@@ -231,6 +231,41 @@ describe('More settings', () => {
     dispatch = { priority: 'high', maxActiveRuns: 5 };
     await screen.update(render());
     expect(field().props.value).toBe('5');
+    // Post a summary is omitted when no authorized connected source trigger is present (e.g. internal Task trigger).
+    expect(screen.findByTestId('wf-more-settings-dispatch-post-summary:on')).toBeNull();
+    await screen.unmount();
+  });
+
+  it('exposes Q11 Post a summary (default off) only when an authorized connected source trigger is present', async () => {
+    const { createWorkflowEditorReadable } =
+      await import('./workflowEditorDraftStore');
+    const { WorkflowMoreSettings } = await import('./WorkflowMoreSettings');
+    const store = createWorkflowEditorReadable(createWorkflowEditorDraft({ draftId: 'd4' }));
+    const changes: unknown[] = [];
+    let dispatch: { priority: 'normal' | 'high'; maxActiveRuns: number | null; postSummaryToSource: boolean } = {
+      priority: 'normal', maxActiveRuns: null, postSummaryToSource: false,
+    };
+    const render = () => (
+      <WorkflowMoreSettings
+        draftStore={store}
+        onChange={(next) => store.set(next)}
+        documentEditable
+        authoringFacts={undefined}
+        triggerDispatch={{ ...dispatch, onChange: (next) => { changes.push(next); dispatch = { ...dispatch, ...next }; } }}
+        testIDPrefix="wf-gh"
+      />
+    );
+    const screen = await renderScreen(render());
+    // Off by default: closed summary does not claim posting.
+    expect(screen.getTextContent()).not.toContain(t('workflows.page.sections.postSummarySummaryOn'));
+    await screen.pressByTestIdAsync('wf-gh-more-settings-toggle');
+    expect(screen.findByTestId('wf-gh-more-settings-dispatch-post-summary:off')).not.toBeNull();
+    expect(screen.findByTestId('wf-gh-more-settings-dispatch-post-summary:on')).not.toBeNull();
+    await screen.pressByTestIdAsync('wf-gh-more-settings-dispatch-post-summary:on');
+    expect(changes).toEqual([{ postSummaryToSource: true }]);
+    await screen.update(render());
+    await screen.pressByTestIdAsync('wf-gh-more-settings-toggle');
+    expect(screen.getTextContent()).toContain(t('workflows.page.sections.postSummarySummaryOn'));
     await screen.unmount();
   });
 });

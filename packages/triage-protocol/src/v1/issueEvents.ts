@@ -3,16 +3,15 @@ import {
 } from '@happier-dev/plugin-sdk/protocol';
 import { SessionInputForgeEvidenceV1Schema } from '@happier-dev/plugin-sdk/sessions';
 import { TriageConfiguredSourceConnectedAccountInstanceV1Schema, TriageConfiguredSourceInstanceV1Schema } from './instances.js';
-import { TriageSourceInstanceIdV1Schema, TriageActionIdV1Schema, TriageIdentifierV1ProtocolSchema } from './identity.js';
+import { TriageSourceInstanceIdV1Schema, TriageIdentifierV1ProtocolSchema } from './identity.js';
 import { MAX_TRIAGE_ROUTING_TOKEN_UTF8_BYTES_V1 } from './bounds.js';
 import { defineTriageSingleLineStringV1 } from './strings.js';
 
 const closed = { policy: 'closed' } as const;
 
-export const TriageIssueInvestigationV1Schema = defineProtocolUnion([
-  defineProtocolObject({ mode: defineProtocolLiteral('inbox') }, closed),
-  defineProtocolObject({ mode: defineProtocolLiteral('auto_start'), configuredActionId: TriageActionIdV1Schema }, closed),
-]);
+export const TriageIssueInvestigationV1Schema = defineProtocolObject({
+  mode: defineProtocolLiteral('inbox'),
+}, closed);
 
 export const TriageIssueEventSetupInputV1Schema = defineProtocolObject({
   sourceInstanceId: TriageSourceInstanceIdV1Schema,

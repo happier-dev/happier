@@ -3053,6 +3053,7 @@ const translated = Shared_actionFamilyTranslations.translated;
 
 const actionFamilyTranslations = { ca: translated({
         actionFamilies: {
+            plans: 'Plans i Col·laborador',
             themes: 'Temes',
             bot_templates: "Plantilles de bots",
             client_files: "Fitxers del client",
@@ -3301,7 +3302,7 @@ return { addFlowsTranslations };
 const Domain_agentInstallJobTranslations = (() => {
 const en = Shared_agentInstallJobTranslations.en;
 
-const agentInstallJobTranslations = { 'ca': { ...en, archiveExpandedByteLimitBody: "El runtime baixat supera el límit de mida d’extracció. Actualitza Happier abans de tornar-ho a provar." } };
+const agentInstallJobTranslations = { 'ca': { ...en, approvalTitleInstall: ({ agent }: { agent: string }) => `Instal·la ${agent}`, approvalTitleUpdate: ({ agent }: { agent: string }) => `Actualitza ${agent}`, approvalSummaryInstall: ({ agent }: { agent: string }) => `Instal·la ${agent} en aquesta màquina i executa l’instal·lador del proveïdor quan cal.`, approvalSummaryUpdate: ({ agent }: { agent: string }) => `Actualitza ${agent} en aquesta màquina i executa l’instal·lador del proveïdor quan cal.`, archiveExpandedByteLimitBody: "El runtime baixat supera el límit de mida d’extracció. Actualitza Happier abans de tornar-ho a provar." } };
 
 return { agentInstallJobTranslations };
 })();
@@ -5127,6 +5128,7 @@ const ca: ConnectedServicesPoolCopy = {
     fallbackDescription: "Canvia a un altre membre quan el compte actiu necessiti recuperar-se.",
     switchEarlyTitle: "Canvia abans d'hora",
     switchEarlyDescription: 'Percentatge restant per sota del qual el grup passa a un membre amb quota més fresca. 0 ho desactiva.',
+    switchEarlyTurnEndNote: ({ agents }: { agents: string }) => `${agents}: no pot canviar de compte a mig torn, així que el canvi espera que acabi el torn actual.`,
     nativeUsageLimitContinuationTitle: "Permet que Claude esperi als límits d’ús",
     nativeUsageLimitContinuationSubtitle: "A les sessions noves, Claude espera i continua automàticament quan es restableix el límit. Desactiva-ho perquè Happier gestioni la recuperació.",
     autoResetsTitle: 'Usa automàticament els reinicis de quota',
@@ -6308,6 +6310,7 @@ const filesPaneTranslations = { ca: {
         serverFolderUnsupportedTitle: 'Aquest servidor encara no és compatible',
         serverFolderUnsupportedBody: ({ workspace }: { workspace: string }) => `Happier només pot obrir carpetes en servidors Linux i macOS d’aquesta manera. Configura ${workspace} com a màquina: llavors Happier s’hi executa pel seu compte.`,
         managedStartingTitle: ({ workspace }) => `Iniciant ${workspace}…`,
+        reconnectingTo: ({ workspace }) => `Reconnectant amb ${workspace}…`,
         page: {
             view: "Veure",
             preview: "Previsualització",
@@ -6500,7 +6503,6 @@ const fileViewerTranslations = { ca: {
             freehand: "Dibuixar",
             highlighter: "Marcador",
             text: "Text",
-        reconnectingTo: ({ workspace }) => `Reconnectant amb ${workspace}…`,
             step: "Pas numerat",
             blur: "Difuminar",
             crop: "Retallar",
@@ -7743,6 +7745,7 @@ const ca: typeof en = {
     searchFailed: 'No s’ha pogut completar la cerca',
     peopleCursorExpired: "Aquesta pàgina ja no està disponible. Actualitza la llista per tornar al principi.",
     invalidRead: "Aquest Home no ha reconegut la sol·licitud.",
+    invalidPolicy: "Aquest Home ha rebutjat aquesta configuració de la política. Revisa-la abans de tornar a desar.",
 
     statusActive: 'Actiu',
     statusDisabled: 'Desactivat',
@@ -7857,7 +7860,6 @@ const ca: typeof en = {
     policyReadOnly: 'Només un propietari del Home ho pot canviar.',
     policyEditingUnavailable: 'Encara no es poden canviar les polítiques des d’aquest dispositiu.',
     revisionConflictTitle: 'Aquesta política ha canviat en un altre lloc',
-    invalidPolicy: "Aquest Home ha rebutjat aquesta configuració de la política. Revisa-la abans de tornar a desar.",
     revisionConflictBody: 'Algú altre ha desat un canvi mentre editaves. La teva tria es manté: torna a carregar aquest Home i aplica-la de nou.',
     sessionDefaultsChanged: "Els valors predeterminats de sessió d’aquest Home han canviat. Actualitza la pàgina per veure la configuració actual abans de tornar-la a editar.",
     reload: 'Torna a carregar',
@@ -10155,10 +10157,6 @@ const machineDetailPageTranslations = { ca: translated({
                 network: "baixada",
                 window: "darrers 5 min",
             },
-            pressure: {
-                critical: "Crítica",
-                elevated: "Poca memòria",
-            },
             unsupported: "No informa de recursos en aquest sistema",
             olderHappier: "Fa servir un Happier antic i no informa de recursos.",
             olderHappierShort: "Encara no hi ha dades de recursos",
@@ -11808,7 +11806,6 @@ const machineDetailPageTranslations = { ca: translated({
         machineScheduled: {
             title: "Programat",
             description: ({ machine }: { machine: string }) => `El que s’executa de manera programada a ${machine}: els crontabs i temporitzadors, llegits en obrir-ho.`,
-            refresh: "Torna a llegir",
             none: "Cap",
             more: "Mostra’n més",
             nextRun: ({ time }: { time: string }) => `Propera ${time}`,
@@ -11823,8 +11820,7 @@ const machineDetailPageTranslations = { ca: translated({
             systemdTimers: "Temporitzadors de systemd",
             launchd: "launchd",
             taskScheduler: "Programador de tasques",
-            oneJob: "1 tasca",
-            jobs: ({ count }: { count: number }) => `${count} tasques`,
+
         },
         machineServices: {
             unresolvedEnvironment: english.machineServices.unresolvedEnvironment,
@@ -11928,14 +11924,14 @@ const machineDetailPageTranslations = { ca: translated({
                 title: 'Logs',
                 description: ({ service }) => `Les darreres línies de ${service}.`,
                 none: ({ service }) => `${service} no té logs que Happier pugui llegir.`,
-                    recipe: ({ recipe, machine }: { recipe: string; machine: string }) => `Configura «${recipe}» a ${machine} i després torna a llegir els logs.`,
-                    recipeUnnamed: ({ machine }: { machine: string }) => `Configura l’accés als logs a ${machine} i després torna a llegir els logs.`,
                 reading: 'S’estan llegint les darreres línies…',
                 approval: 'S’espera l’aprovació per llegir aquests logs.',
                 error: { title: 'No s’han pogut llegir els logs', machineNotAnswering: ({ machine }) => `${machine} no respon` },
                 needMachineOnline: ({ machine }) => `Per llegir els registres en directe, ${machine} ha d’estar en línia.`,
                 remedy: {
                     redeployEnvironment: 'Torna a desplegar l’Entorn per restablir l’emmascarament dels secrets i després torna a llegir els logs.',
+                    recipe: ({ recipe, machine }: { recipe: string; machine: string }) => `Configura «${recipe}» a ${machine} i després torna a llegir els logs.`,
+                    recipeUnnamed: ({ machine }: { machine: string }) => `Configura l’accés als logs a ${machine} i després torna a llegir els logs.`,
                 },
                 following: 'Seguint',
                 follow: 'Segueix',
@@ -12280,7 +12276,7 @@ return { nativePasswordTranslations };
 const Domain_navigationPlacementTranslations = (() => {
 type NavigationPlacementTranslation = Shared_navigationPlacementTranslations.NavigationPlacementTranslation;
 
-const navigationPlacementTranslations = { ca: { auto: 'Automàtic', customize: 'Personalitza…', title: 'Navegació', description: 'Tria què és visible, va a Més o queda ocult. Arrossega per ordenar. Es desa en aquest dispositiu.', pinned: 'Fixat', overflow: 'Més', hidden: 'Ocult', reset: 'Restableix', keepInBar: "Mantén a la barra", moveToMore: "Mou a Més", hide: "Amaga", tabMenuTitle: ({ title, source }: { title: string; source: string }) => `${title} · de ${source}`, appRail: 'Barra esquerra', sessionRail: 'Barra de sessió', workspaceRail: 'Barra de l’espai de treball', sessionTabBar: 'Pestanyes del telèfon', projectTabBar: 'Pestanyes del projecte', phoneLauncher: 'Dreceres del telèfon', composer: 'Compositor', composerDescription: 'Tria què es queda a la barra, va a + o queda ocult. Arrossega per reordenar. Desat en aquest dispositiu.', shown: 'Visible', inPlus: 'A +', always: 'Sempre', customizeTabs: 'Personalitza les pestanyes…', customizeComposer: 'Personalitza el compositor…', inField: 'Al camp', alwaysReachable: 'Sempre accessible', stopNote: 'Visible mentre corre un torn', pendingNote: 'A la barra mentre et necessita', menuOnly: 'S’obre des de +', preview: 'Previsualització', linkedFiles: "Fitxers enllaçats", attachmentsUnavailable: "La pujada d’adjunts no està disponible en aquesta Home o versió.", contextSession: "Sessió", contextProject: "Projecte", contextNewSession: "Sessió nova", contextWorkflow: "Flux de treball", contextDiscussion: "Discussió", workflowStepTargets: "Destinacions dels passos", workflowRunTarget: "Destinació de l’execució", railBandWork: "Feina", railBandTogether: "Junts", railBandLibrary: "Biblioteca", railBandPlugins: "Connectors", railBandFooter: "Peu" , detailDescription: "Tria on va cada element a l’escriptori i al telèfon. Es desa en aquest dispositiu.", desktop: "Escriptori", phone: "Telèfon", deviceLabel: "Dispositiu", topTabs: "Pestanyes superiors", topTabsDescription: "Pàgines que canvien la vista principal. Es mostren quan n’hi ha més d’una.", rail: "Barra dreta", railDescription: "Acompanyants que s’obren al costat de la pàgina.", phoneBar: "Barra de pestanyes", phoneBarDescription: "A la barra, a Més o amagat.", bar: "Barra", pageTabsTitle: "Pestanyes de pàgina", pageTabsDescription: "A dalt, les pàgines de la barra es desplacen en una franja sobre la pàgina; les eines es queden a baix.", pageTabsRow: "Mostra les pàgines", pageTabsBottom: "A baix", pageTabsTop: "A dalt", railGroupSession: "Sessió", railGroupCode: "Codi", railGroupMachine: "Màquina", railGroupPlugins: "Connectors", detailTitle: ({ name }: { name: string }) => `Navegació de ${name}` } } satisfies Pick<Record<string, NavigationPlacementTranslation>, "ca">;
+const navigationPlacementTranslations = { ca: { auto: 'Automàtic', customize: 'Personalitza…', title: 'Navegació', description: 'Tria què és visible, va a Més o queda ocult. Arrossega per ordenar. Es desa en aquest dispositiu.', pinned: 'Fixat', overflow: 'Més', hidden: 'Ocult', reset: 'Restableix', keepInBar: "Mantén a la barra", moveToMore: "Mou a Més", hide: "Amaga", tabMenuTitle: ({ title, source }: { title: string; source: string }) => `${title} · de ${source}`, appRail: 'Barra esquerra', sessionRail: 'Barra de sessió', workspaceRail: 'Barra de l’espai de treball', sessionTabBar: 'Pestanyes del telèfon', projectTabBar: 'Pestanyes del projecte', phoneLauncher: 'Dreceres del telèfon', composer: 'Compositor', composerDescription: 'Tria què es queda a la barra, va a + o queda ocult. Arrossega per reordenar. Desat en aquest dispositiu.', shown: 'Visible', inPlus: 'A +', always: 'Sempre', customizeTabs: 'Personalitza les pestanyes…', customizeComposer: 'Personalitza el compositor…', sessionHeader: "Capçalera de la sessió", sessionHeaderDescription: "Tria quines accions de la sessió es mostren com a icones a la capçalera. La resta queden a ⋯. Arrossega per reordenar. Es desa en aquest dispositiu.", inMenu: "A ⋯", customizeHeader: "Personalitza la capçalera…", inField: 'Al camp', alwaysReachable: 'Sempre accessible', stopNote: 'Visible mentre corre un torn', pendingNote: 'A la barra mentre et necessita', menuOnly: 'S’obre des de +', preview: 'Previsualització', linkedFiles: "Fitxers enllaçats", attachmentsUnavailable: "La pujada d’adjunts no està disponible en aquesta Home o versió.", contextSession: "Sessió", contextProject: "Projecte", contextNewSession: "Sessió nova", contextWorkflow: "Flux de treball", contextDiscussion: "Discussió", workflowStepTargets: "Destinacions dels passos", workflowRunTarget: "Destinació de l’execució", railBandWork: "Feina", railBandTogether: "Junts", railBandLibrary: "Biblioteca", railBandPlugins: "Connectors", railBandFooter: "Peu" , detailDescription: "Tria on va cada element a l’escriptori i al telèfon. Es desa en aquest dispositiu.", desktop: "Escriptori", phone: "Telèfon", deviceLabel: "Dispositiu", topTabs: "Pestanyes superiors", topTabsDescription: "Pàgines que canvien la vista principal. Es mostren quan n’hi ha més d’una.", rail: "Barra dreta", railDescription: "Acompanyants que s’obren al costat de la pàgina.", phoneBar: "Barra de pestanyes", phoneBarDescription: "A la barra, a Més o amagat.", bar: "Barra", pageTabsTitle: "Pestanyes de pàgina", pageTabsDescription: "A dalt, les pàgines de la barra es desplacen en una franja sobre la pàgina; les eines es queden a baix.", pageTabsRow: "Mostra les pàgines", pageTabsBottom: "A baix", pageTabsTop: "A dalt", railGroupSession: "Sessió", railGroupCode: "Codi", railGroupMachine: "Màquina", railGroupPlugins: "Connectors", detailTitle: ({ name }: { name: string }) => `Navegació de ${name}` } } satisfies Pick<Record<string, NavigationPlacementTranslation>, "ca">;
 
 return { navigationPlacementTranslations };
 })();
@@ -13677,6 +13673,7 @@ const ca: ReviewWalkthroughTranslations = {
         continuesSession: 'continua la seva sessió',
         startsFresh: 'comença de zero',
         askedAgain: 'se li torna a demanar',
+        needsAccess: 'Necessita accés',
         noRuns: 'Encara no hi ha execucions en aquesta ronda',
         workflowRun: 'Execució del flux',
         reviewerRun: ({ count }) => `Revisor ${count}`,
@@ -14828,7 +14825,7 @@ const sessionCollaborationPaneTranslations = {...Domain_sessionCollaborationPane
 
 const en = Shared_sessionCollaborationTranslations.en;
 
-const sessionCollaborationTranslations: Pick<Record<'en'|'ca'|'de'|'es'|'fr'|'it'|'ja'|'pl'|'pt'|'ru'|'zh-Hans'|'zh-Hant', typeof en>, "ca"> = { ca: { pane: sessionCollaborationPaneTranslations['ca'], readiness: sessionReadinessCopy.ca, title: 'Persones', viewingNow: 'Veient ara', justYou: 'Només tu', typing: 'Escrivint…', stale: 'Pot estar desactualitzat', unavailable: 'Presència en directe no disponible', connecting: 'Connectant…', unnamed: 'Membre de Happier', open: 'Obre la col·laboració', conversations: "Discussions", accessUnavailable: 'Accés a la sessió no disponible', accessUnavailableReason: 'Aquest Home no admet compartir sessions amb persones.', discussion: { openAnchor: ({ name }: { name: string }) => `Obre ${name}`, reply: { readUpTo: "Ha llegit la discussió fins a la pregunta", passed: "Ha passat", failed: "No ha pogut respondre", cancelled: "S’ha aturat abans de respondre", stopped: "S’ha aturat abans d’acabar" }, participants: { title: "Participants", loading: "Comprovant qui hi ha…", moreSessionsFailed: "No s’han pogut carregar més sessions.", peopleGroup: "Persones", agentsGroup: "Agents", agentsNote: "Cadascun manté la seva sessió, màquina i aprovacions", owner: "Propietari", you: "Tu", hereNow: "Ara aquí", canPost: "Pot publicar", canRead: "Pot llegir", teamAccess: "Accés d’equip", noAgents: "Encara no hi ha agents", model: "Model", session: "Sessió", modelStarting: "Model iniciant-se", policyWhenAddressed: "Respon quan se l’esmenta", policyReadsOnly: "Només llegeix", policyDrafts: "Esborranys per aprovar", policyWatches: "Observa i intervé", privateNote: "Només les persones convidades ho poden llegir. Una menció mai no dona permís.", mentionNote: "Una menció mai no dona permís.", inheritedNote: "Les persones convidades i el seu equip ho poden llegir. Una menció mai no dona permís.", leave: "Surt", invitedOnly: "Només convidats", teamCanRead: "L’equip ho pot llegir", people: ({ count }) => count === 1 ? 'Només tu' : `${count.toLocaleString()} persones`, peopleAndAgents: ({ people, agents }) => `${people === 1 ? '1 persona' : `${people.toLocaleString()} persones`}, ${agents === 1 ? '1 agent' : `${agents.toLocaleString()} agents`}` }, home: { search: "Cerca discussions", needsYou: "Et necessita", filter: "Filtra", filterAll: "Totes les discussions", filterUnread: "Sense llegir", filterEmpty: "No hi ha res amb aquest filtre", today: "Avui", thisWeek: "Aquesta setmana", earlier: "Abans", columnEmpty: "Aquí apareixen les discussions a què et conviden", inviteTitle: "Parla-ho amb persones i agents", inviteBody: "Reuneix companys, sessions, bots i models en una sola discussió. Esmenta un agent i respondrà des de la seva pròpia sessió, amb les seves pròpies aprovacions.", idleTitle: "Obre una discussió", idleBody: "Tria'n una de la llista o comença'n una de nova amb persones i agents.", audience: "Només les persones que convidis", draftWaiting: "Hi ha un esborrany que t’espera", approvalPending: "Necessita la teva aprovació", draftWaitingNamed: ({ name }: { name: string }) => `L’esborrany de ${name} t’espera`, approvalPendingNamed: ({ name }: { name: string }) => `${name} necessita aprovació` }, manage: { startAgain: "Torna-la a iniciar", startAgainBody: "La seva sessió no s’ha iniciat. Torna-ho a provar amb la mateixa configuració.", followParticipant: "Segueix…", muteParticipant: "Silencia els seus missatges", unmuteParticipant: "Silenciat · Reactiva", mutedNotice: ({ name }: { name: string }) => `Silenciat · ${name}`, unmutedNotice: ({ name }: { name: string }) => `Reactivat · ${name}`, muteFailed: "No s’ha pogut canviar. Torna-ho a provar.", invitePlaceholder: "Cerca persones, sessions o models", policyWhenAddressedBody: "Una menció o una resposta a ella. Per defecte.", policyReadsOnlyBody: "Llegeix; mai no respon aquí.", policyDraftsBody: "Tu publiques la seva resposta, o la descartes.", policyWatchesBody: "Llegeix cada missatge i pot respondre. Gasta torns encara que calli.", answersGroup: "Respon", operationsGroup: "Sessió", openSession: "Obre la seva sessió", removeModel: "Treu-lo i arxiva la seva sessió", removeModelBody: "Es va iniciar per a aquesta discussió; l’historial es conserva.", removeSession: "Treu-la d’aquesta discussió", removeSessionBody: "La sessió continua pel seu compte.", rowHint: "Tria com respon, obre-la o treu-la", working: "Desant…", checking: "Comprovant si s’ha fet…", failed: "No s’ha pogut fer.", leaveTitle: "Surt d’aquesta discussió", leaveBody: "Algú n’ha de ser propietari. Passa-la a algú d’aquí o arxiva-la; no s’esborra res.", transferGroup: "Fes propietari algú altre", transferSubtitle: "Passa a ser propietari i després surts", noTransferCandidates: "Convida algú primer per passar-la-hi.", archiveInstead: "Arxiva-la", archiveInsteadBody: "Continues sent el propietari. Ningú no hi pot publicar fins que es restauri.", inviteSubtitle: "Només hi poden llegir les persones que convidis", sessionsGroup: "Les teves sessions", modelsGroup: "Models", sessionCandidate: "Cada una respon quan se la menciona", modelOn: ({ machine }: { machine: string }) => `Un model a ${machine}`, modelCandidate: "Una sessió nova teva · tria l’agent i el model", startedGroup: "Iniciats per a aquesta discussió", modelSessionOn: ({ machine }: { machine: string }) => `una sessió teva a ${machine}`, modelNewSessionOn: ({ machine }: { machine: string }) => `Una sessió nova teva a ${machine}`, modelStartingOn: ({ machine }: { machine: string }) => `S’està iniciant a ${machine}…`, modelFailedOn: ({ machine }: { machine: string }) => `No s’ha iniciat a ${machine}`, modelNotStartedOn: ({ machine }: { machine: string }) => `No iniciat a ${machine}` }, invite: { button: "Convida", title: ({ title }: { title: string }) => `Convida a ${title}`, canManage: "Pot gestionar", ownerOnly: "Només el propietari pot canviar qui hi és convidat.", failed: "No s’ha pogut desar la invitació." }, composer: { mention: "Menciona", mentionHint: "Menciona un agent perquè respongui", unresolvedMentionsTitle: "Algunes @mencions no estan seleccionades", unresolvedMentionsBody: "Tria un suggeriment per adreçar-te a algú. Si les envies com a text, aquests noms no quedaran vinculats.", sendAsText: "Envia com a text" }, newPage: { invitePlaceholder: "Cerca persones o sessions", inviteTitle: "Amb qui comença", invitedTitle: ({ names, count }: { names: string; count: number }) => count === 1 ? `${names} hi està convidat` : `${names} hi estan convidats`, namePlaceholder: "Posa nom a aquesta discussió", emptyTitle: "Menciona qui ha de respondre", emptyBody: "Un agent només respon quan se’l menciona. Un missatge que no menciona ningú només arriba a les persones." }, secondOpinion: { title: "Demana una segona opinió", discussTitle: "Comenta aquesta resposta", discussionTitle: "Segona opinió", discussionTitleOn: ({ session }: { session: string }) => `Segona opinió sobre ${session}`, discussDiscussionTitle: "Sobre aquesta resposta", defaultQuestion: "És correcte? Què hi canviaries?", subtitle: ({ session }: { session: string }) => `Sobre una resposta a ${session}`, subtitleUntitled: "Sobre aquesta resposta", answer: "Aquesta resposta", open: "Obre la discussió", askQuoteOnly: "Pregunta només amb la cita", shareAndAsk: "Comparteix i pregunta", ask: "Pregunta", freshOpinionsHint: "Tria’n dos o més per a Opinions independents", askFreshOpinions: ({ count }: { count: number }) => `Pregunta a ${count} · Opinions independents`, whereBody: "Opinions independents s’executa des d’aquesta màquina i carpeta.", noReviewers: "Encara no hi ha altres sessions en aquesta Home", nothingCanAnswer: "Ara mateix res del que és teu pot respondre", nothingCanAnswerBody: "Cap de les teves màquines està a punt", paneClosed: "Aquesta consulta es va tancar en recarregar l’app. Torna-la a començar des de la resposta.", searchReviewers: "Cerca sessions i models", noReviewerMatch: "Res no coincideix amb aquesta cerca", showAllReviewers: ({ count }: { count: number }) => `Mostra-ho tot (${count})`, addAgent: "Afegeix un agent", addAgentShort: "Afegeix agent", yourSession: "Sessió", moreSessions: "Mostra més sessions", question: "Pregunta", thisSession: "aquesta sessió", cannotAskTitle: ({ name }: { name: string }) => `No es pot preguntar a ${name} aquí`, quoteOnlyTitle: ({ name }: { name: string }) => `${name} només veu la cita`, quoteOnlyBody: "No pot obrir la resta d’aquesta sessió.", grantTitle: ({ name }: { name: string }) => `Deixa que ${name} llegeixi aquesta sessió`, grantBody: ({ name, session }: { name: string; session: string }) => `${name} conserva l’accés de lectura a ${session} fins que el revoquis.`, grantUnavailable: "No pots compartir aquesta sessió, així que només s’envia la cita.", readsAsYouTitle: ({ name }: { name: string }) => `${name} llegeix aquesta sessió com tu`, readsTitle: ({ name }: { name: string }) => `${name} ja pot llegir aquesta sessió`, readsAsYouBody: "No es comparteix res de nou.", discussionTitleRow: "La nova discussió", discussionOnlyYou: "Només tu, fins que convidis algú.", discussionPeople: ({ count }: { count: number }) => `Tu i ${count} més la podeu llegir`, readsGroup: "Què poden llegir", disclosure: { sameSession: "És la sessió que ha escrit aquesta resposta.", broader: "Ho veuria més gent de la que ara pot llegir la resposta.", public: "Esdevindria pública.", notAllowed: "Les normes de compartició d’aquesta Home no ho permeten.", unavailable: "Ara no es pot llegir aquesta resposta." }, discussDone: "Discussió iniciada", asked: ({ name }: { name: string }) => `Has preguntat a ${name}`, askedBody: "La resposta arribarà a la discussió.", freshStarted: ({ count }: { count: number }) => `Opinions independents iniciat amb ${count}`, freshStartedBody: "Cadascú respon pel seu compte; les respostes arriben a la discussió.", openRun: "Obre l’execució", failed: "No s’ha pogut fer.", pending: "Encara no ha acabat. Tornar-ho a provar no ho pregunta dues vegades.", previewChanged: "Ha canviat qui pot llegir això. Revisa-ho i torna a preguntar.", approvalPendingBody: "La discussió s’obre aquí quan s’aprovi. La teva pregunta es conserva.", sendTo: ({ name }: { name: string }) => `Envia a ${name}`, sendToSession: "Envia a la sessió", sentNextTurn: "Ho llegeix al seu proper torn.", askAnother: "Pregunta a un altre", checkAgain: "Torna-ho a comprovar", uncertainHint: "Tornar-ho a comprovar no ho envia dues vegades." }, draftReview: { post: "Publica", decline: "Rebutja", onlyYou: "Només tu ho veus fins que ho publiquis." }, replyDraft: { action: "Respon", actionTo: ({ name }: { name: string }) => `Respon a ${name}`, replyingTo: ({ name }: { name: string }) => `Responent a ${name}`, removedTitle: ({ names }: { names: string }) => `Tret d’Envia a: ${names}`, removedBody: "Ja no són en aquesta discussió, així que no els arriba res." },
+const sessionCollaborationTranslations: Pick<Record<'en'|'ca'|'de'|'es'|'fr'|'it'|'ja'|'pl'|'pt'|'ru'|'zh-Hans'|'zh-Hant', typeof en>, "ca"> = { ca: { pane: sessionCollaborationPaneTranslations['ca'], readiness: sessionReadinessCopy.ca, title: 'Persones', viewingNow: 'Veient ara', justYou: 'Només tu', typing: 'Escrivint…', stale: 'Pot estar desactualitzat', unavailable: 'Presència en directe no disponible', connecting: 'Connectant…', unnamed: 'Membre de Happier', open: 'Obre la col·laboració', conversations: "Discussions", accessUnavailable: 'Accés a la sessió no disponible', accessUnavailableReason: 'Aquest Home no admet compartir sessions amb persones.', discussion: { openAnchor: ({ name }: { name: string }) => `Obre ${name}`, reply: { readUpTo: "Ha llegit la discussió fins a la pregunta", passed: "Ha passat", failed: "No ha pogut respondre", cancelled: "S’ha aturat abans de respondre", stopped: "S’ha aturat abans d’acabar" }, participants: { title: "Participants", loading: "Comprovant qui hi ha…", moreSessionsFailed: "No s’han pogut carregar més sessions.", peopleGroup: "Persones", agentsGroup: "Agents", agentsNote: "Cadascun manté la seva sessió, màquina i aprovacions", owner: "Propietari", you: "Tu", hereNow: "Ara aquí", canPost: "Pot publicar", canRead: "Pot llegir", teamAccess: "Accés d’equip", noAgents: "Encara no hi ha agents", model: "Model", session: "Sessió", modelStarting: "Model iniciant-se", policyWhenAddressed: "Respon quan se l’esmenta", policyReadsOnly: "Només llegeix", policyDrafts: "Esborranys per aprovar", policyWatches: "Observa i intervé", privateNote: "Només les persones convidades ho poden llegir. Una menció mai no dona permís.", mentionNote: "Una menció mai no dona permís.", inheritedNote: "Les persones convidades i el seu equip ho poden llegir. Una menció mai no dona permís.", leave: "Surt", invitedOnly: "Només convidats", teamCanRead: "L’equip ho pot llegir", people: ({ count }) => count === 1 ? 'Només tu' : `${count.toLocaleString()} persones`, peopleAndAgents: ({ people, agents }) => `${people === 1 ? '1 persona' : `${people.toLocaleString()} persones`}, ${agents === 1 ? '1 agent' : `${agents.toLocaleString()} agents`}` }, home: { search: "Cerca discussions", needsYou: "Et necessita", filter: "Filtra", filterAll: "Totes les discussions", filterUnread: "Sense llegir", filterEmpty: "No hi ha res amb aquest filtre", today: "Avui", thisWeek: "Aquesta setmana", earlier: "Abans", columnEmpty: "Aquí apareixen les discussions a què et conviden", inviteTitle: "Parla-ho amb persones i agents", inviteBody: "Reuneix companys, sessions, bots i models en una sola discussió. Esmenta un agent i respondrà des de la seva pròpia sessió, amb les seves pròpies aprovacions.", idleTitle: "Obre una discussió", idleBody: "Tria'n una de la llista o comença'n una de nova amb persones i agents.", audience: "Només les persones que convidis", draftWaiting: "Hi ha un esborrany que t’espera", approvalPending: "Necessita la teva aprovació", draftWaitingNamed: ({ name }: { name: string }) => `L’esborrany de ${name} t’espera`, approvalPendingNamed: ({ name }: { name: string }) => `${name} necessita aprovació` }, manage: { startAgain: "Torna-la a iniciar", startAgainBody: "La seva sessió no s’ha iniciat. Torna-ho a provar amb la mateixa configuració.", followParticipant: "Segueix…", muteParticipant: "Silencia els seus missatges", unmuteParticipant: "Silenciat · Reactiva", mutedNotice: ({ name }: { name: string }) => `Silenciat · ${name}`, unmutedNotice: ({ name }: { name: string }) => `Reactivat · ${name}`, muteFailed: "No s’ha pogut canviar. Torna-ho a provar.", invitePlaceholder: "Cerca persones, sessions o models", policyWhenAddressedBody: "Una menció o una resposta a ella. Per defecte.", policyReadsOnlyBody: "Llegeix; mai no respon aquí.", policyDraftsBody: "Tu publiques la seva resposta, o la descartes.", policyWatchesBody: "Llegeix cada missatge i pot respondre. Gasta torns encara que calli.", answersGroup: "Respon", operationsGroup: "Sessió", openSession: "Obre la seva sessió", removeModel: "Treu-lo i arxiva la seva sessió", removeModelBody: "Es va iniciar per a aquesta discussió; l’historial es conserva.", removeSession: "Treu-la d’aquesta discussió", removeSessionBody: "La sessió continua pel seu compte.", rowHint: "Tria com respon, obre-la o treu-la", working: "Desant…", checking: "Comprovant si s’ha fet…", failed: "No s’ha pogut fer.", leaveTitle: "Surt d’aquesta discussió", leaveBody: "Algú n’ha de ser propietari. Passa-la a algú d’aquí o arxiva-la; no s’esborra res.", transferGroup: "Fes propietari algú altre", transferSubtitle: "Passa a ser propietari i després surts", noTransferCandidates: "Convida algú primer per passar-la-hi.", archiveInstead: "Arxiva-la", archiveInsteadBody: "Continues sent el propietari. Ningú no hi pot publicar fins que es restauri.", inviteSubtitle: "Només hi poden llegir les persones que convidis", sessionsGroup: "Les teves sessions", modelsGroup: "Models", sessionCandidate: "Cada una respon quan se la menciona", modelOn: ({ machine }: { machine: string }) => `Un model a ${machine}`, modelCandidate: "Una sessió nova teva · tria l’agent i el model", startedGroup: "Iniciats per a aquesta discussió", modelSessionOn: ({ machine }: { machine: string }) => `una sessió teva a ${machine}`, modelNewSessionOn: ({ machine }: { machine: string }) => `Una sessió nova teva a ${machine}`, modelStartingOn: ({ machine }: { machine: string }) => `S’està iniciant a ${machine}…`, modelFailedOn: ({ machine }: { machine: string }) => `No s’ha iniciat a ${machine}`, modelNotStartedOn: ({ machine }: { machine: string }) => `No iniciat a ${machine}` }, invite: { helpTitle: 'Com s’uneixen els agents', button: "Convida", title: ({ title }: { title: string }) => `Convida a ${title}`, canManage: "Pot gestionar", ownerOnly: "Només el propietari pot canviar qui hi és convidat.", failed: "No s’ha pogut desar la invitació." }, composer: { mention: "Menciona", mentionHint: "Menciona un agent perquè respongui", unresolvedMentionsTitle: "Algunes @mencions no estan seleccionades", unresolvedMentionsBody: "Tria un suggeriment per adreçar-te a algú. Si les envies com a text, aquests noms no quedaran vinculats.", sendAsText: "Envia com a text" }, newPage: { invitePlaceholder: "Cerca persones o sessions", inviteTitle: "Amb qui comença", invitedTitle: ({ names, count }: { names: string; count: number }) => count === 1 ? `${names} hi està convidat` : `${names} hi estan convidats`, namePlaceholder: "Posa nom a aquesta discussió", emptyTitle: "Menciona qui ha de respondre", emptyBody: "Un agent només respon quan se’l menciona. Un missatge que no menciona ningú només arriba a les persones." }, secondOpinion: { title: "Demana una segona opinió", discussTitle: "Comenta aquesta resposta", discussionTitle: "Segona opinió", discussionTitleOn: ({ session }: { session: string }) => `Segona opinió sobre ${session}`, discussDiscussionTitle: "Sobre aquesta resposta", defaultQuestion: "És correcte? Què hi canviaries?", subtitle: ({ session }: { session: string }) => `Sobre una resposta a ${session}`, subtitleUntitled: "Sobre aquesta resposta", answer: "Aquesta resposta", open: "Obre la discussió", askQuoteOnly: "Pregunta només amb la cita", shareAndAsk: "Comparteix i pregunta", ask: "Pregunta", freshOpinionsHint: "Tria’n dos o més per a Opinions independents", askFreshOpinions: ({ count }: { count: number }) => `Pregunta a ${count} · Opinions independents`, whereBody: "Opinions independents s’executa des d’aquesta màquina i carpeta.", noReviewers: "Encara no hi ha altres sessions en aquesta Home", nothingCanAnswer: "Ara mateix res del que és teu pot respondre", nothingCanAnswerBody: "Cap de les teves màquines està a punt", paneClosed: "Aquesta consulta es va tancar en recarregar l’app. Torna-la a començar des de la resposta.", searchReviewers: "Cerca sessions i models", noReviewerMatch: "Res no coincideix amb aquesta cerca", showAllReviewers: ({ count }: { count: number }) => `Mostra-ho tot (${count})`, addAgent: "Afegeix un agent", addAgentShort: "Afegeix agent", yourSession: "Sessió", moreSessions: "Mostra més sessions", question: "Pregunta", thisSession: "aquesta sessió", cannotAskTitle: ({ name }: { name: string }) => `No es pot preguntar a ${name} aquí`, quoteOnlyTitle: ({ name }: { name: string }) => `${name} només veu la cita`, quoteOnlyBody: "No pot obrir la resta d’aquesta sessió.", grantTitle: ({ name }: { name: string }) => `Deixa que ${name} llegeixi aquesta sessió`, grantBody: ({ name, session }: { name: string; session: string }) => `${name} conserva l’accés de lectura a ${session} fins que el revoquis.`, grantUnavailable: "No pots compartir aquesta sessió, així que només s’envia la cita.", readsAsYouTitle: ({ name }: { name: string }) => `${name} llegeix aquesta sessió com tu`, readsTitle: ({ name }: { name: string }) => `${name} ja pot llegir aquesta sessió`, readsAsYouBody: "No es comparteix res de nou.", discussionTitleRow: "La nova discussió", discussionOnlyYou: "Només tu, fins que convidis algú.", discussionPeople: ({ count }: { count: number }) => `Tu i ${count} més la podeu llegir`, readsGroup: "Què poden llegir", disclosure: { sameSession: "És la sessió que ha escrit aquesta resposta.", broader: "Ho veuria més gent de la que ara pot llegir la resposta.", public: "Esdevindria pública.", notAllowed: "Les normes de compartició d’aquesta Home no ho permeten.", unavailable: "Ara no es pot llegir aquesta resposta." }, discussDone: "Discussió iniciada", asked: ({ name }: { name: string }) => `Has preguntat a ${name}`, askedBody: "La resposta arribarà a la discussió.", freshStarted: ({ count }: { count: number }) => `Opinions independents iniciat amb ${count}`, freshStartedBody: "Cadascú respon pel seu compte; les respostes arriben a la discussió.", openRun: "Obre l’execució", failed: "No s’ha pogut fer.", pending: "Encara no ha acabat. Tornar-ho a provar no ho pregunta dues vegades.", previewChanged: "Ha canviat qui pot llegir això. Revisa-ho i torna a preguntar.", approvalPendingBody: "La discussió s’obre aquí quan s’aprovi. La teva pregunta es conserva.", sendTo: ({ name }: { name: string }) => `Envia a ${name}`, sendToSession: "Envia a la sessió", sentNextTurn: "Ho llegeix al seu proper torn.", askAnother: "Pregunta a un altre", checkAgain: "Torna-ho a comprovar", uncertainHint: "Tornar-ho a comprovar no ho envia dues vegades." }, draftReview: { post: "Publica", decline: "Rebutja", onlyYou: "Només tu ho veus fins que ho publiquis." }, replyDraft: { action: "Respon", actionTo: ({ name }: { name: string }) => `Respon a ${name}`, replyingTo: ({ name }: { name: string }) => `Responent a ${name}`, removedTitle: ({ names }: { names: string }) => `Tret d’Envia a: ${names}`, removedBody: "Ja no són en aquesta discussió, així que no els arriba res." },
         quote: discussionQuoteCopy.ca, controls: discussionControlsCopy.ca, attribution: discussionAttributionCopy.ca,
         workflowRound: { speakers: ({ count }: { count: number }) => count === 1 ? '1 participant' : `${count.toLocaleString()} participants`, sitOut: ({ names }: { names: string }) => `${names} no participen en aquesta ronda.`, everyonePassed: "Tothom ha passat, així que el debat s’ha acabat.", failedReply: "No ha respost", retryReceipt: "Reintent iniciat" },
         heldParticipant: "Participant de sessió",
@@ -14973,7 +14970,8 @@ const ca: typeof en = {
         syncing: 'S’està sincronitzant…',
         conflict: 'Cal revisar-ho',
         unsupported: 'Sense sincronitzar — aquest Home no pot sincronitzar aquest esborrany',
-        startInterrupted: 'Inici interromput',
+        starting: 'S’està iniciant',
+        startFailed: 'No s’ha pogut iniciar',
         storageError: 'Aquest dispositiu no ha pogut desar l’esborrany localment.',
         cryptoError: 'Aquest dispositiu no ha pogut sincronitzar l’esborrany perquè no l’ha pogut xifrar o obrir.',
         transportError: 'Aquest dispositiu no ha pogut sincronitzar l’esborrany amb el seu Home.',
@@ -16649,18 +16647,17 @@ const settingsSessionPagesTranslations: Pick<Record<
                 typingDescription: 'Com es comporten Retorn i l’historial de missatges al compositor.',
                 enterToSendTitle: 'Retorn per enviar',
                 sendModeTitle: 'Mentre l’agent treballa',
-                sendQueue: 'A la cua',
-                sendInterrupt: 'Interromp',
-                sendPending: 'Pendent',
-                busySteerTitle: 'Si l’agent admet direcció',
-                busySteerInactive: 'Només s’aplica quan els missatges es posen a la cua o queden pendents mentre l’agent treballa.',
+                addToTurn: 'Insereix',
+                waitForTurn: 'A la cua',
+                stopAndSend: 'Interromp',
+                inactiveSessionsSection: 'Sessions inactives',
+                inactiveSessionsDescription: 'S’aplica quan envies a una sessió amb l’agent aturat o la màquina fora de línia.',
                 nonSteerableTitle: 'Pregunta si un missatge no pot dirigir',
                 resumeWhenPossible: 'Quan es pugui',
                 resumeIfOnline: 'Si està en línia',
                 resumeNever: 'Mai',
                 pendingSection: 'Missatges pendents',
                 pendingDescription: 'Com arriben a l’agent els missatges pendents.',
-                pendingInactive: 'Amb les teves opcions actuals no queda res pendent. Això s’aplica tan bon punt un missatge ho estigui.',
                 drainOne: 'D’un en un',
                 drainAll: 'Tots alhora',
                 timingAfterReply: 'Després de la resposta',
@@ -17087,12 +17084,12 @@ const catalan: TeamsTranslationRoot = {
             conflict: 'Algú altre ho ha canviat abans. Revisa els valors actuals i torna-ho a provar.',
             offline: 'Aquest Home no és accessible, així que el canvi no s’ha enviat.',
             invalidName: 'Introdueix un nom d’entre 1 i 80 caràcters.',
-            invalidTeamLink: "Obre l’equip des d’Equips per fer servir un enllaç vigent.",
             invalidDescription: 'Introdueix una descripció de 500 caràcters com a màxim.',
-            listCursorExpired: "Aquesta pàgina ja no està disponible. Actualitza la llista per tornar al principi.",
             invalidNameCharacters: "Treu els caràcters no imprimibles del nom de l’equip.",
             invalidDescriptionCharacters: "Treu els caràcters no imprimibles de la descripció de l’equip.",
             invalidTeamDetails: "Revisa les dades de l’equip.",
+            invalidTeamLink: "Obre l’equip des d’Equips per fer servir un enllaç vigent.",
+            listCursorExpired: "Aquesta pàgina ja no està disponible. Actualitza la llista per tornar al principi.",
             createRequestConflict: "Pot ser que aquesta sol·licitud ja hagi creat un equip. Consulta Equips abans de començar-ne una de nova.",
         },
         directory: {
@@ -17413,6 +17410,11 @@ const catalan: TeamsTranslationRoot = {
                 readOnlyTeam: "Només qui gestiona la configuració d’aquest equip pot canviar-los.",
                 readOnlyGroup: "Només qui gestiona aquest grup pot canviar-los.",
                 machine: "Màquina",
+                machineNotMemberUsable: "Els membres no poden utilitzar aquesta màquina. Comparteix-la amb l’equip o tria’n una altra.",
+                machineDescription: "On comencen les sessions noves.",
+                agentDescription: "Quin agent fan servir les sessions noves.",
+                teamDefault: "Predeterminat de l’equip",
+                groupDefault: "Predeterminat del grup",
                 useDefault: ({ value }: { value: string }) => `Usa el valor per defecte · ${value}`,
                 agentDefault: "Valor per defecte de l’agent",
                 otherAgents: "Altres agents",
@@ -17422,11 +17424,6 @@ const catalan: TeamsTranslationRoot = {
                 machineDefault: "Valor de la màquina",
                 homeDefault: "Valor de la Home",
                 policyDefault: "Política de l’organització",
-                machineNotMemberUsable: "Els membres no poden utilitzar aquesta màquina. Comparteix-la amb l’equip o tria’n una altra.",
-                machineDescription: "On comencen les sessions noves.",
-                agentDescription: "Quin agent fan servir les sessions noves.",
-                teamDefault: "Predeterminat de l’equip",
-                groupDefault: "Predeterminat del grup",
                 none: "Sense definir",
                 preset: "Una configuració predefinida de màquina",
                 unavailableMachine: "Una màquina que no pots veure",
@@ -17792,6 +17789,7 @@ const catalan: TeamsTranslationRoot = {
             archivedTitle: 'Aquest equip està arxivat',
             archivedBody: "Una persona que gestioni l’equip pot restaurar-lo i enviar-te una invitació nova.",
             inactiveTitle: 'Aquest compte no s’hi pot unir ara mateix',
+            inactiveBody: "Fes servir un compte actiu en aquest Home o demana a un administrador que et restableixi l’accés.",
             invalidTitle: 'Aquest enllaç d’invitació no és vàlid',
             unresolvedHomeTitle: 'Aquest enllaç no identifica el seu Home',
             unresolvedHomeBody: 'Aquest dispositiu no pot saber quin Home ha emès aquesta invitació, així que no s’ha enviat res. Demana un enllaç nou a qui gestioni l’equip.',
@@ -17799,9 +17797,11 @@ const catalan: TeamsTranslationRoot = {
             unknownHomeBody: 'Afegeix el Home d’aquest equip i torna a obrir l’enllaç.',
             askForNew: 'Demana una invitació nova a un responsable de l’equip.',
             mismatchTitle: 'Aquesta invitació és per a una altra adreça',
+            mismatchBody: "Inicia la sessió amb l’adreça que ha rebut la invitació i torna a obrir-la.",
             signInWithInvited: 'Inicia la sessió amb l’adreça convidada',
             verifyAddress: 'Verifica aquesta adreça',
             updateRequiredTitle: 'Aquest Home necessita una actualització per fer servir invitacions d’equip',
+            updateRequiredBody: "Demana a un administrador que actualitzi aquest Home i torna a obrir la invitació.",
             offlineTitle: 'Aquest Home no és accessible',
             offlineBody: 'La invitació es conserva. Torna-ho a provar quan el Home torni a estar disponible.',
             acceptanceOutcomeUnknown: "No s’ha pogut confirmar si t’has unit. Si ho tornes a provar, pots acceptar la invitació i unir-te a l’equip.",
@@ -20058,6 +20058,11 @@ const ca: WorkflowEditorPageTranslations = {
         concurrencyInvalid: "Escriu un nombre enter més gran que 0, o deixa-ho en blanc.",
         concurrencySummaryNone: "Sense límit de simultaneïtat",
         concurrencySummary: ({ count }: { count: number }) => `Com a màxim ${count} alhora`,
+        postSummaryRow: "Publicar un resum",
+        postSummaryOff: "Desactivat",
+        postSummaryOn: "Activat",
+        postSummaryNote: "Desactivat per defecte. Publica el resum de l’execució com a comentari a la incidència o pull request de GitHub que l’ha activada sota el perfil d’aprovació d’aquesta regla.",
+        postSummarySummaryOn: "Publica un resum",
         rolesRow: 'Rols',
         lastRun: 'Última execució',
         runsInRow: 'S’executa a',
@@ -20079,6 +20084,7 @@ const ca: WorkflowEditorPageTranslations = {
         agentAndWhereTitle: "Agent i on s'executa",
         modelAndPermissionsTitle: 'Model i permisos',
         thisStepTitle: 'Aquest pas',
+        sessionTitle: 'Sessió',
         inputsTitle: 'Entrades i resultat',
     },
     unavailable: {
@@ -20220,6 +20226,7 @@ const workflowExamplesTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'c
         checkForDrift: { title: "Comprovar desviacions", description: "Compara un servei desplegat amb la configuració prevista. No es modifica res." },
         runJobOnSchedule: { title: "Executar una tasca programada", description: "Tria un servei, edita l’ordre a l’esborrany i activa’n l’horari. No hi intervé cap agent." },
         deploymentMove: { title: "Mou a una altra màquina", description: "Només aplicacions de repositori sense dominis ni dades locals." },
+        deploymentDataMove: { title: "Mou una base de dades", description: "Un Workflow pausa les escriptures, verifica una còpia final, restaura i comprova la destinació, i connecta i desplega l’app. Les dades antigues es conserven. Un canvi incert necessita la teva decisió." },
         backupVerify: { title: "Verifica una còpia de seguretat", description: "Comprova una instantània de còpia de seguretat al nivell que triïs. No es restaura ni es canvia res." },
         nightlyBackups: { title: "Còpies de seguretat nocturnes", description: "Fa una còpia de les teves dades, verifica cada instantània nova i conserva només el que permet la retenció. Activa’n l’horari per executar-ho cada nit." },
         restoreDrill: { title: "Simulacre de restauració", description: "Comprova que les còpies es poden restaurar: en restaura una en un entorn separat, en revisa les dades i després l’atura." },
@@ -20911,7 +20918,8 @@ const ca: WorkflowTriggersCopy = {
         sessionDescription: "La sessió que escolta. El flux s’executa a la seva pròpia sessió.",
         noSession: "Encara no hi ha sessions",
         howOften: "Amb quina freqüència",
-        howOftenKind: { thisTurn: "Aquest torn", nextTime: "La propera vegada", everyTime: "Cada vegada" },
+        howOftenKind: { thisTurn: "Aquest torn", nextMatches: "Pròximes N vegades", nextTime: "La propera vegada", everyTime: "Cada vegada" },
+        matchCount: "Nombre de coincidències",
         deployFinished: "Desplegament finalitzat",
         deployOutcome: { custom: "Personalitzat", label: "Només quan", any: "Qualsevol resultat", succeeded: "Correcte", failed: "Fallat", cancelled: "Cancel·lat", outcome_unknown: "Desconegut" },
         source: "Origen",

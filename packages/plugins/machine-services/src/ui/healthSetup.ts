@@ -61,18 +61,15 @@ type Draft = Readonly<{
 const EMPTY: Draft = { kind: 'http', endpoint: '', expectStatus: '200', keyword: '', host: '', port: '', hostname: '',
     recordType: 'A', expectedAnswer: '', graceMs: MINUTE, periodMs: MINUTE, consecutiveFailuresBeforeAlerting: 1 };
 
-type InvestigationDraft = Readonly<{ mode: 'inbox' | 'auto_start'; configuredActionId?: string }>;
-
 type RendererDraft = Readonly<{
     check: Draft | null;
     alerts?: SourceOptions['alerts'];
-    investigation?: InvestigationDraft;
     preparedPreview?: HealthCheckSetupPreviewResultV1;
 }>;
 
 function readRendererDraft(value: unknown, subject: HealthCheckSubjectV1): RendererDraft | undefined {
     if (typeof value !== 'object' || value === null || Array.isArray(value)) return;
-    const { check, alerts, investigation, preparedPreview } = value as Readonly<Record<string, unknown>>;
+    const { check, alerts, preparedPreview } = value as Readonly<Record<string, unknown>>;
     const prepared = HealthCheckSetupPreviewResultV1ProtocolSchema.safeParse(preparedPreview);
     const previewSubject = prepared.success ? prepared.data.sourceConfig.subject : undefined;
     let restored: Draft | null = null;
@@ -95,18 +92,12 @@ function readRendererDraft(value: unknown, subject: HealthCheckSubjectV1): Rende
         };
     }
     const parsedAlerts = HealthCheckSetupDraftV1ProtocolSchema.safeParse({ v: 1, alerts });
-    const mode = typeof investigation === 'object' && investigation !== null && 'mode' in investigation
-        ? investigation.mode : undefined;
-    const action = typeof investigation === 'object' && investigation !== null && 'configuredActionId' in investigation
-        ? investigation.configuredActionId : undefined;
     return {
         check: restored,
         ...(prepared.success && prepared.data.sourceConfig.alerts && subject.kind === 'environment'
             && previewSubject?.kind === 'environment' && previewSubject.environmentId === subject.environmentId
             ? { preparedPreview: prepared.data } : {}),
         ...(parsedAlerts.success && parsedAlerts.data.alerts ? { alerts: parsedAlerts.data.alerts } : {}),
-        ...(mode === 'inbox' || mode === 'auto_start'
-            ? { investigation: { mode, ...(typeof action === 'string' ? { configuredActionId: action } : {}) } } : {}),
     };
 }
 
@@ -351,15 +342,6 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
         return () => { retired = true; };
     }, [host, props.signal, props.subject, props.existing, props.sourceOptions, previewAttempt, resumedPreview]);
     const previewRefusal = previewFailure && projectPluginActionRejectionV1(previewFailure.error, t);
-    const [editedInvestigation, setInvestigation] = useState<InvestigationDraft | undefined>(props.rendererDraft?.investigation);
-    const investigation = editedInvestigation ?? props.sourceOptions.investigation ?? preparedPreview?.sourceConfig.investigation;
-    const changeInvestigation = (next: InvestigationDraft) => {
-        setInvestigation(next);
-        setRefusedSave(null);
-    };
-    const investigationMode = investigation?.mode ?? 'inbox';
-    const configuredActionId = investigation && 'configuredActionId' in investigation
-        ? investigation.configuredActionId ?? '' : '';
     const [saving, setSaving] = useState(false);
     // The host's refusal of this Save, in its own words when it gave them; the entries stay for a correction.
     const [refusedSave, setRefusedSave] = useState<string | null>(null);
@@ -401,8 +383,7 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
     const issues = fieldIssues(draft, t);
     const candidate = buildHealthCheckSetupInput(props.subject, existing, draft, { ...props.sourceOptions,
         ...(alerts === undefined ? {} : { alerts }),
-        investigation: investigationMode === 'auto_start'
-            ? { mode: 'auto_start', configuredActionId: configuredActionId.trim() } : { mode: 'inbox' } });
+        investigation: { mode: 'inbox' } });
     const loopback = props.observerMachineId === undefined || draft.contributedKind || nativeDomain ? null : {
         refused: isHealthCheckLoopbackRefusedV1({ subject: props.subject, observerMachineId: props.observerMachineId,
             kindLocalId: draft.kind, config: configFor(draft) }),
@@ -427,8 +408,7 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
         consecutiveFailuresBeforeAlerting: draft.consecutiveFailuresBeforeAlerting,
     } : check) : existing;
     const savedCandidate = HealthCheckSetupInputV1ProtocolSchema.safeParse({ v: 1, subject: props.subject, checks: savedChecks,
-        alerts, investigation: investigationMode === 'auto_start'
-            ? { mode: 'auto_start', configuredActionId: configuredActionId.trim() } : { mode: 'inbox' } });
+        alerts, investigation: { mode: 'inbox' } });
     const validAddition = candidate.success && contributedValid && monitorValid && loopback?.refused !== true;
     const canAdd = alerts !== undefined && validAddition && !saving;
     const defaultsPending = alerts === undefined && (previewRefusal === null || previewRefusal.status === 'pending');
@@ -617,18 +597,6 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
             alerts,
             onChange: setAlerts, testContext: preparedSource, destinationSelectionContext,
         }),
-        h(SelectionTiles<'inbox' | 'auto_start'>, { accessibilityLabel: t(`${K}.investigation`, 'When a check needs attention'),
-            value: investigationMode, onChange: mode => changeInvestigation({ mode, configuredActionId }), maximumColumns: 2,
-            options: [
-                { id: 'inbox', title: t(`${K}.investigation.inbox`, 'Show in Inbox'),
-                    subtitle: t(`${K}.investigation.inbox.description`, 'Investigate when you choose.') },
-                { id: 'auto_start', title: t(`${K}.investigation.automatic`, 'Start investigation'),
-                    subtitle: t(`${K}.investigation.automatic.description`, 'Use a configured Action when a new alert opens.') },
-            ] }),
-        investigationMode === 'auto_start' ? text(t(`${K}.investigation.action`, 'Configured investigation'), configuredActionId,
-            value => changeInvestigation({ mode: 'auto_start', configuredActionId: value }), { testID: 'health-setup-investigation-action',
-                description: t(`${K}.investigation.action.description`,
-                    'Choose an existing investigate Action from PRs & Issues. Its saved Machine, workspace and Agent choices are used.') }) : null,
         // Beside the primary, never below the fold: its refusal first, else what it waits on (R19-D5).
         h(ModalCardFooterActions, {
             ...(refusedSave ? { note: refusedSave, noteTone: 'danger' as const, noteTestID: 'health-setup-save-refused' }
@@ -637,7 +605,6 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
             captureDraft: addingNew ? () => saving ? undefined : JSON.parse(JSON.stringify({
                 check: editedDraft,
                 ...(editedAlerts ? { alerts: editedAlerts } : {}),
-                ...(editedInvestigation ? { investigation: editedInvestigation } : {}),
                 ...(preparedPreview && props.subject.kind === 'environment' ? { preparedPreview } : {}),
             })) : undefined,
             cancel: { testID: 'health-setup-cancel', disabled: saving,

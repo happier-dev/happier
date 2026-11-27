@@ -22,14 +22,11 @@ import type { MachineServiceRowV1 } from '@happier-dev/protocol/actions/specs/ma
 import { HealthCheckSourceConfigV1Schema, HealthCheckTransitionV1Schema, createHealthCheckSourceInstanceIdV1,
     type ServiceHealthNoticePageV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { readTriageAutomaticInvestigationChoiceV1, requestTriageAutomaticInvestigationV1,
-    type TriageSessionHandoffHostV1 } from '@happier-dev/triage-sources/runtime';
 
 export type ConfiguredHealthCheckNoticeHost = Readonly<{
     credentials: StoredCredentials; serverId: string; serverHttpBaseUrl: string; machineId: string;
     readService(subject: Readonly<{ machineId: string; serviceId: string }>, signal: AbortSignal): Promise<MachineServiceRowV1 | null>;
     readEnvironment(environmentId: string, signal: AbortSignal): Promise<Pick<DeploymentEnvironmentDetailV1, 'environment' | 'content'>>;
-    executeAction?: TriageSessionHandoffHostV1['executeAction'];
 }>;
 
 /** The observer settled thresholds and E2 stamped this occurrence's admission.
@@ -101,28 +98,6 @@ export function createConfiguredHealthCheckNotices(host: ConfiguredHealthCheckNo
             if (!input.signal.aborted) logger.warnLocalFile('[deploymentHealth] Check notice delivery unavailable', {
                 failureCause: projectActionFailureCauseV1(error, 'deployment.notice.check_delivery', { allowUnknownErrorCode: false }),
             });
-        }
-        if (committed.opened === true && source.data.investigation?.mode === 'auto_start') {
-            const triage: TriageSessionHandoffHostV1 = { executeAction: host.executeAction ?? (async () => ({
-                ok: false, errorCode: 'target_unavailable', effectAttempted: false,
-            })) };
-            const selection = await readTriageAutomaticInvestigationChoiceV1(triage,
-                source.data.investigation.configuredActionId, { signal: input.signal });
-            const reference = { kind: 'host' as const, artifactId: committed.artifactId, source: notice.source };
-            const outcome = typeof selection === 'string' ? selection : await requestTriageAutomaticInvestigationV1(triage, {
-                selection, context: { kind: 'healthAlert', notice: reference, target: page },
-                evidence: [{ kind: 'alert', notice: reference }],
-            }, { signal: input.signal });
-            if (outcome !== null) {
-                try {
-                    await runWithServerHttpBaseUrl(host.serverHttpBaseUrl, () => store.writeNotice({ ...notice,
-                        body: `${notice.body}\n${outcome}` }));
-                } catch (error) {
-                    if (!input.signal.aborted) logger.warnLocalFile('[deploymentHealth] Investigation notice update unavailable', {
-                        failureCause: projectActionFailureCauseV1(error, 'deployment.notice.investigation_update', { allowUnknownErrorCode: false }),
-                    });
-                }
-            }
         }
         return { kind: 'consumed' as const, changed: committed.changed, artifactId: committed.artifactId };
     };

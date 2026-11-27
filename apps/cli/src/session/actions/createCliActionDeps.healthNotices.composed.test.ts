@@ -25,8 +25,7 @@ import { TRIAGE_SESSION_HANDOFF_ACTION_REF_V1 } from '@happier-dev/triage-source
 
 afterEach(() => vi.restoreAllMocks());
 
-it.each(['inbox', 'auto_start', 'retired_caller'] as const)(
-    'stores the portable Home and preserves admitted caller for %s health investigation', async mode => {
+it('stores the portable Home and writes health notices with zero legacy auto_start handoffs', async () => {
     const artifacts = createPlainAccountArtifactHttpBoundary();
     const serverId = 'daemon-local-profile';
     const serverIdentityId = 'srv_niq7wbpMyJviL4EtO5YlTEd0Us0Ou0nN';
@@ -40,7 +39,7 @@ it.each(['inbox', 'auto_start', 'retired_caller'] as const)(
     const subject = { kind: 'environment' as const, environmentId: detail.environment.id };
     const sourceInstanceId = 'health:factory';
     const definition = { v: 1 as const, sourceInstanceId, sourceConfig: { v: 1, subject,
-        ...(mode === 'inbox' ? {} : { investigation: { mode: 'auto_start', configuredActionId: 'investigate' } }), checks: [{ checkId: 'tcp',
+        investigation: { mode: 'inbox' as const }, checks: [{ checkId: 'tcp',
         kind: { pluginId: caller.pluginId, localId: 'tcp' }, binding: { kind: 'healthCheck' }, config: { host: 'localhost', port: 80 },
         periodMs: 1000, consecutiveFailuresBeforeAlerting: 1 }] }, displayLabel: 'Health', filter: null, maximumObservationAgeMs: null };
     const retained: AutomationEventStoredDefinitionProjectionV1 = { automationId: binding.automationId, triggerId: binding.triggerId,
@@ -65,7 +64,6 @@ it.each(['inbox', 'auto_start', 'retired_caller'] as const)(
     artifacts.writes.mockImplementation(async (url, body, config) => {
         if (new URL(String(url)).pathname === AutomationEventActionHttpPathsV1['automation.event.admit']) {
             AutomationEventAdmitHttpRequestV1Schema.parse(body);
-            if (mode === 'retired_caller') callerCurrent = false;
             return { status: 200, data: { results: [{ kind: 'observed', checkpointSafe: true }],
                 continuation: { kind: 'ready', accountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null } } } };
         }
@@ -137,11 +135,6 @@ it.each(['inbox', 'auto_start', 'retired_caller'] as const)(
     expect(decodePlainArtifactStoredContent(notices[0]!.header)).toMatchObject({
         page: { page: 'environment', environment: { serverId: serverIdentityId, environmentId: detail.environment.id } },
     });
-    expect(handoffs).toHaveLength(mode === 'auto_start' ? 1 : 0);
-    if (mode === 'auto_start') expect(handoffs[0]).toMatchObject({ handoff: {
-        task: 'investigate', context: { kind: 'healthAlert', target: { environment: { serverId: serverIdentityId } } },
-    } });
-    if (mode === 'retired_caller') expect(JSON.stringify(decodePlainArtifactStoredContent(notices[0]!.body)))
-        .toContain('plugin_action_caller_unavailable');
+    expect(handoffs).toHaveLength(0);
     } finally { targets.dispose(); await owners.dispose(); }
 });

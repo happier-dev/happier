@@ -3047,6 +3047,7 @@ const translated = Shared_actionFamilyTranslations.translated;
 
 const actionFamilyTranslations = { pt: translated({
         actionFamilies: {
+            plans: 'Planos e Apoiador',
             themes: 'Temas',
             bot_templates: "Modelos de bots",
             client_files: "Arquivos do cliente",
@@ -3295,7 +3296,7 @@ return { addFlowsTranslations };
 const Domain_agentInstallJobTranslations = (() => {
 const en = Shared_agentInstallJobTranslations.en;
 
-const agentInstallJobTranslations = { 'pt': { ...en, archiveExpandedByteLimitBody: "O runtime transferido excede o limite de tamanho de extração. Atualize o Happier antes de tentar novamente." } };
+const agentInstallJobTranslations = { 'pt': { ...en, approvalTitleInstall: ({ agent }: { agent: string }) => `Instalar ${agent}`, approvalTitleUpdate: ({ agent }: { agent: string }) => `Atualizar ${agent}`, approvalSummaryInstall: ({ agent }: { agent: string }) => `Instala ${agent} nesta máquina, executando o instalador do fornecedor quando necessário.`, approvalSummaryUpdate: ({ agent }: { agent: string }) => `Atualiza ${agent} nesta máquina, executando o instalador do fornecedor quando necessário.`, archiveExpandedByteLimitBody: "O runtime transferido excede o limite de tamanho de extração. Atualize o Happier antes de tentar novamente." } };
 
 return { agentInstallJobTranslations };
 })();
@@ -5121,6 +5122,7 @@ const pt: ConnectedServicesPoolCopy = {
     fallbackDescription: 'Trocar para outro membro quando a conta ativa precisar de recuperação.',
     switchEarlyTitle: 'Trocar antes',
     switchEarlyDescription: 'Percentual restante abaixo do qual o grupo passa a um membro com cota mais recente. 0 desativa.',
+    switchEarlyTurnEndNote: ({ agents }: { agents: string }) => `${agents}: não consegue trocar de conta no meio de um turno, então a troca espera o turno atual terminar.`,
     nativeUsageLimitContinuationTitle: "Permitir que Claude aguarde nos limites de uso",
     nativeUsageLimitContinuationSubtitle: "Nas novas sessões, Claude aguarda e continua automaticamente quando o limite é reposto. Desative para que o Happier gerencie a recuperação.",
     autoResetsTitle: 'Usar redefinições de cota automaticamente',
@@ -6302,6 +6304,7 @@ const filesPaneTranslations = { pt: {
         serverFolderUnsupportedTitle: 'Este servidor ainda não é compatível',
         serverFolderUnsupportedBody: ({ workspace }: { workspace: string }) => `O Happier só abre pastas desta forma em servidores Linux e macOS. Configure ${workspace} como máquina: assim o Happier roda lá por conta própria.`,
         managedStartingTitle: ({ workspace }) => `Iniciando ${workspace}…`,
+        reconnectingTo: ({ workspace }) => `Reconectando a ${workspace}…`,
         page: {
             view: "Ver",
             preview: "Pré-visualização",
@@ -6494,7 +6497,6 @@ const fileViewerTranslations = { pt: {
             freehand: "Desenhar",
             highlighter: "Marcador",
             text: "Texto",
-        reconnectingTo: ({ workspace }) => `Reconectando a ${workspace}…`,
             step: "Passo numerado",
             blur: "Desfocar",
             crop: "Recortar",
@@ -7737,6 +7739,7 @@ const pt: typeof en = {
     searchFailed: 'Não foi possível concluir a pesquisa',
     peopleCursorExpired: "Esta página já não está disponível. Atualize a lista para voltar ao início.",
     invalidRead: "Este Home não reconheceu a solicitação.",
+    invalidPolicy: "Este Home rejeitou estas definições da política. Revê-as antes de voltares a guardar.",
 
     statusActive: 'Ativa',
     statusDisabled: 'Desativada',
@@ -7851,7 +7854,6 @@ const pt: typeof en = {
     policyReadOnly: 'Só um proprietário do Home pode alterar isto.',
     policyEditingUnavailable: 'Ainda não é possível alterar políticas a partir deste dispositivo.',
     revisionConflictTitle: 'Esta política mudou noutro sítio',
-    invalidPolicy: "Este Home rejeitou estas definições da política. Revê-as antes de voltares a guardar.",
     revisionConflictBody: 'Outra pessoa guardou uma alteração enquanto editavas. A tua escolha foi mantida — recarrega este Home e aplica-a novamente.',
     sessionDefaultsChanged: "As predefinições de sessão deste Home mudaram. Recarrega a página para ver as definições atuais antes de voltares a editá-las.",
     reload: 'Recarregar',
@@ -10149,10 +10151,6 @@ const machineDetailPageTranslations = { pt: translated({
                 network: "download",
                 window: "últimos 5 min",
             },
-            pressure: {
-                critical: "Crítica",
-                elevated: "Pouca memória",
-            },
             unsupported: "Não reporta recursos neste sistema",
             olderHappier: "Usa um Happier mais antigo, por isso não reporta recursos.",
             olderHappierShort: "Ainda sem dados de recursos",
@@ -11802,7 +11800,6 @@ const machineDetailPageTranslations = { pt: translated({
         machineScheduled: {
             title: "Agendado",
             description: ({ machine }: { machine: string }) => `O que roda em horários em ${machine}: crontabs e temporizadores, lidos ao abrir.`,
-            refresh: "Ler de novo",
             none: "Nenhum",
             more: "Mostrar mais",
             nextRun: ({ time }: { time: string }) => `Próxima ${time}`,
@@ -11817,8 +11814,7 @@ const machineDetailPageTranslations = { pt: translated({
             systemdTimers: "Temporizadores do systemd",
             launchd: "launchd",
             taskScheduler: "Agendador de Tarefas",
-            oneJob: "1 tarefa",
-            jobs: ({ count }: { count: number }) => `${count} tarefas`,
+
         },
         machineServices: {
             unresolvedEnvironment: english.machineServices.unresolvedEnvironment,
@@ -11922,14 +11918,14 @@ const machineDetailPageTranslations = { pt: translated({
                 title: 'Logs',
                 description: ({ service }) => `As linhas mais recentes de ${service}.`,
                 none: ({ service }) => `${service} não tem logs que o Happier possa ler.`,
-                    recipe: ({ recipe, machine }: { recipe: string; machine: string }) => `Configure “${recipe}” em ${machine} e depois leia os logs de novo.`,
-                    recipeUnnamed: ({ machine }: { machine: string }) => `Configure o acesso aos logs em ${machine} e depois leia os logs de novo.`,
                 reading: 'Lendo as linhas mais recentes…',
                 approval: 'Aguardando aprovação para ler estes logs.',
                 error: { title: 'Não foi possível ler os logs', machineNotAnswering: ({ machine }) => `${machine} não está respondendo` },
                 needMachineOnline: ({ machine }) => `Para ler os logs ao vivo, ${machine} precisa estar online.`,
                 remedy: {
                     redeployEnvironment: 'Implante o Ambiente novamente para restaurar o mascaramento dos segredos e depois leia os logs de novo.',
+                    recipe: ({ recipe, machine }: { recipe: string; machine: string }) => `Configure “${recipe}” em ${machine} e depois leia os logs de novo.`,
+                    recipeUnnamed: ({ machine }: { machine: string }) => `Configure o acesso aos logs em ${machine} e depois leia os logs de novo.`,
                 },
                 following: 'Acompanhando',
                 follow: 'Acompanhar',
@@ -12274,7 +12270,7 @@ return { nativePasswordTranslations };
 const Domain_navigationPlacementTranslations = (() => {
 type NavigationPlacementTranslation = Shared_navigationPlacementTranslations.NavigationPlacementTranslation;
 
-const navigationPlacementTranslations = { pt: { auto: 'Automático', customize: 'Personalizar…', title: 'Navegação', description: 'Escolha o que fica visível, vai para Mais ou fica oculto. Arraste para reordenar. Salvo neste dispositivo.', pinned: 'Fixado', overflow: 'Mais', hidden: 'Oculto', reset: 'Redefinir', keepInBar: "Manter na barra", moveToMore: "Mover para Mais", hide: "Ocultar", tabMenuTitle: ({ title, source }: { title: string; source: string }) => `${title} · de ${source}`, appRail: 'Barra esquerda', sessionRail: 'Barra da sessão', workspaceRail: 'Barra do espaço de trabalho', sessionTabBar: 'Abas do telefone', projectTabBar: 'Abas do projeto', phoneLauncher: 'Atalhos do telefone', composer: 'Compositor', composerDescription: 'Escolha o que fica na barra, vai para + ou fica oculto. Arraste para reordenar. Salvo neste dispositivo.', shown: 'Visível', inPlus: 'Em +', always: 'Sempre', customizeTabs: 'Personalizar abas…', customizeComposer: 'Personalizar compositor…', inField: 'No campo', alwaysReachable: 'Sempre acessível', stopNote: 'Visível enquanto um turno roda', pendingNote: 'Na barra enquanto precisar de você', menuOnly: 'Abre pelo +', preview: 'Pré-visualização', linkedFiles: "Arquivos vinculados", attachmentsUnavailable: "O upload de anexos não está disponível neste Home ou nesta versão.", contextSession: "Sessão", contextProject: "Projeto", contextNewSession: "Nova sessão", contextWorkflow: "Fluxo de trabalho", contextDiscussion: "Discussão", workflowStepTargets: "Destinos das etapas", workflowRunTarget: "Destino da execução", railBandWork: "Trabalho", railBandTogether: "Juntos", railBandLibrary: "Biblioteca", railBandPlugins: "Plugins", railBandFooter: "Rodapé" , detailDescription: "Escolha onde cada item fica no computador e no telefone. Salvo neste dispositivo.", desktop: "Computador", phone: "Telefone", deviceLabel: "Dispositivo", topTabs: "Abas superiores", topTabsDescription: "Páginas que trocam a visualização principal. Aparecem quando há mais de uma.", rail: "Barra direita", railDescription: "Companheiros que abrem ao lado da página.", phoneBar: "Barra de abas", phoneBarDescription: "Na barra, em Mais ou oculto.", bar: "Barra", pageTabsTitle: "Abas de página", pageTabsDescription: "No topo, as páginas da barra rolam numa faixa acima da página; as ferramentas ficam embaixo.", pageTabsRow: "Mostrar páginas", pageTabsBottom: "Embaixo", pageTabsTop: "No topo", railGroupSession: "Sessão", railGroupCode: "Código", railGroupMachine: "Máquina", railGroupPlugins: "Plugins", detailTitle: ({ name }: { name: string }) => `Navegação de ${name}` } } satisfies Pick<Record<string, NavigationPlacementTranslation>, "pt">;
+const navigationPlacementTranslations = { pt: { auto: 'Automático', customize: 'Personalizar…', title: 'Navegação', description: 'Escolha o que fica visível, vai para Mais ou fica oculto. Arraste para reordenar. Salvo neste dispositivo.', pinned: 'Fixado', overflow: 'Mais', hidden: 'Oculto', reset: 'Redefinir', keepInBar: "Manter na barra", moveToMore: "Mover para Mais", hide: "Ocultar", tabMenuTitle: ({ title, source }: { title: string; source: string }) => `${title} · de ${source}`, appRail: 'Barra esquerda', sessionRail: 'Barra da sessão', workspaceRail: 'Barra do espaço de trabalho', sessionTabBar: 'Abas do telefone', projectTabBar: 'Abas do projeto', phoneLauncher: 'Atalhos do telefone', composer: 'Compositor', composerDescription: 'Escolha o que fica na barra, vai para + ou fica oculto. Arraste para reordenar. Salvo neste dispositivo.', shown: 'Visível', inPlus: 'Em +', always: 'Sempre', customizeTabs: 'Personalizar abas…', customizeComposer: 'Personalizar compositor…', sessionHeader: "Cabeçalho da sessão", sessionHeaderDescription: "Escolha quais ações da sessão aparecem como ícones no cabeçalho. As demais ficam em ⋯. Arraste para reordenar. Salvo neste dispositivo.", inMenu: "Em ⋯", customizeHeader: "Personalizar cabeçalho…", inField: 'No campo', alwaysReachable: 'Sempre acessível', stopNote: 'Visível enquanto um turno roda', pendingNote: 'Na barra enquanto precisar de você', menuOnly: 'Abre pelo +', preview: 'Pré-visualização', linkedFiles: "Arquivos vinculados", attachmentsUnavailable: "O upload de anexos não está disponível neste Home ou nesta versão.", contextSession: "Sessão", contextProject: "Projeto", contextNewSession: "Nova sessão", contextWorkflow: "Fluxo de trabalho", contextDiscussion: "Discussão", workflowStepTargets: "Destinos das etapas", workflowRunTarget: "Destino da execução", railBandWork: "Trabalho", railBandTogether: "Juntos", railBandLibrary: "Biblioteca", railBandPlugins: "Plugins", railBandFooter: "Rodapé" , detailDescription: "Escolha onde cada item fica no computador e no telefone. Salvo neste dispositivo.", desktop: "Computador", phone: "Telefone", deviceLabel: "Dispositivo", topTabs: "Abas superiores", topTabsDescription: "Páginas que trocam a visualização principal. Aparecem quando há mais de uma.", rail: "Barra direita", railDescription: "Companheiros que abrem ao lado da página.", phoneBar: "Barra de abas", phoneBarDescription: "Na barra, em Mais ou oculto.", bar: "Barra", pageTabsTitle: "Abas de página", pageTabsDescription: "No topo, as páginas da barra rolam numa faixa acima da página; as ferramentas ficam embaixo.", pageTabsRow: "Mostrar páginas", pageTabsBottom: "Embaixo", pageTabsTop: "No topo", railGroupSession: "Sessão", railGroupCode: "Código", railGroupMachine: "Máquina", railGroupPlugins: "Plugins", detailTitle: ({ name }: { name: string }) => `Navegação de ${name}` } } satisfies Pick<Record<string, NavigationPlacementTranslation>, "pt">;
 
 return { navigationPlacementTranslations };
 })();
@@ -13671,6 +13667,7 @@ const pt: ReviewWalkthroughTranslations = {
         continuesSession: 'continua sua sessão',
         startsFresh: 'começa do zero',
         askedAgain: 'solicitado novamente',
+        needsAccess: 'Precisa de acesso',
         noRuns: 'Ainda não há execuções nesta rodada',
         workflowRun: 'Execução do fluxo',
         reviewerRun: ({ count }) => `Revisor ${count}`,
@@ -14822,7 +14819,7 @@ const sessionCollaborationPaneTranslations = {...Domain_sessionCollaborationPane
 
 const en = Shared_sessionCollaborationTranslations.en;
 
-const sessionCollaborationTranslations: Pick<Record<'en'|'ca'|'de'|'es'|'fr'|'it'|'ja'|'pl'|'pt'|'ru'|'zh-Hans'|'zh-Hant', typeof en>, "pt"> = { pt: { pane: sessionCollaborationPaneTranslations['pt'], readiness: sessionReadinessCopy.pt, title: 'Pessoas', viewingNow: 'Vendo agora', justYou: 'Só você', typing: 'Digitando…', stale: 'Pode estar desatualizado', unavailable: 'Presença em tempo real indisponível', connecting: 'Conectando…', unnamed: 'Membro do Happier', open: 'Abrir colaboração', conversations: "Discussões", accessUnavailable: 'Acesso à sessão indisponível', accessUnavailableReason: 'Este Home não suporta partilhar sessões com pessoas.', discussion: { openAnchor: ({ name }: { name: string }) => `Abrir ${name}`, reply: { readUpTo: "Leu a discussão até à pergunta", passed: "Passou", failed: "Não conseguiu responder", cancelled: "Parou antes de responder", stopped: "Parou antes de terminar" }, participants: { title: "Participantes", loading: "Verificando quem está aqui…", moreSessionsFailed: "Não foi possível carregar mais sessões.", peopleGroup: "Pessoas", agentsGroup: "Agentes", agentsNote: "Cada um mantém a própria sessão, máquina e aprovações", owner: "Proprietário", you: "Você", hereNow: "Aqui agora", canPost: "Pode publicar", canRead: "Pode ler", teamAccess: "Acesso da equipe", noAgents: "Nenhum agente ainda", model: "Modelo", session: "Sessão", modelStarting: "Modelo iniciando", policyWhenAddressed: "Responde quando mencionado", policyReadsOnly: "Só lê", policyDrafts: "Rascunhos para aprovação", policyWatches: "Acompanha e se manifesta", privateNote: "Só pessoas convidadas podem ler isto. Uma menção nunca concede permissão.", mentionNote: "Uma menção nunca concede permissão.", inheritedNote: "Pessoas convidadas e a equipe delas podem ler isto. Uma menção nunca concede permissão.", leave: "Sair", invitedOnly: "Só convidados", teamCanRead: "A equipe pode ler", people: ({ count }) => count === 1 ? 'Só você' : `${count.toLocaleString()} pessoas`, peopleAndAgents: ({ people, agents }) => `${people === 1 ? '1 pessoa' : `${people.toLocaleString()} pessoas`}, ${agents === 1 ? '1 agente' : `${agents.toLocaleString()} agentes`}` }, home: { search: "Pesquisar discussões", needsYou: "Precisa de você", filter: "Filtrar", filterAll: "Todas as discussões", filterUnread: "Não lidas", filterEmpty: "Nada corresponde a este filtro", today: "Hoje", thisWeek: "Esta semana", earlier: "Antes", columnEmpty: "As discussões para as quais você foi convidado aparecem aqui", inviteTitle: "Converse com pessoas e agentes", inviteBody: "Reúna colegas, sessões, bots e modelos em uma só discussão. Mencione um agente e ele responde da própria sessão, com as próprias aprovações.", idleTitle: "Abra uma discussão", idleBody: "Escolha uma na lista ou comece uma nova com pessoas e agentes.", audience: "Só as pessoas que você convidar", draftWaiting: "Um rascunho está esperando você", approvalPending: "Precisa da sua aprovação", draftWaitingNamed: ({ name }: { name: string }) => `O rascunho de ${name} está esperando você`, approvalPendingNamed: ({ name }: { name: string }) => `${name} precisa de aprovação` }, manage: { startAgain: "Iniciar de novo", startAgainBody: "A sessão não começou. Tente de novo com a mesma configuração.", followParticipant: "Acompanhar…", muteParticipant: "Silenciar as mensagens", unmuteParticipant: "Silenciado · Reativar", mutedNotice: ({ name }: { name: string }) => `Silenciado · ${name}`, unmutedNotice: ({ name }: { name: string }) => `Reativado · ${name}`, muteFailed: "Não foi possível alterar. Tente de novo.", invitePlaceholder: "Buscar pessoas, sessões ou modelos", policyWhenAddressedBody: "Uma menção ou uma resposta a ela. Padrão.", policyReadsOnlyBody: "Lê; nunca responde aqui.", policyDraftsBody: "Você publica a resposta ou a descarta.", policyWatchesBody: "Lê todas as mensagens e pode responder. Usa turnos mesmo calado.", answersGroup: "Responde", operationsGroup: "Sessão", openSession: "Abrir a sessão", removeModel: "Remover e arquivar a sessão", removeModelBody: "Foi iniciada para esta discussão; o histórico fica.", removeSession: "Remover desta discussão", removeSessionBody: "A sessão continua por conta própria.", rowHint: "Escolha como responde, abra ou remova", working: "Salvando…", checking: "Verificando se deu certo…", failed: "Não deu certo.", leaveTitle: "Sair desta discussão", leaveBody: "Alguém precisa ser o dono. Passe para alguém daqui ou arquive; nada é apagado.", transferGroup: "Tornar outra pessoa dona", transferSubtitle: "Vira dona e depois você sai", noTransferCandidates: "Convide alguém primeiro para passar a ela.", archiveInstead: "Arquivar em vez disso", archiveInsteadBody: "Você continua dono. Ninguém pode publicar até que seja restaurada.", inviteSubtitle: "Só quem você convidar pode ler", sessionsGroup: "Suas sessões", modelsGroup: "Modelos", sessionCandidate: "Cada uma responde quando mencionada", modelOn: ({ machine }: { machine: string }) => `Um modelo em ${machine}`, modelCandidate: "Uma nova sessão sua · escolha o agente e o modelo", startedGroup: "Iniciados para esta discussão", modelSessionOn: ({ machine }: { machine: string }) => `uma sessão sua em ${machine}`, modelNewSessionOn: ({ machine }: { machine: string }) => `Uma nova sessão sua em ${machine}`, modelStartingOn: ({ machine }: { machine: string }) => `Iniciando em ${machine}…`, modelFailedOn: ({ machine }: { machine: string }) => `Não iniciou em ${machine}`, modelNotStartedOn: ({ machine }: { machine: string }) => `Ainda não iniciado em ${machine}` }, invite: { button: "Convidar", title: ({ title }: { title: string }) => `Convidar para ${title}`, canManage: "Pode gerenciar", ownerOnly: "Só o proprietário pode mudar quem está convidado.", failed: "Não foi possível salvar o convite." }, composer: { mention: "Mencionar", mentionHint: "Mencione um agente para que ele responda", unresolvedMentionsTitle: "Algumas @menções não foram selecionadas", unresolvedMentionsBody: "Escolha uma sugestão para se dirigir a alguém. Enviar como texto mantém esses nomes sem vínculo.", sendAsText: "Enviar como texto" }, newPage: { invitePlaceholder: "Pesquisar pessoas ou sessões", inviteTitle: "Com quem começa", invitedTitle: ({ names, count }: { names: string; count: number }) => count === 1 ? `${names} foi convidado` : `${names} foram convidados`, namePlaceholder: "Dê um nome a esta discussão", emptyTitle: "Mencione quem deve responder", emptyBody: "Um agente só responde quando é mencionado. Uma mensagem sem menções chega só às pessoas." }, secondOpinion: { title: "Pedir uma segunda opinião", discussTitle: "Discutir esta resposta", discussionTitle: "Segunda opinião", discussionTitleOn: ({ session }: { session: string }) => `Segunda opinião sobre ${session}`, discussDiscussionTitle: "Sobre esta resposta", defaultQuestion: "Isto está certo? O que você mudaria?", subtitle: ({ session }: { session: string }) => `Sobre uma resposta em ${session}`, subtitleUntitled: "Sobre esta resposta", answer: "Esta resposta", open: "Abrir a discussão", askQuoteOnly: "Perguntar só com a citação", shareAndAsk: "Compartilhar e perguntar", ask: "Perguntar", freshOpinionsHint: "Escolha dois ou mais para Opiniões independentes", askFreshOpinions: ({ count }: { count: number }) => `Perguntar a ${count} · Opiniões independentes`, whereBody: "Opiniões independentes é executado a partir desta máquina e pasta.", noReviewers: "Ainda não há outras sessões neste Home", nothingCanAnswer: "Nada seu pode responder agora", nothingCanAnswerBody: "Nenhuma das suas máquinas está pronta", paneClosed: "Este pedido fechou quando o app recarregou. Comece de novo a partir da resposta.", searchReviewers: "Pesquisar sessões e modelos", noReviewerMatch: "Nada corresponde a essa pesquisa", showAllReviewers: ({ count }: { count: number }) => `Mostrar todos (${count})`, addAgent: "Adicionar um agente", addAgentShort: "Adicionar agente", yourSession: "Sessão", moreSessions: "Mostrar mais sessões", question: "Pergunta", thisSession: "esta sessão", cannotAskTitle: ({ name }: { name: string }) => `Não é possível perguntar a ${name} aqui`, quoteOnlyTitle: ({ name }: { name: string }) => `${name} vê só a citação`, quoteOnlyBody: "Não pode abrir o resto desta sessão.", grantTitle: ({ name }: { name: string }) => `Deixar ${name} ler esta sessão`, grantBody: ({ name, session }: { name: string; session: string }) => `${name} mantém acesso de leitura a ${session} até você revogar.`, grantUnavailable: "Você não pode compartilhar esta sessão, então só a citação vai junto.", readsAsYouTitle: ({ name }: { name: string }) => `${name} lê esta sessão como você`, readsTitle: ({ name }: { name: string }) => `${name} já pode ler esta sessão`, readsAsYouBody: "Nada novo é compartilhado.", discussionTitleRow: "A nova discussão", discussionOnlyYou: "Só você, até convidar alguém.", discussionPeople: ({ count }: { count: number }) => `Você e mais ${count} podem lê-la`, readsGroup: "O que podem ler", disclosure: { sameSession: "É a sessão que escreveu esta resposta.", broader: "Mais pessoas a veriam do que hoje podem ler a resposta.", public: "Ela se tornaria pública.", notAllowed: "As regras de compartilhamento deste Home não permitem.", unavailable: "Esta resposta não pode ser lida agora." }, discussDone: "Discussão iniciada", asked: ({ name }: { name: string }) => `Perguntou a ${name}`, askedBody: "A resposta chega na discussão.", freshStarted: ({ count }: { count: number }) => `Opiniões independentes iniciado com ${count}`, freshStartedBody: "Cada um responde por conta própria; as respostas chegam na discussão.", openRun: "Abrir execução", failed: "Não deu certo.", pending: "Ainda não terminou. Tentar de novo não pergunta duas vezes.", previewChanged: "Mudou quem pode ler isto. Confira e pergunte de novo.", approvalPendingBody: "A discussão abre aqui assim que for aprovada. Sua pergunta fica guardada.", sendTo: ({ name }: { name: string }) => `Enviar para ${name}`, sendToSession: "Enviar para a sessão", sentNextTurn: "Ela lê no próximo turno.", askAnother: "Perguntar a outro", checkAgain: "Verificar de novo", uncertainHint: "Verificar de novo não envia duas vezes." }, draftReview: { post: "Publicar", decline: "Recusar", onlyYou: "Só você vê isto até publicar." }, replyDraft: { action: "Responder", actionTo: ({ name }: { name: string }) => `Responder a ${name}`, replyingTo: ({ name }: { name: string }) => `Respondendo a ${name}`, removedTitle: ({ names }: { names: string }) => `Removido de Enviar para: ${names}`, removedBody: "Não estão mais nesta discussão, então nada é enviado a eles." },
+const sessionCollaborationTranslations: Pick<Record<'en'|'ca'|'de'|'es'|'fr'|'it'|'ja'|'pl'|'pt'|'ru'|'zh-Hans'|'zh-Hant', typeof en>, "pt"> = { pt: { pane: sessionCollaborationPaneTranslations['pt'], readiness: sessionReadinessCopy.pt, title: 'Pessoas', viewingNow: 'Vendo agora', justYou: 'Só você', typing: 'Digitando…', stale: 'Pode estar desatualizado', unavailable: 'Presença em tempo real indisponível', connecting: 'Conectando…', unnamed: 'Membro do Happier', open: 'Abrir colaboração', conversations: "Discussões", accessUnavailable: 'Acesso à sessão indisponível', accessUnavailableReason: 'Este Home não suporta partilhar sessões com pessoas.', discussion: { openAnchor: ({ name }: { name: string }) => `Abrir ${name}`, reply: { readUpTo: "Leu a discussão até à pergunta", passed: "Passou", failed: "Não conseguiu responder", cancelled: "Parou antes de responder", stopped: "Parou antes de terminar" }, participants: { title: "Participantes", loading: "Verificando quem está aqui…", moreSessionsFailed: "Não foi possível carregar mais sessões.", peopleGroup: "Pessoas", agentsGroup: "Agentes", agentsNote: "Cada um mantém a própria sessão, máquina e aprovações", owner: "Proprietário", you: "Você", hereNow: "Aqui agora", canPost: "Pode publicar", canRead: "Pode ler", teamAccess: "Acesso da equipe", noAgents: "Nenhum agente ainda", model: "Modelo", session: "Sessão", modelStarting: "Modelo iniciando", policyWhenAddressed: "Responde quando mencionado", policyReadsOnly: "Só lê", policyDrafts: "Rascunhos para aprovação", policyWatches: "Acompanha e se manifesta", privateNote: "Só pessoas convidadas podem ler isto. Uma menção nunca concede permissão.", mentionNote: "Uma menção nunca concede permissão.", inheritedNote: "Pessoas convidadas e a equipe delas podem ler isto. Uma menção nunca concede permissão.", leave: "Sair", invitedOnly: "Só convidados", teamCanRead: "A equipe pode ler", people: ({ count }) => count === 1 ? 'Só você' : `${count.toLocaleString()} pessoas`, peopleAndAgents: ({ people, agents }) => `${people === 1 ? '1 pessoa' : `${people.toLocaleString()} pessoas`}, ${agents === 1 ? '1 agente' : `${agents.toLocaleString()} agentes`}` }, home: { search: "Pesquisar discussões", needsYou: "Precisa de você", filter: "Filtrar", filterAll: "Todas as discussões", filterUnread: "Não lidas", filterEmpty: "Nada corresponde a este filtro", today: "Hoje", thisWeek: "Esta semana", earlier: "Antes", columnEmpty: "As discussões para as quais você foi convidado aparecem aqui", inviteTitle: "Converse com pessoas e agentes", inviteBody: "Reúna colegas, sessões, bots e modelos em uma só discussão. Mencione um agente e ele responde da própria sessão, com as próprias aprovações.", idleTitle: "Abra uma discussão", idleBody: "Escolha uma na lista ou comece uma nova com pessoas e agentes.", audience: "Só as pessoas que você convidar", draftWaiting: "Um rascunho está esperando você", approvalPending: "Precisa da sua aprovação", draftWaitingNamed: ({ name }: { name: string }) => `O rascunho de ${name} está esperando você`, approvalPendingNamed: ({ name }: { name: string }) => `${name} precisa de aprovação` }, manage: { startAgain: "Iniciar de novo", startAgainBody: "A sessão não começou. Tente de novo com a mesma configuração.", followParticipant: "Acompanhar…", muteParticipant: "Silenciar as mensagens", unmuteParticipant: "Silenciado · Reativar", mutedNotice: ({ name }: { name: string }) => `Silenciado · ${name}`, unmutedNotice: ({ name }: { name: string }) => `Reativado · ${name}`, muteFailed: "Não foi possível alterar. Tente de novo.", invitePlaceholder: "Buscar pessoas, sessões ou modelos", policyWhenAddressedBody: "Uma menção ou uma resposta a ela. Padrão.", policyReadsOnlyBody: "Lê; nunca responde aqui.", policyDraftsBody: "Você publica a resposta ou a descarta.", policyWatchesBody: "Lê todas as mensagens e pode responder. Usa turnos mesmo calado.", answersGroup: "Responde", operationsGroup: "Sessão", openSession: "Abrir a sessão", removeModel: "Remover e arquivar a sessão", removeModelBody: "Foi iniciada para esta discussão; o histórico fica.", removeSession: "Remover desta discussão", removeSessionBody: "A sessão continua por conta própria.", rowHint: "Escolha como responde, abra ou remova", working: "Salvando…", checking: "Verificando se deu certo…", failed: "Não deu certo.", leaveTitle: "Sair desta discussão", leaveBody: "Alguém precisa ser o dono. Passe para alguém daqui ou arquive; nada é apagado.", transferGroup: "Tornar outra pessoa dona", transferSubtitle: "Vira dona e depois você sai", noTransferCandidates: "Convide alguém primeiro para passar a ela.", archiveInstead: "Arquivar em vez disso", archiveInsteadBody: "Você continua dono. Ninguém pode publicar até que seja restaurada.", inviteSubtitle: "Só quem você convidar pode ler", sessionsGroup: "Suas sessões", modelsGroup: "Modelos", sessionCandidate: "Cada uma responde quando mencionada", modelOn: ({ machine }: { machine: string }) => `Um modelo em ${machine}`, modelCandidate: "Uma nova sessão sua · escolha o agente e o modelo", startedGroup: "Iniciados para esta discussão", modelSessionOn: ({ machine }: { machine: string }) => `uma sessão sua em ${machine}`, modelNewSessionOn: ({ machine }: { machine: string }) => `Uma nova sessão sua em ${machine}`, modelStartingOn: ({ machine }: { machine: string }) => `Iniciando em ${machine}…`, modelFailedOn: ({ machine }: { machine: string }) => `Não iniciou em ${machine}`, modelNotStartedOn: ({ machine }: { machine: string }) => `Ainda não iniciado em ${machine}` }, invite: { helpTitle: 'Como os agentes entram', button: "Convidar", title: ({ title }: { title: string }) => `Convidar para ${title}`, canManage: "Pode gerenciar", ownerOnly: "Só o proprietário pode mudar quem está convidado.", failed: "Não foi possível salvar o convite." }, composer: { mention: "Mencionar", mentionHint: "Mencione um agente para que ele responda", unresolvedMentionsTitle: "Algumas @menções não foram selecionadas", unresolvedMentionsBody: "Escolha uma sugestão para se dirigir a alguém. Enviar como texto mantém esses nomes sem vínculo.", sendAsText: "Enviar como texto" }, newPage: { invitePlaceholder: "Pesquisar pessoas ou sessões", inviteTitle: "Com quem começa", invitedTitle: ({ names, count }: { names: string; count: number }) => count === 1 ? `${names} foi convidado` : `${names} foram convidados`, namePlaceholder: "Dê um nome a esta discussão", emptyTitle: "Mencione quem deve responder", emptyBody: "Um agente só responde quando é mencionado. Uma mensagem sem menções chega só às pessoas." }, secondOpinion: { title: "Pedir uma segunda opinião", discussTitle: "Discutir esta resposta", discussionTitle: "Segunda opinião", discussionTitleOn: ({ session }: { session: string }) => `Segunda opinião sobre ${session}`, discussDiscussionTitle: "Sobre esta resposta", defaultQuestion: "Isto está certo? O que você mudaria?", subtitle: ({ session }: { session: string }) => `Sobre uma resposta em ${session}`, subtitleUntitled: "Sobre esta resposta", answer: "Esta resposta", open: "Abrir a discussão", askQuoteOnly: "Perguntar só com a citação", shareAndAsk: "Compartilhar e perguntar", ask: "Perguntar", freshOpinionsHint: "Escolha dois ou mais para Opiniões independentes", askFreshOpinions: ({ count }: { count: number }) => `Perguntar a ${count} · Opiniões independentes`, whereBody: "Opiniões independentes é executado a partir desta máquina e pasta.", noReviewers: "Ainda não há outras sessões neste Home", nothingCanAnswer: "Nada seu pode responder agora", nothingCanAnswerBody: "Nenhuma das suas máquinas está pronta", paneClosed: "Este pedido fechou quando o app recarregou. Comece de novo a partir da resposta.", searchReviewers: "Pesquisar sessões e modelos", noReviewerMatch: "Nada corresponde a essa pesquisa", showAllReviewers: ({ count }: { count: number }) => `Mostrar todos (${count})`, addAgent: "Adicionar um agente", addAgentShort: "Adicionar agente", yourSession: "Sessão", moreSessions: "Mostrar mais sessões", question: "Pergunta", thisSession: "esta sessão", cannotAskTitle: ({ name }: { name: string }) => `Não é possível perguntar a ${name} aqui`, quoteOnlyTitle: ({ name }: { name: string }) => `${name} vê só a citação`, quoteOnlyBody: "Não pode abrir o resto desta sessão.", grantTitle: ({ name }: { name: string }) => `Deixar ${name} ler esta sessão`, grantBody: ({ name, session }: { name: string; session: string }) => `${name} mantém acesso de leitura a ${session} até você revogar.`, grantUnavailable: "Você não pode compartilhar esta sessão, então só a citação vai junto.", readsAsYouTitle: ({ name }: { name: string }) => `${name} lê esta sessão como você`, readsTitle: ({ name }: { name: string }) => `${name} já pode ler esta sessão`, readsAsYouBody: "Nada novo é compartilhado.", discussionTitleRow: "A nova discussão", discussionOnlyYou: "Só você, até convidar alguém.", discussionPeople: ({ count }: { count: number }) => `Você e mais ${count} podem lê-la`, readsGroup: "O que podem ler", disclosure: { sameSession: "É a sessão que escreveu esta resposta.", broader: "Mais pessoas a veriam do que hoje podem ler a resposta.", public: "Ela se tornaria pública.", notAllowed: "As regras de compartilhamento deste Home não permitem.", unavailable: "Esta resposta não pode ser lida agora." }, discussDone: "Discussão iniciada", asked: ({ name }: { name: string }) => `Perguntou a ${name}`, askedBody: "A resposta chega na discussão.", freshStarted: ({ count }: { count: number }) => `Opiniões independentes iniciado com ${count}`, freshStartedBody: "Cada um responde por conta própria; as respostas chegam na discussão.", openRun: "Abrir execução", failed: "Não deu certo.", pending: "Ainda não terminou. Tentar de novo não pergunta duas vezes.", previewChanged: "Mudou quem pode ler isto. Confira e pergunte de novo.", approvalPendingBody: "A discussão abre aqui assim que for aprovada. Sua pergunta fica guardada.", sendTo: ({ name }: { name: string }) => `Enviar para ${name}`, sendToSession: "Enviar para a sessão", sentNextTurn: "Ela lê no próximo turno.", askAnother: "Perguntar a outro", checkAgain: "Verificar de novo", uncertainHint: "Verificar de novo não envia duas vezes." }, draftReview: { post: "Publicar", decline: "Recusar", onlyYou: "Só você vê isto até publicar." }, replyDraft: { action: "Responder", actionTo: ({ name }: { name: string }) => `Responder a ${name}`, replyingTo: ({ name }: { name: string }) => `Respondendo a ${name}`, removedTitle: ({ names }: { names: string }) => `Removido de Enviar para: ${names}`, removedBody: "Não estão mais nesta discussão, então nada é enviado a eles." },
         quote: discussionQuoteCopy.pt, controls: discussionControlsCopy.pt, attribution: discussionAttributionCopy.pt,
         workflowRound: { speakers: ({ count }: { count: number }) => count === 1 ? '1 participante' : `${count.toLocaleString()} participantes`, sitOut: ({ names }: { names: string }) => `${names} não participam desta rodada.`, everyonePassed: "Todos passaram, então o debate terminou.", failedReply: "Não respondeu", retryReceipt: "Nova tentativa iniciada" },
         heldParticipant: "Participante da sessão",
@@ -14967,7 +14964,8 @@ const pt: typeof en = {
         syncing: 'A sincronizar…',
         conflict: 'Precisa de revisão',
         unsupported: 'Não sincronizado — este Home não consegue sincronizar este rascunho',
-        startInterrupted: 'Início interrompido',
+        starting: 'A iniciar',
+        startFailed: 'Não foi possível iniciar',
         storageError: 'Este dispositivo não conseguiu salvar o rascunho localmente.',
         cryptoError: 'Este dispositivo não conseguiu sincronizar o rascunho porque não conseguiu criptografá-lo ou abri-lo.',
         transportError: 'Este dispositivo não conseguiu sincronizar o rascunho com seu Home.',
@@ -16621,18 +16619,17 @@ const settingsSessionPagesTranslations: Pick<Record<
                 typingDescription: 'Como Enter e o histórico de mensagens funcionam no compositor.',
                 enterToSendTitle: 'Enter para enviar',
                 sendModeTitle: 'Enquanto o agente trabalha',
-                sendQueue: 'Na fila',
-                sendInterrupt: 'Interromper',
-                sendPending: 'Pendente',
-                busySteerTitle: 'Se o agente aceita direcionamento',
-                busySteerInactive: 'Só vale quando as mensagens entram na fila ou ficam pendentes enquanto o agente trabalha.',
+                addToTurn: 'Inserir',
+                waitForTurn: 'Enfileirar',
+                stopAndSend: 'Interromper',
+                inactiveSessionsSection: 'Sessões inativas',
+                inactiveSessionsDescription: 'Vale quando você envia para uma sessão cujo agente parou ou cuja máquina está offline.',
                 nonSteerableTitle: 'Perguntar quando uma mensagem não puder direcionar',
                 resumeWhenPossible: 'Quando possível',
                 resumeIfOnline: 'Se estiver online',
                 resumeNever: 'Nunca',
                 pendingSection: 'Mensagens pendentes',
                 pendingDescription: 'Como as mensagens pendentes chegam ao agente.',
-                pendingInactive: 'Com suas escolhas atuais nada fica pendente. Isto vale assim que uma mensagem ficar.',
                 drainOne: 'Uma de cada vez',
                 drainAll: 'Todas juntas',
                 timingAfterReply: 'Após a resposta',
@@ -17059,12 +17056,12 @@ const portuguese: TeamsTranslationRoot = {
             conflict: 'Outra pessoa alterou primeiro. Reveja os valores atuais e tente novamente.',
             offline: 'Este Home está inacessível, por isso a alteração não foi enviada.',
             invalidName: 'Introduza um nome entre 1 e 80 caracteres.',
-            invalidTeamLink: 'Abre a equipa em Equipas para usares uma ligação atual.',
             invalidDescription: 'Introduza uma descrição com 500 caracteres ou menos.',
-            listCursorExpired: "Esta página já não está disponível. Atualize a lista para voltar ao início.",
             invalidNameCharacters: "Remova os caracteres não imprimíveis do nome da equipa.",
             invalidDescriptionCharacters: "Remova os caracteres não imprimíveis da descrição da equipa.",
             invalidTeamDetails: "Reveja os dados da equipa.",
+            invalidTeamLink: 'Abre a equipa em Equipas para usares uma ligação atual.',
+            listCursorExpired: "Esta página já não está disponível. Atualize a lista para voltar ao início.",
             createRequestConflict: "Este pedido pode já ter criado uma equipa. Consulte a lista de equipas antes de iniciar um novo pedido.",
         },
         directory: {
@@ -17385,6 +17382,11 @@ const portuguese: TeamsTranslationRoot = {
                 readOnlyTeam: "Só quem gere as definições desta equipa pode alterá-las.",
                 readOnlyGroup: "Só quem gere este grupo pode alterá-las.",
                 machine: "Máquina",
+                machineNotMemberUsable: "Os membros não podem usar esta máquina. Partilha-a com a equipa ou escolhe outra.",
+                machineDescription: "Onde começam as novas sessões.",
+                agentDescription: "Qual agente as novas sessões usam.",
+                teamDefault: "Padrão da equipe",
+                groupDefault: "Padrão do grupo",
                 useDefault: ({ value }: { value: string }) => `Usar a predefinição · ${value}`,
                 agentDefault: "Predefinição do agente",
                 otherAgents: "Outros agentes",
@@ -17394,11 +17396,6 @@ const portuguese: TeamsTranslationRoot = {
                 machineDefault: "Predefinição da máquina",
                 homeDefault: "Predefinição da Home",
                 policyDefault: "Política da organização",
-                machineNotMemberUsable: "Os membros não podem usar esta máquina. Partilha-a com a equipa ou escolhe outra.",
-                machineDescription: "Onde começam as novas sessões.",
-                agentDescription: "Qual agente as novas sessões usam.",
-                teamDefault: "Padrão da equipe",
-                groupDefault: "Padrão do grupo",
                 none: "Não definido",
                 preset: "Uma predefinição de máquina",
                 unavailableMachine: "Uma máquina que não consegues ver",
@@ -17764,6 +17761,7 @@ const portuguese: TeamsTranslationRoot = {
             archivedTitle: 'Esta equipa está arquivada',
             archivedBody: "Uma pessoa que gere a equipa pode restaurá-la e enviar-lhe um novo convite.",
             inactiveTitle: 'Esta conta não pode juntar-se neste momento',
+            inactiveBody: "Use uma conta ativa neste Home ou peça a um administrador para restaurar o seu acesso.",
             invalidTitle: 'Esta ligação de convite não é válida',
             unresolvedHomeTitle: 'Este link não identifica o seu Home',
             unresolvedHomeBody: 'Este dispositivo não consegue saber qual Home emitiu este convite, por isso nada foi enviado. Peça um novo link a quem gere a equipa.',
@@ -17771,9 +17769,11 @@ const portuguese: TeamsTranslationRoot = {
             unknownHomeBody: 'Adicione o Home desta equipa e abra o link novamente.',
             askForNew: 'Peça um novo convite a um responsável da equipa.',
             mismatchTitle: 'Este convite é para outro endereço',
+            mismatchBody: "Inicie sessão com o endereço que recebeu o convite e volte a abri-lo.",
             signInWithInvited: 'Iniciar sessão com o endereço convidado',
             verifyAddress: 'Verificar este endereço',
             updateRequiredTitle: 'Este Home precisa de uma atualização para usar convites de equipa',
+            updateRequiredBody: "Peça a um administrador para atualizar este Home e volte a abrir o convite.",
             offlineTitle: 'Este Home está inacessível',
             offlineBody: 'O convite é mantido. Tente novamente quando o Home voltar.',
             acceptanceOutcomeUnknown: "Não foi possível confirmar se aderiu à equipa. Uma nova tentativa pode aceitar o convite e fazer com que adira à equipa.",
@@ -20028,6 +20028,11 @@ const pt: WorkflowEditorPageTranslations = {
         concurrencyInvalid: "Digite um número inteiro maior que 0 ou deixe em branco.",
         concurrencySummaryNone: "Sem limite de simultaneidade",
         concurrencySummary: ({ count }: { count: number }) => `No máximo ${count} ao mesmo tempo`,
+        postSummaryRow: "Publicar um resumo",
+        postSummaryOff: "Desativado",
+        postSummaryOn: "Ativado",
+        postSummaryNote: "Desativado por padrão. Publica o resumo da execução como comentário na issue ou pull request do GitHub que a acionou sob o perfil de aprovação desta regra.",
+        postSummarySummaryOn: "Publica um resumo",
         rolesRow: 'Funções',
         lastRun: 'Última execução',
         runsInRow: 'Executa em',
@@ -20049,6 +20054,7 @@ const pt: WorkflowEditorPageTranslations = {
         agentAndWhereTitle: 'Agente e onde é executado',
         modelAndPermissionsTitle: 'Modelo e permissões',
         thisStepTitle: 'Este passo',
+        sessionTitle: 'Sessão',
         inputsTitle: 'Entradas e resultado',
     },
     unavailable: {
@@ -20190,6 +20196,7 @@ const workflowExamplesTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'c
         checkForDrift: { title: "Verificar desvios", description: "Compara um serviço implantado com a configuração esperada. Nada é alterado." },
         runJobOnSchedule: { title: "Executar uma tarefa agendada", description: "Escolhe um serviço, edita o comando no rascunho e ativa o horário. Nenhum agente participa." },
         deploymentMove: { title: "Mover para outra máquina", description: "Apenas aplicações de repositório sem domínios ou dados locais." },
+        deploymentDataMove: { title: "Mover uma base de dados", description: "Um Workflow pausa as escritas, verifica uma cópia final, restaura e verifica o destino e liga e implementa a app. Os dados antigos ficam guardados. Uma mudança incerta exige a tua decisão." },
         backupVerify: { title: "Verificar uma cópia de segurança", description: "Verifica um instantâneo de cópia de segurança ao nível que escolher. Nada é restaurado nem alterado." },
         nightlyBackups: { title: "Cópias de segurança noturnas", description: "Faz cópia dos seus dados, verifica cada novo instantâneo e mantém só o que a retenção permite. Ative o horário para correr todas as noites." },
         restoreDrill: { title: "Simulação de restauração", description: "Comprova que as cópias se restauram: restaura uma cópia num ambiente separado, verifica os dados e depois para-o." },
@@ -20879,7 +20886,8 @@ const pt: WorkflowTriggersCopy = {
         sessionDescription: "A sessão observada. O workflow é executado em sua própria sessão.",
         noSession: "Nenhuma sessão ainda",
         howOften: "Com que frequência",
-        howOftenKind: { thisTurn: "Este turno", nextTime: "Da próxima vez", everyTime: "Toda vez" },
+        howOftenKind: { thisTurn: "Este turno", nextMatches: "Próximas N vezes", nextTime: "Da próxima vez", everyTime: "Toda vez" },
+        matchCount: "Número de correspondências",
         deployFinished: "Implantação concluída",
         deployOutcome: { custom: "Personalizado", label: "Somente quando", any: "Qualquer resultado", succeeded: "Bem-sucedida", failed: "Falhou", cancelled: "Cancelada", outcome_unknown: "Desconhecido" },
         source: "Origem",

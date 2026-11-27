@@ -54,6 +54,8 @@ export const WorkflowDraftTriggerSnapshotV1Schema = lazyZodSchema(() => z.strict
   /** How the set's Runs queue for an automation slot; absent reads as Normal and uncapped. */
   priority: z.optional(AutomationV3RulePrioritySchema),
   maxActiveRuns: z.optional(z.nullable(AutomationV3RuleMaxConcurrentRunsSchema)),
+  /** Q11: opt-in summary posting to an authorized connected source (default off). */
+  postSummaryToSource: z.optional(z.boolean()),
 }));
 export const WorkflowDraftSettingsV1Schema = lazyZodSchema(() => z.strictObject({
   description: z.string(), projectTarget: zMini.nullable(WorkflowProjectTargetV1Schema),

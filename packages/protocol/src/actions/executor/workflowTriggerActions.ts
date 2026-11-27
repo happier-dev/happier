@@ -50,6 +50,7 @@ import {
   WorkflowDeploymentBackupTargetV1Schema,
   summarizeWorkflowTriggerRowsV1,
   isWorkflowTriggerSourceGoneV1, readWorkflowTriggerSubjectProjectV1,
+  supportsWorkflowTriggerPostSummaryV1,
   SessionInitialTriggerV1Schema, type SessionInitialTriggerV1, type SessionInitialTriggerDefinitionV1,
 } from '../../workflows/triggers/workflowTriggerActionsV1.js';
 import { SessionInitialTriggerAdmissionV1Schema, type SessionInitialTriggerAdmissionV1 } from '../../sessions/creation/sessionInitialTriggerAdmissionV1.js';
@@ -660,10 +661,9 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
           if (caller.serverId && !areServerProfileIdentifiersEquivalent(target.address.serverId, caller.serverId,
             identifier => identifier === caller.serverId || identifier === caller.serverIdentityId
               ? caller.serverIdentityId : deps.resolveServerProfileScopeId?.(identifier))) return false;
-          // Typed targets spend the author's start authority, independently of
-          // the trigger's own scope Session and ordinary readable-child access.
-          const authority = admittedSession?.sessionId === target.address.sessionId && admittedSession.authority
-            ? admittedSession.authority : await resolveActionAgentStartContextV1(deps, caller, target.address.sessionId);
+          // The lifetime Session already passed this same start admission.
+          if (admittedSession?.sessionId === target.address.sessionId && admittedSession.authority) return true;
+          const authority = await resolveActionAgentStartContextV1(deps, caller, target.address.sessionId);
           return admitActionAgentStartV1(caller, { kind: 'session_target', targetSessionId: target.address.sessionId }, authority).ok;
         } },
         roleOverrides: context.roleOverrides,
@@ -719,6 +719,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       ...(input.roleOverrides === undefined ? {} : { roleOverrides: input.roleOverrides }),
       ...(approvalProfileId === undefined ? {} : { approvalProfileId }),
       ...(input.visibleTeamId === undefined ? {} : { visibleTeamId: input.visibleTeamId }),
+      ...(input.postSummaryToSource === undefined ? {} : { postSummaryToSource: input.postSummaryToSource }),
       ...(input.onComplete === undefined ? {} : { onComplete: input.onComplete }),
       ...(input.deploymentPreview === undefined ? {} : { deploymentPreview: input.deploymentPreview }),
       ...(target.kind === 'inline' ? { inlineDefinition: target.definition } : {}) });
@@ -1404,7 +1405,11 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
           ...(input.inputs === undefined ? {} : { inputs: input.inputs }),
           ...(input.visibleTeamId === undefined ? {} : { visibleTeamId: input.visibleTeamId }),
           ...(input.approvalProfileId === undefined ? {} : { approvalProfileId: input.approvalProfileId }),
+          ...(input.postSummaryToSource === undefined ? {} : { postSummaryToSource: input.postSummaryToSource }),
           ...(input.roleOverrides === undefined ? {} : { roleOverrides: input.roleOverrides }) });
+        if (mergedContext.postSummaryToSource === true && !supportsWorkflowTriggerPostSummaryV1([...row.triggers, input.trigger])) {
+          refuseInput('post_summary_source_unsupported');
+        }
         const { deploymentTriggers: _oldRows, ...oldOperands } = current.context;
         const { deploymentTriggers: _nextRows, ...nextOperands } = mergedContext;
         if (!sameStrictJsonValue(oldOperands, nextOperands)) withoutTriggerApprovals(mergedContext);
@@ -1426,6 +1431,9 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
           ...dispatchSettings(input),
         }, row.enabled, false, current.storedContext, caller);
         return writeResult(committed, triggerId, false, prepared);
+      }
+      if (context.postSummaryToSource === true && !supportsWorkflowTriggerPostSummaryV1([input.trigger])) {
+        refuseInput('post_summary_source_unsupported');
       }
       if (input.deployment !== undefined) context.deploymentTriggers = [{ triggerId, ...input.deployment }];
       const triggerEvents = await readInlineTriggerEvents(target, [input.trigger]);
@@ -1565,6 +1573,10 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       const context = AutomationStoredWorkflowDefinitionV2Schema.parse({ ...previous, ...contextPatch, ...(targetProject && { workspace }),
         ...(scope?.onComplete === undefined ? {} : { onComplete: scope.onComplete }),
         ...(target.kind === 'inline' ? { inlineDefinition: target.definition } : {}) });
+      const resultingTriggers = row.triggers.map(item => item.id === input.triggerId && trigger !== undefined ? trigger : item);
+      if (context.postSummaryToSource === true && !supportsWorkflowTriggerPostSummaryV1(resultingTriggers)) {
+        refuseInput('post_summary_source_unsupported');
+      }
       if (Object.keys(contextPatch).length || nextTarget || nextProject || deployment !== undefined) withoutTriggerApprovals(context);
       const previousTrigger = row.triggers.find(item => item.id === input.triggerId);
       if (trigger !== undefined && (trigger.kind === 'schedule' || previousTrigger?.kind === 'schedule')

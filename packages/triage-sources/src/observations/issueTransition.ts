@@ -1,15 +1,10 @@
 import {
   PluginError,
-  type JsonValue,
   type PluginInvocationContext,
 } from '@happier-dev/plugin-sdk';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import type { TriageEntryRefV1 } from '@happier-dev/triage-protocol/v1';
 import { publishTriageAttentionV1 } from './attention.js';
-import {
-  readTriageIssueAutomaticInvestigationChoiceV1,
-  requestTriageIssueAutomaticInvestigationV1,
-} from './issueInvestigation.js';
 import {
   TRIAGE_ISSUE_NOTIFICATION_CATEGORY_ID_V1,
   type TriageIssueTransitionV1,
@@ -25,55 +20,11 @@ const ISSUE_TRANSITION_SENTENCE: Record<
   resolved: (provider) => `Resolved in ${provider}.`,
 };
 
-type ChoiceHost = Parameters<
-  typeof readTriageIssueAutomaticInvestigationChoiceV1
->[0];
-export type TriageIssueInvestigationChoiceReaderV1 = (
-  configuredActionId: string,
-) => ReturnType<typeof readTriageIssueAutomaticInvestigationChoiceV1>;
-
-/** One finite publication pass reads each configured investigation choice once. */
-export function createTriageIssueInvestigationChoiceReaderV1(
-  context: Pick<PluginInvocationContext, 'services' | 'signal'>,
-  source: TriageEntryRefV1['source'],
-): {
-  host: ChoiceHost;
-  read: TriageIssueInvestigationChoiceReaderV1;
-} {
-  const host: ChoiceHost = {
-    executeAction: async (
-      ref: { pluginId: string; localId: string },
-      args: JsonValue,
-    ) =>
-      context.services.actions.execute(ref, args, { signal: context.signal }),
-  };
-  const choices = new Map<
-    string,
-    ReturnType<typeof readTriageIssueAutomaticInvestigationChoiceV1>
-  >();
-  return {
-    host,
-    read(configuredActionId) {
-      let choice = choices.get(configuredActionId);
-      if (!choice)
-        choices.set(
-          configuredActionId,
-          (choice = readTriageIssueAutomaticInvestigationChoiceV1(
-            host,
-            configuredActionId,
-            { signal: context.signal, source },
-          )),
-        );
-      return choice;
-    },
-  };
-}
-
 /**
- * The ONE issue transition → attention/notice → optional investigation
- * publisher. Vendor scan-diff observers call it from their checkpoint save; a
- * commit-published source calls it after its own Account write committed and
- * the Automation Engine admitted the occurrence. Occurrence dedupe stays with AE.
+ * The ONE issue transition → attention/notice publisher. Vendor scan-diff
+ * observers call it from their checkpoint save; a commit-published source
+ * calls it after its own Account write committed and the Automation Engine
+ * admitted the occurrence. Automatic Workflow dispatch is owned solely by AE.
  */
 export async function publishTriageIssueTransitionV1(
   context: Pick<PluginInvocationContext, 'services' | 'signal'>,
@@ -85,11 +36,6 @@ export async function publishTriageIssueTransitionV1(
     entryRef: TriageEntryRefV1;
     title: string;
     webUrl?: string;
-    /** Present only when AE admitted this occurrence for a selected auto-start definition. */
-    autoStart?: Readonly<{
-      configuredActionId: string;
-      choices: ReturnType<typeof createTriageIssueInvestigationChoiceReaderV1>;
-    }>;
   }>,
 ): Promise<void> {
   const entry = {
@@ -128,36 +74,5 @@ export async function publishTriageIssueTransitionV1(
     throw new PluginError({
       code: 'triage_issue_notice_unavailable',
       message: 'The issue notice was not committed.',
-    });
-  if (
-    !input.autoStart ||
-    input.transition.phase !== 'open' ||
-    result.notice?.opened !== true ||
-    result.replayed
-  )
-    return;
-  const choice = await input.autoStart.choices.read(
-    input.autoStart.configuredActionId,
-  );
-  const outcome =
-    typeof choice === 'string'
-      ? choice
-      : await requestTriageIssueAutomaticInvestigationV1(
-          input.autoStart.choices.host,
-          {
-            selection: choice,
-            entry,
-          },
-          { signal: context.signal },
-        );
-  if (outcome !== null)
-    await publishTriageAttentionV1(context, {
-      entryRef: input.entryRef,
-      reason: 'watchedAlert',
-      notice: {
-        ...notice,
-        clientRequestId: `${input.occurrenceId}:investigation`,
-        body: `${notice.body}\n${outcome}`,
-      },
     });
 }

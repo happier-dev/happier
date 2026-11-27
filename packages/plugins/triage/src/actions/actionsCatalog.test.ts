@@ -49,18 +49,6 @@ describe('the configured-action Actions', () => {
             } } } as unknown as TriageDataActionContext;
         const handler = createTriageReadActionsActionHandler();
         const readCatalog = (input: unknown) => handler(TriageReadActionsActionInputV1Schema.parse(input), context);
-        const { inputTypes, resources } = createTriageIssueWatchOptionsV1(source);
-        const inputType = inputTypes[triageIssueWatchOptionIdsV1(source).investigation]!;
-        const options = resources[inputType.options.resource]!;
-        const optionContext = (draftInput: Record<string, string>) => createTestResourceInvocationContext({
-            query: { fieldPath: 'investigation.configuredActionId', draftInput },
-            readAction: async (_ref, input) => ({ ok: true, result: await readCatalog(input) }),
-        });
-        await expect(options.runtime.read(optionContext({}))).rejects.toMatchObject({ code: 'missing_option_dependency' });
-        expect(JSON.parse(String(await options.runtime.read(optionContext({ sourceInstanceId }))))).toEqual({
-            options: [{ value: 'fix', label: 'Fix' }, { value: 'investigate', label: 'Investigate' }],
-        });
-
         const setup = createTriageIssueEventSourceSetupV1({ pluginId: source.pluginId, sourceLocalId: source.localId, displayName: 'Sentry' });
         const setupContext = {
             signal: context.signal,
@@ -76,11 +64,12 @@ describe('the configured-action Actions', () => {
                     : readCatalog(input),
             } },
         } as unknown as PluginInvocationContext;
-        const submit = (configuredActionId: string) => setup({
-            sourceInstanceId, investigation: { mode: 'auto_start', configuredActionId },
-        }, setupContext);
-        await expect(submit('investigate')).resolves.toMatchObject({ sourceInstanceId });
-        await expect(submit('ask')).rejects.toMatchObject({ code: 'triage_issue_investigation_unavailable' });
+        await expect(setup({ sourceInstanceId }, setupContext)).resolves.toMatchObject({
+            sourceInstanceId, sourceConfig: { investigation: { mode: 'inbox' } },
+        });
+        await expect(setup({
+            sourceInstanceId, investigation: { mode: 'auto_start', configuredActionId: 'investigate' },
+        }, setupContext)).rejects.toThrow();
     });
 
     it('keeps the explicit code review target and pull-request workspace when renamed', async () => {

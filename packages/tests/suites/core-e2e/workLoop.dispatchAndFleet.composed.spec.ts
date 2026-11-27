@@ -196,7 +196,25 @@ it('starts a Workflow when the direct Task edit Action commits a matching label'
   expect(await history()).toHaveLength(1);
 }, 360_000);
 
-it.todo('starts one Workflow per migrated Sentry, telemetry and health occurrence');
+it('rejects retired legacy auto_start configs so all automatic starts flow through Workflow triggers only', async () => {
+  const { HealthCheckSourceConfigV1Schema } = await import('@happier-dev/protocol/deployments/healthCheckSourceV1');
+  const { TriageIssueInvestigationV1Schema } = await import('@happier-dev/triage-protocol/v1');
+  expect(TriageIssueInvestigationV1Schema.safeParse({ mode: 'inbox' }).success).toBe(true);
+  expect(TriageIssueInvestigationV1Schema.safeParse({ mode: 'auto_start', configuredActionId: 'investigate' }).success).toBe(false);
+  expect(HealthCheckSourceConfigV1Schema.safeParse({
+    v: 1,
+    subject: { kind: 'machineService', machineId: 'm1', serviceId: 'web' },
+    investigation: { mode: 'auto_start', configuredActionId: 'investigate' },
+    checks: [{
+      checkId: 'tcp',
+      kind: { pluginId: 'happier.machine.services', localId: 'tcp' },
+      binding: { kind: 'healthCheck' },
+      config: { host: '127.0.0.1', port: 8080 },
+      periodMs: 60_000,
+      consecutiveFailuresBeforeAlerting: 1,
+    }],
+  }).success).toBe(false);
+});
 async function runHistory(baseUrl: string, token: string, automationId: string) {
   const response = await fetchJson<unknown>(`${baseUrl}/v3/automations/${automationId}/runs`, {
     headers: { Authorization: `Bearer ${token}` },

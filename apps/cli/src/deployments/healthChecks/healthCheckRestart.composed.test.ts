@@ -30,8 +30,7 @@ it.each(['admitted', 'rejoined', 'observed', 'rejected', 'inbox', 'default'] as 
     const sourceInstanceId = 'health:retained-service';
     const sourceConfig: HealthCheckSourceConfigV1 = { v: 1,
         subject: { kind: 'machineService', machineId: caller.machineId, serviceId: 'web' },
-        ...(mode === 'default' ? {} : { investigation: mode === 'inbox' ? { mode: 'inbox' as const }
-            : { mode: 'auto_start' as const, configuredActionId: 'investigate-retained' } }),
+        ...(mode === 'default' ? {} : { investigation: { mode: 'inbox' as const } }),
         checks: [{ checkId: 'http', kind: { pluginId: caller.pluginId, localId: 'http' },
             binding: { kind: 'healthCheck' }, config: { endpoint: 'https://example.test/private-health', expectStatus: 200 },
             periodMs: 1000, consecutiveFailuresBeforeAlerting: 1 }] };
@@ -168,11 +167,7 @@ it.each(['admitted', 'rejoined', 'observed', 'rejected', 'inbox', 'default'] as 
     const accepted = mode !== 'rejected';
     expect(notices.rows.size).toBe(accepted ? 1 : 0);
     expect(notices.writes).toHaveBeenCalledTimes(accepted ? 1 : 0);
-    const starts = mode === 'admitted' || mode === 'rejoined' || mode === 'observed';
-    expect(handoffs).toEqual(starts ? [expect.objectContaining({ handoff: expect.objectContaining({
-        task: 'investigate', context: expect.objectContaining({ kind: 'healthAlert' }),
-        evidence: [expect.objectContaining({ kind: 'alert', notice: expect.objectContaining({ artifactId: [...notices.rows.keys()][0] }) })],
-    }) })] : []);
+    expect(handoffs).toEqual([]);
     initial.abort.abort();
     let release!: () => void;
     let readStarted!: () => void;
@@ -198,7 +193,7 @@ it.each(['admitted', 'rejoined', 'observed', 'rejected', 'inbox', 'default'] as 
     expect(admissions[1]?.payload).toMatchObject({ transition: 'recovered' });
     expect(notices.rows.size).toBe(accepted ? 1 : 0);
     expect(notices.writes).toHaveBeenCalledTimes(accepted ? 2 : 0);
-    expect(handoffs).toHaveLength(starts ? 1 : 0);
+    expect(handoffs).toHaveLength(0);
     if (accepted) expect(decodePlainArtifactStoredContent([...notices.rows.values()][0]!.header)).toMatchObject({
         healthPhase: 'recovered', source: { subject: { kind: 'healthCheck', subject: sourceConfig.subject, checkId: 'http' } },
     });

@@ -109,7 +109,12 @@ export type WorkflowTriggerDispatchControl = Readonly<{
   priority: AutomationV3RulePriority;
   /** `null`: no cap of its own. */
   maxActiveRuns: number | null;
-  onChange?: (next: Readonly<{ priority?: AutomationV3RulePriority; maxActiveRuns?: number | null }>) => void;
+  /**
+   * Q11: present ONLY when the workflow has an authorized connected source trigger
+   * (GitHub issue/PR). Omitted on pure internal Task / schedule / session triggers.
+   */
+  postSummaryToSource?: boolean;
+  onChange?: (next: Readonly<{ priority?: AutomationV3RulePriority; maxActiveRuns?: number | null; postSummaryToSource?: boolean }>) => void;
 }>;
 
 function formatDispatchSummary(dispatch: WorkflowTriggerDispatchControl): readonly string[] {
@@ -120,6 +125,7 @@ function formatDispatchSummary(dispatch: WorkflowTriggerDispatchControl): readon
     dispatch.maxActiveRuns === null
       ? t('workflows.page.sections.concurrencySummaryNone')
       : t('workflows.page.sections.concurrencySummary', { count: dispatch.maxActiveRuns }),
+    ...(dispatch.postSummaryToSource === true ? [t('workflows.page.sections.postSummarySummaryOn')] : []),
   ];
 }
 
@@ -276,10 +282,12 @@ export function WorkflowMoreSettings(
 }
 
 const PRIORITY_IDS: readonly AutomationV3RulePriority[] = ['normal', 'high'];
+const POST_SUMMARY_IDS: readonly ('off' | 'on')[] = ['off', 'on'];
 
 /**
- * Priority and Concurrency limit (work-loop factory lab `rule:v:more`). The limit commits once, when the field
- * is left or submitted; the Protocol owner's schema decides what a limit may be, so a blank field clears it.
+ * Priority, Concurrency limit, and Q11 Post a summary (when triggered by an authorized connected source).
+ * The limit commits once, when the field is left or submitted; the Protocol owner's schema decides
+ * what a limit may be, so a blank field clears it.
  */
 function WorkflowTriggerDispatchRows(
   props: Readonly<{ dispatch: WorkflowTriggerDispatchControl; testIDPrefix: string }>,
@@ -297,6 +305,13 @@ function WorkflowTriggerDispatchRows(
     () => PRIORITY_IDS.map((id) => ({
       id,
       label: id === 'high' ? t('workflows.page.sections.priorityHigh') : t('workflows.page.sections.priorityNormal'),
+    })),
+    [],
+  );
+  const postSummaryTabs = React.useMemo(
+    () => POST_SUMMARY_IDS.map((id) => ({
+      id,
+      label: id === 'on' ? t('workflows.page.sections.postSummaryOn') : t('workflows.page.sections.postSummaryOff'),
     })),
     [],
   );
@@ -344,6 +359,27 @@ function WorkflowTriggerDispatchRows(
             testID={`${id}-concurrency`}
           />
           <Text style={styles.note}>{t('workflows.page.sections.concurrencyNote')}</Text>
+        </View>
+      ))}
+      {dispatch.postSummaryToSource === undefined ? null : renderWorkflowCardFieldRow('post-summary', t('workflows.page.sections.postSummaryRow'), dispatch.onChange === undefined ? (
+        <Text testID={`${id}-post-summary-readonly`} style={styles.readOnlyValue}>
+          {dispatch.postSummaryToSource ? t('workflows.page.sections.postSummaryOn') : t('workflows.page.sections.postSummaryOff')}
+        </Text>
+      ) : (
+        <View style={styles.dispatchField}>
+          <SegmentedTabBar<'off' | 'on'>
+            tabs={postSummaryTabs}
+            activeTabId={dispatch.postSummaryToSource ? 'on' : 'off'}
+            onSelectTab={(next) => {
+              const enabled = next === 'on';
+              if (enabled !== dispatch.postSummaryToSource) dispatch.onChange?.({ postSummaryToSource: enabled });
+            }}
+            segmentSizing="content"
+            accessibilityLabel={t('workflows.page.sections.postSummaryRow')}
+            role="radiogroup"
+            testIDPrefix={`${id}-post-summary`}
+          />
+          <Text style={styles.note}>{t('workflows.page.sections.postSummaryNote')}</Text>
         </View>
       ))}
     </>

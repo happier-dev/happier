@@ -58,9 +58,9 @@ it('saves Inbox by default through the agent setup Action and retains an explici
         } } satisfies PluginTestServicesFixture;
         expect(await kit.invokeAction('health/setup', draft, { surface: 'agent', services }))
             .toMatchObject({ sourceConfig: { investigation: { mode: 'inbox' } } });
-        const investigation = { mode: 'auto_start', configuredActionId: 'investigate-production' };
-        expect(await kit.invokeAction('health/setup', { ...draft, investigation }, { surface: 'agent', services }))
-            .toMatchObject({ sourceConfig: { investigation } });
+        await expect(kit.invokeAction('health/setup', {
+            ...draft, investigation: { mode: 'auto_start', configuredActionId: 'investigate-production' },
+        }, { surface: 'agent', services })).rejects.toThrow();
     } finally { await kit.dispose(); }
 });
 

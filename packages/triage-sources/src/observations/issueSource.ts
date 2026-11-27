@@ -2,7 +2,6 @@ import { PluginError, type JsonValue, type PluginInvocationContext } from '@happ
 import type { PluginContributionIdentity } from '@happier-dev/plugin-sdk/manifest';
 import { PluginEventAutomationSetupResultV1Schema } from '@happier-dev/plugin-sdk/events';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
-import { readTriageSessionHandoffChoicesV1 } from '../sessionHandoff.js';
 import {
   TriageConfiguredSourceConnectedAccountInstanceV1Schema, TriageConfiguredSourceInstanceV1Schema,
   TriageIssueCommitPublishedEventSourceConfigV1Schema,
@@ -28,7 +27,7 @@ export const TRIAGE_ISSUE_NOTIFICATION_CATEGORY_ID_V1 = 'issue-alerts';
 type IssueWatchDeclaration = NonNullable<TriageSourceDescriptorV1['issueWatch']>;
 
 export function triageIssueWatchOptionIdsV1(source: PluginContributionIdentity) {
-  return { source: `issue-source/${source.localId}`, investigation: `issue-investigation/${source.localId}` } as const;
+  return { source: `issue-source/${source.localId}` } as const;
 }
 
 /** The commit-published setup uses the same fields without the polling interval. */
@@ -46,16 +45,6 @@ export function createTriageIssueEventSetupInputHintsV1(
     path: 'checkPeriodSeconds', title: 'Check every (seconds)',
     description: 'Default: 300 seconds (5 minutes). Provider rate limits may delay a check.',
     widget: 'number' as const, defaultValue: 300,
-  }, {
-    path: 'investigation.mode', title: 'When an issue opens', widget: 'select' as const,
-    defaultValue: 'inbox', options: [{ value: 'inbox', label: 'Show in Inbox' },
-      { value: 'auto_start', label: 'Start an investigation' }],
-  }, {
-    path: 'investigation.configuredActionId', title: 'Configured investigation', widget: 'select' as const,
-    inputType: { pluginId: source.pluginId, localId: ids.investigation },
-    description: 'Choose an existing investigate Action configured in PRs & Issues.',
-    visibleWhen: { op: 'eq' as const, path: 'investigation.mode', value: 'auto_start' },
-    requiredWhen: { op: 'eq' as const, path: 'investigation.mode', value: 'auto_start' },
   }];
   return { fields: options?.publication === 'commit' ? fields.filter(field => field.path !== 'checkPeriodSeconds') : fields };
 }
@@ -89,22 +78,13 @@ export function createTriageIssueEventSourceSetupV1(input: Partial<IssueWatchDec
       || (commit && selected.checkPeriodSeconds !== undefined)) {
       throw new PluginError({ code: 'triage_issue_source_unavailable', message: 'Choose a currently configured source.' });
     }
-    if (selected.investigation?.mode === 'auto_start') {
-      const choices = await readTriageSessionHandoffChoicesV1({ executeAction: (ref, args, options) =>
-        context.services.actions.execute(ref, args, options) }, { task: 'investigate', source, signal: context.signal });
-      context.signal.throwIfAborted();
-      const configuredActionId = selected.investigation.configuredActionId;
-      if (choices.kind !== 'choices' || !choices.actions.some(action => action.selection.configuredActionId === configuredActionId)) {
-        throw new PluginError({ code: 'triage_issue_investigation_unavailable', message: 'Choose a currently configured investigate Action.' });
-      }
-    }
     const sourceConfig = commit ? TriageIssueCommitPublishedEventSourceConfigV1Schema.parse({
-      v: 1, instance: instance.data, investigation: selected.investigation ?? { mode: 'inbox' },
+      v: 1, instance: instance.data, investigation: { mode: 'inbox' },
     }) : TriageIssueEventSourceConfigV1Schema.parse({
       v: 1, instance: instance.data,
       checkPeriodMs: selected.checkPeriodSeconds === undefined
         ? TRIAGE_ISSUE_DEFAULT_CHECK_PERIOD_MS_V1 : selected.checkPeriodSeconds * 1_000,
-      investigation: selected.investigation ?? { mode: 'inbox' },
+      investigation: { mode: 'inbox' },
     });
     return projectNativeJsonValueForTransport(PluginEventAutomationSetupResultV1Schema.parse({
       v: 1, sourceInstanceId: selected.sourceInstanceId, sourceContractVersion: 1,

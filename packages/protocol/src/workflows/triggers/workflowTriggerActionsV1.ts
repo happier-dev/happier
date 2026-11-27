@@ -42,6 +42,17 @@ import { AutomationEventSourceInstanceIdV1Schema } from '../../automations/autom
 import { AutomationActionTriggerSchema } from '../../automations/automationActionTriggerV1.js';
 import { AutomationTriggerActionIdV1Schema, AutomationActionPhaseV1Schema } from '../../automations/automationActionIdentityV1.js';
 
+export {
+  GITHUB_POST_SUMMARY_COMMENT_ACTION_LOCAL_ID_V1,
+  GITHUB_POST_SUMMARY_EVENT_LOCAL_IDS_V1,
+  GITHUB_POST_SUMMARY_PLUGIN_ID_V1,
+  isAuthorizedPostSummaryTriggerV1,
+  resolveGithubPostSummaryTargetV1,
+  supportsWorkflowTriggerPostSummaryV1,
+  type GithubPostSummaryTargetV1,
+  type WorkflowTriggerPostSummaryCandidateV1,
+} from './workflowTriggerPostSummaryV1.js';
+
 const Revision = z.number().check(z.int(), z.nonnegative(), z.int());
 /** Safe author identity shared by attached and Workflow-level trigger summaries. */
 export const WorkflowTriggerSetUpByV1Schema = lazyZodSchema(() => z.strictObject({
@@ -173,7 +184,7 @@ export function summarizeWorkflowTriggerRowsV1(rows: readonly Parameters<typeof 
   }
   return result;
 }
-const ContextFields = lazyZodSchema(() => zMini.omit(AutomationStoredWorkflowDefinitionV2Schema, { workspace: true, inlineDefinition: true, onComplete: true, deploymentTriggers: true, actionApprovals: true }));
+const ContextFields = lazyZodSchema(() => zMini.omit(AutomationStoredWorkflowDefinitionV2Schema, { workspace: true, inlineDefinition: true, onComplete: true, deploymentTriggers: true, actionApprovals: true, actorConsent: true }));
 /** A policy-independent capture identity; Environment edits do not rewrite a saved Workflow's target. */
 export const WorkflowDeploymentBackupTargetV1Schema = lazyZodSchema(() => z.omit(DeploymentBackupRunInputV1Schema, { expectedRevision: true }));
 export const WorkflowTriggerListRequestV1Schema = lazyZodSchema(() => z.union([
@@ -440,7 +451,7 @@ export function isWorkflowTriggerSourceGoneV1(set: Pick<WorkflowTriggerSetV1, 'h
 }
 
 const SessionId = asProtocolZod(SessionIdSchema);
-const SessionContextFields = lazyZodSchema(() => zMini.omit(AutomationStoredWorkflowDefinitionV2Schema, { workspace: true, inlineDefinition: true, deploymentTriggers: true, actionApprovals: true }));
+const SessionContextFields = lazyZodSchema(() => zMini.omit(AutomationStoredWorkflowDefinitionV2Schema, { workspace: true, inlineDefinition: true, deploymentTriggers: true, actionApprovals: true, actorConsent: true }));
 const SessionPullRequestTriggerSchema = lazyZodSchema(() => (<T extends zMini.ZodMiniObject>(schema: T) => zMini.core.clone(schema, { ...schema._zod.def, catchall: zMini.never() }) as zMini.ZodMiniObject<T['shape'], zMini.core.$strict>)(zMini.extend(AutomationAuthoredPullRequestTriggerSchema, {
   pullRequest: zMini.optional(AutomationPullRequestTriggerSchema.shape.pullRequest),
 })));

@@ -136,10 +136,7 @@ export const HealthCheckSourceConfigV1BaseSchema = lazyZodSchema(() => z.strictO
     checks: z.array(HealthCheckDefinitionV1Schema).check(z.minLength(1)),
     /** Absent on retained sources; an explicit empty selection stays off. */
     alerts: z.optional(HealthCheckAlertsV1Schema),
-    investigation: z.optional(z.discriminatedUnion('mode', [
-        z.strictObject({ mode: z.literal('inbox') }),
-        z.strictObject({ mode: z.literal('auto_start'), configuredActionId: id }),
-    ])),
+    investigation: z.optional(z.strictObject({ mode: z.literal('inbox') })),
 }));
 /** Environment notification choices use the same saved source before a probe is configured.
  * Keep the empty arm structural so portable Action/catalog validators retain the service check requirement. */

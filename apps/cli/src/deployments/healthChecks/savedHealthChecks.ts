@@ -220,20 +220,6 @@ export function createSavedHealthChecksHost(input: Readonly<{
                     if (!seed.isOccurrenceCurrent() || !caller) return unavailable('source_unavailable');
                     const kinds = input.readKinds?.() ?? [];
                     for (const check of request.sourceConfig.checks) if (!builtin(check)) contributed(check, kinds);
-                    if (request.sourceConfig.investigation?.mode === 'auto_start') {
-                        // Triage sources derive their field allocation from the full list schemas at
-                        // import; only an auto-start investigation needs them, so every process
-                        // that hosts plugin runtimes (each Runner) does not pay that at start.
-                        const { readTriageSessionHandoffChoicesV1 } = await import('@happier-dev/triage-sources/runtime');
-                        const choices = await readTriageSessionHandoffChoicesV1({ executeAction: (ref, args, options) =>
-                            services.actions.execute(ref, args, options) }, { task: 'investigate', signal });
-                        signal.throwIfAborted();
-                        const configuredActionId = request.sourceConfig.investigation.configuredActionId;
-                        if (choices.kind !== 'choices' || !choices.actions.some(action =>
-                            action.selection.configuredActionId === configuredActionId)) {
-                            return unavailable('health_check_investigation_unavailable');
-                        }
-                    }
                     if (request.sourceConfig.subject.kind === 'environment') {
                         const environment = await readEnvironment(request.sourceConfig.subject.environmentId, signal);
                         const domains = new Map<string, Promise<Awaited<ReturnType<typeof readDomain>>>>();

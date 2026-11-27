@@ -39,10 +39,12 @@ import type { WorkflowCompanionAddTrigger, WorkflowCompanionUndoTrigger } from '
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { WORKFLOW_STARTER_EXAMPLES_V1, type WorkflowStarterExampleSelection, type WorkflowStarterExampleV1 } from '@happier-dev/protocol/workflows/builtins/examples';
 import { getBuiltinWorkflowCatalogV1 } from '@happier-dev/protocol/workflows/builtins/catalog';
+import { bindPullRequestReviewSourceEventV1 } from '@happier-dev/protocol/workflows/builtins/pullRequestReview';
 import type { ArtifactCallerAccessV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { projectNativeJsonValueForTransport, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows';
 import { WorkflowDefinitionV1Schema } from '@happier-dev/protocol/workflows/workflowV1';
+import { supportsWorkflowTriggerPostSummaryV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerPostSummaryV1';
 import { isWorkflowProjectTarget, type WorkflowAuthoringTarget } from '@/sync/domains/workflows/workflowProjectTarget';
 import { resolveWorkspaceTargetForSession } from '@/sync/domains/session/resolveWorkspaceTargetForSession';
 import type { WorkflowArtifactRevisionV1 } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
@@ -1935,10 +1937,19 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
             return { status: 'refused', reason: error instanceof WorkflowTriggerSnapshotRestoreError
                 ? error.code : 'invalid_trigger_snapshot', draftRevision: revision };
         }
-        if (!changeSnapshot({ draft: result.draft, ...settings }, label, committed)) {
+        let nextDraft = result.draft;
+        if (settings?.triggers !== undefined) {
+            const previousTriggers = new Map(current.triggers.rows.map(row => [row.identity.clientId, row.trigger]));
+            const selectedEvent = settings.triggers.rows.find(row => row.trigger?.kind === 'pluginEvent'
+                && !pluginJsonValuesEqual(row.trigger, previousTriggers.get(row.identity.clientId)));
+            if (selectedEvent?.trigger?.kind === 'pluginEvent') {
+                nextDraft = bindPullRequestReviewSourceEventV1(nextDraft, selectedEvent.trigger.eventRef);
+            }
+        }
+        if (!changeSnapshot({ draft: nextDraft, ...settings }, label, committed)) {
             return { status: 'unchanged', draftRevision: revision };
         }
-        setDraft(result.draft);
+        setDraft(nextDraft);
         const incompleteTriggers = settings?.incompleteTriggers;
         if (incompleteTriggers !== undefined) updateIncompleteTriggers(() => incompleteTriggers);
         if (settings?.description !== undefined) setDescription(settings.description);
@@ -2118,8 +2129,8 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
     const onChangeTriggerDraft = useEventCallback((next: React.ComponentProps<typeof WorkflowTriggerSection>['draft']) => {
         editMountedDraft({ expectedDraftRevision: history.getRevision(), settings: { triggers: triggers.captureSnapshot(next) } }, t('workflows.editor.history.triggers'));
     });
-    // More settings' Priority and Concurrency limit are the trigger set's context: one trigger-draft edit, one Undo step.
-    const onChangeTriggerDispatch = useEventCallback((patch: Pick<WorkflowTriggerSetContextDraft, 'priority' | 'maxActiveRuns'>) => {
+    // More settings' Priority, Concurrency limit, and Q11 Post a summary are the trigger set's context: one trigger-draft edit, one Undo step.
+    const onChangeTriggerDispatch = useEventCallback((patch: Pick<WorkflowTriggerSetContextDraft, 'priority' | 'maxActiveRuns' | 'postSummaryToSource'>) => {
         onChangeTriggerDraft(editWorkflowTriggerDraft(triggers.readDraft(), { kind: 'setContext', context: patch }));
     });
     const companionExecution = useMountedActionExecution(activeAccountScope);
@@ -2365,9 +2376,15 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
                         incomplete: triggerIncomplete,
                     } satisfies React.ComponentProps<typeof WorkflowTriggerSection>;
                     const triggerRows = projectWorkflowTriggerRows(triggers.set, triggers.draft);
+                    const dispatch = readWorkflowTriggerDispatch(triggers.set, triggers.draft);
+                    const supportsPostSummary = supportsWorkflowTriggerPostSummaryV1(triggerRows.map((row) => row.trigger));
                     return { onSave: saveFromUi, triggersSummary: triggers.summary,
                         ...(triggerRows.length === 0 ? {} : { triggerDispatch: {
-                            ...readWorkflowTriggerDispatch(triggers.set, triggers.draft), onChange: onChangeTriggerDispatch } }),
+                            priority: dispatch.priority,
+                            maxActiveRuns: dispatch.maxActiveRuns,
+                            ...(supportsPostSummary ? { postSummaryToSource: dispatch.postSummaryToSource } : {}),
+                            onChange: onChangeTriggerDispatch,
+                        } }),
                         onAddTriggerWhen,
                         hasTriggerRow: triggers.hasTriggerRow, canUndoAddedTrigger, onUndoAddedTrigger,
                         resultDecides: formatTriggerResultDecides(triggerRows.map((row) => row.trigger)),

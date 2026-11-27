@@ -241,12 +241,6 @@ describe('saved source finite native producer binding', () => {
         await expect(service.setup({ sourceInstanceId: 'health:subject', sourceConfig,
             heartbeatContributionId: 'health-heartbeat' })).resolves.toEqual(sourceConfig);
         expect(execute).not.toHaveBeenCalled();
-        const automatic = { ...sourceConfig, investigation: { mode: 'auto_start' as const, configuredActionId: 'investigate-production' } };
-        await expect(service.setup({ sourceInstanceId: 'health:subject', sourceConfig: automatic,
-            heartbeatContributionId: 'health-heartbeat' })).rejects.toMatchObject({ code: 'health_check_investigation_unavailable' });
-        available = true;
-        await expect(service.setup({ sourceInstanceId: 'health:subject', sourceConfig: automatic,
-            heartbeatContributionId: 'health-heartbeat' })).resolves.toEqual(automatic);
     });
     it('dispatches a contributed check on its saved observer even when the Environment app has another controller', async () => {
         const environment = createDeploymentEnvironmentHeaderV1({ id: 'environment', serverId: 'server', controllerMachineId: 'app-machine' });

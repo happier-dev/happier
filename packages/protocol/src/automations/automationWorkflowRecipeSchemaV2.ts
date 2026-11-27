@@ -124,6 +124,8 @@ export const AutomationStoredWorkflowDefinitionV2Schema = lazyZodSchema(() => z.
   }))),
   /** Actor-reviewed shared trigger facts; private content never enters summaries. */
   actorConsent: z.optional(WorkflowTriggerActorConsentV1Schema),
+  /** Q11: opt-in summary posting to an authorized connected source (default off). */
+  postSummaryToSource: z.optional(z.boolean()),
   onComplete: z.optional(z.strictObject({ kind: z.literal('originating_session') })),
 }));
 export type AutomationStoredWorkflowDefinitionV2 = z.infer<typeof AutomationStoredWorkflowDefinitionV2Schema>;

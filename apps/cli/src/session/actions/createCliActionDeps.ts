@@ -1,13 +1,12 @@
 import { readActiveMachineId } from '@/daemon/machineIdentity/machineRegistrationStore';
-import { createReviewRecordPortV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
-import { createCliActionAutomationPortV1 } from '@/api/actionAutomations';
 import { refuseDeploymentArtifactRead } from '@/deployments/deploymentFailure';
+import { createCliActionAutomationPortV1 } from '@/api/actionAutomations';
 import { resolveSessionApprovalProfileReferenceV1 } from '@happier-dev/protocol/actions/approvalProfiles';
-import { createCliPrivateLabelActionOpener } from '@/api/privateLabels';
 import { bindApprovalProfileV1 } from '@happier-dev/protocol/actions/approvalProfileArtifactV1';
 import { refreshActiveApprovalProfileCatalog } from '@/settings/profiles/hydrateProfileCatalog';
 import { readHeldSessionApprovalConsents } from '@/settings/profiles/sessionApprovalConsentsCatalog';
 import { loadSessionApprovalConsentsV1 } from '@happier-dev/protocol/actions/sessionApprovalConsentsV1';
+import { createCliPrivateLabelActionOpener } from '@/api/privateLabels';
 import { createActionExecuteFailureError, createActionRefusalDetailsV1, isActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { apiTokenEncryptionAccessRequired } from '@/auth/apiTokenDeploymentCustody';
 import { PROJECT_SOURCE_MOVE_TO_TEAM_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
@@ -214,6 +213,7 @@ import type { resolveSessionCreationAgentTarget } from '@/session/creation/resol
 import type { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 import { openSessionMessageContent, readSessionOwnerLocality } from '@/session/transport/encryption/sessionEncryptionContext';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { createReviewRecordPortV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 import type { resolveBackendTargetFromSessionMetadata } from '@/session/backendTargets/resolveBackendTargetFromSessionMetadata';
 import { createCliActionInventoryDeps } from './cliActionDeps/createCliActionInventoryDeps';
 
@@ -379,7 +379,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
     await params.resolveServerFeaturesSnapshot?.();
   const projectHomeId = params.serverId ?? configuration.activeServerId;
   const actionHomeId = params.serverIdentityId ?? projectHomeId;
-  const localMachineId = params.machineActionDirectTargetTransport?.machineId
+  const localMachineId = params.runtimeActionMachineId ?? params.machineActionDirectTargetTransport?.machineId
     ?? params.sessionSpawnDirectTargetTransport?.machineId;
   const { resolveProjectHomeIdentity, projectHomeAdmission, projectAccountAdmission, admitProjectRows, withProjectHome, projectRowsAuthority, assertProjectRequesterCurrent, readProjectRows, readProjectRequesterArtifact } = createCliProjectAdmission(params, { projectHomeId, actionHomeId, executionRunActionFailure });
 
@@ -520,7 +520,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
     const sources = await read();
     signal?.throwIfAborted();
     if (params.savedSecretOperationContext && !await params.savedSecretOperationContext.isCurrent()) {
-      throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' });
+      throw new RoleActionRefusalV1('scope-retired');
     }
     return sources;
   };
@@ -692,15 +692,6 @@ export function createCliActionDeps(params: CliActionDepsParams,
         const { createConfiguredHealthCheckNotices } = await import('@/deployments/deploymentServiceHealthNotices');
         const health = await createConfiguredHealthCheckNotices({ credentials: params.credentials!, serverId: noticeHomeIdentity,
           serverHttpBaseUrl: todoHomeBaseUrl, machineId: observation.caller.machineId,
-          executeAction: async (action, input, options) => {
-            if (!params.invokeContributedAction) return { ok: false, errorCode: 'target_unavailable', effectAttempted: false };
-            const result = await params.invokeContributedAction({ action, input, context: {
-              surface: 'plugin', serverId: projectHomeId, serverIdentityId: noticeHomeIdentity,
-              actionCaller: observation.actionCaller, signal: options?.signal,
-            },
-              ...(options?.signal ? { signal: options.signal } : {}) });
-            return StrictJsonValueSchema.parse(result);
-          },
           readEnvironment: (environmentId, signal) => readOpenedDeploymentEnvironment(environmentId, { signal }),
           readService: async (subject, signal) => {
             const { MachineServicesDetailResultV1Schema } = await import('@happier-dev/protocol/actions/specs/machine/services');
@@ -874,7 +865,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
       prepareArtifactRecipients: (artifactIds, prepareContext) =>
         withProjectHome(() => roleArtifactStore.prepareRecipients(artifactIds, prepareContext.signal)) };
   };
-  const transcriptDeps = createCliTranscriptActionDeps(params, { resolveServerRequestHeaders });
+  const transcriptDeps = createCliTranscriptActionDeps(params, { resolveServerRequestHeaders, projectHomeAdmission, withProjectHome });
   const filesystemDeps = createCliFilesystemActionDeps(params, { callMachineAction, isMachineActionServerScopeCurrent, readRecord });
   const awarenessDeps = createCliAwarenessActionDeps(params, { resolveServerRequestHeaders, readServerFeaturesSnapshot, isSameActionHomeId });
   const { actionDeps: executionRunActionDeps, callDetachedExecutionRunRpc, readExecutionRunTransportMachineId } = createCliExecutionRunActionDeps(params, {
@@ -1336,6 +1327,10 @@ export function createCliActionDeps(params: CliActionDepsParams,
         provisionerAccount: { token: params.token, credentials: params.credentials, serverUrl: todoHomeBaseUrl },
         managedMachineAction: (readEffectiveDeps?.() ?? actionDeps).managedMachineAction,
         readSessionMachineId: async (target, context) => {
+          if (target.sessionId === readCliActionBoundSessionId(params.sessionId)
+            && !context.expectedSessionAddress) {
+            return await resolveCurrentSessionValue('machineId', context.signal);
+          }
           const transport = await resolveTransportForSession(target.sessionId, context.signal,
             { actionId: request.actionId, context }, context.expectedSessionAddress);
           if (!transport.ok) return executionRunActionFailure(transport.code);
@@ -1629,30 +1624,30 @@ export function createCliActionDeps(params: CliActionDepsParams,
           } }));
       },
       readSession: async (ref, context) => {
-        if (!params.credentials) throw Object.assign(new Error('not_authenticated'), { code: 'not_authenticated' });
+        if (!params.credentials) throw createActionExecuteFailureError({ ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' });
         const templateParentActionId = readAdmittedBotTemplateParentActionIdV1(context);
         const requesterAccountId = templateParentActionId
           && context.externalActionExecutionAuthorization && 'credentialId' in context.externalActionExecutionAuthorization.binding
           ? context.externalActionExecutionAuthorization.binding.accountId : homeAccountId;
         if (!homeAccountId || await (templateParentActionId ? projectHomeAdmission : projectAccountAdmission)(ref.serverId, context)) {
-          throw Object.assign(new Error('session_target_unavailable'), { code: 'session_target_unavailable' });
+          throw createActionExecuteFailureError({ ok: false, errorCode: 'session_target_unavailable', error: 'session_target_unavailable' });
         }
         const read = async () => {
           const { resolveSessionTransportContext } = await import("@/session/services/resolveSessionTransportContext");
           const target = await resolveSessionTransportContext({ reason: 'session-action', credentials: params.credentials!, idOrPrefix: ref.sessionId,
             serverFeaturesSnapshot: await readServerFeaturesSnapshot(),
             signal: context.signal, resolveAuthorizationHeaders: request => resolveServerRequestHeaders(context, 'memory.remember', request) });
-          if (!target.ok || target.sessionId !== ref.sessionId) throw Object.assign(new Error('session_target_unavailable'), { code: 'session_target_unavailable' });
+          if (!target.ok || target.sessionId !== ref.sessionId) throw createActionExecuteFailureError({ ok: false, errorCode: 'session_target_unavailable', error: 'session_target_unavailable' });
           // Legacy metadata is readable by recipients too. Only an explicit
           // canonical owner role can authorize this captured Account's private context.
           const raw = target.rawSession;
           if (raw.effectiveAccess === undefined && raw.share === undefined
             || readSessionAccessProjectionRoleV1(raw) !== 'owner'
             || raw.ownerAccountId !== undefined && raw.ownerAccountId !== requesterAccountId) {
-            throw Object.assign(new Error('session_target_unavailable'), { code: 'session_target_unavailable' });
+            throw createActionExecuteFailureError({ ok: false, errorCode: 'session_target_unavailable', error: 'session_target_unavailable' });
           }
           const metadata = readTransportSessionOwnerMetadata(target);
-          if (!metadata) throw Object.assign(new Error('session_target_unavailable'), { code: 'session_target_unavailable' });
+          if (!metadata) throw createActionExecuteFailureError({ ok: false, errorCode: 'session_target_unavailable', error: 'session_target_unavailable' });
           const machineId = readSessionOwnerLocality({ metadata, rawSession: target.rawSession })?.machineId;
           return { metadata, revision: target.rawSession.metadataVersion, ...(machineId ? { machineId } : {}) };
         };
@@ -1879,9 +1874,9 @@ export function createCliActionDeps(params: CliActionDepsParams,
       callMachineAction,
       resolveAuthorizationHeaders: (actionId, context, request) => resolveServerRequestHeaders(context, actionId, request),
     }) : {}),
-    projectsSetupSet: projectDeps.projectsSetupSet,
     ...createCliProjectSessionDefaultsActionDeps({ projectAccountAdmission, projectHomeAdmission, projectRowsAuthority, withProjectHome, resolveProjectHomeIdentity },
       () => readEffectiveDeps?.() ?? actionDeps),
+    projectsSetupSet: projectDeps.projectsSetupSet,
     projectsOrganizationUpdate: projectDeps.projectsOrganizationUpdate,
     projectsVisibilitySet: projectDeps.projectsVisibilitySet,
     projectsList: projectDeps.projectsList,

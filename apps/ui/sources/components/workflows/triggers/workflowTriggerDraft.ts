@@ -1,5 +1,5 @@
 import type { PluginJsonSchemaV2 } from '@happier-dev/protocol/plugins/contributions/publicTypes';
-import type { WorkflowTriggerEventDeclarationV1 } from '@happier-dev/protocol/workflows/workflowTriggerEventReferenceV1';
+import { createWorkflowActionTriggerEventDeclarationV1, type WorkflowTriggerEventDeclarationV1 } from '@happier-dev/protocol/workflows/workflowTriggerEventReferenceV1';
 import { AutomationTriggerIdSchema, type AutomationTriggerId } from '@happier-dev/protocol/automations/automationTriggerIdentity';
 import { sameStrictJsonValue, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { AutomationTriggerDefinition, AutomationTriggerDefinitionInput } from '@happier-dev/protocol/automations/automationTriggerDefinition';
@@ -33,16 +33,19 @@ export type WorkflowTriggerSetContextDraft = Readonly<{
     visibleTeamId?: string | null;
     priority?: AutomationV3RulePriority;
     maxActiveRuns?: number | null;
+    postSummaryToSource?: boolean;
 }>;
 
 /** How the set's Runs queue, as saved or as edited: Normal and uncapped when the set never chose. */
 export function readWorkflowTriggerDispatch(set: WorkflowTriggerSetV1 | null, draft: WorkflowTriggerDraft): Readonly<{
     priority: AutomationV3RulePriority;
     maxActiveRuns: number | null;
+    postSummaryToSource: boolean;
 }> {
     return {
         priority: draft.context?.priority ?? set?.priority ?? 'normal',
         maxActiveRuns: draft.context?.maxActiveRuns === undefined ? set?.maxActiveRuns ?? null : draft.context.maxActiveRuns,
+        postSummaryToSource: draft.context?.postSummaryToSource ?? set?.context?.postSummaryToSource ?? false,
     };
 }
 
@@ -127,11 +130,13 @@ export function captureWorkflowTriggerSnapshot(
     const visibleTeamId = draft.context?.visibleTeamId === undefined ? set?.context?.visibleTeamId : draft.context.visibleTeamId;
     const priority = draft.context?.priority ?? set?.priority;
     const maxActiveRuns = draft.context?.maxActiveRuns === undefined ? set?.maxActiveRuns : draft.context.maxActiveRuns;
+    const postSummaryToSource = draft.context?.postSummaryToSource ?? set?.context?.postSummaryToSource;
     return { rows, project: draft.context?.project ?? set?.project ?? null, inputs: draft.context?.inputs ?? set?.context?.inputs ?? {},
         ...(roleOverrides === undefined ? {} : { roleOverrides: [...roleOverrides] }),
         ...(visibleTeamId === undefined ? {} : { visibleTeamId }),
         ...(priority === undefined ? {} : { priority }),
-        ...(maxActiveRuns === undefined ? {} : { maxActiveRuns }) };
+        ...(maxActiveRuns === undefined ? {} : { maxActiveRuns }),
+        ...(postSummaryToSource === undefined ? {} : { postSummaryToSource }) };
 }
 
 /** Rebase a history snapshot onto the current saved set after any successful writes. */
@@ -167,6 +172,7 @@ export function restoreWorkflowTriggerSnapshot(set: WorkflowTriggerSetV1 | null,
     if ((snapshot.visibleTeamId ?? null) !== (set?.context?.visibleTeamId ?? null)) context.visibleTeamId = snapshot.visibleTeamId ?? null;
     if ((snapshot.priority ?? 'normal') !== (set?.priority ?? 'normal')) context.priority = snapshot.priority ?? 'normal';
     if ((snapshot.maxActiveRuns ?? null) !== (set?.maxActiveRuns ?? null)) context.maxActiveRuns = snapshot.maxActiveRuns ?? null;
+    if ((snapshot.postSummaryToSource ?? false) !== (set?.context?.postSummaryToSource ?? false)) context.postSummaryToSource = snapshot.postSummaryToSource ?? false;
     return { adds, updates, removes: (set?.triggers ?? []).filter((saved) => !retained.has(saved.id)).map((saved) => saved.id),
         ...(Object.keys(context).length ? { context } : {}) };
 }
@@ -298,6 +304,11 @@ export function projectWorkflowTriggerEvents(set: WorkflowTriggerSetV1 | null, d
     const addedById = new Map(draft.adds.map(add => [add.clientId, add]));
     for (const row of projectWorkflowTriggerRows(set, draft)) {
         const trigger = row.trigger;
+        if (trigger.kind === 'action' && 'phase' in trigger) {
+            triggerEvents.push(createWorkflowActionTriggerEventDeclarationV1(trigger.phase));
+            intendedTriggers.push({ kind: trigger.kind, phase: trigger.phase, actionIds: trigger.actionIds });
+            continue;
+        }
         if (trigger.kind !== 'pluginEvent') continue;
         const edit = row.kind === 'saved' ? draft.updates[row.triggerId] : addedById.get(row.clientId);
         const saved = row.kind === 'saved' ? savedById.get(row.triggerId) : undefined;
@@ -383,6 +394,7 @@ export async function saveWorkflowTriggerDraft(params: Readonly<{
                     ...(context.visibleTeamId === undefined ? {} : { visibleTeamId: context.visibleTeamId }),
                     ...(context.priority === undefined ? {} : { priority: context.priority }),
                     ...(context.maxActiveRuns === undefined ? {} : { maxActiveRuns: context.maxActiveRuns }),
+                    ...(context.postSummaryToSource === undefined ? {} : { postSummaryToSource: context.postSummaryToSource }),
                 },
             });
             set = receipt.set;
@@ -408,6 +420,7 @@ export async function saveWorkflowTriggerDraft(params: Readonly<{
                 ...(set === null && context?.visibleTeamId !== undefined ? { visibleTeamId: context.visibleTeamId } : {}),
                 ...(set === null && context?.priority !== undefined ? { priority: context.priority } : {}),
                 ...(set === null && context?.maxActiveRuns !== undefined ? { maxActiveRuns: context.maxActiveRuns } : {}),
+                ...(set === null && context?.postSummaryToSource !== undefined ? { postSummaryToSource: context.postSummaryToSource } : {}),
             });
             set = result.set;
             params.onAcknowledged?.({ kind: 'add', ...add },

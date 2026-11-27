@@ -150,9 +150,9 @@ it('explains why Environment alert defaults failed and retries without losing th
   }) })]);
 });
 
-it('prefills first Configure alert defaults without losing the retained automatic investigation', async () => {
+it('prefills first Configure alert defaults without exposing legacy auto_start investigation', async () => {
   const calls: unknown[] = [];
-  const investigation = { mode: 'auto_start', configuredActionId: 'saved-investigation' };
+  const investigation = { mode: 'inbox' as const };
   const alerts = { channels: [{ channelId: 'saved-channel' }], phases: ['open'] };
   let finishPreview: (value: JsonValue) => void = () => { throw new Error('Preview transport not initialized'); };
   const pendingPreview = new Promise<JsonValue>(resolve => { finishPreview = resolve; });
@@ -167,7 +167,7 @@ it('prefills first Configure alert defaults without losing the retained automati
     sourceConfig: { v: 1, subject, investigation, alerts } }); });
   expect((await page.getByRole('button', { name: 'Add destination' })).state?.disabled ?? false).toBe(false);
   await expect(page.getByRole('radio', { name: 'Failure only' })).resolves.toBeDefined();
-  expect((await page.getAllByRole('radio')).find(target => target.name?.startsWith('Start investigation'))).toBeDefined();
+  expect((await page.getAllByRole('radio')).find(target => target.name?.startsWith('Start investigation'))).toBeUndefined();
   expect(calls).toEqual([expect.objectContaining({ action: { pluginId: MACHINE_SERVICES_PLUGIN_ID, localId: 'health/setup' },
     input: expect.objectContaining({ mode: 'preview', subject }) })]);
   expect(settled).toEqual([]);
@@ -642,15 +642,10 @@ it('reveals the heartbeat address only on request and rotates it through the con
   expect(document.body.textContent).not.toContain('secret-capability');
 });
 
-it('keeps automatic investigation as an explicit source-local choice when adding a check', async () => {
-  const investigation = { mode: 'auto_start', configuredActionId: 'investigate-production' };
+it('omits legacy auto_start investigation choice and settles inbox mode when adding a check', async () => {
+  const investigation = { mode: 'inbox' as const };
   const { page, settled } = await mount({ initialInput: { v: 1, subject } });
-  await act(async () => {
-    const automatic = (await page.getAllByRole('radio')).find(target => target.name?.startsWith('Start investigation'));
-    expect(automatic).toBeDefined();
-    await page.press(automatic!);
-  });
-  await type('Configured investigation', investigation.configuredActionId);
+  expect((await page.getAllByRole('radio')).find(target => target.name?.startsWith('Start investigation'))).toBeUndefined();
   await act(async () => {
     const tcp = (await page.getAllByRole('radio')).find(target => target.name?.startsWith('TCP'));
     expect(tcp).toBeDefined();
@@ -805,7 +800,7 @@ it.each([false, true])('saves and reopens Environment notification choices with 
     binding: { kind: 'healthCheck' }, config: { host: 'app.example.test', port: 443 },
     periodMs: 60000, consecutiveFailuresBeforeAlerting: 3 };
   const alerts = { channels: [{ channelId: 'saved-slack', destination: { connectionId: 'production' } }], phases: ['open'] };
-  const investigation = { mode: 'auto_start', configuredActionId: 'production-triage' };
+  const investigation = { mode: 'inbox' as const };
   const { page, settled } = await mount({ initialInput: { v: 1, subject: environment } }, {
     selectActionInput: async () => ({ kind: 'notificationDestination', channel: alerts.channels[0]! }),
   }, async () => ({
@@ -865,7 +860,7 @@ it('edits a saved check in its own sheet with one Save and a Cancel that writes 
   expect((await names()).some(name => name?.startsWith('Saved check'))).toBe(false);
   expect(await names()).not.toContain('Add check');
   expect(await names()).not.toContain('More checks');
-  expect((await page.getAllByRole('radio')).some(tile => tile.name?.startsWith('TCP'))).toBe(false);
+  expect(await page.queryByRole('radio', { name: 'TCP' })).toBeUndefined();
   await act(async () => { await page.press(await page.getByRole('button', { name: 'Cancel' })); });
   expect(settled).toEqual([{ kind: 'cancelled' }]);
 });

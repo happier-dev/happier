@@ -80,7 +80,7 @@ describe('explicit saved heartbeat enrollment', () => {
             checkId: 'tcp', kind: { pluginId: caller.pluginId, localId: 'tcp' }, binding: { kind: 'healthCheck' },
             config: { host: 'service.example', port: 443 }, periodMs: 1000, consecutiveFailuresBeforeAlerting: 1 }] };
         try {
-            const investigation = { mode: 'auto_start', configuredActionId: 'saved-investigation' };
+            const investigation = { mode: 'inbox' as const };
             expect(await kit.invokeAction('health/setup', { v: 1, mode: 'preview', subject: source.subject, investigation }))
                 .toMatchObject({ mode: 'preview', destinationSelectionContext: { serverId: 'server', machineId: 'observer' },
                     sourceConfig: { subject: source.subject, investigation, alerts: { channels, phases: ['open', 'recovered'] } } });

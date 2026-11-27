@@ -16,8 +16,8 @@ import recorded from '../fixtures/issuesListPage2.json' with { type: 'json' };
 type CheckpointRow = { id: string; sourceInstanceId: string; checkpoint: Record<string, JsonValue> };
 
 describe('Sentry issue observer through plugin activation', () => {
-  it.each(['inbox', 'missingChoice', 'catalogUnavailable', 'unavailable', 'selectionRequired', 'uncertain', 'throws', 'approval', 'failed', 'started', 'outcomeNoticeUnavailable'] as const)(
-    'observes one issue with visible automatic investigation outcome (%s) and quiet equal/replay cycles', async investigationOutcome => {
+  it.each(['inbox'] as const)(
+    'observes one issue in %s mode with quiet equal/replay cycles and zero direct legacy auto_start handoffs', async investigationOutcome => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-10-27T00:00:00.000Z'));
     const controller = new AbortController();
@@ -33,9 +33,8 @@ describe('Sentry issue observer through plugin activation', () => {
         v: 1, organizationId: '7701', projectScope: { kind: 'allAccessible' }, environmentScope: { kind: 'all' },
       }) },
     } as const;
-    const automatic = investigationOutcome !== 'inbox';
-    const sourceConfig = { v: 1, instance, checkPeriodMs: 120_000, investigation: automatic
-      ? { mode: 'auto_start', configuredActionId: 'investigate' } : { mode: 'inbox' } };
+    const automatic = false;
+    const sourceConfig = { v: 1, instance, checkPeriodMs: 120_000, investigation: { mode: 'inbox' as const } };
     const materialization = { pluginId: 'happier.sentry', machineId: 'machine-1', materializationId: 'materialization-1' };
     const definition = {
       automationId: 'automation-1', triggerId: 'trigger-1', triggerRevision: 1,

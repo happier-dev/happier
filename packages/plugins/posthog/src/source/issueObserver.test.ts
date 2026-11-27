@@ -266,24 +266,17 @@ describe('PostHog issue observer through plugin activation', () => {
         state: 'resolved', occurredAt: cancelledObservedAt,
       } }]);
       await vi.advanceTimersByTimeAsync(1_000);
-      const automatic = { ...sourceConfig, investigation: { mode: 'auto_start', configuredActionId: 'investigate' } };
       await expect(setup?.({ sourceInstanceId: instance.instance.sourceInstanceId,
-        investigation: { mode: 'auto_start', configuredActionId: 'missing' } }, context(controller.signal)))
-        .rejects.toMatchObject({ code: 'triage_issue_investigation_unavailable' });
-      expect(await setup?.({ sourceInstanceId: instance.instance.sourceInstanceId, investigation: automatic.investigation }, context(controller.signal)))
-        .toMatchObject({ sourceConfig: automatic });
-      expect(catalogTasks).toEqual(['investigate', 'investigate']);
-      definition = { ...definition, sourceConfig: automatic };
+        investigation: { mode: 'auto_start', configuredActionId: 'investigate' } }, context(controller.signal)))
+        .rejects.toThrow();
+      expect(await setup?.({ sourceInstanceId: instance.instance.sourceInstanceId }, context(controller.signal)))
+        .toMatchObject({ sourceConfig });
       await cycle(); // The cancelled recovery is now observed and committed.
       expect(attempts.at(-1)?.occurredAt).toBe(cancelledObservedAt);
       status = 'active';
       await cycle();
       await cycle();
-      expect(handoffs).toMatchObject([{ task: 'investigate', configuredActionId: 'investigate', delivery: 'send',
-        context: { kind: 'entry', entry: { sourceInstanceId: instance.instance.sourceInstanceId } },
-        evidence: [{ kind: 'alertEntry', entry: { sourceInstanceId: instance.instance.sourceInstanceId } }],
-      }]);
-      expect(catalogTasks).toEqual(['investigate', 'investigate', 'investigate']);
+      expect(handoffs).toHaveLength(0);
       for (const reason of ['filtered', 'outsideFreshness'] as const) {
         status = 'resolved';
         await cycle();
@@ -292,7 +285,7 @@ describe('PostHog issue observer through plugin activation', () => {
         const noticesBefore = send.mock.calls.length;
         await cycle();
         expect(send).toHaveBeenCalledTimes(noticesBefore + 1);
-        expect(handoffs).toHaveLength(1);
+        expect(handoffs).toHaveLength(0);
         expect([...rows.values()][0]?.value.checkpoint).not.toHaveProperty('pending');
         const writesAfterSkip = batch.mock.calls.length;
         await cycle();
@@ -319,7 +312,7 @@ describe('PostHog issue observer through plugin activation', () => {
       await cycle();
       expect(attempts.at(-1)?.occurredAt).toBe(winningObservedAt);
       expect(sourceObservedDeltas.at(-1)).toBe(0);
-      expect(handoffs).toHaveLength(2);
+      expect(handoffs).toHaveLength(0);
       expect([...rows.values()][0]?.value.checkpoint).not.toHaveProperty('pending');
       admissionOutcome = 'admitted';
       mixedSubscribers = true;
@@ -327,7 +320,7 @@ describe('PostHog issue observer through plugin activation', () => {
       await cycle();
       status = 'active';
       await cycle();
-      expect(handoffs).toHaveLength(3); // One actual admission, despite another subscriber's filtered outcome.
+      expect(handoffs).toHaveLength(0);
       status = 'resolved';
       admissionOutcome = 'admitted';
       await cycle();
@@ -347,7 +340,7 @@ describe('PostHog issue observer through plugin activation', () => {
       await cycle();
       expect(attempts.at(-1)?.occurredAt).toBe(replacementObservedAt);
       expect(batch).toHaveBeenCalledTimes(replacementWrites + 1);
-      expect(handoffs).toHaveLength(3);
+      expect(handoffs).toHaveLength(0);
       expect([...rows.values()][0]?.value.checkpoint).not.toHaveProperty('pending');
       // The provider's status may revert while the effective cursor is still
       // active. A second resolve at the SAME native time is a distinct occurrence,

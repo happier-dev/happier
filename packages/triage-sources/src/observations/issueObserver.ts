@@ -210,26 +210,6 @@ export function createTriageIssueEventSourceAdapterV1(provider: TriageIssueObser
       if (!await sourceIsCurrent(input)) return;
       const storage = input.context.services.storage.account;
       if (!storage) throw new PluginError({ code: 'triage_issue_checkpoint_unavailable', message: 'Account checkpoint storage is unavailable.' });
-      // Project this finite attempt once; do not rescan every observation's
-      // admission metadata for every changed issue, or read it for Inbox mode.
-      const admittedOccurrences = new Set<string>();
-      if (input.source.investigation.mode === 'auto_start' && input.disposition?.kind === 'checkpointSafe') {
-        const selectorKey = (selector: Pick<typeof input.definition, 'automationId' | 'triggerId' | 'triggerRevision' | 'sourceSelectorId'>) =>
-          JSON.stringify([selector.automationId, selector.triggerId, selector.triggerRevision, selector.sourceSelectorId]);
-        const selectedDefinitions = new Set(input.definitions.map(selectorKey));
-        for (const admission of input.disposition.admissions ?? []) {
-          if (admission.observation.eventRef.pluginId === input.definition.eventRef.pluginId
-            && admission.observation.eventRef.localId === input.definition.eventRef.localId
-            && admission.observation.sourceInstanceId === input.definition.sourceInstanceId
-            && admission.observation.sourceContractVersion === input.definition.sourceContractVersion
-            && (admission.result.kind === 'admitted' || admission.result.kind === 'rejoined')
-            && selectedDefinitions.has(selectorKey(admission.definition))) {
-            admittedOccurrences.add(admission.observation.occurrenceId);
-          }
-        }
-      }
-      const choices = createTriageIssueInvestigationChoiceReaderV1(input.context, input.source.instance.instance.source);
-      const investigation = input.source.investigation;
       for (const change of input.checkpoint.changes) {
         input.context.signal.throwIfAborted();
         if (change.transition && change.occurrenceId) {
@@ -238,8 +218,6 @@ export function createTriageIssueEventSourceAdapterV1(provider: TriageIssueObser
             transition: change.transition, occurrenceId: change.occurrenceId, entryRef: change.entryRef,
             title: change.present.snapshot.title,
             ...(change.present.locator.webUrl === undefined ? {} : { webUrl: change.present.locator.webUrl }),
-            ...(investigation.mode === 'auto_start' && admittedOccurrences.has(change.occurrenceId)
-              ? { autoStart: { configuredActionId: investigation.configuredActionId, choices } } : {}),
           });
         }
         input.context.signal.throwIfAborted();
@@ -256,4 +234,4 @@ export function createTriageIssueEventSourceAdapterV1(provider: TriageIssueObser
   };
 }
 
-import { createTriageIssueInvestigationChoiceReaderV1, publishTriageIssueTransitionV1 } from './issueTransition.js';
+import { publishTriageIssueTransitionV1 } from './issueTransition.js';

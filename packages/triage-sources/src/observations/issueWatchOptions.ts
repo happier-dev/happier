@@ -2,11 +2,8 @@ import { PluginError, type DefinePluginInput } from '@happier-dev/plugin-sdk';
 import type { PluginDynamicResourceRuntime } from '@happier-dev/plugin-sdk/resources';
 import {
   readTriageConfiguredSourceDisplayLabelV1,
-  TRIAGE_READ_SESSION_HANDOFF_CHOICES_ACTION_REF_V1,
   TRIAGE_SOURCES_READ_CONFIGURED_ACTION_REF_V1,
-  TriageActionIdV1Schema,
   TriageReadConfiguredSourceInstancesResultV1Schema,
-  TriageSessionHandoffChoicesV1Schema,
   TriageSourceInstanceIdV1Schema,
 } from '@happier-dev/triage-protocol/v1';
 import type { PluginContributionIdentity } from '@happier-dev/plugin-sdk/manifest';
@@ -27,7 +24,6 @@ function optionsResource(read: ReadOptions) {
 export function createTriageIssueWatchOptionsV1(source: PluginContributionIdentity) {
   const ids = triageIssueWatchOptionIdsV1(source);
   const sourceResource = `options/${ids.source}`;
-  const investigationResource = `options/${ids.investigation}`;
   const resources = {
     [sourceResource]: optionsResource(async ({ readAction, signal }) => {
       const result = await readAction(TRIAGE_SOURCES_READ_CONFIGURED_ACTION_REF_V1, { v: 1, source, purpose: 'issueWatch' }, { signal });
@@ -46,24 +42,10 @@ export function createTriageIssueWatchOptionsV1(source: PluginContributionIdenti
         destination: setup.destination,
       } }) });
     }),
-    [investigationResource]: optionsResource(async ({ query, readAction, signal }) => {
-      const selected = TriageSourceInstanceIdV1Schema.safeParse(query?.draftInput?.sourceInstanceId);
-      if (!selected.success) {
-        throw new PluginError({ code: 'missing_option_dependency', details: { requiredDraftPath: 'sourceInstanceId' } });
-      }
-      const result = await readAction(TRIAGE_READ_SESSION_HANDOFF_CHOICES_ACTION_REF_V1,
-        { v: 1, projection: 'sessionHandoff', task: 'investigate', source }, { signal });
-      if (!result.ok) throw new PluginError({ code: result.errorCode });
-      const read = TriageSessionHandoffChoicesV1Schema.parse(result.result);
-      if (read.kind !== 'choices') throw new PluginError({ code: read.reason });
-      return JSON.stringify({ options: read.actions.map(({ label, selection }) => ({ value: selection.configuredActionId, label })) });
-    }),
   } satisfies NonNullable<DefinePluginInput['resources']>;
   const inputTypes = {
     [ids.source]: { title: 'Source', semantic: 'triageConfiguredSource',
       valueSchema: TriageSourceInstanceIdV1Schema.jsonSchema, options: { resource: sourceResource } },
-    [ids.investigation]: { title: 'Configured investigation', semantic: 'triageConfiguredInvestigation',
-      valueSchema: TriageActionIdV1Schema.jsonSchema, options: { resource: investigationResource } },
   } satisfies NonNullable<DefinePluginInput['inputTypes']>;
   return { resources, inputTypes };
 }

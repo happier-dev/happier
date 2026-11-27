@@ -2,6 +2,7 @@ import type { WorkflowTriggerEventIdentityV1 } from '@happier-dev/protocol/workf
 import { randomUUID } from 'node:crypto';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { WorkflowStepProgress } from './stepProgress';
+import { postWorkflowRunSummaryToAuthorizedSource, type WorkflowPostSummaryEventOccurrence } from './postSummaryToSource';
 
 import { WorkflowTargetUnavailableDiagnosticV1Schema, type WorkflowTargetUnavailableDiagnosticV1 } from '@happier-dev/protocol/workflows/workflowTargetUnavailableReasonV1';
 import { applyWorkflowInvocationFactV1, classifyWorkflowHoldV1, isTerminalWorkflowInvocationLifecycleV1, WorkflowAuthoredInputV1Schema, WorkflowCheckpointEnvelopeV1Schema, WorkflowProgressEnvelopeV1Schema, WorkflowInvocationFactV1Schema, WorkflowInvocationFactResultV1Schema, WorkflowRunInvocationIndexV1Schema, WorkflowRunSummaryV1Schema, WorkflowOperationErrorCodeV1Schema, WORKFLOW_UNSETTLED_INVOCATION_LIFECYCLES_V1, WORKFLOW_INVOCATION_LIFECYCLES_V1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
@@ -18,6 +19,7 @@ import { openAutomationTemplateStoredV1 } from '@happier-dev/protocol/automation
 import { convertLegacyAutomationRecipeToInlineWorkflowV1 } from '@happier-dev/protocol/automations/automationLegacyWorkflowV1';
 import { WorkflowAcceptedSnapshotV1Schema, WorkflowResolvedInputsV1Schema, type WorkflowDefinitionMetadataV1 } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 import { materializeWorkflowAcceptedSnapshotV1, workflowRequiresMachineStartCapacityV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
+import { projectWorkflowActionTriggerEventOccurrenceV1 } from '@happier-dev/protocol/workflows/workflowTriggerEventReferenceV1';
 import type { WorkflowTargetUnavailableReasonV1 } from '@happier-dev/protocol/workflows/workflowTargetUnavailableReasonV1';
 import { readWorkflowInvocationMembersV1, readWorkflowInvocationRootV1 } from '@happier-dev/protocol/workflows';
 import { resolveWorkflowDefinitionRefV1 } from '@happier-dev/protocol/workflows/workflowDefinitionResolverV1';
@@ -1513,6 +1515,7 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
     }
     let resolvedAcceptedEnvelope = claim.acceptedEnvelope;
     let workspaceSource: import('@/workspaces/source/workspaceSource').WorkspaceSource | undefined;
+    let postSummaryRequest: Readonly<{ enabled: boolean; occurrence: WorkflowPostSummaryEventOccurrence }> | undefined;
     // Admission happens once. A reclaim/Continue uses the same immutable
     // snapshot and recipient key custody as a direct Run, not the live source.
     if (claim.definitionEnvelope !== undefined && resolvedAcceptedEnvelope === undefined) {
@@ -1598,8 +1601,18 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
           kind: 'automation_trigger_evidence', encryption: accountEncryption });
       const pluginEvent = claim.automationCause.kind === 'trigger' && claim.automationCause.triggerKind === 'pluginEvent'
         ? AutomationRunPluginEventTriggerEvidenceV1Schema.safeParse(evidenceContent) : undefined;
-      const eventOccurrence = pluginEvent?.success && matchesCauseEvidence(claim.automationCause, pluginEvent.data)
+      const pluginEventOccurrence = pluginEvent?.success && matchesCauseEvidence(claim.automationCause, pluginEvent.data)
         ? { event: pluginEvent.data.eventRef, payload: pluginEvent.data.payload } : undefined;
+      if (storedDefinition.data.postSummaryToSource === true && pluginEvent?.success && matchesCauseEvidence(claim.automationCause, pluginEvent.data)) {
+        postSummaryRequest = {
+          enabled: true,
+          occurrence: {
+            eventRef: pluginEvent.data.eventRef,
+            sourceInstanceId: pluginEvent.data.sourceInstanceId,
+            payload: pluginEvent.data.payload,
+          },
+        };
+      }
       let source: WorkflowTriggerClaimSource | null;
       try {
         if (storedDefinition.data.deploymentPreview) {
@@ -1616,7 +1629,7 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
         } else {
           source = await resolveWorkflowTriggerClaimSource({
             target: target.target, credentials: params.execution.credentials, encryption: accountEncryption,
-            ...(eventOccurrence ? { event: eventOccurrence.event } : {}),
+            ...(pluginEventOccurrence ? { event: pluginEventOccurrence.event } : {}),
             ...(claim.signal ? { signal: claim.signal } : {}),
           });
         }
@@ -1714,6 +1727,9 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
       const runMetadata = (source.kind === 'inline' ? undefined : source.metadata)
         ?? (automationTitle ? { title: automationTitle } : undefined);
       let created: Awaited<ReturnType<typeof materializeWorkflowAcceptedSnapshotV1>>;
+      const eventOccurrence = actionEvidence
+        ? projectWorkflowActionTriggerEventOccurrenceV1(actionEvidence)
+        : pluginEventOccurrence;
       try {
         created = await materializeWorkflowAcceptedSnapshotV1({
           definition: source.definition,
@@ -2045,13 +2061,13 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
         : null;
     };
     const freshConversation = createProductionFreshWorkflowSessionConversation({
-      ...(accepted.workspaceTarget.projectFiles ? { projectFiles: accepted.workspaceTarget.projectFiles } : {}),
       credentials: params.execution.credentials,
       serverId: params.execution.serverId,
       machineId: params.machineId,
       workDepth: accepted.workDepth,
       originRunId: claim.runId,
       ...(accepted.workspaceTarget.sessionPlacement ? { sessionPlacement: accepted.workspaceTarget.sessionPlacement } : {}),
+      ...(accepted.workspaceTarget.projectFiles ? { projectFiles: accepted.workspaceTarget.projectFiles } : {}),
       ...(accepted.origin?.originSessionId ? { originSessionId: accepted.origin.originSessionId } : {}),
       ...(accepted.origin?.discussion ? { discussionOrigin: accepted.origin.discussion } : {}),
       machineAdmissionTransport: params.execution.machineAdmissionTransport,
@@ -2564,6 +2580,29 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
         }
       }
       durableStore.applyParentTransition(committed, rootTerminal);
+      if (terminalState === 'succeeded' && postSummaryRequest?.enabled) {
+        try {
+          const context = buildWorkflowActionContext({ ...accepted, runId: claim.runId }, params.requesterWorkAttributionV1);
+          const outcome = await postWorkflowRunSummaryToAuthorizedSource({
+            enabled: true,
+            occurrence: postSummaryRequest.occurrence,
+            finalResult: result.finalResult,
+            actionExecutor: params.execution.detachedRun.actionExecutor,
+            context: { ...context, ...(claim.signal ? { signal: claim.signal } : {}) },
+          });
+          if (outcome.kind === 'failed') {
+            logger.warnLocalFile('[WORKFLOW] Post summary to source failed', {
+              runId: claim.runId, code: outcome.code,
+            });
+          }
+        } catch (error) {
+          if (!claim.signal?.aborted) {
+            logger.warnLocalFile('[WORKFLOW] Post summary to source threw', {
+              runId: claim.runId, error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+      }
       await params.onCommittedTransition?.({ run: committed, result });
       return result;
     }
