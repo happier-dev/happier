@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { createHash, randomUUID } from "node:crypto";
 import tweetnacl from 'tweetnacl';
+import type { Socket } from 'socket.io';
 import {
     AutomationRunCauseSchema,
     deriveSessionCreationTagV1,
@@ -17,6 +18,7 @@ import { decodeBase64 } from 'privacy-kit';
 import { AUTOMATION_TEMPLATE_V02_EXISTING_PLAIN, AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED,
     AUTOMATION_TEMPLATE_V02_PLAIN, AUTOMATION_TEMPLATE_V02_ENCRYPTED } from '../../../../../packages/protocol/src/automations/automationTemplateV02.testFixtures';
 
+import { eventRouter, type ClientConnection, type UpdatePayload } from "@/app/events/eventRouter";
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
@@ -28,7 +30,9 @@ import { admitAutomationRunTx } from './automationRunAdmissionService';
 import { observePrismaRequests } from "@/testkit/observeSqliteRequests";
 import { projectNativeJsonValueForTransport } from "@happier-dev/protocol/json/strictJsonValue";
 import { sameAutomationAccountContentIdentityV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
-import { admitWorkflowRun } from '@/app/workflows/workflowRunService';
+import { admitWorkflowRun, transitionWorkflowRun } from '@/app/workflows/workflowRunService';
+import { sealWorkflowCheckpointStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1,
+    serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows';
 
 import {
     claimAutomationRun,
@@ -252,6 +256,125 @@ async function readSignedClaimReceiptRow(params: Readonly<{
 
 describe("automationClaimService (integration)", () => {
     let harness: Awaited<ReturnType<typeof createDatabaseIntegrationHarness>>;
+
+    it("claims High before older Normal runs and releases a capped rule's queued work after settlement", async () => {
+        const machineId = randomUUID();
+        const { accountId } = await createAccountWithMachine(machineId, "plain");
+        await publishInstalledTestMachine(machineId);
+        const createRule = async (name: string) => {
+            const rule = await createAutomationWithAssignments({ accountId, machineIds: [machineId], name });
+            await db.automation.update({ where: { id: rule.id }, data: {
+                targetType: null, workflowDefinitionId: "builtin:keep-going",
+                templateCiphertext: JSON.stringify(createAutomationWorkflowRecipeFixture({ templateVersion: 1, directory: "/repo", prompt: "Work" })),
+            } });
+            return rule;
+        };
+        const normal = await createRule("Normal");
+        const urgent = await createRule("Urgent");
+        await updateAutomation({ accountId, automationId: urgent.id, expectedTemplateVersion: 1,
+            input: { priority: "high", maxConcurrentRuns: 1 } });
+        const admit = async (rule: typeof normal, now: Date) => {
+            const result = await inTx(tx => admitAutomationRunTx({ tx, accountId, automationId: rule.id, now,
+                recipeFeaturePolicy: { workflowsEnabled: true },
+                cause: AutomationRunCauseSchema.parse({ kind: "trigger", triggerId: rule.triggerId, triggerRevision: 0,
+                    triggerKind: "schedule", occurredAt: now.getTime(),
+                    occurrenceKey: createHash("sha256").update(randomUUID()).digest("base64url"),
+                    evidence: { scheduledFor: now.getTime() } }),
+            }));
+            if (result.kind !== "admitted") throw new Error("Expected admitted Workflow Run");
+            return result.run.id;
+        };
+        const recent = new Date();
+        const older = new Date(recent.getTime() - 2_000);
+        const normalFirst = await admit(normal, older);
+        const normalSecond = await admit(normal, older);
+        const urgentFirst = await admit(urgent, new Date(recent.getTime() - 1_000));
+        const urgentSecond = await admit(urgent, recent);
+        const claim = () => claimAutomationRun({ accountId, machineId, leaseDurationMs: 30_000,
+            scope: "workflow", recipeFeaturePolicy: { workflowsEnabled: true } });
+        await expect(claim()).resolves.toMatchObject({ run: { id: urgentFirst } });
+        const normalClaims = await Promise.all([claim(), claim()]);
+        expect(normalClaims.map(result => result.run?.id)).toEqual(expect.arrayContaining([normalFirst, normalSecond]));
+        await expect(claim()).resolves.toMatchObject({ run: null });
+        await expect(cancelAutomationRun({ accountId, runId: urgentFirst })).resolves.toMatchObject({ state: "cancelled" });
+        await expect(claim()).resolves.toMatchObject({ run: { id: urgentSecond } });
+    });
+
+    it.each(["cancel", "park", "raise", "clear"] as const)("wakes the queued Run's disjoint target after a capped rule can claim again (%s)", async release => {
+        const firstMachine = randomUUID();
+        const waitingMachine = randomUUID();
+        const { accountId } = await createAccountWithMachine(firstMachine, "plain");
+        await db.machine.create({ data: { id: waitingMachine, accountId, metadata: "{}" } });
+        await Promise.all([publishInstalledTestMachine(firstMachine), publishInstalledTestMachine(waitingMachine)]);
+        const rule = await createAutomationWithAssignments({ accountId, machineIds: [firstMachine], name: "Capped fleet rule" });
+        await db.automation.update({ where: { id: rule.id }, data: {
+            targetType: null, workflowDefinitionId: "builtin:keep-going",
+            templateCiphertext: JSON.stringify(createAutomationWorkflowRecipeFixture({ templateVersion: 1, directory: "/repo", prompt: "Work" })),
+        } });
+        await updateAutomation({ accountId, automationId: rule.id, expectedTemplateVersion: 1, input: { maxConcurrentRuns: 1 } });
+        const admit = async () => {
+            const now = new Date();
+            const result = await inTx(tx => admitAutomationRunTx({ tx, accountId, automationId: rule.id, now,
+                recipeFeaturePolicy: { workflowsEnabled: true },
+                cause: AutomationRunCauseSchema.parse({ kind: "trigger", triggerId: rule.triggerId, triggerRevision: 0,
+                    triggerKind: "schedule", occurredAt: now.getTime(),
+                    occurrenceKey: createHash("sha256").update(randomUUID()).digest("base64url"),
+                    evidence: { scheduledFor: now.getTime() } }),
+            }));
+            if (result.kind !== "admitted") throw new Error("Expected admitted Workflow Run");
+            return result.run.id;
+        };
+        const claim = (machineId: string) => claimAutomationRun({ accountId, machineId, leaseDurationMs: 30_000,
+            scope: "workflow", recipeFeaturePolicy: { workflowsEnabled: true } });
+        const active = await admit();
+        await expect(claim(firstMachine)).resolves.toMatchObject({ run: { id: active } });
+        await db.automationAssignment.update({ where: { automationId_machineId: { automationId: rule.id, machineId: firstMachine } },
+            data: { machineId: waitingMachine } });
+        const queued = await admit();
+        await expect(claim(waitingMachine)).resolves.toMatchObject({ run: null });
+        const updates: UpdatePayload[] = [];
+        const observer: ClientConnection = {
+            connectionType: "machine-scoped", userId: accountId, machineId: waitingMachine,
+            socket: { emit(event: string, payload: UpdatePayload) { if (event === "update") updates.push(payload); } } as unknown as Socket,
+        };
+        eventRouter.addConnection(accountId, observer);
+        try {
+            if (release === "cancel") {
+                await expect(cancelAutomationRun({ accountId, runId: active })).resolves.toMatchObject({ state: "cancelled" });
+            } else if (release === "park") {
+                const rootId = randomUUID();
+                const invocationId = randomUUID();
+                await db.workflowRunInvocation.create({ data: {
+                    id: invocationId, runId: active, sequence: 1n, memberOrdinal: 0n, parentRecordId: rootId, lifecycle: "waiting_for_review",
+                    contentEnvelope: serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({
+                        mode: "plain", binding: { v: 1, purpose: "invocation_progress", accountId, runId: active, recordId: invocationId,
+                            sequence: "1", parentRecordId: rootId, memberOrdinal: "0", attempt: "0" },
+                        progress: { kind: "happier.workflow-progress.v1", invocationPath: { blockId: "wait", scope: [] },
+                            blockKind: "wait", attempt: "0", logicalInvocationRecordId: invocationId },
+                    })),
+                } });
+                const parent = await db.automationRun.findUniqueOrThrow({ where: { id: active }, select: { attempt: true, revision: true } });
+                const account = await db.account.findUniqueOrThrow({ where: { id: accountId }, select: automationAccountCurrentnessSelect });
+                const checkpointEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowCheckpointStoredEnvelopeV1({
+                    mode: "plain", binding: { v: 1, purpose: "checkpoint", accountId, runId: active },
+                    checkpoint: { kind: "happier.workflow-checkpoint.v1", rootRecordId: rootId, nextSequence: "2",
+                        frontier: { nextBlockOrdinal: 1, paused: false } },
+                }));
+                await transitionWorkflowRun({ accountId, runId: active, machineId: firstMachine, parentAttempt: parent.attempt,
+                    expectedRevision: parent.revision, state: "waiting_for_review", checkpointEnvelope,
+                    accountCurrentness: deriveAutomationAccountCurrentnessWitness(account) });
+                await expect(db.automationRun.findUniqueOrThrow({ where: { id: active }, select: { state: true, claimedByMachineId: true } }))
+                    .resolves.toEqual({ state: "waiting_for_review", claimedByMachineId: null });
+            } else {
+                await updateAutomation({ accountId, automationId: rule.id, expectedTemplateVersion: 2,
+                    input: { maxConcurrentRuns: release === "raise" ? 2 : null } });
+            }
+            expect(updates.filter(({ body }) => body.t === "automation-run-updated" && body.state === "queued")).toEqual([
+                expect.objectContaining({ body: expect.objectContaining({ runId: queued, targetMachineId: waitingMachine }) }),
+            ]);
+            await expect(claim(waitingMachine)).resolves.toMatchObject({ run: { id: queued } });
+        } finally { eventRouter.removeConnection(accountId, observer); }
+    });
 
     it('advertises only an admitted claim deadline and parks scoped queued work until its active Run releases', async () => {
         const machineId = randomUUID();

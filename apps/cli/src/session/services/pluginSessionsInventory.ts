@@ -252,6 +252,7 @@ function projectSessionSummary(params: Readonly<{
     ...(projectId ? { projectId } : {}),
     ...(agentId ? { agentId } : {}),
     ...(ownerMetadata ? { hasAttestedContext: ownerMetadata.system?.attestedContext !== undefined } : {}),
+    ...(params.raw.botPausedAt != null ? { botPausedAt: params.raw.botPausedAt } : {}),
     state,
     runtimeAvailability: runtimeAvailability(state),
     storagePolicy: params.storagePolicy,

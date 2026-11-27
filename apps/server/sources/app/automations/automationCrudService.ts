@@ -13,6 +13,7 @@ import { markSharedWorkflowTriggerSummaryChangedInTx, publishAutomationMutationI
     type AutomationMutationPublication } from './automationSharedWorkflowSummaries';
 import type { Prisma } from "@prisma/client";
 
+import { publishQueuedAutomationRuleMachineWakesInTx } from '@/app/workflows/workflowRunMachineRouting';
 import { afterTx, inTx, type Tx } from "@/storage/inTx";
 import type { DeletedManagedWebhookConsumer } from "@/app/plugins/webhooks/removeUnusedManagedRepositoryWebhook";
 import { db } from "@/storage/db";
@@ -1054,6 +1055,29 @@ function automationTriggerPatchOnlyDisables(
     return patch.enabled === false && patch.trigger === undefined && patch.triggerDefinitionEnvelope === undefined;
 }
 
+function automationDispatchChanges(
+    input: Pick<AutomationPatchInput, "priority" | "maxConcurrentRuns">,
+    existing?: Pick<AutomationListItem, "priority" | "maxConcurrentRuns">,
+) {
+    const priority = input.priority === undefined ? undefined : input.priority === 'high' ? 1 : null;
+    return {
+        ...(priority !== undefined && priority !== (existing?.priority ?? null) ? { priority } : {}),
+        ...(input.maxConcurrentRuns !== undefined && input.maxConcurrentRuns !== (existing?.maxConcurrentRuns ?? null)
+            ? { maxConcurrentRuns: input.maxConcurrentRuns } : {}),
+    };
+}
+
+async function publishRaisedAutomationRuleCapInTx(tx: Tx, params: Readonly<{
+    accountId: string; before: AutomationListItem; after: AutomationListItem; cursor: AccountChangePublication;
+}>): Promise<void> {
+    const previous = params.before.maxConcurrentRuns;
+    const next = params.after.maxConcurrentRuns;
+    if (previous != null && (next == null || next > previous)) {
+        await publishQueuedAutomationRuleMachineWakesInTx(tx, { accountId: params.accountId, automationId: params.after.id,
+            cursor: params.cursor, capRaised: true });
+    }
+}
+
 function automationMatchesCurrentCreateInput(
     existing: AutomationListItem,
     requested: AutomationCurrentUpsertInput,
@@ -1070,6 +1094,8 @@ function automationMatchesCurrentCreateInput(
         || existing.name !== requested.name
         || existing.description !== (requested.description ?? null)
         || existing.enabled !== requested.enabled
+        || Object.keys(automationDispatchChanges({ priority: requested.priority ?? 'normal',
+            maxConcurrentRuns: requested.maxConcurrentRuns ?? null }, existing)).length > 0
         || existing.workflowDefinitionId !== (requested.workflowDefinitionId ?? null)
         || existing.scopeSessionId !== (requested.scopeSessionId ?? null)
         || existing.targetType !== null
@@ -5038,6 +5064,7 @@ export async function createAutomationInTx(tx: Tx, params: Readonly<{
             name: params.input.name,
             description: params.input.description ?? null,
             enabled: params.input.enabled,
+            ...automationDispatchChanges(params.input),
             targetType: definition.targetType,
             workflowDefinitionId: params.input.workflowDefinitionId ?? null,
             scopeSessionId: params.input.scopeSessionId ?? null,
@@ -5247,7 +5274,9 @@ export async function updateAutomation(params: {
         const legacyInput = isAutomationCurrentPatchInput(params.input)
             ? null
             : params.input;
-        const cleanupOnly = params.input.enabled === false
+        const dispatchUpdate = automationDispatchChanges(params.input, existing);
+        const dispatchChanged = Object.keys(dispatchUpdate).length > 0;
+        const cleanupOnly = params.input.enabled === false && !dispatchChanged
             && params.input.executionRecipe === undefined && params.input.observationOnly === undefined
             && legacyInput?.templateCiphertext === undefined && legacyInput?.targetType === undefined
             && legacyInput?.schedule === undefined
@@ -5439,6 +5468,7 @@ export async function updateAutomation(params: {
             ?? (inputSuppliesTemplate && effectiveTemplateCiphertext !== existing.templateCiphertext)) || targetTypeChanged;
         const observationBoundaryNow = new Date();
         const automationUpdate = {
+            ...dispatchUpdate,
             ...(effectiveWorkflowDefinitionId !== existing.workflowDefinitionId ? { workflowDefinitionId: effectiveWorkflowDefinitionId } : {}),
             ...(effectiveScopeSessionId !== existing.scopeSessionId ? { scopeSessionId: effectiveScopeSessionId } : {}),
             ...(typeof params.input.name === "string" && params.input.name !== existing.name
@@ -5459,12 +5489,11 @@ export async function updateAutomation(params: {
                     }),
                 }
                 : {}),
-            ...(templateSemanticsWritten
-                ? { templateVersion: { increment: 1 } }
-                : {}),
+            ...(templateSemanticsWritten ? { templateVersion: { increment: 1 } }
+                : dispatchChanged ? advanceAutomationDefinitionRevision(existing) : {}),
         };
 
-        if (templateSemanticsWritten) {
+        if (templateSemanticsWritten || dispatchChanged) {
             const updated = await tx.automation.updateMany({
                 where: {
                     id: existing.id,
@@ -5558,7 +5587,7 @@ export async function updateAutomation(params: {
             }
         }
 
-        if (scheduleChanged && !templateSemanticsWritten) {
+        if (scheduleChanged && !templateSemanticsWritten && !dispatchChanged) {
             await advanceAutomationTriggerSetRevisionTx(tx, existing, observationBoundaryNow);
         }
 
@@ -5613,6 +5642,7 @@ export async function updateAutomation(params: {
             cursor,
             previousAssignments: existing.assignments,
         });
+        await publishRaisedAutomationRuleCapInTx(tx, { accountId: params.accountId, before: existing, after: updated, cursor });
 
         return updated;
     }, {
@@ -5691,8 +5721,10 @@ export async function reconcileAutomationDefinition(params: Readonly<{
         }
         const consentOnly = isAutomationConsentDefinition(params.input.triggers.map(item =>
             item.trigger ?? existingTriggersById.get(item.triggerId)!));
+        const dispatchUpdate = automationDispatchChanges(params.input, existing);
+        const dispatchChanged = Object.keys(dispatchUpdate).length > 0;
         // Cleanup may outlive its Environment; a mixed editor save remains authoring.
-        const cleanupOnly = params.input.executionRecipe === undefined && params.input.observationOnly === undefined
+        const cleanupOnly = !dispatchChanged && params.input.executionRecipe === undefined && params.input.observationOnly === undefined
             && params.input.name === existing.name && params.input.description === existing.description
             && (params.input.enabled === existing.enabled || params.input.enabled === false)
             && (params.input.workflowDefinitionId === undefined || params.input.workflowDefinitionId === existing.workflowDefinitionId)
@@ -5784,7 +5816,7 @@ export async function reconcileAutomationDefinition(params: Readonly<{
                 await validateRetainedSessionLifecycleTriggerTargetTx(tx, effectiveAutomation, trigger, serverIdentityId);
             }
         }
-        const definitionChanged = currentDefinition?.changed === true
+        const definitionChanged = dispatchChanged || currentDefinition?.changed === true
             || params.input.name !== existing.name || params.input.description !== existing.description
             || params.input.enabled !== existing.enabled
             || effectiveAutomation.workflowDefinitionId !== existing.workflowDefinitionId
@@ -5808,6 +5840,7 @@ export async function reconcileAutomationDefinition(params: Readonly<{
                 description: params.input.description,
                 enabled: params.input.enabled,
                 updatedAt: now,
+                ...dispatchUpdate,
                 ...revisionUpdate,
                 ...(params.input.workflowDefinitionId !== undefined ? { workflowDefinitionId: params.input.workflowDefinitionId } : {}),
                 ...(params.input.scopeSessionId !== undefined ? { scopeSessionId: params.input.scopeSessionId } : {}),
@@ -6021,6 +6054,7 @@ export async function reconcileAutomationDefinition(params: Readonly<{
             cursor,
             previousAssignments: existing.assignments,
         });
+        await publishRaisedAutomationRuleCapInTx(tx, { accountId: params.accountId, before: existing, after: result, cursor });
         return result;
     }, {
         // The locked publication audience and complete revision census protect this save.

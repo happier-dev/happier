@@ -445,6 +445,12 @@ export const CHANNEL_COLLECTION_MIGRATIONS = {
     toSchemaVersion: 29,
     // Optional thread recovery receipts and custody leave retained rows valid.
     migrate: (value) => value,
+  }, {
+    id: 'channel-state-v29-to-v30',
+    fromSchemaVersion: 29,
+    toSchemaVersion: 30,
+    // The terminal reason vocabulary widens without changing existing custody rows.
+    migrate: (value) => value,
   }],
   [CHANNEL_DELIVERIES_COLLECTION_ID]: [{
     id: 'channel-deliveries-v1-to-v2',

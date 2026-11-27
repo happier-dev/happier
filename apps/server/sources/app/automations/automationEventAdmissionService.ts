@@ -91,6 +91,7 @@ type EncryptedCandidate = Readonly<{
 
 type ExistingOccurrenceRow = Readonly<{
     id: string;
+    errorCode: string | null;
     automationId: string;
     triggerId: string | null;
     causeKind: string;
@@ -106,6 +107,7 @@ type ExistingOccurrenceRow = Readonly<{
 
 const existingEventOccurrenceSelect = {
     id: true,
+    errorCode: true,
     automationId: true,
     triggerId: true,
     causeKind: true,
@@ -194,9 +196,18 @@ function blocked(reason: "temporarilyUnavailable" | "occurrenceConflict" | "noEn
     return { kind: "blocked", reason, checkpointSafe: false };
 }
 
-function skipped(reason: "filtered" | "beforeObservationStart" | "outsideFreshness" | "definitionRetired" | "occurrenceRejected"):
+function skipped(reason: "filtered" | "beforeObservationStart" | "outsideFreshness" | "definitionRetired" | "occurrenceRejected" | "bot_paused"):
     AutomationEventAdmitItemResultV1 {
     return { kind: "skipped", reason, checkpointSafe: true };
+}
+
+function occurrenceResult(
+    kind: "admitted" | "rejoined",
+    run: Readonly<{ id: string; errorCode: string | null }>,
+): AutomationEventAdmitItemResultV1 {
+    return run.errorCode === "bot_paused"
+        ? skipped("bot_paused")
+        : { kind, runId: run.id, checkpointSafe: true };
 }
 
 function refresh(reason: "definitionStale" | "observationTargetChanged"):
@@ -544,7 +555,7 @@ async function admitEncryptedAutomationEventV1(params: Readonly<{
                 occurrenceEvidenceEqualityTag: definition.occurrenceEvidenceEqualityTag,
             });
             assignGroupResult(results, group, disposition === "match"
-                ? { kind: "rejoined", runId: existing.id, checkpointSafe: true }
+                ? occurrenceResult("rejoined", existing)
                 : blocked(disposition === "mismatch" ? "occurrenceConflict" : "temporarilyUnavailable"));
         }
 
@@ -797,12 +808,7 @@ async function admitEncryptedAutomationEventV1(params: Readonly<{
                 );
                 continue;
             }
-            const run = admitted.run;
-            assignGroupResult(results, candidate.group, {
-                kind: admitted.kind,
-                runId: run.id,
-                checkpointSafe: true,
-            });
+            assignGroupResult(results, candidate.group, occurrenceResult(admitted.kind, admitted.run));
         }
         return assertAllResultsWithReadyContinuation({
             accountCurrentness: params.hostEvidence.accountCurrentness,
@@ -939,7 +945,7 @@ export async function admitAutomationEventV1(params: Readonly<{
                 results,
                 group,
                 disposition === "match"
-                    ? { kind: "rejoined", runId: existing.id, checkpointSafe: true }
+                    ? occurrenceResult("rejoined", existing)
                     : blocked(disposition === "mismatch" ? "occurrenceConflict" : "temporarilyUnavailable"),
             );
         }
@@ -1269,11 +1275,7 @@ export async function admitAutomationEventV1(params: Readonly<{
                 );
                 continue;
             }
-            assignGroupResult(results, group, {
-                kind: admitted.kind,
-                runId: admitted.run.id,
-                checkpointSafe: true,
-            });
+            assignGroupResult(results, group, occurrenceResult(admitted.kind, admitted.run));
         }
 
         return assertAllResultsWithReadyContinuation({

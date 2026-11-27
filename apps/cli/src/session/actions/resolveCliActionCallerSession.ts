@@ -61,6 +61,7 @@ export function createCliBoundSessionMetadataReader(params: SessionMetadataReade
 type CallerSessionFacts = Readonly<{
   metadata: Readonly<Record<string, unknown>> | null;
   workDepth: unknown;
+  botPausedAt?: number | null;
   backendTarget: PersistedBackendTargetRefV2 | null | undefined;
   machineId: string | null;
   directory: string | null;
@@ -73,7 +74,7 @@ export async function resolveCliActionCallerSession(params: Readonly<{
   credentials?: StoredCredentials;
   boundSessionId?: string;
   reviewedWorkspaceSessionId?: string;
-  readBoundSession?: () => Promise<CallerSessionFacts>;
+  readBoundSession?: () => Promise<CallerSessionFacts | null>;
   callSessionRpcForTransport?: CliSessionActionTransport['callSessionRpcForTransport'];
   resolveTransportForSession: (sessionId: string, signal?: AbortSignal) => Promise<Extract<ResolveSessionTransportContextResult, { ok: true }> | Readonly<{ ok: false }>>;
 }>): Promise<(CallerSessionFacts & Readonly<{ sessionId: string }>) | null> {
@@ -85,6 +86,7 @@ export async function resolveCliActionCallerSession(params: Readonly<{
   const isBoundSession = sessionId === params.boundSessionId;
   if (isBoundSession && params.readBoundSession) {
     const session = await params.readBoundSession();
+    if (!session) return null;
     return { sessionId, ...session, directory: session.machineId ? resolveSessionWorkspaceRootForMachine({
       metadata: session.metadata, machineId: session.machineId, candidatePath: session.directory ?? '',
     }).machinePath || null : session.directory };
@@ -126,7 +128,7 @@ export async function resolveCliActionCallerSession(params: Readonly<{
   };
   const machineId = readString(transport.rawSession.machineId) ?? readString(metadata?.machineId);
   const candidatePath = readString(metadata?.path) ?? readString(transport.rawSession.path) ?? '';
-  return { sessionId, metadata, workDepth: transport.rawSession.workDepth,
+  return { sessionId, metadata, workDepth: transport.rawSession.workDepth, botPausedAt: transport.rawSession.botPausedAt,
     backendTarget, ...(!isBoundSession && params.context.actionCaller?.kind === 'session' ? { readAppliedChildSelection } : {}),
     machineId,
     directory: machineId ? resolveSessionWorkspaceRootForMachine({ metadata, machineId, candidatePath }).machinePath || null

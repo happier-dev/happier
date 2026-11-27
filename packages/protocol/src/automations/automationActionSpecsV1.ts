@@ -336,7 +336,7 @@ export const AutomationEventAdmitItemResultV1Schema = lazyZodSchema(() => z.disc
   z.strictObject({ kind: z.literal('observed'), checkpointSafe: z.literal(true) }),
   z.strictObject({
     kind: z.literal('skipped'),
-    reason: z.enum(['filtered', 'beforeObservationStart', 'outsideFreshness', 'definitionRetired', 'occurrenceRejected']),
+    reason: z.enum(['filtered', 'beforeObservationStart', 'outsideFreshness', 'definitionRetired', 'occurrenceRejected', 'bot_paused']),
     checkpointSafe: z.literal(true),
   }),
   zMini.extend(AutomationEventRefreshDefinitionStatusV1Schema, {

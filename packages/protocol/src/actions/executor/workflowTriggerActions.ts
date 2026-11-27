@@ -202,7 +202,6 @@ export type WorkflowTriggerActionsDependencies = Readonly<{
   prepareBirthTrigger?: (automationId: string, triggerId: string, trigger: AutomationTriggerDefinitionInput) => Promise<AutomationTriggerDefinitionInput>;
   openActionTrigger?: (automation: AutomationDefinitionDetail,
     trigger: Extract<AutomationDefinitionDetail['triggers'][number], { kind: 'action' }>) => Promise<import('../../automations/automationActionTriggerV1.js').AutomationActionTrigger>;
-  openOwnActionTrigger?: (reference: ActionAutomationSelectedTriggerV1) => Promise<import('../../automations/automationActionTriggerV1.js').AutomationActionTrigger>;
   openSharedActionTrigger?: (reference: ActionAutomationSelectedTriggerV1, caller: Caller)
     => Promise<import('../../automations/automationActionTriggerV1.js').AutomationActionTrigger>;
   openPluginEventTrigger?: (automation: AutomationDefinitionDetail,
@@ -816,6 +815,8 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       }),
       ...(row.scheduleHolds?.length ? { scheduleHolds: row.scheduleHolds } : {}),
       revision: row.templateVersion, enabled: row.enabled, scopeSessionId: row.scopeSessionId ?? null,
+      ...(row.priority === undefined ? {} : { priority: row.priority }),
+      ...(row.maxConcurrentRuns === undefined ? {} : { maxActiveRuns: row.maxConcurrentRuns }),
       ...(row.templateCiphertext !== undefined && !row.observationOnly ? { legacy: { editable: false as const, reason: 'created_in_0_2' as const } } : {}) };
   };
   const projectedDefinition = async (row: AutomationDefinitionDetail, reviewed?: Readonly<{ target: TriggerTargetV1; context: WorkflowTriggerContextV1;
@@ -971,8 +972,12 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       return withPostWriteFailure({ ...receipt, set }, cause, 'workflow.trigger.eventDefinition');
     }
   };
+  const dispatchSettings = (input: Pick<WorkflowTriggerUpdateRequestV1['patch'], 'priority' | 'maxActiveRuns'>) => ({
+    ...(input.priority === undefined ? {} : { priority: input.priority }),
+    ...(input.maxActiveRuns === undefined ? {} : { maxConcurrentRuns: input.maxActiveRuns }),
+  });
   const reconcile = async (row: AutomationDefinitionDetail, context: WorkflowTriggerContextV1, target: TriggerTargetV1,
-    targetProject: WorkflowProjectTargetV1 | undefined, changes: Pick<AutomationDefinitionReconcileRequest, 'triggers' | 'removedTriggers'>,
+    targetProject: WorkflowProjectTargetV1 | undefined, changes: Pick<AutomationDefinitionReconcileRequest, 'triggers' | 'removedTriggers' | 'priority' | 'maxConcurrentRuns'>,
     enabled = row.enabled, preserveAssignments = false, storedContext?: unknown, caller?: Caller) => deps.automations.reconcile(row.id, {
       expectedTemplateVersion: row.templateVersion, name: row.name, description: row.description, enabled,
       workflowDefinitionId: target.kind === 'workflow' ? target.ref : null,
@@ -990,7 +995,6 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
   const actions = {
     prepareActionMatching: (accountId: string) => createActionAutomationPrivateMatchingV1({ accountId,
       readDefinition: findRetained,
-      ...(deps.openOwnActionTrigger ? { readOwnDefinition: deps.openOwnActionTrigger } : {}),
       ...(deps.openSharedActionTrigger ? { readSharedDefinition: deps.openSharedActionTrigger } : {}),
       openTrigger: async (row, trigger) => {
         if (!deps.openActionTrigger) refuse('target_unavailable');
@@ -1417,6 +1421,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
           triggers: [...retainedTriggers(row), { kind: 'new', triggerId, trigger: input.trigger,
             ...('managedGithubRepositoryId' in input && input.managedGithubRepositoryId !== undefined
               ? { managedGithubRepositoryId: input.managedGithubRepositoryId } : {}) }], removedTriggers: [],
+          ...dispatchSettings(input),
         }, row.enabled, false, current.storedContext, caller);
         return writeResult(committed, triggerId, false, prepared);
       }
@@ -1432,7 +1437,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       const executionRecipe = await deps.sealContext({ automationId, templateVersion: 1, context, caller });
       const row = await deps.automations.create({ automationId, name: WORKFLOW_TRIGGER_SET_STORAGE_NAME, description: null, enabled: true,
         workflowDefinitionId: target.kind === 'workflow' ? target.ref : null, scopeSessionId: scope?.sessionId ?? null,
-        executionRecipe,
+        executionRecipe, ...dispatchSettings(input),
         assignments: targetProject ? [{ machineId: targetProject.machineId, enabled: true }] : [], triggers: [{ triggerId, trigger: input.trigger,
           ...('managedGithubRepositoryId' in input && input.managedGithubRepositoryId !== undefined
             ? { managedGithubRepositoryId: input.managedGithubRepositoryId } : {}) }] }, undefined, caller?.signal);
@@ -1475,7 +1480,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         reviewedProject = (await deps.resolveSession(sessionId, caller)).project;
         current = { target: input.patch.target, context: triggerContext(input.patch, input.patch.target, input.patch.project) };
       } else current = await opened(row, false, caller);
-      const { target: nextTarget, project: nextProject, enabled, trigger, deployment, actionApproval, managedGithubRepositoryId: registrationRepository, ...contextPatch } = input.patch;
+      const { target: nextTarget, project: nextProject, enabled, trigger, deployment, actionApproval, managedGithubRepositoryId: registrationRepository, priority, maxActiveRuns, ...contextPatch } = input.patch;
       const usesInvocationPlacement = row.executionRecipe?.v === 2 && row.executionRecipe.placement === 'action_invocation';
       if (usesInvocationPlacement && !nextProject
         && (trigger && (trigger.kind !== 'action' || 'consentFor' in trigger)
@@ -1522,7 +1527,9 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         && scope?.onComplete === undefined
         && !current.context.actionApprovals?.some(approval => input.triggerId === undefined
           || approval.triggerId === input.triggerId || disabledSiblings.has(approval.triggerId))
-        && Object.keys(input.patch).every((key) => key === 'enabled' || key === 'trigger')) {
+        && Object.keys(contextPatch).length === 0
+        && nextTarget === undefined && nextProject === undefined && deployment === undefined
+        && actionApproval === undefined && registrationRepository === undefined) {
         const placement = !usesInvocationPlacement && row.assignments.length === 1 && current.context.workspace
           ? project(row, current.context) : undefined;
         const admittedSource = await assertTargetAccess(current.target, { ...current.context }, triggerEvents, triggerWrites, caller, placement);
@@ -1532,7 +1539,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         return writeResult(await deps.automations.reconcile(row.id, {
           expectedTemplateVersion: row.templateVersion, name: row.name, description: row.description, enabled: setEnabled,
           assignments: row.assignments.map(({ machineId, enabled, priority }) => ({ machineId, enabled, priority })),
-          triggers, removedTriggers: [],
+          triggers, removedTriggers: [], ...dispatchSettings({ priority, maxActiveRuns }),
         }, row, undefined, caller?.signal), input.triggerId, false, prepared);
       }
       if (!scope && current.target.kind === 'workflow' && nextTarget && (nextTarget.kind !== 'workflow' || nextTarget.ref !== current.target.ref)) refuseInput('workflow_trigger_target_mismatch');
@@ -1584,7 +1591,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       const prepared = await prepareTriggerProjection({ target, context }, row.scopeSessionId, admittedSource);
       const savedTriggers = registrationRepository === undefined ? triggers : triggers.map(item => item.triggerId === input.triggerId
         ? { ...item, managedGithubRepositoryId: registrationRepository } : item);
-      return writeResult(await reconcile(row, context, target, targetProject, { triggers: savedTriggers, removedTriggers: [] },
+      return writeResult(await reconcile(row, context, target, targetProject, { triggers: savedTriggers, removedTriggers: [], ...dispatchSettings({ priority, maxActiveRuns }) },
         setEnabled, nextProject === undefined || (reviewedProject !== undefined
           && createCanonicalJsonSigningInput(reviewedProject) === createCanonicalJsonSigningInput(targetProject)), current.storedContext, caller), input.triggerId, false, prepared);
     },

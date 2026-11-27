@@ -161,13 +161,21 @@ describe("Automation schedule trigger firing (integration)", () => {
         });
     }
 
-    async function seedOnce(active = true) {
+    async function seedOnce(active = true, paused = false) {
         accountId = `account-${randomUUID()}`;
         await db.account.create({ data: { id: accountId, encryptionMode: "plain" } });
         await db.machine.create({ data: { id: MACHINE_ID, accountId, metadata: "{}",
             installationId: `installation-${MACHINE_ID}`, active } });
+        const source = paused ? await db.session.create({ data: {
+            accountId, tag: randomUUID(), encryptionMode: "plain",
+            metadata: JSON.stringify({ machineId: MACHINE_ID, path: "/tmp/schedule-firing" }),
+        } }) : null;
+        if (source) {
+            await db.session.updateMany({ where: { id: source.id }, data: { botPausedAt: BigInt(dueAt.getTime() - 1) } });
+        }
         const created = await createAutomation({ accountId, input: {
             automationId: randomUUID(), name: "Run once", enabled: true,
+            ...(source ? { scopeSessionId: source.id } : {}),
             executionRecipe: executionRecipe(), assignments: [{ machineId: MACHINE_ID }],
             triggers: [{ triggerId: AutomationTriggerIdSchema.parse(randomUUID()), trigger: {
                 kind: "schedule", enabled: true, schedule: { kind: "once", scheduledAt: dueAt.getTime() },
@@ -196,6 +204,21 @@ describe("Automation schedule trigger firing (integration)", () => {
         await inTx(tx => ensureAutomationScheduleCursorsTx({ tx, automationId, now: new Date(dueAt.getTime() + 120_000) }));
         await runAutomationScheduleWorkerPass({ now: new Date(dueAt.getTime() + 120_000) });
         await expect(readRuns()).resolves.toHaveLength(1);
+    });
+
+    it("records a paused Bot's absolute occurrence as skipped and never replays it after resume", async () => {
+        const trigger = await seedOnce(true, true);
+        await runAutomationScheduleWorkerPass({ now: dueAt });
+        await expect(readRuns()).resolves.toMatchObject([{
+            state: "skipped", errorCode: "bot_paused", causeScheduledFor: dueAt,
+        }]);
+        await expect(db.automationTrigger.findUniqueOrThrow({ where: { id: trigger.id } }))
+            .resolves.toMatchObject({ nextRunAt: null, remainingOccurrences: 0 });
+        await db.session.updateMany({ where: { accountId }, data: { botPausedAt: null } });
+        await runAutomationScheduleWorkerPass({ now: new Date(dueAt.getTime() + 60_000) });
+        await expect(readRuns()).resolves.toHaveLength(1);
+        await expect(claimAutomationRun({ accountId, machineId: MACHINE_ID, leaseDurationMs: 30_000 }))
+            .resolves.toMatchObject({ run: null });
     });
 
     it("records offline at the instant as missed and never runs it on reconnect", async () => {

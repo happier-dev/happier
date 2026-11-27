@@ -2,6 +2,7 @@ import { encodeStoredText } from '@/storage/storedContent';
 import { afterTx, inTx, type Tx } from "@/storage/inTx";
 import { getDbProviderFromEnv } from "@/storage/prisma";
 import { publishManagedRunWakeInTx } from '@/app/machines/managed/managedWake';
+import { publishQueuedAutomationRuleMachineWakesInTx } from '@/app/workflows/workflowRunMachineRouting';
 import { invalidateSessionReviewProjectionForRunInTx } from './sessionReviewProjectionInvalidation';
 import { AutomationRunResultStoredV1Schema, validateAutomationReplyHandoffStoredEnvelopeOuterForModeV1, type AutomationRunResultStoredV1 } from '@happier-dev/protocol/automations/event';
 import { parseAutomationRunExecutionRecipeV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
@@ -989,6 +990,7 @@ export async function settleAutomationExecutionDispatch(params: Readonly<{
             run,
         });
         await publishManagedRunWakeInTx(tx, { accountId: params.accountId, runId: run.id, cursor });
+        await publishQueuedAutomationRuleMachineWakesInTx(tx, { accountId: params.accountId, automationId: run.automationId, cursor });
         afterTx(tx, () => {
             emitAutomationRunTransition({
                 accountId: params.accountId,

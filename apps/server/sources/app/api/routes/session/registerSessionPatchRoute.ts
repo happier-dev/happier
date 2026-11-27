@@ -248,6 +248,7 @@ export function registerSessionPatchRoute(app: Fastify) {
                         runtimeProjection: tupleResult.runtimeProjection,
                         ...(tupleResult.changed ? { changed: tupleResult.changed } : {}),
                         ...(tupleResult.projectKey !== undefined ? { projectKey: tupleResult.projectKey } : {}),
+                        ...(tupleResult.botPausedAt !== undefined ? { botPausedAt: tupleResult.botPausedAt } : {}),
                     },
                 });
                 log({ module: "session-metadata", sessionId, mode: tupleBody.mode,

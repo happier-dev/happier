@@ -1,3 +1,4 @@
+import { SessionBotPausedAtV1Schema } from '../sessions/identity/sessionBotV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 import { PushTokensRemoteAlertProjectionV2Schema } from '../push/pushTokenRegistration.js';
@@ -98,6 +99,7 @@ export const UpdateBodySchema = lazyZodSchema(() => z.discriminatedUnion('t', [
   z.looseObject({
     t: z.literal('new-session'),
     id: z.string(),
+    botPausedAt: z.optional(z.nullable(SessionBotPausedAtV1Schema)),
     projectKey: z.optional(z.nullable(z.string())),
     viewer: z.optional(SessionViewerProjectionV1Schema),
     seq: z.number().check(z.int(), z.minimum(0)),

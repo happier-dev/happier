@@ -707,6 +707,7 @@ export async function updateSessionMetadataEnvelopeTupleWithRetry(
     initialSnapshot: SessionMetadataWriterSnapshot;
     mutation: SessionMetadataEnvelopeTupleMutation;
     projectKey?: string | null;
+    botPausedAt?: number | null;
     publisherPrecondition?: SessionMetadataPublisherPreconditionV1;
     sessionExpectation?:
       SessionMetadataInactiveModelIntentExpectationV1;
@@ -814,6 +815,7 @@ export async function updateSessionMetadataEnvelopeTupleWithRetry(
       initialSnapshot: params.initialSnapshot,
       mutation: mutationWithSummary,
       ...(params.projectKey !== undefined ? { projectKey: params.projectKey } : {}),
+      botPausedAt: params.botPausedAt,
       crypto: createSessionMetadataTupleCrypto({ cryptoContext,
         ...(owner ? { readOwnerAuthority: () => accountEncryptionCurrentness
           ? { credentials: owner.credentials, accountEncryptionMode: accountEncryptionCurrentness.mode } : null } : {}) }),
@@ -1113,6 +1115,7 @@ export async function updateSessionMetadataWithRetry(params: Readonly<{
   rawSession: LayoutAwareRawSession;
   /** Accepted non-content Project relationship, written only by the owner tuple. */
   projectKey?: string | null;
+  botPausedAt?: number | null;
   updater: (
     metadata: Record<string, unknown>,
     context?: SessionMetadataMutationContext,
@@ -1158,7 +1161,7 @@ export async function updateSessionMetadataWithRetry(params: Readonly<{
   }
   // Migration has its own strict wire shape. Publish the accepted relationship
   // only after the canonical migration has produced a layout-one owner tuple.
-  if (params.projectKey !== undefined && initialSnapshot.mode === 'legacy_owner') {
+  if ((params.projectKey !== undefined || params.botPausedAt !== undefined) && initialSnapshot.mode === 'legacy_owner') {
     const migrated = await updateSessionMetadataEnvelopeTupleWithRetry({
       token: params.token,
       ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
@@ -1167,7 +1170,7 @@ export async function updateSessionMetadataWithRetry(params: Readonly<{
       mutation: { kind: 'ownerMigration' }, currentness: params.currentness,
     });
     if (migrated.mode !== 'owner') {
-      throw createMetadataUpdateError('Project publication requires owner metadata authority', 'metadata_privacy_upgrade_required');
+      throw createMetadataUpdateError('Session routing metadata requires owner metadata authority', 'metadata_privacy_upgrade_required');
     }
     initialSnapshot = migrated;
   }
@@ -1186,6 +1189,7 @@ export async function updateSessionMetadataWithRetry(params: Readonly<{
     ...cryptoContext,
     initialSnapshot,
     ...(params.projectKey !== undefined ? { projectKey: params.projectKey } : {}),
+    botPausedAt: params.botPausedAt,
     currentness: params.currentness,
     sessionExpectation: params.sessionExpectation,
     teamCredentialBindings: params.teamCredentialBindings,

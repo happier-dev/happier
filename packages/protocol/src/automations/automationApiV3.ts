@@ -179,7 +179,20 @@ export type AutomationTriggerCreateRequest = z.infer<
   typeof AutomationTriggerCreateRequestSchema
 >;
 
+export const AutomationV3RulePrioritySchema = lazyZodSchema(() => z.enum(['normal', 'high']));
+export type AutomationV3RulePriority = z.infer<typeof AutomationV3RulePrioritySchema>;
+
+// This is the signed INTEGER storage range. An omitted or null limit reserves no quota.
+export const AutomationV3RuleMaxConcurrentRunsSchema = lazyZodSchema(() =>
+  z.number().check(z.int(), z.positive(), z.maximum(2_147_483_647)));
+
+const automationDefinitionDispatchFields = () => ({
+  priority: z.optional(AutomationV3RulePrioritySchema),
+  maxConcurrentRuns: z.optional(z.nullable(AutomationV3RuleMaxConcurrentRunsSchema)),
+});
+
 const AutomationDefinitionCreateRequestBaseSchema = lazyZodSchema(() => z.strictObject({
+  ...automationDefinitionDispatchFields(),
   automationId: asProtocolZod(AutomationIdV1Schema),
   name: z.string().check(z.trim(), z.minLength(1), z.maxLength(128)),
   description: z.optional(z.nullable(z.string().check(z.maxLength(2_000)))),
@@ -224,6 +237,7 @@ export type AutomationDefinitionCreateRequest = z.infer<
 >;
 
 export const AutomationDefinitionPatchRequestSchema = lazyZodSchema(() => z.strictObject({
+  ...automationDefinitionDispatchFields(),
   expectedTemplateVersion: z.number().check(z.int(), z.nonnegative(), z.int()),
   name: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(128))),
   description: z.optional(z.nullable(z.string().check(z.maxLength(2_000)))),
@@ -302,6 +316,7 @@ export type AutomationTriggerReconcileNewItem = z.infer<
  * definition, recipe, assignments, and trigger set in one transaction.
  */
 export const AutomationDefinitionReconcileRequestSchema = lazyZodSchema(() => z.strictObject({
+  ...automationDefinitionDispatchFields(),
   expectedTemplateVersion: z.number().check(z.int(), z.nonnegative(), z.int()),
   name: z.string().check(z.trim(), z.minLength(1), z.maxLength(128)),
   description: z.nullable(z.string().check(z.maxLength(2_000))),
@@ -384,6 +399,7 @@ export type AutomationTriggerDeleteRequest = z.infer<
 
 
 const AutomationDefinitionBaseSchema = lazyZodSchema(() => z.strictObject({
+  ...automationDefinitionDispatchFields(),
   id: IDENTIFIER_SCHEMA,
   name: z.string(),
   description: z.nullable(z.string()),

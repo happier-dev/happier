@@ -1,7 +1,18 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { readSessionBotV1, SessionBotV1Schema, SessionBotV1StoredSchema, SessionIdentityAdditionsV1Schema,
+import { BotSetInputSchema, readSessionBotV1, SessionBotV1Schema, SessionBotV1StoredSchema, SessionIdentityAdditionsV1Schema,
   SessionIdentityAdditionsV1StoredSchema } from './sessionBotV1.js';
+
+describe('session.bot.set', () => {
+  it('admits a pause and an explicit resume while preserving the original promotion input', () => {
+    const input = { sessionId: 'c' + 'a'.repeat(24), bot: { kind: 'bot' } };
+    const pausedAt = 1_800_000_000_000;
+    expect(BotSetInputSchema.parse({ ...input, pausedAt })).toMatchObject({ pausedAt });
+    expect(BotSetInputSchema.parse({ ...input, pausedAt: null })).toMatchObject({ pausedAt: null });
+    expect(BotSetInputSchema.parse(input)).not.toHaveProperty('pausedAt');
+    expect(BotSetInputSchema.safeParse({ ...input, bot: null, pausedAt }).success).toBe(false);
+  });
+});
 
 describe('readSessionBotV1', () => {
   it('admits birth geometry once while stored birth facts retain their coordinates', () => {

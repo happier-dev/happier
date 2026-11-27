@@ -19,7 +19,7 @@ export function createCliAgentStartContext(
     prepareAccountRoleOverrides: (signal?: AbortSignal) => Promise<void>;
     readReadyAccountRoleOverrides: (signal?: AbortSignal) => ReturnType<typeof readPreparedAccountRoleOverrides>;
     readRoleSources: RoleSourceReader;
-    resolveActionCallerSession: (context: ActionExecutorContext) => ReturnType<typeof resolveCliActionCallerSession>;
+    resolveActionCallerSession: (context: ActionExecutorContext, readPause?: boolean) => ReturnType<typeof resolveCliActionCallerSession>;
     readWorkflowActionStartContext?: (context: ActionExecutorContext) => Promise<ActionExecutorContext['agentStartContext'] | null>;
   }>,
   readEffectiveDeps: () => ActionExecutorDeps,
@@ -47,7 +47,8 @@ export function createCliAgentStartContext(
         ledSubtreeSessionIds: [], roles: {}, callerPermissionCeiling: witness.authorization.admittedPermissionCeiling,
         workDepthLimit: settings.workDepthLimit, allowLists: settings.sessionAgentStartAllowListsV1 };
     }
-    const session = await measureActionStartPhaseV1(context, 'caller_session', () => resolveActionCallerSession(context));
+    const scopeOnly = options?.purpose === 'session_scope' || options?.purpose === 'workflow_scope';
+    const session = await measureActionStartPhaseV1(context, 'caller_session', () => resolveActionCallerSession(context, options?.readBotPause));
     const refuse = (reason: import('@happier-dev/protocol/workflows/workflowProgressV1').WorkflowTargetUnavailableReasonV1) =>
       actionStartTargetUnavailableV1(context, 'agent_start_context', reason);
     if (!session) return refuse('caller_session_unavailable');
@@ -77,7 +78,6 @@ export function createCliAgentStartContext(
     // Scope admission consumes the same validated caller, not Agent launch
     // selections. Catalog hydration repeats requester authority round trips
     // without contributing any fact to the fresh Home subtree decision.
-    const scopeOnly = options?.purpose === 'session_scope' || options?.purpose === 'workflow_scope';
     const readsWorkPolicy = options?.purpose !== 'session_scope';
     const requiresBoundStartPolicy = readsWorkPolicy && (Boolean(params.readAgentStartPolicy)
       || (params.actionsSettingsProvider ? !params.actionsSettingsProvider.getAccountSettings : !params.credentials));
@@ -165,8 +165,10 @@ export function createCliAgentStartContext(
     // A scope witness proves identity/depth/reachability, not native execution
     // configuration. Never let its metadata-only observation stand in for an
     // admitted effective baseline in a later Role copy.
-    return scopeOnly && resolved && !('ok' in resolved) ? { ...resolved,
-      baseline: { machineId: resolved.baseline.machineId, directory: resolved.baseline.directory } } : resolved;
+    if (!resolved || 'ok' in resolved) return resolved;
+    return { ...resolved, botPausedAt: session.botPausedAt, ...(scopeOnly ? { baseline: {
+      machineId: resolved.baseline.machineId, directory: resolved.baseline.directory,
+    } } : {}) };
   };
   return resolveAgentStartContext;
 }

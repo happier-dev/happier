@@ -26,9 +26,15 @@ export const SessionIdentityAdditionsV1Schema = lazyZodSchema(() => z.strictObje
 export type SessionIdentityAdditions = z.infer<typeof SessionIdentityAdditionsV1Schema>;
 export const SessionIdentityAdditionsV1StoredSchema = createStoredReadSchema(SessionIdentityAdditionsV1Schema);
 
+/** Person-authored intake pause time on the owning Session, in epoch milliseconds. */
+export const SessionBotPausedAtV1Schema = lazyZodSchema(() => z.number().check(z.int(), z.nonnegative(), z.maximum(Number.MAX_SAFE_INTEGER)));
+
 export const BotSetInputSchema = lazyZodSchema(() => z.strictObject({
   sessionId: asProtocolZod(SessionIdSchema),
   bot: z.nullable(SessionBotV1Schema),
   expectedBot: z.optional(z.nullable(SessionBotV1Schema)),
-}));
+  pausedAt: z.optional(z.nullable(SessionBotPausedAtV1Schema)),
+}).check(z.refine(input => input.bot !== null || input.pausedAt == null, {
+  path: ['pausedAt'], message: 'Only a Bot can be paused',
+})));
 export type BotSetInput = z.infer<typeof BotSetInputSchema>;

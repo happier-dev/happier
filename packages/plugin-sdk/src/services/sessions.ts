@@ -473,6 +473,8 @@ export type SessionSummary = Readonly<{
     agentId?: string;
     /** Protected birth facts were opened; omission means their presence is unknown. */
     hasAttestedContext?: boolean;
+    /** Operator pause time for admission of new work. */
+    botPausedAt?: number | null;
     state: 'active' | 'idle' | 'stopped' | 'archived';
     runtimeAvailability: PluginOperationAvailability;
     storagePolicy: 'required_e2ee' | 'optional' | 'plaintext_only';

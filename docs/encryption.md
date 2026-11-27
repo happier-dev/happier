@@ -7158,6 +7158,14 @@ minimum only after the synced write succeeds. Action policy governs admission.
 
 Missing client-requirement fields preserve the released behavior (`follow_account`). The daemon environment override can only strengthen the effective requirement; invalid non-empty values fail startup.
 
+The Bot intake pause in 0.3 is a nullable, server-readable timestamp on the
+Session. An owner updates it through `session.bot.set` in the same metadata
+CAS as the Bot marker. The marker and related content retain their existing
+envelopes. Workflow trigger admission records paused occurrences as skipped
+with `bot_paused`. Channels and new child admission consume the Session
+pause, and work already admitted continues. Resume clears the timestamp
+and the skipped occurrences remain terminal.
+
 Layout-1 Session owner metadata is a separate privacy contract approved by
 `PLAINTEXT-ACCOUNTS-2026-07-30.6`. Current source carries one strict plain/encrypted
 owner envelope through the canonical tuple and recipient projector. The server may

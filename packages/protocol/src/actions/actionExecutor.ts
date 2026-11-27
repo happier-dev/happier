@@ -3489,8 +3489,11 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
         && readRecord(request.target).kind !== 'detached' && request.resumeHandle === undefined;
       const resolved = admittedWorkflowLeafStart ? ctx.agentStartContext : await resolveActionAgentStartContextV1(deps,
         { ...ctx, callerPermissionMode: caller.effectiveCallerMode }, typeof targetSessionId === 'string' ? targetSessionId : undefined,
-        explicitRunDefault ? { executionRunChildSelection: 'agentDefault' }
-          : attachedRoleFreeRun ? { purpose: 'attached_execution_run' } : undefined);
+        {
+          ...(explicitRunDefault ? { executionRunChildSelection: 'agentDefault' } : attachedRoleFreeRun
+            ? { purpose: 'attached_execution_run' } : {}),
+          ...(agentStartAction && !userRoleStart ? { readBotPause: true } : {}),
+        });
       if (resolved && 'ok' in resolved) return classifyExecutionRunStartPreDispatchFailure(actionId, resolved);
       // This fact comes from the authenticated Action caller, never authored input.
       const startContext = resolved ? { ...resolved, callerPermissionCeiling: ceiling,
@@ -8791,8 +8794,10 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
         // the authenticated start owner before strict creation-input parsing.
         const permission = resolveAgentEffectivePermission(ctx);
         if (!permission.ok) return settlePrepareResult(actionId, permission.error);
+        const admittedStart = readAdmittedAgentStartV1(actionId, ctx, readRecord(input));
         const startContext = await resolveActionAgentStartContextV1(deps,
-          { ...ctx, callerPermissionMode: permission.effectiveCallerMode });
+          { ...ctx, callerPermissionMode: permission.effectiveCallerMode }, undefined,
+          admittedStart ? undefined : { readBotPause: true });
         if (startContext && 'ok' in startContext) return settlePrepareResult(actionId, startContext);
         if (!startContext) return settlePrepareResult(actionId,
           actionStartTargetUnavailableV1(ctx, 'agent_start_context', 'agent_start_context_unavailable'));

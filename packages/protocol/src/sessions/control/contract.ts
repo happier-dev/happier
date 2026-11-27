@@ -1,3 +1,4 @@
+import { SessionBotPausedAtV1Schema } from '../identity/sessionBotV1.js';
 import { MachineDeletedSessionLifecycleReasonSchema } from '../metadata/sessionDisplaySchemasV1.js';
 import { createSessionSystemSessionV1Schema } from '../metadata/systemSessionV1.js';
 export { createSessionSystemSessionV1Schema, SessionSystemSessionV1Schema, readSystemSessionMetadataFromMetadata, isHiddenSystemSession, buildSystemSessionMetadataV1, type SessionSystemSessionV1 } from '../metadata/systemSessionV1.js';
@@ -424,6 +425,7 @@ export const V2SessionRecordSchema = lazyZodSchema(() => z.looseObject({
     /** Canonical immutable Session owner, absent on Homes predating this projection. */
     ownerAccountId: z.optional(z.string().check(z.minLength(1))),
     /** Home-local accepted Project identity; absent/null means not yet published. */
+    botPausedAt: z.optional(z.nullable(SessionBotPausedAtV1Schema)),
     projectKey: z.optional(z.nullable(z.string())),
     /** The owner published that this Session belongs to no Project; absent means a key or not yet classified. */
     projectKeyNone: z.optional(z.literal(true)),

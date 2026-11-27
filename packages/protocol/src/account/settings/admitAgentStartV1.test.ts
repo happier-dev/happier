@@ -43,6 +43,15 @@ const leaf = (facts: AgentStartFactsV1 = {}): MaterializedWorkflowLeafV1 => ({ b
 const spawn = (facts: AgentStartFactsV1 = {}): AgentStartRequestV1 => ({ kind: 'spawn_new', facts });
 
 describe('admitAgentStartV1', () => {
+  it('refuses fresh child starts from a paused Bot with the typed cause', () => {
+    const request = spawn({ agentTarget: target, permissionMode: 'default' });
+    const admit = (botPausedAt: number | null) => admitAgentStartV1(
+      DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, request, { ...baseline, botPausedAt },
+    );
+    expect(admit(null)).toMatchObject({ ok: true });
+    expect(admit(1_800_000_000_000)).toEqual({ ok: false, refusal: { code: 'bot_paused' } });
+  });
+
   it('starts a host root at its own depth without granting automation the present-user exemption', () => {
     const host = { ...baseline, caller: { kind: 'host' as const } };
     const request = spawn({ agentTarget: target, permissionMode: 'default' });

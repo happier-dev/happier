@@ -24,7 +24,8 @@ import { SessionManagedCreationV1Schema, type SessionManagedCreationV1 } from '@
 import { applyManagedCreationScopeEndInTx, bindManagedCreationScopeRetentionInTx, validateManagedCreationBirthInTx } from '@/app/machines/managed/managedCreationBirth';
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { buildMachineAdmissionFactsSelect, isMachineOwnedByAccountInTx, resolveMachineAdmissionFromFactsInTx } from '@/app/machines/machineAccess';
-import { publishWorkflowRunMachineWakeInTx } from './workflowRunMachineRouting';
+import { publishQueuedAutomationRuleMachineWakesInTx, publishWorkflowRunMachineWakeInTx } from './workflowRunMachineRouting';
+import { occupiesAutomationRuleSlot } from '@/app/automations/automationRunClaimEligibility';
 import { readWorkflowRunFrontierContinuationsInTx } from './workflowRunFrontierContinuation';
 
 import { markAccountsChanged, type AccountChangePublication } from "@/app/changes/markAccountChanged";
@@ -35,7 +36,7 @@ import { publishManagedRunWakeInTx, publishManagedContextWakeInTx } from '@/app/
 import { acquireAccountEncryptionTransitionFenceInTx } from "@/app/encryption/accountEncryptionTransition";
 import { deriveAccountEncryptionCurrentnessFromRow } from "@/app/encryption/accountContentKeyAdmission";
 import { automationRunCustodyTerminalWhere, readAutomationLiveCauseRunIdsTx } from "@/app/automations/automationCrudService";
-import { AUTOMATION_RUN_TERMINAL_STATES, projectAutomationRunState } from "@/app/automations/automationTypes";
+import { AUTOMATION_RUN_TERMINAL_STATES } from "@/app/automations/automationTypes";
 import { automationRunCauseSelect, automationRunWithoutExecutionWhere } from "@/app/automations/automationPersistenceSelect";
 import { decodeAutomationRunCause, isAutomationCauseRow } from "@/app/automations/automationRunCauseCodec";
 import { automationRunCancellationSelect, cancelAutomationRunRowTx } from "@/app/automations/automationRunCancellation";
@@ -71,12 +72,6 @@ const MAX_DATABASE_BIGINT = 9_223_372_036_854_775_807n;
 // A continuation cursor, rather than an unbounded SQL `take`, carries reads
 // that need more rows. This is an internal fetch bound, not a workflow quota.
 const WORKFLOW_PAGE_DATABASE_BATCH_ROWS = 128;
-
-function automationPreviousStateForWorkflowTerminalEffects(state: WorkflowRunState) {
-    const projected = projectAutomationRunState(state);
-    if (projected === null) throw new WorkflowRunServiceError("currentness_conflict");
-    return projected;
-}
 
 export class WorkflowRunServiceError extends Error {
     constructor(readonly code: "invalid_input" | "target_unavailable" | "run_not_found" | "run_access_denied" | "visible_team_not_granted" | "data_key_not_required" | "currentness_conflict" | "ineligible_state" | "custody_pending" | "content_unavailable" | "requester_custody_unavailable",
@@ -2538,9 +2533,6 @@ export async function transitionWorkflowRun(params: Readonly<{ accountId: string
         const terminalAutomationState = transitionsToTerminal
             && previous.originKind === "automation"
             && !sameTerminalCustodySettlement;
-        const previousAutomationState = terminalAutomationState
-            ? automationPreviousStateForWorkflowTerminalEffects(previous.state as WorkflowRunState)
-            : null;
         const storedCheckpoint = encodeStoredText(params.checkpointEnvelope);
         const storedResult = params.resultEnvelope === undefined ? undefined : encodeStoredText(params.resultEnvelope);
         const errorCode = previous.errorCode === WORKFLOW_RUN_STOPPED_BY_MACHINE_OWNER_V1
@@ -2586,12 +2578,11 @@ export async function transitionWorkflowRun(params: Readonly<{ accountId: string
             }
         }
         if (terminalAutomationState) {
-            if (!previousAutomationState) throw new WorkflowRunServiceError("currentness_conflict");
             await applyAutomationRunTerminalEffectsTx({
                 tx,
                 accountId: params.accountId,
                 runId: params.runId,
-                previousState: previousAutomationState,
+                previousState: previous.state,
                 state: params.state as "succeeded" | "failed" | "cancelled" | "outcome_uncertain",
                 now,
                 prepareWorkflowReplyHandoff: params.state === "succeeded",
@@ -2601,7 +2592,12 @@ export async function transitionWorkflowRun(params: Readonly<{ accountId: string
         const row = await tx.automationRun.findUniqueOrThrow({ where: { id: params.runId }, select: workflowRunSelect });
         if (params.discussionRound) await updateDiscussionRoundOutcomeInTx(tx, { ...params.discussionRound, runId: params.runId,
             settled: row.state === 'succeeded' && row.workflowCustodyState === 'settled' });
-        await markWorkflowRunChangedTx(tx, params.accountId, params.runId, deliveryBefore);
+        const cursor = await markWorkflowRunChangedTx(tx, params.accountId, params.runId, deliveryBefore);
+        if (!terminalAutomationState && row.automationId !== null
+            && occupiesAutomationRuleSlot(previous.state, previous.workflowCustodyState)
+            && !occupiesAutomationRuleSlot(row.state, row.workflowCustodyState)) {
+            await publishQueuedAutomationRuleMachineWakesInTx(tx, { accountId: params.accountId, automationId: row.automationId, cursor });
+        }
         return await projectRunInTx(tx, row as WorkflowRunProjectionRow, params.accountId);
     }, {
         // Ordered publication locks/replay and mode/control/row predicates fence this mutation.
@@ -2789,7 +2785,7 @@ export async function cancelWorkflowRunTx(
             tx,
             accountId: params.accountId,
             runId: params.runId,
-            previousState: automationPreviousStateForWorkflowTerminalEffects(current.state as WorkflowRunState),
+            previousState: current.state,
             state: terminalState,
             now,
             ...(permanentTargetLoss && !immediate

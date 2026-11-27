@@ -78,7 +78,7 @@ export type SessionStateFieldActionValue =
   | Readonly<{ fieldId: 'display.title'; value: string }>
   | Readonly<{ fieldId: 'display.statusReason'; value: string | null }>
   | Readonly<{ fieldId: 'display.statusProgress'; value: SessionStatusProgressV1 | null | 'clear' }>
-  | Readonly<{ fieldId: 'display.bot'; value: SessionBotV1 | null; expectedValue?: SessionBotV1 | null }>
+  | Readonly<{ fieldId: 'display.bot'; value: SessionBotV1 | null; expectedValue?: SessionBotV1 | null; botPausedAt?: number | null }>
   | Readonly<{ fieldId: 'display.botFace'; value: SessionBotFaceV1 | null }>
   | Readonly<{ fieldId: 'view.transcriptToolCalls'; value: boolean | null }>
   | Readonly<{ fieldId: 'intent.memoryEnabled'; value: boolean; expectedMetadataRevision: number }>
@@ -150,7 +150,8 @@ export function resolveSessionStateFieldActionWrite(
   if (actionId === 'session.bot.set') {
     const request = input as AdmittedActionInputById['session.bot.set'];
     return { fieldId: SESSION_STATE_FIELD_ACTIONS[actionId].fieldId, value: request.bot,
-      ...(request.expectedBot !== undefined ? { expectedValue: request.expectedBot } : {}) };
+      ...(request.expectedBot !== undefined ? { expectedValue: request.expectedBot } : {}),
+      ...(request.bot === null || request.pausedAt !== undefined ? { botPausedAt: request.pausedAt ?? null } : {}) };
   }
   if (actionId === 'session.bot.face.set') {
     return { fieldId: 'display.botFace', value: (input as AdmittedActionInputById['session.bot.face.set']).face };

@@ -2607,7 +2607,7 @@ async function batchPutIngressObligation(input: Readonly<{
   const collection = requireChannelsAccountStorage(input.context).collection(CHANNEL_STATE_COLLECTION);
   const result = await collection.batch([
     { kind: 'put', value: input.value, expectedRevision: input.expectedRevision },
-    ...(input.members ?? []),
+    ...input.members ?? [],
   ], { signal: input.context.signal });
   if (result.status === 'conflict') {
     const current = await readIngressLifecycleConflict({ ...input, result, transitionOwner: 'batchPutIngressObligation' });
@@ -2964,10 +2964,20 @@ async function settleNewSessionTerminal(input: Readonly<{
 }
 
 /** Every Channels Session binding restores its canonical target before admitting input. */
-async function readSessionForIngressDispatch(context: PluginInvocationContext, sessionId: string) {
+async function readSessionIngressTarget(context: PluginInvocationContext, sessionId: string) {
   const session = await context.services.sessions.get(sessionId, { signal: context.signal });
   if (session === null) return null;
-  const summary = await session.summary({ signal: context.signal });
+  return { session, summary: await session.summary({ signal: context.signal }) };
+}
+
+async function readSessionForIngressDispatch(
+  context: PluginInvocationContext,
+  sessionId: string,
+  admitted?: Awaited<ReturnType<typeof readSessionIngressTarget>>,
+) {
+  const target = admitted === undefined ? await readSessionIngressTarget(context, sessionId) : admitted;
+  if (target === null) return null;
+  const { session, summary } = target;
   if (summary.state === 'archived') {
     const restored = await context.services.actions.execute(
       'session.unarchive',
@@ -4028,6 +4038,7 @@ async function dispatchIngressObligationAttempt(input: Readonly<{
       value: attemptingIngressObligationValue({ obligation: obligation.value, now: Date.now() }),
     });
   }
+  let sessionTarget: Awaited<ReturnType<typeof readSessionIngressTarget>> | undefined;
   if (['ready', 'debounceDue', 'retryDue'].includes(obligation.value.payload.lifecycle.phase)) {
     authority = input.admittedAuthority ?? await revalidateFirstDispatchAuthority({
       context: input.context,
@@ -4063,6 +4074,16 @@ async function dispatchIngressObligationAttempt(input: Readonly<{
     }
     const now = Date.now();
     const target = obligation.value.payload.target;
+    if (obligation.value.payload.lifecycle.attemptCount === 0 && target?.kind === 'session'
+      && !target.stop && !target.resume && target.approval === null && target.userActionAnswer === null
+      && obligation.value.payload.userActionAnswerRequestId === undefined) {
+      sessionTarget = await readSessionIngressTarget(input.context, target.sessionId);
+      if (sessionTarget?.summary.botPausedAt != null) {
+        const terminal = await settleIngressTerminal({ context: input.context, authority, obligation,
+          disposition: 'suppressed', nonAdmission: { reason: 'bot_paused', senderFeedbackEligible: false } });
+        return settleTerminalRefusalCustody({ context: input.context, obligation: terminal });
+      }
+    }
     const carry = obligation.value.payload.lifecycle.attemptCount === 0 && ingress.kind === 'fullText'
       && ingress.observation.endpoint.kind === 'thread' && target?.kind === 'session'
       && !target.stop && !target.resume && !target.approval && !target.newSession
@@ -4180,7 +4201,7 @@ async function dispatchIngressObligationAttempt(input: Readonly<{
         value: blockedIngressObligationValue({ obligation: obligation.value, now: Date.now() }) });
       return 'checkpointSafe';
     }
-    preparedSession = await readSessionForIngressDispatch(input.context, sessionId);
+    preparedSession = await readSessionForIngressDispatch(input.context, sessionId, sessionTarget);
     if (preparedSession === null) throw pluginError('channels_ingress_session_unavailable', 'The Session target is unavailable for the frozen PR update.', true);
     if (admission.prepareRound && prUpdate !== undefined && obligation.value.payload.prRoundPrepared !== true) {
       const prepared = await prepareSessionPullRequestWatchRound({ binding: currentBinding.value.payload,
@@ -4390,7 +4411,7 @@ async function dispatchIngressObligationAttempt(input: Readonly<{
       : await sessionSourceDisplayNameSnapshot(input.context,
         input.connectionId, input.bindingId, authority, currentBinding?.value, input.source.providerDisplayName);
     const actorKind = fullText.actor.kind;
-    const session = preparedSession ?? await readSessionForIngressDispatch(input.context, target.sessionId);
+    const session = preparedSession ?? await readSessionForIngressDispatch(input.context, target.sessionId, sessionTarget);
     if (session === null) {
       throw pluginError(
         'channels_ingress_session_unavailable',

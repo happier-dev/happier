@@ -4598,6 +4598,7 @@ type VoiceActionExecutorBinding = Readonly<{
             return updater(metadata, metadataRevision);
           }, { serverId: serverId ?? null,
             ...(fieldId === 'display.title' ? { mutationIntent: 'rename_session' as const } : {}),
+            botPausedAt: fieldId === 'display.bot' ? write.botPausedAt : undefined,
             ...(accountContext ? { accountLifetime: accountContext.accountLifetime,
               ...(accountContext.prepareRequest ? { prepareRequest: accountContext.prepareRequest } : {}) } : {}),
             onMetadataCommitted: (revision) => { committedRevision = revision; },
@@ -4611,7 +4612,7 @@ type VoiceActionExecutorBinding = Readonly<{
       return { ok: true, sessionId: sid, ...(fieldId === 'display.title' ? { title: value, updatedAt }
         : fieldId === 'display.statusReason' ? { reason: value }
         : fieldId === 'display.statusProgress' ? { progress: value === 'clear' ? null : value }
-        : fieldId === 'display.bot' ? { bot: value } : fieldId === 'display.botFace' ? { face: value }
+        : fieldId === 'display.bot' ? { bot: value, ...(write.botPausedAt !== undefined ? { pausedAt: write.botPausedAt } : {}) } : fieldId === 'display.botFace' ? { face: value }
         : fieldId === 'intent.memoryEnabled' ? { enabled: value }
         : fieldId === 'intent.voicePreference' ? { preference: value }
         : fieldId === 'intent.approvalProfileId' ? { approvalProfileId: value }

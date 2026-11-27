@@ -92,6 +92,23 @@ function readNullableTimestamp(value: unknown, fallback: number | null | undefin
             : fallback;
 }
 
+function projectBotPauseFromSocketUpdate(
+    current: Pick<Session, 'botPausedAt' | 'metadataLayoutVersion' | 'metadataVersion'>,
+    update: Readonly<{
+        botPausedAt?: number | null;
+        metadataLayoutVersion?: number;
+        metadata?: { version: number };
+    }>,
+): number | null | undefined {
+    if (update.botPausedAt === undefined || compareSessionMetadataRevisions({
+        incomingLayoutVersion: update.metadataLayoutVersion,
+        incomingMetadataVersion: update.metadata?.version,
+        storedLayoutVersion: current.metadataLayoutVersion,
+        storedMetadataVersion: current.metadataVersion,
+    }) < 0) return current.botPausedAt;
+    return update.botPausedAt;
+}
+
 function readTimestamp(value: unknown, fallback: number): number {
     return typeof value === 'number' && Number.isFinite(value)
         ? Math.trunc(value)
@@ -184,6 +201,7 @@ type NewSessionSocketUpdateBody = Readonly<{
     meaningfulActivityAt?: unknown;
     currentStorageState?: unknown;
     projectKey?: unknown;
+    botPausedAt?: unknown;
 }>;
 
 function readNewSessionId(body: NewSessionSocketUpdateBody): string | null {
@@ -375,6 +393,7 @@ export async function buildNewSessionFromSocketUpdate(params: {
     return {
         id: sessionId,
         projectKey: typeof updateBody.projectKey === 'string' ? updateBody.projectKey : undefined,
+        botPausedAt: typeof updateBody.botPausedAt === 'number' ? updateBody.botPausedAt : undefined,
         viewer: resolveSessionViewerProjectionUpdate(updateBody.viewer, undefined),
         ...(typeof params.sourceServerId === 'string' && params.sourceServerId.trim().length > 0
             ? { serverId: params.sourceServerId.trim() }
@@ -601,6 +620,7 @@ export function buildUpdatedSessionProjectionFromSocketUpdate(params: {
                 : session.archivedAt,
         projectKey: typeof updateBody.projectKey === 'string' || updateBody.projectKey === null
             ? updateBody.projectKey : session.projectKey,
+        botPausedAt: projectBotPauseFromSocketUpdate(session, updateBody),
         // Only an explicit projection changes responsibility. An update that omits
         // the field says nothing about it and must not turn a known assignee, or a
         // server that does not project responsibility at all, into "No one".
@@ -1111,6 +1131,7 @@ export async function buildUpdatedSessionListRenderablePatchFromSocketUpdate(par
                 : renderable.archivedAt,
         projectKey: typeof updateBody.projectKey === 'string' || updateBody.projectKey === null
             ? updateBody.projectKey : renderable.projectKey,
+        botPausedAt: projectBotPauseFromSocketUpdate(renderable, updateBody),
         lastViewedSessionSeq: nextLastViewedSessionSeq,
         latestTurnId: nextLatestTurnId,
         latestTurnStatus: nextLatestTurnStatus,

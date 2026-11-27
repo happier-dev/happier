@@ -47,6 +47,7 @@ export class AutomationConversationAdmissionCallerError extends Error {
 
 type ExistingConversationOccurrenceRow = Readonly<{
     id: string;
+    errorCode: string | null;
     accountId: string;
     triggerId: string | null;
     causeKind: string;
@@ -69,6 +70,7 @@ type ExistingConversationOccurrenceRow = Readonly<{
 
 const existingConversationOccurrenceSelect = {
     id: true,
+    errorCode: true,
     accountId: true,
     triggerId: true,
     causeKind: true,
@@ -172,10 +174,11 @@ async function scopedAdmissionRefusalTx(params: Readonly<{
         ? null : refused('scopedTriggerIdentityMismatch');
 }
 
-function rejoined(runId: string): AutomationConversationAdmitResultV1 {
+function rejoined(run: Readonly<{ id: string; errorCode: string | null }>): AutomationConversationAdmitResultV1 {
+    if (run.errorCode === "bot_paused") return refused("bot_paused");
     return AutomationConversationAdmitResultV1Schema.parse({
         kind: "rejoined",
-        runId,
+        runId: run.id,
         checkpointSafe: true,
     });
 }
@@ -547,7 +550,8 @@ async function createConversationRunTx(params: Readonly<{
         if (result.reason === "watchCompleted") return refused("watchCompleted");
         return blocked("temporarilyUnavailable");
     }
-    if (result.kind === "rejoined") return rejoined(result.run.id);
+    if (result.kind === "rejoined") return rejoined(result.run);
+    if (result.run.errorCode === "bot_paused") return refused("bot_paused");
     return admitted(result.run.id);
 }
 
@@ -628,7 +632,7 @@ export async function admitEncryptedAutomationConversationV1(params: Readonly<{
                 accountId: params.accountId,
                 hostEvidence,
             });
-            if (disposition === "match") return rejoined(existing.id);
+            if (disposition === "match") return rejoined(existing);
             return blocked(
                 disposition === "mismatch" ? "occurrenceConflict" : "temporarilyUnavailable",
             );
@@ -723,7 +727,7 @@ export async function admitAutomationConversationV1(params: Readonly<{
                 occurrenceKey,
                 evidence,
             })
-                ? rejoined(existing.id)
+                ? rejoined(existing)
                 : blocked("occurrenceConflict");
         }
 

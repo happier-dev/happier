@@ -89,6 +89,7 @@ export async function updateSessionStateFieldForTarget<F extends SessionStateFie
   value: SessionStateFieldWriteValue<F>;
   metadataReason: string;
   expectedMetadataRevision?: number;
+  botPausedAt?: number | null;
   expectedValue?: SessionStateFieldValue<F> | null;
   currentness?: SessionMetadataMutationCurrentness;
   checkMetadata?: (metadata: unknown) => void;
@@ -118,6 +119,7 @@ export async function updateSessionStateFieldForTarget<F extends SessionStateFie
               return updater(metadata, context?.metadataRevision);
             },
             currentness: params.currentness,
+            botPausedAt: params.botPausedAt,
           });
           targetResult = result;
           if (result.ok) {

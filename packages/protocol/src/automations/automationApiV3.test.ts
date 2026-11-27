@@ -171,6 +171,17 @@ const listDefinition = {
   triggers: [schedule, event, lifecycle],
 };
 
+it('round-trips rule dispatch settings and accepts an explicit clear alongside omitted updates', () => {
+  const dispatch = { priority: 'high', maxConcurrentRuns: 2 };
+  const patch = { expectedTemplateVersion: 3 };
+  expect(Api.AutomationDefinitionPatchRequestSchema.parse({ ...patch, ...dispatch })).toEqual({ ...patch, ...dispatch });
+  expect(Api.AutomationDefinitionPatchRequestSchema.parse({ ...patch, maxConcurrentRuns: null })).toEqual({ ...patch, maxConcurrentRuns: null });
+  expect(Api.AutomationDefinitionPatchRequestSchema.parse(patch)).toEqual(patch);
+  expect(Api.AutomationDefinitionPatchRequestSchema.safeParse({ ...patch, maxConcurrentRuns: 0 }).success).toBe(false);
+  expect(Api.AutomationDefinitionPatchRequestSchema.safeParse({ ...patch, maxConcurrentRuns: 0.5 }).success).toBe(false);
+  expect(Api.AutomationDefinitionListItemSchema.parse({ ...listDefinition, ...dispatch })).toMatchObject(dispatch);
+});
+
 const eventCause = {
   kind: 'trigger' as const,
   triggerId: event.id,

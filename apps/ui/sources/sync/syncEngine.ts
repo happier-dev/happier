@@ -5801,6 +5801,7 @@ class Sync {
             teamCredentialBinding?: SessionMetadataTeamCredentialBinding;
             mutationIntent?: 'rename_session';
             expectedMetadataRevision?: number;
+            botPausedAt?: number | null;
             onMetadataCommitted?: (revision: number) => void;
             accountLifetime?: Pick<ServerAccountScopeLifetime, 'scope' | 'isCurrent'>;
             authority?: ServerAccountRequestAuthority;
@@ -6215,6 +6216,7 @@ class Sync {
                 };
                 const committedSession = {
                     ...ordinarySession,
+                    ...(options?.botPausedAt !== undefined ? { botPausedAt: options.botPausedAt } : {}),
                     metadata:
                         next.value.sharedMetadata as unknown as Metadata,
                     metadataVersion: next.metadataVersion,
@@ -6249,6 +6251,7 @@ class Sync {
             teamCredentialBinding: options?.teamCredentialBinding,
             mutationIntent: options?.mutationIntent,
             expectedMetadataRevision: options?.expectedMetadataRevision,
+            botPausedAt: options?.botPausedAt,
             onMetadataCommitted: options?.onMetadataCommitted,
             assertCurrent,
         });
@@ -9122,6 +9125,7 @@ class Sync {
             teamCredentialBinding?: SessionMetadataTeamCredentialBinding;
             mutationIntent?: 'rename_session';
             expectedMetadataRevision?: number;
+            botPausedAt?: number | null;
             onMetadataCommitted?: (revision: number) => void;
             accountLifetime?: Pick<ServerAccountScopeLifetime, 'scope' | 'isCurrent'>;
             /** The admitted caller's request preparation applies to both captured reads and writes. */

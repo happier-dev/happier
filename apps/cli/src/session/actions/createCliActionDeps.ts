@@ -523,17 +523,28 @@ export function createCliActionDeps(params: CliActionDepsParams,
     }
     return sources;
   };
-  const callerSessionResolution = (context: ActionExecutorContext): Parameters<typeof resolveCliActionCallerSession>[0] => ({
+  const callerSessionResolution = (context: ActionExecutorContext, readPause = false): Parameters<typeof resolveCliActionCallerSession>[0] => ({
     context, credentials: params.credentials, boundSessionId: params.sessionId, resolveTransportForSession, callSessionRpcForTransport,
     readBoundSession: async () => {
       const metadata = await readCurrentSessionMetadata(context.signal);
+      const sessionId = params.sessionId;
+      let botPausedAt: number | null | undefined;
+      if (readPause && sessionId) {
+        const { fetchSessionById } = await import('@/session/transport/http/sessionsHttp');
+        const record = await fetchSessionById({ token: params.token, sessionId, reason: 'session-action',
+          serverUrl: params.serverHttpBaseUrl, signal: context.signal,
+          serverFeaturesSnapshot: await readServerFeaturesSnapshot() });
+        if (!record || record.id !== sessionId) return null;
+        botPausedAt = record.botPausedAt;
+      }
       const { resolveBackendTargetFromSessionMetadata } = await import("@/session/backendTargets/resolveBackendTargetFromSessionMetadata");
       return { metadata, workDepth: params.getCurrentSessionWorkDepth?.() ?? params.rawSession?.workDepth,
+        botPausedAt,
         backendTarget: params.getCurrentSessionBackendTarget?.() ?? resolveBackendTargetFromSessionMetadata(metadata),
         machineId: await resolveCurrentSessionValue('machineId', context.signal), directory: await resolveCurrentSessionValue('path', context.signal) };
     },
   });
-  const resolveActionCallerSession = async (context: ActionExecutorContext) => await resolveCliActionCallerSession(callerSessionResolution(context));
+  const resolveActionCallerSession = async (context: ActionExecutorContext, readPause?: boolean) => await resolveCliActionCallerSession(callerSessionResolution(context, readPause));
   const resolveAgentStartContext = createCliAgentStartContext(params, { prepareAccountRoleOverrides, readReadyAccountRoleOverrides, readRoleSources, resolveActionCallerSession,
     readWorkflowActionStartContext: context => readWorkflowActionStartContext(context) }, () => readEffectiveDeps?.() ?? actionDeps);
   const approvalsStore = params.credentials ? createCliApprovalsArtifactStore({ credentials: params.credentials,

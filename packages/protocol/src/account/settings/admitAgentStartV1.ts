@@ -134,6 +134,8 @@ export function readAgentStartCallerWorkDepthV1(caller: AgentStartCallerV1): num
 export type AgentStartContextV1 = Readonly<{
   /** Host-only present-user start; role binding still runs, agent restrictions do not. */
   initiator?: 'user';
+  /** Read at the source Session's fresh start admission. */
+  botPausedAt?: number | null;
   caller: AgentStartCallerV1;
   baseline: AgentStartBaselineV1;
   ledSubtreeSessionIds: readonly string[];
@@ -216,6 +218,10 @@ export function admitAgentStartV1(
   const allowLists = context.allowLists ?? DEFAULT_SESSION_AGENT_START_ALLOW_LISTS_V1;
   const workDepth = context.initiator === 'user' ? 0 : readAgentStartCallerWorkDepthV1(context.caller) + 1;
   const refuse = (refusal: AgentStartRefusalV1): AgentStartAdmissionV1 => ({ ok: false, refusal });
+  if (context.initiator !== 'user' && context.caller.kind === 'session' && context.botPausedAt != null
+    && (request.kind === 'spawn_new' || request.kind === 'execution_run' || request.kind === 'workflow_run')) {
+    return refuse({ code: 'bot_paused' });
+  }
   const targetSessionId = 'targetSessionId' in request ? request.targetSessionId : undefined;
   if (targetSessionId !== undefined && context.initiator !== 'user') {
     const ownSessionId = context.caller.kind === 'session' ? context.caller.sessionId

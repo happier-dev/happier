@@ -39,6 +39,7 @@ export type SessionMetadataRecipientProjectionInput = Readonly<{
     agentState: string | null;
     agentStateVersion: number;
     projectKey?: string | null;
+    botPausedAt?: number | null;
     /** Stored JSON or an already-captured current wire projection. */
     displayProjectionV1?: string | SessionDisplayProjectionV1 | null;
 }>;
@@ -349,6 +350,7 @@ export function projectSessionMetadataForRecipient(params: Readonly<{
             ownerMetadata: validatedOwnerMetadata,
             ...(descriptor.displayProjectionV1 ? { displayProjectionV1: descriptor.displayProjectionV1 } : {}),
             ...(session.projectKey !== undefined ? { projectKey: session.projectKey } : {}),
+            ...(session.botPausedAt !== undefined ? { botPausedAt: session.botPausedAt } : {}),
             agentState: session.agentState,
             agentStateVersion: session.agentStateVersion,
         };
@@ -359,6 +361,7 @@ export function projectSessionMetadataForRecipient(params: Readonly<{
         metadataVersion: session.metadataVersion,
         metadataLayoutVersion: SESSION_METADATA_LAYOUT_VERSION_V1,
         ...(session.projectKey !== undefined ? { projectKey: session.projectKey } : {}),
+        ...(session.botPausedAt !== undefined ? { botPausedAt: session.botPausedAt } : {}),
         agentState: null,
         ...(descriptor.displayProjectionV1 ? { displayProjectionV1: descriptor.displayProjectionV1 } : {}),
         agentStateVersion: session.agentStateVersion,

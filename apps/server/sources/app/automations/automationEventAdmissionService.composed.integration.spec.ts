@@ -1111,6 +1111,7 @@ describe("Automation Event admission", () => {
             () => db.automationRun.deleteMany(),
             () => db.automationAssignment.deleteMany(),
             () => db.automation.deleteMany(),
+            () => db.session.deleteMany(),
             () => db.pluginWebhookDelivery.deleteMany(),
             () => db.pluginWebhookEndpoint.deleteMany(),
             () => db.pluginWebhookRoute.deleteMany(),
@@ -2138,6 +2139,37 @@ describe("Automation Event admission", () => {
             results: [{ kind: "blocked", reason: "noEnabledAssignment", checkpointSafe: false }],
         });
         await expect(db.automationRun.count({ where: { automationId: AUTOMATION_ID } })).resolves.toBe(0);
+    });
+
+    it("settles a paused Bot Event as bot_paused and admits only fresh input after resume", async () => {
+        await seed();
+        const source = await db.session.create({
+            data: { accountId: ACCOUNT_ID, tag: randomUUID(), encryptionMode: "plain", metadata: "{}",
+                botPausedAt: BigInt(input().occurredAt - 1) },
+        });
+        await db.automation.update({ where: { id: AUTOMATION_ID }, data: { scopeSessionId: source.id } });
+        const event = input({ occurrenceId: "paused-bot-event" });
+        const publish = async (request: typeof event) => AutomationEventAdmitResultV1Schema.parse(
+            await admitAutomationEventV1({ accountId: ACCOUNT_ID, caller, input: request }),
+        );
+        const paused = { results: [{ kind: "skipped", reason: "bot_paused", checkpointSafe: true }] };
+        await expect(publish(event)).resolves.toEqual(paused);
+        const skipped = await db.automationRun.findFirstOrThrow({
+            where: { automationId: AUTOMATION_ID },
+            select: { id: true, state: true, errorCode: true, finishedAt: true },
+        });
+        expect(skipped).toMatchObject({ state: "skipped", errorCode: "bot_paused", finishedAt: expect.any(Date) });
+        await expect(db.automationRunEvent.findMany({
+            where: { runId: skipped.id },
+            select: { type: true, payload: true },
+        })).resolves.toEqual([{ type: "run_skipped", payload: { errorCode: "bot_paused" } }]);
+
+        await db.session.update({ where: { id: source.id }, data: { botPausedAt: null } });
+        await expect(publish(event)).resolves.toEqual(paused);
+        await expect(db.automationRun.count({ where: { automationId: AUTOMATION_ID } })).resolves.toBe(1);
+        await expect(publish(input({ occurrenceId: "fresh-bot-event" }))).resolves.toEqual({
+            results: [{ kind: "admitted", runId: expect.any(String), checkpointSafe: true }],
+        });
     });
 
     it("rejoins committed plain evidence before current definition retirement while rejecting net-new work", async () => {

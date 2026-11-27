@@ -457,7 +457,10 @@ async function findClaimCandidates(params: {
             ...(params.runIds ? { id: { in: [...params.runIds] } } : {}),
             ...expectedRunTriggerCauseWhere(params.expectedTriggerKind),
         },
-        orderBy: [{ dueAt: "asc" }, { createdAt: "asc" }, { id: "asc" }],
+        orderBy: [
+            { automation: { priority: { sort: "desc", nulls: "last" } } },
+            { dueAt: "asc" }, { createdAt: "asc" }, { id: "asc" },
+        ],
         select: automationClaimCandidateSelect,
     });
 }

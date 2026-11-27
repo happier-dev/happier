@@ -90,7 +90,8 @@ vi.mock('@/session/transport/http/sessionsHttp', async (importOriginal) => ({
       expect(patch.sharedMetadata.expectedVersion).toBe(current.metadataVersion);
       expect(patch.expectedOwnerMetadata).toEqual(current.ownerMetadata);
       boundary.session = { ...current, metadataVersion: current.metadataVersion + 1, metadata: patch.sharedMetadata.ciphertext,
-        ownerMetadata: patch.ownerMetadata, agentState: patch.agentState.ciphertext, agentStateVersion: current.agentStateVersion! + 1 };
+        ownerMetadata: patch.ownerMetadata, agentState: patch.agentState.ciphertext, agentStateVersion: current.agentStateVersion! + 1,
+        ...(patch.botPausedAt !== undefined ? { botPausedAt: patch.botPausedAt } : {}) };
       return { success: true, metadataLayoutVersion: 1, sharedMetadata: { version: boundary.session.metadataVersion },
         agentState: { version: boundary.session.agentStateVersion } };
     }
@@ -276,6 +277,26 @@ describe('headless registered Session field Actions', () => {
     expect(await miswired.execute('session.memory.set', { sessionId, serverId: 'home', expectedMetadataRevision: 4, enabled: true },
       { surface: 'cli', authority: 'present_user', serverId: 'home' })).toMatchObject({ ok: false, errorCode: 'unsupported_action' });
     expect(boundary.patches).toEqual([]);
+  });
+
+  it.each(['plain', 'e2ee'] as const)('pauses and resumes an existing Bot through the %s owner tuple without waking it', async mode => {
+    if (!boundary.session) throw new Error('Missing Home fixture');
+    boundary.accountMode = mode;
+    const marker = { kind: 'bot' } as const;
+    const initialOwner = sealBotOwner({ v: 1, work: { bot: marker, memoryEnabled: true } });
+    boundary.session = { ...boundary.session, metadataLayoutVersion: 1, encryptionMode: mode,
+      metadata: mode === 'e2ee' ? encodeBase64(encrypt(botSecret, 'legacy', { v: 1 })) : JSON.stringify({ v: 1 }),
+      ownerMetadata: initialOwner };
+    const owner = executor();
+    const context = { surface: 'cli', authority: 'present_user', serverId: 'home' } as const;
+    const pausedAt = 1_800_000_000_000;
+    for (const desired of [pausedAt, null]) {
+      const response = await owner.execute('session.bot.set', { sessionId, bot: marker, expectedBot: marker, pausedAt: desired }, context);
+      expect(response, JSON.stringify(response)).toMatchObject({ ok: true, result: { pausedAt: desired } });
+      expect(boundary.session).toMatchObject({ botPausedAt: desired, ownerMetadata: initialOwner });
+      expect(readBotOwner().work).toMatchObject({ bot: marker, memoryEnabled: true });
+    }
+    expect(boundary.rpcCalls).toBe(0);
   });
 
   it.each(['plain', 'e2ee'] as const)('guards Bot inverses through %s headless Actions on the first read and every metadata retry', async mode => {

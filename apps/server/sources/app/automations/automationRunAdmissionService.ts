@@ -274,6 +274,7 @@ type PreparedAutomationRunAdmission = Readonly<{
             machine: Readonly<{ accountId: string; installationId: string | null }> }>[];
     }>;
     missedReason: "machine_offline" | "machine_presence_at_due_unavailable" | null;
+    botPaused: boolean;
 }>;
 
 type PreparedAutomationRunAdmissionResult =
@@ -363,6 +364,7 @@ function prepareAutomationRunAdmission(params: Readonly<{
     invocationPlacement: boolean;
     runTargetAdmission: WorkflowMachineAdmission | undefined;
     manualAssignmentAccessDenied: boolean;
+    pausedBotSessionIds: ReadonlySet<string>;
 }>): PreparedAutomationRunAdmissionResult {
     const cause = params.cause;
     const automation = params.automationsById.get(params.request.automationId);
@@ -371,6 +373,8 @@ function prepareAutomationRunAdmission(params: Readonly<{
     if (parseAutomationObservationOnlyDefinitionV1(automation.templateCiphertext) !== null) {
         return { kind: "ineligible", reason: "observationOnly" };
     }
+    const botPaused = cause.kind !== "manual" && automation.scopeSessionId !== null
+        && params.pausedBotSessionIds.has(automation.scopeSessionId);
     const assignmentMayBeFrozen = (assignment: AutomationAdmissionDefinition["assignments"][number]): boolean => {
         const availability = classifyMachineAvailabilityState(assignment.machine);
         return availability === "available"
@@ -404,7 +408,7 @@ function prepareAutomationRunAdmission(params: Readonly<{
     // non-replayable and may retain a reversibly replaced machine so undo can
     // make the already-admitted Run claimable. An empty post-policy snapshot
     // is permanently unclaimable.
-    if (admissionAutomation.assignments.length === 0) {
+    if (!botPaused && admissionAutomation.assignments.length === 0) {
         if (cause.kind === "manual" && params.manualAssignmentAccessDenied) {
             return { kind: "ineligible", reason: "target_unavailable" };
         }
@@ -449,6 +453,7 @@ function prepareAutomationRunAdmission(params: Readonly<{
             workflowDefinitionEnvelope: frozen.workflowDefinitionEnvelope,
             automation: admissionAutomation,
             missedReason: params.request.runTargetMachineId === undefined ? missedReason : null,
+            botPaused,
         },
     };
 }
@@ -458,14 +463,16 @@ async function insertPreparedAutomationRunTx(params: Readonly<{
     accountId: string;
     admission: PreparedAutomationRunAdmission;
 }>): Promise<AutomationRunAdmissionResult> {
-    const { request, cause, executionInputEnvelope, workflowDefinitionEnvelope, automation, missedReason } = params.admission;
-    const missed = missedReason !== null;
+    const { request, cause, workflowDefinitionEnvelope, automation, missedReason, botPaused } = params.admission;
+    const executionInputEnvelope = botPaused ? null : params.admission.executionInputEnvelope;
+    const terminal = botPaused ? { state: "skipped", errorCode: "bot_paused" } as const
+        : missedReason !== null ? { state: "missed", errorCode: missedReason } as const : null;
     const triggerId = cause.kind === "manual" ? undefined : cause.triggerId;
     // Material Action requests and PR feedback are distinct immutable occurrences,
     // including while the Session is busy. Other scoped triggers keep their existing
     // latest-pending policy. The scoped correspondence was admitted above;
     // encrypted event bodies are never inspected to choose this policy.
-    if (automation.scopeSessionId !== null && triggerId && !preservesDistinctScopedOccurrences(request, cause)) {
+    if (!botPaused && automation.scopeSessionId !== null && triggerId && !preservesDistinctScopedOccurrences(request, cause)) {
         const pending = await params.tx.automationRun.findMany({
             where: { accountId: params.accountId, triggerId, state: "queued" }, select: { id: true, workflowCustodyState: true },
         });
@@ -483,7 +490,7 @@ async function insertPreparedAutomationRunTx(params: Readonly<{
         ? new Date(cause.evidence.scheduledFor)
         : request.now;
     const causeFields = encodeAutomationRunCause(cause);
-    const runId = request.replyHandoff ? randomUUID() : null;
+    const runId = !botPaused && request.replyHandoff ? randomUUID() : null;
     const initialExecutionDispatchState = executionInputEnvelope === null
         ? null
         : initialAutomationExecutionDispatchStateForRun(executionInputEnvelope);
@@ -499,8 +506,8 @@ async function insertPreparedAutomationRunTx(params: Readonly<{
                 originKind: "automation",
                 sourceArtifactId: workflowSource?.kind === "artifact" ? workflowSource.artifactId : null,
             } : {}),
-            state: missed ? "missed" : "queued",
-            ...(missed ? { finishedAt: request.now, errorCode: missedReason } : {}),
+            state: terminal?.state ?? "queued",
+            ...(terminal ? { finishedAt: request.now, errorCode: terminal.errorCode } : {}),
             ...causeFields,
             // One derivation owner for the persisted identity and the rejoin
             // probe: the cause codec cannot see a manual invocation's
@@ -517,7 +524,7 @@ async function insertPreparedAutomationRunTx(params: Readonly<{
             assignments: {
                 // Frozen assignment index also serves retained predecessor
                 // inputs, which have no embedded assignmentMachineIds.
-                create: automation.assignments.map((assignment) => ({
+                create: (botPaused ? [] : automation.assignments).map((assignment) => ({
                     machineId: assignment.machineId,
                     priority: assignment.priority,
                     ...(workflowDefinitionEnvelope !== null
@@ -544,14 +551,14 @@ async function insertPreparedAutomationRunTx(params: Readonly<{
     });
     let run = projectAutomationOriginRun(inserted);
     if (!run) throw new Error("Admitted Automation Run has invalid origin correspondence");
-    if (workflowDefinitionEnvelope !== null) {
+    if (!botPaused && workflowDefinitionEnvelope !== null) {
         await attachAutomationWorkflowBodyTx(params.tx, {
             accountId: params.accountId,
             runId: run.id,
             automationId: request.automationId,
             definitionEnvelope: workflowDefinitionEnvelope,
         });
-        if (missed) await params.tx.automationRun.update({ where: { id: run.id }, data: { workflowCustodyState: "settled" } });
+        if (terminal) await params.tx.automationRun.update({ where: { id: run.id }, data: { workflowCustodyState: "settled" } });
         const attached = await params.tx.automationRun.findUnique({
             where: { id: run.id },
             select: automationRunItemSelect,
@@ -567,11 +574,12 @@ async function insertPreparedAutomationRunTx(params: Readonly<{
         automationId: request.automationId,
         runId: run.id,
     });
-    if (missed) await params.tx.automationRunEvent.create({ data: {
-        runId: run.id, ts: request.now, type: "run_missed", payload: { errorCode: missedReason },
+    if (terminal) await params.tx.automationRunEvent.create({ data: {
+        runId: run.id, ts: request.now, type: terminal.state === "skipped" ? "run_skipped" : "run_missed",
+        payload: { errorCode: terminal.errorCode },
     } });
-    if (!missed) await publishManagedRunWakeInTx(params.tx, { accountId: params.accountId, runId: run.id, cursor });
-    if (!missed && workflowDefinitionEnvelope !== null) await publishWorkflowRunMachineWakeInTx(params.tx,
+    if (!terminal) await publishManagedRunWakeInTx(params.tx, { accountId: params.accountId, runId: run.id, cursor });
+    if (!terminal && workflowDefinitionEnvelope !== null) await publishWorkflowRunMachineWakeInTx(params.tx,
         { accountId: params.accountId, run, cursor, admittedTargets: automation.assignments.map(assignment => ({
             machineId: assignment.machineId, custodianAccountId: assignment.machine.accountId,
         })) });
@@ -583,7 +591,7 @@ async function insertPreparedAutomationRunTx(params: Readonly<{
             cursor: cursor.resolveCursor(),
         });
         for (const assignment of automation.assignments) {
-            if (missed) continue;
+            if (terminal) continue;
             if (workflowDefinitionEnvelope !== null) continue;
             emitAutomationRunUpdatedToMachineOnly({
                 accountId: params.accountId,
@@ -735,6 +743,16 @@ export async function admitAutomationRunsTx(params: Readonly<{
         },
         select: automationAdmissionDefinitionSelect,
     })))).flat();
+    const triggeredAutomationIds = new Set(eligibleAdmissions.flatMap(({ request, cause }) =>
+        cause.kind === "manual" ? [] : [request.automationId]));
+    const scopedSessionIds = [...new Set(automations.flatMap(row =>
+        row.scopeSessionId && triggeredAutomationIds.has(row.id) ? [row.scopeSessionId] : []))];
+    const pausedBotSessionIds = new Set((await Promise.all(automationPortableQueryChunks({
+        values: scopedSessionIds, bindingsPerValue: 1, fixedBindings: 0,
+    }).map(chunk => params.tx.session.findMany({
+        where: { id: { in: [...chunk] }, botPausedAt: { not: null } },
+        select: { id: true },
+    })))).flat().map(row => row.id));
     // The preparation owner freezes availability according to the cause.
     const workflowRecipes = new Map(automations.flatMap(automation => {
         const parsed = parseAutomationStoredWorkflowDefinitionRecipeV2(automation.templateCiphertext);
@@ -792,6 +810,7 @@ export async function admitAutomationRunsTx(params: Readonly<{
         invocationPlacement,
         runTargetAdmission: request.runTargetMachineId === undefined ? undefined : machineAdmissions.get(request.runTargetMachineId),
         manualAssignmentAccessDenied: deniedAssignmentAutomationIds.has(request.automationId),
+        pausedBotSessionIds,
     }));
 
     for (const [index, result] of prepared.entries()) {

@@ -15,7 +15,7 @@ import { OPAQUE_CURSOR_SCHEMA } from '../../automations/automationActionSpecsV1.
 import { AutomationEventSourceStatusV1Schema } from '../../automations/automationEventSourceStatusV1.js';
 import { AutomationHealthCheckSubjectV1Schema } from '../../automations/automationSubjectV1.js';
 import { AutomationTriggerReferenceV1Schema } from '../../automations/automationTriggerIdentity.js';
-import { AutomationDefinitionListRequestSchema, AutomationEnvironmentHealthCheckSelectionV1Schema, AutomationScheduleHoldV1Schema } from '../../automations/automationApiV3.js';
+import { AutomationDefinitionListRequestSchema, AutomationEnvironmentHealthCheckSelectionV1Schema, AutomationScheduleHoldV1Schema, AutomationV3RulePrioritySchema, AutomationV3RuleMaxConcurrentRunsSchema } from '../../automations/automationApiV3.js';
 import { AutomationRunStateV3Schema } from '../../automations/automationRunStateV3.js';
 import { WorkflowRunLastStartedSummaryV1Schema } from '../workflowProgressV1.js';
 import { AutomationSubjectV1Schema, type AutomationSubjectV1 } from '../../automations/automationSubjectV1.js';
@@ -226,7 +226,13 @@ export function readWorkflowTriggerSubjectProjectV1(trigger: Readonly<{ kind: st
   return project.success ? project.data : undefined;
 }
 
+const workflowTriggerDispatchFields = () => ({
+  priority: z.optional(AutomationV3RulePrioritySchema),
+  maxActiveRuns: z.optional(z.nullable(AutomationV3RuleMaxConcurrentRunsSchema)),
+});
+
 const WorkflowTriggerExecutableAddRequestV1Schema = lazyZodSchema(() => z.strictObject({
+  ...workflowTriggerDispatchFields(),
   workflow: zMini.optional(WorkflowDefinitionRefV1StringSchema),
   target: zMini.optional(TriggerTargetV1Schema),
   project: z.optional(WorkflowProjectTargetV1Schema),
@@ -269,6 +275,7 @@ export const WorkflowTriggerUpdateRequestV1Schema = lazyZodSchema(() => z.strict
   expectedRevision: Revision,
   confirmLegacyConversion: z.optional(z.literal(true)),
   patch: z.strictObject({
+    ...workflowTriggerDispatchFields(),
     project: zMini.optional(WorkflowProjectTargetV1Schema),
     ...zMini.partial(ContextFields).shape,
     target: zMini.optional(TriggerTargetV1Schema),
@@ -317,6 +324,7 @@ const OpenedActionTriggerDetailSchema = lazyZodSchema(() => z.extend(AutomationA
     id: true, revision: true, enabled: true, createdAt: true, updatedAt: true, reachesOthers: true,
   }).shape));
 export const WorkflowTriggerSetV1Schema = lazyZodSchema(() => z.strictObject({
+  ...workflowTriggerDispatchFields(),
   /** Display facts from the already-admitted Account record, not another lookup. */
   name: z.optional(z.string()),
   updatedAt: z.optional(z.number().check(z.int(), z.nonnegative())),
@@ -466,6 +474,7 @@ export const SessionInitialTriggerV1Schema = lazyZodSchema(() => z.strictObject(
 export type SessionInitialTriggerV1 = z.infer<typeof SessionInitialTriggerV1Schema>;
 export const SessionTriggerListRequestV1Schema = lazyZodSchema(() => z.strictObject({ sessionId: SessionId }));
 export const SessionTriggerAddRequestV1Schema = lazyZodSchema(() => z.strictObject({
+  ...workflowTriggerDispatchFields(),
   sessionId: SessionId, target: TriggerTargetV1Schema,
   /** Ordinary triggers may repeat the authorized Session project; managed scope-end rules use their controller. */
   project: zMini.optional(WorkflowProjectTargetV1Schema),

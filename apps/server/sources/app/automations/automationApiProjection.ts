@@ -186,6 +186,8 @@ function definitionCommon(
     return {
         ...(observationOnly ? { observationOnly } : {}),
         id: item.id, name: item.name, description: item.description, enabled: item.enabled,
+        ...(item.priority != null ? { priority: 'high' } : {}),
+        ...(item.maxConcurrentRuns != null ? { maxConcurrentRuns: item.maxConcurrentRuns } : {}),
         targetType: targetTypeV3(item.targetType), existingSessionId: readExistingSessionId(item),
         workflowDefinitionId: item.workflowDefinitionId, scopeSessionId: item.scopeSessionId,
         ...(deploymentEnvironment ? { deploymentEnvironment } : {}),

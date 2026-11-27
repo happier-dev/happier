@@ -59,7 +59,7 @@ import {
 } from '../external/linkedSessionMetadata.js';
 import { readRuntimeDescriptorV1 } from './runtimeDescriptorV1.js';
 import { SessionDirectoryV1Schema } from './sessionDirectoryV1.js';
-import { SessionBotV1Schema, readSessionBotV1 } from '../identity/sessionBotV1.js';
+import { SessionBotPausedAtV1Schema, SessionBotV1Schema, readSessionBotV1 } from '../identity/sessionBotV1.js';
 import { SessionBotFaceV1Schema, readSessionBotFaceV1 } from '../identity/sessionBotFaceV1.js';
 import { SessionVoicePreferenceV1Schema } from '../instructions/sessionVoicePreferenceV1.js';
 import { SessionPromptStackV1Schema, SessionDisabledInheritedEntryIdsV1Schema, migrateRetainedSessionWorkContextV1, migrateRetainedSessionMetadataContextV1 } from '../context/sessionContextV1.js';
@@ -275,6 +275,7 @@ export const SessionMetadataOwnerPatchV1Schema = lazyZodSchema(() => z.strictObj
   displayProjectionV1: z.optional(z.nullable(SessionDisplayProjectionV1Schema)),
   /** Accepted Project identity; `null` publishes that the owner classified this Session as in no Project. */
   projectKey: z.optional(z.nullable(NonBlankOpaqueIdentifierSchema)),
+  botPausedAt: z.optional(z.nullable(SessionBotPausedAtV1Schema)),
   activitySummaryV1: z.optional(SessionAgentStateActivitySummaryV1Schema),
   sharedActionConfirmationSummaryV1: z.optional(SessionSharedActionConfirmationSummaryV1Schema),
   metadataLayoutVersion: z.literal(SESSION_METADATA_LAYOUT_VERSION_V1),
@@ -295,6 +296,7 @@ export type SessionMetadataOwnerPatchV1 = z.infer<
 export const SessionMetadataInactiveModelIntentOwnerPatchV1Schema =
   lazyZodSchema(() => z.extend(z.omit(SessionMetadataOwnerPatchV1Schema, {
     projectKey: true,
+    botPausedAt: true,
     publisherPrecondition: true,
     activitySummaryV1: true,
     sharedActionConfirmationSummaryV1: true,
@@ -418,6 +420,7 @@ const SessionMetadataSharedRecipientProjectionV1Schema = lazyZodSchema(() => z.s
   metadataLayoutVersion: z.literal(SESSION_METADATA_LAYOUT_VERSION_V1),
   agentState: z.null(),
   agentStateVersion: SessionEnvelopeVersionSchema,
+  botPausedAt: z.optional(z.nullable(SessionBotPausedAtV1Schema)),
   projectKey: z.optional(z.nullable(z.string())),
 }));
 

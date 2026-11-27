@@ -345,6 +345,8 @@ export function registerAutomationV3Routes(
                     name: body.name,
                     ...(body.description !== undefined ? { description: body.description } : {}),
                     enabled: body.enabled,
+                    priority: body.priority,
+                    maxConcurrentRuns: body.maxConcurrentRuns,
                     ...(body.observationOnly !== undefined
                         ? { observationOnly: body.observationOnly }
                         : { executionRecipe: body.executionRecipe }),
@@ -387,6 +389,8 @@ export function registerAutomationV3Routes(
                 ...(body.name !== undefined ? { name: body.name } : {}),
                 ...(body.description !== undefined ? { description: body.description } : {}),
                 ...(body.enabled !== undefined ? { enabled: body.enabled } : {}),
+                priority: body.priority,
+                maxConcurrentRuns: body.maxConcurrentRuns,
                 ...(body.workflowDefinitionId !== undefined ? { workflowDefinitionId: body.workflowDefinitionId } : {}),
                 ...(body.scopeSessionId !== undefined ? { scopeSessionId: body.scopeSessionId } : {}),
                 ...(body.assignments !== undefined ? { assignments: body.assignments } : {}),

@@ -4116,6 +4116,7 @@ export type UpdateSessionMetadataEnvelopeTupleResult =
         agentState: Readonly<{ version: number; value: string | null }>;
         /** Present only when this owner patch admitted a Project classification; null is "no Project". */
         projectKey?: string | null;
+        botPausedAt?: number | null;
         runtimeProjection?: SessionCurrentViewPublicationSourceV1['runtimeProjection'];
         /** Which private parts this commit changed; absent on an exact retry, which publishes nothing. */
         changed?: SessionCurrentViewPublicationSourceV1['changed'];
@@ -4182,7 +4183,7 @@ export function doesStoredSessionDisplayMatchTupleWrite(
 }
 
 function isExactMetadataEnvelopeTupleRetry(
-    current: StoredSessionMetadataEnvelopeTuple & Readonly<{ projectKey: string | null; projectKeyNone: boolean }>,
+    current: StoredSessionMetadataEnvelopeTuple & Readonly<{ projectKey: string | null; projectKeyNone: boolean; botPausedAt: bigint | null }>,
     params: ActiveSessionMetadataEnvelopeTupleInput,
 ): boolean {
     if (
@@ -4190,6 +4191,8 @@ function isExactMetadataEnvelopeTupleRetry(
         || current.metadataVersion !== params.sharedMetadata.expectedVersion + 1
         || current.metadata !== params.sharedMetadata.ciphertext
         || !doesStoredSessionDisplayMatchTupleWrite(current.displayProjectionV1, params.displayProjectionV1, params.mode === 'shared_editor')
+        || (params.mode === "owner" && params.botPausedAt !== undefined
+            && (current.botPausedAt === null ? null : Number(current.botPausedAt)) !== params.botPausedAt)
         || (params.mode === "owner" && params.projectKey !== undefined
             && (current.projectKey !== params.projectKey || current.projectKeyNone !== (params.projectKey === null)))
     ) {
@@ -4305,6 +4308,9 @@ function toMetadataEnvelopeTupleSuccess(
         ...(changed ? { changed } : {}),
         ...(params.mode === "owner" && params.projectKey !== undefined
             ? { projectKey: params.projectKey }
+            : {}),
+        ...(params.mode === "owner" && params.botPausedAt !== undefined
+            ? { botPausedAt: params.botPausedAt }
             : {}),
         metadataLayoutVersion: SESSION_METADATA_LAYOUT_VERSION_V1,
         sharedMetadata: {
@@ -4831,6 +4837,7 @@ async function updateSessionMetadataEnvelopeTupleAfterCursorFenceInTx(
             latestTurnStatus: true,
             seq: true,
             projectKey: true,
+            botPausedAt: true,
             projectKeyNone: true,
             encryptionMode: true,
             displayProjectionV1: true,
@@ -4959,6 +4966,8 @@ async function updateSessionMetadataEnvelopeTupleAfterCursorFenceInTx(
             agentStateVersion: nextAgentStateVersion,
             ...(params.mode === "owner" && params.projectKey !== undefined
                 ? { projectKey: params.projectKey, projectKeyNone: params.projectKey === null } : {}),
+            ...(params.mode === "owner" && params.botPausedAt !== undefined
+                ? { botPausedAt: params.botPausedAt === null ? null : BigInt(params.botPausedAt) } : {}),
             ...pendingSummary,
             ...sharedConfirmationSummary,
         }
@@ -5013,6 +5022,7 @@ async function updateSessionMetadataEnvelopeTupleAfterCursorFenceInTx(
                 active: true,
                 archivedAt: true,
                 projectKey: true,
+                botPausedAt: true,
                 projectKeyNone: true,
                 displayProjectionV1: true,
                 metadataLayoutVersion: true,

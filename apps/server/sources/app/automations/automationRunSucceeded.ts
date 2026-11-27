@@ -1,13 +1,15 @@
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
+import { publishQueuedAutomationRuleMachineWakesInTx } from "@/app/workflows/workflowRunMachineRouting";
 import { readMachineAvailabilityStateInTx } from "@/app/machines/machineStateGuards";
 import { afterTx, type Tx } from "@/storage/inTx";
 
 import { emitAutomationRunTransition, markAutomationRunSummaryChangedTx } from "./automationChangePublisher";
+import { occupiesAutomationRuleSlot } from "./automationRunClaimEligibility";
 import { automationRunItemSelect } from "./automationPersistenceSelect";
 import { decodeAutomationRunCause, projectAutomationOriginRun } from "./automationRunCauseCodec";
 import { advanceAutomationScheduleCursorAfterTerminalRunTx } from "./automationRunQueueService";
 import { invalidateSessionReviewProjectionForRunInTx } from "./sessionReviewProjectionInvalidation";
-import type { AutomationRunItem, AutomationRunState } from "./automationTypes";
+import type { AutomationRunItem } from "./automationTypes";
 import type { Prisma } from '@prisma/client';
 import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { projectAutomationRunState } from './automationTypes';
@@ -28,8 +30,6 @@ export async function failAutomationRunWithoutContentInTx(params: Readonly<{
     where: Prisma.AutomationRunWhereInput;
     errorCode: string; settleWorkflowCustody: boolean; now: Date;
 }>): Promise<Readonly<{ changed: boolean; run: AutomationRunItem | null }>> {
-    const previousState = projectAutomationRunState(params.previousState);
-    if (previousState === null) throw new Error('Automation Run state is unavailable');
     const changed = await params.tx.automationRun.updateMany({ where: { ...params.where,
         id: params.runId, accountId: params.accountId, state: params.previousState }, data: {
         state: 'failed', finishedAt: params.now, errorCode: params.errorCode, errorMessage: null,
@@ -38,7 +38,7 @@ export async function failAutomationRunWithoutContentInTx(params: Readonly<{
     } });
     if (changed.count !== 1) return { changed: false, run: null };
     const run = await applyAutomationRunTerminalEffectsTx({ tx: params.tx, accountId: params.accountId,
-        runId: params.runId, previousState, state: 'failed', now: params.now,
+        runId: params.runId, previousState: params.previousState, state: 'failed', now: params.now,
         eventPayload: { errorCode: params.errorCode } });
     return { changed: true, run };
 }
@@ -52,7 +52,7 @@ export async function applyAutomationRunTerminalEffectsTx(params: Readonly<{
     tx: Tx;
     accountId: string;
     runId: string;
-    previousState: AutomationRunState;
+    previousState: WorkflowRunSummaryV1['state'];
     state: AutomationTerminalState;
     now: Date;
     eventPayload?: Readonly<Record<string, unknown>>;
@@ -141,11 +141,18 @@ export async function applyAutomationRunTerminalEffectsTx(params: Readonly<{
         automationId: run.automationId,
         runId: run.id,
     });
+    const previousState = projectAutomationRunState(params.previousState);
+    if (previousState === null) throw new Error('Automation Run state is unavailable');
+    // A prior pause request still had Workflow custody even when this terminal
+    // write also settled it.
+    if (occupiesAutomationRuleSlot(params.previousState, 'pending')) {
+        await publishQueuedAutomationRuleMachineWakesInTx(params.tx, { accountId: params.accountId, automationId: run.automationId, cursor });
+    }
     afterTx(params.tx, () => {
         emitAutomationRunTransition({
             accountId: params.accountId,
             run: run as AutomationRunItem,
-            previousState: params.previousState,
+            previousState,
             cursor: cursor.resolveCursor(),
             ...(params.transitionCause ? { transitionCause: params.transitionCause } : {}),
         });

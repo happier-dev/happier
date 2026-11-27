@@ -73,6 +73,16 @@ const definition = WorkflowDefinitionV1Schema.parse({ version: 1,
 const trigger = { kind: 'schedule' as const, enabled: true,
   schedule: { kind: 'interval' as const, scheduleExpr: null, everyMs: 60_000, timezone: null } };
 const project = { machineId: 'machine-one', directory: '/workspace' };
+
+it('accepts authored dispatch settings on trigger creation and clears the cap on update', () => {
+  expect(WorkflowTriggerAddRequestV1Schema.parse({
+    workflow, project, trigger, priority: 'high', maxActiveRuns: 1,
+  })).toMatchObject({ priority: 'high', maxActiveRuns: 1 });
+  expect(WorkflowTriggerUpdateRequestV1Schema.parse({
+    automationId: 'automation-one', expectedRevision: 1, patch: { priority: 'normal', maxActiveRuns: null },
+  }).patch).toEqual({ priority: 'normal', maxActiveRuns: null });
+});
+
 const capturedBackup = () => WorkflowDefinitionV1Schema.parse({ version: 1, defaults: {},
   inputs: [{ name: 'backupTarget', valueType: 'json', required: true }],
   blocks: [{ kind: 'action', id: 'backup', actionId: 'deployments.backups.run', input: Object.fromEntries(

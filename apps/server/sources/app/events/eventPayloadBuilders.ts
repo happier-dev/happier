@@ -405,6 +405,7 @@ export function buildSessionMetadataRecipientUpdate(
         metadataLayoutVersion: recipientProjection.metadataLayoutVersion,
         ...ownerMetadata,
         ...(recipientProjection.projectKey !== undefined ? { projectKey: recipientProjection.projectKey } : {}),
+        ...(recipientProjection.botPausedAt !== undefined ? { botPausedAt: recipientProjection.botPausedAt } : {}),
     };
     if (agentState === undefined) delete recipientBody.agentState;
     return {

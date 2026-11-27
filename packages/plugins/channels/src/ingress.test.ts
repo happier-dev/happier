@@ -2464,6 +2464,27 @@ describe('Conversation provider observation ingress', () => {
       carriedAskerPrincipalIds: ['telegram:user:42', 'telegram:user:43'],
     });
   });
+
+  it('settles input to a paused Bot without replaying it after resume', async () => {
+    let botPausedAt: number | null = 1_800_000_000_000;
+    const harness = createIngressHarness({ sessionSummary: id => ({
+      id, state: 'idle', runtimeAvailability: { status: 'available' },
+      storagePolicy: 'optional', encryptionMode: 'e2ee', updatedAtMs: 1, botPausedAt,
+    }) });
+    const input = observation({ messageRevision: 'while-paused' });
+    await ingestConversationProviderObservationForInvocation(input, harness.context);
+    expect(harness.send).not.toHaveBeenCalled();
+    const obligations = [...harness.rows.values()].filter(row => row.value['record-kind'] === 'ingress-obligation');
+    expect(obligations).toHaveLength(1);
+    expect(obligations[0]?.value.payload).toMatchObject({ disposition: 'suppressed',
+      nonAdmission: { reason: 'bot_paused', senderFeedbackEligible: false } });
+    botPausedAt = null;
+    await ingestConversationProviderObservationForInvocation(input, harness.context);
+    expect(harness.send).not.toHaveBeenCalled();
+    await ingestConversationProviderObservationForInvocation(observation({ messageRevision: 'after-resume', occurrenceId: 'telegram:update:9002', messageId: 'telegram:message:6' }), harness.context);
+    expect(harness.send).toHaveBeenCalledTimes(1);
+  });
+
   it.each(['mixed', 'filesOnly'] as const)('visibly refuses %s Workflow file input instead of admitting only its text', async kind => {
     const harness = createIngressHarness({ execute: async id => {
       if (id === 'automation.conversation.admit') return { kind: 'admitted', runId: 'run-1', checkpointSafe: true };

@@ -56,6 +56,7 @@ export const automationTriggerListItemSelect = {
 /** Canonical definition read. Every current trigger reader starts here. */
 export const automationListItemSelect = {
     id: true, accountId: true, name: true, description: true, enabled: true,
+    priority: true, maxConcurrentRuns: true,
     workflowDefinitionId: true, scopeSessionId: true,
     deploymentEnvironmentId: true,
     deploymentPreviewRole: true,

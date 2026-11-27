@@ -3,7 +3,7 @@ import { parseAutomationRunExecutionRecipeV1, type AutomationRunExecutionRecipeV
 import type { AutomationStoredActionDefinitionRecipeV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
 import { type AutomationObservationOnlyDefinitionV1, type AutomationStoredWorkflowDefinitionRecipeV2 } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
 import { type AutomationReplyHandoffStateV1 } from '@happier-dev/protocol/automations/automationReplyHandoffStateV1';
-import { type AutomationExecutionDispatchStateV3, type AutomationTriggerCreateRequest } from '@happier-dev/protocol/automations/automationApiV3';
+import { type AutomationDefinitionPatchRequest, type AutomationExecutionDispatchStateV3, type AutomationTriggerCreateRequest } from '@happier-dev/protocol/automations/automationApiV3';
 import { AutomationRunStateV3Schema, AUTOMATION_RUN_TERMINAL_STATES_V3, isTerminalAutomationRunStateV3, type AutomationRunStateV3 } from '@happier-dev/protocol/automations/automationRunStateV3';
 import { type AutomationPluginEventDefinitionTriggerInput, type AutomationTriggerDefinitionInput } from '@happier-dev/protocol/automations/automationTriggerDefinition';
 import { type AutomationRunCause } from '@happier-dev/protocol/automations/run-cause';
@@ -136,7 +136,9 @@ export type AutomationLegacyTemplateEnvelopeAdmission = Readonly<{
     existingSessionId: string;
 }>;
 
-type AutomationDefinitionInputCommon = Readonly<{
+type AutomationDispatchInput = Pick<AutomationDefinitionPatchRequest, 'priority' | 'maxConcurrentRuns'>;
+
+type AutomationDefinitionInputCommon = AutomationDispatchInput & Readonly<{
     name: string;
     description?: string | null;
     enabled: boolean;
@@ -178,7 +180,7 @@ export type AutomationUpsertInput = AutomationLegacyDefinitionInput | Automation
 export type AutomationLegacyUpsertInput = AutomationLegacyDefinitionInput;
 export type AutomationCurrentUpsertInput = AutomationCurrentDefinitionInput;
 
-type AutomationPatchCommon = Readonly<{
+type AutomationPatchCommon = AutomationDispatchInput & Readonly<{
     name?: string;
     description?: string | null;
     enabled?: boolean;
@@ -231,6 +233,8 @@ export type AutomationListItem = Readonly<{
     accountId: string;
     workflowDefinitionId: string | null;
     scopeSessionId: string | null;
+    priority?: number | null;
+    maxConcurrentRuns?: number | null;
     deploymentEnvironmentId?: string | null;
     deploymentPreviewRole?: string | null;
     managedTargetHomeId?: string | null;

@@ -1,3 +1,4 @@
+import { SessionBotPausedAtV1Schema } from '../sessions/identity/sessionBotV1.js';
 import { MachineDeletedSessionLifecycleReasonSchema } from '../sessions/metadata/sessionDisplaySchemasV1.js';
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
@@ -15,6 +16,7 @@ export const SessionUpdateBodySchema = lazyZodSchema(() => {
   const full = z.looseObject({
     t: z.literal('update-session'),
     id: z.string(),
+    botPausedAt: z.optional(z.nullable(SessionBotPausedAtV1Schema)),
     projectKey: z.optional(z.nullable(z.string())),
     metadata: z.optional(versionedDocument()),
     metadataLayoutVersion: z.optional(z.number().check(z.int(), z.nonnegative())),

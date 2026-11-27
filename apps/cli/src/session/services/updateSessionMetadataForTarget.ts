@@ -22,6 +22,7 @@ export async function updateSessionMetadataForTarget(params: Readonly<{
   expectedSessionId?: string;
   updater: Parameters<typeof updateSessionMetadataWithRetry>[0]['updater'];
   expectedMetadataRevision?: number;
+  botPausedAt?: number | null;
   currentness?: SessionMetadataMutationCurrentness;
   serverFeaturesSnapshot?: CliServerFeaturesSnapshot;
 }>): Promise<UpdateSessionMetadataForTargetResult> {
@@ -64,6 +65,7 @@ export async function updateSessionMetadataForTarget(params: Readonly<{
     accountEncryptionCurrentness: sessionTarget.accountEncryptionCurrentness,
     updater: params.updater,
     expectedMetadataRevision: params.expectedMetadataRevision,
+    botPausedAt: params.botPausedAt,
     currentness: params.currentness,
   });
 

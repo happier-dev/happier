@@ -1569,6 +1569,8 @@ model Session {
     ownerMetadata     String? @db.LongText
     /// Compact display envelopes linked to the same metadata tuple revision.
     displayProjectionV1 String? @db.LongText
+    /// Operator-authored intake pause. Only this non-content fact is visible to admission.
+    botPausedAt       BigInt?
     metadataLayoutVersion Int             @default(0)
     /// Home-local opaque accepted Project identity; null until the owner publishes it.
     projectKey        String?
@@ -3064,6 +3066,9 @@ model Automation {
     description      String?
     enabled          Boolean                @default(true)
     deletedAt        DateTime?
+    // A null rank has normal priority, shared with direct Workflow Runs.
+    priority         Int?
+    maxConcurrentRuns Int?
     targetType       AutomationTargetType?
     templateCiphertext String
     templateVersion  Int                    @default(0)

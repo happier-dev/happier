@@ -402,6 +402,9 @@ export function buildSessionFromListRenderable(
             : rowAdmission } : {}),
         id: renderable.id,
         projectKey: renderable.projectKey,
+        botPausedAt: metadataCurrent || options.baseSession === undefined
+            ? renderable.botPausedAt
+            : options.baseSession.botPausedAt,
         viewer: renderable.viewer,
         encryptionMode: renderable.encryptionMode ?? options.baseSession?.encryptionMode,
         encryptedContentAvailability: renderable.encryptedContentAvailability !== undefined

@@ -1,5 +1,8 @@
 import { buildAutomationRunMachineWakeUpdate, emitAutomationRunUpdatedToMachineOnly } from '@/app/automations/automationChangePublisher';
+import { automationRunClaimExclusionsCte } from '@/app/automations/automationRunClaimEligibility';
 import { db } from '@/storage/db';
+import { prismaRuntime } from '@/storage/prisma';
+import { workflowRunSqlIdentifier } from './workflowRunAttention';
 import { afterTx, type Tx } from '@/storage/inTx';
 import type { MachineAdmission } from '@happier-dev/protocol/machines/machineAccessV1';
 import type { Socket } from 'socket.io';
@@ -63,6 +66,62 @@ export async function publishWorkflowRunMachineWakeInTx(tx: Tx, params: Readonly
     }
 }
 
+/** Send one claim hint per frozen route after a rule frees capacity. The worker claim still selects the Run. */
+export async function publishQueuedAutomationRuleMachineWakesInTx(tx: Tx, params: Readonly<{
+    accountId: string;
+    automationId: string;
+    cursor: { resolveCursor(): number };
+    capRaised?: boolean;
+}>) {
+    const id = workflowRunSqlIdentifier;
+    type Timestamp = Date | number | bigint;
+    type WakeRow = Readonly<Omit<WorkflowWakeRun, 'scheduledAt' | 'startedAt' | 'finishedAt' | 'updatedAt' | 'state'> & {
+        scheduledAt: Timestamp; startedAt: Timestamp | null; finishedAt: Timestamp | null; updatedAt: Timestamp;
+        machineId: string; accountId: string; installationId: string | null; admittedMachineInstallationId: string | null;
+    }>;
+    const rows = await tx.$queryRaw<WakeRow[]>(prismaRuntime.sql`
+        WITH ${automationRunClaimExclusionsCte(params.accountId, params.automationId)}, ranked AS (
+            SELECT r.${id('id')}, r.${id('automationId')}, r.${id('triggerId')}, r.${id('causeKind')},
+                r.${id('scheduledAt')}, r.${id('startedAt')}, r.${id('finishedAt')}, r.${id('updatedAt')},
+                r.${id('claimedByMachineId')}, r.${id('attempt')}, a.${id('machineId')}, a.${id('admittedMachineInstallationId')},
+                m.${id('accountId')}, m.${id('installationId')},
+                ROW_NUMBER() OVER (PARTITION BY a.${id('machineId')}, a.${id('admittedMachineInstallationId')},
+                    CASE WHEN m.${id('accountId')} = r.${id('accountId')} OR r.${id('causeKind')} = 'manual' THEN NULL
+                        ELSE COALESCE(r.${id('triggerId')}, r.${id('id')}) END
+                    ORDER BY r.${id('id')}) AS ordinal
+            FROM ${id('AutomationRun')} r JOIN ${id('AutomationRunAssignment')} a ON a.${id('runId')} = r.${id('id')}
+                JOIN ${id('Machine')} m ON m.${id('id')} = a.${id('machineId')}
+                JOIN ${id('Automation')} rule ON rule.${id('id')} = r.${id('automationId')}
+            WHERE r.${id('accountId')} = ${params.accountId} AND r.${id('automationId')} = ${params.automationId}
+                AND r.${id('state')} = 'queued' AND m.${id('revokedAt')} IS NULL AND m.${id('replacedByMachineId')} IS NULL
+                ${params.capRaised ? prismaRuntime.empty : prismaRuntime.sql`AND rule.${id('maxConcurrentRuns')} IS NOT NULL`}
+                AND NOT EXISTS (SELECT 1 FROM claim_exclusions e WHERE (e.kind = 'rule' AND e.id = r.${id('automationId')})
+                    OR (e.kind = 'trigger' AND e.id = r.${id('triggerId')}))
+        ) SELECT * FROM ranked WHERE ordinal = 1`);
+    const timestamp = (value: Timestamp) => value instanceof Date ? value : new Date(Number(value));
+    const emittedRoutes = new Set<string>();
+    for (const row of rows) {
+        const target = workflowRunAdmittedMachineTarget(params.accountId, row, { ...row, id: row.machineId });
+        if (!target) continue;
+        const route = JSON.stringify([target.machineId, requesterCustodyWake(row, params.accountId, target.custodianAccountId)]);
+        if (emittedRoutes.has(route)) continue;
+        emittedRoutes.add(route);
+        await publishWorkflowRunMachineWakeInTx(tx, { ...params, admittedTargets: [target], run: {
+            ...row, state: 'queued', scheduledAt: timestamp(row.scheduledAt), updatedAt: timestamp(row.updatedAt),
+            startedAt: row.startedAt === null ? null : timestamp(row.startedAt),
+            finishedAt: row.finishedAt === null ? null : timestamp(row.finishedAt),
+        } });
+    }
+}
+
+function workflowRunAdmittedMachineTarget(accountId: string, assignment: Readonly<{ admittedMachineInstallationId: string | null }>,
+    machine: Readonly<{ id: string; accountId: string; installationId: string | null }> | undefined): AdmittedWorkflowMachineTarget | null {
+    if (!machine || (assignment.admittedMachineInstallationId === null
+        ? machine.accountId !== accountId
+        : machine.installationId !== assignment.admittedMachineInstallationId)) return null;
+    return { machineId: machine.id, custodianAccountId: machine.accountId };
+}
+
 async function readWorkflowRunMachineTargetsInTx(tx: Tx, params: Readonly<{
     accountId: string; run: Readonly<{ id: string }>;
 }>): Promise<AdmittedWorkflowMachineTarget[]> {
@@ -73,11 +132,8 @@ async function readWorkflowRunMachineTargetsInTx(tx: Tx, params: Readonly<{
     const machinesById = new Map(machines.map(machine => [machine.id, machine]));
     const targets: AdmittedWorkflowMachineTarget[] = [];
     for (const assignment of assignments) {
-        const machine = machinesById.get(assignment.machineId);
-        if (!machine || (assignment.admittedMachineInstallationId === null
-            ? machine.accountId !== params.accountId
-            : machine.installationId !== assignment.admittedMachineInstallationId)) continue;
-        targets.push({ machineId: machine.id, custodianAccountId: machine.accountId });
+        const target = workflowRunAdmittedMachineTarget(params.accountId, assignment, machinesById.get(assignment.machineId));
+        if (target) targets.push(target);
     }
     return targets;
 }

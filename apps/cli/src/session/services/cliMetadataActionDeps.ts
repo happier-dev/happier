@@ -260,6 +260,7 @@ export function createCliMetadataActionDeps(
         // its field across retries while preserving unrelated tuple changes.
         expectedMetadataRevision: 'expectedMetadataRevision' in write ? write.expectedMetadataRevision : undefined,
         expectedValue: 'expectedValue' in write ? write.expectedValue : undefined,
+        botPausedAt: fieldId === 'display.bot' ? write.botPausedAt : undefined,
         currentness: { signal: context.signal },
         checkMetadata: createSessionAgentTitleWriteGuard(write, () => readAccountSettings?.()),
         resolveAuthorizationHeaders,
@@ -277,7 +278,7 @@ export function createCliMetadataActionDeps(
       return { ok: true, sessionId: res.sessionId, ...(fieldId === 'display.title' ? { title: value }
         : fieldId === 'display.statusReason' ? { reason: value }
         : fieldId === 'display.statusProgress' ? { progress: value === 'clear' ? null : value }
-        : fieldId === 'display.bot' ? { bot: value } : fieldId === 'display.botFace' ? { face: value }
+        : fieldId === 'display.bot' ? { bot: value, ...(write.botPausedAt !== undefined ? { pausedAt: write.botPausedAt } : {}) } : fieldId === 'display.botFace' ? { face: value }
         : fieldId === 'intent.memoryEnabled' ? { enabled: value }
         : fieldId === 'intent.approvalProfileId' ? { approvalProfileId: value }
         : fieldId === 'intent.voicePreference' ? { preference: value }

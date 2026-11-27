@@ -195,6 +195,7 @@ export interface SessionListRenderableSession {
     serverId?: string;
     /** Accepted relationship remains available independently of private metadata. */
     projectKey?: string | null;
+    botPausedAt?: number | null;
     seq: number;
     createdAt: number;
     updatedAt: number;
@@ -758,6 +759,7 @@ export function buildSessionListRenderableFromSession(
         id: session.id,
         serverId: session.serverId ?? previous?.serverId,
         projectKey: session.projectKey,
+        botPausedAt: session.botPausedAt,
         seq: session.seq,
         encryptionMode: session.encryptionMode,
         encryptedContentAvailability: session.encryptedContentAvailability,
@@ -1132,6 +1134,7 @@ export function areSessionListRenderablesEqual(
     return previous.id === next.id
         && previous.serverId === next.serverId
         && (previous.projectKey ?? null) === (next.projectKey ?? null)
+        && (previous.botPausedAt ?? null) === (next.botPausedAt ?? null)
         && JSON.stringify(previous.agentActivityHeadline ?? null) === JSON.stringify(next.agentActivityHeadline ?? null)
         && previous.seq === next.seq
         && previous.createdAt === next.createdAt
@@ -1250,6 +1253,7 @@ export function didSessionListRenderableStructuralFieldsChange(
 ): boolean {
     if (!previous) return true;
     if ((previous.projectKey ?? null) !== (next.projectKey ?? null)) return true;
+    if ((previous.botPausedAt ?? null) !== (next.botPausedAt ?? null)) return true;
     if (previous.active !== next.active) return true;
     if (previous.createdAt !== next.createdAt) return true;
     if ((previous.archivedAt ?? null) !== (next.archivedAt ?? null)) return true;
@@ -1277,6 +1281,7 @@ export function didSessionListRenderableProjectGroupingFieldsChange(
 ): boolean {
     if (!previous) return true;
     if ((previous.projectKey ?? null) !== (next.projectKey ?? null)) return true;
+    if ((previous.botPausedAt ?? null) !== (next.botPausedAt ?? null)) return true;
     if ((previous.metadata?.workspaceId ?? null) !== (next.metadata?.workspaceId ?? null)
         || (previous.metadata?.projectId ?? null) !== (next.metadata?.projectId ?? null)) return true;
     if (!areSessionListWorkspaceLocationsEqual(previous.metadata?.sessionWorkspaceLocationV1, next.metadata?.sessionWorkspaceLocationV1)) return true;
@@ -1327,6 +1332,7 @@ export function didSessionListRenderableWarmCacheFieldsChange(
 ): boolean {
     if (!previous) return true;
     if ((previous.projectKey ?? null) !== (next.projectKey ?? null)) return true;
+    if ((previous.botPausedAt ?? null) !== (next.botPausedAt ?? null)) return true;
     if (previous.updatedAt !== next.updatedAt) return true;
     if ((previous.meaningfulActivityAt ?? null) !== (next.meaningfulActivityAt ?? null)) return true;
     if (previous.createdAt !== next.createdAt) return true;
@@ -1390,6 +1396,7 @@ export function isSessionListRenderableWarmCacheProgressOnlyChange(
 ): boolean {
     if (!previous) return false;
     if ((previous.projectKey ?? null) !== (next.projectKey ?? null)) return false;
+    if ((previous.botPausedAt ?? null) !== (next.botPausedAt ?? null)) return false;
     if (previous.viewer !== next.viewer && JSON.stringify(previous.viewer ?? null) !== JSON.stringify(next.viewer ?? null)) return false;
     if (previous.active !== true || next.active !== true) return false;
     if (previous.active !== next.active) return false;

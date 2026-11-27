@@ -8923,6 +8923,15 @@ cannot be projected into V1 or a synthetic new-Session draft. An unavailable typ
 does not authorize an Open effect with an unretained intent. The retained draft does not replace
 Machine acknowledgement or prove filesystem effects, setup completion or exclusive checkout custody.
 
+### Automation Rule dispatch settings (development)
+
+Rule definitions accept `priority` (`normal` or `high`) and an optional positive `maxConcurrentRuns` in create, patch, and reconcile. Omitting dispatch settings in a patch or reconcile preserves the stored settings. `priority: "normal"` restores normal ordering and `maxConcurrentRuns: null` removes the cap. Definitions without stored settings continue at normal priority with no rule cap. Assignment priority remains a separate machine-routing field. A capped rule leaves excess Runs queued and does not consume another machine execution slot until a claim succeeds.
+
+The executable `workflow.trigger.add` and `workflow.trigger.update` Actions expose
+these same rule settings as `priority` and `maxActiveRuns`. Update takes the fields
+inside `patch`; readers get the settings on the saved trigger set. A null cap clears
+the Automation's stored limit. Session-lifetime Workflow Actions use the same rule.
+
 ### Automation predecessor data (development)
 
 The 0.3 development line updates server, daemon and clients together, without rollback.

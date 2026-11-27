@@ -14,7 +14,7 @@ import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createCliActionDeps } from './createCliActionDeps';
 import { resolveCliAgentStartContextV1 } from './resolveCliAgentStartContextV1';
-import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
+import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { resolveBackendTargetFromSessionMetadata } from '@/session/backendTargets/resolveBackendTargetFromSessionMetadata';
 import type { ActionExecutorDeps } from '@happier-dev/protocol';
 import { inheritedCodexInput } from './sessionSpawnNew.agent.testkit';
@@ -41,6 +41,7 @@ it.each([false, true])('admits cont6 inherited MCP spawn from real CLI caller fa
   const metadata = { machineId, path: '/tmp', flavor: 'codex' };
   let selectionAvailable = true;
   let roleSourceAvailable = true;
+  let botPausedAt: number | null = null;
   const readAppliedChildSelection = (): ExecutionRunAppliedParentSelection => selectionAvailable
     ? { status: 'applied', backendTarget, modelId: inheritedCodexInput.modelSelection.ref.modelId,
       modelSelection: inheritedCodexInput.modelSelection.ref, connectedServices: null }
@@ -53,10 +54,13 @@ it.each([false, true])('admits cont6 inherited MCP spawn from real CLI caller fa
     } }),
     readAccountRoleOverrides: () => ({ status: 'ready', overrides: {} }), readAppliedChildSelection,
   });
-  // Home settings/catalog reads are external; native selection, role resolution
+  // Home Session/settings/catalog reads are external; native selection, role resolution
   // and CLI admission stay real through the production composition.
   vi.spyOn(axios, 'get').mockImplementation(async url => {
     const path = new URL(String(url)).pathname;
+    if (path === `/v2/sessions/${sessionId}`) return { status: 200, data: {
+      session: createSessionRecordFixture({ id: sessionId, metadata: JSON.stringify(metadata), encryptionMode: 'plain', botPausedAt }),
+    } };
     if (path === '/v2/account/settings') return { status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } };
     if (path === '/v1/account/encryption') return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
     if (path === ACP_CATALOG_ROWS_ROUTE_V1) return { status: 200, data: { status: 'absent' } };
@@ -89,6 +93,12 @@ it.each([false, true])('admits cont6 inherited MCP spawn from real CLI caller fa
     actionId: 'session.spawn_new', input: value,
   }, sessionId);
   const expected = { ok: true, result: { type: 'pending', outcome: 'accepted' } };
+  botPausedAt = 1_800_000_000_000;
+  const paused = await invoke(inheritedCodexInput);
+  expect(paused, JSON.stringify(paused)).toMatchObject({ ok: false, errorCode: 'bot_paused' });
+  expect(sessionSpawnNew).not.toHaveBeenCalled();
+  botPausedAt = null;
+
   const inherited = await invoke(inheritedCodexInput);
   expect(inherited, JSON.stringify(inherited)).toMatchObject(expected);
   const child = sessionSpawnNew.mock.calls[0]?.[0];
@@ -143,6 +153,9 @@ it('admits a J6 Account-default child without inheriting the unavailable parent 
   });
   vi.spyOn(axios, 'get').mockImplementation(async url => {
     const path = new URL(String(url)).pathname;
+    if (path === `/v2/sessions/${sessionId}`) return { status: 200, data: {
+      session: createSessionRecordFixture({ id: sessionId, metadata: JSON.stringify(metadata), encryptionMode: 'plain' }),
+    } };
     if (path === '/v2/account/settings') return { status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } };
     if (path === '/v1/account/encryption') return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
     if (path === ACP_CATALOG_ROWS_ROUTE_V1) return { status: 200, data: { status: 'absent' } };

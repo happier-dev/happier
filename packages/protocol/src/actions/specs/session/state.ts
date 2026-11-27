@@ -265,7 +265,7 @@ function createSessionStateActionSpecs() {
   {
     id: 'session.bot.set', approval: {result: 'none'},
     title: 'Make a session a bot or a regular session',
-    description: 'Set the reversible Bot marker through Account metadata without waking its execution host.',
+    description: 'Set the reversible Bot marker and optionally pause or resume new work through Session metadata.',
     safety: 'safe', sideEffectClass: 'write', executionPlacement: 'account', placements: [],
     bindings: { mcpToolName: 'session_bot_set', voiceClientToolName: 'setSessionBot' },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },

@@ -64,6 +64,7 @@ export type SessionCurrentViewPublicationSourceV1 = Readonly<{
         agentState: Readonly<{ version: number; value: string | null }>;
         /** Omission leaves the recipient's accepted identity unchanged. */
         projectKey?: string | null;
+        botPausedAt?: number | null;
       }>
     | (Readonly<{
         kind: "legacy_v0";
@@ -192,6 +193,7 @@ async function publishCurrentViews(params: Parameters<typeof publishSessionCurre
                         agentState: source.agentState.value,
                         agentStateVersion: source.agentState.version,
                         ...(source.projectKey !== undefined ? { projectKey: source.projectKey } : {}),
+                        ...(source.botPausedAt !== undefined ? { botPausedAt: source.botPausedAt } : {}),
                     },
                     recipient: accountId === source.sessionOwnerId
                         ? {

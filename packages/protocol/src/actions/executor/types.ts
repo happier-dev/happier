@@ -2291,7 +2291,7 @@ export type ActionExecutorDeps = Readonly<{
    * custody refusal to concrete child selection without an applied baseline.
    */
   resolveAgentStartContext?: (context: ActionExecutorContext,
-    options?: Readonly<{ purpose?: 'session_scope' | 'workflow_scope' | 'attached_execution_run'; executionRunChildSelection?: ExecutionRunStartRequest['childSelection'] }>) => Promise<AgentStartContextV1 | ReturnType<typeof actionStartTargetUnavailableV1> | null>;
+    options?: Readonly<{ purpose?: 'session_scope' | 'workflow_scope' | 'attached_execution_run'; readBotPause?: true; executionRunChildSelection?: ExecutionRunStartRequest['childSelection'] }>) => Promise<AgentStartContextV1 | ReturnType<typeof actionStartTargetUnavailableV1> | null>;
   /** Live Session role owner; checked again after deferred approval/prepared invocation. */
   getCurrentWorkspaceWrites?: () => 'allow' | 'deny' | undefined;
   /**

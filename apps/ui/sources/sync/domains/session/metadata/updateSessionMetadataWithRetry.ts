@@ -150,6 +150,7 @@ export async function updateSessionMetadataWithRetry<M, A = unknown>(
         teamCredentialBinding?: SessionMetadataTeamCredentialBinding;
         mutationIntent?: 'rename_session';
         expectedMetadataRevision?: number;
+        botPausedAt?: number | null;
         onMetadataCommitted?: (revision: number) => void;
         assertCurrent?: () => void;
     },
@@ -318,6 +319,7 @@ export async function updateSessionMetadataWithRetry<M, A = unknown>(
             : { kind: 'metadata', update: updater, ...(params.expectedMetadataRevision !== undefined
                 ? { expectedMetadataRevision: params.expectedMetadataRevision } : {}) },
         crypto: tupleCrypto,
+        botPausedAt: params.botPausedAt,
         commit: async (patch) => {
             if ((params.sessionExpectation || params.teamCredentialBinding) && patch.mode !== 'owner') {
                 throw createMetadataPrivacyUpgradeRequiredError(
