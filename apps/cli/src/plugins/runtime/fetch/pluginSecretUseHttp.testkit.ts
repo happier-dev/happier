@@ -31,9 +31,9 @@ export type Response = Awaited<ReturnType<HttpService['request']>>;
 
 afterEach(() => { resetActiveAccountSettingsSnapshotForTests(); vi.resetAllMocks(); vi.unstubAllGlobals(); });
 
-export function fixture(mode: 'plain' | 'e2ee', options: Readonly<{ keyless?: boolean; use?: boolean; revision?: number; modeMismatch?: boolean; onCatalogRead?(): void }> = {}) {
+export function fixture(mode: 'plain' | 'e2ee', options: Readonly<{ keyless?: boolean; use?: boolean; revision?: number; modeMismatch?: boolean; value?: string; onCatalogRead?(): void }> = {}) {
     const { credentials, content, resources } = createSecretUseMaterialFixture(mode, { accountId: 'http-secret-owner',
-        resourceId: 'provider-secret', value: sentinel, revision: options.revision ?? 3, keyless: options.keyless, use: options.use });
+        resourceId: 'provider-secret', value: options.value ?? sentinel, revision: options.revision ?? 3, keyless: options.keyless, use: options.use });
     const token = credentials.token;
     persistence.read.mockResolvedValue(credentials);
     vi.mocked(axios.get).mockImplementation(async url => {
