@@ -18,8 +18,8 @@ import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/
 import { TriageDetailSurfaceInputV1Schema } from '@happier-dev/triage-protocol/v1';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { LINEAR_ACTIONS, LINEAR_PLUGIN_ID } from '../contracts.js';
-import { host, instance, issue, localRef } from '../fixtures.test-support.js';
+import { LINEAR_ACTIONS, LINEAR_DETAIL_SECTIONS, LINEAR_PLUGIN_ID } from '../contracts.js';
+import { host, instance, issue, localRef, page as connectionPage } from '../fixtures.test-support.js';
 import { LINEAR_PLUGIN } from '../manifest.js';
 import { activate as activateAccount } from '../accountRuntime.js';
 import { renderSurface } from './renderSurface.js';
@@ -110,6 +110,49 @@ it('keeps Linear Comments mapped to Activity under the single outer page Tabs wi
   expect(await fixture.queryAllByRole('tab')).toHaveLength(0);
   expect(navigation.filter(value => value !== null).every(value => value.pageKind.pluginId === 'happier.triage')).toBe(true);
   expect(navigation.at(-1)).toMatchObject({ value: 'activity' });
+});
+
+it.each(LINEAR_DETAIL_SECTIONS)('opens only Linear %s and leaves no work after close', async section => {
+  const reads: unknown[] = [];
+  const empty = connectionPage([]);
+  const provider = host(({ operationName, variables }) => {
+    expect(operationName).toBe('LinearDetail');
+    expect(variables.id).toBe(localRef.entryId);
+    return { issue: {
+      ...issue, description: 'Issue description', labels: empty, children: empty,
+      relations: empty, inverseRelations: empty, comments: empty, team: { ...issue.team, states: empty },
+    } };
+  });
+  const backend = await createPluginTestkit({ manifest: LINEAR_PLUGIN.manifest,
+    module: { activate: LINEAR_PLUGIN.activate, activateAccount }, services: provider.context.services });
+  backends.push(backend);
+  let page!: PluginUiTestkit;
+  await act(async () => {
+    page = await createPluginUiTestkit({
+      identity: { instanceId: 'linear-detail-reads', mountNonce: section },
+      authorPlugin: { id: LINEAR_PLUGIN_ID, version: '0.0.0' },
+      surface: renderSurface,
+      surfaceContext: createSurfaceContextFixture(),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      launchInput: { ...INPUT, panel: section === 'comments' ? 'activity' : section } as unknown as JsonValue,
+      handlers: {
+        executeAction: async ({ action, input, signal }) => {
+          expect(action).toEqual({ pluginId: LINEAR_PLUGIN_ID, localId: LINEAR_ACTIONS.detail });
+          reads.push(input);
+          const result = await backend.invokeAction(LINEAR_ACTIONS.detail, input!, { surface: 'ui', signal });
+          expect(result).toMatchObject({ kind: 'ready' });
+          return result;
+        },
+      },
+    });
+  });
+  mounted.push(page);
+  expect(reads).toEqual([expect.objectContaining({ section })]);
+  expect(provider.request).toHaveBeenCalledTimes(1);
+  await act(async () => { await page.updateSurface(createSurfaceContextFixture()); });
+  await act(async () => { await page.retire(); });
+  expect(reads).toHaveLength(1);
+  expect(provider.request).toHaveBeenCalledTimes(1);
 });
 
 async function mountComments(answer: Parameters<typeof host>[0]) {

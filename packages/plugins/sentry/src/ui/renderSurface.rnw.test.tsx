@@ -409,6 +409,17 @@ describe('the mounted Sentry issue detail body', () => {
     // A complete history needs no read count under it.
     expect(text).not.toContain('activity record(s) read');
     await expect(page.queryByRole('tab')).resolves.toBeUndefined();
+
+    const issueProjections = () => harness.invocations
+      .filter(({ localId }) => localId === SENTRY_ACTION_IDS.readIssue)
+      .map(({ input }) => (input as { projection: string }).projection);
+    // Without admitted detail, the root summary determines Release tab visibility.
+    expect(issueProjections().sort()).toEqual(['activity', 'overview']);
+    expect(harness.countOf(SENTRY_ACTION_IDS.readEvent)).toBe(0);
+    await act(async () => { await page.updateSurface(createSurfaceContextFixture()); });
+    await act(async () => { await page.retire(); });
+    expect(issueProjections().sort()).toEqual(['activity', 'overview']);
+    expect(harness.countOf(SENTRY_ACTION_IDS.readEvent)).toBe(0);
   });
   it('aborts hidden occurrence paging and resumes from its settled continuation', async () => {
     let panel = 'occurrences';

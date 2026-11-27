@@ -40,6 +40,7 @@ async function mountComments(outcome: 'applied' | 'uncertain' | 'failed') {
     description: adf('Keep queued work.'),
   }, schema: {} };
   const methods: string[] = [];
+  const readPaths: string[] = [];
   const context = { signal: new AbortController().signal, services: {
     connectedAccounts: {
       listAccounts: async () => ({ status: 'complete', accounts: [{ account, state: 'connected', connectedAccountOrigins: [origin] }] }),
@@ -48,6 +49,7 @@ async function mountComments(outcome: 'applied' | 'uncertain' | 'failed') {
     http: { request: async (request: { url: string; method: string }) => {
       methods.push(request.method);
       const path = new URL(request.url).pathname;
+      if (request.method === 'GET') readPaths.push(path);
       if (request.method === 'POST' && outcome === 'uncertain') throw new Error('answer lost');
       const body = path.endsWith('/myself') ? { accountId: 'person-1' }
         : request.method === 'POST' ? { id: 'comment-1' }
@@ -62,6 +64,7 @@ async function mountComments(outcome: 'applied' | 'uncertain' | 'failed') {
   const controls = new Map<string, { publish(event: PluginUiActionControlEventV1): void; disabled?: boolean }>();
   const prepared: unknown[] = [];
   const settlements: unknown[] = [];
+  const detailReads: unknown[] = [];
   const input = TriageDetailSurfaceInputV1Schema.parse({ v: 1, instance, panel: 'overview', linkedSessions: [],
     observation: { entryRef: { source: instance.instance.source, ...localRef }, observedAtMs: 1000,
       locator: { v: 1, webUrl: `${origin}/browse/ABC-123` }, snapshot: { v: 1, title: issue.fields.summary,
@@ -74,6 +77,7 @@ async function mountComments(outcome: 'applied' | 'uncertain' | 'failed') {
       launchInput: input as unknown as JsonValue, handlers: {
         executeAction: async ({ action, input }) => {
           expect(action).toEqual({ pluginId: JIRA_PLUGIN_ID, localId: JIRA_ACTIONS.detail });
+          detailReads.push(input);
           return backend.invokeAction(JIRA_ACTIONS.detail, input) as Promise<JsonValue>;
         },
         actionControl: async ({ request, publish }) => {
@@ -94,12 +98,17 @@ async function mountComments(outcome: 'applied' | 'uncertain' | 'failed') {
       } });
   });
   mounted.push(page);
-  return { page, prepared, settlements, methods, instance, localRef, control: () => [...controls.values()][0]! };
+  return { page, prepared, settlements, detailReads, readPaths, methods, instance, localRef, control: () => [...controls.values()][0]! };
 }
 
 it.each(['applied', 'uncertain', 'failed'] as const)('settles a Jira comment as %s through its registered writer without replay', async outcome => {
   const mounted = await mountComments(outcome);
   await expect(mounted.page.getByText('Keep queued work.')).resolves.toBeDefined();
+  expect(mounted.detailReads).toHaveLength(1);
+  expect(mounted.readPaths).toEqual(['/rest/api/3/issue/10001', '/rest/api/3/myself']);
+  await act(async () => { await mounted.page.updateSurface(createSurfaceContextFixture()); });
+  expect(mounted.detailReads).toHaveLength(1);
+  expect(mounted.readPaths).toHaveLength(2);
   expect(mounted.control().disabled).toBe(true);
   const field = document.querySelector<HTMLTextAreaElement>('textarea')!;
   await act(async () => {
