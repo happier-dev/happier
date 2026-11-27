@@ -190,6 +190,24 @@ export function decodeLegacyReviewStartInput(value: unknown): unknown {
   })) };
 }
 
+/** Read the bound engine reviewer's options; other direct Runs retain their explicit engine-map key. */
+export function readReviewEngineOptionsV1(input: Pick<ReviewStartInput, 'reviewers' | 'engines'>, fallbackEngineId?: string): ReviewEngineInput | undefined;
+export function readReviewEngineOptionsV1(input: unknown, fallbackEngineId?: string): unknown;
+export function readReviewEngineOptionsV1(input: unknown, fallbackEngineId?: string): unknown {
+  const decoded = decodeLegacyReviewStartInput(input);
+  if (!decoded || typeof decoded !== 'object' || Array.isArray(decoded)) return undefined;
+  const record = decoded as Record<string, unknown>;
+  const selected: unknown = Array.isArray(record.reviewers) && record.reviewers.length === 1 ? record.reviewers[0] : undefined;
+  const selection = selected && typeof selected === 'object' && !Array.isArray(selected)
+    ? selected as Record<string, unknown> : undefined;
+  const reviewer = selection?.kind === 'engine' ? selection : undefined;
+  if (reviewer?.options !== undefined) return reviewer.options;
+  const engineId = typeof reviewer?.engineId === 'string' ? reviewer.engineId : fallbackEngineId;
+  const engines = record.engines;
+  return engineId !== undefined && engines && typeof engines === 'object' && !Array.isArray(engines)
+    ? (engines as Record<string, unknown>)[engineId] : undefined;
+}
+
 /** Static Workflow validation has no value yet for a historical bound engines field. */
 export function reviewStartDeferredFieldsV1(fields: ReadonlySet<string>): ReadonlySet<string> {
   return fields.has('engineIds') ? new Set([...fields, 'reviewers']) : fields;

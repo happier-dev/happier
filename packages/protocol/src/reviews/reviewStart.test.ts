@@ -7,6 +7,30 @@ const reviewStartExports = reviewStart as typeof reviewStart & {
 };
 
 describe('ReviewStartInputSchema', () => {
+  it('reads the invocation options from its selected reviewer before the historical engine map', () => {
+    const engineId = 'agent:happier.review.deepsec/deepsec';
+    const options = { confirmedCostWarning: true };
+    expect(reviewStart.readReviewEngineOptionsV1({ reviewers: [{ kind: 'engine', engineId, options }],
+      engines: { [engineId]: { confirmedCostWarning: false } } }, 'deepsec')).toEqual(options);
+    expect(reviewStart.readReviewEngineOptionsV1({ reviewers: [{ kind: 'engine', engineId }],
+      engines: { [engineId]: options } }, 'deepsec')).toEqual(options);
+    expect(reviewStart.readReviewEngineOptionsV1({ reviewers: [{ kind: 'engine', engineId, options: {} }],
+      engines: { [engineId]: options } }, 'deepsec')).toEqual({});
+    expect(reviewStart.readReviewEngineOptionsV1({ engineIds: [engineId], engines: { [engineId]: options } }, 'deepsec'))
+      .toEqual(options);
+    expect(reviewStart.readReviewEngineOptionsV1({ engines: { deepsec: options } }, 'deepsec')).toEqual(options);
+  });
+
+  it('keeps repeated engine selections independent when each is bound to its own invocation', () => {
+    const engineId = 'agent:happier.review.coderabbit/coderabbit';
+    const reviewers = ['major', 'critical'].map(gate => ({ kind: 'engine' as const, engineId, options: { gate } }));
+    const engines = { [engineId]: { gate: 'minor' }, coderabbit: { gate: 'minor' } };
+    expect(reviewers.map(reviewer => reviewStart.readReviewEngineOptionsV1({ reviewers: [reviewer], engines }, 'coderabbit')))
+      .toEqual([{ gate: 'major' }, { gate: 'critical' }]);
+    // Direct Runs may retain a full roster; their explicit engine-map selector stays authoritative.
+    expect(reviewStart.readReviewEngineOptionsV1({ reviewers, engines }, 'coderabbit')).toEqual({ gate: 'minor' });
+  });
+
   it.each(['selected', 'staged', 'disabled', 'replaced'] as const)(
     'includes a source Session in admission only for the selected transcript read: %s', scenario => {
       const sourceSession = { serverId: 'home', sessionId: 'transcript-source' };

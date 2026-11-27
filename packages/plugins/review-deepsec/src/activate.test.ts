@@ -260,6 +260,26 @@ function readStructuredOutput(events: readonly AgentExecutionRunEvent[]) {
 }
 
 describe('activate', () => {
+  it('honors the qualified reviewer cost consent delivered by public review.start', async () => {
+    // Shape captured from replay73-deepsec-codex-consented, after dispatch binds one reviewer.
+    const engineId = 'agent:happier.review.deepsec/deepsec';
+    const fixture = createRuntimeContext();
+    const { runtime } = await createNativeDeepSecRuntime();
+    const request = createOpenRequest({ engineId, profileLocalId: 'repository-security-audit' });
+    const opened = await runtime.executionRuns?.open({ ...request, input: { ...request.input, structuredInput: {
+      instructions: 'Review this repository for correctness and report findings only. Do not change files.',
+      permissionMode: 'read_only', changeType: 'all', base: { kind: 'none' }, scope: 'repository', engineId,
+      reviewers: [{ kind: 'engine', engineId, options: { confirmedCostWarning: true } }],
+      engines: { [engineId]: { confirmedCostWarning: true } },
+    } } }, fixture.context);
+    if (!opened) throw new Error('Expected DeepSec execution');
+    try {
+      const events = await watchToTerminal(opened);
+      expect(events.at(-1)?.kind).toBe('run-complete');
+      expect(fixture.run.mock.calls.map(([request]) => request.args?.[0])).toEqual(['scan', 'process', 'export']);
+    } finally { await opened.dispose(); }
+  });
+
   it.each([
     { runner: 'claude', purpose: 'model_upstream_api_key', values: { ANTHROPIC_API_KEY: 'selected-key' }, baseUrl: 'https://api.anthropic.com' },
     { runner: 'claude', purpose: 'kimi-code-api-key', values: { ANTHROPIC_API_KEY: 'selected-key', ANTHROPIC_BASE_URL: 'https://api.kimi.com/coding' }, baseUrl: 'https://api.kimi.com/coding' },
@@ -590,7 +610,7 @@ describe('activate', () => {
   });
 
   it.each([
-    { profileLocalId: 'review', engineId: 'happier.review.deepsec/deepsec', commands: ['process'] },
+    { profileLocalId: 'review', engineId: 'agent:happier.review.deepsec/deepsec', commands: ['process'] },
     { profileLocalId: 'repository-security-audit', engineId: 'deepsec', commands: ['scan', 'process', 'export'] },
   ])('requires fresh paid-start consent and allows an explicit retry ($profileLocalId)', async ({ profileLocalId, engineId, commands }) => {
     const profile = PLUGIN_MANIFEST.contributes?.executionRunProfiles?.find(profile => profile.id === profileLocalId);
@@ -598,7 +618,7 @@ describe('activate', () => {
     expect(consentOption).toBe('confirmedCostWarning');
     if (typeof consentOption !== 'string') throw new Error('Expected per-start cost consent option');
     const fixture = createRuntimeContext();
-    const context = { ...fixture.context, agent: { id: engineId } };
+    const context = fixture.context;
     const { runtime } = await createNativeDeepSecRuntime();
     const opened = await runtime.executionRuns?.open(createOpenRequest({
       runId: 'run-confirmation-required',

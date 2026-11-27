@@ -20,7 +20,9 @@ export function normalizeCodeRabbitReviewStartInput(params: Readonly<{
     : '';
   return ReviewStartInputSchema.parse({
     ...(rawIntentInput ?? {}),
-    reviewers: [{ kind: 'engine', engineId: 'coderabbit' }],
+    ...((rawIntentInput?.reviewers === undefined || Array.isArray(rawIntentInput.reviewers) && rawIntentInput.reviewers.length === 0)
+      && rawIntentInput?.engineIds === undefined
+      ? { reviewers: [{ kind: 'engine', engineId: 'coderabbit' }] } : {}),
     instructions: instructions.length > 0 ? instructions : fallbackInstructions,
   });
 }

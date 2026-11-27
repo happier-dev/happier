@@ -26,10 +26,12 @@ describe('normalizeCodeRabbitReviewStartInput', () => {
     });
   });
 
-  it('selects CodeRabbit as the native reviewer for plugin-local execution', () => {
+  it.each(['roster', 'legacy'] as const)('preserves the admitted qualified reviewer and its invocation options (%s)', format => {
+    const reviewer = { kind: 'engine', engineId: 'agent:happier.review.coderabbit/coderabbit', options: { gate: 'major' } };
     const normalized = normalizeCodeRabbitReviewStartInput({
       intentInput: {
-        reviewers: [{ kind: 'engine', engineId: 'deepsec' }],
+        ...(format === 'roster' ? { reviewers: [reviewer] }
+          : { engineIds: [reviewer.engineId], engines: { [reviewer.engineId]: reviewer.options } }),
         instructions: 'Review this change.',
         changeType: 'uncommitted',
         base: { kind: 'none' },
@@ -37,6 +39,6 @@ describe('normalizeCodeRabbitReviewStartInput', () => {
       fallbackInstructions: 'fallback',
     });
 
-    expect(normalized.reviewers).toEqual([{ kind: 'engine', engineId: 'coderabbit' }]);
+    expect(normalized.reviewers).toEqual([reviewer]);
   });
 });

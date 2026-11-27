@@ -195,9 +195,9 @@ describe('native clawpatch review', () => {
     const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
     const factory = activation.registration('agents', 'clawpatch')?.factory;
     if (!factory) throw new Error('Missing clawpatch reviewer registration');
-    const agent = await factory({ plugin: { id: PLUGIN_MANIFEST.id, version: '0.0.0' }, agent: { id: engineId }, signal: f.controller.signal });
+    const agent = await factory({ plugin: { id: PLUGIN_MANIFEST.id, version: '0.0.0' }, agent: { id: 'clawpatch' }, signal: f.controller.signal });
     // Only host I/O services are substituted; the runtime, scope schema and adapter remain real.
-    const context = { agent: { id: engineId }, signal: f.controller.signal, services: {
+    const context = { agent: { id: 'clawpatch' }, signal: f.controller.signal, services: {
       exec: f.exec, fs: { getPluginDataDirectory: async () => f.state },
       managedServices: { dependencies: { ensure: async () => ({ state: 'ready', id: 'review-executable', version: '0.8.4', sourceId: 'test' }) } },
     } } as unknown as AgentExecutionRunRuntimeContextV1;

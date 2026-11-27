@@ -42,6 +42,14 @@ The engine's execution-run capability describes the workspace-write policy its
 native invocation actually enforces. A selected runner's direct Agent capability
 does not replace that execution-surface guarantee.
 
+Native Review runtimes read per-invocation options through
+`readReviewEngineOptionsV1` from `@happier-dev/plugin-sdk/reviews` in 0.3
+development source. Profile admission uses the same Review input owner. The
+selected reviewer's `options` take precedence; retained engine maps use that
+reviewer's exact engine id. Direct Runs without a single engine reviewer retain
+their explicit engine-map key, and the existing legacy decoder handles pre-roster
+`engineIds` inputs.
+
 For unnamed Voice Session creation in 0.3 development source, the inventory's
 `defaultTargetKey` comes from the shared backend preference owner using the
 selected Machine and Account's Agent readiness. The inventory Action acquires

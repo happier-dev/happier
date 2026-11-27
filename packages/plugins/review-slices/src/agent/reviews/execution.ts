@@ -1,6 +1,7 @@
 import { computeCanonicalDomainSeparatedDigest, type JsonValue } from '@happier-dev/plugin-sdk';
 import { createFiniteExecutionRunHostRuntime, type AgentExecutionRunRuntimeFactory } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { ReviewFindingsV2, ReviewStartInput } from '@happier-dev/plugin-sdk/reviews';
+import { readReviewEngineOptionsV1 } from '@happier-dev/plugin-sdk/reviews';
 import { buildAgentTargetKeyV2 } from '@happier-dev/plugin-sdk/agents';
 import { runClawpatchReview, type RunClawpatchReviewInput } from './run.js';
 
@@ -37,7 +38,7 @@ export function createClawpatchExecutionRunFactory(): AgentExecutionRunRuntimeFa
             return { status: 'failed', diagnostic: { code: 'clawpatch_scope_unsupported', severity: 'error', message: 'clawpatch requires an admitted repository scope.' } };
           }
           // Options have already crossed the host profile-schema boundary.
-          const options = (review.engines[context.agent.id] ?? {}) as ClawpatchReviewOptions;
+          const options = (readReviewEngineOptionsV1(review, context.agent.id) ?? {}) as ClawpatchReviewOptions;
           const runnerKey = request.runnerAgentTarget ? buildAgentTargetKeyV2(request.runnerAgentTarget) : null;
           const provider = runnerKey === null ? options.provider : new Map([
             [buildAgentTargetKeyV2({ kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } }), 'codex'],

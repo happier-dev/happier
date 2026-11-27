@@ -11,6 +11,7 @@ import {
   ReviewScmScopeV1Schema,
   type ReviewScmScopeV1,
   ReviewStartInputSchema,
+  readReviewEngineOptionsV1,
   type ReviewFindingsV2,
 } from '@happier-dev/plugin-sdk/reviews';
 
@@ -61,11 +62,6 @@ function readAgentCli(value: unknown): DeepSecAgentCli | null {
   return DEEPSEC_AGENT_CLIS.find(agentCli => agentCli === value) ?? null;
 }
 
-function readDeepSecEngineConfig(intentRecord: Record<string, unknown>, agentId: string): Record<string, unknown> {
-  const engines = readRecord(intentRecord.engines);
-  return readRecord(engines?.[agentId]) ?? {};
-}
-
 function readScmReviewScope(intentRecord: Record<string, unknown>): ReviewScmScopeV1 | null {
   const parsed = ReviewScmScopeV1Schema.safeParse(intentRecord[REVIEW_SCM_SCOPE_INPUT_KEY]);
   return parsed.success ? parsed.data : null;
@@ -96,7 +92,9 @@ function normalizeReviewStartInput(params: Readonly<{
   const instructions = (readString(rawIntent.instructions) ?? params.fallbackInstructions.trim()) || 'Run DeepSec review.';
   return ReviewStartInputSchema.parse({
     ...rawIntent,
-    reviewers: [{ kind: 'engine', engineId: 'deepsec' }],
+    ...((rawIntent.reviewers === undefined || Array.isArray(rawIntent.reviewers) && rawIntent.reviewers.length === 0)
+      && rawIntent.engineIds === undefined
+      ? { reviewers: [{ kind: 'engine', engineId: 'deepsec' }] } : {}),
     instructions,
   }) as Record<string, unknown>;
 }
@@ -109,7 +107,7 @@ function normalizeDeepSecStart(params: Readonly<{
 }>): NormalizedDeepSecStart {
   const reviewInput = normalizeReviewStartInput(params);
   const scmScope = readScmReviewScope(reviewInput);
-  const engineConfig = readDeepSecEngineConfig(reviewInput, params.agentId);
+  const engineConfig = readRecord(readReviewEngineOptionsV1(reviewInput, params.agentId)) ?? {};
   const mode = readMode(engineConfig, reviewInput, params.profileId);
   const thinkingLevel = engineConfig.thinkingLevel;
   if (thinkingLevel !== undefined && !isDeepSecThinkingLevel(thinkingLevel)) {

@@ -23,7 +23,7 @@ async function runFixture(options: { engineId?: string; failedMember?: boolean; 
   const factory = activation.registration('agents', 'roborev')?.factory;
   if (!factory) throw new Error('Expected roborev reviewer Agent registration');
   const controller = new AbortController();
-  const agent = await factory({ plugin: { id: PLUGIN_MANIFEST.id, version: '0.0.0' }, agent: { id: engineId }, signal: controller.signal });
+  const agent = await factory({ plugin: { id: PLUGIN_MANIFEST.id, version: '0.0.0' }, agent: { id: 'roborev' }, signal: controller.signal });
   const record = structuredClone(selectedReview);
   if (options.failedMember) record.panel.members[1]!.status = 'failed';
   if (options.unableToReview) record.structured_output.verdict = 'unable_to_review';
@@ -45,7 +45,7 @@ async function runFixture(options: { engineId?: string; failedMember?: boolean; 
   });
   const writeFile = vi.fn<FileSystemService['writeFile']>(async () => {});
   const context = { plugin: { id: PLUGIN_MANIFEST.id, version: '0.0.0' }, contribution: { id: 'roborev', qualifiedId: `${PLUGIN_MANIFEST.id}/agents/roborev` },
-    surface: 'agent', signal: controller.signal, agent: { id: engineId }, services: { availability: () => ({ status: 'available' }),
+    surface: 'agent', signal: controller.signal, agent: { id: 'roborev' }, services: { availability: () => ({ status: 'available' }),
       exec: { run }, fs: { getPluginDataDirectory: async () => '/plugin-data/runs/test', writeFile } },
   } as unknown as AgentRuntimeContext;
   const request: Extract<AgentExecutionRunOpenRequest, { kind: 'create' }> = {

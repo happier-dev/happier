@@ -3098,6 +3098,7 @@
 | `./reviews` | `preflightReviewCommentPublicationRoutingV1` | value | any |
 | `./reviews` | `presentReviewRoundQualityV1` | value | any |
 | `./reviews` | `produceScmPullRequestReviewScope` | value | daemon |
+| `./reviews` | `readReviewEngineOptionsV1` | value | daemon |
 | `./reviews` | `readReviewFindingDecisionV1` | value | any |
 | `./reviews` | `readReviewFindingRevisedBodyV1` | value | any |
 | `./reviews` | `readReviewStartActionResultV1` | value | daemon |

@@ -44,7 +44,7 @@ async function runFixture(params: { cleanupFailure?: boolean; launchEnvironment?
   const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
   const factory = activation.registration('agents', 'coderabbit')?.factory;
   if (!factory) throw new Error('Expected CodeRabbit factory');
-  const agent = await factory({ plugin: { id: PLUGIN_MANIFEST.id, version: '0.0.0' }, agent: { id: params.engineId ?? 'coderabbit' }, signal: new AbortController().signal });
+  const agent = await factory({ plugin: { id: PLUGIN_MANIFEST.id, version: '0.0.0' }, agent: { id: 'coderabbit' }, signal: new AbortController().signal });
   const text = params.raw ?? params.records.map(value => JSON.stringify(value)).join('\r\n');
   const bytes = new TextEncoder().encode(text);
   let listener: ((chunk: PluginProcessOutput) => void) | undefined;
@@ -74,7 +74,7 @@ async function runFixture(params: { cleanupFailure?: boolean; launchEnvironment?
   });
   // The host process service is the genuine system boundary; plugin/runtime logic stays real.
   const context = { plugin: { id: PLUGIN_MANIFEST.id, version: '0.0.0' }, contribution: { id: 'coderabbit', qualifiedId: `${PLUGIN_MANIFEST.id}/agents/coderabbit` },
-    surface: 'agent', signal: new AbortController().signal, agent: { id: params.engineId ?? 'coderabbit' },
+    surface: 'agent', signal: new AbortController().signal, agent: { id: 'coderabbit' },
     // SCM Actions cross the host transport boundary; the adapter's scope decision stays real.
     services: { availability: () => ({ status: 'available' }), actions: { execute: vi.fn(async (_action: 'scm.status.snapshot', _input: unknown, options?: { signal?: AbortSignal }) => {
       if (!params.cancelPreflight) return params.checkout ?? checkoutSnapshot('live-head');

@@ -6,7 +6,7 @@ import type {
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { createFiniteExecutionRunHostRuntime } from '@happier-dev/plugin-sdk/agents/runtime';
 import { isPluginError } from '@happier-dev/plugin-sdk';
-import { REVIEW_SCM_SCOPE_INPUT_KEY } from '@happier-dev/plugin-sdk/reviews';
+import { REVIEW_SCM_SCOPE_INPUT_KEY, readReviewEngineOptionsV1 } from '@happier-dev/plugin-sdk/reviews';
 
 import { createCodeRabbitAgentOutput } from './agentOutput.js';
 import { preflightCodeRabbitReviewScope, readCodeRabbitReviewScopeFacts } from './scopePreflight.js';
@@ -42,7 +42,7 @@ function createRuntime(
       if (!preflight.ok) {
         return { status: 'failed', diagnostic: { code: 'coderabbit_scope_unsupported', severity: 'error', message: preflight.error } };
       }
-      const engineConfig = reviewInput.engines?.[context.agent.id];
+      const engineConfig = readReviewEngineOptionsV1(reviewInput, context.agent.id);
       const args = ['review', '--agent', '--dir', request.cwd];
       if (preflight.changeType === 'committed') args.push('--committed');
       if (preflight.changeType === 'uncommitted') args.push('--uncommitted');

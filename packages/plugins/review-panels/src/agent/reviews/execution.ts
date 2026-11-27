@@ -1,5 +1,6 @@
 import { createFiniteExecutionRunHostRuntime, type AgentExecutionRunRuntimeFactory } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { ReviewFindingsV2, ReviewStartInput } from '@happier-dev/plugin-sdk/reviews';
+import { readReviewEngineOptionsV1 } from '@happier-dev/plugin-sdk/reviews';
 import { RoborevReviewError } from './document.js';
 import { runRoborevReview } from './run.js';
 import type { RoborevReviewOptions } from './profile.js';
@@ -21,7 +22,7 @@ export function createRoborevExecutionRunFactory(): AgentExecutionRunRuntimeFact
           // ReviewProfile owns input, scope and profile-options admission. This
           // adapter translates the admitted value; it does not re-parse it.
           const input = request.input.structuredInput as ReviewStartInput;
-          const options = input.engines[context.agent.id] as RoborevReviewOptions | undefined;
+          const options = readReviewEngineOptionsV1(input, context.agent.id) as RoborevReviewOptions | undefined;
           const scope = input.scmReviewScope;
           const comparison = scope?.comparison;
           const range = scope?.revisionRange;
