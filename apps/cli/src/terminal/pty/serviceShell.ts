@@ -49,6 +49,7 @@ export async function consumeServiceShellTerminal(input: Readonly<{
         launchProcess: { file: input.launch.command, args: input.launch.args, env: input.launch.env,
             ...(input.launch.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}) },
         authorizedProjectLaunch: input.launch,
+        ...(input.launch.secretRedactionLease ? { outputRedaction: input.launch.secretRedactionLease } : {}),
     });
     if (!terminal.ok) {
         input.onRegistered(terminal);

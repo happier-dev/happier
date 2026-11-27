@@ -13,6 +13,7 @@ import { authorizeMachineRpcRequest, verifyMachineRpcAdmissionCurrent,
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { DaemonTerminalEnsureResponseSchema } from '@happier-dev/protocol/daemon/terminal';
+import { decodeTerminalStreamBytesFrame, TerminalStreamReadResponseSchema } from '@happier-dev/protocol/terminal/stream';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { registerMachineRpcHandlers } from '@/api/machine/rpcHandlers';
 import { prepareActionCompletionV1 } from '@happier-dev/protocol/actions/actionCompletion';
@@ -607,6 +608,7 @@ describe('admitted finite Compose command', () => {
                 const pty: PtyProcess = { pid: client.pid,
                     write(data) { client.writes.push(data); }, resize() {}, kill() {},
                     onData(listener) { client.events.on('data', listener); return { dispose() { client.events.off('data', listener); } }; },
+                    onDataBytes(listener) { client.events.on('data', listener); return { dispose() { client.events.off('data', listener); } }; },
                     onExit(listener) { client.events.on('exit', listener); return { dispose() { client.events.off('exit', listener); } }; },
                 };
                 return pty;
@@ -730,10 +732,25 @@ describe('admitted finite Compose command', () => {
                     .toMatchObject({ ok: false, errorCode: 'effect_in_progress', details: { actionOperationId: liveOperation!.operationId } });
                 // Reconnect uses the same retained terminal id and emits no launch.
                 phase = 'interactive-input';
-                clients[0].events.emit('data', 'service-output');
+                clients[0].events.emit('data', Buffer.from('service-output '));
                 expect(await rpc.invokeLocal(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ,
                     { terminalId: opened.terminalId, cursor: 0 }, { rpcContext: owner })).toMatchObject({ ok: true,
-                    events: [expect.objectContaining({ data: 'service-output' })] });
+                    events: [expect.objectContaining({ data: 'service-output ' })] });
+                // The runtime binding's value can be split across PTY reads.
+                phase = 'interactive-redaction';
+                clients[0].events.emit('data', Buffer.from('finite-native-'));
+                clients[0].events.emit('data', Buffer.from('secret-sentinel\r\n'));
+                const shellOutput = await rpc.invokeLocal(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ,
+                    { terminalId: opened.terminalId, cursor: 0 }, { rpcContext: owner });
+                expect.soft(JSON.stringify(shellOutput)).not.toMatch(/finite-native-|secret-sentinel/);
+                expect.soft(JSON.stringify(shellOutput)).toContain('[REDACTED]');
+                if (process.platform !== 'win32') {
+                    const stream = TerminalStreamReadResponseSchema.parse(await rpc.invokeLocal(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES,
+                        { terminalId: opened.terminalId, byteOffset: 0 }, { rpcContext: owner }));
+                    if (!stream.ok) throw new Error(`Expected shell bytes, got ${stream.code}`);
+                    const bytes = stream.frames.flatMap(frame => frame.t === 'bytes' ? [decodeTerminalStreamBytesFrame(frame)] : []);
+                    expect.soft(Buffer.concat(bytes).toString('utf8')).toBe('service-output [REDACTED]\r\n');
+                }
                 expect(await rpc.invokeLocal(RPC_METHODS.DAEMON_TERMINAL_INPUT,
                     { terminalId: opened.terminalId, data: 'echo owner\n' }, { rpcContext: owner })).toMatchObject({ ok: true });
                 expect(clients[0].writes).toEqual(['echo owner\n']);

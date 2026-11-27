@@ -38,6 +38,7 @@ import { createTerminalPtyMetrics, type TerminalPtyMetrics } from './metrics';
 import type { Disposable, PtyProvider, PtyProcess } from './provider';
 import type { TerminalLaunchProcess } from './launch';
 import type { HostAuthorizedPluginExecLaunch } from '@/plugins/runtime/invocation/services/exec';
+import type { ProviderRedactionLease } from '@/providers/spawn/redaction';
 import { resolveTerminalShell } from './shells';
 import { createTerminalNativeLaunch } from './nativeLaunch';
 import { readAgentLaunchTerminalExecFailure } from '@/daemon/agentIsolation/agentLaunchDiagnostics';
@@ -114,6 +115,8 @@ export type TerminalPtyEnsureInput = Readonly<{
   launchProcess?: TerminalLaunchProcess;
   /** Actual B4 final tuple, supplied only by the host Project preparation owner. */
   authorizedProjectLaunch?: HostAuthorizedPluginExecLaunch;
+  /** Output custody borrowed from an admitted service generation until the shell exits. */
+  outputRedaction?: ProviderRedactionLease;
   /** Supervisor-only native launch; public terminal requests cannot create this classification. */
   serviceProcess?: true;
   /** Canonical finalizer output for an admitted non-Project person shell. */
@@ -874,16 +877,22 @@ export function createTerminalPtySessionManager(params: Readonly<{
       for (const observer of session.processOutputObservers) observer(chunk);
     };
 
+    // Mask before publishing to either terminal representation or inspecting URLs.
+    const outputSanitizer = input.outputRedaction?.createStreamingSanitizer();
+    const publishOutput = outputSanitizer
+      ? (bytes: Buffer) => consumePayloadBytes(Buffer.from(outputSanitizer.pushBytes(bytes)))
+      : consumePayloadBytes;
     const consumeBytes = (bytes: Buffer) => nativeLaunch
-      ? nativeLaunch.consume(bytes, consumePayloadBytes) : consumePayloadBytes(bytes);
+      ? nativeLaunch.consume(bytes, publishOutput) : publishOutput(bytes);
 
     const consumeLegacyString = (text: string) => {
       if (nativeLaunch) { consumeBytes(Buffer.from(text, 'utf8')); return; }
-      if (text) recordIo(session);
       if (session.byteMode.kind === 'bytes') {
         session.byteMode = { kind: 'legacyOnly', provider: 'unknown', reason: 'PTY provider emitted decoded strings instead of raw bytes' };
         metrics.recordLegacyOnlyProvider();
       }
+      if (outputSanitizer) { consumeBytes(Buffer.from(text, 'utf8')); return; }
+      if (text) recordIo(session);
       pushDecodedText(session, String(text ?? ''), config);
       if (text) {
         const chunk: PluginProcessOutput = { sequence: session.outputSequence++, stream: 'stdout', data: Buffer.from(text) };
@@ -919,6 +928,7 @@ export function createTerminalPtySessionManager(params: Readonly<{
     session.disposables.push(
       pty.onExit((e) => {
         nativeLaunch?.finish();
+        if (outputSanitizer) consumePayloadBytes(Buffer.from(outputSanitizer.flushBytes()));
         session.lastActivityAtMs = now();
         const finalByteOffset = session.byteRing.bounds().totalBytesWritten;
         pushDecodedText(session, session.decoder.flush(), config, finalByteOffset);
