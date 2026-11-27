@@ -110,43 +110,22 @@ function normalizeRpcMethodName(value: unknown): string | null {
     return trimmed;
 }
 
-async function waitForRpcTargetAvailability(params: Readonly<{
-    method: string;
-    initialTargetSocket: Socket | null;
-    initialTargetSocketId?: string | null;
-    lookupTargetSocket: () => Socket | null;
-    lookupRedisSocketId?: () => Promise<string | null>;
-}>): Promise<Readonly<{ targetSocket: Socket | null; targetSocketId: string | null }>> {
-    const graceMs = resolveRpcMethodAvailabilityGraceMs(params.method);
+async function waitForRpcTargetAvailability<T>(
+    method: string,
+    lookup: () => T | null | Promise<T | null>,
+): Promise<T | null> {
+    let target = await lookup();
+    if (target !== null) return target;
+
+    const deadline = Date.now() + resolveRpcMethodAvailabilityGraceMs(method);
     const pollMs = resolveRpcMethodAvailabilityPollMs();
-    const deadline = Date.now() + graceMs;
-
-    const initialTargetSocketId =
-        typeof params.initialTargetSocketId === 'string' && params.initialTargetSocketId.trim().length > 0
-            ? params.initialTargetSocketId
-            : null;
-    let targetSocketId = initialTargetSocketId ?? (params.lookupRedisSocketId ? await params.lookupRedisSocketId() : null);
-    let targetSocket =
-        params.initialTargetSocket && params.initialTargetSocket.connected
-            ? params.initialTargetSocket
-            : params.lookupTargetSocket();
-
-    while (
-        (!targetSocket || !targetSocket.connected)
-        && graceMs > 0
-        && Date.now() < deadline
-        && (!params.lookupRedisSocketId || !targetSocketId || targetSocketId === initialTargetSocketId)
-    ) {
-        const remainingMs = deadline - Date.now();
+    let remainingMs = deadline - Date.now();
+    while (target === null && remainingMs > 0) {
         await new Promise<void>((resolve) => setTimeout(resolve, Math.min(pollMs, remainingMs)));
-        targetSocketId = params.lookupRedisSocketId ? await params.lookupRedisSocketId() : null;
-        targetSocket = params.lookupTargetSocket() ?? targetSocket ?? null;
+        target = await lookup();
+        remainingMs = deadline - Date.now();
     }
-
-    return {
-        targetSocket: targetSocket && targetSocket.connected ? targetSocket : null,
-        targetSocketId,
-    };
+    return target;
 }
 
 function ensureUserRpcListenerMapRegistered(
@@ -169,7 +148,7 @@ function pruneUserRpcListenerMapIfEmpty(
     }
 }
 
-function readMachineScopedSocketMachineId(socket: Socket): string | null {
+function readMachineScopedSocketMachineId(socket: Pick<Socket, "data">): string | null {
     const socketData = readHappierSocketData(socket);
     const clientType = socketData.clientType ?? '';
     const machineId = socketData.machineId ?? '';
@@ -190,14 +169,14 @@ function canRegisterMachineScopedRpcMethod(socket: Socket, method: string): bool
 }
 
 function isExplicitMachineStopTargetSocket(params: Readonly<{
-    socket: Socket;
+    socket: Pick<Socket, "data">;
     request: Readonly<{ machineId: string }>;
 }>): boolean {
     return readMachineScopedSocketMachineId(params.socket) === params.request.machineId;
 }
 
 function readExplicitMachineStopTargetMismatch(params: Readonly<{
-    socket: Socket;
+    socket: Pick<Socket, "data">;
     request: Readonly<{ machineId: string }> | null;
 }>): Readonly<{ ok: false; error: string; errorCode: string }> | null {
     if (!params.request || isExplicitMachineStopTargetSocket({
@@ -251,12 +230,11 @@ export function rpcHandler(
         >;
     },
 ) {
-    const ownedMethods = new Set<string>();
+    const pendingRegistrations = new Map<string, symbol>();
     const redisRegistry = createRpcRedisRegistryCoordinator({
         config: ctx.redisRegistry,
         userId,
         socketId: socket.id,
-        ownedMethods,
     });
     // Correlations are scoped to this authenticated caller socket. The relay
     // maps each one to a fresh target id before forwarding.
@@ -279,26 +257,28 @@ export function rpcHandler(
     };
 
     // RPC register - Register this socket as a listener for an RPC method
-    socket.on(SOCKET_RPC_EVENTS.REGISTER, async (data: any) => {
+    socket.on(SOCKET_RPC_EVENTS.REGISTER, async (data: { method?: unknown } | undefined) => {
+        const method = normalizeRpcMethodName(data?.method);
+        if (!method) {
+            socket.emit(SOCKET_RPC_EVENTS.ERROR, { type: 'register', error: 'Invalid method name' });
+            return;
+        }
+        if (
+            !canRegisterSessionScopedRpcMethod({ socket, method })
+            || !canRegisterMachineScopedRpcMethod(socket, method)
+        ) {
+            socket.emit(SOCKET_RPC_EVENTS.ERROR, { type: 'register', error: 'Forbidden' });
+            return;
+        }
+
+        // Machine validation can yield to an unregister, disconnect, or replacement REGISTER.
+        const registration = Symbol();
+        pendingRegistrations.set(method, registration);
         try {
-            const method = normalizeRpcMethodName(data?.method);
-
-            if (!method) {
-                socket.emit(SOCKET_RPC_EVENTS.ERROR, { type: 'register', error: 'Invalid method name' });
-                return;
-            }
-
-            if (
-                !canRegisterSessionScopedRpcMethod({ socket, method })
-                || !canRegisterMachineScopedRpcMethod(socket, method)
-            ) {
-                socket.emit(SOCKET_RPC_EVENTS.ERROR, { type: 'register', error: 'Forbidden' });
-                return;
-            }
-
             const machineId = readMachineScopedSocketMachineId(socket);
             if (machineId) {
                 const currentMachine = await validateCurrentMachineSocket({ accountId: userId, machineId });
+                if (pendingRegistrations.get(method) !== registration) return;
                 if (!currentMachine.ok) {
                     socket.emit(SOCKET_RPC_EVENTS.ERROR, {
                         type: 'register',
@@ -307,19 +287,21 @@ export function rpcHandler(
                     return;
                 }
             }
+            if (!socket.connected) return;
 
-            // Register this socket as the listener for this method
-            const listeners = resolveUserRpcListeners('ensure');
-            listeners.set(method, socket);
-            ownedMethods.add(method);
-            // Started before the write: the refresh retries a registration Redis rejects.
-            redisRegistry.startRefreshLoopIfNeeded();
+            resolveUserRpcListeners('ensure').set(method, socket);
             await redisRegistry.registerMethod(method);
 
-            socket.emit(SOCKET_RPC_EVENTS.REGISTERED, { method });
+            if (pendingRegistrations.get(method) === registration && socket.connected) {
+                socket.emit(SOCKET_RPC_EVENTS.REGISTERED, { method });
+            }
         } catch (error) {
             log({ module: 'websocket', level: 'error' }, `Error in rpc-register: ${error}`);
-            socket.emit(SOCKET_RPC_EVENTS.ERROR, { type: 'register', error: 'Internal error' });
+            if (pendingRegistrations.get(method) === registration && socket.connected) {
+                socket.emit(SOCKET_RPC_EVENTS.ERROR, { type: 'register', error: 'Internal error' });
+            }
+        } finally {
+            if (pendingRegistrations.get(method) === registration) pendingRegistrations.delete(method);
         }
     });
 
@@ -333,18 +315,13 @@ export function rpcHandler(
                 return;
             }
 
+            pendingRegistrations.delete(method);
             const listeners = resolveUserRpcListeners('get');
-            // Released even when another socket took the method over first, so this socket's
-            // refresh never restores a route it withdrew. Its Redis mapping goes too: the refresh
-            // may have restored it after the other socket left, and the removal only deletes a
-            // mapping that names this socket.
-            ownedMethods.delete(method);
             if (listeners.get(method) === socket) {
                 listeners.delete(method);
                 pruneUserRpcListenerMapIfEmpty(allRpcListeners, userId, listeners);
             }
-            await redisRegistry.removeSocketRegistration(userId, method, socket.id);
-            await redisRegistry.stopRefreshLoopIfIdle();
+            await redisRegistry.unregisterMethod(method);
 
             socket.emit(SOCKET_RPC_EVENTS.UNREGISTERED, { method });
         } catch (error) {
@@ -426,7 +403,7 @@ export function rpcHandler(
                 return;
             }
 
-            let { targetUserId, targetSocket } = targetResolution;
+            const { targetUserId } = targetResolution;
             const explicitMachineStopRequest = readExplicitMachineStopRequest(method, rpcAuthorization);
             if (method.endsWith(`:${RPC_METHODS.STOP_SESSION}`) && !explicitMachineStopRequest) {
                 callback?.({
@@ -436,7 +413,6 @@ export function rpcHandler(
                 return;
             }
             const forwardTimeoutMs = resolveRpcForwardTimeoutMs(method, requestedTimeoutMs);
-            let attemptedTargetSocketId: string | null = null;
             let explicitMachineStopCapture: CaptureExplicitMachineStopResult | null = null;
             const buildForwardedRequest = () => ({
                 method,
@@ -553,272 +529,97 @@ export function rpcHandler(
                     }
                 }
 
+                const lookupConnectedLocalTarget = () => {
+                    const local = lookupInMemoryTargetSocket();
+                    return local?.connected ? local : null;
+                };
+                let localTarget: Socket | null;
+                let targetSocketId: string | null;
                 if (redisRegistry.enabled) {
-                    let targetSocketId = await redisRegistry.lookupSocketId(targetUserId, method);
-                    if (!targetSocket?.connected || !targetSocketId) {
-                        const awaited = await waitForRpcTargetAvailability({
-                            method,
-                            initialTargetSocket: targetSocket ?? null,
-                            initialTargetSocketId: typeof targetSocketId === 'string' ? targetSocketId : null,
-                            lookupTargetSocket: lookupInMemoryTargetSocket,
-                            lookupRedisSocketId: async () => {
-                                const lookedUp = await redisRegistry.lookupSocketId(targetUserId, method);
-                                return typeof lookedUp === 'string' && lookedUp.trim().length > 0 ? lookedUp : null;
-                            },
-                        });
-                        targetSocketId = awaited.targetSocketId;
-                        targetSocket = awaited.targetSocket ?? targetSocket;
-                    }
-                    const fallbackCandidate = targetSocket ?? lookupInMemoryTargetSocket();
-                    const fallbackSocket = (
-                        fallbackCandidate
-                        && (
-                            !explicitMachineStopRequest
-                            || !targetSocketId
-                            || fallbackCandidate.id === targetSocketId
-                        )
-                    )
-                        ? fallbackCandidate
-                        : null;
-                    if (fallbackSocket && fallbackSocket.connected) {
-                        if (fallbackSocket === socket) {
-                            if (callback) {
-                                callback({
-                                    ok: false,
-                                    error: 'Cannot call RPC on the same socket',
-                                });
-                            }
-                            return;
-                        }
+                    targetSocketId = await waitForRpcTargetAvailability(method, () => redisRegistry.lookupSocketId(targetUserId, method));
+                    const local = lookupConnectedLocalTarget();
+                    localTarget = local && local.id === targetSocketId ? local : null;
+                } else {
+                    const initialLocalTarget = targetResolution.targetSocket;
+                    localTarget = initialLocalTarget?.connected
+                        ? initialLocalTarget
+                        : await waitForRpcTargetAvailability(method, lookupConnectedLocalTarget);
+                    targetSocketId = localTarget?.id ?? null;
+                }
+                if (!targetSocketId) {
+                    callback?.({ ok: false, error: RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE, errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE });
+                    return;
+                }
+                if (targetSocketId === socket.id) {
+                    callback?.({ ok: false, error: 'Cannot call RPC on the same socket' });
+                    return;
+                }
 
-                        const fallbackMachineId = readMachineScopedSocketMachineId(fallbackSocket);
-                        const fallbackStopTargetMismatch = readExplicitMachineStopTargetMismatch({
-                            socket: fallbackSocket,
-                            request: explicitMachineStopRequest,
-                        });
-                        if (fallbackStopTargetMismatch) {
-                            callback?.(fallbackStopTargetMismatch);
-                            return;
-                        }
-                        if (fallbackMachineId) {
-                            const fallbackMachine = await validateCurrentMachineSocket({
-                                accountId: targetUserId,
-                                machineId: fallbackMachineId,
-                            });
-                            if (!fallbackMachine.ok) {
-                                if (callback) {
-                                    callback({
-                                        ok: false,
-                                        error: formatCurrentMachineSocketError(fallbackMachine.reason),
-                                        errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
-                                    });
-                                }
-                                return;
-                            }
-                        }
-
-                        const response = await awaitCancellableTargetResponse({
-                            io: ctx.io,
-                            cancellation,
-                            targetSocketId: fallbackSocket.id,
-                            submit: async () => await fallbackSocket.timeout(forwardTimeoutMs).emitWithAck(
-                                SOCKET_RPC_EVENTS.REQUEST,
-                                buildForwardedRequest(),
-                            ),
-                        });
-                        // Evaluated before the optional call: `callback?.(await ...)` would
-                        // short-circuit its argument and skip the stop lifecycle entirely
-                        // when the caller emitted without an acknowledgement.
-                        const forwardedResponse = await forwardTargetResponse(response);
-                        callback?.(forwardedResponse);
+                let targetWithMetadata: Pick<Socket, "data"> | null = localTarget;
+                const needsRemoteMachine = !localTarget && Boolean(
+                    resolveSocketRpcProviderStartingMethod(method) || explicitMachineStopRequest,
+                );
+                if (needsRemoteMachine) {
+                    const currentTargets = await ctx.io.in(targetSocketId).fetchSockets();
+                    const currentTarget = currentTargets.find(candidate => candidate.id === targetSocketId);
+                    if (!currentTarget) {
+                        callback?.({ ok: false, error: RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE, errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE });
                         return;
                     }
-                    if (!targetSocketId) {
-                        // Fallback: Redis registry can briefly miss registrations (e.g. during reconnect or cleanup),
-                        // but the in-process registry may still know the correct socket. Prefer keeping UX stable
-                        // over failing fast with METHOD_NOT_AVAILABLE.
-                        if (callback) {
-                            callback({
-                                ok: false,
-                                error: RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE,
-                                errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
-                            });
-                        }
-                        return;
-                    }
-                    if (targetSocketId === socket.id) {
-                        if (callback) {
-                            callback({
-                                ok: false,
-                                error: 'Cannot call RPC on the same socket',
-                            });
-                        }
-                        return;
-                    }
-
-                    attemptedTargetSocketId = targetSocketId;
-                    if (resolveSocketRpcProviderStartingMethod(method) || explicitMachineStopRequest) {
-                        const currentTargets = await ctx.io.in(targetSocketId).fetchSockets();
-                        const currentTarget = currentTargets.find((candidate) => candidate.id === targetSocketId);
-                        if (!currentTarget) {
-                            await redisRegistry.removeSocketRegistration(targetUserId, method, targetSocketId);
-                            callback?.({
-                                ok: false,
-                                error: RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE,
-                                errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
-                            });
-                            return;
-                        }
-                        const currentMachineId = readMachineScopedSocketMachineId(currentTarget as unknown as Socket);
-                        const currentStopTargetMismatch = readExplicitMachineStopTargetMismatch({
-                            socket: currentTarget as unknown as Socket,
-                            request: explicitMachineStopRequest,
-                        });
-                        if (currentStopTargetMismatch) {
-                            callback?.(currentStopTargetMismatch);
-                            return;
-                        }
-                        if (!currentMachineId) {
-                            callback?.({
-                                ok: false,
-                                error: RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE,
-                                errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
-                            });
-                            return;
-                        }
-                        const currentMachine = await validateCurrentMachineSocket({
-                            accountId: targetUserId,
-                            machineId: currentMachineId,
-                        });
-                        if (!currentMachine.ok) {
-                            callback?.({
-                                ok: false,
-                                error: formatCurrentMachineSocketError(currentMachine.reason),
-                                errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
-                            });
-                            return;
-                        }
-                    }
-                    const responses = await awaitCancellableTargetResponse({
-                        io: ctx.io,
-                        cancellation,
-                        targetSocketId,
-                        submit: async () => await ctx.io.timeout(forwardTimeoutMs).to(targetSocketId).emitWithAck(
-                            SOCKET_RPC_EVENTS.REQUEST,
-                            buildForwardedRequest(),
-                        ),
+                    targetWithMetadata = currentTarget;
+                }
+                if (targetWithMetadata) {
+                    const stopTargetMismatch = readExplicitMachineStopTargetMismatch({
+                        socket: targetWithMetadata,
+                        request: explicitMachineStopRequest,
                     });
-                    if (Array.isArray(responses) && responses.length === 0) {
-                        // The socket mapping exists in Redis, but no socket acknowledged the call.
-                        // Treat this as method unavailable and clean up stale mapping.
-                        try {
-                            await redisRegistry.removeSocketRegistration(targetUserId, method, targetSocketId);
-                        } catch {
-                            // best-effort cleanup only
-                        }
-                        if (callback) {
-                            callback({
-                                ok: false,
-                                error: RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE,
-                                errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
-                            });
-                        }
+                    if (stopTargetMismatch) {
+                        callback?.(stopTargetMismatch);
                         return;
                     }
-                    const response = Array.isArray(responses) ? responses[0] : responses;
-
-                    const forwardedResponse = await forwardTargetResponse(response);
-                    callback?.(forwardedResponse);
-                    return;
-                }
-
-                if (!targetSocket) {
-                    targetSocket = lookupInMemoryTargetSocket() ?? undefined;
-                }
-                if (!targetSocket || !targetSocket.connected) {
-                    const awaited = await waitForRpcTargetAvailability({
-                        method,
-                        initialTargetSocket: targetSocket ?? null,
-                        lookupTargetSocket: lookupInMemoryTargetSocket,
-                    });
-                    targetSocket = awaited.targetSocket ?? undefined;
-                }
-                if (!targetSocket || !targetSocket.connected) {
-                    if (callback) {
-                        callback({
-                            ok: false,
-                            error: RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE,
-                            errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
-                        });
+                    const machineId = readMachineScopedSocketMachineId(targetWithMetadata);
+                    if (needsRemoteMachine && !machineId) {
+                        callback?.({ ok: false, error: RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE, errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE });
+                        return;
                     }
-                    return;
-                }
-                if (targetSocket === socket) {
-                    if (callback) {
-                        callback({
-                            ok: false,
-                            error: 'Cannot call RPC on the same socket',
-                        });
-                    }
-                    return;
-                }
-
-                const targetMachineId = readMachineScopedSocketMachineId(targetSocket);
-                const stopTargetMismatch = readExplicitMachineStopTargetMismatch({
-                    socket: targetSocket,
-                    request: explicitMachineStopRequest,
-                });
-                if (stopTargetMismatch) {
-                    callback?.(stopTargetMismatch);
-                    return;
-                }
-                if (targetMachineId) {
-                    const targetMachine = await validateCurrentMachineSocket({
-                        accountId: targetUserId,
-                        machineId: targetMachineId,
-                    });
-                    if (!targetMachine.ok) {
-                        if (callback) {
-                            callback({
+                    if (machineId) {
+                        const targetMachine = await validateCurrentMachineSocket({ accountId: targetUserId, machineId });
+                        if (!targetMachine.ok) {
+                            callback?.({
                                 ok: false,
                                 error: formatCurrentMachineSocketError(targetMachine.reason),
                                 errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
                             });
+                            return;
                         }
-                        return;
                     }
                 }
 
-                // Forward the RPC request to the target socket using emitWithAck (single-process path).
-                const activeTargetSocket = targetSocket;
-                const response = await awaitCancellableTargetResponse({
+                const responses = await awaitCancellableTargetResponse({
                     io: ctx.io,
                     cancellation,
-                    targetSocketId: activeTargetSocket.id,
-                    submit: async () => await activeTargetSocket.timeout(forwardTimeoutMs).emitWithAck(
-                        SOCKET_RPC_EVENTS.REQUEST,
-                        buildForwardedRequest(),
-                    ),
+                    targetSocketId,
+                    submit: async () => {
+                        const request = buildForwardedRequest();
+                        if (localTarget) {
+                            // A direct ack can itself be an array. Wrap it in the response list
+                            // so it is interpreted the same way as a single broadcast ack.
+                            return [await localTarget.timeout(forwardTimeoutMs).emitWithAck(SOCKET_RPC_EVENTS.REQUEST, request)];
+                        }
+                        const responses = await ctx.io.timeout(forwardTimeoutMs).to(targetSocketId).emitWithAck(SOCKET_RPC_EVENTS.REQUEST, request);
+                        return Array.isArray(responses) ? responses : [responses];
+                    },
                 });
-
-                const forwardedResponse = await forwardTargetResponse(response);
+                if (responses.length === 0) {
+                    callback?.({ ok: false, error: RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE, errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE });
+                    return;
+                }
+                // Stop lifecycle effects apply even when the caller supplied no acknowledgement.
+                const forwardedResponse = await forwardTargetResponse(responses[0]);
                 callback?.(forwardedResponse);
-
             } catch (error) {
                 const errorMsg = error instanceof Error ? error.message : 'RPC call failed';
 
-                // Timeout or error occurred
-                if (
-                    redisRegistry.enabled
-                    && attemptedTargetSocketId
-                    && !cancellation?.controller.signal.aborted
-                ) {
-                    try {
-                        await redisRegistry.removeSocketRegistration(targetUserId, method, attemptedTargetSocketId);
-                    } catch {
-                        // best-effort cleanup only
-                    }
-                }
                 if (callback) {
                     callback({
                         ok: false,
@@ -849,27 +650,15 @@ export function rpcHandler(
             cancelActiveSocketRpcCall({ io: ctx.io, active });
         }
         activeCancellations.clear();
+        pendingRegistrations.clear();
         const listeners = resolveUserRpcListeners('get');
-        const methodsToRemove: string[] = [];
-        for (const [method, registeredSocket] of listeners.entries()) {
-            if (registeredSocket === socket) {
-                methodsToRemove.push(method);
-            }
+        for (const [method, registeredSocket] of listeners) {
+            if (registeredSocket === socket) listeners.delete(method);
         }
-
-        // Every method this socket claimed loses its Redis mapping, including ones another socket
-        // took over locally: the refresh may have restored those after the other socket left, and
-        // the cleanup only deletes mappings that name this socket. Owned methods are cleared so
-        // the refresh loop stops with the socket.
-        const redisMethodsToRemove = [...new Set([...methodsToRemove, ...ownedMethods])];
-        ownedMethods.clear();
-        methodsToRemove.forEach(method => listeners.delete(method));
-        if (redisMethodsToRemove.length > 0) {
-            void redisRegistry.cleanupMethodsForSocket(userId, redisMethodsToRemove, socket.id);
-        }
-
         pruneUserRpcListenerMapIfEmpty(allRpcListeners, userId, listeners);
 
-        void redisRegistry.stopRefreshLoopIfIdle();
+        void redisRegistry.unregisterAll().catch(error => {
+            log({ module: "websocket", level: "warn", socketId: socket.id, error }, "Failed to unregister Redis RPC routes on disconnect");
+        });
     });
 }

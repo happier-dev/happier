@@ -59,11 +59,9 @@ function createRedisCoordinator(overrides: Record<string, unknown> = {}) {
     return {
         enabled: false,
         registerMethod: vi.fn().mockResolvedValue(undefined),
-        startRefreshLoopIfNeeded: vi.fn(),
-        removeSocketRegistration: vi.fn().mockResolvedValue(undefined),
-        stopRefreshLoopIfIdle: vi.fn().mockResolvedValue(undefined),
+        unregisterMethod: vi.fn().mockResolvedValue(undefined),
         lookupSocketId: vi.fn().mockResolvedValue(null),
-        cleanupMethodsForSocket: vi.fn().mockResolvedValue(undefined),
+        unregisterAll: vi.fn().mockResolvedValue(undefined),
         ...overrides,
     };
 }
@@ -222,104 +220,6 @@ describe("rpcHandler", () => {
             expect.objectContaining({ type: "register", error: "Machine replaced" }),
         );
     });
-    it("removes only the socket mapping that failed during a forwarded RPC call", async () => {
-        const redisCoordinator = createRedisCoordinator({
-            enabled: true,
-            lookupSocketId: vi
-                .fn()
-                .mockResolvedValueOnce("stale-socket")
-                .mockResolvedValueOnce("fresh-socket"),
-            removeSocketRegistration: vi.fn().mockResolvedValue(undefined),
-        });
-        createRpcRedisRegistryCoordinatorMock.mockReturnValue(redisCoordinator);
-        resolveRpcCallTargetMock.mockResolvedValue({
-            targetUserId: "target-user",
-            targetSocket: null,
-        });
-
-        const emitWithAck = vi.fn().mockRejectedValue(new Error("RPC call failed"));
-        const io = {
-            timeout: vi.fn(() => ({
-                to: vi.fn(() => ({
-                    emitWithAck,
-                })),
-            })),
-        };
-        const socket = createSocket({ id: "caller-socket" });
-        const userRpcListeners = new Map<string, Socket>();
-        const allRpcListeners = new Map<string, Map<string, Socket>>();
-        const callback = vi.fn();
-
-        rpcHandler("caller-user", socket as unknown as Socket, userRpcListeners, allRpcListeners, {
-            io: io as unknown as Server,
-            redisRegistry: { enabled: true, instanceId: "instance-1" },
-        });
-
-        await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.CALL, { method: "agent.run", params: {} }, callback);
-
-        expect(redisCoordinator.removeSocketRegistration).toHaveBeenCalledTimes(1);
-        expect(redisCoordinator.removeSocketRegistration).toHaveBeenCalledWith("target-user", "agent.run", "stale-socket");
-        expect(redisCoordinator.removeSocketRegistration).not.toHaveBeenCalledWith("target-user", "agent.run", "fresh-socket");
-        expect(callback).toHaveBeenCalledWith({
-            ok: false,
-            error: "RPC call failed",
-        });
-    });
-
-    it("waits through a stale redis mapping until a connected target socket is available during reconnect grace", async () => {
-        vi.useFakeTimers();
-        resolveRpcMethodAvailabilityGraceMsMock.mockReturnValue(20);
-        resolveRpcMethodAvailabilityPollMsMock.mockReturnValue(5);
-
-        const redisCoordinator = createRedisCoordinator({
-            enabled: true,
-            lookupSocketId: vi.fn().mockResolvedValue("stale-socket"),
-        });
-        createRpcRedisRegistryCoordinatorMock.mockReturnValue(redisCoordinator);
-        resolveRpcCallTargetMock.mockResolvedValue({
-            targetUserId: "target-user",
-            targetSocket: null,
-        });
-
-        const ioEmitWithAck = vi.fn().mockResolvedValue([]);
-        const io = {
-            timeout: vi.fn(() => ({
-                to: vi.fn(() => ({
-                    emitWithAck: ioEmitWithAck,
-                })),
-            })),
-        };
-        const callerSocket = createSocket({ id: "caller-socket" });
-        const reconnectingTargetSocket = createSocket({
-            id: "reconnected-target-socket",
-            emitWithAck: vi.fn().mockResolvedValue({ ok: true, via: "reconnected-socket" }),
-        });
-        const allRpcListeners = new Map<string, Map<string, Socket>>([["target-user", new Map<string, Socket>]]);
-        const targetListeners = allRpcListeners.get("target-user");
-        const callback = vi.fn();
-
-        rpcHandler("caller-user", callerSocket as unknown as Socket, new Map<string, Socket>(), allRpcListeners, {
-            io: io as unknown as Server,
-            redisRegistry: { enabled: true, instanceId: "instance-1" },
-        });
-
-        setTimeout(() => {
-            targetListeners?.set("agent.run", reconnectingTargetSocket as unknown as Socket);
-        }, 5);
-
-        const callPromise = triggerSocketHandler(callerSocket, SOCKET_RPC_EVENTS.CALL, { method: "agent.run", params: {} }, callback);
-
-        await vi.advanceTimersByTimeAsync(5);
-        await callPromise;
-
-        expect(reconnectingTargetSocket.timeout).toHaveBeenCalled();
-        expect(ioEmitWithAck).not.toHaveBeenCalled();
-        expect(callback).toHaveBeenCalledWith({
-            ok: true,
-            result: { ok: true, via: "reconnected-socket" },
-        });
-    });
-
     it("prunes an empty per-user listener map after unregister and reattaches it on the next registration", async () => {
         const redisCoordinator = createRedisCoordinator();
         createRpcRedisRegistryCoordinatorMock.mockReturnValue(redisCoordinator);
@@ -700,7 +600,6 @@ describe("rpcHandler", () => {
 
         expect(userRpcListeners.size).toBe(0);
         expect(allRpcListeners.has("user-1")).toBe(false);
-        expect(redisCoordinator.cleanupMethodsForSocket).toHaveBeenCalledWith("user-1", ["agent.run"], "socket-1");
     });
 
     it("cancels the issuing socket's in-flight target request when that caller disconnects", async () => {

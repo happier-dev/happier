@@ -233,7 +233,7 @@ describe("rpcHandler", () => {
     }
   });
 
-  it("does not fall back to the caller listener map for delegated permission RPCs when redis is missing a mapping", async () => {
+  it("does not fall back to either listener map for delegated permission RPCs without a Redis route", async () => {
     vi.useFakeTimers();
     vi.resetModules();
     setRpcAvailabilityEnv();
@@ -283,21 +283,17 @@ describe("rpcHandler", () => {
 
       const handler = getSocketHandler(callerSocket, SOCKET_RPC_EVENTS.CALL);
       const callback = vi.fn();
-      await handler({ method, params: { requestId: "perm-1" } }, callback);
+      const pending = handler({ method, params: { requestId: "perm-1" } }, callback);
+      await vi.advanceTimersByTimeAsync(100);
+      await pending;
 
       expect(callerEmitWithAck).not.toHaveBeenCalled();
       expect(timeout).not.toHaveBeenCalled();
-      expect(ownerTimeout).toHaveBeenCalledWith(30000);
-      expect(ownerEmitWithAck).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.REQUEST, {
-        method,
-        params: { requestId: "perm-1" },
-      });
-      expect(callback).toHaveBeenCalledWith(
-        expect.objectContaining({
-          ok: true,
-          result: { ok: true, value: "owner" },
-        }),
-      );
+      expect(ownerEmitWithAck).not.toHaveBeenCalled();
+      expect(callback).toHaveBeenCalledWith(expect.objectContaining({
+        ok: false,
+        errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+      }));
     } finally {
       vi.doUnmock("@/storage/redis/redis");
       vi.doUnmock("@/app/share/accessControl");
@@ -748,94 +744,6 @@ describe("rpcHandler", () => {
     );
   });
 
-  it("falls back to in-memory rpc listener when Redis has no mapping (redis enabled)", async () => {
-    vi.resetModules();
-    const hmget = vi.fn().mockResolvedValue([null]);
-    const evalFn = vi.fn();
-    const multi = vi.fn(() => ({ hset: () => ({ expire: () => ({ exec: vi.fn() }) }) }));
-
-    vi.doMock("@/storage/redis/redis", () => ({
-      getRedisClient: () => ({ hmget, eval: evalFn, multi }),
-    }));
-
-    const { rpcHandler } = await import("./rpcHandler");
-    const userRpcListeners = new Map<string, any>();
-    const allRpcListeners = new Map<string, any>();
-
-    const targetEmitWithAck = vi.fn().mockResolvedValue({ ok: true, value: 123 });
-    const targetTimeout = vi.fn(() => ({ emitWithAck: targetEmitWithAck }));
-    const targetSocket = createFakeSocket({ connected: true, timeout: targetTimeout as any, id: "target-local" });
-    userRpcListeners.set("some-method", targetSocket as any);
-
-    const callerSocket = createFakeSocket({ emit: vi.fn() });
-    rpcHandler("user-1", callerSocket as any, userRpcListeners as any, allRpcListeners as any, {
-      io: {} as any,
-      redisRegistry: { enabled: true, instanceId: "instance-1", ttlSeconds: 120 },
-    } as any);
-
-    const handler = getSocketHandler(callerSocket, SOCKET_RPC_EVENTS.CALL);
-    const callback = vi.fn();
-    await handler({ method: "some-method", params: { a: 1 } }, callback);
-
-    expect(hmget).toHaveBeenCalled();
-    expect(targetTimeout).toHaveBeenCalledWith(30000);
-    expect(targetEmitWithAck).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.REQUEST, {
-      method: "some-method",
-      params: { a: 1 },
-    });
-    expect(callback).toHaveBeenCalledWith(
-      expect.objectContaining({
-        ok: true,
-        result: { ok: true, value: 123 },
-      }),
-    );
-  });
-
-  it("treats an empty io.emitWithAck response as method not available and cleans up stale Redis mapping", async () => {
-    vi.resetModules();
-    const targetSocketId = "target-socket";
-    const hmget = vi.fn().mockResolvedValue([targetSocketId]);
-    const evalFn = vi.fn();
-    const multi = vi.fn(() => ({ hset: () => ({ expire: () => ({ exec: vi.fn() }) }) }));
-
-    vi.doMock("@/storage/redis/redis", () => ({
-      getRedisClient: () => ({ hmget, eval: evalFn, multi }),
-    }));
-
-    const { rpcHandler } = await import("./rpcHandler");
-    const userRpcListeners = new Map<string, any>();
-    const allRpcListeners = new Map<string, any>();
-
-    const emitWithAck = vi.fn().mockResolvedValue([]);
-    const to = vi.fn(() => ({ emitWithAck }));
-    const timeout = vi.fn(() => ({ to }));
-    const io = { timeout } as any;
-    const socket = createFakeSocket({ emit: vi.fn(), timeout: timeout as any });
-
-    rpcHandler("user-1", socket as any, userRpcListeners as any, allRpcListeners as any, {
-      io,
-      redisRegistry: { enabled: true, instanceId: "instance-1", ttlSeconds: 120 },
-    } as any);
-
-    const handler = getSocketHandler(socket, SOCKET_RPC_EVENTS.CALL);
-
-    const callback = vi.fn();
-    await handler({ method: "some-method", params: { a: 1 } }, callback);
-
-    expect(timeout).toHaveBeenCalledWith(30000);
-    expect(to).toHaveBeenCalledWith(targetSocketId);
-    expect(emitWithAck).toHaveBeenCalled();
-
-    expect(evalFn).toHaveBeenCalledWith(expect.any(String), 1, "rpc:user-1:some-method", targetSocketId);
-    expect(callback).toHaveBeenCalledWith(
-      expect.objectContaining({
-        ok: false,
-        error: "RPC method not available",
-        errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
-      }),
-    );
-  });
-
   it("uses a longer forward timeout for capabilities RPC calls", async () => {
     vi.resetModules();
     const { rpcHandler } = await import("./rpcHandler");
@@ -844,7 +752,7 @@ describe("rpcHandler", () => {
 
     const targetEmitWithAck = vi.fn().mockResolvedValue({ ok: true, result: "{}" });
     const targetTimeout = vi.fn(() => ({ emitWithAck: targetEmitWithAck }));
-    const targetSocket = createFakeSocket({ connected: true, timeout: targetTimeout });
+    const targetSocket = createFakeSocket({ id: "target-socket", timeout: targetTimeout });
     userRpcListeners.set("machine-1:capabilities.invoke", targetSocket as any);
 
     const callerSocket = createFakeSocket({ emit: vi.fn() });
@@ -877,7 +785,7 @@ describe("rpcHandler", () => {
 
     const targetEmitWithAck = vi.fn().mockResolvedValue({ ok: true, value: 123 });
     const targetTimeout = vi.fn(() => ({ emitWithAck: targetEmitWithAck }));
-    const targetSocket = createFakeSocket({ connected: true, timeout: targetTimeout });
+    const targetSocket = createFakeSocket({ id: "target-socket", timeout: targetTimeout });
     userRpcListeners.set("machine-1:daemon.sessionHandoff.prepareTarget", targetSocket as any);
 
     const callerSocket = createFakeSocket({ emit: vi.fn() });
