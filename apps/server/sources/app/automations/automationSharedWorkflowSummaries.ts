@@ -7,7 +7,7 @@ import { afterTx, inTx, inReadSnapshot, type Tx } from '@/storage/inTx';
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encryption/accountEncryptionMode';
 import { markAccountsChanged, type AccountChangePublication } from '@/app/changes/markAccountChanged';
 import { automationDefinitionListItemSelect } from './automationPersistenceSelect';
-import { toAutomationTriggerSummaryProjection } from './automationApiProjection';
+import { toAutomationDefinitionListItemApiDto } from './automationApiProjection';
 import { loadAutomationEventStatusProjections } from './automationEventStatusProjection';
 import { loadAutomationSessionLifecycleStatusProjections } from './automationSessionLifecycleStatusProjection';
 import type { AutomationListItem } from './automationTypes';
@@ -141,9 +141,7 @@ export async function readSharedWorkflowTriggerSummaries(input: Readonly<{
         loadAutomationSessionLifecycleStatusProjections({ automations: rows.map(row => row.definition) }),
     ]);
     return [...summarizeWorkflowTriggerRowsV1(rows.map(({ definition, setUpBy }) => ({
-        id: definition.id, workflowDefinitionId: definition.workflowDefinitionId, enabled: definition.enabled, setUpBy,
-        triggers: definition.triggers.map(trigger => toAutomationTriggerSummaryProjection(
-            trigger, events, lifecycle.get(definition.id) ?? new Map())),
+        ...toAutomationDefinitionListItemApiDto(definition, null, events, lifecycle.get(definition.id)), setUpBy,
     }))).values()].map(summary => ({ ...summary, triggers: summary.triggers.map(redactSharedWorkflowTriggerSubject) }));
 }
 
