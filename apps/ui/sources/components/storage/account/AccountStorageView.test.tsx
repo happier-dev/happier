@@ -253,9 +253,11 @@ async function serve(limit: number | null, options: Readonly<{
   pages?: readonly [readonly unknown[], readonly unknown[]];
   /** The read's summary in place of the default Account's. */
   summary?: StorageInventoryV1;
+  refuseFirstOnce?: boolean;
   /** The Home refuses the first ask for the next page with its typed cursor refusal. */
   refuseNextOnce?: boolean;
 }> = {}) {
+  let refuseFirst = options.refuseFirstOnce === true;
   let refuseNext = options.refuseNextOnce === true;
   inventoryReads = [];
   artifactListReads = 0;
@@ -281,6 +283,10 @@ async function serve(limit: number | null, options: Readonly<{
       if (request.path === '/v1/artifacts/storage/usage') {
         inventoryReads.push(request.url);
         const next = request.url.searchParams.get('cursor') === 'page-2';
+        if (!next && refuseFirst) {
+          refuseFirst = false;
+          return Response.json({ error: 'storage_size_out_of_range' }, { status: 503 });
+        }
         if (next && refuseNext) {
           refuseNext = false;
           return Response.json({ error: 'invalid_storage_inventory_cursor' }, { status: 400 });
@@ -434,6 +440,30 @@ describe('Settings › Storage (storage-view lab scenes 1–4)', () => {
         expect(inventoryReads).toHaveLength(2);
         expect(inventoryReads[1]!.searchParams.get('cursor')).toBe('page-2');
         expect(textOf(screen.findHostByTestId(`storage:item:${UNKNOWN}:size`))).toBe('—');
+      } finally {
+        await screen.unmount();
+      }
+    } finally {
+      await disconnect();
+    }
+  });
+
+  it('shows the typed first-page storage refusal and retries that same page', async () => {
+    const disconnect = await serve(null, { refuseFirstOnce: true });
+    try {
+      const screen = await renderScreen(<AppPaneProvider><StorageSettingsRoute /></AppPaneProvider>);
+      try {
+        await vi.waitFor(() => expect(screen.findHostByTestId('storage:retry')).not.toBeNull());
+        const details = screen.findHostByTestId('storage:first-failed:details');
+        expect(details).not.toBeNull();
+        const { Modal } = await import('@/modal');
+        await act(async () => { invokeTestInstanceHandler(details, 'onPress'); });
+        expect(JSON.stringify(vi.mocked(Modal.alert).mock.calls.at(-1))).toContain('storage_size_out_of_range');
+        await act(async () => { invokeTestInstanceHandler(screen.findHostByTestId('storage:retry'), 'onPress'); });
+        await vi.waitFor(() => expect(screen.findHostByTestId('storage:collection:stage')).not.toBeNull());
+        await layOut(screen, 'storage:collection:stage');
+        await vi.waitFor(() => expect(itemOrder(screen)).toContain(LARGE));
+        expect(inventoryReads.map((url) => url.searchParams.get('cursor'))).toEqual([null, null]);
       } finally {
         await screen.unmount();
       }

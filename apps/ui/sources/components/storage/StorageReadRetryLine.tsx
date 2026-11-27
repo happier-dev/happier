@@ -2,9 +2,34 @@ import * as React from 'react';
 
 import type { ArtifactActionFailure } from '@/components/artifacts/artifactActionsClient';
 import { presentArtifactActionFailure } from '@/components/artifacts/artifactActionFailure';
+import { StorageSaySection } from '@/components/storage/StorageSayLine';
+import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { t } from '@/text';
 import { showActionFailureDetails } from '@/utils/errors/alertActionFailure';
+
+export function StorageFirstReadFailureSection(props: Readonly<{
+  testID: string;
+  failure?: ArtifactActionFailure | null;
+  onRetry: () => void;
+}>) {
+  const { testID, failure, onRetry } = props;
+  return (
+    <StorageSaySection
+      testID={`${testID}:say`}
+      lead={t('artifacts.browser.storageView.say.failed')}
+      text={t('artifacts.browser.storageView.say.failedBody')}
+      trailing={<>
+        <TextLinkButton testID={`${testID}:retry`} tone="strong" label={t('common.retry')} onPress={onRetry} />
+        {failure ? <> <TextLinkButton
+          testID={`${testID}:first-failed:details`}
+          label={t('approvals.technicalDetails')}
+          onPress={() => showActionFailureDetails(presentArtifactActionFailure(failure, ''))}
+        /></> : null}
+      </>}
+    />
+  );
+}
 
 /**
  * A Storage read that failed while what was already read stays listed (the next page, a page's file names): the

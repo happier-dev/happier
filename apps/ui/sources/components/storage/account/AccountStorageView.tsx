@@ -58,7 +58,7 @@ import {
   StorageCapacityNote,
   StorageCapacityRow,
 } from '@/components/storage/StorageCapacityRow';
-import { StorageReadRetryLine } from '@/components/storage/StorageReadRetryLine';
+import { StorageFirstReadFailureSection, StorageReadRetryLine } from '@/components/storage/StorageReadRetryLine';
 import { StorageSaySection } from '@/components/storage/StorageSayLine';
 import { StorageSizeCell, StorageSizeMeter } from '@/components/storage/StorageSizeBar';
 import { useStorageKindMarks, type StorageKindMark } from '@/components/storage/storageKindMarks';
@@ -160,7 +160,7 @@ export function AccountStorageView(props: Readonly<{ initialFilter: AccountStora
     return projectAccountStorageItems(read.items, opened, folders, files);
   }, [artifactIds, files, folders, read.items, rows]);
   return (
-    <AccountStorageBody inventory={read.inventory} status={read.status} onRetry={read.retry} items={items}
+    <AccountStorageBody inventory={read.inventory} status={read.status} failure={read.failure} onRetry={read.retry} items={items}
       itemsLoaded={read.inventory !== null} filter={filter} onFilter={setFilter} onMore={read.more} loadingMore={read.loadingMore}
       moreFailure={read.moreFailure} namesFailure={exact.failure} onRetryNames={exact.retry} onChanged={read.retry} />
   );
@@ -171,6 +171,7 @@ export function AccountStorageBody(
   props: Readonly<{
     inventory: StorageInventoryV1 | null;
     status: 'loading' | 'ready' | 'failed';
+    failure?: ArtifactActionFailure | null;
     onRetry: () => void;
     /** The owner's page(s), in its order, joined with the Artifact headers this device read. */
     items: readonly AccountStorageItem[];
@@ -251,6 +252,7 @@ export function AccountStorageBody(
       <AccountStorageSay
         inventory={inventory}
         status={status}
+        failure={props.failure}
         onRetry={props.onRetry}
       />
       <ItemGroup testID="storage:capacity">
@@ -313,26 +315,13 @@ function AccountStorageSay(
   props: Readonly<{
     inventory: StorageInventoryV1 | null;
     status: 'loading' | 'ready' | 'failed';
+    failure?: ArtifactActionFailure | null;
     onRetry: () => void;
   }>,
 ) {
   if (props.inventory === null) {
     if (props.status === 'failed') {
-      return (
-        <StorageSaySection
-          testID="storage:say"
-          lead={t('artifacts.browser.storageView.say.failed')}
-          text={t('artifacts.browser.storageView.say.failedBody')}
-          trailing={
-            <TextLinkButton
-              testID="storage:retry"
-              tone="strong"
-              label={t('common.retry')}
-              onPress={props.onRetry}
-            />
-          }
-        />
-      );
+      return <StorageFirstReadFailureSection testID="storage" failure={props.failure} onRetry={props.onRetry} />;
     }
     // The sentence's line is reserved while the read is out, so nothing under it moves when it lands.
     return (
