@@ -9567,7 +9567,9 @@ and admitting a recovered host use the existing client's version check before
 control; recovered-host admission never creates or replaces that server. Claude's unified
 runtime lives in `packages/plugins/claude/src/agent/runtime/terminal/unified` and
 uses the host's terminal service, composer parsing, and prompt-submission
-verification. Successful terminal writes are not Agent acceptance acknowledgements.
+verification. The parser accepts session names and overflow labels in horizontal
+composer rules. Successful terminal writes are not Agent acceptance
+acknowledgements.
 In development source, Claude normal and shell prompts share one active-input
 selection and wrapped-text reader. Shell input can verify an authorized `!` request,
 but cannot make the terminal ready for an ordinary message or bypass a blocking dialog.

@@ -218,9 +218,15 @@ const EFFORT_STATUS_LINE = /\beffort:\s*([a-z]+)\b/im;
 // candidates need the surrounding composer rules because they share the chooser glyph.
 const COMPOSER_LINE = /^[^\S\n]*(?:[\u2502|][^\S\n]*)?((?:>|\u203a|\u276f)(?![^\S\n]*[\u25ef\u25c9\u25cb\u25cf\u25d0\u25d1])|!(?=[\s\S]*\n[^\S\n]*! for shell mode(?:\s|$)))[^\S\n]*(.*?)[^\S\n]*(?:[\u2502|][^\S\n]*)?(?:\n|$)/m;
 const NUMBERED_COMPOSER_CONTENT = /^\d+\./u;
-// A scrolled native composer replaces its hidden prompt row with an overflow border.
-// Require the bordered, indented viewport and leave the next row's delimiter for composer ordering.
-const SCROLLED_COMPOSER = /(?:^|\n)\u2500+[^\S\n]+\u2191[^\S\n]+[1-9]\d*[^\S\n]+more[^\S\n]+\u2500+\n((?:(?:[^\S\n][^\n]*)?\n)+)\u2500+(?=\n|$)/;
+// Native horizontal rules can carry labels between runs of rule glyphs. Closing rules
+// are at column zero so an indented separator in the draft remains draft text.
+const HORIZONTAL_COMPOSER_RULE = /[\u2500\u2501]+(?:[^\S\n]+\S[^\n]*?[^\S\n]+[\u2500\u2501]+)?/u;
+// The complete upward-overflow label distinguishes a scrolled composer from other
+// labelled rules. Leave the next row's delimiter available for composer ordering.
+const SCROLLED_COMPOSER = new RegExp(
+  String.raw`(?:^|\n)(?=[^\n]*[\u2500\u2501][^\S\n]+\u2191[^\S\n]+[1-9]\d*[^\S\n]+more[^\S\n]+[\u2500\u2501])${HORIZONTAL_COMPOSER_RULE.source}\n((?:(?:[^\S\n][^\n]*)?\n)+)${HORIZONTAL_COMPOSER_RULE.source}(?=\n|$)`,
+  'gu',
+);
 const SLASH_SUGGESTION_LINE = /(?:^|\n)[^\S\n]*\/[a-z][a-z0-9-]*\b/i;
 // Agents/selection panel (remote-dev live capture 2026-06-12): the selector header renders
 // `↑/↓ to select` and the focus cursor renders as `❯ ◯ <agent-type> <title>` rows. The cursor
@@ -257,9 +263,10 @@ function lastMatch(pattern: RegExp, text: string): RegExpExecArray | null {
 }
 
 // Blank or vertical-only rows can be intentional paragraphs.
-const COMPOSER_BORDER_LINE = /^[\s\u2500\u2501\u2014\u2570\u256f\u256d\u256e\u2502|]*[\u2500\u2501\u2014\u2570\u256f\u256d\u256e][\s\u2500\u2501\u2014\u2570\u256f\u256d\u256e\u2502|]*$/u;
-// Claude puts the session title in the opening rule. Similar lines inside the draft are text.
-const COMPOSER_TITLED_OPENING_RULE = /^[^\S\n]*[\u2500\u2501]{3,}[^\S\n]+\S.*[^\S\n]+[\u2500\u2501]{3,}[^\S\n]*$/u;
+const COMPOSER_BORDER_LINE = new RegExp(
+  String.raw`^(?:${HORIZONTAL_COMPOSER_RULE.source}|[\s\u2500\u2501\u2014\u2570\u256f\u256d\u256e\u2502|]*[\u2500\u2501\u2014\u2570\u256f\u256d\u256e][\s\u2500\u2501\u2014\u2570\u256f\u256d\u256e\u2502|]*)$`,
+  'u',
+);
 // Status glyphs that can follow the composer when no border is rendered (fail-closed stop set).
 const COMPOSER_CONTINUATION_STOP = /^[\s]*(?:[\u23f5\u2190\u23fa\u273b\u2736\u00B7]|\u26a0)/;
 
@@ -305,7 +312,7 @@ function hasComposerLeadingBorder(text: string, match: RegExpExecArray): boolean
   const previousLineEnd = match.index - 1;
   const previousLineStart = text.lastIndexOf('\n', previousLineEnd - 1) + 1;
   const previousLine = text.slice(previousLineStart, previousLineEnd);
-  return COMPOSER_BORDER_LINE.test(previousLine) || COMPOSER_TITLED_OPENING_RULE.test(previousLine);
+  return COMPOSER_BORDER_LINE.test(previousLine.trimStart());
 }
 
 type ComposerMatch = Readonly<{ line: RegExpExecArray; framedContinuation: ComposerContinuation | null }>;
@@ -841,7 +848,7 @@ export function parseClaudeScreenState(rawText: string, context?: ClaudeScreenPa
     ? resolveDialogSelectionPresentation(selectionTail, null)
     : selectionCandidate;
   const rewindSelectionVisible = REWIND_SELECTION.test(visibleTail);
-  const scrolledMatch = lastMatch(new RegExp(SCROLLED_COMPOSER.source, 'g'), text);
+  const scrolledMatch = lastMatch(SCROLLED_COMPOSER, text);
   const activeScrolledMatch = scrolledMatch
     && (!lastComposerMatch || lastComposerMatch.index < scrolledMatch.index + scrolledMatch[0].length)
     ? scrolledMatch

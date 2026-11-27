@@ -4,12 +4,12 @@ import { createClaudePromptSubmitVerificationPolicy } from './promptSubmitVerifi
 
 describe('Claude unified terminal prompt submit verification', () => {
   it.each([
-    ['1.1.5 は配布済み', '────────────────────'],
-    ['21.2 installed', '────────────────────'],
-    ['1. check the build\n2. review the output', '──── Build check ────'],
-  ])('stages a numbered draft and recognizes when it clears: %s', (promptText, topRule) => {
+    ['1.1.5 は配布済み', '────────────────────', '────────────────────'],
+    ['21.2 installed', '────────────────────', '────────────────────'],
+    ['1. check the build\n2. review the output', '──── Build check ────', '────────────────────'],
+    ['1. Review the output\n2. Compare the runs', '──── Review session ─', '──── ↓ 4 more ──────'],
+  ])('stages a numbered draft and recognizes when it clears: %s', (promptText, topRule, bottomRule) => {
     const policy = createClaudePromptSubmitVerificationPolicy();
-    const bottomRule = '────────────────────';
     const [first, ...rest] = promptText.split('\n');
     const draft = [`❯ ${first}`, ...rest.map((line) => `  ${line}`)];
     const staged = ['❯ earlier prompt', '', topRule, ...draft, bottomRule].join('\n');
@@ -18,6 +18,33 @@ describe('Claude unified terminal prompt submit verification', () => {
     expect(policy.verifyBeforeSubmitStaging({ promptText, screenText: staged })).toBe(true);
     expect(policy.verifyAfterSubmit({ promptText, screenText: staged })).toBe(true);
     expect(policy.verifyAfterSubmit({ promptText, screenText: cleared })).toBe(false);
+  });
+
+  it.each([
+    '─── ↑ 2 more ──────────── Review session ─',
+    '─── Review session ──────────── ↑ 2 more ─',
+  ])('stages an authorized scrolled draft in a labelled frame %s', (topRule) => {
+    const policy = createClaudePromptSubmitVerificationPolicy();
+    const promptText = 'Read all the notes.\n\nReview the output for unexpected changes.';
+    const screenText = [
+      '❯ An earlier submitted prompt',
+      topRule,
+      '  Review the output for',
+      '  unexpected changes.',
+      '─── ↓ 3 more ───',
+    ].join('\n');
+
+    expect(policy.verifyBeforeSubmitStaging({ promptText, screenText })).toBe(true);
+    expect(policy.verifyAfterSubmit({ promptText, screenText })).toBe(true);
+    expect(policy.verifyAfterSubmit({ promptText, screenText: screenText + '\n❯' })).toBe(false);
+    expect(() => policy.verifyBeforeSubmitStaging({
+      promptText,
+      screenText: screenText.replace('unexpected changes.', 'unexpected charges.'),
+    })).toThrow();
+    expect(policy.verifyBeforeSubmitStaging({
+      promptText,
+      screenText: screenText.replace(topRule, '─── Build status ↑ 2 more jobs ───'),
+    })).toBe(false);
   });
 
   it('does not stage input on a numbered chooser immediately below a divider', () => {
