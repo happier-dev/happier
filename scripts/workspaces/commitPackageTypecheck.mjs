@@ -417,30 +417,45 @@ function missingAmbientDeclaration(repo, treeId, dir, rows) {
   return null;
 }
 
-// TS7016 from a published workspace JS export is a missing input when that
-// exact tree declares the corresponding type and supplies its authored TS source.
-function missingPublishedDeclaration(repo, treeId, rows) {
+const WORKSPACE_OUTPUT_FAILURE = 'missing-workspace-build-output:';
+const workspaceOutputFailure = code => typeof code === 'string' && code.startsWith(WORKSPACE_OUTPUT_FAILURE);
+const workspaceOutputReason = code => `environment: missing workspace build output (${code.slice(WORKSPACE_OUTPUT_FAILURE.length)})`;
+
+// TS7016 from a published JS export can be judged from its resolved path.
+// TS2307 needs the actual compiler worktree to verify the missing output.
+function missingPublishedDeclaration(repo, treeId, rows, worktree) {
   let workspaces;
   for (const row of rows) {
-    if (row.code !== 7016) continue;
-    const match = /for module '([^']+)'. '([^']+)'/u.exec(row.text);
+    const match = worktree
+      ? row.code === 2307 && /^Cannot find module '([^']+)'/u.exec(row.text)
+      : row.code === 7016 && /for module '([^']+)'. '([^']+)'/u.exec(row.text);
     if (!match) continue;
     const [, specifier, resolvedJs] = match;
     const name = packageNameOfSpecifier(specifier);
     workspaces ??= readCommitTreeWorkspacePackages(repo, treeId);
     const owner = workspaces.get(name);
-    const resolvedPath = resolvedJs.replaceAll('\\', '/');
-    if (!owner || !resolvedPath.includes(`/${owner.root}/dist/`)) continue;
+    if (!owner) continue;
     const subpath = specifier === name ? '.' : `.${specifier.slice(name.length)}`;
     const exported = packageExportMatch.matchPackageExport(owner.manifest.exports, subpath);
     if (!exported) continue;
-    const emittedDeclaration = resolvedPath.replace(/\.([cm]?)js$/u, '.d.$1ts');
     const declarationTargets = collectPackageBuildOutputTargets({ exports: exported.declaration })
-      .filter(target => target.startsWith('./dist/') && /\.d\.[cm]?ts$/u.test(target));
-    if (!declarationTargets.some(target => {
-      const output = packageExportMatch.substitutePackageExportTarget(target, exported.replacement);
-      return emittedDeclaration.endsWith(`/${owner.root}/${output.slice(2)}`);
-    })) continue;
+      .filter(target => target.startsWith('./dist/') && /\.d\.[cm]?ts$/u.test(target))
+      .map(target => packageExportMatch.substitutePackageExportTarget(target, exported.replacement).slice(2));
+    if (!declarationTargets.length) continue;
+    if (worktree) {
+      // A composed check can pull source owned by another workspace. That
+      // source's manifest determines whether it may use the publication.
+      const importer = [...workspaces.values()].reduce((nearest, entry) =>
+        row.file.startsWith(`${entry.root}/`) && (!nearest || entry.root.length > nearest.root.length) ? entry : nearest, null);
+      if (!importer || !['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies']
+        .some(field => Object.hasOwn(importer.manifest[field] ?? {}, name))) continue;
+      if (declarationTargets.some(target => existsSync(join(worktree, owner.root, target)))) continue;
+    } else {
+      const resolvedPath = resolvedJs.replaceAll('\\', '/');
+      const emittedDeclaration = resolvedPath.replace(/\.([cm]?)js$/u, '.d.$1ts');
+      if (!resolvedPath.includes(`/${owner.root}/dist/`)
+        || !declarationTargets.some(target => emittedDeclaration.endsWith(`/${owner.root}/${target}`))) continue;
+    }
     let source;
     try { source = resolveWorkspaceSource(workspaces, specifier); } catch { continue; }
     const sourcePath = relative(resolve('.'), source).replaceAll('\\', '/');
@@ -546,6 +561,12 @@ export function treeTypechecker({ repo, state, env, log, compile = compileScope,
     }
     for (const dir of missing) {
       const compiled = compile(worktree, dir, compileEnv);
+      const missingOutput = compiled.rows && missingPublishedDeclaration(repo, treeId, compiled.rows, worktree);
+      if (missingOutput) {
+        compiled.rows = null;
+        compiled.failureCode = WORKSPACE_OUTPUT_FAILURE + missingOutput;
+        compiled.failure = workspaceOutputReason(compiled.failureCode);
+      }
       timings.push({ side, step: dir, ms: compiled.ms, complete: Boolean(compiled.rows) });
       log(`[commit-package-typecheck] ${side} ${dir} ${(compiled.ms / 1000).toFixed(1)}s${compiled.declarationMs === undefined ? '' : ` (declaration emit ${(compiled.declarationMs / 1000).toFixed(1)}s)`} ${compiled.rows ? `${compiled.rows.length} diagnostics` : `incomplete ${compiled.failure} ${compiled.tail?.join(' | ') ?? ''}`}`);
       const judged = judgeRows(treeId, compiled.rows, side, dir);
@@ -577,7 +598,8 @@ export function treeTypechecker({ repo, state, env, log, compile = compileScope,
             const temporary = `${path}.${process.pid}.tmp`;
             writeFileSync(temporary, JSON.stringify({ tree: entry.treeId, package: dir, rows: workerRows, ms }));
             renameSync(temporary, path);
-          }
+          } else setTypecheckFailure(entry.rows, dir, fetched?.get(entry.treeId)?.failures?.get(dir)
+            ?? (workerRows === undefined ? 'worker-unavailable' : 'worker-compile-incomplete'));
         }
       }
     }
@@ -648,9 +670,13 @@ export async function commitPackageTypecheck({ repo, base, tree, env = process.e
     const compared = freshBetween(git, trees.base, trees.head, selection.packages, baseRows, headRows);
     const fresh = compared.fresh.map(({ dir, row }) => ({ ...row, package: dir }));
     // A candidate no worker judged (unreachable, no rows) is not the candidate's doing: unavailable, never refused.
-    const unjudged = compared.incomplete.filter(dir => headRows.get(dir) === undefined);
+    const environment = [baseRows, headRows].flatMap(rows =>
+      [...(rows.failures ?? [])].filter(([, code]) => workspaceOutputFailure(code)).map(([, code]) => workspaceOutputReason(code)));
+    const unjudged = compared.incomplete.filter(dir => headRows.get(dir) === undefined
+      || workspaceOutputFailure(headRows.failures?.get(dir)));
     return { ...selection, skipped: false, trees, fresh, incomplete: compared.incomplete.filter(dir => !unjudged.includes(dir)),
-      unavailable: [...compared.unavailable, ...unjudged], timings, lockWaitMs, ms: Date.now() - started };
+      unavailable: [...compared.unavailable, ...unjudged], environment: [...new Set(environment)],
+      timings, lockWaitMs, ms: Date.now() - started };
   });
 }
 
@@ -674,7 +700,8 @@ export function formatCommitPackageTypecheck(result) {
   const lines = [`package typecheck: ${result.packages.join(', ')} new=${result.fresh.length} incomplete=${result.incomplete.length} unavailable=${result.unavailable.length} ${(result.ms / 1000).toFixed(1)}s`];
   for (const row of result.fresh) lines.push(`  ${row.file}(${row.line},${row.column}): TS${row.code} ${row.text}`);
   for (const dir of result.incomplete) lines.push(`  ${dir}: the candidate's typecheck did not complete (its parent's did)`);
-  for (const dir of result.unavailable) lines.push(`  ${dir}: typecheck unavailable (neither parent nor candidate completed); not counted`);
+  for (const dir of result.unavailable) lines.push(`  ${dir}: typecheck comparison unavailable`);
+  for (const reason of result.environment ?? []) lines.push(`  ${reason}`);
   return lines;
 }
 
@@ -710,7 +737,9 @@ export async function commitGateTypecheck({ repo, base, tree, env = process.env,
   const result = await commitPackageTypecheck({ repo, base, tree, env, log, packages: plan.blocking, cachedOnly, remote: compare });
   if (!result.skipped && record && !cachedOnly) {
     mkdirSync(state, { recursive: true });
-    appendFileSync(join(state, 'verdicts.log'), `${new Date().toISOString()} GATE-${commitPackageTypecheckRefuses(result) ? 'REFUSED' : 'ok'} base=${result.trees.base} tree=${result.trees.head} packages=${result.packages.join(',')} new=${result.fresh.length} incomplete=${result.incomplete.join(',') || '-'} unavailable=${result.unavailable.join(',') || '-'} ${(result.ms / 1000).toFixed(1)}s\n`);
+    const verdict = commitPackageTypecheckRefuses(result) ? 'REFUSED' : result.environment.length ? 'environment' : 'ok';
+    const reason = result.environment.length ? ` reason=${result.environment.join(', ')}` : '';
+    appendFileSync(join(state, 'verdicts.log'), `${new Date().toISOString()} GATE-${verdict} base=${result.trees.base} tree=${result.trees.head} packages=${result.packages.join(',')} new=${result.fresh.length} incomplete=${result.incomplete.join(',') || '-'} unavailable=${result.unavailable.join(',') || '-'} ${(result.ms / 1000).toFixed(1)}s${reason}\n`);
   }
   return { ...result, detached: plan.detached };
 }
@@ -783,7 +812,8 @@ function diagnosticsStillAtHead({ repo, state, sha, fresh, verdictPath }) {
 }
 
 function recordGateReport(path, sha, result, verdict) {
-  appendFileSync(path, `${new Date().toISOString()} GATE-REPORT-${verdict} commit=${sha} packages=${result.packages.join(',')} new=${result.fresh.length} incomplete=${result.incomplete.join(',') || '-'} unavailable=${result.unavailable.join(',') || '-'} wall=${(result.ms / 1000).toFixed(1)}s${result.supersededBy ? ` rolling=${result.supersededBy}` : ''}\n`);
+  const reason = result.environment?.length ? ` reason=${result.environment.join(', ')}` : '';
+  appendFileSync(path, `${new Date().toISOString()} GATE-REPORT-${verdict} commit=${sha} packages=${result.packages.join(',')} new=${result.fresh.length} incomplete=${result.incomplete.join(',') || '-'} unavailable=${result.unavailable.join(',') || '-'} wall=${(result.ms / 1000).toFixed(1)}s${result.supersededBy ? ` rolling=${result.supersededBy}` : ''}${reason}\n`);
 }
 
 /**
@@ -818,7 +848,8 @@ export async function reportCommitGateTypecheck({ repo, commit, env = process.en
     try { post(urgentEntry({ commit: sha, subject, author, lane: commitLane(git, sha), check: EXACT_DECLARATION_DIRS.has(rows[0].package) ? 'Declaration comparison' : 'Package typecheck', rows, base, head: sha, how: 'the commit gate typecheck (report mode) finds' })); }
     catch (error) { log(`[commit-gate-typecheck] board post failed for ${sha.slice(0, 11)}: ${error?.message ?? error}`); }
   }
-  const verdict = result.fresh.length ? 'RED' : result.incomplete.length || result.unavailable.length ? 'incomplete' : 'ok';
+  const verdict = result.fresh.length ? 'RED' : result.environment?.length ? 'environment'
+    : result.incomplete.length || result.unavailable.length ? 'incomplete' : 'ok';
   recordGateReport(verdictPath, sha, result, verdict);
   return result;
 }
@@ -1794,7 +1825,12 @@ export async function commitPackageTypecheckMain(argv, entry = fileURLToPath(imp
       }))];
     }));
     process.stdout.write(`${WORKER_ROWS}${JSON.stringify(byTree)}\n`);
-    return !request.gate || completeTypecheckRows(byTree, request.trees, request.packages) ? 0 : 2;
+    // A known environmental failure is a usable worker response. Passing it
+    // through keeps the failed scope out of the controller's diagnostic delta.
+    return !request.gate || request.trees.every(tree => request.packages.every(dir => {
+      const value = byTree[tree][dir];
+      return Array.isArray(value) || workspaceOutputFailure(value?.failure);
+    })) ? 0 : 2;
   }
   if (argv.includes('--compiler-admitted') && process.env.HAPPIER_COMMIT_TYPECHECK_ROLLING === '1') {
     const options = { repo: process.env.HAPPIER_COMMIT_TYPECHECK_REPO, scope: process.env.HAPPIER_COMMIT_TYPECHECK_SCOPE || 'packages' };

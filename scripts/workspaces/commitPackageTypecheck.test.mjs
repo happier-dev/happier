@@ -1528,6 +1528,39 @@ test('the gate reports missing published workspace declarations as incomplete in
   assert.equal(sourceError.fresh[0]?.code, 7016, 'an export whose TypeScript source is absent can still be a real regression');
 });
 
+test('a declared workspace TS2307 with a missing build output is an environment verdict', async t => {
+  const { repo, commit } = await workspace(t);
+  const state = join(repo, '.fixture-state');
+  const env = { ...process.env, HAPPIER_COMMIT_TYPECHECK_DIR: state };
+  await commit('packages/protocol/package.json', JSON.stringify({ name: '@x/protocol',
+    exports: { '.': { 'happier-source': './src/index.ts', types: './dist/index.d.ts' } } }));
+  const sha = await commit('packages/sdk/src/index.ts', "import { value } from '@x/protocol';\nexport { value };\n");
+  const head = execFileSync('git', ['rev-parse', `${sha}^{tree}`], { cwd: repo, encoding: 'utf8' }).trim();
+  const row = specifier => ({ file: 'packages/sdk/src/index.ts', line: 1, column: 23, code: 2307,
+    text: `Cannot find module '${specifier}' or its corresponding type declarations.` });
+  const posts = [];
+  const check = async specifier => {
+    // The compiler is the system boundary. The exact trees, publication files,
+    // cache and report are handled by their owners.
+    const checker = treeTypechecker({ repo, state, env, capturedWorktree: repo, log: () => {},
+      compile: () => ({ rows: [row(specifier)], ms: 0 }) });
+    return reportCommitGateTypecheck({ repo, commit: sha, env, log: () => {}, post: entry => posts.push(entry),
+      remote: trees => new Map(trees.map(tree => [tree,
+        tree === head ? checker.rowsAt(tree, ['packages/sdk']) : new Map([['packages/sdk', []]])])) });
+  };
+
+  const result = await check('@x/protocol');
+  assert.deepEqual(result.fresh, []);
+  assert.deepEqual(result.unavailable, ['packages/sdk']);
+  assert.deepEqual(posts, []);
+  assert.match(readFileSync(join(state, 'verdicts.log'), 'utf8'), /GATE-REPORT-environment .*environment: missing workspace build output/u);
+  const output = join(repo, 'packages', 'protocol', 'dist');
+  await mkdir(output);
+  await writeFile(join(output, 'index.d.ts'), 'export declare const value: number;\n');
+  assert.equal((await check('@x/protocol')).fresh[0]?.code, 2307, 'a present export requires investigation');
+  assert.equal(posts.length, 1);
+});
+
 test('report mode withholds a verdict when the worker cannot load a declared ambient dependency', async t => {
   const { repo, commit } = await workspace(t);
   const state = await mkdtemp(join(tmpdir(), 'happier-report-ambient-'));
