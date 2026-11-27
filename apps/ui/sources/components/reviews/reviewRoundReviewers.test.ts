@@ -9,6 +9,13 @@ import { ReviewStartInputSchema, reviewReviewerIdentitiesForStartV1 } from '@hap
 import { projectReviewRoundReviewers, reviewRosterOf, reviewRoundReviewerName, reviewRoundReviewerOutcomeLabel, reviewRoundReviewerReasonWords, reviewRoundReviewerStateLabel,
   reviewRoundReviewerRowCount, reviewRoundUnfinishedReviewers } from './reviewRoundReviewers';
 
+it('shows the settled reviewer owner refusal rather than a generic launch failure', () => {
+  expect(reviewRoundReviewerReasonWords({ run: 'launch_failed', errorCode: 'review_engine_not_available',
+    error: 'Enable this reviewer on the selected Machine before starting a new round.', requestId: 'settled-refusal',
+    details: { reason: 'engine_disabled' }, failureCause: { phase: 'review.start', errorClass: 'HttpStatusError',
+      errorCode: 'review_engine_not_available', httpStatus: 409 } })).toBe('Enable this reviewer on the selected Machine before starting a new round.');
+});
+
 it('keeps an explicit native model reviewer identified by its Agent and mark across steps (U8 R7 NM1)', () => {
   // Captured SHIP-02 1123-mixed-workflow-terminal accepted launch; only Home, Machine and path are anonymized.
   const input = ReviewStartInputSchema.parse({ reviewers: [nativeModelReviewer], instructions: 'Review.', steps: [

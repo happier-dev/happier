@@ -182,7 +182,9 @@ it('keeps the step-2 name in round 2 and says why it did not finish (U8 R5 P7, r
     reviewerIds: ['step-2-reviewer-1'], reviewerDisplayNames: { 'step-2-reviewer-1': 'claude' },
     runs: [{ kind: 'workflow', runId: '22222222-2222-4222-8222-222222222222' }],
     reviewerOutcomes: [{ reviewerId: 'step-2-reviewer-1', displayName: 'claude', outcome: 'failed', runId: 'run-2',
-      startedAt: first.finishedAt + 2, finishedAt: first.finishedAt + 8000, reason: { run: 'launch_failed', errorCode: 'provider_model_not_found' } }] };
+      startedAt: first.finishedAt + 2, finishedAt: first.finishedAt + 8000, reason: { run: 'launch_failed', errorCode: 'provider_model_not_found',
+        requestId: 'settled-reviewer-request', details: { reason: 'model_not_found' }, failureCause: { phase: 'review.start',
+          errorClass: 'HttpStatusError', errorCode: 'provider_model_not_found', httpStatus: 404 } } }] };
   // The findings read never answers; the round, notice and Runs speak from the record alone.
   fixture = await createSessionFilesViewFixture({ serverUrl: 'https://two-round.test', request: async url =>
     new URL(String(url)).pathname === '/v1/reviews/comments' ? new Promise<Response>(() => {}) : Response.json({}, { status: 404 }) });
@@ -205,6 +207,10 @@ it('keeps the step-2 name in round 2 and says why it did not finish (U8 R5 P7, r
     await act(async () => screen.findByType(ReviewDetailView).props.onSelectTab('runs'));
     expect(textOf('review-detail:run:run-2')).toContain(stepTwo);
     expect(textOf('review-detail:run:run-2')).toContain(t('settingsProviders.errors.modelNotFoundTitle'));
+    const refusal = screen.findAllByType((await import('@/components/ui/surfaces/SurfaceStateCard')).SurfaceStateCard)
+      .find(node => node.props.diagnosticCode === 'provider_model_not_found');
+    expect(refusal?.props.diagnosticDetail).toContain('settled-reviewer-request');
+    expect(refusal?.props.diagnosticDetail).toContain('review.start');
     expect(textOf('review-detail:participant:step-2-reviewer-1')).toContain(t('settingsProviders.errors.modelNotFoundTitle'));
   } finally { await screen.unmount(); }
 });

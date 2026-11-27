@@ -839,7 +839,7 @@ export function ReviewRoundRuns(props: Readonly<{
         return <Item key={reviewer.reviewerId} testID={`review-detail:run:${reviewer.runId ?? reviewer.reviewerId}`}
           title={joinHappierFacts(reviewer.name, model)} icon={<ReviewerMark reviewer={reviewer} size={20} />}
           // How it ended and, when it didn't finish, why ("Didn't finish · Usage limit reached"), from the outcome owner.
-          subtitle={failure ? <SurfaceStateCard kind="error" size="line" title={reviewer.reason ?? failure.message}
+          subtitle={failure ? <SurfaceStateCard kind="error" size="line" title={reviewer.reason ?? failure.reason}
             diagnosticCode={reviewer.failure?.errorCode}
             diagnosticDetail={failure.technicalDetails.filter(detail => detail.key !== 'code')
               .map(detail => `${detail.label}: ${detail.value}`).join('\n') || undefined} /> : joinHappierFacts(reviewer.outcome === null ? unfinished.has(reviewer.reviewerId)

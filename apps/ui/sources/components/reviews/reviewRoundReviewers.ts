@@ -2,10 +2,13 @@ import type { ExecutionRunPublicState } from '@happier-dev/protocol/execution/ru
 import type { ReviewArtifactV1, ReviewRoundReviewerOutcomeV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 import { readReviewReviewerSlotV1 } from '@happier-dev/protocol/reviews/reviewStart';
 import { SessionRuntimeIssueV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 
 import { normalizeAgentCatalogId, resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogProjection';
 import { resolveAgentIdFromFlavor, type AgentId } from '@/agents/catalog/catalog';
 import { presentExecutionRunFailureSummary } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
+import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
 
 type ReviewRound = ReviewArtifactV1['rounds'][number];
@@ -29,6 +32,8 @@ export type ReviewRoundReviewer = Readonly<{
   outcome: ReviewRoundReviewerOutcome | null;
   /** Why it didn't finish, in words ("Usage limit reached"), from its settled reason; null when none was recorded. */
   reason: string | null;
+  /** The settled Action refusal, retained for the existing diagnostic disclosure. */
+  failure?: ActionExecuteFailure;
   runId?: string;
   startedAt?: number;
   finishedAt?: number;
@@ -73,6 +78,11 @@ type ReviewerReason = ReviewRoundReviewerOutcomeV1['reason'];
  */
 export function reviewRoundReviewerReasonWords(reason: ReviewerReason | undefined): string | null {
   if (!reason) return null;
+  if (reason.errorCode) {
+    const message = resolveActionExecutionFailureMessage({ ...reason, ok: false,
+      errorCode: reason.errorCode, error: reason.error ?? reason.errorCode }, '');
+    if (message) return message;
+  }
   const issue = reason.runtimeIssue ? SessionRuntimeIssueV1Schema.safeParse({ v: 1, scope: 'primary_session', status: 'failed',
     occurredAt: 0, source: reason.runtimeIssue.source, code: reason.runtimeIssue.code }).data : undefined;
   const failure = issue || reason.errorCode ? presentExecutionRunFailureSummary({ code: reason.errorCode ?? issue!.code,
@@ -180,6 +190,7 @@ export function projectReviewRoundReviewers(
     return round.reviewerOutcomes.map(reviewer => ({
       reviewerId: reviewer.reviewerId, ...reviewRoundReviewerIdentity(named, reviewer.reviewerId, roster ?? named),
       outcome: reviewer.outcome, reason: reviewRoundReviewerReasonWords(reviewer.reason),
+      ...(reviewer.reason?.errorCode ? { failure: readActionFailureEnvelope({ ...reviewer.reason, ok: false }) ?? undefined } : {}),
       runId: reviewer.runId, startedAt: reviewer.startedAt, finishedAt: reviewer.finishedAt,
       findingsCount: null, run: null,
     }));
