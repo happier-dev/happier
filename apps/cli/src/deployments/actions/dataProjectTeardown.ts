@@ -5,7 +5,7 @@ import { DeploymentProviderTeardownContentV1Schema, type DeploymentEnvironmentDe
 import { DEPLOYMENT_TEARDOWN_STEPS_V1 } from '@happier-dev/protocol/deployments/deploymentTeardownContentV1';
 import { readDeploymentTargetDisplayNameV1, readPlatformResourceName, selectDeploymentTargetRemovalChoicesV1 } from '@happier-dev/deployments';
 import { DeploymentTargetDataInputV1Schema, DeploymentTargetDataRemovalResultV1Schema } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
-import { DeploymentTargetTeardownVolumePreviewV1Schema } from '@happier-dev/protocol/deployments/deploymentVolumeRemovalV1';
+import { DeploymentTargetTeardownVolumePreviewV1Schema, DeploymentVolumeRemovalOutcomeV1Schema } from '@happier-dev/protocol/deployments/deploymentVolumeRemovalV1';
 import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -151,14 +151,15 @@ export function createDataProjectTeardownForHost(host: DataTeardownHost) {
             const port = request.context.hostReviewedChild;
             if (!port) return failure('unsupported_action');
             const content = parsed.data;
+            const deleting = receipt.deployment.state === 'queued';
             let response: ActionExecuteResult;
             try {
                 const { lease, action, observeAction } = await leaseDeclaration(link);
                 try {
-                    const selected = receipt.deployment.state === 'queued' ? action : observeAction;
+                    const selected = deleting ? action : observeAction;
                     if (!selected) return failure('deployment_target_role_unavailable');
                     response = await port.invoke({ action: selected,
-                        role: receipt.deployment.state === 'queued' ? 'projects.delete' : 'projects.observe',
+                        role: deleting ? 'projects.delete' : 'projects.observe',
                         input: projectInput(request.input, content.platform),
                         invocationServices: { deploymentAcceptedReceipt: acceptedReceiptOperand(receipt) } });
                 } finally { await lease.release(); }
@@ -171,16 +172,22 @@ export function createDataProjectTeardownForHost(host: DataTeardownHost) {
             const state = childFailure ? isActionOutcomeUnknownErrorCodeV1(childFailure.errorCode) || childFailure.effectAttempted === true
                 ? 'outcome_unknown' as const : 'failed' as const : observation?.success ? observation.data.state : 'outcome_unknown' as const;
             const { failure: previousFailure, ...withoutFailure } = content;
-            // The provider's service observer cannot verify a previously unacknowledged volume delete.
-            const unconfirmedVolume = previousFailure?.code === 'outcome_unknown'
-                && previousFailure.failureCause?.phase === 'deployment.railway.data.volume_delete'
-                && observation?.success && observation.data.volumeRemoval === undefined;
+            const details = childFailure?.details;
+            const authored = details && typeof details === 'object' && 'details' in details ? details.details : undefined;
+            const failedVolumeRemoval = authored && typeof authored === 'object' && 'volumeRemoval' in authored
+                ? DeploymentVolumeRemovalOutcomeV1Schema.safeParse(authored.volumeRemoval).data : undefined;
+            const observed = observation?.success ? observation.data : undefined;
+            const volumeRemoval = observed?.volumeRemoval ?? failedVolumeRemoval ?? content.platform.observation.volumeRemoval;
+            // Service observation can settle without any new evidence about the volume.
+            const retainedDeleteFailure = previousFailure?.phase === 'teardown' && volumeRemoval?.kind === 'kept-unchecked'
+                && observed && observed.volumeRemoval === undefined ? previousFailure : undefined;
             const nextContent: DeploymentProviderTeardownContentV1 = { ...withoutFailure,
-                ...(observation?.success ? { platform: { ...content.platform, observation: {
-                    ...observation.data, ...(unconfirmedVolume ? { volumeRemoval: { kind: 'kept-unchecked' } } : {}),
+                ...(observed || failedVolumeRemoval ? { platform: { ...content.platform, observation: {
+                    ...(observed ?? content.platform.observation), ...(volumeRemoval ? { volumeRemoval } : {}),
                 } } } : {}),
-                ...(childFailure ? { failure: projectDeploymentReceiptFailure(childFailure, 'teardown') }
-                    : unconfirmedVolume ? { failure: previousFailure } : {}) };
+                ...(childFailure ? { failure: { ...projectDeploymentReceiptFailure(childFailure, 'teardown'),
+                    ...(!deleting ? { phase: 'observe' as const } : {}) } }
+                    : retainedDeleteFailure ? { failure: retainedDeleteFailure } : {}) };
             try {
                 const written = await host.writeTransition({ environmentId: request.input.environmentId, deploymentId: receipt.deployment.id,
                     receiptHeader: receipt.deployment, expectedRevision: receipt.deployment.revision, state, content: nextContent, context: request.context,

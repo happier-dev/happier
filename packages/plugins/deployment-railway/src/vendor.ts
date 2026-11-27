@@ -102,8 +102,9 @@ export async function removeDatabase(selection: ServiceSelection, context: Plugi
   const phase = 'deployment.railway.data.delete';
   const volume = observeOnly ? null : await readDatabaseVolume(project, selection, context.signal);
   let deleteCause: ActionFailureCauseV1 | undefined;
+  let removed: Awaited<ReturnType<typeof settleDeploymentTargetResourceRemovalV1>>;
   try {
-    const removed = await settleDeploymentTargetResourceRemovalV1({
+    removed = await settleDeploymentTargetResourceRemovalV1({
       ...(observeOnly ? {} : { remove: async () => {
         try {
           return await project.deleteServiceInstance(selection);
@@ -122,24 +123,24 @@ export async function removeDatabase(selection: ServiceSelection, context: Plugi
       observeAbsent: () => project.observeServiceAbsent(selection),
       now: Date.now,
     });
-    if (volume === null) return removed;
-    if (volume === undefined) return { ...removed, volumeRemoval: { kind: 'kept-unchecked' } };
-    const { id, otherEnvironments, url } = volume;
-    if (otherEnvironments) return { ...removed, volumeRemoval: { kind: 'kept', otherEnvironments, url } };
-    try {
-      await project.deleteVolume(id);
-    } catch (error) {
-      context.signal.throwIfAborted();
-      if (writeRefused(error)) return readFailure(error);
-      const volumePhase = 'deployment.railway.data.volume_delete';
-      throw withActionFailureDiagnostic(new PluginError({ code: 'outcome_unknown',
-        failureCause: { ...projectActionFailureCauseV1(error, volumePhase, { allowUnknownErrorCode: true }), phase: volumePhase } }),
-      { phase: volumePhase, causeKind: 'native_failure', error });
-    }
-    return { ...removed, volumeRemoval: { kind: 'removed' } };
   } catch (error) {
     if (!deleteCause || !isPluginError(error) || error.code !== 'outcome_unknown') throw error;
     throw withActionFailureDiagnostic(new PluginError({ ...error.data, failureCause: deleteCause }),
       { phase, causeKind: 'native_failure', error });
   }
+  if (volume === null) return removed;
+  if (volume === undefined) return { ...removed, volumeRemoval: { kind: 'kept-unchecked' } };
+  const { id, otherEnvironments, url } = volume;
+  if (otherEnvironments) return { ...removed, volumeRemoval: { kind: 'kept', otherEnvironments, url } };
+  try {
+    await project.deleteVolume(id);
+  } catch (error) {
+    context.signal.throwIfAborted();
+    if (writeRefused(error)) return readFailure(error);
+    const volumePhase = 'deployment.railway.data.volume_delete';
+    throw withActionFailureDiagnostic(new PluginError({ code: 'outcome_unknown', details: { volumeRemoval: { kind: 'kept-unchecked' } },
+      failureCause: { ...projectActionFailureCauseV1(error, volumePhase, { allowUnknownErrorCode: true }), phase: volumePhase } }),
+    { phase: volumePhase, causeKind: 'native_failure', error });
+  }
+  return { ...removed, volumeRemoval: { kind: 'removed' } };
 }

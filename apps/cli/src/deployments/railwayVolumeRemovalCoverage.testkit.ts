@@ -6,7 +6,7 @@ import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFAC
 import { DeploymentEnvironmentContentV1Schema, DeploymentTargetLinkContentV1Schema, DeploymentProviderTeardownContentV1Schema } from '@happier-dev/deployments/contracts/v1';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { DeploymentEnvironmentCreateResultV1Schema, DeploymentReceiptGetResultV1Schema, DeploymentReceiptResultV1Schema, DeploymentTargetLinkResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentEnvironmentCreateResultV1Schema, DeploymentReceiptGetResultV1Schema, DeploymentReceiptListResultV1Schema, DeploymentReceiptResultV1Schema, DeploymentTargetLinkResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
@@ -253,6 +253,14 @@ export async function runRailwayVolumeRemovalCoverage({ home, artifacts, invoke,
                 expect(settled).toMatchObject({ ok: false, errorCode: 'outcome_unknown',
                     failureCause: { phase: 'deployment.railway.data.volume_delete' } });
                 expect(writes).toEqual([{ kind: 'service', id: serviceId, environmentId }, { kind: 'volume', id: volumeId }]);
+                const history = DeploymentReceiptListResultV1Schema.parse(await resultOf('deployments.receipts.list', address));
+                if (!history.ok) throw new Error(history.error);
+                const receipt = history.items.find(row => row.operation === 'teardown' && row.requestKey === removal.requestKey);
+                if (!receipt || receipt.state !== 'outcome_unknown') throw new Error('Expected the unsettled teardown receipt');
+                const artifact = await artifacts.read(receipt.contentArtifactId);
+                if (typeof artifact?.body !== 'string') throw new Error('The encrypted removal receipt must be readable by its owner');
+                const stored = DeploymentProviderTeardownContentV1Schema.parse(JSON.parse(artifact.body));
+                expect(stored.platform.observation.volumeRemoval).toEqual({ kind: 'kept-unchecked' });
                 continue;
             }
             if (!settled.ok) throw new Error(`Railway teardown approval refused: ${JSON.stringify({ errorCode: settled.errorCode, error: settled.error, failureCause: settled.failureCause })}`);

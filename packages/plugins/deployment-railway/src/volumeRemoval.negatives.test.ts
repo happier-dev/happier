@@ -109,6 +109,16 @@ describe('SEC negatives: Railway data Delete', () => {
     } finally { await h.kit.dispose(); }
   });
 
+  it('keeps the volume failure phase after observing a service delete with a lost acknowledgement', async () => {
+    const h = await host(exclusive, new TypeError('service response lost'), absent, new TypeError('volume response lost'));
+    try {
+      const r = await h.run('database-delete');
+      expect(ops(h.calls)).toEqual(['volumeRead', 'serviceDelete', 'observe', 'volumeDelete']);
+      expect(r).toMatchObject({ error: { code: 'outcome_unknown',
+        data: { failureCause: { phase: 'deployment.railway.data.volume_delete' } } } });
+    } finally { await h.kit.dispose(); }
+  });
+
   it('D7 volumeDelete answers false: never reported removed', async () => {
     const h = await host(exclusive, { data: { serviceDelete: true } }, { data: { volumeDelete: false } });
     try {

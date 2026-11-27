@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DeploymentTeardownInputV1Schema, encodeBase64, type ActionExecutorContext } from '@happier-dev/protocol';
 import { createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { DeploymentProviderTeardownContentV1Schema } from '@happier-dev/deployments/contracts/v1';
@@ -9,14 +10,17 @@ import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugi
 import * as installationStore from '@/daemon/identity/store';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import * as railway from '../../../../../packages/plugins/deployment-railway/src/index';
-import { actionIds, observeRemovalActionId } from '../../../../../packages/plugins/deployment-railway/src/actions';
+import { actionIds, deleteActionId, observeRemovalActionId } from '../../../../../packages/plugins/deployment-railway/src/actions';
 import { createDataProjectTeardownForHost } from './dataProjectTeardown';
 import type { DataTeardownHost } from './dataTeardown';
 
 afterEach(() => vi.restoreAllMocks());
 
 describe('Railway teardown receipt observation', () => {
-    it('retains the unconfirmed volume deletion when observing the database absent', async () => {
+    it.each([
+        { description: 'when observing the database absent', observeFails: false },
+        { description: 'after a failed observation followed by confirmed service absence', observeFails: true },
+    ])('retains the unconfirmed volume deletion $description', async ({ observeFails }) => {
         const installationId = 'fixture-installation';
         const machineId = 'fixture-machine';
         vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue({
@@ -24,8 +28,6 @@ describe('Railway teardown receipt observation', () => {
             publicKey: encodeBase64(new Uint8Array(32), 'base64url'),
             privateKey: encodeBase64(new Uint8Array(64), 'base64url'),
         });
-        const previousFailure = { code: 'outcome_unknown', phase: 'teardown', effectAttempted: true,
-            failureCause: { phase: 'deployment.railway.data.volume_delete', errorClass: 'TypeError', errorCode: null, httpStatus: null } } as const;
         const credentialRef = { service: { pluginId: 'happier.machine.railway', localId: 'railway-account' }, accountId: 'connected' };
         const content = DeploymentProviderTeardownContentV1Schema.parse({
             machines: [], images: [], machineResults: [], steps: [],
@@ -37,9 +39,8 @@ describe('Railway teardown receipt observation', () => {
                 providerIdentity: { providerAccountId: 'project-one', providerResourceId: 'database-one', providerEnvironment: 'production' },
                 providerEnvironment: { kind: 'native', selection: { projectId: 'project-one', environmentId: 'production', serviceId: 'database-one' } },
                 observation: { v: 1, state: 'queued', observedAtMs: 1000 } },
-            failure: previousFailure,
         });
-        const deployment = createDeploymentReceiptHeaderV1({ operation: 'teardown', state: 'outcome_unknown',
+        const deployment = createDeploymentReceiptHeaderV1({ operation: 'teardown', state: 'queued',
             acceptedExecution: { v: 1, controller: { machineId, installationId } } });
         const receipt = createDeploymentReceiptDetailV1({ deployment, content });
         const input = DeploymentTeardownInputV1Schema.parse({ serverId: 'home', environmentId: deployment.environmentId,
@@ -48,29 +49,48 @@ describe('Railway teardown receipt observation', () => {
             contentHeaderVersion: deployment.contentHeaderVersion, contentBodyVersion: deployment.contentBodyVersion });
         const result = { ok: true, environmentId: deployment.environmentId, revision: 2, deploymentId: deployment.id,
             deploymentRevision: 2, state: 'succeeded' } as const;
-        const queries: string[] = [];
+        let observations = 0;
         const provider = await createPluginTestkit({ manifest: railway.manifest, module: railway, services: {
             http: createPluginHttpFixture({ async request(request) {
                 const { query } = JSON.parse(new TextDecoder().decode(request.body));
-                queries.push(query);
-                return { status: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify({ data: {
-                    environment: { id: 'production', projectId: 'project-one',
-                        serviceInstances: { edges: [], pageInfo: { endCursor: null, hasNextPage: false } } },
-                } })) };
+                const reply = (data: unknown) => ({ status: 200, headers: {},
+                    body: new TextEncoder().encode(JSON.stringify({ data })) });
+                const pageInfo = { endCursor: null, hasNextPage: false };
+                if (query.includes('volumeInstances')) return reply({ project: { id: 'project-one', environments: {
+                    edges: [{ node: { id: 'production', volumeInstances: { edges: [{ node: {
+                        environmentId: 'production', serviceId: 'database-one', volumeId: 'volume-one',
+                        isPendingDeletion: false, deletedAt: null,
+                    } }], pageInfo } } }], pageInfo,
+                } } });
+                if (query.includes('serviceDelete')) return reply({ serviceDelete: true });
+                if (query.includes('volumeDelete')) throw new TypeError('volume response lost');
+                if (!query.includes('serviceInstances')) throw new Error('Unexpected Railway query');
+                const edges = ++observations === 1 && observeFails
+                    ? [{ node: { serviceId: 'database-one', serviceName: 'Database', deletedAt: null, service: { templateId: 'pg-template' } } }]
+                    : [];
+                return reply({ environment: { id: 'production', projectId: 'project-one',
+                    serviceInstances: { edges, pageInfo } } });
             } }),
         } });
         const mounted = await createAdmittedPluginRuntimeFixture({
             runtimeOptions: { pluginIds: [railway.manifest.id, 'happier.machine.railway'] },
         });
         try {
+            const remove = { pluginId: railway.manifest.id, localId: deleteActionId };
             const observe = { pluginId: railway.manifest.id, localId: observeRemovalActionId };
             const context: ActionExecutorContext = { surface: 'cli', serverId: 'home',
                 operationAcceptance: { operationId: deployment.actionOperationId, accept() {} } };
             const hostReviewedChild = createHostReviewedChildPortV1({ actionId: 'deployments.teardown', input, context,
-                reviewAdmitted: true, plan: { children: [{ action: observe, role: 'projects.observe' }] },
+                reviewAdmitted: true, plan: { children: [
+                    { action: remove, role: 'projects.delete' }, { action: observe, role: 'projects.observe' },
+                ] },
                 execute: async (envelope) => {
-                    const { input: child } = envelope as { input: unknown };
-                    return { ok: true, result: normalizeStrictJsonValue(await provider.invokeAction(observe.localId, child)) };
+                    const { input: child, action } = envelope as { input: unknown; action: typeof remove };
+                    try {
+                        return { ok: true, result: normalizeStrictJsonValue(await provider.invokeAction(action.localId, child)) };
+                    } catch (error) {
+                        return { ok: false, ...normalizeActionExecutorThrownError(error) };
+                    }
                 },
             });
             const writeTransition = vi.fn<DataTeardownHost['writeTransition']>().mockResolvedValue(result);
@@ -82,14 +102,34 @@ describe('Railway teardown receipt observation', () => {
                     resolveRuntimeRegistry: async () => mounted.registry,
                 }),
             });
-            await expect(owner.executeProject({ actionId: 'deployments.teardown', input, receipt: result,
-                context: { ...context, hostReviewedChild } }, receipt, { role: 'data', targetKind: 'railway-postgresql',
-                source: { kind: 'plugin', contribution: { pluginId: railway.manifest.id, localId: 'postgresql' } } })).resolves.toEqual(result);
-            expect(queries).toEqual([expect.stringContaining('serviceInstances')]);
-            expect(writeTransition).toHaveBeenCalledWith(expect.objectContaining({ state: 'succeeded', content: expect.objectContaining({
-                failure: previousFailure,
-                platform: expect.objectContaining({ observation: expect.objectContaining({ volumeRemoval: { kind: 'kept-unchecked' } }) }),
-            }) }));
+            const execute = (current: typeof receipt) => owner.executeProject({
+                actionId: 'deployments.teardown', input, receipt: result, context: { ...context, hostReviewedChild },
+            }, current, { role: 'data', targetKind: 'railway-postgresql',
+                source: { kind: 'plugin', contribution: { pluginId: railway.manifest.id, localId: 'postgresql' } } });
+            function stored() {
+                const transition = writeTransition.mock.lastCall?.[0];
+                if (!transition) throw new Error('Expected a receipt transition');
+                return createDeploymentReceiptDetailV1({
+                    deployment: { ...deployment, state: transition.state },
+                    content: DeploymentProviderTeardownContentV1Schema.parse(transition.content),
+                });
+            }
+
+            await expect(execute(receipt)).resolves.toMatchObject({ ok: false, errorCode: 'outcome_unknown',
+                failureCause: { phase: 'deployment.railway.data.volume_delete' } });
+            const deleteFailure = stored();
+            let resumed = deleteFailure;
+            if (observeFails) {
+                await expect(execute(resumed)).resolves.toMatchObject({ ok: false, errorCode: 'outcome_unknown' });
+                resumed = stored();
+                expect(resumed.deployment.state).toBe('outcome_unknown');
+                expect(resumed.content).not.toHaveProperty('failure.failureCause.phase', 'deployment.railway.data.volume_delete');
+            }
+            await expect(execute(resumed)).resolves.toEqual(result);
+            const settled = stored().content;
+            expect(settled).toHaveProperty('platform.observation.volumeRemoval', { kind: 'kept-unchecked' });
+            if (observeFails) expect(settled).not.toHaveProperty('failure');
+            else expect(settled).toHaveProperty('failure', DeploymentProviderTeardownContentV1Schema.parse(deleteFailure.content).failure);
         } finally {
             await mounted.dispose();
             await provider.dispose();
