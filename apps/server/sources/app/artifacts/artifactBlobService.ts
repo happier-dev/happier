@@ -3,11 +3,12 @@ import * as privacyKit from 'privacy-kit';
 import { ArtifactBlobReferenceV1Schema, type ArtifactBlobStoredContentV1, type ArtifactBlobWriteV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { db } from '@/storage/db';
+import type { PrivateFileWrite } from '@/storage/privateFiles/privateFiles';
 import { inTx, type Tx } from '@/storage/inTx';
 import { captureReadSnapshot } from '@/storage/captureReadSnapshot';
 import { deletePrivateFile } from '@/storage/blob/files';
 import { normalizePrivateFileKey } from '@/storage/privateFiles/privateFileKeys';
-import { storePrivateBinaryContent, openPrivateBinaryContent } from '@/storage/privateFiles/privateBinaryContent';
+import { preparePrivateBinaryContent, openPrivateBinaryContent, type PrivateBinaryContentInput } from '@/storage/privateFiles/privateBinaryContent';
 import { readArtifactForCallerInTx } from './artifactAccessService';
 import { artifactBlobRejectedUploadPrefix, artifactBlobWritingUploadPrefix,
     writeAccountPrivateFileCandidate, settleAccountPrivateFileUploadInTx,
@@ -18,8 +19,9 @@ export { artifactBlobConversionUploadPrefix, artifactBlobWritingUploadPrefix } f
 
 export type ArtifactBlobRow = Readonly<{ id: string; artifactId: string; storageKey: string; encryptionMode: string; storedSizeBytes: bigint }>;
 export type PreparedArtifactBlobWrite = Readonly<{
-    accountId: string; row: ArtifactBlobRow; bytes: Uint8Array; candidate: boolean;
+    accountId: string; row: ArtifactBlobRow; sizeBytes: number; contentSha256: string; candidate: boolean;
 }>;
+export type ArtifactBlobWriteInput = Omit<ArtifactBlobWriteV1, 'content'> & Readonly<{ content?: PrivateBinaryContentInput }>;
 const rejectedUploadPrefix = artifactBlobRejectedUploadPrefix;
 export const artifactBlobRejectedUploadReuseKey = (artifactId: string) => `${rejectedUploadPrefix}${artifactId}`;
 
@@ -32,18 +34,18 @@ export async function openArtifactBlobBytes(accountId: string, row: ArtifactBlob
     return openPrivateBinaryContent(blobPath(accountId, row.artifactId, row.id), row);
 }
 
-type ArtifactBlobCandidate = Readonly<{ prepared: PreparedArtifactBlobWrite; stored: Uint8Array }>;
+type ArtifactBlobCandidate = Readonly<{ prepared: PreparedArtifactBlobWrite; stored: PrivateFileWrite }>;
 
 /** Encode once so quota admission can use the stored size before private IO. */
 export function prepareArtifactBlobCandidate(input: Readonly<{
-    accountId: string; artifactId: string; blobId: string; content: ArtifactBlobStoredContentV1;
+    accountId: string; artifactId: string; blobId: string; content: PrivateBinaryContentInput;
 }>): ArtifactBlobCandidate {
     const storageKey = artifactBlobCandidateStorageKey(input.artifactId, input.blobId, randomUUID());
-    const stored = storePrivateBinaryContent(blobPath(input.accountId, input.artifactId, input.blobId), input.content);
+    const { stored, sizeBytes, contentSha256 } = preparePrivateBinaryContent(blobPath(input.accountId, input.artifactId, input.blobId), input.content);
     const prepared: PreparedArtifactBlobWrite = { accountId: input.accountId,
         row: { id: input.blobId, artifactId: input.artifactId, storageKey,
         encryptionMode: input.content.t === 'plain' ? 'plain' : 'e2ee', storedSizeBytes: BigInt(stored.byteLength) },
-        bytes: new Uint8Array(privacyKit.decodeBase64(input.content.t === 'plain' ? input.content.v : input.content.c)), candidate: true };
+        sizeBytes, contentSha256, candidate: true };
     return { prepared, stored };
 }
 
@@ -58,12 +60,14 @@ export async function storeArtifactBlobCandidate({ prepared, stored }: ArtifactB
     return prepared;
 }
 
-export async function prepareArtifactBlobWrite(input: Readonly<{ accountId: string; artifactId: string; blob: ArtifactBlobWriteV1 }>): Promise<PreparedArtifactBlobWrite | null> {
+export async function prepareArtifactBlobWrite(input: Readonly<{ accountId: string; artifactId: string; blob: ArtifactBlobWriteInput }>): Promise<PreparedArtifactBlobWrite | null> {
     if (input.blob.content) {
         return storeArtifactBlobCandidate(prepareArtifactBlobCandidate({ ...input, blobId: input.blob.blobId, content: input.blob.content }));
     }
     const row = await db.artifactBlob.findFirst({ where: { id: input.blob.blobId, artifactId: input.artifactId } });
-    return row ? { accountId: input.accountId, row, bytes: await openArtifactBlobBytes(input.accountId, row), candidate: false } : null;
+    if (!row) return null;
+    const bytes = await openArtifactBlobBytes(input.accountId, row);
+    return { accountId: input.accountId, row, sizeBytes: bytes.byteLength, contentSha256: sha256(bytes), candidate: false };
 }
 
 /** Settle pending custody atomically with admission, or transfer it to a live conversion stage. */
@@ -77,7 +81,7 @@ export async function completeArtifactBlobCandidateCustodyInTx(tx: Tx, prepared:
 }
 
 export async function admitArtifactBlobWriteInTx(tx: Tx, input: Readonly<{
-    artifactId: string; mode: 'plain' | 'e2ee'; body: Uint8Array; blob?: ArtifactBlobWriteV1;
+    artifactId: string; mode: 'plain' | 'e2ee'; body: Uint8Array; blob?: ArtifactBlobWriteInput;
     prepared?: PreparedArtifactBlobWrite; currentBlobId?: string | null;
 }>): Promise<boolean> {
     const decoded = input.mode === 'plain' ? decodePlainArtifactStoredContent(privacyKit.encodeBase64(new Uint8Array(input.body))) : null;
@@ -87,7 +91,7 @@ export async function admitArtifactBlobWriteInTx(tx: Tx, input: Readonly<{
     const prepared = input.prepared;
     if (!prepared || prepared.row.id !== input.blob.blobId || prepared.row.encryptionMode !== input.mode) return false;
     if (input.mode === 'plain' && (!reference.success || reference.data.blobId !== input.blob.blobId
-        || reference.data.sizeBytes !== prepared.bytes.byteLength || reference.data.sha256 !== sha256(prepared.bytes))) return false;
+        || reference.data.sizeBytes !== prepared.sizeBytes || reference.data.sha256 !== prepared.contentSha256)) return false;
     const existing = await tx.artifactBlob.findUnique({ where: { id: input.blob.blobId } });
     if (prepared.candidate) {
         return existing === null && await isAccountPrivateFileUploadActiveInTx(tx, prepared.accountId)

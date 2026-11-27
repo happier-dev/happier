@@ -1,6 +1,6 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import * as privacyKit from 'privacy-kit';
-import type { BinaryBlobStoredContentV1, BinaryBlobReferenceV1 } from '@happier-dev/protocol/storage/binaryBlobV1';
+import type { BinaryBlobReferenceV1 } from '@happier-dev/protocol/storage/binaryBlobV1';
 import type { DiscussionAttachmentReadRequestV1, DiscussionAttachmentReadInputV1, DiscussionAttachmentReadResponseV1,
     DiscussionAttachmentRemovedV1 } from '@happier-dev/protocol/discussions/attachments';
 import type { DiscussionPostRequestV1 } from '@happier-dev/protocol/discussions/api';
@@ -8,7 +8,7 @@ import { db } from '@/storage/db';
 import { inTx, type Tx } from '@/storage/inTx';
 import { captureReadSnapshot } from '@/storage/captureReadSnapshot';
 import { normalizePrivateFileKey } from '@/storage/privateFiles/privateFileKeys';
-import { storePrivateBinaryContent, openPrivateBinaryContent } from '@/storage/privateFiles/privateBinaryContent';
+import { preparePrivateBinaryContent, openPrivateBinaryContent, type PrivateBinaryContentInput } from '@/storage/privateFiles/privateBinaryContent';
 import { writeAccountPrivateFileCandidate, settleAccountPrivateFileUploadInTx, discardAccountPrivateFileCandidate,
     deleteAccountPrivateFileUpload, discussionAttachmentWritingUploadPrefix, discussionAttachmentRejectedUploadPrefix } from '@/storage/privateFiles/accountPrivateFileCustody';
 import type { SessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication';
@@ -36,15 +36,14 @@ export async function openDiscussionAttachmentBytes(row: Pick<DiscussionAttachme
 
 /** A unique, Account-captured candidate cannot overwrite any committed message's bytes. */
 export async function prepareDiscussionAttachmentWrite(input: Readonly<{
-    accountId: string; blobId: string; content: BinaryBlobStoredContentV1;
+    accountId: string; blobId: string; content: PrivateBinaryContentInput;
 }>): Promise<PreparedDiscussionAttachmentWrite> {
     const storageKey = discussionAttachmentCandidateStorageKey(input.blobId, randomUUID());
-    const stored = storePrivateBinaryContent(binaryPath(input.blobId), input.content);
-    const bytes = new Uint8Array(privacyKit.decodeBase64(input.content.t === 'plain' ? input.content.v : input.content.c));
+    const { stored, sizeBytes, contentSha256 } = preparePrivateBinaryContent(binaryPath(input.blobId), input.content);
     const prepared: PreparedDiscussionAttachmentWrite = { accountId: input.accountId,
         row: { blobId: input.blobId, storageKey, encryptionMode: input.content.t === 'plain' ? 'plain' : 'e2ee',
             storedSizeBytes: BigInt(stored.byteLength) },
-        sizeBytes: bytes.byteLength, contentSha256: createHash('sha256').update(bytes).digest('hex') };
+        sizeBytes, contentSha256 };
     await writeAccountPrivateFileCandidate({ accountId: input.accountId, path: storageKey, bytes: stored,
         writingReuseKey: `${discussionAttachmentWritingUploadPrefix}${input.blobId}`,
         rejectedReuseKey: discussionAttachmentRejectedUploadReuseKey(input.blobId) });

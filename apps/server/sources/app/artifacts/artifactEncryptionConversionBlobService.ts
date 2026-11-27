@@ -1,10 +1,11 @@
 import type { AccountEncryptionMigrateArtifactsDirective } from '@happier-dev/protocol/account/encryptionMigrate';
-import type { ArtifactBlobStoredContentV1, ArtifactBlobAccountEncryptionStageV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
+import type { ArtifactBlobAccountEncryptionStageV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
 import { artifactBlobCandidateStorageKey, artifactBlobConversionUploadPrefix, artifactBlobRejectedUploadReuseKey, completeArtifactBlobCandidateCustodyInTx, openArtifactBlobBytes, prepareArtifactBlobWrite, discardArtifactBlobCandidate, type ArtifactBlobRow, type PreparedArtifactBlobWrite } from './artifactBlobService';
 import { acquireAccountEncryptionTransitionFenceInTx } from '@/app/encryption/accountEncryptionTransition';
-import { preparePrivateBinaryConversion, privateBinaryContentDigest as digest } from '@/storage/privateFiles/privateBinaryConversion';
+import { preparePrivateBinaryConversion } from '@/storage/privateFiles/privateBinaryConversion';
+import type { PrivateBinaryContentInput } from '@/storage/privateFiles/privateBinaryContent';
 
 const stagePrefix = artifactBlobConversionUploadPrefix;
 export const artifactConversionBlobKey = artifactBlobCandidateStorageKey;
@@ -12,16 +13,13 @@ export const artifactConversionBlobCustody = (row: ArtifactBlobRow) => `${stageP
 export type PreparedArtifactAccountEncryptionConversionBlob = Readonly<{
     source: ArtifactBlobRow;
     expectedContentSha256: string;
-    target: Readonly<Omit<PreparedArtifactBlobWrite, 'bytes'> & {
-        contentSha256: string;
-        sizeBytes: number;
-    }>;
+    target: PreparedArtifactBlobWrite;
 }>;
 export type PreparedArtifactAccountEncryptionConversionBlobs = ReadonlyMap<string, PreparedArtifactAccountEncryptionConversionBlob>;
 
 /** Upload custody is not a mode change. Only the signed Account transaction activates these bytes. */
 export async function stageArtifactBlobAccountEncryptionConversion(input: Readonly<{
-    accountId: string; artifactId: string; blobId: string; content: ArtifactBlobStoredContentV1;
+    accountId: string; artifactId: string; blobId: string; content: PrivateBinaryContentInput;
 }>): Promise<ArtifactBlobAccountEncryptionStageV1> {
     const source = await db.artifactBlob.findFirst({ where: { id: input.blobId, artifactId: input.artifactId,
         artifact: { accountId: input.accountId } }, include: { artifact: { select: { currentBlobId: true,
@@ -42,7 +40,7 @@ export async function stageArtifactBlobAccountEncryptionConversion(input: Readon
             await completeArtifactBlobCandidateCustodyInTx(tx, candidate, artifactConversionBlobCustody(candidate.row));
         });
     } catch (error) { await discardArtifactBlobCandidate(candidate); throw error; }
-    return { t: input.content.t, uploadId: candidate.row.storageKey.split('/').at(-1)!, contentSha256: digest(candidate.bytes) };
+    return { t: input.content.t, uploadId: candidate.row.storageKey.split('/').at(-1)!, contentSha256: candidate.contentSha256 };
 }
 
 /** IO happens one blob pair at a time before the Account transaction. Only validated digests and lengths are retained; the transaction rechecks exact source and stage custody. */

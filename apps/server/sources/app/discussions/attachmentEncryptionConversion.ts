@@ -1,7 +1,8 @@
-import type { BinaryBlobStoredContentV1, BinaryBlobAccountEncryptionStageV1 } from '@happier-dev/protocol/storage/binaryBlobV1';
+import type { BinaryBlobAccountEncryptionStageV1 } from '@happier-dev/protocol/storage/binaryBlobV1';
 import type { AccountEncryptionMigrateDiscussionsDirectiveV1 } from '@happier-dev/protocol/discussions/accountEncryptionMigration';
 import { acquireAccountEncryptionTransitionFenceInTx } from '@/app/encryption/accountEncryptionTransition';
 import { db } from '@/storage/db';
+import type { PrivateBinaryContentInput } from '@/storage/privateFiles/privateBinaryContent';
 import { inTx } from '@/storage/inTx';
 import { discussionAttachmentConversionUploadPrefix } from '@/storage/privateFiles/accountPrivateFileCustody';
 import { preparePrivateBinaryConversion, type PreparedPrivateBinaryConversion } from '@/storage/privateFiles/privateBinaryConversion';
@@ -17,7 +18,7 @@ export const discussionConversionAttachmentKey = (messageId: string, blobId: str
 
 /** Staging never changes the binding or mode; the signed Account transaction activates it. */
 export async function stageDiscussionAttachmentAccountEncryptionConversion(input: Readonly<{
-    accountId: string; discussionId: string; messageId: string; blobId: string; content: BinaryBlobStoredContentV1;
+    accountId: string; discussionId: string; messageId: string; blobId: string; content: PrivateBinaryContentInput;
 }>): Promise<BinaryBlobAccountEncryptionStageV1> {
     const source = await db.discussionAttachment.findFirst({ where: { blobId: input.blobId, messageId: input.messageId, removedByAccountId: null,
         message: { discussionId: input.discussionId, discussion: { ownerAccountId: input.accountId } } },

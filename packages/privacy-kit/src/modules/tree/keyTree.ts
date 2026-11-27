@@ -7,8 +7,11 @@ import { hmac_sha512 } from "../crypto/hmac_sha512";
 import type { Bytes } from "../../types";
 
 const PACKAGE_AES_BUFFER = 0;
+const AES_NONCE_BYTES = 12;
+const AES_TAG_BYTES = 16;
 
 export class KeyTree {
+    static readonly symmetricEnvelopeOverheadBytes = 1 + AES_NONCE_BYTES + AES_TAG_BYTES;
 
     #master: Bytes
 
@@ -56,20 +59,33 @@ export class KeyTree {
     // Encryption
     //
 
-    symmetricEncrypt(path: string[], data: Bytes | string): Bytes {
+    #startSymmetricEnvelope(path: string[]) {
         const key = this.deriveSymmetricKey(path);
-        const nonce = crypto.randomBytes(12);
-        const cipher = crypto.createCipheriv('aes-256-gcm', key, nonce);
-        const encrypted = cipher.update(typeof data === 'string' ? encodeUTF8(data) : data);
-        const encryptedFinal = cipher.final();
-        const authTag = cipher.getAuthTag();
+        const nonce = crypto.randomBytes(AES_NONCE_BYTES);
+        const cipher = crypto.createCipheriv('aes-256-gcm', key, nonce, { authTagLength: AES_TAG_BYTES });
+        return { nonce, cipher };
+    }
+
+    symmetricEncrypt(path: string[], data: Bytes | string): Bytes {
+        const { nonce, cipher } = this.#startSymmetricEnvelope(path);
         return concatBytes(
-            Uint8Array.from([PACKAGE_AES_BUFFER]),
+            Uint8Array.of(PACKAGE_AES_BUFFER),
             nonce,
-            encrypted,
-            encryptedFinal,
-            authTag
+            cipher.update(typeof data === 'string' ? encodeUTF8(data) : data),
+            cipher.final(),
+            cipher.getAuthTag()
         );
+    }
+
+    /** Emits the same authenticated envelope as symmetricEncrypt. */
+    async *symmetricEncryptChunks(path: string[], chunks: AsyncIterable<Uint8Array>): AsyncGenerator<Bytes> {
+        const { nonce, cipher } = this.#startSymmetricEnvelope(path);
+        yield Uint8Array.of(PACKAGE_AES_BUFFER);
+        yield nonce;
+        for await (const chunk of chunks) yield cipher.update(chunk);
+        const tail = cipher.final();
+        if (tail.byteLength) yield tail;
+        yield cipher.getAuthTag();
     }
 
     symmetricDecryptBuffer(path: string[], data: Bytes): Bytes {
@@ -77,9 +93,11 @@ export class KeyTree {
             throw new Error('Invalid data');
         }
         const key = this.deriveSymmetricKey(path);
-        const nonce = data.subarray(1, 1 + 12);
-        const encrypted = data.subarray(13, data.length - 16);
-        const authTag = data.subarray(data.length - 16, data.length);
+        const bodyStart = 1 + AES_NONCE_BYTES;
+        const tagStart = data.length - AES_TAG_BYTES;
+        const nonce = data.subarray(1, bodyStart);
+        const encrypted = data.subarray(bodyStart, tagStart);
+        const authTag = data.subarray(tagStart);
         const cipher = crypto.createDecipheriv('aes-256-gcm', key, nonce);
         cipher.setAuthTag(authTag);
 

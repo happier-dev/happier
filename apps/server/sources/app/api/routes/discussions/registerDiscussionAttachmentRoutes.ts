@@ -1,7 +1,6 @@
 import { Readable } from 'node:stream';
-import { readFile, rm } from 'node:fs/promises';
+import { rm } from 'node:fs/promises';
 import { z } from 'zod/mini';
-import { encodeBase64 } from 'privacy-kit';
 import { DISCUSSION_HTTP_PATHS_V1, DiscussionErrorResponseV1Schema, type DiscussionAgentPublisherPublicationV1 } from '@happier-dev/protocol/discussions/api';
 import { DiscussionAttachmentReadRequestV1Schema, DiscussionAttachmentReadResponseV1Schema,
     DiscussionAttachmentRemovedV1Schema } from '@happier-dev/protocol/discussions/attachments';
@@ -237,12 +236,10 @@ export function registerDiscussionAttachmentRoutes(app: Fastify,
                         const opened = await lifecycle.openUploadTransferSession({ target: {
                             destPath: ownerAccountId, destDisplayPath: segment.blobId, overwrite: false,
                             expectedSizeBytes: segment.storedSizeBytes,
-                            finalizeUpload: async ({ tempPath, sizeBytes }) => {
+                            finalizeUpload: async ({ tempPath, sizeBytes, sha256 }) => {
                                 try {
                                     if (canceled) throw new Error('Discussion upload canceled');
-                                    const bytes = await readFile(tempPath);
-                                    const content = segment.t === 'plain' ? { t: 'plain' as const, v: encodeBase64(bytes) }
-                                        : { t: 'encrypted' as const, c: encodeBase64(bytes) };
+                                    const content = { t: segment.t, staged: { tempPath, sizeBytes, sha256 } };
                                     if (target.operation === 'encryption-conversion') {
                                         const stage = await stageDiscussionAttachmentAccountEncryptionConversion({ accountId: request.userId,
                                             ...target.input, content });

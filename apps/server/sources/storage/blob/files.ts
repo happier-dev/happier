@@ -5,7 +5,8 @@ import { PRIVATE_BINARY_STORAGE_UNAVAILABLE_CODE_V1, type PrivateBinaryStorageUn
 import { deleteLightPublicFile, ensureLightFilesDir, getLightPublicUrl, readLightPublicFile, resolveLightPublicFilesDir, writeLightPublicFile } from '@/flavors/light/files';
 import { createLocalPrivateFilesBackendFromEnv, resolveLocalPrivateFilesDir } from '@/storage/privateFiles/privateFilesLocal';
 import { ACCOUNT_PET_DISK_PRIVATE_FILE_PREFIX, ACCOUNT_PET_S3_PRIVATE_FILE_PREFIX, normalizePrivateFileKey } from '@/storage/privateFiles/privateFileKeys';
-import type { PrivateFilesBackend } from '@/storage/privateFiles/privateFiles';
+import { Readable } from 'node:stream';
+import type { PrivateFilesBackend, PrivateFileWrite } from '@/storage/privateFiles/privateFiles';
 import { log } from '@/utils/logging/log';
 import { realpath } from 'node:fs/promises';
 import { isAbsolute, relative, sep } from 'node:path';
@@ -150,7 +151,40 @@ export async function initFilesS3FromEnv(env: NodeJS.ProcessEnv = process.env): 
         configurePrivateBackend({
             accountPetKeyPrefix: ACCOUNT_PET_S3_PRIVATE_FILE_PREFIX,
             async writePrivateFile(key, data) {
-                await s3client.putObject(privateBucket, normalizePrivateFileKey(key), Buffer.from(data));
+                const objectKey = normalizePrivateFileKey(key);
+                if (data instanceof Uint8Array) {
+                    await s3client.putObject(privateBucket, objectKey, Buffer.from(data));
+                    return;
+                }
+                const { chunks, byteLength } = data;
+                let sourceFailure: { error: unknown } | undefined;
+                // MinIO's multipart pipe does not forward the source's error.
+                // Let it settle on EOF and refuse the candidate if staging failed.
+                const input = Readable.from((async function* () {
+                    try {
+                        yield* chunks;
+                    } catch (error) {
+                        sourceFailure = { error };
+                    }
+                })(), { objectMode: false });
+                try {
+                    await s3client.putObject(privateBucket, objectKey, input, byteLength);
+                } catch (error) {
+                    if (byteLength > s3client.calculatePartSize(byteLength)) {
+                        try {
+                            const uploadId = await s3client.findUploadId(privateBucket, objectKey);
+                            if (uploadId) await s3client.abortMultipartUpload(privateBucket, objectKey, uploadId);
+                        } catch (cleanupError) {
+                            log({ module: 'files', level: 'warn',
+                                errorClass: cleanupError instanceof Error ? cleanupError.name : 'unknown' },
+                            'Incomplete private S3 multipart upload cleanup failed');
+                        }
+                    }
+                    throw sourceFailure ? sourceFailure.error : error;
+                } finally {
+                    input.destroy();
+                }
+                if (sourceFailure) throw sourceFailure.error;
             },
             async readPrivateFile(key) {
                 const stream = await s3client.getObject(privateBucket, normalizePrivateFileKey(key));
@@ -287,7 +321,7 @@ export function assertPrivateStorageAvailable(): void {
     requirePrivateFilesBackend();
 }
 
-export async function writePrivateFile(key: string, data: Uint8Array): Promise<void> {
+export async function writePrivateFile(key: string, data: PrivateFileWrite): Promise<void> {
     try {
         await requirePrivateFilesBackend().writePrivateFile(key, data);
     } catch (error: unknown) {

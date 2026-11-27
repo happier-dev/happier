@@ -1,10 +1,9 @@
 import { Readable } from 'node:stream';
-import { readFile, rm } from 'node:fs/promises';
+import { rm } from 'node:fs/promises';
 import { z } from 'zod/mini';
 import { SERVER_HTTP_REQUEST_MAX_BODY_UTF8_BYTES_V1 } from '@happier-dev/protocol/server/http/requestBodyBoundsV1';
 import { type ArtifactBlobUploadInitV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import { ARTIFACT_UPLOAD_CONTENT_TYPE_V1, ARTIFACT_UPLOAD_PATH_V1, decodeArtifactUploadMetadataV1, readBinaryUploadFrameV1, BinaryUploadFrameErrorV1 } from '@happier-dev/transfers';
-import { encodeBase64 } from 'privacy-kit';
 import { TransferSessionStore, createTransferSessionLifecycle, readFiniteTransferConfig } from '@happier-dev/transfers/node';
 import { inReadSnapshot } from '@/storage/inTx';
 import { assertPrivateStorageAvailable } from '@/storage/blob/files';
@@ -91,12 +90,10 @@ export function registerArtifactUploadRoutes(app: Fastify): void {
                         const session = await lifecycle.openUploadTransferSession({ target: {
                             destPath: request.userId, destDisplayPath: destination.artifactId,
                             overwrite: destination.kind !== 'create', expectedSizeBytes: destination.sizeBytes,
-                            finalizeUpload: async ({ tempPath, sizeBytes }) => {
+                            finalizeUpload: async ({ tempPath, sizeBytes, sha256 }) => {
                                 try {
                                     if (canceled) throw new Error('Artifact upload canceled');
-                                    const bytes = await readFile(tempPath);
-                                    const content = destination.t === 'plain' ? { t: 'plain' as const, v: encodeBase64(bytes) }
-                                        : { t: 'encrypted' as const, c: encodeBase64(bytes) };
+                                    const content = { t: destination.t, staged: { tempPath, sizeBytes, sha256 } };
                                     let result: ArtifactUploadHttpResult;
                                     if (destination.kind === 'encryption-conversion') {
                                         const stage = await stageArtifactBlobAccountEncryptionConversion({ accountId: request.userId,

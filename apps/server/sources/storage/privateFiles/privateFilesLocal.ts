@@ -112,7 +112,7 @@ export function createLocalPrivateFilesBackend(options: LocalPrivateFilesBackend
             if (leafStats?.isSymbolicLink() || (leafStats && !leafStats.isFile())) {
                 throw privateFilePathError();
             }
-            await writeFile(resolved.path, data);
+            await writeFile(resolved.path, data instanceof Uint8Array ? data : data.chunks);
         },
         async readPrivateFile(key) {
             const resolved = resolvePrivateFilePath(rootDir, key);

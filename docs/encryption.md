@@ -4787,6 +4787,13 @@ existing owners. Exact reads qualify Discussion, message and blob, and re-admit
 current Discussion and quoted-source access, key, mode and locator after private IO.
 History/list projections acquire metadata only.
 
+Artifact and Discussion binary uploads pass the verified staging file, size and
+digest from the transfer receiver into the existing private candidate writer.
+Local and S3 writers consume the staged bytes as a stream. The writer preserves
+opaque encrypted bytes and the existing Plain JSON or AES-GCM envelope. Account
+custody captures the candidate before the write and settles it with the existing
+mutation or conversion stage.
+
 The development CLI Discussion adapter admits its local Account material against
 live Account currentness using Protocol's existing fingerprint converter:
 currentness uses `aemk1_…`, while resource recipient bindings use

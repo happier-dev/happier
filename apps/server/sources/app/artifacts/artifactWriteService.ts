@@ -19,9 +19,8 @@ import { getDbProviderFromEnv } from '@/storage/db';
 import { isPrismaErrorCode } from '@/storage/prisma';
 import { readArtifactStorageEnv } from '@/app/features/catalog/readFeatureEnv';
 import { deletePrivateFile, PrivateStorageUnavailableError } from '@/storage/blob/files';
-import type { ArtifactBlobWriteV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import { tryDeriveArtifactStoredKindV1, ArtifactStoredKindV1Schema, decodeArtifactKindV1, getArtifactContentDeliveryPolicyV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
-import { prepareArtifactBlobCandidate, storeArtifactBlobCandidate, prepareArtifactBlobWrite, admitArtifactBlobWriteInTx, completeArtifactBlobCandidateCustodyInTx, discardArtifactBlobCandidate, cleanupArtifactOrphanBlobs, cleanupArtifactOrphanBlobsAfterCommit, cleanupRejectedArtifactBlobUploads, artifactBlobRejectedUploadReuseKey, type PreparedArtifactBlobWrite } from './artifactBlobService';
+import { prepareArtifactBlobCandidate, storeArtifactBlobCandidate, prepareArtifactBlobWrite, admitArtifactBlobWriteInTx, completeArtifactBlobCandidateCustodyInTx, discardArtifactBlobCandidate, cleanupArtifactOrphanBlobs, cleanupArtifactOrphanBlobsAfterCommit, cleanupRejectedArtifactBlobUploads, artifactBlobRejectedUploadReuseKey, type PreparedArtifactBlobWrite, type ArtifactBlobWriteInput } from './artifactBlobService';
 import { acquireAccountChangePublicationLocksInTx, markAccountChanged, markAccountsChanged, type AccountChangePublication } from "@/app/changes/markAccountChanged";
 import { readArtifactKindsV1 } from '@happier-dev/protocol/changes';
 import {
@@ -795,7 +794,7 @@ export async function createArtifact(params: {
     dataEncryptionKey: Uint8Array;
     provenance?: Uint8Array;
     provenanceDataEncryptionKey?: Uint8Array;
-    blob?: ArtifactBlobWriteV1;
+    blob?: ArtifactBlobWriteInput;
     /** Verified credential kind of this write; Session consent records admit only a person (F-7). */
     writerAuthTokenKind?: unknown;
 } & Partial<ApprovalArtifactQueryHintsV1> & ArtifactMemoryDecisionWriteContext): Promise<CreateArtifactResult> {
@@ -879,7 +878,7 @@ type CreateArtifactTxParams = {
     dataEncryptionKey: Uint8Array;
     provenance?: Uint8Array;
     provenanceDataEncryptionKey?: Uint8Array;
-    blob?: ArtifactBlobWriteV1;
+    blob?: ArtifactBlobWriteInput;
     preparedBlob?: PreparedArtifactBlobWrite;
     /**
      * A qualified owner may replace the generic Artifact invalidation only
@@ -1216,7 +1215,7 @@ export async function updateArtifact(params: {
     body?: { bytes: Uint8Array; expectedVersion: number };
     provenance?: Uint8Array;
     provenanceDataEncryptionKey?: Uint8Array;
-    blob?: ArtifactBlobWriteV1 | null;
+    blob?: ArtifactBlobWriteInput | null;
     /** Verified credential kind of this write; Session consent records admit only a person (F-7). */
     writerAuthTokenKind?: unknown;
 } & Partial<ApprovalArtifactQueryHintsV1> & ArtifactMemoryDecisionWriteContext): Promise<UpdateArtifactResult> {
@@ -1313,7 +1312,7 @@ export async function updateArtifactTx(
         provenance?: Uint8Array;
         provenanceDataEncryptionKey?: Uint8Array;
         expectedRevision?: Readonly<{ headerVersion: number; bodyVersion: number }>;
-        blob?: ArtifactBlobWriteV1 | null;
+        blob?: ArtifactBlobWriteInput | null;
         preparedBlob?: PreparedArtifactBlobWrite;
         restoredBlobId?: string | null;
         writerAuthTokenKind?: unknown;

@@ -17,6 +17,12 @@ export function encryptBytes(path: string[], bytes: Uint8Array<ArrayBuffer>) {
     return keyTree!.symmetricEncrypt(path, bytes);
 }
 
+export const symmetricEnvelopeOverheadBytes = KeyTree.symmetricEnvelopeOverheadBytes;
+
+export function encryptBytesChunks(path: string[], chunks: AsyncIterable<Uint8Array>) {
+    return keyTree!.symmetricEncryptChunks(path, chunks);
+}
+
 export function decryptString(path: string[], encrypted: Uint8Array<ArrayBuffer>) {
     return keyTree!.symmetricDecryptString(path, encrypted);
 }

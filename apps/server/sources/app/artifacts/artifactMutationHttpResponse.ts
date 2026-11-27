@@ -10,7 +10,7 @@ import { createArtifact, updateArtifact } from './artifactWriteService';
 import { randomKeyNaked } from '@/utils/keys/randomKeyNaked';
 import { log } from '@/utils/logging/log';
 import * as privacyKit from 'privacy-kit';
-import type { ArtifactBlobWriteV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
+import type { ArtifactBlobWriteInput } from './artifactBlobService';
 import type { CoordinationMessageRefV1 } from '@happier-dev/protocol/discussions/messageRefs';
 import type { SessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication';
 import { readDatabaseErrorCode } from '@/storage/transactionErrors';
@@ -20,8 +20,8 @@ import type { ArtifactIdScopeV1 } from '@happier-dev/protocol';
 import type { ApprovalTranscriptVisualPublicationV1 } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
 
 export type ArtifactHttpMutationResult = Awaited<ReturnType<typeof createArtifactHttpMutation | typeof updateArtifactHttpMutation>>;
-export type ArtifactCreateHttpInput = Readonly<{ id: string; idScope?: ArtifactIdScopeV1; kind?: string; reviewMetadata?: ReviewMetadataWriteV1; header: string; body: string; dataEncryptionKey: string; provenance?: string | null; provenanceDataEncryptionKey?: string | null; blob?: ArtifactBlobWriteV1; memoryDecisionSource?: CoordinationMessageRefV1 } & Partial<ApprovalArtifactQueryHintsV1>>;
-export type ArtifactUpdateHttpInput = Readonly<{ updateOperationId?: string; transcriptVisualPublication?: ApprovalTranscriptVisualPublicationV1; kind?: string; reviewMetadata?: ReviewMetadataWriteV1; header?: string; expectedHeaderVersion?: number; body?: string; expectedBodyVersion?: number; provenance?: string | null; provenanceDataEncryptionKey?: string | null; blob?: ArtifactBlobWriteV1 | null; memoryDecisionSource?: CoordinationMessageRefV1 } & Partial<ApprovalArtifactQueryHintsV1>>;
+export type ArtifactCreateHttpInput = Readonly<{ id: string; idScope?: ArtifactIdScopeV1; kind?: string; reviewMetadata?: ReviewMetadataWriteV1; header: string; body: string; dataEncryptionKey: string; provenance?: string | null; provenanceDataEncryptionKey?: string | null; blob?: ArtifactBlobWriteInput; memoryDecisionSource?: CoordinationMessageRefV1 } & Partial<ApprovalArtifactQueryHintsV1>>;
+export type ArtifactUpdateHttpInput = Readonly<{ updateOperationId?: string; transcriptVisualPublication?: ApprovalTranscriptVisualPublicationV1; kind?: string; reviewMetadata?: ReviewMetadataWriteV1; header?: string; expectedHeaderVersion?: number; body?: string; expectedBodyVersion?: number; provenance?: string | null; provenanceDataEncryptionKey?: string | null; blob?: ArtifactBlobWriteInput | null; memoryDecisionSource?: CoordinationMessageRefV1 } & Partial<ApprovalArtifactQueryHintsV1>>;
 
 export function readArtifactPrivateStorageHttpRefusal(error: unknown) {
     return error instanceof PrivateStorageUnavailableError

@@ -30,7 +30,15 @@ describe('storage/files (S3 env parsing)', () => {
     const objects = new Map<string, Buffer>();
     vi.doMock('minio', () => ({ Client: vi.fn().mockImplementation(() => ({
       bucketExists: vi.fn().mockResolvedValue(true), getBucketPolicy: vi.fn().mockResolvedValue('{"Statement":[]}'),
-      putObject: async (bucket: string, key: string, value: Buffer) => { objects.set(`${bucket}/${key}`, value); },
+      putObject: async (bucket: string, key: string, value: Buffer | Readable, size?: number) => {
+        const parts: Uint8Array[] = [];
+        if (value instanceof Readable) {
+          for await (const part of value) parts.push(part);
+        } else parts.push(value);
+        const bytes = Buffer.concat(parts);
+        if (value instanceof Readable) expect(size).toBe(bytes.byteLength);
+        objects.set(`${bucket}/${key}`, bytes);
+      },
       getObject: async (bucket: string, key: string) => {
         const bytes = objects.get(`${bucket}/${key}`);
         if (!bytes) throw new Error('NoSuchKey');
@@ -45,10 +53,41 @@ describe('storage/files (S3 env parsing)', () => {
     const bytes = Uint8Array.of(0, 255, 0, 12);
     await files.writePrivateFile('artifacts/a/b', bytes);
     expect(await files.readPrivateFile('artifacts/a/b')).toEqual(bytes);
+    await files.writePrivateFile('artifacts/a/b', {
+      byteLength: bytes.byteLength,
+      chunks: (async function* () { yield bytes.subarray(0, 1); yield bytes.subarray(1); })(),
+    });
+    expect(await files.readPrivateFile('artifacts/a/b')).toEqual(bytes);
     expect(objects.has('public/artifacts/a/b')).toBe(false);
     await files.deletePrivateFile('artifacts/a/b');
     await files.deletePrivateFile('artifacts/a/b');
     await expect(files.readPrivateFile('artifacts/a/b')).rejects.toThrow();
+  });
+  it('aborts an incomplete S3 multipart candidate when the staged source fails', async () => {
+    vi.resetModules();
+    const partSize = 5 * 1024 * 1024;
+    const failure = new Error('Staged file read failed');
+    const abortMultipartUpload = vi.fn().mockResolvedValue(undefined);
+    // MinIO's multipart consumer observes EOF on its part stream, so end the
+    // supplied stream and surface the source failure at the private writer.
+    const putObject = vi.fn(async (_bucket: string, _key: string, stream: Readable) => {
+      for await (const _part of stream) { /* consume the stream */ }
+      throw new Error('S3 multipart completion failed');
+    });
+    vi.doMock('minio', () => ({ Client: vi.fn().mockImplementation(() => ({
+      bucketExists: vi.fn().mockResolvedValue(true), getBucketPolicy: vi.fn().mockResolvedValue('{"Statement":[]}'),
+      calculatePartSize: () => partSize, putObject, abortMultipartUpload,
+      findUploadId: vi.fn().mockResolvedValue('incomplete-upload'),
+    })) }));
+    const files = await import('./files');
+    await files.initFilesS3FromEnv({ S3_HOST: 'example.com', S3_BUCKET: 'public', S3_PRIVATE_BUCKET: 'private',
+      S3_PUBLIC_URL: 'https://cdn.example.com', S3_ACCESS_KEY: 'access', S3_SECRET_KEY: 'secret' });
+    await files.loadFiles();
+    await expect(files.writePrivateFile('artifacts/a/b', {
+      byteLength: partSize + 1,
+      chunks: (async function* () { yield Uint8Array.of(1); throw failure; })(),
+    })).rejects.toBe(failure);
+    expect(abortMultipartUpload).toHaveBeenCalledWith('private', 'artifacts/a/b', 'incomplete-upload');
   });
   it('keeps public-only S3 usable and refuses private IO without a separate bucket', async () => {
     vi.resetModules();
