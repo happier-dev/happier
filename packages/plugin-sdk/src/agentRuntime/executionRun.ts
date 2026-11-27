@@ -1,8 +1,10 @@
 import type { PluginDiagnosticData } from '../diagnostics.js';
+import { isPluginError } from '../errors.js';
 import type { PluginContributionRef } from '../identity.js';
 import type { Disposable } from '../lifecycle.js';
 import type { PluginJsonSchemaV2 } from '../actions/actionTypeMap.generated.js';
 import type { AgentExecutionTargetV1, ProviderBoundModelRef } from '@happier-dev/protocol';
+import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
 import type { AgentExecutionRunEventV1 } from '@happier-dev/protocol/runtime';
 import type { AgentExecutionRunHostServicesV1, AgentRuntimeContext } from './context.js';
 import type {
@@ -250,6 +252,7 @@ export type AgentFiniteExecutionRunHostOptions = Readonly<{
     signal: AbortSignal;
     emit(event: AgentFiniteExecutionRunProgressEvent): void;
   }>): Promise<AgentFiniteExecutionRunResult>;
+  /** Supplies a diagnostic for an untyped execution failure. */
   mapFailure(error: unknown): PluginDiagnosticData;
   unsupportedSendDiagnostic: PluginDiagnosticData;
 }>;
@@ -368,6 +371,21 @@ function createExecutionRunLifecycle(
   return lifecycle;
 }
 
+function readPluginErrorDiagnostic(error: unknown): PluginDiagnosticData | undefined {
+  if (!isPluginError(error)) return undefined;
+  const { details, failureCause, remediation } = error.data;
+  return {
+    code: error.code,
+    severity: 'error',
+    message: error.message,
+    details: failureCause === undefined ? details : {
+      ...(isJsonObject(details) ? details : details === undefined ? {} : { producerDetails: details }),
+      failureCause,
+    },
+    ...(remediation === undefined ? {} : { remediation }),
+  };
+}
+
 /**
  * Runs one native finite operation behind the canonical Execution Run event,
  * cancellation, replay, terminalization, and disposal lifecycle.
@@ -404,7 +422,7 @@ export function createFiniteExecutionRunHostRuntime(
     } catch (error) {
       result = signal.aborted
         ? { status: 'cancelled' }
-        : { status: 'failed', diagnostic: options.mapFailure(error) };
+        : { status: 'failed', diagnostic: readPluginErrorDiagnostic(error) ?? options.mapFailure(error) };
     }
     if (result.status === 'complete') {
       lifecycle.emit({ kind: 'run-complete' });
@@ -463,7 +481,8 @@ function createExecutionRunRuntimeFromConversation<Event extends AgentExecutionR
             : {}),
         }, sendOptions);
       } catch (error) {
-        emit({ kind: 'run-failed' });
+        const diagnostic = readPluginErrorDiagnostic(error);
+        emit({ kind: 'run-failed', ...(diagnostic === undefined ? {} : { diagnostic }) });
         try {
           await lifecycle.runtime.dispose();
         } catch {

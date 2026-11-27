@@ -115,6 +115,12 @@ persistence and native-provider limits belong to those boundary owners. Run
 markers retain the result's byte size as a nonnegative safe integer independently
 of its content size.
 
+In 0.3 development, a native finite Run or conversation send that throws a
+typed `PluginError` publishes its code, message, details, cause and remediation
+through the existing terminal diagnostic. The finite Run's fallback mapper
+supplies diagnostics for untyped failures. The host applies its existing
+diagnostic sanitization before delivery.
+
 ACP tool calls remain Running until native terminal evidence or an explicit host
 lifecycle action settles them. Elapsed time alone does not manufacture a failed
 tool result. The development transport and plugin declarations have no tool-call

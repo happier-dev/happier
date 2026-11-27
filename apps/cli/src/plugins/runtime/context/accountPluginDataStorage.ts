@@ -283,6 +283,10 @@ function dataError(
     });
 }
 
+function accountKvOutcomeUnknown(message: string): PluginError {
+    return new PluginError({ code: 'plugin_account_storage_outcome_unknown', message, effectAttempted: true });
+}
+
 function createUnavailableAccountCollection<
     TDefinition extends PluginAccountCollectionDefinition,
 >(code: string): PluginAccountCollectionForDefinition<TDefinition> {
@@ -1768,18 +1772,18 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                         encodedBody,
                         requestConfig(input.snapshot.credentials, signal),
                     );
-                } catch (error) {
-                    throw dataError('plugin_account_storage_outcome_unknown', 'Account KV write outcome is unknown');
+                } catch {
+                    throw accountKvOutcomeUnknown('Account KV write outcome is unknown');
                 }
                 if (response.status < 200 || response.status >= 300) {
                     const unavailable = PluginAccountStorageUnavailableV1Schema.safeParse(response.data);
                     throw unavailable.success
                         ? dataError(ACCOUNT_DATA_UNAVAILABLE_CODE, 'Account KV is unavailable on this server')
-                        : dataError('plugin_account_storage_outcome_unknown', 'Account KV write outcome is unknown');
+                        : accountKvOutcomeUnknown('Account KV write outcome is unknown');
                 }
                 const parsed = PluginAccountStorageMutationResponseV1Schema.safeParse(response.data);
                 if (!parsed.success) {
-                    throw dataError('plugin_account_storage_outcome_unknown', 'Account KV mutation acknowledgement is invalid');
+                    throw accountKvOutcomeUnknown('Account KV mutation acknowledgement is invalid');
                 }
                 if (parsed.data.status === 'conflict') {
                     return 'conflict';

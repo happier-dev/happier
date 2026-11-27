@@ -1,5 +1,6 @@
 import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 
+import { PluginError } from '../errors.js';
 import {
   createExecutionRunHostBackendFromConversationRuntime,
   type AgentExecutionRunConversationRuntimeV1,
@@ -574,10 +575,12 @@ describe('createExecutionRunHostBackendFromConversationRuntime', () => {
     expect(harness.sessionDisposeCalls).toBe(1);
   });
 
-  it('terminalizes and disposes a resumed Run if its first send throws', async () => {
+  it('publishes the typed send refusal before retiring a resumed Run', async () => {
     const harness = createSessionHarness();
+    const refusal = new PluginError({ code: 'provider_account_required', message: 'Select a provider account.',
+      details: { reason: 'account_missing', requestId: 'resumed-send' } });
     harness.setSend(async () => {
-      throw new Error('resumed send failed');
+      throw refusal;
     });
     const execution = await createExecutionRunHostBackendFromConversationRuntime<AgentSessionRuntimeEvent>({
       request: createResumeRequest('run-resumed-send-failure'),
@@ -586,9 +589,12 @@ describe('createExecutionRunHostBackendFromConversationRuntime', () => {
     const events: AgentExecutionRunEvent[] = [];
     execution.watch((event) => events.push(event));
 
-    await expect(execution.send({ text: 'Continue the run.' })).rejects.toThrow('resumed send failed');
+    await expect(execution.send({ text: 'Continue the run.' })).rejects.toBe(refusal);
 
     expect(events.map((event) => event.kind)).toEqual(['run-start', 'run-failed']);
+    expect(events.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic: {
+      code: refusal.code, message: refusal.message, details: refusal.details,
+    } });
     expect(harness.subscriptionDisposeCalls).toBe(1);
     expect(harness.sessionDisposeCalls).toBe(1);
   });

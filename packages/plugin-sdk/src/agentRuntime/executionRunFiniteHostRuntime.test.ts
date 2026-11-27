@@ -1,4 +1,7 @@
 import { describe, expect, expectTypeOf, it, vi } from 'vitest';
+import { AgentExecutionRunEventV1Schema } from '@happier-dev/protocol/runtime';
+
+import { PluginError } from '../errors.js';
 
 import {
   createFiniteExecutionRunHostRuntime,
@@ -117,6 +120,36 @@ describe('createFiniteExecutionRunHostRuntime', () => {
     expect(events.map((event) => event.kind)).toEqual(['run-start', 'run-failed']);
     expect(events.at(-1)).toMatchObject({
       diagnostic: { code: 'native_review_failed', message: 'native failure' },
+    });
+  });
+
+  it('publishes the original typed refusal in the terminal Run event', async () => {
+    const refusal = new PluginError({
+      code: 'provider_account_required',
+      message: 'Select a provider account.',
+      details: { reason: 'account_missing', requestId: 'review-request' },
+      remediation: { kind: 'retry' },
+      failureCause: { errorClass: 'TypeError', errorCode: 'account_missing', phase: 'review.open', httpStatus: null },
+    });
+    const runtime = createFiniteExecutionRunHostRuntime({
+      request: createRequest('typed-refusal'),
+      execute: async () => { throw refusal; },
+      mapFailure: () => ({ code: 'review_failed', severity: 'error' }),
+      unsupportedSendDiagnostic: { code: 'follow_up_unsupported', severity: 'error' },
+    });
+    const events: AgentExecutionRunEvent[] = [];
+    runtime.watch((event) => events.push(event));
+
+    await vi.waitFor(() => expect(events.at(-1)?.kind).toBe('run-failed'));
+    expect(AgentExecutionRunEventV1Schema.parse(events.at(-1))).toMatchObject({
+      kind: 'run-failed',
+      diagnostic: {
+        severity: 'error',
+        code: refusal.code,
+        message: refusal.message,
+        remediation: refusal.remediation,
+        details: { reason: 'account_missing', requestId: 'review-request', failureCause: refusal.data.failureCause },
+      },
     });
   });
 

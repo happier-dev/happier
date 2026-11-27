@@ -1,5 +1,5 @@
 /** @moduleRealm any */
-import { PluginError, projectActionFailureCauseV1 } from '../errors.js';
+import { isPluginError, PluginError, projectActionFailureCauseV1 } from '../errors.js';
 import type {
   ConnectedAccountAuthenticationContext, ConnectedAccountAuthCompletionResult,
   ConnectedAccountHealthResult, ConnectedAccountPortableReadContext, ConnectedAccountPortableRuntime,
@@ -140,7 +140,11 @@ export function createMachineProvisionerApiKeyAccount(definition: MachineProvisi
         signal.throwIfAborted();
         if (!validToken(token)) throw new PluginError({ code: 'credential_unavailable' });
         return { kind: 'httpHeaders', headers: { [binding.headerName]: authorization(binding, token) } };
-      } catch { signal.throwIfAborted(); throw new PluginError({ code: 'credential_unavailable' }); }
+      } catch (error) {
+        signal.throwIfAborted();
+        if (isPluginError(error)) throw error;
+        throw new PluginError({ code: 'credential_unavailable' });
+      }
     },
   };
   return {

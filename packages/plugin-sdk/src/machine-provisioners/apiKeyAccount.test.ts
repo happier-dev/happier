@@ -32,6 +32,14 @@ function context(status: number, failure?: Error): ConnectedAccountReadContext {
 }
 
 describe('machine API key probe failure evidence', () => {
+  it('keeps a typed credential reader refusal when materializing headers', async () => {
+    const refusal = new PluginError({ code: 'plugin_connected_account_binding_out_of_scope',
+      details: { reason: 'holder_retired', requestId: 'credential-read' } });
+    await expect(runtime.materialize!({ kind: 'httpHeaders', origin: 'https://api.example.test', headerNames: ['authorization'] }, {
+      ...context(200), credentials: { async get() { throw refusal; } },
+    })).rejects.toBe(refusal);
+  });
+
   it('retains the thrown PluginError cause without disclosing its message', async () => {
     const result = await runtime.status(context(200, new PluginError({ code: 'plugin_fetch_adapter_unavailable', message: secret })));
     expect(result).toMatchObject({ status: 'unavailable', diagnostic: { details: { failureCause: {

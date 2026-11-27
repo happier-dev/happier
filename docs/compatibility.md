@@ -10049,11 +10049,12 @@ Action's material-safe projection. If the
 effect may have happened but terminal persistence cannot be proven, the
 Artifact remains `executing` and later callers receive
 `approval_execution_outcome_unknown`; they do not replay blindly.
-Current V2 terminal receipts also record whether the Action effect was attempted.
-Direct `approved -> failed` settlement records `effectAttempted: false`; terminal
-settlement after the `executing` claim records `true`. Existing development V2
-records without this presentation fact remain readable and do not gain inferred
-execution history.
+Current V2 terminal receipts carry evidence of whether the Action effect was
+attempted. A refusal before the handler starts records `effectAttempted: false`.
+A lost Account KV write acknowledgement records `true` because the storage
+owner dispatched the write. A handler can start and then receive a nested
+refusal without establishing whether the parent attempted its effect. Receipts
+without evidence omit the field. Existing V2 records remain readable as stored.
 
 The current development V2 vocabulary also permits terminal `outcome_unknown`
 from `approved` when a replay transport may have dispatched but its result is

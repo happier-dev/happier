@@ -396,12 +396,18 @@ it.each([
                 expect(readApproval().status).toBe('rejected');
             } else if (scenario === 'disable' || nested) {
                 expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'plugin_action_generation_retired' });
-                // The parent may have entered before its callee is refused;
-                // the parent receipt records that attempt, while writes stays 0.
-                expect(readApproval()).toMatchObject({ status: 'failed', execution: { ok: false,
-                    effectAttempted: scenario === 'callee_retire_during_caller_read' } });
+                const receipt = readApproval();
+                expect(receipt).toMatchObject({ status: 'failed', execution: { ok: false,
+                    errorCode: 'plugin_action_generation_retired' } });
+                if (scenario === 'callee_retire_during_caller_read') {
+                    // Starting the parent handler establishes no fact about its effect.
+                    expect(result).not.toHaveProperty('effectAttempted');
+                    expect(receipt.execution).not.toHaveProperty('effectAttempted');
+                } else {
+                    expect(receipt.execution).toHaveProperty('effectAttempted', false);
+                }
             } else if (scenario === 'uncertain') {
-                expect(result).toMatchObject({ ok: false, errorCode: 'plugin_account_storage_outcome_unknown' });
+                expect(result).toMatchObject({ ok: false, errorCode: 'plugin_account_storage_outcome_unknown', effectAttempted: true });
                 expect(readApproval()).toMatchObject({ status: 'failed', execution: { ok: false,
                     errorCode: 'plugin_account_storage_outcome_unknown', effectAttempted: true } });
             } else {

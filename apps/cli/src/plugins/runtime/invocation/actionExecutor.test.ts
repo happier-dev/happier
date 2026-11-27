@@ -124,6 +124,23 @@ describe('target action executor', () => {
     },
   );
 
+  it('keeps the typed Action refusal when the approval receipt acknowledgement is lost', async () => {
+    const failureCause = { phase: 'execution_authorization', errorClass: 'RpcError',
+      errorCode: 'credential_scope_denied', httpStatus: 403 } as const;
+    const executor = createExecutor({
+      resolve: () => ({ ...resolved('writesRemote'), confirmation: { title: 'Run effect' } }),
+      requestCurrentIntent: async ({ fingerprint }) => ({ status: 'approved', fingerprint,
+        artifactId: 'awaiting-receipt', settleExecution: async () => { throw new Error('Receipt acknowledgement lost'); } }),
+      invoke: async () => { throw new PluginError({ code: 'credential_scope_denied', failureCause,
+        details: { requestId: 'provider-request' } }); },
+    });
+
+    await expect(executor.execute({ pluginId: 'acme.alpha', localId: 'run', input: { value: 'x' }, surface: 'cli' }))
+      .resolves.toMatchObject({ status: 'failed', code: 'approval_execution_outcome_unknown', data: {
+        details: { reasonCode: 'credential_scope_denied', requestId: 'provider-request' }, failureCause,
+      } });
+  });
+
   it.each(['agent', 'mcp'] as const)('requests approval for Channels management on %s and dispatches the existing handler once after approval', async (surface) => {
     const localId = 'connection/pairing-cancel-v1';
     const parsed = parsePluginManifest(PLUGIN_MANIFEST);

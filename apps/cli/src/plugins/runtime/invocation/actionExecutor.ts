@@ -6,10 +6,10 @@ import { createApprovalAutomaticChecksV1 } from '@happier-dev/protocol/actions/e
 import type { ApprovalAutomaticChecksV1 } from '@happier-dev/protocol/approvals/approvalAutomaticChecks';
 import { readCurrentIntentMismatchFieldV1, type CurrentIntentMismatchV1 } from '@happier-dev/protocol/actions/executor/approvalReview';
 import { projectPluginFailureMessage } from '@happier-dev/protocol/plugins/failureProjection';
-import { ActionFailureCauseV1Schema, ActionOperationCredentialUseV1Schema, type ActionFailureCauseV1, type ActionOperationCredentialUseV1, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionFailureCauseV1Schema, ActionOperationCredentialUseV1Schema, projectApprovalExecutionOutcomeUnknownV1, type ActionFailureCauseV1, type ActionOperationCredentialUseV1, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ApprovalExecutionV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import type { ActionActorV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
-import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { sameStrictJsonValue, StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ActionExecutorContext, ApprovalExecutionOriginV1, ApprovalRequesterConfirmationV1, PluginSourceCustodyV1, TargetActionApprovalReplayPlacementV1, PluginActionPresentUserGatePolicy } from '@happier-dev/protocol';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginActionHandlerInvocation } from '@happier-dev/plugin-sdk/actions';
@@ -366,7 +366,7 @@ export function createTargetActionExecutor(deps: Readonly<{
           // gets the result only when those operands were absent.
           const resultIsPrivate = deps.hostConsumesExecutedValue || deps.rawDiagnosticConfidentiality?.paths.length;
           const execution = publicResult.status === 'executed'
-            ? { ok: true, ...(resultIsPrivate ? {} : { result: publicResult.value }) }
+            ? { ok: true as const, ...(resultIsPrivate ? {} : { result: publicResult.value }) }
             : projectContributedActionFailure({ ...publicResult, errorCode: publicResult.code, error: publicResult.message });
           try {
             await settleExecution({ artifactId: approvalArtifactId, execution: {
@@ -375,7 +375,17 @@ export function createTargetActionExecutor(deps: Readonly<{
           } catch {
             // The effect may have finished before its receipt acknowledgement
             // was lost. Never retry the live operands or claim nonexecution.
-            return Object.freeze({ status: 'failed', code: 'approval_execution_outcome_unknown', message: 'approval_execution_outcome_unknown' });
+            const failure = projectApprovalExecutionOutcomeUnknownV1(execution.ok ? undefined : execution);
+            const details = StrictJsonValueSchema.safeParse(failure.requestId === undefined
+              ? failure.details : { ...readRecord(failure.details), requestId: failure.requestId });
+            return Object.freeze({
+              status: 'failed', code: failure.errorCode, message: failure.error,
+              ...(details.success || failure.failureCause || failure.effectAttempted === true ? { data: {
+                ...(details.success ? { details: details.data } : {}),
+                ...(failure.failureCause ? { failureCause: failure.failureCause } : {}),
+                ...(failure.effectAttempted === true ? { effectAttempted: true } : {}),
+              } } : {}),
+            });
           }
         }
         return automationNotices ? { ...publicResult, automationNotices } : publicResult;
