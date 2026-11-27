@@ -75,6 +75,21 @@ describe('personal usage Action execution', () => {
         .toMatchObject({ ok: true, result: { kind: 'composed', facts: { tokens: { total: 2 } } } });
     });
 
+    it('preserves explicit source scope in a private recap for an Environment token', async () => {
+      const compose = USAGE_PRIVATE_RECAP_ACTION_IDS.compose;
+      const recap = (sources: string[]) => ({ query: normalizeUsageQuery({ ...query, sources }), selectedFields: ['tokens'] });
+      const execute = executeUsage(environmentGrant);
+      expect(await execute(compose, recap([outside]))).toMatchObject({
+        ok: false, errorCode: 'credential_scope_denied', details: { reason: 'environment_not_granted' },
+      });
+      expect(await execute(compose, recap([allowed, outside]))).toMatchObject({
+        ok: true, result: { kind: 'composed', facts: { tokens: { total: 1 } } },
+      });
+      expect(await executeUsage(API_TOKEN_FULL_GRANT_V1)(compose, recap([outside]))).toMatchObject({
+        ok: true, result: { kind: 'composed', facts: { tokens: { total: 0 } } },
+      });
+    });
+
     it('reads and prices only the granted Environment in a mixed-source query', async () => {
       expect(await read([allowed, outside], environmentGrant)).toMatchObject({ ok: true, result: { results: [
         { shownQuery: { sources: [allowed] }, accounting: { totals: { eventCount: 1, cost: { reportedUsd: 1 } } } },

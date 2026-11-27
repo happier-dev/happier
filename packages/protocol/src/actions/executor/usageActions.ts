@@ -75,8 +75,8 @@ export async function executeUsageAction(actionId: UsageActionId, value: unknown
     return parsed.success ? { ok: true, result: projectUsageModelPriceDelivery(parsed.data, request, context.surface) }
       : failure('usage_price_catalog_invalid');
   }
-  const read = async (input: UsageQueryBatchInput): Promise<UsageQueryBatchResult | ActionExecuteFailure> => {
-    const scope = projectApiTokenUsageQueryV1(context.externalActionCredential?.grant, input);
+  const read = async (input: UsageQueryBatchInput, recapSourceSelection?: readonly string[]): Promise<UsageQueryBatchResult | ActionExecuteFailure> => {
+    const scope = projectApiTokenUsageQueryV1(context.externalActionCredential?.grant, input, recapSourceSelection);
     if (!scope.ok) return scope;
     const { queries } = normalizeUsageQueryBatchInput(scope.input);
     const raw = await ports.query({ queries }, context, readChild);
@@ -131,7 +131,7 @@ export async function executeUsageAction(actionId: UsageActionId, value: unknown
           ...(selected.has('modelMix') ? ['model' as const] : []),
         ],
       });
-      const queried = await read({ queries: [query] });
+      const queried = await read({ queries: [query] }, request.query.sources);
       if ('ok' in queried) return queried;
       const snapshot = queried.results[0];
       if (!snapshot) return failure('usage_query_result_invalid');

@@ -4143,7 +4143,9 @@ in those Environments. An empty selection reads all app sources in the grant.
 The grant projection strips demand for quota, connected-account pools, Work,
 and Session or Activity evidence before the read. The response contains only
 accounting for the admitted app sources.
-The reader and delivery both consume the projected queries.
+The reader and delivery both consume the projected queries. Private recap
+passes its explicit source selection to the same grant projection before the
+read. An Account-wide private recap keeps its existing source selection rules.
 The grant owner permits the Usage query, accounting export and private recap
 paths to use this projection. App calls can still read the public model price
 catalog under the Action grant. The grant owner refuses Usage Actions that

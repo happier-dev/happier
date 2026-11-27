@@ -177,13 +177,20 @@ export function isApiTokenGrantRestrictedV1(grant: ApiTokenGrantV1): boolean {
 }
 
 /** Applies the admitted credential's Environment scope before any usage operands are read. */
-export function projectApiTokenUsageQueryV1(grant: ApiTokenGrantV1 | undefined, input: UsageQueryBatchInput) {
+export function projectApiTokenUsageQueryV1(
+  grant: ApiTokenGrantV1 | undefined,
+  input: UsageQueryBatchInput,
+  recapSourceSelection?: readonly string[],
+) {
   const environments = grant?.targets?.environments;
   if (!environments?.length) return { ok: true, input } as const;
 
   const allowedSources = new Set(environments.map(usageAppCallsSourceId));
   const queries = input.queries.flatMap(query => {
-    const sources = query.sources.length ? query.sources.filter(source => allowedSources.has(source)) : [...allowedSources];
+    // An Account-wide recap ignores page source filters. A scoped token still
+    // needs its explicit selection checked against the grant before any read.
+    const requested = recapSourceSelection ?? query.sources;
+    const sources = requested.length ? requested.filter(source => allowedSources.has(source)) : [...allowedSources];
     if (!sources.length) return [];
     // Project the requested evidence as well as the sources. Aggregation can
     // derive Work and Activity sections even without a private source read.
