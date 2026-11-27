@@ -299,7 +299,7 @@ export function createDaemonConnectedServiceAuthGroupSwitchCoordinator(params: R
       const memberStatesByProfileId = new Map(state.memberStatesByProfileId);
       const members = state.members.filter(({ profileId }) => {
         const health = resolveProjectedCredentialHealth(serviceId, profileId);
-        if (health.kind === 'present_but_unusable') {
+        if (health.kind === 'present_but_unusable' || health.kind === 'usable') {
           memberStatesByProfileId.set(profileId, {
             ...memberStatesByProfileId.get(profileId),
             credentialHealthStatus: health.status,

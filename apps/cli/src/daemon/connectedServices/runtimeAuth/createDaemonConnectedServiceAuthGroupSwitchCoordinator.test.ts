@@ -373,8 +373,14 @@ describe('createDaemonConnectedServiceAuthGroupSwitchCoordinator', () => {
     expect(restartSession).toHaveBeenCalledWith(expect.objectContaining({ activeProfileId: 'backup', generation: 2 }));
   });
 
-  it('hands a missing active member back to pool selection without listing profiles', async () => {
-    let current = group('primary', 1);
+  it('selects a reconnected backup after the active member is removed without listing profiles', async () => {
+    const beforeReconnect = group('primary', 1);
+    let current: ConnectedServiceAuthGroupV1 = {
+      ...beforeReconnect,
+      members: beforeReconnect.members.map((member) => member.profileId === 'backup'
+        ? { ...member, state: { ...member.state, credentialHealthStatus: 'needs_reauth' } }
+        : member),
+    };
     const listConnectedServiceProfiles = vi.fn(async () => ({
       serviceId: 'openai-codex' as const,
       profiles: [{ profileId: 'backup', status: 'connected' as const }],

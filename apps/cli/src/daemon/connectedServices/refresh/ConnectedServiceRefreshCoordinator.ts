@@ -1106,10 +1106,16 @@ export class ConnectedServiceRefreshCoordinator {
   private async credentialHealthRequiresReconnect(
     binding: BoundProfile,
     options: Readonly<{ force: boolean; reason: ConnectedServiceRefreshReason }>,
+    refreshDue: boolean,
   ): Promise<boolean> {
     if (options.reason === 'scheduled' || (options.reason === 'quota_bridge' && !options.force)) {
       const health = this.params.resolveProjectedCredentialHealth?.(binding.serviceId, binding.profileId);
-      return health?.kind === 'present_but_unusable' && isReconnectRequiredProfileStatus(health.status);
+      if (health && health.kind !== 'unknown') {
+        return health.kind === 'present_but_unusable' && isReconnectRequiredProfileStatus(health.status);
+      }
+      // A due refresh can write health. Check the existing latch when the push projection
+      // cannot answer, while settled credentials wait for their normal account update.
+      if (!refreshDue) return false;
     }
     return isReconnectRequiredProfileStatus(await readCredentialHealthStatusForRefresh({ api: this.params.api, binding }));
   }
@@ -1155,9 +1161,12 @@ export class ConnectedServiceRefreshCoordinator {
     }
 
     const expiresAt = source.mode === 'plain' ? record.expiresAt : source.metadata.expiresAt ?? record.expiresAt;
+    const refreshDue = options.force || (
+      typeof expiresAt === 'number' && Number.isFinite(expiresAt) && expiresAt - now <= this.params.refreshWindowMs
+    );
     let isCredentialHealthReprobe = false;
     if (shouldBlockRefreshForCredentialHealth(options.reason)
-      && await this.credentialHealthRequiresReconnect(binding, options)) {
+      && await this.credentialHealthRequiresReconnect(binding, options, refreshDue)) {
       if (this.shouldDeferCredentialHealthReprobe(binding, now, options)) {
         return {
           status: 'blocked_by_credential_health',
@@ -1175,43 +1184,24 @@ export class ConnectedServiceRefreshCoordinator {
       isCredentialHealthReprobe = true;
     }
     const descriptor = getConnectedAccountDescriptor(binding.serviceId);
-    const providerContextOnly = options.ensureProviderContext === true
-      && !options.force && !isCredentialHealthReprobe
-      && (typeof expiresAt !== 'number' || !Number.isFinite(expiresAt) || expiresAt - now > this.params.refreshWindowMs);
+    const providerContextOnly = options.ensureProviderContext === true && !refreshDue && !isCredentialHealthReprobe;
     const needsProviderContext = providerContextOnly
       && connectedServiceUsageRequiresOrganizationId(binding.serviceId) && descriptor?.oauth?.resolveRefreshCredentialEvidence
       && !readConnectedServiceCredentialOrganizationId(record);
-    if (!options.force && !isCredentialHealthReprobe && !needsProviderContext) {
-      if (typeof expiresAt !== 'number' || !Number.isFinite(expiresAt)) {
-        return {
+    if (!refreshDue && !isCredentialHealthReprobe && !needsProviderContext) {
+      return {
+        status: 'not_needed',
+        credential: record,
+        ...(source.revisionSemantics === 'revisioned' ? { credentialRevision: source.credentialRevision } : {}),
+        diagnostic: buildRefreshDiagnostic({
+          binding,
+          reason: options.reason,
           status: 'not_needed',
-          credential: record,
-          ...(source.revisionSemantics === 'revisioned' ? { credentialRevision: source.credentialRevision } : {}),
-          diagnostic: buildRefreshDiagnostic({
-            binding,
-            reason: options.reason,
-            status: 'not_needed',
-            expiresAt,
-            now,
-            refreshWindowMs: this.params.refreshWindowMs,
-          }),
-        };
-      }
-      if (expiresAt - now > this.params.refreshWindowMs) {
-        return {
-          status: 'not_needed',
-          credential: record,
-          ...(source.revisionSemantics === 'revisioned' ? { credentialRevision: source.credentialRevision } : {}),
-          diagnostic: buildRefreshDiagnostic({
-            binding,
-            reason: options.reason,
-            status: 'not_needed',
-            expiresAt,
-            now,
-            refreshWindowMs: this.params.refreshWindowMs,
-          }),
-        };
-      }
+          expiresAt,
+          now,
+          refreshWindowMs: this.params.refreshWindowMs,
+        }),
+      };
     }
 
     if (source.revisionSemantics !== 'revisioned') {

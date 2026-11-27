@@ -5531,7 +5531,7 @@ afterEach(() => {
     });
   });
 
-  it('backs off scheduled reconnect-required reprobes after a failed probe', async () => {
+  it.each(['pushed', 'unknown'] as const)('backs off reconnect-required reprobes with %s health after a transient failure', async (projection) => {
     const baseDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-refresh-needs-reauth-backoff-'));
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-server-refresh-needs-reauth-backoff-'));
 
@@ -5542,12 +5542,13 @@ afterEach(() => {
     if (credentials.encryption.type !== 'legacy') throw new Error('fixture');
 
     let now = 1_000_000;
+    const expiresAt = now + 30_000;
     const record = buildConnectedServiceCredentialRecord({
       now,
       serviceId: 'openai-codex',
       profileId: 'work',
       kind: 'oauth',
-      expiresAt: now + 30_000,
+      expiresAt,
       oauth: {
         accessToken: 'old-access',
         refreshToken: 'invalid-refresh',
@@ -5569,7 +5570,7 @@ afterEach(() => {
     const api = {
       getConnectedServiceCredentialSealed: vi.fn(async () => ({
         sealed: { format: 'account_scoped_v1', ciphertext: sealedCiphertext },
-        metadata: { kind: 'oauth', providerEmail: null, providerAccountId: 'acct', expiresAt: now + 30_000 },
+        metadata: { kind: 'oauth', providerEmail: null, providerAccountId: 'acct', expiresAt },
       })),
       listConnectedServiceProfiles: vi.fn(async () => ({
         serviceId: 'openai-codex',
@@ -5579,7 +5580,7 @@ afterEach(() => {
           kind: 'oauth' as const,
           providerEmail: null,
           providerAccountId: 'acct',
-          expiresAt: now + 30_000,
+          expiresAt,
         }],
       })),
       acquireConnectedServiceRefreshLease: vi.fn(async () => ({ acquired: true, leaseUntil: now + 60_000 })),
@@ -5606,7 +5607,9 @@ afterEach(() => {
       refreshWindowMs: 60_000,
       refreshLeaseMs: 30_000,
       now: () => now,
-      resolveProjectedCredentialHealth: () => ({ kind: 'present_but_unusable', status: 'needs_reauth' }),
+      resolveProjectedCredentialHealth: () => projection === 'pushed'
+        ? { kind: 'present_but_unusable', status: 'needs_reauth' }
+        : { kind: 'unknown' },
       logRefreshDiagnostic,
     });
 
@@ -5620,8 +5623,15 @@ afterEach(() => {
       materializationKey: 'session-1',
     });
 
+    if (projection === 'unknown') {
+      now -= 60_000;
+      await expect(coordinator.tickOnce()).resolves.toBeUndefined();
+      expect(api.listConnectedServiceProfiles).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled();
+      now += 60_000;
+    }
+
     await expect(coordinator.tickOnce()).resolves.toBeUndefined();
-    expect(api.listConnectedServiceProfiles).not.toHaveBeenCalled();
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(api.updateConnectedServiceCredentialHealth).not.toHaveBeenCalled();
     expect(logRefreshDiagnostic).toHaveBeenLastCalledWith(expect.objectContaining({
@@ -5640,6 +5650,7 @@ afterEach(() => {
     now += 30_000;
     await expect(coordinator.tickOnce()).resolves.toBeUndefined();
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    if (projection === 'pushed') expect(api.listConnectedServiceProfiles).not.toHaveBeenCalled();
   });
 
   it('returns an honest blocked-health spawn preflight result before the expiry-window shortcut', async () => {
