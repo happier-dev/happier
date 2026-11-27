@@ -1387,9 +1387,11 @@ conversion's keys to open the source Discussion key or wrap a new one under the
 target Task key. The existing signed Account transaction commits the Task,
 Discussion content, and staged attachments together.
 
-Task deletion currently retires the Task key envelopes while
-retaining the thread. Retention of the key needed to recover that history must
-be resolved before this path ships.
+Deleting an internal Task atomically deletes its Task-anchored Discussion
+thread in the same Task-deletion transaction, retiring the thread, its
+messages, and any attachments alongside the Task's grants and key envelopes so
+no orphaned unreadable threads remain and no separate key-retention machinery
+is needed.
 
 ### Shared Collection items (0.3 development integration)
 

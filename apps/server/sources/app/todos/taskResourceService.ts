@@ -16,6 +16,7 @@ import type { Prisma } from '@prisma/client';
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 import { acquireAccountChangePublicationLocksInTx } from '@/app/changes/markAccountChanged';
 import { ACCOUNT_DISPLAY_PROFILE_SELECT, projectAccountDisplayProfileV1, resolveAccountDisplayLabelV1 } from '@/app/account/profile/accountDisplayProfile';
+import { deleteTaskDiscussionInTx } from '@/app/discussions/deleteTaskDiscussionInTx';
 import { taskCredentialFactsSelect, resolveTaskGrantAdmissionsForRowsInTx, taskRowsWhere, resolveTaskAudienceInTx } from './taskGrantStorageAdapter';
 import { publishTaskChangedInTx } from './taskChanges';
 
@@ -208,7 +209,7 @@ export async function mutateTaskResourceInTx(tx: Tx, input: TaskActorInput & Rea
     return { ok: true, value: { ...admitted.value, content, version: written.value } };
 }
 
-/** Tombstone the owned Task and publish to its previous audience before retiring its grants and keys. */
+/** Tombstone the owned Task and publish to its previous audience before retiring its anchored Discussion, grants, and keys. */
 export async function deleteTaskResource(input: TaskActorInput): Promise<TaskResult<ReturnType<typeof TaskResourceDeleteResponseV1Schema.parse>>> {
     if (input.actorAccountId !== input.ownerAccountId) return { ok: false, error: 'task_not_found' };
     return inTx<TaskResult<ReturnType<typeof TaskResourceDeleteResponseV1Schema.parse>>>(async tx => {
@@ -216,8 +217,14 @@ export async function deleteTaskResource(input: TaskActorInput): Promise<TaskRes
         const resolved = await resolveTaskContextInTx(tx, input);
         if (!resolved.ok) return resolved;
         const context = resolved.value;
+        const audience = await resolveTaskAudienceInTx(tx, context.row.id);
         const written = await writeTaskContentInTx(tx, context, context.row.version, null);
         if (!written.ok) return written;
+        await deleteTaskDiscussionInTx(tx, {
+            taskRowId: context.row.id,
+            ownerAccountId: context.row.accountId,
+            audienceAccountIds: audience,
+        });
         await tx.taskGrant.deleteMany({ where: { taskId: context.row.id } });
         await tx.taskKeyEnvelope.deleteMany({ where: { taskId: context.row.id } });
         return { ok: true, value: { deleted: true } };

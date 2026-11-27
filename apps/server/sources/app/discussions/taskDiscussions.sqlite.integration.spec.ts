@@ -9,10 +9,11 @@ import { registerDiscussionRoutes } from '@/app/api/routes/discussions/registerD
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { createPresentUserSessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication.testkit';
 import { admitTeamMemberInTx } from '@/app/teams/memberships/membershipService';
+import { deleteTaskResource } from '@/app/todos/taskResourceService';
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
 import { createAccountTokenForTests, createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
-import { migrateDiscussionAccountEncryptionInTx } from './accountEncryptionMigration';
+import { migrateDiscussionAccountEncryptionInTx, readDiscussionAccountEncryptionInventoryInTx } from './accountEncryptionMigration';
 import { createDiscussion } from './mutations';
 import { getDiscussion, listDiscussions } from './queries';
 import { setDiscussionGrant } from './accessService';
@@ -153,5 +154,64 @@ describe('Task Discussion first comment', () => {
         }));
         expect(result).toEqual({ status: 'migration_incomplete' });
         expect(await getDiscussion({ discussionId: discussion.id, actorAccountId: owner.id, authentication })).toMatchObject({ ok: true });
+    });
+
+    it('atomically deletes the Task-anchored Discussion thread when deleting a Task', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const member = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const taskId = crypto.randomUUID();
+        const task = await db.userKVStore.create({ data: { accountId: owner.id, key: `todo.${taskId}`,
+            value: new TextEncoder().encode(JSON.stringify({ t: 'plain', v: { id: taskId, title: 'Deletable task' } })) } });
+        await db.taskGrant.create({ data: { taskId: task.id, principalKind: 'account', accountId: member.id, accessLevel: 'edit', createdByAccountId: owner.id } });
+        const anchor = { kind: 'task' as const, entry: { source: INTERNAL_TASK_SOURCE_V1, ...internalTaskLocalRefV1(taskId, owner.id) } };
+
+        const created = await createDiscussion({ actorAccountId: owner.id, authentication, request: requestFor(anchor, member.id) });
+        if (!created.ok) throw new Error(created.error);
+        const discussionId = created.value.discussion.id;
+
+        expect(await getDiscussion({ discussionId, actorAccountId: owner.id, authentication })).toMatchObject({ ok: true });
+        expect(await getDiscussion({ discussionId, actorAccountId: member.id, authentication })).toMatchObject({ ok: true });
+        expect(await listDiscussions({ anchorTask: anchor.entry, actorAccountId: owner.id, authentication })).toMatchObject({ ok: true,
+            value: { discussions: [{ id: discussionId }], nextCursor: null } });
+        expect(await db.discussion.count({ where: { id: discussionId } })).toBe(1);
+        expect(await db.discussionMessage.count({ where: { discussionId } })).toBe(1);
+
+        expect(await deleteTaskResource({ ownerAccountId: owner.id, taskId, actorAccountId: owner.id, authentication })).toEqual({
+            ok: true, value: { deleted: true },
+        });
+
+        expect(await getDiscussion({ discussionId, actorAccountId: owner.id, authentication })).toEqual({ ok: false, error: 'discussion_not_found' });
+        expect(await getDiscussion({ discussionId, actorAccountId: member.id, authentication })).toEqual({ ok: false, error: 'discussion_not_found' });
+        expect(await listDiscussions({ anchorTask: anchor.entry, actorAccountId: owner.id, authentication })).toEqual({ ok: true,
+            value: { discussions: [], nextCursor: null } });
+        expect(await listDiscussions({ anchorKinds: ['task'], actorAccountId: owner.id, authentication })).toEqual({ ok: true,
+            value: { discussions: [], nextCursor: null } });
+        expect(await listDiscussions({ anchorKinds: ['task'], actorAccountId: member.id, authentication })).toEqual({ ok: true,
+            value: { discussions: [], nextCursor: null } });
+
+        const ownerToken = await createAccountTokenForTests(owner.id, { kind: 'terminal', authority: 'account_automation' });
+        await withAuthenticatedTestApp(registerDiscussionRoutes, async app => {
+            const response = await app.inject({ method: 'GET', url: `/v1/discussions/${discussionId}`, headers: { authorization: `Bearer ${ownerToken}` } });
+            expect(response.statusCode).toBe(404);
+        }, { authentication: 'real' });
+
+        expect(await db.discussion.count({ where: { id: discussionId } })).toBe(0);
+        expect(await db.discussionMessage.count({ where: { discussionId } })).toBe(0);
+        expect(await db.discussionReadState.count({ where: { discussionId } })).toBe(0);
+        expect(await db.discussionGrant.count({ where: { discussionId } })).toBe(0);
+        expect(await db.discussionKeyEnvelope.count({ where: { discussionId } })).toBe(0);
+        expect(await db.discussionParticipant.count({ where: { discussionId } })).toBe(0);
+        expect(await db.taskGrant.count({ where: { taskId: task.id } })).toBe(0);
+        expect(await db.taskKeyEnvelope.count({ where: { taskId: task.id } })).toBe(0);
+        expect(await inTx(tx => readDiscussionAccountEncryptionInventoryInTx(tx, { accountId: owner.id, authentication }))).toEqual({ items: [] });
+        expect(await db.accountChange.count({ where: { accountId: owner.id, kind: 'discussion', entityId: discussionId } })).toBe(1);
+        expect(await db.accountChange.count({ where: { accountId: member.id, kind: 'discussion', entityId: discussionId } })).toBe(1);
+
+        const withoutDiscussionTaskId = crypto.randomUUID();
+        await db.userKVStore.create({ data: { accountId: owner.id, key: `todo.${withoutDiscussionTaskId}`,
+            value: new TextEncoder().encode(JSON.stringify({ t: 'plain', v: { id: withoutDiscussionTaskId, title: 'No comments' } })) } });
+        expect(await deleteTaskResource({ ownerAccountId: owner.id, taskId: withoutDiscussionTaskId, actorAccountId: owner.id, authentication })).toEqual({
+            ok: true, value: { deleted: true },
+        });
     });
 });
