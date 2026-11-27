@@ -462,6 +462,18 @@ describe('Usage settings UI Action admission', () => {
         expect(harness.artifacts(serverId).list().map(artifact => artifact.id)).toEqual(beforeRetiredPress);
         await screen.unmount();
     });
+    it('shows the typed refusal when the Home denies model-price Refresh', async () => {
+        harness.answer(serverId, 'POST /v1/account/usage/prices/refresh', {
+            status: 403, body: { error: 'credential_scope_denied' },
+        });
+        const { slice } = priceSlice();
+        const screen = await renderScreen(<UsageModelPricesEditor slice={slice} serverId={serverId} testID="prices" />);
+        await act(async () => { screen.pressByTestId('prices.provenance.refresh'); });
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(t('errors.permissionDenied')));
+        expect(screen.findByTestId('prices.provenance.refresh')?.props.disabled).toBe(false);
+        await screen.unmount();
+    });
+
     it('draws the rows the sheet can show in its opening commit and the rest in one deferred commit (R138 Prices cost)', async () => {
         const { slice } = priceSlice();
         // Scale-shaped: a heavy Account prices a few dozen models.

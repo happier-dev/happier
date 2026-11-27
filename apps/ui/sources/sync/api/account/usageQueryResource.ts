@@ -1,4 +1,6 @@
 import { projectUsageAnalyticsResponseDemand } from '@happier-dev/protocol/usage/usageLeaderProjection';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionCredentialScopeDeniedHttpFailureV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { createFrontDoorActionExecute, createFrontDoorUiActionExecutor, requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
@@ -318,11 +320,17 @@ export async function readUiUsageModelPrices(context: UsageQueryAccountContext, 
     const retirement = context.accountLifetime.onRetire(() => abort.abort());
     const cancellation = mergeAbortSignals([signal, abort.signal]);
     const consume = async (response: Response) => {
-        if (!response.ok) throw new HappyError('Model price catalog unavailable', false, {
-            status: response.status, kind: response.status === 401 || response.status === 403 ? 'auth' : 'config',
-            code: response.status === 401 || response.status === 403 ? 'denied'
-                : [404, 405, 501].includes(response.status) ? 'unsupported' : 'usage_prices_read_failed',
-        });
+        if (!response.ok) {
+            if (response.status === 403) {
+                const refusal = readActionCredentialScopeDeniedHttpFailureV1(response.status, await response.json().catch(() => null));
+                if (refusal) throw createActionExecuteFailureError(refusal);
+            }
+            throw new HappyError('Model price catalog unavailable', false, {
+                status: response.status, kind: response.status === 401 || response.status === 403 ? 'auth' : 'config',
+                code: response.status === 401 || response.status === 403 ? 'denied'
+                    : [404, 405, 501].includes(response.status) ? 'unsupported' : 'usage_prices_read_failed',
+            });
+        }
         return UsageModelPriceCatalogSchema.parse(await response.json());
     };
     if (refresh && scope) modelPriceReads.invalidate(scope);

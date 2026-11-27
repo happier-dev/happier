@@ -1,3 +1,5 @@
+import { parseActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionCredentialScopeDeniedHttpFailureV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { UsageActionPorts } from '@happier-dev/protocol/actions/executor/usageActions';
 import type { UsageQueryBatchResult } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
@@ -16,8 +18,14 @@ const publicProfileReads = createScopedResolutionSingleFlight<PublicProfileRead>
 
 async function consumePublicProfile(response: Response): Promise<PublicProfileRead> {
   if ([404, 405, 501].includes(response.status)) return { kind: 'unavailable' };
-  if (!response.ok) return { ok: false, errorCode: response.status === 401 || response.status === 403 ? 'denied' : 'public_profile_read_failed',
-    error: 'public_profile_read_failed' };
+  if (!response.ok) {
+    if (response.status === 403) {
+      const refusal = readActionCredentialScopeDeniedHttpFailureV1(response.status, await response.json().catch(() => null));
+      if (refusal) return refusal;
+    }
+    return { ok: false, errorCode: response.status === 401 || response.status === 403 ? 'denied' : 'public_profile_read_failed',
+      error: 'public_profile_read_failed' };
+  }
   const result = PublicProfileReadResultV1Schema.safeParse(await response.json());
   return result.success ? result.data : { ok: false, errorCode: 'public_profile_result_invalid', error: 'public_profile_result_invalid' };
 }
@@ -36,6 +44,8 @@ export function createUiUsageActionPorts(account: UsageQueryAccountContext & Pic
     } catch (error) {
       account.assertCurrent();
       throwIfAborted(context.signal);
+      const failure = parseActionExecuteFailure(error);
+      if (failure) return failure;
       if (error instanceof HappyError && error.code) return { ok: false as const, errorCode: error.code, error: error.code };
       throw error;
     }

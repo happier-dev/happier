@@ -21,6 +21,7 @@ import { Typography } from '@/constants/Typography';
 import { useSetting } from '@/sync/domains/state/storage';
 import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import { resolveActionExecutionErrorMessage, resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { formatUsageObservedAt } from '@/sync/domains/usage/usageCalendarPresentation';
 import {
   buildUsagePriceEditorModel,
@@ -179,24 +180,28 @@ function UsagePriceProvenance(
 ) {
   const text = usePlanText();
   const rowInset = useModelPriceRowInset();
-  const [state, setState] = React.useState<'idle' | 'refreshing' | 'failed'>(
-    'idle',
-  );
+  const [state, setState] = React.useState<'idle' | 'refreshing' | { failureMessage: string }>('idle');
+  const fallback = t('usage.board.page.pricesFetchFailed');
   const note =
     props.provenance.fetchStatus === 'disabled'
       ? t('usage.board.page.pricesFetchDisabled')
-      : props.provenance.fetchStatus === 'error' || state === 'failed'
-        ? t('usage.board.page.pricesFetchFailed')
-        : null;
+      : typeof state === 'object'
+        ? state.failureMessage
+        : props.provenance.fetchStatus === 'error' ? fallback : null;
   const { execute, isCurrent } = useMountedActionExecution(props.serverId);
   const refresh = async () => {
     if (!isCurrent()) return;
     setState('refreshing');
     try {
       const executed = await execute('usage.prices.refresh', {});
-      if (isCurrent()) setState(executed.ok || isActionApprovalDeclinedErrorCode(executed.errorCode) ? 'idle' : 'failed');
-    } catch {
-      if (isCurrent()) setState('failed');
+      if (!isCurrent()) return;
+      if (executed.ok || isActionApprovalDeclinedErrorCode(executed.errorCode)) {
+        setState('idle');
+        return;
+      }
+      setState({ failureMessage: resolveActionExecutionFailureMessage(executed, fallback) ?? fallback });
+    } catch (error) {
+      if (isCurrent()) setState({ failureMessage: resolveActionExecutionErrorMessage(error, fallback) });
     }
   };
   return (
