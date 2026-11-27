@@ -81,6 +81,21 @@ exportCheck="Export scan"
 printf '%s\n' "$cs" | checked "$exportCheck"
 miss=$(lines_added <(printf '%s\n' "$bs") <(printf '%s\n' "$cs"))
 if [ -n "$miss" ]; then
+  # Confirm apparent additions with the same scanner against the exact parent. A cached whole-tree
+  # result can omit an inherited row. Rescan only the importers we would otherwise blame.
+  if ! parent_rows=$(env -u OVERLAY -u PREFETCH -u INDEX_OUT "REV=$1" EXACT=1 \
+    node "$toolsDir/scan/scan.cjs" "$PWD" <(printf '%s\n' "$miss" | cut -f1 | sort -u) \
+    | sed -E 's/:[0-9]+\t/\t/'); then
+    echo "gate unavailable: exact parent export recheck failed"
+    exit 75
+  fi
+  preexisting=$(lines_common <(printf '%s\n' "$parent_rows") <(printf '%s\n' "$miss"))
+  if [ -n "$preexisting" ]; then
+    printf 'Pre-existing export findings (also at parent %s):\n%s\n' "$1" "$preexisting"
+  fi
+  miss=$(lines_added <(printf '%s\n' "$parent_rows") <(printf '%s\n' "$miss"))
+fi
+if [ -n "$miss" ]; then
   echo "MISSING EXPORTS (new, whole repo):"
   echo "$miss" | cut -c1-250
   first=${miss%%$'\n'*}
