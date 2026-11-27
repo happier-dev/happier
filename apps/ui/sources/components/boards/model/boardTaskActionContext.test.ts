@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { PluginContributesV2Schema } from '@happier-dev/protocol/plugins/contributions/v2';
-import { TaskResourceV1Schema, TaskResourcesListResponseV1Schema } from '@happier-dev/protocol/actions/internalTaskActions';
+import { InternalTaskListOutputSchema, TaskResourceV1Schema, TaskResourcesListResponseV1Schema } from '@happier-dev/protocol/actions/internalTaskActions';
 import { PLUGIN_MANIFEST } from '@happier-dev/plugins-triage/manifest';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -32,8 +32,7 @@ it('reads linked tasks through the real Board Account Action front door', async 
         ownerAccountId: 'owner', taskId: task.id, access: 'owner', encryptionMode: 'plain', encryptedDataKey: null,
         version: 1, content: { t: 'plain', v: task },
     })] }) });
-    homes.answer(serverId, 'GET /v1/kv/todo.index', { body: { key: 'todo.index', version: 1,
-        value: Buffer.from(JSON.stringify({ t: 'plain', v: { undoneOrder: [task.id], completedOrder: [] } })).toString('base64') } });
+    homes.answer(serverId, 'POST /v1/kv/bulk', { body: { values: [] } });
     // This authored test client implements Work Items only, rather than the production drag/drop client.
     const contributes = PluginContributesV2Schema.parse({ ...PLUGIN_MANIFEST.contributes, dragSources: [], dropTargets: [] });
     const definition = contributes.workItems[0]!;
@@ -53,8 +52,12 @@ it('reads linked tasks through the real Board Account Action front door', async 
                 actionFailure = error;
                 throw error;
             });
-            if (!result || typeof result !== 'object' || !('todos' in result) || !Array.isArray(result.todos)) throw new Error('Expected Task list');
-            return { itemIds: result.todos.map(todo => String(todo.id)), complete: true };
+            const listed = InternalTaskListOutputSchema.parse(result);
+            if (listed.status !== 'ok') {
+                actionFailure = listed;
+                throw new Error('Expected Task list');
+            }
+            return { itemIds: listed.todos.map(todo => todo.id), complete: true };
         },
         resolve: async ({ itemIds }) => Object.fromEntries(itemIds.map(id => [id, { title: task.title, category: 'unstarted' as const,
             linkedSessions: [{ serverId, sessionId: 'worker' }] }])),

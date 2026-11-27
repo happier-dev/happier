@@ -15,9 +15,9 @@ import { createPluginUiClientExecutableRegistrationIndex } from '@/components/pl
 import { readBoardTaskItems } from '../model/boardTaskItems';
 import { createBoardCardProjection } from '../model/boardCards';
 import { buildWorkBoardItemKeyV1 } from '@happier-dev/protocol/boards/workBoardV1';
+import { resolveBoardCardOpenTarget, type BoardCardAction } from '../model/boardCardOpenTarget';
 
-const sessionNavigation = vi.hoisted(() => vi.fn());
-vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ router: { push: sessionNavigation } }).module);
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 
 const hydrateSessionListRows = vi.hoisted(() => vi.fn(async (_addresses: readonly { serverId: string; sessionId: string }[]) => undefined));
 vi.mock('@/sync/sync', () => ({ sync: { hydrateSessionListRows } }));
@@ -118,13 +118,16 @@ describe('Board body facts', () => {
             task: () => ({ title: 'Fix checkout', category: 'started', categoryLabel: 'In progress',
                 parentItemId: 'payments', parentTitle: 'Payments', linkedSessions: [{ serverId: 'home-b', sessionId: 'worker' }] }),
         })[0]!;
-        const screen = await renderScreen(<BoardCardView card={card} />);
+        const onAction = vi.fn((selected: BoardCard, action: BoardCardAction) =>
+            resolveBoardCardOpenTarget(selected, { inboxAvailable: true, action }));
+        const screen = await renderScreen(<BoardCardView card={card} onAction={onAction} />);
         expect(screen.getTextContent()).toContain('In progress');
         expect(screen.getTextContent()).toContain('Payments');
         const open = screen.findHostByTestId('board-card:task:session:home-b:worker');
         expect(open).not.toBeNull();
         await act(async () => open!.props.onPress());
-        expect(sessionNavigation).toHaveBeenCalledWith('/session/worker?serverId=home-b');
+        expect(onAction).toHaveReturnedWith({ kind: 'item', ref: { kind: 'session',
+            qualifiedId: { serverId: 'home-b', id: 'worker' } } });
     });
     it('offers native Review for a held Run and Run now for a readable workflow without answering inline', async () => {
         const onAction = vi.fn();
