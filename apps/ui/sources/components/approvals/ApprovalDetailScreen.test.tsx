@@ -1545,17 +1545,30 @@ describe('ApprovalDetailScreen', () => {
   it('follows the detached operation an executed receipt accepted until it settles (CLOUD-ACQ)', async () => {
     const { actionOperationStore } = await import('@/sync/domains/actionOperations/actionOperationStore');
     const { ActionOperationSnapshotV1Schema } = await import('@happier-dev/protocol/actions/operations/v1');
-    currentArtifact = await createBuiltInApprovalArtifact({
-      // Any executed result that names its detached operation (managed Create and Delete do) is followed alike.
-      actionId: 'machines.presets.archive',
-      actionArgs: { homeId: approvalHomeFixture.serverIdentityId, id: 'preset-1', expectedRevision: 0 },
+    const { ManagedDeleteInputV1Schema, ManagedDeleteOutputV1Schema } = await import('@happier-dev/protocol/machines/managed/actionsV1');
+    const homeId = approvalHomeFixture.serverIdentityId;
+    const actionId = 'machines.managed.delete';
+    const request = ApprovalRequestV2Schema.parse({
+      v: 2, status: 'executed', createdAtMs: 1, updatedAtMs: 3,
+      actionId, requestedSurface: 'cli', createdBy: { surface: 'cli' },
+      actionArgs: ManagedDeleteInputV1Schema.parse({ homeId, managedId: 'managed-1', when: 'now',
+        expectedRevision: 1, intent: 'delete', reviewedDependencies: true }),
       summary: 'Delete machine',
-      executedResult: { kind: 'accepted', managedId: 'managed-1', intentRevision: 2, operation: { operationId: 'delete-1' } },
+      executionOriginV1: { v: 1, actionId, surface: 'cli', authority: 'present_user', serverId: homeId,
+        accountId: 'account-1', requestId: 'delete-request', caller: { kind: 'host' } },
+      decision: { kind: 'approve', decidedAtMs: 2, authority: 'present_user', decidingAccountId: 'account-1' },
+      execution: { executedAtMs: 3, ok: true, result: ManagedDeleteOutputV1Schema.parse({
+        kind: 'accepted', managedId: 'managed-1', intentRevision: 2,
+        operation: { operationId: 'delete-1' },
+        machineReferences: { homeId, machineId: 'guest-1', coverage: 'complete', references: [], unavailable: [] },
+      }) },
     });
+    currentArtifact = { id: 'artifact-1', fixtureHomeKey: 'server-cache',
+      header: buildApprovalRequestArtifactHeaderV1(request), body: JSON.stringify(request) };
     await prepareApprovalFixture();
     const operationServerId = resolveServerProfileScopeIdForIdentifier(account.serverId);
     const operation = (overrides: Record<string, unknown>) => ActionOperationSnapshotV1Schema.parse({
-      version: 1, operationId: 'delete-1', revision: 1, actionId: 'machines.presets.archive', state: 'running',
+      version: 1, operationId: 'delete-1', revision: 1, actionId, state: 'running',
       title: 'Delete machine', createdAt: 1, startedAt: 2, cancellation: 'unsupported',
       scope: { accountId: 'account-1', machineId: 'controller-1' }, ...overrides });
     const { ApprovalDetailScreen } = approvalDetailScreenModule;

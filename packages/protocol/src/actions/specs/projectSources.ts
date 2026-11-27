@@ -131,6 +131,8 @@ export const PROJECT_SOURCE_ACTION_SPECS_V1: readonly ProjectSourceActionSpec[] 
   },
   {
     ...common, id: PROJECT_SOURCE_SETUP_REQUIREMENTS_ACTION_ID_V1, approval: { result: 'required' },
+    hostReviewedChildren: (input: unknown) => [{ action: 'artifact.get', role: 'read_published_setup',
+      scopeInput: { projectSourceId: ProjectSourcesReadInputV1Schema.parse(input).sourceId } }],
     title: 'Read Source setup requirements',
     description: 'Read the environment variable names declared by the Source’s published setup and their publication revision.',
     safety: 'safe', sideEffectClass: 'read',

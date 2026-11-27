@@ -31,7 +31,7 @@ import { buildApprovalOriginFailure } from '../approvals/approvalStaleReason.js'
 import type { StampedStartV1 } from '../account/settings/admitAgentStartV1.js';
 import { isPluginActionInvokeConfirmationV1 } from './invocationAuthority.js';
 import { ACTION_INVOKE_ACTION_ID_V1, isApprovalRequestObservationActionIdV1, isWorkspaceSyncRelationshipWriteActionId, SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, SESSION_MESSAGE_SEND_ACTION_ID_V1, SESSION_INPUT_HANDOFF_ACTION_ID_V1, WORKFLOW_ACTIVITY_LIST_ACTION_ID_V1 } from './actionIds.js';
-import { isProjectSourceActionIdV1, PROJECT_SOURCE_UPDATE_ACTION_ID_V1 } from './specs/projectSourcesActionIdsV1.js';
+import { isProjectSourceActionIdV1, PROJECT_SOURCE_SETUP_REQUIREMENTS_ACTION_ID_V1, PROJECT_SOURCE_UPDATE_ACTION_ID_V1 } from './specs/projectSourcesActionIdsV1.js';
 import { FILESYSTEM_BROWSER_ACTION_IDS_V1 } from './filesystemActionIdsV1.js';
 import { COMPUTER_RECORDING_ACTION_IDS_V1 } from './recordingActionIds.js';
 import { isSessionAgentReadinessRootActionIdV1, readSessionAgentReadinessRoleV1, type SessionAgentReadinessActionIdV1 } from '../machines/managed/actionIdsV1.js';
@@ -4761,6 +4761,7 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
       const projectSetup = actionId === PROJECT_SETUP_SET_ACTION_ID_V1
         ? admittedInput as AdmittedActionInputById[typeof PROJECT_SETUP_SET_ACTION_ID_V1] : undefined;
       if (projectSetup) ctx = { ...ctx, projectSetupSetRootInput: projectSetup };
+      if (actionId === PROJECT_SOURCE_SETUP_REQUIREMENTS_ACTION_ID_V1) ctx = { ...ctx, artifactReadOnly: true };
       const retainedChildPort = existingAdmission?.context.hostReviewedChild ?? ctx.hostReviewedChild;
       const retainedChildParent = readHostAdmittedReviewedParentV1(retainedChildPort);
       const starter = actionId === PROJECT_STARTER_CREATE_ACTION_ID_V1

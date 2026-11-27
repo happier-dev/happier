@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createActionExecutor } from './actionExecutor.js';
+import { normalizeActionsSettingsV1 } from './actionSettings.js';
+import { bindPresentUserActionConfirmationV1 } from './executor/approvalReview.js';
 import { PROJECT_SOURCE_SETUP_REQUIREMENTS_ACTION_ID_V1 } from './specs/projectSourcesActionIdsV1.js';
 
 describe('Source setup requirements Action', () => {
@@ -28,9 +30,14 @@ describe('Source setup requirements Action', () => {
         } };
       },
     });
-    const read = () => executor.execute(PROJECT_SOURCE_SETUP_REQUIREMENTS_ACTION_ID_V1, { serverId: 'home', sourceId },
-      { surface: 'ui', authority: 'present_user', runtimeAccountId: 'reader', expectedAccountId: 'reader',
-        serverId: 'home', serverIdentityId: 'home', actionCaller: { kind: 'host' } });
+    const input = { serverId: 'home', sourceId };
+    const read = () => executor.execute(PROJECT_SOURCE_SETUP_REQUIREMENTS_ACTION_ID_V1, input,
+      bindPresentUserActionConfirmationV1(PROJECT_SOURCE_SETUP_REQUIREMENTS_ACTION_ID_V1, input,
+        { surface: 'ui', authority: 'present_user', runtimeAccountId: 'reader', expectedAccountId: 'reader',
+          serverId: 'home', serverIdentityId: 'home', actionCaller: { kind: 'host' }, actionRequestId: 'requirements',
+          actionsSettings: normalizeActionsSettingsV1({ v: 1, actions: {
+            'artifact.get': { approvalRequiredSurfaces: ['ui'] },
+          } }) }));
 
     expect(await read()).toEqual({ ok: true, result: { kind: 'published', names: ['API_TOKEN'],
       provenance: { layer: 'shared', sourceId, contentRevision: revision } } });

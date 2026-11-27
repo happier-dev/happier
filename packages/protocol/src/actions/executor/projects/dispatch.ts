@@ -51,7 +51,9 @@ export async function dispatchProjectsDispatch1(inv: Pick<CoreInvocation, 'actio
         return source;
       },
       readArtifact: async (artifactId, projectSourceId) => {
-        const opened = await executeHostChild('artifact.get', { artifactId, projectSourceId }, { ...ctx, artifactReadOnly: true });
+        const opened = await ctx.hostReviewedChild?.invoke({ action: 'artifact.get', role: 'read_published_setup',
+          input: { artifactId, projectSourceId } });
+        if (!opened) throw createActionExecuteFailureError({ ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' });
         if (!opened.ok) throw createActionExecuteFailureError(opened);
         return ArtifactActionOutputSchemasV1['artifact.get'].parse(opened.result).artifact;
       },
