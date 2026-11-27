@@ -11,10 +11,6 @@ import { prepareMachineSetupPresetApplyInput } from './machineSetupApply';
 import { prepareMachineSetupSourcesApplyInput } from './machineSetupReview';
 import { countMachineSetupTargetChanges, groupMachineSetupChanges } from './machineSetupReviewChanges';
 
-// The receiving daemon addresses every script its effects Plan runs; these Plans run the preset's one script.
-const reviewOneScript = (machineId: string) => ({ target: { homeId: 'home', machineId }, administratorRequired: null,
-    downtime: 'unknown' as const, steps: [{ planIndex: 0, stepId: 'script:0', label: 'Script 1' }],
-    presetUpdateEffects: { toolchain: false, scripts: [{ sourceIndex: 0, scriptIndex: 0 }] } });
 const scriptLabel = (index: number) => ({ key: 'machinePresets.setup.scriptNumbered', fallback: 'Script {index}', params: { index } });
 
 it('projects a saved preset to the opaque Plan source without sending its opened setup', async () => {
@@ -26,8 +22,12 @@ it('projects a saved preset to the opaque Plan source without sending its opened
     const executeAction = async (_actionId: unknown, input: unknown) => {
         const request = MachineSetupPlanInputV1Schema.parse(input);
         requests.push(request);
-        return { ok: true as const, result: request.mode
-            ? { ...current, sources: request.sources, recipePlans: [], review: reviewOneScript('machine') }
+        return { ok: true as const, result: request.mode === 'effects'
+            ? MachineSetupPlanResultV1Schema.parse({ ...current, sources: request.sources, recipePlans: [], review: {
+                target: { homeId: 'home', machineId: 'machine' }, administratorRequired: null,
+                downtime: 'unknown', steps: [{ planIndex: 0, stepId: 'script:0', label: scriptLabel(1) }],
+                presetUpdateEffects: { toolchain: false, scripts: [{ sourceIndex: 0, scriptIndex: 0 }] },
+            } })
             : current };
     };
 

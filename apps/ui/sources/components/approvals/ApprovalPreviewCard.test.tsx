@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { MachineSetupApplyInputV1Schema, MachineSetupRemoveInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { MachineSetupApplyInputV1Schema, MachineSetupPlanReviewV1Schema, MachineSetupRemoveInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { installApprovalCommonModuleMocks } from './approvalsTestHelpers';
@@ -59,10 +59,15 @@ describe('ApprovalPreviewCard reviewed Machine scripts', () => {
                 { kind: 'direct', setup: { scripts: [{ body: 'echo already-done' }, { body: 'printf TEAM' }] } },
             ] }] });
         // The host's admission preview carries the target Plan's own script review.
-        const review = { steps: [{ planIndex: 0, stepId: 'script:1', label: 'Script 2' }, { planIndex: 0, stepId: 'script:3', label: 'Script 4' }],
-            presetUpdateEffects: { toolchain: false, scripts: [{ sourceIndex: 0, scriptIndex: 1 }, { sourceIndex: 1, scriptIndex: 1 }] } };
+        const recordedSteps = recordedAgentApply.preview.deploymentReview.scripts[0]!.review.steps;
+        const { steps, presetUpdateEffects } = MachineSetupPlanReviewV1Schema.parse({
+            target: { homeId: 'home', machineId: 'vps' }, administratorRequired: null, downtime: 'unknown',
+            steps: [recordedSteps[1], recordedSteps[3]],
+            presetUpdateEffects: { toolchain: false, scripts: [{ sourceIndex: 0, scriptIndex: 1 }, { sourceIndex: 1, scriptIndex: 1 }] },
+        });
         const screen = await renderScreen(<ApprovalPreviewCard
-            preview={{ summary: 'Review setup', deploymentReview: { kind: 'machineSetup', scripts: [{ targetIndex: 0, homeId: 'home', machineId: 'vps', review }] } }}
+            preview={{ summary: 'Review setup', deploymentReview: { kind: 'machineSetup',
+                scripts: [{ targetIndex: 0, homeId: 'home', machineId: 'vps', review: { steps, presetUpdateEffects } }] } }}
             request={{ actionId: 'machines.setup.apply', actionArgs }} />);
         expect(screen.getTextContent()).toContain('Script 2');
         expect(screen.getTextContent()).toContain('$ printf TEAM');

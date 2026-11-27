@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
-import { ActionOperationSnapshotV1Schema, type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
+import { ActionOperationGetV1ResponseSchema, ActionOperationSnapshotV1Schema, type ActionOperationGetV1Response, type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { OpenProjectResultV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
 import { createDeferred, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { readPresentationNotice, retirePresentationNotice } from '@/components/sessions/presentation/presentationNotices';
@@ -91,7 +91,7 @@ function setupOperation(overrides: Partial<ActionOperationSnapshotV1> = {}): Act
 describe('selected Team batch progress', () => {
     it('retains the native Machine operation while its Team Setup page is absent', async () => {
         const apply = vi.fn(async () => ({ operationId: 'native-apply' }));
-        const read = createDeferred<unknown>();
+        const read = createDeferred<ActionOperationGetV1Response>();
         const executor = createActionExecutor({
             machineSetupApply: apply,
             actionOperationAction: async () => read.promise,
@@ -130,8 +130,12 @@ describe('selected Team batch progress', () => {
             expect(controller.batch).toMatchObject({ running: true, machine: { ok: true, result: { operationId: 'native-apply' } } });
         } finally {
             await act(async () => {
-                read.resolve({ kind: 'found', operation: { ...opening(), operationId: 'native-apply',
-                    actionId: 'machines.setup.apply', state: 'succeeded', settledAt: 2 } });
+                read.resolve(ActionOperationGetV1ResponseSchema.parse({ kind: 'found', operation: {
+                    version: 1, operationId: 'native-apply', revision: 2, actionId: 'machines.setup.apply', state: 'succeeded',
+                    scope: { accountId: query.accountId, machineId: target.machineId }, title: 'Apply machine setup',
+                    createdAt: 1, startedAt: 1, settledAt: 2, cancellation: 'supported',
+                    domainRef: { kind: 'machineSetup', serverId: target.homeId, machineId: target.machineId },
+                } }));
                 await pending;
             });
             await screen.unmount();

@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { act, type ReactTestInstance } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 
 import { createExpoRouterMock, renderScreen as renderTestScreen, standardCleanup } from '@/dev/testkit';
 import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelpers';
@@ -501,18 +502,18 @@ describe('created machine resource rows (UIR5)', () => {
 
   it.each([
     ['managed.intent.busy', 'Waiting for guest work', 'managedRetention.busy'],
-    ['managed.intent.draining', 'Finishing work', 'managedRetention.draining'],
+    ['managed.intent.draining', 'Preparing idle machine', 'managedRetention.draining'],
   ] as const)('tells a Keep wait the operation reports (%s) once, as the machine\'s state with its freshness', async (phase, label, stateKey) => {
     const { ManagedCreationProgress } = await import('./ManagedCreationProgress');
     const { t } = await import('@/text');
     const machine = await boundMachine({ observation: { observedAt: 5, availability: 'present', power: 'running', storage: 'retained' } });
     if (!machine.controller) throw new Error('Expected a bound controller');
     const operation = { serverId: machine.homeId, observation: 'available' as const, isUnavailableProjection: false,
-      snapshot: { version: 1 as const, operationId: 'policy-stop', revision: 3, actionId: 'machines.managed.power.set', state: 'running' as const,
+      snapshot: ActionOperationSnapshotV1Schema.parse({ version: 1, operationId: 'policy-stop', revision: 3, actionId: 'machines.managed.power.set', state: 'running',
         scope: { accountId: 'owner', machineId: machine.controller.machineId }, title: 'Stop', createdAt: 1, startedAt: 2,
-        domainRef: { kind: 'managedMachine' as const, id: machine.id, resource: machine.resource, controller: machine.controller },
-        cancellation: 'supported' as const, progress: { kind: 'phase' as const, phase, label } } };
-    const screen = await renderScreen(<ManagedCreationProgress machine={machine} operation={operation as never} handlers={{ checkNow: vi.fn() }} />);
+        domainRef: { kind: 'managedMachine', id: machine.id, resource: machine.resource, controller: machine.controller },
+        cancellation: 'supported', progress: { kind: 'phase', phase, label } }) };
+    const screen = await renderScreen(<ManagedCreationProgress machine={machine} operation={operation} handlers={{ checkNow: vi.fn() }} />);
     // One card: the state row says the wait in the app's words; the producer's stage label is not a second copy of it.
     expect(testIds(screen, 'managed-machine.installation')).toHaveLength(0);
     expect(testIds(screen, 'managed-machine.progress')).toHaveLength(1);

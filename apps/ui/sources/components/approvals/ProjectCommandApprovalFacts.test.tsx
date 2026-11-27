@@ -3,8 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installSessionSubagentCommonModuleMocks } from '@/components/sessions/agents/sessionSubagentTestHelpers';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { ProjectPrepareInputV1Schema } from '@happier-dev/protocol/actions/projectActionFamily';
-import { ProjectSetupReviewV1Schema } from '@happier-dev/protocol/actions/projectSetupConsentFailure';
 import { createMachineFixture, createMachineMetadataFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createProjectSetupReviewFixture } from '@/dev/testkit/fixtures/projectSetupReview';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { LocalServiceStartApprovalReviewV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 
@@ -51,7 +51,7 @@ describe('Project command approval facts', () => {
       expectedEffectDigest: 'a'.repeat(64) };
     const review = LocalServiceStartApprovalReviewV1Schema.parse({ request: start, target: workspace, reviewedEffectDigest: start.expectedEffectDigest,
       setup: { required: false, project: { serverId: workspace.serverId, projectId: 'project' },
-        reviewedEffectDigest: 'b'.repeat(64), reviewedEffect: {} },
+        ...createProjectSetupReviewFixture([], 'b'.repeat(64)) },
       reviewedEffect: { command: { source: { kind: 'command', command: 'serve replacement web' } } } });
     const approval = { actionId: 'localServices.actions.restartManaged' as const,
       actionArgs: { requestId: 'restart', action: 'restart_managed',
@@ -72,7 +72,7 @@ describe('Project command approval facts', () => {
   it('discloses incoming setup in the same Move approval for an agent request', async () => {
     const destination = { kind: 'workers', destination: { kind: 'machine', machineId: 'worker' } };
     const address = { serverId: 'home', refId: 'checkout' };
-    const setupReview = { reviewedEffectDigest: 'a'.repeat(64), reviewedEffect: { commands: [{ kind: 'command', command: 'install on destination' }] } };
+    const setupReview = createProjectSetupReviewFixture(['install on destination']);
     const presentation = readProjectCommandApproval({ actionId: 'projects.service.relocate', actionArgs: {
       workspace: address, sourceMachineId: 'devbox', serviceName: 'web', requestId: 'move',
       currentTarget: { kind: 'managed_service', managedServiceId: 'old', machineId: 'incumbent' },
@@ -94,7 +94,7 @@ describe('Project command approval facts', () => {
     const review = { request, target, reviewedEffectDigest: 'a'.repeat(64),
       reviewedEffect: { command: { source: { kind: 'command', command: 'serve web' } } },
       setup: { required: true, project: { serverId: workspace.serverId, projectId: 'project' },
-        reviewedEffectDigest: 'b'.repeat(64), reviewedEffect: { commands: [{ kind: 'command', command: 'install dependencies' }] } } };
+        ...createProjectSetupReviewFixture(['install dependencies'], 'b'.repeat(64)) } };
     const presentation = readProjectCommandApproval({ actionId: 'localServices.launcher.start', actionArgs: request,
       preview: { serviceStartReview: review } });
     expect(presentation).toMatchObject({ kind: 'service', destination: { kind: 'machine', machineId: 'worker' }, workspace: target });
@@ -122,7 +122,7 @@ describe('Project command approval facts', () => {
     const review = { request, target: workspace, reviewedEffectDigest: 'a'.repeat(64),
       reviewedEffect: { command: { source: { kind: 'command', command: 'serve web' } } },
       setup: { required: true, project: { serverId: workspace.serverId, projectId: 'project' },
-        reviewedEffectDigest: 'b'.repeat(64), reviewedEffect: { commands: [{ kind: 'command', command: 'install dependencies' }] } } };
+        ...createProjectSetupReviewFixture(['install dependencies'], 'b'.repeat(64)) } };
     const presentation = readProjectCommandApproval({ actionId: 'localServices.launcher.start', actionArgs: request,
       preview: { serviceStartReview: review } });
     if (!presentation) throw new Error('Missing Service review');
@@ -268,22 +268,19 @@ describe('Project command approval facts', () => {
   });
 
   it('carries the canonical target review into setup facts only for the approved effect basis', () => {
-    const setupReview = ProjectSetupReviewV1Schema.parse({ reviewedEffectDigest: 'reviewed', reviewedEffect: {
-      commands: [{ kind: 'command', command: 'echo setup', cwd: '.', os: 'linux' }],
-      configEnvironment: { MODE: 'development' },
-    } });
-    const actionArgs = ProjectPrepareInputV1Schema.parse({ workspace, phase: 'setup', expectedEffectDigest: 'reviewed', consentScope: 'thisTime' });
+    const setupReview = createProjectSetupReviewFixture(['echo setup'], undefined, { MODE: 'development' });
+    const actionArgs = ProjectPrepareInputV1Schema.parse({
+      workspace, phase: 'setup', expectedEffectDigest: setupReview.reviewedEffectDigest, consentScope: 'thisTime',
+    });
     const input = { actionId: 'projects.prepare' as const, actionArgs, preview: { setupReview } };
     expect(readProjectCommandApproval(input)).toMatchObject({ kind: 'setup', setupReview });
     expect(readProjectCommandApproval({ ...input, actionArgs: { ...actionArgs, expectedEffectDigest: 'stale' } }))
       .toMatchObject({ kind: 'setup', setupReview: null });
   });
   it('discloses the remembered consent only when the agent asked for Until it changes', async () => {
-    const setupReview = ProjectSetupReviewV1Schema.parse({ reviewedEffectDigest: 'reviewed', reviewedEffect: {
-      commands: [{ kind: 'command', command: 'mise install', cwd: '.', os: 'linux' }],
-    } });
+    const setupReview = createProjectSetupReviewFixture(['mise install']);
     const read = (consentScope?: 'thisTime' | 'untilChanged') => readProjectCommandApproval({ actionId: 'projects.prepare',
-      actionArgs: ProjectPrepareInputV1Schema.parse({ workspace, phase: 'setup', expectedEffectDigest: 'reviewed',
+      actionArgs: ProjectPrepareInputV1Schema.parse({ workspace, phase: 'setup', expectedEffectDigest: setupReview.reviewedEffectDigest,
         ...(consentScope ? { consentScope } : {}), ...(consentScope === 'untilChanged' ? { heldOperationId: 'operation-1' } : {}) }),
       preview: { setupReview } })!;
 
@@ -308,12 +305,7 @@ describe('Project command approval facts', () => {
     }
   });
   it('renders the reviewed setup steps with Where, Files and As, and says plainly when the steps could not be read', async () => {
-    const setupReview = ProjectSetupReviewV1Schema.parse({ reviewedEffectDigest: 'reviewed', reviewedEffect: {
-      commands: [
-        { kind: 'command', command: 'mise install', cwd: '.', os: 'linux' },
-        { kind: 'command', command: 'yarn install --immutable', cwd: '.', os: 'linux' },
-      ],
-    } });
+    const setupReview = createProjectSetupReviewFixture(['mise install', 'yarn install --immutable']);
     const actionArgs = ProjectPrepareInputV1Schema.parse({ workspace, phase: 'setup' });
     const reviewed = readProjectCommandApproval({ actionId: 'projects.prepare', actionArgs, preview: { setupReview } });
     const withSteps = await renderScreen(<ProjectCommandApprovalFacts anatomy="page" presentation={reviewed!} testID="facts" />);

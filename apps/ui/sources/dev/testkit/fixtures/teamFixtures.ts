@@ -36,8 +36,24 @@ import {
 } from '@happier-dev/protocol/teams';
 import { PrivateLabelReadV1Schema, type PrivateLabelReadV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
 import { ProjectSourceListItemV1Schema, type ProjectSourceListItemV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
+import { projectSharedSetupDigestV1 } from '@happier-dev/protocol/projects/projectSetupV1';
+import { resolveProjectDefinitionV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectDefinitionCompositionV1';
+import { ProjectManifestV1Schema } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 
 import { accountDisplayProfileFixture } from './homeGovernanceFixtures';
+
+export function teamPendingSharedSetupFixture(source: Readonly<{ id: string; name: string }>) {
+    const manifest = ProjectManifestV1Schema.parse({ version: 1, scripts: {
+        lint: { source: { kind: 'command', command: 'npm run lint' } },
+        test: { source: { kind: 'command', command: 'npm test' } },
+    } });
+    const { pendingSharedSetup } = resolveProjectDefinitionV1({ repositoryManifest: null, pendingSharedSetup: {
+        source, manifest, setup: { sourceId: source.id, contentRevision: { headerVersion: 1, bodyVersion: 2 },
+            digest: projectSharedSetupDigestV1(manifest) },
+    } });
+    if (!pendingSharedSetup) throw new Error('Expected the pending shared setup from the checkout definition');
+    return pendingSharedSetup;
+}
 
 /**
  * The Team answers the Team destination suites share.

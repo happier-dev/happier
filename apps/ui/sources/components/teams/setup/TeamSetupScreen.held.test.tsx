@@ -3,6 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { teamProjectSourceFixture } from '@/dev/testkit/fixtures/teamFixtures';
+import { createProjectSetupReviewFixture } from '@/dev/testkit/fixtures/projectSetupReview';
 import { createMachineAdministrationTargetSelectionFixture } from '@/dev/testkit/fixtures/machineAdministrationTargetSelectionFixtures';
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
 
@@ -71,8 +72,7 @@ const held: ActionOperationProjection = {
     setupReview: {
       kind: 'pendingApproval',
       code: 'project_setup_consent_required',
-      reviewedEffectDigest: 'reviewed',
-      reviewedEffect: {},
+      ...createProjectSetupReviewFixture(['npm ci']),
     },
   }),
 };

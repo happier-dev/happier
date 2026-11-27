@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { removeServerProfile, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
-import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { ApprovalRequestV2Schema, type ApprovalExecutionOriginV1, type ApprovalRequestCreatedBy } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import {
     describeApprovalOrigin,
     describeUnnamedApprovalSession,
@@ -12,6 +14,19 @@ import { t } from '@/text';
 
 const created: string[] = [];
 afterEach(async () => { for (const id of created.splice(0)) await removeServerProfile(id); });
+
+const sessionId = 'session-1';
+const sessionCaller = { kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 } as const;
+const titleChange = { sessionId, title: 'Release cleanup' };
+
+function requestFrom(actionId: ActionId, args: unknown, createdBy: ApprovalRequestCreatedBy,
+    surface: ApprovalExecutionOriginV1['surface'], caller: ApprovalExecutionOriginV1['caller']) {
+    return ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+        createdBy, requestedSurface: surface, actionId, actionArgs: getActionSpec(actionId).inputSchema.parse(args),
+        summary: getActionSpec(actionId).title,
+        executionOriginV1: { v: 1, authority: 'account_automation', serverId: 'home', accountId: 'account',
+            actionId, requestId: 'request', surface, caller, sessionId: createdBy.sessionId } });
+}
 
 describe('the Home a requesting session is said to live on', () => {
     it('names a Home by its own name, else as this Home when this device has it but never named it', async () => {
@@ -34,32 +49,42 @@ describe('the Home a requesting session is said to live on', () => {
 describe('how a built-in request says who asked', () => {
     // The host stamps surface 'agent' on every Workflow Run Action; the caller is what tells a person
     // that no agent was involved.
-    const requestFrom = (surface: string, caller: Readonly<{ kind: string }>) =>
-        ({ v: 2, executionOriginV1: { surface, caller } }) as unknown as ApprovalRequest;
-
     it('reads a Workflow Run caller as the Run, not as the agent surface the host stamped', () => {
-        const surface = readApprovalRequesterSurface(requestFrom('agent', { kind: 'workflowRun' }), true);
+        const request = requestFrom('session.title.set', titleChange, { surface: 'agent' }, 'agent', {
+            kind: 'workflowRun', runId: 'run',
+            authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' },
+            authenticatedStarterV1: { requestRef: 'start', requester: { accountId: 'account', serverId: 'home' } },
+        });
+        const surface = readApprovalRequesterSurface(request, true);
         expect(describeApprovalOrigin(surface)).toBe(t('detailPages.approval.origin.workflowRun'));
         expect(describeApprovalOrigin(surface)).not.toBe(t('detailPages.approval.origin.agent'));
     });
 
     it('keeps the stamped surface for a session agent caller', () => {
-        const surface = readApprovalRequesterSurface(requestFrom('agent', { kind: 'session' }), true);
+        const surface = readApprovalRequesterSurface(
+            requestFrom('session.title.set', titleChange, { surface: 'agent', sessionId }, 'agent', sessionCaller), true);
         expect(describeApprovalOrigin(surface)).toBe(t('detailPages.approval.origin.agent'));
     });
 });
 
 describe('which requests Happier Guard asked', () => {
-    const request = (surface: string, caller: Readonly<{ kind: string }>, actionId = 'machines.processes.leftBehind.cleanUp', pluginId?: string) =>
-        ({ v: 2, actionId, createdBy: { surface, sessionId: 'session-1', ...(pluginId ? { pluginId } : {}) },
-            executionOriginV1: { surface: 'api', caller } }) as unknown as ApprovalRequest;
+    const cleanupAction = 'machines.processes.leftBehind.cleanUp';
+    const cleanup = { serverId: 'home', machineId: 'machine', refs: ['exact-ref'] };
+    const request = (surface: ApprovalRequestCreatedBy['surface'], caller: ApprovalExecutionOriginV1['caller'],
+        actionId: typeof cleanupAction | 'session.title.set' = cleanupAction) =>
+        requestFrom(actionId, actionId === cleanupAction ? cleanup : titleChange, { surface, sessionId }, 'rpc', caller);
 
     it('is the daemon host\'s Left behind Ask on the system surface, even when it names the Session whose work it concerns', () => {
         expect(isHappierGuardApproval(request('system', { kind: 'host' }), true)).toBe(true);
         expect(isHappierGuardApproval(request('agent', { kind: 'host' }), true)).toBe(false);
-        expect(isHappierGuardApproval(request('system', { kind: 'session' }), true)).toBe(false);
+        expect(isHappierGuardApproval(request('system', sessionCaller), true)).toBe(false);
         expect(isHappierGuardApproval(request('system', { kind: 'host' }, 'session.title.set'), true)).toBe(false);
-        expect(isHappierGuardApproval(request('system', { kind: 'host' }, undefined, 'example.observer'), true)).toBe(false);
+        const pluginId = 'example.observer';
+        const plugin = requestFrom(cleanupAction, cleanup, { surface: 'system', pluginId, sessionId }, 'plugin', {
+            kind: 'plugin', pluginId, contributionLocalId: 'observer',
+            sourceCustody: { kind: 'development', registeredRootId: 'observer-root' },
+        });
+        expect(isHappierGuardApproval(plugin, true)).toBe(false);
         expect(isHappierGuardApproval(request('system', { kind: 'host' }), false)).toBe(false);
         expect(isHappierGuardApproval(null, true)).toBe(false);
     });

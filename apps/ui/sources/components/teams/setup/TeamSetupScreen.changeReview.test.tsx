@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { teamPendingSharedSetupFixture } from '@/dev/testkit/fixtures/teamFixtures';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { standardCleanup } from '@/dev/testkit';
 import {
@@ -140,11 +141,7 @@ it('lets an agent open the same checkout Scripts review the changed-Source contr
       repositoryName="acme/web"
       navigationContextKey="setup-source-review"
       onReview={onReview}
-      pending={{
-        source: { id: 'acme-web', name: 'Web' },
-        setup: { kind: 'none' } as never,
-        summary: [{ kind: 'scripts', count: 2 }] as never,
-      }}
+      pending={teamPendingSharedSetupFixture({ id: 'acme-web', name: 'Web' })}
     />,
   );
   await screen.pressByTestIdAsync('team-setup-source-changed-review:acme-web');
