@@ -58,7 +58,7 @@ export async function mintExternalActionExecutionAuthorization(input: Readonly<{
         ...(input.authorityCeiling === 'account_automation'
           || readAuthTokenProvenance(decodeJwtPayload(input.pat), { allowLegacyHome: false })?.provenance.kind === 'terminal'
           ? { [AUTHORITY_CEILING_HEADER_V1]: 'account_automation' } : {}) };
-    if (!headers) return { ok: false, code: 'admission_unavailable' };
+    if (!headers) return { ok: false, code: 'auth_unavailable' };
     response = await axios.post<unknown>(
       `${input.serverHttpBaseUrl}${path}`, body,
       {

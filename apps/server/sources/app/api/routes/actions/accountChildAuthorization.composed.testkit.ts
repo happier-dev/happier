@@ -214,6 +214,10 @@ export function registerAccountChildAuthorizationComposedTests(): void {
                 expect((await list(foreign.id)).statusCode).toBe(401);
 
                 const request = collectorRequest(selected.id);
+                const { target: _target, ...targetlessEnvelope } = request.envelope;
+                const targetless = await send(mintPath, 'POST', ACTION_INVOKE_ACTION_ID_V1,
+                    { ...request, envelope: targetlessEnvelope });
+                expect(targetless.statusCode, targetless.body).toBe(401);
                 const child = await send(mintPath, 'POST', ACTION_INVOKE_ACTION_ID_V1, request);
                 expect(child.statusCode, child.body).toBe(200);
                 const { telemetryReadInstallationPublicKey, ...issued } = ExternalActionExecutionAuthorizationV1Schema.parse(child.json());

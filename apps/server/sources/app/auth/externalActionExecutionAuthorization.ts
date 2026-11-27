@@ -1400,10 +1400,11 @@ function isScopedUsageCollectorHttpPurpose(binding: ExternalActionExecutionAutho
     const request = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(proof.body);
     if (!request.success) return false;
     const { machineId, envelope, executionAuthorization, ...issuance } = request.data;
-    if (Object.keys(issuance).some(key => key !== 'v')
-        || envelope.v !== 2 || !envelope.telemetryCollectorCodec || envelope.pluginInvocation
-        || envelope.target.kind !== 'machine' || envelope.target.project || envelope.target.machineId !== machineId
-        || !isApiTokenGrantTargetMemberV1(grant, envelope.target)) return false;
+    if (envelope.v !== 2 || !envelope.telemetryCollectorCodec || envelope.pluginInvocation
+        || Object.keys(issuance).some(key => key !== 'v')) return false;
+    const target = envelope.target;
+    if (target?.kind !== 'machine' || target.project || target.machineId !== machineId
+        || !isApiTokenGrantTargetMemberV1(grant, target)) return false;
     const read = envelope.deploymentReadAdmission;
     if (read?.actionId !== ACTION_INVOKE_ACTION_ID_V1 || !('telemetryCollector' in read)
         || formatQualifiedPluginActionId(read.action) !== TELEMETRY_COSTS_READ_ACTION_ID_V1
