@@ -721,7 +721,7 @@ async function main(argv) {
       return 1;
     }
     console.log(`committed ${finalized.commit}: parent=${finalized.checked.base}`);
-    console.log(kickRollingHeadTypecheck({ repo, commit: finalized.commit }));
+    console.log(kickRollingHeadTypecheck({ repo }));
     return 0;
   }
   let incoherent = 0;

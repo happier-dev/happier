@@ -737,6 +737,19 @@ active graph or the group running at that point.
 The TypeScript launcher refuses package compilation in commit-triggered entry
 loads. The rolling worker owns package typechecks.
 
+The 0.3 rolling scheduler compiles affected packages, including directly
+changed plugins, at the newest HEAD when their turn starts. It probes
+intermediate revisions only to attribute new diagnostics. The broad entry,
+bundle, and export report compares HEAD with its last checked revision. If
+it finds a new failure, the scheduler checks the candidate against its exact
+parent before attributing the failure.
+
+To request an exact compiler delta and broad entry report for a landed commit,
+run `node scripts/workspaces/commitGateTypecheck.mjs --report --commit=<sha>`.
+The rolling scheduler takes this request after its current check and ahead of
+another HEAD turn. It reports against the selected commit’s parent. Both exact
+and rolling reports write to the scheduler’s `verdicts.log`.
+
 Waiters that have waited past their class’s longest recorded successful run
 are served first in arrival order. Once such a waiter is blocked at the head,
 the broker stops admitting smaller jobs until the head fits. Classes with no

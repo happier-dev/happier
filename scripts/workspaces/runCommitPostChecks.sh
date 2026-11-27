@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The rolling report runs these broader checks on a landed commit and its exact parent.
+# Compare two landed trees for the rolling report or an exact parent check.
 set -uo pipefail
 tooling=$(cd -- "$(dirname "$0")/../.." && pwd -P)
 toolsDir="$tooling/.project/scripts/p03/cw-head"

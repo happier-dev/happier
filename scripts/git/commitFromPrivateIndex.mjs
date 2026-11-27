@@ -171,7 +171,7 @@ export async function commitFromPrivateIndex({
     reconcileCheckout(cwd, env, commit);
     // HEAD moved: the rolling HEAD typecheck (owner ruling 2026-11-15) covers this commit; it never waits.
     const { kickRollingHeadTypecheck } = await import('../workspaces/commitPackageTypecheck.mjs');
-    console.error(kickRollingHeadTypecheck({ repo: cwd, commit }));
+    console.error(kickRollingHeadTypecheck({ repo: cwd }));
     return commit;
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });

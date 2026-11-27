@@ -12,7 +12,7 @@ import { inspectDependencyRefresh, publishDependencyRefreshMarker } from '../../
 import { withWorkspaceBundleLock } from './workspaceBundleLock.mjs';
 import { runCommitGate } from './commitGate.mjs';
 import { BOARD_PATH } from '../board/postBoardEntry.mjs';
-import { attributeRollingRange, commitGateTypecheck, commitGateTypecheckPlan, reportCommitGateTypecheck, drainCommitGateReports, queueCommitGateReport, workerTreeRows, treeDependencyPreparer, treeTypechecker, commitPackageTypecheckRefuses, nextRollingScope, runRollingVerdictRound, commitTypecheckApps, commitTypecheckPackages, packageTypecheckRows, rollingHeadTypecheckPass } from './commitPackageTypecheck.mjs';
+import { attributeRollingRange, commitGateTypecheck, commitGateTypecheckPlan, reportCommitGateTypecheck, drainCommitGateReports, queueCommitGateReport, workerTreeRows, treeDependencyPreparer, treeTypechecker, commitPackageTypecheckRefuses, nextRollingScope, runRollingVerdictRound, commitTypecheckApps, commitTypecheckPackages, packageTypecheckRows, rollingBroadReport, rollingHeadTypecheckPass } from './commitPackageTypecheck.mjs';
 
 async function workspace(t) {
   const repo = await mkdtemp(join(tmpdir(), 'happier-commit-package-typecheck-'));
@@ -711,32 +711,6 @@ test('post-commit alerts use the exact Lane trailer and fall back only without o
   ]);
 });
 
-test('report mode skips queued work only when a rolling verdict completed all its packages', async t => {
-  const { repo, commit } = await workspace(t);
-  const state = await mkdtemp(join(tmpdir(), 'happier-report-coverage-'));
-  t.after(() => rm(state, { recursive: true, force: true }));
-  const env = { ...process.env, HAPPIER_COMMIT_TYPECHECK_DIR: state };
-  const base = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
-  const sha = await commit('packages/leaf/src/index.ts', 'export const value = 42;');
-  const head = await commit('packages/leaf/src/index.ts', 'export const value = 43;');
-  const log = join(state, 'verdicts.log');
-  const verdict = (head, unavailable) => `${new Date().toISOString()} ROLLING-ok scope=packages base=${base} head=${head} packages=packages/leaf new=0 incomplete=- unavailable=${unavailable} 1.0s\n`;
-  await writeFile(log, verdict(base, '-') + verdict(head, 'packages/leaf'));
-  let requests = 0;
-  const options = { repo, env, log: () => {}, post: () => assert.fail('unexpected author notification'),
-    remote: (trees, dirs) => {
-      requests += 1;
-      return new Map(trees.map(tree => [tree, new Map(dirs.map(dir => [dir, []]))]));
-    } };
-  await reportCommitGateTypecheck({ ...options, commit: sha });
-  assert.equal(requests, 1, 'older or unavailable rolling results do not count');
-  await appendFile(log, verdict(head, '-').replace(' incomplete=- unavailable=-', ''));
-  queueCommitGateReport({ repo, env, commit: head });
-  await drainCommitGateReports({ ...options, workerCandidates: ['nl1'] });
-  assert.equal(requests, 1);
-  assert.match(readFileSync(log, 'utf8').trim().split('\n').at(-1), /GATE-REPORT-superseded .*packages=packages\/leaf/u);
-});
-
 test('report mode records failed declaration preparation as incomplete without notifying the author', async t => {
   const { repo, commit } = await workspace(t);
   const state = await mkdtemp(join(tmpdir(), 'happier-report-preparation-'));
@@ -867,55 +841,117 @@ test('each selected tree prepares its own embedded policy before declaration imp
   assert.equal(observed.length, 2, 'failed generation never reaches the compiler');
 });
 
-// 2026-11-18 21:00-21:12Z: one detached report process per landed commit (10 in 12 min) piled up behind the gate lane's
-// single worktree. One drainer takes the queued commits in landing order; a commit's parent tree is the previous
-// commit's tree, so each commit after the first fetches only its own tree.
-test('queued report-mode commits are drained in landing order by one drainer, each new tree fetched once', async t => {
+test('the exact request jumps the legacy queue and runs its parent comparison despite rolling coverage', async t => {
   const { repo, commit } = await workspace(t);
-  const state = await mkdtemp(join(tmpdir(), 'happier-commit-gate-queue-'));
-  t.after(() => rm(state, { recursive: true, force: true }));
-  const env = { ...process.env, HAPPIER_COMMIT_TYPECHECK_DIR: state };
-  const fetched = [];
-  const remote = (treeIds, dirs) => { fetched.push(...treeIds); return new Map(treeIds.map(treeId => [treeId, new Map(dirs.map(dir => [dir, []]))])); };
-  const shas = [];
-  for (const value of [21, 22, 23]) {
-    shas.push(await commit('packages/plugins/codex/src/index.ts', `export const value = ${value};\n`));
-    queueCommitGateReport({ repo, env, commit: shas.at(-1) });
-  }
-  const workerCandidates = ['nl1', 'nl3'];
-  const drained = await drainCommitGateReports({ repo, env, workerCandidates, remote, post: () => {}, boardPaths: [], log: () => {} });
-  assert.deepEqual(drained, shas, 'landing order, each once');
-  assert.equal(fetched.length, 4, 'parent + 3 commits: every tree once');
-  assert.deepEqual(await drainCommitGateReports({ repo, env, workerCandidates, remote, post: () => {}, boardPaths: [], log: () => {} }), [], 'the queue is empty');
-  assert.equal(readFileSync(join(state, 'verdicts.log'), 'utf8').match(/GATE-REPORT-ok/gu).length, 3);
-});
-
-// P03 ORCH 2026-11-18: one queue, two consumers (nl1 and nl3 gate lanes); ~50 package commits/h arrive against ~30/h
-// for one serial lane.
-test('two report consumers split one queue: every commit is checked exactly once, and both consumers take commits', async t => {
-  const { repo, commit } = await workspace(t);
-  const state = await mkdtemp(join(tmpdir(), 'happier-commit-gate-split-'));
+  const state = await mkdtemp(join(tmpdir(), 'happier-commit-gate-priority-'));
   t.after(() => rm(state, { recursive: true, force: true }));
   const env = { ...process.env, HAPPIER_COMMIT_TYPECHECK_DIR: state };
   const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
-  const shas = [];
-  for (const value of [31, 32, 33, 34, 35, 36]) {
-    shas.push(await commit('packages/plugins/codex/src/index.ts', `export const value = ${value};\n`));
-    queueCommitGateReport({ repo, env, commit: shas.at(-1) });
-  }
-  const checkedBy = new Map();
-  // The worker boundary: each consumer's remote answers after a tick, so the two drain concurrently.
-  const consumer = worker => async () => drainCommitGateReports({ repo, env, worker, workerCandidates: ['nl1', 'nl3'], post: () => {}, boardPaths: [], log: () => {},
-    remote: (treeIds, dirs) => {
-      for (const treeId of treeIds) checkedBy.set(treeId, [...(checkedBy.get(treeId) ?? []), worker]);
-      return new Map(treeIds.map(treeId => [treeId, new Map(dirs.map(dir => [dir, []]))]));
-    } });
-  const [nl1, nl3] = await Promise.all([consumer('nl1')(), consumer('nl3')()]);
-  assert.deepEqual([...nl1, ...nl3].sort(), [...shas].sort(), 'every queued commit once, none twice');
-  assert.ok(nl1.length > 0 && nl3.length > 0, `both consumers took commits: nl1=${nl1.length} nl3=${nl3.length}`);
-  const verdicts = readFileSync(join(state, 'verdicts.log'), 'utf8').match(/GATE-REPORT-ok commit=\w+/gu);
-  assert.equal(new Set(verdicts).size, 6);
-  void git;
+  const file = 'packages/plugins/codex/src/index.ts';
+  const legacy = await commit(file, 'export const value = 21;');
+  const exact = await commit(file, 'export const value = 22;');
+  const head = await commit(file, 'export const value = 23;');
+  await writeFile(join(state, 'gate-report-queue'), `${legacy}\n${exact}\n${head}\n`);
+  await writeFile(join(state, 'verdicts.log'), `2026-11-27T00:00:00Z ROLLING-ok scope=packages base=${legacy} head=${head} packages=packages/plugins/codex new=0 1.0s\n`);
+  await queueCommitGateReport({ repo, env, commit: exact });
+  await queueCommitGateReport({ repo, env, commit: exact });
+  const requests = [];
+  const remote = (treeIds, dirs) => {
+    requests.push(...treeIds);
+    return new Map(treeIds.map(treeId => [treeId, new Map(dirs.map(dir => [dir, []]))]));
+  };
+  const options = { repo, env, workerCandidates: ['nl1'], remote, post: () => {}, log: () => {} };
+  assert.deepEqual(await drainCommitGateReports(options), [exact]);
+  assert.deepEqual(requests, [git('rev-parse', `${legacy}^{tree}`), git('rev-parse', `${exact}^{tree}`)]);
+  assert.deepEqual(await drainCommitGateReports(options), []);
+  assert.equal(readFileSync(join(state, 'gate-report-queue'), 'utf8'), `${legacy}\n${exact}\n${head}\n`,
+    'the legacy range remains available to initialize the broad HEAD checkpoint');
+});
+
+test('rolling includes changed plugins and checks the newest tree of a green range once', async t => {
+  const { repo, commit } = await workspace(t);
+  const state = await mkdtemp(join(tmpdir(), 'happier-rolling-plugin-head-'));
+  t.after(() => rm(state, { recursive: true, force: true }));
+  const env = { ...process.env, HAPPIER_COMMIT_TYPECHECK_DIR: state };
+  const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+  const file = 'packages/plugins/codex/src/index.ts';
+  const requests = [];
+  const remote = (tree, dirs) => {
+    requests.push([tree, dirs]);
+    return new Map(dirs.map(dir => [dir, []]));
+  };
+  const options = { repo, env, remote, log: () => {}, post: () => assert.fail('green range posted an alert') };
+  await commit('README.md', 'The initial rolling checkpoint.\n');
+  await rollingHeadTypecheckPass(options);
+  requests.length = 0;
+  await commit(file, 'export const value = 21;');
+  await commit(file, 'export const value = 22;');
+  const head = await commit(file, 'export const value = 23;');
+  const result = await rollingHeadTypecheckPass(options);
+  assert.deepEqual(requests, [[git('rev-parse', `${head}^{tree}`), ['packages/plugins/codex']]]);
+  assert.deepEqual(result.unavailable, []);
+  assert.deepEqual(result.attributions, []);
+});
+
+test('the rolling broad report replaces the legacy backlog with one HEAD range on green', { skip: process.platform === 'win32' }, async t => {
+  const { repo, commit } = await workspace(t);
+  const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+  const base = git('rev-parse', 'HEAD');
+  const file = 'packages/plugins/codex/src/index.ts';
+  const first = await commit(file, 'export const value = 21;');
+  const last = await commit(file, 'export const value = 22;');
+  const head = await commit(file, 'export const value = 23;');
+  const state = join(repo, '.git/typecheck-state');
+  await mkdir(state);
+  await writeFile(join(state, 'gate-report-queue'), `${first}\n${last}\n`);
+  const runner = join(repo, 'scripts/workspaces/runCommitPostChecks.sh');
+  await mkdir(dirname(runner), { recursive: true });
+  await writeFile(runner, 'printf "%s %s\\n" "$1" "$2" >> replayed\nexit 0\n');
+  const env = { ...process.env, HAPPIER_COMMIT_TYPECHECK_DIR: state };
+  await queueCommitGateReport({ repo, env, commit: last });
+  const phases = [];
+  await runRollingVerdictRound({ scopes: ['broad'], head: () => head,
+    recorded: () => existsSync(join(state, 'rolling-head-broad')) ? readFileSync(join(state, 'rolling-head-broad'), 'utf8') : '',
+    drainExact: async () => {
+      for (const sha of await drainCommitGateReports({ repo, env, workerCandidates: ['nl1'], log: () => {},
+        remote: (trees, dirs) => new Map(trees.map(tree => [tree, new Map(dirs.map(dir => [dir, []]))])) })) phases.push(sha);
+    },
+    run: async (_scope, recorded, current) => {
+      phases.push(current);
+      return await rollingBroadReport({ repo, env, recorded, head: current });
+    }, log: () => {},
+  });
+  assert.deepEqual(phases, [last, head]);
+  assert.equal(readFileSync(join(repo, 'replayed'), 'utf8'), `${first} ${last}\n${base} ${head}\n`);
+  assert.equal(readFileSync(join(state, 'gate-report-queue'), 'utf8'), '');
+});
+
+test('a broad rolling failure bisects the range and verifies the introducing commit against its parent', { skip: process.platform === 'win32' }, async t => {
+  const { repo, commit } = await workspace(t);
+  const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+  const base = git('rev-parse', 'HEAD');
+  const file = 'packages/leaf/src/index.ts';
+  const green = await commit(file, 'export const value = 21;');
+  const firstRed = await commit(file, 'export const value = 22;');
+  await commit(file, 'export const value = 23;');
+  const head = await commit(file, 'export const value = 24;');
+  const state = join(repo, '.git/typecheck-state');
+  await mkdir(state);
+  const runner = join(repo, 'scripts/workspaces/runCommitPostChecks.sh');
+  await mkdir(dirname(runner), { recursive: true });
+  await writeFile(runner, `printf "%s %s\\n" "$1" "$2" >> replayed
+if [ "$2" = "${green}" ]; then exit 0; fi
+printf "HAPPIER_POST_COMMIT_FAILURE\\tExport scan\\t${file}\\tmissingExport\\n"
+exit 10
+`);
+  const env = { ...process.env, HAPPIER_COMMIT_TYPECHECK_DIR: state };
+  const posts = [];
+  assert.equal(await rollingBroadReport({ repo, env, recorded: base, head, post: text => posts.push(text) }), 10);
+  assert.deepEqual(readFileSync(join(repo, 'replayed'), 'utf8').trim().split('\n'),
+    [`${base} ${head}`, `${base} ${firstRed}`, `${base} ${green}`, `${green} ${firstRed}`]);
+  assert.equal(posts.length, 1);
+  assert.ok(posts[0].includes(`exact commit ${firstRed} adds`));
+  assert.equal(readFileSync(join(state, 'rolling-head-broad'), 'utf8'), head);
 });
 
 test('a rolling attempt publishes a typed failure after one worker dispatch without rows', async t => {
@@ -1427,7 +1463,7 @@ test('a failed broader check reports the exact landed SHA for a fix forward', { 
   const base = execFileSync('git', ['rev-parse', `${sha}^`], { cwd: repo, encoding: 'utf8' }).trim();
   const env = { ...process.env, HAPPIER_COMMIT_TYPECHECK_DIR: join(repo, '.git/typecheck-state') };
   const posts = [];
-  queueCommitGateReport({ repo, env, commit: sha });
+  await queueCommitGateReport({ repo, env, commit: sha });
   const remote = (trees, dirs) => new Map(trees.map(tree => [tree, new Map(dirs.map(dir => [dir, []]))]));
   const drained = await drainCommitGateReports({
     repo, env, workerCandidates: ['nl1'], remote, post: entry => posts.push(entry), boardPaths: [],
@@ -1466,7 +1502,7 @@ exit 10
   const posts = [];
   const verdicts = () => readFileSync(join(state, 'verdicts.log'), 'utf8');
   const replay = async sha => {
-    queueCommitGateReport({ repo, env, commit: sha });
+    await queueCommitGateReport({ repo, env, commit: sha });
     assert.deepEqual(await drainCommitGateReports({
       repo, env, workerCandidates: ['nl1'], post: entry => posts.push(entry), log: () => {},
     }), [sha]);

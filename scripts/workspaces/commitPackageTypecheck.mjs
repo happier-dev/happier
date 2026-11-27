@@ -15,8 +15,8 @@
 // the canonical dependency refresh that hstack-exec runs for the admitted payload. Results are cached
 // per (tree, package): a tree's diagnostics are a function of its bytes, so a moved HEAD is just
 // another tree, and the next candidate's parent is usually the tree checked last. Only diagnostics new
-// relative to the parent count (commitTypeCoherenceDiagnostics owns that comparison). `packages/plugins/*`
-// stays on the combined package runs.
+// relative to the comparison tree count (commitTypeCoherenceDiagnostics owns that comparison).
+// Rolling packages include direct changes to independently typecheckable plugins.
 //
 // The rolling HEAD typecheck also follows apps/server, apps/cli and apps/ui, one scope each (own recorded
 // HEAD, own admission identity via --projects, so the broker sizes each from its own recorded peak). An
@@ -55,6 +55,8 @@ const BROAD_REPLAY_PATH = /^(?:(?:apps|packages|scripts)\/.*\.(?:[cm]?[jt]sx?|js
 const COMPILER_INPUT = /\.(?:[cm]?[jt]sx?|json)$/u;
 /** App workspaces the rolling HEAD typecheck follows, one scope each. */
 export const ROLLING_APP_SCOPES = Object.freeze(['apps/server', 'apps/cli', 'apps/ui']);
+const BROAD_SCOPE = 'broad';
+const ROLLING_TURN_SCOPES = [...ROLLING_APP_SCOPES, BROAD_SCOPE];
 const isAppScope = dir => ROLLING_APP_SCOPES.includes(dir);
 const PACKAGE_PATH = /^packages\/([^/]+)\//u;
 const GLOBAL_DIAGNOSTIC = /^error TS(\d+): (.+)$/u;
@@ -709,7 +711,6 @@ export function commitPackageTypecheckCached({ repo, base, tree, env = process.e
 
 /** Human-readable verdict lines; also what committers see when a packet is refused. */
 export function formatCommitPackageTypecheck(result) {
-  if (result.supersededBy) return [`package typecheck: superseded by rolling ${result.supersededBy.slice(0, 11)} (${result.packages.join(', ')})`];
   if (result.skipped) return ['package typecheck: skipped (no packages/* source touched)'];
   const lines = [`package typecheck: ${result.packages.join(', ')} new=${result.fresh.length} incomplete=${result.incomplete.length} unavailable=${result.unavailable.length} ${(result.ms / 1000).toFixed(1)}s`];
   for (const row of result.fresh) lines.push(`  ${row.file}(${row.line},${row.column}): TS${row.code} ${row.text}`);
@@ -758,22 +759,6 @@ export async function commitGateTypecheck({ repo, base, tree, env = process.env,
   return { ...result, detached: plan.detached };
 }
 
-/** A green range can still list packages that the worker could not compare. */
-function coveringRollingHead(repo, verdictPath, commit, packages) {
-  let verdicts;
-  try { verdicts = readFileSync(verdictPath, 'utf8'); }
-  catch (error) { if (error?.code === 'ENOENT') return undefined; throw error; }
-  for (const line of verdicts.split('\n').reverse()) {
-    const row = /^\S+ ROLLING-ok scope=packages base=\S+ head=([0-9a-f]+) packages=(\S+) new=0(?: incomplete=(\S+) unavailable=(\S+))? /u.exec(line);
-    if (!row) continue;
-    const [, head, selected, incomplete, unavailable] = row;
-    const checked = new Set(selected.split(','));
-    for (const dir of `${incomplete},${unavailable}`.split(',')) checked.delete(dir);
-    if (!packages.every(dir => checked.has(dir))) continue;
-    if (spawnSync('git', ['merge-base', '--is-ancestor', commit, head], { cwd: repo, env: gitEnv() }).status === 0) return head;
-  }
-}
-
 function cutAfterCommit(repo, sha) {
   let board;
   try { board = readFileSync(join(repo, BOARD_PATH), 'utf8'); }
@@ -794,8 +779,7 @@ function cutAfterCommit(repo, sha) {
 function diagnosticsStillAtHead({ repo, state, sha, fresh, verdictPath }) {
   const cut = cutAfterCommit(repo, sha);
   if (!cut) return fresh;
-  // Both rolling and per-commit workers publish exact-tree verdicts to this
-  // cache. Plugins are checked by the latter and are outside the rolling scope.
+  // Rolling and requested exact reports both publish rows for judged trees here.
   const git = gitAt(repo);
   const candidates = git(['log', '--first-parent', '--format=%H %T', `${cut}^..HEAD`]).trim().split('\n');
   const key = ({ file, line, code }) => `${file}:${line}:TS${code}`;
@@ -827,7 +811,7 @@ function diagnosticsStillAtHead({ repo, state, sha, fresh, verdictPath }) {
 
 function recordGateReport(path, sha, result, verdict) {
   const reason = result.environment?.length ? ` reason=${result.environment.join(', ')}` : '';
-  appendFileSync(path, `${new Date().toISOString()} GATE-REPORT-${verdict} commit=${sha} packages=${result.packages.join(',')} new=${result.fresh.length} incomplete=${result.incomplete.join(',') || '-'} unavailable=${result.unavailable.join(',') || '-'} wall=${(result.ms / 1000).toFixed(1)}s${result.supersededBy ? ` rolling=${result.supersededBy}` : ''}${reason}\n`);
+  appendFileSync(path, `${new Date().toISOString()} GATE-REPORT-${verdict} commit=${sha} packages=${result.packages.join(',')} new=${result.fresh.length} incomplete=${result.incomplete.join(',') || '-'} unavailable=${result.unavailable.join(',') || '-'} wall=${(result.ms / 1000).toFixed(1)}s${reason}\n`);
 }
 
 /**
@@ -846,15 +830,6 @@ export async function reportCommitGateTypecheck({ repo, commit, env = process.en
   const state = commitPackageTypecheckStateDir(repo, env);
   const verdictPath = join(state, 'verdicts.log');
   mkdirSync(state, { recursive: true });
-  // A range verdict cannot substitute for the exact declaration comparison of each Protocol or SDK commit.
-  const supersededBy = packages.some(dir => EXACT_DECLARATION_DIRS.has(dir))
-    ? undefined : coveringRollingHead(repo, verdictPath, sha, packages);
-  if (supersededBy) {
-    const result = { touched: packages, packages, detached, skipped: true, fresh: [], incomplete: [], unavailable: [],
-      timings: [], ms: Date.now() - started, supersededBy };
-    recordGateReport(verdictPath, sha, result, 'superseded');
-    return result;
-  }
   const result = await commitGateTypecheck({ repo, base, tree: sha, env, log, remote, workers, record: false });
   const rows = result.fresh.length ? diagnosticsStillAtHead({ repo, state, sha, fresh: result.fresh, verdictPath }) : [];
   if (rows.length) {
@@ -868,8 +843,8 @@ export async function reportCommitGateTypecheck({ repo, commit, env = process.en
   return result;
 }
 
-function hasBroadCommitReplay(repo, commit) {
-  return gitAt(repo)(['diff', '--no-renames', '--name-only', '-z', `${commit}^`, commit])
+function hasBroadCommitReplay(repo, base, head) {
+  return gitAt(repo)(['diff', '--no-renames', '--name-only', '-z', base, head])
     .split('\0').some(path => BROAD_REPLAY_PATH.test(path));
 }
 
@@ -891,11 +866,12 @@ function broadFailureAtHead({ git, verdictPath, cut, failure }) {
 }
 
 async function reportBroadCommitReplay({ repo, commit, env, post = entry => postBoardEntry(repo, entry),
-  log = message => process.stderr.write(`${message}\n`) }) {
+  log = message => process.stderr.write(`${message}\n`), base = `${commit}^`, notify = true }) {
   const script = join(repo, 'scripts/workspaces/runCommitPostChecks.sh');
-  if (!existsSync(script) || !hasBroadCommitReplay(repo, commit) || process.platform === 'win32') return;
+  if (!hasBroadCommitReplay(repo, base, commit) || process.platform === 'win32') return { status: 0 };
+  if (!existsSync(script)) return { status: 75 };
   const git = gitAt(repo);
-  const base = git(['rev-parse', `${commit}^`]).trim();
+  base = git(['rev-parse', base]).trim();
   // The existing report consumer runs each exact replay outside the commit lock.
   // Its entry and bundle phases acquire and release their own grants in sequence.
   const child = spawn('bash', [script, base, commit], { cwd: repo, env, stdio: ['ignore', 'pipe', 'inherit'] });
@@ -926,7 +902,8 @@ async function reportBroadCommitReplay({ repo, commit, env, post = entry => post
   const verdict = status === 0 ? 'ok' : status === 10 ? 'RED' : 'incomplete';
   const verdictPath = join(commitPackageTypecheckStateDir(repo, env), 'verdicts.log');
   appendFileSync(verdictPath, `${new Date().toISOString()} BROAD-REPORT-${verdict} commit=${commit} exit=${status} checks=${JSON.stringify([...checks])}\n`);
-  if (status !== 10) return;
+  const result = { status, failure, checks };
+  if (status !== 10 || !notify || (typeof notify === 'function' && !notify(failure))) return result;
   const cut = cutAfterCommit(repo, commit);
   let checkedHead;
   if (cut) {
@@ -934,7 +911,7 @@ async function reportBroadCommitReplay({ repo, commit, env, post = entry => post
     if (!present) {
       const status = present === false ? `fixed by HEAD ${head}` : `HEAD unverified at or after cut ${cut}`;
       appendFileSync(verdictPath, `${new Date().toISOString()} BROAD-REPORT-HEAD introduced at ${commit}, ${status} ${failure?.check ?? 'Broad post-commit replay'} ${failure?.path ?? ''}\n`);
-      return;
+      return result;
     }
     checkedHead = head;
   }
@@ -945,69 +922,68 @@ async function reportBroadCommitReplay({ repo, commit, env, post = entry => post
   const entry = [
     `### ${stamp} UTC — P03-COMMIT-CHECKS → ${addressees} — URGENT — Broad post-commit checks failed for ${commit.slice(0, 11)}`,
     `- ${lane ? `${lane}: fix forward` : `P03 ORCH: route to author ${author} for a fix forward`}. The exact commit ${commit} adds an entry, bundle or export failure over its parent ${base}.`,
-    `- ${failure?.check ?? 'Broad post-commit replay'} failed at ${failure?.path ? inlineCode(failure.path) : 'an unreported path'}. Details in \`runs/gate-report.log\`.`,
+    `- ${failure?.check ?? 'Broad post-commit replay'} failed at ${failure?.path ? inlineCode(failure.path) : 'an unreported path'}. Details in \`verdicts.log\` and \`runs/rolling.log\`.`,
     ...(checkedHead ? [`- This failure is also present in the broad report for checked HEAD ${checkedHead}.`] : []),
     '',
   ].join('\n');
   try { post(entry); }
   catch (error) { log(`[commit-checks] broad report board post failed for ${commit}: ${error.message}`); }
+  return result;
 }
 
 const gateReportQueuePath = state => join(state, 'gate-report-queue');
+const EXACT_REPORT = 'exact ';
 
-/** Queues a landed commit for report mode; the single drainer (`drainCommitGateReports`) checks it. */
-export function queueCommitGateReport({ repo, env = process.env, commit }) {
-  const state = commitPackageTypecheckStateDir(repo, env);
-  mkdirSync(state, { recursive: true });
-  appendFileSync(gateReportQueuePath(state), `${commit}\n`);
+function readGateReportQueue(state) {
+  const path = gateReportQueuePath(state);
+  return existsSync(path) ? readFileSync(path, 'utf8').split('\n').filter(Boolean) : [];
 }
 
-/** Takes the oldest queued commit, or undefined (the claim lock is held only for the read and rewrite). */
-async function takeQueuedCommit(state) {
-  const queue = gateReportQueuePath(state);
-  return await withWorkspaceBundleLock(async () => {
-    if (!existsSync(queue)) return undefined;
-    const [first, ...rest] = [...new Set(readFileSync(queue, 'utf8').split('\n').filter(Boolean))];
-    if (rest.length) {
-      writeFileSync(`${queue}.${process.pid}`, `${rest.join('\n')}\n`);
-      renameSync(`${queue}.${process.pid}`, queue);
-    } else rmSync(queue, { force: true });
-    return first;
-  }, { lockPath: `${queue}.lock`, timeoutMs: null });
+async function changeGateReportQueue(state, change) {
+  const path = gateReportQueuePath(state);
+  return await withWorkspaceBundleLock(() => {
+    const entries = readGateReportQueue(state);
+    const remaining = change(entries);
+    if (isDeepStrictEqual(entries, remaining)) return;
+    const temp = `${path}.${process.pid}`;
+    writeFileSync(temp, remaining.length ? `${remaining.join('\n')}\n` : '');
+    renameSync(temp, path);
+  }, { lockPath: `${path}.lock`, timeoutMs: null });
 }
 
-/**
- * One report-mode consumer: takes queued commits one at a time, oldest first, and checks each on `worker`. One consumer per worker and
- * host (its lock, without waiting; a second one returns []), so two consumers split one queue: a serial lane handles
- * ~30 commits/h and ~50 package commits/h arrived at 21:00Z on 2026-11-18. The holder re-reads the queue before it
- * lets go (2026-11-18 21:00-21:12Z: one detached process per commit, 10 in 12 min, piled up behind the gate lane).
- */
-export async function drainCommitGateReports({ repo, env = process.env, worker, workerCandidates, ...options }) {
-  const eligible = workerCandidates ? filterExecutionWorkers(workerCandidates, env) : [...typecheckWorkerConnections(repo, env, GATE_PACKAGE_CHECK_CLASS).keys()];
-  worker ??= eligible[0];
-  if (!eligible.includes(worker)) return [];
+/** Exact requests share the existing report queue. Untagged entries are the old automatic backlog. */
+export async function queueCommitGateReport({ repo, env = process.env, commit }) {
   const state = commitPackageTypecheckStateDir(repo, env);
   mkdirSync(state, { recursive: true });
-  const queue = gateReportQueuePath(state);
-  const workers = [worker];
+  const request = `${EXACT_REPORT}${commit}`;
+  await changeGateReportQueue(state, entries => [...new Set([...entries, request])]);
+}
+
+/** The rolling owner services exact requests before choosing another HEAD scope. */
+export async function drainCommitGateReports({ repo, env = process.env, workerCandidates, ...options }) {
+  const state = commitPackageTypecheckStateDir(repo, env);
+  if (!readGateReportQueue(state).some(entry => entry.startsWith(EXACT_REPORT))) return [];
+  const workers = workerCandidates ? filterExecutionWorkers(workerCandidates, env) : undefined;
   const drained = [];
-  for (;;) try {
-    await withWorkspaceBundleLock(async () => {
-      for (let commit; (commit = await takeQueuedCommit(state));) {
-        await reportCommitGateTypecheck({ repo, env, commit, workers, ...options });
-        try {
-          await reportBroadCommitReplay({ repo, commit, env, ...options });
-        } catch (error) {
-          (options.log ?? console.error)(`[commit-checks] broad report unavailable for ${commit}: ${error.message}`);
-        }
-        drained.push(commit);
-      }
-    }, { lockPath: join(state, `gate-report-${worker}.lock`), timeoutMs: null, wait: false });
-    // A commit queued between the holder's last read and its release: its own kick found this consumer busy.
-    if (!existsSync(queue)) return drained;
-  } catch (error) {
-    if (error?.code !== WORKSPACE_BUNDLE_LOCK_BUSY_ERROR_CODE) throw error;
-    return drained;
+  for (;;) {
+    let request;
+    await changeGateReportQueue(state, entries => {
+      request = entries.find(entry => entry.startsWith(EXACT_REPORT));
+      return request ? entries.filter(entry => entry !== request) : entries;
+    });
+    if (!request) return drained;
+    const commit = request.slice(EXACT_REPORT.length);
+    try {
+      await reportCommitGateTypecheck({ repo, env, commit, workers, ...options });
+    } catch (error) {
+      (options.log ?? console.error)(`[commit-checks] exact compiler report unavailable for ${commit}: ${error.message}`);
+    }
+    try {
+      await reportBroadCommitReplay({ repo, commit, env, ...options });
+    } catch (error) {
+      (options.log ?? console.error)(`[commit-checks] exact broad report unavailable for ${commit}: ${error.message}`);
+    }
+    drained.push(commit);
   }
 }
 
@@ -1047,7 +1023,8 @@ const rollingHeadPath = (state, scope) => join(state, scope === 'packages' ? ROL
 const rollingScopeDirs = ({ repo, base, head, scope, baseline = false }) => {
   const from = baseline ? EMPTY_TREE : base;
   return scope === 'packages'
-    ? commitTypecheckPackages({ repo, base: from, tree: head }).packages
+    ? [...new Set([...commitTypecheckPackages({ repo, base: from, tree: head }).packages,
+      ...commitGateTypecheckPlan({ repo, base: from, tree: head }).blocking])]
     : commitTypecheckApps({ repo, base: from, tree: head }).filter(dir => dir === scope);
 };
 
@@ -1055,6 +1032,43 @@ const rollingScopeDirs = ({ repo, base, head, scope, baseline = false }) => {
 function rollingBase(repo, recorded, head) {
   const ancestor = recorded && spawnSync('git', ['merge-base', '--is-ancestor', recorded, head], { cwd: repo, env: gitEnv() }).status === 0;
   return ancestor ? recorded : gitAt(repo)(['rev-parse', `${head}^`]).trim();
+}
+
+/** Check the newest broad range, with the original replay used for red probes and exact parent proof. */
+export async function rollingBroadReport({ repo, env = process.env, recorded, head, post, log = console.error }) {
+  const state = commitPackageTypecheckStateDir(repo, env);
+  const git = gitAt(repo);
+  const legacy = readGateReportQueue(state).filter(entry => !entry.startsWith(EXACT_REPORT));
+  const base = rollingBase(repo, recorded || (legacy.length ? `${legacy[0]}^` : ''), head);
+  const replay = (commit, parent, notify) => reportBroadCommitReplay({ repo, env, commit, base: parent, post, log, notify });
+  const commits = git(['rev-list', '--first-parent', '--reverse', `${base}..${head}`]).trim().split('\n').filter(Boolean);
+  const current = await replay(head, base, commits.length === 1);
+  if (current.status !== 0 && current.status !== 10) return current.status;
+  if (current.status === 10 && commits.length > 1) {
+    const failure = current.failure;
+    const sameFailure = other => other && failure && other.check === failure.check
+      && (other.key ?? other.path) === (failure.key ?? failure.path);
+    let low = 0;
+    let high = commits.length - 1;
+    while (low < high) {
+      const mid = Math.floor((low + high) / 2);
+      const result = await replay(commits[mid], base, false);
+      if (result.status === 10 && sameFailure(result.failure)) high = mid;
+      else if (result.status === 0 || (result.status === 10 && failure && result.failure?.check !== failure.check
+        && result.checks.has(failure.check))) low = mid + 1;
+      else return result.status === 10 ? 75 : result.status;
+    }
+    const exact = await replay(commits[low], `${commits[low]}^`, sameFailure);
+    if (exact.status !== 10 || !sameFailure(exact.failure)) {
+      log(`[commit-checks] broad RED at ${head} has no confirmed first red commit (candidate ${commits[low]}, exit ${exact.status})`);
+      return 75;
+    }
+  }
+  const checkpoint = rollingHeadPath(state, BROAD_SCOPE);
+  writeFileSync(`${checkpoint}.tmp`, head);
+  renameSync(`${checkpoint}.tmp`, checkpoint);
+  if (legacy.length) await changeGateReportQueue(state, entries => entries.filter(entry => entry.startsWith(EXACT_REPORT)));
+  return current.status;
 }
 
 /** Older app passes could store a checkpoint even when neither tree was judged. */
@@ -1093,7 +1107,7 @@ export async function rollingHeadTypecheckPass({ repo, env = process.env, log = 
   const base = pending ? pending.base : rollingBase(repo, recorded, head);
   result.base = base;
   const record = verdict => {
-    if (!pending && verdict !== 'skipped' && !result.failures.some(failure => failure.side === 'head')) {
+    if (!pending && verdict !== 'skipped' && !result.failures.some(failure => failure.side === 'head' || failure.dir.startsWith('packages/plugins/'))) {
       writeFileSync(`${recordedPath}.tmp`, head);
       renameSync(`${recordedPath}.tmp`, recordedPath);
     }
@@ -1117,6 +1131,15 @@ export async function rollingHeadTypecheckPass({ repo, env = process.env, log = 
     try {
       if (cachedBaseline) {
         [rows] = await rowsAtMany([{ treeId: tree, packages, side }], { cachedOnly: true });
+        // Plugins enter this rolling scope from the former exact report. Judge the baseline once if it has no rows.
+        const missingPlugins = packages.filter(dir => dir.startsWith('packages/plugins/') && !rows.has(dir));
+        if (missingPlugins.length) {
+          const checked = await rowsAt(tree, missingPlugins, side);
+          for (const [dir, value] of checked) {
+            rows.set(dir, value);
+            if (checked.failures?.has(dir)) setTypecheckFailure(rows, dir, checked.failures.get(dir));
+          }
+        }
       } else {
         rows = await rowsAt(tree, packages, side);
       }
@@ -1192,17 +1215,34 @@ export async function rollingHeadTypecheckPass({ repo, env = process.env, log = 
     if (tree === headTree) return new Set(items);
     const dirs = packages.filter(dir => items.some(item => item.dir === dir));
     const atCommit = await rowsAt(tree, dirs, commit.slice(0, 10));
+    const missing = dirs.filter(dir => !atCommit.get(dir));
+    if (missing.length) {
+      for (const dir of missing) result.failures.push({ side: commit, dir, code: atCommit.failures?.get(dir) ?? 'compiler-incomplete' });
+      return null;
+    }
     const newAtHead = new Set(freshBetween(git, tree, headTree, dirs, atCommit, headRows).fresh.map(({ row }) => row));
-    return new Set(items.filter(item => atCommit.get(item.dir) && !newAtHead.has(item.row)));
+    return new Set(items.filter(item => !newAtHead.has(item.row)));
   };
   let remaining = compared.fresh;
   for (let low = 0; remaining.length;) {
     let [a, b] = [low, commits.length - 1];
     while (a < b) {
       const middle = (a + b) >> 1;
-      if ((await presentAt(commits[middle], remaining)).size) b = middle; else a = middle + 1;
+      const found = await presentAt(commits[middle], remaining);
+      if (!found) { record('INCOMPLETE'); return result; }
+      if (found.size) b = middle; else a = middle + 1;
     }
     const here = await presentAt(commits[a], remaining);
+    if (!here) { record('INCOMPLETE'); return result; }
+    if (a > 0) {
+      const inherited = await presentAt(commits[a - 1], [...here]);
+      if (!inherited) { record('INCOMPLETE'); return result; }
+      if (inherited.size) {
+        for (const { dir } of inherited) result.failures.push({ side: commits[a - 1], dir, code: 'attribution-parent-already-red' });
+        record('INCOMPLETE');
+        return result;
+      }
+    }
     result.attributions.push({ commit: commits[a], rows: [...here].map(({ dir, row }) => ({ ...row, package: dir })) });
     remaining = remaining.filter(item => !here.has(item));
     low = a + 1;
@@ -1676,7 +1716,7 @@ export async function attributeRollingRange({ repo, env = process.env, scope = '
   if (!existsSync(path)) return null;
   const pending = JSON.parse(readFileSync(path, 'utf8'));
   const result = await rollingHeadTypecheckPass({ repo, env, scope, ...options, pending });
-  rmSync(path, { force: true });
+  if (!result.failures.length) rmSync(path, { force: true });
   return result;
 }
 
@@ -1685,9 +1725,10 @@ export async function attributeRollingRange({ repo, env = process.env, scope = '
  * finalizer). It never waits: it starts the single rolling owner detached, which exits at once when a
  * check already holds the warm worktree (that holder re-reads HEAD before it lets go).
  */
-export function kickRollingHeadTypecheck({ repo, env = process.env, commit }) {
-  // A repository without typecheckable packages/* (test fixtures) has nothing to follow.
-  if (!commitTypecheckPackages({ repo, base: EMPTY_TREE, tree: 'HEAD' }).packages.length
+export function kickRollingHeadTypecheck({ repo, env = process.env }) {
+  // A repository without a requested report or a typecheckable workspace has nothing to follow.
+  if (!readGateReportQueue(commitPackageTypecheckStateDir(repo, env)).some(entry => entry.startsWith(EXACT_REPORT))
+    && !rollingScopeDirs({ repo, base: EMPTY_TREE, head: 'HEAD', scope: 'packages' }).length
     && !commitTypecheckApps({ repo, base: EMPTY_TREE, tree: 'HEAD' }).length) return 'rolling HEAD typecheck: no packages/* or apps to check';
   const childEnv = { ...env };
   for (const name of ['GIT_INDEX_FILE', 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR']) delete childEnv[name];
@@ -1698,20 +1739,6 @@ export function kickRollingHeadTypecheck({ repo, env = process.env, commit }) {
     spawn(process.execPath, [fileURLToPath(import.meta.url), '--rolling'], { cwd: repo, env: childEnv, detached: true, stdio: ['ignore', descriptor, descriptor] }).unref();
   } finally {
     closeSync(descriptor);
-  }
-  // The landed commit's gate typecheck in report-and-URGENT mode (P03 ORCH 2026-11-18): its own detached process and
-  // worker lane, only for a commit that touches packages/* or packages/plugins/* workspaces.
-  if (commit && (commitGateTypecheckPlan({ repo, base: `${commit}^`, tree: commit }).blocking.length || hasBroadCommitReplay(repo, commit))) {
-    queueCommitGateReport({ repo, env, commit });
-    const reportLog = openSync(join(state, 'runs', 'gate-report.log'), 'a');
-    try {
-      for (const worker of typecheckWorkerConnections(repo, env, GATE_PACKAGE_CHECK_CLASS).keys()) {
-        spawn(process.execPath, [fileURLToPath(new URL('./commitGateTypecheck.mjs', import.meta.url)), '--report-queue', `--worker=${worker}`],
-          { cwd: repo, env: childEnv, detached: true, stdio: ['ignore', reportLog, reportLog] }).unref();
-      }
-    } finally {
-      closeSync(reportLog);
-    }
   }
   // The same kick moves the QA green pointer (owner 2026-11-18): its own lock and state, never this worktree.
   const greenCheck = fileURLToPath(new URL('../../apps/stack/scripts/stack/qa_green.mjs', import.meta.url));
@@ -1739,20 +1766,19 @@ function admittedCommand(repo, payload, cached, projects, className = 'compilati
     '--exec-admitted', '--', ...payload];
 }
 
-/** The next scope a rolling pass compiles: packages (minutes) whenever it is behind and did not run last, so its
- * verdict never waits behind more than one hour-long app compile (P03-TYPECHECK-DEBT 2026-11-17); otherwise the behind
- * app after `lastApp`, in turn, so a HEAD that moves during every pass still reaches each app. */
+/** Give packages every other pending turn. Rotate apps and the broad report between those turns. */
 export function nextRollingScope({ pending, lastScope, lastApp }) {
   if (pending.includes('packages') && (lastScope !== 'packages' || pending.length === 1)) return 'packages';
-  const start = ROLLING_APP_SCOPES.indexOf(lastApp) + 1;
-  return [...ROLLING_APP_SCOPES.slice(start), ...ROLLING_APP_SCOPES.slice(0, start)].find(scope => pending.includes(scope));
+  const start = ROLLING_TURN_SCOPES.indexOf(lastApp) + 1;
+  return [...ROLLING_TURN_SCOPES.slice(start), ...ROLLING_TURN_SCOPES.slice(0, start)].find(scope => pending.includes(scope));
 }
 
 /** Run each pending scope against the current HEAD, refreshing it after every pass. */
-export async function runRollingVerdictRound({ scopes, head, recorded, run, log }) {
+export async function runRollingVerdictRound({ scopes, head, recorded, run, log, drainExact }) {
   const stalled = new Set();
   let lastApp, lastScope;
   for (;;) {
+    if (drainExact) await drainExact();
     const current = head();
     const pending = scopes.filter(scope => recorded(scope) !== current && !stalled.has(`${scope}@${current}`));
     const scope = nextRollingScope({ pending, lastScope, lastApp });
@@ -1772,7 +1798,7 @@ export async function runRollingVerdictRound({ scopes, head, recorded, run, log 
 async function rolling(repo) {
   const state = commitPackageTypecheckStateDir(repo);
   const worktree = join(state, 'worktree');
-  const scopes = ['packages', ...ROLLING_APP_SCOPES];
+  const scopes = ['packages', ...ROLLING_TURN_SCOPES];
   const head = () => execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8', env: gitEnv() }).trim();
   const recorded = scope => { const path = rollingHeadPath(state, scope); return existsSync(path) ? readFileSync(path, 'utf8').trim() : ''; };
   const behind = () => scopes.filter(scope => recorded(scope) !== head());
@@ -1782,8 +1808,9 @@ async function rolling(repo) {
     try {
       stalledHead = await withWorkspaceBundleLock(async () => {
         const stalled = await runRollingVerdictRound({
-          scopes, head, recorded, log: console.error,
+          scopes, head, recorded, log: console.error, drainExact: () => drainCommitGateReports({ repo }),
           run: (scope, before, current) => {
+            if (scope === BROAD_SCOPE) return rollingBroadReport({ repo, recorded: before, head: current });
             ensureWorktree(repo, worktree);
             const env = { ...process.env, HAPPIER_COMMIT_TYPECHECK_ROLLING: '1', HAPPIER_COMMIT_TYPECHECK_REPO: repo,
               HAPPIER_COMMIT_TYPECHECK_LOCKED: '1', HAPPIER_COMMIT_TYPECHECK_SCOPE: scope };
@@ -1814,6 +1841,7 @@ async function rolling(repo) {
       throw error;
     }
     // Closes the window between the holder's last HEAD read and its release.
+    if (readGateReportQueue(state).some(entry => entry.startsWith(EXACT_REPORT))) continue;
     if (stalledHead === head() || !behind().length) return 0;
   }
 }
@@ -1882,8 +1910,7 @@ export async function commitPackageTypecheckMain(argv, entry = fileURLToPath(imp
   }
   const repo = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
   if (argv.includes('--kick')) {
-    const commit = argv.find(arg => arg.startsWith('--commit='))?.slice('--commit='.length);
-    console.log(kickRollingHeadTypecheck({ repo, commit: commit && execFileSync('git', ['rev-parse', '--verify', `${commit}^{commit}`], { cwd: repo, encoding: 'utf8' }).trim() }));
+    console.log(kickRollingHeadTypecheck({ repo }));
     return 0;
   }
   if (argv.includes('--rolling')) { rollingOwner = true; return await rolling(repo); }
