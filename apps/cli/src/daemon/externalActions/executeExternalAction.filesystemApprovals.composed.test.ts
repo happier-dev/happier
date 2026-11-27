@@ -126,7 +126,7 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
       expect(await readFile(join(h.directory, 'outside'), 'utf8')).toBe('outside unchanged');
     } finally { await h.close(); }
   });
-  it('copies binary bytes through credential-bound root control without wire requester identity', async () => {
+  it('copies binary bytes through Home without sending requester identity on root control', async () => {
     const actionId = 'daemon.filesystem.copy';
     const h = await createHarness(actionId, 'allowed');
     const rootCalls: Array<{ method: string | undefined; body: string }> = [];
@@ -150,8 +150,11 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
       const { actionRequestId: _requestId, ...request } = SignedRootActionExecuteRequestSchema.parse(wire);
       expect(request).toEqual({ actionId, input, target: { kind: 'machine', machineId: h.ref.machineId } });
       expect(h.hasApproval()).toBe(false);
-      expect(h.networkPaths).not.toContain(`POST /v1/actions/${actionId}`);
+      const delivery = `POST /v1/actions/${actionId}`;
+      const admission = `${delivery}/execution-authorization`;
+      expect(h.networkPaths.filter(path => path === admission || path === delivery)).toEqual([admission, delivery]);
       expect(await readFile(join(h.rootPath, 'terminal-copy.bin'))).toEqual(bytes);
+
       expect(await readFile(join(h.rootPath, 'original'))).toEqual(bytes);
       expect(await readFile(join(h.directory, 'outside'), 'utf8')).toBe('outside unchanged');
     } finally { await h.close(); }
