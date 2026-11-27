@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { Client } from 'pg';
 import { expect, it } from 'vitest';
 import { openPostgresqlConnection } from './postgresql.js';
 
@@ -35,6 +36,22 @@ it('reports native statistics prerequisites and visibility restrictions while ke
         expect(await connection.execute({ ...read, statement: { sql: 'SELECT * FROM pg_stat_statements', parameters: [] } }))
             .toMatchObject({ ok: false, code: 'database_engine_error', cause: { code: '55000' } });
         expect(await connection.execute(read)).toMatchObject({ ok: true });
+        const advice = await openPostgresqlConnection(`postgresql://fixture@localhost/postgres?host=${encodeURIComponent(directory)}`,
+            undefined, { sessionGuardSql: "SET lock_timeout = '100ms'" });
+        const catalogLock = new Client({ host: directory, user: 'fixture', database: 'postgres' });
+        try {
+            await catalogLock.connect();
+            await catalogLock.query('BEGIN');
+            await catalogLock.query('LOCK TABLE pg_catalog.pg_extension IN ACCESS EXCLUSIVE MODE');
+            expect(await advice.execute({ operation: 'stats.read', target, request: {
+                kind: 'stats.read', group: 'indexAdvice', selection: { statementKey: '1' },
+            } })).toMatchObject({ ok: false, status: 'failed', code: 'database_engine_error', cause: {
+                source: 'engine', code: '55P03', message: 'canceling statement due to lock timeout',
+            } });
+        } finally {
+            await catalogLock.end();
+            await advice.close();
+        }
         await run(join(binaries, 'psql'), ['-X', '-qAt', '-v', 'ON_ERROR_STOP=1', '-h', directory, '-U', 'fixture', '-d', 'postgres',
             '-c', 'CREATE ROLE stats_reader LOGIN; CREATE TABLE items(id integer PRIMARY KEY); GRANT SELECT ON items TO stats_reader; REVOKE SELECT ON pg_stat_statements FROM PUBLIC; REVOKE EXECUTE ON FUNCTION pg_catalog.pg_database_size(name), pg_catalog.pg_relation_size(regclass), pg_catalog.pg_stat_get_activity(integer) FROM PUBLIC']);
         const restricted = await openPostgresqlConnection(`postgresql://stats_reader@localhost/postgres?host=${encodeURIComponent(directory)}`);

@@ -185,8 +185,7 @@ export async function openPostgresqlConnection(connectionString: string, signal?
             if (operationSignal?.aborted || closed) return { ok: false, status: 'cancelled', code: 'database_cancelled' };
             if (error instanceof PostgresqlOperationError) return error.failure;
             if (error instanceof PostgresqlInputError) return { ok: false, status: 'failed', code: error.code, reason: error.reason };
-            const cause = postgresqlFailureCause(error);
-            const failureCause = indexAdvice ? { ...cause, message: 'The index estimate failed' } : cause;
+            const failureCause = postgresqlFailureCause(error);
             if (input.operation === 'stats.enable' && failureCause.code === '42501') {
                 return { ok: false, status: 'unavailable', code: 'database_statistics_extension_privilege_required',
                     reason: 'Use a database login that can install pg_stat_statements, or ask your database administrator to enable it.' };
