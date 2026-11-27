@@ -912,6 +912,7 @@ export function createPluginInvocationActionsService(params: Readonly<{
         const execute = () => params.seed.reviewedParent && issueReviewedChild ? invokeHostReviewedChildV1({
             parent: params.seed.reviewedParent,
             context: executionContext,
+            requesterCustodySource: source,
             // Contribution refs already have their canonical action.invoke
             // envelope. The shared issuer owns target preparation, not this adapter.
             child: { action: actionId, role: 'actions.execute', input: parsedPluginInput.data as JsonValue },

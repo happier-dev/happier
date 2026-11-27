@@ -1,6 +1,7 @@
 import { rm } from 'node:fs/promises';
 import { expect, it } from 'vitest';
 import {
+  createActionExecutor,
   invokeHostReviewedChildV1,
   type ActionExecutorContext,
 } from '@happier-dev/protocol/actions/actionExecutor';
@@ -19,6 +20,9 @@ import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/acces
 import { createTestGitScmBackendRegistry } from '@/scm/rpc/__tests__/testRpcHarness';
 import { createLocalScmRepositoryFixture } from '@/testkit/scm/scmBackendContractFixtures';
 import { runWithRealGitScmRuntime } from '../../../../../../packages/plugins/scm-git/src/testkit/scmRuntime.test-support';
+import { createPluginInvocationActionsService } from '@/plugins/runtime/invocation/services/actions';
+import { createPluginActionCallerMaterializationFixture } from '@/plugins/runtime/invocation/services/actionCaller.testkit';
+import { createEmptyActionAutomationPort } from '@/testkit/actionTransportDeps';
 import { createCliMachineActionTransport } from './machineTransport';
 
 const token = `e30.${Buffer.from(
@@ -33,10 +37,10 @@ const token = `e30.${Buffer.from(
 // mounted Triage Review Start reached the daemon as action.invoke with retained
 // requester custody. The Triage Action runs as that root's reviewed action_invoke
 // child, whose authorization is the reviewed-child descriptor copy. Its native
-// review.start then ran Session-placed SCM with the inherited target cleared and
-// refused not_authenticated before any Machine RPC was sent.
+// review.start then rebuilds the context in the Actions service. Cut 54 showed
+// that the next reviewed child lost the original requester during that rebuild.
 it.each([
-  'owner-person', 'owner-automation', 'unretained', 'other-machine', 'foreign-home', 'non-member',
+  'owner-person', 'owner-automation', 'unretained', 'copied-authorization', 'other-machine', 'foreign-home', 'non-member',
 ] as const)(
   "spends a reviewed action.invoke child's %s requester custody for targetless Session-placed SCM",
   async (source) =>
@@ -128,10 +132,11 @@ it.each([
           externalActionExecutionAuthorization: authorization,
           externalActionTarget: target,
         };
+        const parent = { actionId: 'action.invoke', input: { action, input: {} } };
         const reviewed = await invokeHostReviewedChildV1<{
           context: ActionExecutorContext;
         }>({
-          parent: { actionId: 'action.invoke', input: { action, input: {} } },
+          parent,
           context: root,
           child: { action, role: 'action_invoke', input: {} },
           admittedReview: { action, role: 'action_invoke', surface: 'plugin' },
@@ -141,12 +146,6 @@ it.each([
           throw new Error(
             `Expected the reviewed child: ${JSON.stringify(reviewed)}`,
           );
-        // The executor's Session-bound SCM branch clears the inherited Machine target.
-        const child: ActionExecutorContext = {
-          ...reviewed.context,
-          defaultSessionId: 'session-1',
-          externalActionTarget: undefined,
-        };
         const transport = createCliMachineActionTransport({
           credentials: { token, encryption: null },
           externalActionMachineInstallationId: 'installation',
@@ -157,19 +156,70 @@ it.each([
           },
         });
         const machineId = source === 'other-machine' ? 'another-machine' : 'machine';
-        const call = transport.callMachineAction({
-          machineId,
-          method: 'scm.status.snapshot',
-          effectActionId: 'scm.status.snapshot',
-          exactMachine: true,
-          authority,
-          context: child,
-          request: createTargetedActionRpcRequestV1(
-            { cwd: repository.rootPath, detail: 'facts', outcomeVersion: 1, operationStateVersion: 1 },
-            { kind: 'machine', machineId, project: { machineId, directory: repository.rootPath } },
-            child,
-          ),
+        const callStatus = (context: ActionExecutorContext) => {
+          // The Session-placed SCM adapter selects its Machine and clears the
+          // inherited Machine target before calling this transport.
+          const child = { ...context, defaultSessionId: 'session-1', externalActionTarget: undefined };
+          return transport.callMachineAction({
+            machineId,
+            method: 'scm.status.snapshot',
+            effectActionId: 'scm.status.snapshot',
+            exactMachine: true,
+            authority,
+            context: child,
+            request: createTargetedActionRpcRequestV1(
+              { cwd: repository.rootPath, detail: 'facts', outcomeVersion: 1, operationStateVersion: 1 },
+              { kind: 'machine', machineId, project: { machineId, directory: repository.rootPath } },
+              child,
+            ),
+          });
+        };
+        let call: ReturnType<typeof callStatus> | undefined;
+        const service = createPluginInvocationActionsService({
+          seed: {
+            plugin: { id: action.pluginId, version: '1.0.0' },
+            ...createPluginActionCallerMaterializationFixture(action.pluginId, { machineId: 'machine' }),
+            surface: 'plugin',
+            occurrenceId: 'triage-occurrence',
+            approvalContext: reviewed.context,
+            reviewedParent: parent,
+            ...(source === 'copied-authorization' ? {
+              externalActionContext: {
+                authority,
+                actionRequestId: 'review-start',
+                serverId: 'home',
+                serverIdentityId: 'home',
+                externalActionTarget: target,
+                // Descriptor copies preserve the HTTP projection but cannot
+                // spend the original proof held by another authorization.
+                externalActionExecutionAuthorization: Object.defineProperties(
+                  { ...authorization },
+                  Object.getOwnPropertyDescriptors(reviewed.context.externalActionExecutionAuthorization ?? authorization),
+                ),
+              },
+            } : {}),
+            signal: new AbortController().signal,
+            isOccurrenceCurrent: () => true,
+          },
+          actionExecutor: createActionExecutor({
+            actionAutomations: createEmptyActionAutomationPort(accountId),
+            reviewEnginesList: async () => ({ items: [{ value: 'codex', label: 'Codex' }] }),
+            scmActionExecute: async ({ actionId, context }) => {
+              if (actionId !== 'scm.status.snapshot') throw new Error('Fixture ends after the SCM status read');
+              call = callStatus(context);
+              return await call;
+            },
+          }),
+          invokeContributedAction: async () => { throw new Error('Unexpected contributed Action'); },
         });
+        // This probe ends at SCM. Creating a Review Workflow is the loaded-runtime check.
+        const review = await service.execute('review.start', {
+          sessionId: 'session-1',
+          instructions: 'Review the selected changes.',
+          changeType: 'committed',
+          reviewers: [{ kind: 'engine', engineId: 'codex' }],
+        }).catch((error: unknown) => error);
+        if (!call) throw new Error('Review Start did not reach its SCM read', { cause: review });
         if (source === 'owner-person' || source === 'owner-automation') {
           const result = await call;
           expect(ScmStatusSnapshotResponseSchema.parse(result)).toMatchObject({

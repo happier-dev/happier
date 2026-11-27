@@ -330,9 +330,12 @@ function createReviewedChildProof(actionId: string, role: string, input: JsonVal
       ? { deploymentNativeAdmission: native } : {}) });
 }
 
-function attachReviewedChildHttpProjection(context: ActionExecutorContext, childContext: ChildContext, proof: ChildProof): void {
+function attachReviewedChildHttpProjection(context: ActionExecutorContext, childContext: ChildContext, proof: ChildProof,
+  requesterCustodySource?: ActionExecutorContext): void {
   const authorization = context.externalActionExecutionAuthorization;
   const originalAuthorization = readHostReviewedChildOriginalAuthorizationV1(context)
+    ?? (requesterCustodySource?.externalActionExecutionAuthorization === authorization
+      ? readHostReviewedChildOriginalAuthorizationV1(requesterCustodySource) : undefined)
     ?? (authorization === proof.parentProof?.childAuthorization ? proof.parentProof?.originalAuthorization : undefined)
     ?? authorization;
   const http = originalAuthorization?.requesterHttpProjection;
@@ -469,6 +472,8 @@ export async function invokeHostReviewedChildV1<T = ActionExecuteResult, TAction
   parent: HostReviewedParentV1;
   context: ActionExecutorContext;
   child: HostReviewedChildV1<TAction>;
+  /** The host context before an adapter projected fields for the next Action. Only its exact requester authorization is carried. */
+  requesterCustodySource?: ActionExecutorContext;
   invocationServices?: HostReviewedChildInvocationV1['invocationServices'];
   /** Supplied only by the receiving custody/placement owner after ordinary admission. */
   receivingAdmission?: SocketRpcMachineAdmissionContextV1;
@@ -558,7 +563,7 @@ export async function invokeHostReviewedChildV1<T = ActionExecuteResult, TAction
   const childContext: ChildContext = { ...context, bypassApprovals: false,
     hostReviewedChild: undefined, invocationServices: params.invocationServices, [deploymentRoleChild]: proof };
   // Independently Home-bound Run children keep their own incumbent ceiling.
-  attachReviewedChildHttpProjection(context, childContext, proof);
+  attachReviewedChildHttpProjection(context, childContext, proof, params.requesterCustodySource);
   return await params.execute(envelope ?? childInput, childContext, typeof child.action === 'string' ? child.action : 'action.invoke');
 }
 
