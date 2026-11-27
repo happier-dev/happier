@@ -4,6 +4,7 @@ import { readConnectedServiceProfileHealths } from '@/cloud/connectedServices/re
 import type { BoundProfile } from './refreshTypes';
 
 export type CredentialHealthReprobeState = Readonly<{
+  credentialRevision: string;
   failureCount: number;
   nextProbeAt: number;
 }>;

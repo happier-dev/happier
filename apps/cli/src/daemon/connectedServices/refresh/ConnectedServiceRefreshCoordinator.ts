@@ -893,25 +893,16 @@ export class ConnectedServiceRefreshCoordinator {
     return group;
   }
 
-  private shouldDeferCredentialHealthReprobe(
-    binding: BoundProfile,
-    now: number,
-    options: Readonly<{ force: boolean; reason: ConnectedServiceRefreshReason }>,
-  ): boolean {
-    if (!canReprobeCredentialHealth(options.reason, options)) return true;
-    const state = this.credentialHealthReprobeState.get(bindingKey(binding));
-    return Boolean(state && now < state.nextProbeAt);
-  }
-
   private resetCredentialHealthReprobe(binding: BoundProfile): void {
     this.credentialHealthReprobeState.delete(bindingKey(binding));
   }
 
-  private armCredentialHealthReprobeBackoff(binding: BoundProfile, now: number): void {
+  private armCredentialHealthReprobeBackoff(binding: BoundProfile, credentialRevision: string, now: number): void {
     const key = bindingKey(binding);
     const previous = this.credentialHealthReprobeState.get(key);
-    const failureCount = (previous?.failureCount ?? 0) + 1;
+    const failureCount = previous?.credentialRevision === credentialRevision ? previous.failureCount + 1 : 1;
     this.credentialHealthReprobeState.set(key, {
+      credentialRevision,
       failureCount,
       nextProbeAt: now + credentialHealthReprobeDelayMs(failureCount - 1),
     });
@@ -1014,16 +1005,13 @@ export class ConnectedServiceRefreshCoordinator {
           this.distributingRefreshedBindings.delete(distributionKey);
         }
       }
-    } else if (
+    } else if (result.credentialRevision && (
       (result.status === 'refresh_failed'
         && isReauthRequiredFailure(result.diagnostic.category ?? 'unknown'))
       || (result.status === 'blocked_by_credential_health'
         && result.diagnostic.category !== undefined)
-    ) {
-      this.armCredentialHealthReprobeBackoff({
-        serviceId: result.diagnostic.serviceId,
-        profileId: result.diagnostic.profileId,
-      }, this.params.now());
+    )) {
+      this.armCredentialHealthReprobeBackoff(binding, result.credentialRevision, this.params.now());
     }
     this.logRefreshDiagnostic(finalizedResult.diagnostic);
     if (result.mutationKind === 'provider_context') return finalizedResult;
@@ -1174,10 +1162,14 @@ export class ConnectedServiceRefreshCoordinator {
     const refreshDue = options.force || (
       typeof expiresAt === 'number' && Number.isFinite(expiresAt) && expiresAt - now <= this.params.refreshWindowMs
     );
+    const previousReprobe = this.credentialHealthReprobeState.get(bindingKey(binding));
+    // A pushed healthy status can predate our failure. The exact credential read
+    // establishes whether this attempt still uses the revision whose reprobe is armed.
+    const currentReprobe = previousReprobe?.credentialRevision === source.credentialRevision ? previousReprobe : undefined;
     let isCredentialHealthReprobe = false;
     if (shouldBlockRefreshForCredentialHealth(options.reason)
-      && await this.credentialHealthRequiresReconnect(binding, options, refreshDue)) {
-      if (this.shouldDeferCredentialHealthReprobe(binding, now, options)) {
+      && (currentReprobe || await this.credentialHealthRequiresReconnect(binding, options, refreshDue))) {
+      if (!canReprobeCredentialHealth(options.reason, options) || (currentReprobe && now < currentReprobe.nextProbeAt)) {
         return {
           status: 'blocked_by_credential_health',
           credential: null,

@@ -5531,7 +5531,7 @@ afterEach(() => {
     });
   });
 
-  it.each(['pushed', 'unknown'] as const)('backs off reconnect-required reprobes with %s health after a transient failure', async (projection) => {
+  it.each(['pushed', 'unknown', 'stale usable'] as const)('backs off reconnect-required reprobes with %s health after a transient failure', async (projection) => {
     const baseDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-refresh-needs-reauth-backoff-'));
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-server-refresh-needs-reauth-backoff-'));
 
@@ -5543,6 +5543,7 @@ afterEach(() => {
 
     let now = 1_000_000;
     const expiresAt = now + 30_000;
+    let credentialRevision = 'csr_abcdefghijklmnopqrstuv';
     const record = buildConnectedServiceCredentialRecord({
       now,
       serviceId: 'openai-codex',
@@ -5569,6 +5570,7 @@ afterEach(() => {
 
     const api = {
       getConnectedServiceCredentialSealed: vi.fn(async () => ({
+        credentialRevision,
         sealed: { format: 'account_scoped_v1', ciphertext: sealedCiphertext },
         metadata: { kind: 'oauth', providerEmail: null, providerAccountId: 'acct', expiresAt },
       })),
@@ -5607,9 +5609,11 @@ afterEach(() => {
       refreshWindowMs: 60_000,
       refreshLeaseMs: 30_000,
       now: () => now,
-      resolveProjectedCredentialHealth: () => projection === 'pushed'
-        ? { kind: 'present_but_unusable', status: 'needs_reauth' }
-        : { kind: 'unknown' },
+      resolveProjectedCredentialHealth: () => {
+        if (projection === 'pushed') return { kind: 'present_but_unusable', status: 'needs_reauth' };
+        if (projection === 'stale usable') return { kind: 'usable', status: 'connected' };
+        return { kind: 'unknown' };
+      },
       logRefreshDiagnostic,
     });
 
@@ -5631,6 +5635,25 @@ afterEach(() => {
       now += 60_000;
     }
 
+    if (projection === 'stale usable') {
+      fetchMock.mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        statusText: 'bad request',
+        text: async () => JSON.stringify({ error: 'invalid_grant' }),
+      });
+      await expect(coordinator.tickOnce()).rejects.toThrow('Connected services refresh tick failed');
+      expect(api.updateConnectedServiceCredentialHealth).toHaveBeenCalledWith(expect.objectContaining({
+        health: expect.objectContaining({ status: 'needs_reauth', reconnectRequired: true }),
+      }));
+      fetchMock.mockClear();
+      vi.mocked(api.updateConnectedServiceCredentialHealth).mockClear();
+      now += 30_000;
+      await expect(coordinator.tickOnce()).resolves.toBeUndefined();
+      expect(fetchMock).not.toHaveBeenCalled();
+      now += 30_000;
+    }
+
     await expect(coordinator.tickOnce()).resolves.toBeUndefined();
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(api.updateConnectedServiceCredentialHealth).not.toHaveBeenCalled();
@@ -5647,10 +5670,22 @@ afterEach(() => {
       reason: 'scheduled',
     }));
 
-    now += 30_000;
+    now += projection === 'stale usable' ? 270_000 : 30_000;
     await expect(coordinator.tickOnce()).resolves.toBeUndefined();
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    if (projection === 'pushed') expect(api.listConnectedServiceProfiles).not.toHaveBeenCalled();
+    expect(api.updateConnectedServiceCredentialHealth).not.toHaveBeenCalled();
+    if (projection !== 'unknown') expect(api.listConnectedServiceProfiles).not.toHaveBeenCalled();
+
+    if (projection === 'stale usable') {
+      // A replacement from the credential authority retires the old revision's backoff.
+      credentialRevision = 'csr_0000000000000000000001';
+      await expect(coordinator.tickOnce()).rejects.toThrow('Connected services refresh tick failed');
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(api.updateConnectedServiceCredentialHealth).toHaveBeenCalledWith(expect.objectContaining({
+        expectedCredentialRevision: credentialRevision,
+        health: expect.objectContaining({ status: 'refresh_failed_retryable', reconnectRequired: false }),
+      }));
+    }
   });
 
   it('returns an honest blocked-health spawn preflight result before the expiry-window shortcut', async () => {
