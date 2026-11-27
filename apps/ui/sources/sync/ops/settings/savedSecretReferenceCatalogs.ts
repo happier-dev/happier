@@ -8,7 +8,6 @@ import { openAcpCatalogContentV1, listAcpCatalogSavedSecretRefsV1 } from '@happi
 import { openProviderConnectionsContentV1, listProviderConnectionsCatalogSavedSecretRefsV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 import { openConnectedAccountCatalogContentV1, listConnectedConfigurationCatalogSavedSecretRefsV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import { openNotificationChannelCatalogContentV1, listNotificationChannelSavedSecretRefsV1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
-import { resolveAccountStorageContext } from '@/sync/encryption/accountStorageContext';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import type { ProfileAccountContext } from '@/sync/api/account/apiProfileCatalog';
 import { readMcpServerCatalogRowInContext, prepareMcpServerCatalogMutationInContext } from '@/sync/api/account/apiMcpServerCatalog';
@@ -118,14 +117,8 @@ export function publishAcknowledgedSavedSecretReferenceCatalogsInContext(context
     } catch { /* Display publication cannot retract an acknowledged atomic transaction. */ }
 }
 
-async function assertAccountMode(context: ProfileAccountContext, mode: 'plain' | 'e2ee') {
-    context.assertCurrent();
-    const { encryption } = await context.resolveAccountEncryption();
-    const storage = await resolveAccountStorageContext(context.credentials, { encryption, request: context.request, usage: 'fresh-authority' });
-    context.assertCurrent();
-    if (storage.mode !== mode) throw new Error('saved_secret_account_mode_changed');
-}
-
+// The caller's admission proved `mode` once (fresh authority). Reads and preparation here consume it;
+// Home's Account encryption-transition fence decides it again for every census and catalog write.
 /** Notification authority belongs to the full census, not the numeric catalog batch. */
 export async function captureSavedSecretNotificationChannelsInContext(context: ProfileAccountContext,
     mode: 'plain' | 'e2ee'): Promise<Readonly<{
@@ -133,7 +126,7 @@ export async function captureSavedSecretNotificationChannelsInContext(context: P
         census: NonNullable<SavedSecretReferenceCensusV1['notificationChannels']>;
     }> | null> {
     try {
-        await assertAccountMode(context, mode);
+        context.assertCurrent();
         const row = await readNotificationChannelCatalogRowInContext({
             request: (path, init) => context.request(path, init, { retry: 'none' }),
             isCurrent: context.accountLifetime.isCurrent,
@@ -144,7 +137,7 @@ export async function captureSavedSecretNotificationChannelsInContext(context: P
         const material = mode === 'plain' ? null : resolveAccountScopedCryptoMaterialFromCredentials(context.credentials);
         const opened = openNotificationChannelCatalogContentV1({ content: row.content, mode, material });
         if (opened.status !== 'opened') return null;
-        await assertAccountMode(context, mode);
+        context.assertCurrent();
         return { catalog: opened.record, census: { revision: row.revision,
             resourceRefs: listNotificationChannelSavedSecretRefsV1(opened.record) } };
     } catch { return null; }
@@ -158,7 +151,7 @@ export function captureSavedSecretReferenceCatalogsInContext(context: ProfileAcc
 export async function captureSavedSecretReferenceCatalogsInContext(context: ProfileAccountContext,
     mode: 'plain' | 'e2ee', keys?: readonly SavedSecretReferenceCatalogKey[]): Promise<CapturedCatalogs | null> {
     try {
-        await assertAccountMode(context, mode);
+        context.assertCurrent();
         const material = mode === 'plain' ? null : resolveAccountScopedCryptoMaterialFromCredentials(context.credentials);
         const catalogs: { -readonly [K in keyof SavedSecretReferenceCatalogFacets]: SavedSecretReferenceCatalogFacets[K] } = {};
         const revisions: Partial<SavedSecretCatalogRevisionsV1> = {};
@@ -222,7 +215,7 @@ export async function captureSavedSecretReferenceCatalogsInContext(context: Prof
                 }
             }
         }));
-        await assertAccountMode(context, mode);
+        context.assertCurrent();
         return { catalogs, storedContents, revisions: keys === undefined ? SavedSecretCatalogRevisionsV1Schema.parse(revisions) : revisions };
     } catch { return null; }
 }
@@ -238,7 +231,7 @@ export async function prepareSavedSecretReferenceCatalogMutationsInContext(conte
     selectedSecrets?: readonly SharedSavedSecretReferenceSelectionV1[];
     pendingResourceIds?: readonly string[];
 }>): Promise<SavedSecretCatalogMutationsV1> {
-    await assertAccountMode(context, input.accountMode);
+    context.assertCurrent();
     const changed = (key: SavedSecretReferenceCatalogKey) => input.catalogs[key] !== undefined
         && !sameStrictJsonValue(input.catalogs[key], input.previousCatalogs[key]);
     for (const key of catalogKeys) if (changed(key) && input.catalogs[key] === null) {
@@ -279,6 +272,6 @@ export async function prepareSavedSecretReferenceCatalogMutationsInContext(conte
         ...(registrySources ? { registrySources: await preparePromptLibraryRecordMutationInContext(context,
             { record: { key: 'registry-sources', value: registrySources }, ...common('registrySources'), pendingResourceIds }) } : {}),
     };
-    await assertAccountMode(context, input.accountMode);
+    context.assertCurrent();
     return SavedSecretCatalogMutationsV1Schema.parse(mutations);
 }

@@ -3406,6 +3406,22 @@ describe('Saved Secret operations through their real Account and Action owners',
         expect(account.writes.filter(write => write.path.endsWith('/delete'))).toHaveLength(mode === 'plain' ? 1 : 0);
     });
 
+    // Admission proves the Account mode once; Home's encryption-transition fence decides it again at every
+    // catalog and resource write. The reference capture between them re-reads nothing.
+    it.each(['plain', 'e2ee'] as const)('captures the complete %s reference state on its admitted Account mode', async mode => {
+        const account = await openAccount(mode);
+        const trustReads: string[] = [];
+        const captured = await withProfileAccount(account.scope, undefined, async (context, accountMode) => {
+            account.setTrustReadObserver(path => { trustReads.push(path); });
+            try { return await captureSavedSecretReferenceStateInContext(context, accountMode); }
+            finally { account.setTrustReadObserver(undefined); }
+        });
+        expect(captured).toMatchObject({ ok: true, referenceCensus: { accountMode: mode } });
+        // Measured 9 before. The 4 left are apiProfileCatalog's genuine Settings/profile baseline
+        // admissions (transaction baselines, a shared owner); the Saved Secret captures add none.
+        expect(trustReads).toEqual(Array(4).fill('/v1/account/encryption/currentness'));
+    });
+
     it.each([
         { mode: 'plain', linked: false }, { mode: 'plain', linked: true },
         { mode: 'e2ee', linked: false }, { mode: 'e2ee', linked: true },

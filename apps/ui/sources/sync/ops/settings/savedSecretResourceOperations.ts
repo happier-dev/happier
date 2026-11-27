@@ -19,6 +19,7 @@ import { openRemoteHostCatalogContentV1, RemoteHostCatalogRecordV1Schema,
 import { prepareNotificationChannelCatalogMutationInContext, readNotificationChannelCatalogRowInContext } from '@/sync/api/account/apiNotificationChannelCatalog';
 import { NotificationChannelCatalogRecordV1Schema, type NotificationChannelCatalogMutationV1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
 import { withProfileAccount, admitProfileAccount, readProfileCatalogInContext, readProfileTransferSourceInContext, prepareProfileRecordMutationsInContext, type ProfileAccountContext } from '@/sync/api/account/apiProfileCatalog';
+import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import { loadAiLaunchProfileArtifacts, resolveProfileCatalogAuthorityV1, removeTransferredProfileSourcesV1, listTransferredProfileIdsV1 } from '@happier-dev/protocol/profiles/read';
 import type { ArtifactSharingResourceV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
 import { requireOneShotAccountSettingsMutationApplied, syncSettings } from '@/sync/engine/settings/syncSettings';
@@ -160,19 +161,20 @@ type RemoteHostReferenceCapture = NonNullable<SavedSecretReferenceCensusV1['remo
 async function captureRemoteHostReferences(context: ProfileAccountContext, accountMode: 'plain' | 'e2ee'): Promise<Readonly<{
     hosts: SavedSecretReferenceCatalogsV1['remoteHostRecords']; capture: RemoteHostReferenceCapture;
 }> | null> {
-    return admitProfileAccount(context, async (_context, mode, material) => {
-        if (mode !== accountMode) return null;
-        const row = await readRemoteHostCatalogRowInContext(context);
-        if (row.status === 'absent') return { hosts: undefined, capture: { revision: 'absent', resourceRefs: [] } };
-        if (row.status === 'deleted') return { hosts: null, capture: { revision: row.revision, resourceRefs: [] } };
-        if (row.status !== 'present') return null;
-        const opened = openRemoteHostCatalogContentV1({ content: row.content, mode, material });
-        if (opened.status !== 'ready') return null;
-        context.assertCurrent();
-        return { hosts: opened.hosts, capture: { revision: row.revision,
-            resourceRefs: [...new Set(opened.hosts.flatMap(host => [host.ssh.passwordSecretRef, host.ssh.identityPrivateKeySecretRef])
-                .filter((ref): ref is string => typeof ref === 'string'))] } };
-    });
+    // Consumes the caller's admitted mode; Home's census fence decides it again at the write.
+    context.assertCurrent();
+    const mode = accountMode;
+    const material = mode === 'plain' ? null : resolveAccountScopedCryptoMaterialFromCredentials(context.credentials);
+    const row = await readRemoteHostCatalogRowInContext(context);
+    if (row.status === 'absent') return { hosts: undefined, capture: { revision: 'absent', resourceRefs: [] } };
+    if (row.status === 'deleted') return { hosts: null, capture: { revision: row.revision, resourceRefs: [] } };
+    if (row.status !== 'present') return null;
+    const opened = openRemoteHostCatalogContentV1({ content: row.content, mode, material });
+    if (opened.status !== 'ready') return null;
+    context.assertCurrent();
+    return { hosts: opened.hosts, capture: { revision: row.revision,
+        resourceRefs: [...new Set(opened.hosts.flatMap(host => [host.ssh.passwordSecretRef, host.ssh.identityPrivateKeySecretRef])
+            .filter((ref): ref is string => typeof ref === 'string'))] } };
 }
 function profileReferenceCensus(catalog: Extract<ProfileCatalogSnapshotV1, { status: 'ready' }>, accountMode: 'plain' | 'e2ee',
     artifactsById: ReadonlyMap<string, ArtifactSharingResourceV1> | undefined, remoteHosts: RemoteHostReferenceCapture,
@@ -226,10 +228,7 @@ export async function captureSavedSecretReferenceStateInContext(context: Profile
         const artifactsById = await loadAiLaunchProfileArtifacts([...profiles.records.map(row => row.record),
             ...(Array.isArray(effectiveSource.profiles) ? effectiveSource.profiles : [])],
             { read: (id, options) => context.workflowArtifacts.read(id, options) });
-        const { encryption } = await context.resolveAccountEncryption();
-        const storage = await resolveAccountStorageContext(context.credentials, { encryption, request: context.request, usage: 'fresh-authority' });
         context.assertCurrent();
-        if (storage.mode !== accountMode) return { ok: false, reason: 'changed' };
         const catalogs = { ...referenceCatalogs.catalogs, notificationChannels: notificationChannels.catalog,
             profileRecords: profiles.records.map(({ record }) => record), artifactsById, profileControl: control,
             remoteHostRecords: remoteHosts.hosts };
