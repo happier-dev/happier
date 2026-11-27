@@ -1000,6 +1000,7 @@ export async function startServerLight(params: {
       ...baseEnv,
       PORT: String(port),
       PUBLIC_URL: baseUrl,
+      HAPPIER_INSTANCE_PING: '0',
       ...(dbProvider === 'sqlite'
         ? { DATABASE_URL: sqliteUrl }
         : dbProvider === 'postgres' || dbProvider === 'mysql'
