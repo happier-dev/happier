@@ -653,6 +653,26 @@ describe('createCodexAppServerClient', () => {
         } finally { await client.dispose(); }
     });
 
+    it.each([true, false])('reads the daemon’s own SQLite store when native config exposes it (%s)', async configured => {
+        const sqliteHome = join(osBoundary.home, 'native-store');
+        const capture = createCapturingExec({ async request(method): Promise<JsonValue> {
+            if (method === 'configRequirements/read') return { requirements: null };
+            if (method === 'config/read') return { config: configured ? { sqlite_home: sqliteHome } : {} };
+            return {};
+        } });
+        const client = await createCodexNativeAppServerClient({
+            exec: capture.exec,
+            cwd: osBoundary.home,
+            processEnv: { CODEX_HOME: osBoundary.home, CODEX_SQLITE_HOME: join(osBoundary.home, 'decoy-store') },
+            transport: { kind: 'daemonProxy' },
+        });
+        try {
+            expect(client.readRuntimeSqliteHome).toBeTypeOf('function');
+            if (configured) await expect(client.readRuntimeSqliteHome?.()).resolves.toBe(sqliteHome);
+            else await expect(client.readRuntimeSqliteHome?.()).resolves.toBeUndefined();
+        } finally { await client.dispose(); }
+    });
+
     it('connects an explicit native socket through the managed host without another native server launch', async () => {
         const capture = createCapturingExec({ async request(method) {
             return method === 'thread/read' ? { thread: { id: 'native-thread', name: 'λ😀 Native title' } } : {};

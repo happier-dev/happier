@@ -33,6 +33,7 @@ export type CodexRuntimeStore = Readonly<{
   environment: CodexRuntimeHomeEnvironment;
   sqliteHome: string | null;
   sqliteHomeOverride: string | null;
+  sqliteHomeWhenUnconfigured: string | null;
 }>;
 
 function missing(error: unknown): boolean {
@@ -157,7 +158,19 @@ export async function resolveCodexRuntimeStore(params: CodexRuntimeHomeInput): P
     environment,
     sqliteHome: await resolveNativeSqliteHome(params, environment, pin, override),
     sqliteHomeOverride: pin && !override ? `sqlite_home=${JSON.stringify(pin)}` : null,
+    sqliteHomeWhenUnconfigured: environment.CODEX_SQLITE_HOME ?? environment.CODEX_HOME,
   });
+}
+
+export function resolveCodexDaemonProxyStore(params: Pick<CodexRuntimeHomeInput, 'env' | 'cwd'>): CodexRuntimeStore {
+  return {
+    cwd: resolve(params.cwd),
+    environment: { CODEX_HOME: resolve(params.cwd, resolveConfiguredNativeHomePath(CODEX_NATIVE_HOME, params.env)) },
+    sqliteHome: null,
+    sqliteHomeOverride: null,
+    // The independently launched daemon's environment is unknown to the proxy.
+    sqliteHomeWhenUnconfigured: null,
+  };
 }
 
 export async function resolveCodexRuntimeHomeEnvironment(params: CodexRuntimeHomeInput): Promise<CodexRuntimeHomeEnvironment> {
@@ -198,9 +211,7 @@ export async function proveCodexNativeRuntimeStore(params: Readonly<{
     const config = asRecord(asRecord(configured)?.config);
     if (!config) return params.store;
     const nativePath = asRecord(requirements)?.sqliteHome ?? config.sqlite_home;
-    const sqliteHome = nativePath == null
-      ? params.store.environment.CODEX_SQLITE_HOME ?? params.store.environment.CODEX_HOME
-      : readNativeAbsolutePath(nativePath);
+    const sqliteHome = nativePath == null ? params.store.sqliteHomeWhenUnconfigured : readNativeAbsolutePath(nativePath);
     return { ...params.store, sqliteHome };
   } catch {
     return params.store;

@@ -26,7 +26,7 @@ import {
     initializeCodexAppServerClient,
 } from './connection.js';
 import { withCodexNativeStartupLock } from './nativeStartupLock.js';
-import { applyCodexRuntimeStoreEnvironment, proveCodexNativeRuntimeStore, type CodexRuntimeStore } from '../../auth/services/state/sharing/files.js';
+import { applyCodexRuntimeStoreEnvironment, proveCodexNativeRuntimeStore, resolveCodexDaemonProxyStore, type CodexRuntimeStore } from '../../auth/services/state/sharing/files.js';
 import { reconcileCodexResumeRolloutPath } from '../../auth/services/state/sharing/reconcileResumeRolloutPath.js';
 import { buildCodexUserMcpServerDisableOverrides } from './config/overrides.js';
 import { assertCodexToolRestrictionRuntimeSupported, readCodexToolRestrictionEvidence } from './client/toolRestriction.js';
@@ -435,7 +435,10 @@ type CodexNativeAppServerClientParams = Readonly<{
 
 export async function createCodexNativeAppServerClient(params: CodexNativeAppServerClientParams): Promise<DisposableCodexAppServerClient> {
     if (params.transport && params.transport.kind !== 'stdio') {
-        return await verifyCodexNativeAppServerClient(params, await createUnlockedCodexNativeAppServerClient(params));
+        const client = await verifyCodexNativeAppServerClient(params, await createUnlockedCodexNativeAppServerClient(params));
+        if (params.transport.kind !== 'daemonProxy') return client;
+        const store = resolveCodexDaemonProxyStore({ env: params.processEnv ?? process.env, cwd: params.cwd ?? process.cwd() });
+        return bindCodexNativeRuntimeStore(client, store);
     }
     const env = params.processEnv ?? process.env;
     const resolvedSystemTool = await params.exec.systemTools.resolve({
