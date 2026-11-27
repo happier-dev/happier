@@ -309,7 +309,8 @@ export function AzureReviewPublicationControls({ input }: Readonly<{
     [includeWalkthrough, walkthroughOffered],
   );
   const draft = useTriageReviewPublicationDraftV1({
-    selection: draftSelection, walkthrough: draftWalkthrough, verdictOptions, setVerdict, setSummary,
+    continuation: { title: text('plugins.triage.detailStory.showMore', 'Read more'),
+      pending: proposals.status === 'loading', loadMore: proposals.loadMore }, selection: draftSelection, walkthrough: draftWalkthrough, verdictOptions, setVerdict, setSummary,
   });
   const selected = proposals.proposals.filter((proposal) => selectedIds.includes(proposal.id));
   const body = summary.trim();
@@ -365,7 +366,7 @@ export function AzureReviewPublicationControls({ input }: Readonly<{
       {proposals.status === 'ready' && proposals.proposals.length === 0 ? <Status tone="muted" label={text('plugins.azureDevops.ui.publication.empty', 'No proposed review comment is linked to this pull request yet.')} /> : null}
       {proposals.loadMore === undefined ? null : (
         <Button title={text('plugins.triage.detailStory.showMore', 'Read more')}
-          variant="secondary" busy={proposals.status === 'loading'} onPress={proposals.loadMore} />
+          variant="secondary" busy={proposals.status === 'loading'} onPress={draft.loadMore} />
       )}
       {proposals.proposals.length === 0 ? null : (
         <Form.Select

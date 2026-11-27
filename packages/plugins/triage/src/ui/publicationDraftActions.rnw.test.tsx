@@ -322,14 +322,21 @@ describe('the Publish sheet draft as agent Actions', () => {
   ] as const)('continues past an empty matching proposals page on %s', async (forge, label) => {
     const draft = await mountPublishSheet(forge, true);
     await vi.waitFor(() => expect(draft.proposalRequests).toHaveLength(1));
-    const more = await draft.page.getByRole('button', { name: label });
+    await draft.page.getByRole('button', { name: label });
     expect(draft.commands().some(row => row.operation.kind === 'setPublicationFindingIncluded')).toBe(false);
-    await act(async () => { await draft.page.press(more); });
+    const command = draft.commands().find(row => row.title === label);
+    expect(command).toBeDefined();
+    await act(async () => {
+      expect(await draft.invoke(command!.operation)).toEqual({ status: 'applied' });
+    });
     await vi.waitFor(() => expect(draft.commands().some(row => row.operation.kind === 'setPublicationFindingIncluded')).toBe(true));
     expect(draft.proposalRequests).toEqual([
       expect.objectContaining({ reviewId: 'admitted-review' }),
       expect.objectContaining({ reviewId: 'admitted-review', cursor: 'next' }),
     ]);
+    const clicked = await mountPublishSheet(forge, true);
+    await act(async () => { await clicked.page.press(await clicked.page.getByRole('button', { name: label })); });
+    await vi.waitFor(() => expect(clicked.proposalRequests).toEqual(draft.proposalRequests));
   });
 
   it.each([

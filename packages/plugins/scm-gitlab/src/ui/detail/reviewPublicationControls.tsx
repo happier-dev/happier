@@ -322,8 +322,9 @@ function PublicationOutcome({ execution }: Readonly<{
   return <PublicationResult result={parsed.data} text={text} />;
 }
 
-function ProposalReadState({ read }: Readonly<{
+function ProposalReadState({ read, onLoadMore = read.loadMore }: Readonly<{
   read: GitlabReviewProposalReadV1;
+  onLoadMore?: () => void;
 }>): React.ReactElement | null {
   const text = usePluginTranslation();
   return <Stack gap="small">
@@ -338,7 +339,7 @@ function ProposalReadState({ read }: Readonly<{
       ? <Status tone="muted" label={text('plugins.gitlab.ui.publication.empty', 'No proposed review comment is linked to this entry yet.')} />
       : null}
     {read.loadMore === undefined ? null : <Button title={text('plugins.triage.detailStory.showMore', 'Read more')}
-      variant="secondary" busy={read.status === 'loading'} onPress={read.loadMore} />}
+      variant="secondary" busy={read.status === 'loading'} onPress={onLoadMore} />}
   </Stack>;
 }
 
@@ -398,7 +399,8 @@ export function GitlabMergeRequestPublicationControls({
           : text('plugins.gitlab.ui.publication.verdict.comment', 'Comment'),
   })), [text]);
   const draft = useTriageReviewPublicationDraftV1({
-    open, selection: draftSelection, walkthrough: draftWalkthrough, verdictOptions, setVerdict, setSummary,
+    open, continuation: { title: text('plugins.triage.detailStory.showMore', 'Read more'),
+      pending: proposals.status === 'loading', loadMore: proposals.loadMore }, selection: draftSelection, walkthrough: draftWalkthrough, verdictOptions, setVerdict, setSummary,
   });
   const selected = proposals.proposals.filter((proposal) => selectedIds.includes(proposal.id));
   const summaryBody = summary.trim();
@@ -484,7 +486,7 @@ export function GitlabMergeRequestPublicationControls({
           value={summary}
           onChange={setSummary}
         />}
-        notices={<ProposalReadState read={proposals} />}
+        notices={<ProposalReadState read={proposals} onLoadMore={draft.loadMore} />}
         proposals={proposals.proposals}
         selectedIds={selectedIds}
         onSelectedIdsChange={draft.setSelectedIds}

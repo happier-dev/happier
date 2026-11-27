@@ -441,7 +441,8 @@ function BitbucketReviewPublicationControls({
     [includeWalkthrough, walkthroughOffered],
   );
   const draft = useTriageReviewPublicationDraftV1({
-    selection: draftSelection, walkthrough: draftWalkthrough, verdictOptions, setVerdict, setSummary,
+    continuation: { title: text('plugins.triage.detailStory.showMore', 'Read more'),
+      pending: status === 'loading', loadMore }, selection: draftSelection, walkthrough: draftWalkthrough, verdictOptions, setVerdict, setSummary,
   });
 
   const selected = proposals.filter((proposal) => selectedIds.includes(proposal.id));
@@ -491,7 +492,7 @@ function BitbucketReviewPublicationControls({
       {status === 'ready' && proposals.length === 0 ? <Text variant="micro" tone="neutral" valueKey="plugins.bitbucket.ui.mutations.review.noProposals" fallback="No proposed review comments are linked to this pull request." /> : null}
       {loadMore === undefined ? null : (
         <Button title={text('plugins.triage.detailStory.showMore', 'Read more')}
-          variant="secondary" busy={status === 'loading'} onPress={loadMore} />
+          variant="secondary" busy={status === 'loading'} onPress={draft.loadMore} />
       )}
       {proposals.length > 0 ? (
         <Form.Select

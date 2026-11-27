@@ -45,10 +45,10 @@ function parseReviewPublicationResult(value: unknown): GithubMutationResultV1 | 
   return parsed.success ? parsed.data : null;
 }
 
-function ReviewProposalContinuation({ read }: Readonly<{ read: ReviewCommentProposalReadV1 }>): React.ReactElement | null {
+function ReviewProposalContinuation({ read, onLoadMore = read.loadMore }: Readonly<{ read: ReviewCommentProposalReadV1; onLoadMore?: () => void }>): React.ReactElement | null {
   return read.loadMore === undefined ? null : <Button title="Load more comments"
     titleKey="plugins.github.ui.loadMoreComments" variant="secondary"
-    busy={read.status === 'loading'} onPress={read.loadMore} />;
+    busy={read.status === 'loading'} onPress={onLoadMore} />;
 }
 
 /**
@@ -226,7 +226,8 @@ export function PullRequestReviewPublicationWrite({
         : text('plugins.github.ui.mutations.review.verdict.comment', 'Comment'),
   })), [text]);
   const draft = useTriageReviewPublicationDraftV1({
-    open, selection: draftSelection, walkthrough: draftWalkthrough, verdictOptions, setVerdict, setSummary: setVerdictBody,
+    open, continuation: { title: text('plugins.github.ui.loadMoreComments', 'Load more comments'),
+      pending: proposalRead === 'loading', loadMore: publicationProposals.loadMore }, selection: draftSelection, walkthrough: draftWalkthrough, verdictOptions, setVerdict, setSummary: setVerdictBody,
   });
   const selected = React.useMemo(
     () => proposals.filter(proposal => selectedIds.includes(proposal.id)),
@@ -321,7 +322,7 @@ export function PullRequestReviewPublicationWrite({
             label={text('plugins.github.ui.mutations.review.proposals.empty', 'No proposed review comment is linked to this pull request yet.')}
           />
         ) : null}
-        <ReviewProposalContinuation read={publicationProposals} />
+        <ReviewProposalContinuation read={publicationProposals} onLoadMore={draft.loadMore} />
       </>}
       proposals={proposals}
       selectedIds={selectedIds}

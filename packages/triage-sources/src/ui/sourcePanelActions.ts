@@ -30,6 +30,7 @@ export function useTriageSourcePanelPagingV1(
   canLoadMore: boolean,
   pending: boolean,
   onLoadMore: () => void,
+  enabled = true,
 ): () => void {
   const commands = React.useMemo<readonly TriageSourcePanelCommandV1[]>(() => canLoadMore && !pending
     ? [{ title, operation: { kind: 'loadMoreSourceItems', list } }] : [], [canLoadMore, list, pending, title]);
@@ -38,9 +39,11 @@ export function useTriageSourcePanelPagingV1(
     onLoadMore();
     return { status: 'applied' };
   }, [canLoadMore, onLoadMore, pending]);
-  useTriageSourcePanelIntentV1({ kind: 'loadMoreSourceItems', list }, async () => advance(), commands);
+  useTriageSourcePanelIntentV1({ kind: 'loadMoreSourceItems', list }, async () => advance(), commands, enabled);
   return React.useCallback(() => { advance(); }, [advance]);
 }
+
+const noPublicationContinuation = () => {};
 
 type PublicationDraftFinding = Readonly<{ id: string; title: string }>;
 
@@ -56,13 +59,22 @@ export function useTriageReviewPublicationDraftV1<Verdict extends string>(option
     selectedIds: readonly string[];
     setSelectedIds: (ids: readonly string[]) => void;
   }>;
+  continuation?: Readonly<{ title: string; pending: boolean; loadMore?: () => void }>;
   walkthrough?: Readonly<{ included: boolean; setIncluded: (included: boolean) => void }> | null;
   verdictOptions: readonly Readonly<{ value: Verdict; label: string }>[];
   setVerdict: (verdict: Verdict) => void;
   setSummary: (summary: string) => void;
 }>) {
   const text = usePluginTranslation();
-  const { open = true, selection, walkthrough, verdictOptions, setVerdict, setSummary } = options;
+  const { open = true, continuation, selection, walkthrough, verdictOptions, setVerdict, setSummary } = options;
+  const loadMore = useTriageSourcePanelPagingV1(
+    'publication-proposals',
+    continuation?.title ?? '',
+    continuation?.loadMore !== undefined,
+    continuation?.pending === true,
+    continuation?.loadMore ?? noPublicationContinuation,
+    open && continuation?.loadMore !== undefined,
+  );
   const setFinding = React.useCallback((proposalId: string, included: boolean): TriageSourcePanelResultV1 => {
     if (!selection?.findings.some((finding) => finding.id === proposalId)) return { status: 'unavailable' };
     selection.setSelectedIds(withFinding(selection.selectedIds, proposalId, included));
@@ -128,5 +140,5 @@ export function useTriageReviewPublicationDraftV1<Verdict extends string>(option
     if (next !== selectedIds) setSelectedIds(next);
   }, [selection]);
   const setWalkthroughFromSheet = React.useCallback((included: boolean) => { setWalkthrough(included); }, [setWalkthrough]);
-  return { setSelectedIds: setSelectedFromSheet, setWalkthroughIncluded: setWalkthroughFromSheet, setVerdict: changeVerdict };
+  return { loadMore: continuation?.loadMore === undefined ? undefined : loadMore, setSelectedIds: setSelectedFromSheet, setWalkthroughIncluded: setWalkthroughFromSheet, setVerdict: changeVerdict };
 }

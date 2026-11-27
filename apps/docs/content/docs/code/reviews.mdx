@@ -131,6 +131,11 @@ counts, and any summary you wrote. **Open in Happier** opens an admitted Review.
 **Fix in Happier** opens a selected finding in that Review so you can decide
 how to address it.
 
+In the development Publish sheet for GitHub, GitLab, Azure DevOps, and
+Bitbucket, an agent can load the next page of proposed comments while the sheet
+offers more. Read the sheet's commands with `ui.current_context.read` and pass
+the paging command ID to `ui.current_context.command.invoke`.
+
 Plugin authors can import `buildReviewPublicationSummaryV1` from
 `@happier-dev/plugin-sdk/reviews` to build the preview parts. Pass the captured head
 and the approved findings, including their canonical comment IDs as
