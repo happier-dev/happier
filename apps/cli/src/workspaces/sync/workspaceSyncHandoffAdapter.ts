@@ -35,6 +35,7 @@ import { isManagedWorkspaceRefV2, type ManagedWorkspaceRefV2 } from '@happier-de
 import { resolveWorkspaceSyncExecutionMachineIdV1 } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 import type { ManagedWorkspaceSyncTarget } from '@/machines/managed/acquire';
 import type { WorkspaceManifest } from '@happier-dev/protocol/workspaces/manifestSchema';
+import { deriveWorkspaceSyncRelationshipId } from '@happier-dev/protocol/workspaces/workspaceSyncAdmissionV1';
 import {
   createWorkspaceSyncExecutionRegistry,
   sameAdmittedHandoffInput,
@@ -224,6 +225,7 @@ type PreparedOperation = Readonly<{
   remoteSource?: Readonly<{ machineId: string; input: WorkspaceSyncHandoffSourceInputV1; physicalEndpoint?: MachineInstallationPublicIdentityV1 }>;
   sourcePhaseAuthority?: WorkspaceSyncHandoffSourcePhaseAuthority;
   sourcePhaseContext?: RpcHandlerContext;
+  hadPrivateExecution?: boolean;
 }>;
 
 export function sameExecutionWorkspace(input: Pick<PrepareWorkspaceSyncHandoffInput,
@@ -399,7 +401,11 @@ export function createWorkspaceSyncHandoffAdapter(deps: WorkspaceSyncHandoffAdap
         throw adapterError('workspace_root_unsafe', 'workspace_root_unsafe');
       }
       if (input.action.kind === 'copy_once') validateWorkspaceSyncContentPolicy(input.action.contentPolicy);
-      const hadPrivateExecution = registry.hasOperation(input.operationId);
+      const hadPrivateExecution = registry.hasOperation(input.operationId)
+        || (input.action.kind === 'create_relationship'
+          && registry.findByRelationshipId(deriveWorkspaceSyncRelationshipId(input.operationId)) !== null)
+        || (input.action.kind === 'relationship'
+          && registry.findByRelationshipId(input.action.relationshipId) !== null);
       try {
         const admittedInput = input;
         const execution = input.action.kind !== 'none' ? await deps.resolveExecutionInput?.(input, authority, context) : undefined;
@@ -459,7 +465,7 @@ export function createWorkspaceSyncHandoffAdapter(deps: WorkspaceSyncHandoffAdap
             relationshipId: relationshipTransaction.relationship.relationshipId,
             relationshipCreated: !relationshipTransaction.reused, action: input.action, status: preparedStatus,
           };
-          preparedOperations.set(input.operationId, { prepared, admittedInput, executionInput: input, relationshipTransaction });
+          preparedOperations.set(input.operationId, { prepared, admittedInput, executionInput: input, relationshipTransaction, hadPrivateExecution });
           return prepared;
         }
         let effectiveInput = input;
@@ -519,7 +525,7 @@ export function createWorkspaceSyncHandoffAdapter(deps: WorkspaceSyncHandoffAdap
             ...(traversed === undefined ? {} : { traversed }),
           };
           preparedOperations.set(input.operationId, {
-            prepared, admittedInput, executionInput: effectiveInput,
+            prepared, admittedInput, executionInput: effectiveInput, hadPrivateExecution,
             ...(fence ? { fence } : {}), ...(context ? { sourcePhaseContext: context } : {}),
           });
           return prepared;
@@ -598,7 +604,7 @@ export function createWorkspaceSyncHandoffAdapter(deps: WorkspaceSyncHandoffAdap
       }
       await operation?.fence?.release('commit');
       if (prepared.relationshipId) await registry.bindRelationship(input.operationId, prepared.relationshipId, 'relationship');
-      else await registry.release(input.operationId);
+      else if (!operation?.hadPrivateExecution) await registry.release(input.operationId);
       preparedOperations.delete(input.operationId);
       return buildSettledResult(input.operationId, prepared, operation?.finalizedStatus ?? prepared.status, operation?.finalizedRoute ?? prepared.traversed);
     },
@@ -618,7 +624,7 @@ export function createWorkspaceSyncHandoffAdapter(deps: WorkspaceSyncHandoffAdap
       const failures = cleanup.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
       if (failures.length === 1) throw failures[0];
       if (failures.length > 1) throw new AggregateError(failures, 'Workspace handoff abort cleanup failed');
-      await registry.release(input.operationId);
+      if (!operation?.hadPrivateExecution) await registry.release(input.operationId);
       preparedOperations.delete(input.operationId);
     },
   };

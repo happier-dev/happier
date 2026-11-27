@@ -1,4 +1,4 @@
-import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionFailureCauseV1Schema, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readWorkspaceSyncRuntimeErrorCode } from '@/workspaces/sync/workspaceSyncSidecarLifecycle';
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import { assertWorkspaceSyncSeedExportSucceeded, prepareSignedWorkspaceSyncSeed, type CallWorkspaceSyncSeedExport } from '@/workspaces/sync/workspaceSyncSeedTransfer';
@@ -73,7 +73,7 @@ import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtim
 import type { PrivateProjectNativeSync, PrivateProjectSyncNetwork } from '@/workspaces/activation/privateProjectSyncEffect';
 import type { WorkspaceNativeCopyBaselineEffect } from '@/workspaces/activation/privateProjectSyncEffect';
 import { runWorkspaceEffectChannel } from '@/workspaces/activation/workspaceEffectProcess';
-import { createBufferTransferPayloadSource, readTransferPayloadChunk, resolveTransferPayloadSizeBytes, resolveTransferPayloadManifestHash } from '@/machines/transfer/transferPayloadSource';
+import { createBufferTransferPayloadSource, readTransferPayloadChunk, resolveTransferPayloadSizeBytes, resolveTransferPayloadManifestHash, type TransferPayloadSource } from '@/machines/transfer/transferPayloadSource';
 import { resolveWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import type { TransferEndpointCandidate } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -143,13 +143,14 @@ import {
 } from '@/workspaces/sync/workspaceSyncTargetDriver';
 import { createWorkspaceSyncPeerIdentityValidator } from '@/workspaces/sync/transport/workspaceSyncPeerIdentity';
 import { inspectRetiredWorkspaceReplicationState } from '@/workspaces/sync/workspaceSyncLegacyState';
-import { sameExecutionWorkspace, type WorkspaceSyncHandoffAdapter, type WorkspaceSyncPrivateExecution, type PrepareWorkspaceSyncHandoffInput,
+import { materializeWorkspaceSyncForOpen, sameExecutionWorkspace, type WorkspaceSyncHandoffAdapter, type WorkspaceSyncPrivateExecution, type PrepareWorkspaceSyncHandoffInput,
   type RetainedWorkspaceSyncPrivateExecution, type WorkspaceSyncManagedCopySource } from '@/workspaces/sync/workspaceSyncHandoffAdapter';
 import type { WorkspaceSyncRequesterTarget } from '@/workspaces/sync/workspaceSyncTypes';
 import type { SessionHandoffWorkspaceCaptureRequestV3, SessionHandoffWorkspaceCaptureResultV3 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { requesterWorkspaceCaptureRequired, requiresRequesterWorkspaceCapture } from '@/api/machine/machineRpcAuthorization';
 import {
   createWorkspaceSyncRelationshipOwner,
+  WorkspaceSyncPreparationRefusal,
   type WorkspaceSyncRelationshipOwner,
   type WorkspaceSyncRelationshipOwnerOptions,
 } from '@/workspaces/sync/workspaceSyncRelationshipOwner';
@@ -1156,6 +1157,64 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
             return { resolvePayloadSource: staged.resolvePayloadSource, release: staged.dispose };
           },
           prepareSourceSeed: async seed => {
+            if (seed.sourceMachineId === input.localMachineId && !targetPhaseContext?.workspaceSyncSourceWriterTargetRouting) {
+              seed.signal?.throwIfAborted();
+              const boundRelationshipId = executionRegistry()?.getByOperationId(request.operationId)?.relationshipId;
+              if (seed.sourceWorkspaceRefId !== request.source.id
+                || (seed.operationId !== request.operationId && seed.operationId !== boundRelationshipId)) {
+                throw compositionError('target_unavailable', 'Managed local seed does not match this execution');
+              }
+              const exported = await targetAuthority.prepareSourceSeedExport({
+                operationId: seed.operationId,
+                sourceWorkspaceRefId: seed.sourceWorkspaceRefId,
+                targetMachineId: request.target.controller.machineId,
+                contentPolicy: seed.contentPolicy,
+                ...(seed.exclusionCandidates ? { exclusionCandidates: seed.exclusionCandidates } : {}),
+              });
+              const openedSources: TransferPayloadSource[] = [];
+              const dispose = async () => {
+                try { await Promise.allSettled(openedSources.splice(0).map(source => source.dispose?.())); }
+                finally { await exported.payloadSource.dispose?.(); }
+              };
+              try {
+                seed.signal?.throwIfAborted();
+                const [sizeBytes, manifestHash] = await Promise.all([
+                  resolveTransferPayloadSizeBytes(exported.payloadSource),
+                  resolveTransferPayloadManifestHash(exported.payloadSource),
+                ]);
+                return {
+                  transferId: seed.operationId,
+                  sizeBytes,
+                  manifestHash,
+                  resolvePayloadSource: async ({ transferId }) => {
+                    seed.signal?.throwIfAborted();
+                    const source = transferId === seed.operationId
+                      ? exported.payloadSource
+                      : await exported.onDemandScope.resolvePayloadSourceOnOpen({ transferId, requestBody: undefined });
+                    if (source !== exported.payloadSource) openedSources.push(source);
+                    const [sourceSizeBytes, sourceManifestHash] = await Promise.all([
+                      resolveTransferPayloadSizeBytes(source),
+                      resolveTransferPayloadManifestHash(source),
+                    ]);
+                    return {
+                      sizeBytes: sourceSizeBytes,
+                      manifestHash: sourceManifestHash,
+                      readChunk: async range => {
+                        seed.signal?.throwIfAborted();
+                        return await readTransferPayloadChunk({ source, ...range });
+                      },
+                    };
+                  },
+                  openPayload: async () => {
+                    throw compositionError('target_bootstrap_offline', 'Managed local seed uses callback byte transfer');
+                  },
+                  dispose,
+                };
+              } catch (error) {
+                await dispose().catch(() => undefined);
+                throw error;
+              }
+            }
             const openCarrier = request.custody.accountId === installedAccountId ? input.openMachineCarrierTunnel
               : input.createRequesterMachineCarrierTunnel?.({ credentials: request.credentials, accountId: request.custody.accountId });
             if (!input.requestDirectTransferPayloadFile) throw compositionError('target_bootstrap_offline', 'Managed source transfer is unavailable');
@@ -1450,6 +1509,14 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     }
   }));
 
+  const findRetainedHandoffExecution = (request: Pick<Parameters<DaemonWorkspaceSyncRuntimeDependencies['bootstrap']>[0], 'operationId' | 'action'>) =>
+    executionRegistry()?.findByOperationOrRelationship(request.operationId)
+    ?? (request.action.kind === 'create_relationship'
+      ? executionRegistry()?.findByRelationshipId(deriveWorkspaceSyncRelationshipId(request.operationId))
+      : request.action.kind === 'relationship'
+        ? executionRegistry()?.findByRelationshipId(request.action.relationshipId)
+        : null);
+
   const readHandoffExecutionBasis = async (request: Parameters<DaemonWorkspaceSyncRuntimeDependencies['bootstrap']>[0], context?: RpcHandlerContext,
     physicalSourceAuthority?: WorkspaceSyncSourceContextV1) => {
     await privateRecovery;
@@ -1501,7 +1568,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
         sourceMachineId: resolved.endpoint.machineId, sourceRootPath: resolved.endpoint.rootPath } };
     }
     const authorization = context?.callerInputAuthorization;
-    const snapshot = executionRegistry()?.getByOperationId(request.operationId)?.execution.getSnapshot?.()
+    const snapshot = findRetainedHandoffExecution(request)?.execution.getSnapshot?.()
       ?? await readHandoffProjectSnapshot(request.signal, context);
     if (authorization) {
       for (const endpoint of [
@@ -2038,7 +2105,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
 
   runtime = factories.createDaemonRuntime({
     resolveHandoffRelationshipOwner: async (request, context) => {
-      const retained = executionRegistry()?.getByOperationId(request.operationId);
+      const retained = findRetainedHandoffExecution(request);
       if (!retained) {
         if (context && !canUseInstalledRelationshipOwner(context)) {
           const code = resolveMachineAgentExecutionPlacementV1({ policy: input.agentIsolation?.read() ?? { enabled: false },
@@ -2196,7 +2263,8 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     },
     handoffRelationshipController: {
       flush: async (relationshipId, signal) => {
-        const relationship = resolveRelationship(factories.getProjectSnapshot(), relationshipId);
+        const snapshot = executionRegistry()?.findByRelationshipId(relationshipId)?.execution.getSnapshot?.() ?? factories.getProjectSnapshot();
+        const relationship = resolveRelationship(snapshot, relationshipId);
         if (relationship.controllerMachineId === input.localMachineId) {
           if (!runtime) throw controllerUnavailable();
           return await runtime.managedWorkspaceSync.flush(relationshipId, signal);
@@ -2981,7 +3049,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
   };
   const materializeManagedProjectTarget = async (request: OpenProjectInputV1, context: RpcHandlerContext): Promise<OpenProjectResultV1> => {
     const materialization = request.materialization;
-    if (materialization.kind !== 'sync' || !materialization.targetManaged || !input.callWorkspaceProjectSource) {
+    if (materialization.kind !== 'sync' || !materialization.targetManaged) {
       return { kind: 'refused', code: 'workspace_sync_unavailable' };
     }
     const destination = materialization.targetManaged;
@@ -3005,8 +3073,49 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
         action.kind === 'relationship' ? action.relationshipId : deriveWorkspaceSyncRelationshipId(operationId));
     }
     retained.execution.bindTargetPhaseContext?.(context);
-    const result = await input.callWorkspaceProjectSource({ machineId: source.machineId, operationId,
-      sourceWorkspace: source, credentials: retained.execution.credentials, request }, context);
+    let result: Awaited<ReturnType<NonNullable<typeof input.callWorkspaceProjectSource>>>;
+    if (source.machineId === input.localMachineId && context.sessionProjectOpenRows) {
+      if (!runtime) return { kind: 'refused', code: 'workspace_sync_unavailable' };
+      let effectsIssued = false;
+      try {
+        const copyFacts = await materializeWorkspaceSyncForOpen(runtime.handoffAdapter, {
+          operationId: action.kind === 'copy_once' ? retained.input.operationId : operationId,
+          accountServerId: semanticServerId,
+          action,
+          sourceMachineId: source.machineId,
+          sourceRootPath: source.rootPath,
+          sourceWorkspaceRefId: source.id,
+          targetMachineId: request.machineId,
+          targetManaged: destination,
+          targetRootPath: materialization.targetPath,
+          targetWorkspaceRefId: target.workspace.id,
+          signal: context.signal,
+          onEffectsIssued: () => { effectsIssued = true; },
+        }, context);
+        result = { kind: 'materialized', ...copyFacts };
+      } catch (error) {
+        if (error instanceof WorkspaceSyncPreparationRefusal && !context.signal.aborted) {
+          const cause = error.cause && typeof error.cause === 'object' && 'failureCause' in error.cause
+            ? ActionFailureCauseV1Schema.safeParse(error.cause.failureCause) : null;
+          return { kind: 'refused', code: error.code, effectAttempted: effectsIssued,
+            ...(cause?.success ? { failureCause: cause.data } : {}) };
+        }
+        if (effectsIssued) {
+          return { kind: 'outcomeUnknown' };
+        }
+        const code = context.signal.aborted ? 'cancelled'
+          : error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
+            ? error.code : 'project_open_unavailable';
+        const cause = error && typeof error === 'object' && 'failureCause' in error
+          ? ActionFailureCauseV1Schema.safeParse(error.failureCause) : null;
+        return { kind: 'refused', code, effectAttempted: false,
+          ...(cause?.success ? { failureCause: cause.data } : {}) };
+      }
+    } else {
+      if (!input.callWorkspaceProjectSource) return { kind: 'refused', code: 'workspace_sync_unavailable' };
+      result = await input.callWorkspaceProjectSource({ machineId: source.machineId, operationId,
+        sourceWorkspace: source, credentials: retained.execution.credentials, request }, context);
+    }
     if (result.kind !== 'materialized') return result;
     const { native } = await target.open();
     const checkout = await native.inspectCheckout(request.subdir);

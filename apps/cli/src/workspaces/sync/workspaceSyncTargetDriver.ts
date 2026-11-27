@@ -283,7 +283,7 @@ export function createSignedRemoteRequesterDriver(
         relationshipId: request.relationshipId, targetMachineId: request.targetMachineId, targetWorkspaceRefId: request.targetWorkspaceRefId,
       });
       if (request.targetMachineId === localMachineId) {
-        if (retained.execution.nativeSync) {
+        if (retained.execution.nativeSync && !retained.execution.managedTarget) {
           const localResolutionEndpoint = await resolveLocalResolutionEndpoint(request.relationshipId, request.targetWorkspaceRefId);
           return retained.execution.nativeSync.recoverConflictResolutionHere(wireRequest, request.signal, { localResolutionEndpoint });
         }
