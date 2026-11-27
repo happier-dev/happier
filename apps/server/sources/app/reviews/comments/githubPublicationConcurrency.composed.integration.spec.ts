@@ -9,7 +9,8 @@ import { buildReviewTriageTransitionRequestV1 } from '@happier-dev/protocol/revi
 import { buildReviewCommentPublicationTransportRequestV1, openReviewCommentPublicationTransportResponseV1 } from '@happier-dev/protocol/reviews/comments/publicationTransport';
 import { createAuthenticatedTestApp, withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { db } from '@/storage/db';
-import { createAccountTokenForTests, createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
+import { createAccountTokenForTests } from '@/testkit/lightSqliteHarness';
+import { createDatabaseIntegrationHarness } from '@/testkit/databaseIntegrationHarness';
 import { registerReviewCommentRoutes } from './routes';
 import { publishGithubIssueComment } from '../../../../../../packages/plugins/scm-github/src/triage/mutations/issue';
 import { createStubGithubTransport, createTestGithubApiClient, readRecordedJsonBody } from '../../../../../../packages/plugins/scm-github/src/triage/testkit/githubTriage.test-support';
@@ -66,9 +67,10 @@ afterEach(() => {
 });
 
 describe('GitHub publication through registered Reviews routes and the SQL claim owner', () => {
-    let harness: LightSqliteHarness;
+    let harness: Awaited<ReturnType<typeof createDatabaseIntegrationHarness>>;
     beforeAll(async () => {
-        harness = await createLightSqliteHarness({ tempDirPrefix: 'happier-github-publication-concurrency-', initAuth: true, initEncrypt: true, sqliteConnectionLimit: 2 });
+        const options = { tempDirPrefix: 'happier-github-publication-concurrency-', initAuth: true, initEncrypt: true, sqliteConnectionLimit: 2 };
+        harness = await createDatabaseIntegrationHarness(options);
     }, 120_000);
     afterAll(async () => { await harness?.close(); });
 
@@ -167,19 +169,25 @@ describe('GitHub publication through registered Reviews routes and the SQL claim
             expect(providerWrites()).toHaveLength(1);
             holdNextWrite = true;
             const first = publish(planA);
+            // Both registered HTTP claims start before either caller reaches the
+            // provider write, exercising PostgreSQL's competing insert/lock path.
+            const competing = publish(planA);
             try {
-                await Promise.race([heldWriteEntered, first.then(result => {
+                await Promise.race([heldWriteEntered, Promise.all([first, competing]).then(result => {
                     throw new Error(`Publication settled before reaching the held provider write: ${JSON.stringify(result)}`);
                 })]);
                 expect(comments).toHaveLength(1);
-                expect(await publish(planA)).toMatchObject({ kind: 'settled', publication: {
+                expect(await Promise.race([first, competing])).toMatchObject({ kind: 'settled', publication: {
                     entries: [{ happierCommentId: commentA.id, outcome: { kind: 'uncertain' } }],
                 } });
                 expect(providerWrites()).toHaveLength(2);
             } finally {
                 releaseHeldWrite();
             }
-            expect(await first).toMatchObject(published(commentA.id, '5579420455'));
+            const completed = await Promise.all([first, competing]);
+            expect(completed.find(result => result.kind === 'settled'
+                && result.publication.entries[0]?.outcome.kind === 'published'))
+                .toMatchObject(published(commentA.id, '5579420455'));
             expect(await publish(planA)).toMatchObject(published(commentA.id, '5579420455'));
             expect(dispositions).toEqual(['dispatch', 'dispatch', 'reconcile', 'reconcile']);
             expect(providerWrites()).toHaveLength(2);
@@ -484,8 +492,10 @@ describe('GitHub publication through registered Reviews routes and the SQL claim
                 expect(sent).not.toContain('unselected.ts');
                 expect(sent).not.toContain(ignored.body);
                 expect(sent).not.toContain('ignored.ts');
-                expect(await db.reviewCommentPublicationCorrelation.findMany({ where: { accountId: recipient.id },
-                    select: { commentId: true }, orderBy: { commentId: 'asc' } })).toEqual([{ commentId: null }, { commentId: selected.id }]);
+                const correlations = await db.reviewCommentPublicationCorrelation.findMany({ where: { accountId: recipient.id },
+                    select: { commentId: true } });
+                expect(correlations).toHaveLength(2);
+                expect(correlations).toEqual(expect.arrayContaining([{ commentId: null }, { commentId: selected.id }]));
                 expect(await db.reviewComment.count({ where: { reviewId } })).toBe(3);
                 const reply = await attempt('approve', false, true);
                 expect(reply.outcome, JSON.stringify({ outcome: reply.outcome, claimResponses, claimStatuses })).toMatchObject({
