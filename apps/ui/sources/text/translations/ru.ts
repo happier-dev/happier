@@ -20245,7 +20245,7 @@ settingsSession: {
           railwayVolumeWillRemove: "Railway удалит том и его данные.",
           railwayVolumeWillKeep: ({ count }: { count: number }) => `Railway сохранит том, поскольку он используется ${count === 1 ? "ещё в 1 окружении" : `ещё в ${count} окружениях`}.`,
           railwayVolumeUnchecked: "Railway удалит том, только если ни одно другое окружение его не использует, и сохранит его в остальных случаях.",
-          railwayVolumeRemoved: "Railway удалил том и его данные.",
+          railwayVolumeRemoved: "Railway удаляет том и его данные.",
           railwayVolumeKept: ({ count }: { count: number }) => `Railway сохранил том, поскольку он по-прежнему используется ${count === 1 ? "ещё в 1 окружении" : `ещё в ${count} окружениях`}.`,
           railwayVolumeKeptUnchecked: "Happier не смог подтвердить удаление тома. Проверьте его в Railway.",
           railwayVolumeOpen: "Открыть в Railway",

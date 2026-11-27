@@ -20165,7 +20165,7 @@ settingsSession: {
           railwayVolumeWillRemove: "Railway supprimera le volume et ses données.",
           railwayVolumeWillKeep: ({ count }: { count: number }) => `Railway conservera le volume parce que ${count} autre${count === 1 ? " environnement l’utilise" : "s environnements l’utilisent"}.`,
           railwayVolumeUnchecked: "Railway supprimera le volume uniquement si aucun autre environnement ne l’utilise et le conservera dans le cas contraire.",
-          railwayVolumeRemoved: "Railway a supprimé le volume et ses données.",
+          railwayVolumeRemoved: "Railway supprime le volume et ses données.",
           railwayVolumeKept: ({ count }: { count: number }) => `Railway a conservé le volume parce que ${count} autre${count === 1 ? " environnement l’utilise encore" : "s environnements l’utilisent encore"}.`,
           railwayVolumeKeptUnchecked: "Happier n’a pas pu confirmer la suppression du volume. Vérifiez-le dans Railway.",
           railwayVolumeOpen: "Ouvrir dans Railway",

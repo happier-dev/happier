@@ -20116,7 +20116,7 @@ settingsSession: {
           railwayVolumeWillRemove: "Railway usunie wolumin i jego dane.",
           railwayVolumeWillKeep: ({ count }: { count: number }) => `Railway zachowa wolumin, ponieważ jest używany w ${count} ${plural({ count, one: "innym środowisku", few: "innych środowiskach", many: "innych środowiskach" })}.`,
           railwayVolumeUnchecked: "Railway usunie wolumin tylko wtedy, gdy nie korzysta z niego żadne inne środowisko, a w przeciwnym razie go zachowa.",
-          railwayVolumeRemoved: "Railway usunął wolumin i jego dane.",
+          railwayVolumeRemoved: "Railway usuwa wolumin i jego dane.",
           railwayVolumeKept: ({ count }: { count: number }) => `Railway zachował wolumin, ponieważ jest on nadal używany w ${count} ${plural({ count, one: "innym środowisku", few: "innych środowiskach", many: "innych środowiskach" })}.`,
           railwayVolumeKeptUnchecked: "Happier nie mógł potwierdzić usunięcia woluminu. Sprawdź go w Railway.",
           railwayVolumeOpen: "Otwórz w Railway",

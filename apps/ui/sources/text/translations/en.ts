@@ -23674,7 +23674,7 @@ const enProjects = {
         railwayVolumeWillRemove: "Railway will remove the volume and its data.",
         railwayVolumeWillKeep: ({ count }: { count: number }) => `Railway will keep the volume because ${count} other ${count === 1 ? "environment uses" : "environments use"} it.`,
         railwayVolumeUnchecked: "Railway will remove the volume only if no other environment uses it, and will keep it otherwise.",
-        railwayVolumeRemoved: "Railway removed the volume and its data.",
+        railwayVolumeRemoved: "Railway is deleting the volume and its data.",
         railwayVolumeKept: ({ count }: { count: number }) => `Railway kept the volume because ${count} other ${count === 1 ? "environment still uses" : "environments still use"} it.`,
         railwayVolumeKeptUnchecked: "Happier could not confirm volume removal. Check the volume in Railway.",
         railwayVolumeOpen: "Open in Railway",
