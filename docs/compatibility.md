@@ -10877,12 +10877,11 @@ An empty array means settlement retained no questions. No envelope, Account-mode
 server metadata, migration or wire epoch changes; strict development readers need
 matching Protocol and UI sources.
 
-Unreleased 0.3 dispatch can carry the paths from admitted Session uploads in
-`sessionAttachmentPaths`. Claude resolves relative paths against the original
-Session or Run workspace, then supplies absolute paths to its file tools under
-the existing tool policy. Older messages retain their attachment listing and
-Claude SDK images still use the existing verified byte input. The new field
-is optional and exists only during dispatch.
+Unreleased 0.3 Claude Session dispatch renders admitted upload paths against the
+opened workspace. The shared prompt renderer accounts for those paths before
+replay context is fitted. Older messages retain their attachment listing and
+Claude SDK images still use the existing verified byte input. The absolute
+paths are projected only for dispatch and grant no filesystem permissions.
 
 Unreleased 0.3 native Session and Execution Run assistant deltas can include
 `phase` with the Agent's `commentary`, `partial_answer`, or `final_answer`

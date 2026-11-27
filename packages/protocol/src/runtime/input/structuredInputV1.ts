@@ -484,7 +484,6 @@ export function readAdmittedHappierStructuredInputV1FromMeta(
  * generic envelope keeps its additive-preserve behavior for Message ingress.
  */
 export const AgentDispatchStructuredInputV1Schema = lazyZodSchema(() => z.extend(z.omit(HappierStructuredInputV1ObjectSchema, { composerAttachments: true }), {
-    sessionAttachmentPaths: z.optional(z.array(z.string())),
     resolvedComposerAttachments: z.optional(z.array(ResolvedComposerAttachmentDispatchV1Schema).check(z.maxLength(MAX_COMPOSER_ATTACHMENT_INSTANCES_V1))),
   }).check(z.superRefine((value, context) => {
     rejectOversizedComposerAttachmentEnvelope(value, context);
@@ -498,8 +497,6 @@ export const AgentDispatchStructuredInputV1Schema = lazyZodSchema(() => z.extend
   })));
 export type AgentDispatchStructuredInputV1 = Readonly<
   Omit<HappierStructuredInputV1, 'composerAttachments'> & Readonly<{
-    /** Dispatch-only upload paths selected by the host. They grant no filesystem permissions. */
-    sessionAttachmentPaths?: readonly string[];
     resolvedComposerAttachments?: readonly ResolvedComposerAttachmentDispatchV1[];
   }>
 >;

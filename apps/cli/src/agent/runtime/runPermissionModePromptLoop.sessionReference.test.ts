@@ -1,3 +1,4 @@
+import { resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -610,6 +611,7 @@ describe('runPermissionModePromptLoop Session reference dispatch', () => {
       composerAttachments?: NonNullable<PermissionModeQueuedPrompt['structuredInput']>['composerAttachments'];
       resolveComposerAttachmentForDispatch?: Parameters<typeof runPermissionModePromptLoop>[0]['resolveComposerAttachmentForDispatch'];
       attachments?: PermissionModeQueuedPrompt['attachments'];
+      uploadWorkspace?: string;
       failAssociationRelease?: boolean;
       onHarnessCreated?: (harness: Readonly<{
         runtime: ReturnType<typeof createRuntime>;
@@ -697,6 +699,7 @@ describe('runPermissionModePromptLoop Session reference dispatch', () => {
         permissionHandler: { setPermissionMode: vi.fn(), reset: vi.fn() },
         runtime,
         ...(params.resolveComposerAttachmentForDispatch ? { resolveComposerAttachmentForDispatch: params.resolveComposerAttachmentForDispatch } : {}),
+        uploadWorkspace: params.uploadWorkspace,
         createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
         messageBuffer: new MessageBuffer(),
         shouldExit: () => shouldExit,
@@ -731,22 +734,26 @@ describe('runPermissionModePromptLoop Session reference dispatch', () => {
       });
     }
 
-    it('fits the seed with the actual Session, contributed and upload frame in one projection', async () => {
+    it('fits the seed with the Session, contributed context and absolute upload path in one projection', async () => {
       const sessionRef = buildMentionRefForKindV1(MENTION_KIND_V1.session, 'source-session');
       const selected = buildComposerReferenceMentionPayloadV1({ reference: { pluginId: 'acme.issues', localId: 'issues' },
         candidate: { id: 'issue:42', label: 'Issue 42' } });
       const issueToken = `[Issue 42](happier-ref:${selected.ref})`;
       const sessionToken = `[Auth](happier-ref:${sessionRef})`;
+      const uploadWorkspace = resolve('session workspace');
+      const uploadPath = '.happier/uploads/messages/input/report.txt';
       const { prompt } = await runSeededPrompt({ withSessionReference: true, seedText: fullReplaySeed(), sessionToken, sessionMentionLabel: 'Auth',
         userText: `continue ${sessionToken} ${issueToken} [report](happier-ref:attachment:report)`,
         extraMentions: [{ ...selected, token: issueToken }],
-        attachments: [{ id: 'report', name: 'report.txt', path: '.happier/uploads/messages/input/report.txt', sizeBytes: 42 }],
+        attachments: [{ id: 'report', name: 'report.txt', path: uploadPath, sizeBytes: 42 }],
+        uploadWorkspace,
         onHarnessCreated: ({ runtime }) => Object.assign(runtime, { resolveComposerReference: async () => ({
           id: 'issue:42', label: 'Issue 42', context: 'Current issue context',
         }) }),
       });
       expect(prompt).toContain('<recent_transcript>');
       expect(prompt).toContain('Current issue context');
+      expect(prompt).toContain(`path=${JSON.stringify(resolve(uploadWorkspace, uploadPath))}`);
       expect(prompt).toContain('[File: report.txt]');
       expect(prompt).toContain('@Session "Auth"');
       expect(prompt).not.toContain('happier-ref:');

@@ -32,6 +32,8 @@ export type SessionInputReferencesV1 = Readonly<{
   composerAttachments?: readonly ComposerAttachmentContextBlockEntryV1[];
   composerAttachmentInputs?: readonly ComposerAttachmentInputV1[];
   uploads?: readonly SessionAttachmentDescriptorV1[];
+  /** Absolute paths from the host's opened workspace, used only for provider prompt rendering. */
+  absoluteUploadPaths?: ReadonlyMap<string, string>;
   imageInputs?: readonly StructuredImageInputV1[];
   skillMentions?: readonly SkillMentionV1[];
   vendorPluginMentions?: readonly VendorPluginMentionV1[];
@@ -191,12 +193,13 @@ export function projectSessionInputReferencesV1(params: Readonly<{
     referenceEntries.push(`- vendor_plugin=${data(plugin.vendorPluginRef)}${plugin.label ? `; label=${data(plugin.label)}` : ''}`);
   }
   for (const upload of references.uploads ?? []) {
-    // Retained 0.2 messages already carry their upload listing in the original text.
-    if (!upload.id && params.text.includes('[attachments]')) continue;
+    // Retained 0.2 messages already list their relative paths. A host-projected absolute path still needs a row.
+    const absolutePath = references.absoluteUploadPaths?.get(upload.path);
+    if (!absolutePath && !upload.id && params.text.includes('[attachments]')) continue;
     const key = `upload:${upload.id ?? upload.path}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    uploadEntries.push(`- path=${data(upload.path)}; name=${data(upload.name)}; mime_type=${data(upload.mimeType ?? 'unknown')}; size_bytes=${upload.sizeBytes}`);
+    uploadEntries.push(`- path=${data(absolutePath ?? upload.path)}; name=${data(upload.name)}; mime_type=${data(upload.mimeType ?? 'unknown')}; size_bytes=${upload.sizeBytes}`);
     if (upload.id) {
       const imageIndex = references.imageInputs?.findIndex(value => value.id === upload.id) ?? -1;
       markers.set(buildMentionRefV1(INLINE_REFERENCE_ATTACHMENT_SCHEME_V1, upload.id), {

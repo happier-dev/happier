@@ -241,6 +241,7 @@ import type { RuntimeActivityApplicability } from '@/agent/runtime/session/activ
 import type { TerminalRemoteSessionMode } from './runTerminalRemoteSessionModeLoop';
 import type { SessionStateCapabilitiesV1 } from '@happier-dev/protocol';
 import type { MetadataUpdatePort, SessionStateFacet, SessionStateSyncEngine } from '@happier-dev/agents';
+import { areSameAgentRoutingIdentity } from '@happier-dev/agents';
 import {
   getAgentModelConfig,
   isRuntimeConfigUpdateOutcomeApplied,
@@ -2426,6 +2427,7 @@ async function runHostedSessionRuntime(
       const targetSession = currentLifecycleSession;
       return {
         sessionId: targetSession.sessionId,
+        uploadWorkspace,
         materializeDiscussionAttachmentsForDispatch: input => targetSession.materializeDiscussionAttachmentsForDispatch(input),
         reconcileSessionInputForProviderDispatch: input => targetSession.reconcileSessionInputForProviderDispatch(input),
         retainPromptComposition: async composition => {
@@ -2548,6 +2550,8 @@ async function runHostedSessionRuntime(
         ?? ''
       )
     : runtimeContext.runtimeDirectory;
+  // Claude file tools can run from a shell cwd that differs from its opened Session workspace.
+  const uploadWorkspace = areSameAgentRoutingIdentity(policyAgentId, 'claude') ? runtimeDirectory : undefined;
   if (runtimeDirectory) bindHostedSessionWorkingDirectory(runtimeDirectory);
   // A placed Session's checkpoints, review fingerprints and media act on its target, not this Machine's path.
   bindPlacedSessionWorkspaceSource();
@@ -4402,6 +4406,7 @@ async function runHostedSessionRuntime(
         runPermissionModePromptLoopFn: async (loopParams) => await (deps.runPermissionModePromptLoopFn ?? runPermissionModePromptLoop)({
           ...loopParams,
           inputConsumer,
+          uploadWorkspace,
           prepareHostContext: effectivePrepareHostContext,
         }),
       },

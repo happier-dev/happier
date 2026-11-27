@@ -1,3 +1,5 @@
+import { resolve } from 'node:path';
+
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import { AgentDispatchStructuredInputV1Schema, readStructuredInputMentionSourcesV1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
 import { buildComposerAttachmentDedupeKeyV1, ComposerAttachmentInputV1Schema, ResolvedComposerAttachmentDispatchV1Schema } from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
@@ -770,6 +772,15 @@ function projectSessionMediaInputs(params: Readonly<{
   return { images: Object.freeze(images), files: Object.freeze(files) };
 }
 
+function projectUploadReferences(uploads: readonly SessionAttachmentDescriptorV1[], workspace?: string) {
+  return {
+    uploads,
+    ...(workspace && uploads.length ? {
+      absoluteUploadPaths: new Map(uploads.map(upload => [upload.path, resolve(workspace, upload.path)])),
+    } : {}),
+  };
+}
+
 /**
  * Rewrites the envelope so what reaches a plugin is the RESOLVED model.
  *
@@ -786,6 +797,7 @@ function projectSessionMediaInputs(params: Readonly<{
 export async function resolveStructuredInputProviderDispatchContext(params: Readonly<{
   structuredInput: HappierStructuredInputV1 | null | undefined;
   attachments?: readonly SessionAttachmentDescriptorV1[];
+  uploadWorkspace?: string;
   /** Exact durable items read from the canonical SessionMedia message envelope. */
   sessionMedia?: readonly SessionMediaItemV1[];
   catalogs?: StructuredInputCatalogReaders;
@@ -806,11 +818,9 @@ export async function resolveStructuredInputProviderDispatchContext(params: Read
   const uploadedAttachments = params.attachments ?? [];
   if (!envelope) {
     return Object.freeze({
-      structuredInput: uploadedAttachments.length
-        ? AgentDispatchStructuredInputV1Schema.parse({ v: 1, sessionAttachmentPaths: uploadedAttachments.map(upload => upload.path) })
-        : envelope,
+      structuredInput: envelope,
       promptContext: Object.freeze({
-        references: Object.freeze({ uploads: uploadedAttachments }),
+        references: Object.freeze(projectUploadReferences(uploadedAttachments, params.uploadWorkspace)),
       }),
     });
   }
@@ -881,9 +891,6 @@ export async function resolveStructuredInputProviderDispatchContext(params: Read
   // pre-existing dispatch projection before parsing the exact final schema.
   delete resolvedEnvelope.composerAttachments;
   delete resolvedEnvelope.resolvedComposerAttachments;
-  delete resolvedEnvelope.sessionAttachmentPaths;
-  const uploads = [...uploadedAttachments, ...sessionMediaInputs.files];
-  if (uploads.length) resolvedEnvelope.sessionAttachmentPaths = uploads.map(upload => upload.path);
   if (sources.mentions.length > 0) {
     // D-4's precedence owner says mentions[] wins when it is populated. Replace that raw
     // enumeration with the dispatch projection, while legacy-only envelopes remain legible
@@ -926,7 +933,7 @@ export async function resolveStructuredInputProviderDispatchContext(params: Read
     composerReferences: composerContextEntries,
     composerAttachments: attachmentProjection.contextEntries,
     composerAttachmentInputs: attachments,
-    uploads,
+    ...projectUploadReferences([...uploadedAttachments, ...sessionMediaInputs.files], params.uploadWorkspace),
     imageInputs: structuredInput.imageInputs ?? [],
     skillMentions: structuredInput.skillMentions ?? [],
     vendorPluginMentions: structuredInput.vendorPluginMentions ?? [],

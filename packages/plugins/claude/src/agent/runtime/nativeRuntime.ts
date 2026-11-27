@@ -19,9 +19,7 @@ import type {
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { createExecutionRunHostBackendFromConversationRuntime } from '@happier-dev/plugin-sdk/agents/runtime';
 import { claudeHandoffSurface } from '../surfaces/sessions/handoff/providerOps.js';
-import { resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
-import type { AgentDispatchStructuredInputV1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
 import { randomUUID } from 'node:crypto';
 import { AgentRuntimeJsonValueSchema } from '@happier-dev/plugin-sdk/agents/runtime';
 import { PluginError, type PluginDiagnosticData } from '@happier-dev/plugin-sdk';
@@ -454,11 +452,10 @@ function acceptsClaudeImageInput(operations: ClaudeNativeSessionOperations): boo
 async function submitClaudeProviderInput(
   operations: ClaudeNativeSessionOperations,
   request: Parameters<AgentSessionRuntime['send']>[0],
-  workspace: string,
 ): Promise<ClaudeRuntimePromptSubmissionOutcome> {
   const structuredInput = request.input.structuredInput;
   const structured = structuredInput && typeof structuredInput === 'object' && !Array.isArray(structuredInput)
-    ? structuredInput as AgentDispatchStructuredInputV1 : null;
+    ? structuredInput as Readonly<Record<string, unknown>> : null;
   if (!acceptsClaudeImageInput(operations) && Array.isArray(structured?.imageInputs) && structured.imageInputs.length > 0) {
     return { kind: 'rejected_before_effect', code: 'claude_image_input_unsupported', reason: 'The terminal text transport cannot deliver image content.' };
   }
@@ -474,12 +471,7 @@ async function submitClaudeProviderInput(
   }
   // Explicit selections are user invocations, including skills the model-side
   // Skill tool cannot invoke. Preserve the request; send references, never bodies.
-  const skillPrompt = skillReferences.length ? `${request.input.text}\n\n<explicit_skill_invocations>\nThe user explicitly requested each skill below. Read each source file and follow its instructions, including user-only skills.\n${JSON.stringify(skillReferences)}\n</explicit_skill_invocations>` : request.input.text;
-  const uploadPaths = structured?.sessionAttachmentPaths;
-  const prompt = uploadPaths?.length ? [
-    skillPrompt, '', 'Use these absolute paths to read the uploaded files:',
-    ...Array.from(new Set(uploadPaths.map(path => resolve(workspace, path))), path => JSON.stringify(path)),
-  ].join('\n') : skillPrompt;
+  const prompt = skillReferences.length ? `${request.input.text}\n\n<explicit_skill_invocations>\nThe user explicitly requested each skill below. Read each source file and follow its instructions, including user-only skills.\n${JSON.stringify(skillReferences)}\n</explicit_skill_invocations>` : request.input.text;
   const meta = {
     localId: request.inputIds[0] ?? null,
     localIds: [...request.inputIds],
@@ -879,7 +871,7 @@ export function createClaudeNativeSessionRuntimeFromOperations(
       }
       let submissionOutcome: ClaudeRuntimePromptSubmissionOutcome;
       try {
-        submissionOutcome = await submitClaudeProviderInput(operations, nativeRequest, request.cwd);
+        submissionOutcome = await submitClaudeProviderInput(operations, nativeRequest);
       } catch (error) {
         const queued = terminalPromptDelivery?.decision?.kind === 'accepted'
           ? bufferedEvents?.drain() ?? []
@@ -1203,7 +1195,6 @@ export function createClaudeNativeSessionRuntimeFromOperations(
 
 function createClaudeExecutionRunConversationFromOperations(
   operations: ReturnType<typeof createClaudeAgentSdkTurnOperations>,
-  workspace: string,
   runtimeAuthServiceId: string | null,
 ): AgentExecutionRunConversationRuntimeV1 {
   const listeners = new Set<Parameters<AgentExecutionRunConversationRuntimeV1['watch']>[0]>();
@@ -1232,7 +1223,7 @@ function createClaudeExecutionRunConversationFromOperations(
         }
       }
       try {
-        const outcome = await submitClaudeProviderInput(operations, request, workspace);
+        const outcome = await submitClaudeProviderInput(operations, request);
         if (outcome.kind === 'accepted' || outcome.kind === 'custody_observed') {
           return { status: 'admitted' };
         }
@@ -1588,7 +1579,7 @@ async function openClaudeNativeAgentSdkExecutionRunConversation(input: Readonly<
     skills: input.request.skills,
     publishSdkMessages: true,
   });
-  return createClaudeExecutionRunConversationFromOperations(operations, input.request.cwd,
+  return createClaudeExecutionRunConversationFromOperations(operations,
     readClaudeConnectedServiceRuntimeServiceFromEnv(input.request.launchEnvironment?.values));
 }
 

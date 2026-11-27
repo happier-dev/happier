@@ -565,6 +565,7 @@ async function transformAgentContextPromptBeforeDispatch(params: Readonly<{
 
 export async function runPermissionModePromptLoop(opts: {
   providerName: string;
+  uploadWorkspace?: string;
   agentMessageType: ACPProvider;
   explicitPermissionMode: PermissionMode | undefined;
   session: ApiSessionClient;
@@ -1463,6 +1464,7 @@ export async function runPermissionModePromptLoop(opts: {
           : null;
         const referenceServices = {
           sessionId: opts.session.sessionId,
+          uploadWorkspace: opts.uploadWorkspace,
           materializeDiscussionAttachmentsForDispatch: (input: Parameters<ApiSessionClient['materializeDiscussionAttachmentsForDispatch']>[0]) =>
             opts.session.materializeDiscussionAttachmentsForDispatch(input),
           catalogs: {

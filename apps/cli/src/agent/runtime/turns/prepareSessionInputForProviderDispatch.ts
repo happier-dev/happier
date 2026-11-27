@@ -64,6 +64,7 @@ export function projectSessionComposerAttachmentDispatchInput(
 
 export type SessionInputDispatchServices = Readonly<{
   sessionId?: string;
+  uploadWorkspace?: string;
   reconcileSessionInputForProviderDispatch?: SessionClientInteractionApi['reconcileSessionInputForProviderDispatch'];
   materializeDiscussionAttachmentsForDispatch?: (input: DiscussionAttachmentDispatchInput) => Promise<DiscussionAttachmentDispatchResult>;
   catalogs?: StructuredInputCatalogReaders;
@@ -124,6 +125,7 @@ export async function resolveSessionInputForProviderDispatch(input: Readonly<{
   return await resolveStructuredInputProviderDispatchContext({
     structuredInput,
     attachments,
+    uploadWorkspace: services?.uploadWorkspace,
     sessionMedia: input.prompt.sessionMedia,
     catalogs: services?.catalogs,
     signal: input.signal,
