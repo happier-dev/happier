@@ -21,10 +21,17 @@ node "$tooling/scripts/workspaces/commitGate.mjs" --post-commit --base="$1" --tr
 case $structuralStatus in 0) ;; 10) exit 10;; *) exit 75;; esac
 unset P03_SCAN_CHEAP_ONLY P03_GATE_PRIOR SCAN_FROM
 refuse() {
-  local check=$1 path=$2
-  printf 'HAPPIER_POST_COMMIT_FAILURE\t%s\t%s\n' "$check" "$path"
+  local check=$1 path=$2 key=$3
+  printf 'HAPPIER_POST_COMMIT_FAILURE\t%s\t%s\t%s\n' "$check" "$path" "$key"
   echo "POST-COMMIT RED: $check"
   exit 10
+}
+checked() {
+  local check=$1 key
+  printf 'HAPPIER_POST_COMMIT_CHECK\t%s\n' "$check"
+  while IFS= read -r key; do
+    if [ -n "$key" ]; then printf 'HAPPIER_POST_COMMIT_CHECK\t%s\t%s\n' "$check" "$key"; fi
+  done
 }
 first_path() {
   awk -F '\t' '$1 ~ /[^[:space:]]/ { sub(/^ +/, "", $1); sub(/:[0-9]+$/, "", $1); print $1; exit }'
@@ -47,11 +54,18 @@ b=$(hb "$1") || { echo "gate unavailable: base bundle failed"; exit 75; }
 c=$(hbrun "$(git rev-parse "$2")") || { echo "gate unavailable: candidate bundle failed"; exit 75; }
 echo "gate: base $(printf '%s' "$b" | grep -c .) errors, candidate $(printf '%s' "$c" | grep -c .) errors"
 printf '%s\n' "$c" | cut -c1-220
+bundleCheck="Bundle and import check"
+printf '%s\n' "$c" | build_error_keys | checked "$bundleCheck"
 # Any esbuild error the candidate adds (CLI incl. bundled plugins, server, and every .mjs/.cjs script under
 # apps/stack, scripts/ and packages/*/scripts) fails: a missing module is kept external and recorded, so
 # missing-export link errors are never hidden behind it.
 bad=$(new_build_errors <(printf '%s\n' "$b") <(printf '%s\n' "$c") | grep . || true)
-[ -z "$bad" ] || { echo "NEW BUILD/IMPORT ERRORS:"; echo "$bad" | cut -c1-250; refuse "Bundle and import check" "$(printf '%s\n' "$bad" | first_path)"; }
+if [ -n "$bad" ]; then
+  echo "NEW BUILD/IMPORT ERRORS:"
+  echo "$bad" | cut -c1-250
+  first=${bad%%$'\n'*}
+  refuse "$bundleCheck" "$(printf '%s\n' "$first" | first_path)" "$(printf '%s\n' "$first" | build_error_keys)"
+fi
 # Type-level and re-export check, whole repository (esbuild bundles a missing TS re-export as undefined,
 # and drops type-only imports entirely, so a consumer reading a type its producer never committed slips
 # through the bundle). The base result is cached per commit; only findings the candidate adds fail.
@@ -63,6 +77,13 @@ src=0; bs=$(fullscan "$1") || src=$?
 [ $src -eq 0 ] || { echo "gate unavailable: base scan failed"; exit 75; }
 src=0; cs=$(fullscan "$2") || src=$?
 [ $src -eq 0 ] || { echo "gate unavailable: candidate scan failed"; exit 75; }
+exportCheck="Export scan"
+printf '%s\n' "$cs" | checked "$exportCheck"
 miss=$(lines_added <(printf '%s\n' "$bs") <(printf '%s\n' "$cs"))
-[ -z "$miss" ] || { echo "MISSING EXPORTS (new, whole repo):"; echo "$miss" | cut -c1-250; refuse "Export scan" "$(printf '%s\n' "$miss" | first_path)"; }
+if [ -n "$miss" ]; then
+  echo "MISSING EXPORTS (new, whole repo):"
+  echo "$miss" | cut -c1-250
+  first=${miss%%$'\n'*}
+  refuse "$exportCheck" "$(printf '%s\n' "$first" | first_path)" "$first"
+fi
 echo "scan: no new missing exports anywhere in apps/ or packages/"

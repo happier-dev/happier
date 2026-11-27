@@ -731,13 +731,12 @@ function coveringRollingHead(repo, verdictPath, commit, packages) {
   }
 }
 
-/** On the shared branch, a backlogged packet needs a current-cut or later package verdict to alert. */
-function diagnosticsStillAtHead({ repo, state, sha, fresh, verdictPath }) {
+function cutAfterCommit(repo, sha) {
   let board;
   try { board = readFileSync(join(repo, BOARD_PATH), 'utf8'); }
-  catch (error) { if (error.code === 'ENOENT') return fresh; throw error; }
+  catch (error) { if (error.code === 'ENOENT') return; throw error; }
   const cutRef = /^### [^\n]+ — Systemic → [^\n]+ — RULING — cut \d+ is NAMED: ([a-f0-9]{7,40})\b/mu.exec(board)?.[1];
-  if (!cutRef) return fresh;
+  if (!cutRef) return;
   const resolved = spawnSync('git', ['rev-parse', '--verify', '--quiet', `${cutRef}^{commit}`], {
     cwd: repo, env: gitEnv(), encoding: 'utf8',
   });
@@ -745,8 +744,13 @@ function diagnosticsStillAtHead({ repo, state, sha, fresh, verdictPath }) {
   const cut = resolved.stdout.trim();
   const isAncestor = (base, head) =>
     spawnSync('git', ['merge-base', '--is-ancestor', base, head], { cwd: repo, env: gitEnv() }).status === 0;
-  if (!cut || sha === cut || !isAncestor(sha, cut) || !isAncestor(cut, 'HEAD')) return fresh;
+  if (cut && sha !== cut && isAncestor(sha, cut) && isAncestor(cut, 'HEAD')) return cut;
+}
 
+/** On the shared branch, a backlogged packet needs a current-cut or later package verdict to alert. */
+function diagnosticsStillAtHead({ repo, state, sha, fresh, verdictPath }) {
+  const cut = cutAfterCommit(repo, sha);
+  if (!cut) return fresh;
   // Both rolling and per-commit workers publish exact-tree verdicts to this
   // cache. Plugins are checked by the latter and are outside the rolling scope.
   const git = gitAt(repo);
@@ -824,6 +828,23 @@ function hasBroadCommitReplay(repo, commit) {
     .split('\0').some(path => BROAD_REPLAY_PATH.test(path));
 }
 
+function broadFailureAtHead({ git, verdictPath, cut, failure }) {
+  const reports = new Map();
+  const lines = readFileSync(verdictPath, 'utf8').split('\n');
+  lines.pop(); // Another drainer may be appending the last record.
+  for (const line of lines) {
+    const row = /^\S+ BROAD-REPORT-(?:ok|RED|incomplete) commit=([0-9a-f]+) exit=\S+(?: checks=(.*))?$/u.exec(line);
+    if (row) reports.set(row[1], row[2]);
+  }
+  // The queue can finish old commits after newer ones. Choose by branch order.
+  const head = git(['log', '--first-parent', '--format=%H', `${cut}^..HEAD`]).trim().split('\n')
+    .find(sha => reports.has(sha));
+  const checks = reports.get(head);
+  // A replay may skip this graph, stop at an earlier phase, or predate per-check evidence.
+  const keys = checks && failure && JSON.parse(checks).find(([check]) => check === failure.check)?.[1];
+  return { head, present: keys ? keys.includes(failure.key ?? 'failed') : undefined };
+}
+
 async function reportBroadCommitReplay({ repo, commit, env, post = entry => postBoardEntry(repo, entry),
   log = message => process.stderr.write(`${message}\n`) }) {
   const script = join(repo, 'scripts/workspaces/runCommitPostChecks.sh');
@@ -834,20 +855,44 @@ async function reportBroadCommitReplay({ repo, commit, env, post = entry => post
   // Its entry and bundle phases acquire and release their own grants in sequence.
   const child = spawn('bash', [script, base, commit], { cwd: repo, env, stdio: ['ignore', 'pipe', 'inherit'] });
   let failure;
+  const checks = new Map();
   const output = createInterface({ input: child.stdout, crlfDelay: Infinity });
   output.on('line', line => {
-    const match = /^HAPPIER_POST_COMMIT_FAILURE\t([^\t]+)\t(.*)$/u.exec(line);
-    if (match) failure ??= { check: match[1], path: match[2] };
-    else process.stdout.write(line + '\n');
+    const failed = /^HAPPIER_POST_COMMIT_FAILURE\t([^\t]+)\t([^\t]*)(?:\t(.*))?$/u.exec(line);
+    if (failed) {
+      const [, check, path, key] = failed;
+      failure ??= { check, path, key };
+      if (!checks.has(check)) checks.set(check, [key ?? 'failed']);
+      return;
+    }
+    const checked = /^HAPPIER_POST_COMMIT_CHECK\t([^\t]+)(?:\t(.*))?$/u.exec(line);
+    if (checked) {
+      const [, check, key] = checked;
+      if (!checks.has(check)) checks.set(check, []);
+      if (key !== undefined) checks.get(check).push(key);
+      return;
+    }
+    process.stdout.write(line + '\n');
   });
   const [status] = await once(child, 'close').catch(error => {
     log(`[commit-checks] broad replay could not start for ${commit}: ${error.message}`);
     return [75];
   });
   const verdict = status === 0 ? 'ok' : status === 10 ? 'RED' : 'incomplete';
-  const state = commitPackageTypecheckStateDir(repo, env);
-  appendFileSync(join(state, 'verdicts.log'), `${new Date().toISOString()} BROAD-REPORT-${verdict} commit=${commit} exit=${status}\n`);
+  const verdictPath = join(commitPackageTypecheckStateDir(repo, env), 'verdicts.log');
+  appendFileSync(verdictPath, `${new Date().toISOString()} BROAD-REPORT-${verdict} commit=${commit} exit=${status} checks=${JSON.stringify([...checks])}\n`);
   if (status !== 10) return;
+  const cut = cutAfterCommit(repo, commit);
+  let checkedHead;
+  if (cut) {
+    const { head, present } = broadFailureAtHead({ git, verdictPath, cut, failure });
+    if (!present) {
+      const status = present === false ? `fixed by HEAD ${head}` : `HEAD unverified at or after cut ${cut}`;
+      appendFileSync(verdictPath, `${new Date().toISOString()} BROAD-REPORT-HEAD introduced at ${commit}, ${status} ${failure?.check ?? 'Broad post-commit replay'} ${failure?.path ?? ''}\n`);
+      return;
+    }
+    checkedHead = head;
+  }
   const lane = commitLane(git, commit);
   const author = git(['log', '-1', '--format=%an', commit]).trim();
   const addressees = lane ?? 'P03 ORCH';
@@ -856,6 +901,7 @@ async function reportBroadCommitReplay({ repo, commit, env, post = entry => post
     `### ${stamp} UTC — P03-COMMIT-CHECKS → ${addressees} — URGENT — Broad post-commit checks failed for ${commit.slice(0, 11)}`,
     `- ${lane ? `${lane}: fix forward` : `P03 ORCH: route to author ${author} for a fix forward`}. The exact commit ${commit} adds an entry, bundle or export failure over its parent ${base}.`,
     `- ${failure?.check ?? 'Broad post-commit replay'} failed at ${failure?.path ? inlineCode(failure.path) : 'an unreported path'}. Details in \`runs/gate-report.log\`.`,
+    ...(checkedHead ? [`- This failure is also present in the broad report for checked HEAD ${checkedHead}.`] : []),
     '',
   ].join('\n');
   try { post(entry); }

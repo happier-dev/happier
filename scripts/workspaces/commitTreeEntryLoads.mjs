@@ -761,6 +761,13 @@ if (process.argv[1] && existsSync(process.argv[1]) && realpathSync(process.argv[
     try {
       const result = await commitTreeEntryLoads({ repo, base, tree, phase: args.includes('--post-commit') ? 'deferred' : 'report', installDir: resolve(option('install-dir') ?? repo), signal: stop.signal });
       for (const finding of result.findings) console.error(`tree entry load: ${finding}`);
+      if (args.includes('--post-commit')) {
+        for (const { graph, status } of result.results) {
+          if (status === 'passed' || status === 'failed') {
+            console.log(`HAPPIER_POST_COMMIT_CHECK\tEntry load (${graph})${status === 'failed' ? '\tfailed' : ''}`);
+          }
+        }
+      }
       if (args.includes('--post-commit') && result.findings.length) {
         const [, graph, path] = /^([^:]+): (.*?): /u.exec(result.findings[0]) ?? [];
         console.log(`HAPPIER_POST_COMMIT_FAILURE\tEntry load (${graph})\t${path ?? ''}`);

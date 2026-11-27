@@ -1412,6 +1412,69 @@ test('a failed broader check reports the exact landed SHA for a fix forward', { 
   assert.equal(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim(), sha);
 });
 
+test('broad replay alerts for a pre-cut failure only when the latest checked HEAD still has it', { skip: process.platform === 'win32' }, async t => {
+  const { repo, commit } = await workspace(t);
+  const file = 'apps/cli/src/index.ts';
+  const historical = await commit(file, 'export const old = 1;\n');
+  const cut = await commit(file, 'export const cut = 2;\n');
+  const checkedHead = await commit(file, 'export const head = 3;\n');
+  await commit('README.md', 'Live HEAD advances beyond the checked revision.\n');
+  const board = join(repo, BOARD_PATH);
+  await mkdir(dirname(board), { recursive: true });
+  await writeFile(board, `### 2026-11-27 06:01 UTC — Systemic → ALL leads — RULING — cut 54 is NAMED: ${cut.slice(0, 11)}\n`);
+  const runner = join(repo, 'scripts/workspaces/runCommitPostChecks.sh');
+  await mkdir(dirname(runner), { recursive: true });
+  await writeFile(runner, `if [ "$2" = "${checkedHead}" ]; then
+  cat head-report
+  exit 0
+fi
+cat failure
+exit 10
+`);
+  const state = join(repo, '.git/typecheck-state');
+  const env = { ...process.env, HAPPIER_COMMIT_TYPECHECK_DIR: state };
+  const posts = [];
+  const verdicts = () => readFileSync(join(state, 'verdicts.log'), 'utf8');
+  const replay = async sha => {
+    queueCommitGateReport({ repo, env, commit: sha });
+    assert.deepEqual(await drainCommitGateReports({
+      repo, env, workerCandidates: ['nl1'], post: entry => posts.push(entry), log: () => {},
+    }), [sha]);
+  };
+
+  await writeFile(join(repo, 'failure'), `HAPPIER_POST_COMMIT_FAILURE\tExport scan\t${file}\t${file}\tmissingExport\n`);
+  await replay(historical);
+  assert.deepEqual(posts, [], 'an unchecked HEAD cannot confirm the historical failure');
+  assert.match(verdicts(), new RegExp(`introduced at ${historical}, HEAD unverified`, 'u'));
+  await writeFile(join(repo, 'head-report'), `HAPPIER_POST_COMMIT_CHECK\tExport scan\nHAPPIER_POST_COMMIT_CHECK\tExport scan\t${file}\tunrelatedExport\n`);
+  await replay(checkedHead);
+  await replay(historical);
+  assert.deepEqual(posts, [], 'an unrelated failure in the same check does not keep the old alert alive');
+  assert.match(verdicts(), new RegExp(`introduced at ${historical}, fixed by HEAD ${checkedHead}.*Export scan`, 'u'));
+
+  await writeFile(join(repo, 'head-report'), `HAPPIER_POST_COMMIT_CHECK\tExport scan\nHAPPIER_POST_COMMIT_CHECK\tExport scan\t${file}\tmissingExport\n`);
+  await replay(checkedHead);
+  await replay(historical);
+  assert.equal(posts.length, 1, 'an inherited failure still present at HEAD justifies an alert');
+  assert.ok(posts[0].includes(historical));
+  assert.ok(posts[0].includes(checkedHead));
+  await replay(cut);
+  assert.equal(posts.length, 2, 'reports at the cut retain immediate alerts');
+  assert.ok(posts[1].includes(cut));
+
+  await writeFile(join(repo, 'failure'), `HAPPIER_POST_COMMIT_FAILURE\tEntry load (catalog)\t${file}\n`);
+  await writeFile(join(repo, 'head-report'), 'HAPPIER_POST_COMMIT_CHECK\tEntry load (daemon)\n');
+  await replay(checkedHead);
+  await replay(historical);
+  assert.equal(posts.length, 2, 'the latest report skipped the failing graph');
+  assert.match(verdicts().trim().split('\n').at(-1), /HEAD unverified.*Entry load \(catalog\)/u);
+  await writeFile(join(repo, 'head-report'), 'HAPPIER_POST_COMMIT_CHECK\tEntry load (catalog)\n');
+  await replay(checkedHead);
+  await replay(historical);
+  assert.equal(posts.length, 2, 'the same graph passed at the checked HEAD');
+  assert.match(verdicts().trim().split('\n').at(-1), /fixed by HEAD.*Entry load \(catalog\)/u);
+});
+
 test('Protocol and SDK declaration diagnostics are fix-forward reports after landing, regardless of a legacy block setting', async t => {
   const { repo, commit } = await workspace(t);
   const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
