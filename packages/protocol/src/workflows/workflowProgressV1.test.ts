@@ -74,6 +74,9 @@ describe('workflow progress v1', () => {
     expect(projectWorkflowLoopItemDisplayLabelV1({ kind: 'issue', id: 1, displayName: 'Review the release' })).toBe('Review the release');
     expect(projectWorkflowLoopItemDisplayLabelV1({ kind: 'file', id: 2, name: 'main.ts' })).toBe('main.ts');
   });
+  it('leaves backup manifests without a label when their fields only describe metadata', () => {
+    expect(projectWorkflowLoopItemDisplayLabelV1({ schemaVersion: 1, environmentId: 'source-environment', fileCount: 2 })).toBeUndefined();
+  });
   it('rejects caller-authored publication authority in a recovery replacement input', () => {
     expect(WorkflowAuthoredInputV1Schema.safeParse({ document: { text: 'Retry', references: [], attachments: [] }, input: [],
       discussionReplyTo: { discussion: { serverId: 'home', discussionId: 'other-discussion' }, messageId: 'other-question', throughSeq: 1 } }).success).toBe(false);

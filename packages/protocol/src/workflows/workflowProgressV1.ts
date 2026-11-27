@@ -431,10 +431,6 @@ export function projectWorkflowLoopItemDisplayLabelV1(value: unknown): string | 
     const label = Object.prototype.hasOwnProperty.call(fields, key) ? scalar(fields[key]) : undefined;
     if (label !== undefined) return label;
   }
-  for (const field of Object.values(fields)) {
-    const label = scalar(field);
-    if (label !== undefined) return label;
-  }
   return undefined;
 }
 

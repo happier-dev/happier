@@ -275,10 +275,10 @@ describe('workflow coordinator', () => {
     expect(dispatched).toEqual([[context]]);
     expect(store.list().filter(record => record.blockId === leaf.id).map(record => record.recordId)).toEqual([row?.recordId]);
   });
-  it('records scalar For-each display labels on exact private item frames, including waiting items', async () => {
+  it('records named and scalar For-each display labels on exact private item frames, including waiting items', async () => {
     const store = createInMemoryWorkflowCoordinatorStore();
     const values: WorkflowJsonValue[] = ['#1482', { nested: { hidden: 'not a label' }, title: ' src/main.ts ' },
-      { number: 1483, secret: { token: 'not a label' } }, { nested: ['no raw JSON'] },
+      { schemaVersion: 1, environmentId: 'source-environment', fileCount: 2 }, { nested: ['no raw JSON'] },
       { id: 1484, title: '🚀'.repeat(300) }, false];
     const coordinator = createWorkflowCoordinator({ store, resolveWorkspace,
       executeStep: async () => ({ kind: 'completed', result: 'done' }) });
@@ -292,7 +292,7 @@ describe('workflow coordinator', () => {
     expect(frames.map(row => row.frame?.source)).toEqual([
       { kind: 'item', index: '0', displayLabel: '#1482' },
       { kind: 'item', index: '1', displayLabel: 'src/main.ts' },
-      { kind: 'item', index: '2', displayLabel: '1483' },
+      { kind: 'item', index: '2' },
       { kind: 'item', index: '3' },
       { kind: 'item', index: '4', displayLabel: '🚀'.repeat(255) + '…' },
       { kind: 'item', index: '5', displayLabel: 'false' },
