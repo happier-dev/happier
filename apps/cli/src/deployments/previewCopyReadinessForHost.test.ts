@@ -35,7 +35,8 @@ it.each(['restored', 'rolledBack', 'review-only', 'foreign-child', 'wrong-databa
     });
 
 it.each(['missing', 'not-created', 'review-only', 'main-incomplete', 'legacy-managed', 'restored', 'foreign-parent', 'wrong-runtime', 'wrong-database',
-    'connection-missing', 'connection-failed', 'connection-review-only', 'connection-foreign-child', 'connection-wrong-set'] as const)(
+    'empty', 'empty-app-failed', 'empty-app-active', 'empty-wrong-target', 'empty-unconnected', 'connection-missing', 'connection-failed',
+    'connection-review-only', 'connection-foreign-child', 'connection-wrong-set'] as const)(
     'keeps a required companion copy incomplete until its immutable creation and restore settle: %s', async outcome => {
         const main = createDeploymentEnvironmentDetailV1();
         main.content.previewCreationRunId = 'creation-run';
@@ -91,13 +92,20 @@ it.each(['missing', 'not-created', 'review-only', 'main-incomplete', 'legacy-man
         }, outcome === 'connection-review-only' ? undefined : connected,
         outcome === 'connection-review-only' ? connected : undefined);
         if (outcome === 'connection-failed') connect.index.lifecycle = 'failed';
-        const companionRows = outcome === 'legacy-managed' ? [] : [companionCreate, restore,
-            ...(outcome === 'connection-missing' ? [] : [connect])];
+        const appDeploy = invocation('preview-deploy', 'deployments.deploy', { serverId: main.environment.serverId,
+            environmentId: main.environment.id, targetLinkId: outcome === 'empty-wrong-target' ? 'other-target' : main.environment.runtimeTargetLinkId,
+            requestKey: 'preview-request-deploy', sha: 'c'.repeat(40) }, outcome === 'empty-app-failed' ? undefined : { ok: true, state: 'succeeded',
+            environmentId: main.environment.id, revision: 5, deploymentId: 'app-deployment', deploymentRevision: 1 });
+        if (outcome === 'empty-app-failed') appDeploy.index.lifecycle = 'failed';
+        if (outcome === 'empty-app-active') appDeploy.index.lifecycle = 'running';
+        const empty = outcome.startsWith('empty');
+        const companionRows = outcome === 'legacy-managed' ? [] : [companionCreate, empty ? appDeploy : restore,
+            ...(outcome === 'connection-missing' || outcome === 'empty-unconnected' ? [] : [connect])];
         const pages = [WorkflowInvocationListResultV1Schema.parse({ invocations: [mainCreate.index], invocationDetails: [mainCreate],
             parentRevision: 1, nextCursor: 'companion-page' }), WorkflowInvocationListResultV1Schema.parse({
             invocations: companionRows.map(row => row.index), invocationDetails: companionRows, parentRevision: 1 })];
         const readInvocations = async ({ cursor }: { cursor?: string }) => pages[cursor ? 1 : 0]!;
         expect(await readPreviewCopyReadinessForHost(main, readInvocations,
             outcome === 'missing' || outcome === 'legacy-managed' ? null : companion))
-            .toBe(outcome === 'restored' || outcome === 'legacy-managed');
+            .toBe(outcome === 'restored' || outcome === 'legacy-managed' || outcome === 'empty' || outcome === 'empty-app-failed');
     });

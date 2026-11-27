@@ -17,7 +17,7 @@ import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fu
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
 import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
-import { resolveWorkflowActionFieldBinding } from '@/daemon/workflows/input';
+import { evaluateWorkflowCondition, resolveWorkflowActionFieldBinding } from '@/daemon/workflows/input';
 import { readDeploymentTargetV1 } from './targets/deploymentTargetCatalog';
 import { resolvePreviewWorkflowForHost, type PreviewLifecycleEventForHost } from './previewWorkflowForHost';
 import { preparePreviewDomainForHost } from './previewDomainForHost';
@@ -155,7 +155,7 @@ describe('saved deployment preview Workflow composition', () => {
             expectedTargetLinkRevision: 19, content: planned.content,
             ...(domainRevision === undefined ? {} : { expectedDomainRevision: domainRevision }) });
     });
-    it('copies into a catalog companion when the repository does not declare PostgreSQL', async () => {
+    it.each(['copy', 'empty', 'missing-backup'] as const)('prepares catalog companion data before the app: %s', async mode => {
         const catalog = await nativeCatalogFixture();
         try {
             const current = fixture(neon);
@@ -167,10 +167,15 @@ describe('saved deployment preview Workflow composition', () => {
             current.detail.content = DeploymentEnvironmentContentV1Schema.parse({ ...current.detail.content,
                 previewTemplate: { ...current.detail.content.previewTemplate!, data: [{ kind: 'template',
                     templateRef: catalog.templateRef, dataExportNames: ['DATABASE_URL'], connectTo: { service: 'app' },
-                    destinationBackup: catalog.destinationBackup,
-                    copyFrom: { environmentId: 'source', targetLinkId: 'source-runtime', deploymentId: 'source-release', snapshotId: 'c'.repeat(64) } }] } });
+                    ...(mode === 'copy' ? { destinationBackup: catalog.destinationBackup } : {}),
+                    ...(mode === 'empty' ? {} : { copyFrom: { environmentId: 'source', targetLinkId: 'source-runtime',
+                        deploymentId: 'source-release', snapshotId: 'c'.repeat(64) } }) }] } });
             const workflow = await resolvePreviewWorkflowForHost({ ...current.input,
                 readNativeDataPlacements: ({ selections, existingTemplate }) => catalog.placements(selections, existingTemplate) });
+            if (mode === 'missing-backup') {
+                expect(workflow).toEqual({ kind: 'refused', reason: 'backup_required' });
+                return;
+            }
             expect(workflow.kind).toBe('available');
             if (workflow.kind !== 'available') throw new Error(workflow.reason);
             const actions = workflow.definition.blocks.filter((block): block is WorkflowActionLeafV1 => block.kind === 'action');
@@ -190,8 +195,26 @@ describe('saved deployment preview Workflow composition', () => {
             expect(await bindings(action('preview-data-companion-provision').input, results))
                 .toMatchObject({ environmentId: 'companion', targetLinkId: 'data-runtime', services: ['database'] });
             expect(await bindings(action('preview-data-companion-provision').input, results)).not.toHaveProperty('sha');
-            expect(DeploymentBackupRestoreInputV1Schema.parse(await bindings(action('preview-copy-0-prepare').input, results)))
-                .toMatchObject({ environmentId: 'companion', targetLinkId: 'data-runtime', destination: { service: 'database', database: 'app' } });
+            if (mode === 'empty') {
+                expect(actions.some(block => block.actionId === 'deployments.backups.restore')).toBe(false);
+                for (const id of ['preview-data-connect', 'preview-deploy']) {
+                    const condition = action(id).onlyWhen;
+                    if (!condition) throw new Error(`${id} must wait for the companion`);
+                    for (const state of ['failed', 'succeeded', 'running_unverified']) {
+                        const eligible = await evaluateWorkflowCondition(condition, {
+                            inputs: {}, resolveResult: async producer => {
+                                if (producer.blockId !== 'preview-data-companion-provision') throw new Error('Unexpected producer');
+                                return { state };
+                            },
+                            resolveWorkspace: async () => { throw new Error('Unexpected workspace'); },
+                        });
+                        expect(eligible, `${id} after ${state}`).toBe(state !== 'failed');
+                    }
+                }
+            } else {
+                expect(DeploymentBackupRestoreInputV1Schema.parse(await bindings(action('preview-copy-0-prepare').input, results)))
+                    .toMatchObject({ environmentId: 'companion', targetLinkId: 'data-runtime', destination: { service: 'database', database: 'app' } });
+            }
             expect(await bindings(action('preview-data-connect').input, results))
                 .toMatchObject({ environmentId: 'main-child', expectedRevision: 2, set: [], remove: [] });
             expect(await bindings(action('preview-deploy').input, results))

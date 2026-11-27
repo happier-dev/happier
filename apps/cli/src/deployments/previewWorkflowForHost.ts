@@ -123,7 +123,6 @@ export async function resolvePreviewWorkflowForHost(input: PreviewWorkflowForHos
     // source grant and destination. The producer only selects their executor.
     if (nativeSelections.length && !machine)
         return { kind: 'refused', reason: 'unsupported_action' };
-    if (nativeSelections.some(selection => !selection.copyFrom)) return { kind: 'refused', reason: 'backup_required' };
     let nativePlacements: readonly PreviewNativeDataPlacementForHost[] = [];
     if (nativeSelections.length) {
         if (!input.readNativeDataPlacements) return { kind: 'refused', reason: 'unsupported_action' };
@@ -193,12 +192,18 @@ export async function resolvePreviewWorkflowForHost(input: PreviewWorkflowForHos
         revision = result(linkId, 'revision');
     }
     const copied: string[] = [];
+    const provisioned: string[] = [];
     if (nativeSelections.length) {
         for (const placement of ['repository', 'companion'] as const) {
             const selected = nativePlacements.filter(row => row.placement === placement);
             if (!selected.length) continue;
             const destinationCreateId = placement === 'repository' ? createId : companionId;
-            blocks.push({ id: placement === 'repository' ? 'preview-data-provision' : 'preview-data-companion-provision',
+            const id = placement === 'repository' ? 'preview-data-provision' : 'preview-data-companion-provision';
+            if (selected.some(({ selectionIndex }) => {
+                const choice = policy.data[selectionIndex];
+                return choice?.kind === 'template' && !choice.copyFrom;
+            })) provisioned.push(id);
+            blocks.push({ id,
                 kind: 'action', actionId: DEPLOYMENT_DEPLOY_ACTION_ID_V1, input: {
                     ...fields({ serverId: input.templateRef.serverId,
                         ...(placement === 'repository' ? { sha: input.event.headSha } : {}) }),
@@ -210,10 +215,11 @@ export async function resolvePreviewWorkflowForHost(input: PreviewWorkflowForHos
         let repositoryIndex = 0;
         let companionIndex = 0;
         for (const [index, placement] of nativePlacements.entries()) {
-            const selection = nativeSelections[index]!;
+            const selection = policy.data[placement.selectionIndex];
             const destinationCreateId = placement.placement === 'repository' ? createId : companionId;
             const destinationIndex = placement.placement === 'repository' ? repositoryIndex++ : companionIndex++;
-            const source = selection.copyFrom!;
+            if (selection?.kind !== 'template' || !selection.copyFrom) continue;
+            const source = selection.copyFrom;
             const currentId = index === 0 ? 'preview-data-current' : `preview-data-current-${index}`;
             const prepareId = `preview-copy-${index}-prepare`;
             const confirmId = `preview-copy-${index}-confirm`;
@@ -246,15 +252,19 @@ export async function resolvePreviewWorkflowForHost(input: PreviewWorkflowForHos
             copied.push(confirmId);
         }
     }
-    const copiedCondition = copied.length ? { kind: 'all' as const, conditions: copied.map(id => ({ kind: 'compare' as const, operator: 'eq' as const,
-        left: result(id, 'verified'), right: literal(true) })) } : undefined;
+    const readiness = [
+        ...provisioned.map(deploymentSettledCondition),
+        ...copied.map(id => ({ kind: 'compare' as const, operator: 'eq' as const,
+            left: result(id, 'verified'), right: literal(true) })),
+    ];
+    const dataReady = readiness.length ? { kind: 'all' as const, conditions: readiness } : undefined;
     if (companionRequired) {
         blocks.push({ id: 'preview-data-connect-current', kind: 'action', actionId: DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1,
-            ...(copiedCondition ? { onlyWhen: copiedCondition } : {}), input: {
+            ...(dataReady ? { onlyWhen: dataReady } : {}), input: {
                 serverId: literal(input.templateRef.serverId), environmentId: result(createId, 'environmentId'),
             } });
         blocks.push({ id: 'preview-data-connect', kind: 'action', actionId: DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1,
-            ...(copiedCondition ? { onlyWhen: copiedCondition } : {}), input: {
+            ...(dataReady ? { onlyWhen: dataReady } : {}), input: {
                 serverId: literal(input.templateRef.serverId), environmentId: result(createId, 'environmentId'),
                 expectedRevision: result('preview-data-connect-current', 'environment', 'revision'),
                 set: result(companionId, 'previewNativeBindings'), remove: literal([]),
@@ -263,17 +273,21 @@ export async function resolvePreviewWorkflowForHost(input: PreviewWorkflowForHos
     blocks.push({ id: 'preview-deploy', kind: 'action', actionId: DEPLOYMENT_DEPLOY_ACTION_ID_V1, input: {
         ...deployInput,
         environmentId: result(createId, 'environmentId'), targetLinkId: result(createId, 'runtimeTargetLinkId'),
-    }, ...(copiedCondition ? { onlyWhen: copiedCondition } : {}) });
+    }, ...(dataReady ? { onlyWhen: dataReady } : {}) });
     return finish(blocks, result(createId, 'environmentId'));
+}
+
+function deploymentSettledCondition(blockId: string) {
+    return { kind: 'any' as const, conditions: ['succeeded', 'running_unverified'].map(state => ({
+        kind: 'compare' as const, operator: 'eq' as const, left: result(blockId, 'state'), right: literal(state),
+    })) };
 }
 
 function previewDomainBlocks(input: Readonly<{
     serverId: string; requestKey: string; environmentId: WorkflowActionFieldBindingV1;
     content: Awaited<ReturnType<typeof readPreviewDomainForHost>>['content']; domainRevision?: number;
 }>): WorkflowBlock[] {
-    const settled = { kind: 'any' as const, conditions: ['succeeded', 'running_unverified'].map(state => ({
-        kind: 'compare' as const, operator: 'eq' as const, left: result('preview-deploy', 'state'), right: literal(state),
-    })) };
+    const settled = deploymentSettledCondition('preview-deploy');
     const current = (...path: (string | number)[]): Extract<WorkflowActionFieldBindingV1, { kind: 'result' }> => ({
         kind: 'result', producer: { blockId: 'preview-domain-current', scope: { kind: 'outer', levels: 1 } }, path,
     });

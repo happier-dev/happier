@@ -3,15 +3,16 @@ import type { WorkflowInvocationListResultV1Schema } from '@happier-dev/protocol
 import type { z } from 'zod/mini';
 import { DeploymentBackupRestoreInputV1Schema, DeploymentBackupRestoreResultV1Schema } from '@happier-dev/protocol/deployments/deploymentBackupRestoreV1';
 import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1,
-    DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+    DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_DEPLOY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentEnvironmentCreateActionInputV1Schema, DeploymentEnvironmentCreateResultV1Schema,
     DeploymentBindingsSetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentDeployActionInputV1Schema } from '@happier-dev/protocol/deployments/deploymentDeployIntentV1';
 import { DeploymentBindingsPatchInputV1Schema } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { EnvironmentVariableBindingInputV1 } from '@happier-dev/protocol';
 import { readPreviewTemplateNativeDataForHost } from './templates/previewCreate';
 
-/** A later PR event requires the original native copy and companion connection to finish. */
+/** A later PR event requires the original native data provisioning and companion connection to finish. */
 export async function readPreviewCopyReadinessForHost(
     child: Pick<Awaited<ReturnType<typeof readDeploymentEnvironmentForHost>>, 'environment' | 'content'>,
     readInvocations: (input: Readonly<{ runId: string; cursor?: string }>) => Promise<z.infer<typeof WorkflowInvocationListResultV1Schema>>,
@@ -23,6 +24,7 @@ export async function readPreviewCopyReadinessForHost(
     if (companionChild && (companionChild.environment.previewCompanionOfEnvironmentId !== child.environment.id
         || companionChild.environment.serverId !== child.environment.serverId)) return false;
     let companionRequired = Boolean(companionChild);
+    let appDeployAdmitted = false;
     let companionData: readonly Readonly<{ service: string; database: string }>[] = [];
     let companionBindings: readonly EnvironmentVariableBindingInputV1[] = [];
     const connections: z.infer<typeof DeploymentBindingsPatchInputV1Schema>[] = [];
@@ -63,6 +65,17 @@ export async function readPreviewCopyReadinessForHost(
                     && output.data.environmentId === child.environment.id) connections.push(input.data);
                 continue;
             }
+            // The original app action gets a retained execution only when admitted past
+            // the data prerequisites. An app failure after admission leaves that data reusable.
+            if (execution.actionId === DEPLOYMENT_DEPLOY_ACTION_ID_V1
+                && invocation.progress.invocationPath.blockId === 'preview-deploy') {
+                if (invocation.index.lifecycle !== 'completed' && invocation.index.lifecycle !== 'failed') continue;
+                const input = DeploymentDeployActionInputV1Schema.safeParse(execution.input);
+                if (input.success && input.data.serverId === child.environment.serverId
+                    && input.data.environmentId === child.environment.id && !input.data.services
+                    && input.data.targetLinkId === child.environment.runtimeTargetLinkId) appDeployAdmitted = true;
+                continue;
+            }
             if (invocation.index.lifecycle !== 'completed' || execution.actionId !== DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1) continue;
             const input = DeploymentBackupRestoreInputV1Schema.safeParse(execution.input);
             const output = DeploymentBackupRestoreResultV1Schema.safeParse(execution.output);
@@ -78,6 +91,7 @@ export async function readPreviewCopyReadinessForHost(
     if (companionRequired && (!companionChild || !companionData.length || !companionBindings.length
         || !connections.some(connection => companionBindings.every(expected =>
             connection.set.some(binding => sameStrictJsonValue(binding, expected)))))) return false;
+    if (appDeployAdmitted) return true;
     return expected.every(target => restored.has(restoreKey(child.environment.id, child.environment.runtimeTargetLinkId, target.service, target.database)))
         && companionData.every(target => restored.has(restoreKey(companionChild!.environment.id,
             companionChild!.environment.runtimeTargetLinkId, target.service, target.database)));
