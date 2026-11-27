@@ -31,7 +31,7 @@ async function options(input: OptionsInput, context: PluginAccountActionContext)
   const choices = () => createRailwayProjectOperations(railwayRequest(context), context.signal);
   try {
     if (input.fieldPath === 'workspaceId') {
-      return projectPage({ choices: await choices().listGrantedWorkspaces(), nextCursor: null });
+      return projectPage({ choices: [...await choices().listGrantedWorkspaces()], nextCursor: null });
     }
     if (input.fieldPath === paths[0]) {
       const material = await context.services.connectedAccounts.materialize(ACCOUNT_PURPOSE,

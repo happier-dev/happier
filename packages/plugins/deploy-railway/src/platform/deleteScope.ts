@@ -15,7 +15,7 @@ type Preview = Inventory & { happierEnvironments: NamedItem[]; links: NamedItem[
 type DeleteResult = { status: 'removed' | 'kept-unchecked' };
 
 const text = { type: 'string', minLength: 1 } as const;
-const namedItem = { type: 'object', additionalProperties: false, properties: { id: text, name: text }, required: ['id', 'name'] } as const;
+const namedItem = { type: 'object', additionalProperties: false, properties: { id: text, name: text }, required: ['id', 'name'] as string[] } as const;
 const namedList = { type: 'array', items: namedItem } as const;
 const vendorLists = {
   environments: 'Railway environments', services: 'Services (including database services)',
