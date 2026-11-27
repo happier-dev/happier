@@ -821,8 +821,12 @@ describe('Database workbench surfaces', () => {
       expect(failure.errorCode).toBe(code);
       return { reason, nextStep, technicalDetails: [{ key: 'code', label: 'Code', value: code }] };
     });
-    const execute = vi.fn<Parameters<typeof createPluginUiActionControlTestHost>[0]>(async () =>
-      outcome === 'refused' ? { ok: false, errorCode: code, error: code } : { ok: true, result: null });
+    let editingOff = outcome === 'refused';
+    const execute = vi.fn<Parameters<typeof createPluginUiActionControlTestHost>[0]>(async () => {
+      if (editingOff) return { ok: false, errorCode: code, error: code };
+      return { ok: true, result: outcome === 'refused' ? { ok: true, status: 'review', role: 'happier_read',
+        statements: ['CREATE ROLE happier_read'], endpointTrust: 'encrypted_unverified' } : null };
+    });
     const control = createPluginUiActionControlTestHost(execute);
     const fixture = await createPluginUiTestkit({
       identity: { instanceId: 'managed-read-unverified', mountNonce: 'managed-read-unverified' },
@@ -863,9 +867,14 @@ describe('Database workbench surfaces', () => {
         // Editing off is the Environment's policy: a refusal line without a failure's diagnostic disclosure.
         expect(await fixture.queryByRole('button', { name: 'Details' })).toBeUndefined();
         expect(document.body.textContent).not.toContain('Something went wrong');
-        // A login can't be created here, so Create is no longer pressable into the same refusal.
-        expect((await fixture.getByRole('button', { name: 'Create read-only login' })).state?.disabled).toBe(true);
         expect((await fixture.getByRole('button', { name: 'Use existing read-only login' })).state?.disabled).not.toBe(true);
+        editingOff = false;
+        await fixture.press(await fixture.getByRole('button', { name: 'Create read-only login' }));
+        await settle(20);
+        expect(execute.mock.calls).toHaveLength(2);
+        expect(execute.mock.calls[1]?.[0]).toMatchObject({ action: create, input: { target, mode: 'preview' } });
+        expect(await fixture.getByText('Review the read-only login')).toBeTruthy();
+        return;
       } else {
         expect(await fixture.getByText('Could not verify the setup result.')).toBeTruthy();
         expect(presentActionFailure).not.toHaveBeenCalled();

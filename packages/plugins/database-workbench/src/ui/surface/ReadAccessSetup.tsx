@@ -77,7 +77,7 @@ export function ReadAccessSetup({ target, display, onConfigured }: Readonly<{
 
   // The login already exists and is saved: using it is the one way forward, never a second login.
   const recovery = notice?.kind === 'failure' ? notice.recovery : null;
-  // The owner's typed refusal says a login can't be created here; Create stays visible but is never pressed into it again.
+  // The last refusal guides recovery. The Action decides the Environment's current editing policy on each request.
   const editingOff = notice?.kind === 'failure'
     && (notice.execution.status === 'error' || notice.execution.status === 'outcomeUnknown')
     && notice.execution.code === 'database_editing_off';
@@ -98,11 +98,10 @@ export function ReadAccessSetup({ target, display, onConfigured }: Readonly<{
       body={failure}
       live={notice?.kind === 'pending' ? { text: notice.text } : undefined}
       alternative={<Row gap="small" wrap justify="center">
-        {/* Creating the login is the expected path; once editing is off, an existing login is the only one. */}
         <Button title={attachTitle} variant={editingOff ? 'primary' : 'secondary'} size="small" disabled={notice?.kind === 'pending'}
           onPress={() => openAttach()} />
         <Action.Control action={createAction} title={createTitle} variant={editingOff ? 'plain' : 'primary'}
-          disabled={notice?.kind === 'pending' || editingOff}
+          disabled={notice?.kind === 'pending'}
           controller={{
             prepare: () => { setNotice(null); return { input: projectNativeJsonValueForTransport({ target, mode: 'preview' }) }; },
             onSettled: execution => settled(execution, 'review'),
@@ -136,7 +135,7 @@ export function ReadAccessSetup({ target, display, onConfigured }: Readonly<{
         action={attaching ? attachAction : createAction}
         title={attaching ? t('plugins.database.readSetup.confirmAttach', 'Use this login') : createTitle}
         variant="primary"
-        disabled={notice?.kind === 'pending' || (!attaching && editingOff)}
+        disabled={notice?.kind === 'pending'}
         reviewedInput={input}
         controller={{ prepare: () => { setNotice(null); return { input }; }, onSettled: execution => settled(execution, 'configured') }}
         fallback={<Text tone="secondary" value={unavailable}/>} />}
