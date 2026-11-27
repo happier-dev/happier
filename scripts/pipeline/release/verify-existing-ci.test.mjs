@@ -106,3 +106,32 @@ test('explicit run-id attestation fetches that run and writes evidence only for 
     assert.deepEqual(requests, [['gh', ['api', 'repos/happier-dev/happier/actions/runs/123']]]);
   }
 });
+
+test('a release waits for the exact-SHA CI that is still running, then admits its success', async (t) => {
+  const running = {
+    id: 321, html_url: 'https://github.com/happier-dev/happier/actions/runs/321',
+    path: '.github/workflows/tests.yml', head_sha: sha, head_branch: 'v0.3',
+    event: 'push', head_repository: { full_name: 'happier-dev/happier' }, status: 'in_progress', conclusion: null,
+  };
+  let watched = false;
+  let watchStatus = 0;
+  const requests = [];
+  // GitHub's process boundary is replaced; selection, waiting and admission stay real.
+  t.mock.method(childProcess, 'spawnSync', (command, args) => {
+    requests.push(args.slice(0, 2).join(' '));
+    if (args[0] === 'run' && args[1] === 'watch') { watched = true; return { status: watchStatus, stdout: '', stderr: '' }; }
+    const run = watched ? { ...running, status: 'completed', conclusion: watchStatus === 0 ? 'success' : 'failure' } : running;
+    return { status: 0, stdout: JSON.stringify({ workflow_runs: [run] }), stderr: '' };
+  });
+  syncBuiltinESMExports();
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+  const args = ['--repository', 'happier-dev/happier', '--source-sha', sha, '--source-branch', 'v0.3'];
+
+  assert.equal((await main(args)).runId, 321);
+  assert.deepEqual(requests, ['api repos/happier-dev/happier/actions/workflows/tests.yml/runs?branch=v0.3&head_sha=' + sha + '&per_page=100', 'run watch',
+    'api repos/happier-dev/happier/actions/workflows/tests.yml/runs?branch=v0.3&head_sha=' + sha + '&per_page=100']);
+
+  watched = false;
+  watchStatus = 1;
+  await assert.rejects(main(args), /did not complete successfully/);
+});

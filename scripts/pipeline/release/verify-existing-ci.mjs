@@ -118,7 +118,16 @@ export async function main(argv = process.argv.slice(2)) {
       throw new Error('CI run ' + requestedRunId + ' is not a successful canonical push CI for the requested source');
     }
   } else {
-    const runs = fetchWorkflowRuns(repository, workflow, sourceBranch, sourceSha);
+    let runs = fetchWorkflowRuns(repository, workflow, sourceBranch, sourceSha);
+    const observed = selectExactCanonicalCiRun(runs, expected);
+    if (observed.status !== 'completed') {
+      // The exact source's CI is still running: wait for it to settle instead of refusing the release.
+      process.stderr.write(`Waiting for exact-SHA CI ${observed.id} (${observed.status})...\n`);
+      const watched = spawnSync('gh', ['run', 'watch', String(observed.id), '--repo', repository, '--exit-status', '--interval', '60'], { stdio: 'inherit', env: process.env });
+      if (watched.error) throw watched.error;
+      if (watched.status !== 0) throw new Error(`Exact-SHA CI ${observed.id} did not complete successfully`);
+      runs = fetchWorkflowRuns(repository, workflow, sourceBranch, sourceSha);
+    }
     run = selectExactSuccessfulCiRun(runs, expected);
   }
   let sourceSuiteReuse = {};

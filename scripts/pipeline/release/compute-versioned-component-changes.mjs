@@ -26,7 +26,8 @@ function parseArgs(argv) {
 }
 
 function runGit(args) {
-  const result = spawnSync('git', args, { encoding: 'utf8' });
+  // The tracked path list of this repository exceeds spawnSync's 1 MiB default; read it whole.
+  const result = spawnSync('git', args, { encoding: 'utf8', maxBuffer: Infinity });
   if (result.error) throw result.error;
   if (result.status !== 0) {
     const err = String(result.stderr || result.stdout || '').trim();

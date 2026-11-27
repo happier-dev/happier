@@ -27,7 +27,8 @@ function parseArgs(argv) {
 }
 
 function runGit(args) {
-  const r = spawnSync('git', args, { encoding: 'utf8' });
+  // A diff against an old channel base can list more paths than spawnSync's 1 MiB default.
+  const r = spawnSync('git', args, { encoding: 'utf8', maxBuffer: Infinity });
   if (r.error) throw r.error;
   if (r.status !== 0) {
     const err = String(r.stderr || r.stdout || '').trim();
@@ -47,10 +48,9 @@ function main() {
   if (!base && !bases) fail('--base or --bases is required');
   if (!head) fail('--head is required');
 
-  const baseRefs = (bases || base).split(',').map((value) => value.trim()).filter(Boolean);
-  if (baseRefs.length === 0 || new Set(baseRefs).size !== baseRefs.length) {
-    fail('--base/--bases must contain unique non-empty git revisions');
-  }
+  // Channel bases may resolve to the same commit (preview == main after a promotion); one base then.
+  const baseRefs = [...new Set((bases || base).split(',').map((value) => value.trim()).filter(Boolean))];
+  if (baseRefs.length === 0) fail('--base/--bases must contain at least one non-empty git revision');
 
   const changedPaths = new Set();
   let commitCount;
