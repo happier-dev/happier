@@ -1007,6 +1007,149 @@ it.each(['vercel', 'pages'] as const)('opens the %s existing-project choices thr
   }
 });
 
+it.each(['empty', 'denied'] as const)('settles the Railway service picker for a %s provider read', async scenario => {
+  const plugin = await import('../../../../../../packages/plugins/deploy-railway/src/index');
+  const { createPluginHttpFixture } = await import('@happier-dev/plugin-sdk/testing');
+  const { isPluginError } = await import('@happier-dev/plugin-sdk/errors');
+  const { encodeBase64 } = await import('@happier-dev/protocol/crypto/base64');
+  const { resolveInputTypeOptions } = await import('@happier-dev/protocol/inputs/inputTypeRuntime');
+  const { readActionFailureEnvelope } = await import('@happier-dev/protocol/actions/executor/actionFailureEnvelope');
+  const { createAccountTokenForTests } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+  const { createAccountEncryptionCurrentnessFixtureForCredentials } = await import('@/dev/testkit/fixtures/accountEncryptionCurrentness');
+  const { createMachineMetadataFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+  const { readDeploymentPlatformTargets } = await import('./platformTargetLink');
+  const accountId = 'railway-picker-owner';
+  const projectId = 'new-project';
+  const environmentId = 'default-environment';
+  const account = { service: { pluginId: 'happier.machine.railway', localId: 'railway-account' }, accountId: 'railway-token' };
+  const credentials = { token: createAccountTokenForTests(accountId, { currentAccount: true }),
+    secret: encodeBase64(new Uint8Array(32).fill(17), 'base64url') };
+  const serverId = await homes.addHome({ name: 'Railway', serverUrl: `https://railway-${scenario}.test`,
+    serverIdentityId: `srv_${'b'.repeat(32)}`, accountId, currentAccount: true, accountEncryptionMode: 'e2ee', credentials });
+  homes.answer(serverId, '/v1/account/encryption/currentness', { body: createAccountEncryptionCurrentnessFixtureForCredentials(credentials) });
+  const context = await captureLazyActionAccountContext(serverId);
+  const installed = await installPortableAccountPluginReleaseForTest({ manifest: plugin.manifest,
+    activate: plugin.activateAccount, accountLifetime: context.accountLifetime, publishProjection: true });
+  const { manifest } = plugin;
+  const qualified = (localId: string) => buildQualifiedPluginContributionKey({ pluginId: manifest.id, localId });
+  const definitions = plugin.manifest.contributes.inputTypes ?? [];
+  const projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1,
+    familiesById: { inputTypes: { family: 'inputTypes', entriesById: Object.fromEntries(definitions.map(definition =>
+      [qualified(definition.id), { id: qualified(definition.id), pluginId: manifest.id, pluginVersion: manifest.version, definition }])) } },
+    resourcesById: Object.fromEntries((plugin.manifest.contributes.resources ?? []).filter(resource => resource.source === 'dynamic')
+      .map(resource => [qualified(resource.id), { pluginId: manifest.id, id: resource.id, resourceKind: resource.kind,
+        scope: resource.scope, execution: resource.execution, accountRuntimeDeclared: true }])) });
+  receiverRpc.call.mockResolvedValue({ protocolVersion: 1, projection });
+  const pageInfo = { hasNextPage: false, endCursor: null };
+  const kit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin, services: {
+    connectedAccounts: {
+      async getBinding(purpose) { return { purpose, account, service: account.service,
+        target: { kind: 'account', displayName: 'Cedar Invoicing' } }; },
+      async materialize() { return { kind: 'environment', env: { RAILWAY_PROJECT_ID: projectId } }; },
+    },
+    http: createPluginHttpFixture({ async request(raw) {
+      const { query, variables } = JSON.parse(new TextDecoder().decode(raw.body));
+      if (query.includes('serviceInstances')) {
+        expect(variables).toEqual({ projectId, environmentId, after: null });
+        return { status: scenario === 'denied' ? 403 : 200, headers: {}, body: new TextEncoder().encode(JSON.stringify({
+          data: { environment: { id: environmentId, projectId, serviceInstances: { edges: [], pageInfo } } },
+        })) };
+      }
+      expect(query).toContain('environments');
+      return { status: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify({
+        data: { project: { environments: { edges: [{ node: { id: environmentId, name: 'production' } }], pageInfo } } },
+      })) };
+    } }),
+  } });
+  try {
+    const target = readDeploymentPlatformTargets([{ manifest: plugin.manifest }])[0]!;
+    const optionsActionId = getActionSpec('action.options.resolve').id;
+    const machineId = 'railway-options-controller';
+    const installationId = 'railway-options-installation';
+    const boundary = await answerExternalActionAccountForHome(homes, serverId, { actionId: optionsActionId, machineId, installationId,
+      tokenEpoch: 0, requesterInvocation: 'required',
+      failure: result => readActionFailureEnvelope(result),
+      execute: async raw => {
+        const input = getActionSpec(optionsActionId).inputSchema.parse(raw);
+        expect(input.actionId).toBe(target.inspectActionId);
+        const identity = target.fields.find(field => field.path === input.fieldPath)?.inputType;
+        if (!identity || 'hostType' in identity || !input.fieldPath) throw new Error('Expected the declared Railway field');
+        const result = await resolveInputTypeOptions({ identity, ctx: {},
+          query: { fieldPath: input.fieldPath, draftInput: input.draftInput }, readFailure: readActionFailureEnvelope,
+          deps: {
+            async resolveInputType(ref) {
+              const definition = definitions.find(entry => entry.id === ref.localId);
+              return definition ? { identity: ref, occurrenceId: installationId, definition } : null;
+            },
+            async readInputTypeResource({ resource, query }) {
+              const runtime = kit.registration('resources', resource.localId);
+              if (!runtime) throw new Error('Expected the Railway options Resource');
+              try {
+                const value = await runtime.read(createTestResourceInvocationContext({ query,
+                  async readAction(ref, payload) {
+                    try { return { ok: true, result: await kit.invokeAction(ref.localId, payload, { surface: 'plugin' }) }; }
+                    catch (error) {
+                      if (!isPluginError(error)) throw error;
+                      return { ok: false, errorCode: error.code, error: error.message };
+                    }
+                  },
+                }));
+                return JSON.parse(typeof value === 'string' ? value : new TextDecoder().decode(value));
+              } catch (error) {
+                if (!isPluginError(error)) throw error;
+                return { ok: false, errorCode: error.code, error: error.message };
+              }
+            },
+          },
+        });
+        return result.ok ? { actionId: input.actionId, fieldPath: input.fieldPath, optionsSourceId: null, options: result.result } : result;
+      },
+    });
+    const { encryption } = await context.resolveAccountEncryption();
+    const installationPublicKey = boundary.machine.installationPublicKey;
+    if (!encryption || !installationPublicKey) throw new Error('Expected the encrypted Account and Machine');
+    const encryptor = await encryption.openEncryption(null);
+    const metadata = createMachineMetadataFixture({ installationPublicKey });
+    boundary.machine.metadata = encodeBase64((await encryptor.encrypt([metadata]))[0]!, 'base64');
+    await publishMachineInventoryForTest(context.accountLifetime.scope, [createMachineFixture({ id: machineId, installationId,
+      installationPublicKey, metadata, activeAt: Date.now(), storageMode: 'e2ee',
+      dataEncryptionKey: boundary.machine.dataEncryptionKey, access: boundary.machine.access })]);
+
+    const screen = await renderScreen(<ModalProvider>{null}</ModalProvider>);
+    try {
+      await act(async () => showDeploymentPlatformTargetSheet({
+        name: 'Cedar Invoicing', environment: { definition: { kind: 'repository' }, projectSourceId: '' },
+        ownerAccountId: accountId, lifetime: context.accountLifetime, actions: createDeploymentActions(context.accountLifetime, ''),
+        onApproval: () => {}, initialTargetKey: target.key,
+      }));
+      await waitForHomeGovernance(() => expect(screen.root.findAllByType(ConnectedAccountPurposeTargetChooser)).toHaveLength(1));
+      await act(async () => screen.root.findByType(ConnectedAccountPurposeTargetChooser).props.onChange({ kind: 'account', account }, null));
+      const refusal = () => screen.root.findAllByType(SurfaceStateCard).find(card =>
+        card.props.testID === 'project-deployments.platform.choicesFailed');
+      if (scenario === 'denied') {
+        await waitForHomeGovernance(() => expect(refusal()?.props.diagnosticCode, screen.getTextContent()).toBe('deployment_access_denied'));
+        expect(surfaceAction(refusal()).onPress).toBeTypeOf('function');
+      } else {
+        await waitForHomeGovernance(() => {
+          expect(refusal()?.props.diagnosticCode, screen.getTextContent()).toBeUndefined();
+          const fields = screen.root.findAllByType(ActionInputFields);
+          const service = fields.find(field => field.props.fields[0]?.path === 'providerEnvironment');
+          expect(service?.props.resolveFieldOptions.state(service.props.fields[0]), screen.getTextContent())
+            .toMatchObject({ status: 'ready', options: [] });
+          expect(service?.props.input).toMatchObject({ providerAccountId: projectId, railwayEnvironmentId: environmentId });
+        });
+      }
+      expect(screen.findByTestId('project-deployments.platform.check')?.props.disabled).toBe(true);
+    } finally {
+      await screen.unmount();
+    }
+  } finally {
+    await kit.dispose();
+    await installed.dispose();
+    context.dispose();
+  }
+});
+
 it('explains why a stored Compose Environment under a repository Project cannot use a platform', async () => {
   const { manifest, activateAccount } = await import('../../../../../../packages/plugins/deploy-cloudflare/src/index');
   const { manifest: vercel, activateAccount: activateVercel } = await import('../../../../../../packages/plugins/deploy-vercel/src/index');

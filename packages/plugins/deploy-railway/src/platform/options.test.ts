@@ -77,6 +77,15 @@ it('uses the selected Connected Account scope and reveals one provider page per 
   ]);
 }));
 
+it('returns a terminal empty service page for a newly created Railway environment', () => withOptions(query => {
+  expect(query).toContain('serviceInstances');
+  return { environment: { id: environmentId, projectId,
+    serviceInstances: { edges: [], pageInfo: { hasNextPage: false, endCursor: null } } } };
+}, async read => {
+  await expect(read('providerEnvironment', { ...draft, providerAccountId: projectId, railwayEnvironmentId: environmentId }))
+    .resolves.toEqual({ options: [] });
+}));
+
 it('offers the reviewed environment for Create in one request without requiring a service', () => withOptions(() => ({
   project: { environments: { pageInfo: { endCursor: null, hasNextPage: false }, edges: [
     { node: { id: environmentId, name: 'Production' } },

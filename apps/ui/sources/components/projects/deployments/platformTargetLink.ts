@@ -419,6 +419,11 @@ export function drawPlatformFields<Field extends EffectiveActionInputField>(
     if (field.required && !field.allowCustomValue && (field.widget === 'select' || field.widget === 'multiselect')
       && value === undefined && choices.status === 'ready' && choices.options.length === 0
       && choices.nextCursor === undefined && !paged(field)) {
+      // A selected scope can have no children yet. Keep the field's existing empty state.
+      if (answered) {
+        drawn.push(field);
+        return { fields: drawn, failure: null, canCheck: false };
+      }
       return { fields: drawn, failure: { code: 'provider_options_empty', field }, canCheck: false };
     }
     // An answered choice that offers nothing else is not a row: it would repeat the value beside it (the sole
