@@ -325,12 +325,7 @@ async function withCapturedScmComparison<T>(input: ReadCapturedScmComparisonInpu
     return await withStoredComparison(input, async (reader, sessionId) => {
       // Validate the retained authority once before disclosing selected records.
       const captured = await qualifyCapturedScmComparison(input, reader.stored, sessionId);
-      const result = await consume(captured, reader);
-      if (reader.legacy) {
-        try { await writeComparison({ comparisonId: input.comparisonId, sessionId }, reader.stored); }
-        catch { logger.warn('Retained comparison storage could not be upgraded; captured evidence remains readable.'); }
-      }
-      return result;
+      return await consume(captured, reader);
     });
   } catch (error) {
     if (error instanceof Error && 'code' in error && error.code === 'DIFF_UNAVAILABLE') throw error;

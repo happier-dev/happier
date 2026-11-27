@@ -43,11 +43,10 @@ export const StoredScmComparisonSchema = z.strictObject({
 });
 export type StoredScmComparison = z.infer<typeof StoredScmComparisonSchema>;
 export type StoredScmComparisonReader = Readonly<{
-  stored: StoredScmComparison; totalFiles: number; legacy?: true;
+  stored: StoredScmComparison; totalFiles: number;
   readFile: (position: number, kind: 'full' | 'index') => Promise<ScmComparisonFile>;
   findFile: (path: string) => Promise<number | undefined>;
 }>;
-const StoredReadSchema = createStoredReadSchema(StoredScmComparisonSchema);
 const FileReadSchema = createStoredReadSchema(ScmComparisonFileSchema);
 const FooterReadSchema = createStoredReadSchema(z.strictObject({ stored: StoredScmComparisonSchema,
   totalFiles: z.number(), recordsOffset: z.number(), pathsOffset: z.number() }));
@@ -120,23 +119,7 @@ export async function withStoredScmComparison<T>(path: string, consume: (reader:
   try {
     const { size } = await handle.stat();
     const prefix = await readRange(handle, 0, Math.min(magic.length, size), size);
-    // Compatibility lives only at this owner. New captures have one record
-    // writer; this low-level reader stays read-only. The capture owner can
-    // promote legacy JSON after validating its scope and serving the request.
-    if (!prefix.equals(magic)) {
-      const stored = StoredReadSchema.parse(JSON.parse((await handle.readFile()).toString('utf8')));
-      return await consume({ stored, legacy: true, totalFiles: stored.comparison.inventory.files.length,
-        readFile: async (position, kind) => {
-          const file = stored.comparison.inventory.files[position];
-          if (!file) throw new Error('Captured comparison file position is invalid');
-          return kind === 'index' ? projectCapturedComparisonFileIndex(file) : file;
-        },
-        findFile: async path => {
-          const position = stored.comparison.inventory.files.findIndex(file => resolve(stored.comparison.repository.rootPath, file.path)
-            === resolve(stored.comparison.repository.rootPath, path));
-          return position < 0 ? undefined : position;
-        } });
-    }
+    if (!prefix.equals(magic)) throw new Error('Captured comparison container is unsupported');
     const trailer = await readRange(handle, size - trailerBytes, trailerBytes, size);
     const footerOffset = Number(trailer.readBigUInt64BE());
     if (footerOffset < magic.length) throw new Error('Captured comparison footer position is invalid');

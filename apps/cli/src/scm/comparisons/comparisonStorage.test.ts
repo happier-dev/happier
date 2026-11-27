@@ -203,7 +203,7 @@ describe('captured comparison selective storage reads', () => {
     }
   });
 
-  it('promotes legacy JSON after a successful read and preserves readable bytes when publication fails', async () => {
+  it('rejects unsupported JSON comparison containers without rewriting their bytes', async () => {
     const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'scm-legacy-storage-' });
     let comparisonId: string | undefined;
     try {
@@ -214,18 +214,11 @@ describe('captured comparison selective storage reads', () => {
       const stored = await readStoredScmComparison(path);
       const legacy = JSON.stringify(stored);
       await fs.writeFile(path, legacy);
-      // A genuine filesystem publication failure must not lose readable evidence.
-      const rename = vi.spyOn(fs, 'rename').mockRejectedValue(Object.assign(new Error('injected write refusal'), { code: 'EACCES' }));
-      try {
-        expect(await readCapturedScmComparison({ cwd: fixture.rootPath, comparisonId })).toEqual(captured);
-        expect(await fs.readFile(path, 'utf8')).toBe(legacy);
-      } finally { rename.mockRestore(); }
-      // A Session lookup may admit the repository-scoped fallback. Promotion
-      // must stay in that admitted namespace so a second lookup remains readable.
-      const fallbackInput = { cwd: fixture.rootPath, comparisonId, sessionId: 'legacy-repository-fallback' };
-      expect(await readCapturedScmComparison(fallbackInput)).toEqual(captured);
-      expect((await fs.readFile(path)).subarray(0, 1).toString()).not.toBe('{');
-      expect(await readCapturedScmComparison(fallbackInput)).toEqual(captured);
+      await expect(readCapturedScmComparison({ cwd: fixture.rootPath, comparisonId }))
+        .rejects.toMatchObject({ code: 'DIFF_UNAVAILABLE' });
+      expect(await fs.readFile(path, 'utf8')).toBe(legacy);
+      await writeStoredScmComparison(path, stored);
+      expect(await readCapturedScmComparison({ cwd: fixture.rootPath, comparisonId })).toEqual(captured);
       expect(await readStoredScmComparison(path)).toEqual(stored);
     } finally {
       vi.restoreAllMocks();

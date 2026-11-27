@@ -14,7 +14,7 @@ import { retainRepositoryCheckpointTurnEvidence } from '../checkpoints/sessionEv
 import { createLocalScmRepositoryFixture } from '@/testkit/scm/scmBackendContractFixtures';
 import { runWithScmAccountScope } from '../accountScope';
 import { captureScmComparison, deleteCapturedScmComparison, prepareCapturedScmComparisonInvestigation, readCapturedScmComparison } from './captureScmComparison';
-import { readStoredScmComparison, resolveStoredScmComparisonPath } from './comparisonStorage';
+import { readStoredScmComparison, writeStoredScmComparison, resolveStoredScmComparisonPath } from './comparisonStorage';
 
 describe('captured SCM comparison storage', () => {
   const directories: string[] = [];
@@ -196,7 +196,7 @@ describe('captured SCM comparison storage', () => {
       try {
         const stored: Record<string, unknown> = await readStoredScmComparison(scopedPath);
         delete stored.sessionId;
-        await writeFile(scopedPath, JSON.stringify(stored));
+        await writeStoredScmComparison(scopedPath, stored);
         await expect(readCapturedScmComparison({ cwd: fixture.rootPath, sessionId, comparisonId: scoped.comparison.id }))
           .rejects.toMatchObject({ code: 'DIFF_UNAVAILABLE' });
         await writeFile(scopedPath, '{');
@@ -246,7 +246,7 @@ describe('captured SCM comparison storage', () => {
       const stored = await readStoredScmComparison(path);
       stored.comparison.source = { kind: 'turnCheckpoint' };
       stored.metadata.source = { kind: 'turnCheckpoint' };
-      await writeFile(path, JSON.stringify(stored));
+      await writeStoredScmComparison(path, stored);
       const retained = await readCapturedScmComparison({ cwd: fixture.rootPath, sessionId: first.sessionId, comparisonId: first.comparison.id });
       expect(retained.comparison.id).toBe(first.comparison.id);
       expect(retained.comparison.inventory).toEqual(first.comparison.inventory);
@@ -371,7 +371,7 @@ describe('captured SCM comparison storage', () => {
     const stored = await readStoredScmComparison(path);
     const legacy = stored.comparison.inventory.files.find(file => file.path === fixture.trackedPath)!;
     legacy.evidence = { state: 'available', unifiedDiff: legacyPatch.slice(legacyPatch.indexOf('diff --git ')) };
-    await writeFile(path, JSON.stringify(stored));
+    await writeStoredScmComparison(path, stored);
     git('replace', '-d', git('rev-parse', `HEAD:${fixture.trackedPath}`));
     try {
       expect((await readCapturedScmComparison({ ...scope, comparisonId: captured.comparison.id })).files[0]?.unifiedDiff)
@@ -435,22 +435,23 @@ describe('captured SCM comparison storage', () => {
       comparison: { ...captured.comparison, future: true, repository: { ...captured.comparison.repository, future: true },
         inventory: { ...captured.comparison.inventory, future: true, files: captured.comparison.inventory.files.map(file => ({ ...file,
           evidence: { ...file.evidence, future: true }, occurrences: file.occurrences.map(occurrence => ({ ...occurrence,
-            future: true, before: { ...occurrence.before, future: true } })),
+            future: true, ...(occurrence.before ? { before: { ...occurrence.before, future: true } } : {}) })),
         })) } },
       retainedRefs: original.retainedRefs.map(ref => ({ ...ref, future: true })),
     };
-    await writeFile(path, JSON.stringify(stored));
+    await writeStoredScmComparison(path, stored);
     expect(await readCapturedScmComparison(scope)).toEqual(captured);
     await expect(readCapturedScmComparison({ ...scope, cwd: '/another-repository' })).rejects.toMatchObject({ code: 'DIFF_UNAVAILABLE' });
     await expect(readCapturedScmComparison({ ...scope, source: { kind: 'commit', commit: 'HEAD' } })).rejects.toMatchObject({ code: 'DIFF_UNAVAILABLE' });
-    await writeFile(path, JSON.stringify({ ...stored, sessionId: 'another-session' }));
+    await writeStoredScmComparison(path, { ...stored, sessionId: 'another-session' });
     await expect(readCapturedScmComparison(scope)).rejects.toMatchObject({ code: 'DIFF_UNAVAILABLE' });
-    await writeFile(path, JSON.stringify({ ...stored, comparison: { ...stored.comparison, endpoints: { before: 1 } } }));
+    // @ts-expect-error Deliberately corrupt persisted endpoints at the filesystem boundary.
+    await writeStoredScmComparison(path, { ...stored, comparison: { ...stored.comparison, endpoints: { before: 1 } } });
     await expect(readCapturedScmComparison(scope)).rejects.toMatchObject({ code: 'DIFF_UNAVAILABLE' });
-    await writeFile(path, JSON.stringify(stored));
+    await writeStoredScmComparison(path, stored);
     await captureScmComparison({ cwd: fixture.rootPath, sessionId, source: { kind: 'workingTree' } });
     expect(await readFile(path, 'utf8')).not.toContain('"future"');
-    await writeFile(path, JSON.stringify(stored));
+    await writeStoredScmComparison(path, stored);
     await deleteCapturedScmComparison(scope);
     await expect(readFile(path, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
   }));
