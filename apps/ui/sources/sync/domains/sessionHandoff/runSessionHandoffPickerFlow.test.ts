@@ -21,6 +21,7 @@ const openObservedProgressMock = vi.hoisted(() => vi.fn((_input: unknown) => ({
     close: progressCloseMock,
     isAttached: () => true,
     showRequestFailure: showRequestFailureMock,
+    showResult: vi.fn(),
     showMachineCreation: showMachineCreationMock,
 })));
 const randomUUIDMock = vi.hoisted(() => vi.fn(() => 'new-request-id'));

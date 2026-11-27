@@ -159,6 +159,40 @@ function lastPushedOperation(): ActionOperationSnapshotV1 {
 }
 
 describe('observed session handoff progress presentation', () => {
+    it.each(['none', 'copied', 'relationship'] as const)('presents the returned terminal status without an Account push (%s)', async (kind) => {
+        const { SessionHandoffActionResultV1Schema } = await import('@happier-dev/protocol/sessions/control/handoff/handoffSchemas');
+        const { openObservedSessionHandoffProgressModal } = await import('./openSessionHandoffProgressModal');
+        const result = SessionHandoffActionResultV1Schema.parse({
+            handoffId: 'handoff-terminal',
+            status: { handoffId: 'handoff-terminal', status: 'completed', phase: 'finalizing', recoveryActions: [] },
+            workspace: kind === 'none' ? { kind } : kind === 'copied' ? { kind, operationId: 'copy' }
+                : { kind, relationshipId: 'link', created: true },
+        });
+        const presentation = openObservedSessionHandoffProgressModal({
+            requestId: 'guest-request', sessionId: 'session-1', serverId: SERVER_ID,
+            accountId: 'account-1', store: createActionOperationStore(),
+        });
+        presentation.showResult(result);
+        const shown = modalShowMock.mock.calls.at(-1)?.[0] as { component: ProgressModalComponent; props: Record<string, unknown> };
+        const update = modalUpdateMock.mock.calls.at(-1)?.[1] as Record<string, unknown>;
+        const setChrome = vi.fn();
+        const screen = await renderScreen(React.createElement(shown.component, {
+            ...shown.props, ...update, onClose: () => {}, setChrome,
+        }));
+        expect(screen.findByTestId('session-handoff-progress-status')?.props.accessibilityLabel)
+            .toContain('sessionHandoff.progress.primary.ready');
+        expect(screen.findByTestId('session-handoff-progress-status')?.props.accessibilityLabel)
+            .toContain('sessionHandoff.progress.completedMessage');
+        if (kind !== 'none') expect(screen.findByTestId('session-handoff-workspace-outcome')).toBeTruthy();
+        const chrome = setChrome.mock.calls.at(-1)?.[0] as { footer: React.ReactNode };
+        const footer = await renderScreen(chrome.footer);
+        expect(footer.findByTestId('action-operation-done')).toBeTruthy();
+        presentation.close();
+        modalUpdateMock.mockClear();
+        presentation.showResult(result);
+        expect(modalUpdateMock).not.toHaveBeenCalled();
+    });
+
     beforeEach(() => {
         modalShowMock.mockClear();
         modalHideMock.mockClear();

@@ -134,6 +134,9 @@ describe('available session handoff entry', () => {
         await expect(result).resolves.toMatchObject({ ok: true, result: { workspace: { kind: 'relationship' } } });
         expect(Modal.update).toHaveBeenCalledWith(pickerModalId(), { awaitingAdmission: false });
         expect(progressSurfaces()).toHaveLength(1);
+        expect(Modal.update).toHaveBeenCalledWith(expect.any(String), {
+            requestResult: completed({ kind: 'relationship', relationshipId: 'relationship-1', created: true }).result,
+        });
     });
 
     it('does not open progress after the picker is deliberately dismissed before admission', async () => {

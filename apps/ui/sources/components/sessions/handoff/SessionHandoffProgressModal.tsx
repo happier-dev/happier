@@ -5,7 +5,7 @@ import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierProgress } from '@happier-dev/plugin-ui/presentation';
 import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
-import { SessionHandoffProgressCheckpointSchema, SessionHandoffActionResultV1Schema } from '@happier-dev/protocol/sessions/control/handoff/handoffSchemas';
+import { SessionHandoffProgressCheckpointSchema, SessionHandoffActionResultV1Schema, type SessionHandoffActionResultV1 } from '@happier-dev/protocol/sessions/control/handoff/handoffSchemas';
 import { SESSION_HANDOFF_PROGRESS_FULL_TIMELINE, SESSION_HANDOFF_PROGRESS_FULL_TIMELINE_WITH_SOURCE_SCAN, resolveSessionHandoffProgressTimeline, type SessionHandoffProgressCheckpoint, type SessionHandoffStatus } from '@happier-dev/protocol/sessions/control/handoff/handoffStatus';
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { HandoffWorkspaceOutcomeV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
@@ -54,6 +54,7 @@ type Props = CustomModalInjectedProps & Readonly<{
     title?: string;
     message?: string;
     status?: SessionHandoffStatus;
+    requestResult?: SessionHandoffActionResultV1;
     operation?: ActionOperationSnapshotV1;
     serverId?: string | null;
     sourceSessionId?: string;
@@ -468,9 +469,10 @@ function translateCheckpoint(checkpoint: SessionHandoffProgressCheckpoint): stri
     }
 }
 
-export function SessionHandoffProgressModal({ onClose, setChrome, title, message, status, operation, serverId, sourceSessionId, targetMachineId, onResume, requestFailure, onOpenConflicts, machineCreation, onRetry, route }: Props) {
+export function SessionHandoffProgressModal({ onClose, setChrome, title, message, status: observedStatus, requestResult, operation, serverId, sourceSessionId, targetMachineId, onResume, requestFailure, onOpenConflicts, machineCreation, onRetry, route }: Props) {
     const { theme } = useUnistyles();
     const presentationTheme = usePluginUiTheme(theme);
+    const status = requestResult?.status ?? observedStatus;
     const styles = stylesheet;
     const creationPending = machineCreation !== undefined && machineCreation.progress.kind !== 'ready';
     const creationPresentation = machineCreation && creationPending
@@ -549,7 +551,7 @@ export function SessionHandoffProgressModal({ onClose, setChrome, title, message
     // otherwise the live Action operation the production opener subscribes to.
     // A terminal (failed/cancelled) operation must never keep presenting as
     // active progress with a running spinner.
-    const terminalResult = SessionHandoffActionResultV1Schema.safeParse(operation?.result);
+    const terminalResult = SessionHandoffActionResultV1Schema.safeParse(requestResult ?? operation?.result);
     const workspaceOutcome = terminalResult.success ? terminalResult.data.workspace : undefined;
     const outcomeLabel = workspaceOutcome ? translateWorkspaceOutcome(workspaceOutcome) : null;
     const outcomeCleanupWarning = terminalResult.success
@@ -563,7 +565,7 @@ export function SessionHandoffProgressModal({ onClose, setChrome, title, message
     const isFailureState = effectiveStatus?.status === 'failed' || effectiveStatus?.status === 'aborted' || effectiveStatus?.status === 'awaiting_recovery' || operationFailed || Boolean(requestFailure);
     const isReadyForCutover = effectiveStatus?.status === 'ready_for_cutover';
     const isCompleted = effectiveStatus?.status === 'completed';
-    const canShowActiveProgress = !isFailureState && !isReadyForCutover && !operationCancelled;
+    const canShowActiveProgress = !isFailureState && !isReadyForCutover && !isCompleted && !operationCancelled;
     const progressFraction = canShowActiveProgress ? computeProgressFraction(effectiveStatus) : null;
     const summaryChips = buildSummaryChips(effectiveStatus);
     const progressStats = buildProgressStatRows(effectiveStatus);
@@ -633,7 +635,7 @@ export function SessionHandoffProgressModal({ onClose, setChrome, title, message
     const resolvedMessage =
         message
         ?? (creationFailed ? t('sessionHandoff.failure.nothingMoved') : creationPending ? t('sessionHandoff.progress.message') : null)
-        ?? (outcomeLabel && !isFailureState
+        ?? ((isCompleted || outcomeLabel) && !isFailureState
             ? t('sessionHandoff.progress.completedMessage')
             : isAwaitingRecovery
             ? [providerFailureMessage, t('sessionHandoff.recovery.messageAfterSourceStop')].filter(Boolean).join(' ')
@@ -694,7 +696,7 @@ export function SessionHandoffProgressModal({ onClose, setChrome, title, message
     }, [resume]);
     // A committed workspace outcome is itself a terminal reading, so the footer
     // must offer Done rather than a cancel control the daemon can no longer honor.
-    const operationTerminal = Boolean(requestFailure || operation?.state === 'succeeded'
+    const operationTerminal = Boolean(requestFailure || isCompleted || operation?.state === 'succeeded'
         || operation?.state === 'failed'
         || operation?.state === 'cancelled'
         || outcomeLabel);

@@ -240,15 +240,13 @@ export async function runSessionHandoffPickerFlow(args: Readonly<{
             return result;
         }
         showAdmittedProgress();
+        if (result.ok && !progressDismissed && isPickerOpen()) {
+            ensureProgress().showResult(result.result);
+        }
         if (!result.ok && !progressDismissed && isPickerOpen()) {
             ensureProgress().showRequestFailure(result);
         }
         if (result.ok && progressDismissed) closePicker();
-        if (result.ok && !progressDismissed && isPickerOpen() && !currentProgress()?.isAttached()) {
-            // A completed Action result proves admission even when its operation
-            // projection has not reached this client yet.
-            ensureProgress();
-        }
         return result;
     } finally {
         disposeScope();

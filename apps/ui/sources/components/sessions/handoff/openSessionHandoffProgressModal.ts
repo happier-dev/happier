@@ -3,6 +3,7 @@ import type { BaseModalConfig } from '@/modal/types';
 import { subscribeActionOperationByRequestId } from '@/sync/domains/actionOperations/subscribeActionOperationByRequestId';
 import type { ActionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import type { ExecuteSessionHandoffActionResult } from '@/sync/domains/sessionHandoff/executeSessionHandoffAction';
+import type { SessionHandoffActionResultV1 } from '@happier-dev/protocol/sessions/control/handoff/handoffSchemas';
 
 import { SessionHandoffProgressModal, type SessionHandoffMachineCreationProgress, type SessionHandoffRoute } from './SessionHandoffProgressModal';
 
@@ -10,6 +11,7 @@ export type SessionHandoffProgressPresentation = Readonly<{
     close: () => void;
     isAttached: () => boolean;
     showRequestFailure: (failure: Extract<ExecuteSessionHandoffActionResult, { ok: false }>) => void;
+    showResult: (result: SessionHandoffActionResultV1) => void;
     showMachineCreation: (creation: SessionHandoffMachineCreationProgress) => void;
 }>;
 
@@ -70,6 +72,11 @@ export function openObservedSessionHandoffProgressModal(params: Readonly<{
         isAttached: () => attached,
         showRequestFailure: (failure) => {
             if (attached) Modal.update(modalId, { requestFailure: failure });
+        },
+        showResult: (result) => {
+            // Shared-Machine requesters do not receive the custodian's Account push.
+            // The returned daemon status is the same authoritative terminal fact.
+            if (attached) Modal.update(modalId, { requestResult: result });
         },
         showMachineCreation: (machineCreation) => {
             if (attached) Modal.update(modalId, { machineCreation });
