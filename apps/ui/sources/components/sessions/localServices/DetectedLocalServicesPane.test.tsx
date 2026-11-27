@@ -1,6 +1,12 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
+import { createPluginUiActionControlTestHost, createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
+import type { PluginUiPresentationHost } from '@happier-dev/plugin-ui/advanced';
+import { PluginUiHostPresentationScope } from '@happier-dev/plugin-ui/advanced';
+import { projectHappierUiEnvironment } from '@happier-dev/plugin-ui/environment';
+import { renderSurface as renderDatabases } from '../../../../../../packages/plugins/database-workbench/src/ui/surface/DatabasesPanel';
+
 import {
     applyLocalServiceInventoryRefreshStarted,
     applyLocalServiceInventorySnapshot,
@@ -141,6 +147,79 @@ const openableTarget = {
 };
 
 describe('DetectedLocalServicesPane', () => {
+    it('returns the Saved Secret to the open database connection form when inventory settles during the picker', async () => {
+        const savedRef = 'saved-database';
+        const control = createPluginUiActionControlTestHost(async () => {
+            throw new Error('The test only needs to reach the ready to connect state');
+        });
+        const transport = await createPluginUiTestkit({
+            identity: { instanceId: 'db-services', mountNonce: 'db-services' },
+            authorPlugin: { id: 'happier.database', version: '0.0.0' },
+            launchInput: { scope: { kind: 'worktree', accountId: 'account', installationId: 'installation',
+                projectKey: 'project', workspace: { serverId: 'home', machineId: 'machine-a', workspaceId: 'work', rootPath: '/repo' } } },
+            surface: null,
+            surfaceContext: createSurfaceContextFixture({ target: { kind: 'services' } }),
+            adapter: { async mount() { return {
+                async snapshot() { return { revision: 1, nodes: [] }; }, async update() {}, async invoke() {}, async dispose() {},
+            }; } },
+            handlers: { executeAction: async () => ({ ok: true, targets: [], looked: [] }), actionControl: control.handler },
+        });
+        function ConnectWhileScanning(props: { ready: boolean }) {
+            type Connect = (ref: string) => void;
+            const [picker, setPicker] = React.useState<{ deliver: Connect } | null>(null);
+            const [choice, setChoice] = React.useState<string | null>(null);
+            const privateHost: PluginUiPresentationHost = {
+                renderCodeBlock: () => null, renderIcon: () => null, renderMarkdown: () => null, renderPopover: () => null,
+                // The external picker is hosted beside the Services pane and delivers its selected reference.
+                renderSavedSecretChoiceList: input => <Text testID="add-saved-key" onPress={() => {
+                    if (!input.onConnect) throw new Error('Missing Saved Secret hand-back');
+                    setChoice(input.selectedRef);
+                    setPicker({ deliver: input.onConnect });
+                }}>{input.selectedRef ?? 'Add a key'}</Text>,
+            };
+            const footer = <PluginUiHostPresentationScope environment={projectHappierUiEnvironment(transport.context.surface)}
+                presentationHost={privateHost}>{renderDatabases(transport.context)}</PluginUiHostPresentationScope>;
+            return <>
+                <DetectedLocalServicesPane
+                    inventoryState={buildLocalServiceInventoryState({
+                        rows: props.ready ? [buildLocalServiceInventoryRow({ id: 'openable-row' })] : [],
+                        generatedAt: props.ready ? 3000 : 0,
+                        refreshState: props.ready ? 'idle' : 'refreshing',
+                    })}
+                    launcherState={props.ready ? launcherStateWith([openableTarget]) : createLocalServiceLauncherState()}
+                    machine={MACBOOK_ONLINE}
+                    footer={footer}
+                />
+                {picker ? <>
+                    <Text testID="saved-database-radio" accessibilityRole="radio" accessibilityState={{ checked: choice === savedRef }}
+                        onPress={() => setChoice(savedRef)}>Saved database URL</Text>
+                    <Text accessibilityRole="radio" accessibilityState={{ checked: choice === 'other-key' }}
+                        onPress={() => setChoice('other-key')}>Other saved key</Text>
+                    <Text testID="use-saved-key" onPress={() => {
+                        if (!choice) throw new Error('Select a Saved Secret first');
+                        picker.deliver(choice);
+                        setPicker(null);
+                    }}>Use</Text>
+                </> : null}
+            </>;
+        }
+        const screen = await renderScreen(<ConnectWhileScanning ready={false} />);
+        try {
+            await pressTestInstanceAsync(screen.findByTestId('database.panel.connect'), 'Connect a database');
+            await pressTestInstanceAsync(screen.findByTestId('add-saved-key'), 'Add a key');
+            await pressTestInstanceAsync(screen.findByTestId('saved-database-radio'), 'Saved database URL');
+            await screen.update(<ConnectWhileScanning ready />);
+            expect(screen.findByTestId('detected-local-services-pane-row:inventory:openable-row-item')).toBeTruthy();
+            await pressTestInstanceAsync(screen.findByTestId('use-saved-key'), 'Use');
+            expect(screen.findAllByProps({ accessibilityLabel: 'Connection name' }).length).toBeGreaterThan(0);
+            expect(collectText(screen.findByTestId('add-saved-key')!)).toBe(savedRef);
+            expect(control.presentation('Test and connect')?.disabled).toBe(false);
+        } finally {
+            await screen.unmount();
+            await transport.dispose();
+        }
+    });
+
     it.each(['tablet', 'phone'] as const)('commits no unchanged Service row details across repeated scan observations, then renders a real change (%s)', async device => {
         deviceState.type = device;
         const originalLanguage = getPreferredLanguage();

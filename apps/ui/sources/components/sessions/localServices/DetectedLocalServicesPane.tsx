@@ -614,7 +614,6 @@ function DetectedLocalServicesPaneBody(props: DetectedLocalServicesPaneProps): R
 
     // The ports owner's answer for this checkout: its services take their ports when they start.
     const portsAssignedAtStart = launcherState.worktreePorts?.result.kind === 'ready';
-    const listPresented = detailRow === null;
     const renderRow = React.useCallback((row: ServiceRow) => (
         <TargetServiceRow
             key={row.id}
@@ -800,169 +799,132 @@ function DetectedLocalServicesPaneBody(props: DetectedLocalServicesPaneProps): R
             </ScrollView>
         );
     }
-    // A whole-pane state stands in for the rows only: the page's purpose and the scope stay above it
-    // (a Machine-scope scan can take minutes, and the person must be able to switch back), and the
-    // Services panel's plugin surfaces stay reachable below it.
-    // A Machine out of reach is the exception: nothing below can run or load until Try again succeeds, and the
-    // card already names the Machine, so the plugin surfaces stay out rather than repeat "offline" in their words.
-    const withFooter = (state: React.ReactElement, footer: React.ReactNode = props.footer): React.ReactElement => (footer || pageHeader || scopeBar ? (
-        <ScrollView style={styles.root} contentContainerStyle={styles.stateScrollContent}>
-            {pageHeader || scopeBar ? (
-                <ConstrainedScreenContent>
-                    {pageHeader}
-                    {scopeBar}
-                </ConstrainedScreenContent>
-            ) : null}
-            {state}
-            {footer}
-        </ScrollView>
-    ) : state);
-
+    // Inventory changes replace the rows in place. The footer owns independent plugin mounts,
+    // including forms awaiting a host picker, and stays at the same position in this tree.
+    // When a Machine is out of reach the empty pane still omits the footer until it can run.
+    const offlineState = offered && offline && !hasRows;
+    const footer = offlineState ? null : props.footer;
+    let inventoryState: React.ReactElement | null = null;
     if (availability !== 'available') {
-        // Nothing is scanned while the Home does not offer Local services: the state says why, never an
-        // empty list. The scope switch has nothing to switch. The Services panel's plugin surfaces stay below the
-        // state: Databases reach remote databases and other targets that do not depend on Local services
-        // (owner 2026-11-20), and each surface says its own state.
-        const state = <LocalServicesAvailabilityState availability={availability} serverId={props.serverId ?? null}
+        // Databases and other plugin surfaces can still reach targets when the Home has no local Services.
+        inventoryState = <LocalServicesAvailabilityState availability={availability} serverId={props.serverId ?? null}
             animationEnabled={animationEnabled} testID={testID} />;
-        return props.footer || pageHeader ? (
-            <ScrollView style={styles.root} contentContainerStyle={styles.stateScrollContent}>
-                {pageHeader ? <ConstrainedScreenContent>{pageHeader}</ConstrainedScreenContent> : null}
-                {state}
-                {props.footer}
-            </ScrollView>
-        ) : state;
-    }
-
-    if (offline && !hasRows) {
-        return withFooter(
-            <ConstrainedScreenContent>
-                <CheckoutUnreachableState reachability={reachability}
-                    testID={`${testID}-${reachability.announced ? 'waiting' : 'offline'}`} />
-            </ConstrainedScreenContent>,
-            null,
-        );
-    }
-
-    if (scanPending) {
-        return withFooter(
-            <SurfaceStateCard
-                testID={`${testID}-loading`}
-                kind="loading"
-                title={t('localServices.inventory.loadingTitle')}
-                animationEnabled={animationEnabled}
-            />
-        );
-    }
-
-    if ((viewModel.status === 'empty' || viewModel.status === 'unavailable'
+    } else if (offlineState) {
+        inventoryState = <CheckoutUnreachableState reachability={reachability}
+            testID={`${testID}-${reachability.announced ? 'waiting' : 'offline'}`} />;
+    } else if (scanPending) {
+        inventoryState = <SurfaceStateCard
+            testID={`${testID}-loading`}
+            kind="loading"
+            title={t('localServices.inventory.loadingTitle')}
+            animationEnabled={animationEnabled}
+        />;
+    } else if ((viewModel.status === 'empty' || viewModel.status === 'unavailable'
         && launcherState.updatedAt !== null && launcherState.refreshStatus === 'idle')
         && launcherState.refreshStatus !== 'error' && !hasLauncherTargets) {
-        // Pane-states E: an empty pane that invites — what shows up here and why it is worth it.
-        return withFooter(emptyCard);
-    }
-
-    if ((viewModel.status === 'error' || viewModel.status === 'unavailable' || launcherState.refreshStatus === 'error') && !hasLauncherTargets) {
+        inventoryState = emptyCard;
+    } else if ((viewModel.status === 'error' || viewModel.status === 'unavailable' || launcherState.refreshStatus === 'error') && !hasLauncherTargets) {
         const diagnosticCopy = launcherState.refreshError
             ? resolveReasonCopy({ reasonCode: launcherState.refreshError, kind: 'localServiceLauncher' })
             : firstInventoryDiagnosticCopy(viewModel.diagnostics, props.machine?.homeDir);
-        // G16: a failed first read used to be terminal. The card's own primary-action slot is the
-        // retry, so the failure recovers through the same invalidation the refresh control uses.
-        return withFooter(
-            <SurfaceStateCard
-                testID={`${testID}-error`}
-                kind="error"
-                title={t('localServices.inventory.errorTitle')}
-                {...(diagnosticCopy && diagnosticCopy.body !== diagnosticCopy.title ? { reason: diagnosticCopy.body } : {})}
-                diagnosticCode={diagnosticCopy?.diagnosticCode}
-                {...(onRefresh
-                    ? { action: { label: t('common.retry'), onPress: onRefresh } }
-                    : {})}
-            />
-        );
+        inventoryState = <SurfaceStateCard
+            testID={`${testID}-error`}
+            kind="error"
+            title={t('localServices.inventory.errorTitle')}
+            {...(diagnosticCopy && diagnosticCopy.body !== diagnosticCopy.title ? { reason: diagnosticCopy.body } : {})}
+            diagnosticCode={diagnosticCopy?.diagnosticCode}
+            {...(onRefresh ? { action: { label: t('common.retry'), onPress: onRefresh } } : {})}
+        />;
     }
 
+    const visibleDetailRow = inventoryState ? null : detailRow;
+    const listActive = visibleDetailRow === null;
     const effectReview = props.effectReview ? <View style={styles.effectReview}>{props.effectReview}</View> : null;
     return (
         <View style={styles.root}>
-            <PluginSurfaceFocusEligibilityProvider active={listPresented} currentUiContextActive={listPresented}>
+            <PluginSurfaceFocusEligibilityProvider active={listActive} currentUiContextActive={listActive}>
             <View
                 testID={`${testID}-list`}
-                accessibilityElementsHidden={detailRow !== null}
-                importantForAccessibility={detailRow ? 'no-hide-descendants' : 'auto'}
-                style={[styles.root, detailRow ? styles.listHidden : null]}
+                accessibilityElementsHidden={visibleDetailRow !== null}
+                importantForAccessibility={visibleDetailRow ? 'no-hide-descendants' : 'auto'}
+                style={[styles.root, visibleDetailRow ? styles.listHidden : null]}
             >
                 <ScrollView
-                    testID={testID}
+                    testID={inventoryState ? undefined : testID}
                     style={styles.root}
-                    contentContainerStyle={styles.scrollContent}
+                    contentContainerStyle={inventoryState ? styles.stateScrollContent : styles.scrollContent}
                 >
                     <ConstrainedScreenContent>
                         {pageHeader}
-                        {offline && !reachability.announced ? (
-                            <View style={styles.offlineLine}>
-                                <SurfaceFreshnessLine
-                                    testID={`${testID}-offline-line`}
-                                    tone="warning"
-                                    reason={reachability.runtime.label}
-                                    action={reachability.runtime.nextAction === 'retry'
-                                        ? { label: t('common.retry'), onPress: retryMachineReachability } : undefined}
-                                />
-                            </View>
-                        ) : null}
-                        {/* The scope control stays put when switching: a scan diagnostic belongs to the selected scope, so it sits under it. */}
-                        {scopeBar}
-                        {scope === 'workspace' ? props.scopeNote : null}
-                        <DiagnosticsBanner diagnostics={viewModel.diagnostics} homeDir={props.machine?.homeDir} testID={`${testID}-error`} checkAgain={checkAgain} />
-                        {detailRow ? null : effectReview}
-                        {hasRows
-                            ? sections.map((entry, index) => (
-                                <View key={entry.section} testID={`${testID}-section-${entry.section}`}>
-                                    {entry.section === 'happier' ? (
-                                        <ItemGroup selectableItemCountOverride={1}>
-                                            <ExpandableItem
-                                                expanded={happierOpen}
-                                                onExpandedChange={setHappierOpen}
-                                                header={({ headerProps }) => (
-                                                    <Item
-                                                        {...headerProps}
-                                                        testID={`${testID}-happier-item`}
-                                                        title={t('localServices.pane.happierServices', { count: entry.rows.length })}
-                                                    />
-                                                )}
-                                            >
-                                                {renderedRowsBySection[index]}
-                                            </ExpandableItem>
-                                        </ItemGroup>
-                                    ) : (
-                                        <>
-                                            {/* What the rows share and how many: the list's quiet group label
-                                                (lab s-services), not a page section title. */}
-                                            <CollectionListGroupLabel
-                                                testID={`${testID}-section-${entry.section}-label`}
-                                                title={sectionTitle(entry.section, machineName)}
-                                                count={entry.rows.length}
-                                                first={index === 0}
-                                            />
-                                            <ItemGroup
-                                                header="none"
-                                                accessibilityLabel={sectionTitle(entry.section, machineName)}
-                                                surface="none"
-                                                selectableItemCountOverride={entry.rows.length}
-                                            >
-                                                {renderedRowsBySection[index]}
-                                            </ItemGroup>
-                                        </>
-                                    )}
+                        {inventoryState ? <>
+                            {offered ? scopeBar : null}
+                            {inventoryState}
+                        </> : <>
+                            {offline && !reachability.announced ? (
+                                <View style={styles.offlineLine}>
+                                    <SurfaceFreshnessLine
+                                        testID={`${testID}-offline-line`}
+                                        tone="warning"
+                                        reason={reachability.runtime.label}
+                                        action={reachability.runtime.nextAction === 'retry'
+                                            ? { label: t('common.retry'), onPress: retryMachineReachability } : undefined}
+                                    />
                                 </View>
-                            ))
-                            : emptyCard}
-                        {props.footer}
+                            ) : null}
+                            {/* The scope control stays put when switching: a scan diagnostic belongs to the selected scope, so it sits under it. */}
+                            {scopeBar}
+                            {scope === 'workspace' ? props.scopeNote : null}
+                            <DiagnosticsBanner diagnostics={viewModel.diagnostics} homeDir={props.machine?.homeDir} testID={`${testID}-error`} checkAgain={checkAgain} />
+                            {detailRow ? null : effectReview}
+                            {hasRows
+                                ? sections.map((entry, index) => (
+                                    <View key={entry.section} testID={`${testID}-section-${entry.section}`}>
+                                        {entry.section === 'happier' ? (
+                                            <ItemGroup selectableItemCountOverride={1}>
+                                                <ExpandableItem
+                                                    expanded={happierOpen}
+                                                    onExpandedChange={setHappierOpen}
+                                                    header={({ headerProps }) => (
+                                                        <Item
+                                                            {...headerProps}
+                                                            testID={`${testID}-happier-item`}
+                                                            title={t('localServices.pane.happierServices', { count: entry.rows.length })}
+                                                        />
+                                                    )}
+                                                >
+                                                    {renderedRowsBySection[index]}
+                                                </ExpandableItem>
+                                            </ItemGroup>
+                                        ) : (
+                                            <>
+                                                {/* What the rows share and how many: the list's quiet group label
+                                                    (lab s-services), not a page section title. */}
+                                                <CollectionListGroupLabel
+                                                    testID={`${testID}-section-${entry.section}-label`}
+                                                    title={sectionTitle(entry.section, machineName)}
+                                                    count={entry.rows.length}
+                                                    first={index === 0}
+                                                />
+                                                <ItemGroup
+                                                    header="none"
+                                                    accessibilityLabel={sectionTitle(entry.section, machineName)}
+                                                    surface="none"
+                                                    selectableItemCountOverride={entry.rows.length}
+                                                >
+                                                    {renderedRowsBySection[index]}
+                                                </ItemGroup>
+                                            </>
+                                        )}
+                                    </View>
+                                ))
+                                : emptyCard}
+                        </>}
+                        {footer}
                     </ConstrainedScreenContent>
                 </ScrollView>
             </View>
             </PluginSurfaceFocusEligibilityProvider>
-            {detailRow ? (
+            {visibleDetailRow ? (
                 <View testID={`${testID}-detail`} style={styles.root}>
                     {renderedDetailRow}
                 </View>
