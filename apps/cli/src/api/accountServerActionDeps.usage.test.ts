@@ -810,6 +810,7 @@ describe('CLI and MCP personal usage Account transport', () => {
     await app.close();
   });
   it('composes retained quota/history/targets and persists Coach suppressions through Account KV without changing preferences', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1_000);
     const app = fastify();
     const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 } });
     const source = { bindingKind: 'account' as const, ref: { service: { pluginId: 'example.usage', localId: 'quota' }, accountId: 'work' } };
@@ -1035,7 +1036,6 @@ describe('CLI and MCP personal usage Account transport', () => {
     expect(rangeHistoryReads).toBe(beforeHead + 2);
     // Named All has an open accounting start; quota history still spans all
     // retained observations through its existing numeric range contract.
-    const clock = vi.spyOn(Date, 'now').mockReturnValue(1_000);
     try {
       expectedHistoryRequest = { range: { startAtMs: 0, endAtMs: 1_000 }, pageSize: 100 };
       const beforeAll = rangeHistoryReads;
@@ -1043,7 +1043,7 @@ describe('CLI and MCP personal usage Account transport', () => {
       expect(accountingRequests.at(-1)?.dateRange).toEqual({ endMs: 1_000 });
       expect(all.quota).toMatchObject([{ history: { entries: [{ id: 'history' }], nextCursor: null } }]);
       expect(rangeHistoryReads).toBe(beforeAll + 1);
-    } finally { clock.mockRestore(); expectedHistoryRequest = historyRequest; }
+    } finally { expectedHistoryRequest = historyRequest; }
     expect(slice.pools).toMatchObject([{ group: group.ref, memberAccountIds: ['work'], activeAccountId: 'work',
       selection: { status: 'unsupported', errorCode: 'machine_context_unavailable' } }]);
     expect(slice.sources).toEqual(expect.arrayContaining([{ source: 'accounting', status: 'available', asOfMs: 180 },

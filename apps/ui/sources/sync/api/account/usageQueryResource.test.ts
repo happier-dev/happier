@@ -7844,18 +7844,21 @@ describe('usage query captured Resource adapter', () => {
     }
   });
 
-  it.each(['held', 'failed', 'complete', 'unobserved'] as const)(
-    'reports the same mounted Resets quota state in its single-query Action when history is %s', async stage => {
+  it.each(['held', 'failed', 'complete', 'unobserved', 'no_sample', 'daily_partial', 'daily_stale'] as const)(
+    'reports the same mounted Resets quota state in its single-query Action for %s coverage', async stage => {
       const now = Date.UTC(2026, 9, 12, 12);
       vi.spyOn(Date, 'now').mockReturnValue(now);
       const ref = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'resets' };
       const source = { bindingKind: 'account' as const, ref };
       const recordKey = { providerId: 'codex', accountSubjectId: ref.accountId, subjectKind: 'account', quotaScope: 'account' } as const;
-      const observedAt = stage === 'unobserved' ? 0 : now;
+      const noSample = stage === 'no_sample';
+      const missingSummary = stage === 'daily_partial' || stage === 'daily_stale';
+      const dayStartAtMs = Date.UTC(2026, 9, 11);
+      const observedAt = stage === 'unobserved' || noSample ? 0 : stage === 'daily_stale' ? now - 60_001 : now;
       const record = ProviderAccountUsageSnapshotV1Schema.parse({ v: 1, recordId: buildProviderAccountUsageRecordId(recordKey),
         recordKey, providerId: 'codex', accountSubject: { kind: 'providerSubject', id: ref.accountId },
         observedAtMs: observedAt, fetchedAtMs: observedAt, staleAfterMs: 60_000, source: 'providerHttp', confidence: 'confirmed',
-        state: stage === 'unobserved' ? 'error_last_known_good' : 'loaded_empty', meters: [] });
+        state: noSample ? 'not_loaded' : stage === 'unobserved' ? 'error_last_known_good' : 'loaded_empty', meters: [] });
       const history = createDeferred<void>();
       const captured = await context(async request => {
         if (request.path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
@@ -7864,6 +7867,10 @@ describe('usage query captured Resource adapter', () => {
           source, recordId: record.recordId, providerAccountId: ref.accountId, fetchedAt: observedAt, staleAfterMs: 60_000 });
         if (request.path === '/v4/connect/qualified/provider-account-usage/record') return Response.json({
           content: { t: 'plain', v: record }, metadata: { fetchedAt: observedAt, staleAfterMs: 60_000, status: 'ok' }, sources: [source] });
+        if (missingSummary && request.path === '/v4/connect/qualified/provider-account-usage/day-summaries') {
+          return Response.json({ summaries: [], missingDays: [{ dayStartAtMs,
+            coverage: { observationCount: 1, frontier: { id: 'prior-day', observedAtMs: dayStartAtMs + 60_000 } } }] });
+        }
         if (request.path === '/v4/connect/qualified/provider-account-usage/history') {
           const query = parseQualifiedConnectedAccountV4StructuredQueryValue(QualifiedProviderAccountUsageHistoryRequestV4Schema,
             request.url.searchParams.get('query'));
@@ -7879,9 +7886,12 @@ describe('usage query captured Resource adapter', () => {
       }, { connectedAccountsV4: [{ ref, status: 'connected', authenticationModeId: 'manual', revisionSemantics: 'revisioned',
         credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz', configurationReady: false, configurationRevision: null, scopes: [] }] });
       await getServerFeaturesSnapshot({ serverId: captured.accountLifetime.scope.serverId, force: true });
-      const query = normalizeUsageQuery({ period: { startMs: now - 86_400_000, endMs: now }, session: 'saved-resets',
-        includeAccounting: false, includeQuota: true, includeQuotaHistory: true, includeQuotaExactHistory: true, includeSessionEvidence: false, includeWorkEvidence: false,
-        includeTranscriptEvidence: false, includeActivity: false, includeComparison: false });
+      const query = normalizeUsageQuery({
+        period: missingSummary ? { relative: 'all' } : { startMs: now - 86_400_000, endMs: now },
+        session: 'saved-resets', includeAccounting: false, includeQuota: true, includeQuotaHistory: !noSample,
+        includeQuotaExactHistory: !noSample && !missingSummary, includeSessionEvidence: false, includeWorkEvidence: false,
+        includeTranscriptEvidence: false, includeActivity: false, includeComparison: false,
+      });
       const sibling = normalizeUsageQuery({ ...query, includeAccounting: true, includeQuota: false, includeQuotaHistory: false, includeQuotaExactHistory: false });
       const store = getUsageQueryResourceStore(captured);
       const entry = store.getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport({ queries: [query, sibling] }) });
@@ -7896,7 +7906,12 @@ describe('usage query captured Resource adapter', () => {
       try {
         await expect.poll(() => readPage()?.quota?.[0]?.current).toEqual(record);
         if (stage !== 'held') await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
-        expect(readQuota(readPage())).toBe(stage === 'failed' ? 'stale' : stage === 'complete' ? 'available' : 'partial');
+        const expectedStatus = stage === 'failed' || stage === 'daily_stale' ? 'stale'
+          : stage === 'complete' || noSample ? 'available' : 'partial';
+        if (missingSummary) expect(readPage()?.quota?.[0]?.pageFacts).toMatchObject({
+          historyStatus: 'partial', historyCoverageCause: 'provider_account_usage_day_summary_pending',
+        });
+        expect(readQuota(readPage())).toBe(expectedStatus);
         const response = await executor.execute('usage.query', { queries: [query] },
           { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } });
         if (!response.ok) throw new Error(response.errorCode);
@@ -7909,6 +7924,9 @@ describe('usage query captured Resource adapter', () => {
           pending: slice?.pending,
         });
         expect(coverage(action), 'page and Action project the same admitted quota coverage').toEqual(coverage(readPage()));
+        if (missingSummary) expect(coverage(action)).toMatchObject({
+          aggregate: expectedStatus, qualified: [expectedStatus], pending: false,
+        });
       } finally { history.resolve(); release(); account.dispose(); }
     });
 

@@ -12,7 +12,7 @@ import type { ScmBranchWorkEvidence } from '../scm/branches.js';
 import { resolveUsageHowYouWork, UsageHowYouWorkSchema, type UsageHowYouWorkDetailInput, type UsageSessionEvidenceCoverage } from './resolveUsageHowYouWork.js';
 import type { UsageWorkIntervalsInput } from './usageWorkIntervals.js';
 import { ConnectedServiceQuotaGetResultV1Schema, type ConnectedServiceQuotaGetResultV1 } from '../connect/providerAccountUsageHistorySchemasV1.js';
-import { wasConnectedServiceQuotaObserved } from '../connect/quotaObservationTime.js';
+import { isConnectedServiceQuotaObservationFresh, wasConnectedServiceQuotaObserved } from '../connect/quotaObservationTime.js';
 import { evaluateUsageCoach } from './coach/evaluateUsageCoach.js';
 import { createUsageCoachDigestSuggestion } from './coach/coachDigestSuggestion.js';
 import { UsageCoachEvaluationSchema } from './coach/coachFinding.js';
@@ -739,6 +739,27 @@ export type UsageQuotaCoverageRead = Readonly<{
     pending?: boolean;
     unavailable?: boolean;
 }>;
+
+/** Project settled coverage from the admitted head and its history evidence. */
+export function projectUsageQuotaSourceCoverage(source: string, value: ConnectedServiceQuotaGetResultV1 | null,
+    nowMs: number, historyRequested: boolean): UsageQuerySourceState {
+    const continuing = value?.history?.nextCursor != null;
+    const partialHistory = value?.pageFacts?.historyStatus === 'partial';
+    const current = value?.current ?? null;
+    if (current && wasConnectedServiceQuotaObserved(current)) {
+        const fresh = isConnectedServiceQuotaObservationFresh({
+            observedAtMs: current.observedAtMs, nowMs, maxAgeMs: current.staleAfterMs,
+        });
+        // A finite continuation is an incomplete read. A settled day-summary
+        // gap qualifies a fresh head and leaves an expired head stale.
+        const status = continuing ? 'partial' : !fresh ? 'stale' : partialHistory ? 'partial' : 'available';
+        return { source, status, asOfMs: current.fetchedAtMs };
+    }
+    // A completed head-only read can answer before the first provider observation.
+    const completeEmptyRead = value !== null && !historyRequested && !continuing && !partialHistory
+        && (current === null || current.state === 'not_loaded');
+    return { source, status: completeEmptyRead ? 'available' : 'partial' };
+}
 
 /** Project the same aggregate from opened, progressing or retained qualified reads. */
 export function projectUsageQuotaCoverage(reads: readonly UsageQuotaCoverageRead[],

@@ -1,8 +1,7 @@
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol';
 import { getUsageQueryKey, resolveUsageQueryPeriod, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
-import { isConnectedServiceQuotaObservationFresh, wasConnectedServiceQuotaObserved } from '@happier-dev/protocol/connect/quotaObservationTime';
-import { projectUsageQuotaCoverage, type UsageQuotaCoverageRead, type UsageQuotaSourceSnapshot } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import { projectUsageQuotaCoverage, projectUsageQuotaSourceCoverage, type UsageQuotaCoverageRead, type UsageQuotaSourceSnapshot } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 
 type ReadQuota = NonNullable<NonNullable<ActionExecutorDeps['usageActions']>['readQuota']>;
 
@@ -35,11 +34,7 @@ export async function readCliUsageQuota(input: Readonly<{
         status: result.errorCode === 'unsupported' ? 'unsupported' : 'error',
         errorCode: result.errorCode ?? 'usage_quota_read_failed',
       } };
-      const current = result.current && wasConnectedServiceQuotaObserved(result.current) ? result.current : undefined;
-      const status = result.history?.nextCursor != null || !current ? 'partial'
-        : isConnectedServiceQuotaObservationFresh({ observedAtMs: current.observedAtMs,
-          nowMs: settledAtMs, maxAgeMs: current.staleAfterMs }) ? 'available' : 'stale';
-      return { value: result, state: { source: sourceKey, status, ...(current ? { asOfMs: current.fetchedAtMs } : {}) } };
+      return { value: result, state: projectUsageQuotaSourceCoverage(sourceKey, result, settledAtMs, group.history !== undefined) };
     }));
     const snapshot = projectUsageQuotaCoverage(rows, 'available');
     return group.queries.map(query => [getUsageQueryKey(query), snapshot] as const);

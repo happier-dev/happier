@@ -13,7 +13,7 @@ import { createCanonicalJsonSigningInput } from '@happier-dev/plugin-sdk';
 import { getUsageQueryBatchKey, getUsageQueryKey, normalizeUsageQuery, normalizeUsageQueryBatchInput, resolveUsageQueryPeriod, usageAnalyticsRequestToQuery, usageQueryToAnalyticsRequest, usageQueryNeedsContributionRows, type UsageQuery, type UsageQueryBatchInput } from '@happier-dev/protocol/inputs/usageQuery';
 import { collectUsageWorkSources, readUsageWorkSessionTurns } from '@happier-dev/protocol/usage/usageWorkSources';
 import { hasSameUsageQueryWorkEvidenceMembership } from '@happier-dev/protocol/usage/usageWorkEvidence';
-import { USAGE_COACH_PREFERENCES_READ_SOURCE, readUsageAccountingReadAtMs, resolveUsagePageAccountingReads, resolveUsageAccountingAsOfMs, resolveUsageComparisonQuery, resolveUsageQuotaSourceSnapshot, projectUsageQuotaCoverage, retainAccountingOnReadFailure, retainUsageQueryResultReferences, canRetainUsageReadFailure, isUsageQuerySourceOutstanding, withdrawUsageQueryWork, UsageQueryBatchResultSchema, type UsageAccountingSourceSnapshot, type UsagePoolSourceSnapshot, type UsageQueryPoolSnapshot, type UsageQueryBatchResult, type UsageWorkSourceSnapshot, type UsageQuerySourceState, type UsageQueryResultSlice, type UsageQuotaCoverageRead, type UsageQuotaSourceSnapshot } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import { USAGE_COACH_PREFERENCES_READ_SOURCE, readUsageAccountingReadAtMs, resolveUsagePageAccountingReads, resolveUsageAccountingAsOfMs, resolveUsageComparisonQuery, resolveUsageQuotaSourceSnapshot, projectUsageQuotaCoverage, projectUsageQuotaSourceCoverage, retainAccountingOnReadFailure, retainUsageQueryResultReferences, canRetainUsageReadFailure, isUsageQuerySourceOutstanding, withdrawUsageQueryWork, UsageQueryBatchResultSchema, type UsageAccountingSourceSnapshot, type UsagePoolSourceSnapshot, type UsageQueryPoolSnapshot, type UsageQueryBatchResult, type UsageWorkSourceSnapshot, type UsageQuerySourceState, type UsageQueryResultSlice, type UsageQuotaCoverageRead, type UsageQuotaSourceSnapshot } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { ConnectedServicePoolSelectionGetRequestV1Schema, type ConnectedServicePoolSelectionGetRequestV1, type ConnectedServicePoolSelectionGetResponseV1 } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
 import { isMachineRpcTimeoutError, readRpcErrorCode, RpcError } from '@happier-dev/protocol/rpcErrors';
 import { readRpcRequestDisposition } from '@happier-dev/sync-client';
@@ -66,7 +66,7 @@ import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCreden
 import { buildProviderAccountUsageScopeKey } from '@/sync/domains/connectedServices/accountUsage/providerAccountUsageLoadRoute';
 import { getProviderAccountUsageCacheState, subscribeProviderAccountUsageCache, type ProviderAccountUsageCacheEntry } from '@/sync/domains/connectedServices/accountUsage/providerAccountUsageCache';
 import { buildQualifiedQuotaSnapshotScopeKey, getQualifiedQuotaSnapshotEntry, subscribeQualifiedQuotaSnapshotEntry, type QualifiedQuotaSnapshotStoreEntry } from '@/sync/domains/connectedServices/qualifiedConnectedAccountQuotaSnapshotStore';
-import { compareConnectedServiceQuotaObservationRecency, isConnectedServiceQuotaObservationFresh, wasConnectedServiceQuotaObserved } from '@happier-dev/protocol/connect/quotaObservationTime';
+import { compareConnectedServiceQuotaObservationRecency, wasConnectedServiceQuotaObserved } from '@happier-dev/protocol/connect/quotaObservationTime';
 import { getProviderAccountUsageDerivationInterval } from '@happier-dev/protocol/connect/deriveProviderAccountUsagePace';
 import { getCachedServerFeaturesSnapshot, subscribeServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { resolveRuntimeFeatureDecisionFromSnapshot, type ServerFeaturesRuntimeSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
@@ -162,7 +162,7 @@ function reconcileQuotaRead(input: Readonly<{
     previousState?: UsageQuerySourceState;
     revision: Readonly<{ kind: 'cache'; row: ProviderAccountUsageCacheEntry | undefined; nowMs: number;
         targets: Parameters<typeof projectProviderAccountUsageQuotaReadV1>[0]['targets'] }>
-        | Readonly<{ kind: 'progress'; value: ConnectedServiceQuotaGetResultV1 | null; settled: boolean; errorCode?: string }>
+        | Readonly<{ kind: 'progress'; value: ConnectedServiceQuotaGetResultV1 | null; settled: boolean; historyRequested: boolean; errorCode?: string }>
         | Readonly<{ kind: 'sibling'; state: UsageQuerySourceState }>;
 }>): UsageQuotaCoverageRead {
     const { admitted, source: quotaSource, previousState, revision } = input;
@@ -182,9 +182,9 @@ function reconcileQuotaRead(input: Readonly<{
         // A current-only cache observation cannot replace settled history.
         if (retained?.current && settledState && admitted.error === null && !row?.hadError
             && (!row?.snapshot || row.snapshot.recordId === retained.current.recordId)) {
-            const state = settledState.status === 'available' && !isConnectedServiceQuotaObservationFresh({
-                observedAtMs: retained.current.observedAtMs, nowMs, maxAgeMs: retained.current.staleAfterMs,
-            }) ? { ...settledState, status: 'stale' as const } : settledState;
+            const stale = (settledState.status === 'available' || settledState.status === 'partial')
+                && projectUsageQuotaSourceCoverage(source, retained, nowMs, false).status === 'stale';
+            const state = stale ? { ...settledState, status: 'stale' as const } : settledState;
             return { value: retained, state };
         }
         const pending = (admitted.loading || row?.loading === true)
@@ -193,19 +193,19 @@ function reconcileQuotaRead(input: Readonly<{
             return { value: retained ?? null, ...(retained && previousState ? { state: previousState } : {}),
                 pending, unavailable: true };
         }
-        const stale = admitted.error !== null || row.hadError || !isConnectedServiceQuotaObservationFresh({
-            observedAtMs: row.snapshot.observedAtMs, nowMs, maxAgeMs: row.snapshot.staleAfterMs,
-        });
+        const value = projectProviderAccountUsageQuotaReadV1({ input: { source: quotaSource }, current: row.snapshot, nowMs,
+            targets, waitingWork: { status: 'unavailable', reason: 'read_failed' } });
+        const coverage = projectUsageQuotaSourceCoverage(source, value, nowMs, false);
         // The current body can advance while the already admitted history read is still outstanding.
         const historyPending = retained !== undefined && previousState?.status === 'pending';
-        return { value: projectProviderAccountUsageQuotaReadV1({ input: { source: quotaSource }, current: row.snapshot, nowMs,
-            targets, waitingWork: { status: 'unavailable', reason: 'read_failed' } }),
+        return { value,
             state: wasConnectedServiceQuotaObserved(row.snapshot)
-                ? { source, status: stale ? 'stale' : historyPending ? 'pending' : 'available', asOfMs: row.snapshot.fetchedAtMs }
+                ? { ...coverage, status: admitted.error !== null || row.hadError ? 'stale'
+                    : historyPending && coverage.status === 'available' ? 'pending' : coverage.status }
                 : previousState ?? { source, status: 'not_loaded' }, pending: pending || historyPending };
     }
     let { value } = revision;
-    const { settled, errorCode } = revision;
+    const { settled, historyRequested, errorCode } = revision;
     if (!settled && !errorCode && retained && settledState) return { value: retained, state: settledState };
     if (errorCode) {
         if (!canRetainUsageReadFailure(errorCode)) value = null;
@@ -236,15 +236,12 @@ function reconcileQuotaRead(input: Readonly<{
         });
         if (retainedPace) value = { ...value, pace };
     }
-    return { value, state: { source,
+    const observation = projectUsageQuotaSourceCoverage(source, value, Date.now(), historyRequested);
+    return { value, state: { ...observation,
         status: errorCode ? value ? 'stale' : 'error' : unobservedReplacement || retainedPace ? 'stale'
             : settled || value?.pageFacts?.historyStatus === 'complete' || value?.pageProjection || value?.history?.nextCursor === null
-                ? value?.current && wasConnectedServiceQuotaObserved(value.current)
-                    ? isConnectedServiceQuotaObservationFresh({ observedAtMs: value.current.observedAtMs,
-                        nowMs: Date.now(), maxAgeMs: value.current.staleAfterMs }) ? 'available' : 'stale'
-                    : 'partial'
+                ? observation.status
                 : 'pending',
-        ...(value?.current && wasConnectedServiceQuotaObserved(value.current) ? { asOfMs: value.current.fetchedAtMs } : {}),
         ...(errorCode ? { errorCode } : {}),
     } };
 }
@@ -506,13 +503,15 @@ function retainUsageAllowance(batch: UsageQueryBatchResult, previous: RetainedUs
             // Keep that answer when another history mode takes over its head.
             const observed = wasConnectedServiceQuotaObserved(current);
             if (!observed && (!sourceState || sourceState.status === 'pending' || sourceState.status === 'not_loaded')) continue;
-            const state: UsageQuerySourceState = !observed && sourceState ? sourceState : {
-                source, status: sourceState?.status === 'available' ? 'available' : 'stale', asOfMs: current.fetchedAtMs,
-            };
-            if (existing?.state.status === 'available' && state.status === 'stale' && existing.read.current === current) continue;
             const prior = (existing ?? previous?.heads.get(key))?.read;
             const head = prior?.current === current && prior.targets === read.targets && prior.waitingWork === read.waitingWork ? prior
                 : projectProviderAccountUsageQuotaReadV1({ input: { source: read.source }, current, nowMs, targets: read.targets, waitingWork: read.waitingWork });
+            // A head loan carries no history, so partial history does not age the head.
+            const state: UsageQuerySourceState = !observed && sourceState ? sourceState
+                : sourceState?.status === 'available' || sourceState?.status === 'partial'
+                    ? projectUsageQuotaSourceCoverage(source, head, nowMs, false)
+                    : { source, status: 'stale', asOfMs: current.fetchedAtMs };
+            if (existing?.state.status === 'available' && state.status === 'stale' && existing.read.current === current) continue;
             heads.set(key, { read: head, state });
         }
     }
@@ -617,7 +616,7 @@ async function readOpenedQuotaHistory(context: UsageQueryAccountContext,
             const viewSettled = settled || !view.range || !!value?.pageFacts;
             if (errorCode === row.errorCode && value === row.accepted && viewSettled === row.settled) continue;
             const reconciled = reconcileQuotaRead({ admitted, source, previous: row.previous, previousState: row.previousState,
-                revision: { kind: 'progress', value: value ?? null, settled: viewSettled, errorCode } });
+                revision: { kind: 'progress', value: value ?? null, settled: viewSettled, historyRequested: view.range !== undefined, errorCode } });
             Object.assign(row, { accepted: value, settled: viewSettled, errorCode, value: reconciled.value, state: reconciled.state! });
             quotaByQuery.set(view.key, projectProgressQuota(view.sources));
             changed = true;
