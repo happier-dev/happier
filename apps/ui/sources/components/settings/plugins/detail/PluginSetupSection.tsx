@@ -84,7 +84,7 @@ function presentSetupRow(
  * configuration row per pending step — the thing, its status, "…" (Skip) and the one action that opens the step's
  * existing owner, so every action sits on the right edge. Steps already done or skipped collapse to quiet check
  * lines; progress reads beside the title. When every step is settled the section is one quiet line. The first
- * action leads; the rest stay secondary. Skip is also an agent command of the mounted page.
+ * action leads; the rest stay secondary. The mounted page exposes the same row actions to agents.
  */
 export function PluginSetupSection(
   props: Readonly<{
@@ -122,18 +122,39 @@ export function PluginSetupSection(
         : localizePluginText(props.pluginId, value),
     [localizePluginText, props.pluginId],
   );
-  const skipCommands = React.useMemo<readonly CurrentUiContextLocalCommand[]>(
-    () =>
-      skip === null
-        ? []
-        : rows.map((row) => ({
-            key: `plugin.setup.skip:${props.pluginId}:${row.id}`,
-            title: `${t('settingsPlugins.surfaces.setupSkip')}: ${presentSetupRow(row, localize).title}`,
-            invoke: () => skip(row),
-          })),
-    [localize, props.pluginId, rows, skip],
-  );
-  useCurrentUiContextLocalCommands(skipCommands, { contextKey: `plugin.setup:${props.pluginId}` });
+  const { onAddToPreset, pluginId } = props;
+  const pendingRows = React.useMemo(() => rows.map((row) => {
+    const presentation = presentSetupRow(row, localize);
+    const commandScope = `${pluginId}:${row.id}`;
+    const recipeMenu = row.kind === 'machineRecipe' && onAddToPreset ? {
+      item: row.item,
+      onChoose: (choice: StorePresetChoice) => onAddToPreset(choice, row.item),
+      runNow: {
+        commandScope,
+        title: presentation.action,
+        machinesTitle: t('settingsPlugins.surfaces.setupRunNow'),
+        presetsTitle: t('settingsPlugins.surfaces.setupAddToPresetSetup'),
+        onRun: (machineId: string) => open(row, presentation.title, machineId),
+      },
+    } : null;
+    return { row, presentation, commandScope, recipeMenu,
+      onOpen: () => open(row, presentation.title), onSkip: skip ? () => skip(row) : null };
+  }), [localize, onAddToPreset, open, pluginId, rows, skip]);
+  const commands = React.useMemo<readonly CurrentUiContextLocalCommand[]>(() => pendingRows.flatMap(
+    ({ presentation, commandScope, recipeMenu, onOpen, onSkip }) => [
+      ...(onSkip ? [{
+        key: `plugin.setup.skip:${commandScope}`,
+        title: `${t('settingsPlugins.surfaces.setupSkip')}: ${presentation.title}`,
+        invoke: onSkip,
+      }] : []),
+      ...(recipeMenu ? [] : [{
+        key: `plugin.setup.open:${commandScope}`,
+        title: `${presentation.action}: ${presentation.title}`,
+        invoke: onOpen,
+      }]),
+    ],
+  ), [pendingRows]);
+  useCurrentUiContextLocalCommands(commands, { contextKey: `plugin.setup:${pluginId}` });
   if (progress.total === 0) return null;
   const testID = props.testID ?? `settings.plugins.detail.${props.pluginId}.setup`;
   const settled = steps.filter((step) => step.status !== 'pending');
@@ -159,8 +180,7 @@ export function PluginSetupSection(
           </Text>
         }
       >
-        {rows.map((row, index) => {
-          const presentation = presentSetupRow(row, localize);
+        {pendingRows.map(({ row, presentation, recipeMenu, onOpen, onSkip }, index) => {
           return (
             <Item
               key={row.id}
@@ -174,31 +194,23 @@ export function PluginSetupSection(
               accessoryLayout="adaptive"
               rightElement={
                 <View style={styles.rowActions}>
-                  {skip ? (
+                  {onSkip ? (
                     <ItemRowActions
                       title={presentation.title}
                       overflowOnly
                       overflowTriggerTestID={`${testID}.${row.id}.more`}
-                      actions={[{ id: 'skip', title: t('settingsPlugins.surfaces.setupSkip'), icon: 'skip-forward',
-                        onPress: () => skip(row) }]}
+                      actions={[{ id: 'skip', title: t('settingsPlugins.surfaces.setupSkip'), icon: 'skip-forward', onPress: onSkip }]}
                     />
                   ) : null}
-                  {row.kind === 'machineRecipe' && props.onAddToPreset ? (
+                  {recipeMenu ? (
                     // "Use on a machine" (lab ideas-1118-platform round 4): one control with the recipe's two outcomes,
                     // run it now on a chosen Machine (its Setup review) or add it to a preset's Setup (the preset editor).
                     <StoreAddToPresetButton
                       testID={`${testID}.${row.id}.use`}
                       size="small"
                       serverId={recipeScope?.serverId ?? null}
-                      item={row.item}
                       name={presentation.title}
-                      onChoose={(choice) => props.onAddToPreset?.(choice, row.item)}
-                      runNow={{
-                        title: presentation.action,
-                        machinesTitle: t('settingsPlugins.surfaces.setupRunNow'),
-                        presetsTitle: t('settingsPlugins.surfaces.setupAddToPresetSetup'),
-                        onRun: (machineId) => { void open(row, presentation.title, machineId); },
-                      }}
+                      {...recipeMenu}
                     />
                   ) : (
                     <RoundButton
@@ -207,9 +219,7 @@ export function PluginSetupSection(
                       display={index === 0 ? 'default' : 'secondary'}
                       title={presentation.action}
                       accessibilityLabel={`${presentation.action}: ${presentation.title}`}
-                      onPress={() => {
-                        void open(row, presentation.title);
-                      }}
+                      onPress={onOpen}
                     />
                   )}
                 </View>

@@ -2,7 +2,11 @@ import * as React from 'react';
 import { afterEach, beforeEach, expect, it, onTestFinished, vi } from 'vitest';
 import { act, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createPlainManagedMachinePresetFixture } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { CURRENT_UI_CONTEXT_COMMAND_INVOKE_ACTION_ID } from '@happier-dev/protocol/actions/actionIds';
 import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import type { PluginSettingSetupObservation } from '@/components/settings/plugins/model/pluginSettingSetupObservation';
 import type { StorePresetChoice } from './StoreAddToPreset';
 import type { StorePresetDoorItem } from './storePresetDoor';
 
@@ -16,6 +20,7 @@ vi.mock('expo-router', async () => {
 
 const home = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(home);
+installDisconnectedServerSocketBoundary();
 const { StoreAddToPresetButton, StorePresetEditorHandoff } = await import('./StoreAddToPreset');
 const { StoreListingPaneTitleContext } = await import('../storeListingPaneTitle');
 beforeEach(async () => { await home.reset(); });
@@ -23,32 +28,55 @@ afterEach(() => standardCleanup());
 
 const item = { kind: 'softwareRecipe' as const,
     selection: { ref: { pluginId: 'happier.machine.recipes', recipeId: 'google-chrome', revision: '1' }, inputs: {} } };
+const settings: readonly PluginSettingSetupObservation[] = [
+    { field: { key: 'workspace', title: 'Workspace', secretCustody: null, required: true }, status: 'missing' },
+];
 
-it('opens Machine review or the preset Setup editor from the same installed recipe control', async () => {
+it.each(['press', 'command'] as const)('opens the setup row and both recipe choices by %s', async (entry) => {
     const { PluginSetupSection } = await import('@/components/settings/plugins/detail/PluginSetupSection');
     const { MachineProvisionerPicker } = await import('@/components/settings/machines/managed/MachineProvisionerPicker');
     const { ManagedMachineConfigurationView } = await import('@/components/settings/machines/managed/ManagedMachineConfigurationView');
     const { storage } = await import('@/sync/domains/state/storage');
-    const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+    const { createMachineFixture, createMachineMetadataFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
     const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
     const { Modal } = await import('@/modal');
     const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+    const { buildPluginDetailRoute } = await import('@/components/settings/plugins/model/pluginsSurfaceRoutes');
+    const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+    const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+    const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+    const { CurrentUiContextCommandsProvider, useCurrentUiContextComposedCommands } =
+        await import('@/components/appShell/currentUiContext/CurrentUiContextCommands');
+    const { usePublishCurrentUiContext } = await import('@/components/appShell/currentUiContext/CurrentUiContextProvider');
+    const { t } = await import('@/text');
     const { publishAppliedActiveServerSnapshot, publishAppliedActiveServerRuntimeAvailability } =
         await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
     const { pluginId, recipeId, revision } = item.selection.ref;
     const serverIdentityId = 'srv_installed_recipe';
-    const serverId = await home.addHome({ name: 'Recipe Home', serverUrl: 'https://installed-recipe.test',
-        serverIdentityId, accountId: 'owner', currentAccount: true });
+    const serverUrl = 'https://installed-recipe.test';
+    const serverId = await home.addHome({ name: 'Recipe Home', serverUrl,
+        serverIdentityId, accountId: 'owner', currentAccount: true, accountEncryptionMode: 'plain' });
     const scope = { serverId, accountId: 'owner' };
+    if (entry === 'command') {
+        await (await import('@/dev/testkit/harness/syncSingletonLoader')).loadSyncSingletonForTests();
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const { restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
+        await restoreConnectionToActiveServer((await TokenStorage.getCredentialsForServerUrl(serverUrl))!);
+    }
     await act(async () => {
         storage.getState().activateProfileScope(scope);
         await storage.getState().activateSettingsScope(scope);
         await publishMachineInventoryForTest(scope, [
-            createMachineFixture({ id: 'first-machine', activeAt: Date.now() }),
-            createMachineFixture({ id: 'chosen-machine', activeAt: Date.now() }),
+            createMachineFixture({ id: 'first-machine', metadata: createMachineMetadataFixture({ displayName: 'First Machine' }), activeAt: Date.now() }),
+            createMachineFixture({ id: 'chosen-machine', metadata: createMachineMetadataFixture({ displayName: 'Chosen Machine' }), activeAt: Date.now() }),
         ]);
         publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
     });
+    const preset = createPlainManagedMachinePresetFixture({ homeId: serverIdentityId, id: 'ready', name: 'Ready to add',
+        owner: { kind: 'account', accountId: scope.accountId }, revision: 3, setup: { scripts: [{ body: 'echo ready' }] } });
+    const contains = createPlainManagedMachinePresetFixture({ homeId: serverIdentityId, id: 'contains', name: 'Already added',
+        owner: { kind: 'account', accountId: scope.accountId }, revision: 1, setup: { items: [item] } });
+    home.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [preset, contains] } });
     onTestFinished(() => { publishAppliedActiveServerRuntimeAvailability(false); });
     const projection = PluginProjectionV2Schema.parse({
         v: 2, generation: 1, agentsById: {}, familiesById: {
@@ -71,25 +99,92 @@ it('opens Machine review or the preset Setup editor from the same installed reci
         return preset
             ? <StorePresetEditorHandoff {...preset} onReturn={() => setPreset(null)} />
             : <PluginSetupSection pluginId={pluginId} title="Machine tools" host="app" projection={projection}
-                machineId="first-machine" serverId={serverId} settings={[]} testID="recipe-setup"
+                machineId="first-machine" serverId={serverId} settings={settings} testID="recipe-setup"
                 onAddToPreset={(choice, item) => setPreset({ choice, item })} />;
     }
-    const screen = await renderScreen(<InstalledRecipe />);
+    function Publication() {
+        const commands = useCurrentUiContextComposedCommands();
+        usePublishCurrentUiContext(React.useMemo(() => ({ commands }), [commands]));
+        return null;
+    }
+    const screen = entry === 'press'
+        ? await renderScreen(<InstalledRecipe />)
+        : await renderMountedCurrentUiContext(
+            <CurrentUiContextCommandsProvider authority={captureActiveServerAccountScopeLifetime()}>
+                <Publication />
+                <InstalledRecipe />
+            </CurrentUiContextCommandsProvider>,
+        );
+    const caller = { serverId, surface: 'agent' as const, authority: 'account_automation' as const };
+    const executor = createDefaultActionExecutor();
+    async function listCommands() {
+        const read = await executor.execute('ui.current_context.read', {}, caller);
+        if (!read.ok) throw new Error(`Current UI read failed: ${JSON.stringify(read)}`);
+        return (read.result as { commands: readonly { id: string; title: string }[] }).commands;
+    }
+    async function select(testID: string, title: string) {
+        if (entry === 'press') {
+            await act(async () => screen.pressByTestId(testID));
+            return;
+        }
+        const command = (await listCommands()).find(row => row.title === title);
+        expect(command, title).toBeDefined();
+        await act(async () => {
+            await expect(executor.execute(CURRENT_UI_CONTEXT_COMMAND_INVOKE_ACTION_ID, { commandId: command!.id }, caller))
+                .resolves.toMatchObject({ ok: true });
+        });
+    }
+    const choose = `${t('settingsPlugins.surfaces.setupChoose')}: Workspace`;
+    const useOnMachine = `${t('settingsPlugins.surfaces.setupUseOnMachine')}: Set up browser`;
+    const runOnChosenMachine = `${t('settingsPlugins.surfaces.setupRunNow')}: Chosen Machine`;
+    const addToReadyPreset = `${t('settingsPlugins.surfaces.setupAddToPresetSetup')}: Ready to add`;
+    const addToDisabledPreset = `${t('settingsPlugins.surfaces.setupAddToPresetSetup')}: Already added`;
+    const newPreset = t('capabilities.store.softwarePage.presetsNew');
+    if (entry === 'command') {
+        const titles = (await listCommands()).map(row => row.title);
+        expect(titles).toContain(`${t('settingsPlugins.surfaces.setupSkip')}: Workspace`);
+        expect.soft(titles).toContain(choose);
+        expect.soft(titles).toContain(useOnMachine);
+        expect(titles).not.toContain(runOnChosenMachine);
+        expect(titles).not.toContain(addToReadyPreset);
+    }
+    routerPush.mockClear();
+    await select('recipe-setup.["setting","workspace",null,null].action', choose);
+    expect(routerPush).toHaveBeenCalledWith(buildPluginDetailRoute('app', pluginId));
+
     const trigger = screen.root.findAll(node => typeof node.props.testID === 'string'
         && node.props.testID.startsWith('recipe-setup.') && node.props.testID.endsWith('.use')
         && typeof node.props.onPress === 'function')[0];
     expect(trigger).toBeDefined();
     const prefix = trigger!.props.testID as string;
-    await act(async () => screen.pressByTestId(prefix));
+    expect(home.requestsFor('/v1/machines/presets/list')).toHaveLength(0);
+    await select(prefix, useOnMachine);
     await waitForHomeGovernance(() => expect(screen.findByTestId(`${prefix}.machine.chosen-machine`)).not.toBeNull());
-    await act(async () => screen.pressByTestId(`${prefix}.machine.chosen-machine`));
+    await waitForHomeGovernance(() => expect(screen.findByTestId(`${prefix}.preset.ready`)).not.toBeNull());
+    if (entry === 'command') {
+        const titles = (await listCommands()).map(row => row.title);
+        expect(titles).toContain(addToReadyPreset);
+        expect(titles).not.toContain(addToDisabledPreset);
+    }
+    await select(`${prefix}.machine.chosen-machine`, runOnChosenMachine);
     await waitForHomeGovernance(() => expect(showModal).toHaveBeenCalledWith(expect.objectContaining({ props: expect.objectContaining({
         intent: 'recipe', item, scope: { serverId: serverIdentityId, accountId: scope.accountId }, machineId: 'chosen-machine',
     }) })));
 
-    await act(async () => screen.pressByTestId(prefix));
+    if (entry === 'command') {
+        expect((await listCommands()).map(row => row.title)).not.toContain(runOnChosenMachine);
+    }
+    await select(prefix, useOnMachine);
+    await waitForHomeGovernance(() => expect(screen.findByTestId(`${prefix}.preset.ready`)).not.toBeNull());
+    await select(`${prefix}.preset.ready`, addToReadyPreset);
+    const editor = () => screen.findAllByType(ManagedMachineConfigurationView)[0]?.props;
+    await waitForHomeGovernance(() => expect(editor()).toMatchObject({ serverId: serverIdentityId, presetId: 'ready',
+        presetContinuation: { item, preset: { id: 'ready', revision: 3 }, draft: { name: 'Ready to add' } } }));
+    await act(async () => editor()?.presetContinuation?.onReturn?.());
+
+    await select(prefix, useOnMachine);
     await waitForHomeGovernance(() => expect(screen.findByTestId(`${prefix}.new`)).not.toBeNull());
-    await act(async () => screen.pressByTestId(`${prefix}.new`));
+    await select(`${prefix}.new`, newPreset);
     const pickers = () => screen.findAllByType(MachineProvisionerPicker);
     await waitForHomeGovernance(() => expect(pickers()[0]?.props).toMatchObject({ serverId: serverIdentityId, presetOnly: true }));
     const provisioner = 'acme.cloud/vm';

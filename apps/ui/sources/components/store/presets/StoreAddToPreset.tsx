@@ -2,6 +2,7 @@ import * as React from 'react';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { hasOpenedManagedMachinePresetCreationV1, type OpenedManagedMachinePresetV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
 
+import { useCurrentUiContextLocalCommands, type CurrentUiContextLocalCommand } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { ManagedMachineConfigurationView } from '@/components/settings/machines/managed/ManagedMachineConfigurationView';
 import {
   MachineProvisionerPicker,
@@ -38,6 +39,7 @@ const NO_SERVERS: readonly string[] = [];
 const NEW_PRESET = 'store.preset.new';
 const RUN_ON_MACHINE = 'store.preset.runOn:';
 const NO_CHOSEN_MACHINES: ReadonlySet<string> = new Set();
+const NO_RECIPE_COMMANDS: readonly CurrentUiContextLocalCommand[] = [];
 
 /** A preset's one line: what it sets up, in the receipt's own words (the Setup tab says it the same way). */
 export function describeStorePreset(preset: OpenedManagedMachinePresetV1): string {
@@ -75,10 +77,11 @@ export function StoreAddToPresetButton(
     /** A row's trailing control is small (a setup checklist row); a page's is normal. */
     size?: 'small' | 'normal';
     runNow?: Readonly<{
+      commandScope: string;
       title: string;
       machinesTitle: string;
       presetsTitle: string;
-      onRun: (machineId: string) => void;
+      onRun: (machineId: string) => Promise<void>;
     }>;
   }>,
 ) {
@@ -157,19 +160,60 @@ export function StoreAddToPresetButton(
   );
   const waiting =
     demanded && (!state || (state.loading && state.value == null));
+  const presetsUnavailable = waiting || !!state?.error;
+  const visibleItems = React.useMemo(() => presetsUnavailable
+    ? items.filter((entry) => entry.id === NEW_PRESET || entry.category === 'machines')
+    : items, [items, presetsUnavailable]);
+  const disabled = !props.item || (!props.serverId && !runOn);
+  const onOpenChange = React.useCallback((next: boolean) => {
+    if (next) setDemanded(true);
+    setOpen(next);
+  }, []);
+  const { name, onChoose, serverId } = props;
+  const newPreset = React.useMemo<StorePresetChoice | null>(() => serverId
+    ? { serverId, preset: null, itemName: name }
+    : null, [name, serverId]);
+  const onSelect = React.useCallback((id: string) => {
+    setOpen(false);
+    if (runOn && id.startsWith(RUN_ON_MACHINE)) return runOn.onRun(id.slice(RUN_ON_MACHINE.length));
+    if (id === NEW_PRESET) {
+      if (newPreset) onChoose(newPreset);
+      return;
+    }
+    const choice = choices.find((entry) => entry.preset.id === id);
+    if (choice && !choice.contains) onChoose({ serverId: choice.serverId, preset: choice.preset, itemName: name });
+  }, [choices, name, newPreset, onChoose, runOn]);
+  const recipeCommands = React.useMemo<readonly CurrentUiContextLocalCommand[]>(() => {
+    if (!runOn || disabled) return NO_RECIPE_COMMANDS;
+    const { commandScope } = runOn;
+    const openCommand = {
+      key: `plugin.setup.open:${commandScope}`,
+      title: `${runOn.title}: ${name}`,
+      invoke: () => onOpenChange(true),
+    };
+    if (!open) return [openCommand];
+    return [openCommand, ...visibleItems.filter((entry) => !entry.disabled && (entry.id !== NEW_PRESET || newPreset)).map((entry) => {
+      const invoke = () => onSelect(entry.id);
+      if (entry.category === 'machines') return {
+        key: `plugin.setup.run:${commandScope}:${entry.id.slice(RUN_ON_MACHINE.length)}`,
+        title: `${runOn.machinesTitle}: ${entry.title}`,
+        invoke,
+      };
+      if (entry.id === NEW_PRESET) return { key: `plugin.setup.newPreset:${commandScope}`, title: entry.title, invoke };
+      return {
+        key: `plugin.setup.addToPreset:${commandScope}:${entry.id}`,
+        title: `${runOn.presetsTitle}: ${entry.title}`,
+        invoke,
+      };
+    })];
+  }, [disabled, name, newPreset, onOpenChange, onSelect, open, runOn, visibleItems]);
+  useCurrentUiContextLocalCommands(recipeCommands, { contextKey: runOn?.commandScope });
   return (
     <DropdownMenu
       testID={`${props.testID}.menu`}
       open={open}
-      onOpenChange={(next) => {
-        if (next) setDemanded(true);
-        setOpen(next);
-      }}
-      items={
-        waiting || state?.error
-          ? items.filter((entry) => entry.id === NEW_PRESET || entry.category === 'machines')
-          : items
-      }
+      onOpenChange={onOpenChange}
+      items={visibleItems}
       {...(categoryTitles ? { categoryTitles } : {})}
       emptyLabel={null}
       // While presets load, the menu says so: "New preset" alone would read as having none (and invite a duplicate).
@@ -178,19 +222,7 @@ export function StoreAddToPresetButton(
           : undefined}
       separateCategories
       matchTriggerWidth={false}
-      onSelect={(id) => {
-        setOpen(false);
-        if (runOn && id.startsWith(RUN_ON_MACHINE)) {
-          runOn.onRun(id.slice(RUN_ON_MACHINE.length));
-          return;
-        }
-        if (id === NEW_PRESET) {
-          if (props.serverId) props.onChoose({ serverId: props.serverId, preset: null, itemName: props.name });
-          return;
-        }
-        const choice = choices.find((entry) => entry.preset.id === id);
-        if (choice && !choice.contains) props.onChoose({ serverId: choice.serverId, preset: choice.preset, itemName: props.name });
-      }}
+      onSelect={onSelect}
       trigger={({ toggle }) => (
         <RoundButton
           testID={props.testID}
@@ -201,7 +233,7 @@ export function StoreAddToPresetButton(
             'capabilities.store.softwarePage.addToPresetTitle',
             { name: props.name },
           )}
-          disabled={!props.item || (!props.serverId && !runOn)}
+          disabled={disabled}
           onPress={toggle}
         />
       )}
