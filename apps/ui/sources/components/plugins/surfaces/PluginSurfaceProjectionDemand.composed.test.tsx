@@ -746,9 +746,12 @@ it.each(['surface', 'Action control', 'Review New Task control', 'Review selecti
         if (reviewHost) {
             await waitForHomeGovernance(() => expect(tree!.getTextContent()).toContain(reviewRoot.finding!.title));
             if (presentation === 'Review selection task') {
+                await flushHookEffects({ cycles: 8 });
+                const requestsBeforeSelecting = requestsByMachineId.size;
                 await tree.pressByTestIdAsync('review-findings:select-mode');
                 await tree.pressByTestIdAsync(`review-findings:select:${reviewRoot.id}`);
                 expect(tree.findHostByTestId('review-detail:selection')).not.toBeNull();
+                expect(requestsBeforeSelecting).toBe(0);
             } else expect(tree.findHostByTestId('review-detail:finding-page')).not.toBeNull();
         }
         const actionId = `${pluginId}/${reviewTask ? 'tasks/open-create-v1' : 'write'}`;

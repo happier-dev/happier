@@ -559,7 +559,7 @@ export function ReviewDetailHost(props: Readonly<{
     // and place in the Review, its facts line names where and who, and its decision waits in the bottom bar.
     return (
       <View style={{ flex: 1 }}>
-        {canEdit && scope ? <ReviewFindingTaskProjectionDemand scope={scope} /> : null}
+        {canEdit && scope && decisionBar ? <ReviewFindingTaskProjectionDemand scope={scope} /> : null}
         <ItemList testID="review-detail:finding-page" pageColumn="wide">
           {homeNotice}
           <PageHeader title={row.finding.title} alwaysShowTitle navigationTitle={t('detailsSurface.review.title')}
@@ -625,7 +625,8 @@ export function ReviewDetailHost(props: Readonly<{
     <ReviewPagePluginContent reviewId={artifact.id} serverId={artifact.sourceServerId ?? artifactScope?.serverId ?? null}
       selection={props.pluginPageSelection}>{menu => (
     <View style={{ flex: 1 }}>
-    {canEdit && scope ? <ReviewFindingTaskProjectionDemand scope={scope} /> : null}
+    {canEdit && scope && activeTab === 'findings' && (openFinding != null || selecting && selectedRowIds.length > 0)
+      ? <ReviewFindingTaskProjectionDemand scope={scope} /> : null}
     <ReviewDetailView
       title={record.title || t('detailsSurface.review.title')}
       meta={meta}
