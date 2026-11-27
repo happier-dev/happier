@@ -295,10 +295,10 @@ export async function confirmDeploymentRestoreV1(input: DeploymentRestoreConfirm
     if (destination.hasMeaningfulData && !prepare.safetyBackup) refuse('backup_required');
     let integrity: DeploymentRestoreIntegrityUnavailableV1 | undefined;
     const result = (...[kind, nextAction, code, error]:
-        | [kind: 'notActivated', nextAction: 'none' | 'checkServiceHealth', code?: RestoreFailureCode, error?: unknown]
+        | [kind: 'notActivated', nextAction: 'none' | 'checkServiceHealth', code?: RestoreFailureCode | undefined, error?: unknown]
         | [kind: Exclude<DeploymentRestoreResultV1['kind'], 'notActivated'>,
             nextAction: Exclude<DeploymentRestoreResultV1, { kind: 'restored' }>['nextAction'],
-            code?: RestoreFailureCode, error?: unknown]): DeploymentRestoreResultV1 => {
+            code?: RestoreFailureCode | undefined, error?: unknown]): DeploymentRestoreResultV1 => {
         const nativeFailure = readDeploymentBackupMaintenanceFailureEvidenceV1(error)?.nativeFailure;
         const evidence = { source: prepare.source, destination, steps: steps.snapshot(),
             ...(error === undefined ? {} : { failureCause: projectActionFailureCauseV1(error, 'restore') }),
@@ -459,7 +459,7 @@ export async function confirmDeploymentRestoreV1(input: DeploymentRestoreConfirm
         return code === 'outcome_unknown' ? result('outcome_unknown', 'observeDatabaseNames', code, error)
             : result('recoveryRequired', input.signal.aborted ? 'observeDatabaseNames' : 'restoreRecoveryDatabase', code, error);
     };
-    const restartWriters = async (outcome: DeploymentRestoreResultV1) => {
+    const restartWriters = async (outcome: DeploymentRestoreResultV1): Promise<DeploymentRestoreResultV1> => {
         if (!writersStopped) return { ...outcome, steps: steps.snapshot() };
         if (input.signal.aborted) return outcome.kind === 'notActivated'
             ? { ...outcome, nextAction: 'checkServiceHealth', steps: steps.snapshot() }
