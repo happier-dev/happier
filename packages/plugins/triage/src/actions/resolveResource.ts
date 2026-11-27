@@ -112,7 +112,7 @@ async function resourceForSession(
     code: 'invalid_input', effectAttempted: false, message: 'Enter a positive pull request number.',
   });
   const checkout = await readReviewSessionRepository(input.sessionId, context);
-  if (checkout?.repository.kind !== 'github') throw new PluginError({
+  if (checkout?.repository?.kind !== 'github') throw new PluginError({
     code: 'invalid_input', effectAttempted: false,
     message: 'A pull request number needs a repository. Select a Session with the repository checkout or paste the pull request URL.',
     details: { field: 'repository', reason: 'repository_needed' },

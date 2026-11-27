@@ -1,4 +1,5 @@
 import type { PluginActionInputById, PluginActionResultById } from '@happier-dev/plugin-sdk/actions';
+import type { ScmWorkingSnapshot } from '@happier-dev/plugin-sdk/scm';
 import {
     TriageConfiguredSourceInstanceV1Schema,
     TriageSourceInstanceDraftV1Schema,
@@ -398,7 +399,7 @@ export async function createTriagePullRequestReviewActionTestkit(options: Readon
     observationFailure?: TriageSourceFailureV1;
     repositoryConnected?: () => boolean;
     resolveManualResourceNumber?: (resource: Readonly<{ kind: string; url: string }>) => string | undefined;
-    manualCheckout?: Readonly<{ repository?: string; prState?: 'closed' | 'merged' }>;
+    manualCheckout?: Readonly<{ repository?: string; prState?: 'closed' | 'merged'; remotes?: ScmWorkingSnapshot['repo']['remotes'] }>;
     /** The host-stamped caller, as a workflow run's Action invocation carries it. */
     caller?: Readonly<{ kind: 'automationRun'; runId: string; automationId: string; cause: unknown }>;
 }> = {}) {
@@ -510,7 +511,7 @@ export async function createTriagePullRequestReviewActionTestkit(options: Readon
                 }
                 if (action === 'scm.status.snapshot' && options.manualCheckout) {
                     return { success: true, snapshot: { repo: { isRepo: true, rootPath: TESTKIT_SELECTED_WORKSPACE.rootPath,
-                        remotes: [] }, ...(options.manualCheckout.repository === undefined ? {} : {
+                        remotes: options.manualCheckout.remotes ?? [] }, ...(options.manualCheckout.repository === undefined ? {} : {
                             hostingProvider: { id: 'github', kind: 'github', baseUrl: 'https://github.com',
                                 nameWithOwner: options.manualCheckout.repository },
                         }) } };

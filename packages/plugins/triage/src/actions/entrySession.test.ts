@@ -1040,10 +1040,29 @@ describe('the registered formal Review transition', () => {
         expect(h.prepareInputs).toHaveLength(1);
     });
 
-    it('refuses manual Prepare before source workspace mutation when the Session has a different checkout', async () => {
-        const h = await createTriagePullRequestReviewActionTestkit({ manualCheckout: { repository: 'example/other' } });
+    it('prepares an upstream PR from a fork checkout with the upstream remote configured', async () => {
+        const h = await createTriagePullRequestReviewActionTestkit({ manualCheckout: {
+            repository: 'contributor/fork', remotes: [
+                { name: 'origin', fetchUrl: 'https://github.com/contributor/fork.git' },
+                { name: 'upstream', fetchUrl: 'git@github.com:example/repository.git' },
+            ],
+        } });
         const input = await h.resolveManualInput('https://github.com/example/repository/pull/17');
-        await expect(h.invoke('entries/prepare-pull-request-review-v1', input)).rejects.toMatchObject({ code: 'repositoryMismatch' });
+        await expect(h.invoke('entries/prepare-pull-request-review-v1', input)).resolves.toMatchObject({ status: 'prepared' });
+        expect(h.prepareInputs).toEqual([expect.objectContaining({ entryRef: input.entryRef, workspace: TESTKIT_SELECTED_WORKSPACE })]);
+    });
+
+    it('names the missing repository remote and refuses Prepare before source workspace mutation', async () => {
+        const h = await createTriagePullRequestReviewActionTestkit({ manualCheckout: {
+            repository: 'contributor/fork', remotes: [
+                { name: 'origin', fetchUrl: 'https://github.com/contributor/fork.git' },
+                { name: 'upstream', fetchUrl: 'git@other.example:example/repository.git' },
+            ],
+        } });
+        const input = await h.resolveManualInput('https://github.com/example/repository/pull/17');
+        await expect(h.invoke('entries/prepare-pull-request-review-v1', input)).rejects.toMatchObject({
+            code: 'repositoryMismatch', message: expect.stringContaining('remote for example/repository'),
+        });
         expect(h.prepareInputs).toEqual([]);
     });
 

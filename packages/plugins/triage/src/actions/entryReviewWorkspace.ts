@@ -18,7 +18,7 @@ import type { PullRequestReviewRuleOccurrenceV1 } from './entrySessionProtocol.j
 import { bindCorpusCollections } from '../corpus/collections/bindCorpusCollections.js';
 import { setReviewSkip } from '../corpus/marks/setPinned.js';
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
-import { readReviewSessionRepository, reviewSessionRepositoryMismatch } from './reviewSessionRepository.js';
+import { readReviewSessionRepository, reviewSessionHasRepository, reviewSessionRepositoryMismatch } from './reviewSessionRepository.js';
 import { admitPullRequestSourceForPreparation } from './resolveResource.js';
 
 type TriageReviewWorkspaceRequestV1 = Extract<
@@ -320,9 +320,9 @@ async function prepareManualPullRequestReview(
 
     const session = await context.services.sessions.get(input.sessionId, options);
     const summary = await session?.summary(options);
-    if (!summary?.address || !summary.machineId) throw reviewSessionRepositoryMismatch();
+    if (!summary?.address || !summary.machineId) throw reviewSessionRepositoryMismatch(repository);
     const checkout = await readReviewSessionRepository(input.sessionId, context);
-    if (!checkout || !sameScmHostingRepositoryIdentity(checkout.repository, repository)) throw reviewSessionRepositoryMismatch();
+    if (!checkout || !reviewSessionHasRepository(checkout, repository)) throw reviewSessionRepositoryMismatch(repository);
     const url = preparation.lastKnownLocator.webUrl;
     if (!url) throw unreadable();
     const admitted = await admitPullRequestSourceForPreparation({ instance: input.instance, entryRef: input.entryRef, url }, context);
