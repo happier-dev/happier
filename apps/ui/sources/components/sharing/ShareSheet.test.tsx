@@ -51,7 +51,7 @@ describe('ShareSheet full presentation', () => {
         const recipientAdapter = createDocumentShareAdapter({ artifactId: 'shared-document', kind: 'workflow-definition.v1',
             grants: [], loading: false, readOnly: true, retryContent: noop, issue: {
                 code, message: t('approvals.transientFailureTitle'), retryable: true,
-                actionFailure: { ok: false, errorCode: code, requestId: 'document-roster-refusal', effectAttempted: false,
+                actionFailure: { ok: false, error: code, errorCode: code, requestId: 'document-roster-refusal', effectAttempted: false,
                     failureCause: { phase: 'home.database.transaction', errorClass: 'HttpStatusError', errorCode: code, httpStatus: 503 },
                     details: { reason: 'private_project_slug', status: 'private_team_slug', kind: 'private_machine_slug' } },
             } });

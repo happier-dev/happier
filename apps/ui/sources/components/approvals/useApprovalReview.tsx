@@ -876,8 +876,9 @@ export function useApprovalReview(props: ApprovalReviewInput) {
       requesterStatus={requesterStatus}
       requesterAgentId={parsed.request.createdBy.agentId ?? null}
       // The Account the request was admitted for: the person who asked when no Session or Agent did.
-      requesterAccountId={parsed.kind === 'built_in' && parsed.request.v === 2 || parsed.kind === 'target'
-        ? parsed.request.executionOriginV1?.accountId ?? null : null}
+      requesterAccountId={parsed.kind === 'built_in'
+        ? parsed.request.v === 2 ? parsed.request.executionOriginV1.accountId ?? null : null
+        : parsed.kind === 'target' ? parsed.request.executionOriginV1?.accountId ?? null : null}
       requesterSurface={requesterSurface}
       requestedByGuard={isHappierGuardApproval(parsed?.request ?? null, parsed?.kind === 'built_in')}
     />

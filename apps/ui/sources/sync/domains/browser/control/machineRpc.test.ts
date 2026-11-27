@@ -86,7 +86,7 @@ describe('dispatchBrowserDaemonControlCommandViaMachineRpc', () => {
     });
 
     it.each(['return', 'throw'] as const)('carries the same owner refusal through command and view discovery (%s)', async (carrier) => {
-        const failureCause = { phase: 'rpc.admission.machine', errorClass: 'Error', errorCode: 'machine_unavailable', httpStatus: 403 };
+        const failureCause = { phase: 'rpc.admission.machine', errorClass: 'Error', errorCode: 'machine_unavailable', httpStatus: 403 } as const;
         const details = { reason: 'private_project_slug' };
         const refusal = { ok: false, errorCode: 'RPC_FORBIDDEN', error: 'PRIVATE_MACHINE_PROSE', requestId: 'browser-rpc-request',
             effectAttempted: false, failureCause, details } as const;

@@ -5,7 +5,7 @@ import { isMachineDaemonRpcUnsupportedError } from './machineDaemonRpcErrors';
 
 it('preserves the refusal correlation and no-effect marker from an RPC exception', async () => {
     const { projectMachineDaemonRpcFailure } = await import('./machineDaemonRpcErrors');
-    const failureCause = { phase: 'rpc.admission.machine', errorClass: 'Error', errorCode: 'machine_unavailable', httpStatus: 403 };
+    const failureCause = { phase: 'rpc.admission.machine', errorClass: 'Error', errorCode: 'machine_unavailable', httpStatus: 403 } as const;
     const refusal = { errorCode: RPC_ERROR_CODES.FORBIDDEN, requestId: 'rpc-request', effectAttempted: false, failureCause };
     const thrown = Object.assign(new RpcError('Forbidden', refusal.errorCode, failureCause), {
         requestId: refusal.requestId, effectAttempted: refusal.effectAttempted,

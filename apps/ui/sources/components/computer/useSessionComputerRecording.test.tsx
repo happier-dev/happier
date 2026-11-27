@@ -2,6 +2,8 @@ import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { COMPUTER_RECORDING_ACTION_IDS_V1 as ids } from '@happier-dev/protocol/actions/actionIds';
 
+import { ComputerRecordingSessionV1Schema } from '@happier-dev/protocol/computer/recording';
+
 import type { ComputerActionExecute } from '@/sync/domains/computer/computerControlClient';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
@@ -18,7 +20,7 @@ const base = {
     machineId: 'machine-1', sourceId: 'computer:1', sourceIdentity: { kind: 'session', sessionId: 'session-1' },
     target: { kind: 'display', displayId: ':0' }, mediaTarget: { sessionId: 'session-1', messageLocalId: 'local-1' },
 } as const;
-const recording = { ...base, status: 'recording' } as const;
+const recording = ComputerRecordingSessionV1Schema.parse({ ...base, status: 'recording' });
 const finalized = { ...base, status: 'finalized', stoppedAtMs: 2_000, outcomeReason: 'user_stopped', durationMs: 1_000, byteSize: 10, frameCount: 3, fps: 3,
     mediaRef: { refKind: 'sessionMedia', mediaId: 'media-1', mediaKind: 'video', mimeType: 'video/webm', sizeBytes: 10 } } as const;
 

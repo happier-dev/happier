@@ -122,7 +122,7 @@ export function createDocumentShareAdapter(input: Readonly<{
                 : grant.acceptedVersions.map(report => t('botTemplates.acceptedVersionReport', report))]))
         : null;
     const hasGrantDetails = versionReports !== null || input.grantRows?.some(row =>
-        row.operation.kind === 'error' && row.operation.error.actionFailure !== undefined);
+        row.operation.kind === 'error' && 'actionFailure' in row.operation.error && row.operation.error.actionFailure !== undefined);
     return {
         namespace: 'document-share',
         title: t('shareSheet.documents.title'),

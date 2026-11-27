@@ -256,7 +256,8 @@ async function setup(
       }),
       approvalsGet: async ({ artifactId }) => {
         const artifact = await read(artifactId);
-        const match = artifact?.header && approvalArtifactBodyMatchesHeaderV1(artifact.header, artifact.body);
+        const match = artifact?.header && typeof artifact.body === 'string'
+          ? approvalArtifactBodyMatchesHeaderV1(artifact.header, artifact.body) : null;
         return match?.family === 'built_in' ? match.request : null;
       },
       approvalsUpdate: ({ artifactId, request }) => approvalArtifacts.writeApprovalRequestArtifact({
@@ -429,7 +430,8 @@ describe('Machine › Work from your projects through the Machine policy Actions
     const address = reader.readCurrentUiContext()!.commands[0]!.id;
     const resolved = reader.resolveCurrentUiCommand(address)!;
     if (resolved.command.kind !== 'hostLocal') throw new Error('expected_local');
-    await act(async () => { await resolved.command.invoke({ signal: resolved.retirementSignal, context: { surface: 'agent' } }); });
+    const command = resolved.command;
+    await act(async () => { await command.invoke({ signal: resolved.retirementSignal, context: { surface: 'agent' } }); });
     expect(screen.findAll(node => node.props?.open === true).length).toBeGreaterThan(0);
     const popover = screen.find(node => node.props?.open === true && typeof node.props.onRequestClose === 'function');
     await act(async () => { popover.props.onRequestClose(); });
@@ -543,8 +545,9 @@ describe('Machine › Work from your projects through the Machine policy Actions
     const rowCommand = reader.readCurrentUiContext()!.commands[1]!;
     const resolved = reader.resolveCurrentUiCommand(rowCommand.id)!;
     if (resolved.command.kind !== 'hostLocal') throw new Error('expected_local');
+    const command = resolved.command;
     vi.mocked(Modal.show).mockClear();
-    await act(async () => { await resolved.command.invoke({ signal: resolved.retirementSignal, context: { surface: 'agent' } }); });
+    await act(async () => { await command.invoke({ signal: resolved.retirementSignal, context: { surface: 'agent' } }); });
     await vi.waitFor(() => expect(Modal.show).toHaveBeenCalled());
     expect(vi.mocked(Modal.show).mock.lastCall?.[0].props).toMatchObject({ operationId: 'own-1' });
     vi.mocked(Modal.show).mockClear();
@@ -1025,8 +1028,9 @@ describe('Machine › Work from your projects through the Machine policy Actions
     const details = reader.readCurrentUiContext()!.commands.find(row => row.title.startsWith('approvals.technicalDetails:'))!;
     const resolved = reader.resolveCurrentUiCommand(details.id)!;
     if (resolved.command.kind !== 'hostLocal') throw new Error('expected_local');
+    const command = resolved.command;
     alert.mockClear();
-    await act(async () => { await resolved.command.invoke({ signal: resolved.retirementSignal, context: { surface: 'agent' } }); });
+    await act(async () => { await command.invoke({ signal: resolved.retirementSignal, context: { surface: 'agent' } }); });
     expect(alert).toHaveBeenCalledWith('approvals.technicalDetails', expect.stringContaining('workspace_sync_dependencies_unavailable'));
     await screen.unmount();
     expect(reader.resolveCurrentUiCommand(details.id)).toBeNull();

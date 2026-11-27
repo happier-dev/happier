@@ -181,8 +181,9 @@ describe('WorkspaceSyncRelationshipRow', () => {
             const address = current.readCurrentUiContext()!.commands[0]!.id;
             const command = current.resolveCurrentUiCommand(address)!;
             if (command.command.kind !== 'hostLocal') throw new Error('Expected mounted local command');
+            const mountedCommand = command.command;
             await act(async () => {
-                expect(await command.command.invoke({ signal: command.retirementSignal, context: { surface: 'agent' } })).toMatchObject({ ok: true });
+                expect(await mountedCommand.invoke({ signal: command.retirementSignal, context: { surface: 'agent' } })).toMatchObject({ ok: true });
             });
             expect(opened).toEqual(['relationship-1']);
             await act(async () => { screen.findByTestId('workspace-sync-relationship-relationship-1')!.props.onPress(); });

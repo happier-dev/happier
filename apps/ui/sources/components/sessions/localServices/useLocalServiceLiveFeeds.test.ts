@@ -580,7 +580,7 @@ describe('Project Services source feed plus actual native binding', () => {
     remote.mockImplementation(async ({ method, machineId }: { method: string; machineId: string }) => {
       if (method.endsWith('.watch')) return new Promise(() => {});
       if (refuseRefresh && method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_REFRESH) {
-        throw Object.assign(new RpcError('private transport detail', RPC_ERROR_CODES.METHOD_NOT_AVAILABLE, { phase: 'rpc.discovery' }), {
+        throw Object.assign(new RpcError('private transport detail', RPC_ERROR_CODES.METHOD_NOT_AVAILABLE, { phase: 'rpc.discovery', errorClass: 'Error', errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE, httpStatus: null }), {
           effectAttempted: false,
         });
       }
