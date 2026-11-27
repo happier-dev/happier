@@ -29,7 +29,16 @@ function resolveContainedBin(tool: ReturnType<typeof resolveToolPackage>, packag
   if (!isCanonicalAbsolutePathInsideRoot(tool.packageRoot, entrypoint)) {
     throw new Error(`Resolved tool entrypoint must remain inside ${packageName}`);
   }
-  const physicalEntrypoint = realpathSync(entrypoint);
+  let physicalEntrypoint: string;
+  try {
+    physicalEntrypoint = realpathSync(entrypoint);
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException | null)?.code !== 'ENOENT') throw cause;
+    throw Object.assign(
+      new Error(`Missing ${binName} entrypoint in ${packageName}. Repair the installed package and retry.`, { cause }),
+      { code: 'ENOENT' },
+    );
+  }
   if (!statSync(physicalEntrypoint).isFile() || !isCanonicalAbsolutePathInsideRoot(tool.packageRoot, physicalEntrypoint)) {
     throw new Error(`Resolved tool entrypoint must be a contained regular file inside ${packageName}`);
   }

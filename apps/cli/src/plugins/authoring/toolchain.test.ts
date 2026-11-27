@@ -1376,6 +1376,15 @@ describe('runPluginAuthorToolchain', () => {
         bin: { 'happier-plugin-build-ui': './dist/ui/build/bin.js' },
       }), 'utf8');
       const expectedBuilder = join(packageRoot, 'dist', 'ui', 'build', 'bin.js');
+      expect(() => resolvePluginUiBuildBin(projectRoot)).toThrow(expect.objectContaining({
+        code: 'ENOENT',
+        message: expect.stringContaining('Missing happier-plugin-build-ui entrypoint in @happier-dev/plugin-sdk'),
+      }));
+      try {
+        resolvePluginUiBuildBin(projectRoot);
+      } catch (error) {
+        expect((error as Error).message).not.toContain(projectRoot);
+      }
       await writeFile(expectedBuilder, 'export {};\n', 'utf8');
 
       expect(resolvePluginUiBuildBin(projectRoot)).toBe(await realpath(expectedBuilder));
