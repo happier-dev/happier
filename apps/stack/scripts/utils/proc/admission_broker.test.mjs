@@ -615,6 +615,30 @@ printf '%s' "\${5#MemoryMax=}" > "${limitFile}"
   }), 137, 'a cgroup OOM cannot publish a successful result');
 });
 
+test('an uncapped worker job keeps the default Node heap', linux, async t => {
+  const gib = 1024 * 1024;
+  const { root } = await fixture(t, { readMemory: () => ({
+    availableMemoryKiB: 100 * gib, totalMemoryKiB: 100 * gib, hostAvailableMemoryKiB: 100 * gib,
+  }) });
+  const scope = `/user.slice/user-${process.getuid()}.slice/user@${process.getuid()}.service/happier.slice/happier-jobs.slice/happier-jobs-123-fixture.scope`;
+  const read = fs.readFileSync;
+  t.mock.method(fs, 'readFileSync', (path, ...args) => {
+    if (path === '/proc/self/cgroup') return `0::${scope}\n`;
+    if (path === `/sys/fs/cgroup${scope}/memory.max`) return 'max\n';
+    return read(path, ...args);
+  });
+  syncBuiltinESMExports();
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+  // A class envelope is an admission reservation, not a ceiling: a focused
+  // Vitest worker needs more than 75% of its 1 GiB estimate.
+  assert.equal(await runAdmittedTask({ root, className: 'focused-validation', floorKiB: gib,
+    machine: 'fixture', repoDir: root, cacheBaseDir: root, readJobPeakKiB: () => null,
+    env: { HAPPIER_DEV_TARGET_EXECUTION: '1', NODE_OPTIONS: '--enable-source-maps' } }, async env => {
+    assert.equal(env.NODE_OPTIONS, '--enable-source-maps');
+    return 0;
+  }), 0);
+});
+
 test('nineteen cold multithreaded compiles cannot all reserve a 48-core host', { ...linux, timeout: 6000 }, async t => {
   const { root } = await fixture(t, { cpuCores: 48, readCpuPressure: () => 0,
     readSlotWorkingSetKiB: () => 1 });

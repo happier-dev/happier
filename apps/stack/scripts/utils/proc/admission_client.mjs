@@ -393,7 +393,8 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
               : null;
             if (ownsWorkerScope) {
               const jobScope = compilerScope ?? readOwnJobScopeMemoryMax();
-              const heapMiB = jobScope && resolveNodeOldSpaceMiB(className, jobScope.bytes);
+              // Size the heap only under a real cgroup ceiling; a class envelope alone is a reservation.
+              const heapMiB = Number.isFinite(jobScope?.bytes) && resolveNodeOldSpaceMiB(className, jobScope.bytes);
               if (heapMiB > 0) {
                 // The final singleton NODE_OPTIONS value wins, including over
                 // an inherited heap flag. Keep other caller options intact.
