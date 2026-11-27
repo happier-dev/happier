@@ -188,6 +188,8 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
   cliPolicy?: Readonly<{ authentication: 'account' | 'terminal'; askWithUiWaiver?: boolean; hostOnlyAsk?: 'waived' | 'unavailable';
     requireMoveChild?: true; approvalDecisionActorAccountId?: string; machineCustodianAccountId?: string; machineRole?: 'manage' | 'use';
     deploymentRuntimeMachine?: true; waiveDeploymentChild?: true; additionalActionIds?: readonly ActionId[];
+    /** Allowed on every surface, as the Actions settings page writes it. */
+    allowedActionIds?: readonly ActionId[];
     workspaceReturn?: Readonly<{
       sessions: Map<string, ReturnType<typeof createSessionRecordFixture>>;
       openTarget: NonNullable<import('@/api/apiMachine').ApiMachineClientLifecycleDependencies['openManagedProjectWorkspace']>;
@@ -375,7 +377,9 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
       ...(approval === 'allowed' ? { [actionId]: ['ui', 'rpc', 'cli'] } : {}),
       'projects.service.placement.set': ['ui', 'rpc', 'cli'],
       ...(!cliPolicy?.requireMoveChild ? { 'localServices.launcher.start': ['ui', 'rpc', 'cli'] } : {}),
-    } } : {}) } };
+    } } : {}),
+    ...(cliPolicy?.allowedActionIds ? { approvalWaivedSurfaces: Object.fromEntries(cliPolicy.allowedActionIds
+      .map(id => [id, ['ui', 'rpc', 'cli', 'mcp']])) } : {}) } };
   let artifact: Readonly<Record<string, unknown>> | undefined;
   let servicePlacementContent: WorkspaceExecutionConfigContentV1 | null = null;
   let servicePlacementRevision = 0;

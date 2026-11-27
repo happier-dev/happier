@@ -30,6 +30,7 @@ import type { ActionExecuteResult } from '@happier-dev/protocol/actions';
 import { requiresOriginalAccountMachineActionProof } from '@/api/externalActionExecutionAuthorization';
 import { SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { LOCAL_SERVICE_CONTROL_ACTION_RPC_METHODS } from '@happier-dev/protocol/local/services/actionIdsV1';
+import { isMachineTerminalActionId } from '@happier-dev/protocol/actions/specs/machineTerminal';
 import { requiresManagedMachineDaemonIngress } from './externalActions/reconcileExternalActionTarget';
 import { projectExternalActionRunNowIdempotencyKeyV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { SessionStopIntent } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
@@ -1339,6 +1340,8 @@ export function createDaemonControlApp({
           const spec = getActionSpec(parsed.data.actionId);
           if ((parsed.data.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1
             || (Object.hasOwn(LOCAL_SERVICE_CONTROL_ACTION_RPC_METHODS, parsed.data.actionId) && hasDeclaredActionDaemonIngress(spec, 'cli'))
+            // A terminal runs as its placed requester; only Home's signed root carries that admission.
+            || isMachineTerminalActionId(parsed.data.actionId)
             || requiresManagedMachineDaemonIngress(parsed.data.actionId,
             resolveActionExecutionPlacementForInput(spec, parsed.data.input, undefined, surface), controlControllerTarget, parsed.data.input))
             && requiresOriginalAccountMachineActionProof(parsed.data.actionId, parsed.data.input, { surface })) {

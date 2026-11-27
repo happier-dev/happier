@@ -47,3 +47,21 @@ it('runs a present person package-script terminal from the app after one in-plac
     expect(h.spawned).toHaveLength(1);
   } finally { await h.close(); }
 });
+
+it('runs an Allowed package-script terminal from an external MCP agent with no prompt, as its requester', async () => {
+  resetServerFeaturesClientForTests();
+  const h = await createHarness('machines.terminal.open', 'default', false, undefined, undefined, false, false,
+    { authentication: 'account', allowedActionIds: ['machines.terminal.open', 'projects.script.run'] });
+  try {
+    await writeFile(join(h.rootPath, 'package.json'), JSON.stringify({ name: 'pkg', scripts: { dev: 'vite' } }));
+    const opened = await h.runSavedProfileMcp({ serverId: 'srv_n2', machineId: 'machine', terminalKey: 'pkg-dev-allowed',
+      cwd: h.rootPath, launch: { kind: 'package_script', runTargetId: 'pkg:dev' } }, 'machines.terminal.open', true);
+    expect(opened, JSON.stringify({ opened, outcomes: h.rpcOutcomes })).toMatchObject({ terminalId: expect.any(String) });
+    expect(h.hasApproval()).toBe(false);
+    expect(h.spawned).toHaveLength(1);
+    // The terminal belongs to the admitted requester Account, not to an anonymous daemon caller.
+    const terminalId = opened && typeof opened === 'object' && 'terminalId' in opened ? String(opened.terminalId) : '';
+    expect(await h.readTerminalAs(terminalId, 'account')).toMatchObject({ ok: true });
+    expect(await h.readTerminalAs(terminalId, 'another-account')).toMatchObject({ ok: false, code: 'terminal_forbidden' });
+  } finally { await h.close(); }
+});
