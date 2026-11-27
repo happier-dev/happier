@@ -467,7 +467,12 @@ describe('resolveClaudeModelCatalog', () => {
     }
 
     /** The shape Claude Code's `/login` stores for a gateway, next to the hostname's TLS pin. */
-    async function writeGatewaySignIn(params: Readonly<{ url: string; pin: string | null; expiresAt: number }>) {
+    async function writeGatewaySignIn(params: Readonly<{
+      url: string;
+      pin: string | null;
+      expiresAt: number;
+      previousClaudeLogin?: boolean;
+    }>) {
       await writeFile(join(configDir, '.credentials.json'), JSON.stringify({
         enterpriseGateway: {
           url: params.url,
@@ -477,6 +482,7 @@ describe('resolveClaudeModelCatalog', () => {
           tokenEndpoint: `${params.url}/oauth/token`,
         },
         ...(params.pin ? { gatewayTrust: { '127.0.0.1': params.pin } } : {}),
+        ...(params.previousClaudeLogin ? { claudeAiOauth: { accessToken: 'previous-claude-login', scopes: [] } } : {}),
       }));
     }
 
@@ -514,6 +520,24 @@ describe('resolveClaudeModelCatalog', () => {
       }
     });
 
+    it('uses the saved gateway instead of a previous Claude.ai login', async () => {
+      const gateway = await startGateway();
+      try {
+        await writeGatewaySignIn({
+          url: gateway.url, pin: gateway.pin, expiresAt: Date.now() + 60 * 60_000, previousClaudeLogin: true,
+        });
+        fetchMock.mockResolvedValue(modelsResponse([{ id: 'claude-public-only' }]));
+
+        const resolution = await resolveClaudeModelCatalogResolution({ timeoutMs: 5_000 });
+
+        expect(resolution).toMatchObject({ source: 'dynamic', models: [{ id: 'claude-gateway-only' }] });
+        expect(gateway.requests[0]?.authorization).toBe(`Bearer ${GATEWAY_TOKEN}`);
+        expect(fetchMock).not.toHaveBeenCalled();
+      } finally {
+        await gateway.close();
+      }
+    });
+
     it.each([
       { situation: 'the certificate does not match the pin', pin: 'f'.repeat(64), expiresInMs: 60 * 60_000 },
       { situation: 'the certificate does not match the pin and NODE_TLS_REJECT_UNAUTHORIZED=0',
@@ -528,7 +552,7 @@ describe('resolveClaudeModelCatalog', () => {
       const gateway = await startGateway();
       try {
         await writeGatewaySignIn({ url: gateway.url, pin: pin === 'gateway' ? gateway.pin : pin,
-          expiresAt: Date.now() + expiresInMs });
+          expiresAt: Date.now() + expiresInMs, previousClaudeLogin: true });
         if (baseUrl) process.env.ANTHROPIC_BASE_URL = baseUrl;
         if (allowUnauthorizedTls) process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 

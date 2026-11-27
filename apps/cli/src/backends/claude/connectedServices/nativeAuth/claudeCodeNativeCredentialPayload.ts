@@ -81,8 +81,7 @@ export function readClaudeCodeNativeCredentialPayload(
  * stored in the same secure storage as `claudeAiOauth`.
  *
  * `gatewayTrust` maps the gateway hostname to the SHA-256 fingerprint of the TLS certificate
- * Claude Code pinned at sign-in. Claude Code refuses a gateway without that pin and checks it on
- * every request, so a login without a usable https URL and pin projects to `null`.
+ * Claude Code pinned at sign-in. Happier requires that pin for its own HTTPS catalog requests.
  */
 export type ClaudeCodeGatewayLogin = Readonly<{
   url: string;
@@ -93,23 +92,38 @@ export type ClaudeCodeGatewayLogin = Readonly<{
 
 const SHA256_HEX = /^[0-9a-f]{64}$/u;
 
-export function readClaudeCodeGatewayLogin(value: unknown): ClaudeCodeGatewayLogin | null {
-  const root = readObject(value);
-  const gateway = readObject(root?.enterpriseGateway);
+function readClaudeCodeGatewayLogin(root: Record<string, unknown>, value: unknown): ClaudeCodeGatewayLogin | null {
+  const gateway = readObject(value);
   const url = readString(gateway?.url)?.trim() ?? null;
   const accessToken = readString(gateway?.jwt)?.trim() ?? null;
   if (!gateway || !url || !accessToken) return null;
   let hostname: string;
   try {
     const parsed = new URL(url);
-    if (parsed.protocol !== 'https:') return null;
+    if (parsed.protocol !== 'https:' || parsed.username || parsed.password) return null;
     hostname = parsed.hostname.replace(/^\[|\]$/gu, '');
   } catch {
     return null;
   }
-  const tlsCertificateSha256 = readString(readObject(root?.gatewayTrust)?.[hostname])?.trim().toLowerCase() ?? null;
+  const tlsCertificateSha256 = readString(readObject(root.gatewayTrust)?.[hostname])?.trim().toLowerCase() ?? null;
   if (!tlsCertificateSha256 || !SHA256_HEX.test(tlsCertificateSha256)) return null;
   return { url, accessToken, expiresAt: readNumber(gateway.expiresAt), tlsCertificateSha256 };
+}
+
+export type ClaudeCodeCatalogSignIn =
+  | Readonly<{ kind: 'gateway'; login: ClaudeCodeGatewayLogin | null }>
+  | Readonly<{ kind: 'subscription'; accessToken: string }>;
+
+export function readClaudeCodeCatalogSignIn(value: unknown): ClaudeCodeCatalogSignIn | null {
+  const root = readObject(value);
+  if (!root) return null;
+  // Claude Code ignores earlier Claude.ai sign-ins while signed in to a gateway.
+  // An unusable gateway sign-in also cannot authorize discovery under that earlier account.
+  if (root.enterpriseGateway != null) {
+    return { kind: 'gateway', login: readClaudeCodeGatewayLogin(root, root.enterpriseGateway) };
+  }
+  const subscription = readClaudeCodeNativeCredentialPayload(root);
+  return subscription ? { kind: 'subscription', accessToken: subscription.claudeAiOauth.accessToken.trim() } : null;
 }
 
 function canonicalizeJsonValue(value: unknown): unknown {

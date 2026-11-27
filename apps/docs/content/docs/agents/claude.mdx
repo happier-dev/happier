@@ -258,14 +258,12 @@ model catalog and does not select a saved account. Malformed JSON, non-object us
 roots and non-string helper settings are skipped, as in Claude Code's non-interactive mode. Turning off **Discover available
 models** also prevents helper execution. This behavior is not yet available in a released build.
 
-In development source, Happier also discovers models when Claude Code is signed in to an
-enterprise gateway with `/login` (for example under `forceLoginMethod: "gateway"`). When no API
-key, auth token, helper or claude.ai login applies, Happier lists the models that gateway returns
-from `/v1/models`. It sends the gateway token only to the gateway that issued it, and only when the
-gateway presents the TLS certificate Claude Code pinned at sign-in. If the sign-in has expired,
-Happier shows its built-in catalog until Claude Code refreshes it in a session. Happier connects
-to the gateway directly, not through an HTTP(S) proxy. This behavior is not yet available in a
-released build.
+In development source, Happier also discovers models when Claude Code is signed in to a
+Cloud gateway with `/login`. The saved gateway sign-in takes precedence over a previous saved
+Claude.ai login. Happier lists the models the gateway returns for that token from `/v1/models`.
+The request goes directly to the issuing gateway over HTTPS and requires the TLS certificate
+Claude Code pinned at sign-in. If the sign-in expires, Happier shows its built-in catalog until
+Claude Code refreshes the sign-in in a session. This behavior is not yet available in a released build.
 
 For the full user-facing MCP guide in Happier, see:
 

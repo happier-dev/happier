@@ -152,15 +152,18 @@ describe('claudeCodeCredentialFile macOS keychain source', () => {
 
     const {
       readClaudeCodeNativeCredential,
-      readClaudeCodeNativeGatewayLogin,
+      readClaudeCodeNativeCatalogSignIn,
     } = await import('./claudeCodeCredentialFile');
     const { homeDir, claudeConfigDir } = await globalClaudeConfigDir('happier-claude-keychain-gateway-');
 
-    await expect(readClaudeCodeNativeGatewayLogin({ claudeConfigDir, homeDir })).resolves.toEqual({
-      url: 'https://gateway.example.com',
-      accessToken: 'gateway-access-placeholder',
-      expiresAt: KEYCHAIN_EXPIRES_AT_MS,
-      tlsCertificateSha256: pin,
+    await expect(readClaudeCodeNativeCatalogSignIn({ claudeConfigDir, homeDir })).resolves.toEqual({
+      kind: 'gateway',
+      login: {
+        url: 'https://gateway.example.com',
+        accessToken: 'gateway-access-placeholder',
+        expiresAt: KEYCHAIN_EXPIRES_AT_MS,
+        tlsCertificateSha256: pin,
+      },
     });
     await expect(readClaudeCodeNativeCredential({ claudeConfigDir, homeDir })).resolves.toBeNull();
   });

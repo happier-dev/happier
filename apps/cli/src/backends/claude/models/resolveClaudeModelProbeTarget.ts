@@ -7,10 +7,7 @@ import {
   type ConnectedServiceCredentialApi,
   type ConnectedServiceAuthGroupApi,
 } from '@/api/connectedServices/connectedServiceCredentialApi';
-import {
-  readClaudeCodeNativeCredential,
-  readClaudeCodeNativeGatewayLogin,
-} from '@/backends/claude/connectedServices/nativeAuth/claudeCodeCredentialFile';
+import { readClaudeCodeNativeCatalogSignIn } from '@/backends/claude/connectedServices/nativeAuth/claudeCodeCredentialFile';
 import type { ClaudeCodeGatewayLogin } from '@/backends/claude/connectedServices/nativeAuth/claudeCodeNativeCredentialPayload';
 import { resolveConnectedServiceCredentialsWithRevisions } from '@/cloud/connectedServices/resolveConnectedServiceCredentials';
 import type { Credentials } from '@/persistence';
@@ -278,23 +275,19 @@ export async function resolveClaudeModelProbeTarget(
   try {
     // Saved logins can wait on the macOS keychain, so they share the discovery deadline.
     return await withCatalogProbeLifecycle(params, async ({ signal }) => {
-      if (baseUrl === null) {
-        const native = await readClaudeCodeNativeCredential({ claudeConfigDir, signal });
-        const accessToken = readNonBlankString(native?.payload.claudeAiOauth.accessToken);
-        if (accessToken) {
-          const credential = { kind: 'bearer' as const, value: accessToken };
-          return { baseUrl: null, credential, cacheIdentity: targetCacheIdentity(null, credential) };
-        }
-      }
-      const gatewayLogin = await readClaudeCodeNativeGatewayLogin({ claudeConfigDir, signal });
-      return gatewayLogin
-        ? resolveGatewayLoginTarget({
-          login: gatewayLogin,
+      const signIn = await readClaudeCodeNativeCatalogSignIn({ claudeConfigDir, signal });
+      if (signIn?.kind === 'gateway') {
+        if (!signIn.login) return null;
+        return resolveGatewayLoginTarget({
+          login: signIn.login,
           baseUrl,
           configuredEndpoint: readNonBlankString(effectiveEnv.ANTHROPIC_BASE_URL),
           nowMs: (params.nowMs ?? Date.now)(),
-        })
-        : null;
+        });
+      }
+      if (!signIn || baseUrl !== null) return null;
+      const credential = { kind: 'bearer' as const, value: signIn.accessToken };
+      return { baseUrl: null, credential, cacheIdentity: targetCacheIdentity(null, credential) };
     });
   } catch {
     return null;

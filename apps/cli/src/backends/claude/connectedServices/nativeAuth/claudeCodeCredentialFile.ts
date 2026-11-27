@@ -22,13 +22,13 @@ import {
   computeClaudeCodeCredentialSafeTokenFingerprint,
   isExistingClaudeCodeCredentialNewer,
   readClaudeCodeCredentialFreshness,
-  readClaudeCodeGatewayLogin,
+  readClaudeCodeCatalogSignIn,
   readClaudeCodeNativeCredentialPayload,
   readNumber,
   readObject,
   readOptionalString,
   readString,
-  type ClaudeCodeGatewayLogin,
+  type ClaudeCodeCatalogSignIn,
   type ClaudeCodeNativeCredentialPayload,
 } from './claudeCodeNativeCredentialPayload';
 
@@ -133,13 +133,13 @@ export async function readClaudeCodeNativeCredential(params: Readonly<{
   return result;
 }
 
-/** Claude Code's saved gateway sign-in, read from the same secure storage as its claude.ai login. */
-export async function readClaudeCodeNativeGatewayLogin(params: Readonly<{
+/** Read the effective saved model-catalog sign-in from a single secure-storage document. */
+export async function readClaudeCodeNativeCatalogSignIn(params: Readonly<{
   claudeConfigDir: string;
   homeDir?: string | null | undefined;
   signal?: AbortSignal;
-}>): Promise<ClaudeCodeGatewayLogin | null> {
-  return (await readClaudeCodeSecureStorage(params, readClaudeCodeGatewayLogin))?.value ?? null;
+}>): Promise<ClaudeCodeCatalogSignIn | null> {
+  return (await readClaudeCodeSecureStorage(params, readClaudeCodeCatalogSignIn))?.value ?? null;
 }
 
 /**
