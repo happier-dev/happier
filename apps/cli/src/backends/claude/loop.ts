@@ -250,6 +250,7 @@ export async function loop(opts: LoopOptions): Promise<number> {
                 logger.infoFile('[CLAUDE_STARTUP] stage=provider_launcher_entered', { runtime: 'local' });
                 const result = await claudeLocalLauncher(session, {
                     entry: localEntry,
+                    startupModelId: opts.model,
                     remoteSwitchingEnabled: true,
                     signal: opts.signal,
                 });

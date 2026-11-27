@@ -397,6 +397,8 @@ export const AGENT_MODEL_CONFIG: Readonly<Record<AgentId, AgentModelConfig>> = O
     nonAcpApplyScope: 'next_prompt',
     acpApplyBehavior: 'set_model',
     acpModelConfigOptionId: 'model',
+    // The `model` option takes model families; effort is the separate `thought_level` option.
+    acpModelSetMethod: 'config_option',
     dynamicProbe: 'auto',
     defaultMode: 'default',
     allowedModes: ['default'],

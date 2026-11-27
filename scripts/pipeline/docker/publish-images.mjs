@@ -5,6 +5,7 @@ import { parseArgs } from 'node:util';
 import { appendFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { resolveHostedImages } from './hosted-images.mjs';
 import { resolveOptionalDockerBuildArgs } from './resolve-build-args.mjs';
 import { resolveDockerTagSpec } from './resolve-tag-spec.mjs';
@@ -19,6 +20,10 @@ function fail(message) {
   console.error(message);
   process.exit(1);
 }
+
+// The build context is the candidate source (the working directory), but the trusted workflow-control checkout
+// that runs this script owns the Dockerfiles, so a resumed release can build an older candidate with fixed recipes.
+const CONTROL_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 
 const MULTIARCH_BUILDER_NAME = 'happier-multiarch';
 const MULTIARCH_BUILDER_FALLBACK_NAME = 'happier-multiarch-docker-container';
@@ -502,6 +507,7 @@ async function main() {
       'build-dev-box': { type: 'string', default: 'true' },
       'hosted-services': { type: 'string', default: '' },
       'dry-run': { type: 'boolean', default: false },
+      'no-push': { type: 'boolean', default: false },
     },
     allowPositionals: false,
   });
@@ -516,6 +522,7 @@ async function main() {
   let buildRelay = parseBool(values['build-relay'], '--build-relay');
   const buildDevBox = parseBool(values['build-dev-box'], '--build-dev-box');
   const dryRun = values['dry-run'] === true;
+  const noPush = values['no-push'] === true;
 
   const shaRaw = String(values.sha ?? '').trim();
   const sha = shaRaw || run('git', ['rev-parse', 'HEAD'], { dryRun: false, stdio: 'pipe' }).trim();
@@ -547,8 +554,8 @@ async function main() {
   }
 
   dockerPreflight({ dryRun });
-  if (registries.has('dockerhub')) dockerLogin({ dryRun });
-  if (registries.has('ghcr')) dockerLoginGhcr({ dryRun });
+  if (!noPush && registries.has('dockerhub')) dockerLogin({ dryRun });
+  if (!noPush && registries.has('ghcr')) dockerLoginGhcr({ dryRun });
 
   const builder = ensureMultiarchBuilder({ dryRun });
 
@@ -592,19 +599,19 @@ async function main() {
    */
   const runBuildxForTags = async (tags, params) => {
     if (tags.length === 0) return;
-    const metadataDir = params.captureDigest && !dryRun ? mkdtempSync(join(tmpdir(), 'published-image-')) : null;
+    const metadataDir = params.captureDigest && !dryRun && !noPush ? mkdtempSync(join(tmpdir(), 'published-image-')) : null;
     const metadataFile = metadataDir ? join(metadataDir, 'metadata.json') : null;
     const args = [
       'buildx',
       'build',
       '--file',
-      params.file,
+      join(CONTROL_ROOT, params.file),
       ...(params.target ? ['--target', params.target] : []),
       '--builder',
       builder,
       '--platform',
       'linux/amd64,linux/arm64',
-      '--push',
+      ...(noPush ? ['--output', 'type=cacheonly'] : ['--push']),
       ...(useGhaCache ? ['--cache-from', `type=gha,scope=${params.cacheScope}`] : []),
       ...(useGhaCache ? ['--cache-to', `type=gha,mode=max,scope=${params.cacheScope}`] : []),
       ...(params.extraArgs ?? []),
@@ -680,7 +687,7 @@ async function main() {
         env: process.env,
         release: defaultSentryRelease,
         channel,
-        dryRun,
+        dryRun: dryRun || noPush,
         run: (cmd, cmdArgs, opts) => runWithEnv(cmd, cmdArgs, opts),
       });
       if (tracked.status === 'tracked') {

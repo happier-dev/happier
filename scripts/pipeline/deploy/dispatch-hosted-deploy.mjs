@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 
 // Keep credentials in deploy.yml's protected environment, admitted on its deploy ref.
@@ -27,7 +27,28 @@ try {
     throw new Error('Deploy dispatch did not return a workflow run ID');
   }
   console.log(`Waiting for hosted deployment: https://github.com/${repository}/actions/runs/${response.workflow_run_id}`);
-  execFileSync('gh', ['run', 'watch', String(response.workflow_run_id), '--repo', repository, '--exit-status'], { stdio: 'inherit' });
+  const runPath = `repos/${repository}/actions/runs/${response.workflow_run_id}`;
+  // The run record decides the outcome. GitHub can answer 404 right after dispatch (release run 45662976860)
+  // and 5xx mid-deploy (release run 45915649737: gh run watch exited on HTTP 500 while the deploy succeeded),
+  // so those answers are waited out; any other lookup error fails, and the calling job's timeout bounds the wait.
+  const readRun = () => {
+    for (;;) {
+      try {
+        return JSON.parse(execFileSync('gh', ['api', runPath], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));
+      } catch (error) {
+        if (!/HTTP (404|5\d\d)|Not Found/.test(String(error.stderr ?? ''))) throw error;
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2_000);
+      }
+    }
+  };
+  for (let run = readRun(); ; run = readRun()) {
+    if (run.status === 'completed') {
+      if (run.conclusion !== 'success') throw new Error(`Hosted deployment ended ${run.conclusion}`);
+      break;
+    }
+    // gh run watch only blocks until the run settles; its exit code is not the verdict.
+    spawnSync('gh', ['run', 'watch', String(response.workflow_run_id), '--repo', repository], { stdio: 'inherit' });
+  }
 } catch (error) {
   console.error(error.message);
   process.exitCode = 1;

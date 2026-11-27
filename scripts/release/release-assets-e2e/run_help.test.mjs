@@ -332,3 +332,13 @@ test('release-assets-e2e run.sh surfaces npm pack output on failure', () => {
   assert.equal(res.status, 2, res.stderr || res.stdout);
   assert.match(`${res.stdout ?? ''}\n${res.stderr ?? ''}`, /npm shim: pack failed/);
 });
+
+test('release asset smoke images install published CLIs the way users do, without skipping the CUDA download', () => {
+  // Release run 45621013081: onnxruntime-node's postinstall fetches a GPU archive that now returns 404. Setting
+  // ONNXRUNTIME_NODE_INSTALL_CUDA=skip here hid that every Linux x64 `npm install -g @happier-dev/cli` failed. The CLI
+  // now takes @huggingface/transformers as an optional dependency, so these images must install it like a user would.
+  for (const name of ['Dockerfile', 'Dockerfile.remote-host', 'Dockerfile.remote-host-systemd']) {
+    const dockerfile = fs.readFileSync(join(here, name), 'utf8');
+    assert.doesNotMatch(dockerfile, /ONNXRUNTIME_NODE_INSTALL_CUDA/, `${name} must not mask the user npm install path`);
+  }
+});

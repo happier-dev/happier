@@ -6,6 +6,7 @@ import { withExecutionRunBackendModelOptions } from '@/agent/executionRuns/runti
 import type { AgentBackend, AgentMessageHandler, AgentPromptPayload, SessionId } from '@/agent/core';
 import { sendAgentPromptPayload, sendAgentSteerPromptPayload } from '@/agent/core/AgentPromptPayload';
 import { createCatalogAcpBackend } from '@/agent/acp/createCatalogAcpBackend';
+import type { SessionConfigOption } from '@/agent/acp/AcpBackend';
 
 type ConfigurableCatalogBackend = AgentBackend & Partial<{
   setSessionModel: (sessionId: SessionId, modelId: string) => Promise<void>;
@@ -14,6 +15,7 @@ type ConfigurableCatalogBackend = AgentBackend & Partial<{
     configId: string,
     value: string | number | boolean | null,
   ) => Promise<void>;
+  getSessionConfigOptionsState: () => ReadonlyArray<SessionConfigOption> | null;
 }>;
 
 function createLazyCatalogExecutionRunBackend(
@@ -23,6 +25,7 @@ function createLazyCatalogExecutionRunBackend(
   const handlers = new Set<AgentMessageHandler>();
   const registeredHandlers = new Set<AgentMessageHandler>();
   let backendPromise: Promise<ConfigurableCatalogBackend> | null = null;
+  let resolvedBackend: ConfigurableCatalogBackend | null = null;
 
   const resolveBackend = async (): Promise<ConfigurableCatalogBackend> => {
     if (!backendPromise) {
@@ -35,6 +38,7 @@ function createLazyCatalogExecutionRunBackend(
         mcpServers: await options.resolveMcpServers?.() ?? {},
       }))().then(({ backend }) => {
         const resolved = backend as ConfigurableCatalogBackend;
+        resolvedBackend = resolved;
         for (const handler of handlers) {
           resolved.onMessage(handler);
           registeredHandlers.add(handler);
@@ -107,13 +111,23 @@ function createLazyCatalogExecutionRunBackend(
     async setSessionConfigOption(sessionId, configId, value) {
       await (await resolveBackend()).setSessionConfigOption?.(sessionId, configId, value);
     },
+    // Model options apply after the session opened, so the backend has resolved by then.
+    getSessionConfigOptionsState() {
+      return resolvedBackend?.getSessionConfigOptionsState?.() ?? null;
+    },
     async dispose() {
       await (await backendPromise?.catch(() => null))?.dispose();
     },
   };
 }
 
-export function createCatalogDefinedExecutionRunBackendFactory(agentId: AgentId): ExecutionRunBackendFactory {
+type ExecutionRunModelOptions = Parameters<typeof withExecutionRunBackendModelOptions>[1];
+
+/** `modelControls` is the provider's runtime model adapter, so runs map saved model ids as sessions do. */
+export function createCatalogDefinedExecutionRunBackendFactory(
+  agentId: AgentId,
+  modelControls: Pick<ExecutionRunModelOptions, 'resolveSessionModelConfigUpdate' | 'resolveSessionConfigOptionUpdate'> = {},
+): ExecutionRunBackendFactory {
   const modelConfig = getAgentModelConfig(agentId);
   return (options) => withExecutionRunBackendModelOptions(
     createLazyCatalogExecutionRunBackend(agentId, options),
@@ -126,6 +140,7 @@ export function createCatalogDefinedExecutionRunBackendFactory(agentId: AgentId)
       ...(options.sessionConfigOptionOverrides
         ? { sessionConfigOptionOverrides: options.sessionConfigOptionOverrides }
         : {}),
+      ...modelControls,
     },
   );
 }
