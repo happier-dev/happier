@@ -174,7 +174,7 @@ export const WorkflowDeploymentBackupTargetV1Schema = lazyZodSchema(() => z.omit
 export const WorkflowTriggerListRequestV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({
     actionId: AutomationTriggerActionIdV1Schema,
-    phase: AutomationActionPhaseV1Schema,
+    phase: z.optional(AutomationActionPhaseV1Schema),
     limit: z.optional(AutomationDefinitionListRequestSchema.shape.limit),
     cursor: z.optional(AutomationDefinitionListRequestSchema.shape.cursor),
   }),

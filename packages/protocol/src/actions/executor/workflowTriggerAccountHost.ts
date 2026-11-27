@@ -116,6 +116,8 @@ export type WorkflowTriggerAccountHostParams = Readonly<{
   automations: WorkflowTriggerAutomationOperations;
   /** Current validated Account encryption; throws typed when unavailable or stale. */
   resolveEncryption: () => Promise<AvailableAutomationAccountEncryptionV1>;
+  /** Read opening may borrow the authenticated Account observation before final disclosure. */
+  resolveReadEncryption?: () => Promise<AvailableAutomationAccountEncryptionV1>;
   /** Authenticated Session-mode/key custody, separate from ordinary plain Account material. */
   resolveRetainedSession?: (sessionId: string) => Promise<AutomationTemplateRetainedSessionV1 | null>;
   randomBytes: (length: number) => Uint8Array;
@@ -287,8 +289,8 @@ export const readAccountStoredPluginEventTriggerV1 = (row: AutomationDefinitionD
   };
 
 function assertStoredActionDefinitionMatches(definition: AutomationActionTrigger,
-  trigger: Extract<AutomationDefinitionDetail['triggers'][number], { kind: 'action' }>) {
-  if ('consentFor' in trigger) unavailable();
+  trigger: Pick<ReturnType<typeof projectAutomationActionTriggerStructuralV1>,
+    'phase' | 'actionIds' | 'subjectKey' | 'subjectKind' | 'mode' | 'onFailure'>) {
   const projected = projectAutomationActionTriggerStructuralV1(definition);
   if (projected.phase !== trigger.phase || !pluginJsonValuesEqual(projected.actionIds, trigger.actionIds)
     || projected.subjectKey !== trigger.subjectKey || projected.subjectKind !== trigger.subjectKind
@@ -302,14 +304,19 @@ export const readAccountStoredActionTriggerV1 = (row: Pick<AutomationDefinitionD
       triggerId, triggerRevision: trigger.revision, triggerKind: 'action' });
     let envelope: unknown;
     try { envelope = JSON.parse(trigger.triggerDefinitionEnvelope); } catch { unavailable(); }
-    const opened = openAutomationTriggerDefinitionStoredEnvelopeV1({ binding, envelope,
-      ...(isAvailableE2eeAutomationAccountEncryptionV1(current)
-        ? { mode: 'e2ee' as const, material: current.material.material } : { mode: 'plain' as const }) });
-    if (opened.kind !== 'available') unavailable();
-    const definition = AutomationActionTriggerSchema.parse(opened.definition);
+    const definition = openAccountActionDefinition(binding, envelope, current);
     assertStoredActionDefinitionMatches(definition, trigger);
     return { trigger, binding, definition };
   };
+
+function openAccountActionDefinition(binding: AutomationTriggerDefinitionBindingV1, envelope: unknown,
+  current: AvailableAutomationAccountEncryptionV1): AutomationActionTrigger {
+  const opened = openAutomationTriggerDefinitionStoredEnvelopeV1({ binding, envelope,
+    ...(isAvailableE2eeAutomationAccountEncryptionV1(current)
+      ? { mode: 'e2ee' as const, material: current.material.material } : { mode: 'plain' as const }) });
+  if (opened.kind !== 'available') unavailable();
+  return AutomationActionTriggerSchema.parse(opened.definition);
+}
 
 /**
  * Every Account host (CLI/daemon and the UI front door) composes the one trigger owner through
@@ -329,6 +336,17 @@ function createAccountWorkflowTriggerActionOwner(params: WorkflowTriggerAccountH
       envelope: { t: 'plain', v: payload } });
     if (opened.kind !== 'available') unavailable();
     return AutomationActionTriggerSchema.parse(opened.definition);
+  };
+  const openOwnActionTrigger: NonNullable<WorkflowTriggerActionsDependencies['openOwnActionTrigger']> = async reference => {
+    const envelope = reference.ownDefinitionEnvelope;
+    if (!envelope) unavailable();
+    const binding = AutomationTriggerDefinitionBindingV1Schema.parse({ v: 1, automationId: reference.automationId,
+      triggerId: reference.triggerId, triggerRevision: reference.triggerRevision, triggerKind: 'action' });
+    const current = await params.resolveEncryption();
+    const definition = envelope.t === 'workflow' ? await openWorkflowAction(reference.workflowId, binding, envelope.content)
+      : openAccountActionDefinition(binding, envelope, current);
+    assertStoredActionDefinitionMatches(definition, reference);
+    return definition;
   };
   const storedAction = async (row: AutomationDefinitionDetail, triggerId: string,
     current: AvailableAutomationAccountEncryptionV1) => {
@@ -1064,6 +1082,7 @@ if (trigger.kind === 'sessionLifecycle') {
     openSessionLifecycleTrigger: async (row, trigger) => storedSessionLifecycle(row, trigger.id, await params.resolveEncryption()).definition,
     prepareBirthTrigger: async (automationId, triggerId, trigger) => preparePrivateTrigger(automationId, triggerId, 0, trigger, await params.resolveEncryption()),
     openActionTrigger: async (row, trigger) => (await storedAction(row, trigger.id, await params.resolveEncryption())).definition,
+    openOwnActionTrigger,
     openSharedActionTrigger: async (reference) => {
       if (!reference.sharedDefinitionEnvelope) unavailable();
       const binding = AutomationTriggerDefinitionBindingV1Schema.parse({ v: 1, automationId: reference.automationId,
@@ -1150,12 +1169,12 @@ export function createAccountHealthCheckSourceReaderV1(params: HealthCheckSource
 export function createAccountWorkflowTriggerActions(params: WorkflowTriggerAccountHostParams): WorkflowTriggerActions {
   const actions = createAccountWorkflowTriggerActionOwner(params);
   const readWithAccountWitness = async <Result>(read: (owner: WorkflowTriggerActions) => Promise<Result>) => {
-    // Each private source read opens under one fresh Account witness.
+    // Borrow the connection witness for opening; a fresh read still fences disclosure.
     let encryption: Promise<AvailableAutomationAccountEncryptionV1> | undefined;
     const workflowContents = new Map<string, ReturnType<NonNullable<WorkflowTriggerAccountHostParams['resolveWorkflowContent']>>>();
     const resolveWorkflowContent = params.resolveWorkflowContent;
     const owner = createAccountWorkflowTriggerActionOwner({ ...params,
-      resolveEncryption: () => (encryption ??= params.resolveEncryption()),
+      resolveEncryption: () => (encryption ??= (params.resolveReadEncryption ?? params.resolveEncryption)()),
       ...(resolveWorkflowContent ? { resolveWorkflowContent: (workflowId: string) => {
         let content = workflowContents.get(workflowId);
         if (!content) { content = resolveWorkflowContent(workflowId); workflowContents.set(workflowId, content); }

@@ -1,5 +1,7 @@
+import { APPROVAL_PROFILE_ARTIFACT_KIND_V1, ArtifactCoarseKindV1Schema, encodeArtifactKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { automationSubjectKeyV1, type AutomationSubjectV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 import { readArtifactCandidateAccess, resolveArtifactAccessInTx } from '@/app/artifacts/artifactAccessService';
+import { artifactVisibleWhere } from '@/app/artifacts/artifactClassification';
 import { projectDeploymentSourceAdmission, type DeploymentAuthentication } from '@/app/deployments/deploymentAdmission';
 import { loadDeploymentEnvironmentInTx, projectDeploymentEnvironmentHeader } from '@/app/deployments/deploymentEnvironmentService';
 import { listMachineCandidatesInTx, resolveEffectiveMachineRoleInTx } from '@/app/machines/machineAccess';
@@ -11,6 +13,9 @@ import { resolveEffectiveSessionAccessWhere } from '@/app/session/access/session
 import type { Tx } from '@/storage/inTx';
 import { getDbProviderFromEnv, prismaRuntime } from '@/storage/prisma';
 import { AutomationStoredContentReadError } from './automationStoredContentRead';
+
+const approvalProfileStoredKinds = ArtifactCoarseKindV1Schema.options.map(kind =>
+    encodeArtifactKindV1({ kind, kindHint: APPROVAL_PROFILE_ARTIFACT_KIND_V1 }));
 
 /** The trigger writer consumes one server decision; a caller header never grants reach. */
 export async function resolveAutomationActionReachInTx(tx: Tx, input: Readonly<{
@@ -47,7 +52,10 @@ export async function resolveAutomationActionReachInTx(tx: Tx, input: Readonly<{
             if (serverId) {
                 const access = readArtifactCandidateAccess(input.accountId);
                 const candidates = (await Promise.all([access.owned!, ...access.received].map(where =>
-                    tx.artifact.findMany({ where, select: { id: true } })))).flat();
+                    tx.artifact.findMany({
+                        where: { ...where, ...artifactVisibleWhere, kind: { in: approvalProfileStoredKinds } },
+                        select: { id: true },
+                    })))).flat();
                 const profile = candidates.find(({ id: profileId }) => automationSubjectKeyV1({ kind: 'approvalProfile', serverId, profileId }) === subjectKey);
                 if (profile) {
                     const access = await resolveArtifactAccessInTx(tx, { actorAccountId: input.accountId, artifactId: profile.id });

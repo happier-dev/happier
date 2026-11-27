@@ -773,6 +773,11 @@ resource key used to read the Workflow and evaluates it locally. E2EE filter
 plaintext never enters the server or an Account-plain duplicate carrier. Inline
 checks retain the Account-scoped trigger codec. No additional sharing grants or
 filter key distribution are introduced.
+The author-only index can carry an own trigger's stored envelope. Opening uses
+the existing Account or Workflow key, trigger binding, and structural projection.
+For private list and matching reads, the host may open under its authenticated
+connection's Account witness. It checks the live Account mode and key identity
+before returning the result.
 The Artifact's existing mode/key conversion inventories these attached definitions
 and replaces their envelopes in the same transaction as the Workflow key,
 including checks authored by other people.
@@ -4528,7 +4533,10 @@ private sidecars. Missing or changed private key material does not remove public
 membership. The finite read retains its admitted access; membership and source
 grant revocation take effect on the next request. Private list/detail projections
 continue to use the canonical Account-mode, recipient-key and exact-envelope
-binding owners.
+binding owners. The Events Activity projection can carry display content for
+the admitted Runs that appear in the feed. It uses the same Account-mode,
+recipient-key and envelope owners while keeping the other rows access-only.
+The host opens the display sidecars, and the server does not decrypt them.
 Membership includes failed Runs, even when they have no Session or invocation,
 and non-cancelled Runs with an indexed approval, review, needs-attention or
 uncertain-outcome invocation. An interrupted state or pending

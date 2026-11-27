@@ -109,7 +109,7 @@ export function createApprovalAutomaticChecksV1(selection: ActionAutomationSelec
   const selected = [...selection.before, ...selection.after];
   return ApprovalAutomaticChecksV1Schema.parse({ phase: 'consent', humanApprovalRequired,
     subjects: selection.subjects, selectionStatus: selection.status, notices: selection.notices ?? [],
-    selected: selected.map(({ consent: _consent, ...row }) => row),
+    selected: selected.map(({ consent: _consent, ownDefinitionEnvelope: _privateEnvelope, ...row }) => row),
     consents: selected.filter(row => row.consent).map(row => ({ automationId: row.automationId, triggerId: row.triggerId,
       decision: row.consent?.status === 'current' ? 'allow' : 'pending',
       ...(row.consent?.review ? { review: row.consent.review } : {}),

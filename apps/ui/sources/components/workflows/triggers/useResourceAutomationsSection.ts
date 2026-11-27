@@ -91,6 +91,7 @@ export type ResourceAutomationsSectionRead = SelectedAutomationsSectionRead & Re
         createSentenceIntent(options?: SessionWorkflowSentenceOptions): WorkflowSentenceEditorIntent | null;
     }>) | null;
     link: Readonly<{
+        setOpen(open: boolean): void;
         whenOptions: readonly WorkflowLinkTriggerStartOption[];
         whenStatus: 'idle' | 'loading' | 'ready' | 'machineOffline' | 'unavailable';
         draft: ResourceAutomationLinkDraft | null;
@@ -121,57 +122,35 @@ function useSelectedAutomationsProjection(read: ReturnType<typeof useWorkflowTri
     return { accountLifetime, read, editor, rows, also, skippedNotSharedCount: read.attachedPage?.skippedNotSharedCount ?? 0 };
 }
 
-type ActionTriggerPhase = Extract<WorkflowTriggerListRequestV1, { actionId: string }>['phase'];
+type ActionTriggerPhase = NonNullable<Extract<WorkflowTriggerListRequestV1, { actionId: string }>['phase']>;
 const BOTH_PHASES: readonly ActionTriggerPhase[] = ['before', 'after'];
 
-/**
- * Action detail selects an Action's before and after attachments (one selected read per phase the Action
- * offers), without inventing a resource or audience. One section reads both: the editor and rows see one read.
- */
+/** Action detail uses one selected page and cursor for its supported phases. */
 export function useActionAutomationsSection(props: Readonly<{ actionId: Extract<WorkflowTriggerListRequestV1, { actionId: string }>['actionId'];
     phases?: readonly ActionTriggerPhase[]; accountLifetime: ServerAccountScopeLifetime | null }>): SelectedAutomationsSectionRead & Pick<ResourceAutomationsSectionRead, 'link'> {
     const { accountLifetime, actionId } = props;
     const phases = props.phases ?? BOTH_PHASES;
     const demanded = useLayoutPresentationActive();
-    const beforeRequest = React.useMemo(() => phases.includes('before') ? { actionId, phase: 'before' as const } : null, [actionId, phases]);
-    const afterRequest = React.useMemo(() => phases.includes('after') ? { actionId, phase: 'after' as const } : null, [actionId, phases]);
-    const before = useWorkflowTriggerSets(beforeRequest, accountLifetime, { demanded });
-    const after = useWorkflowTriggerSets(afterRequest, accountLifetime, { demanded });
-    const both = beforeRequest !== null && afterRequest !== null;
-    const sets = React.useMemo(() => both
-        ? [...before.sets, ...after.sets.filter(set => !before.sets.some(held => held.automationId === set.automationId))]
-        : beforeRequest === null ? after.sets : before.sets, [both, beforeRequest, before.sets, after.sets]);
-    const beforePage = before.attachedPage;
-    const afterPage = after.attachedPage;
-    const attachedPage = React.useMemo(() => !both ? (beforeRequest === null ? afterPage : beforePage)
-        : beforePage && afterPage ? { attached: [...beforePage.attached, ...afterPage.attached],
-            nextCursor: beforePage.nextCursor ?? afterPage.nextCursor,
-            skippedNotSharedCount: beforePage.skippedNotSharedCount + afterPage.skippedNotSharedCount } : undefined,
-    [both, beforeRequest, beforePage, afterPage]);
-    const status = before.status === 'failed' || after.status === 'failed' ? 'failed' as const
-        : before.status === 'loading' || after.status === 'loading' ? 'loading' as const : 'ready' as const;
-    const handles = React.useRef({ before, after });
-    handles.current = { before, after };
-    const loadMore = React.useCallback(() => {
-        const { before: b, after: a } = handles.current;
-        if (b.attachedPage?.nextCursor) b.loadMore(); else a.loadMore();
-    }, []);
-    const retry = React.useCallback(() => { handles.current.before.retry(); handles.current.after.retry(); }, []);
-    const acknowledge = React.useCallback((set: WorkflowTriggerSetV1) => {
-        handles.current.before.acknowledge(set); handles.current.after.acknowledge(set);
-    }, []);
-    const selected = useSelectedAutomationsProjection({ sets, attachedPage, status, loadMore, retry, acknowledge }, accountLifetime);
+    const before = phases.includes('before');
+    const after = phases.includes('after');
+    const request = React.useMemo(() => before && after ? { actionId }
+        : before ? { actionId, phase: 'before' as const } : after ? { actionId, phase: 'after' as const } : null,
+    [actionId, before, after]);
+    const read = useWorkflowTriggerSets(request, accountLifetime, { demanded });
+    const selected = useSelectedAutomationsProjection(read, accountLifetime);
+    const [linkOpen, setLinkOpen] = React.useState(false);
+    const catalogDemanded = demanded && linkOpen && accountLifetime !== null;
     const actionScope = React.useMemo(() => ({ kind: 'machine' as const, machineId: null,
         serverId: accountLifetime?.scope.serverId }), [accountLifetime]);
-    const catalog = useWorkflowActionCatalog(actionScope, 'automation', { enabled: demanded && accountLifetime !== null, accountLifetime });
-    const whenStatus = !demanded || !accountLifetime ? 'idle' as const
+    const catalog = useWorkflowActionCatalog(actionScope, 'automation', { enabled: catalogDemanded, accountLifetime });
+    const whenStatus = !catalogDemanded ? 'idle' as const
         : catalog.phase === 'error' || catalog.phase === 'unsupported' ? 'unavailable' as const
             : catalog.phase === 'ready' ? 'ready' as const : 'loading' as const;
     const whenOptions = React.useMemo(() => whenStatus === 'ready'
         ? buildActionWorkflowTriggerStartOptions({ actionId, actions: catalog.specs }).filter(option => phases.includes(option.relation))
         : EMPTY_WHEN_OPTIONS, [whenStatus, actionId, catalog.specs, phases]);
     const { link } = useWorkflowLinkController({ subject: null, binding: accountLifetime, demanded, editor: selected.editor,
-        whenOptions, whenStatus, retryWhen: catalog.retry });
+        setOpen: setLinkOpen, whenOptions, whenStatus, retryWhen: catalog.retry });
     return { ...selected, link };
 }
 
@@ -218,15 +197,16 @@ export function useResourceAutomationsSection(props: ResourceSectionInput): Reso
         : { kind: 'machine' as const, machineId: props.machineId ?? project?.machineId ?? (subject?.kind === 'machine' ? subject.machineId : null), serverId },
     [subject?.kind, subject?.kind === 'session' ? subject.sessionId : null,
         subject?.kind === 'machine' ? subject.machineId : null, props.machineId, project?.machineId, serverId]);
-    const actionCatalog = useWorkflowActionCatalog(actionScope, 'automation', {
-        enabled: demanded && subject !== null, accountLifetime });
+    const [linkOpen, setLinkOpen] = React.useState(false);
+    const catalogDemanded = demanded && linkOpen && subject !== null && accountLifetime !== null;
+    const actionCatalog = useWorkflowActionCatalog(actionScope, 'automation', { enabled: catalogDemanded, accountLifetime });
     const eventCatalog = useWorkflowTriggerEventOptions({ machineId: actionCatalog.machineId, serverId: serverId ?? null,
-        enabled: demanded && subject !== null && accountLifetime !== null, accountLifetime });
+        enabled: catalogDemanded, accountLifetime });
     const eventsReady = eventCatalog.status === 'ready'
         || (eventCatalog.status === 'idle' && actionCatalog.machineId === null);
     const [catalogMachine] = useMachinePresenceSummaries(serverId,
-        demanded && subject && actionCatalog.machineId ? [actionCatalog.machineId] : [], accountLifetime);
-    const whenStatus = !demanded || !subject || accountLifetime === null ? 'idle'
+        catalogDemanded && actionCatalog.machineId ? [actionCatalog.machineId] : [], accountLifetime);
+    const whenStatus = !catalogDemanded ? 'idle'
         : actionCatalog.phase === 'ready' && eventsReady ? 'ready'
             : catalogMachine?.reachability === 'unreachable' ? 'machineOffline'
                 : actionCatalog.phase === 'error' || actionCatalog.phase === 'unsupported' || eventCatalog.status === 'unavailable' ? 'unavailable'
@@ -243,7 +223,7 @@ export function useResourceAutomationsSection(props: ResourceSectionInput): Reso
     // A native Source host remains the reader even while its roster is unavailable.
     const { link, audience } = useWorkflowLinkController({ subject, subjectName: props.subjectName,
         ...('sourceAudience' in props ? { sourceAudience: props.sourceAudience } : {}),
-        binding, demanded, editor, project, whenOptions, whenStatus, retryWhen });
+        binding, demanded, editor, project, setOpen: setLinkOpen, whenOptions, whenStatus, retryWhen });
     return { accountLifetime, read, editor, rows, also, skippedNotSharedCount, machineId: actionCatalog.machineId, project, audience, session, link };
 }
 
@@ -252,6 +232,7 @@ function useWorkflowLinkController(input: Readonly<{
     subject: AutomationSubjectV1 | null; subjectName?: string; sourceAudience?: readonly PrincipalRefV1[];
     binding: ServerAccountScopeLifetime | null | undefined; demanded: boolean;
     editor: SelectedAutomationsSectionRead['editor']; project?: WorkflowProjectTargetV1;
+    setOpen: ResourceAutomationsSectionRead['link']['setOpen'];
     whenOptions: readonly WorkflowLinkTriggerStartOption[]; whenStatus: ResourceAutomationsSectionRead['link']['whenStatus'];
     retryWhen(): void;
 }>) {
@@ -361,9 +342,9 @@ function useWorkflowLinkController(input: Readonly<{
     }, [linkDraft, needsAudience, audience, reviewIssue, review.shareMissingAudience, editor.add, project, binding]);
     const missingAudience = workflow && (!needsAudience || audience?.length === 0) ? NO_SHARED_AUDIENCE : review.missingAudience;
     const audienceNames = machineSubject ? machineSharing.audienceNames : undefined;
-    const link = React.useMemo<ResourceAutomationsSectionRead['link']>(() => ({ whenOptions, whenStatus, draft: linkDraft, setDraft,
+    const link = React.useMemo<ResourceAutomationsSectionRead['link']>(() => ({ setOpen: input.setOpen, whenOptions, whenStatus, draft: linkDraft, setDraft,
         missingAudience, audienceNames, issue: reviewIssue, loading: reviewLoading,
         retryReview, retryWhen, submit: submitLink }),
-    [whenOptions, whenStatus, linkDraft, setDraft, missingAudience, audienceNames, reviewIssue, reviewLoading, retryReview, retryWhen, submitLink]);
+    [input.setOpen, whenOptions, whenStatus, linkDraft, setDraft, missingAudience, audienceNames, reviewIssue, reviewLoading, retryReview, retryWhen, submitLink]);
     return { link, audience };
 }

@@ -99,6 +99,7 @@ export const ActionAutomationTriggerReferenceV1Schema = lazyZodSchema(() => {
     consentFor: z.optional(AutomationActionConsentTriggerSchema.shape.consentFor),
     consentedWorkflowRevision: z.optional(AutomationActionConsentTriggerSchema.shape.consentedWorkflowRevision),
     sharedDefinitionEnvelope: z.optional(StoredContentEnvelopeV1Schema),
+    ownDefinitionEnvelope: z.optional(AutomationActionTriggerDefinitionEnvelopeV1Schema),
   });
 });
 

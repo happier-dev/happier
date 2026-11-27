@@ -512,8 +512,8 @@ export const AutomationDefinitionListRequestSchema = lazyZodSchema(() => z.stric
   legacySessionLifecycleSelections: z.optional(z.literal(true)),
   healthCheckSources: z.optional(AutomationHealthCheckSourcesSelectionSchema),
 }).check(z.superRefine((value, context) => {
-  if ((value.actionId === undefined) !== (value.phase === undefined)) {
-    context.addIssue({ code: 'custom', path: ['actionId'], message: 'Action selection requires its phase' });
+  if (value.actionId === undefined && value.phase !== undefined) {
+    context.addIssue({ code: 'custom', path: ['actionId'], message: 'Phase selection requires an Action' });
   }
   if (value.actionId !== undefined && Object.keys(value).some(key => !['actionId', 'phase', 'limit', 'cursor', 'details'].includes(key))) {
     context.addIssue({ code: 'custom', path: ['actionId'], message: 'Action selection cannot be combined with another definition selection' });

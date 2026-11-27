@@ -12,6 +12,7 @@ export function createActionAutomationPrivateMatchingV1(options: Readonly<{
   accountId: string;
   readDefinition(automationId: string, context: ActionExecutorContext): Promise<AutomationDefinitionDetail | null>;
   openTrigger: NonNullable<WorkflowTriggerActionsDependencies['openActionTrigger']>;
+  readOwnDefinition?: NonNullable<WorkflowTriggerActionsDependencies['openOwnActionTrigger']>;
   readSharedDefinition?: NonNullable<WorkflowTriggerActionsDependencies['openSharedActionTrigger']>;
 }>): ActionAutomationPrepareMatchingV1 {
   return async (selection, context) => {
@@ -19,8 +20,10 @@ export function createActionAutomationPrivateMatchingV1(options: Readonly<{
     type Opened = Readonly<{ trigger: AutomationActionTrigger }> | Readonly<{ reason: string }>;
     const key = (row: ActionAutomationSelectedTriggerV1) => JSON.stringify([row.automationId, row.triggerId, row.triggerRevision]);
     const references = [...new Map([...selection.before, ...selection.after].map(row => [key(row), row])).values()];
+    const openIndexedOwn = (row: ActionAutomationSelectedTriggerV1) =>
+      row.ownerAccountId === options.accountId && row.ownDefinitionEnvelope !== undefined && options.readOwnDefinition;
     const sources = new Map(await Promise.all([...new Set(references
-      .filter(row => row.ownerAccountId === options.accountId).map(row => row.automationId))]
+      .filter(row => row.ownerAccountId === options.accountId && !openIndexedOwn(row)).map(row => row.automationId))]
       .map(async (automationId): Promise<readonly [string, Source]> => {
         try {
           const row = await options.readDefinition(automationId, context);
@@ -33,6 +36,11 @@ export function createActionAutomationPrivateMatchingV1(options: Readonly<{
       if (reference.ownerAccountId !== options.accountId) {
         if (!options.readSharedDefinition) return [key(reference), { reason: 'content_unavailable' }];
         try { return [key(reference), { trigger: await options.readSharedDefinition(reference, context) }]; }
+        catch (error) { return [key(reference), { reason: readActionErrorCodeV1(error) ?? 'action_failed' }]; }
+      }
+      const openOwn = openIndexedOwn(reference);
+      if (openOwn) {
+        try { return [key(reference), { trigger: await openOwn(reference) }]; }
         catch (error) { return [key(reference), { reason: readActionErrorCodeV1(error) ?? 'action_failed' }]; }
       }
       const source = sources.get(reference.automationId)!;

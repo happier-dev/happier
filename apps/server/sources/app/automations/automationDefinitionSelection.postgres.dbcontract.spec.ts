@@ -186,6 +186,13 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Automation defi
                 actionCursor = page.nextCursor;
             } while (actionCursor);
             expect(actionSelected).toEqual(visibleTriggerIds);
+            const actionCandidates = queries.filter(query => query.sql.includes('JOIN "Automation" a')
+                && query.sql.includes('"actionIdsJson"'));
+            expect(actionCandidates.length).toBeGreaterThan(0);
+            for (const [pageIndex, query] of actionCandidates.entries()) {
+                const rows = await traced.$queryRawUnsafe<Array<{ id: string }>>(query.sql, ...query.bindings);
+                expect(rows.map(row => row.id)).toEqual(visibleTriggerIds.slice(pageIndex));
+            }
             expect(await listAutomationDefinitionsPage({ accountId: otherAccountId,
                 actionId: 'session.title.set', phase: 'before' })).toMatchObject({ attached: [], skippedNotSharedCount: 0 });
             const candidateQueries = queries.filter(query => query.sql.includes('"AutomationTrigger"') && query.sql.includes('"subjectKey"'));

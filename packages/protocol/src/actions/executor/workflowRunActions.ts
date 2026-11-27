@@ -3012,9 +3012,10 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
           // Rows with a sealed display summary arrive without their frozen
           // program unless this request names authored steps.
           const displayEnvelopesByRunId = record(storagePage.displayEnvelopesByRunId ?? {});
-          const readEncryption = page.runs.length === 0 ? undefined
-            : await (callerEncryption ??= deps.resolveReadEncryption?.(args.context.signal) ?? encryption(args.context.signal));
+          const activity = args.input.projection === 'activity';
           const keyCensusByRunId = record(storagePage.keyCensusByRunId);
+          const readEncryption = page.runs.some(run => !activity || Object.hasOwn(keyCensusByRunId, run.id))
+            ? await (callerEncryption ??= deps.resolveReadEncryption?.(args.context.signal) ?? encryption(args.context.signal)) : undefined;
           const rootProgressByRunId = record(storagePage.rootProgressByRunId ?? {});
           const heldProgressByRunId = record(storagePage.heldProgressByRunId ?? {});
           const metadataByRunId: Record<string, WorkflowRunPrivateMetadataV1> = {};
@@ -3023,6 +3024,10 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
           const invocationProvenance: NonNullable<ReturnType<typeof WorkflowRunListResultV1Schema.parse>['invocationProvenance']> = [];
           const runs: WorkflowRunSummaryV1[] = [];
           for (const run of page.runs) {
+            if (activity && !Object.hasOwn(keyCensusByRunId, run.id)) {
+              runs.push(run);
+              continue;
+            }
             let origin = run.origin;
             let matchesResource = !(target?.kind === 'machine' && target.project);
             let matchesDestination = args.input.targetSessionId === undefined;
@@ -3144,12 +3149,13 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
             if (!matchesResource || !matchesDestination || !matchesUnder) continue;
             // Storage/control rows cannot author this private accepted-source fact.
             const { sourceSavedBy: _unopenedSavedBy, ...publicRun } = run;
-            runs.push({ ...publicRun, origin, where, startedBy, stepProgress, stepProgressCurrentness, startWaitReason, heldStep,
+            runs.push(activity ? run : { ...publicRun, origin, where, startedBy, stepProgress, stepProgressCurrentness, startWaitReason, heldStep,
               ...(sourceSavedBy ? { sourceSavedBy } : {}) });
             if (projected) metadataByRunId[run.id] = projected;
           }
           return WorkflowActionOutputSchemasV1[args.actionId].parse({
             runs,
+            ...(activity ? { projection: 'activity' } : {}),
             metadataByRunId,
             supportsAnotherRoundByRunId: Object.fromEntries(runs.flatMap(run =>
               supportsAnotherRoundByRunId[run.id] === undefined ? [] : [[run.id, supportsAnotherRoundByRunId[run.id]]])),

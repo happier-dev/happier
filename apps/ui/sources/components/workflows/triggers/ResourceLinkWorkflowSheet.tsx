@@ -74,7 +74,7 @@ export function ResourceLinkWorkflowSheet(
   props: Readonly<{
     anchorRef: React.RefObject<View | null>;
     resourceName: string;
-    link: ResourceAutomationsSectionRead['link'];
+    link: Omit<ResourceAutomationsSectionRead['link'], 'setOpen'>;
     serverId: string | null;
     machineId: string | null;
     accountLifetime: ResourceAutomationsSectionRead['accountLifetime'];

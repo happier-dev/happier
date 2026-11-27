@@ -1,4 +1,4 @@
-import { WorkflowActionOutputSchemasV1, projectWorkflowRunMembershipV1, type WorkflowActivityListRequestV1, type WorkflowRunListResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
+import { WorkflowActionOutputSchemasV1, projectWorkflowRunMembershipV1, workflowActivityDisplayRunIdsV1, type WorkflowActivityListRequestV1, type WorkflowRunListResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -10,7 +10,7 @@ import { retainDeep } from '@/sync/domains/state/structuralSharing';
 import { readMachineActivity, readMachinePresenceAnswer } from '@/sync/domains/machines/machineActivity';
 import { ViewDemandSync } from '@/sync/engine/viewDemandSync';
 import { subscribeMachineUpdates } from '@/sync/store/domains/machines';
-import { isBeyondWorkflowRunListSpan, workflowRunStoreKey } from '@/sync/store/domains/workflowRuns';
+import { isBeyondWorkflowRunListSpan, workflowRunRowFromSummary, workflowRunStoreKey } from '@/sync/store/domains/workflowRuns';
 import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { readWorkflowRunAccountChangeRunId } from '@/sync/runtime/orchestration/changesPlanner';
 import { callWorkflowAction } from '@/sync/domains/workflows/callWorkflowAction';
@@ -40,22 +40,28 @@ function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySou
 
     const readPage = async (input: WorkflowActivityListRequestV1 = {}): Promise<WorkflowRunListResultV1> => {
         const signal = controller?.signal;
-        const result = await callWorkflowAction({ actionId: 'workflow.activity.list', input,
+        const result = await callWorkflowAction({ actionId: 'workflow.activity.list', input: { ...input, includeRunDisplay: true },
             parseResult: WorkflowActionOutputSchemasV1['workflow.activity.list'].parse,
             accountLifetime: lifetime, signal });
-        // Only retained Event subjects and their Started from it rows need Run names.
-        // Keep other Runs in public membership without opening their accepted content.
-        const runIds = result.retained.runs.flatMap(run => {
-            const cause = run.origin.kind === 'automation' ? run.origin.cause : undefined;
-            if (cause?.kind === 'trigger' && cause.triggerKind === 'runLifecycle') {
-                return cause.evidence.source.kind === 'workflow_run' ? [run.id, cause.evidence.source.runId] : [run.id];
-            }
-            if (cause?.kind === 'trigger' && cause.triggerKind === 'sessionLifecycle') return [run.id];
-            return projectWorkflowActivityRunFact(run, 'terminal', 'retained') ? [run.id] : [];
-        });
-        await refreshWorkflowRunsByIds(runIds, { accountLifetime: lifetime, signal,
-            fence: { isCurrent: () => lifetime.isCurrent() && !signal?.aborted } });
-        return result.retained;
+        const { retained } = result;
+        const missingDisplay = new Set(workflowActivityDisplayRunIdsV1(retained.runs));
+        const current = () => lifetime.isCurrent() && !signal?.aborted;
+        if (current()) {
+            const display = retained.runs.flatMap(run => {
+                const metadata = retained.metadataByRunId[run.id];
+                const callerAccess = retained.callerAccessByRunId?.[run.id];
+                if (!metadata && !callerAccess) return [];
+                missingDisplay.delete(run.id);
+                return [workflowRunRowFromSummary(projectWorkflowRunMembershipV1(run), metadata ?? null, undefined, callerAccess)];
+            });
+            if (display.length > 0) storage.getState().upsertWorkflowRuns(display, lifetime.scope);
+            // The page cannot supply the title of a cause outside its membership.
+            if (missingDisplay.size > 0) await refreshWorkflowRunsByIds([...missingDisplay], {
+                accountLifetime: lifetime, signal, fence: { isCurrent: current },
+            });
+        }
+        return { runs: retained.runs.map(projectWorkflowRunMembershipV1), projection: 'membership',
+            metadataByRunId: {}, ...(retained.nextCursor ? { nextCursor: retained.nextCursor } : {}) };
     };
     const publish = (batch: WorkflowActivityLiveFact[]) => {
         if (batch.length === 0) return;

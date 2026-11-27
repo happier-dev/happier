@@ -9,6 +9,7 @@ import { getTransactionContext, type Tx } from '@/storage/inTx';
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { timeWebLatencyPhase } from '@/utils/webLatencyTrace';
+import { resolveCurrentSessionRecipientAccountIdsBySessionInTx } from '@/app/session/access/sessionRecipients';
 
 export type AutomationSessionLifecycleSourceSubjects = Readonly<{
     sessionId: string;
@@ -51,26 +52,32 @@ export function projectAutomationSessionLifecycleSourceSubjects(
  * visibility and admit in their own short transactions after source commit. */
 export function buildAutomationSessionLifecycleCandidateWheres(
     sources: readonly Pick<AutomationSessionLifecycleSourceSubjects, 'contexts'>[],
+    audienceAccountIds: readonly string[],
 ): readonly Prisma.AutomationTriggerWhereInput[] {
     const selections = new Map<string, Readonly<{ subjectKind: string | null; subjectKey: string | null }>>();
     for (const source of sources) {
-        const subjects = [{ subjectKind: null, subjectKey: null }, ...source.contexts.map(context => ({
+        const subjects = source.contexts.map(context => ({
             subjectKind: context.subject.kind, subjectKey: automationSubjectKeyV1(context.subject),
-        }))];
+        }));
         for (const subject of subjects) {
             selections.set(JSON.stringify(subject), subject);
         }
     }
-    // At most two identity bindings per branch. Kind and
-    // Prisma's portable offset are the statement's two fixed bindings.
-    return portableQueryChunks({ values: [...selections.values()], bindingsPerValue: 2, fixedBindings: 2 })
-        .map(chunk => ({ kind: 'sessionLifecycle', deletedAt: null,
+    const scopes = [...selections.values(), ...audienceAccountIds.map(accountId => ({ accountId }))];
+    // Each subject uses two binds and each broad-trigger Account uses one.
+    // Kind and Prisma's portable offset are the statement's fixed bindings.
+    return portableQueryChunks({ values: scopes, bindingsPerValue: 2, fixedBindings: 2 }).map(chunk => {
+        const accounts = chunk.flatMap(scope => 'accountId' in scope ? [scope.accountId] : []);
+        const subjects = chunk.filter(scope => !('accountId' in scope));
+        return { kind: 'sessionLifecycle', deletedAt: null,
             // Legacy exact-source rows also have null subject columns. Their
             // explicit one-time migration must precede current matching.
-            definitionEnvelope: { not: null },
-            automation: { deletedAt: null },
-            OR: [...chunk],
-        }));
+            definitionEnvelope: { not: null }, automation: { deletedAt: null },
+            OR: [...subjects, ...(accounts.length === 0 ? [] : [{ subjectKind: null, subjectKey: null,
+                automation: { accountId: { in: accounts } },
+            }])],
+        };
+    });
 }
 
 const SESSION_LIFECYCLE_CANDIDATE_SELECT = {
@@ -117,15 +124,21 @@ export async function readAutomationSessionLifecycleCandidatesInTx(
     if (missing.length > 0) {
         const serverId = await readCurrentServerIdentityId(process.env, tx);
         const sources = missing.map(session => projectAutomationSessionLifecycleSourceSubjects(serverId, session));
-        const rows = (await Promise.all(buildAutomationSessionLifecycleCandidateWheres(sources)
+        const recipients = await resolveCurrentSessionRecipientAccountIdsBySessionInTx(tx, {
+            sessionIds: sources.map(source => source.sessionId),
+        });
+        const audienceBySession = new Map(sources.map(source => [source.sessionId,
+            new Set([source.ownerAccountId, ...(recipients.get(source.sessionId) ?? [])])]));
+        const audienceAccountIds = [...new Set([...audienceBySession.values()].flatMap(ids => [...ids]))];
+        const rows = (await Promise.all(buildAutomationSessionLifecycleCandidateWheres(sources, audienceAccountIds)
             .map(where => timeWebLatencyPhase('automation.sessionLifecycle.candidates', () => tx.automationTrigger.findMany({
                 where, orderBy: { id: 'asc' }, select: SESSION_LIFECYCLE_CANDIDATE_SELECT,
             }))))).flat();
         for (const source of sources) prepared.set(source.sessionId, {
             source,
-            rows: rows.filter(row => row.subjectKey === null || automationSubjectKeyMatchesV1(
-                row.subjectKey, source.contexts, undefined, row.subjectKind ?? undefined,
-            )),
+            rows: rows.filter(row => row.subjectKey === null
+                ? audienceBySession.get(source.sessionId)!.has(row.automation.accountId)
+                : automationSubjectKeyMatchesV1(row.subjectKey, source.contexts, undefined, row.subjectKind ?? undefined)),
         });
     }
     return sessions.map(session => prepared.get(session.id)!);

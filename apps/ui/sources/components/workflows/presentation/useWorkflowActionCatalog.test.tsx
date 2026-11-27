@@ -428,6 +428,38 @@ describe('useWorkflowActionCatalog', () => {
         },
     );
 
+    it('keeps a closed resource Link from acquiring a Machine catalog', async () => {
+        const { useResourceAutomationsSection } = await import('../triggers/useResourceAutomationsSection');
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+        const accountLifetime = captureActiveServerAccountScopeLifetime();
+        if (!accountLifetime) throw new Error('Expected the admitted physical Account');
+        const subject = { kind: 'machine' as const, serverId, machineId: 'machine-1' };
+        network.setHttpResponder(async input => {
+            const path = new URL(String(input)).pathname;
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (path === '/v2/account/settings') return Response.json({ content: null, version: 0 });
+            if (path === '/v3/automations/query') return Response.json({ automations: [], attached: [], nextCursor: null, skippedNotSharedCount: 0 });
+            return null;
+        });
+        const hook = await renderHook(() => useResourceAutomationsSection({ subject, accountLifetime }),
+            { wrapper: ({ children }) => <PluginSurfaceFocusEligibilityProvider active>{children}</PluginSurfaceFocusEligibilityProvider> });
+        try {
+            const { waitForHomeGovernance } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+            const machineRequests = () => network.requests.filter(request => request.targetId === 'machine-1');
+            await waitForHomeGovernance(() => expect(hook.getCurrent().read.status).not.toBe('loading'));
+            await waitForHomeGovernance(() => expect(hook.getCurrent().link.whenStatus).not.toBe('loading'));
+            expect(machineRequests()).toHaveLength(0);
+            expect(hook.getCurrent().link.whenStatus).toBe('idle');
+            await act(async () => hook.getCurrent().link.setOpen(true));
+            await vi.waitFor(() => expect(machineRequests()).toEqual(expect.arrayContaining([
+                expect.objectContaining({ method: RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE }),
+            ])), { timeout: 10_000 });
+            await act(async () => hook.getCurrent().link.setOpen(false));
+            expect(hook.getCurrent().link.whenStatus).toBe('idle');
+        } finally { await hook.unmount(); }
+    });
+
     it('recovers unreadable resource starts on retry while another reader retains the refused Account catalog', async () => {
         const { useResourceAutomationsSection } = await import('../triggers/useResourceAutomationsSection');
         const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
@@ -454,6 +486,7 @@ describe('useWorkflowActionCatalog', () => {
             return { ...section, other };
         }, { wrapper: ({ children }) => <PluginSurfaceFocusEligibilityProvider active={presented}>{children}</PluginSurfaceFocusEligibilityProvider> });
         try {
+            await act(async () => hook.getCurrent().link.setOpen(true));
             await vi.waitFor(() => expect(hook.getCurrent().link.whenStatus).toBe('unavailable'));
             expect(hook.getCurrent().other.phase).toBe('error');
             expect(hook.getCurrent().link.whenOptions).toEqual([]);
@@ -539,7 +572,8 @@ describe('useWorkflowActionCatalog', () => {
             useWorkflowActionCatalog({ kind: 'machine', machineId: 'machine-1', serverId }, 'after'),
         ]);
         try {
-            await vi.waitFor(() => expect(hook.getCurrent().every(catalog => catalog.phase === 'ready')).toBe(true));
+            const { waitForHomeGovernance } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+            await waitForHomeGovernance(() => expect(hook.getCurrent().every(catalog => catalog.phase === 'ready')).toBe(true));
             const entry = readCachedDaemonMergedProjectionCacheEntry({ machineId: 'machine-1', serverId, sections: PLUGIN_UI_SECTIONS });
             expect(entry?.workflowActionCatalog.current?.readers).toBe(3);
             const [steps, before, after] = hook.getCurrent();

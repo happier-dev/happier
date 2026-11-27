@@ -23,6 +23,8 @@ import { formatQualifiedPluginActionId } from "@happier-dev/protocol/plugins/act
 import { DatabaseManualTargetV1Schema, DatabaseWorktreeTargetV1Schema } from "@happier-dev/protocol/databases/databaseTargetIdentityV1";
 import { inTx } from '@/storage/inTx';
 import { migrateArtifactAccountEncryptionInTx } from '@/app/artifacts/artifactWriteService';
+import { observePrismaRequests } from '@/testkit/observeSqliteRequests';
+import { resolveAutomationActionReachInTx } from './automationActionReachAdmission';
 import { listWorkflowRuns } from '@/app/workflows/workflowRunService';
 
 describe("Action occurrence admission through the real router", () => {
@@ -599,6 +601,38 @@ describe("Action occurrence admission through the real router", () => {
                 }
             }
         } finally { await app.close(); }
+    });
+
+    it("scans only Approval Profile Artifacts for encrypted trigger reach", async () => {
+        const ownerId = randomUUID();
+        const editorId = randomUUID();
+        const profileId = randomUUID();
+        const serverId = await getOrCreateServerIdentityId();
+        await db.account.createMany({ data: [ownerId, editorId].map(id => ({ id, encryptionMode: "plain" })) });
+        const unrelated = Array.from({ length: 24 }, (_, index) => ({ id: randomUUID(),
+            accountId: index % 2 === 0 ? editorId : ownerId, kind: "prompt" }));
+        await db.artifact.createMany({ data: [
+            ...unrelated,
+            { id: profileId, accountId: ownerId, kind: encodeArtifactKindV1({ kind: "other", kindHint: APPROVAL_PROFILE_ARTIFACT_KIND_V1 }) },
+        ].map(artifact => ({ ...artifact, header: Buffer.from("header"), body: Buffer.from("body"),
+            dataEncryptionKey: Buffer.from(ARTIFACT_PLAIN_DATA_KEY_MARKER, "base64"), headerVersion: 1, bodyVersion: 1 })) });
+        await db.artifactGrant.createMany({ data: [profileId, ...unrelated.filter(row => row.accountId === ownerId).map(row => row.id)]
+            .map(artifactId => ({ artifactId, principalKind: "account", accountId: editorId,
+                accessLevel: "edit", createdByAccountId: ownerId })) });
+        const readIds: string[] = [];
+        const stop = observePrismaRequests(db, { after(request, result) {
+            if (request.model !== 'Artifact' || request.action !== 'findMany' || !Array.isArray(result)) return;
+            const args = request.args as { select?: { id?: boolean } } | undefined;
+            if (args?.select?.id !== true || Object.keys(args.select).length !== 1) return;
+            for (const row of result) if (row && typeof row.id === 'string') readIds.push(row.id);
+        } });
+        try {
+            await expect(inTx(tx => resolveAutomationActionReachInTx(tx, {
+                accountId: editorId, definition: { mode: "e2ee", subjectKind: "approvalProfile",
+                    subjectKey: automationSubjectKeyV1({ kind: "approvalProfile", serverId, profileId }) },
+            }))).resolves.toBe(true);
+            expect(readIds).toEqual([profileId]);
+        } finally { stop(); }
     });
 
     it("derives profile reach from the Artifact edit grant at every write", async () => {

@@ -11,7 +11,7 @@ import { toAutomationDefinitionListItemApiDto } from './automationApiProjection'
 import { loadAutomationEventStatusProjections } from './automationEventStatusProjection';
 import { loadAutomationSessionLifecycleStatusProjections } from './automationSessionLifecycleStatusProjection';
 import type { AutomationListItem } from './automationTypes';
-import { resolveArtifactAccessBatchInTx, resolveArtifactAudienceInTx,
+import { readArtifactCandidateAccess, resolveArtifactAccessBatchInTx, resolveArtifactAudienceInTx,
     type ArtifactHeaderForCaller } from '@/app/artifacts/artifactAccessService';
 import { automationActionIndexSelect, readAutomationActionWorkflowRevisionsInTx, projectAutomationActionIndexRows,
     type AutomationActionIndexDefinition } from './automationActionIndex';
@@ -19,6 +19,8 @@ import { emitAutomationUpsert } from './automationChangePublisher';
 import type { ActionAutomationIndexSelectionV1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import type { Prisma } from '@prisma/client';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
+import { artifactVisibleWhere } from '@/app/artifacts/artifactClassification';
+import { ArtifactCoarseKindV1Schema, getArtifactTeamResourceStoredKindsV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 
 export type WorkflowSummaryArtifactAccess = Pick<ArtifactHeaderForCaller, 'ownerAccountId' | 'access'>;
 
@@ -32,6 +34,22 @@ export async function readWorkflowSummaryArtifactAccessInTx(tx: Tx, input: Reado
     return new Map([...access].map(([artifactId, decision]) => [artifactId, {
         ownerAccountId: decision.ownerAccountId, access: decision.level,
     }]));
+}
+
+const workflowCandidateKinds = [...getArtifactTeamResourceStoredKindsV1().workflows, ...ArtifactCoarseKindV1Schema.options];
+
+/** Push indexed Artifact access into unbounded shared-trigger discovery. */
+export async function readWorkflowSummaryArtifactCandidatesInTx(tx: Tx, accountId: string): Promise<string[]> {
+    const { owned, received } = readArtifactCandidateAccess(accountId);
+    const rows = await tx.artifact.findMany({ where: {
+        ...artifactVisibleWhere,
+        AND: [
+            { OR: [...(owned ? [owned] : []), ...received] },
+            // Retained Workflows may precede the persisted kind hint.
+            { OR: [{ kind: null }, { kind: { in: workflowCandidateKinds } }] },
+        ],
+    }, select: { id: true } });
+    return rows.map(row => row.id);
 }
 
 /** Candidate-scoped Artifact admission includes direct-person grants without a Team selection. */
@@ -122,26 +140,28 @@ export async function readAutomationActionIndex(input: Readonly<{
     ] : undefined;
     if (selectedScopes?.length === 0) return { v: 1 as const, rows: [] };
     return inReadSnapshot(async tx => {
-        const eligible = { enabled: true, deletedAt: null,
-            OR: [{ accountId: input.accountId }, { scopeSessionId: null, workflowDefinitionId: { not: null },
-                triggers: { some: { kind: 'action', enabled: true, deletedAt: null, reachesOthers: true,
-                    subjectKey: { not: null }, subjectKind: { not: 'plugin' } } } }],
+        const own = { accountId: input.accountId };
+        const shared = { accountId: { not: input.accountId }, scopeSessionId: null,
+            triggers: { some: { kind: 'action', enabled: true, deletedAt: null, reachesOthers: true,
+                subjectKey: { not: null }, subjectKind: { not: 'plugin' } } },
         } satisfies Prisma.AutomationWhereInput;
-        // Enter through the Action index on every provider; correlated Automation
-        // predicates otherwise make SQLite scan unrelated schedule definitions.
-        // Seven predicates plus SQLite's LIMIT/OFFSET bindings leave the rest for selected ids.
-        const scopes = selectedScopes ? portableQueryChunks({ values: selectedScopes, bindingsPerValue: 1, fixedBindings: 9 })
-            : [undefined];
+        // Exact change recovery is already rooted in addressed definitions or Artifacts.
+        // A seed has no such roots, so discover the caller's Workflow candidates first.
+        const scopes: Prisma.AutomationWhereInput[] = selectedScopes
+            ? portableQueryChunks({ values: selectedScopes, bindingsPerValue: 1, fixedBindings: 12 }).map(scope => {
+                const ids = scope.flatMap(item => 'id' in item ? [item.id] : []);
+                const workflows = scope.flatMap(item => 'workflowDefinitionId' in item ? [item.workflowDefinitionId] : []);
+                return { AND: [{ OR: [own, { ...shared, workflowDefinitionId: { not: null } }] }, { OR: [
+                    ...(ids.length ? [{ id: { in: ids } }] : []),
+                    ...(workflows.length ? [{ workflowDefinitionId: { in: workflows } }] : []),
+                ] }] };
+            })
+            : [own, ...portableQueryChunks({ values: await readWorkflowSummaryArtifactCandidatesInTx(tx, input.accountId),
+                bindingsPerValue: 1, fixedBindings: 12 }).map(ids => ({ ...shared, workflowDefinitionId: { in: [...ids] } }))];
         const candidateIds = new Set<string>();
         for (const scope of scopes) {
-            const automationIds = scope?.flatMap(item => 'id' in item ? [item.id] : []) ?? [];
-            const workflowDefinitionIds = scope?.flatMap(item => 'workflowDefinitionId' in item ? [item.workflowDefinitionId] : []) ?? [];
-            const automationWhere = scope ? { AND: [eligible, { OR: [
-                    ...(automationIds.length ? [{ id: { in: automationIds } }] : []),
-                    ...(workflowDefinitionIds.length ? [{ workflowDefinitionId: { in: workflowDefinitionIds } }] : []),
-                ] }] } : eligible;
             const candidateWhere = { kind: 'action', enabled: true, deletedAt: null,
-                automation: { is: automationWhere } } satisfies Prisma.AutomationTriggerWhereInput;
+                automation: { is: { enabled: true, deletedAt: null, ...scope } } } satisfies Prisma.AutomationTriggerWhereInput;
             const rows = await tx.automationTrigger.findMany({ where: candidateWhere,
                 select: { automationId: true }, distinct: ['automationId'] });
             for (const row of rows) candidateIds.add(row.automationId);

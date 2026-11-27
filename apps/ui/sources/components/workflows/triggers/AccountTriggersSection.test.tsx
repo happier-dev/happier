@@ -503,6 +503,30 @@ describe('Account Workflow Library and settings', () => {
         expect(requests.every(input => typeof input === 'object' && input !== null && 'actionId' in input && !('subject' in input))).toBe(true);
     });
 
+    it('reads Before and After triggers in one Home request on an Action detail', async () => {
+        const { useActionAutomationsSection } = await import('./useResourceAutomationsSection');
+        const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const accountLifetime = captureActiveServerAccountScopeLifetime();
+        if (!accountLifetime) throw new Error('Expected the admitted physical Account');
+        const requests: unknown[] = [];
+        home.answer(serverId, 'POST /v3/automations/query', { select: input => {
+            requests.push(input);
+            return { body: AutomationDefinitionListResponseSchema.parse({
+                automations: [], attached: [], nextCursor: null, skippedNotSharedCount: 0,
+            }) };
+        } });
+        const hook = await renderHook(() => useActionAutomationsSection({ actionId: 'deployments.deploy', accountLifetime }), {
+            wrapper: ({ children }) => <PluginSurfaceFocusEligibilityProvider active>{children}</PluginSurfaceFocusEligibilityProvider>,
+        });
+        try {
+            await waitForHomeGovernance(() => expect(hook.getCurrent().read.status).toBe('ready'));
+            expect(requests).toHaveLength(1);
+            expect(requests[0]).toMatchObject({ actionId: 'deployments.deploy' });
+            expect(requests[0]).not.toHaveProperty('phase');
+        } finally { await hook.unmount(); }
+    });
+
     it('reads the selected resource page without a census and retains direct, context and skipped facts across failure and Retry', async () => {
         const { useResourceAutomationsSection } = await import('./useResourceAutomationsSection');
         const { AutomationSubjectV1Schema } = await import('@happier-dev/protocol/automations/automationSubjectV1');
@@ -710,7 +734,8 @@ describe('Account Workflow Library and settings', () => {
         expect(screen.getTextContent()).toContain('workflows.triggers.section.projectInfo');
         await screen.unmount();
     });
-    it('says, in place of Link, that a Machine\'s starts could not be read', async () => {
+    it('shows unreadable Machine starts inside Link after opening it', async () => {
+        const { SelectionList } = await import('@/components/ui/selectionList');
         const { SubjectTriggersSection } = await import('./SubjectTriggersSection');
         const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
         const { ListPresentationProvider, PageFrameWidthsContext } = await import('@/components/ui/lists/listPresentation');
@@ -722,22 +747,22 @@ describe('Account Workflow Library and settings', () => {
             </PageFrameWidthsContext.Provider>
         </ListPresentationProvider></PluginSurfaceFocusEligibilityProvider>;
         const screen = await renderAccountScreen(sectionAtWidth(720));
-        await waitForHomeGovernance(() => expect(screen.findByTestId('subject-triggers-starts-unavailable')).not.toBeNull());
-        // Link's place stays held (unseen) so Automate… does not jump when the read fails; Retry may bring Link back there.
-        expect(screen.findByTestId('subject-triggers-link-pending')).not.toBeNull();
-        expect(screen.findByTestId('subject-triggers-link')).toBeNull();
-        expect(screen.getTextContent()).toContain('workflows.triggers.section.startsUnavailable');
-        // Automate… leads at both widths. Link's held place follows it even when the header wraps.
+        await waitForHomeGovernance(() => expect(screen.findByTestId('subject-triggers-link')).not.toBeNull());
+        expect(screen.findByTestId('resource-link-starts-unavailable')).toBeNull();
         const actionOrder = () => [...new Set(screen.findAll((node) => node.props?.testID === 'subject-triggers-add'
-            || node.props?.testID === 'subject-triggers-link-pending').map((node) => node.props.testID as string))];
-        expect(actionOrder()).toEqual(['subject-triggers-add', 'subject-triggers-link-pending']);
+            || node.props?.testID === 'subject-triggers-link').map((node) => node.props.testID as string))];
+        expect(actionOrder()).toEqual(['subject-triggers-add', 'subject-triggers-link']);
         await screen.update(sectionAtWidth(358));
-        expect(screen.findByTestId('subject-triggers-starts-unavailable')).not.toBeNull();
-        expect(screen.findByTestId('subject-triggers-link')).toBeNull();
-        expect(actionOrder()).toEqual(['subject-triggers-add', 'subject-triggers-link-pending']);
+        expect(actionOrder()).toEqual(['subject-triggers-add', 'subject-triggers-link']);
+        await screen.pressByTestIdAsync('subject-triggers-link');
+        const picker = () => screen.findAllByType(SelectionList).find(list => list.props.testID === 'resource-link-pick');
+        await waitForHomeGovernance(() => expect(picker()).toBeDefined());
+        await act(async () => picker()!.props.onSelect('builtin:review-and-converge'));
+        await waitForHomeGovernance(() => expect(screen.findByTestId('resource-link-starts-unavailable')).not.toBeNull());
         await screen.unmount();
     });
     it('keeps Environment Automations rows and explains that their starts need the catalog Machine online', async () => {
+        const { SelectionList } = await import('@/components/ui/selectionList');
         const { SubjectTriggersSection } = await import('./SubjectTriggersSection');
         const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
         const { ListPresentationProvider } = await import('@/components/ui/lists/listPresentation');
@@ -760,8 +785,13 @@ describe('Account Workflow Library and settings', () => {
         </ListPresentationProvider></PluginSurfaceFocusEligibilityProvider>);
         try {
             await waitForHomeGovernance(() => expect(screen.findByTestId('subject-triggers:daily-deploy-check:t1')).not.toBeNull());
+            expect(screen.getTextContent()).not.toContain('workflows.triggers.section.startsNeedMachineOnline');
+            await screen.pressByTestIdAsync('subject-triggers-link');
+            const picker = () => screen.findAllByType(SelectionList).find(list => list.props.testID === 'resource-link-pick');
+            await waitForHomeGovernance(() => expect(picker()).toBeDefined());
+            await act(async () => picker()!.props.onSelect('builtin:review-and-converge'));
             await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('workflows.triggers.section.startsNeedMachineOnline'));
-            expect(screen.findByTestId('subject-triggers-starts-unavailable')).toBeNull();
+            expect(screen.findByTestId('resource-link-starts-unavailable')).toBeNull();
         } finally {
             await screen.unmount();
         }
@@ -819,12 +849,12 @@ describe('Account Workflow Library and settings', () => {
             <EnvironmentAutomations />
         </ListPresentationProvider></PluginSurfaceFocusEligibilityProvider>);
         try {
-            await waitForHomeGovernance(() => expect(current.link.whenStatus).toBe('unavailable'));
+            expect(current.link.whenStatus).toBe('idle');
             expect(screen.findByTestId('subject-triggers-read')).not.toBeNull();
-            expect.soft(screen.findByTestId('subject-triggers-starts-unavailable')).toBeNull();
             rowsPending.resolve();
-            await waitForHomeGovernance(() => expect(screen.findByTestId('subject-triggers-starts-unavailable')).not.toBeNull());
-            expect(screen.findByTestId('subject-triggers-read')).toBeNull();
+            await waitForHomeGovernance(() => expect(screen.findByTestId('subject-triggers-read')).toBeNull());
+            expect(screen.findByTestId('subject-triggers-starts-unavailable')).toBeNull();
+            expect(current.link.whenStatus).toBe('idle');
         } finally {
             rowsPending.resolve();
             await screen.unmount();
@@ -970,7 +1000,8 @@ describe('Account Workflow Library and settings', () => {
         await waitForHomeGovernance(() => expect(hook.getCurrent().catalogPhase).toBe('ready'));
         expect(hook.getCurrent().project).toBeUndefined();
         expect(hook.getCurrent().catalogSpecs).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'deployments.deploy' })]));
-        expect(hook.getCurrent().link.whenStatus).toBe('ready');
+        await act(async () => hook.getCurrent().link.setOpen(true));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().link.whenStatus).toBe('ready'));
         expect(hook.getCurrent().link.whenOptions).toEqual(expect.arrayContaining([
             expect.objectContaining({ id: 'action:before:deployments.deploy', subject }),
             expect.objectContaining({ id: 'action:after:deployments.deploy', subject }),

@@ -167,6 +167,32 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Workflow live m
         } finally { await app.close(); }
     });
 
+    it('returns Event members with private display sidecars only for eligible Event Runs', async () => {
+        const f = await fixture(5);
+        const [finishedRunId, queuedRunId] = f.runIds;
+        await db.automationRun.update({ where: { id: queuedRunId }, data: { state: 'queued', finishedAt: null } });
+        const app = createAuthenticatedTestApp();
+        registerWorkflowRunStorageRoutes(app);
+        await app.ready();
+        try {
+            const read = async () => {
+                const response = await app.inject({ method: 'POST', url: '/v3/automations/runs/workflow-storage',
+                    headers: { 'x-test-user-id': f.actor.id }, payload: { operation: 'list',
+                        request: { sourceArtifactId: f.artifact.id, projection: 'activity' }, pageByteLimit: 1_000_000 } });
+                expect(response.statusCode, response.body).toBe(200);
+                const page: { projection: string; runs: { id: string }[]; keyCensusByRunId: Record<string, unknown>;
+                    acceptedEnvelopesByRunId: Record<string, unknown>; rootProgressByRunId: Record<string, unknown> } = response.json();
+                expect(page.projection).toBe('activity');
+                expect(page.rootProgressByRunId).toEqual({});
+                return { ids: page.runs.map(run => run.id).sort(), keys: Object.keys(page.keyCensusByRunId),
+                    envelopes: Object.keys(page.acceptedEnvelopesByRunId) };
+            };
+            expect(await read()).toEqual({ ids: [...f.runIds].sort(), keys: [finishedRunId], envelopes: [finishedRunId] });
+            await db.artifactGrant.deleteMany({ where: { principalKind: 'team', artifactId: f.artifact.id, teamId: f.teamIds[0]! } });
+            expect(await read()).toEqual({ ids: [queuedRunId], keys: [], envelopes: [] });
+        } finally { await app.close(); }
+    });
+
     it('set-reads live key audiences at 5 and 25 recipients without admitting foreign, revoked or suspended Accounts', async () => {
         const measurements = [];
         for (const recipientCount of [5, 25]) {

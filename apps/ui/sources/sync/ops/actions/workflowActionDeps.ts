@@ -40,7 +40,7 @@ import { readRpcRequestDisposition } from '@happier-dev/sync-client';
 import { WorkflowActionFailureV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { ActionExecuteFailureSchema, createActionExecuteFailureError, isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { getRandomBytes } from '@/platform/cryptoRandom';
-import { fetchAccountEncryptionCurrentness } from '@/sync/api/account/apiAccountEncryptionMode';
+import { fetchAccountEncryptionCurrentness, fetchBorrowedAccountEncryptionCurrentness } from '@/sync/api/account/apiAccountEncryptionMode';
 import { resolveAccountStorageContext } from '@/sync/encryption/accountStorageContext';
 import type { WorkflowRunReadEncryptionV1 } from '@happier-dev/protocol/workflows/workflowRunDataKeyV1';
 import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
@@ -315,11 +315,11 @@ export function createUiWorkflowAction(params: Readonly<{
         },
     });
     const resolveMaterial = () => deriveAccountScopedCryptoMaterialSnapshot(account.credentials, account.serverId);
-    const resolveEncryption = async (signal?: AbortSignal) => {
+    const resolveEncryption = async (signal?: AbortSignal, read = fetchAccountEncryptionCurrentness) => {
         account.assertCurrent();
         const resolved = await resolveValidatedAutomationAccountEncryptionV1({
             signal: signal ?? new AbortController().signal,
-            resolveAccountEncryptionCurrentness: async (signal) => await fetchAccountEncryptionCurrentness(account.credentials, { request: account.request, signal }),
+            resolveAccountEncryptionCurrentness: async (signal) => await read(account.credentials, { request: account.request, signal }),
             resolveAccountEncryptionMaterial: async () => resolveMaterial(),
         });
         account.assertCurrent();
@@ -404,6 +404,7 @@ export function createUiWorkflowAction(params: Readonly<{
             return result;
         },
         resolveEncryption: () => resolveEncryption(),
+        resolveReadEncryption: () => resolveEncryption(undefined, fetchBorrowedAccountEncryptionCurrentness),
         resolveRetainedSession: async (sessionId): Promise<AutomationTemplateRetainedSessionV1 | null> => {
             account.assertCurrent();
             const response = await withActionAccountRequestSignal(account, account.invocationSignal, signal => readSessionByIdHttp({ sessionId, serverId: account.serverId,

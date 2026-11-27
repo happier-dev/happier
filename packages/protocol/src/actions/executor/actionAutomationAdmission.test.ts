@@ -407,7 +407,10 @@ it.each(['plain', 'e2ee'] as const)('retains selected private Only-when matching
       })) })) };
   const unexpectedWrite = async (): Promise<never> => { throw new Error('Matching performs no write'); };
   let retainedRow: AutomationDefinitionDetail | null = stored;
-  const actions = createAccountWorkflowTriggerActions({ resolveEncryption: async () => current,
+  let liveEncryptionReads = 0;
+  const actions = createAccountWorkflowTriggerActions({
+    resolveEncryption: async () => { liveEncryptionReads++; return current; },
+    resolveReadEncryption: async () => current,
     randomBytes: length => new Uint8Array(length).fill(1), newId: () => 'unused',
     resolveWorkflow: async () => { workflowReads++; return { definition: WorkflowDefinitionV1Schema.parse({ version: 1,
       blocks: [{ kind: 'action', id: 'notice', actionId, input: { message: { kind: 'literal', value: 'Notice' } } }] }) }; },
@@ -493,6 +496,22 @@ it.each(['plain', 'e2ee'] as const)('retains selected private Only-when matching
     });
   }
   expect(sent).toHaveLength(2);
+
+  retainedRow = stored;
+  const readsBeforeIndexedInvocation = definitionReads;
+  const encryptionReadsBeforeIndexedInvocation = liveEncryptionReads;
+  const afterReference = rows.find(row => row.phase === 'after')!;
+  const afterTrigger = stored.triggers.find(trigger => trigger.id === afterReference.triggerId);
+  if (!afterTrigger || afterTrigger.kind !== 'action' || 'consentFor' in afterTrigger) throw new Error('Expected own After trigger');
+  http.apply({ automationId: 'own', rows: [{ ...afterReference,
+    ownDefinitionEnvelope: JSON.parse(afterTrigger.triggerDefinitionEnvelope!) }] });
+  const indexedContext = { actionRequestId: 'indexed-request', defaultSessionMachineId: 'machine' };
+  const indexed = await http.select({ actionId, input: {}, context: indexedContext, prepareMatching: checks.prepareMatching });
+  await createActionAutomationInvocationV1({ actionId, context: indexedContext, selection: indexed, port: http })
+    .settle({ ok: false, errorCode: 'target_unavailable', error: 'unavailable' });
+  expect(sent).toHaveLength(3);
+  expect(definitionReads - readsBeforeIndexedInvocation).toBe(0);
+  expect(liveEncryptionReads - encryptionReadsBeforeIndexedInvocation).toBe(1);
 });
 
 it.each([true, false])('admits shared Action checks for the actor through Workflow content (filtered=%s)', async filtered => {

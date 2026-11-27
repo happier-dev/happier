@@ -123,6 +123,20 @@ describe('Session lifecycle scoped admission', () => {
         expect(page.attached).toHaveLength(2);
     });
 
+    it('keeps unrelated Account habits out of the lifecycle candidate batch', async () => {
+        const current = await owner();
+        const definition: AutomationSessionLifecycleTrigger = {
+            kind: 'sessionLifecycle', events: ['parentTurnCompleted'], policy: { kind: 'everyMatch' },
+        };
+        const related = await habit(current, definition);
+        for (let index = 0; index < 24; index++) await habit(await owner(), definition);
+        const { readAutomationSessionLifecycleCandidatesInTx } = await import('./automationSessionLifecycleSubjects');
+        const source = await db.session.create({ data: { accountId: current.accountId, tag: randomUUID(),
+            encryptionMode: 'plain', metadata: '{}' } });
+        const [candidates] = await inTx(tx => readAutomationSessionLifecycleCandidatesInTx(tx, [source]));
+        expect(candidates.rows.map(row => row.id)).toEqual([related.trigger.id]);
+    });
+
     it('filters Account habits before admission and bounded consumption using one published turn fact', async () => {
         const current = await owner();
         const definition: AutomationSessionLifecycleTrigger = {
@@ -587,6 +601,8 @@ describe('Session lifecycle scoped admission', () => {
         for (let account = 0; account < 4; account += 1) {
             const recipient = await owner();
             recipients.push(recipient.accountId);
+            await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: source.id,
+                accountId: recipient.accountId, createdByAccountId: current.accountId, accessLevel: 'view' } });
             for (let trigger = 0; trigger < 2; trigger += 1) triggerIds.add((await habit(recipient, {
                 kind: 'sessionLifecycle', events: ['sessionArchived'], policy: { kind: 'everyMatch' },
             }, { enabled: false })).trigger.id);
@@ -632,11 +648,12 @@ describe('Session lifecycle scoped admission', () => {
         // this fixture can close its database.
         await inTx(async () => undefined);
         expect(visited.size).toBe(triggerIds.size);
-        expect(accountReads).toBe(triggerIds.size);
+        // One per returned row to map it to the Session, and one to bucket admission.
+        expect(accountReads).toBe(2 * triggerIds.size);
         expect(await db.automationRun.count({ where: { triggerId: { in: [...triggerIds] } } })).toBe(0);
     });
 
-    it('performs no additional source ACL work for an empty candidate bucket', async () => {
+    it('uses only the batched source audience when no lifecycle triggers match', async () => {
         const current = await owner();
         const source = await db.session.create({ data: { accountId: current.accountId, tag: randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
         const models: string[] = [];
@@ -648,6 +665,7 @@ describe('Session lifecycle scoped admission', () => {
             }))).toEqual([]);
         } finally { stop(); }
         expect(models.filter(model => model === 'AutomationTrigger')).toHaveLength(1);
-        expect(models.filter(model => model !== 'AutomationTrigger' && model !== 'SimpleCache')).toEqual([]);
+        expect(models.filter(model => model !== 'AutomationTrigger' && model !== 'SimpleCache'))
+            .toEqual(['Session', 'SessionGrant']);
     });
 });

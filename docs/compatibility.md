@@ -589,6 +589,13 @@ present. An older row may omit it. The strict 0.3 read projection accepts it as
 an optional display fact. Trigger writes and admission still use their
 existing authority contracts.
 
+The 0.3 Action index can include an optional own-trigger definition envelope
+on rows whose reach is limited to the author. Hosts open the envelope with its
+stored binding and can still read retained definitions from Homes that omit it.
+Strict older development clients need the matching index schema to accept the
+new field. Persisted approval continuations keep references and resolve their
+definitions through the retained reader.
+
 The public Action result optionally carries `automationNotices` for unchecked
 automations and skipped triggers. These typed notices preserve the original
 Action outcome and contain code/reference facts rather than private failure
@@ -9430,6 +9437,13 @@ Run or unreadable content. Membership updates the existing window's ordered ids
 and paging frontier, not the full Run-body map. Exact readers therefore retain
 their normal missing-body acquisition, while the durable Account change applier
 continues to materialize changed Run bodies before advancing its cursor.
+The development Events feed opts into `workflow.activity.list.includeRunDisplay`.
+The Action passes `projection: 'activity'` to Workflow Run storage. That
+response carries the public membership page and emits private display sidecars
+only for selected page members. A linked source outside the page keeps its
+existing exact-Run acquisition. Callers that omit the opt-in still receive
+membership. Action-attachment lists can also omit the `phase` filter to obtain
+Before and After triggers in the same page.
 Private destination, Discussion and subtree filters
 and requested invocation provenance require the full projection. Both modes use
 the same attention predicate and fresh Run admission; no server decryption or

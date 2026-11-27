@@ -15,7 +15,7 @@ import {
 } from './triggers/workflowTriggerActionsV1.js';
 
 import { OPAQUE_CURSOR_SCHEMA } from '../automations/automationActionSpecsV1.js';
-import { AutomationV3RunMutationResponseSchema } from '../automations/automationApiV3.js';
+import { AutomationV3RunMutationResponseSchema, isTerminalAutomationRunStateV3 } from '../automations/automationApiV3.js';
 import { AutomationIdV1Schema } from '../automations/automationIdV1.js';
 import { AutomationTriggerIdSchema } from '../automations/automationTriggerIdentity.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
@@ -221,7 +221,7 @@ export const WorkflowRunAttentionFilterV1Schema = lazyZodSchema(() => z.literal(
 export const WorkflowRunListRequestV1Schema = lazyZodSchema(() => z.strictObject({
   cursor: zMini.optional(CursorSchema), limit: z.optional(PositivePagePreferenceSchema),
   /** Membership or the content-free control list for an owned Machine. */
-  projection: z.optional(z.enum(['membership', 'machine_control'])),
+  projection: z.optional(z.enum(['membership', 'activity', 'machine_control'])),
   /**
    * Exact-Run selection for background refresh and transcript initial
    * materialization. The page stays the lean list projection — Run summaries
@@ -257,7 +257,7 @@ export const WorkflowRunListRequestV1Schema = lazyZodSchema(() => z.strictObject
     }
     return;
   }
-  if (value.projection !== 'membership') return;
+  if (value.projection !== 'membership' && value.projection !== 'activity') return;
   for (const key of ['originDiscussionId', 'targetSessionId', 'underSessionId', 'invocationProvenance'] as const) {
     if (value[key] !== undefined) context.addIssue({ code: 'custom', path: [key], message: 'Membership cannot select private facts' });
   }
@@ -295,7 +295,7 @@ const WorkflowMachineControlRunV1Schema = lazyZodSchema(() => z.strictObject(
 export const WorkflowRunListResultV1Schema = lazyZodSchema(() => z.strictObject({
   runs: z.array(WorkflowRunSummaryV1Schema),
   /** Absent means the existing complete private list projection, including readable untitled Runs. */
-  projection: z.optional(z.enum(['membership', 'machine_control'])),
+  projection: z.optional(z.enum(['membership', 'activity', 'machine_control'])),
   machineRuns: z.optional(z.array(WorkflowMachineControlRunV1Schema)),
   /** Private authored support opened with the page; this grants no start/control authority. */
   supportsAnotherRoundByRunId: z.optional(z.record(z.string(), z.boolean())),
@@ -351,13 +351,28 @@ export const WorkflowRunListResultV1Schema = lazyZodSchema(() => z.strictObject(
       message: 'Caller access must belong to a Run in the same page' });
   }
 })));
-/** Activity retains only the public Run projection; local observations belong to the observing UI. */
-export const WorkflowActivityListRequestV1Schema = lazyZodSchema(() => z.omit(z.strictObject(WorkflowRunListRequestV1Schema.shape), {
+/** Only retained Event subjects and their started Runs need names. */
+export function workflowActivityDisplayRunIdsV1(runs: readonly WorkflowRunSummaryV1[]): ReadonlySet<string> {
+  const ids = new Set<string>();
+  for (const run of runs) {
+    const cause = run.origin.kind === 'automation' ? run.origin.cause : undefined;
+    if (cause?.kind === 'trigger' && cause.triggerKind === 'runLifecycle') {
+      ids.add(run.id);
+      if (cause.evidence.source.kind === 'workflow_run') ids.add(cause.evidence.source.runId);
+    } else if (cause?.kind === 'trigger' && cause.triggerKind === 'sessionLifecycle'
+      || isTerminalAutomationRunStateV3(run.state) && run.finishedAt) {
+      ids.add(run.id);
+    }
+  }
+  return ids;
+}
+
+export const WorkflowActivityListRequestV1Schema = lazyZodSchema(() => z.extend(z.omit(z.strictObject(WorkflowRunListRequestV1Schema.shape), {
   projection: true, originDiscussionId: true, targetSessionId: true, underSessionId: true, invocationProvenance: true,
-}));
+}), { includeRunDisplay: z.optional(z.boolean()) }));
 export const WorkflowActivityListResultV1Schema = lazyZodSchema(() => z.strictObject({
-  retained: WorkflowRunListResultV1Schema.check(z.refine(page => page.projection === 'membership', {
-    message: 'Activity requires public Run membership',
+  retained: WorkflowRunListResultV1Schema.check(z.refine(page => page.projection === 'membership' || page.projection === 'activity', {
+    message: 'Activity requires an activity or membership projection',
   })),
   live: z.strictObject({ kind: z.literal('unavailable'), reason: z.literal('ui_local_only') }),
 }));

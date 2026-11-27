@@ -9,7 +9,7 @@ import { parseAutomationRunFailureDetailStoredEnvelopeV1, validateAutomationRunF
     type AutomationRunPreExecutionFailureV1 } from '@happier-dev/protocol/automations/automationRunFailureDetailStoredContent';
 import { toAutomationRunExecutionInputV1Origin } from '@happier-dev/protocol/automations/automationApiV3';
 import { projectAutomationAccountCurrentnessWitnessV1, sameAutomationAccountContentIdentityV1, type AutomationAccountCurrentnessWitnessV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
-import { WorkflowRunListRequestV1Schema, WorkflowRunAutomationSummariesRequestV1Schema, workflowRunListRequiresAcceptedProgramV1,
+import { WorkflowRunListRequestV1Schema, WorkflowRunAutomationSummariesRequestV1Schema, workflowRunListRequiresAcceptedProgramV1, workflowActivityDisplayRunIdsV1,
     type WorkflowRunListRequestV1, type WorkflowRunSummariesResultV1,
     type WorkflowRunSourceSummariesResultV1, type WorkflowRunAutomationSummariesResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import type { Prisma } from "@prisma/client";
@@ -1283,15 +1283,17 @@ export async function listWorkflowRuns(params: PageOptions & Readonly<{
     runIds?: readonly string[];
     invocationProvenance?: readonly Readonly<{ runId: string; invocationRecordIds: readonly string[] }>[];
     originSessionId?: string; originDiscussionId?: string; targetSessionId?: string; underSessionId?: string; automationId?: string; triggerId?: string; machineId?: string; sourceArtifactId?: string;
-    projection?: "membership";
+    projection?: "membership" | "activity";
 }>) {
     if (params.limit !== undefined && (!Number.isSafeInteger(params.limit) || params.limit <= 0)) throw new WorkflowRunServiceError("invalid_input");
     const membershipOnly = params.projection === "membership";
-    const includeHeld = !membershipOnly && (params.attention === "required" || params.runId !== undefined || params.runIds !== undefined);
+    const activity = params.projection === "activity";
+    const publicSelection = membershipOnly || activity;
+    const includeHeld = !publicSelection && (params.attention === "required" || params.runId !== undefined || params.runIds !== undefined);
     // A row reads its sealed display summary; the frozen program travels only
     // to pages that name authored steps, or for Runs admitted before summaries.
-    const programRequired = !membershipOnly && workflowRunListRequiresAcceptedProgramV1(params);
-    if (membershipOnly) {
+    const programRequired = !publicSelection && workflowRunListRequiresAcceptedProgramV1(params);
+    if (publicSelection) {
         const { accountId: _accountId, pageByteLimit: _pageByteLimit, ...request } = params;
         if (!WorkflowRunListRequestV1Schema.safeParse(request).success) throw new WorkflowRunServiceError("invalid_input");
     }
@@ -1308,7 +1310,7 @@ export async function listWorkflowRuns(params: PageOptions & Readonly<{
         ...(params.triggerId ? { triggerId: params.triggerId } : {}),
         ...(params.starter ? { starter: params.starter } : {}),
         ...(params.originDiscussionId ? { originDiscussionId: params.originDiscussionId } : {}),
-        ...(membershipOnly ? { projection: params.projection } : {}) });
+        ...(publicSelection ? { projection: params.projection } : {}) });
     const decoded = params.cursor ? decodeKeysetCursorV1(params.cursor, queryKey) : null;
     const afterDate = decoded?.status === "ok" ? readKeysetCursorTextV1(decoded.parts[0]) : null;
     const afterId = decoded?.status === "ok" ? readKeysetCursorIdV1(decoded.parts[1]) : null;
@@ -1346,20 +1348,32 @@ export async function listWorkflowRuns(params: PageOptions & Readonly<{
                 ...(additionalWhere.length > 0 ? { AND: additionalWhere } : {}),
             },
             orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: batchSize + 1,
-            select: membershipOnly ? { ...workflowRunListSelect, workflowAcceptedSnapshotEnvelope: false }
+            select: publicSelection ? { ...workflowRunListSelect, workflowAcceptedSnapshotEnvelope: false }
                 : programRequired ? workflowRunListSelect
                 : { ...workflowRunListSelect, workflowAcceptedSnapshotEnvelope: false, workflowDisplaySummaryEnvelope: true },
         }) as WorkflowRunListCapturedRow[];
         const pageRows = rows.slice(0, batchSize);
+        const displayIds = activity ? workflowActivityDisplayRunIdsV1(pageRows.map(row =>
+            projectRun({ ...row, invocationAttentionRequired: false }, params.accountId))) : null;
+        // Activity fetches display content only for Event Runs in the membership page.
+        const displayCandidateIds = displayIds === null ? null : pageRows.filter(row => displayIds.has(row.id)).map(row => row.id);
+        const displayRows = displayCandidateIds === null ? null : displayCandidateIds.length === 0 ? [] : await tx.automationRun.findMany({
+            where: { id: { in: displayCandidateIds } },
+            select: { id: true, workflowDisplaySummaryEnvelope: true },
+        });
+        const displayById = displayRows === null ? null : new Map(displayRows.map(row => [row.id, row.workflowDisplaySummaryEnvelope]));
+        const displayCandidates = displayById === null ? pageRows
+            : pageRows.map(row => ({ ...row, workflowDisplaySummaryEnvelope: displayById.get(row.id) }));
+        const privateRows = displayById === null ? displayCandidates : displayCandidates.filter(row => displayById.has(row.id));
         // Runs admitted before display summaries list from their accepted snapshot.
-        const summaryless = membershipOnly || programRequired ? [] : pageRows.filter(row => row.workflowDisplaySummaryEnvelope == null);
+        const summaryless = membershipOnly || programRequired ? [] : privateRows.filter(row => row.workflowDisplaySummaryEnvelope == null);
         const snapshots = summaryless.length === 0 ? null : new Map((await tx.automationRun.findMany({
             where: { id: { in: summaryless.map(row => row.id) } }, select: { id: true, workflowAcceptedSnapshotEnvelope: true },
         })).map(row => [row.id, row.workflowAcceptedSnapshotEnvelope]));
-        const candidateRows = snapshots === null ? pageRows
-            : pageRows.map(row => snapshots.has(row.id) ? { ...row, workflowAcceptedSnapshotEnvelope: snapshots.get(row.id) ?? null } : row);
+        const candidateRows = snapshots === null ? displayCandidates
+            : displayCandidates.map(row => snapshots.has(row.id) ? { ...row, workflowAcceptedSnapshotEnvelope: snapshots.get(row.id) ?? null } : row);
         const progress = await readWorkflowRunProjectionProgressInTx(tx, candidateRows,
-            membershipOnly ? "membership" : includeHeld ? "held" : "root");
+            publicSelection ? "membership" : includeHeld ? "held" : "root");
         const candidateIds = new Set(candidateRows.map(row => row.id));
         const selectedReferences = params.invocationProvenance?.filter(ref => candidateIds.has(ref.runId)
             && ref.invocationRecordIds.length > 0) ?? [];
@@ -1369,8 +1383,8 @@ export async function listWorkflowRuns(params: PageOptions & Readonly<{
             select: invocationSelect,
         });
         const continuation = await readWorkflowRunFrontierContinuationsInTx(tx, candidateRows);
-        const pageKeys = readPageKeys
-            ? await withWorkflowRunAccess(() => readPageKeys(tx, candidateRows.map(candidate => candidate.id))) : null;
+        const pageKeys = readPageKeys && privateRows.length > 0
+            ? await withWorkflowRunAccess(() => readPageKeys(tx, privateRows.map(candidate => candidate.id))) : null;
         return { candidateRows, ...progress, selectedInvocations, continuation, pageKeys, batchHasMore: rows.length > batchSize };
     };
     // Exact page bytes depend on validation. Capture request visibility once,
@@ -1398,9 +1412,10 @@ export async function listWorkflowRuns(params: PageOptions & Readonly<{
                 const { candidateRows, rootsByRunId, heldByRunId, approvalHoldsByRunId, selectedInvocations, attentionIds, continuation, pageKeys, batchHasMore } = captured;
                 const { candidates, bounded } = await timeWebLatencyPhase('workflow.list.materialize', () => {
                     const candidates = candidateRows.map((candidate) => {
-                        if (membershipOnly) return { ...candidate, frontierContinuationAvailable: continuation.has(candidate.id), invocationAttentionRequired: attentionIds.has(candidate.id),
-                            workflowAcceptedSnapshotEnvelope: null, workflowDisplaySummaryEnvelope: null, keyCensus: null, rootProgress: null, heldProgress: null, invocationProgress: [] };
                         const keyCensus = pageKeys?.get(candidate.id);
+                        if (membershipOnly || (activity && !keyCensus)) return {
+                            ...candidate, frontierContinuationAvailable: continuation.has(candidate.id), invocationAttentionRequired: attentionIds.has(candidate.id),
+                            workflowAcceptedSnapshotEnvelope: null, workflowDisplaySummaryEnvelope: null, keyCensus: null, rootProgress: null, heldProgress: null, invocationProgress: [] };
                         if (!keyCensus) throw new WorkflowRunServiceError("run_not_found");
                         const root = rootsByRunId.get(candidate.id);
                         const rootProgress = projectWorkflowInvocationProgress(root, keyCensus);
@@ -1433,16 +1448,16 @@ export async function listWorkflowRuns(params: PageOptions & Readonly<{
                         byteLimit: params.pageByteLimit,
                         // Each Run occupies the `runs` array and the private accepted
                         // sidecar object, so it contributes both exact members.
-                        serializeMembers: (row) => membershipOnly ? [JSON.stringify(projectRun(row as WorkflowRunRow, params.accountId))] : [
+                        serializeMembers: (row) => !row.keyCensus ? [JSON.stringify(projectRun(row as WorkflowRunRow, params.accountId))] : [
                             JSON.stringify(projectRun(row as WorkflowRunRow, params.accountId)),
                             ...(shipsAcceptedEnvelope(row) ? [`${JSON.stringify(row.id)}:${JSON.stringify(row.workflowAcceptedSnapshotEnvelope)}`] : []),
                             ...(row.workflowDisplaySummaryEnvelope !== null ? [`${JSON.stringify(row.id)}:${JSON.stringify(row.workflowDisplaySummaryEnvelope)}`] : []),
                             `${JSON.stringify(row.id)}:${JSON.stringify(row.keyCensus)}`,
-                            `${JSON.stringify(row.id)}:${JSON.stringify(row.rootProgress)}`,
+                            ...(activity ? [] : [`${JSON.stringify(row.id)}:${JSON.stringify(row.rootProgress)}`]),
                             ...(includeHeld ? [`${JSON.stringify(row.id)}:${JSON.stringify(row.heldProgress)}`] : []),
                             ...(params.invocationProvenance ? [`${JSON.stringify(row.id)}:${JSON.stringify(row.invocationProgress)}`] : []),
                         ],
-                        emptyPage: (nextCursor) => ({ ...(membershipOnly ? { projection: "membership" } : {}),
+                        emptyPage: (nextCursor) => ({ ...(publicSelection ? { projection: params.projection } : {}),
                             runs: [], acceptedEnvelopesByRunId: {}, keyCensusByRunId: {}, rootProgressByRunId: {},
                             ...(includeHeld ? { heldProgressByRunId: {} } : {}),
                             ...(params.invocationProvenance ? { invocationProgressByRunId: {} } : {}), ...(nextCursor ? { nextCursor } : {}) }),
@@ -1467,12 +1482,12 @@ export async function listWorkflowRuns(params: PageOptions & Readonly<{
     const last = page.rows.at(-1);
     const displayEnvelopes = page.rows.flatMap(row => row.workflowDisplaySummaryEnvelope !== null ? [[row.id, row.workflowDisplaySummaryEnvelope] as const] : []);
     return {
-        ...(membershipOnly ? { projection: "membership" as const } : {}),
+        ...(publicSelection ? { projection: params.projection } : {}),
         runs: page.rows.map(row => projectRun(row as WorkflowRunRow, params.accountId)),
-        acceptedEnvelopesByRunId: Object.fromEntries(membershipOnly ? [] : page.rows.flatMap((row) => shipsAcceptedEnvelope(row) ? [[row.id, row.workflowAcceptedSnapshotEnvelope] as const] : [])),
+        acceptedEnvelopesByRunId: Object.fromEntries(page.rows.flatMap((row) => row.keyCensus && shipsAcceptedEnvelope(row) ? [[row.id, row.workflowAcceptedSnapshotEnvelope] as const] : [])),
         ...(displayEnvelopes.length > 0 ? { displayEnvelopesByRunId: Object.fromEntries(displayEnvelopes) } : {}),
         keyCensusByRunId: Object.fromEntries(page.rows.flatMap(row => row.keyCensus ? [[row.id, row.keyCensus] as const] : [])),
-        rootProgressByRunId: Object.fromEntries(membershipOnly ? [] : page.rows.map((row) => [row.id, row.rootProgress])),
+        rootProgressByRunId: Object.fromEntries(publicSelection ? [] : page.rows.map((row) => [row.id, row.rootProgress])),
         ...(includeHeld || params.attention === "required"
             ? { heldProgressByRunId: Object.fromEntries(membershipOnly ? [] : page.rows.map(row => [row.id, row.heldProgress])) } : {}),
         ...(params.invocationProvenance ? { invocationProgressByRunId: Object.fromEntries(page.rows.map(row => [row.id, row.invocationProgress])) } : {}),

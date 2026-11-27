@@ -216,7 +216,7 @@ export function registerAutomationV3Routes(
             const page = await listAutomationDefinitionsPage({
                 accountId,
                 authentication,
-                ...(query.actionId !== undefined ? { actionId: query.actionId, phase: query.phase! } : {}),
+                ...(query.actionId !== undefined ? { actionId: query.actionId, phase: query.phase } : {}),
                 ...(query.subject !== undefined ? { subject: query.subject } : {}),
                 ...(query.contextSubjects !== undefined ? { contextSubjects: query.contextSubjects } : {}),
                 limit: query.limit,

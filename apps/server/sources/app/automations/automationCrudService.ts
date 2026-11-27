@@ -4753,7 +4753,7 @@ export async function listAutomationDefinitionsPage(params: Readonly<{
         return { automations: [], ...await listAutomationAttachedTriggers({ ...params, subject: params.subject }) };
     }
     if (params.actionId !== undefined) {
-        return { automations: [], ...await listAutomationAttachedTriggers({ ...params, actionId: params.actionId, phase: params.phase! }) };
+        return { automations: [], ...await listAutomationAttachedTriggers({ ...params, actionId: params.actionId, phase: params.phase }) };
     }
     const limit = Math.min(
         Math.max(Math.floor(params.limit ?? AUTOMATION_V3_DEFINITION_LIST_MAX_ITEMS), 1),

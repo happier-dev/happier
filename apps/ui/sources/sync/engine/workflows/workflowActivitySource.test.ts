@@ -34,11 +34,11 @@ it('publishes only a fresh, paired Deployment receipt from the listening Home', 
     let membershipReads = 0;
     boundary = await installWorkflowActionHttpBoundary({ accountId: () => 'deployment-events-account',
         fixtureResponse: async (actionId, input) => {
-            if (actionId !== 'workflow.run.list' || input.projection !== 'membership') {
+            if (actionId !== 'workflow.run.list' || input.projection !== 'activity') {
                 throw new Error(`Unexpected receipt Event read: ${actionId}`);
             }
             membershipReads += 1;
-            return { ok: true, result: { runs: [], metadataByRunId: {}, projection: 'membership' } };
+            return { ok: true, result: { runs: [], metadataByRunId: {}, projection: 'activity' } };
         } });
     const { restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
     await restoreConnectionToActiveServer(boundary.credentials);
@@ -81,7 +81,7 @@ it('publishes only a fresh, paired Deployment receipt from the listening Home', 
     expect(membershipReads).toBe(1);
 });
 
-it('opens a 240-Run membership page and reads names only for its Event rows, children and exact off-page Workflow cause', async () => {
+it.each([true, false])('opens names with the Event page and reads only a genuinely off-page cause separately (off page: %s)', async offPage => {
     const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
     await upsertAndActivateServer({ serverUrl: 'https://workflow-activity-names.test' });
     const sourceRun = createWorkflowRunSummaryFixture({ id: 'source-workflow', ownerAccountId: 'event-names-account' });
@@ -104,15 +104,20 @@ it('opens a 240-Run membership page and reads names only for its Event rows, chi
     const unrelated = Array.from({ length: 237 }, (_, index) => createWorkflowRunSummaryFixture({
         id: `queued-${index}`, ownerAccountId: 'event-names-account', state: 'queued',
     }));
-    const members = [...children, terminal, ...unrelated];
+    const members = [...children, terminal, ...(offPage ? [] : [sourceRun]), ...unrelated];
     const namedRuns = [...children, terminal, sourceRun];
     const titleByRunId = new Map(namedRuns.map((run, index) => [run.id, `Accepted work ${index}`]));
     const leanReads: Record<string, unknown>[] = [];
     let membershipReads = 0;
     boundary = await installWorkflowActionHttpBoundary({ accountId: () => 'event-names-account',
         fixtureResponse: async (actionId, input) => {
-            // The real activity Action delegates to the existing public membership list owner.
             if (actionId !== 'workflow.run.list') throw new Error(`Unexpected full-body Event read: ${actionId}`);
+            if (input.projection === 'activity') {
+                membershipReads += 1;
+                return { ok: true, result: { runs: members, projection: 'activity',
+                    metadataByRunId: Object.fromEntries(namedRuns.filter(run => members.includes(run)).map(run =>
+                        [run.id, { kind: 'available', value: { title: titleByRunId.get(run.id)! } }])) } };
+            }
             if (input.projection === 'membership') {
                 membershipReads += 1;
                 return { ok: true, result: { runs: members, metadataByRunId: {}, projection: 'membership' } };
@@ -150,13 +155,10 @@ it('opens a 240-Run membership page and reads names only for its Event rows, chi
         })).toEqual(namedRuns.map(run => titleByRunId.get(run.id)));
     }, { timeout: 10_000 });
     expect(membershipReads).toBe(1);
-    expect(leanReads).toHaveLength(1);
-    expect(leanReads[0]?.runIds).toEqual(expect.arrayContaining(namedRuns.map(run => run.id)));
-    expect(leanReads[0]?.runIds).toHaveLength(namedRuns.length);
-    expect(leanReads[0]?.runIds).not.toContain('run-native');
+    expect(leanReads.map(read => read.runIds)).toEqual(offPage ? [[sourceRun.id]] : []);
     release(); secondRelease();
     await source.retry(); await source.loadMore();
-    expect(leanReads).toHaveLength(1);
+    expect(leanReads).toHaveLength(offPage ? 1 : 0);
 });
 
 it('shares acquisition across hosts, publishes only changed facts and releases the final demand', async () => {
@@ -166,11 +168,11 @@ it('shares acquisition across hosts, publishes only changed facts and releases t
     const baselineRun = createWorkflowRunSummaryFixture({ id: 'baseline-run', ownerAccountId: 'activity-account', createdAt: '2026-01-01T00:00:00.000Z' });
     const continuationRun = createWorkflowRunSummaryFixture({ id: 'continued-run', ownerAccountId: 'activity-account', createdAt: '2025-12-01T00:00:00.000Z' });
     const middleRun = createWorkflowRunSummaryFixture({ id: 'new-middle-run', ownerAccountId: 'activity-account', createdAt: '2025-12-15T00:00:00.000Z' });
-    const baselinePage = { runs: [baselineRun], metadataByRunId: {}, projection: 'membership' as const, nextCursor: 'older-runs' };
+    const baselinePage = { runs: [baselineRun], metadataByRunId: {}, projection: 'activity' as const, nextCursor: 'older-runs' };
     boundary = await installWorkflowActionHttpBoundary({ accountId: () => 'activity-account',
         fixtureResponse: async (id, input) => {
             if (id !== 'workflow.run.list') throw new Error(`Unexpected activity HTTP read: ${id}`);
-            if (input.projection !== 'membership') {
+            if (input.projection !== 'activity') {
                 const requestedRunIds = input.runIds;
                 if (!Array.isArray(requestedRunIds) || requestedRunIds.length === 0) throw new Error('Expected an exact lean name read');
                 return { ok: true, result: { runs: [baselineRun, continuationRun, middleRun]
@@ -178,9 +180,9 @@ it('shares acquisition across hosts, publishes only changed facts and releases t
             }
             reads += 1;
             return { ok: true, result: input.cursor === 'new-middle-runs'
-                ? { runs: [middleRun], metadataByRunId: {}, projection: 'membership', nextCursor: 'older-runs' }
+                ? { runs: [middleRun], metadataByRunId: {}, projection: 'activity', nextCursor: 'older-runs' }
                 : input.cursor
-                ? { runs: [continuationRun], metadataByRunId: {}, projection: 'membership' }
+                ? { runs: [continuationRun], metadataByRunId: {}, projection: 'activity' }
                 : baselinePage };
         } });
     const { restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
@@ -198,7 +200,7 @@ it('shares acquisition across hosts, publishes only changed facts and releases t
     const source = getWorkflowActivitySource()!;
     expect(source.hasDemand()).toBe(false);
     expect(reads).toBe(0);
-    expect(await source.readPage()).toEqual(baselinePage);
+    expect(await source.readPage()).toEqual({ ...baselinePage, projection: 'membership' });
     reads = 0;
     let activeSubscriptions = 0;
     const track = <Args extends unknown[]>(subscribe: (...args: Args) => () => void) => (...args: Args) => {
@@ -435,10 +437,11 @@ it('opens retained Machine history without per-Machine requests and publishes a 
     const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
     await upsertAndActivateServer({ serverUrl: 'https://workflow-activity-presence.test' });
     boundary = await installWorkflowActionHttpBoundary({ accountId: () => 'presence-account',
-        fixtureResponse: async (actionId) => {
-            if (actionId !== 'workflow.activity.list') throw new Error(`Unexpected activity HTTP read: ${actionId}`);
-            return { ok: true, result: { retained: { runs: [], metadataByRunId: {}, projection: 'membership' },
-                live: { kind: 'unavailable', reason: 'ui_local_only' } } };
+        fixtureResponse: async (actionId, input) => {
+            if (actionId !== 'workflow.run.list' || input.projection !== 'activity') {
+                throw new Error(`Unexpected activity HTTP read: ${actionId}`);
+            }
+            return { ok: true, result: { runs: [], metadataByRunId: {}, projection: 'activity' } };
         } });
     const { restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
     await restoreConnectionToActiveServer(boundary.credentials);

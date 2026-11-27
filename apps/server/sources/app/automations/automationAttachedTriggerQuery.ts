@@ -13,7 +13,7 @@ import { resolveDbSqlDialect } from '@/config/databaseProvider';
 import { automationTriggerListItemSelect } from './automationPersistenceSelect';
 import { automationActionTriggerConfigurationSelect } from './automationActionTriggerConfiguration';
 import { toAutomationTriggerSummaryProjection } from './automationApiProjection';
-import { readAutomationActorConsentReferencesInTx, readWorkflowSummaryArtifactAccessInTx, type WorkflowSummaryArtifactAccess } from './automationSharedWorkflowSummaries';
+import { readAutomationActorConsentReferencesInTx, readWorkflowSummaryArtifactAccessInTx, readWorkflowSummaryArtifactCandidatesInTx, type WorkflowSummaryArtifactAccess } from './automationSharedWorkflowSummaries';
 import { loadAutomationEventStatusProjections } from './automationEventStatusProjection';
 import { loadAutomationSessionLifecycleStatusProjections } from './automationSessionLifecycleStatusProjection';
 import type { AutomationTriggerSummarySource } from './automationTypes';
@@ -29,7 +29,7 @@ export type AutomationAttachedTriggerSelection = Readonly<{
     limit?: number;
     cursor?: string | null;
 } & ({ subject: AutomationSubjectV1; contextSubjects?: readonly AutomationSubjectV1[] }
-    | { actionId: string; phase: AutomationActionTrigger['phase'] })>;
+    | { actionId: string; phase?: AutomationActionTrigger['phase'] })>;
 
 /** Structural selection owns direct/context discovery and its page-independent denied count. */
 export async function listAutomationAttachedTriggers(params: AutomationAttachedTriggerSelection): Promise<WorkflowAttachedTriggerPageV1> {
@@ -73,6 +73,7 @@ export async function listAutomationAttachedTriggers(params: AutomationAttachedT
             return [...subjectsPage, ...accountPage].sort((left, right) => left.id.localeCompare(right.id))
                 .slice(0, AUTOMATION_V3_DEFINITION_LIST_MAX_ITEMS);
         };
+        const actionWorkflowIds = 'actionId' in params ? await readWorkflowSummaryArtifactCandidatesInTx(tx, params.accountId) : [];
         const readCandidates = async (cursor: string | null): Promise<Awaited<ReturnType<typeof readSubjectCandidates>>> => {
             if (!('actionId' in params)) return readSubjectCandidates(cursor);
             const dialect = resolveDbSqlDialect(getDbProviderFromEnv(process.env, 'postgres'));
@@ -86,12 +87,24 @@ export async function listAutomationAttachedTriggers(params: AutomationAttachedT
                 : dialect === 'mysql'
                     ? `JSON_CONTAINS(t."actionIdsJson", JSON_QUOTE(${bind(params.actionId)}))`
                     : `EXISTS (SELECT 1 FROM json_each(t."actionIdsJson") selected_action WHERE selected_action.value = ${bind(params.actionId)})`;
+            const phase = params.phase === undefined ? `t."phase" IN ('before', 'after')`
+                : `t."phase" = '${params.phase === 'before' ? 'before' : 'after'}'`;
+            const account = bind(params.accountId);
+            const workflowSelection = actionWorkflowIds.length === 0 ? '' : (() => {
+                const ids = bind(JSON.stringify(actionWorkflowIds));
+                const selected = dialect === 'postgres' ? `SELECT jsonb_array_elements_text(${ids}::jsonb)`
+                    : dialect === 'mysql' ? `SELECT id COLLATE utf8mb4_unicode_ci FROM JSON_TABLE(${ids}, '$[*]' COLUMNS (id VARCHAR(191) PATH '$')) selected`
+                        : `SELECT value FROM json_each(${ids})`;
+                return `OR (a."scopeSessionId" IS NULL AND t."reachesOthers" = TRUE
+                    AND (t."subjectKind" IS NULL OR t."subjectKind" <> 'plugin') AND t."subjectKey" IS NOT NULL AND a."workflowDefinitionId" IN (${selected}))`;
+            })();
             const sql = `SELECT t."id", t."subjectKind", t."subjectKey", t."reachesOthers",
                 a."id" AS "automationId", a."accountId", a."workflowDefinitionId", a."scopeSessionId"
                 FROM "AutomationTrigger" t JOIN "Automation" a ON a."id" = t."automationId"
                 WHERE t."kind" = 'action' AND t."deletedAt" IS NULL AND t."consentForAutomationId" IS NULL
-                  AND t."phase" = '${params.phase === 'before' ? 'before' : 'after'}' AND ${membership}
-                  AND a."deletedAt" IS NULL ${cursor === null ? '' : `AND t."id" > ${bind(cursor)}`}
+                  AND ${phase} AND ${membership}
+                  AND a."deletedAt" IS NULL AND (a."accountId" = ${account} ${workflowSelection})
+                  ${cursor === null ? '' : `AND t."id" > ${bind(cursor)}`}
                 ORDER BY t."id" ASC LIMIT ${bind(AUTOMATION_V3_DEFINITION_LIST_MAX_ITEMS)}`;
             type Candidate = Awaited<ReturnType<typeof readSubjectCandidates>>[number];
             const rows = await tx.$queryRawUnsafe<Array<Pick<Candidate, 'id' | 'subjectKind' | 'subjectKey' | 'reachesOthers'>
@@ -103,7 +116,7 @@ export async function listAutomationAttachedTriggers(params: AutomationAttachedT
         const workflowAccess = new Map<string, WorkflowSummaryArtifactAccess>();
         const subjectReadability = new Map<string, boolean>();
         let skippedNotSharedCount = 0;
-        let candidateCursor: string | null = null;
+        let candidateCursor = 'actionId' in params ? params.cursor ?? null : null;
         for (;;) {
           const candidates = await readCandidates(candidateCursor);
           if (candidates.length === 0) break;

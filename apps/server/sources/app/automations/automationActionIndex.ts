@@ -25,11 +25,11 @@ export type AutomationActionIndexDefinition = Readonly<Omit<SelectedDefinition, 
 }>;
 export type AutomationActionIndexRow = ReturnType<typeof ActionAutomationIndexRowV1Schema.parse>;
 
-function readSharedDefinitionEnvelope(raw: string | null) {
+function readDefinitionEnvelope(raw: string | null) {
     if (raw === null) return undefined;
     try {
         const parsed = AutomationActionTriggerDefinitionEnvelopeV1Schema.safeParse(JSON.parse(raw));
-        return parsed.success && parsed.data.t === 'workflow' ? parsed.data.content : undefined;
+        return parsed.success ? parsed.data : undefined;
     } catch { return undefined; }
 }
 
@@ -74,11 +74,14 @@ export function projectAutomationActionIndexRows(row: AutomationActionIndexDefin
         }
         if (workflowRevision === undefined) return [];
         if (shared && !canProjectSharedAutomationTriggerSummary(row, configuration)) return [];
+        const envelope = readDefinitionEnvelope(trigger.definitionEnvelope);
         const sharedDefinitionEnvelope = configuration.reachesOthers && row.workflowDefinitionId !== null
-            ? readSharedDefinitionEnvelope(trigger.definitionEnvelope) : undefined;
+            && envelope?.t === 'workflow' ? envelope.content : undefined;
+        const ownDefinitionEnvelope = !shared && !configuration.reachesOthers ? envelope : undefined;
         const { kind: _kind, ...matching } = configuration;
         return [ActionAutomationIndexRowV1Schema.parse({ ...identity, ...matching,
             ...(sharedDefinitionEnvelope === undefined ? {} : { sharedDefinitionEnvelope }),
+            ...(ownDefinitionEnvelope === undefined ? {} : { ownDefinitionEnvelope }),
             ...(shared && configuration.subjectKey
                 ? { subjectKey: automationSubjectSharedKeyV1(configuration.subjectKey, workflowId) } : {}) })];
     }).sort((left, right) => left.triggerId.localeCompare(right.triggerId));

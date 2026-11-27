@@ -21,6 +21,7 @@ import type { Socket } from 'socket.io';
 import { updateArtifact } from '@/app/artifacts/artifactWriteService';
 import { applyArtifactRecipientKeyEnvelopesInTx, removeArtifactAccessGrantInTx } from '@/app/artifacts/artifactAccessService';
 import { automationActionIndexSelect, projectAutomationActionIndexRows } from './automationActionIndex';
+import { observePrismaRequests } from '@/testkit/observeSqliteRequests';
 
 describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Action index seed (PostgreSQL)', () => {
     let ownerId: string;
@@ -80,6 +81,15 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Action index se
             name: 'consent', templateCiphertext: 'not-readable-private-definition',
             triggers: { create: { id: randomUUID(), kind: 'action', consentForAutomationId: sharedAutomationId,
                 consentForTriggerId: sharedTriggerId, consentedWorkflowRevision: 9 } } } });
+        const unrelatedWorkflowId = randomUUID();
+        await db.automation.create({ data: { id: randomUUID(), accountId: ownerId, workflowDefinitionId: unrelatedWorkflowId,
+            name: 'unrelated', templateCiphertext: 'private',
+            triggers: { create: { ...sharedColumns, id: randomUUID() } } } });
+        const candidates = new Set<string>();
+        const stopObserving = observePrismaRequests(db, { after(request, response) {
+            if (request.model !== 'Automation' || request.action !== 'findMany' || !Array.isArray(response)) return;
+            for (const row of response) if (typeof row?.workflowDefinitionId === 'string') candidates.add(row.workflowDefinitionId);
+        } });
         const app = createAuthenticatedTestApp();
         registerAutomationActionIndexRoutes(app);
         changesRoutes(app);
@@ -87,6 +97,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Action index se
             const response = await app.inject({ method: 'GET', url: '/v1/automations/actions/index',
                 headers: { 'x-test-user-id': actorId } });
             expect(response.statusCode).toBe(200);
+            stopObserving();
             expect(response.headers['cache-control']).toBe('no-store');
             const seed = response.json();
             expect(seed.rows).toHaveLength(3);
@@ -100,6 +111,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Action index se
             ]));
             expect(seed.rows.find((row: { automationId: string }) => row.automationId === consentId)).not.toHaveProperty('actionIds');
             expect(response.body).not.toContain('not-readable-private-definition');
+            expect(candidates).toEqual(new Set([workflowId]));
             expect(response.body).not.toContain('private name');
             expect(response.body).not.toContain(subject.machineId);
 
@@ -332,9 +344,15 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Action index se
                 && /"Automation(?:Trigger)?"/.test(statement.query));
             expect(reads.length).toBeGreaterThan(0);
             for (const statement of reads) {
-                expect(statement.query).not.toMatch(/"(?:templateCiphertext|definitionEnvelope|name)"/);
+                expect(statement.query).not.toMatch(/"(?:templateCiphertext|name)"/);
+                const bindings = JSON.parse(statement.params);
+                if (statement.query.includes('"definitionEnvelope"')) {
+                    // Only the addressed definition can carry a trigger envelope.
+                    expect(statement.query).toMatch(/"t0"\."id" IN \(\$/);
+                    expect(bindings).toContain(consent.id);
+                }
                 const plan = await client.$queryRawUnsafe(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${statement.query}`,
-                    ...JSON.parse(statement.params));
+                    ...bindings);
                 console.info('[action-index-plan]', JSON.stringify({ query: statement.query, params: statement.params,
                     accountId: actorId, automationIds: [consent.id], plan }));
             }

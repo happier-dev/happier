@@ -192,13 +192,6 @@ export const SubjectTriggersSectionContent = React.memo(
     const presented = useLayoutPresentationActive();
     const page = useListPresentation() === 'page';
     const linkAnchor = React.useRef<View>(null);
-    // Link is decided by this resource's settled starts: offered when some can start a linked workflow, never a form that
-    // cannot succeed. While they load its place is held unseen, so the common case (starts exist) lands without moving
-    // Automate…; none settles it away, and starts that could not be read say so in the section.
-    const linkSlot = !link ? 'none' : link.whenStatus === 'ready' ? link.whenOptions.length > 0 ? 'offered' : 'none'
-      : link.whenStatus === 'loading' ? 'pending'
-        : link.whenStatus === 'machineOffline' ? 'offline'
-          : link.whenStatus === 'unavailable' ? 'unavailable' : 'none';
     const router = useRouter();
     const { status } = read;
     const legacy = 'serverId' in props.subject || props.subject.kind === 'action' ? null : props.subject;
@@ -207,6 +200,13 @@ export const SubjectTriggersSectionContent = React.memo(
     const persistentStarters = legacy ? SUBJECT_TRIGGER_PERSISTENT_STARTERS[legacy.kind] : NO_STARTERS;
     const addAnchor = React.useRef<View>(null);
     const [opening, setOpening] = React.useState<Opening | null>(null);
+    const linkExpanded = opening?.kind === 'link';
+    const setLinkOpen = link?.setOpen;
+    React.useEffect(() => {
+        if (!linkExpanded || !setLinkOpen) return;
+        setLinkOpen(true);
+        return () => setLinkOpen(false);
+    }, [linkExpanded, setLinkOpen]);
     const starterAvailable = (starter: SubjectTriggerStarter) => starter === 'scheduledJob'
       ? props.deploymentEnvironment !== undefined : starter !== 'deployOnPush' || props.pushSetup !== undefined;
     const empty = rows.length === 0;
@@ -270,17 +270,6 @@ export const SubjectTriggersSectionContent = React.memo(
     const nothingHere = !held && !unsettled && !starters.some(starterAvailable) && also.length === 0 && skippedNotSharedCount === 0;
     const widget = props.presentation === 'widget';
     const description = describeAutomationsSection(props.subject.kind, empty && !unsettled);
-    const linkExpanded = opening?.kind === 'link';
-    // Offline, unread starts are the page's one offline fact: Retry can't answer until the subject is back.
-    const linkHeld = linkSlot === 'pending' || (linkSlot === 'unavailable' && props.offlineStatedAbove !== true);
-    const startNotice = !unsettled && status !== 'failed' && props.offlineStatedAbove !== true
-      ? linkSlot === 'offline'
-        ? { kind: 'offline' as const, title: t('workflows.triggers.section.startsNeedMachineOnline') }
-        : linkSlot === 'unavailable'
-          ? { kind: 'unavailable' as const, title: t('workflows.triggers.section.startsUnavailable'),
-              action: link ? { label: t('common.retry'), onPress: link.retryWhen } : undefined }
-          : undefined
-      : undefined;
     const sectionRows = unsettled ? undefined : empty
       ? starters.filter(starterAvailable).map((starter) => (
           <StarterRow key={starter} starter={starter} onOpen={(anchor) => openStarter(starter, anchor)} />
@@ -311,14 +300,12 @@ export const SubjectTriggersSectionContent = React.memo(
           controls={{
             automateLabel: t('workflows.triggers.section.automate'), linkLabel: t('workflows.triggers.section.link'),
             addAnchor, linkAnchor, onAutomate: openAutomate,
-            link: linkSlot === 'offered' ? { kind: 'offered', expanded: linkExpanded, onPress: openLink }
-              : linkHeld ? { kind: 'held' } : null,
+            link: link && accountLifetime !== null ? { kind: 'offered', expanded: linkExpanded, onPress: openLink } : null,
           }}
           leading={props.leading}
           readState={unsettled ? describeReadState({ status: status === 'failed' ? 'failed' : 'loading',
             onRetry: read.retryable === false ? undefined : read.retry }) : undefined}
           rows={sectionRows}
-          startNotice={startNotice}
           persistentStarters={empty ? null : persistentStarters.filter(starterAvailable).map((starter) => (
             <StarterRow key={starter} starter={starter} onOpen={(anchor) => openStarter(starter, anchor)} />
           ))}

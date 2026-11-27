@@ -7,6 +7,7 @@ import type { WorkflowTriggerActionsDependencies } from '@happier-dev/protocol';
 import { createAutomationDefinition, deleteAutomationDefinition, getAutomationDefinition,
   listAutomationDefinitionDetails, listAutomationDefinitions, readAutomationTriggerEventDeclarations, reconcileAutomationDefinition, runAutomationNowReceipt } from '@/api/automations';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
+import { readAccountEncryptionCurrentnessForRead } from '@/api/client/accountEncryptionCurrentnessObservation';
 import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
 import { getRandomBytes } from '@/api/encryption';
 import type { StoredCredentials } from '@/persistence';
@@ -87,12 +88,12 @@ function createCliTriggerRequesterCustody(params: Readonly<{
 /** Shared authenticated Account-mode adapter for retained trigger reads and writes. */
 export function createCliAutomationEncryptionResolver(params: Readonly<{
   credentials: StoredCredentials; serverHttpBaseUrl?: string; signal?: AbortSignal;
-}>) {
+}>, read = fetchAccountEncryptionCurrentness) {
   const token = params.credentials.token;
   return async () => {
       const resolved = await resolveValidatedAutomationAccountEncryptionV1({
         signal: params.signal ?? new AbortController().signal,
-        resolveAccountEncryptionCurrentness: (signal) => fetchAccountEncryptionCurrentness({
+        resolveAccountEncryptionCurrentness: (signal) => read({
           token, signal,
           ...(params.serverHttpBaseUrl ? { serverBaseUrl: params.serverHttpBaseUrl } : {}),
         }),
@@ -172,6 +173,7 @@ export function createCliWorkflowTriggerActions(params: Readonly<{
       })),
     },
     resolveEncryption: createCliAutomationEncryptionResolver(params),
+    resolveReadEncryption: createCliAutomationEncryptionResolver(params, readAccountEncryptionCurrentnessForRead),
     resolveRetainedSession: (sessionId) => onServer(() => resolveAutomationTemplateRetainedSession({
       credentials: params.credentials, sessionId,
     })),

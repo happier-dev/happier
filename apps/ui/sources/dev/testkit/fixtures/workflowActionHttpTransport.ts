@@ -215,6 +215,7 @@ export function createWorkflowActionHttpTransport(params: Readonly<{
             const keyCensusByRunId: Record<string, unknown> = {};
             for (const run of page.runs) {
                 const metadata = page.metadataByRunId?.[run.id];
+                if (page.projection === 'activity' && metadata === undefined) continue;
                 const materialized = await materializeWorkflowAcceptedSnapshotV1({ definition: createWorkflowDefinitionFixture({
                     defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.test', localId: 'test' } } },
                 }), admission: { kind: 'user' }, effects: { resolveTargetAvailability: async () => true },
@@ -237,7 +238,8 @@ export function createWorkflowActionHttpTransport(params: Readonly<{
                     dataEncryptionKey: null, callerDataEncryptionKey: null, recipients: [],
                     ownerAccountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null } });
             }
-            return json({ runs: page.runs.map(run => ({ ...run, ownerAccountId: requestAccountId })),
+            return json({ ...(page.projection ? { projection: page.projection } : {}),
+                runs: page.runs.map(run => ({ ...run, ownerAccountId: requestAccountId })),
                 ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}), acceptedEnvelopesByRunId, keyCensusByRunId });
         }
         const bootstrap = createEmptyAccountBootstrapHttpResponse(target.pathname, init);

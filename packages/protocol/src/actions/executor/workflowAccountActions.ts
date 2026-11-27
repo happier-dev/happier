@@ -336,8 +336,9 @@ export function createWorkflowActionExecutor(deps: Readonly<{
       }
       if (actionId === WORKFLOW_ACTIVITY_LIST_ACTION_ID_V1) {
         const input = parseWorkflowActionInput(WorkflowActionInputSchemasV1[actionId], rawArgs.input);
+        const { includeRunDisplay, ...selection } = input;
         const retained = await deps.runs.execute({ actionId: 'workflow.run.list',
-          input: { ...input, projection: 'membership' }, context: rawArgs.context,
+          input: { ...selection, projection: includeRunDisplay ? 'activity' : 'membership' }, context: rawArgs.context,
           ...(rawArgs.signal ? { signal: rawArgs.signal } : {}),
         }, context);
         const failure = readActionFailureEnvelope(retained);
