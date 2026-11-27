@@ -1094,6 +1094,18 @@ describe('Environment → Database → Workbench', () => {
 
 });
 
+/** Move is a page-level database operation: it is the page header ⋯'s entry, never a section's action slot. */
+async function chooseMoveFromHeaderMenu(view: Awaited<ReturnType<typeof renderDatabase>>) {
+  const { PageHeaderMenu } = await import('@/components/ui/layout/PageHeaderEntityParts');
+  expect(await view.settle(`${page}.menu.trigger`)).not.toBeNull();
+  expect(view.screen.findByTestId(`${page}.usedBy`)).not.toBeNull();
+  expect(view.screen.findByTestId(`${page}.move`)).toBeNull();
+  const menu = view.screen.findAllByType(PageHeaderMenu).find(node => node.props.testID === `${page}.menu`);
+  const move = menu?.props.actions.find((action: { id: string }) => action.id === 'move');
+  expect(move?.testID).toBe(`${page}.move`);
+  await act(async () => { await move.onSelect(); });
+}
+
 describe('Environment → Database → Move', () => {
   it.each([true, false])('opens Move only with a serving runtime Link from the selected database read (%s)', async hasRuntimeLink => {
     const view = await renderDatabase({ readDatabaseAutomations: true, moveDestination: true,
@@ -1101,11 +1113,12 @@ describe('Environment → Database → Move', () => {
     try {
       expect(await view.settle(`${page}.header`)).not.toBeNull();
       if (hasRuntimeLink) {
-        expect(await view.settle(`${page}.move`)).not.toBeNull();
-        await view.screen.pressByTestIdAsync(`${page}.move`);
+        expect(await view.settle(`${page}.menu.trigger`)).not.toBeNull();
+        await chooseMoveFromHeaderMenu(view);
         expect(await view.settle('project-deployments.move.destination:database-dedicated')).not.toBeNull();
       } else {
         expect(view.screen.findByTestId(`${page}.move`)).toBeNull();
+        expect(view.screen.findByTestId(`${page}.menu.trigger`)).toBeNull();
       }
       const result = await view.readSelectedDatabase();
       expect(result).toMatchObject({ ok: true, value: { items: [{ selected: { detail: {
@@ -1117,8 +1130,8 @@ describe('Environment → Database → Move', () => {
   it('offers dedicated Postgres across Projects and Machines and excludes unsupported destinations', async () => {
     const view = await renderDatabase({ moveDestination: true, movePickerScope: true, storedDefinition: true, databaseOnly: true });
     try {
-      expect(await view.settle(`${page}.move`)).not.toBeNull();
-      await view.screen.pressByTestIdAsync(`${page}.move`);
+        expect(await view.settle(`${page}.menu.trigger`)).not.toBeNull();
+      await chooseMoveFromHeaderMenu(view);
       const destination = await view.settle('project-deployments.move.destination:database-dedicated');
       expect(destination, JSON.stringify({ queries: view.movePickerQueries.map(query => Object.fromEntries(query)),
         failures: view.screen.findAll(node => typeof node.props.diagnosticCode === 'string')
@@ -1143,8 +1156,8 @@ describe('Environment → Database → Move', () => {
     const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
     const view = await renderDatabase({ moveDestination: true, moveDestinationWithApp: true, storedDefinition: true });
     try {
-      await view.settle(`${page}.move`);
-      await view.screen.pressByTestIdAsync(`${page}.move`);
+      await view.settle(`${page}.menu.trigger`);
+      await chooseMoveFromHeaderMenu(view);
       const { DeploymentEnvironmentChooser } = await import('./DeploymentEnvironmentCollection');
       const chooser = view.screen.findAllByType(DeploymentEnvironmentChooser)[0]!;
       expect(view.screen.findByTestId('project-deployments.move.destination:database-dedicated')).toBeNull();
@@ -1163,8 +1176,8 @@ describe('Environment → Database → Move', () => {
     const { t } = await import('@/text');
     const view = await renderDatabase({ moveDestination: true, storedDefinition: true, databaseOnly: true });
     try {
-      await view.settle(`${page}.move`);
-      await view.screen.pressByTestIdAsync(`${page}.move`);
+      await view.settle(`${page}.menu.trigger`);
+      await chooseMoveFromHeaderMenu(view);
       expect(await view.settle('project-deployments.move.destination:database-dedicated')).not.toBeNull();
       await view.screen.pressByTestIdAsync('project-deployments.move.destination:database-dedicated');
       await waitForHomeGovernance(() => expect(view.screen.findByTestId('project-deployments.move.copy')?.props.disabled).toBe(false));
@@ -1184,6 +1197,7 @@ describe('Environment → Database → Move', () => {
     try {
       expect(await view.settle(`${page}.connection`)).not.toBeNull();
       expect(view.screen.findByTestId(`${page}.move`)).toBeNull();
+        expect(view.screen.findByTestId(`${page}.menu.trigger`)).toBeNull();
       expect(view.effects.filter(effect => effect.actionId === 'workflow.run.start')).toEqual([]);
     } finally { await view.dispose(); }
   });
@@ -1194,9 +1208,9 @@ describe('Environment → Database → Move', () => {
     const view = await renderDatabase({ moveDestination: true, moveManagedDestination: true, moveDestinationWithApp: true,
       movePickerScope: true, storedDefinition: true, databaseOnly: true });
     try {
-      await view.settle(`${page}.move`);
+      await view.settle(`${page}.menu.trigger`);
       const beforePicker = view.requests().length;
-      await view.screen.pressByTestIdAsync(`${page}.move`);
+      await chooseMoveFromHeaderMenu(view);
       // Managed positive and native control come from the Home's page projection, never an injected flag.
       expect(await view.settle('project-deployments.move.destination:database-dedicated')).not.toBeNull();
       expect(view.screen.findByTestId('project-deployments.move.destination:database-other-machine')).not.toBeNull();
@@ -1224,8 +1238,8 @@ describe('Environment → Database → Move', () => {
   it('requires destination backups before copying into an already provisioned database', async () => {
     const view = await renderDatabase({ moveDestination: true, moveDestinationUnprotected: true, storedDefinition: true });
     try {
-      await view.settle(`${page}.move`);
-      await view.screen.pressByTestIdAsync(`${page}.move`);
+      await view.settle(`${page}.menu.trigger`);
+      await chooseMoveFromHeaderMenu(view);
       await view.settle('project-deployments.move.destination:database-dedicated');
       await view.screen.pressByTestIdAsync('project-deployments.move.destination:database-dedicated');
       expect(await view.settle('project-deployments.move.destination.unavailable')).not.toBeNull();
@@ -1241,8 +1255,8 @@ describe('Environment → Database → Move', () => {
   it('leads a destination that is not ready yet to where it is shared, the way backups lead to Backups', async () => {
     const view = await renderDatabase({ moveDestination: true, moveDestinationUnshared: true, storedDefinition: true });
     try {
-      await view.settle(`${page}.move`);
-      await view.screen.pressByTestIdAsync(`${page}.move`);
+      await view.settle(`${page}.menu.trigger`);
+      await chooseMoveFromHeaderMenu(view);
       await view.settle('project-deployments.move.destination:database-dedicated');
       await view.screen.pressByTestIdAsync('project-deployments.move.destination:database-dedicated');
       expect(await view.settle('project-deployments.move.destination.unavailable')).not.toBeNull();
@@ -1257,8 +1271,8 @@ describe('Environment → Database → Move', () => {
     const view = await renderDatabase({ moveDestination: true, storedDefinition: true, refuseWorkflowStart: true });
     routerMock.spies.push.mockClear();
     try {
-      await view.settle(`${page}.move`);
-      await view.screen.pressByTestIdAsync(`${page}.move`);
+      await view.settle(`${page}.menu.trigger`);
+      await chooseMoveFromHeaderMenu(view);
       await view.settle('project-deployments.move.destination:database-dedicated');
       await view.screen.pressByTestIdAsync('project-deployments.move.destination:database-dedicated');
       await waitForHomeGovernance(() => expect(view.screen.findByTestId('project-deployments.move.copy')?.props.disabled).toBe(false));
@@ -1275,8 +1289,8 @@ describe('Environment → Database → Move', () => {
   it('reviews source writers and the cutover before admitting one persisted Workflow, with no page-owned effects', async () => {
     const view = await renderDatabase({ moveDestination: true, storedDefinition: true });
     try {
-      await view.settle(`${page}.move`);
-      await view.screen.pressByTestIdAsync(`${page}.move`);
+      await view.settle(`${page}.menu.trigger`);
+      await chooseMoveFromHeaderMenu(view);
       await view.settle('project-deployments.move.destination:database-dedicated');
       await view.screen.pressByTestIdAsync('project-deployments.move.destination:database-dedicated');
       await waitForHomeGovernance(() => expect(view.screen.findByTestId('project-deployments.move.copy')?.props.disabled).toBe(false));
@@ -1320,8 +1334,8 @@ describe('Environment → Database → Move', () => {
   it('requires writer review when the native service cannot be identified and starts no backup', async () => {
     const view = await renderDatabase({ moveDestination: true, moveWritersUnavailable: true, storedDefinition: true });
     try {
-      await view.settle(`${page}.move`);
-      await view.screen.pressByTestIdAsync(`${page}.move`);
+      await view.settle(`${page}.menu.trigger`);
+      await chooseMoveFromHeaderMenu(view);
       await view.settle('project-deployments.move.destination:database-dedicated');
       await view.screen.pressByTestIdAsync('project-deployments.move.destination:database-dedicated');
       await waitForHomeGovernance(() => expect(view.screen.findByTestId('project-deployments.move.copy')?.props.disabled).toBe(false));
@@ -1336,8 +1350,8 @@ describe('Environment → Database → Move', () => {
     const view = await renderDatabase({ storedDefinition: true, movePickerScope: true });
     routerMock.spies.push.mockClear();
     try {
-      await view.settle(`${page}.move`);
-      await view.screen.pressByTestIdAsync(`${page}.move`);
+      await view.settle(`${page}.menu.trigger`);
+      await chooseMoveFromHeaderMenu(view);
       expect(await view.settle('project-deployments.move.destination.empty')).not.toBeNull();
       await view.screen.pressByTestIdAsync('project-deployments.move.destination.empty.action');
       const href = String(routerMock.spies.push.mock.calls.at(-1)?.[0]);

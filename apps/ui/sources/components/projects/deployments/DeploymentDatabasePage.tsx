@@ -25,6 +25,7 @@ import {
   type PageHeaderMetaFact,
 } from '@/components/ui/layout/PageHeader';
 import { PageHeaderMarkIcon } from '@/components/ui/layout/PageHeaderMarkSlot';
+import { PageHeaderMenu } from '@/components/ui/layout/PageHeaderEntityParts';
 import { usePageBackControl } from '@/components/ui/layout/usePageBackControl';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { Item } from '@/components/ui/lists/Item';
@@ -493,6 +494,9 @@ export function DeploymentDatabasePage(
             }
             meta={meta}
             actionsPlacement="page"
+            // Move acts on the whole database, so it sits with the page's rare operations, never in a section's slot.
+            {...(openMove ? { menu: <PageHeaderMenu testID={`${id}.menu`} actions={[{ id: 'move', testID: `${id}.move`,
+              title: t('projects.deployments.databaseMoveTitle'), onSelect: openMove }]} /> } : {})}
             // Connect leads the page only once another Environment can use it; until it is shared, Private network says how.
             {...(openConnect && connectExports.length > 0 ? { primaryAction: { title: t('projects.deployments.databaseConnectTitle'),
               testID: `${id}.connect`, onPress: openConnect } } : {})}
@@ -618,8 +622,6 @@ export function DeploymentDatabasePage(
             testID={`${id}.usedBy`}
             title={t('projects.deployments.tabVariables')}
             description={t('projects.deployments.databaseUsedByDescription')}
-            {...(openMove ? { action: <SectionActionButton testID={`${id}.move`}
-              title={t('projects.deployments.databaseMoveTitle')} onPress={openMove} /> } : {})}
           >
             <Item
               testID={`${id}.variables`}

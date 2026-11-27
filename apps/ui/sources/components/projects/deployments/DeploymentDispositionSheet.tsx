@@ -12,7 +12,6 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { presentActionFailureOutcome } from '@/components/tools/shell/approvals/approvalFailureOutcome';
 import { Text } from '@/components/ui/text/Text';
-import { Typography } from '@/constants/Typography';
 import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
 import { keepNamesWhole } from '@/utils/text/keepNamesWhole';
 import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
@@ -378,9 +377,10 @@ function DeploymentDispositionSheet(
       ) : null}
       {resource && platform && resourceName && choice === 'remove' ? <ItemGroup testID="project-deployments.disposition.resource"
         title={resource.consequence ?? t('projects.deployments.platformLink.deleteConsequence', { resource: resourceName, platform })}>
-        <Item title={resourceConfirmation} titleStyle={Typography.mono()} accessoryLayout="adaptive"
+        {/* The prompt reads as a sentence; only the name to type is in the code face, in the field it must match. */}
+        <Item title={resourceConfirmation} accessoryLayout="adaptive"
           showChevron={false} rightElement={<FieldTextInput testID="project-deployments.disposition.resourceConfirmation"
-            accessibilityLabel={resourceConfirmation ?? undefined}
+            accessibilityLabel={resourceConfirmation ?? undefined} placeholder={resource.name} placeholderIsValue
             value={typedResource} editable={!busy} monospace autoCapitalize="none" autoComplete="off"
             onChangeText={setTypedResource} />} />
       </ItemGroup> : null}
@@ -402,9 +402,10 @@ function DeploymentDispositionSheet(
             options={[{ id: 'keep', label: t('common.keep') }, { id: 'delete', label: t('common.delete') }]}
             onChange={next => setVolumeChoices(previous => ({ ...previous, [volume.name]: next }))} />
           {volumeChoices[volume.name] === 'delete' ? <Item title={t('projects.deployments.volumeConfirmation', { name: volumeDisplayName(volume.name) })}
-            titleStyle={Typography.mono()} accessoryLayout="adaptive" showChevron={false} rightElement={<FieldTextInput
+            accessoryLayout="adaptive" showChevron={false} rightElement={<FieldTextInput
               testID={`project-deployments.disposition.volume.${volume.name}.confirmation`}
               accessibilityLabel={t('projects.deployments.volumeConfirmation', { name: volumeDisplayName(volume.name) })}
+              placeholder={volumeDisplayName(volume.name)} placeholderIsValue
               value={confirmations[volume.name] ?? ''} editable={!busy} monospace autoCapitalize="none" autoComplete="off"
               onChangeText={text => setConfirmations(previous => ({ ...previous, [volume.name]: text }))} />} /> : null}
         </React.Fragment>)}

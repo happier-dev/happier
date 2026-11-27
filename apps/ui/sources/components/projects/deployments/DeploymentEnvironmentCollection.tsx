@@ -341,6 +341,8 @@ export function DeploymentEnvironmentChooser(props: Readonly<{
    * in place of where it runs, or the chosen row's own read still working.
    */
   rowStatus?: (item: EnvironmentItem) => Readonly<{ unavailable: string } | { working: true }> | null;
+  /** What the caller says about the chosen row (its refusal), shown directly under it so it never speaks out of view. */
+  selectedNotice?: React.ReactNode;
 }>) {
   const { theme } = useUnistyles();
   const collection = useDeploymentCollection(props.controller, { mounted: true, visible: true, focused: true },
@@ -351,23 +353,39 @@ export function DeploymentEnvironmentChooser(props: Readonly<{
   const parts = useDeploymentEnvironmentRowParts(items, `${props.testID}.row`, props.lifetime ?? null);
   const partsById = new Map(parts.map(part => [part.environmentId, part]));
   const failure = collection.snapshot.failure;
+  // Rows from more than one Project say which Project they belong to, so two "Production" rows never read the same.
+  const acrossProjects = new Set(items.map(item => item.environment.projectSourceId)).size > 1;
+  const rowFacts = (part: (typeof parts)[number] | undefined, title: string) => {
+    const project = acrossProjects && part?.projectName && !title.startsWith(part.projectName) ? part.projectName : null;
+    return [project, part?.where].filter(Boolean).join(' · ') || undefined;
+  };
+  // Choosable rows lead; rows the caller refuses follow in their own group, their shared reason said once above them.
+  const statuses = rows.map(row => ({ row, status: props.rowStatus?.(row) ?? null }));
+  const open = statuses.filter(entry => !(entry.status && 'unavailable' in entry.status));
+  const closed = statuses.flatMap(entry => entry.status && 'unavailable' in entry.status
+    ? [{ row: entry.row, reason: entry.status.unavailable }] : []);
+  const sharedReason = closed.length > 1 && closed.every(entry => entry.reason === closed[0]!.reason) ? closed[0]!.reason : null;
   return (
+    <>
     <ItemGroup title={props.title}>
       {/* The chosen destination carries its check, so a lone option still reads as chosen or not (D23); no selection fill,
           which read as a disabled row (R14-D11). */}
-      {rows.map(row => {
+      {open.map(({ row, status }) => {
         const part = partsById.get(row.environment.id);
-        const status = props.rowStatus?.(row) ?? null;
-        const unavailable = status && 'unavailable' in status ? status.unavailable : null;
-        return <Item key={row.environment.id} testID={`${props.testID}:${row.environment.id}`}
-          title={row.title} subtitle={unavailable ?? part?.where ?? undefined}
-          icon={<DeploymentEnvironmentMark platform={part?.platformMark ?? null} />}
-          accessibilityRole="radio" accessibilityChecked={props.selectedId === row.environment.id}
-          disabled={props.disabled || unavailable !== null} loading={status !== null && 'working' in status}
-          showChevron={false} onPress={row.onPress}
-          rightElement={props.selectedId === row.environment.id
-            ? <Icon name="check" size={ICON_SIZE.md} color={theme.colors.text.primary} /> : undefined} />;
+        const selected = props.selectedId === row.environment.id;
+        return <React.Fragment key={row.environment.id}>
+          <Item testID={`${props.testID}:${row.environment.id}`}
+            title={row.title} subtitle={rowFacts(part, row.title)}
+            icon={<DeploymentEnvironmentMark platform={part?.platformMark ?? null} />}
+            accessibilityRole="radio" accessibilityChecked={selected}
+            disabled={props.disabled} loading={status !== null && 'working' in status}
+            showChevron={false} onPress={row.onPress}
+            rightElement={selected ? <Icon name="check" size={ICON_SIZE.md} color={theme.colors.text.primary} /> : undefined} />
+          {selected ? props.selectedNotice : null}
+        </React.Fragment>;
       })}
+      {/* A chosen row no longer listed (refreshed away, or chosen before its read) keeps its notice in this group. */}
+      {props.selectedId !== null && !open.some(({ row }) => row.environment.id === props.selectedId) ? props.selectedNotice : null}
       {collection.hasPreviousPage ? <SectionActionButton testID={`${props.testID}.previous`}
         icon="caret-left" title={t('common.previous')} disabled={props.disabled} onPress={collection.previousPage} /> : null}
       {collection.hasNextPage ? <SectionActionButton testID={`${props.testID}.next`}
@@ -379,11 +397,23 @@ export function DeploymentEnvironmentChooser(props: Readonly<{
         {...(failure?.retryable ? { action: { label: t('common.retry'), onPress: () => { void collection.refresh(); } } } : {})} />
         : collection.snapshot.status !== 'ready' && rows.length === 0 ? <SurfaceStateCard size="line" kind="loading"
             testID={`${props.testID}.loading`} title={t('projects.deployments.loading')} />
-        : rows.length === 0 ? <SurfaceStateCard size="line" kind="empty" testID={`${props.testID}.empty`}
+        // Only refused rows listed: nothing can be chosen yet, so the empty state still leads to its prerequisite.
+        : open.length === 0 ? <SurfaceStateCard size="line" kind="empty" testID={`${props.testID}.empty`}
             title={props.emptyTitle} reason={props.emptyBody}
             {...(props.emptyAction && !collection.hasNextPage
               ? { action: { ...props.emptyAction, testID: `${props.testID}.empty.action` } } : {})} /> : null}
     </ItemGroup>
+    {closed.length > 0 ? <ItemGroup testID={`${props.testID}.unavailable`} title={t('projects.deployments.chooserUnavailable')}
+      {...(sharedReason ? { description: sharedReason } : {})}>
+      {closed.map(({ row, reason }) => {
+        const part = partsById.get(row.environment.id);
+        return <Item key={row.environment.id} testID={`${props.testID}:${row.environment.id}`}
+          title={row.title} subtitle={sharedReason ? rowFacts(part, row.title) : reason}
+          icon={<DeploymentEnvironmentMark platform={part?.platformMark ?? null} />}
+          accessibilityRole="radio" accessibilityChecked={false} disabled showChevron={false} />;
+      })}
+    </ItemGroup> : null}
+    </>
   );
 }
 

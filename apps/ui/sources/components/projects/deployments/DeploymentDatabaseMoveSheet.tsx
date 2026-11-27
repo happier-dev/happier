@@ -153,6 +153,32 @@ function DeploymentDatabaseMoveSheet(props: Input & CustomModalInjectedProps) {
       else if (outcome.kind === 'refused') setRefusal({ code: outcome.code });
     } finally { setBusy(false); }
   };
+  // Only a destination refused after its read speaks, directly under its row: what is wrong, and what to do, per reason.
+  const selectedNotice = selectedId && !selection && !selectedReading ? <SurfaceStateCard testID={`project-deployments.move.destination.${
+    selected.snapshot.status === 'ready' ? 'unavailable' : 'failed'}`} size="line"
+    kind={selected.snapshot.status === 'ready' ? 'unavailable' : 'error'}
+    title={selected.snapshot.status === 'unavailable' ? t('projects.deployments.databaseMoveReadFailed')
+      : destinationRefusal === 'unsupported' ? t('projects.deployments.databaseMoveUnsupported')
+      : destinationRefusal === 'backup_required' ? t('projects.deployments.databaseMoveBackupsRequired')
+      : destinationRefusal === 'source_machine_required' ? t('projects.deployments.databaseMoveSourceMachineRequired')
+      : t('projects.deployments.databaseMoveSelectionUnavailable')}
+    diagnosticCode={destinationRefusal ?? selected.snapshot.failure?.code}
+    reason={selected.snapshot.status === 'unavailable'
+      ? deploymentActionRefusalRemedy(selected.snapshot.failure?.code ?? 'deployment_unavailable')
+      : destinationRefusal === 'unsupported' ? t('projects.deployments.databaseMoveUnsupportedRemedy')
+      : destinationRefusal === 'source_machine_required' ? t('projects.deployments.databaseMoveSourceMachineRequiredRemedy') : undefined}
+    // A prerequisite leads to where it is met in the destination's own Settings: Backups (PAGE-ACCEPT-176 D23), or
+    // Sharing for a database not yet on a private network.
+    {...(prerequisite && destination ? { action: {
+      label: prerequisite.label,
+      testID: prerequisite.testID,
+      onPress: () => {
+        props.onClose();
+        router.push(deploymentEnvironmentRoute({ serverId: destination.environment.serverId,
+          projectSourceId: destination.environment.projectSourceId, environmentId: destination.environment.id,
+          tab: 'settings', section: prerequisite.section }) as never);
+      },
+    } } : {})} /> : null;
   const footer = <ModalCardFooterActions cancel={{ onPress: props.onClose, disabled: busy }}>
     <RoundButton testID="project-deployments.move.copy" size="normal" title={t('projects.deployments.databaseMoveReview')}
       disabled={busy || !selection} loading={busy} onPress={() => { void reviewDestination(); }} />
@@ -165,7 +191,7 @@ function DeploymentDatabaseMoveSheet(props: Input & CustomModalInjectedProps) {
       <Text style={deploymentSheetStyles.lead}>{t('projects.deployments.databaseMoveLead')}</Text>
       <DeploymentEnvironmentChooser controller={controller} testID="project-deployments.move.destination" includeDatabaseMoveCandidates
         title={t('projects.deployments.databaseMoveDestination')} selectedId={selectedId} onSelect={select} disabled={busy}
-        lifetime={props.lifetime} rowStatus={rowStatus}
+        lifetime={props.lifetime} rowStatus={rowStatus} selectedNotice={selectedNotice}
         eligible={row => row.environment.id !== props.source.environment.id && row.environment.capabilities.manage
           && row.databaseMoveCandidate === true}
         loadFailedTitle={t('projects.deployments.promotion.loadFailed')}
@@ -175,32 +201,6 @@ function DeploymentDatabaseMoveSheet(props: Input & CustomModalInjectedProps) {
           props.onClose();
           router.push(buildPluginsHomeRoute('app', { view: 'kind', kind: 'app', filters: DEPLOYMENT_DATABASE_CATALOG_FILTER }) as never);
         } }} />
-      {/* Only a destination refused after its read speaks here: what is wrong, and what to do, per reason. */}
-      {selectedId && !selection && !selectedReading ? <SurfaceStateCard testID={`project-deployments.move.destination.${
-        selected.snapshot.status === 'ready' ? 'unavailable' : 'failed'}`} size="line"
-        kind={selected.snapshot.status === 'ready' ? 'unavailable' : 'error'}
-        title={selected.snapshot.status === 'unavailable' ? t('projects.deployments.databaseMoveReadFailed')
-          : destinationRefusal === 'unsupported' ? t('projects.deployments.databaseMoveUnsupported')
-          : destinationRefusal === 'backup_required' ? t('projects.deployments.databaseMoveBackupsRequired')
-          : destinationRefusal === 'source_machine_required' ? t('projects.deployments.databaseMoveSourceMachineRequired')
-          : t('projects.deployments.databaseMoveSelectionUnavailable')}
-        diagnosticCode={destinationRefusal ?? selected.snapshot.failure?.code}
-        reason={selected.snapshot.status === 'unavailable'
-          ? deploymentActionRefusalRemedy(selected.snapshot.failure?.code ?? 'deployment_unavailable')
-          : destinationRefusal === 'unsupported' ? t('projects.deployments.databaseMoveUnsupportedRemedy')
-          : destinationRefusal === 'source_machine_required' ? t('projects.deployments.databaseMoveSourceMachineRequiredRemedy') : undefined}
-        // A prerequisite leads to where it is met in the destination's own Settings: Backups (PAGE-ACCEPT-176 D23), or
-        // Sharing for a database not yet on a private network.
-        {...(prerequisite && destination ? { action: {
-          label: prerequisite.label,
-          testID: prerequisite.testID,
-          onPress: () => {
-            props.onClose();
-            router.push(deploymentEnvironmentRoute({ serverId: destination.environment.serverId,
-              projectSourceId: destination.environment.projectSourceId, environmentId: destination.environment.id,
-              tab: 'settings', section: prerequisite.section }) as never);
-          },
-        } } : {})} /> : null}
       {refusal ? <SurfaceStateCard testID="project-deployments.move.refused" size="line" kind="error"
         title={t('projects.deployments.databaseMoveUnavailable')} diagnosticCode={refusal.code} reason={refusal.variable ?? (refusal.code === 'writer_review_required' ? t('projects.deployments.move.writerReviewRequired')
           : refusal.code === 'noRunningWriter' ? t('projects.deployments.move.noRunningWriter')
@@ -208,6 +208,14 @@ function DeploymentDatabaseMoveSheet(props: Input & CustomModalInjectedProps) {
       {setChrome ? null : footer}
     </View>
   </ListPresentationProvider>;
+}
+
+/** What one authored variable becomes: the destination's address, port or password, added to this app. */
+function moveVariableChange(binding: Prepared['patch']['bindings']['set'][number], destination: string): string {
+  const source = binding.source;
+  if (source.kind === 'reference' && source.component === 'host') return t('projects.deployments.databaseMoveVariableHost', { environment: destination });
+  if (source.kind === 'reference' && source.component === 'port') return t('projects.deployments.databaseMoveVariablePort', { environment: destination });
+  return t('projects.deployments.databaseMoveVariablePassword', { environment: destination });
 }
 
 /** A running writer reads as its Compose service on its Machine, never as the runtime's internal ids. */
@@ -255,10 +263,16 @@ function DeploymentDatabaseMoveCutoverSheet(props: Readonly<{ prepared: Prepared
       </ItemGroup>
       <ItemGroup title={t('projects.deployments.databaseMoveDestination')}>
         <Item title={props.name} mode="info" />
-        <Item title={t('projects.deployments.databaseMoveRemovedService')} detail={props.sourceService} mode="info" />
       </ItemGroup>
+      {/* Each variable says what it becomes: every one is added and reads its value from the destination. */}
       <ItemGroup title={t('projects.deployments.databaseMoveBindings')}>
-        {props.prepared.patch.bindings.set.map(binding => <Item key={binding.name} title={binding.name} mode="info" />)}
+        {props.prepared.patch.bindings.set.map(binding => <Item key={binding.name} testID={`project-deployments.move.variable:${binding.name}`}
+          title={binding.name} subtitle={moveVariableChange(binding, props.name)} mode="info" />)}
+      </ItemGroup>
+      {/* What leaves the app is its own fact, never a line under Destination that reads as the destination losing it. */}
+      <ItemGroup title={t('projects.deployments.databaseMoveRemovedService')}>
+        <Item testID="project-deployments.move.removed" title={props.sourceService}
+          subtitle={t('projects.deployments.databaseMoveRemovedServiceKept')} mode="info" />
       </ItemGroup>
       <ItemGroup title={t('projects.deployments.databaseMoveDefinition')}>
         <CodeBlockView code={storedComposeDocumentText(props.prepared.patch.definition.document)} language="yaml" showCopyButton showHeaderRow={false} />
