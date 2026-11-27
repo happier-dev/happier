@@ -2,7 +2,7 @@
 
 const { createHash } = require('node:crypto');
 const { existsSync, lstatSync, readFileSync, readdirSync, statSync, writeFileSync } = require('node:fs');
-const { dirname, isAbsolute, join, relative, resolve } = require('node:path');
+const { dirname, isAbsolute, join, relative, resolve, sep } = require('node:path');
 
 const CLI_DIST_BUILD_MANIFEST = '.build-manifest.json';
 const CLI_DIST_BUILD_MANIFEST_TOOL_VERSION = '2';
@@ -169,10 +169,14 @@ function isPathInsideDirectory(candidatePath, directoryPath) {
   return relativePath === '' || (!relativePath.startsWith('..') && !isAbsolute(relativePath));
 }
 
-function resolveRelativeImport(rootDir, fromFilePath, specifier) {
+function resolveRelativeImport(rootDir, workspacePackageNames, fromFilePath, specifier) {
   const basePath = resolve(dirname(fromFilePath), specifier);
   if (!isPathInsideDirectory(basePath, rootDir)) {
-    return { ok: false, reason: `outside_dist:${basePath}` };
+    // Native bundles can link directly to an emitted entry in a packaged workspace.
+    const [modules, scope, name, file] = relative(dirname(rootDir), basePath).split(sep, 4);
+    if (modules !== 'node_modules' || scope !== '@happier-dev' || !file || !workspacePackageNames.has(`${scope}/${name}`)) {
+      return { ok: false, reason: `outside_dist:${basePath}` };
+    }
   }
 
   const candidates = [
@@ -225,6 +229,7 @@ function readCliDistClosure(entrypoint, options = {}) {
   const normalizedEntrypoint = resolve(String(entrypoint ?? ''));
   const rootDir = resolve(String(options.outputDir ?? dirname(normalizedEntrypoint)));
   const maxFiles = normalizeMaxFiles(options.maxFiles);
+  const workspacePackageNames = new Set(options.workspaceRuntimePackages);
   const files = [];
   const missing = [];
   const seen = new Set();
@@ -272,7 +277,7 @@ function readCliDistClosure(entrypoint, options = {}) {
     }
 
     for (const specifier of extractRelativeModuleSpecifiers(source)) {
-      const resolvedImport = resolveRelativeImport(rootDir, filePath, specifier);
+      const resolvedImport = resolveRelativeImport(rootDir, workspacePackageNames, filePath, specifier);
       if (!resolvedImport.ok) {
         missing.push(resolvedImport.reason);
         continue;
@@ -372,10 +377,6 @@ function buildCliDistManifest(entrypoint, options = {}) {
   if (!entrypointValidity.ok) {
     throw new Error(`[cli-dist-manifest] ${entrypointValidity.reason}: ${entrypoint}`);
   }
-  const closure = readCliDistClosureFingerprint(entrypoint, options);
-  if (!closure.ok) {
-    throw new Error(`[cli-dist-manifest] ${closure.reason}: ${entrypoint}`);
-  }
   const inputFingerprint = String(options.inputFingerprint ?? '').trim().toLowerCase();
   if (inputFingerprint && !/^[a-f0-9]{64}$/.test(inputFingerprint)) {
     throw new Error(`[cli-dist-manifest] invalid_input_fingerprint: ${entrypoint}`);
@@ -402,6 +403,10 @@ function buildCliDistManifest(entrypoint, options = {}) {
   }
   if (workspaceRuntimePackages !== undefined && !workspaceRuntimeIdentity) {
     throw new Error(`[cli-dist-manifest] workspace_runtime_packages_without_identity: ${entrypoint}`);
+  }
+  const closure = readCliDistClosureFingerprint(entrypoint, options);
+  if (!closure.ok) {
+    throw new Error(`[cli-dist-manifest] ${closure.reason}: ${entrypoint}`);
   }
 
   return {
@@ -545,7 +550,10 @@ function readCliDistBuildManifest(entrypoint, options = {}) {
     return invalidManifestResult('invalid_build_manifest_file_count', manifestPath);
   }
 
-  const closure = readCliDistClosureFingerprint(normalizedEntrypoint, options);
+  const closure = readCliDistClosureFingerprint(normalizedEntrypoint, {
+    ...options,
+    workspaceRuntimePackages: recordedWorkspaceRuntimePackages,
+  });
   if (!closure.ok) {
     return invalidManifestResult(closure.reason, manifestPath, {
       fileCount: closure.fileCount,

@@ -1701,7 +1701,10 @@ belong to code. Target-specific external/native dependencies, tools and Go paylo
 remain support. Support contains `node_modules` and `tools`; JavaScript sidecars
 and source-derived plugin failure diagnostics remain code-owned. Stale checkout
 publication failures neither select static support nor replace the code build's
-private diagnostics during support linking.
+private diagnostics during support linking. The 0.3 CLI dist manifest follows
+relative links from the emitted CLI graph to entries in its declared bundled
+workspaces under the payload's `node_modules`. It fingerprints the reached files
+and refuses links outside the CLI dist and those package roots.
 Native construction does not require a prepared workspace-publication signature
 or a copied CLI source generation. Source-resolution, syntax and bundler/process
 failures abort construction; typechecking remains separate validation. Release

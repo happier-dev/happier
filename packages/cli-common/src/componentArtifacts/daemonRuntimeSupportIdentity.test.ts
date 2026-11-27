@@ -655,6 +655,8 @@ await prepareSourcePluginUiArtifacts(JSON.parse(input));`);
       if(BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.length!==1) throw new Error('source locators unavailable');
       import {identity} from '@happier-dev/shared';
       import legacy from 'legacy-cjs';
+      const plugin = await import('${pluginName}');
+      if (plugin.identity !== identity) throw new Error('split lazy plugin instance');
       if(legacy.charCodeAt(0)!==27) throw new Error('legacy CJS parsing changed');
       const names=process.versions.bun
         ? ['./session.mjs','./run.mjs','./mcp.mjs','./voice.mjs','../node_modules/${pluginName}/.happier-plugin-build/daemon/index.js']
@@ -677,6 +679,8 @@ await prepareSourcePluginUiArtifacts(JSON.parse(input));`);
           writeFixtureFile(outfile, 'native compiler boundary'),
       } : {}),
     });
+    const distEntrypoint = join(payloadDir, 'package-dist/index.mjs');
+    expect(cliDistBuildManifest.readCliDistBuildManifest(distEntrypoint)).toMatchObject({ ok: true });
     const payloadPlugin = join(payloadDir, 'node_modules', pluginName);
     expect(existsSync(join(payloadPlugin, '.happier-plugin-build/stale.js'))).toBe(false);
     expect(await readFile(join(payloadPlugin, '.happier-plugin-assets/kept.txt'), 'utf8')).toBe('authored asset');

@@ -148,6 +148,34 @@ test('readCliDistBuildManifest requires an entrypoint and build manifest', async
   }
 });
 
+test('CLI dist integrity follows declared workspace entries and refuses undeclared siblings', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'cli-dist-workspace-entry-' });
+  const packageName = '@happier-dev/plugins-fixture-extra';
+  const dist = fixture.path('package-dist');
+  const entrypoint = join(dist, 'index.mjs');
+  const daemon = fixture.path('node_modules', packageName, '.happier-plugin-build', 'daemon.js');
+  const specifier = `../node_modules/${packageName}/.happier-plugin-build/daemon.js`;
+  await mkdir(dist, { recursive: true });
+  await mkdir(fixture.path('node_modules', packageName, '.happier-plugin-build'), { recursive: true });
+  await writeFile(entrypoint, `export const load = () => import('${specifier}');`);
+  await writeFile(daemon, 'export const ready = true;');
+
+  assert.throws(() => writeCliDistBuildManifest(entrypoint, {
+    workspaceRuntimeIdentity: 'a'.repeat(64),
+    workspaceRuntimePackages: ['@happier-dev/plugins-fixture'],
+  }), /incomplete:outside_dist/);
+  writeCliDistBuildManifest(entrypoint, {
+    workspaceRuntimeIdentity: 'a'.repeat(64),
+    workspaceRuntimePackages: [packageName],
+  });
+  assert.equal(readCliDistBuildManifest(entrypoint).ok, true);
+
+  await writeFile(daemon, 'export const ready = false;');
+  assert.equal(readCliDistBuildManifest(entrypoint).reason, 'build_manifest_fingerprint_mismatch');
+  await rm(daemon);
+  assert.match(readCliDistBuildManifest(entrypoint).reason, /^incomplete:missing_module:/);
+});
+
 test('resolveCliDistEntrypointFromBin prefers manifest-complete dist before package-dist', async () => {
   const tmp = await mkdtemp(join(tmpdir(), 'happy-cli-dist-entrypoint-manifest-'));
   try {
