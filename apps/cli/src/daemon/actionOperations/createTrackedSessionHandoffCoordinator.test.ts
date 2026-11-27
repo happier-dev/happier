@@ -587,7 +587,7 @@ describe('createTrackedSessionHandoffCoordinator', () => {
       phase = 'retire fixture requester and installed WorkspaceSync runtime';
     });
   });
-  it.each(['relationship', 'linked_workspace'] as const)('uses immutable Home refs independently of the guest profile before %s child membership without moving the Session', async kind => {
+  it.each(['relationship', 'linked_workspace'] as const)('reads immutable Home refs concurrently with %s child membership without moving the Session', async kind => {
     await withTempDir('happier-child-session-link-', async root => {
       const home = 'srv_child_session_home';
       const homeUrl = 'https://session-home.example';
@@ -654,6 +654,10 @@ describe('createTrackedSessionHandoffCoordinator', () => {
         { key: graphKey, revision: 1, content: { t: 'plain' as const, v: { key: graphKey, value: { relationships: [relation] } } } },
       ];
       const reads: string[] = [];
+      const projectReadStarted = Promise.withResolvers<void>();
+      const releaseProjectRead = Promise.withResolvers<void>();
+      let trackPreflight = false;
+      let projectReads = 0;
       const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
         const path = new URL(String(url)).pathname;
         reads.push(path);
@@ -677,7 +681,14 @@ describe('createTrackedSessionHandoffCoordinator', () => {
             happyHomeDir: '/home/custom-user/.happier', happyCliVersion: 'source-fixture', username: 'custom-user' }) } } };
       });
       const post = vi.spyOn(axios, 'post').mockImplementation(async url => {
-        if (String(url).endsWith('/account/project-rows/list')) return { status: 200, data: { status: 'listed', coverage: 'complete', rows } };
+        if (String(url).endsWith('/account/project-rows/list')) {
+          if (trackPreflight) {
+            projectReads++;
+            projectReadStarted.resolve();
+            await releaseProjectRead.promise;
+          }
+          return { status: 200, data: { status: 'listed', coverage: 'complete', rows } };
+        }
         if (String(url).endsWith('/machines/managed/actions/get')) return { status: 200, data: managed };
         throw new Error('Unexpected Session Home write');
       });
@@ -715,14 +726,26 @@ describe('createTrackedSessionHandoffCoordinator', () => {
         },
         readCredentials: async () => credentials, workspaceSyncAdapter });
       let stoppedSource = false;
-      const result = await runWithServerHttpBaseUrl(homeUrl, () => coordinate({
+      trackPreflight = true;
+      const operation = runWithServerHttpBaseUrl(homeUrl, () => coordinate({
         operationId: 'child-session-operation', actionInput: { sessionId: 'session-child-linked', targetMachineId: 'target',
           accountServerId: home, targetPath: '/target', workspaceAction: kind === 'relationship'
             ? { kind, relationshipId: relation.relationshipId, flushBeforeCommit: true } : { kind } },
         start: async () => { stoppedSource = true; throw new Error('Source must not stop when target bootstrap is unavailable'); },
         signal: new AbortController().signal, publishOwnerUpdate() {},
       }));
-      expect(result).toMatchObject({ ok: false, errorCode: 'peer_unavailable' });
+      try {
+        await Promise.race([projectReadStarted.promise, operation]);
+        await vi.waitFor(() => {
+          expect(projectReads).toBe(1);
+          expect(reads.filter(path => path === '/v1/machines/child' || path === '/v1/machines/target').sort())
+            .toEqual(['/v1/machines/child', '/v1/machines/target']);
+        });
+      } finally {
+        releaseProjectRead.resolve();
+        await operation;
+      }
+      expect(await operation).toMatchObject({ ok: false, errorCode: 'peer_unavailable' });
       expect(reads).toEqual(expect.arrayContaining(['/v1/machines/child', '/v1/machines/parent', '/v1/machines/target']));
       expect(workspaceInputs).toEqual([expect.objectContaining({ sourceMachineId: 'child', targetMachineId: 'target',
         sourceWorkspaceRefId: 'child-ref', targetWorkspaceRefId: 'target-ref', sourceRootPath: '/work/custom', targetRootPath: '/target' })]);

@@ -325,23 +325,29 @@ export function createTrackedSessionHandoffCoordinator(deps: CoordinatorDeps) {
       try {
         // Endpoint identity is read from the authenticated Home's Project rows.
         const authorization = hostInput.context?.externalActionExecutionAuthorization;
-        const projectSnapshot = await refreshProjectSnapshot({
-          ...(requester ? { credentials, sessionCustody: { serverId: requester.attribution.serverId,
-            accountId: requester.attribution.accountId, serverHttpBaseUrl: requester.serverHttpBaseUrl, isCurrent: requester.isCurrent } }
-            : authorization ? { authorization, effectActionId: authorization.binding.actionId }
-              : { credentials, publication: 'installed' as const }),
-          serverId: workspaceAccountServerId, signal: hostInput.signal,
-          selection: { kinds: ['workspace-ref', 'relationship-graph'] },
-        });
         const sessionCwd = source.sourceRootPath;
         if (!sessionCwd) throw Object.assign(new Error('Source workspace path is unavailable'), { code: 'workspace_ref_not_ready' });
+        const [projectRead, childMachinesRead] = await Promise.allSettled([
+          refreshProjectSnapshot({
+            ...(requester ? { credentials, sessionCustody: { serverId: requester.attribution.serverId,
+              accountId: requester.attribution.accountId, serverHttpBaseUrl: requester.serverHttpBaseUrl, isCurrent: requester.isCurrent } }
+              : authorization ? { authorization, effectActionId: authorization.binding.actionId }
+                : { credentials, publication: 'installed' as const }),
+            serverId: workspaceAccountServerId, signal: hostInput.signal,
+            selection: { kinds: ['workspace-ref', 'relationship-graph'] },
+          }),
+          readWorkspaceSyncChildMachineFacts({
+            serverId: workspaceAccountServerId, serverHttpBaseUrl: resolveServerHttpBaseUrl(), credentials,
+            machineIds: [source.sourceMachineId, targetMachineId], signal: hostInput.signal,
+          }),
+        ]);
+        if (projectRead.status === 'rejected') throw projectRead.reason;
+        if (childMachinesRead.status === 'rejected') throw childMachinesRead.reason;
+        const projectSnapshot = projectRead.value;
+        const childMachines = childMachinesRead.value;
         const selectedRelationship = workspaceAction.kind === 'relationship'
           ? projectSnapshot.relationships.find((relationship) => relationship.relationshipId === workspaceAction.relationshipId)
           : undefined;
-        const childMachines = await readWorkspaceSyncChildMachineFacts({
-          serverId: workspaceAccountServerId, serverHttpBaseUrl: resolveServerHttpBaseUrl(), credentials,
-          machineIds: [source.sourceMachineId, targetMachineId], signal: hostInput.signal,
-        });
         const sourceCandidates = projectSnapshot.workspaceRefs.filter((ref) => (
           ref.serverId.trim() === workspaceAccountServerId
           && ref.machineId === source.sourceMachineId
