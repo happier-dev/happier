@@ -39,7 +39,6 @@ import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import { createSessionOwnerMetadataV1, createPlainSessionOwnerMetadataEnvelopeV1, projectSessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { sealWorkflowAcceptedSnapshotStoredEnvelopeV1, sealWorkflowCheckpointStoredEnvelopeV1,
     sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1,
-    openWorkflowProgressStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1,
     type WorkflowDefinitionV1, type WorkflowProgressEnvelopeV1 } from '@happier-dev/protocol';
 import { createProductionWorkflowRunCoordinator } from '../../../../cli/src/daemon/workflows/production';
 import { createWorkflowRunStorageTestkit } from '../../../../cli/src/daemon/workflows/workflowRunStorage.testkit';
@@ -86,7 +85,8 @@ import { machinesRoutes } from '@/app/api/routes/machines/machinesRoutes';
 import { createTrustedMachineInstallation, createSignedPluginInstallationPublisherHeader } from '@/testkit/pluginInstallationPublisherTestkit';
 import * as machineRpc from '../../../../cli/src/session/transport/rpc/machineRpc';
 import { ScmComparisonSchema } from '@happier-dev/protocol/scm/comparison';
-import { ScmComparisonCaptureOutputSchema } from '@happier-dev/protocol/scm/diffSummary';
+import { ScmComparisonCaptureInputSchema, ScmComparisonCaptureOutputSchema } from '@happier-dev/protocol/scm/diffSummary';
+import { TargetedActionRpcRequestV1Schema } from '@happier-dev/protocol/actions/actionRpcTransport';
 
 describe('Review read Actions through authenticated HTTP', () => {
     let harness: Awaited<ReturnType<typeof createDatabaseIntegrationHarness>>;
@@ -160,15 +160,22 @@ describe('Review read Actions through authenticated HTTP', () => {
             let childActions: ReturnType<typeof createPluginInvocationActionsService>;
             const source = await createTriagePullRequestReviewActionTestkit({ executeReview: async input =>
                 childActions.execute('review.start', projectNativeJsonValueForTransport(input)) });
-            // Native SCM is outside this HTTP fixture. Preserve the sender's
-            // selected Machine and Session authorization at its socket boundary.
+            // Native SCM is outside this HTTP fixture. Retained comparisons are
+            // exact-Machine reads; only a fresh live capture writes the Session.
             const nativeScm = vi.spyOn(machineRpc, 'callExactMachineRpc').mockImplementation(async request => {
                 expect(request.machineId).toBe(machineId);
-                expect(request.authorization).toEqual({ kind: 'session.write', sessionId: session.id });
                 if (request.method !== RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE) throw new Error(`unexpected_machine_effect:${request.method}`);
-                const captured = await source.context.services.actions.execute('scm.diffSummary.capture', projectNativeJsonValueForTransport(request.request));
+                const envelope = TargetedActionRpcRequestV1Schema.parse(request.request);
+                expect(envelope.target).toEqual({ kind: 'machine', machineId,
+                    project: { machineId, directory: harness.baseDir } });
+                const input = ScmComparisonCaptureInputSchema.parse(envelope.input);
+                expect(input.sessionId).toBe(session.id);
+                if (input.comparisonId) expect(request.authorization).toBeUndefined();
+                else expect(request.authorization).toEqual({ kind: 'session.write', sessionId: session.id });
+                const captured = await source.context.services.actions.execute('scm.diffSummary.capture', projectNativeJsonValueForTransport(input));
                 if (!captured || typeof captured !== 'object' || !('comparison' in captured)) throw new Error('Missing native comparison');
                 const comparison = ScmComparisonSchema.parse(captured.comparison);
+                if (input.comparisonId) expect(comparison.id).toBe(input.comparisonId);
                 return ScmComparisonCaptureOutputSchema.parse({ success: true, comparison,
                     metadata: { source: comparison.source, sourceKey: comparison.id } });
             });
@@ -367,23 +374,10 @@ describe('Review read Actions through authenticated HTTP', () => {
             const manualResult = await coordinate(await claim(manual.id)).catch(error => {
                 throw new Error('Manual PR template start failed', { cause: error });
             });
-            expect(manualResult).toMatchObject({ state: 'failed', reason: 'invalid_input' });
-            const failedInputs = await db.workflowRunInvocation.findMany({ where: { runId: manual.id, lifecycle: 'failed' } });
-            const failedProgress = failedInputs.map(row => {
-                const opened = openWorkflowProgressStoredEnvelopeV1({ mode: 'plain',
-                    binding: { v: 1, purpose: 'invocation_progress', accountId: owner.id, runId: manual.id,
-                        recordId: row.id, sequence: row.sequence.toString(), parentRecordId: row.parentRecordId,
-                        memberOrdinal: row.memberOrdinal.toString(), attempt: row.attempt.toString() },
-                    envelope: parseWorkflowStoredContentEnvelopeV1(row.contentEnvelope) });
-                if (opened.kind !== 'available') throw new Error('Expected readable failed input diagnostics');
-                return opened.content;
-            });
-            const failedPrepare = failedProgress.find(progress => progress.invocationPath.blockId === 'quick-prepare');
-            expect(failedPrepare?.reason).toMatchObject({ code: 'invalid_input' });
-            expect(failedPrepare?.validationIssues).toEqual(expect.arrayContaining([
-                expect.objectContaining({ pointer: '/reviewTarget', keyword: 'required', schemaPath: '#/required', message: expect.any(String) }),
-                expect.objectContaining({ pointer: '/expectedHeadSha', keyword: 'required', schemaPath: '#/required', message: expect.any(String) }),
-            ]));
+            // The event template's active-PR branch has no event on a manual wake.
+            // The separate manual PR workflow resolves its own selected target.
+            expect(manualResult).toMatchObject({ state: 'succeeded' });
+            expect(await db.workflowRunInvocation.count({ where: { runId: manual.id, lifecycle: 'failed' } })).toBe(0);
             expect(source.prepareInputs).toHaveLength(2);
             expect(await db.reviewMetadata.count({ where: { artifact: { accountId: owner.id } } })).toBe(2);
         });

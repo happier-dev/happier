@@ -726,9 +726,13 @@ export function createCliActionHost(params: CliActionExecutorParams):
       const resolvedContext = await resolveContext(context);
       if (!resolvedContext) return {};
       const comments = harness.deps.reviewCommentAction;
-      const boundComments: ActionExecutorDeps['reviewCommentAction'] = comments ? request => params.serverHttpBaseUrl
-        ? runWithServerHttpBaseUrl(params.serverHttpBaseUrl, () => comments(request))
-        : comments(request) : undefined;
+      const invoke = <T>(operation: () => T): T => params.serverHttpBaseUrl
+        ? runWithServerHttpBaseUrl(params.serverHttpBaseUrl, operation) : operation();
+      const boundComments: ActionExecutorDeps['reviewCommentAction'] = comments ? Object.assign(
+        (request: Parameters<typeof comments>[0]) => invoke(() => comments(request)),
+        { createBatch: comments.createBatch && ((...args: Parameters<NonNullable<typeof comments.createBatch>>) =>
+          invoke(() => comments.createBatch!(...args))) },
+      ) : undefined;
       return {
         ...(harness.deps.reviewRecords ? { records: harness.deps.reviewRecords(resolvedContext) } : {}),
         ...(boundComments ? { comments: boundComments } : {}),

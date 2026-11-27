@@ -236,13 +236,18 @@ it('keeps host Review services on their captured Home with refreshed Account cre
             await expect(services.comments!({ actionId: 'reviews.comments.list',
                 input: { reviewId: 'missing-review' } }))
                 .rejects.toMatchObject({ code: 'review_comment_encryption_material_unavailable' });
+            await expect(services.comments!.createBatch!([{ input: {
+                reviewId: 'missing-review', anchor: { kind: 'file', filePath: 'review.ts' },
+                snapshot: { kind: 'none', capturedAt: 1 }, body: 'Retained finding',
+                clientMutationId: `session-finding-${revision}`,
+            } }])).resolves.toMatchObject([{ ok: false, errorCode: 'review_comment_encryption_material_unavailable' }]);
         });
     }
-    expect(reads).toHaveLength(4);
+    expect(reads).toHaveLength(6);
     current = credential('foreign-account', 1);
     await expect(resolve(context)).resolves.toEqual({});
-    expect(reads).toHaveLength(4);
+    expect(reads).toHaveLength(6);
     current = null;
     await expect(resolve(context)).resolves.toEqual({});
-    expect(reads).toHaveLength(4);
+    expect(reads).toHaveLength(6);
 });

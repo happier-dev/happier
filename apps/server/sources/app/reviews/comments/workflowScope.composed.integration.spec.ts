@@ -14,6 +14,7 @@ import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/action
 import { zodSchemaToJsonSchemaObject } from '@happier-dev/protocol/actions/actionInputJsonSchema';
 import type { ReviewCommentPrincipalHeaderV1 } from '@happier-dev/protocol/reviews/comments/actions';
 import { REVIEW_COMMENT_PRINCIPAL_HEADER_V1, ReviewCommentCreateResponseV1Schema, ReviewCommentPrincipalHeaderV1Schema } from '@happier-dev/protocol/reviews/comments/actions';
+import { ReviewCommentMutationBatchRequestV1Schema } from '@happier-dev/protocol/reviews/comments/transport';
 import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import { prepareWorkflowRunDataKeyV1 } from '@happier-dev/protocol/workflows/workflowRunDataKeyV1';
@@ -109,27 +110,32 @@ describe('credentialed Workflow ReviewComment authority at Home', () => {
             const adapter: AxiosAdapter = async config => {
                 const headers = AxiosHeaders.from(config.headers);
                 const path = new URL(config.url!, 'http://localhost').pathname;
+                let payload: unknown = typeof config.data === 'string' ? JSON.parse(config.data) : config.data;
                 if (attack === 'account' && path.startsWith('/v1/reviews/comments')) headers.set('Authorization', `Bearer ${outsiderToken}`);
-                if ((attack === 'run' || attack === 'engine') && path.startsWith('/v1/reviews/comments')) {
-                    const principal = ReviewCommentPrincipalHeaderV1Schema.parse(JSON.parse(Buffer.from(
-                        String(headers.get(REVIEW_COMMENT_PRINCIPAL_HEADER_V1)), 'base64url').toString('utf8')));
-                    if (principal.actor.kind !== 'executionRun' || !principal.proof) throw new Error('detached_run_principal_missing');
-                    if (attack === 'run') principal.actor.runId = 'another-run';
-                    else {
-                        if (!principal.currentIntent) throw new Error('run_current_intent_missing');
-                        principal.actor.agentId = 'another-engine';
-                        principal.currentIntent.agentId = 'another-engine';
-                    }
-                    const { signatureBase64Url: _signature, ...unsignedProof } = principal.proof;
-                    principal.proof.signatureBase64Url = Buffer.from(tweetnacl.sign.detached(
-                        createReviewCommentPrincipalSigningInputV1({ ...principal, proof: unsignedProof }),
-                        keyPair.secretKey)).toString('base64url');
-                    headers.set(REVIEW_COMMENT_PRINCIPAL_HEADER_V1, Buffer.from(JSON.stringify(principal)).toString('base64url'));
+                if ((attack === 'run' || attack === 'engine') && path.endsWith('/prepareBatch')) {
+                    const batch = ReviewCommentMutationBatchRequestV1Schema.parse(payload);
+                    payload = { items: batch.items.map(item => {
+                        if (!item.principalHeader) throw new Error('detached_run_principal_missing');
+                        const principal = ReviewCommentPrincipalHeaderV1Schema.parse(JSON.parse(Buffer.from(
+                            item.principalHeader, 'base64url').toString('utf8')));
+                        if (principal.actor.kind !== 'executionRun' || !principal.proof) throw new Error('detached_run_principal_missing');
+                        if (attack === 'run') principal.actor.runId = 'another-run';
+                        else {
+                            if (!principal.currentIntent) throw new Error('run_current_intent_missing');
+                            principal.actor.agentId = 'another-engine';
+                            principal.currentIntent.agentId = 'another-engine';
+                        }
+                        const { signatureBase64Url: _signature, ...unsignedProof } = principal.proof;
+                        principal.proof.signatureBase64Url = Buffer.from(tweetnacl.sign.detached(
+                            createReviewCommentPrincipalSigningInputV1({ ...principal, proof: unsignedProof }),
+                            keyPair.secretKey)).toString('base64url');
+                        return { ...item, principalHeader: Buffer.from(JSON.stringify(principal)).toString('base64url') };
+                    }) };
                 }
                 const response = await app.inject({ method: config.method?.toUpperCase() as 'GET' | 'POST' | 'PATCH',
                     url: new URL(config.url!, 'http://localhost').pathname, headers: headers.toJSON() as Record<string, string>,
                     ...(config.params ? { query: config.params } : {}),
-                    ...(config.data ? { payload: typeof config.data === 'string' ? JSON.parse(config.data) : config.data } : {}) });
+                    ...(payload === undefined ? {} : { payload: JSON.stringify(payload) }) });
                 requests.push({ path: new URL(config.url!, 'http://localhost').pathname, status: response.statusCode, body: response.json() });
                 return { data: response.json(), status: response.statusCode, statusText: response.statusMessage,
                     headers: response.headers, config };
@@ -205,8 +211,10 @@ describe('credentialed Workflow ReviewComment authority at Home', () => {
                         ...input,
                         context: { surface: 'agent', serverId: 'home' },
                         workspace: { machineId, path: '/repo' }, agentId: 'coderabbit', serverId: 'home',
-                        comments: request => execute(request.actionId, request.input,
-                            request.reviewCommentPrincipal ? { principal: request.reviewCommentPrincipal } : undefined),
+                        comments: Object.assign((request: Parameters<NonNullable<ActionExecutorDeps['reviewCommentAction']>>[0]) =>
+                            execute(request.actionId, request.input,
+                                request.reviewCommentPrincipal ? { principal: request.reviewCommentPrincipal } : undefined),
+                        { createBatch: execute.createBatch }),
                     });
                     const observeSession = (rawText: string, physicalInvocationId = invocationId) => createWorkflowSessionStepExecutor({
                         credentials: { token, encryption: null }, prepareConversation: unused, materializeConversation: unused,
@@ -313,8 +321,12 @@ describe('credentialed Workflow ReviewComment authority at Home', () => {
                 if (origin === 'detached') {
                     for (const kind of ['machine', 'account', 'run', 'engine'] as const) {
                         attack = kind;
+                        const requestStart = requests.length;
                         expect(await materialize(`forged-${kind}`)).toMatchObject({ status: 'failed', commentIds: [],
                             failures: [{ errorCode: 'review_comment_permission_denied' }] });
+                        expect(requests.slice(requestStart).filter(request => request.path.startsWith('/v1/reviews/comments/mutations/')))
+                            .toMatchObject([{ path: '/v1/reviews/comments/mutations/prepareBatch', status: 200,
+                                body: { items: [{ ok: false, errorCode: 'review_comment_permission_denied' }] } }]);
                     }
                     expect(await db.reviewComment.count({ where: { reviewId } })).toBe(2);
                 }

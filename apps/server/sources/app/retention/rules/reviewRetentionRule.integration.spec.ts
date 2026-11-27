@@ -21,6 +21,7 @@ const old = new Date('2026-01-01T00:00:00Z');
 const cutoff = new Date('2026-11-10T12:00:00Z');
 const env = {
     HAPPIER_SERVER_RETENTION__ENABLED: 'true',
+    HAPPIER_SERVER_RETENTION__DRY_RUN: 'false',
     HAPPIER_SERVER_RETENTION__REVIEWS__MODE: 'delete_older_than',
     HAPPIER_SERVER_RETENTION__REVIEWS__DAYS: '7',
     HAPPIER_SERVER_RETENTION__BATCH_SIZE: '1',
@@ -142,7 +143,9 @@ describe('Review retention through the shared sweep and Artifact deletion', () =
             scheduledAt: old, dueAt: old, finishedAt: old,
         } });
         const review = await seedReview(owner.id, old, run.id);
-        await runRetentionSweep({ policy: readRetentionPolicyFromEnv(await readHomeConfigEnv({})), now });
+        await runRetentionSweep({ policy: readRetentionPolicyFromEnv(await readHomeConfigEnv({
+            HAPPIER_SERVER_RETENTION__DRY_RUN: 'false',
+        })), now });
         expect(await db.automationRun.findUnique({ where: { id: run.id } })).toBeNull();
         expect(await db.artifact.findUnique({ where: { id: review.id } })).toEqual(review);
         expect(await db.reviewMetadata.findUnique({ where: { artifactId: review.id } })).not.toBeNull();
@@ -151,6 +154,7 @@ describe('Review retention through the shared sweep and Artifact deletion', () =
             actorAccountId: owner.id,
             write: { expectedRevision: 0, values: {
                 HAPPIER_SERVER_RETENTION__ENABLED: true,
+                HAPPIER_SERVER_RETENTION__DRY_RUN: false,
                 HAPPIER_SERVER_RETENTION__REVIEWS__MODE: 'delete_older_than',
                 HAPPIER_SERVER_RETENTION__REVIEWS__DAYS: 7,
             } },
