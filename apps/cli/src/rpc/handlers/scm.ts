@@ -532,6 +532,7 @@ export function registerScmHandlers(
         source: currentWorkspaceSource().id,
         // The same path read under another execution placement is another answer.
         requesterPlacement: isRequesterScmCommandRunnerSelected(),
+        requesterAccountOnly: Boolean(readScmRequesterCredentials()),
         workingDirectory: routeBase.workingDirectory,
         accessPolicy: routeBase.accessPolicy,
         cwd: request.cwd ?? null,
@@ -999,13 +1000,18 @@ export function registerScmHandlers(
 
     scmRpcHandlerManager.registerHandler<ScmPullRequestListRequest, ScmPullRequestListResponse>(
         RPC_METHODS.SCM_PULL_REQUEST_LIST,
-        async (request) => await executeScmActionOperation({
-            actionId: 'scm.pullRequest.list',
-            input: request,
-            ...routeBase,
-            authorizeSession: authorizeWorkSession,
-            rpcCompatibility: true,
-        }) as ScmPullRequestListResponse,
+        async (request) => {
+            const result = await executeScmActionOperation({
+                actionId: 'scm.pullRequest.list',
+                input: request,
+                ...routeBase,
+                authorizeSession: authorizeWorkSession,
+                rpcCompatibility: true,
+            }) as ScmPullRequestListResponse;
+            // Discovery may have published new hosting facts for the next snapshot.
+            invalidateStatusSnapshotCache();
+            return result;
+        },
     );
 
     scmRpcHandlerManager.registerHandler<ScmPullRequestGetRequest, ScmPullRequestGetResponse>(

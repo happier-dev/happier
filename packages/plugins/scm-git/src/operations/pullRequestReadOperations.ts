@@ -20,7 +20,7 @@ import { projectScmBackendFailure, type BackendRuntimeHandlers } from '@happier-
 
 import type { ScmBackendContext } from '../types.js';
 import { getGitSnapshot } from '../repository.js';
-import { defaultPrStatusCache, type PrStatusCache, type PrStatusCacheKey } from '../hostingProviders/prStatusCache.js';
+import { defaultPrStatusCache, readPrStatusProjectionScope, type PrStatusCache, type PrStatusCacheKey } from '../hostingProviders/prStatusCache.js';
 import { classifyHostingProviderError } from '../hostingProviders/providerFailure.js';
 import type { ResolvedScmHostingProviderRegistry } from '../hostingProviders/types.js';
 import { createValidatedPullRequestFollowupAction } from './pullRequestFollowupAction.js';
@@ -208,6 +208,7 @@ export function createGitPullRequestReadOperations(
         if (!resolved.adapter) {
             return errorResponse('SCM hosting provider does not support pull request listing', SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED);
         }
+        const projectionScope = readPrStatusProjectionScope();
         try {
             const pullRequests = await resolved.adapter.listPullRequests({
                 provider: resolved.provider,
@@ -216,7 +217,7 @@ export function createGitPullRequestReadOperations(
                 ...(request.state ? { state: request.state } : {}),
                 runtimeServices: readRuntimeServices(),
             });
-            let defaultBranch = cache.getRepositoryDefaultBranch(key);
+            let defaultBranch = cache.getRepositoryDefaultBranch(key, projectionScope);
             const repositoryAdapter = resolved.registry.getRepositoryPublishing?.(resolved.provider.id);
             const repository = resolved.provider.nameWithOwner;
             const separator = repository?.lastIndexOf('/') ?? -1;
@@ -244,6 +245,10 @@ export function createGitPullRequestReadOperations(
                 });
             if (currentAuthProfileKey) {
                 cache.setSuccess({ key: writeKey, pullRequests, ...(defaultBranch ? { defaultBranch } : {}) });
+            } else if (projectionScope === 'localOwner') {
+                // The host authenticated this observation without a reusable credential identity.
+                cache.setSuccess({ key: { ...writeKey, localOwnerObservation: true }, pullRequests,
+                    ...(defaultBranch ? { defaultBranch } : {}) });
             }
             return { success: true, pullRequests: [...pullRequests] };
         } catch (error) {
@@ -260,9 +265,9 @@ export function createGitPullRequestReadOperations(
                     state: request.state,
                     authProfileKey: currentAuthProfileKey,
                 });
-            if (currentAuthProfileKey) {
+            if (currentAuthProfileKey || projectionScope === 'localOwner') {
                 cache.setError({
-                    key: writeKey,
+                    key: currentAuthProfileKey ? writeKey : { ...writeKey, localOwnerObservation: true },
                     error: classified.message,
                     errorCode: classified.code,
                     errorKind: classified.cacheKind,

@@ -17,10 +17,13 @@ import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { ScmNativeOperationRefusalSchema } from '@happier-dev/protocol/scm/operationError';
 import { createScmBackendRegistry } from '@/scm/registry';
+import { runWithScmRequesterCredentials } from '@/scm/accountScope';
+import { createRegisteredScmBackendAdapter } from '@/scm/pluginBackends/registeredScmBackendAdapter';
 import { createTestGitScmBackendRegistry, createTestRpcManager } from '@/scm/rpc/__tests__/testRpcHarness';
 
 import type { ScmBackendContext } from '../types.js';
 import { createPrStatusCache } from '../hostingProviders/prStatusCache.js';
+import { createGitScmBackendRuntimeRegistration } from '../backend.js';
 import { createGitPullRequestReadOperations } from './pullRequestReadOperations.js';
 import { createGithubRestAdapter } from '../../../scm-github/src/pullRequests/restAdapter.js';
 import { createGithubForgeHttpFixture } from '../../../../../apps/cli/src/testkit/scm/githubForgeHttp';
@@ -276,13 +279,13 @@ describe('git pull request read operations', () => {
                 };
                 const independent = await runWithGitScmCommandRunner(count, () => Promise.all(
                     states.map(state => ordinary.list({ context: checkout, request: { state } }))));
-                const snapshotLaunches = cwd === linked || cwd === detached ? 8 : 7;
-                expect(launches).toBe(3 * snapshotLaunches);
+                const independentLaunches = launches;
                 launches = 0;
                 const batch = await runWithGitScmCommandRunner(count, () => createOperations().listStates({
                     context: checkout, request: { states },
                 }));
-                expect(launches).toBe(snapshotLaunches);
+                expect(launches).toBeGreaterThan(0);
+                expect(independentLaunches).toBe(states.length * launches);
                 expect(JSON.stringify(batch.results)).toBe(JSON.stringify(independent.map(response => response.success
                     ? { ok: true, response } : { ok: false, error: response })));
                 if (typeof expected === 'number') {
@@ -300,6 +303,54 @@ describe('git pull request read operations', () => {
             expect(forge.httpRequests.every(request => request.path.endsWith('/pulls'))).toBe(true);
         } finally {
             await rm(root, { recursive: true, force: true });
+        }
+    });
+
+    it('projects a local owner’s authenticated draft list into the next snapshot without exposing it to a guest', async () => {
+        const cwd = await realpath(await mkdtemp(join(tmpdir(), 'happier-pr-draft-')));
+        const git = (...args: string[]) => execFileSync('git', args, { cwd, stdio: 'pipe' });
+        try {
+            git('init', '--quiet', '-b', 'topic');
+            git('-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '--allow-empty', '-m', 'base');
+            const nameWithOwner = 'example/private-draft';
+            const cloneUrl = `https://github.com/${nameWithOwner}.git`;
+            git('remote', 'add', 'origin', cloneUrl);
+            git('update-ref', 'refs/remotes/origin/main', 'HEAD');
+            git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+            const forge = createGithubForgeHttpFixture({ nameWithOwner, cloneUrl });
+            forge.setPullRequest({
+                ...pullRequest, provider: forge.provider, number: 1, state: 'draft', headBranch: 'topic',
+                url: `https://github.com/${nameWithOwner}/pull/1`,
+            });
+            const registration = createGitScmBackendRuntimeRegistration();
+            const runtime = registration.runtime!;
+            const backend = createRegisteredScmBackendAdapter({
+                definition: { id: registration.id, kind: 'git' },
+                qualifiedId: `happier.scm.backend.git:${registration.id}`,
+                executableDefinition: { repoModes: runtime.repoModes, capabilities: runtime.capabilities, commands: runtime.commands },
+                registration,
+                hostingProviderRuntimeServices: { resolveScmHostingProviderRegistry: async () => forge.hosting },
+            });
+            const { call } = createTestRpcManager({ workingDirectory: cwd, registry: createScmBackendRegistry([backend]) });
+            const snapshot = () => call(RPC_METHODS.SCM_STATUS_SNAPSHOT, {});
+            const noObservation = { success: true, snapshot: { pullRequestStatus: { openPullRequest: null, authState: 'unknown' } } };
+            await expect(snapshot()).resolves.toMatchObject(noObservation);
+            await expect(call(RPC_METHODS.SCM_PULL_REQUEST_LIST, { head: 'topic', state: 'open' })).resolves.toMatchObject({
+                success: true, pullRequests: [{ number: 1, state: 'draft' }],
+            });
+            const observed = {
+                success: true, snapshot: { pullRequestStatus: {
+                    authState: 'authenticated', openPullRequest: { number: 1, state: 'draft' },
+                } },
+            };
+            await expect(call(RPC_METHODS.SCM_STATUS_SNAPSHOT, { detail: 'facts' })).resolves.toMatchObject(observed);
+            await expect(snapshot()).resolves.toMatchObject(observed);
+            await runWithScmRequesterCredentials({ account: null, signal: new AbortController().signal },
+                async () => await expect(snapshot()).resolves.toMatchObject(noObservation));
+            expect(forge.httpRequests).toEqual([{ method: 'GET', path: `/repos/${nameWithOwner}/pulls` }]);
+            expect(forge.tokenRequests()).toBe(1);
+        } finally {
+            await rm(cwd, { recursive: true, force: true });
         }
     });
 

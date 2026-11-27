@@ -5,6 +5,7 @@ import type {
   ScmPullRequestState,
   ScmPullRequestSummary,
 } from '@happier-dev/plugin-sdk/scm';
+import { readCurrentBackendRuntimeServices } from '@happier-dev/plugin-sdk/scm/backend';
 
 export type PrStatusCacheConfig = Readonly<{
     successTtlMs: number;
@@ -31,6 +32,7 @@ export type PrStatusCacheKey = Readonly<{
     headRepositoryNameWithOwner?: string | null;
     state?: ScmPullRequestState;
     authProfileKey?: string;
+    localOwnerObservation?: true;
 }>;
 
 export type PrStatusCacheInvalidationScope = Readonly<{
@@ -62,11 +64,19 @@ export type PrStatusCacheErrorEntry = Readonly<{
 
 export type PrStatusCacheEntry = PrStatusCacheSuccessEntry | PrStatusCacheErrorEntry;
 
+type PrStatusProjectionScope = 'profiled' | 'localOwner' | 'unavailable';
+
+export function readPrStatusProjectionScope(): PrStatusProjectionScope {
+    const transport = readCurrentBackendRuntimeServices()?.repositoryTransport;
+    if (transport?.requesterAccountOnly) return 'unavailable';
+    return transport?.requiresConnectedAccount === false ? 'localOwner' : 'profiled';
+}
+
 export type PrStatusCache = Readonly<{
     getFresh(key: PrStatusCacheKey): PrStatusCacheEntry | null;
     /** Presentation may retain an expired observation; request reuse still requires getFresh. */
-    getLastKnownForAnyAuthProfile(key: Omit<PrStatusCacheKey, 'authProfileKey' | 'baseBranch'>): PrStatusCacheEntry | null;
-    getRepositoryDefaultBranch(key: Pick<PrStatusCacheKey, 'workspaceKey' | 'repoRootPath' | 'provider'>): string | null;
+    getLastKnownForAnyAuthProfile(key: Omit<PrStatusCacheKey, 'authProfileKey' | 'baseBranch'>, scope?: PrStatusProjectionScope): PrStatusCacheEntry | null;
+    getRepositoryDefaultBranch(key: Pick<PrStatusCacheKey, 'workspaceKey' | 'repoRootPath' | 'provider'>, scope?: PrStatusProjectionScope): string | null;
     setSuccess(input: Readonly<{
         key: PrStatusCacheKey;
         pullRequests: readonly ScmPullRequestSummary[];
@@ -105,6 +115,7 @@ function stableCacheKey(key: PrStatusCacheKey): string {
         headRepositoryNameWithOwner: normalizeOptional(key.headRepositoryNameWithOwner),
         state: key.state ?? 'open',
         authProfileKey: key.authProfileKey ?? '',
+        localOwnerObservation: key.localOwnerObservation === true,
     });
 }
 
@@ -182,16 +193,20 @@ export function createPrStatusCache(input?: Readonly<{
             const entry = entries.get(stableCacheKey(key)) ?? null;
             return entry && isFresh(entry, timestamp) ? entry : null;
         },
-        getLastKnownForAnyAuthProfile(key) {
+        getLastKnownForAnyAuthProfile(key, scope) {
+            if (scope === 'unavailable') return null;
             let latest: PrStatusCacheEntry | null = null;
             for (const entry of entries.values()) {
+                if (entry.key.localOwnerObservation && scope !== 'localOwner') continue;
                 if (sameBranchKey(entry.key, key) && (!latest || entry.fetchedAt > latest.fetchedAt)) latest = entry;
             }
             return latest;
         },
-        getRepositoryDefaultBranch(key) {
+        getRepositoryDefaultBranch(key, scope) {
+            if (scope === 'unavailable') return null;
             let latest: PrStatusCacheSuccessEntry | null = null;
             for (const entry of entries.values()) {
+                if (entry.key.localOwnerObservation && scope !== 'localOwner') continue;
                 if (entry.kind === 'success' && entry.defaultBranch && sameRepositoryKey(entry.key, key)
                     && (!latest || entry.fetchedAt > latest.fetchedAt)) latest = entry;
             }

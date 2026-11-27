@@ -7,7 +7,7 @@ import type {
 } from '@happier-dev/plugin-sdk/scm';
 import { readCurrentHostingProviderRuntimeServices as readCurrentScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/scm/hosting/runtime';
 
-import { defaultPrStatusCache, type PrStatusCache } from '../hostingProviders/prStatusCache.js';
+import { defaultPrStatusCache, readPrStatusProjectionScope, type PrStatusCache } from '../hostingProviders/prStatusCache.js';
 import type { ResolvedScmHostingProviderRegistry } from '../hostingProviders/types.js';
 
 export type PullRequestStatusProjectionRegistry = Pick<ResolvedScmHostingProviderRegistry, 'detectRemote' | 'buildCompareUrl'>;
@@ -77,11 +77,12 @@ export function projectPullRequestStatus(input: Readonly<{
     const registry = input.registry;
     const cache = input.cache ?? defaultPrStatusCache;
     const provider = registry ? selectHostingProvider(input.snapshot, registry) : null;
+    const scope = provider ? readPrStatusProjectionScope() : undefined;
     const defaultBranch = input.snapshot.repo.defaultBranch ?? (provider ? cache.getRepositoryDefaultBranch({
         workspaceKey: input.snapshot.projectKey,
         repoRootPath: input.snapshot.repo.rootPath ?? input.snapshot.projectKey,
         provider,
-    }) : null);
+    }, scope) : null);
     const snapshot = defaultBranch && !input.snapshot.repo.defaultBranch
         ? { ...input.snapshot, repo: { ...input.snapshot.repo, defaultBranch } }
         : input.snapshot;
@@ -109,7 +110,7 @@ export function projectPullRequestStatus(input: Readonly<{
         provider,
         headBranch,
         state: 'open',
-    });
+    }, scope);
     const compareUrl = baseBranch && registry
         ? registry.buildCompareUrl({ provider, base: baseBranch, head: headBranch })
         : { kind: 'unsupported' as const };

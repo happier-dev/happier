@@ -21,7 +21,8 @@ export function createGithubForgeHttpFixture(input: Readonly<{
   const response = (body: unknown, status = 200) => ({ ok: status >= 200 && status < 300, status, statusText: 'Fixture',
     json: async () => body, text: async () => JSON.stringify(body) });
   const rawPullRequest = (pullRequest: ScmPullRequestSummary | null) => pullRequest && ({ number: pullRequest.number, title: pullRequest.title, html_url: pullRequest.url,
-    state: pullRequest.state === 'merged' ? 'closed' : pullRequest.state, merged: pullRequest.state === 'merged',
+    state: pullRequest.state === 'merged' ? 'closed' : pullRequest.state === 'draft' ? 'open' : pullRequest.state,
+    draft: pullRequest.state === 'draft', merged: pullRequest.state === 'merged',
     merge_commit_sha: input.omitRestMergeCommit ? null : pullRequest.mergeCommitSha, base: { ref: pullRequest.baseBranch, sha: pullRequest.baseSha }, head: { ref: pullRequest.headBranch,
       sha: pullRequest.headSha, repo: { full_name: input.nameWithOwner } } });
   const fetcher: NonNullable<Parameters<typeof createGithubRestAdapter>[0]>['fetcher'] = async (url, init) => {
