@@ -51,7 +51,9 @@ export function createMachineUpdatesRolloutActionDeps(host: Readonly<{
     const settled = WorkflowRunWaitSnapshotV1Schema.safeParse(observed);
     if (!settled.success || settled.data.run.workflowCustodyState !== 'settled' || settled.data.run.state === 'interrupted')
       return failure(context.signal?.aborted ? 'stop_unconfirmed' : 'outcome_uncertain', runId);
-    return settled.data.run.state === 'succeeded' ? receipt
-      : failure(settled.data.run.state === 'cancelled' ? 'cancelled' : 'machine_setup_child_failed', runId);
+    const run = settled.data.run;
+    if (run.state === 'succeeded') return receipt;
+    if (run.state === 'cancelled') return failure('cancelled', runId);
+    return failure(run.errorCode ?? 'machine_setup_child_failed', runId);
   } };
 }

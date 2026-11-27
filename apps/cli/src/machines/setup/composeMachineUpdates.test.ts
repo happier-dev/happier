@@ -25,7 +25,7 @@ const target = (machineId: string) => ({ homeId: 'home', machineId, scope: 'secu
   plan: createMachineSetupEffectPlan({ basis: { kind: 'updates', machineId, scope: 'security' }, steps: [], nativeFacts: [] }) });
 
 describe('fleet update Workflow composition', () => {
-  it.each(['interrupted', 'refused', 'disconnected', 'stopped'] as const)(
+  it.each(['interrupted', 'refused', 'disconnected', 'stopped', 'terminal_refusal'] as const)(
     'retains the rollout and its wait cause when observation is %s', async observation => {
     const input = { homeId: 'home', machineId: 'guest', batches: [[target('guest')]], failurePolicy: 'fail_stop' as const };
     const accountId = 'person', requestId = 'rollout-request';
@@ -55,6 +55,10 @@ describe('fleet update Workflow composition', () => {
           acceptedSnapshot: snapshot })) });
     const owner = createWorkflowAccountRunActionOwner({ resolveAccountId: async () => accountId,
       storage: { ...storage, execute: async (operation, options) => {
+        if (operation.operation === 'wait' && observation === 'terminal_refusal') {
+          return { observation: 'terminal', matchedCondition: 'terminal',
+            run: { ...storage.run(), state: 'failed', workflowCustodyState: 'settled', errorCode: 'machine_offline' } };
+        }
         if (operation.operation === 'wait' && observation === 'disconnected') {
           throw Object.assign(new Error('Home storage unavailable'), { response: { status: 503 } });
         }
@@ -73,7 +77,12 @@ describe('fleet update Workflow composition', () => {
       } });
     expect(await storage.execute({ operation: 'wait', runId, conditions: ['terminal', 'attention'] }))
       .toMatchObject({ observation: 'waiting', run: { state: 'interrupted', workflowCustodyState: 'pending', attentionRequired: false } });
-    expect(await deps.machineSetupUpdatesRollout!({ input, context })).toMatchObject({ ok: false,
+    const result = await deps.machineSetupUpdatesRollout!({ input, context });
+    if (observation === 'terminal_refusal') {
+      expect(result).toMatchObject({ ok: false, errorCode: 'machine_offline', details: { runId } });
+      return;
+    }
+    expect(result).toMatchObject({ ok: false,
       errorCode: observation === 'stopped' ? 'stop_unconfirmed' : 'outcome_uncertain', details: { runId }, ...(observation === 'interrupted' ? {} : {
         failureCause: { phase: 'workflow.run.wait', errorCode: 'storage_unavailable' },
       }) });
