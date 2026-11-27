@@ -3,9 +3,10 @@ import { randomUUID } from "node:crypto";
 import { RPC_ERROR_CODES, RPC_METHODS } from "@happier-dev/protocol/rpc";
 import { SOCKET_RPC_EVENTS } from "@happier-dev/protocol/socketRpc";
 import type { Server, Socket } from "socket.io";
-import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { getRedisClient } from "@/storage/redis/redis";
+import { resolveRedisAdapterValidationRedisUrl } from "../../../../scripts/resolveRedisAdapterValidationRedisUrl";
 import { createFakeSocket, getSocketHandler, triggerSocketHandler } from "../testkit/socketHarness";
 import { rpcHandler } from "./rpcHandler";
 
@@ -15,12 +16,20 @@ vi.mock("@/storage/db", () => ({ db: { machine: { findFirst: findMachine } } }))
 const logMock = vi.hoisted(() => vi.fn());
 vi.mock("@/utils/logging/log", () => ({ log: logMock }));
 
-const redisUrl = process.env.REDIS_URL?.trim();
 const machine = { revokedAt: null, replacedByMachineId: null };
 const refreshIntervalMs = 60_000;
 
-describe.skipIf(!redisUrl)("Redis-backed RPC registration lifecycle", () => {
+describe("Redis-backed RPC registration lifecycle", () => {
     let userId: string;
+    let redis: ReturnType<typeof getRedisClient> | undefined;
+    let redisMemory: Awaited<ReturnType<typeof resolveRedisAdapterValidationRedisUrl>>["redisMemory"];
+
+    beforeAll(async () => {
+        const redisTarget = await resolveRedisAdapterValidationRedisUrl({ env: process.env });
+        redisMemory = redisTarget.redisMemory;
+        vi.stubEnv("REDIS_URL", redisTarget.redisUrl);
+        redis = getRedisClient();
+    });
 
     beforeEach(() => {
         vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
@@ -38,7 +47,12 @@ describe.skipIf(!redisUrl)("Redis-backed RPC registration lifecycle", () => {
     });
 
     afterAll(async () => {
-        if (redisUrl) await getRedisClient().quit();
+        try {
+            await redis?.quit();
+        } finally {
+            vi.unstubAllEnvs();
+            await redisMemory?.stop();
+        }
     });
 
     const routeKey = (method: string) => `rpc:${userId}:${method}`;
