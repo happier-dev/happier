@@ -4,13 +4,14 @@ import { deriveManagedStartApprovalRequestIdV1 } from '@happier-dev/protocol/app
 import { MANAGED_DELETE_ACTION_ID_V1, MANAGED_POWER_SET_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import type { ManagedMachineReadSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ManagedPolicyPurposeV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
-import { ManagedMachineActionInputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedMachineActionInputSchemasV1, type ManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 
 import { hasEndedBoundSessionDeletion } from '@/machines/managed/managedRetentionPolicy';
 
 /** Run managed policy through its recorded consent or the shared approval flow. */
 export async function executeManagedMachinePolicyAction<Machine extends ManagedMachineReadSnapshotV1>(input: Readonly<{
     machine: Machine;
+    reviewedMachineRead?: ManagedMachineReadV1;
     purpose: ManagedPolicyPurposeV1;
     context: ActionExecutorContext;
     serverId: string;
@@ -56,7 +57,9 @@ export async function executeManagedMachinePolicyAction<Machine extends ManagedM
         managedMachineAction: async request => {
             if (request.actionId === 'machines.managed.get') {
                 const target = ManagedMachineActionInputSchemasV1['machines.managed.get'].safeParse(request.input);
-                if (target.success && target.data.homeId === machine.homeId && target.data.managedId === machine.id) return machine;
+                if (target.success && target.data.homeId === machine.homeId && target.data.managedId === machine.id) {
+                    return input.reviewedMachineRead ?? machine;
+                }
             }
             if (request.actionId !== actionId
                 || request.context.operationAcceptance?.operationId !== operationId

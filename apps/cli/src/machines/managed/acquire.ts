@@ -1,5 +1,6 @@
 import { ManagedMachinePresetGetResultV1Schema, type ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import type { ManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
+import { projectAdmittedManagedMachinePresetForRecipientV1, type ManagedAdmissionPresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentCarrierV1';
 import type { SessionProjectFilesV1 } from '@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1';
 import type { ManagedWorkspaceLocatorV2, ManagedWorkspaceRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { resolveMachineRetentionPolicyV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
@@ -28,7 +29,7 @@ import { safeBashSingleQuote } from '@happier-dev/cli-common/ssh/shellQuote';
 import { ManagedIntentResultSchema } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import { MANAGED_EXEC_ACTION_ID_V1, isManagedMetadataControlActionIdV1, MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { ManagedMetadataControlAdmissionOutputV1Schema, projectManagedMetadataControlResultV1,
-    type ManagedDeleteTailnetWarningV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+    type ManagedDeleteTailnetWarningV1, type ManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { settleManagedMachineResize } from '@happier-dev/cli-common/machines/managed';
 import { ManagedControllerRequestFailureDetailsV1Schema, type ManagedControllerRequestFailureDetailsV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { readActionFailureCauseV1, projectUnexpectedActionFailureV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -266,7 +267,8 @@ export type ManagedMachineExecutionOptions = Readonly<{
     /** Original admitted finite request; distinct from the controller's native policy authority. */
     actionOrigin?: ExternalActionExecutionAuthorizationV1;
     /** The installed Action owner evaluates current policy/Ask at effect time. */
-    runPolicyAction?: (machine: ManagedMachineFullV1, runApproved: (context: ActionExecutorContext) => Promise<ManagedMachineFullV1>) => Promise<ManagedMachineFullV1>;
+    runPolicyAction?: (machine: ManagedMachineFullV1, runApproved: (context: ActionExecutorContext) => Promise<ManagedMachineFullV1>,
+        reviewedMachineRead?: ManagedMachineReadV1) => Promise<ManagedMachineFullV1>;
     /** Ordinary fresh Session admission retained only by its initiating host. */
     runAgentStart?: (input: Readonly<{ machine: ManagedMachineFullV1; projectFiles?: SessionProjectFilesV1 }>) => Promise<void>;
     /** Original admitted Workflow continuation on its ordinary enrolled Machine. */
@@ -1040,11 +1042,19 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                 // target is already sufficient for the pending owner's exact CAS.
                 failureClient = admissionClient;
                 const policyInput = ManagedPolicyAdmissionInputV1Schema.parse({ ...admissionClient.correlation(machine), purpose: prepared.purpose });
+                // The controller opens the preview for execution. Action review consumes the
+                // existing public read shape and receives only its own recipient envelope.
+                const reviewRead = (row: ManagedMachineV1, presetContent?: ManagedAdmissionPresetContentV1): ManagedMachineReadV1 => {
+                    if (!isManagedOpaquePresetMachineV1(row)) return row;
+                    const recipientAccountId = readAccountIdFromToken(input.token);
+                    if (!presetContent || !recipientAccountId) throw new ManagedMachineControllerError('credential_unavailable');
+                    return { machine: row, presetContent: projectAdmittedManagedMachinePresetForRecipientV1({ ...presetContent, recipientAccountId }) };
+                };
                 // Preparation projects the reviewed effect without changing the
                 // retained row. Shared Ask owns admission as well as native IO.
-                const preview = purpose.kind === 'creation-cleanup' ? machine : (await normalizeManagedPresetCarrier(await admissionClient.post(
-                    '/v1/machines/managed/controller/prepare-policy', policyInput, ManagedPolicyAdmissionOutputV1Schema),
-                hydrator, options.signal)).machine;
+                const previewCarrier = purpose.kind === 'creation-cleanup' ? undefined : await admissionClient.post(
+                    '/v1/machines/managed/controller/prepare-policy', policyInput, ManagedPolicyAdmissionOutputV1Schema);
+                const preview = previewCarrier ? (await normalizeManagedPresetCarrier(previewCarrier, hydrator, options.signal)).machine : machine;
                 let accepted: ReturnType<typeof ManagedIntentResultSchema.parse> | undefined;
                 let deleteWarning: ManagedDeleteTailnetWarningV1 | undefined;
                 const runApproved = async (context?: ActionExecutorContext): Promise<ManagedMachineFullV1> => {
@@ -1061,9 +1071,9 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                     // /current belongs to an already admitted request. This new
                     // policy still has no custody there; admit-policy atomically
                     // checks its reviewed revision, purpose and controller instead.
-                    const admitted = await normalizeManagedPresetCarrier(await admissionClient.post(
-                        '/v1/machines/managed/controller/admit-policy', policyInput, ManagedPolicyAdmissionOutputV1Schema),
-                    hydrator, options.signal);
+                    const admissionCarrier = await admissionClient.post(
+                        '/v1/machines/managed/controller/admit-policy', policyInput, ManagedPolicyAdmissionOutputV1Schema);
+                    const admitted = await normalizeManagedPresetCarrier(admissionCarrier, hydrator, options.signal);
                     const approvedContext = context ?? options.context!;
                     const policyAction = options.runPolicyAction;
                     let initialApprovalPending = true;
@@ -1077,7 +1087,8 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                                 initialApprovalPending = false;
                                 return runEffect(approvedContext);
                             }
-                            return policyAction(currentMachine, runEffect);
+                            return policyAction(currentMachine, runEffect, reviewRead(hydrator.structural(currentMachine),
+                                'presetContent' in admissionCarrier ? admissionCarrier.presetContent : undefined));
                         } : undefined };
                     const action = admitted.machine.desired === 'delete' ? 'machines.managed.delete' : 'machines.managed.power.set';
                     const client = createManagedMachineControllerClient(input, currentOptions, action, hydrator);
@@ -1090,7 +1101,9 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                         options: currentOptions, client, machine: admitted.machine, action,
                         onDeleteWarning: warning => { deleteWarning = warning; } });
                 };
-                const settled = await (options.runPolicyAction ? options.runPolicyAction(preview, runApproved) : runApproved());
+                const settled = await (options.runPolicyAction ? options.runPolicyAction(preview, runApproved,
+                    previewCarrier ? reviewRead(previewCarrier.machine, 'presetContent' in previewCarrier ? previewCarrier.presetContent : undefined)
+                        : undefined) : runApproved());
                 if (purpose.kind === 'accepted-input-start' && (settled.observation?.power !== 'running'
                     || settled.observation.availability !== 'present' || settled.observation.storage === 'lost')) {
                     throw new ManagedMachineControllerError('native_intent_unconfirmed');

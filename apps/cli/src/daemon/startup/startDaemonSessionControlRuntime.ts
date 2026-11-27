@@ -11730,8 +11730,8 @@ export async function startDaemonSessionControlRuntime(
       ? { readTargetCurrent: params.readManagedMachineTargetCurrent }
       : {}),
     acquireRuntimeRegistryLease: acquireDaemonPluginRuntimeRegistryLease,
-    executeManagedPolicyAction: (machine, context, runApproved, purpose) => executeManagedMachinePolicyAction({
-      machine, purpose, context, runApproved, serverId: params.serverId,
+    executeManagedPolicyAction: (machine, context, runApproved, purpose, _actionOrigin, reviewedMachineRead) => executeManagedMachinePolicyAction({
+      machine, reviewedMachineRead, purpose, context, runApproved, serverId: params.serverId,
       createExecutor: overrides => createExternalActionExecutor(params.credentials, undefined, undefined, undefined, undefined, overrides),
     }),
     waitForActionOperationCompletion: async (...args: Parameters<ApiMachineClient['waitForActionOperationCompletion']>) => {
@@ -11864,10 +11864,10 @@ export async function startDaemonSessionControlRuntime(
                         rpcContext: requesterAccountOperationContext(apiMachine, admitted, signal),
                       });
                     },
-                    executeManagedPolicyAction: (machine, context, runApproved, purpose, actionOrigin) => {
+                    executeManagedPolicyAction: (machine, context, runApproved, purpose, actionOrigin, reviewedMachineRead) => {
                       const requester = readRequesterAccountActionContext(actionOrigin) ?? admitted;
                       return executeManagedMachinePolicyAction({
-                        machine, purpose, context, runApproved, serverId: params.serverId,
+                        machine, reviewedMachineRead, purpose, context, runApproved, serverId: params.serverId,
                         createExecutor: overrides => createExternalActionExecutor(requester.credentials,
                           undefined, undefined, undefined, undefined, overrides, requester),
                       });

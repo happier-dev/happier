@@ -1,7 +1,7 @@
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps, ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { completeSpawnActionResult } from '@happier-dev/protocol/actions/executor/resultProjection';
-import { isManagedPresetAcquireInputV1, ManagedAcquireInputV1Schema, ManagedCredentialInstallInputV1Schema, ManagedMachineActionOutputSchemasV1, ManagedGetOutputV1Schema, type ManagedAcquireInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { isManagedPresetAcquireInputV1, ManagedAcquireInputV1Schema, ManagedCredentialInstallInputV1Schema, ManagedMachineActionOutputSchemasV1, ManagedGetOutputV1Schema, type ManagedAcquireInputV1, type ManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { resolveAccountExecutionRuntime, type AccountExecutionRuntime } from '@/plugins/runtime/accountExecutionRuntime';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -87,7 +87,7 @@ type ManagedMachineActionAdapterParams = Readonly<{
     onSessionTargetNativeAbsent?: (input: Readonly<{ sessionId: string; managedId: string }>) => Promise<void>;
     executeManagedPolicyAction?: <Machine extends ManagedMachineReadSnapshotV1>(machine: Machine, context: ActionExecutorContext,
         runApproved: (context: ActionExecutorContext) => Promise<Machine>, purpose: ManagedPolicyPurposeV1,
-        actionOrigin?: ExternalActionExecutionAuthorizationV1) => Promise<Machine>;
+        actionOrigin?: ExternalActionExecutionAuthorizationV1, reviewedMachineRead?: ManagedMachineReadV1) => Promise<Machine>;
     prepareRequesterAccountContext?: PrepareExternalActionRequesterAccountContext;
     acquireRuntimeRegistryLease(): Promise<PluginRuntimeRegistryLease>;
 }>;
@@ -657,7 +657,8 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
                                     policySchedulerSignal: schedulerSignal,
                                     ...(request.retentionContinuationRequestId ? { retentionContinuationRequestId: request.retentionContinuationRequestId } : {}),
                                     ...(actionOrigin ? { actionOrigin } : {}),
-                                    runPolicyAction: (machine, runApproved) => params.executeManagedPolicyAction!(machine, context, runApproved, request.purpose, actionOrigin) },
+                                    runPolicyAction: (machine, runApproved, reviewedMachineRead) => params.executeManagedPolicyAction!(
+                                        machine, context, runApproved, request.purpose, actionOrigin, reviewedMachineRead) },
                             ));
                             return { ok: true as const, result };
                         } catch (error) {
