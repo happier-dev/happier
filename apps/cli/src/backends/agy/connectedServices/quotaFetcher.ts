@@ -3,11 +3,7 @@ import { ConnectedServiceQuotaFetchError, type ConnectedServiceQuotaFetcher, typ
 import { requestGoogleCodeAssist, type GoogleCodeAssistFetchRuntime } from '@/daemon/connectedServices/quotas/googleCodeAssistRequest';
 import { readConnectedServiceQuotaStaleAfterMs } from '@/daemon/connectedServices/quotas/configuration';
 import { delayUnrefAbortable } from '@/utils/time';
-
-// The Antigravity ACP 1.3.0 useragent.py client surface. Without this product token Google returns
-// UNSUPPORTED_CLIENT instead of the entitlement (re-observed 2026-11-27 against prod and daily while
-// agy 1.5.18 was current). It describes these control-plane requests, not a runtime.
-const QUOTA_USER_AGENT = 'antigravity/acp/1.3.0 (aidev_client; host_path=happier; proxy_client=antigravity/sdk)';
+import { AGY_CODE_ASSIST_USER_AGENT, awaitsGoogleValidation, loadAgyCodeAssistEntitlement } from './codeAssistEntitlement';
 
 function object(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
@@ -26,11 +22,6 @@ function malformed(reason: string): never {
 function describeEntitlement(load: Record<string, unknown> | null): string {
   const ids = (value: unknown, key: string) => Array.isArray(value) ? value.map(item => text(object(item)?.[key])).filter(Boolean).join('|') : '';
   return `allowed=${ids(load?.allowedTiers, 'id') || '-'};ineligible=${ids(load?.ineligibleTiers, 'reasonCode') || '-'};paid=${text(object(load?.paidTier)?.id) ?? '-'}`;
-}
-
-/** Code Assist reports an account Google must verify as an ineligible tier with this reason code. */
-function awaitsGoogleValidation(load: Record<string, unknown> | null): boolean {
-  return Array.isArray(load?.ineligibleTiers) && load.ineligibleTiers.some(tier => object(tier)?.reasonCode === 'VALIDATION_REQUIRED');
 }
 
 function assignedProject(load: Record<string, unknown> | null): string | null {
@@ -104,17 +95,16 @@ export function createAgyQuotaFetcher(deps: Readonly<{ fetchRuntime?: GoogleCode
       throw new ConnectedServiceQuotaFetchError('missing_antigravity_oauth_record', { quotaFetchErrorCode: 'missing_auth' });
     }
     const explicitProject = text(object(record.oauth.raw)?.project_id);
-    const userAgent = QUOTA_USER_AGENT;
+    const userAgent = AGY_CODE_ASSIST_USER_AGENT;
     const request = { fetchRuntime: deps.fetchRuntime ?? fetch, accessToken: record.oauth.accessToken, userAgent, signal };
     // ACP 1.3.0 onboard.py bootstraps on prod and selects daily only for consumer tiers.
-    const loadEntitlement = async () => object(await requestGoogleCodeAssist({ ...request, endpoint: 'https://cloudcode-pa.googleapis.com', method: 'loadCodeAssist',
-      body: { metadata: { ideType: 'ANTIGRAVITY' }, ...(explicitProject ? { cloudaicompanionProject: explicitProject } : {}) } }));
+    const loadEntitlement = async () => await loadAgyCodeAssistEntitlement(request, explicitProject);
     let load = await loadEntitlement();
     const offersFreeTier = (value: Record<string, unknown> | null) =>
       Array.isArray(value?.allowedTiers) && value.allowedTiers.some(tier => object(tier)?.id === 'free-tier');
     if (!object(load?.currentTier) && awaitsGoogleValidation(load)) {
       // Google must verify the account first (agy shows "Verification required"). Onboarding cannot
-      // proceed and this is not a malformed response; the provider's link and text are not copied.
+      // proceed and this is not a malformed response; the failed turn shows the link (classifyAgyRuntimeFailure).
       throw new ConnectedServiceQuotaFetchError('antigravity_validation_required', {
         quotaFetchErrorCode: 'provider_backoff', providerCode: 'antigravity_validation_required' });
     }

@@ -5,6 +5,7 @@ import { findConnectedServiceChildSelection } from '@/daemon/connectedServices/c
 import { reportConnectedServiceRuntimeAuthFailureToDaemon } from '@/daemon/connectedServices/runtimeAuth/reportConnectedServiceRuntimeAuthFailureToDaemon';
 import { projectConnectedServiceRuntimeAuthRecoveryReport } from '@/daemon/connectedServices/runtimeAuth/projection/connectedServiceRuntimeAuthRecoverySessionEvent';
 import { logger } from '@/ui/logger';
+import { readGoogleAccountLink } from './codeAssistEntitlement';
 
 type Kind = ConnectedServiceRuntimeFailureClassification['kind'];
 type LimitCategory = NonNullable<ConnectedServiceRuntimeFailureClassification['limitCategory']>;
@@ -103,9 +104,33 @@ export async function reportAgyTurnFailure(params: Readonly<{ error: unknown; is
   const classification = params.issue ? { ...classified, runtimeIssueFingerprint: buildUsageLimitIssueFingerprint(params.issue) } : classified;
   const report = await reportConnectedServiceRuntimeAuthFailureToDaemon({ sessionId: params.sessionId, classification, switchesThisTurn: 0, logPrefix: '[agy]' });
   if (report.report === null) logger.warn('[agy] Connected-account recovery could not reach the daemon');
-  projectConnectedServiceRuntimeAuthRecoveryReport({ report, classification, sendGenericStatusMessage: (message) => {
+  const send = (message: string) => {
     if (!params.session.sendSessionEvent) return false;
     params.session.sendSessionEvent({ type: 'message', message });
     return true;
-  } });
+  };
+  // A pool that moved the session to another account keeps its own switch message.
+  if (classification.kind === 'validation' && report.statusCode !== 'switch_attempted_switched') {
+    // Duplicate triggers of one failure coalesce onto the same daemon report.
+    if (verificationReportsShown.has(report)) return;
+    verificationReportsShown.add(report);
+    send(await buildVerificationMessage(classification, params.processEnv));
+    return;
+  }
+  projectConnectedServiceRuntimeAuthRecoveryReport({ report, classification, sendGenericStatusMessage: send });
+}
+
+const verificationReportsShown = new WeakSet<object>();
+
+/** Google's link comes from the failure text when agy printed one, else from the account's Code Assist entitlement. */
+async function buildVerificationMessage(classification: ConnectedServiceRuntimeFailureClassification, processEnv: NodeJS.ProcessEnv): Promise<string> {
+  let url = readGoogleAccountLink(classification.action?.url);
+  if (!url) {
+    const { readAgyVerificationLink } = await import('./readAgyVerificationLink');
+    const link = await readAgyVerificationLink(processEnv);
+    url = link.url;
+    if (link.url === null) logger.warn(`[agy] Verification link unavailable: ${link.reason}`);
+  }
+  const intro = 'Google needs to verify this Antigravity account before it can be used.';
+  return url ? `${intro} Open ${url} to verify, then resend your message.` : `${intro} Verify the account with Google, then resend your message.`;
 }
