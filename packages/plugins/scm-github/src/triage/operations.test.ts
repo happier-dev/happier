@@ -1157,6 +1157,21 @@ describe('GitHub Triage source operations', () => {
     expect(serialized).not.toContain(OTHER_ACCOUNT.accountId);
   });
 
+  it('retains the connected Account refusal when reauthorization fails before preparing', async () => {
+    const stub = createStubGithubTransport({ respond: () => undefined });
+    const materializer = withReviewWorkspaceMaterializer({ ...stub.context, services: {
+      ...stub.context.services, connectedAccounts: { ...stub.context.services.connectedAccounts,
+        materializeListedAccount: async () => { throw new Error('Connected Account no longer available'); } },
+    } });
+    const result = await prepareGithubTriageReviewWorkspace(prepareWorkspaceInput({}), materializer.context);
+    expect(TriagePrepareReviewWorkspaceResultV1Schema.parse(result)).toMatchObject({
+      kind: 'unavailable', reason: 'account',
+      failure: { class: 'authentication' },
+    });
+    expect(stub.requests).toEqual([]);
+    expect(materializer.execute).not.toHaveBeenCalled();
+  });
+
   it('reauthorizes a GitHub fork source tip before materializing only at the selected workspace root', async () => {
     const stub = createStubGithubTransport({
       respond: (request): StubHttpResponse | undefined => {

@@ -1025,6 +1025,43 @@ describe('the registered formal Review transition', () => {
         }
     });
 
+    it.each([
+        ['https://github.com/example/repository/pull/17', 'closed'],
+        ['17', 'merged'],
+    ] as const)('prepares manual PR %s at the exact observed head even when %s', async (pullRequest, prState) => {
+        const h = await createTriagePullRequestReviewActionTestkit({ manualCheckout: { repository: 'example/repository', prState } });
+        const result = TriagePreparePullRequestReviewResultV1Schema.parse(await h.invoke('entries/prepare-pull-request-review-v1', {
+            ...await h.resolveManualInput(pullRequest),
+        }));
+        expect(result).toMatchObject({ status: 'prepared', review: {
+            workspace: TESTKIT_SELECTED_WORKSPACE, pullRequest: { number: 17 },
+            observed: { headSha: TESTKIT_OBSERVED_REVISION.headSha },
+        }, comparisonId: 'c'.repeat(64) });
+        expect(h.prepareInputs).toHaveLength(1);
+    });
+
+    it('refuses manual Prepare before source workspace mutation when the Session has a different checkout', async () => {
+        const h = await createTriagePullRequestReviewActionTestkit({ manualCheckout: { repository: 'example/other' } });
+        const input = await h.resolveManualInput('https://github.com/example/repository/pull/17');
+        await expect(h.invoke('entries/prepare-pull-request-review-v1', input)).rejects.toMatchObject({ code: 'repositoryMismatch' });
+        expect(h.prepareInputs).toEqual([]);
+    });
+
+    it('retains the provider code and remedy when reauthorization fails before preparation', async () => {
+        const failure = { class: 'authentication' as const, code: 'plugin_connected_account_unavailable',
+            detail: 'Reconnect the source account in PRs & Issues.' };
+        const h = await createTriagePullRequestReviewActionTestkit({
+            manualCheckout: { repository: 'example/repository' },
+            rejectPreparation: () => ({ kind: 'unavailable', reason: 'account', failure }),
+        });
+        await expect(h.invoke('entries/prepare-pull-request-review-v1', await h.resolveManualInput())).rejects.toMatchObject({
+            code: failure.code, message: failure.detail,
+            data: { effectAttempted: false, details: { kind: 'unavailable', reason: 'account', failure } },
+        });
+        expect(h.prepareInputs).toEqual([]);
+        expect(h.captureInputs).toEqual([]);
+    });
+
     it('prepares distinct occurrence PR targets through one saved source, Account and workspace selection', async () => {
         const h = await createTriagePullRequestReviewActionTestkit();
         const savedBytes = JSON.stringify(h.savedInput);

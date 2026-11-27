@@ -407,13 +407,27 @@ function createTriagePlugin(): TriagePlugin {
 
       [TRIAGE_PREPARE_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1]: {
         title: 'Prepare a pull request review',
-        description: 'Prepares the selected source workspace and captures the pinned pull request comparison without creating a session or starting reviewers.',
+        description: 'Prepare the selected workspace for the pinned pull request comparison. For a manual review, resolve entries/resolve-resource-v1, read entries/read-detail-v1, then call entries/reobserve-v1 with includeComparisonSource:true. Pass kind:resolvedPullRequestForSession, the Session id, the configured instance from detail, and entryRef, observation and comparisonSource from reobserve. The person approves the pinned head before preparation.',
         surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
         placementBindings: [],
         operation: TRIAGE_REVIEW_WORKSPACE_OPERATION_V1,
         dangerLevel: 'writesLocal',
-        confirmationWhen: { presentUserUi: false },
-        confirmation: { title: 'Prepare this pull request review?', body: 'This prepares the selected workspace and captures the selected pull request comparison.', confirmLabel: 'Prepare review' },
+        confirmationWhen: {
+          presentUserUi: { op: 'eq', path: 'kind', value: 'resolvedPullRequestForSession' },
+          cli: { op: 'eq', path: 'kind', value: 'resolvedPullRequestForSession' },
+        },
+        confirmation: {
+          title: 'Prepare this pull request review?',
+          body: 'This prepares the selected workspace and captures the selected pull request comparison.',
+          confirmLabel: 'Prepare review',
+          inputFields: [
+            { path: 'comparisonSource.locator.repository', title: 'Repository' },
+            { path: 'entryRef.entryId', title: 'Pull request' },
+            { path: 'comparisonSource.locator.headOid', title: 'Head revision' },
+            { path: 'instance.instance.sourceInstanceId', title: 'Connected source' },
+            { path: 'sessionId', title: 'Session checkout' },
+          ],
+        },
         inputSchema: TriagePreparePullRequestReviewInputV1Schema,
         resultSchema: TriagePreparePullRequestReviewResultV1Schema,
         hostAccess: ['account-storage'],

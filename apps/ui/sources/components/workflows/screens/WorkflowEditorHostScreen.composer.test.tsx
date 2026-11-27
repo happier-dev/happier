@@ -1359,6 +1359,34 @@ describe('editor workflow composer', () => {
         expect(screen.findByTestId('workflow-builtin-more-settings-session')).not.toBeNull();
     });
 
+    it('starts the pull request built-in against the Session selected in the existing Run form', async () => {
+        const { createSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+        const session = createSessionFixture({ serverId: appliedHome.serverId });
+        getStorage().setState({ sessions: { [session.id]: session },
+            machineListByServerId: { ...getStorage().getState().machineListByServerId,
+                [appliedHome.serverId]: Object.values(getStorage().getState().machines) } });
+        runStart.mockImplementation(async request => ({ admission: 'created', run: createWorkflowRunSummaryFixture({ id: request.runId }) }));
+        const screen = await renderScreen(<AppPaneProvider>
+            <WorkflowBuiltinEditorHostScreen workflow="builtin:review-pull-request" intent="run" />
+        </AppPaneProvider>);
+        const { WorkflowRunComposer } = await import('../run/WorkflowRunComposer');
+        const pullRequest = 'https://github.com/example/repository/pull/17';
+        const quickReview = { reviewers: [{ kind: 'engine', engineId: 'clawpatch' }], instructions: 'Inspect the change.' };
+        const address = { serverId: appliedHome.serverId, sessionId: session.id };
+        try {
+            expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(true);
+            await act(async () => screen.root.findByType(WorkflowRunComposer).props.onChangeValues({ pullRequest, quickReview, session: address }));
+            await vi.waitFor(() => expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false));
+            await screen.pressByTestIdAsync('workflow-run-inputs-run');
+            expect(runStart).toHaveBeenCalledWith(expect.objectContaining({
+                source: { kind: 'catalog', workflow: 'builtin:review-pull-request' },
+                inputs: { pullRequest, quickReview, session: address },
+            }), { machineId: 'machine-1', directory: '/Users/tester/project' });
+        } finally {
+            await screen.unmount();
+        }
+    });
+
     it('applies the Workflow Start Action policy to catalog Run input options', async () => {
         const store = getStorage();
         const settings = store.getState().settings;

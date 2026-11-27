@@ -1,3 +1,4 @@
+import type { WorkflowTriggerEventIdentityV1 } from '../workflowReferenceV1.js';
 import type { WorkflowDefinitionV1 } from '../workflowV1.js';
 import type { DiscussionRoundOutcomeV1 } from '../../discussions/models.js';
 import type { WorkflowAcceptedSnapshotV1 } from '../workflowDefinitionV1.js';
@@ -10,7 +11,7 @@ import { FRESH_OPINIONS_WORKFLOW_V1, PARALLEL_IMPLEMENTATIONS_WORKFLOW_V1 } from
 import { ANSWER_AND_REVIEW_WORKFLOW_V1 } from './answerAndReview.js';
 import { DEBATE_WORKFLOW_V1 } from './debate.js';
 import { REPOSITORY_REVIEW_WORKFLOW_V1 } from './repositoryReview.js';
-import { REVIEW_PULL_REQUEST_WORKFLOW_V1 } from './pullRequestReview.js';
+import { createPullRequestReviewWorkflowV1, REVIEW_PULL_REQUEST_WORKFLOW_V1 } from './pullRequestReview.js';
 
 export { WORKFLOW_STARTER_EXAMPLE_KEYS_V1, WORKFLOW_STARTER_EXAMPLES_V1, getWorkflowStarterExamplesV1,
   type WorkflowStarterExampleKeyV1, type WorkflowStarterExampleV1 } from './examples.js';
@@ -34,6 +35,8 @@ type CatalogEntryFieldsV1 = Readonly<{
   icon: BuiltinWorkflowIconV1;
   requiresOriginSession: boolean;
   definition: WorkflowDefinitionV1;
+  startSessionInput?: string;
+  forEvent?: (event: WorkflowTriggerEventIdentityV1) => WorkflowDefinitionV1;
   discussionRoundPattern?: DiscussionRoundOutcomeV1['pattern'];
 }>;
 
@@ -76,7 +79,7 @@ export const BUILTIN_WORKFLOW_CATALOG_V1 = Object.freeze([
   { id: 'builtin:review-pull-request', version: 1,
     titleKey: 'workflows.examples.reviewPullRequest.title',
     descriptionKey: 'workflows.examples.reviewPullRequest.description', purpose: 'pull_request', icon: 'check-circle', requiresOriginSession: false,
-    definition: REVIEW_PULL_REQUEST_WORKFLOW_V1 },
+    definition: REVIEW_PULL_REQUEST_WORKFLOW_V1, startSessionInput: 'session', forEvent: event => createPullRequestReviewWorkflowV1(event) },
 ] satisfies readonly CatalogEntryFieldsV1[]);
 
 export type BuiltinWorkflowIdV1 = (typeof BUILTIN_WORKFLOW_CATALOG_V1)[number]['id'];
@@ -97,7 +100,7 @@ export function readWorkflowDiscussionRoundBindingV1(accepted: Pick<WorkflowAcce
 }
 
 /** The id is the parsed builtin arm's slug, not another reference grammar. */
-export function resolveBuiltinWorkflowDefinitionV1(id: string): Readonly<{ definition: WorkflowDefinitionV1; version: number }> | null {
+export function resolveBuiltinWorkflowDefinitionV1(id: string, event?: WorkflowTriggerEventIdentityV1): Readonly<{ definition: WorkflowDefinitionV1; version: number }> | null {
   const entry = getBuiltinWorkflowCatalogV1().find((item) => item.id === `builtin:${id}`);
-  return entry?.definition ? { definition: entry.definition, version: entry.version } : null;
+  return entry?.definition ? { definition: event && entry.forEvent ? entry.forEvent(event) : entry.definition, version: entry.version } : null;
 }

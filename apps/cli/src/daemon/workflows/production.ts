@@ -1,3 +1,4 @@
+import type { WorkflowTriggerEventIdentityV1 } from '@happier-dev/protocol/workflows/workflowReferenceV1';
 import { randomUUID } from 'node:crypto';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { WorkflowStepProgress } from './stepProgress';
@@ -1410,6 +1411,7 @@ export async function resolveWorkflowTriggerClaimSource(params: Readonly<{
   target: TriggerTargetV1;
   credentials: StoredCredentials;
   encryption: AvailableAutomationAccountEncryptionV1;
+  event?: WorkflowTriggerEventIdentityV1;
   signal?: AbortSignal;
 }>): Promise<WorkflowTriggerClaimSource | null> {
   params.signal?.throwIfAborted();
@@ -1421,6 +1423,7 @@ export async function resolveWorkflowTriggerClaimSource(params: Readonly<{
   });
   const definitions = createWorkflowDefinitionActions({ artifactStore });
   return resolveWorkflowDefinitionRefV1(params.target.ref, {
+    ...(params.event ? { event: params.event } : {}),
     readPluginWorkflows: definitions.readPluginWorkflows,
     readArtifact: (definitionId, signal) => definitions.get({ definitionId, ...(signal ? { signal } : {}) }),
     ...(params.signal ? { signal: params.signal } : {}),
@@ -1589,6 +1592,10 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
       const evidenceContent = claim.automationEvidenceEnvelope == null ? null
         : openAutomationStoredContent({ serialized: claim.automationEvidenceEnvelope,
           kind: 'automation_trigger_evidence', encryption: accountEncryption });
+      const pluginEvent = claim.automationCause.kind === 'trigger' && claim.automationCause.triggerKind === 'pluginEvent'
+        ? AutomationRunPluginEventTriggerEvidenceV1Schema.safeParse(evidenceContent) : undefined;
+      const eventOccurrence = pluginEvent?.success && matchesCauseEvidence(claim.automationCause, pluginEvent.data)
+        ? { event: pluginEvent.data.eventRef, payload: pluginEvent.data.payload } : undefined;
       let source: WorkflowTriggerClaimSource | null;
       try {
         if (storedDefinition.data.deploymentPreview) {
@@ -1605,6 +1612,7 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
         } else {
           source = await resolveWorkflowTriggerClaimSource({
             target: target.target, credentials: params.execution.credentials, encryption: accountEncryption,
+            ...(eventOccurrence ? { event: eventOccurrence.event } : {}),
             ...(claim.signal ? { signal: claim.signal } : {}),
           });
         }
@@ -1702,10 +1710,6 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
       const runMetadata = (source.kind === 'inline' ? undefined : source.metadata)
         ?? (automationTitle ? { title: automationTitle } : undefined);
       let created: Awaited<ReturnType<typeof materializeWorkflowAcceptedSnapshotV1>>;
-      const pluginEvent = claim.automationCause.kind === 'trigger' && claim.automationCause.triggerKind === 'pluginEvent'
-        ? AutomationRunPluginEventTriggerEvidenceV1Schema.safeParse(evidenceContent) : undefined;
-      const eventOccurrence = pluginEvent?.success && matchesCauseEvidence(claim.automationCause, pluginEvent.data)
-        ? { event: pluginEvent.data.eventRef, payload: pluginEvent.data.payload } : undefined;
       try {
         created = await materializeWorkflowAcceptedSnapshotV1({
           definition: source.definition,

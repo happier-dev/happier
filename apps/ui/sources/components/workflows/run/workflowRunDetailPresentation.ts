@@ -30,6 +30,7 @@ import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/contr
 import type { WorkflowFlowProjection } from '../flow/workflowFlowProjection';
 import type { WorkflowRunPublicationRequest } from './useWorkflowRunPublicationRequests';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import type { WorkflowBlock } from '@happier-dev/protocol/workflows/workflowV1';
 import type { WorkflowFailureRemedy } from '@/components/workflows/presentation/workflowLifecyclePresentation';
 import { readWorkflowSetupInstallPackagesV1 } from '@happier-dev/protocol/workflows/workflowStepLabel';
@@ -328,16 +329,25 @@ export function projectWorkflowInvocationRecovery(params: Readonly<{
             ? lastSeenAt : null } : null;
     const issue = presentSessionRuntimeIssue(runtimeIssue);
     const reportedMessage = issue.message ?? params.progress?.reason?.message ?? null;
-    // Older launch failures stored the closed startup code as their message. Prefer the typed
-    // cause when present, and recognize only that exact historical code, never arbitrary prose.
-    const startupRecovery = presentSessionStartupFailureRecovery([runtimeIssue?.code, params.progress?.reason?.failureCause?.errorCode,
-        params.progress?.reason?.code, params.progress?.reason?.message]);
     const preparationFailure = params.progress?.reason?.code === WORKFLOW_STEP_PREPARATION_FAILED
         ? describeWorkflowOperationProblem(WORKFLOW_STEP_PREPARATION_FAILED).message : null;
+    const execution = params.progress?.execution;
+    const reason = params.progress?.reason;
+    // Contributed Actions own the remedy that accompanies their typed refusal.
+    const contributedRemedy = execution?.kind === 'action' && parseQualifiedPluginActionId(execution.actionId)
+        ? reason?.code === 'observedHeadMoved' ? t('workflows.recovery.pullRequestHeadChanged')
+            : reason?.message !== reason?.code ? reason?.message : undefined
+        : undefined;
+    // A contributed Action with its own message already provides the recovery guidance.
+    // Older launch failures may instead carry only a known startup code.
+    const startupRecovery = contributedRemedy === undefined
+        ? presentSessionStartupFailureRecovery([runtimeIssue?.code, reason?.failureCause?.errorCode, reason?.code, reason?.message])
+        : null;
     const headline = failed && params.progress?.reason
         ? preparationFailure ?? describeRecordedTransportFailure(params.progress.reason.code)
             // A classified cause keeps the transport failure under its outer disposition (for example a reset Start).
             ?? describeRecordedTransportFailure(params.progress.reason.failureCause?.errorCode ?? '')
+            ?? contributedRemedy
             ?? startupRecovery?.cause
             ?? issue.summary
             ?? presentSessionStartupFailureCause(params.progress.reason.failureCause?.errorCode)

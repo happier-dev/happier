@@ -42,6 +42,8 @@ export const TriageReadEntryDetailInputV1Schema = defineProtocolObject({
      * choosing "the first" would silently show a different provider's truth.
      */
     sourceInstanceId: TriageSourceInstanceIdV1Schema,
+    /** A Session PR review requires a connected source before it can continue. */
+    forSessionPullRequest: defineProtocolLiteral(true).optional(),
     /** A known private row address; the stored row still owns identity and lifecycle. */
     sourceInstanceRowId: TriageIdentifierV1ProtocolSchema.optional(),
     /** Absent reads the first linked-Session page; present continues it opaquely. */

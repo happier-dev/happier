@@ -33,6 +33,8 @@ const exactEntryInput = {
 export const TriageReadPullRequestStatusInputV1Schema = defineProtocolObject(exactEntryInput, { policy: 'closed' });
 export const TriageReobserveEntryInputV1Schema = defineProtocolObject({
   ...exactEntryInput,
+  /** A Session PR review requires an available observation with a comparison. */
+  forSessionPullRequest: defineProtocolLiteral(true).optional(),
   includeComparisonSource: defineProtocolLiteral(true).optional(),
 }, { policy: 'closed' });
 export type TriageReobserveEntryActionInputV1 = ReturnType<

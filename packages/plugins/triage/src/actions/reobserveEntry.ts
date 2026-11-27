@@ -1,7 +1,7 @@
 import { indexTriageAdmittedSourcesV1, readAccountDataSourceRecordsV1, type AccountDataSourceReadOptionsV1 } from '../corpus/configuration/accountDataSources.js';
 import { admitSourceFacts } from '@happier-dev/triage-protocol/v1';
 import type { TriageDataActionContext, TriageDataActionHandler } from './dataContext.js';
-import type { PluginCancellationOptions, JsonValue } from '@happier-dev/plugin-sdk';
+import { PluginError, type PluginCancellationOptions, type JsonValue } from '@happier-dev/plugin-sdk';
 import { throwIfAborted } from '@happier-dev/plugin-sdk/async';
 import type { ScmComparisonSource } from '@happier-dev/plugin-sdk/scm';
 import type {
@@ -21,6 +21,7 @@ import {
 } from '../corpus/fold/qualify.js';
 import { bindCorpusCollections } from '../corpus/collections/bindCorpusCollections.js';
 import { admitConfiguredEntrySourceRow, readConfiguredEntrySourceRow } from '../corpus/configuration/readConfiguredSourceRows.js';
+import { disconnectedSourceError, sourceResourceReadError } from './resolveResource.js';
 import { renderSourceQualifiedId } from '../corpus/identity/components.js';
 import type { TriageAdmittedGetExecutorV1 } from '../composer/resolveForDispatch.js';
 import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../targetedContributions.js';
@@ -159,7 +160,7 @@ export function createTriageReobserveEntryActionHandler(): TriageDataActionHandl
       requestId: context.requestId,
       readConfiguredInstance: async (_sourceInstanceId, options) => {
         const row = await readConfiguredEntrySourceRow(sourceInstances, input, options);
-        return admitConfiguredEntrySourceRow(row, input.entryRef.source)?.value.configured ?? null;
+        return admitConfiguredEntrySourceRow(row, input.entryRef.source, input.forSessionPullRequest)?.value.configured ?? null;
       },
       readSourceSnapshot: async (options) => {
         const observation = context.services.targetedContributions.observeForSelf(
@@ -177,6 +178,17 @@ export function createTriageReobserveEntryActionHandler(): TriageDataActionHandl
       nowMs: () => Date.now(),
       ...(context.signal ? { signal: context.signal } : {}),
     });
+    if (input.forSessionPullRequest) {
+      const failure = result.kind === 'unavailable' ? result.failure
+        : result.kind === 'observed' && result.observation.outcome.kind === 'unresolved'
+          ? result.observation.outcome.failure : undefined;
+      if (failure) throw sourceResourceReadError(failure);
+      if (result.kind === 'unavailable') throw disconnectedSourceError();
+      if (result.kind !== 'observed' || !result.comparisonSource) throw new PluginError({
+        code: 'sourceUnavailable', effectAttempted: false,
+        message: 'The pull request could not be read from its connected source.',
+      });
+    }
     if (result.kind === 'observed') {
       const { entryRef, ...observation } = result.observation;
       return { kind: 'observed', entryRef, observation: toTriageWireObservation(observation),

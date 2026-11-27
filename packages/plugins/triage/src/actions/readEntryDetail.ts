@@ -13,6 +13,7 @@ import { readReviewOutcome } from '../corpus/marks/setPinned.js';
 import { createTriageSourceSessionRelations } from '../sessions/sourceSessionRelations.js';
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
 import { resolveTriageCallerSources } from './callerSource.js';
+import { disconnectedSourceError } from './resolveResource.js';
 import type {
     TriageReadEntryDetailInputV1,
     TriageReadEntryDetailResultV1,
@@ -54,6 +55,7 @@ export async function readTriageEntryDetail(
     const row = admitConfiguredEntrySourceRow(
         await deps.sourceRelations.findConfiguredInstance(input.sourceInstanceId, input.entryRef),
         input.entryRef.source,
+        input.forSessionPullRequest,
     );
     if (row === null) return UNAVAILABLE;
 
@@ -83,6 +85,7 @@ export function createTriageReadEntryDetailActionHandler(): TriageDataActionHand
         const resolution = await resolveTriageCallerSources(context, { signal: context.signal }, input.entryRef.source);
         if (resolution.kind !== 'sources'
             || !resolution.callers[0]?.contribution.descriptor.kinds.some((kind) => kind.id === input.entryRef.kindId)) {
+            if (input.forSessionPullRequest) throw disconnectedSourceError();
             return UNAVAILABLE;
         }
         const { sourceInstances, sessionLinks, userMarks } = bindCorpusCollections(
@@ -92,7 +95,7 @@ export function createTriageReadEntryDetailActionHandler(): TriageDataActionHand
         const record = await readConfiguredEntrySourceRow(sourceInstances, input, {
             signal: context.signal, accountDataSources: readAccountDataSourceRecordsV1(sources),
         });
-        return await readTriageEntryDetail(input, {
+        const detail = await readTriageEntryDetail(input, {
             sourceRelations: createTriageSourceSessionRelations(context, { sourceInstances, sessionLinks }, {
                 entryRef: input.entryRef, sources, record,
             }),
@@ -100,5 +103,7 @@ export function createTriageReadEntryDetailActionHandler(): TriageDataActionHand
                 ...(readOptions?.signal ? { signal: readOptions.signal } : {}) }),
             ...(context.signal ? { signal: context.signal } : {}),
         });
+        if (input.forSessionPullRequest && detail.kind === 'unavailable') throw disconnectedSourceError();
+        return detail;
     };
 }

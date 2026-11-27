@@ -914,6 +914,7 @@ export const en = {
         publicationUnavailable: 'Its answer couldn’t be posted to the discussion. Restore access, then resume the run.',
         keptBody: 'Completed steps are kept. Nothing finished is repeated.',
         choicesOnReconnect: ({ machine }: { machine: string }) => `Recovery choices appear when ${machine} reconnects.`,
+        pullRequestHeadChanged: "The pull request changed since you approved it. Start the Workflow again to review the new head.",
         machineUnreachable: ({ machine }: { machine: string }) => `Happier couldn’t reach ${machine}.`,
         noChoices: 'This step can’t be resumed.',
         unconfirmedStop: 'Happier can’t tell whether this step stopped, so it won’t start it again.',

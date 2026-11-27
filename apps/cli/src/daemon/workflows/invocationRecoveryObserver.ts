@@ -44,6 +44,8 @@ import { classifyWorkflowSessionInputResult, observeWorkflowDetachedExecutionRun
 import { observeWorkflowDetachedRunRecovery } from './detachedRunRecovery';
 import { readWorkflowActionApprovalSettlement } from './actionApproval';
 import { isWorkflowInlineAccountReadWithoutResult } from './actionReadRecovery';
+import { parseQualifiedPluginActionId, readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
+import { isPluginErrorData } from '@happier-dev/protocol/plugins/errors';
 import { WorkflowMachineCommandOutputV1Schema } from '@happier-dev/protocol/workflows/stepActionsV1';
 import { deriveWorkflowSessionInputLocalIdV2 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { isSessionStopConfirmed } from '@happier-dev/protocol/sessions/control/contract';
@@ -216,6 +218,12 @@ export async function observeWorkflowInvocationRecoveryEvidence(params: Readonly
       if (approval) return { activity: approval.kind === 'unresolved' ? 'unknown' : 'not_active',
         canReattach: approval.kind !== 'unresolved' || approval.code === 'approval_required', canContinueConversation: false };
       const reason = params.progress.reason;
+      const refusal = params.progress.result;
+      if (parseQualifiedPluginActionId(execution.actionId) && isPluginErrorData(refusal)
+        && refusal.code === reason?.code && readPluginActionFailureAuthorPayload(refusal).effectAttempted === false) {
+        // A settled contributed Action explicitly refused before its effect.
+        return { activity: 'not_active', canReattach: false, canContinueConversation: false };
+      }
       if (params.progress.blockKind === 'action' && execution.actionId === 'machines.command.run'
         && reason?.code === 'command_failed' && params.progress.timing?.finishedAt !== undefined) {
         const command = WorkflowMachineCommandOutputV1Schema.safeParse(params.progress.result);

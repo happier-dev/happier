@@ -365,7 +365,7 @@ type GithubAuthorizedReviewWorkspaceV1 =
     sourceTip: NonNullable<ReturnType<typeof toGithubReviewWorkspaceSourceTip>>;
     pullRequest: Readonly<{ number: number; title?: string }>;
   }>
-  | Readonly<{ kind: 'unavailable'; reason: 'account' }>
+  | Readonly<{ kind: 'unavailable'; reason: 'account'; failure: TriageSourceFailureV1 }>
   | Readonly<{ kind: 'refused'; reason: 'instanceMoved' | 'pullRequestMoved' | 'observedHeadMoved' }>;
 
 /** One provider authority path shared by initial preparation and final verification. */
@@ -393,7 +393,7 @@ async function authorizeGithubReviewWorkspace(
   });
   const opened = await openClient(request.instance, context);
   context.signal.throwIfAborted();
-  if (!opened.ok) return Object.freeze({ kind: 'unavailable' as const, reason: 'account' as const });
+  if (!opened.ok) return Object.freeze({ kind: 'unavailable' as const, reason: 'account' as const, failure: opened.failure });
 
   const reread = await readGithubPullRequest(
     localRef,

@@ -1,0 +1,1387 @@
+{
+  "recipe": {
+    "version": 1,
+    "inputs": [
+      {
+        "name": "request",
+        "valueType": "json",
+        "required": true
+      },
+      {
+        "name": "prepareReviewWorkspaceSelection",
+        "valueType": "json",
+        "required": true
+      },
+      {
+        "name": "sessionId",
+        "valueType": "string",
+        "required": true
+      },
+      {
+        "name": "reviewRules",
+        "valueType": "json",
+        "required": false,
+        "default": {},
+        "description": "Options for ignored paths and inline comment severity."
+      },
+      {
+        "name": "quickReview",
+        "valueType": "json",
+        "required": true,
+        "description": "The reviewers, steps and launch choices for internal authors."
+      },
+      {
+        "name": "standardReview",
+        "valueType": "json",
+        "required": true,
+        "description": "The reviewers, steps and launch choices used after approval for other authors."
+      }
+    ],
+    "defaults": {},
+    "blocks": [
+      {
+        "kind": "if",
+        "id": "pr-lifecycle",
+        "name": "Review an active pull request",
+        "when": {
+          "kind": "any",
+          "conditions": [
+            {
+              "kind": "compare",
+              "operator": "eq",
+              "left": {
+                "kind": "trigger_event",
+                "event": {
+                  "pluginId": "example.forge",
+                  "localId": "pull-request"
+                },
+                "path": [
+                  "pullRequest",
+                  "action"
+                ]
+              },
+              "right": {
+                "kind": "literal",
+                "value": "opened"
+              }
+            },
+            {
+              "kind": "compare",
+              "operator": "eq",
+              "left": {
+                "kind": "trigger_event",
+                "event": {
+                  "pluginId": "example.forge",
+                  "localId": "pull-request"
+                },
+                "path": [
+                  "pullRequest",
+                  "action"
+                ]
+              },
+              "right": {
+                "kind": "literal",
+                "value": "reopened"
+              }
+            },
+            {
+              "kind": "compare",
+              "operator": "eq",
+              "left": {
+                "kind": "trigger_event",
+                "event": {
+                  "pluginId": "example.forge",
+                  "localId": "pull-request"
+                },
+                "path": [
+                  "pullRequest",
+                  "action"
+                ]
+              },
+              "right": {
+                "kind": "literal",
+                "value": "synchronize"
+              }
+            }
+          ]
+        },
+        "then": [
+          {
+            "kind": "if",
+            "id": "author-route",
+            "name": "Choose the review composition",
+            "when": {
+              "kind": "compare",
+              "operator": "eq",
+              "left": {
+                "kind": "trigger_event",
+                "event": {
+                  "pluginId": "example.forge",
+                  "localId": "pull-request"
+                },
+                "path": [
+                  "pullRequest",
+                  "authorAssociation"
+                ]
+              },
+              "right": {
+                "kind": "literal",
+                "value": "internal"
+              }
+            },
+            "then": [
+              {
+                "id": "quick-prepare",
+                "name": "Prepare the selected pull request",
+                "kind": "action",
+                "actionId": "happier.triage/actions/entries/prepare-pull-request-review-v1",
+                "input": {
+                  "v": {
+                    "kind": "literal",
+                    "value": 1
+                  },
+                  "request": {
+                    "kind": "input",
+                    "name": "request",
+                    "path": []
+                  },
+                  "prepareReviewWorkspaceSelection": {
+                    "kind": "input",
+                    "name": "prepareReviewWorkspaceSelection",
+                    "path": []
+                  },
+                  "sessionId": {
+                    "kind": "input",
+                    "name": "sessionId",
+                    "path": []
+                  },
+                  "reviewTarget": {
+                    "kind": "trigger_event",
+                    "event": {
+                      "pluginId": "example.forge",
+                      "localId": "pull-request"
+                    },
+                    "path": [
+                      "reviewTarget"
+                    ]
+                  },
+                  "expectedHeadSha": {
+                    "kind": "trigger_event",
+                    "event": {
+                      "pluginId": "example.forge",
+                      "localId": "pull-request"
+                    },
+                    "path": [
+                      "pullRequest",
+                      "headSha"
+                    ]
+                  },
+                  "reviewRules": {
+                    "kind": "input",
+                    "name": "reviewRules",
+                    "path": []
+                  },
+                  "ruleOccurrence": {
+                    "kind": "trigger_event",
+                    "event": {
+                      "pluginId": "example.forge",
+                      "localId": "pull-request"
+                    },
+                    "path": [
+                      "pullRequest"
+                    ]
+                  }
+                }
+              },
+              {
+                "id": "quick-review",
+                "name": "Quick review",
+                "onlyWhen": {
+                  "kind": "compare",
+                  "operator": "eq",
+                  "left": {
+                    "kind": "result",
+                    "producer": {
+                      "blockId": "quick-prepare",
+                      "scope": {
+                        "kind": "current"
+                      }
+                    },
+                    "path": [
+                      "status"
+                    ]
+                  },
+                  "right": {
+                    "kind": "literal",
+                    "value": "prepared"
+                  }
+                },
+                "kind": "action",
+                "actionId": "happier.triage/actions/sessions/start-pull-request-review-v1",
+                "input": {
+                  "v": {
+                    "kind": "literal",
+                    "value": 1
+                  },
+                  "sessionId": {
+                    "kind": "input",
+                    "name": "sessionId",
+                    "path": []
+                  },
+                  "review": {
+                    "kind": "result",
+                    "producer": {
+                      "blockId": "quick-prepare",
+                      "scope": {
+                        "kind": "current"
+                      }
+                    },
+                    "path": [
+                      "review"
+                    ]
+                  },
+                  "reviewInput": {
+                    "kind": "input",
+                    "name": "quickReview",
+                    "path": []
+                  },
+                  "comparisonId": {
+                    "kind": "result",
+                    "producer": {
+                      "blockId": "quick-prepare",
+                      "scope": {
+                        "kind": "current"
+                      }
+                    },
+                    "path": [
+                      "comparisonId"
+                    ]
+                  }
+                }
+              }
+            ],
+            "otherwise": [
+              {
+                "id": "approve-pr-setup",
+                "name": "Approve pull request setup",
+                "kind": "wait",
+                "document": {
+                  "text": "This pull request has an external or unknown author. Review the author, repository and Standard review composition below. Approve to prepare its workspace and run the Standard review. Deny by stopping this Run; no workspace preparation or review will run.",
+                  "references": [],
+                  "attachments": []
+                },
+                "input": [
+                  {
+                    "kind": "trigger_event",
+                    "event": {
+                      "pluginId": "example.forge",
+                      "localId": "pull-request"
+                    },
+                    "path": [
+                      "pullRequest",
+                      "author",
+                      "login"
+                    ]
+                  },
+                  {
+                    "kind": "trigger_event",
+                    "event": {
+                      "pluginId": "example.forge",
+                      "localId": "pull-request"
+                    },
+                    "path": [
+                      "pullRequest",
+                      "author",
+                      "id"
+                    ]
+                  },
+                  {
+                    "kind": "trigger_event",
+                    "event": {
+                      "pluginId": "example.forge",
+                      "localId": "pull-request"
+                    },
+                    "path": [
+                      "pullRequest",
+                      "authorAssociation"
+                    ]
+                  },
+                  {
+                    "kind": "trigger_event",
+                    "event": {
+                      "pluginId": "example.forge",
+                      "localId": "pull-request"
+                    },
+                    "path": [
+                      "pullRequest",
+                      "baseRepository",
+                      "repository"
+                    ]
+                  },
+                  {
+                    "kind": "trigger_event",
+                    "event": {
+                      "pluginId": "example.forge",
+                      "localId": "pull-request"
+                    },
+                    "path": [
+                      "pullRequest",
+                      "number"
+                    ]
+                  },
+                  {
+                    "kind": "trigger_event",
+                    "event": {
+                      "pluginId": "example.forge",
+                      "localId": "pull-request"
+                    },
+                    "path": [
+                      "pullRequest",
+                      "headSha"
+                    ]
+                  },
+                  {
+                    "kind": "input",
+                    "name": "standardReview",
+                    "path": []
+                  }
+                ]
+              },
+              {
+                "id": "standard-prepare",
+                "name": "Prepare the selected pull request",
+                "kind": "action",
+                "actionId": "happier.triage/actions/entries/prepare-pull-request-review-v1",
+                "input": {
+                  "v": {
+                    "kind": "literal",
+                    "value": 1
+                  },
+                  "request": {
+                    "kind": "input",
+                    "name": "request",
+                    "path": []
+                  },
+                  "prepareReviewWorkspaceSelection": {
+                    "kind": "input",
+                    "name": "prepareReviewWorkspaceSelection",
+                    "path": []
+                  },
+                  "sessionId": {
+                    "kind": "input",
+                    "name": "sessionId",
+                    "path": []
+                  },
+                  "reviewTarget": {
+                    "kind": "trigger_event",
+                    "event": {
+                      "pluginId": "example.forge",
+                      "localId": "pull-request"
+                    },
+                    "path": [
+                      "reviewTarget"
+                    ]
+                  },
+                  "expectedHeadSha": {
+                    "kind": "trigger_event",
+                    "event": {
+                      "pluginId": "example.forge",
+                      "localId": "pull-request"
+                    },
+                    "path": [
+                      "pullRequest",
+                      "headSha"
+                    ]
+                  },
+                  "reviewRules": {
+                    "kind": "input",
+                    "name": "reviewRules",
+                    "path": []
+                  },
+                  "ruleOccurrence": {
+                    "kind": "trigger_event",
+                    "event": {
+                      "pluginId": "example.forge",
+                      "localId": "pull-request"
+                    },
+                    "path": [
+                      "pullRequest"
+                    ]
+                  }
+                }
+              },
+              {
+                "id": "standard-review",
+                "name": "Standard review",
+                "onlyWhen": {
+                  "kind": "compare",
+                  "operator": "eq",
+                  "left": {
+                    "kind": "result",
+                    "producer": {
+                      "blockId": "standard-prepare",
+                      "scope": {
+                        "kind": "current"
+                      }
+                    },
+                    "path": [
+                      "status"
+                    ]
+                  },
+                  "right": {
+                    "kind": "literal",
+                    "value": "prepared"
+                  }
+                },
+                "kind": "action",
+                "actionId": "happier.triage/actions/sessions/start-pull-request-review-v1",
+                "input": {
+                  "v": {
+                    "kind": "literal",
+                    "value": 1
+                  },
+                  "sessionId": {
+                    "kind": "input",
+                    "name": "sessionId",
+                    "path": []
+                  },
+                  "review": {
+                    "kind": "result",
+                    "producer": {
+                      "blockId": "standard-prepare",
+                      "scope": {
+                        "kind": "current"
+                      }
+                    },
+                    "path": [
+                      "review"
+                    ]
+                  },
+                  "reviewInput": {
+                    "kind": "input",
+                    "name": "standardReview",
+                    "path": []
+                  },
+                  "comparisonId": {
+                    "kind": "result",
+                    "producer": {
+                      "blockId": "standard-prepare",
+                      "scope": {
+                        "kind": "current"
+                      }
+                    },
+                    "path": [
+                      "comparisonId"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "otherwise": []
+      }
+    ]
+  },
+  "leaves": [
+    {
+      "blockId": "quick-prepare",
+      "actionId": "happier.triage/actions/entries/prepare-pull-request-review-v1",
+      "actionInput": {
+        "v": 1,
+        "request": {
+          "instance": {
+            "v": 1,
+            "instance": {
+              "source": {
+                "pluginId": "happier.example.source",
+                "localId": "example-forge"
+              },
+              "sourceInstanceId": "11111111-1111-4111-8111-111111111111"
+            },
+            "localInstanceKey": "example/repository",
+            "configuration": {
+              "v": 1,
+              "token": "routing-token"
+            },
+            "binding": {
+              "purpose": "triage-source",
+              "account": {
+                "service": {
+                  "pluginId": "happier.example.source",
+                  "localId": "accounts"
+                },
+                "accountId": "account-1"
+              }
+            }
+          },
+          "entryRef": {
+            "source": {
+              "pluginId": "happier.example.source",
+              "localId": "example-forge"
+            },
+            "kindId": "pull-request",
+            "collisionScope": "example/repository",
+            "entryId": "17"
+          },
+          "workflowSubject": "pullRequest",
+          "lastKnownLocator": {
+            "v": 1,
+            "webUrl": "https://example.test/example/repository/pull/17",
+            "displayPath": "example/repository #17"
+          },
+          "observed": {
+            "baseSha": "1111111111111111111111111111111111111111",
+            "headSha": "2222222222222222222222222222222222222222",
+            "nativeRevision": "pr-17@2",
+            "observedAtMs": 1760000800000
+          },
+          "workspace": {
+            "serverId": "server-a",
+            "machineId": "machine-a",
+            "rootPath": "/workspaces/example-review"
+          }
+        },
+        "prepareReviewWorkspaceSelection": {
+          "selection": {
+            "target": {
+              "pluginId": "happier.triage",
+              "sourceCustody": {
+                "kind": "development",
+                "registeredRootId": "triage-root-1"
+              }
+            },
+            "point": {
+              "pointId": "sources",
+              "protocol": {
+                "id": "happier.triage/sources",
+                "version": 1
+              }
+            },
+            "contributor": {
+              "pluginId": "happier.example.source",
+              "contributionId": "example-forge",
+              "sourceCustody": {
+                "kind": "development",
+                "registeredRootId": "source-root-1"
+              }
+            }
+          },
+          "input": {
+            "v": 1,
+            "instance": {
+              "v": 1,
+              "instance": {
+                "source": {
+                  "pluginId": "happier.example.source",
+                  "localId": "example-forge"
+                },
+                "sourceInstanceId": "11111111-1111-4111-8111-111111111111"
+              },
+              "localInstanceKey": "example/repository",
+              "configuration": {
+                "v": 1,
+                "token": "routing-token"
+              },
+              "binding": {
+                "purpose": "triage-source"
+              }
+            },
+            "entryRef": {
+              "source": {
+                "pluginId": "happier.example.source",
+                "localId": "example-forge"
+              },
+              "kindId": "pull-request",
+              "collisionScope": "example/repository",
+              "entryId": "17"
+            },
+            "lastKnownLocator": {
+              "v": 1,
+              "webUrl": "https://example.test/example/repository/pull/17",
+              "displayPath": "example/repository #17"
+            },
+            "observed": {
+              "baseSha": "1111111111111111111111111111111111111111",
+              "headSha": "2222222222222222222222222222222222222222",
+              "nativeRevision": "pr-17@2",
+              "observedAtMs": 1760000800000
+            },
+            "workspace": {
+              "serverId": "server-a",
+              "machineId": "machine-a",
+              "rootPath": "/workspaces/example-review"
+            }
+          },
+          "credentialRef": {
+            "service": {
+              "pluginId": "happier.example.source",
+              "localId": "accounts"
+            },
+            "accountId": "account-1"
+          }
+        },
+        "sessionId": "session-a",
+        "reviewTarget": {
+          "kind": "unresolved"
+        },
+        "expectedHeadSha": {
+          "kind": "unresolved"
+        },
+        "reviewRules": {},
+        "ruleOccurrence": {
+          "kind": "unresolved"
+        }
+      },
+      "selection": {}
+    },
+    {
+      "blockId": "quick-review",
+      "actionId": "happier.triage/actions/sessions/start-pull-request-review-v1",
+      "actionInput": {
+        "v": 1,
+        "sessionId": "session-a",
+        "review": {
+          "kind": "unresolved"
+        },
+        "reviewInput": {
+          "reviewers": [
+            {
+              "kind": "engine",
+              "engineId": "engine-a"
+            }
+          ],
+          "instructions": "Quick composition"
+        },
+        "comparisonId": {
+          "kind": "unresolved"
+        }
+      },
+      "selection": {}
+    },
+    {
+      "blockId": "approve-pr-setup",
+      "selection": {}
+    },
+    {
+      "blockId": "standard-prepare",
+      "actionId": "happier.triage/actions/entries/prepare-pull-request-review-v1",
+      "actionInput": {
+        "v": 1,
+        "request": {
+          "instance": {
+            "v": 1,
+            "instance": {
+              "source": {
+                "pluginId": "happier.example.source",
+                "localId": "example-forge"
+              },
+              "sourceInstanceId": "11111111-1111-4111-8111-111111111111"
+            },
+            "localInstanceKey": "example/repository",
+            "configuration": {
+              "v": 1,
+              "token": "routing-token"
+            },
+            "binding": {
+              "purpose": "triage-source",
+              "account": {
+                "service": {
+                  "pluginId": "happier.example.source",
+                  "localId": "accounts"
+                },
+                "accountId": "account-1"
+              }
+            }
+          },
+          "entryRef": {
+            "source": {
+              "pluginId": "happier.example.source",
+              "localId": "example-forge"
+            },
+            "kindId": "pull-request",
+            "collisionScope": "example/repository",
+            "entryId": "17"
+          },
+          "workflowSubject": "pullRequest",
+          "lastKnownLocator": {
+            "v": 1,
+            "webUrl": "https://example.test/example/repository/pull/17",
+            "displayPath": "example/repository #17"
+          },
+          "observed": {
+            "baseSha": "1111111111111111111111111111111111111111",
+            "headSha": "2222222222222222222222222222222222222222",
+            "nativeRevision": "pr-17@2",
+            "observedAtMs": 1760000800000
+          },
+          "workspace": {
+            "serverId": "server-a",
+            "machineId": "machine-a",
+            "rootPath": "/workspaces/example-review"
+          }
+        },
+        "prepareReviewWorkspaceSelection": {
+          "selection": {
+            "target": {
+              "pluginId": "happier.triage",
+              "sourceCustody": {
+                "kind": "development",
+                "registeredRootId": "triage-root-1"
+              }
+            },
+            "point": {
+              "pointId": "sources",
+              "protocol": {
+                "id": "happier.triage/sources",
+                "version": 1
+              }
+            },
+            "contributor": {
+              "pluginId": "happier.example.source",
+              "contributionId": "example-forge",
+              "sourceCustody": {
+                "kind": "development",
+                "registeredRootId": "source-root-1"
+              }
+            }
+          },
+          "input": {
+            "v": 1,
+            "instance": {
+              "v": 1,
+              "instance": {
+                "source": {
+                  "pluginId": "happier.example.source",
+                  "localId": "example-forge"
+                },
+                "sourceInstanceId": "11111111-1111-4111-8111-111111111111"
+              },
+              "localInstanceKey": "example/repository",
+              "configuration": {
+                "v": 1,
+                "token": "routing-token"
+              },
+              "binding": {
+                "purpose": "triage-source"
+              }
+            },
+            "entryRef": {
+              "source": {
+                "pluginId": "happier.example.source",
+                "localId": "example-forge"
+              },
+              "kindId": "pull-request",
+              "collisionScope": "example/repository",
+              "entryId": "17"
+            },
+            "lastKnownLocator": {
+              "v": 1,
+              "webUrl": "https://example.test/example/repository/pull/17",
+              "displayPath": "example/repository #17"
+            },
+            "observed": {
+              "baseSha": "1111111111111111111111111111111111111111",
+              "headSha": "2222222222222222222222222222222222222222",
+              "nativeRevision": "pr-17@2",
+              "observedAtMs": 1760000800000
+            },
+            "workspace": {
+              "serverId": "server-a",
+              "machineId": "machine-a",
+              "rootPath": "/workspaces/example-review"
+            }
+          },
+          "credentialRef": {
+            "service": {
+              "pluginId": "happier.example.source",
+              "localId": "accounts"
+            },
+            "accountId": "account-1"
+          }
+        },
+        "sessionId": "session-a",
+        "reviewTarget": {
+          "kind": "unresolved"
+        },
+        "expectedHeadSha": {
+          "kind": "unresolved"
+        },
+        "reviewRules": {},
+        "ruleOccurrence": {
+          "kind": "unresolved"
+        }
+      },
+      "selection": {}
+    },
+    {
+      "blockId": "standard-review",
+      "actionId": "happier.triage/actions/sessions/start-pull-request-review-v1",
+      "actionInput": {
+        "v": 1,
+        "sessionId": "session-a",
+        "review": {
+          "kind": "unresolved"
+        },
+        "reviewInput": {
+          "reviewers": [
+            {
+              "kind": "engine",
+              "engineId": "engine-a"
+            },
+            {
+              "kind": "engine",
+              "engineId": "engine-b"
+            }
+          ],
+          "instructions": "Standard composition"
+        },
+        "comparisonId": {
+          "kind": "unresolved"
+        }
+      },
+      "selection": {}
+    }
+  ],
+  "cases": [
+    {
+      "association": "internal",
+      "eventOperands": [
+        {
+          "event": {
+            "pluginId": "example.forge",
+            "localId": "pull-request"
+          },
+          "path": [
+            "pullRequest",
+            "action"
+          ],
+          "value": "opened"
+        },
+        {
+          "event": {
+            "pluginId": "example.forge",
+            "localId": "pull-request"
+          },
+          "path": [
+            "pullRequest",
+            "authorAssociation"
+          ],
+          "value": "internal"
+        },
+        {
+          "event": {
+            "pluginId": "example.forge",
+            "localId": "pull-request"
+          },
+          "path": [
+            "reviewTarget"
+          ],
+          "value": {
+            "entryRef": {
+              "source": {
+                "pluginId": "happier.example.source",
+                "localId": "example-forge"
+              },
+              "kindId": "pull-request",
+              "collisionScope": "example/repository",
+              "entryId": "17"
+            },
+            "lastKnownLocator": {
+              "v": 1,
+              "webUrl": "https://example.test/example/repository/pull/17",
+              "displayPath": "example/repository #17"
+            },
+            "comparisonSource": {
+              "kind": "pullRequest",
+              "locator": {
+                "providerId": "example-forge",
+                "repository": "example/repository",
+                "number": 17,
+                "baseOid": "1111111111111111111111111111111111111111",
+                "headOid": "2222222222222222222222222222222222222222"
+              }
+            }
+          }
+        },
+        {
+          "event": {
+            "pluginId": "example.forge",
+            "localId": "pull-request"
+          },
+          "path": [
+            "pullRequest",
+            "headSha"
+          ],
+          "value": "2222222222222222222222222222222222222222"
+        },
+        {
+          "event": {
+            "pluginId": "example.forge",
+            "localId": "pull-request"
+          },
+          "path": [
+            "pullRequest"
+          ],
+          "value": {
+            "id": "455",
+            "number": 17,
+            "action": "opened",
+            "headSha": "2222222222222222222222222222222222222222",
+            "headRef": "preview",
+            "baseRef": "main",
+            "baseRepository": {
+              "kind": "github",
+              "deployment": "https://github.com",
+              "repository": "acme/widgets"
+            },
+            "headRepository": {
+              "kind": "github",
+              "deployment": "https://github.com",
+              "repository": "acme/widgets"
+            },
+            "author": {
+              "id": "101",
+              "login": "first-contributor",
+              "kind": "human"
+            },
+            "authorAssociation": "internal"
+          }
+        },
+        {
+          "event": {
+            "pluginId": "example.forge",
+            "localId": "pull-request"
+          },
+          "path": [
+            "pullRequest",
+            "author",
+            "login"
+          ],
+          "value": "first-contributor"
+        },
+        {
+          "event": {
+            "pluginId": "example.forge",
+            "localId": "pull-request"
+          },
+          "path": [
+            "pullRequest",
+            "author",
+            "id"
+          ],
+          "value": "101"
+        },
+        {
+          "event": {
+            "pluginId": "example.forge",
+            "localId": "pull-request"
+          },
+          "path": [
+            "pullRequest",
+            "baseRepository",
+            "repository"
+          ],
+          "value": "acme/widgets"
+        },
+        {
+          "event": {
+            "pluginId": "example.forge",
+            "localId": "pull-request"
+          },
+          "path": [
+            "pullRequest",
+            "number"
+          ],
+          "value": 17
+        }
+      ],
+      "behavior": {
+        "state": "succeeded",
+        "sourceEvents": [
+          "source.get",
+          "source.prepareReviewWorkspace",
+          "scm.diffSummary.capture",
+          "source.verifyReviewWorkspace",
+          "review.start"
+        ],
+        "reviews": [
+          {
+            "sessionId": "session-a",
+            "reviewers": [
+              "step-1-reviewer-1"
+            ],
+            "instructions": "Quick composition"
+          }
+        ]
+      }
+    },
+    {
+      "association": "external",
+      "eventOperands": [
+        {
+          "event": {
+            "pluginId": "example.forge",
+            "localId": "pull-request"
+          },
+          "path": [
+            "pullRequest",
+            "action"
+          ],
+          "value": "opened"
+        },
+        {
+          "event": {
+            "pluginId": "example.forge",
+            "localId": "pull-request"
+          },
+          "path": [
+            "pullRequest",
+            "authorAssociation"
+          ],
+          "value": "external"
+        },
+        {
+          "event": {
+            "pluginId": "example.forge",
+            "localId": "pull-request"
+          },
+          "path": [
+            "reviewTarget"
+          ],
+          "value": {
+            "entryRef": {
+              "source": {
+                "pluginId": "happier.example.source",
+                "localId": "example-forge"
+              },
+              "kindId": "pull-request",
+              "collisionScope": "example/repository",
+              "entryId": "17"
+            },
+            "lastKnownLocator": {
+              "v": 1,
+              "webUrl": "https://example.test/example/repository/pull/17",
+              "displayPath": "example/repository #17"
+            },
+            "comparisonSource": {
+              "kind": "pullRequest",
+              "locator": {
+                "providerId": "example-forge",
+                "repository": "example/repository",
+                "number": 17,
+                "baseOid": "1111111111111111111111111111111111111111",
+                "headOid": "2222222222222222222222222222222222222222"
+              }
+            }
+          }
+        },
+        {
+          "event": {
+            "pluginId": "example.forge",
+            "localId": "pull-request"
+          },
+          "path": [
+            "pullRequest",
+            "headSha"
+          ],
+          "value": "2222222222222222222222222222222222222222"
+        },
+        {
+          "event": {
+            "pluginId": "example.forge",
+            "localId": "pull-request"
+          },
+          "path": [
+            "pullRequest"
+          ],
+          "value": {
+            "id": "455",
+            "number": 17,
+            "action": "opened",
+            "headSha": "2222222222222222222222222222222222222222",
+            "headRef": "preview",
+            "baseRef": "main",
+            "baseRepository": {
+              "kind": "github",
+              "deployment": "https://github.com",
+              "repository": "acme/widgets"
+            },
+            "headRepository": {
+              "kind": "github",
+              "deployment": "https://github.com",
+              "repository": "acme/widgets"
+            },
+            "author": {
+              "id": "101",
+              "login": "first-contributor",
+              "kind": "human"
+            },
+            "authorAssociation": "external"
+          }
+        },
+        {
+          "event": {
+            "pluginId": "example.forge",
+            "localId": "pull-request"
+          },
+          "path": [
+            "pullRequest",
+            "author",
+            "login"
+          ],
+          "value": "first-contributor"
+        },
+        {
+          "event": {
+            "pluginId": "example.forge",
+            "localId": "pull-request"
+          },
+          "path": [
+            "pullRequest",
+            "author",
+            "id"
+          ],
+          "value": "101"
+        },
+        {
+          "event": {
+            "pluginId": "example.forge",
+            "localId": "pull-request"
+          },
+          "path": [
+            "pullRequest",
+            "baseRepository",
+            "repository"
+          ],
+          "value": "acme/widgets"
+        },
+        {
+          "event": {
+            "pluginId": "example.forge",
+            "localId": "pull-request"
+          },
+          "path": [
+            "pullRequest",
+            "number"
+          ],
+          "value": 17
+        }
+      ],
+      "behavior": {
+        "state": "waiting_for_review",
+        "sourceEvents": [],
+        "reviews": [],
+        "hold": [
+          "first-contributor",
+          "101",
+          "external",
+          "acme/widgets",
+          17,
+          "2222222222222222222222222222222222222222",
+          {
+            "reviewers": [
+              {
+                "kind": "engine",
+                "engineId": "engine-a"
+              },
+              {
+                "kind": "engine",
+                "engineId": "engine-b"
+              }
+            ],
+            "instructions": "Standard composition"
+          }
+        ]
+      }
+    }
+  ],
+  "prepareOperand": {
+    "v": 1,
+    "request": {
+      "instance": {
+        "v": 1,
+        "instance": {
+          "source": {
+            "pluginId": "happier.example.source",
+            "localId": "example-forge"
+          },
+          "sourceInstanceId": "11111111-1111-4111-8111-111111111111"
+        },
+        "localInstanceKey": "example/repository",
+        "configuration": {
+          "v": 1,
+          "token": "routing-token"
+        },
+        "binding": {
+          "purpose": "triage-source",
+          "account": {
+            "service": {
+              "pluginId": "happier.example.source",
+              "localId": "accounts"
+            },
+            "accountId": "account-1"
+          }
+        }
+      },
+      "entryRef": {
+        "source": {
+          "pluginId": "happier.example.source",
+          "localId": "example-forge"
+        },
+        "kindId": "pull-request",
+        "collisionScope": "example/repository",
+        "entryId": "17"
+      },
+      "workflowSubject": "pullRequest",
+      "lastKnownLocator": {
+        "v": 1,
+        "webUrl": "https://example.test/example/repository/pull/17",
+        "displayPath": "example/repository #17"
+      },
+      "observed": {
+        "baseSha": "1111111111111111111111111111111111111111",
+        "headSha": "2222222222222222222222222222222222222222",
+        "nativeRevision": "pr-17@2",
+        "observedAtMs": 1760000800000
+      },
+      "workspace": {
+        "serverId": "server-a",
+        "machineId": "machine-a",
+        "rootPath": "/workspaces/example-review"
+      }
+    },
+    "prepareReviewWorkspaceSelection": {
+      "selection": {
+        "target": {
+          "pluginId": "happier.triage",
+          "sourceCustody": {
+            "kind": "development",
+            "registeredRootId": "triage-root-1"
+          }
+        },
+        "point": {
+          "pointId": "sources",
+          "protocol": {
+            "id": "happier.triage/sources",
+            "version": 1
+          }
+        },
+        "contributor": {
+          "pluginId": "happier.example.source",
+          "contributionId": "example-forge",
+          "sourceCustody": {
+            "kind": "development",
+            "registeredRootId": "source-root-1"
+          }
+        }
+      },
+      "input": {
+        "v": 1,
+        "instance": {
+          "v": 1,
+          "instance": {
+            "source": {
+              "pluginId": "happier.example.source",
+              "localId": "example-forge"
+            },
+            "sourceInstanceId": "11111111-1111-4111-8111-111111111111"
+          },
+          "localInstanceKey": "example/repository",
+          "configuration": {
+            "v": 1,
+            "token": "routing-token"
+          },
+          "binding": {
+            "purpose": "triage-source"
+          }
+        },
+        "entryRef": {
+          "source": {
+            "pluginId": "happier.example.source",
+            "localId": "example-forge"
+          },
+          "kindId": "pull-request",
+          "collisionScope": "example/repository",
+          "entryId": "17"
+        },
+        "lastKnownLocator": {
+          "v": 1,
+          "webUrl": "https://example.test/example/repository/pull/17",
+          "displayPath": "example/repository #17"
+        },
+        "observed": {
+          "baseSha": "1111111111111111111111111111111111111111",
+          "headSha": "2222222222222222222222222222222222222222",
+          "nativeRevision": "pr-17@2",
+          "observedAtMs": 1760000800000
+        },
+        "workspace": {
+          "serverId": "server-a",
+          "machineId": "machine-a",
+          "rootPath": "/workspaces/example-review"
+        }
+      },
+      "credentialRef": {
+        "service": {
+          "pluginId": "happier.example.source",
+          "localId": "accounts"
+        },
+        "accountId": "account-1"
+      }
+    },
+    "sessionId": "session-a",
+    "reviewTarget": {
+      "entryRef": {
+        "source": {
+          "pluginId": "happier.example.source",
+          "localId": "example-forge"
+        },
+        "kindId": "pull-request",
+        "collisionScope": "example/repository",
+        "entryId": "17"
+      },
+      "lastKnownLocator": {
+        "v": 1,
+        "webUrl": "https://example.test/example/repository/pull/17",
+        "displayPath": "example/repository #17"
+      },
+      "comparisonSource": {
+        "kind": "pullRequest",
+        "locator": {
+          "providerId": "example-forge",
+          "repository": "example/repository",
+          "number": 17,
+          "baseOid": "1111111111111111111111111111111111111111",
+          "headOid": "2222222222222222222222222222222222222222"
+        }
+      }
+    },
+    "expectedHeadSha": "2222222222222222222222222222222222222222",
+    "reviewRules": {},
+    "ruleOccurrence": {
+      "id": "455",
+      "number": 17,
+      "action": "opened",
+      "headSha": "2222222222222222222222222222222222222222",
+      "headRef": "preview",
+      "baseRef": "main",
+      "baseRepository": {
+        "kind": "github",
+        "deployment": "https://github.com",
+        "repository": "acme/widgets"
+      },
+      "headRepository": {
+        "kind": "github",
+        "deployment": "https://github.com",
+        "repository": "acme/widgets"
+      },
+      "author": {
+        "id": "101",
+        "login": "first-contributor",
+        "kind": "human"
+      },
+      "authorAssociation": "internal"
+    }
+  }
+}

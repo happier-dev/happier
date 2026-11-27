@@ -1,3 +1,4 @@
+import type { WorkflowTriggerEventIdentityV1 } from './workflowReferenceV1.js';
 import { resolveBuiltinWorkflowDefinitionV1 } from './builtins/catalog.js';
 import { parseWorkflowDefinitionRefV1 } from './workflowDefinitionRefV1.js';
 import type { WorkflowDefinitionV1 } from './workflowV1.js';
@@ -24,6 +25,7 @@ export async function resolveWorkflowPluginSourceV1(workflow: string, options: R
 export async function resolveWorkflowDefinitionRefV1<TArtifact extends DefinitionSourceV1 = DefinitionSourceV1>(
   value: string,
   options: Readonly<{
+    event?: WorkflowTriggerEventIdentityV1;
     readArtifact?: (artifactId: string, signal?: AbortSignal) => Promise<TArtifact | null>;
     readPluginWorkflows?: WorkflowPluginSourceReaderV1;
     signal?: AbortSignal;
@@ -32,7 +34,7 @@ export async function resolveWorkflowDefinitionRefV1<TArtifact extends Definitio
   options.signal?.throwIfAborted();
   const ref = parseWorkflowDefinitionRefV1(value);
   if (ref?.kind === 'builtin') {
-    const entry = resolveBuiltinWorkflowDefinitionV1(ref.id);
+    const entry = resolveBuiltinWorkflowDefinitionV1(ref.id, options.event);
     return entry ? { kind: 'catalog', ref: value, sourceKey: value, ...entry } : null;
   }
   if (ref?.kind === 'plugin') {

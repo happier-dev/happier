@@ -2,6 +2,8 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { Modal } from '@/modal';
 import { getBuiltinWorkflowCatalogV1, type BuiltinWorkflowCatalogEntryV1 } from '@happier-dev/protocol/workflows/builtins/catalog';
+import { ActionSessionAddressV1Schema } from '@happier-dev/protocol/actions/sessionTargetV1';
+import { resolveWorkspaceTargetForSession } from '@/sync/domains/session/resolveWorkspaceTargetForSession';
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { RoleOverrideV1 } from '@happier-dev/protocol/prompts/roles/rolesV1';
 import type { WorkflowPluginSourceV1 } from '@happier-dev/protocol/workflows/workflowPluginSourceContractV1';
@@ -96,10 +98,16 @@ function CatalogDefinition(props: Readonly<{ plugin: WorkflowPluginSourceV1 | Bu
         const seed = takeWorkflowReviewDirectory(plugin.definition, {});
         return target && seed.directory !== undefined ? { ...target, directory: seed.directory } : target;
     });
+    const chooseSession = builtin?.startSessionInput;
     const mounted = useMountedRef();
     const isCurrent = React.useCallback(() => mounted.current && lifetime?.isCurrent() === true, [lifetime, mounted]);
     const [open, setOpen] = React.useState(props.intent === 'run' && !sessionBound);
     const [values, setValues] = React.useState<Readonly<Record<string, JsonValue | undefined>>>({});
+    const selectedSession = chooseSession ? ActionSessionAddressV1Schema.safeParse(values[chooseSession]).data : undefined;
+    const selectedWorkspace = selectedSession && props.serverId
+        ? resolveWorkspaceTargetForSession({ sessionId: selectedSession.sessionId, serverId: props.serverId }) : null;
+    const sessionProject = selectedWorkspace ? { machineId: selectedWorkspace.machineId, directory: selectedWorkspace.rootPath } : null;
+    const runTarget = chooseSession ? sessionProject : target;
     const [rawTextValues, setRawTextValues] = React.useState<Readonly<Record<string, string>>>({});
     // Run now anchors its composer under itself, as in the editor (convo-N7).
     const runAnchorRef = React.useRef<View | null>(null);
@@ -128,13 +136,14 @@ function CatalogDefinition(props: Readonly<{ plugin: WorkflowPluginSourceV1 | Bu
             ...(accountLifetime ? { serverId: accountLifetime.scope.serverId } : {}) } } as never);
     };
     const admit = async (inputs: Readonly<Record<string, JsonValue>> | undefined, roleOverrides?: readonly RoleOverrideV1[], directory?: string) => {
-        if (!isCurrent() || sessionBound || target === null || !isWorkflowProjectTarget(target) || target.directory.trim().length === 0) return;
-        const project = directory === undefined ? target : { ...target, directory };
-        if (runNow.retainedRequest === null && project !== target) setTarget(project);
+        if (!isCurrent() || sessionBound || runTarget === null || !isWorkflowProjectTarget(runTarget) || runTarget.directory.trim().length === 0) return;
+        const project = chooseSession || directory === undefined ? runTarget : { ...runTarget, directory };
+        if (!chooseSession && runNow.retainedRequest === null && project !== target) setTarget(project);
         const accepted = await runNow.runNow({
             source: catalogSource,
             metadata: { title: plugin.title }, ...(inputs === undefined ? {} : { inputs: { ...inputs } }),
-            ...(roleOverrides === undefined ? {} : { roleOverrides: [...roleOverrides] }), project, isInvocationCurrent: isCurrent,
+            ...(roleOverrides === undefined ? {} : { roleOverrides: [...roleOverrides] }), project,
+            ...(selectedSession ? { originSessionId: selectedSession.sessionId } : {}), isInvocationCurrent: isCurrent,
             refusal: 'inline' });
         if (accepted !== null && isCurrent()) {
             setOpen(false);
@@ -143,17 +152,17 @@ function CatalogDefinition(props: Readonly<{ plugin: WorkflowPluginSourceV1 | Bu
     };
     // While a start is unsettled, the review shows the Where it already sent, without a setter.
     const retained = runNow.retainedRequest;
-    const shownTarget = retained?.project ?? target;
+    const shownTarget = retained?.project ?? runTarget;
     const shownMachine = machines.find((entry) => entry.id === shownTarget?.machineId);
     const runComposer = useWorkflowRunComposerModal({ open, anchorRef: runAnchorRef, props: {
         inputs: plugin.definition.inputs, definition: plugin.definition, workflowName: plugin.title,
         optionsConsumer: { kind: 'workflow', workflow: catalogSource.workflow },
         preview: plugin.description ?? '', values, onChangeValues: setValues, rawTextValues, onChangeRawTextValues: setRawTextValues,
         machineId: shownTarget?.machineId ?? null, directory: shownTarget && isWorkflowProjectTarget(shownTarget) ? shownTarget.directory : null, serverId: props.serverId,
-        ...(retained ? {} : { onChangeDirectory: (directory: string) => setTarget(current => current && isWorkflowProjectTarget(current)
+        ...(retained || chooseSession ? {} : { onChangeDirectory: (directory: string) => setTarget(current => current && isWorkflowProjectTarget(current)
             ? { ...current, directory } : current) }),
         retainedRequest: retained,
-        extraActionChips: createWorkflowStartPlacementChips({ target: shownTarget, machines,
+        extraActionChips: chooseSession ? [] : createWorkflowStartPlacementChips({ target: shownTarget, machines,
             machineName: shownMachine ? getMachineDisplayName(shownMachine) : null,
             ...(retained?.project ? {} : { onChange: setTarget }),
             testID: `${prefix}:run-where`, testIDPrefix: `${prefix}:run` }),
@@ -161,7 +170,7 @@ function CatalogDefinition(props: Readonly<{ plugin: WorkflowPluginSourceV1 | Bu
         pending: runNow.isPending(runNow.pendingRunId ?? ''),
         startProblem: runNow.refusal,
         reconciling: runNow.stateFor(runNow.pendingRunId ?? '') === 'reconciling',
-        startDisabled: target === null || !isWorkflowProjectTarget(target) || target.directory.trim().length === 0,
+        startDisabled: runTarget === null || !isWorkflowProjectTarget(runTarget) || runTarget.directory.trim().length === 0,
     } });
     const exportSource = async () => {
         if (!isCurrent()) return;

@@ -148,9 +148,12 @@ vi.mock('react-native-unistyles', async () => {
 });
 vi.mock('@/text', async () => {
   const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+  const { workflowTranslationsEnglish } = await import('@/text/translations/workflowTranslations.shared');
   return createTextModuleMock({
     translate: (key, params) =>
-      params ? `${key}:${JSON.stringify(params)}` : key,
+      key === 'workflows.recovery.pullRequestHeadChanged'
+        ? workflowTranslationsEnglish.en.recovery.pullRequestHeadChanged
+        : params ? `${key}:${JSON.stringify(params)}` : key,
   });
 });
 // Substitute only the native recycler; list selection, normalization and refs stay real.
@@ -5413,6 +5416,40 @@ describe('WorkflowRunContent', () => {
       expect(base.onRunAgain).toHaveBeenCalledOnce();
     },
   );
+
+  it.each([
+    { code: 'sourceUnavailable', message: 'Connect the repository in PRs & Issues, then try the pull request again.',
+      remedy: 'Connect the repository in PRs & Issues, then try the pull request again.', action: 'resolve-resource-v1' },
+    { code: 'connected_service_credential_reconnect_required',
+      message: 'Reconnect the source account in PRs & Issues, then try the pull request again.',
+      remedy: 'Reconnect the source account in PRs & Issues, then try the pull request again.', action: 'reobserve-v1' },
+    { code: 'observedHeadMoved', message: 'The observed head changed.',
+      remedy: 'The pull request changed since you approved it. Start the Workflow again to review the new head.',
+      action: 'prepare-pull-request-review-v1' },
+  ])('shows the $code remedy on the interrupted pull request Run', async ({ code, message, remedy, action }) => {
+    const invocation = createWorkflowInvocationIndexFixture({ id: 'inv-1', lifecycle: 'failed' });
+    const screen = await renderContent({
+      run: createWorkflowRunSummaryFixture({ state: 'interrupted' }),
+      invocations: [invocation],
+      invocationsLoaded: true,
+      invocationHistoryComplete: true,
+      firstFailedInvocationId: invocation.id,
+      firstFailedInvocationResolution: 'resolved',
+      invocationProgressById: new Map([[invocation.id, {
+        kind: 'happier.workflow-progress.v1',
+        invocationPath: { blockId: 'analyze', scope: [] },
+        blockKind: 'action',
+        attempt: '0',
+        logicalInvocationRecordId: invocation.id,
+        reason: { code, message },
+        execution: { kind: 'action', actionId: `happier.triage/actions/entries/${action}`,
+          actionRequestId: 'prepare-request', localInputId: 'workflow:prepare:action', input: {} },
+      }]]),
+    });
+    const cause = screen.findByTestId('workflow-run-failure-reason')?.props.children;
+    expect(cause).toContain(remedy);
+    expect(cause).not.toContain(code);
+  });
 
   it('decides a failed Run whose first-failure lookup failed once, as Run workflow again', async () => {
     const onRunAgain = vi.fn();

@@ -430,6 +430,13 @@ describe('the entry detail read', () => {
             detailInput(INSTANCE_A),
             createContext({ collections }),
         )).rejects.toMatchObject({ code: 'triage_source_retired', data: { retryable: false } });
+        await expect(createTriageReadEntryDetailActionHandler()(
+            TriageReadEntryDetailInputV1Schema.parse({ ...detailInput(INSTANCE_A), forSessionPullRequest: true }),
+            createContext({ collections, hostSurface: 'agent' }),
+        )).rejects.toMatchObject({
+            code: 'sourceUnavailable',
+            message: expect.stringContaining('Connect the repository in PRs & Issues'),
+        });
     });
 
     it('refuses a connection that belongs to a different source than the entry', async () => {

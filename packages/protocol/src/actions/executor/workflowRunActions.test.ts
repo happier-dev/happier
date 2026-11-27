@@ -254,11 +254,14 @@ function storedRootInvocation(snapshot: ReturnType<typeof runSnapshot>, workspac
 }
 
 describe('shared Account workflow run owner', () => {
-  it('names the missing reviewer selection in the catalog Start failure', async () => {
+  it.each([
+    { workflow: 'builtin:review-and-converge', inputs: {}, missing: 'reviewers' },
+    { workflow: 'builtin:review-pull-request', inputs: { quickReview: { reviewers: [{ kind: 'engine', engineId: 'engine-a' }], instructions: 'Review this PR' } }, missing: 'pullRequest' },
+  ])('names the missing $missing input before creating a catalog Run', async ({ workflow, inputs, missing }) => {
     const owner = createWorkflowAccountRunActionOwner({
       ...ownerDeps({ execute: async operation => {
         if (operation.operation === 'get') throw Object.assign(new Error('run_not_found'), { code: 'run_not_found' });
-        throw new Error('A missing reviewer selection must not reach storage');
+        throw new Error('Missing required catalog input must not write a Run');
       } }),
       resolveMaterializationContext: async () => ({ effects: {
         resolveTargetAvailability: async () => true,
@@ -270,15 +273,15 @@ describe('shared Account workflow run owner', () => {
     const agentTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
     const result = await execute({
       actionId: 'workflow.run.start',
-      input: WorkflowRunStartRequestV1Schema.parse({ runId, source: { kind: 'catalog', workflow: 'builtin:review-and-converge' } }),
+      input: WorkflowRunStartRequestV1Schema.parse({ runId, source: { kind: 'catalog', workflow }, inputs }),
       context: { callerPermissionMode: 'default', defaultSessionId: 'origin-1', externalActionTarget: { kind: 'machine', machineId: 'machine-a',
         project: { machineId: 'machine-a', directory: '/repo' } } },
     }, { agentTarget, machineId: 'machine-a', directory: '/repo' });
     expect(result).toMatchObject({
       ok: false,
       errorCode: 'invalid_input',
-      error: expect.stringMatching(/required.*reviewers/i),
-      details: { issues: [{ code: 'missing_reference', path: '/inputs/reviewers' }] },
+      error: expect.stringContaining(missing),
+      details: { issues: [{ code: 'missing_reference', path: `/inputs/${missing}` }] },
     });
   });
 

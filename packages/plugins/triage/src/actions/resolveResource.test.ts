@@ -152,9 +152,25 @@ it.each([0, 1, 4])('walks %s active configured connections once, skipping retire
         seed(91, 'active', false);
         answer(async () => ({ kind: 'unavailable', failure: { class: 'unknown', code: 'provider_unreachable' } }));
         expect(await plugin.invokeAction(TRIAGE_RESOLVE_RESOURCE_ACTION_LOCAL_ID_V1, { v: 1, resource }, { surface: 'cli' }))
-            .toEqual({ kind: 'unavailable' });
+            .toMatchObject({ kind: 'unavailable', code: 'sourceUnavailable', remedy: expect.stringContaining('PRs & Issues') });
         expect(requests).toHaveLength(count);
         expect(new Set(requests.map(value => value.instance.instance.sourceInstanceId)).size).toBe(count);
+    });
+});
+
+it('returns the same disconnected-source code and remedy to both URL callers', async () => {
+    await withSource('plain', async ({ plugin, seed, answer, requests }) => {
+        seed(1);
+        answer(async () => ({ kind: 'unavailable', failure: { class: 'unknown', code: 'provider_unreachable' } }));
+        const unavailable = await plugin.invokeAction(TRIAGE_RESOLVE_RESOURCE_ACTION_LOCAL_ID_V1, { v: 1, resource }, { surface: 'agent' });
+        expect(unavailable).toMatchObject({ kind: 'unavailable', code: 'sourceUnavailable', remedy: expect.stringContaining('PRs & Issues') });
+        if (!unavailable || typeof unavailable !== 'object' || !('code' in unavailable) || !('remedy' in unavailable)) {
+            throw new Error('Expected a typed resolution refusal');
+        }
+        await expect(plugin.invokeAction(TRIAGE_RESOLVE_RESOURCE_ACTION_LOCAL_ID_V1, {
+            v: 1, kind: 'pullRequestForSession', reference: resource.url, sessionId: 'session-a',
+        }, { surface: 'agent' })).rejects.toMatchObject({ code: unavailable.code, message: unavailable.remedy });
+        expect(requests.map(request => request.resource)).toEqual([resource, resource]);
     });
 });
 

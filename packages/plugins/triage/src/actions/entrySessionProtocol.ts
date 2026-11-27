@@ -44,6 +44,7 @@ import { MAX_TRIAGE_LIST_WINDOW_ROWS_V1 } from '../projection/listWindow.js';
 import { TriageEntrySessionLinkDisplayV1Schema } from './sessionLinksProtocol.js';
 import { TriageNewSessionFailureV1Schema } from '../ui/header/newSessionSeedCommand.js';
 import { TriageWorkspaceModeV1Schema } from '../sessions/entrySessionWorkspace.js';
+import { TriageProjectedObservationV1Schema } from './listEntriesProtocol.js';
 
 const reviewOccurrenceText = defineProtocolString({ minLength: 1 });
 const reviewOccurrenceBoolean = defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]);
@@ -514,7 +515,7 @@ const TriageStartEntrySessionReviewContextV1Schema = defineProtocolObject({
 
 /** Workflow preparation shares the selected-source operand with Session start. */
 export const TRIAGE_PREPARE_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1 = 'entries/prepare-pull-request-review-v1';
-export const TriagePreparePullRequestReviewInputV1Schema = defineProtocolObject({
+const TriagePrepareSelectedPullRequestReviewInputV1Schema = defineProtocolObject({
     v: defineProtocolLiteral(1),
     request: TriageStartEntrySessionReviewWorkspaceRequestV1Schema,
     prepareReviewWorkspaceSelection: TriageStartEntrySessionPrepareReviewWorkspaceSelectionV1Schema,
@@ -524,6 +525,18 @@ export const TriagePreparePullRequestReviewInputV1Schema = defineProtocolObject(
     ruleOccurrence: PullRequestReviewRuleOccurrenceV1Schema.optional(),
     reviewRules: PullRequestReviewStepRulesV1Schema.optional(),
 }, { policy: 'closed' });
+export const TriagePreparePullRequestReviewInputV1Schema = defineProtocolUnion([
+    TriagePrepareSelectedPullRequestReviewInputV1Schema,
+    defineProtocolObject({
+        v: defineProtocolLiteral(1),
+        kind: defineProtocolLiteral('resolvedPullRequestForSession'),
+        sessionId: triageSessionId,
+        instance: TriageConfiguredSourceInstanceV1Schema,
+        entryRef: TriageEntryRefV1Schema,
+        observation: TriageProjectedObservationV1Schema,
+        comparisonSource: ScmComparisonSourceProtocolSchema,
+    }, { policy: 'closed' }),
+]);
 export type TriagePreparePullRequestReviewInputV1 = ReturnType<typeof TriagePreparePullRequestReviewInputV1Schema.parse>;
 export const TriagePreparePullRequestReviewResultV1Schema = defineProtocolUnion([
     defineProtocolObject({

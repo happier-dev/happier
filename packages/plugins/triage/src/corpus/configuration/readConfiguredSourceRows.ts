@@ -22,9 +22,11 @@ import { TRIAGE_SOURCE_RETIRED_CODE } from './configuredSourceAuthority.js';
 export function admitConfiguredEntrySourceRow(
     row: CorpusRowV1<CorpusSourceInstanceRowV1> | null,
     source: TriageEntryRefV1['source'],
+    activeOnly = false,
 ): CorpusRowV1<CorpusSourceInstanceRowV1> | null {
     if (row === null || !configuredSourceInstanceIsOwnedBy(row.value, source)) return null;
     if (row.value.lifecycle === CORPUS_SOURCE_INSTANCE_LIFECYCLE.retired) {
+        if (activeOnly) return null;
         throw new PluginError({ code: TRIAGE_SOURCE_RETIRED_CODE, retryable: false });
     }
     return row;

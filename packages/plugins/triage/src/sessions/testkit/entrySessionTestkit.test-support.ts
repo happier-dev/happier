@@ -8,6 +8,7 @@ import {
     type TriagePrepareReviewWorkspaceInputV1,
     type TriagePrepareReviewWorkspaceResultV1,
     type TriageReviewWorkspaceObservedRevisionV1,
+    type TriageSourceFailureV1,
     type TriageSelectedWorkspaceScopeV1,
 } from '@happier-dev/triage-protocol/v1';
 
@@ -37,7 +38,10 @@ import { activate } from '../../activate.js';
 import { activate as activateAccount } from '../../accountRuntime.js';
 import { createTestkitCorpusCollections } from '../../corpus/testkit/corpusCollections.test-support.js';
 import { testkitSnapshot, testkitViewer } from '../../corpus/testkit/observations.test-support.js';
-import { CORPUS_SOURCE_INSTANCES_COLLECTION_ID } from '../../corpus/collections/ids.js';
+import { CORPUS_SESSION_LINKS_COLLECTION_ID, CORPUS_SOURCE_INSTANCES_COLLECTION_ID } from '../../corpus/collections/ids.js';
+import { TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1, TriageReadEntryDetailResultV1Schema } from '../../actions/entryDetailProtocol.js';
+import { TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1, TriageReobserveEntryResultV1Schema } from '../../actions/reobserveEntryProtocol.js';
+import { TRIAGE_RESOLVE_RESOURCE_ACTION_LOCAL_ID_V1, TriageResolveResourceActionResultV1Schema } from '../../actions/resolveResourceProtocol.js';
 
 /** A real Workflow admission receipt; engine launches have not happened yet. */
 export const TESTKIT_REVIEW_WORKFLOW_RECEIPT = { reviewRound: { reviewId: 'review-standard-workflow', roundOrdinal: 1 },
@@ -390,6 +394,11 @@ export async function createTriagePullRequestReviewActionTestkit(options: Readon
     signal?: AbortSignal;
     executeReview?: (input: unknown) => Promise<unknown>;
     baseRules?: Record<string, unknown>;
+    rejectPreparation?: () => TriagePrepareReviewWorkspaceResultV1 | undefined;
+    observationFailure?: TriageSourceFailureV1;
+    repositoryConnected?: () => boolean;
+    matchesManualResource?: (resource: Readonly<{ kind: string; url: string }>, number: number) => boolean;
+    manualCheckout?: Readonly<{ repository: string; prState?: 'closed' | 'merged' }>;
     /** The host-stamped caller, as a workflow run's Action invocation carries it. */
     caller?: Readonly<{ kind: 'automationRun'; runId: string; automationId: string; cause: unknown }>;
 }> = {}) {
@@ -405,6 +414,9 @@ export async function createTriagePullRequestReviewActionTestkit(options: Readon
     let currentRevision = TESTKIT_OBSERVED_REVISION;
     let currentEntryRef = request.entryRef;
     let currentPullRequestNumber = 17;
+    const currentLocator = () => options.manualCheckout
+        ? testkitLocator({ webUrl: `https://github.com/example/repository/pull/${currentPullRequestNumber}` })
+        : request.lastKnownLocator;
     const events: string[] = [];
     const prepareInputs: unknown[] = [];
     const verifyInputs: unknown[] = [];
@@ -412,6 +424,7 @@ export async function createTriagePullRequestReviewActionTestkit(options: Readon
     const rulesReads: unknown[] = [];
     const executionOptions: unknown[] = [];
     const getOperation = { role: 'get' };
+    const resolveOperation = { role: 'resolveResource' };
     const prepareOperation = { identity: { target: { pluginId: selected.selection.target.pluginId },
         point: selected.selection.point, contributor: { ...selected.selection.contributor, occurrenceId: 'source-1' },
         role: 'prepareReviewWorkspace' } };
@@ -424,29 +437,59 @@ export async function createTriagePullRequestReviewActionTestkit(options: Readon
         branch: 'pr-17', created: false, pullRequest: { number: 17 }, currentness: { kind: 'currentAtObservedHead' as const } };
     const signal = options.signal ?? new AbortController().signal;
     const context = { surface: 'cli', signal, ...(options.caller === undefined ? {} : { caller: options.caller }), services: {
+        sessions: { get: async (id: string) => id === 'session-a' && options.manualCheckout ? {
+            summary: async () => ({ machineId: TESTKIT_SELECTED_WORKSPACE.machineId, address: {
+                sessionId: id, serverId: TESTKIT_SELECTED_WORKSPACE.serverId, serverUrl: 'https://home.example.test',
+            } }),
+        } : null },
         storage: { account: { collection: (definition: { id: string }) => definition.id === CORPUS_SOURCE_INSTANCES_COLLECTION_ID
-            ? collections.sourceInstances : collections.userMarks } },
+            ? collections.sourceInstances : definition.id === CORPUS_SESSION_LINKS_COLLECTION_ID
+                ? collections.sessionLinks : collections.userMarks } },
         targetedContributions: { observeForSelf: () => ({
             readCurrent: async () => ({ occurrenceId: 'target-1', sourceCustody: selected.selection.target.sourceCustody,
                 contributions: [{ contributor: { ...selected.selection.contributor, occurrenceId: 'source-1' },
                     descriptor: testkitReadOnlySourceSnapshot().contributions[0]!.descriptor,
                     protocol: selected.selection.point.protocol,
-                    operations: { get: getOperation, prepareReviewWorkspace: prepareOperation, verifyReviewWorkspace: verifyOperation } }] }),
+                    operations: { get: getOperation, prepareReviewWorkspace: prepareOperation, verifyReviewWorkspace: verifyOperation,
+                        ...(options.manualCheckout ? { resolveResource: resolveOperation } : {}) } }] }),
             dispose() {},
         }) },
         actions: {
             executeAdmittedTargetedOperation: async (operation: unknown, input: unknown, invocationOptions: unknown) => {
                 signal.throwIfAborted();
+                if (operation === resolveOperation) {
+                    const resource = input as { resource: { kind: string; url: string } }; // Source RPC boundary fixture.
+                    const matches = options.matchesManualResource?.(resource.resource, currentPullRequestNumber)
+                        ?? resource.resource.url === `https://github.com/example/repository/pull/${currentPullRequestNumber}`;
+                    return options.repositoryConnected?.() !== false && matches
+                        ? { kind: 'resolved', localRef: { kindId: currentEntryRef.kindId,
+                            collisionScope: currentEntryRef.collisionScope, entryId: currentEntryRef.entryId },
+                            locator: currentLocator() } : { kind: 'unavailable' };
+                }
                 if (operation === getOperation) {
                     events.push('source.get');
+                    if (options.observationFailure) return { kind: 'unresolved', failure: options.observationFailure,
+                        localRef: { kindId: currentEntryRef.kindId, collisionScope: currentEntryRef.collisionScope,
+                            entryId: currentEntryRef.entryId } };
                     return { kind: 'present', localRef: { kindId: currentEntryRef.kindId,
                         collisionScope: currentEntryRef.collisionScope, entryId: currentEntryRef.entryId },
-                        locator: request.lastKnownLocator, nativeRevision: currentRevision.nativeRevision,
+                        locator: currentLocator(), nativeRevision: currentRevision.nativeRevision,
                         snapshot: testkitSnapshot({ reviewRevision: { baseSha: currentRevision.baseSha,
-                            headSha: currentRevision.headSha, nativeRevision: currentRevision.nativeRevision } }), viewer: testkitViewer() };
+                            headSha: currentRevision.headSha, nativeRevision: currentRevision.nativeRevision },
+                            ...(options.manualCheckout?.prState ? { state: { presentation: 'closed' as const,
+                                nativeLabel: options.manualCheckout.prState } } : {}) }), viewer: testkitViewer(),
+                        ...(options.manualCheckout ? {
+                            repository: { kind: 'github', deployment: 'https://github.com', repository: 'example/repository' },
+                            comparisonSource: { ...comparisonSource, locator: { ...comparisonSource.locator,
+                                number: currentPullRequestNumber, baseOid: currentRevision.baseSha, headOid: currentRevision.headSha } },
+                        } : {}) };
                 }
                 executionOptions.push(invocationOptions);
                 if (operation === prepareOperation) {
+                    const requested = input as TriagePrepareReviewWorkspaceInputV1;
+                    const refused = options.rejectPreparation?.();
+                    if (refused) return refused;
+                    if (requested.observed.headSha !== currentRevision.headSha) return { kind: 'refused', reason: 'observedHeadMoved' };
                     events.push('source.prepareReviewWorkspace'); prepareInputs.push(input);
                     return preparedWorkspace;
                 }
@@ -455,9 +498,17 @@ export async function createTriagePullRequestReviewActionTestkit(options: Readon
                 return { kind: 'verified', pullRequest: preparedWorkspace.pullRequest };
             },
             execute: async (actionId: unknown, input: unknown) => {
-                if (typeof actionId === 'object' && actionId !== null && 'localId' in actionId
-                    && actionId.localId === 'entries/reobserve-v1') {
-                    return await registeredTriageActionHandler('entries/reobserve-v1')(input as JsonValue, context);
+                const action = testkitTriageActionId(actionId);
+                switch (action) {
+                    case TRIAGE_RESOLVE_RESOURCE_ACTION_LOCAL_ID_V1:
+                    case TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1:
+                    case TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1:
+                        return await registeredTriageActionHandler(action)(input as JsonValue, context);
+                }
+                if (action === 'scm.status.snapshot' && options.manualCheckout) {
+                    return { success: true, snapshot: { repo: { isRepo: true, rootPath: TESTKIT_SELECTED_WORKSPACE.rootPath,
+                        remotes: [] }, hostingProvider: { id: 'github', kind: 'github', baseUrl: 'https://github.com',
+                            nameWithOwner: options.manualCheckout.repository } } };
                 }
                 if (actionId === 'scm.diffSummary.capture') {
                     events.push('scm.diffSummary.capture'); captureInputs.push(input);
@@ -481,7 +532,12 @@ export async function createTriagePullRequestReviewActionTestkit(options: Readon
             },
         },
     } } as unknown as PluginInvocationContext; // Host services and external source/SCM transports.
+    const invoke = async (localId: string, input: JsonValue) => await registeredTriageActionHandler(localId)(input, context);
     return { context, collections, events, prepareInputs, verifyInputs, captureInputs, rulesReads, executionOptions, preparedWorkspace,
+        removeReviewSource: () => administerConfiguredSourceInstance({ collections, source: request.entryRef.source,
+            declaredPurpose: request.instance.binding.purpose,
+            request: { kind: 'remove', sourceInstanceId: request.instance.instance.sourceInstanceId }, nowMs: 2,
+            mintSourceInstanceId: () => { throw new Error('Removing a source does not mint an instance'); } }),
         savedInput: { v: 1 as const, request, prepareReviewWorkspaceSelection: selected,
             sessionId: 'session-a', reviewTarget: { entryRef: request.entryRef,
                 lastKnownLocator: request.lastKnownLocator, comparisonSource } },
@@ -492,6 +548,21 @@ export async function createTriagePullRequestReviewActionTestkit(options: Readon
             preparedWorkspace.pullRequest.number = number;
             preparedWorkspace.branch = `pr-${number}`;
         },
-        invoke: async (localId: string, input: JsonValue) => await registeredTriageActionHandler(localId)(input, context),
+        invoke,
+        resolveManualInput: async (reference: string | number = '17') => {
+            const sessionId = 'session-a';
+            const resolved = TriageResolveResourceActionResultV1Schema.parse(await invoke(TRIAGE_RESOLVE_RESOURCE_ACTION_LOCAL_ID_V1,
+                { v: 1, kind: 'pullRequestForSession', reference, sessionId }));
+            if (resolved.kind !== 'resolved') throw new Error('Expected a connected pull request');
+            const exact = { v: 1, entryRef: resolved.entryRef, sourceInstanceId: resolved.sourceInstance.sourceInstanceId };
+            const detail = TriageReadEntryDetailResultV1Schema.parse(await invoke(TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1, exact));
+            const observed = TriageReobserveEntryResultV1Schema.parse(await invoke(TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1,
+                { ...exact, lastKnownLocator: resolved.locator, includeComparisonSource: true }));
+            if (detail.kind !== 'read' || observed.kind !== 'observed' || !observed.comparisonSource) {
+                throw new Error('Expected an observed pull request with a comparison');
+            }
+            return { v: 1, kind: 'resolvedPullRequestForSession', sessionId, instance: detail.instance,
+                entryRef: observed.entryRef, observation: observed.observation, comparisonSource: observed.comparisonSource } as const;
+        },
     };
 }

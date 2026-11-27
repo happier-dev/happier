@@ -1,8 +1,9 @@
-import { selectCurrentTargetedContribution, type JsonValue, type PluginInvocationContext, type TargetedContributionSelectionUnavailableReason } from '@happier-dev/plugin-sdk';
+import { PluginError, selectCurrentTargetedContribution, type JsonValue, type PluginInvocationContext, type TargetedContributionSelectionUnavailableReason } from '@happier-dev/plugin-sdk';
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
+import { projectActionFailureCauseV1 } from '@happier-dev/plugin-sdk/errors';
 import { pluginJsonValuesEqual, projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import { produceScmPullRequestReviewScope, type ScmPullRequestReviewScopeV1 } from '@happier-dev/plugin-sdk/reviews';
-import { ScmComparisonSchema, type ScmComparison, type ScmComparisonSource } from '@happier-dev/plugin-sdk/scm';
+import { normalizeScmHostingRepositoryIdentity, sameScmHostingRepositoryIdentity, ScmComparisonSchema, type ScmComparison, type ScmComparisonSource } from '@happier-dev/plugin-sdk/scm';
 import { projectTriagePrepareReviewWorkspaceInputV1, projectTriageReviewSkipRulesV1, type TriagePrepareReviewWorkspaceInputV1, type TriageVerifyReviewWorkspaceResultV1 } from '@happier-dev/triage-protocol/v1';
 import { projectTriageNewSessionFailureV1 } from '../ui/header/newSessionSeedCommand.js';
 import { renderSourceQualifiedId } from '../corpus/identity/components.js';
@@ -17,6 +18,8 @@ import type { PullRequestReviewRuleOccurrenceV1 } from './entrySessionProtocol.j
 import { bindCorpusCollections } from '../corpus/collections/bindCorpusCollections.js';
 import { setReviewSkip } from '../corpus/marks/setPinned.js';
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
+import { readReviewSessionRepository, reviewSessionRepositoryMismatch } from './reviewSessionRepository.js';
+import { admitPullRequestSourceForPreparation } from './resolveResource.js';
 
 type TriageReviewWorkspaceRequestV1 = Extract<
     Extract<TriageStartEntrySessionInputV1['destination'], Readonly<{ kind: 'new' }>>['materialization'],
@@ -112,9 +115,10 @@ export async function readCurrentPrepareReviewWorkspace(
     };
 }
 
-/** Reads the selected source's exact final workspace verifier. */
-export async function readCurrentVerifyReviewWorkspaceOperation(
+/** Reads the selected source's current workspace operation. */
+async function readCurrentReviewWorkspaceOperation<Role extends 'prepareReviewWorkspace' | 'verifyReviewWorkspace'>(
     source: TriageStartPullRequestReviewInputV1['review']['entryRef']['source'],
+    role: Role,
     context: Pick<PluginInvocationContext, 'signal'> & Readonly<{
         services: Pick<PluginInvocationContext['services'], 'targetedContributions'>;
     }>,
@@ -129,12 +133,19 @@ export async function readCurrentVerifyReviewWorkspaceOperation(
         );
         return indexTriageAdmittedSourcesV1(snapshot.contributions).get(
             renderSourceQualifiedId(source),
-        )?.operations.verifyReviewWorkspace;
+        )?.operations[role];
     } finally {
         observation.dispose();
     }
 }
 
+
+export function readCurrentVerifyReviewWorkspaceOperation(
+    source: TriageStartPullRequestReviewInputV1['review']['entryRef']['source'],
+    context: Parameters<typeof readCurrentReviewWorkspaceOperation>[2],
+) {
+    return readCurrentReviewWorkspaceOperation(source, 'verifyReviewWorkspace', context);
+}
 
 /** One final source verifier, strict scope producer and pinned comparison capture for every caller. */
 export async function verifyTriagePullRequestReviewWorkspace(
@@ -258,7 +269,7 @@ type SkipReason = Extract<TriagePreparePullRequestReviewResultV1, { status: 'ski
  */
 async function recordReviewSkip(
     context: PluginInvocationContext,
-    review: Readonly<{ entryRef: TriagePreparePullRequestReviewInputV1['reviewTarget']['entryRef'];
+    review: Readonly<{ entryRef: ApprovedPrepareInput['reviewTarget']['entryRef'];
         lastKnownLocator: { displayPath?: string }; observed: { headSha: string } }>,
     occurrence: PullRequestReviewRuleOccurrenceV1 | undefined,
     reason: SkipReason,
@@ -284,11 +295,75 @@ async function recordReviewSkip(
     }
 }
 
+type ManualPrepareInput = Extract<TriagePreparePullRequestReviewInputV1, { kind: 'resolvedPullRequestForSession' }>;
+type ApprovedPrepareInput = Extract<TriagePreparePullRequestReviewInputV1, { request: unknown }>;
+
+async function prepareManualPullRequestReview(
+    input: ManualPrepareInput,
+    context: PluginInvocationContext,
+): Promise<TriagePreparePullRequestReviewResultV1> {
+    const options = { signal: context.signal };
+    const unreadable = () => new PluginError({
+        code: 'sourceUnavailable', effectAttempted: false, message: 'The pull request could not be read from its connected source.',
+    });
+    const preparation = observedReviewWorkspacePreparationFor(input.instance, input.entryRef, input.observation);
+    const source = input.comparisonSource;
+    const identity = input.observation.outcome.kind === 'present' ? input.observation.outcome.repository : undefined;
+    const repository = normalizeScmHostingRepositoryIdentity(identity);
+    if (!preparation || source.kind !== 'pullRequest' || !repository) throw unreadable();
+    const comparisonRepository = normalizeScmHostingRepositoryIdentity({ ...repository, repository: source.locator.repository });
+    if (!sameScmHostingRepositoryIdentity(repository, comparisonRepository)
+        || source.locator.headOid !== preparation.observed.headSha || source.locator.baseOid !== preparation.observed.baseSha) {
+        throw new PluginError({ code: 'invalid_input', effectAttempted: false,
+            message: 'Use the pinned comparison and observation from the same pull request read.' });
+    }
+
+    const session = await context.services.sessions.get(input.sessionId, options);
+    const summary = await session?.summary(options);
+    if (!summary?.address || !summary.machineId) throw reviewSessionRepositoryMismatch();
+    const checkout = await readReviewSessionRepository(input.sessionId, context);
+    if (!checkout || !sameScmHostingRepositoryIdentity(checkout.repository, repository)) throw reviewSessionRepositoryMismatch();
+    const url = preparation.lastKnownLocator.webUrl;
+    if (!url) throw unreadable();
+    const admitted = await admitPullRequestSourceForPreparation({ instance: input.instance, entryRef: input.entryRef, url }, context);
+
+    // The source operation verifies the approved revision before touching SCM.
+    const outcome = await settlePreparedPullRequestReview({
+        context, sessionId: input.sessionId,
+        request: { ...preparation, instance: admitted.instance, lastKnownLocator: admitted.locator, workflowSubject: 'pullRequest',
+            workspace: { serverId: summary.address.serverId, machineId: summary.machineId, rootPath: checkout.rootPath } },
+        deps: { operation: admitted.operation, execute: (selected, sourceInput, cancellation) =>
+            context.services.actions.executeAdmittedTargetedOperation(selected, sourceInput, cancellation ?? options), ...options },
+        targetSource: source,
+    });
+    if (outcome.status === 'refused' || outcome.status === 'unavailable') {
+        const nested = outcome.sourceResult;
+        const failure = nested && 'failure' in nested ? nested.failure : undefined;
+        const reason = nested && 'reason' in nested ? nested.reason : outcome.reason;
+        const staleHead = reason === 'observedHeadMoved' && outcome.reason === 'refused';
+        const beforeWorkspace = staleHead || (reason === 'account' && outcome.reason === 'unavailable');
+        const message = staleHead
+            ? 'The pull request changed since you approved it. Start the Workflow again to review the new head.'
+            : failure?.detail ?? (reason === 'account' ? 'Reconnect the source account in PRs & Issues, then try the pull request again.' : undefined);
+        throw new PluginError({
+            code: failure?.code ?? outcome.failure?.codes[0] ?? reason,
+            ...(message === undefined ? {} : { message }),
+            ...(beforeWorkspace ? { effectAttempted: false } : {}),
+            ...(nested === undefined ? {} : { details: nested }),
+            ...(failure === undefined ? {} : { failureCause: projectActionFailureCauseV1(
+                new PluginError({ code: failure.code }), 'triage.prepare.review_workspace', { allowUnknownErrorCode: true },
+            ) }),
+        });
+    }
+    return outcome;
+}
+
 /** Selected-source preparation never creates a Session or starts a reviewer. */
 export function createTriagePreparePullRequestReviewActionHandler(): ActionHandler<
     TriagePreparePullRequestReviewInputV1, TriagePreparePullRequestReviewResultV1
 > {
     return async (input, context: PluginInvocationContext) => {
+        if ('kind' in input) return await prepareManualPullRequestReview(input, context);
         // A saved workflow retains the selected source/workspace, not a saved PR revision.
         // This exact-read Action owns source qualification and observation timestamps.
         if (!selectedPrepareInputMatchesRequest(input.prepareReviewWorkspaceSelection, input.request)) {
@@ -308,47 +383,63 @@ export function createTriagePreparePullRequestReviewActionHandler(): ActionHandl
         const deps = await readCurrentPrepareReviewWorkspace(input.request, input.prepareReviewWorkspaceSelection, context);
         if (typeof deps === 'string') return { v: 1, status: 'unavailable', reason: deps };
         if (deps === undefined) return { v: 1, status: 'unavailable', reason: 'sourceUnavailable' };
-        const preparedWorkspace = await prepareEntryReviewWorkspace(deps, request);
-        if (preparedWorkspace.kind !== 'prepared') return {
-            v: 1, status: preparedWorkspace.kind === 'unavailable' ? 'unavailable' : 'refused',
-            reason: preparedWorkspace.kind, sourceResult: preparedWorkspace,
-        };
-        const facts = preparedReviewWorkspaceFactsFor(preparedWorkspace, request.observed);
-        if (facts.reviewEligibility.status !== 'eligible' || request.workspace === null) {
-            return { v: 1, status: 'refused', reason: 'revisionMismatch', sourceResult: preparedWorkspace };
-        }
-        const review = { instance: request.instance, entryRef: request.entryRef, lastKnownLocator: request.lastKnownLocator,
-            observed: request.observed, workspace: request.workspace, repositoryPath: preparedWorkspace.repositoryPath,
-            pullRequest: preparedWorkspace.pullRequest };
-        const resolved = input.ruleOccurrence === undefined ? undefined : await readPullRequestReviewRules({
-            repositoryPath: review.repositoryPath, baseRevision: review.observed.baseSha, occurrence: input.ruleOccurrence,
-            project: input.reviewRules, context,
+        return await settlePreparedPullRequestReview({
+            context, sessionId: input.sessionId, request, deps, targetSource: input.reviewTarget.comparisonSource,
+            ruleOccurrence: input.ruleOccurrence, reviewRules: input.reviewRules,
         });
-        if (resolved?.kind === 'invalid' || resolved?.kind === 'unavailable') return {
-            v: 1, status: 'unavailable', reason: resolved.kind === 'invalid' ? 'invalidReviewRules' : 'reviewRulesUnavailable',
-        };
-        const skip = async (reason: SkipReason, rules: PullRequestReviewResolvedRulesV1) => {
-            await recordReviewSkip(context, review, input.ruleOccurrence, reason, rules);
-            return { v: 1 as const, status: 'skipped' as const, reason, rules };
-        };
-        if (resolved?.kind === 'skipped') return await skip(resolved.reason, resolved.rules);
-        const targetSource = input.reviewTarget.comparisonSource;
-        const comparisonSource = targetSource.kind === 'pullRequest' ? { ...targetSource,
-            locator: { ...targetSource.locator, baseOid: request.observed.baseSha, headOid: request.observed.headSha } } : targetSource;
-        const verified = await captureTriagePullRequestReviewComparison({ ...input, review, comparisonSource }, context, true);
-        if (verified.status !== 'verified') return { ...verified, status: verified.reason === 'sourceUnavailable' ? 'unavailable' : 'refused' };
-        if (verified.comparisonId === undefined) return { v: 1, status: 'unavailable', reason: 'sourceUnavailable' };
-        const rules = resolved?.kind === 'ready' ? resolved.rules : undefined;
-        const selectedPaths = rules?.ignorePaths?.length
-            ? selectPullRequestReviewPaths(verified.inventory?.files.map(file => file.path) ?? [], rules.ignorePaths) : undefined;
-        if (rules && selectedPaths?.length === 0) return verified.inventory?.state === 'complete'
-            ? await skip('noReviewablePaths', rules)
-            : { v: 1, status: 'unavailable', reason: 'sourceUnavailable' };
-        return { v: 1, status: 'prepared', review: { ...review,
-            ...(selectedPaths === undefined ? {} : { selectedPaths }),
-            ...(rules?.inlineThreshold === undefined ? {} : { inlineThreshold: rules.inlineThreshold }),
-        }, preparedWorkspace,
-            ...(rules === undefined ? {} : { rules }),
-            scmPullRequestReviewScope: projectNativeJsonValueForTransport(verified.scope), comparisonId: verified.comparisonId, comparisonSource };
     };
+}
+
+async function settlePreparedPullRequestReview({
+    context, sessionId, request, deps, targetSource, ruleOccurrence, reviewRules,
+}: Readonly<{
+    context: PluginInvocationContext;
+    sessionId: ApprovedPrepareInput['sessionId'];
+    request: TriageReviewWorkspaceRequestV1;
+    deps: TriageReviewWorkspacePreparationDepsV1;
+    targetSource: ScmComparisonSource;
+    ruleOccurrence?: ApprovedPrepareInput['ruleOccurrence'];
+    reviewRules?: ApprovedPrepareInput['reviewRules'];
+}>): Promise<TriagePreparePullRequestReviewResultV1> {
+    const preparedWorkspace = await prepareEntryReviewWorkspace(deps, request);
+    if (preparedWorkspace.kind !== 'prepared') return {
+        v: 1, status: preparedWorkspace.kind === 'unavailable' ? 'unavailable' : 'refused',
+        reason: preparedWorkspace.kind, sourceResult: preparedWorkspace,
+    };
+    const facts = preparedReviewWorkspaceFactsFor(preparedWorkspace, request.observed);
+    if (facts.reviewEligibility.status !== 'eligible' || request.workspace === null) {
+        return { v: 1, status: 'refused', reason: 'revisionMismatch', sourceResult: preparedWorkspace };
+    }
+    const review = { instance: request.instance, entryRef: request.entryRef, lastKnownLocator: request.lastKnownLocator,
+        observed: request.observed, workspace: request.workspace, repositoryPath: preparedWorkspace.repositoryPath,
+        pullRequest: preparedWorkspace.pullRequest };
+    const resolved = ruleOccurrence === undefined ? undefined : await readPullRequestReviewRules({
+        repositoryPath: review.repositoryPath, baseRevision: review.observed.baseSha, occurrence: ruleOccurrence,
+        project: reviewRules, context,
+    });
+    if (resolved?.kind === 'invalid' || resolved?.kind === 'unavailable') return {
+        v: 1, status: 'unavailable', reason: resolved.kind === 'invalid' ? 'invalidReviewRules' : 'reviewRulesUnavailable',
+    };
+    const skip = async (reason: SkipReason, rules: PullRequestReviewResolvedRulesV1) => {
+        await recordReviewSkip(context, review, ruleOccurrence, reason, rules);
+        return { v: 1 as const, status: 'skipped' as const, reason, rules };
+    };
+    if (resolved?.kind === 'skipped') return await skip(resolved.reason, resolved.rules);
+    const comparisonSource = targetSource.kind === 'pullRequest' ? { ...targetSource,
+        locator: { ...targetSource.locator, baseOid: request.observed.baseSha, headOid: request.observed.headSha } } : targetSource;
+    const verified = await captureTriagePullRequestReviewComparison({ sessionId, review, comparisonSource }, context, true);
+    if (verified.status !== 'verified') return { ...verified, status: verified.reason === 'sourceUnavailable' ? 'unavailable' : 'refused' };
+    if (verified.comparisonId === undefined) return { v: 1, status: 'unavailable', reason: 'sourceUnavailable' };
+    const rules = resolved?.kind === 'ready' ? resolved.rules : undefined;
+    const selectedPaths = rules?.ignorePaths?.length
+        ? selectPullRequestReviewPaths(verified.inventory?.files.map(file => file.path) ?? [], rules.ignorePaths) : undefined;
+    if (rules && selectedPaths?.length === 0) return verified.inventory?.state === 'complete'
+        ? await skip('noReviewablePaths', rules)
+        : { v: 1, status: 'unavailable', reason: 'sourceUnavailable' };
+    return { v: 1, status: 'prepared', review: { ...review,
+        ...(selectedPaths === undefined ? {} : { selectedPaths }),
+        ...(rules?.inlineThreshold === undefined ? {} : { inlineThreshold: rules.inlineThreshold }),
+    }, preparedWorkspace,
+        ...(rules === undefined ? {} : { rules }),
+        scmPullRequestReviewScope: projectNativeJsonValueForTransport(verified.scope), comparisonId: verified.comparisonId, comparisonSource };
 }
