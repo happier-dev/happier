@@ -2,8 +2,14 @@ import { isAbsolute, resolve } from 'path';
 
 import type { FilesystemAccessPolicy } from './fileSystem/accessPolicy/filesystemAccessPolicy';
 import { authorizeFilesystemPath, type FilesystemPathAuthorizationResult } from './fileSystem/accessPolicy/filesystemPathAuthorization';
+import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
 
 export type PathValidationResult = FilesystemPathAuthorizationResult;
+
+/** The same checkout containment decision on the filesystem of the admitted reader. */
+export async function validateWorkspacePath(target: string, root: string): Promise<PathValidationResult> {
+    return await (currentWorkspaceSource().validatePathWithinRoot?.(target, root) ?? validatePath(target, root));
+}
 
 export function validateWorkspaceInspectionPath(targetPath: string): PathValidationResult {
     const trimmedPath = typeof targetPath === 'string' ? targetPath.trim() : '';

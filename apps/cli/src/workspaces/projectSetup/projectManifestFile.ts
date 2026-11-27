@@ -8,18 +8,17 @@ import {
 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestDocument';
 
 import { writeFileForRpc } from '@/rpc/handlers/fileSystem/writeFileForRpc';
-import { validatePath } from '@/rpc/handlers/pathSecurity';
+import { validatePath, validateWorkspacePath, type PathValidationResult } from '@/rpc/handlers/pathSecurity';
 
 export const PROJECT_MANIFEST_RELATIVE_PATH = '.happier/project.json';
 
-function manifestPath(root: string): string {
-  const validation = validatePath(PROJECT_MANIFEST_RELATIVE_PATH, resolve(root));
+function manifestPath(validation: PathValidationResult): string {
   if (!validation.valid || !validation.resolvedPath) throw new Error(validation.error ?? 'Project file is outside the root');
   return validation.resolvedPath;
 }
 
 export async function readProjectManifest(input: Readonly<{ root: string }>): Promise<ProjectManifestFileSnapshot> {
-  const path = manifestPath(input.root);
+  const path = manifestPath(await validateWorkspacePath(PROJECT_MANIFEST_RELATIVE_PATH, resolve(input.root)));
   try {
     const buffer = await currentWorkspaceSource().readFile(path);
     return { basis: { kind: 'present', hash: createHash('sha256').update(buffer).digest('hex') }, document: readProjectManifestDocument(buffer.toString('utf8')) };
@@ -36,7 +35,7 @@ export async function updateProjectManifest(input: Readonly<{ root: string; expe
   const document = readProjectManifestDocument(input.bytes);
   if (document.status !== 'valid') return { status: 'refused', code: 'invalid_manifest', diagnostics: document.diagnostics };
   let path: string;
-  try { path = manifestPath(input.root); }
+  try { path = manifestPath(validatePath(PROJECT_MANIFEST_RELATIVE_PATH, resolve(input.root))); }
   catch (error) { return { status: 'refused', code: 'access_denied', message: error instanceof Error ? error.message : 'Access denied' }; }
   const written = await writeFileForRpc({
     path, content: Buffer.from(input.bytes, 'utf8').toString('base64'), expectedHash: basis.data.kind === 'absent' ? null : basis.data.hash,

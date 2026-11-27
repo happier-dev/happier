@@ -28,6 +28,7 @@ export type ProjectAgentLaunchPreparationInput = Readonly<{
     /** Bound Account/Profile owner, demanded only after an accepted Project is found. */
     resolveSecretInputs?: (projectBindings?: ProjectSetupPreparationInput['environmentBindings']) => Promise<Readonly<Pick<ProjectAgentLaunchPreparationInput, 'secretEnvironment' | 'environmentBindings'>>>;
     configEnvironment?: ProjectSetupPreparationInput['configEnvironment'];
+    withProjectWorkspaceSource?: <T>(workspace: WorkspaceRefV1, read: () => Promise<T>) => Promise<T>;
     /** One native invocation shares its private selected file family across review and launch. */
     readDotenvPreparation?: (workspace: WorkspaceRefV1) => NonNullable<ProjectSetupPreparationInput['dotenvPreparation']>;
     originalEnvironment?: ProjectSetupPreparationInput['originalEnvironment'];
@@ -84,41 +85,44 @@ export async function prepareProjectAgentLaunch(input: ProjectAgentLaunchPrepara
         });
         logger.debug('[ProjectSetup] launch phase', { phase: 'association', durationMs: Math.round(performance.now() - associationStartedAt) });
         if (!association) return { kind: 'notAssociated' };
-        input.onPhase?.('manifest');
-        const definition = await readProjectEffectiveDefinition({ root: association.workspace.rootPath,
-            account: input.account, project: association.project, serverHttpBaseUrl: input.serverHttpBaseUrl, signal: input.signal });
-        const requirements = definition.effectiveDefinition.effectiveManifest?.environmentVariables ?? [];
-        input.onPhase?.('secret_inputs');
-        const secretsStartedAt = performance.now();
-        const environmentBindings = await resolveProjectRequesterSecretBindings(input.account, {
-            project: association.project, requirements, environmentBindings: input.environmentBindings,
-        }, input.signal);
-        const secretInputs = input.resolveSecretInputs ? await input.resolveSecretInputs(environmentBindings) : { ...input, environmentBindings };
-        logger.debug('[ProjectSetup] launch phase', { phase: 'secret_inputs', durationMs: Math.round(performance.now() - secretsStartedAt) });
-        const secretNames = new Set(requirements.filter(requirement => requirement.kind === 'secret').map(requirement => requirement.name));
-        const bindings = Object.fromEntries(Object.entries(secretInputs.environmentBindings?.bindings ?? {}).filter(([name]) => secretNames.has(name)));
-        const preparation: ProjectSetupPreparationInput = {
-            acceptedSetup: definition.acceptedSetup,
-            originalEnvironment: input.originalEnvironment ?? process.env,
-            ...(input.readRuntimeEnvironment ? { runtimeEnvironment: await input.readRuntimeEnvironment(association.workspace,
-                definition.effectiveDefinition.effectiveManifest) } : {}),
-            ...(input.readDotenvPreparation ? { dotenvPreparation: input.readDotenvPreparation(association.workspace) } : {}),
-            workspace: association.workspace, projectAssociation: association,
-            requesterIdentity: input.requesterIdentity,
-            requester: { ...input.account, serverHttpBaseUrl: input.serverHttpBaseUrl },
-            purpose: 'setup', nativeIo: input.nativeIo ?? projectNativeSystemIo,
-            platform: input.platform ?? { os: process.platform === 'win32' ? 'windows' : process.platform, arch: process.arch },
-            successHomeDir: input.successHomeDir ?? configuration.happyHomeDir,
-            ...(input.plugins ? { plugins: input.plugins } : {}),
-            ...(secretInputs.secretEnvironment ? { secretEnvironment: secretInputs.secretEnvironment } : {}),
-            ...(Object.keys(bindings).length ? { environmentBindings: { v: 1, bindings } } : {}),
-            ...(input.configEnvironment ? { configEnvironment: input.configEnvironment } : {}),
-            ...(input.approvalContext ? { approvalContext: input.approvalContext } : {}),
-            ...(input.signal ? { signal: input.signal } : {}),
+        const prepare = async (): Promise<ProjectAgentLaunchPreparation> => {
+            input.onPhase?.('manifest');
+            const definition = await readProjectEffectiveDefinition({ root: association.workspace.rootPath,
+                account: input.account, project: association.project, serverHttpBaseUrl: input.serverHttpBaseUrl, signal: input.signal });
+            const requirements = definition.effectiveDefinition.effectiveManifest?.environmentVariables ?? [];
+            input.onPhase?.('secret_inputs');
+            const secretsStartedAt = performance.now();
+            const environmentBindings = await resolveProjectRequesterSecretBindings(input.account, {
+                project: association.project, requirements, environmentBindings: input.environmentBindings,
+            }, input.signal);
+            const secretInputs = input.resolveSecretInputs ? await input.resolveSecretInputs(environmentBindings) : { ...input, environmentBindings };
+            logger.debug('[ProjectSetup] launch phase', { phase: 'secret_inputs', durationMs: Math.round(performance.now() - secretsStartedAt) });
+            const secretNames = new Set(requirements.filter(requirement => requirement.kind === 'secret').map(requirement => requirement.name));
+            const bindings = Object.fromEntries(Object.entries(secretInputs.environmentBindings?.bindings ?? {}).filter(([name]) => secretNames.has(name)));
+            const preparation: ProjectSetupPreparationInput = {
+                acceptedSetup: definition.acceptedSetup,
+                originalEnvironment: input.originalEnvironment ?? process.env,
+                ...(input.readRuntimeEnvironment ? { runtimeEnvironment: await input.readRuntimeEnvironment(association.workspace,
+                    definition.effectiveDefinition.effectiveManifest) } : {}),
+                ...(input.readDotenvPreparation ? { dotenvPreparation: input.readDotenvPreparation(association.workspace) } : {}),
+                workspace: association.workspace, projectAssociation: association,
+                requesterIdentity: input.requesterIdentity,
+                requester: { ...input.account, serverHttpBaseUrl: input.serverHttpBaseUrl },
+                purpose: 'setup', nativeIo: input.nativeIo ?? projectNativeSystemIo,
+                platform: input.platform ?? { os: process.platform === 'win32' ? 'windows' : process.platform, arch: process.arch },
+                successHomeDir: input.successHomeDir ?? configuration.happyHomeDir,
+                ...(input.plugins ? { plugins: input.plugins } : {}),
+                ...(secretInputs.secretEnvironment ? { secretEnvironment: secretInputs.secretEnvironment } : {}),
+                ...(Object.keys(bindings).length ? { environmentBindings: { v: 1, bindings } } : {}),
+                ...(input.configEnvironment ? { configEnvironment: input.configEnvironment } : {}),
+                ...(input.approvalContext ? { approvalContext: input.approvalContext } : {}),
+                ...(input.signal ? { signal: input.signal } : {}),
+            };
+            input.onPhase?.('setup_preparation');
+            const outcome = await prepareProjectSetup(preparation, presentation);
+            return outcome.kind === 'refused' ? outcome : { kind: 'prepared', preparation, outcome };
         };
-        input.onPhase?.('setup_preparation');
-        const outcome = await prepareProjectSetup(preparation, presentation);
-        return outcome.kind === 'refused' ? outcome : { kind: 'prepared', preparation, outcome };
+        return await (input.withProjectWorkspaceSource?.(association.workspace, prepare) ?? prepare());
     } catch (error) {
         return { kind: 'refused', code: input.signal?.aborted ? 'cancelled'
             : error instanceof SavedSecretOperationAdmissionError ? 'project_environment_binding_unavailable'

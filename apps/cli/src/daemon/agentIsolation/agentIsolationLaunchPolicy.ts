@@ -521,25 +521,40 @@ function resolveMemberLaunchCwd(managedBinary: string, member: AgentIsolationMem
     }, signal);
 }
 
-type MemberProjectPathReader = (cwd: string, root: string, signal: AbortSignal) =>
-    Promise<readonly [cwd: string, root: string]>;
-
-/** Read Project path facts under the same retained member binding as the eventual launch. */
-export function createMemberProjectPathReader(input: Readonly<{
+/** Prepare Project reads under the same retained member binding as the eventual launch. */
+export function createMemberProjectAccess(input: Readonly<{
     context?: HostAgentIsolationLaunchContext;
     personBreakGlass?: boolean;
-}> & Omit<Parameters<NonNullable<HostAgentIsolationLaunchContext['prepareLaunch']>>[0], 'signal'>): MemberProjectPathReader | undefined {
+}> & Omit<Parameters<NonNullable<HostAgentIsolationLaunchContext['prepareLaunch']>>[0], 'signal'>) {
     if (input.personBreakGlass || !input.context) return undefined;
     const context = input.context;
     const held = context.read();
     if (!held?.enabled || !held.memberIdentity) return undefined;
-    return async (cwd, root, signal) => {
+    return async (signal: AbortSignal) => {
         const prepared = context.prepareLaunch ? await context.prepareLaunch({ ...input, signal }) : context;
         const snapshot = prepared.read();
         if (!snapshot?.memberIdentity || !snapshot.launch || !snapshot.localTransport) throw new Error('Member path reader unavailable');
-        const result = await resolveMemberLaunchCwd(snapshot.launch.managedHappierBinaryPath, snapshot.memberIdentity, cwd, [root], signal);
-        if (result.status === 'unavailable') throw new Error('Member Project path unavailable');
-        return [result.cwd, result.workspaceRoots[0]!];
+        const { memberIdentity, launch } = snapshot;
+        return {
+            memberIdentity,
+            agentIsolation: {
+                requesterIdentity: input.requesterIdentity,
+                onNativeLaunchFailure: prepared.onNativeLaunchFailure,
+                // Project work borrows the admitted member binding. The Agent
+                // retains custody of its selected files and MCP material.
+                read: () => ({ ...snapshot, enabled: held.enabled, status: held.status,
+                    memberProvisioning: held.memberProvisioning, launch: {
+                    managedHappierBinaryPath: launch.managedHappierBinaryPath,
+                    runtimeHome: launch.runtimeHome,
+                    selectedEnvironmentKeys: [], selectedMaterials: [],
+                } }),
+            } satisfies HostAgentIsolationLaunchContext,
+            async resolvePaths(cwd: string, root: string) {
+                const result = await resolveMemberLaunchCwd(launch.managedHappierBinaryPath, memberIdentity, cwd, [root], signal);
+                if (result.status === 'unavailable') throw new Error('Member Project path unavailable');
+                return [result.cwd, result.workspaceRoots[0]!] as const;
+            },
+        };
     };
 }
 

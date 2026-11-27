@@ -133,7 +133,7 @@ export function createRunnerAgentProjectLaunchInvocation(input: Readonly<{
     };
     const ingress: RpcHandlerContext = input.ingress ?? { signal: input.signal,
         ...(input.requester ? { requesterSessionBootstrap: input.requester.bootstrap } : {}) };
-    const prepare: HostAgentNativeLaunchPreparation = async (signal, cwd, environment, readMemberProjectPaths) => {
+    const prepare: HostAgentNativeLaunchPreparation = async (signal, cwd, environment, prepareMemberProjectAccess) => {
         await assertCurrent();
         if (!owner) {
             const installedAccount = !ingress.requesterSessionBootstrap && !ingress.callerInputAuthorization && !ingress.machineAdmission;
@@ -246,7 +246,7 @@ export function createRunnerAgentProjectLaunchInvocation(input: Readonly<{
                 },
             });
         }
-        const prepared = await observe('project_preparation', () => owner!.prepare(signal, cwd, environment, readMemberProjectPaths));
+        const prepared = await observe('project_preparation', () => owner!.prepare(signal, cwd, environment, prepareMemberProjectAccess));
         return { ...prepared, gitIdentity: readGitIdentity?.() };
     };
     // One original occurrence owns one setup reservation and review producer.

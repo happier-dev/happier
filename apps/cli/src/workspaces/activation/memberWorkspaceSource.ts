@@ -1,12 +1,14 @@
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk/errors';
 import { localWorkspaceSource } from '@/workspaces/source/localWorkspaceSource';
 import type { WorkspaceSource, WorkspaceEntryStats } from '@/workspaces/source/workspaceSource';
+import { validatePath, type PathValidationResult } from '@/rpc/handlers/pathSecurity';
 
 type Entry = Readonly<{ name: string; file: boolean; directory: boolean; link: boolean }>;
 type EntryStats = Pick<WorkspaceEntryStats, 'size' | 'mtimeMs' | 'ctimeMs' | 'dev' | 'ino' | 'mode'> & Omit<Entry, 'name'>;
 
 /** OS facts only. Account material and operation custody remain in the parent. */
 export type MemberWorkspaceReadServices = Readonly<{
+    validatePathWithinRoot(path: string, root: string): Promise<PathValidationResult>;
     readFile(path: string): Promise<Uint8Array>;
     realpath(path: string): Promise<string>;
     stat(path: string): Promise<EntryStats>;
@@ -25,6 +27,7 @@ async function read<T>(effect: () => Promise<T>): Promise<T> {
 /** Created only by the member worker, so these operations never open host paths. */
 export function createMemberWorkspaceReadServices(): MemberWorkspaceReadServices {
     return {
+        validatePathWithinRoot: async (path, root) => validatePath(path, root),
         readFile: path => read(() => localWorkspaceSource.readFile(path)),
         realpath: path => read(() => localWorkspaceSource.realpath(path)),
         stat: path => read(async () => {
@@ -49,6 +52,7 @@ export function createMemberWorkspaceReadSource(services: MemberWorkspaceReadSer
     };
     return {
         kind: 'target', id,
+        validatePathWithinRoot: (path, root) => receive(() => services.validatePathWithinRoot(path, root)),
         readFile: async path => Buffer.from(await receive(() => services.readFile(path))),
         realpath: path => receive(() => services.realpath(path)),
         stat: async path => {

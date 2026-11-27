@@ -27,7 +27,7 @@ import {
 import { prepareProjectSetup, type PreparedProjectSetupPlan, type PreparedProjectSetupCommand } from './projectSetupPreparation';
 import { createProjectSetupSuccessStore } from './projectSetupSuccess';
 import { isProjectNativeProcessUncertain, type ProjectNativeAdapterProductionV1 } from '@/plugins/runtime/lifecycle/contributions/targetProjectNativeAdapters';
-import { validatePath } from '@/rpc/handlers/pathSecurity';
+import { validateWorkspacePath } from '@/rpc/handlers/pathSecurity';
 import { readProjectDefinitionFileBytes } from './nativeDefinitionFiles';
 import { resolveProjectNativeCommand } from './projectNativeResolution';
 import { readLiteralCommandExecutedFiles } from './literalCommandFiles';
@@ -309,7 +309,7 @@ export async function authorizePreparedProjectCommand(input: ProjectSetupExecuti
             const code = resolved.kind === 'refused' ? resolved.code : 'native_adapter_result_invalid';
             throw Object.assign(new Error(code), { code });
         }
-        const cwd = validatePath(resolved.command.cwd, plan.workspace.rootPath);
+        const cwd = await validateWorkspacePath(resolved.command.cwd, plan.workspace.rootPath);
         if (!cwd.valid) throw Object.assign(new Error('outside_root'), { code: 'outside_root' });
         // A contributed resolver may discover extra dependencies only when they
         // were already included in the reviewed explicit setupInputs basis.

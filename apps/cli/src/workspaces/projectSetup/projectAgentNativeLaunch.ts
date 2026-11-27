@@ -9,12 +9,13 @@ import { createProjectNativeInvocationCustody, createProjectNativeLaunchAdmissio
 import { admitReviewedProjectSetup, type ProjectSetupPreparationInput, type ProjectSetupReviewPresentation } from './projectSetupPreparation';
 import type { ActionOperationSetupDecision } from '@/daemon/actionOperations/actionOperationTypes';
 import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { ProjectSetupConsentFailureDetailsV1Schema } from '@happier-dev/protocol/actions/projectActionFamily';
 import { validatePath } from '@/rpc/handlers/pathSecurity';
 import { confineWorkspaceTargetPath } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemPathAuthorization';
-import type { ProjectDotenvPreparation } from './projectDotenv';
-import { createProjectRuntimeDotenvPreparation } from './projectSetupReadiness';
+import { createProjectDotenvPreparation, type ProjectDotenvPreparation } from './projectDotenv';
+import { createProjectRuntimeDotenvPreparation, withProjectMemberWorkspaceSource } from './projectSetupReadiness';
 import { isProjectNativeProcessUncertain } from '@/plugins/runtime/lifecycle/contributions/targetProjectNativeAdapters';
 import { ProjectNativeToolchainUncertainError } from '@/workspaces/toolchain/prepareProjectNativeToolchain';
 import { startProjectSetupAutostartServices, type ProjectSetupAutostartContext } from './projectSetupAutostart';
@@ -61,7 +62,7 @@ export function createProjectAgentNativeLaunchOwner(input: Readonly<{
                     : reason.name === 'TimeoutError' ? 'timeout' : 'error' : 'other' } : {}) };
         },
         async prepare(signal: AbortSignal, cwd?: string, environment?: Readonly<Record<string, string>>,
-            readMemberProjectPaths?: Parameters<HostAgentNativeLaunchPreparation>[3]) {
+            prepareMemberProjectAccess?: Parameters<HostAgentNativeLaunchPreparation>[3]) {
             const dotenvPreparations = new Map<string, ProjectDotenvPreparation>();
             const runtimeEnvironments = new Map<string, Readonly<Record<string, string>>>();
             const originalEnvironment = Object.freeze({ ...(environment ?? runtime.hostEnvironment ?? process.env) });
@@ -69,13 +70,18 @@ export function createProjectAgentNativeLaunchOwner(input: Readonly<{
             signal = AbortSignal.any([signal, ingress.signal, ...(input.operation ? [input.operation.signal] : [])]);
             preparationSignal = signal;
             await assertCurrent(signal);
+            let memberAccess: ReturnType<NonNullable<typeof prepareMemberProjectAccess>> | undefined;
+            const member = prepareMemberProjectAccess ? () => memberAccess ??= prepareMemberProjectAccess(signal) : undefined;
+            const withMemberWorkspace = member ? async <T>(workspace: WorkspaceRefV1, read: () => Promise<T>) =>
+                await withProjectMemberWorkspaceSource({ runtime, ingress, workspace: workspaceAddressFromRefV1(workspace),
+                    context: { signal }, accepted: workspace, native: await member(), read }) : undefined;
             // The host invocation selects the Project. A native child may use a
             // contained cwd, but cannot select another Project by changing cwd.
             if (cwd) {
                 const targetPath = cwd.replaceAll('\\', '/');
-                const validation = readMemberProjectPaths
+                const validation = member
                     ? await confineWorkspaceTargetPath({ targetPath, rootPath: input.cwd, platform: process.platform,
-                        resolvePaths: (target, root) => readMemberProjectPaths(target, root, signal) })
+                        resolvePaths: async (target, root) => (await member()).resolvePaths(target, root) })
                     : validatePath(targetPath, input.cwd);
                 signal.throwIfAborted();
                 if (!validation.valid) fail('outside_root');
@@ -87,6 +93,7 @@ export function createProjectAgentNativeLaunchOwner(input: Readonly<{
                 serverHttpBaseUrl: runtime.serverHttpBaseUrl, account: projectRuntimeAccountRowsInput(runtime),
                 nativeIo: runtime.nativeIo, plugins: runtime.plugins, successHomeDir: runtime.successHomeDir,
                 originalEnvironment,
+                withProjectWorkspaceSource: withMemberWorkspace,
                 async readRuntimeEnvironment(workspace, manifest) {
                     let selected = runtimeEnvironments.get(workspace.rootPath);
                     if (!selected) {
@@ -100,8 +107,9 @@ export function createProjectAgentNativeLaunchOwner(input: Readonly<{
                 readDotenvPreparation(workspace) {
                     let selected = dotenvPreparations.get(workspace.rootPath);
                     if (!selected) {
-                        selected = createProjectRuntimeDotenvPreparation({ runtime, ingress, workspace,
-                            context: { signal }, originalEnvironment });
+                        selected = withMemberWorkspace
+                            ? createProjectDotenvPreparation(workspace.rootPath, originalEnvironment, read => withMemberWorkspace(workspace, read))
+                            : createProjectRuntimeDotenvPreparation({ runtime, ingress, workspace, context: { signal }, originalEnvironment });
                         dotenvPreparations.set(workspace.rootPath, selected);
                     }
                     return selected;
@@ -183,14 +191,18 @@ export function createProjectAgentNativeLaunchOwner(input: Readonly<{
                                 if (decision) break;
                             }
                             pendingPhase = 'setup_execution';
-                            const executed = await executeProjectSetup({ preparation: preparation(), requesterAccountId: runtime.accountId,
+                            const native = await member?.();
+                            const execute = () => executeProjectSetup({ preparation: preparation(), requesterAccountId: runtime.accountId,
                                 operation, terminalSessions: runtime.terminalSessions, environmentIo: runtime.environmentIo,
                                 deferToolchainToLaunch: true, beforeNativeEffect: async () => {
                                     await (() => assertCurrent(signal))();
                                     pendingPhase = 'setup_execution';
                                 },
+                                ...(native ? { agentIsolation: native.agentIsolation, nativeExecutionIdentity: native.memberIdentity,
+                                    requesterIdentity: runtime.requesterIdentity } : {}),
                                 ...(runtime.platform ? { platform: runtime.platform } : {}),
                                 hostEnvironment: originalEnvironment });
+                            const executed = await (withMemberWorkspace?.(baseline.workspace, execute) ?? execute());
                             if (executed.setupSettlement) runtime.publishSetupSettlement?.(executed.setupSettlement);
                             kind = executed.kind;
                             setupState.outcome = executed;
@@ -238,10 +250,17 @@ export function createProjectAgentNativeLaunchOwner(input: Readonly<{
                 if (currentPlan.reviewedEffectDigest !== plan.reviewedEffectDigest) return fail('project_setup_effect_changed');
                 if (current.kind === 'pendingApproval') fail(current.code);
             })();
-            const projectLaunch = { ...createProjectNativeLaunchAdmission({
+            const native = await member?.();
+            const admission = createProjectNativeLaunchAdmission({
                 preparation: preparation(), environmentIo: runtime.environmentIo, hostEnvironment: originalEnvironment,
                 platform: runtime.platform, requesterIdentity: runtime.requesterIdentity, operation: { signal },
-            }, plan), verifyCurrent } satisfies HostProjectNativeLaunchAdmission;
+                ...(native ? { agentIsolation: native.agentIsolation } : {}),
+            }, plan);
+            const projectLaunch = { ...admission, verifyCurrent,
+                toolchain: native && plan.toolchain.kind === 'toolchain'
+                    ? { ...admission.toolchain, configurationContent: plan.toolchainReviewInputs[0]?.content }
+                    : admission.toolchain,
+            } satisfies HostProjectNativeLaunchAdmission;
             return { projectLaunch, ...(projectLaunch.nativeAdapter
                 ? { nativeExecutableOwner: projectLaunch.nativeAdapter.lease.exec } : {}) };
         },

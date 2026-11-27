@@ -22,7 +22,7 @@ import { runWithScmBackendRegistryLease } from '@/scm/scmBackendCatalog';
 import { createNonRepositoryScmSnapshotResponse, runScmRoute } from '@/scm/rpc/dispatch';
 import { preserveUnconfirmedNativeProcess, type ProjectNativeAdapterLeaseV1, type ProjectNativeAdapterProductionV1 } from '@/plugins/runtime/lifecycle/contributions/targetProjectNativeAdapters';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
-import { validatePath } from '@/rpc/handlers/pathSecurity';
+import { validateWorkspacePath } from '@/rpc/handlers/pathSecurity';
 import { resolveProjectToolchainSelection, inspectProjectNativeCommand, type ProjectNativeCommandIo, type ProjectNativeCommandResult, type ProjectNativeFileFact } from './projectNativeResolution';
 import { readProjectEffectiveDefinition } from './projectEffectiveDefinition';
 import type { ProjectSetupReadV1 } from '@happier-dev/protocol/projects/projectSetupV1';
@@ -429,7 +429,7 @@ async function reviewProjectEffect(input: ProjectSetupPreparationInput,
             if (input.signal?.aborted) return refuse('project_setup_cancelled');
             if (source.kind === 'command') {
                 if (source.platforms && !source.platforms.some(platform => platform === input.platform.os)) continue;
-                const cwd = validatePath((source.cwd ?? '.').replaceAll('\\', '/'), root);
+                const cwd = await validateWorkspacePath((source.cwd ?? '.').replaceAll('\\', '/'), root);
                 if (!cwd.valid || !cwd.resolvedPath) return refuse('outside_root');
                 if (source.command.includes('\0')) return refuse('project_setup_command_invalid');
                 // The command text names the files it runs; their current bytes are the reviewed effect.
@@ -459,7 +459,7 @@ async function reviewProjectEffect(input: ProjectSetupPreparationInput,
                 ...(input.signal ? { signal: input.signal } : {}) });
             if (resolved.kind === 'refused') return refuse(resolved.code);
             const native = resolved;
-            const cwd = validatePath(native.cwd, root);
+            const cwd = await validateWorkspacePath(native.cwd, root);
             if (!cwd.valid) return refuse('outside_root');
             for (const fact of native.reviewInputs) {
                 const result = await addFile(fact.file, fact.content);

@@ -75,6 +75,8 @@ export type WorkspaceChildProcess = Pick<ChildProcessWithoutNullStreams, 'stdin'
  */
 export interface WorkspaceSource {
   readonly kind: 'local' | 'target';
+  /** Native path authorization when the daemon itself cannot traverse this source. */
+  validatePathWithinRoot?(target: string, root: string): Promise<import('@/rpc/handlers/fileSystem/accessPolicy/filesystemPathAuthorization').FilesystemPathAuthorizationResult>;
   /** The host-admitted native helper location in this source's OS. */
   readonly nativeHelperPath?: string;
   /** Identity for keys that dedupe per workspace (watches, caches): never shared across sources. */

@@ -1,6 +1,6 @@
 import { afterEach, expect, it, onTestFailed, onTestFinished, vi } from 'vitest';
 import axios from 'axios';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, rename, symlink, unlink, writeFile } from 'node:fs/promises';
 import * as fs from 'node:fs';
 import * as nativeProcess from '@happier-dev/cli-common/process';
 import { Readable } from 'node:stream';
@@ -56,6 +56,8 @@ import { deriveAgentIsolationMemberIdentity } from '@/daemon/agentIsolation/prov
 import { runAgentIsolationMemberReadinessBoundary } from '@/daemon/agentIsolation/agentIsolationEffects.testkit';
 import { readAgentLaunchFrame } from '@/daemon/agentIsolation/agentLaunchFrame';
 import type { HostAgentIsolationLaunchContext } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { workspaceCheckoutNativeBoundary as checkout } from '@/workspaces/activation/workspaceCheckoutNative.testkit';
+import { runWorkspaceEffectWorker } from '@/workspaces/activation/workspaceEffectWorker';
 
 vi.mock('node:fs', async importOriginal => {
   const actual = await importOriginal<typeof fs>();
@@ -67,7 +69,31 @@ vi.mock('@happier-dev/cli-common/process', async importOriginal => {
   return { ...actual, execFileWithDeadline: vi.fn(actual.execFileWithDeadline) };
 });
 
+vi.mock('fs/promises', async importOriginal => {
+  const actual = await importOriginal<typeof import('fs/promises')>();
+  const { workspaceCheckoutNativeBoundary, workspaceCheckoutFilesystemBoundary } =
+    await import('@/workspaces/activation/workspaceCheckoutNative.testkit');
+  const filesystem = workspaceCheckoutFilesystemBoundary(actual);
+  return { ...filesystem, open: (...args: Parameters<typeof actual.open>) => {
+    if (workspaceCheckoutNativeBoundary.identity.getStore() !== 'member'
+        && workspaceCheckoutNativeBoundary.privateRoots.some(root => String(args[0]).startsWith(`${root}/`))) {
+      throw Object.assign(new Error('daemon cannot read member checkout'), { code: 'EACCES' });
+    }
+    return Reflect.apply(filesystem.open, filesystem, args);
+  } };
+});
+
+vi.mock('node:child_process', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  const { workspaceCheckoutNativeBoundary, spawnWorkspaceCheckoutNativeBoundary } =
+    await import('@/workspaces/activation/workspaceCheckoutNative.testkit');
+  return { ...actual, spawn: (command: string, args: readonly string[], options: import('node:child_process').SpawnOptions) =>
+    workspaceCheckoutNativeBoundary.launch && args.slice(-2).join(' ') === '/managed/happier agent-launch'
+      ? spawnWorkspaceCheckoutNativeBoundary(actual.spawn, options) : actual.spawn(command, args, options) };
+});
+
 afterEach(() => {
+  checkout.reset();
   vi.mocked(fs.realpathSync).mockReset();
   vi.mocked(nativeProcess.execFileWithDeadline).mockReset();
   vi.restoreAllMocks();
@@ -512,17 +538,15 @@ it('prepares a fresh zero-step native Project through installed Session custody 
 });
 
 it.skipIf(process.platform !== 'linux')('confines an isolated native launch with requester-owned Project path facts', async () => {
-  const h = await harness();
+  const h = await harness({ machineAccess: { custodianAccountId: 'custodian', role: 'use' } });
   const control = await h.launch();
   await control.release();
-  // The C30 Session opens a Git checkout directly, without a retained Project association.
-  h.removeWorkspaceAssociation();
   const home = join(h.cwd, '..');
   const sibling = h.cwd + '-sibling';
   await mkdir(sibling);
   const requesterIdentity = { kind: 'isolated' as const, separationRequired: true,
-    requester: { serverId: 'session-home', machineId: 'machine', accountId: 'requester', installationId: 'installation' } };
-  const member = { ...deriveAgentIsolationMemberIdentity({ ...requesterIdentity, homeServerIdentityId: 'session-home' }),
+    requester: h.projectLaunchContext.requester.bootstrap.attribution };
+  const member = { ...deriveAgentIsolationMemberIdentity({ ...requesterIdentity, homeServerIdentityId: 'srv_fixture_git_home' }),
     home, workspaceRoot: home, agentUid: 997, agentGid: 997 };
   const sessionMcpContext = { v: 1 as const, socketPath: join(home, 'mcp.sock'), bearerToken: 'fixture-token' };
   const isolation: HostAgentIsolationLaunchContext = { requesterIdentity, read: () => ({
@@ -531,9 +555,18 @@ it.skipIf(process.platform !== 'linux')('confines an isolated native launch with
     launch: { managedHappierBinaryPath: '/managed/happier', runtimeHome: join(home, 'runtime'),
       selectedEnvironmentKeys: [], selectedMaterials: [], sessionMcpContext },
   }) };
+  checkout.privateRoots = [h.cwd];
+  checkout.launch = async (input, output) => {
+    const frame = await readAgentLaunchFrame(input);
+    expect(frame).toMatchObject({ cwd: home, nativeIdentity: { agentUid: member.agentUid }, args: ['workspace-effect'] });
+    await runWorkspaceEffectWorker([], { input, output, signal: new AbortController().signal, currentDirectory: () => home });
+  };
   const { realpathSync } = await vi.importActual<typeof fs>('node:fs');
   vi.mocked(fs.realpathSync).mockImplementation(path => {
-    if (String(path) === h.cwd || String(path) === sibling) throw Object.assign(new Error('daemon cannot traverse member home'), { code: 'EACCES' });
+    if (checkout.identity.getStore() !== 'member'
+        && (String(path) === h.cwd || String(path).startsWith(`${h.cwd}/`) || String(path) === sibling)) {
+      throw Object.assign(new Error('daemon cannot traverse member home'), { code: 'EACCES' });
+    }
     return realpathSync(path);
   });
   const { execFileWithDeadline } = await vi.importActual<typeof nativeProcess>('@happier-dev/cli-common/process');
@@ -551,13 +584,29 @@ it.skipIf(process.platform !== 'linux')('confines an isolated native launch with
   });
 
   await expect(h.launch(sibling, isolation)).rejects.toMatchObject({ code: 'outside_root' });
+  const manifest = join(h.cwd, '.happier/project.json');
+  const outsideManifest = join(sibling, 'project.json');
+  await rename(manifest, outsideManifest);
+  await symlink(outsideManifest, manifest);
+  try {
+    await expect(h.launch(h.cwd, isolation)).rejects.toMatchObject({ code: 'project_workspace_unavailable' });
+    expect(h.nativeEffects()).toBe(1);
+  } finally {
+    await unlink(manifest);
+    await rename(outsideManifest, manifest);
+  }
   const launch = await h.launch(h.cwd, isolation);
   try {
     const payload = await readAgentLaunchFrame(Readable.from([launch.stdinPreamble!], { objectMode: false }));
-    expect(payload).toMatchObject({ cwd: h.cwd, nativeIdentity: { agentUid: member.agentUid }, args: ['installed-agent', '--resume'] });
+    expect(payload).toMatchObject({ cwd: h.cwd, nativeIdentity: { agentUid: member.agentUid },
+      args: ['installed-agent', '--resume'], environment: { NATIVE: 'active' } });
   } finally { await launch.release(); }
+  expect(h.nativeEffects()).toBe(2);
+  h.removeWorkspaceAssociation();
+  const unassociated = await h.launch(h.cwd, isolation);
+  await unassociated.release();
   await expect(h.launch(join(h.cwd, 'missing'), isolation)).rejects.toMatchObject({ code: 'outside_root' });
-  expect(h.nativeEffects()).toBe(1);
+  expect(h.nativeEffects()).toBe(2);
 });
 
 const guestGitIdentity = { name: 'Guest Person', email: 'guest@example.test' };
