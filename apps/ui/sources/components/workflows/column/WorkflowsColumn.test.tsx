@@ -1695,6 +1695,18 @@ describe('WorkflowsColumn', () => {
             expect(subtitleOf(screen, 'due')).toMatch(/^workflows\.triggers\.once\.at\(/u);
         });
 
+        // Round 16 nit 5: a Run waiting to start is the row's news; its schedule's spent-occurrence line does not sit
+        // beside it, so line 2 is the waiting state alone.
+        it('shows a waiting Workflow by its waiting state alone, without its occurrence line', async () => {
+            await serveOnceWorkflows([{ id: 'waiting', remaining: 0, lastRun: 'queued' }, { id: 'missed', remaining: 0, lastRun: 'missed' }]);
+            const screen = await renderScreen(<WorkflowsColumn />, { wrapper: TestAuth });
+            await vi.waitFor(() => expect(subtitleOf(screen, 'missed')).toMatch(/^workflows\.triggers\.once\.missedOn\(/u));
+            const waiting = () => screen.findAll(node => node.props?.testID === 'workflows-column:library:account-trigger:waiting'
+                && 'needsYou' in node.props)[0]!.props;
+            await vi.waitFor(() => expect(String(waiting().accessibilityLabel)).toContain('workflows.runState.queued'));
+            expect(waiting().subtitle).toBeUndefined();
+        });
+
         it('opens History inside the trigger\'s own settings and returns to them', async () => {
             await serveOnceWorkflows([{ id: 'ran', remaining: 0, lastRun: 'succeeded' }]);
             const screen = await renderScreen(<WorkflowsColumn />, { wrapper: TestAuth,

@@ -8,6 +8,7 @@ import { Text } from '@/components/ui/text/Text';
 
 import {
   readWorkflowLibraryRowFacts,
+  readWorkflowLibraryLineTrigger,
   readWorkflowLibraryStateWord,
   WorkflowLibraryStateWord,
   readWorkflowLibraryRowMarks,
@@ -60,7 +61,7 @@ export const WorkflowColumnRow = React.memo(function WorkflowColumnRow(
   const marks = details.icons ? readWorkflowLibraryRowMarks(facts, props.row) : [];
   const trigger = !details.trigger ? null
     : facts.state === 'unavailable' ? (props.fallbackLine ?? facts.triggerLine)
-      : (facts.triggerLine ?? props.fallbackLine ?? null);
+      : (readWorkflowLibraryLineTrigger(facts) ?? props.fallbackLine ?? null);
   const pluginContext = lines === 1 ? null : readCollectionPluginDetails(pluginDetails, stored, props.row, 'context');
   const pluginMark = readCollectionPluginDetails(pluginDetails, stored, props.row, 'mark');
   const line = lines === 1 ? null : [trigger, pluginContext].filter(Boolean).join(' · ') || null;

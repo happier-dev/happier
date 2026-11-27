@@ -220,8 +220,9 @@ function WorkflowSentenceBuilderBody(
       placeholder={t('workflows.sentence.builder.namePlaceholder')}
     />
   );
-  // On the sheet "Saves as" is one more labelled row, on the same label track as When and Machine.
-  const savesAs = props.sheet ? renderWorkflowCardFieldRow('saves-as', t('workflows.sentence.builder.savesAs'), nameField) : (
+  // On the sheet "Saves as" is one more labelled row, on the same label track as When and Machine: the short label
+  // keeps that track on one line at phone width, and the field's placeholder finishes the thought.
+  const savesAs = props.sheet ? renderWorkflowCardFieldRow('saves-as', t('workflows.sentence.builder.savesAsShort'), nameField) : (
     <View style={styles.name}>
       <Text style={styles.nameLabel}>{t('workflows.sentence.builder.savesAs')}</Text>
       <View style={styles.nameField}>{nameField}</View>

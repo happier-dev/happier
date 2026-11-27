@@ -60,6 +60,14 @@ export function readWorkflowLibraryStateWord(state: WorkflowLibraryRowState): st
 }
 
 /**
+ * A list row's line 2 trigger sentence. A Run waiting to start is the row's news, so while one waits the row says that
+ * state alone; its trigger's occurrence line ("Missed on …") would sit beside it with no link (round 16 nit 5).
+ */
+export function readWorkflowLibraryLineTrigger(facts: WorkflowLibraryRowFacts): string | null {
+  return facts.state === 'queued' ? null : facts.triggerLine;
+}
+
+/**
  * Everything a workflow row, table cell or card draws, read once from the row the library owner already projected
  * (definition list header, run summaries, Account trigger set). No reads: a pure reading of the row.
  */

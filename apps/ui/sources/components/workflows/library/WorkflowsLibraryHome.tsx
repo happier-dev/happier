@@ -57,7 +57,7 @@ import {
 import { WorkflowRunStripView } from './WorkflowRunStripView';
 import { readCollectionPluginDetails, useCollectionListExtensions } from '@/components/ui/lists/collection/useCollectionListExtensions';
 import { buildWorkflowLibraryCard, buildWorkflowLibraryFields, readWorkflowLibraryRowFacts, readWorkflowLibraryRowMarks, readWorkflowLineThree, readWorkflowRowStrip, resolveWorkflowRowDetails, workflowLibraryExtensionFacts, workflowRowDetailChoices,
-    WorkflowLibraryStateWord, type WorkflowLibraryRowFacts } from './workflowLibraryCells';
+    WorkflowLibraryStateWord, readWorkflowLibraryLineTrigger, type WorkflowLibraryRowFacts } from './workflowLibraryCells';
 import { WorkflowMarks } from '../presentation/WorkflowMarks';
 import { WorkflowsViewGroupBy, WorkflowsViewNewSection, WorkflowsViewRowDetails } from './WorkflowsViewMenu';
 import { WorkflowsLibraryHeaderActions } from './WorkflowsLibraryHeaderActions';
@@ -489,7 +489,7 @@ function useLibraryAnatomy(
         // the trigger sentence; what it uses ends the title line and its recent runs end the row.
         byline: lines === 1 ? undefined : (row) => {
             const trigger = !rowDetails.trigger ? null
-                : readFacts(row).triggerLine ?? (row.group === 'fromPlugins' ? row.plugin.description ?? null : null);
+                : readWorkflowLibraryLineTrigger(readFacts(row)) ?? (row.group === 'fromPlugins' ? row.plugin.description ?? null : null);
             const extension = readCollectionPluginDetails(extensions.details, details, row, 'context');
             return [trigger, extension].filter(Boolean).join(' · ') || null;
         },
