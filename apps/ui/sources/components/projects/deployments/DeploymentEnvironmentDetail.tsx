@@ -1,5 +1,6 @@
 import { readDeploymentMoveEligibility, showDeploymentMoveSheet, type DeploymentMoveEligibility } from './DeploymentMoveSheet';
 import * as React from 'react';
+import { ROLLBACK_RESPONSE_UNAVAILABLE } from '@/sync/ops/actions/actionResult';
 import { isDeploymentRollbackSourceEligibleV1, resolveDeploymentSourceMethodV1 } from '@happier-dev/deployments/contracts/v1';
 import { selectDeploymentTargetRemovalChoicesV1 } from '@happier-dev/deployments';
 import { SubjectTriggersSection } from '@/components/workflows/triggers/SubjectTriggersSection';
@@ -1729,6 +1730,7 @@ export function DeployOutcomeBanner(
   const recoveryMachineId = recovery?.nextAction.machineId
     ?? (recovery?.nextAction.destination === 'machines' ? props.machineId : undefined);
   const storedRemedy = failure?.technicalDetails.find(line => line.key === 'failure-remedy')?.value;
+  const rollbackResponseUnavailable = rollback && outcome.code === ROLLBACK_RESPONSE_UNAVAILABLE;
   const canonicalReason = typedRecovery?.nextAction.destination === 'registryCredentials' ? typedRecovery.remedy : failure && failure.reason !== storedRemedy && !requestSpecific && !ownDeploy && !leadsNowhere
     ? failure.reason : null;
   const { openRecovery } = controller;
@@ -1746,7 +1748,9 @@ export function DeployOutcomeBanner(
           : 'danger'
       }
       title={
-        needsReview
+        rollbackResponseUnavailable
+          ? t('projects.deployments.receipt.rollbackResponseUnavailable')
+          : needsReview
           ? t('projects.deployments.reviewWaitingTitle')
           : unsupported
           ? t('projects.deployments.deployUnavailableTitle')
@@ -1765,7 +1769,8 @@ export function DeployOutcomeBanner(
                 : t('projects.deployments.deployFailedTitle')
       }
       description={
-        canonicalReason ?? (outcome.reason === 'permission'
+        rollbackResponseUnavailable ? undefined
+          : canonicalReason ?? (outcome.reason === 'permission'
           ? t('projects.deployments.managersOnly')
           : outcome.reason === 'machine' && props.machine !== null
             ? t('projects.deployments.machineOffline', {
@@ -1778,7 +1783,9 @@ export function DeployOutcomeBanner(
               : leadsNowhere ? (failedReceipt ? undefined : t('projects.deployments.refusedBeforeLogs'))
               : (ownDeploy ? typedRecovery?.remedy : recovery?.remedy) ?? failure?.reason ?? refusalConsequence(outcome.code))
       }
-      {...(recovery?.nextAction.destination === 'review'
+      {...(rollbackResponseUnavailable
+        ? { action: { label: t('common.retry'), onPress: controller.retry } }
+        : recovery?.nextAction.destination === 'review'
         ? { action: { label: recovery.nextAction.label, onPress: controller.retry } }
         : recovery && openRecovery ? { action: { label: recovery.nextAction.label,
           onPress: () => openRecovery(recovery.nextAction.destination,

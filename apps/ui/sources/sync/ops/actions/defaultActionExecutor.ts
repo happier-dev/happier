@@ -110,7 +110,7 @@ import {
   sessionUsageLimitSwitchAccountNow, sessionUsageLimitConsumeResetCredit,
   type SessionUsageLimitRecoveryOperationResult,
 } from '@/sync/ops/sessionUsageLimitRecovery';
-import { createActionExecutor, prepareVoiceNamedModelSpawn, readHostReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { buildActionExecuteResultFromRecordedApprovalExecution, createActionExecutor, prepareVoiceNamedModelSpawn, readHostReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { completeSpawnActionResult } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { projectSessionReferenceFailure, resolveServerIdForSession } from '@happier-dev/protocol/actions/executor/sessionScope';
 import { resolveApprovalResultPublicationMachineIdV1 } from '@happier-dev/protocol/actions/executor/approvalOrigins';
@@ -246,7 +246,8 @@ import type { AccountApiTokenDeploymentInputV1 } from '@happier-dev/protocol/aut
 import type { ApiTokenDeploymentAuthoringHost } from '@happier-dev/protocol/actions/executor/workflowRunActions';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { completeUiProjectOpenResult } from './projectOpenResult';
-import { executeOriginalAccountMachineAction } from '@/sync/api/externalActionAccountTransport';
+import { ROLLBACK_RESPONSE_UNAVAILABLE } from './actionResult';
+import { executeOriginalAccountMachineAction, type UiActionResponseRecovery } from '@/sync/api/externalActionAccountTransport';
 import { projectDeploymentReviewedCandidateV1 } from '@happier-dev/protocol/deployments/deploymentCandidatePublicationV1';
 import { readDeploymentRolloutSemanticInput } from '@happier-dev/protocol/actions/executor/approvalPreparation';
 import { createUiLanguageIntelligenceApplyAction, createUiWorkspaceFileReplaceAction } from './workspaceFileReplaceAction';
@@ -459,7 +460,7 @@ import { resolveConnectedServicesLaunchAuthWithInventory } from '@happier-dev/pr
 import { resolveSpawnConnectedServicesSelectionInContext, listSpawnConnectedServicesInContext } from './agentInventoryActionDeps';
 import { createProjectSourceTeamMoveDeps } from '@/sync/api/projects/projectSourceTeamMove';
 import { createUiDeploymentActionDeps, createUiDeploymentWorkspaceMachineReader, isDeploymentActionFailure, recoverUiDeploymentActionResult } from '@/sync/api/deployments/deploymentActions';
-import { DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, isDeploymentAccountMachineTransportActionIdV1, isDeploymentActionIdV1, isDeploymentMembershipActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_ROLLBACK_ACTION_ID_V1, isDeploymentAccountMachineTransportActionIdV1, isDeploymentActionIdV1, isDeploymentMembershipActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { isDeploymentEnvironmentPlacementActionV1, resolveDeploymentEnvironmentExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentActionInputSchemasV1, DeploymentEnvironmentGetResultV1Schema, DeploymentMoveToRepositoryInputV1Schema, resolveDeploymentMoveToRepositoryExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentTemplateInstantiateInputV1Schema, resolveDeploymentTemplateExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
@@ -1139,6 +1140,7 @@ type VoiceActionExecutorBinding = Readonly<{
     actionId: string; input: unknown; context: ActionExecutorContext; confirmInFlow?: boolean; reviewDigest?: string;
     reviewedDeploymentInput?: unknown;
     deploymentReview?: Parameters<typeof executeOriginalAccountMachineAction>[0]['deploymentReview'];
+    responseRecovery?: UiActionResponseRecovery;
     onDeploymentCandidateAuthorized?: (token: string) => void;
   }>) => {
     if (isDeploymentAccountMachineTransportActionIdV1(args.actionId)) {
@@ -1161,6 +1163,33 @@ type VoiceActionExecutorBinding = Readonly<{
       if (!args.confirmInFlow) return workflowAction(start);
       if (ownedWorkflowAction) return ownedWorkflowAction(start, { reviewDigest: args.reviewDigest });
       return workflowAction({ ...start, context: bindPresentUserActionConfirmation(args.actionId, start.input, args.context, args.reviewDigest) });
+    }
+    const recovery = args.responseRecovery;
+    const resume = recovery?.resume;
+    if (resume) {
+      if (!accountContext) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
+      const execution = await resume({
+        account: accountContext,
+        signal: args.context.signal,
+        onDeploymentCandidateAuthorized: args.onDeploymentCandidateAuthorized,
+        readOperation: (machineId, requestId, execution) => recoverUiDeploymentActionResult({
+          account: accountContext, actionId: args.actionId, input: args.input, machineId,
+          requestId, context: args.context, execution,
+        }),
+        readApproval: async (artifactId, originalRequestId) => {
+          const current = await approvalArtifacts.read(artifactId).catch(() => ({ kind: 'unavailable' } as const));
+          if (current.kind === 'missing') return null;
+          const request = current.kind === 'found' ? current.request : null;
+          if (!request || request.v !== 2 || !('actionId' in request) || request.actionId !== args.actionId
+              || request.executionOriginV1?.requestId !== originalRequestId) {
+            return { ok: false, errorCode: ROLLBACK_RESPONSE_UNAVAILABLE, error: ROLLBACK_RESPONSE_UNAVAILABLE };
+          }
+          return buildActionExecuteResultFromRecordedApprovalExecution(request) ?? {
+            ok: true, result: { kind: 'approval_request_created', artifactId, actionId: request.actionId },
+          };
+        },
+      });
+      return settleRecoveredRollback(execution);
     }
     // Mounted surfaces supply this target through the admitted controller, not
     // Action input, presence ranking, or the UI's default Machine selection.
@@ -1302,6 +1331,14 @@ type VoiceActionExecutorBinding = Readonly<{
     return execution.ok ? args.actionId === 'projects.open'
       ? await completeUiProjectOpenResult(accountContext, execution.result, { signal: context.signal, requestId })
       : execution.result : execution;
+
+    function settleRecoveredRollback(execution: ActionExecuteResult) {
+      if (recovery?.resume && !execution.ok && isActionOutcomeUnknownErrorCodeV1(execution.errorCode)) {
+        return { ...execution, errorCode: ROLLBACK_RESPONSE_UNAVAILABLE, error: ROLLBACK_RESPONSE_UNAVAILABLE };
+      }
+      if (recovery && (execution.ok || execution.errorCode !== ROLLBACK_RESPONSE_UNAVAILABLE)) delete recovery.resume;
+      return execution.ok ? execution.result : execution;
+    }
   };
     type AgentsBackendsListArgs = Readonly<{ includeDisabled?: boolean; limit?: number; machineId?: string }>;
   const resolveNativeInventoryProbeTarget = async (args: Readonly<{
@@ -5454,7 +5491,8 @@ type VoiceActionExecutorBinding = Readonly<{
   // Action's review binds a proof to the reviewed request, which the confirm must then replay.
   const confirmationRequest = (actionId: ActionId, context: ActionExecutorContext): ActionExecutorContext =>
     keepsReviewedRequestOnConfirmV1(actionId) ? context : { ...context, actionRequestId: randomUUID() };
-  const executeMachineAction = async (actionId: ActionId, input: unknown, context: ActionExecutorContext, confirmInFlow = false) => {
+  const executeMachineAction = async (actionId: ActionId, input: unknown,
+    context: ActionExecutorContext & Pick<UiActionExecutorContext, 'rollbackResponseRecovery'>, confirmInFlow = false) => {
     // Direct Machine ingress shares the canonical Home normalization used by the core executor,
     // before input-bound consent and the signed receiving request are created.
     if (isDeploymentActionIdV1(actionId)) {
@@ -5488,6 +5526,8 @@ type VoiceActionExecutorBinding = Readonly<{
         }
       }
       if (!reviewDigest) return executeMachineOwnedAction({ actionId, input: actionInput, context, confirmInFlow,
+        ...(actionId === DEPLOYMENT_ROLLBACK_ACTION_ID_V1 && context.rollbackResponseRecovery
+          ? { responseRecovery: context.rollbackResponseRecovery } : {}),
         ...(isDeploymentMembershipActionIdV1(actionId) ? {
           onDeploymentCandidateAuthorized: token => { originalDeploymentAuthorization = token; },
         } : {}) });
@@ -5658,6 +5698,8 @@ export type UiActionExecutorContext = import('@/components/plugins/surfaces/plug
   reviewedManagedMachine?: ManagedMachineReadSnapshotV1;
   /** Exact object admitted by the enclosing UI stop/archive lifecycle. */
   archiveOperation?: SessionArchiveOperation;
+  /** One Roll back press owns its lost-response continuation. Never serialized. */
+  rollbackResponseRecovery?: UiActionResponseRecovery;
   /** Destination-owner navigation leaf, consumed only in this invocation. */
   openRoute?: (route: string) => void | Promise<void>;
 }>;

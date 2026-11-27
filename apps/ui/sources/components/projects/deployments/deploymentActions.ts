@@ -536,7 +536,9 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
             assertCurrent();
             // The controller owns retained content, current placement and candidate publication for every rollback.
             return DeploymentActionOutputSchemasV1['deployments.rollback'].parse(await invoke(
-                'deployments.rollback', { ...input, serverId: lifetime.scope.serverId }, operation));
+                'deployments.rollback', { ...input, serverId: lifetime.scope.serverId,
+                    ...(operation?.actionRequestId && !input.requestKey ? { requestKey: operation.actionRequestId } : {}),
+                }, operation));
         },
     };
 }

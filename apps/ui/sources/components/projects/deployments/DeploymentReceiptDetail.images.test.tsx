@@ -387,13 +387,14 @@ describe('Receipt → failed rollback (PAGE-ACCEPT-85 D11)', () => {
       // The owner has no recovery for this cause, so its generic fallback is not shown as if it were one.
       expect(String(banner.props.description ?? '')).not.toContain(readDeploymentFailureRecoveryV1('unknown_code').remedy);
       await screen.pressByTestIdAsync('project-deployments.receipt.outcome.failed.action');
-      expect(rollback).toHaveBeenCalledWith(expect.objectContaining({ deploymentId: 'retained' }));
+      expect(rollback).toHaveBeenCalledWith(expect.objectContaining({ deploymentId: 'retained' }),
+        expect.objectContaining({ actionRequestId: expect.any(String) }));
     } finally { await screen.unmount(); controller.retire(); }
   });
 });
 
-describe('Receipt → while a rollback runs (R17-D7)', () => {
-  it('says what is rolling back, to which version, in place of a bare spinner, and keeps the receipt it came from', async () => {
+describe('Receipt → waiting for a rollback response', () => {
+  it('names the pending response while keeping the receipt it came from', async () => {
     const base = createDeploymentReceiptDetailV1();
     const failure = { code: 'deployment_failed_unclassified', phase: 'activate' as const };
     const content = DeploymentOwnServerContentV1Schema.parse({ ...base.content, failure });
@@ -422,11 +423,11 @@ describe('Receipt → while a rollback runs (R17-D7)', () => {
       await act(async () => {
         await waitForTestEvent(screen.subscribe, () => screen.findByTestId('project-deployments.receipt.outcome.failed'), node => node !== null);
       });
-      expect(screen.findByTestId('project-deployments.receipt.rollingBack')).toBeNull();
+      expect(screen.findByTestId('project-deployments.receipt.requestingRollback')).toBeNull();
       await screen.pressByTestIdAsync('project-deployments.receipt.outcome.failed.action');
-      const banner = screen.findAll(node => node.props.testID === 'project-deployments.receipt.rollingBack'
+      const banner = screen.findAll(node => node.props.testID === 'project-deployments.receipt.requestingRollback'
         && node.props.title !== undefined)[0];
-      expect(String(banner?.props.title ?? '')).toMatch(/^Rolling back to \S+/);
+      expect(banner?.props.title).toBe('Waiting for rollback response…');
       // The receipt it came from stays on screen beneath it.
       expect(screen.findByTestId('project-deployments.receipt.outcome.failed')).not.toBeNull();
     } finally { await screen.unmount(); controller.retire(); }

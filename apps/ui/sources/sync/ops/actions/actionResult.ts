@@ -3,6 +3,8 @@ import { SESSION_COMPACT_ACTION_ID_V1, type ActionId } from '@happier-dev/protoc
 import type { SessionCompactResultV1 } from '@happier-dev/protocol/sessions/control/index';
 import { HappyError } from '@/utils/errors/errors';
 
+export const ROLLBACK_RESPONSE_UNAVAILABLE = 'rollback_response_unavailable';
+
 /** Retain typed refusal and pending custody instead of exposing either as a completed effect. */
 export function requireActionSuccess(result: ActionExecuteResult, actionId?: ActionId): asserts result is Extract<ActionExecuteResult, { ok: true }> {
   if (!result.ok) throw new HappyError(result.error, false, { code: result.errorCode, details: result.details, failureCause: result.failureCause,

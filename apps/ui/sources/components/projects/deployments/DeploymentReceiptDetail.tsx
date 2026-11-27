@@ -11,6 +11,9 @@ import { isDeploymentRollbackSourceEligibleV1, type DeploymentMachineResultV1 } 
 import { deploymentInProgressStates } from '@happier-dev/protocol/deployments/deploymentStateV1';
 import { DeploymentReceiptAcceptedResultV1Schema } from '@happier-dev/protocol/deployments/deploymentReceiptResultV1';
 import { DeploymentExecutionFailureDetailsV1Schema } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
+import { randomUUID } from '@/platform/randomUUID';
+import { ROLLBACK_RESPONSE_UNAVAILABLE } from '@/sync/ops/actions/actionResult';
+import type { UiActionOperation } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { isDeploymentActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { readActionOperationTerminalResultV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { useActionOperation } from '@/sync/domains/actionOperations/useActionOperations';
@@ -144,7 +147,6 @@ export const DeploymentReceiptDetail = React.memo(
   ) {
     const [latestPress, setLatestPress] = React.useState<'rollback' | 'deploy' | 'cancel' | null>(null);
     // The version a press is rolling back to, said while it runs (R17-D7) instead of a bare spinner.
-    const [rollingBackTo, setRollingBackTo] = React.useState<string | null>(null);
     const rollbackPress = useDeploymentPress(props.review, props.onOpenReceipt);
     const againPress = useDeploymentPress(props.review, props.onOpenReceipt);
     const receipt = useDeploymentReceipt(
@@ -354,17 +356,19 @@ export const DeploymentReceiptDetail = React.memo(
     // Source eligibility is shared with admission; the serving release needs no rollback.
     const retainedTarget = facts.retainedRollbackTarget;
     const { review } = props;
-    const rollingBack = rollbackPress.running;
+    const requestingRollback = rollbackPress.running;
     const reviewPending = rollbackPress.reviewPending;
     // Every press is reviewed or refused by the Action owner (the approval page is its confirmation); none here.
     const rollBack = (deploymentId: string, restoreBackupId?: string) => {
       if (!rollback) return;
       setLatestPress('rollback');
-      setRollingBackTo(deploymentId === retainedTarget?.deploymentId ? deploymentRevisionLabel(retainedTarget.revision)
-        : deploymentId === rollbackTarget?.deploymentId ? deploymentRevisionLabel(rollbackTarget.revision)
-          : deploymentId === retryRollbackTo ? sourceLabel : null);
+      if (rollbackPress.outcome?.kind === 'refused' && rollbackPress.outcome.code === ROLLBACK_RESPONSE_UNAVAILABLE) {
+        void rollbackPress.banner.retry();
+        return;
+      }
+      const operation: UiActionOperation = { actionRequestId: randomUUID(), rollbackResponseRecovery: {} };
       void rollbackPress.press(() => rollback({ environmentId, deploymentId,
-        ...(restoreBackupId === undefined ? {} : { restoreBackupId }) }));
+        ...(restoreBackupId === undefined ? {} : { restoreBackupId }) }, operation));
     };
     // Deploy again builds this receipt's own commit through the Environment's runtime link, as "Redeploy" does.
     const availability = environmentValue ? deploymentDeployAvailability(environmentValue) : null;
@@ -497,8 +501,8 @@ export const DeploymentReceiptDetail = React.memo(
         testID="project-deployments.receipt.rollback"
         display="inverted"
         title={t('projects.deployments.rollbackTo', { version: deploymentRevisionLabel(retainedTarget.revision) })}
-        loading={rollingBack}
-        disabled={rollingBack || reviewPending}
+        loading={requestingRollback}
+        disabled={requestingRollback || reviewPending}
         onPress={() => { rollBack(retainedTarget.deploymentId); }}
       />
     ) : null;
@@ -656,8 +660,8 @@ export const DeploymentReceiptDetail = React.memo(
                       : t('projects.deployments.rollbackTo', { version: deploymentRevisionLabel(rollbackTarget.revision) }),
                   icon: 'arrow-arc-left',
                   display: 'default',
-                  loading: rollingBack,
-                  disabled: rollingBack || reviewPending,
+                  loading: requestingRollback,
+                  disabled: requestingRollback || reviewPending,
                   onPress: chooseRecovery,
                 } : retryRollbackTo ? {
                   // A failed rollback's way forward is the same rollback again, to the release it was restoring.
@@ -665,8 +669,8 @@ export const DeploymentReceiptDetail = React.memo(
                     : t('projects.deployments.rollbackTo', { version: sourceLabel }),
                   icon: 'arrow-arc-left',
                   display: 'default',
-                  loading: rollingBack,
-                  disabled: rollingBack || reviewPending,
+                  loading: requestingRollback,
+                  disabled: requestingRollback || reviewPending,
                   onPress: () => rollBack(retryRollbackTo),
                 } : recoveryNext ? { ...recoveryNext, display: 'default' } : againAction}
                 // Recovery leads when there is one; finding out why is the way forward beside it.
@@ -703,17 +707,14 @@ export const DeploymentReceiptDetail = React.memo(
             ) : null}
             {showInvestigationOutcome && investigation.outcome ? <InvestigationOutcomeBanner outcome={investigation.outcome} serverId={props.serverId}
               testID="project-deployments.receipt.investigate" onChoosePlacement={investigation.investigateWithPlacement} pending={investigation.pending} /> : null}
-            {/* A rollback pressed here says what runs, to which version, while the Action works (the Overview banner's
-                title); this receipt stays beneath it until the new one opens (R17-D7). */}
-            {rollingBack && !pressAttention ? (
+            {requestingRollback && !pressAttention ? (
               <AttentionBanner
-                testID="project-deployments.receipt.rollingBack"
+                testID="project-deployments.receipt.requestingRollback"
                 tone="neutral"
-                title={rollingBackTo !== null ? t('projects.deployments.headlineRollingBack', { sha: rollingBackTo })
-                  : deploymentOperationLabel('rollback')}
+                title={t('projects.deployments.receipt.requestingRollback')}
               />
             ) : null}
-            {!pressAttention && !rollingBack && notice ? (
+            {!pressAttention && !requestingRollback && notice ? (
               <AttentionBanner
                 testID={`project-deployments.receipt.notice.${noticeState}`}
                 tone={notice.tone}

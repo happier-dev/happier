@@ -11,6 +11,15 @@ export function createApprovalArtifactAccess(deps: Readonly<{
     reuseWriteBasis?: boolean;
 }>) {
     let writeBasis: DecryptedArtifact | null = null;
+    const read = async (artifactId: string) => {
+        const full = await deps.read(artifactId);
+        if (deps.reuseWriteBasis) writeBasis = full;
+        if (!full) return { kind: 'missing' } as const;
+        deps.publish?.(full);
+        const request = full.header && typeof full.body === 'string'
+            ? approvalArtifactBodyMatchesHeaderV1(full.header, full.body)?.request : undefined;
+        return request ? { kind: 'found', request } as const : { kind: 'unavailable' } as const;
+    };
     const get: NonNullable<ActionExecutorDeps['approvalsGet']> = async ({ artifactId }) => {
         const local = deps.local?.(artifactId);
         if (local?.header && typeof local.body === 'string') {
@@ -18,15 +27,11 @@ export function createApprovalArtifactAccess(deps: Readonly<{
             if (parsed) return parsed.request;
         }
         // Consent acquires current content independently of ordinary cached reads.
-        const full = await deps.read(artifactId);
-        if (deps.reuseWriteBasis) writeBasis = full;
-        if (!full) return null;
-        deps.publish?.(full);
-        return full.header && typeof full.body === 'string'
-            ? approvalArtifactBodyMatchesHeaderV1(full.header, full.body)?.request ?? null : null;
+        const current = await read(artifactId);
+        return current.kind === 'found' ? current.request : null;
     };
     return {
-        get,
+        get, read,
         takeWriteBasis: (artifactId: string) => {
             const acquired = writeBasis?.id === artifactId ? writeBasis : null;
             // Consume even on refusal/conflict so retries read afresh; a committed

@@ -25,7 +25,7 @@ export type FrontDoorRuntimeActionExecutor = FrontDoorRuntimeActionExecute & Rea
 export type UiActionOperation = Pick<UiActionExecutorContext,
   'signal' | 'presentUserConfirmation' | 'defaultSessionId' | 'actionRequestId' | 'onTransportIssued' | 'isPluginSettingsIntentCurrent' | 'sessionMessageDisplayText'
   | 'executionRunTargetMachineId' | 'executionRunLaunchOrigin' | 'externalActionTarget' | 'openRoute' | 'voiceSpeechSource' | 'reviewPublicProfilePreparedAction' | 'capturePublicProfilePreview' | 'publicProfilePreviewAdmission'
-  | 'reviewNativeSignInLaunch'> & Readonly<{
+  | 'reviewNativeSignInLaunch' | 'rollbackResponseRecovery'> & Readonly<{
     confirmed?: true;
   }>;
 
@@ -115,6 +115,7 @@ export function createFrontDoorUiActionExecutor(
       ...(options?.defaultSessionId ? { defaultSessionId: options.defaultSessionId } : {}),
       ...(options?.actionRequestId ? { actionRequestId: options.actionRequestId } : {}),
       ...(options?.onTransportIssued ? { onTransportIssued: options.onTransportIssued } : {}),
+      ...(options?.rollbackResponseRecovery ? { rollbackResponseRecovery: options.rollbackResponseRecovery } : {}),
       ...(options?.isPluginSettingsIntentCurrent ? { isPluginSettingsIntentCurrent: options.isPluginSettingsIntentCurrent } : {}),
       ...(options?.executionRunTargetMachineId ? { executionRunTargetMachineId: options.executionRunTargetMachineId } : {}),
       ...(options?.executionRunLaunchOrigin ? { executionRunLaunchOrigin: options.executionRunLaunchOrigin } : {}),

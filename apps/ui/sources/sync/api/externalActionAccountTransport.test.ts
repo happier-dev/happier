@@ -1344,6 +1344,55 @@ describe('captured Account Action response decoding', () => {
         expect(JSON.stringify(result)).not.toContain('Failed to fetch');
     });
 
+    it('rejoins the same signed rollback request after losing the first response', async () => {
+        if (!account) throw new Error('Expected captured Account');
+        const rollback = { ...binding, actionId: 'deployments.rollback', requestId: 'rollback-press' } as const;
+        const route = '/v1/actions/deployments.rollback';
+        const recovery: import('./externalActionAccountTransport').UiActionResponseRecovery = {};
+        let issued: unknown;
+        const refusal = { ok: false, errorCode: 'action_interactive_review_required', error: 'action_interactive_review_required' };
+        homes.answer(serverId, route, { select: body => {
+            if (issued === undefined) {
+                issued = body;
+                return { dispatchThenFail: true };
+            }
+            expect(body).toEqual(issued);
+            return { body: { v: 1, actionId: rollback.actionId, requestId: rollback.requestId, execution: refusal } };
+        } });
+        expect(await executeOriginalAccountActionTransport({ account, binding: rollback,
+            input: { serverId: rollback.serverIdentityId, environmentId: 'env', deploymentId: 'old', requestKey: 'rollback-press' },
+            responseRecovery: recovery })).toMatchObject({ ok: false, errorCode: 'outcome_unknown' });
+        expect(homes.requestsFor(route)).toHaveLength(1);
+        account.dispose();
+        account = await captureLazyActionAccountContext(serverId);
+        const readApproval = vi.fn(async () => null);
+        expect(await recovery.resume?.({ account, readApproval })).toMatchObject(refusal);
+        expect(readApproval).toHaveBeenCalledTimes(1);
+        expect(homes.requestsFor(route)).toHaveLength(2);
+    });
+
+    it('returns an admitted rollback approval from the owner with no second Action POST', async () => {
+        if (!account) throw new Error('Expected captured Account');
+        const rollback = { ...binding, actionId: 'deployments.rollback', requestId: 'rollback-press' } as const;
+        const route = '/v1/actions/deployments.rollback';
+        const recovery: import('./externalActionAccountTransport').UiActionResponseRecovery = {};
+        homes.answer(serverId, route, { dispatchThenFail: true });
+        expect(await executeOriginalAccountActionTransport({ account, binding: rollback,
+            input: { serverId: rollback.serverIdentityId, environmentId: 'env', deploymentId: 'old' },
+            responseRecovery: recovery })).toMatchObject({ ok: false, errorCode: 'outcome_unknown' });
+        const { deriveApprovalRequestSourceIdFromIdentityV1 } = await import('@happier-dev/protocol/approvals/creation');
+        const { deriveAccountScopedArtifactIdV1 } = await import('@happier-dev/protocol/artifacts/idScope');
+        const artifactId = deriveAccountScopedArtifactIdV1(rollback.accountId, deriveApprovalRequestSourceIdFromIdentityV1({
+            homeId: rollback.serverIdentityId, accountId: rollback.accountId, requesterId: rollback.accountId,
+            actionId: rollback.actionId, requestId: rollback.requestId, target: rollback.target,
+        }));
+        const accepted = { ok: true, result: { kind: 'approval_request_created', artifactId, actionId: rollback.actionId } } as const;
+        const readApproval = vi.fn(async () => accepted);
+        expect(await recovery.resume?.({ account, readApproval })).toEqual(accepted);
+        expect(readApproval).toHaveBeenCalledExactlyOnceWith(artifactId, rollback.requestId);
+        expect(homes.requestsFor(route)).toHaveLength(1);
+    });
+
     it('retains the response body read failure after an Action was issued', async () => {
         let rejectBody!: (error: unknown) => void;
         const bodyAfter = new Promise<void>((_resolve, reject) => { rejectBody = reject; });

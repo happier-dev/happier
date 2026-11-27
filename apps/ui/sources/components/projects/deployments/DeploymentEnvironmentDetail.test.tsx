@@ -2803,7 +2803,8 @@ describe('Project deployments page', () => {
       expect(text).toContain('b'.repeat(7));
       expect(screen.findByTestId('project-deployments.receipt.rollback')).toBeNull();
       await screen.pressByTestIdAsync('project-deployments.receipt.outcome.failed.action');
-      expect(rollback).toHaveBeenCalledWith({ environmentId: detail.environment.id, deploymentId: 'last-good' });
+      expect(rollback).toHaveBeenCalledWith({ environmentId: detail.environment.id, deploymentId: 'last-good' },
+        expect.objectContaining({ actionRequestId: expect.any(String) }));
     } finally { controller.retire(); }
   });
 
@@ -3542,6 +3543,52 @@ describe('Deployment receipt header actions', () => {
         expectedReceiptRevision: 4 });
       expect(screen.findByTestId('project-deployments.outcome.refused.other')).not.toBeNull();
     } finally { controller.retire(); }
+  });
+
+  it('shows a rollback request without claiming it has started before the Home returns its approval', async () => {
+    const { createDeferred } = await import('@/dev/testkit');
+    const { t } = await import('@/text');
+    const base = environmentDetailForHome();
+    const current = base.targetLinks[0]!;
+    const old = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({ id: 'old-deployment' }) });
+    const { controller, detail } = controllerFor({ receipt: old, detail: {
+      ...base, targetLinks: [{ ...current, targetLink: { ...current.targetLink,
+        id: 'retained-predecessor', activeDeploymentId: old.deployment.id } }, current],
+    } });
+    const approval = new HappyError('approval_request_created', false, { code: 'approval_request_created',
+      details: { kind: 'approval_request_created', actionId: 'deployments.rollback', artifactId: 'rollback-review' } });
+    const reply = createDeferred<never>();
+    const rollback = vi.fn<NonNullable<React.ComponentProps<typeof DeploymentReceiptDetail>['rollback']>>()
+      .mockImplementationOnce(() => reply.promise)
+      .mockRejectedValueOnce(approval);
+    const request = vi.fn();
+    const openReceipt = vi.fn();
+    const screen = await renderScreen(<DeploymentReceiptDetail controller={controller} {...receiptProps}
+      serverId={scope.serverId} environmentId={detail.environment.id} deploymentId={old.deployment.id}
+      rollback={rollback} review={{ ...noReview, request }} onOpenReceipt={openReceipt} />);
+    try {
+      await waitForContent(screen, 'project-deployments.receipt.rollback');
+      await screen.pressByTestIdAsync('project-deployments.receipt.rollback');
+      const operation = rollback.mock.calls[0]?.[1];
+      expect(operation).toMatchObject({ actionRequestId: expect.any(String), rollbackResponseRecovery: {} });
+      expect(rollback).toHaveBeenCalledExactlyOnceWith({ environmentId: detail.environment.id, deploymentId: old.deployment.id }, operation);
+      expect(screen.findByTestId('project-deployments.receipt.rollingBack')).toBeNull();
+      expect(screen.getTextContent()).toContain(t('projects.deployments.receipt.requestingRollback'));
+      expect(request).not.toHaveBeenCalled();
+      await act(async () => { reply.reject(new HappyError('rollback_response_unavailable', false, {
+        code: 'rollback_response_unavailable',
+      })); });
+      expect(screen.getTextContent()).toContain(t('projects.deployments.receipt.rollbackResponseUnavailable'));
+      await screen.pressByTestIdAsync('project-deployments.receipt.rollback');
+      expect(rollback).toHaveBeenCalledTimes(2);
+      expect(rollback.mock.calls[1]?.[1]).toBe(operation);
+      await waitForHomeGovernance(() => expect(request).toHaveBeenCalledExactlyOnceWith('rollback-review'));
+      expect(openReceipt).not.toHaveBeenCalled();
+    } finally {
+      reply.reject(approval);
+      await screen.unmount();
+      controller.retire();
+    }
   });
 
   it.each(['machine_target_not_current', 'target_unavailable'] as const)(

@@ -33,6 +33,8 @@ import { isActionOutcomeUnknownErrorCodeV1, parseActionExecuteFailure, projectAc
 import { withActionFailureDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
 import type { ActionRequiredAuthority } from '@happier-dev/protocol/actions/metadata';
+import { deriveApprovalRequestSourceIdFromIdentityV1 } from '@happier-dev/protocol/approvals/creation';
+import { deriveAccountScopedArtifactIdV1 } from '@happier-dev/protocol/artifacts/idScope';
 import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invocationAuthority';
 import { readAuthTokenProvenance } from '@happier-dev/protocol/auth/authToken';
 import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
@@ -68,7 +70,18 @@ type MachineCustody = Readonly<{
 type HostResourceFrameReceiver = (value: unknown) => void;
 
 type Material = Readonly<{ type: 'dataKey'; machineKey: Uint8Array }>;
+/** Retained by one UI press, only if its issued response was lost. */
+export type UiActionResponseRecovery = {
+    resume?: (ports: Readonly<{
+        account: LazyActionAccountContext;
+        signal?: AbortSignal;
+        readApproval: (artifactId: string, requestId: string) => Promise<ActionExecuteResult | null>;
+        readOperation?: (machineId: string, requestId: string, result: ActionExecuteFailure) => Promise<ActionExecuteResult>;
+        onDeploymentCandidateAuthorized?: (token: string) => void;
+    }>) => Promise<ActionExecuteResult>;
+};
 type DeploymentReviewTransport = Readonly<{
+    responseRecovery?: UiActionResponseRecovery;
     deploymentReview?: ExternalActionExecutionAuthorizationRequestV1['deploymentReview'];
     onDeploymentCandidateAuthorized?: (token: string) => void;
 }>;
@@ -232,6 +245,7 @@ export async function executeOriginalAccountActionTransport(params: DeploymentRe
             [EXTERNAL_ACTION_REVIEWED_CHILD_HEADER]: encodeReviewedActionChildHttpProofV1(params.reviewedChild) } : {}),
         ...(params.authority === 'account_automation' ? { [AUTHORITY_CEILING_HEADER_V1]: params.authority } : {}) };
     account.assertCurrent();
+    let candidateAuthorization: string | undefined;
     const invalid = params.invalidResponseCode ?? 'invalid_action_output';
     const custody = params.machineCustody;
     if (binding.actionId === 'session.agent.transition' && !params.invocation) return failure('admission_unavailable');
@@ -336,7 +350,8 @@ export async function executeOriginalAccountActionTransport(params: DeploymentRe
         const { telemetryReadInstallationPublicKey, ...signedAuthorization } = authorization.data;
         let executionAuthorization = signedAuthorization;
         if (root.deploymentCandidatePublication && !root.deploymentCandidatePublication.reviewed) {
-            params.onDeploymentCandidateAuthorized?.(executionAuthorization.token);
+            candidateAuthorization = executionAuthorization.token;
+            params.onDeploymentCandidateAuthorized?.(candidateAuthorization);
         }
         const wake = executionAuthorization.managedFiniteWake;
         let controllerPublicKey: Uint8Array | undefined;
@@ -440,28 +455,58 @@ export async function executeOriginalAccountActionTransport(params: DeploymentRe
     }
     const retainsEffectReceipt = isActionEffectResult(getActionSpec(binding.actionId).sideEffectClass);
     const path = `/v1/actions/${binding.actionId}`;
-    const init = { method: 'POST', headers, body: JSON.stringify(request), signal: params.signal };
-    let issued = false;
-    const options = { includeAuth: true, retry: 'none' as const,
-        ...(params.timeoutMs === undefined ? {} : { timeoutMs: params.timeoutMs }),
-        onIssued: () => { issued = true; params.onTransportIssued?.(); },
-    };
-    let response: Response;
-    try {
-        if (retainsEffectReceipt) return await account.requestEffectReceipt(path, init, options, readResponse);
-        response = await account.request(path, init, options);
-    } catch (error) {
-        // An issued effect needs reconciliation. For a read, report the network failure.
-        const code = retainsEffectReceipt ? (issued ? 'outcome_unknown' : null) : readServerUnreachableFetchCode(error);
-        if (code) return withActionFailureDiagnostic({ ...failure(code),
-            failureCause: projectActionFailureCauseV1(error, 'external_action.http.execute'),
-        }, { phase: 'external_action.http.execute', causeKind: 'incomplete', error });
-        if (error instanceof ServerFetchWriteTimeoutError) {
-            return failure('admission_unavailable');
-        }
-        throw error;
+    const body = JSON.stringify(request);
+    const initial = await issue(account, params.signal, params.onTransportIssued);
+    const recovery = params.responseRecovery;
+    if (recovery && !initial.ok && isActionOutcomeUnknownErrorCodeV1(initial.errorCode)) {
+        const artifactId = deriveAccountScopedArtifactIdV1(binding.accountId, deriveApprovalRequestSourceIdFromIdentityV1({
+            homeId: binding.serverIdentityId, accountId: binding.accountId, requesterId: binding.accountId,
+            requestId: binding.requestId, actionId: binding.actionId, target: binding.target,
+        }));
+        recovery.resume = async ports => {
+            const current = ports.account;
+            current.assertCurrent();
+            ports.signal?.throwIfAborted();
+            if (current.accountId !== binding.accountId || current.serverIdentityId !== binding.serverIdentityId
+                || current.credentialAuthorityKind !== 'account') return failure('action_account_scope_changed');
+            // A lost response is no evidence that Home missed the press. Recover
+            // the exact admitted Ask or native result before rejoining its request.
+            const admitted = await ports.readApproval(artifactId, binding.requestId);
+            if (admitted) return admitted;
+            if (binding.target.kind === 'machine' && ports.readOperation) {
+                const recorded = await ports.readOperation(binding.target.machineId, binding.requestId, initial);
+                if (recorded !== initial) return recorded;
+            }
+            current.assertCurrent();
+            ports.signal?.throwIfAborted();
+            if (candidateAuthorization) ports.onDeploymentCandidateAuthorized?.(candidateAuthorization);
+            return issue(current, ports.signal);
+        };
     }
-    return await readResponse(response);
+    return initial;
+
+    async function issue(current: LazyActionAccountContext, signal?: AbortSignal, onIssued?: () => void): Promise<ActionExecuteResult> {
+        const init = { method: 'POST', headers, body, signal };
+        let issued = false;
+        const options = { includeAuth: true, retry: 'none' as const,
+            ...(params.timeoutMs === undefined ? {} : { timeoutMs: params.timeoutMs }),
+            onIssued: () => { issued = true; onIssued?.(); },
+        };
+        let response: Response;
+        try {
+            if (retainsEffectReceipt) return await current.requestEffectReceipt(path, init, options, readResponse);
+            response = await current.request(path, init, options);
+        } catch (error) {
+            // An issued effect needs reconciliation. For a read, report the network failure.
+            const code = retainsEffectReceipt ? (issued ? 'outcome_unknown' : null) : readServerUnreachableFetchCode(error);
+            if (code) return withActionFailureDiagnostic({ ...failure(code),
+                failureCause: projectActionFailureCauseV1(error, 'external_action.http.execute'),
+            }, { phase: 'external_action.http.execute', causeKind: 'incomplete', error });
+            if (error instanceof ServerFetchWriteTimeoutError) return failure('admission_unavailable');
+            throw error;
+        }
+        return readResponse(response);
+    }
 
     async function readResponse(response: Response): Promise<ActionExecuteResult> {
         let payload: unknown;
@@ -663,6 +708,7 @@ export async function executeOriginalAccountMachineAction(params: OriginalAccoun
     return await executeOriginalAccountActionTransport({ account, input, authority: params.authority,
         ...(workflowPlacement ? { workflowPlacement } : {}),
         ...(params.deploymentReview ? { deploymentReview: params.deploymentReview } : {}),
+        ...(params.responseRecovery ? { responseRecovery: params.responseRecovery } : {}),
         ...(params.onDeploymentCandidateAuthorized ? { onDeploymentCandidateAuthorized: params.onDeploymentCandidateAuthorized } : {}),
         ...(params.onTransportIssued ? { onTransportIssued: params.onTransportIssued } : {}),
         ...(params.onHostResourceFrame ? { onHostResourceFrame: params.onHostResourceFrame } : {}),
