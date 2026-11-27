@@ -130,12 +130,17 @@ it.skipIf(process.platform !== 'linux').each(['required_fact_unavailable', 'PRIV
   try {
     const preview = MachineAgentIsolationPreviewResultV1Schema.parse(await handlers.get('machines.agentIsolation.preview')!(
       { machineId: machine.id, enabled: true }, context));
-    const failure = { kind: 'native_check_unavailable', ...(reason === 'required_fact_unavailable' ? { reason } : {}) };
-    expect(preview).toMatchObject({ kind: 'unavailable', setup: { reasonCode: 'native_check_unavailable', failure } });
+    const failure = reason === 'required_fact_unavailable'
+      ? { kind: 'native_check_unavailable', reason, requiredFact: 'machine-state-root' }
+      : undefined;
+    expect(preview).toMatchObject({ kind: 'unavailable', setup: { reasonCode: 'native_check_unavailable' } });
+    if (preview.kind !== 'unavailable') throw new Error('Expected an unavailable preview');
+    expect(preview.setup?.failure).toEqual(failure);
     expect(client.getAgentIsolationSnapshot().status).toEqual({ kind: 'unavailable', code: 'provisioning_unavailable',
       setup: { outcome: 'not_applied', reasonCode: 'native_check_unavailable',
         failure } });
     expect(JSON.stringify(preview)).not.toContain('PRIVATE_NATIVE_DETAIL');
+    expect(JSON.stringify(client.getAgentIsolationSnapshot().status)).not.toContain('PRIVATE_NATIVE_DETAIL');
     expect(statusWrites).toBe(1); // One settled fact, no publication or provisioning retry.
     expect(native.mutations).toEqual([]);
     expect(machine.metadata).not.toHaveProperty('agentIsolation');
@@ -171,7 +176,8 @@ it.skipIf(process.platform !== 'linux')('settles a cancelled admitted apply inst
   const result = await handlers.get('machines.agentIsolation.set')!({ machineId: 'machine', enabled: true,
     expectedPolicy: preview.policy, expectedMetadataVersion: preview.metadataVersion, expectedPlanDigest: preview.plan.planDigest }, context);
   expect(result).toMatchObject({ kind: 'failed', code: 'cancelled' });
-  expect(status).toEqual({ kind: 'unavailable', code: 'provisioning_unavailable' });
+  expect(status).toEqual({ kind: 'unavailable', code: 'provisioning_unavailable',
+    setup: { outcome: 'not_applied', reasonCode: 'cancelled' } });
   expect(native.mutations).toEqual([]);
 });
 
