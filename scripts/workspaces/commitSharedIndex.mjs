@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { closeSync, copyFileSync, existsSync, openSync, renameSync, rmSync, watch } from 'node:fs';
+import { copyFileSync, existsSync, linkSync, renameSync, rmSync, statSync, watch } from 'node:fs';
 import { dirname } from 'node:path';
 import { once } from 'node:events';
 import { gitIn } from './commitProducerClosure.mjs';
@@ -61,48 +61,64 @@ function indexUpdates(git, base, changes) {
   return deletions;
 }
 
-function updateLockedIndex(git, env, index, base, commit, checkout, paths) {
-  const lock = `${index}.lock`;
-  const fd = openSync(lock, 'wx');
-  const temp = `${index}.commit-writer-${randomUUID()}`;
-  let ownsLock = true;
-  try {
-    closeSync(fd);
-    if (git(['rev-parse', '--symbolic-full-name', 'HEAD']).trim() !== checkout) return 0;
-    const tip = git(['rev-parse', '--verify', 'HEAD']).trim();
-    try { git(['merge-base', '--is-ancestor', commit, tip]); }
-    catch (error) { if (error.status === 1) return 0; throw error; }
+function readIndexIdentity(index) {
+  const stat = statSync(index, { bigint: true, throwIfNoEntry: false });
+  return stat ? `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}` : null;
+}
 
-    const changes = treeChanges(git, base, commit);
-    if (tip !== commit) {
-      // A newer writer can publish while this writer waits on Git's index lock.
-      // Catch up only the paths from this publication, using their original base test.
-      for (const [name, { after }] of treeChanges(git, commit, tip)) {
-        const change = changes.get(name);
-        if (!change) continue;
-        if (change.before === after) changes.delete(name);
-        else change.after = after;
-      }
+function prepareAndPublishIndex(git, env, index, base, commit, checkout, paths) {
+  if (git(['rev-parse', '--symbolic-full-name', 'HEAD']).trim() !== checkout) return 0;
+  const tip = git(['rev-parse', '--verify', 'HEAD']).trim();
+  try { git(['merge-base', '--is-ancestor', commit, tip]); }
+  catch (error) { if (error.status === 1) return 0; throw error; }
+
+  const changes = treeChanges(git, base, commit);
+  if (tip !== commit) {
+    // Catch up only the paths from this publication, using their original base test.
+    for (const [name, { after }] of treeChanges(git, commit, tip)) {
+      const change = changes.get(name);
+      if (!change) continue;
+      if (change.before === after) changes.delete(name);
+      else change.after = after;
     }
-    if (paths) for (const name of changes.keys()) if (!paths.has(name)) changes.delete(name);
-    if (!changes.size) return 0;
-    const tempEnv = { ...env, GIT_INDEX_FILE: temp };
-    const tempGit = (args, options) => git(args, { env: tempEnv, ...options });
-    if (existsSync(index)) copyFileSync(index, temp);
+  }
+  if (paths) for (const name of changes.keys()) if (!paths.has(name)) changes.delete(name);
+  if (!changes.size) return 0;
+
+  const lock = `${index}.lock`;
+  const temp = `${index}.commit-writer-${randomUUID()}`;
+  const tempEnv = { ...env, GIT_INDEX_FILE: temp };
+  const tempGit = (args, options) => git(args, { env: tempEnv, ...options });
+  try {
+    const original = readIndexIdentity(index);
+    if (original) copyFileSync(index, temp);
     const updates = indexUpdates(tempGit, base, changes);
-    if (!updates.length) return 0;
+    if (!updates.length) return readIndexIdentity(index) === original ? 0 : null;
     tempGit(['update-index', '-z', '--index-info'], { input: Buffer.from(`${updates.join('\0')}\0`, 'latin1') });
-    renameSync(temp, lock);
-    renameSync(lock, index);
-    ownsLock = false;
-    return updates.length;
+
+    // Index-writing subprocesses finish before this writer takes the shared lock.
+    // Publish the complete index through Git's lock path and retry if a
+    // concurrent Git writer replaced the input index during preparation.
+    linkSync(temp, lock);
+    let ownsLock = true;
+    try {
+      if (readIndexIdentity(index) !== original) return null;
+      // A ref writer can publish during private preparation. Re-read under
+      // the lock so a later reconciliation cannot overtake this publication.
+      if (git(['rev-parse', '--verify', 'HEAD']).trim() !== tip) return null;
+      renameSync(lock, index);
+      ownsLock = false;
+      return updates.length;
+    } finally {
+      if (ownsLock) rmSync(lock, { force: true });
+    }
   } finally {
     rmSync(temp, { force: true });
-    if (ownsLock) rmSync(lock, { force: true });
+    rmSync(`${temp}.lock`, { force: true });
   }
 }
 
-/** Compare and update under Git's lock, independently of the ordered ref writer.
+/** Prepare from a private snapshot and publish through Git's lock.
  * The worktree bytes and any different stage, mode or blob stay with their owner. */
 export async function syncPublishedIndex({ repo, base, commit, checkout, paths }) {
   const env = gitEnv();
@@ -117,9 +133,16 @@ export async function syncPublishedIndex({ repo, base, commit, checkout, paths }
       const changed = once(watcher, 'change', { signal: controller.signal });
       changed.catch(() => {});
       try {
-        return updateLockedIndex(git, env, index, base, commit, checkout, paths);
+        if (!existsSync(`${index}.lock`)) {
+          const result = prepareAndPublishIndex(git, env, index, base, commit, checkout, paths);
+          if (result !== null) return result;
+          continue;
+        }
+        console.error('Waiting for shared index lock');
+        if (existsSync(`${index}.lock`)) await changed;
       } catch (error) {
-        if (error.code !== 'EEXIST' || error.path !== `${index}.lock`) throw error;
+        if (error.code === 'ENOENT' && error.path === index) continue;
+        if (error.code !== 'EEXIST' || error.dest !== `${index}.lock`) throw error;
         console.error('Waiting for shared index lock');
         if (existsSync(`${index}.lock`)) await changed;
       } finally {
