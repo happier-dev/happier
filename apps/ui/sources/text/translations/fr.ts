@@ -19278,6 +19278,7 @@ settingsSession: {
     deployments: {
         title: "Déploiements",
         creationDefaults: 'Valeurs par défaut des nouveaux déploiements',
+        pushSetupDescription: 'Choisissez le dépôt à surveiller. Chaque push ou fusion sur ce dépôt déploie cet environnement.',
         environments: "Environnements",
         previewsTitle: "Aperçus",
         add: "Ajouter un environnement",

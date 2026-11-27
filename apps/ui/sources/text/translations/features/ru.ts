@@ -5453,6 +5453,8 @@ const connectedServicesSetupTranslations = { ru: {
         sheetPurposeUnavailable: 'Назначение аккаунта этого плагина недоступно. Откройте источник снова после загрузки плагина.',
         sheetSelectionRequired: 'Выберите этот аккаунт в настройке машины, которая его запросила.',
         sheetProfileUnavailable: 'Загруженные учётные данные принадлежат другому аккаунту. Откройте учётные данные в текущем аккаунте.',
+        accountNeededFirst: ({ account }) => `Нужен ${account}, но он ещё не подключён. Подключите его и откройте это снова.`,
+        connectAccount: ({ account }) => `Подключить ${account}`,
     } } satisfies Pick<Readonly<Record<string, ConnectedServicesSetupTranslation>>, "ru">;
 
 return { connectedServicesSetupTranslations };

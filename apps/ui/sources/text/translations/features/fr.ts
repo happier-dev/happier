@@ -5445,6 +5445,8 @@ const connectedServicesSetupTranslations = { fr: {
         sheetPurposeUnavailable: 'L’usage du compte déclaré par ce plugin est indisponible. Rouvrez la source après le chargement du plugin.',
         sheetSelectionRequired: 'Choisissez ce compte dans la configuration de la machine qui l’a demandé.',
         sheetProfileUnavailable: 'Les identifiants chargés appartiennent à un autre compte. Rouvrez les identifiants dans le compte actuel.',
+        accountNeededFirst: ({ account }) => `Il faut ${account}, et aucun n’est encore connecté. Connectez-en un, puis rouvrez ceci.`,
+        connectAccount: ({ account }) => `Connecter ${account}`,
     } } satisfies Pick<Readonly<Record<string, ConnectedServicesSetupTranslation>>, "fr">;
 
 return { connectedServicesSetupTranslations };

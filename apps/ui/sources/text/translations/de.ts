@@ -19491,6 +19491,7 @@ settingsSession: {
         deployments: {
             title: "Deployments",
             creationDefaults: 'Standardwerte für neue Deployments',
+            pushSetupDescription: 'Wähle das Repository, das beobachtet wird. Jeder Push oder Merge darauf deployt diese Umgebung.',
             environments: "Umgebungen",
             previewsTitle: "Vorschauen",
             add: "Umgebung hinzufügen",

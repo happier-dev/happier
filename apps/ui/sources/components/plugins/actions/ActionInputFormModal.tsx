@@ -47,6 +47,9 @@ const stylesheet = StyleSheet.create((theme) => ({
     error: {
         marginTop: theme.space.s12,
     },
+    notice: {
+        marginBottom: theme.space.s12,
+    },
 }));
 
 function isSuccessfulSubmit(
@@ -74,7 +77,11 @@ export type ActionInputFormModalProps = Readonly<{
     anchor?: PopoverAnchor;
     /** Releases the host's modal/currentness binding; idempotent by contract. */
     onRetire?: () => void;
+    /** The host's own name for this form (Deploy on push or merge); its primary then continues the host's flow. */
+    heading?: ActionInputFormHeading;
 }> & CustomModalInjectedProps;
+
+export type ActionInputFormHeading = Readonly<{ title: string; description?: string }>;
 
 /** The target-neutral RN/RNW host renderer for a normalized SDK Action form. */
 export function ActionInputFormModal(props: ActionInputFormModalProps): React.ReactElement {
@@ -105,14 +112,18 @@ export function ActionInputFormModal(props: ActionInputFormModalProps): React.Re
     });
     const isSubmitting = props.form.isSubmitting();
     const pending = resolveHappierFormPending({ busy: isSubmitting });
-    const title = props.form.presentation.inputHints.title ?? props.form.presentation.title;
-    const description = props.form.presentation.inputHints.description ?? props.form.presentation.description;
-    const hasResolvedEmptyConnectedAccountOptions = fields.some((field) => (
-        field.resolvedEmptyConnectedAccountOptions === true
-    ));
+    const title = props.heading?.title ?? props.form.presentation.inputHints.title ?? props.form.presentation.title;
+    const description = props.heading ? props.heading.description
+        : props.form.presentation.inputHints.description ?? props.form.presentation.description;
+    // A required account choice with no account cannot succeed: the form leads to connecting one instead of submitting.
+    const missingAccountField = fields.find((field) => field.resolvedEmptyConnectedAccountOptions === true && field.required === true);
+    const shownFields = React.useMemo(() => missingAccountField
+        ? fields.filter(field => field !== missingAccountField) : fields, [fields, missingAccountField]);
+    const submitLabel = props.form.presentation.inputHints.submitLabel
+        ?? (props.heading ? t('common.continue') : props.form.presentation.title);
     // A Connected Account choice always offers adding one: the right account may not exist yet.
-    const offersConnectedAccounts = hasResolvedEmptyConnectedAccountOptions
-        || props.form.presentation.choosesConnectedAccount === true;
+    const offersConnectedAccounts = props.form.presentation.choosesConnectedAccount === true
+        || fields.some((field) => field.resolvedEmptyConnectedAccountOptions === true);
 
     const close = React.useCallback(() => {
         props.form.cancel();
@@ -180,7 +191,15 @@ export function ActionInputFormModal(props: ActionInputFormModalProps): React.Re
 
     const footer = React.useMemo(() => (
         <ModalCardFooterActions cancel={{ onPress: close, testID: 'plugin-contributed-action-form-cancel' }}>
-            {offersConnectedAccounts ? (
+            {missingAccountField ? (
+                <RoundButton
+                    testID="plugin-contributed-action-form-repair-connected-accounts"
+                    accessibilityLabel={t('connectedServicesSetup.connectAccount', { account: missingAccountField.title })}
+                    title={t('connectedServicesSetup.connectAccount', { account: missingAccountField.title })}
+                    onPress={repairConnectedAccounts}
+                />
+            ) : null}
+            {!missingAccountField && offersConnectedAccounts ? (
                 <RoundButton
                     testID="plugin-contributed-action-form-repair-connected-accounts"
                     accessibilityLabel={t('connectedServices.title')}
@@ -189,16 +208,18 @@ export function ActionInputFormModal(props: ActionInputFormModalProps): React.Re
                     onPress={repairConnectedAccounts}
                 />
             ) : null}
-            <RoundButton
-                testID="plugin-contributed-action-form-submit"
-                accessibilityLabel={props.form.presentation.inputHints.submitLabel ?? props.form.presentation.title}
-                title={props.form.presentation.inputHints.submitLabel ?? props.form.presentation.title}
-                disabled={pending || validation !== undefined}
-                loading={pending}
-                onPress={submit}
-            />
+            {missingAccountField ? null : (
+                <RoundButton
+                    testID="plugin-contributed-action-form-submit"
+                    accessibilityLabel={submitLabel}
+                    title={submitLabel}
+                    disabled={pending || validation !== undefined}
+                    loading={pending}
+                    onPress={submit}
+                />
+            )}
         </ModalCardFooterActions>
-    ), [close, offersConnectedAccounts, pending, props.form.presentation.inputHints.submitLabel, props.form.presentation.title, repairConnectedAccounts, submit, validation]);
+    ), [close, missingAccountField, offersConnectedAccounts, pending, repairConnectedAccounts, submit, submitLabel, validation]);
 
     const chrome = React.useMemo(() => ({
         ...createAnchoredSheetChrome({ title, subtitle: description ?? undefined, anchor: props.anchor }),
@@ -208,8 +229,18 @@ export function ActionInputFormModal(props: ActionInputFormModalProps): React.Re
 
     return (
         <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.content}>
+            {missingAccountField ? (
+                <View style={styles.notice}>
+                    <HappierValidationMessage
+                        testID="plugin-contributed-action-form-connected-accounts-empty"
+                        message={t('connectedServicesSetup.accountNeededFirst', { account: missingAccountField.title })}
+                        theme={pluginUiTheme}
+                        accessibilityLiveRegion="polite"
+                    />
+                </View>
+            ) : null}
             <ActionInputFields
-                fields={fields}
+                fields={shownFields}
                 input={{ ...input }}
                 editable={!pending}
                 busy={pending}
@@ -223,16 +254,6 @@ export function ActionInputFormModal(props: ActionInputFormModalProps): React.Re
                 <View style={styles.error}>
                     <HappierValidationMessage
                         message={validation.message}
-                        theme={pluginUiTheme}
-                        accessibilityLiveRegion="polite"
-                    />
-                </View>
-            ) : null}
-            {hasResolvedEmptyConnectedAccountOptions ? (
-                <View style={styles.error}>
-                    <HappierValidationMessage
-                        testID="plugin-contributed-action-form-connected-accounts-empty"
-                        message={t('connectedServices.list.notConnected')}
                         theme={pluginUiTheme}
                         accessibilityLiveRegion="polite"
                     />

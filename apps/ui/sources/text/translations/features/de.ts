@@ -5440,6 +5440,8 @@ const connectedServicesSetupTranslations = { de: {
         sheetPurposeUnavailable: 'Der Kontozweck dieses Plugins ist nicht verfügbar. Öffne die Quelle erneut, nachdem das Plugin geladen wurde.',
         sheetSelectionRequired: 'Wähle dieses Konto in der Maschineneinrichtung aus, die es angefordert hat.',
         sheetProfileUnavailable: 'Die geladenen Zugangsdaten gehören zu einem anderen Konto. Öffne Zugangsdaten im aktuellen Konto erneut.',
+        accountNeededFirst: ({ account }) => `Dafür ist ${account} nötig, aber noch keins ist verbunden. Verbinde eins und öffne dies dann erneut.`,
+        connectAccount: ({ account }) => `${account} verbinden`,
     } } satisfies Pick<Readonly<Record<string, ConnectedServicesSetupTranslation>>, "de">;
 
 return { connectedServicesSetupTranslations };

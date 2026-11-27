@@ -19318,6 +19318,7 @@ settingsSession: {
     deployments: {
         title: "デプロイ",
         creationDefaults: '新しいデプロイの既定値',
+        pushSetupDescription: '監視するリポジトリを選びます。そこへの push やマージのたびに、この環境がデプロイされます。',
         environments: "環境",
         previewsTitle: "プレビュー",
         add: "環境を追加",

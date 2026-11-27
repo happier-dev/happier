@@ -5325,6 +5325,8 @@ const connectedServicesSetupTranslations = { 'zh-Hans': {
         sheetPurposeUnavailable: '此插件的账户用途不可用。插件加载后请重新打开来源。',
         sheetSelectionRequired: '请在请求此账户的机器设置中选择账户。',
         sheetProfileUnavailable: '已加载的凭据属于其他账户。请在当前账户中重新打开凭据。',
+        accountNeededFirst: ({ account }) => `需要 ${account}，但尚未连接。请先连接，然后重新打开此处。`,
+        connectAccount: ({ account }) => `连接 ${account}`,
     } } satisfies Pick<Readonly<Record<string, ConnectedServicesSetupTranslation>>, "zh-Hans">;
 
 return { connectedServicesSetupTranslations };

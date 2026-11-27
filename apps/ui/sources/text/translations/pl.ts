@@ -19229,6 +19229,7 @@ settingsSession: {
     deployments: {
         title: "Wdrożenia",
         creationDefaults: 'Domyślne ustawienia nowych wdrożeń',
+        pushSetupDescription: 'Wybierz repozytorium do obserwowania. Każdy push lub merge do niego wdraża to środowisko.',
         environments: "Środowiska",
         previewsTitle: "Podglądy",
         add: "Dodaj środowisko",

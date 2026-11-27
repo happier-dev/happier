@@ -249,6 +249,53 @@ describe('ActionInputFormModal', () => {
         } finally { await act(async () => { form.retire(); }); }
     });
 
+    it('leads to connecting an account, and offers no submit, while the required account choice has none', async () => {
+        const setChrome = vi.fn();
+        const form = createActionInputForm({
+            presentation: { title: 'Set up GitHub repository Event source', description: null, inputHints: { fields: [{
+                path: 'credentialRef', title: 'GitHub account', widget: 'select', options: [], required: true,
+                resolvedEmptyConnectedAccountOptions: true,
+            }, { path: 'repository', title: 'Repository', widget: 'text', required: true }] } },
+            initialInput: { repository: 'acme/widgets' },
+            submit: async () => ({ ok: true }),
+        });
+        try {
+            const screen = await renderScreen(<ActionInputFormModal form={form} onClose={vi.fn()} setChrome={setChrome} />);
+            const footer = await renderScreen((setChrome.mock.calls.at(-1)?.[0] as ChromeWithFooter).footer);
+            const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
+            const button = (testID: string) => footer.findAllByType(RoundButton).find(node => node.props.testID === testID);
+            expect(button('plugin-contributed-action-form-submit')).toBeUndefined();
+            const connect = button('plugin-contributed-action-form-repair-connected-accounts');
+            expect(connect?.props.display ?? 'default').toBe('default');
+            expect(connect?.props.title).toBe('connectedServicesSetup.connectAccount');
+            expect(screen.findAllByTestId('plugin-contributed-action-form-connected-accounts-empty')
+                .find(node => node.props.message !== undefined)?.props.message)
+                .toBe('connectedServicesSetup.accountNeededFirst');
+            // The empty choice is not drawn: the line above says what it needs. The prefilled repository stays.
+            expect(screen.getTextContent()).not.toContain('GitHub account');
+            expect(screen.getTextContent()).toContain('Repository');
+        } finally { await act(async () => { form.retire(); }); }
+    });
+
+    it('names a hosted setup with the host heading and continues with it', async () => {
+        const setChrome = vi.fn();
+        const form = createActionInputForm({
+            presentation: { title: 'Set up GitHub repository Event source', description: 'Resolves a GitHub repository.',
+                inputHints: { fields: [{ path: 'repository', title: 'Repository', widget: 'text', required: true }] } },
+            initialInput: { repository: 'acme/widgets' },
+            submit: async () => ({ ok: true }),
+        });
+        try {
+            await renderScreen(<ActionInputFormModal form={form} onClose={vi.fn()} setChrome={setChrome}
+                heading={{ title: 'Deploy on push or merge', description: 'Deploys Staging.' }} />);
+            const chrome = setChrome.mock.calls.at(-1)?.[0] as ChromeWithFooter & Readonly<{ title?: string; subtitle?: string }>;
+            expect(chrome).toMatchObject({ title: 'Deploy on push or merge', subtitle: 'Deploys Staging.' });
+            const submit = findSubmitButton(chrome);
+            expect(submit?.props.title).toBe('common.continue');
+            expect(submit?.props.disabled).toBe(false);
+        } finally { await act(async () => { form.retire(); }); }
+    });
+
     it.each([null, { machineId: 'settings-machine', serverId: 'settings-home' }])(
         'repairs empty Connected Account options on the admitted form target %j', async pickerContext => {
             const { Modal } = await import('@/modal');
@@ -258,7 +305,7 @@ describe('ActionInputFormModal', () => {
             routerPush.mockClear();
             const form = createActionInputForm({
                 presentation: { title: 'Connect account', description: null, inputHints: { fields: [{
-                    path: 'credentialRef', title: 'Connected account', widget: 'select', options: [],
+                    path: 'credentialRef', title: 'Connected account', widget: 'select', options: [], required: true,
                     resolvedEmptyConnectedAccountOptions: true,
                 }] } },
                 submit: async () => ({ ok: true }),

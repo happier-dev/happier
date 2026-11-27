@@ -5326,6 +5326,8 @@ const connectedServicesSetupTranslations = { 'zh-Hant': {
         sheetPurposeUnavailable: '此插件的帳戶用途無法使用。插件載入後請重新開啟來源。',
         sheetSelectionRequired: '請在要求此帳戶的機器設定中選擇帳戶。',
         sheetProfileUnavailable: '已載入的憑證屬於其他帳戶。請在目前帳戶中重新開啟憑證。',
+        accountNeededFirst: ({ account }) => `需要 ${account}，但尚未連接。請先連接，然後重新開啟此處。`,
+        connectAccount: ({ account }) => `連接 ${account}`,
     } } satisfies Pick<Readonly<Record<string, ConnectedServicesSetupTranslation>>, "zh-Hant">;
 
 return { connectedServicesSetupTranslations };

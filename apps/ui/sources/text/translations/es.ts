@@ -19404,6 +19404,7 @@ settingsSession: {
     deployments: {
         title: "Despliegues",
         creationDefaults: 'Valores predeterminados para nuevos despliegues',
+        pushSetupDescription: 'Elige el repositorio que se vigila. Cada push o merge en él despliega este entorno.',
         environments: "Entornos",
         previewsTitle: "Vistas previas",
         add: "Añadir entorno",

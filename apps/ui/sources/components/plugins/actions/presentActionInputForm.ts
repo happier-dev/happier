@@ -2,7 +2,7 @@ import { Modal } from '@/modal';
 import { createAnchoredSheetChrome } from '@/modal/components/card/anchoredSheetChrome';
 import type { PopoverAnchor } from '@/components/ui/popover';
 
-import { ActionInputFormModal, type ReadSubmittedActionOption, type ValidateActionInput } from './ActionInputFormModal';
+import { ActionInputFormModal, type ActionInputFormHeading, type ReadSubmittedActionOption, type ValidateActionInput } from './ActionInputFormModal';
 import type { ActionInputForm, ActionInputFormSubmissionResult } from './actionInputForm';
 import type { InputTypePickerHostContext } from '@/components/sessions/actions/InputTypePickerHostProvider';
 
@@ -21,6 +21,8 @@ export function presentActionInputForm(params: Readonly<{
     actionId?: string;
     anchor?: PopoverAnchor;
     onSubmitOptions?: (readOption: ReadSubmittedActionOption) => void;
+    /** The host's own name for this form, in place of the Action's title and description. */
+    heading?: ActionInputFormHeading;
 }>): void {
     let modalId = '';
     let retired = false;
@@ -56,13 +58,15 @@ export function presentActionInputForm(params: Readonly<{
             anchor: params.anchor,
             onRetire: retire,
             onSubmitOptions: params.onSubmitOptions,
+            heading: params.heading,
         },
         onRequestClose: cancel,
         onHostUnmount: retire,
         closeOnBackdrop: true,
         chrome: createAnchoredSheetChrome({
-            title: params.form.presentation.inputHints.title ?? params.form.presentation.title,
-            subtitle: params.form.presentation.inputHints.description ?? params.form.presentation.description ?? undefined,
+            title: params.heading?.title ?? params.form.presentation.inputHints.title ?? params.form.presentation.title,
+            subtitle: (params.heading ? params.heading.description
+                : params.form.presentation.inputHints.description ?? params.form.presentation.description) ?? undefined,
             anchor: params.anchor,
         }),
     });

@@ -19358,6 +19358,7 @@ settingsSession: {
     deployments: {
         title: "Развёртывания",
         creationDefaults: 'Настройки новых развёртываний по умолчанию',
+        pushSetupDescription: 'Выберите репозиторий для наблюдения. Каждый push или merge в него развёртывает это окружение.',
         environments: "Окружения",
         previewsTitle: "Превью",
         add: "Добавить окружение",

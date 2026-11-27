@@ -1455,6 +1455,8 @@ export const DeploymentEnvironmentDetail = React.memo(
                     targetLinkId: detail.environment.runtimeTargetLinkId,
                     project: { machineId: detail.environment.controllerMachineId, directory: '~' },
                     protection: detail.environment.protection,
+                    ...(projectSource.source?.source.repository?.provider.kind === 'github'
+                      ? { repository: projectSource.source.source.repository.repository.nameWithOwner } : {}),
                   } : undefined} />
                 </View>
               ) : null}

@@ -6,7 +6,7 @@ import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { t } from '@/text';
 import { WorkflowTriggerAddRequestV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/automationTriggerIdentity';
-import { buildDeploymentPushFilter, buildDeploymentPushRequest } from './deploymentPushSetup';
+import { buildDeploymentPushEventSeed, buildDeploymentPushFilter, buildDeploymentPushRequest } from './deploymentPushSetup';
 
 vi.mock('react-native', async () =>
     (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
@@ -56,6 +56,15 @@ describe('Environment push setup', () => {
     expect(request).not.toHaveProperty('actionApprovals');
     expect(request.deployment).toEqual({});
   });
+  it.each([['acme/widgets', { repository: 'acme/widgets' }], [undefined, {}]] as const)(
+    'seeds the GitHub source with the Environment repository %s and names the setup in deploy terms', (repository, setupInput) => {
+      const seed = buildDeploymentPushEventSeed({ ...config, protection: 'nonProduction', ...(repository ? { repository } : {}) });
+      expect(seed).toEqual({
+        eventRef: { pluginId: GITHUB_EVENT_SETUP_ACTIONS_V1.pluginId, localId: GITHUB_MANAGED_PUSH_EVENT_LOCAL_ID_V1 },
+        setupInput,
+        heading: { title: t('workflows.examples.deployOnPush.title'), description: t('projects.deployments.pushSetupDescription') },
+      });
+    });
 });
 
 const managedPushSource = {

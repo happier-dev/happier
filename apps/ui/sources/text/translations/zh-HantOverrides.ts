@@ -14316,6 +14316,7 @@ settingsSession: {
             restoreBackupAndCode: '還原備份和上一版本',
             rollbackCodeOnly: '僅回復程式碼',
             creationDefaults: '新建部署的預設設定',
+            pushSetupDescription: '選擇要監看的儲存庫。每次推送或合併到該儲存庫都會部署此環境。',
             creationReview: deploymentCreationReviewTranslations['zh-Hant'],
       recommendation: deploymentRecommendationTranslations['zh-Hant'],
       defaultsEditor: deploymentDefaultsTranslations['zh-Hant'],

@@ -19406,6 +19406,7 @@ settingsSession: {
     deployments: {
         title: "Deployment",
         creationDefaults: 'Impostazioni predefinite per nuovi deployment',
+        pushSetupDescription: 'Scegli il repository da osservare. Ogni push o merge su di esso distribuisce questo ambiente.',
         environments: "Ambienti",
         previewsTitle: "Anteprime",
         add: "Aggiungi ambiente",

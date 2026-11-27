@@ -251,14 +251,15 @@ function resolveCurrentSetupSnapshot(params: Readonly<{
  * provides the only setup Action reference; the generic controller owns input
  * collection, and the canonical surface dispatcher owns invocation.
  */
-export type PluginEventAutomationSetupSeed = PluginUiOpenAutomationEventRequestV1 & Readonly<{ sourceLabel?: string }>;
+/** Host-only facts beside the plugin request: the configured source's label and the host's name for the setup form. */
+export type PluginEventAutomationSetupSeed = PluginUiOpenAutomationEventRequestV1 & Readonly<{ sourceLabel?: string; heading?: SetupSurfaceHeading }>;
 
 export async function configurePluginEventAutomationSetup(params: Readonly<{
     initialSetupSeed?: PluginEventAutomationSetupSeed;
     nativeSetupDraft?: Readonly<Record<string, unknown>>;
     watcherSelection?: NativeSetupWatcherSelection;
     requireNativeRenderer?: boolean;
-    /** The host's name for the native setup surface; the Event's own title otherwise. */
+    /** The host's name for the setup (native surface or Action form); the seed's heading, then the Event's or Action's own title otherwise. */
     surfaceHeading?: SetupSurfaceHeading;
     /** A saved source edit passes these values only to its native renderer. */
     savedSourceRendererInput?: NonNullable<PluginUiOpenAutomationEventRequestV1['setupInput']>;
@@ -339,6 +340,7 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
         const initial = await load(currentOrigin);
         if ('kind' in initial) return initial;
         const explicitSeed = params.initialSetupSeed;
+        const surfaceHeading = params.surfaceHeading ?? explicitSeed?.heading;
         const serverId = initial.origin.machineTarget.serverId;
         // The setup Action declares whether it can use the chosen Watcher's Home.
         const seed: PluginUiOpenAutomationEventRequestV1 | undefined = !explicitSeed && !params.initialSource && serverId
@@ -409,7 +411,7 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
                                 observerMachineId: initial.origin.machineTarget.target.machineId,
                                 ...(initialInput?.success ? { initialInput: initialInput.data } : {}),
                             },
-                            ...(params.surfaceHeading ? { heading: params.surfaceHeading } : {}),
+                            ...(surfaceHeading ? { heading: surfaceHeading } : {}),
                             ...(operationScope.signal ? { signal: operationScope.signal } : {}),
                         });
                         if (surfaceSettlement.kind === 'superseded') {
@@ -475,6 +477,7 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
                         form: selection.form,
                         signal: operationScope.signal,
                         actionId: formatQualifiedPluginActionId(initial.event.setupAction.identity),
+                        ...(surfaceHeading ? { heading: surfaceHeading } : {}),
                         ...(savedCheckField || homeField ? { onSubmitOptions: (readOption: ReadSubmittedActionOption) => {
                             submitted.check = savedCheckField ? readOption(savedCheckField.path) : undefined;
                             submitted.home = homeField ? readOption(homeField.path) : undefined;

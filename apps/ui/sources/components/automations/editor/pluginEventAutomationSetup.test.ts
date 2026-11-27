@@ -461,6 +461,19 @@ describe('Plugin Event Automation setup orchestration', () => {
         expect(params.dispatch).not.toHaveBeenCalled();
     });
 
+    it('opens the Action form with the host seed filled in and named by the host heading', async () => {
+        const event = eligibleEvent();
+        const params = durablePushSetupParams(event);
+        const presented = vi.fn();
+        const heading = { title: 'Deploy on push or merge', description: 'Deploys Staging.' };
+        await expect(configurePluginEventAutomationSetup({ ...params, observationTransport: 'checkpointedPull',
+            initialSetupSeed: { eventRef: event.event.identity, setupInput: { repository: 'acme/widgets' }, heading },
+            present: ({ form, heading: shown }) => { presented(form.getInput(), shown); form.cancel(); },
+        })).resolves.toMatchObject({ kind: 'cancelled' });
+        expect(presented).toHaveBeenCalledWith(expect.objectContaining({ repository: 'acme/widgets' }), heading);
+        expect(params.dispatch).not.toHaveBeenCalled();
+    });
+
     it('names a configured Home source from the exact submitted option', async () => {
         const base = eligibleEvent();
         const inputSchema = { type: 'object', properties: { serverId: { type: 'string' } },

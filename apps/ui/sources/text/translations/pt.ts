@@ -19510,6 +19510,7 @@ settingsSession: {
     deployments: {
         title: "Implantações",
         creationDefaults: 'Predefinições para novas implantações',
+        pushSetupDescription: 'Escolha o repositório a observar. Cada push ou merge nele implanta este ambiente.',
         environments: "Ambientes",
         previewsTitle: "Pré-visualizações",
         add: "Adicionar ambiente",

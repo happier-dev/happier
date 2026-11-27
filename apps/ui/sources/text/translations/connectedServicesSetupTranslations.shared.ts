@@ -41,6 +41,9 @@ export type ConnectedServicesSetupTranslation = Readonly<{
     sheetPurposeUnavailable: string;
     sheetSelectionRequired: string;
     sheetProfileUnavailable: string;
+    /** A required account choice has no account yet: what it needs, and the action that connects one. */
+    accountNeededFirst: (params: Readonly<{ account: string }>) => string;
+    connectAccount: (params: Readonly<{ account: string }>) => string;
 }>;
 
 
@@ -83,4 +86,6 @@ export const connectedServicesSetupTranslationsEnglish = { en: {
         sheetPurposeUnavailable: 'This plugin’s account purpose is unavailable. Reopen the source after the plugin loads.',
         sheetSelectionRequired: 'Choose this account from the machine setup that requested it.',
         sheetProfileUnavailable: 'The loaded credentials belong to a different account. Reopen Credentials in the current account.',
+        accountNeededFirst: ({ account }) => `This needs a ${account}, and none is connected yet. Connect one, then open this again.`,
+        connectAccount: ({ account }) => `Connect ${account}`,
     } } satisfies Pick<Readonly<Record<string, ConnectedServicesSetupTranslation>>, "en">;

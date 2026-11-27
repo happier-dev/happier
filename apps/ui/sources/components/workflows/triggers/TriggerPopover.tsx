@@ -10,7 +10,7 @@ import type { TriggerTargetV1} from '@happier-dev/protocol/workflows/triggers/tr
 import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
 import { resolveEffectiveActionInputFields } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import type { AutomationRunPluginEventTriggerEvidenceV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
-import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
+import type { PluginEventAutomationSetupSeed } from '@/components/automations/editor/pluginEventAutomationSetup';
 import type { PluginEventAutomationEditSeed } from '@/sync/domains/automations/pluginEventAutomationEditSeed';
 
 import { RoundButton, RoundButtonSizeScope } from '@/components/ui/buttons/RoundButton';
@@ -150,7 +150,7 @@ type TriggerPopoverBaseProps = Readonly<{
     initialActionTargets?: readonly TriggerTargetV1[];
     /** A new trigger's starting Then ("Add to a workflow…" starts on Run a workflow); defaults to Send a prompt. */
     initialThenKind?: TriggerThenKind;
-    initialEventSeed?: PluginUiOpenAutomationEventRequestV1;
+    initialEventSeed?: PluginEventAutomationSetupSeed;
     initialEventEditSeed?: PluginEventAutomationEditSeed;
     onEditSeedApplied?: React.ComponentProps<typeof TriggerPluginEventRows>['onEditSeedApplied'];
     /**

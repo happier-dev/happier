@@ -5427,6 +5427,8 @@ const connectedServicesSetupTranslations = { ca: {
         sheetPurposeUnavailable: 'La finalitat del compte d’aquest connector no està disponible. Torna a obrir la font quan es carregui el connector.',
         sheetSelectionRequired: 'Tria aquest compte des de la configuració de la màquina que l’ha demanat.',
         sheetProfileUnavailable: 'Les credencials carregades pertanyen a un altre compte. Torna a obrir Credencials al compte actual.',
+        accountNeededFirst: ({ account }) => `Cal un ${account} i encara no n’hi ha cap de connectat. Connecta’n un i torna a obrir això.`,
+        connectAccount: ({ account }) => `Connecta ${account}`,
     } } satisfies Pick<Readonly<Record<string, ConnectedServicesSetupTranslation>>, "ca">;
 
 return { connectedServicesSetupTranslations };

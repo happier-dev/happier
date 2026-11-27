@@ -7,13 +7,26 @@ import type { DeploymentEnvironmentHeaderV1 } from '@happier-dev/protocol/deploy
 import type { DeploymentEnvironmentRefV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentRefV1';
 import { getWorkflowStarterExamplesV1 } from '@happier-dev/protocol/workflows/builtins/examples';
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows/workflowWorkspaceV1';
+import type { PluginEventAutomationSetupSeed } from '@/components/automations/editor/pluginEventAutomationSetup';
+import { t } from '@/text';
 
 export type DeploymentPushSetupConfig = Readonly<{
   environment: DeploymentEnvironmentRefV1;
   targetLinkId: string;
   project: WorkflowProjectTargetV1;
   protection: DeploymentEnvironmentHeaderV1['protection'];
+  /** The Environment's own GitHub repository (owner/name), read from its Source; the setup starts with it filled in. */
+  repository?: string;
 }>;
+
+/** The GitHub push source, seeded with the Environment's repository and named in deploy terms. */
+export function buildDeploymentPushEventSeed(config: DeploymentPushSetupConfig): PluginEventAutomationSetupSeed {
+  return {
+    eventRef: { pluginId: GITHUB_EVENT_SETUP_ACTIONS_V1.pluginId, localId: GITHUB_MANAGED_PUSH_EVENT_LOCAL_ID_V1 },
+    setupInput: config.repository ? { repository: config.repository } : {},
+    heading: { title: t('workflows.examples.deployOnPush.title'), description: t('projects.deployments.pushSetupDescription') },
+  };
+}
 
 /** Translate the editor draft while retaining the owner's other saved filters. */
 export function buildDeploymentPushFilter(branch: string, existing?: AutomationDeploymentTriggerV1) {

@@ -19024,6 +19024,7 @@ settingsSession: {
     deployments: {
         title: "部署",
         creationDefaults: '新建部署的默认设置',
+        pushSetupDescription: '选择要监视的仓库。每次推送或合并到该仓库都会部署此环境。',
         environments: "环境",
         previewsTitle: "预览",
         add: "添加环境",

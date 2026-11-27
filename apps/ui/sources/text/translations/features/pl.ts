@@ -5450,6 +5450,8 @@ const connectedServicesSetupTranslations = { pl: {
         sheetPurposeUnavailable: 'Przeznaczenie konta tego dodatku jest niedostępne. Otwórz źródło ponownie po załadowaniu dodatku.',
         sheetSelectionRequired: 'Wybierz to konto w konfiguracji maszyny, która go zażądała.',
         sheetProfileUnavailable: 'Załadowane dane logowania należą do innego konta. Otwórz ponownie Dane logowania na bieżącym koncie.',
+        accountNeededFirst: ({ account }) => `Potrzebne jest ${account}, a żadne nie jest jeszcze połączone. Połącz je i otwórz to ponownie.`,
+        connectAccount: ({ account }) => `Połącz ${account}`,
     } } satisfies Pick<Readonly<Record<string, ConnectedServicesSetupTranslation>>, "pl">;
 
 return { connectedServicesSetupTranslations };

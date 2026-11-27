@@ -22774,6 +22774,7 @@ const enProjects = {
             },
       title: "Deployments",
       creationDefaults: 'Deployment creation defaults',
+      pushSetupDescription: 'Pick the repository to watch. Each push or merge to it deploys this environment.',
       environments: "Environments",
       previewsTitle: "Previews",
       add: "Add environment",

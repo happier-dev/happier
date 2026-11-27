@@ -18208,6 +18208,7 @@ La meva pregunta: `,
         deployments: {
             title: "Desplegaments",
             creationDefaults: 'Valors predeterminats per crear desplegaments',
+            pushSetupDescription: 'Tria el repositori que vols vigilar. Cada push o fusió hi desplega aquest entorn.',
             environments: "Entorns",
             previewsTitle: "Previsualitzacions",
             add: "Afegeix un entorn",

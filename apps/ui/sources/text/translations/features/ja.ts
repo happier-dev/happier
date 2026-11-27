@@ -5385,6 +5385,8 @@ const connectedServicesSetupTranslations = { ja: {
         sheetPurposeUnavailable: 'このプラグインのアカウント用途は利用できません。プラグインの読み込み後にソースを開き直してください。',
         sheetSelectionRequired: 'このアカウントを要求したマシン設定から選択してください。',
         sheetProfileUnavailable: '読み込まれた認証情報は別のアカウントのものです。現在のアカウントで認証情報を開き直してください。',
+        accountNeededFirst: ({ account }) => `${account} が必要ですが、まだ接続されていません。接続してから、もう一度開いてください。`,
+        connectAccount: ({ account }) => `${account} を接続`,
     } } satisfies Pick<Readonly<Record<string, ConnectedServicesSetupTranslation>>, "ja">;
 
 return { connectedServicesSetupTranslations };
