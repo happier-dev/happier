@@ -7483,6 +7483,13 @@ offer and older responders keep the original encoding. An absent or unknown
 offer always gets the unframed response. Nothing in this offer grants authority
 or changes the existing 0.2 → 0.3 encrypted RPC epoch.
 
+A 0.3 daemon can offer registration batch V1 alongside the first method in its
+existing `rpc-register` event. A supporting Home admits every method through
+the existing registration owner and returns one `rpc-registered-batch` with
+per-method receipts or rejections. An older Home reads the first method as
+usual. Its ordinary receipt or rejection causes the daemon to publish the
+remaining methods individually. The offer is scoped to the current connection.
+
 The current development structured plugin Action ingress also requires
 content-free `structuredMessageRouting` for encrypted requests, automatically
 projected by `callSocketRpc`. Its required invocation kind makes mounted/client

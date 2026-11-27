@@ -57,6 +57,8 @@ import { transferRelayLifecycle } from "../transferRelayLifecycle";
 import {
     SOCKET_RPC_EVENTS,
     SocketRpcCancellationPayloadSchema,
+    SocketRpcRegistrationBatchOfferV1Schema,
+    type SocketRpcRegistrationBatchReceiptV1,
     SocketRpcRequestIdSchema,
     SocketRpcTimeoutMsSchema,
     SocketRpcAnsweringClientV1Schema,
@@ -942,9 +944,12 @@ export function registerSocketRpcHandlers(params: Readonly<{
         });
     });
 
-    params.socket.on(SOCKET_RPC_EVENTS.REGISTER, async (data: unknown) => {
-        const method = normalizeRpcMethodName((data as { method?: unknown } | undefined)?.method);
-        const reject = (error: string, retryable: boolean) => params.socket.emit(SOCKET_RPC_EVENTS.ERROR, {
+    type RegistrationRejection = SocketRpcRegistrationBatchReceiptV1['rejected'][number];
+    const logRegistrationFailure = (error: unknown) => {
+        log({ module: "websocket-rpc", level: "error" }, `Error in rpc-register: ${error}`);
+    };
+    const admitRegistration = async (method: string | null, reportError: (error: RegistrationRejection) => void) => {
+        const reject = (error: string, retryable: boolean) => reportError({
             type: "register", error, ...(method ? { method } : {}), retryable,
         });
         try {
@@ -1029,7 +1034,6 @@ export function registerSocketRpcHandlers(params: Readonly<{
                 }
             }
 
-            const alreadyRegistered = ownedMethods.has(method);
             const availability = parseMachineScopedRpcMethod(method);
             const managedGuestActivity = machineScopedSocketMachineId !== null
                 && (method === `${machineScopedSocketMachineId}:${MANAGED_ACTIVITY_READ_RPC_METHOD}`
@@ -1037,13 +1041,23 @@ export function registerSocketRpcHandlers(params: Readonly<{
             // The method room is the registration authority across Home nodes.
             // An unchanged owner needs no census; a new owner publishes only
             // when the previous room was proven empty, never on an unknown census.
-            const previousPresence = (availability && machineScopedSocketMachineId === null || managedGuestActivity) && !alreadyRegistered
+            const previousPresence = (availability && machineScopedSocketMachineId === null || managedGuestActivity) && !ownedMethods.has(method)
                 ? await readRegisteredRpcTargetPresence({ userId: params.userId, io: params.io, method })
                 : "present";
-            await params.socket.join(buildRpcMethodRoom({ userId: params.userId, method }));
-            const becameAvailable = previousPresence === "absent" && !ownedMethods.has(method);
-            ownedMethods.add(method);
-            writeSocketRegisteredRpcMethods(params.socket, ownedMethods);
+            return { method, availability, machineScopedSocketMachineId, managedGuestActivity, previousPresence, reject };
+        } catch (error) {
+            logRegistrationFailure(error);
+            reject("Internal error", true);
+        }
+    };
+
+    const finishRegistration = async (
+        admitted: NonNullable<Awaited<ReturnType<typeof admitRegistration>>>,
+        becameAvailable: boolean,
+        reportRegistered: (method: string) => void,
+    ) => {
+        const { method, availability, machineScopedSocketMachineId, managedGuestActivity } = admitted;
+        try {
             if (availability && machineScopedSocketMachineId === null && !params.ephemeralRunnerAdmission) {
                 await params.socket.join(buildMachineRpcAvailabilityRoom({ userId: params.userId, machineId: availability.machineId }));
                 if (!ownedMethods.has(method)) {
@@ -1052,7 +1066,7 @@ export function registerSocketRpcHandlers(params: Readonly<{
                 }
             }
             recordRpcRegistration(method);
-            params.socket.emit(SOCKET_RPC_EVENTS.REGISTERED, { method });
+            reportRegistered(method);
             if (managedGuestActivity && becameAvailable && machineScopedSocketMachineId) {
                 const installationId = readVerifiedMachineSocketInstallationIdFromSocketData(readSocketData(params.socket));
                 if (installationId) await publishManagedGuestActivityAvailable({ accountId: params.userId,
@@ -1080,9 +1094,66 @@ export function registerSocketRpcHandlers(params: Readonly<{
                 });
             }
         } catch (error) {
-            log({ module: "websocket-rpc", level: "error" }, `Error in rpc-register: ${error}`);
-            reject("Internal error", true);
+            logRegistrationFailure(error);
+            admitted.reject("Internal error", true);
         }
+    };
+
+    params.socket.on(SOCKET_RPC_EVENTS.REGISTER, async (data: unknown) => {
+        const payload = data as { method?: unknown; batch?: unknown } | undefined;
+        const method = normalizeRpcMethodName(payload?.method);
+        const offer = payload?.batch !== undefined && !params.ephemeralRunnerAdmission
+            && readMachineScopedSocketMachineId(params.socket)
+            ? SocketRpcRegistrationBatchOfferV1Schema.safeParse(payload.batch) : null;
+        const roomFor = (method: string) => buildRpcMethodRoom({ userId: params.userId, method });
+        if (!offer?.success) {
+            const admitted = await admitRegistration(method, error => params.socket.emit(SOCKET_RPC_EVENTS.ERROR, error));
+            if (!admitted) return;
+            try {
+                await params.socket.join(roomFor(admitted.method));
+            } catch (error) {
+                logRegistrationFailure(error);
+                admitted.reject("Internal error", true);
+                return;
+            }
+            if (!params.socket.connected) return;
+            const becameAvailable = admitted.previousPresence === "absent" && !ownedMethods.has(admitted.method);
+            ownedMethods.add(admitted.method);
+            writeSocketRegisteredRpcMethods(params.socket, ownedMethods);
+            await finishRegistration(admitted, becameAvailable, method => params.socket.emit(SOCKET_RPC_EVENTS.REGISTERED, { method }));
+            return;
+        }
+
+        const receipt: SocketRpcRegistrationBatchReceiptV1 = { v: 1, registered: [], rejected: [] };
+        const admitted: NonNullable<Awaited<ReturnType<typeof admitRegistration>>>[] = [];
+        // Process untrusted methods through the same admission, without issuing all
+        // of their authorization reads concurrently from a single packet.
+        for (const candidateMethod of new Set([method, ...offer.data.remainingMethods.map(normalizeRpcMethodName)])) {
+            const candidate = await admitRegistration(candidateMethod, error => receipt.rejected.push(error));
+            if (candidate) admitted.push(candidate);
+        }
+        if (!params.socket.connected) return;
+        try {
+            if (admitted.length > 0) await params.socket.join(admitted.map(({ method }) => roomFor(method)));
+        } catch (error) {
+            logRegistrationFailure(error);
+            for (const candidate of admitted) candidate.reject("Internal error", true);
+            params.socket.emit(SOCKET_RPC_EVENTS.REGISTERED_BATCH, receipt);
+            return;
+        }
+        if (!params.socket.connected) return;
+        // On Machine sockets the acknowledgement is projected synchronously
+        // before post-registration side effects, just like a singleton receipt.
+        const outcomes = admitted.map(candidate => {
+            const becameAvailable = candidate.previousPresence === "absent" && !ownedMethods.has(candidate.method);
+            ownedMethods.add(candidate.method);
+            return { candidate, becameAvailable };
+        });
+        if (admitted.length > 0) writeSocketRegisteredRpcMethods(params.socket, ownedMethods);
+        const effects = outcomes.map(({ candidate, becameAvailable }) =>
+            finishRegistration(candidate, becameAvailable, method => receipt.registered.push(method)));
+        params.socket.emit(SOCKET_RPC_EVENTS.REGISTERED_BATCH, receipt);
+        await Promise.all(effects);
     });
 
     params.socket.on(SOCKET_RPC_EVENTS.UNREGISTER, async (data: unknown) => {

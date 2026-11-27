@@ -3,7 +3,7 @@ import { MACHINE_REACHABILITY_CONFIGURE_ACTION_ID_V1 } from '@happier-dev/protoc
 import { readFiniteCommandFailureDetailsV1 } from '@happier-dev/protocol/actions/operations/finiteCommandFailureV1';
 import { isPluginError, type PluginErrorContractData } from '@happier-dev/protocol/plugins/errors';
 import { createSocketRpcContinuation, type SocketRpcContinuationHandler } from '@happier-dev/sync-client';
-import { SocketRpcContinuationReturnV1Schema, supportsSocketRpcResponseContentV1 } from '@happier-dev/protocol/socketRpc';
+import { SocketRpcContinuationReturnV1Schema, SocketRpcRegistrationBatchReceiptV1Schema, supportsSocketRpcResponseContentV1 } from '@happier-dev/protocol/socketRpc';
 import { openWorkspaceSyncTargetOperationContinuation } from './workspaceSyncOperationContinuation';
 import { isExecutionRunStartRpcPurpose, projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { isReviewScmPreparationEffectV1, isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
@@ -268,6 +268,7 @@ export class RpcHandlerManager {
     private socket: Socket | null = null;
     private readonly observedSockets = new WeakSet<Socket>();
     private readonly permanentlyRejectedRegistrationMethods = new Set<string>();
+    private initialRegistrationOffer: Readonly<{ first: string; remaining: readonly string[] }> | null = null;
     private acknowledgedRegistrationMethods = new Set<string>();
     private registrationReadinessWaiters = new Set<RegistrationReadinessWaiter>();
     private readonly inFlightRequestCounts = new Map<string, number>();
@@ -369,9 +370,7 @@ export class RpcHandlerManager {
         if (!alreadyRegistered) this.onHandlerAvailabilityChanged?.(method);
     }
 
-    private publishHandlerRegistration(prefixedMethod: string): boolean {
-        const socket = this.socket;
-        if (!socket) return false;
+    private canPublishHandlerRegistration(socket: Socket, prefixedMethod: string): boolean {
         const auth = socket.auth;
         if (typeof auth === 'object' && auth.clientType === 'machine-scoped') {
             const method = this.readUnprefixedMethod(prefixedMethod);
@@ -386,6 +385,12 @@ export class RpcHandlerManager {
                 return false;
             }
         }
+        return true;
+    }
+
+    private publishHandlerRegistration(prefixedMethod: string): boolean {
+        const socket = this.socket;
+        if (!socket || !this.canPublishHandlerRegistration(socket, prefixedMethod)) return false;
         socket.emit(SOCKET_RPC_EVENTS.REGISTER, { method: prefixedMethod });
         return true;
     }
@@ -1646,21 +1651,20 @@ export class RpcHandlerManager {
         }, true);
     }
 
-    onSocketConnect(socket: Socket): void {
+    onSocketConnect(socket: Socket, options?: Readonly<{ offerRegistrationBatch: true }>): void {
         if (this.socket && this.socket !== socket) {
             this.settleRegistrationReadinessWaiters('disconnected');
         }
         this.socket = socket;
+        this.initialRegistrationOffer = null;
         this.acknowledgedRegistrationMethods.clear();
         // Rejection policy belongs to the relay admission that produced it.
         // Every connect starts fresh admission, including reuse of the same Socket.
         this.permanentlyRejectedRegistrationMethods.clear();
         if (!this.observedSockets.has(socket)) {
             this.observedSockets.add(socket);
-            socket.on(SOCKET_RPC_EVENTS.ERROR, (error: unknown) => {
-                if (this.socket !== socket) {
-                    return;
-                }
+            const onRegistrationError = (error: unknown) => {
+                if (this.socket !== socket) return;
                 const type = error && typeof error === 'object' && !Array.isArray(error)
                     ? (error as Record<string, unknown>).type
                     : null;
@@ -1670,6 +1674,7 @@ export class RpcHandlerManager {
                 const rejection = error as Record<string, unknown>;
                 const method = typeof rejection.method === 'string' && this.handlers.has(rejection.method)
                     ? rejection.method : undefined;
+                this.finishLegacyRegistrationOffer(typeof rejection.method === 'string' ? rejection.method : undefined);
                 if (method && rejection.retryable === false) {
                     this.permanentlyRejectedRegistrationMethods.add(method);
                 }
@@ -1684,23 +1689,24 @@ export class RpcHandlerManager {
                     ...(typeof rejection.retryable === 'boolean' ? { retryable: rejection.retryable } : {}),
                 });
                 this.onRegistrationError?.(error);
-            });
+            };
+            socket.on(SOCKET_RPC_EVENTS.ERROR, onRegistrationError);
             socket.on(SOCKET_RPC_EVENTS.REGISTERED, (data: unknown) => {
-                if (this.socket !== socket) {
-                    return;
-                }
+                if (this.socket !== socket) return;
                 const method = data && typeof data === 'object' && !Array.isArray(data)
                     ? (data as Record<string, unknown>).method
                     : null;
-                if (typeof method !== 'string' || !this.handlers.has(method)) {
-                    return;
-                }
-                const wasAcknowledged = this.acknowledgedRegistrationMethods.has(method);
-                this.acknowledgedRegistrationMethods.add(method);
-                this.permanentlyRejectedRegistrationMethods.delete(method);
-                this.settleReadyRegistrationWaiters();
-                this.onRegistrationAcknowledged?.(method);
-                if (!wasAcknowledged) this.onHandlerAvailabilityChanged?.(this.readUnprefixedMethod(method));
+                if (typeof method !== 'string') return;
+                this.finishLegacyRegistrationOffer(method);
+                this.acknowledgeRegistrations([method]);
+            });
+            socket.on(SOCKET_RPC_EVENTS.REGISTERED_BATCH, (data: unknown) => {
+                if (this.socket !== socket || !this.initialRegistrationOffer) return;
+                const receipt = SocketRpcRegistrationBatchReceiptV1Schema.safeParse(data);
+                if (!receipt.success) return;
+                this.initialRegistrationOffer = null;
+                for (const rejection of receipt.data.rejected) onRegistrationError(rejection);
+                this.acknowledgeRegistrations(receipt.data.registered);
             });
             socket.on(SOCKET_RPC_EVENTS.CANCEL, (payload: unknown) => {
                 if (this.socket !== socket) {
@@ -1713,9 +1719,40 @@ export class RpcHandlerManager {
                 this.cancelTransportRequest(parsed.data.requestId);
             });
         }
-        for (const [prefixedMethod] of this.handlers) {
-            if (this.permanentlyRejectedRegistrationMethods.has(prefixedMethod)) continue;
-            this.publishHandlerRegistration(prefixedMethod);
+        const methods = [...this.handlers.keys()];
+        if (options?.offerRegistrationBatch) {
+            const [first, ...remaining] = methods.filter(method => this.canPublishHandlerRegistration(socket, method));
+            if (first && remaining.length > 0) {
+                this.initialRegistrationOffer = { first, remaining };
+                socket.emit(SOCKET_RPC_EVENTS.REGISTER, { method: first, batch: { v: 1, remainingMethods: remaining } });
+                return;
+            }
+        }
+        for (const method of methods) this.publishHandlerRegistration(method);
+    }
+
+    private finishLegacyRegistrationOffer(method?: string): void {
+        const offer = this.initialRegistrationOffer;
+        if (!offer || (method !== undefined && offer.first !== method)) return;
+        this.initialRegistrationOffer = null;
+        for (const remaining of offer.remaining) {
+            if (this.handlers.has(remaining)) this.publishHandlerRegistration(remaining);
+        }
+    }
+
+    private acknowledgeRegistrations(methods: readonly string[]): void {
+        const acknowledged: { method: string; wasAcknowledged: boolean }[] = [];
+        for (const method of methods) {
+            if (!this.handlers.has(method)) continue;
+            const wasAcknowledged = this.acknowledgedRegistrationMethods.has(method);
+            this.acknowledgedRegistrationMethods.add(method);
+            this.permanentlyRejectedRegistrationMethods.delete(method);
+            acknowledged.push({ method, wasAcknowledged });
+        }
+        this.settleReadyRegistrationWaiters();
+        for (const { method, wasAcknowledged } of acknowledged) {
+            this.onRegistrationAcknowledged?.(method);
+            if (!wasAcknowledged) this.onHandlerAvailabilityChanged?.(this.readUnprefixedMethod(method));
         }
     }
 
@@ -1738,6 +1775,7 @@ export class RpcHandlerManager {
 
     onSocketDisconnect(transportReason?: string): void {
         this.socket = null;
+        this.initialRegistrationOffer = null;
         this.acknowledgedRegistrationMethods.clear();
         this.settleRegistrationReadinessWaiters('disconnected');
         this.cancelTransportRequests(transportReason);
@@ -1804,6 +1842,7 @@ export class RpcHandlerManager {
         const socket = this.socket;
         if (!socket) return [];
 
+        if (methods === undefined) this.initialRegistrationOffer = null;
         const replayedMethods: string[] = [];
         const candidates = methods === undefined
             ? Array.from(this.handlers.keys(), (method) => this.readUnprefixedMethod(method))

@@ -1,3 +1,6 @@
+import { once } from 'node:events';
+import { createServer } from 'node:http';
+import { io as connectSocket } from 'socket.io-client';
 import { sessionDirectGrantProjectionFixture } from '@/app/session/access/sessionAccess.testkit';
 import { ActionFailureCauseV1Schema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import {
@@ -4628,6 +4631,63 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
         registerSocketRpcHandlers({ userId: 'user-1', socket: restored as unknown as Socket, io });
         for (const method of methods) await triggerSocketHandler(restored, SOCKET_RPC_EVENTS.REGISTER, { method });
         expect(broadcasts()).toEqual(methods.map(method => [room, SOCKET_RPC_EVENTS.REGISTERED, { method }]));
+    });
+
+    it.each([false, true])("reports every registration outcome for a daemon reconnect (%s)", async (batch) => {
+        const http = createServer();
+        const io = new Server(http, { transports: ['websocket'] });
+        io.on('connection', socket => {
+            socket.data = { clientType: 'machine-scoped', machineId: 'machine-1' };
+            registerSocketRpcHandlers({ userId: 'user-1', socket, io });
+        });
+        http.listen(0, '127.0.0.1');
+        await once(http, 'listening');
+        const address = http.address();
+        if (!address || typeof address === 'string') throw new Error('Missing loopback address');
+        const daemon = connectSocket(`http://127.0.0.1:${address.port}`, {
+            transports: ['websocket'], reconnection: false, autoConnect: false,
+        });
+        const connect = () => new Promise<void>(resolve => {
+            daemon.once('connect', resolve);
+            daemon.connect();
+        });
+        try {
+            await connect();
+            daemon.disconnect();
+            await connect();
+            let outbound = 0;
+            let inbound = 0;
+            daemon.io.engine.on('packetCreate', packet => { if (packet.type === 'message') outbound++; });
+            daemon.io.engine.on('packet', packet => { if (packet.type === 'message') inbound++; });
+            const methods = Array.from({ length: 200 }, (_, index) => `machine-1:sample.method-${index}`);
+            const denied = "another-machine:sample.method";
+            if (batch) {
+                const result = new Promise(resolve => {
+                    daemon.once('rpc-registered-batch', resolve);
+                    daemon.once('rpc-registered', resolve);
+                });
+                daemon.emit('rpc-register', { method: methods[0], batch: { v: 1, remainingMethods: [...methods.slice(1), denied] } });
+                await expect(result).resolves.toEqual({ v: 1, registered: methods,
+                    rejected: [{ type: 'register', method: denied, error: 'Forbidden', retryable: false }] });
+            } else {
+                const registrations = new Set<string>();
+                const result = new Promise(resolve => daemon.on('rpc-registered', ({ method }) => {
+                    registrations.add(method);
+                    if (registrations.size === methods.length) resolve(registrations);
+                }));
+                for (const method of methods) daemon.emit('rpc-register', { method });
+                await result;
+            }
+            const socket = io.sockets.sockets.get(daemon.id!);
+            for (const method of methods) expect(socket?.rooms.has(`rpc:user-1:${method}`)).toBe(true);
+            expect(socket?.rooms.has(`rpc:user-1:${denied}`)).toBe(false);
+            console.info('P03_NET_WIRE_REGISTRATION_FRAMES', JSON.stringify({ batch, outbound, inbound, methods: methods.length }));
+            expect({ outbound, inbound }).toEqual(batch
+                ? { outbound: 1, inbound: 1 } : { outbound: methods.length, inbound: methods.length });
+        } finally {
+            daemon.close();
+            await io.close();
+        }
     });
 
     it("registers a mounted command inventory without per-method Machine availability reads and refuses revoked callers", async () => {

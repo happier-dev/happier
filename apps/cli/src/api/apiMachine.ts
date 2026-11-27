@@ -6283,7 +6283,7 @@ export class ApiMachineClient {
                     }
                     // Registration carries no execution authority. The server holds early
                     // packets through admission; request authority checks stay unchanged.
-                    if (socket) this.rpcHandlerManager.onSocketConnect(socket);
+                    if (socket) this.rpcHandlerManager.onSocketConnect(socket, { offerRegistrationBatch: true });
                     // Account observation remains connection-owned, including without a
                     // changes-feed consumer, but does not serialize RPC registration.
                     if (readAccountIdFromToken(this.token)) {

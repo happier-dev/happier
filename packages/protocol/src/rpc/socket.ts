@@ -110,6 +110,7 @@ export function readOriginalActionEnvelopeMachineRpcKindV1(input: Readonly<{
 export const SOCKET_RPC_EVENTS = {
   REGISTER: 'rpc-register',
   REGISTERED: 'rpc-registered',
+  REGISTERED_BATCH: 'rpc-registered-batch',
   UNREGISTER: 'rpc-unregister',
   UNREGISTERED: 'rpc-unregistered',
   ERROR: 'rpc-error',
@@ -121,6 +122,24 @@ export const SOCKET_RPC_EVENTS = {
 } as const;
 
 export type SocketRpcEvent = (typeof SOCKET_RPC_EVENTS)[keyof typeof SOCKET_RPC_EVENTS];
+
+/** A legacy relay reads only the enclosing registration's first method. */
+export const SocketRpcRegistrationBatchOfferV1Schema = lazyZodSchema(() => z.strictObject({
+  v: z.literal(1),
+  remainingMethods: z.array(z.string()),
+}));
+
+export const SocketRpcRegistrationBatchReceiptV1Schema = lazyZodSchema(() => z.strictObject({
+  v: z.literal(1),
+  registered: z.array(z.string()),
+  rejected: z.array(z.strictObject({
+    type: z.literal('register'),
+    method: z.optional(z.string()),
+    error: z.string(),
+    retryable: z.boolean(),
+  })),
+}));
+export type SocketRpcRegistrationBatchReceiptV1 = z.infer<typeof SocketRpcRegistrationBatchReceiptV1Schema>;
 
 /** An omitted deadline uses the relay default; null belongs to caller lifecycle. */
 export const SocketRpcTimeoutMsSchema = lazyZodSchema(() => z.optional(z.nullable(z.number().check(z.positive()))));

@@ -1576,6 +1576,32 @@ function createSocketEventBoundary(clientType?: 'machine-scoped' | 'session-scop
 }
 
 describe('RpcHandlerManager registration receipts', () => {
+  it.each(['batch', 'legacy', 'legacy-rejection'] as const)('settles each method through a %s registration receipt', async (receipt) => {
+    const accepted = vi.fn();
+    const rpc = new RpcHandlerManager({ scopePrefix: 'machine-1', encryptionMode: 'plain', logger: () => {},
+      onRegistrationAcknowledged: accepted });
+    const methods = Array.from({ length: 200 }, (_, index) => `method-${index}`);
+    for (const method of methods) rpc.registerHandler(method, () => null);
+    const boundary = createSocketEventBoundary('machine-scoped');
+    rpc.onSocketConnect(boundary.socket, { offerRegistrationBatch: true });
+    // An old Home reads just the first method and sends its existing receipt.
+    const [first, ...remaining] = methods.map(method => `machine-1:${method}`);
+    if (receipt === 'batch') {
+      expect(boundary.emit.mock.calls).toEqual([['rpc-register', {
+        method: first, batch: { v: 1, remainingMethods: remaining },
+      }]]);
+      boundary.trigger('rpc-registered-batch', { v: 1, registered: [first, ...remaining], rejected: [] });
+      expect(boundary.emit.mock.calls).toHaveLength(1);
+    } else {
+      if (receipt === 'legacy') boundary.trigger('rpc-registered', { method: first });
+      else boundary.trigger('rpc-error', { type: 'register', error: 'Forbidden' });
+      for (const method of remaining) boundary.trigger('rpc-registered', { method });
+      expect(boundary.emit.mock.calls.map(([, body]) => body.method)).toEqual([first, ...remaining]);
+    }
+    await expect(rpc.waitForRegisteredHandlers(receipt === 'legacy-rejection' ? methods.slice(1) : methods, { timeoutMs: 1000 })).resolves.toEqual({ status: 'ready' });
+    expect(accepted.mock.calls.flat()).toEqual(receipt === 'legacy-rejection' ? remaining : [first, ...remaining]);
+  });
+
   it.each(['direct', 'owned'] as const)('publishes method additions and reconnects without republishing %s handler replacements', async (registration) => {
     const rpc = new RpcHandlerManager({ scopePrefix: 'machine-1', encryptionMode: 'plain', logger: () => {} });
     const methods = Array.from({ length: 24 }, (_, index) => `core.method-${index}`);
