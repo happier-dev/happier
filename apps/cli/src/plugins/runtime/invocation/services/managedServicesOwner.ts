@@ -229,6 +229,7 @@ export type ProjectManagedServiceHandle = ManagedServiceHandle & ProjectManagedS
     observeHealth(listener: (snapshot: ManagedServiceProcessHealthSnapshot) => void): Readonly<{ dispose(): void }>;
     /** Host-only cached health/desired-state fact; never a native inspection. */
     readHealthSnapshot?(): ManagedServiceProcessHealthSnapshot;
+    expectNativeStop?: ManagedServiceProcessHandle['expectNativeStop'];
     readLogs?(options?: ManagedServiceNativeLogReadOptionsForHost): Promise<ManagedServiceNativeLogResultV1>;
     watchLogs?: NonNullable<ManagedServiceProcessHandle['watchNativeLogs']>;
     readAccounting?: ProjectBuiltinNativeLifecycle['readAccounting'];
@@ -4890,6 +4891,7 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                 },
                 snapshot: () => withDependencyFailure(process.snapshot().state === 'stopped' && failedSnapshot ? failedSnapshot : wrapped.snapshot()),
                 readHealthSnapshot: () => process.snapshot(),
+                ...(process.expectNativeStop ? { expectNativeStop: process.expectNativeStop } : {}),
                 async inspectCurrentOccurrence() {
                     if (!process.inspectCurrentOccurrence) throw new Error('preview_target_unresolved');
                     await process.inspectCurrentOccurrence();

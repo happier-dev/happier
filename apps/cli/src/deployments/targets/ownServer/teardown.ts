@@ -253,26 +253,36 @@ export function createOwnServerTeardownForHost(host: Host) {
                         kind: 'deployments.teardown', ...(request.context.signal ? { signal: request.context.signal } : {}) },
                         keys: [...projects].map(projectName => ({ kind: 'composeProject', dockerEndpoint: engine.id, projectName })),
                         settleNative: runtime.settleNative }, async () => {
-                        for (const project of projects) {
-                            const listed = await run(['ps', '--all', '--no-trunc', '--filter', `label=com.docker.compose.project=${project}`, '--format', '{{.ID}}']);
-                            if (listed.exitCode !== 0) return { kind: 'unknown' as const, reason: 'observation_unavailable' };
-                            const ids = listed.stdout.trim() ? listed.stdout.trim().split('\n') : [];
-                            if (ids.length && !await removeWitnessedContainers({ ids, project, stopWithNativeGrace: true, run })) {
-                                return { kind: 'unknown' as const, reason: 'removal_unproved' };
+                        let undoExpectedStop: (() => void) | undefined;
+                        try {
+                            for (const project of projects) {
+                                const listed = await run(['ps', '--all', '--no-trunc', '--filter', `label=com.docker.compose.project=${project}`, '--format', '{{.ID}}']);
+                                if (listed.exitCode !== 0) return { kind: 'unknown' as const, reason: 'observation_unavailable' };
+                                const ids = listed.stdout.trim() ? listed.stdout.trim().split('\n') : [];
+                                if (!ids.length) continue;
+                                undoExpectedStop ??= await runtime.expectEnvironmentStop({
+                                    homeServerIdentityId: identity.homeServerIdentityId, environmentId: operation.environmentId,
+                                });
+                                if (!await removeWitnessedContainers({ ids, project, stopWithNativeGrace: true, run })) {
+                                    return { kind: 'unknown' as const, reason: 'removal_unproved' };
+                                }
                             }
+                            // Revisit shared networks after every retained generation
+                            // has been removed. The native owner also handles empty projects.
+                            const networkFailure = await removeUnusedNativeComposeNetworks({ projects: [...projects], run });
+                            if (networkFailure) return { kind: networkFailure === 'network_removal_failed' ? 'failed' as const : 'unknown' as const,
+                                reason: networkFailure };
+                            const volumeFailure = await settleOwnServerTeardownVolumes({ resources: operation.resources, run });
+                            if (volumeFailure) return volumeFailure;
+                            if (!removesImages(operation)) return await observe(operation);
+                            const references = await readImages();
+                            const reason = references === null ? 'image_observation_unavailable'
+                                : await removeNativeComposeDeploymentImageReferences(references, run);
+                            return await observe(operation, reason ? { reason } : {});
+                        } finally {
+                            // Proved removal retires the observer. A still-live observer resumes normal classification.
+                            undoExpectedStop?.();
                         }
-                        // Revisit shared networks after every retained generation
-                        // has been removed. The native owner also handles empty projects.
-                        const networkFailure = await removeUnusedNativeComposeNetworks({ projects: [...projects], run });
-                        if (networkFailure) return { kind: networkFailure === 'network_removal_failed' ? 'failed' as const : 'unknown' as const,
-                            reason: networkFailure };
-                        const volumeFailure = await settleOwnServerTeardownVolumes({ resources: operation.resources, run });
-                        if (volumeFailure) return volumeFailure;
-                        if (!removesImages(operation)) return observe(operation);
-                        const references = await readImages();
-                        const reason = references === null ? 'image_observation_unavailable'
-                            : await removeNativeComposeDeploymentImageReferences(references, run);
-                        return observe(operation, reason ? { reason } : {});
                     });
                 },
             };

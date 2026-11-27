@@ -28,6 +28,7 @@ import { localWorkspaceSource } from '@/workspaces/source/localWorkspaceSource';
 import { runWithWorkspaceSource } from '@/workspaces/source/workspaceSource';
 import { createDeploymentLogicalBackupSourceChoicesV1, createDeploymentVolumeBackupSourceIdV1 } from '@happier-dev/deployments';
 import { readPluginExecProcessCustodyForHost } from '@/plugins/runtime/invocation/services/exec';
+import type { ProjectManagedServiceHandle } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import { resolveEnvironmentDeploymentFactForHost } from '@/deployments/secrets/deploymentFacts';
 import { preparePreviewDomainFactForHost } from '@/deployments/previewDomainForHost';
@@ -556,17 +557,35 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
         await recheck();
         const deploymentRoot = await resolveOwnServerDeploymentRootForHost(configuration.happyHomeDir, host.serverId);
         const native = createOwnServerNativeRuntime({ cwd: deploymentRoot, signal, isCurrent: () => !released });
-        return { ...native, deploymentRoot, assertCurrent,
-          async retireEnvironmentObservers(scope: Readonly<{ homeServerIdentityId: string; environmentId: string }>) {
+        type ObserverScope = Readonly<{ homeServerIdentityId: string; environmentId: string }>;
+        const visitEnvironmentObservers = async (scope: ObserverScope, visit: (handle: ProjectManagedServiceHandle) => void | Promise<void>) => {
             const lease = await host.acquirePluginRuntimeRegistryLease();
             try {
                 for (const handle of lease.registry.projectManagedServices.listProjectServices()) {
                     if (handle.kind === 'environment' && handle.machineId === input.machineId
                         && handle.homeServerIdentityId === scope.homeServerIdentityId && handle.environmentId === scope.environmentId) {
-                        await handle.dispose();
+                        await visit(handle);
                     }
                 }
             } finally { await lease.release(); }
+        };
+        return { ...native, deploymentRoot, assertCurrent,
+          async expectEnvironmentStop(scope: ObserverScope) {
+            const undo: (() => void)[] = [];
+            const undoExpectedStop = () => { for (const restore of undo) restore(); };
+            try {
+                await visitEnvironmentObservers(scope, handle => {
+                    const restore = handle.expectNativeStop?.();
+                    if (restore) undo.push(restore);
+                });
+            } catch (error) {
+                undoExpectedStop();
+                throw error;
+            }
+            return undoExpectedStop;
+          },
+          retireEnvironmentObservers(scope: ObserverScope) {
+            return visitEnvironmentObservers(scope, handle => handle.dispose());
           },
           async release() {
             if (released) return;

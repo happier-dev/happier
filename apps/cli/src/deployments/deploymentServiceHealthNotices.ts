@@ -292,10 +292,9 @@ export function attachDeploymentServiceHealthNotices(input: DeploymentServiceHea
         const signal = AbortSignal.any([controller.signal, health.retirementSignal]);
         const observation = health.observe(aggregate => {
             const recovered = aggregate.authoritativeRecovery;
-            const expectedStop = aggregate.expectedDown === 'stop' && aggregate.down === 0 && aggregate.degraded === 0;
             // Unknown cannot recover an earlier outage. Expected native Stop
             // retains actual down evidence without an actionable outage count.
-            if (!currentHealth() || !recovered && !expectedStop && aggregate.down === 0 && aggregate.degraded === 0) return;
+            if (!currentHealth() || !recovered && aggregate.down === 0 && aggregate.degraded === 0) return;
             pending = pending.catch(() => {}).then(async () => {
                 if (!currentHealth()) return;
                 const fresh = admittedEnvironment;
@@ -312,12 +311,12 @@ export function attachDeploymentServiceHealthNotices(input: DeploymentServiceHea
                     page: { kind: 'host', page: 'environment', targetLinkId: aggregate.targetLinkId,
                         environment: { serverId: input.serverId, projectSourceId: fresh.environment.projectSourceId,
                             environmentId: aggregate.environmentId } },
-                    title: expectedStop ? 'Environment expected during stop' : recovered ? 'Environment recovered' : `${aggregate.down} of ${aggregate.n} servers down`,
-                    type: !recovered && !expectedStop && aggregate.protection === 'production' ? 'blocked' : 'update',
+                    title: recovered ? 'Environment recovered' : `${aggregate.down} of ${aggregate.n} servers down`,
+                    type: !recovered && aggregate.protection === 'production' ? 'blocked' : 'update',
                     healthPhase: recovered ? 'recovered' : 'open', resolved: false,
                     environmentHealth: aggregate,
-                    ...(!recovered && !expectedStop ? recoveryChoices(fresh, affectedRows) : {}),
-                    body: [...aggregate.members.flatMap(member => member.evidence.filter(evidence => evidence.status !== 'up')
+                    ...(!recovered ? recoveryChoices(fresh, affectedRows) : {}),
+                    body: [...aggregate.members.flatMap(member => member.evidence.filter(evidence => evidence.status !== 'up' && evidence.expectedDown !== 'stop')
                         .map(evidence => {
                             const names = evidence.role === 'runtime' ? affectedRows.filter(row => row.deployment?.service.machineId === member.machineId)
                                 .map(row => row.name) : [];
@@ -349,15 +348,14 @@ export function attachDeploymentServiceHealthNotices(input: DeploymentServiceHea
         if (!serviceRows) return;
         const observe = (row: MachineServiceRowV1) => {
             const { health, native } = row;
-            if (!isCurrent() || !health || health.status === 'unknown') return;
+            if (!isCurrent() || !health || health.status === 'unknown' || health.expectedDown === 'stop') return;
             const isObservationCurrent = () => isCurrent() && serviceRows.read(handle).health === health;
             pending = pending.catch(() => {}).then(async () => {
                 if (!isObservationCurrent()) return;
                 const fresh = admittedEnvironment;
                 if (!fresh) return;
                 const alertDelivery = await readAlertDelivery();
-                const expectedStop = health.expectedDown === 'stop';
-                const recovered = health.status === 'up' && !expectedStop;
+                const recovered = health.status === 'up';
                 const labels = await readMachineLabels([subject.machineId], signal);
                 if (!isObservationCurrent()) return;
                 const committed = await runWithServerHttpBaseUrl(input.serverHttpBaseUrl, () => store.writeNotice({
@@ -366,10 +364,10 @@ export function attachDeploymentServiceHealthNotices(input: DeploymentServiceHea
                         machine: { serverId: input.serverId, machineId: subject.machineId },
                         environment: { serverId: input.serverId, projectSourceId: fresh.environment.projectSourceId,
                             environmentId: subject.environmentId } },
-                    title: `${subject.composeService} ${expectedStop ? 'expected during stop' : recovered ? 'recovered' : 'needs attention'}`,
-                    type: !recovered && !expectedStop && fresh.environment.protection === 'production' ? 'blocked' : 'update',
+                    title: `${subject.composeService} ${recovered ? 'recovered' : 'needs attention'}`,
+                    type: !recovered && fresh.environment.protection === 'production' ? 'blocked' : 'update',
                     healthPhase: recovered ? 'recovered' : 'open', resolved: false,
-                    ...(!recovered && !expectedStop ? recoveryChoices(fresh, [row]) : {}),
+                    ...(!recovered ? recoveryChoices(fresh, [row]) : {}),
                     body: [`${labels.get(subject.machineId) ?? 'Machine name unavailable'}: ${row.name}. Service health: ${health.status}.`,
                         ...(native ? [`Readiness: ${native.readiness.replaceAll('_', ' ')}.`] : []),
                         ...(native ? [`Native phase: ${native.phase.replaceAll('_', ' ')}.`] : []),

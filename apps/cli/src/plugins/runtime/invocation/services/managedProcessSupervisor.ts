@@ -339,6 +339,8 @@ export interface ManagedServiceProcessHandle {
         signal?: AbortSignal;
     }>): Promise<ManagedServiceProcessStopResult>;
     controlNative?(operation: 'start' | 'stop' | 'restart', options?: Readonly<{ signal?: AbortSignal }>): Promise<ManagedServiceNativeControlResult>;
+    /** Publish admitted Stop intent before a host-owned native effect can be observed. */
+    expectNativeStop?(): (() => void) | undefined;
     /** Captured from this generation's actual native executors, without inspection. */
     nativeControlCapabilities?: Readonly<Record<'start' | 'stop' | 'restart', boolean>>;
     dispose(): Promise<void>;
@@ -2697,6 +2699,16 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
 
         const nativeControl = spec.mode.kind === 'native' && spec.mode.observationOnly
             ? spec.mode.builtinLifecycle : undefined;
+        const expectNativeStop = () => {
+            if (!isGenerationUsable() || snapshot.expectedDown === 'stop') return;
+            setSnapshot({ ...snapshot, expectedDown: 'stop' });
+            return () => {
+                if (!isGenerationUsable() || snapshot.expectedDown !== 'stop') return;
+                const next = { ...snapshot };
+                delete next.expectedDown;
+                setSnapshot(next);
+            };
+        };
         const handle: ManagedServiceProcessHandle = Object.freeze({
             snapshot: () => snapshot,
             ...(terminalView ? { terminalView } : {}),
@@ -2704,6 +2716,7 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
             get launchEnvironmentDiagnostics() { return launchEnvironmentDiagnostics; },
             nativeControlCapabilities: Object.freeze({ start: Boolean(nativeControl?.start),
                 stop: Boolean(nativeControl?.stop), restart: Boolean(nativeControl?.restart) }),
+            ...(nativeControl ? { expectNativeStop } : {}),
             readNativeLogs,
             watchNativeLogs: nativeLogs.watch,
             observeHealth(listener: (snapshot: ManagedServiceProcessHealthSnapshot) => void) {
@@ -2851,18 +2864,10 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                 if (!nativeControl?.[operation]) {
                     return { kind: 'unsupported', reason: 'unsupported' };
                 }
-                const previousExpectedDown = snapshot.expectedDown;
-                const setExpectedDown = (expectedDown: ManagedServiceProcessSnapshot['expectedDown']): void => {
-                    if (snapshot.expectedDown === expectedDown) return;
-                    const next = { ...snapshot };
-                    if (expectedDown === undefined) delete next.expectedDown;
-                    else next.expectedDown = expectedDown;
-                    setSnapshot(next);
-                };
                 // The native observation may arrive before its control reply.
                 // Keep the admitted intent on this same snapshot, so that push
                 // does not temporarily turn a deliberate stop into an outage.
-                if (operation === 'stop') setExpectedDown('stop');
+                const undoExpectedStop = operation === 'stop' ? expectNativeStop() : undefined;
                 let observation: ManagedServiceNativeObservationV1;
                 try {
                     if (operation === 'stop') {
@@ -2877,7 +2882,7 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                         observation = await nativeControl[operation]!(options);
                     }
                 } catch (error) {
-                    setExpectedDown(previousExpectedDown);
+                    undoExpectedStop?.();
                     throw error;
                 }
                 validateNativeObservation(observation);

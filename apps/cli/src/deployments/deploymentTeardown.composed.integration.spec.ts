@@ -6,6 +6,7 @@ import { nativeCaddyImage } from '@happier-dev/cli-common/machineSetup';
 import { materializeCaddyDomainRouteV1 } from './targets/ownServer/caddyRouteMaterialization';
 import { withSocketTempDir } from '@/testkit/fs/tempDir';
 import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
@@ -16,10 +17,12 @@ import { type ActionExecutorContext, encodeBase64,
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { ProjectSourcesCreateOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
-import { createDeploymentEnvironmentV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { readDeploymentReceiptArtifactV1 } from '@happier-dev/deployment-protocol';
+import { readAccountNoticeArtifactHeaderV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
+import { attachDeploymentServiceHealthNotices } from './deploymentServiceHealthNotices';
 import { DEPLOYMENT_TEARDOWN_STEPS_V1, type DeploymentTeardownResourceV1, type DeploymentTeardownStepProofV1 } from '@happier-dev/protocol/deployments/deploymentTeardownContentV1';
-import type { DeploymentEnvironmentContentV1 } from '@happier-dev/deployments/contracts/v1';
+import { OwnServerDeploymentInputBasisV1Schema, type DeploymentEnvironmentContentV1 } from '@happier-dev/deployments/contracts/v1';
 import { createDeploymentSocketHome, type DeploymentSocketHomeFixture } from '../../../server/sources/testkit/deploymentSocketHome.testkit.mjs';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { ApiClient } from '@/api/api';
@@ -34,6 +37,10 @@ import { createOwnServerDeploymentRuntimeForHost, type OwnServerDeploymentRuntim
 import { createOwnServerDockerBoundary } from './targets/ownServer/ownServerDeployment.testkit';
 import { resolveOwnServerDeploymentIdentityForHost } from './targets/ownServer/paths';
 import { resolveNativeComposeCandidateProjectName } from '@/daemon/local/services/launch/nativeComposeLifecycle';
+import { produceEnvironmentProjectServices } from '@/daemon/local/services/launch/projectDeclarations';
+import { authorizePluginExecLaunchForHost, readPluginExecProcessCustodyForHost } from '@/plugins/runtime/invocation/services/exec';
+import { createOwnServerNativeRuntime } from './targets/ownServer/nativeRuntime';
+import { observeRetainedDeploymentSourceForHost } from './targets/ownServer/exactCommitRelease';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { configuration } from '@/configuration';
@@ -344,7 +351,7 @@ describe('deployment teardown through the canonical Action front door', () => {
                 }
             }, 180_000);
 
-        it.skipIf(process.platform === 'win32').each(['removed-environment', 'detached', 'manual', 'workflow', 'partial', 'healthy', 'network-in-use', 'reviewed-ingress-domains', 'reviewed-ingress-domain-retirement-fails', 'retained-retry-failed', 'retained-retry-network-refused', 'cancel-before-first-proof'] as const)('tears down the actual retained native generation through the Action without a supplied cleanup boundary (%s)', async caller => withSocketTempDir(async socketDirectory => {
+        it.skipIf(process.platform === 'win32').each(['removed-environment', 'stop-and-remove-health', 'detached', 'manual', 'workflow', 'partial', 'healthy', 'network-in-use', 'reviewed-ingress-domains', 'reviewed-ingress-domain-retirement-fails', 'retained-retry-failed', 'retained-retry-network-refused', 'cancel-before-first-proof'] as const)('tears down the actual retained native generation through the Action without a supplied cleanup boundary (%s)', async caller => withSocketTempDir(async socketDirectory => {
             vi.stubEnv('HAPPIER_FEATURE_WORKFLOWS__ENABLED', '1');
             const root = await mkdtemp(join(tmpdir(), 'happier-teardown-native-'));
             const previousHome = configuration.happyHomeDir;
@@ -354,6 +361,7 @@ describe('deployment teardown through the canonical Action front door', () => {
                 controller: pluginReloadController, runtimeOptions: { pluginIds: [] } });
             const credentials = decodeStoredCredentials(encodeStoredCredentials({ token: home.token, encryption: home.encryption }));
             if (!credentials) throw new Error('Canonical controller credentials required');
+            let cleanupHealthObserver: (() => Promise<void>) | undefined;
             try {
                 Reflect.set(configuration, 'happyHomeDir', root);
                 Reflect.set(configuration, 'settingsFile', join(root, 'settings.json'));
@@ -410,8 +418,9 @@ describe('deployment teardown through the canonical Action front door', () => {
                 } : undefined);
                 vi.stubEnv('PATH', `${join(root, 'docker')}${delimiter}${process.env.PATH ?? ''}`);
                 const image = await docker.registerImage('app', 'teardown');
+                const verifyHealth = caller === 'stop-and-remove-health';
                 const document = JSON.stringify({ services: { app: { image: image.registryReference,
-                    ...(caller === 'healthy' ? { healthcheck: { test: ['CMD', 'true'] } } : {}) } } });
+                    ...(caller === 'healthy' || verifyHealth ? { healthcheck: { test: ['CMD', 'true'] } } : {}) } } });
                 const definition = { kind: 'stored' as const, contentRevision: 1, document,
                     composeDigest: `sha256:${createHash('sha256').update(document).digest('hex')}`,
                     services: caller === 'healthy' ? [] : ['app'], profiles: [] };
@@ -423,7 +432,17 @@ describe('deployment teardown through the canonical Action front door', () => {
                         if (!lease) throw new Error('Installed runtime unavailable');
                         return lease;
                     } } satisfies OwnServerDeploymentRuntimeHostInput;
-                const runtime = createOwnServerDeploymentRuntimeForHost(nativeHost);
+                const nativeRuntime = createOwnServerDeploymentRuntimeForHost(nativeHost);
+                let observeStop: (() => Promise<void>) | undefined;
+                const runtime: OwnServerDeploymentRuntime = verifyHealth ? { ...nativeRuntime, async acquireTeardown(...args) {
+                    const acquired = await nativeRuntime.acquireTeardown!(...args);
+                    return { ...acquired, nativeIo: { ...acquired.nativeIo, async run(command) {
+                        const result = await acquired.nativeIo.run(command);
+                        // Let the real observer consume Docker's stop before Docker removes the container.
+                        if (command.args[0] === 'container' && command.args[1] === 'stop' && result.exitCode === 0) await observeStop?.();
+                        return result;
+                    } } };
+                } } : nativeRuntime;
                 const fixture = await prepare(undefined, [], [], { runtime, definition,
                     productionReplay: retainedDomain && !retainedRetry && caller !== 'cancel-before-first-proof' });
                 await updateMachineRegistration(registration => ({
@@ -433,22 +452,121 @@ describe('deployment teardown through the canonical Action front door', () => {
                 }));
                 const draft = { ...createDeploymentReceiptDetailV1().content, sourceIntent: definition,
                     machines: [home.machineId], buildMachineId: home.machineId, machineResults: [], images: [image], onFailure: 'rollbackAll' as const };
-                if (retainedDomain) {
+                const environmentId = fixture.environment.environmentId;
+                const targetLinkId = fixture.link.targetLinkId;
+                const monitoredIdentity = verifyHealth
+                    ? await resolveOwnServerDeploymentIdentityForHost({ happierHomeDir: root, serverId: home.serverId, environmentId }) : null;
+                const retainedContent = monitoredIdentity ? { ...draft, ownServer: { approvedInputBasis: OwnServerDeploymentInputBasisV1Schema.parse({ v: 1,
+                    environmentId, environmentRevision: fixture.link.revision, targetLinkId, targetLinkRevision: fixture.link.targetLinkRevision,
+                    sourceIntent: definition, manifestFingerprint: 'fixture', configInputDigests: [], physicalProjectName: monitoredIdentity.projectName,
+                    toolVersion: '2.40.1', services: ['app'], profiles: [], bindings: [], images: [image], ownServer: fixture.environmentContent.ownServer,
+                    members: [{ machineId: home.machineId, installationId: home.installationId }] }) } } : draft;
+                let retainedDeploymentId: string | undefined;
+                if (retainedDomain || verifyHealth) {
                     // Construct the already successful deployment at the private
                     // Home persistence boundary; deployment admission is separate
                     // from the reviewed teardown under test.
                     const deployedAt = new Date();
-                    await db.deployment.create({ data: { environmentId: fixture.environment.environmentId,
+                    const id = randomUUID();
+                    const actionOperationId = randomUUID();
+                    const receiptContent = monitoredIdentity ? { ...retainedContent, machineResults: [{ machineId: home.machineId,
+                        installationId: home.installationId, actionOperationId, currentDeploymentId: id, steps: [], activation: 'succeeded', health: 'healthy' }] }
+                        : retainedContent;
+                    const retained = await db.deployment.create({ data: { id, environmentId: fixture.environment.environmentId,
                         targetLinkId: fixture.link.targetLinkId, operation: 'deploy', state: 'succeeded',
-                        requestKey: randomUUID(), requestedByAccountId: home.accountId, actionOperationId: randomUUID(),
+                        requestKey: randomUUID(), requestedByAccountId: home.accountId, actionOperationId,
                         requestedAt: deployedAt, startedAt: deployedAt, settledAt: deployedAt,
-                        ...await fixture.prepared('deployment-receipt.v1', draft) } });
+                        ...await fixture.prepared('deployment-receipt.v1', receiptContent) } });
+                    retainedDeploymentId = retained.id;
                 } else {
                     await docker.failImageHealth(image.configDigest);
                     const { reason: _reason, ...deployInput } = fixture.input;
                     const deployed = await fixture.invoke('deployments.deploy', { ...deployInput,
                         ...await fixture.prepared('deployment-receipt.v1', draft), requestKey: randomUUID() });
                     expect(deployed, JSON.stringify(deployed)).toMatchObject({ ok: false });
+                }
+                if (monitoredIdentity && retainedDeploymentId) {
+                    const identity = monitoredIdentity;
+                    await mkdir(identity.deploymentRoot, { recursive: true });
+                    await db.deploymentTargetLink.update({ where: { id: targetLinkId }, data: { state: 'deployed', activeDeploymentId: retainedDeploymentId } });
+                    await db.deploymentTargetLinkMachine.updateMany({ where: { targetLinkId }, data: { state: 'active' } });
+                    await docker.seedComposeGeneration(identity.projectName, 'healthy');
+                    const ids = execFileSync(docker.executablePath, ['ps', '--quiet', '--no-trunc', '--filter',
+                        'label=com.docker.compose.service=app'], { encoding: 'utf8' }).trim().split('\n');
+                    expect(ids).toHaveLength(1);
+                    const lifetime = new AbortController();
+                    const observer = createOwnServerNativeRuntime({ cwd: root, signal: lifetime.signal, isCurrent: () => !lifetime.signal.aborted });
+                    const stopObserver = async () => { lifetime.abort(); await observer.settleNative(); await readPluginExecProcessCustodyForHost(observer.exec).requestStop(); };
+                    cleanupHealthObserver = stopObserver;
+                    const tool = await observer.exec.systemTools.resolve({ toolId: 'docker', purpose: 'deployment-native-compose', cwd: root });
+                    const launch = await authorizePluginExecLaunchForHost(observer.exec, { executable: tool.executable, args: [], cwd: root }, { agentIsolation: null });
+                    cleanupHealthObserver = async () => { await launch.release(); await stopObserver(); };
+                    const project = ['compose', '--project-name', identity.projectName];
+                    const projectOwner = mounted.registry.projectManagedServices;
+                    const handles = await produceEnvironmentProjectServices({ owner: projectOwner, serverId: home.serverId,
+                        release: observeRetainedDeploymentSourceForHost({ environmentId, environmentInstanceId: identity.environmentInstanceId,
+                            deploymentId: retainedDeploymentId, machineId: home.machineId, installationId: home.installationId,
+                            rootPath: root, manifestFingerprint: 'fixture', manifest: [], async assertCurrent() {} }),
+                        specIdentity: retainedDeploymentId, isCurrent: () => !lifetime.signal.aborted, io: observer.nativeIo,
+                        nativeEffects: { keys: [{ kind: 'composeProject', dockerEndpoint: 's0-docker-engine', projectName: identity.projectName }] },
+                        project: { composeArgs: project, services: ['app'], nativeIdsForService: () => ids, nativeFactsForService: () => undefined,
+                            authorizeServiceObserver: () => ({ ...launch, args: [...launch.args, ...project], async release() {} }) } });
+                    const service = handles[0]!;
+                    const readEnvironment = async () => {
+                        const result = await fixture.invoke('deployments.environments.get', { serverId: home.serverId, environmentId });
+                        if (!result.ok) throw new Error(result.errorCode);
+                        const detail = DeploymentEnvironmentGetResultV1Schema.parse(result.result);
+                        if (!detail.ok) throw new Error(detail.error);
+                        return createDeploymentEnvironmentDetailV1({ environment: detail.environment, content: fixture.environmentContent,
+                            targetLinks: detail.targetLinks.map(targetLink => ({ targetLink, content: {} })) });
+                    };
+                    const environment = await readEnvironment();
+                    const notices = attachDeploymentServiceHealthNotices({ credentials, serverId: home.serverId,
+                        homeServerIdentityId: home.serverId, serverHttpBaseUrl: home.baseUrl, machineId: home.machineId,
+                        environment, readEnvironment, handles, nativeWorkload: { installationId: home.installationId,
+                            handles, rows: projectOwner.machineServiceRows, async *receipts() {
+                                const result = await fixture.invoke('deployments.receipts.list', { serverId: home.serverId, environmentId });
+                                if (!result.ok) throw new Error(result.errorCode);
+                                const page = DeploymentReceiptListResultV1Schema.parse(result.result);
+                                if (!page.ok || !page.items[0]) throw new Error('Expected the serving receipt');
+                                const receipt = readDeploymentReceiptArtifactV1(page.items[0], await runWithServerHttpBaseUrl(home.baseUrl,
+                                    () => fixture.artifacts.read(page.items[0]!.contentArtifactId)));
+                                if (!receipt.ok) throw new Error('Expected the serving receipt content');
+                                yield { deployment: page.items[0], content: receipt.content };
+                            } } });
+                    cleanupHealthObserver = async () => { notices.dispose(); await launch.release(); await stopObserver(); };
+                    const settleNotices = () => notices.settled();
+                    const readOpenHealth = () => runWithServerHttpBaseUrl(home.baseUrl, async () => {
+                        const page = await fixture.artifacts.list();
+                        return page.items.flatMap(item => {
+                            const header = readAccountNoticeArtifactHeaderV1(item.header);
+                            return item.ownerAccountId === home.accountId && header?.healthPhase === 'open' && !header.resolved && header.source.kind === 'host'
+                                && header.source.topic === 'service_health' && 'environmentId' in header.source.subject
+                                && header.source.subject.environmentId === fixture.environment.environmentId
+                                ? [{ kind: header.source.subject.kind, title: header.title, body: header.body }] : [];
+                        });
+                    });
+                    await settleNotices();
+                    expect(await readOpenHealth()).toEqual([]);
+                    const refresh = async (status: 'up' | 'down') => {
+                        await vi.waitFor(() => expect(projectOwner.machineServiceRows.read(service)).toMatchObject({ health: { status } }));
+                        await settleNotices();
+                    };
+                    await docker.stopCurrentContainers();
+                    await refresh('down');
+                    expect((await readOpenHealth()).map(item => item.kind).sort()).toEqual(['deployment', 'environment']);
+                    execFileSync(docker.executablePath, ['restart', ...ids]);
+                    await refresh('up');
+                    expect(await readOpenHealth()).toEqual([]);
+                    observeStop = () => refresh('down');
+                    const removed = await fixture.invoke('deployments.teardown', { serverId: home.serverId,
+                        environmentId: fixture.environment.environmentId, reason: 'manual', removeEnvironment: true,
+                        requestKey: randomUUID() });
+                    expect(removed, JSON.stringify(removed)).toMatchObject({ ok: true,
+                        result: { ok: true, state: 'succeeded', environmentRemoved: true } });
+                    await settleNotices();
+                    expect(await readOpenHealth()).toEqual([]);
+                    return;
                 }
                 const identity = await resolveOwnServerDeploymentIdentityForHost({ happierHomeDir: root,
                     serverId: home.serverId, environmentId: fixture.environment.environmentId });
@@ -910,12 +1028,14 @@ describe('deployment teardown through the canonical Action front door', () => {
                     environmentId: detail.environment.id })).toMatchObject({ ok: true, result: { ok: true,
                     environment: { deletedAtMs: expect.any(Number), capabilities: { delete: false } } } });
             } finally {
+                await cleanupHealthObserver?.();
                 Reflect.set(configuration, 'happyHomeDir', previousHome);
                 Reflect.set(configuration, 'settingsFile', previousSettings);
                 Reflect.set(configuration, 'installationIdentityFile', previousInstallation);
                 vi.unstubAllEnvs();
                 await mounted.dispose();
-                await rm(root, { recursive: true, force: true });
+                if (caller === 'stop-and-remove-health') onTestFinished(() => rm(root, { recursive: true, force: true, maxRetries: 3 }));
+                else await rm(root, { recursive: true, force: true });
             }
         }), 180_000);
 

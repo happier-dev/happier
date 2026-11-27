@@ -1388,20 +1388,15 @@ describe('managed-services SVC09 owner', () => {
             await handle.controlNative('stop', { operation: { operationId: 'intentional-stop', kind: 'serviceControl' } });
             await handle.inspectCurrentOccurrence();
             await attachment.settled();
-            expect(writes, 'desired Stop is one visible expected-downtime Update, never a fabricated recovery').toBeGreaterThan(recoveryWrites);
-            expect(readHeader()).toMatchObject({ type: 'update', healthPhase: 'open', title: expect.stringContaining('expected during stop') });
-            if (aggregate) expect(readHeader()).toMatchObject({ environmentHealth: {
-                down: 0, authoritativeRecovery: false, expectedDown: 'stop',
-                members: expect.arrayContaining([expect.objectContaining({ machineId: 'machine-a', status: 'down' })]),
-            } });
-            const stoppedWrites = writes;
+            expect(owner.machineServiceRows.read(handle)).toMatchObject({ health: { status: 'down', expectedDown: 'stop' } });
+            expect(writes, 'a deliberate Stop appears in service health without opening a notice').toBe(recoveryWrites);
             await handle.inspectCurrentOccurrence();
             await attachment.settled();
-            expect(writes, 'equal native Stop evidence produces no extra C1 revision').toBe(stoppedWrites);
+            expect(writes, 'equal native Stop evidence produces no extra C1 revision').toBe(recoveryWrites);
             current = false;
             await owner.retireProjectServices();
             await attachment.settled();
-            expect(writes, 'retirement cannot fabricate another authoritative transition').toBe(stoppedWrites);
+            expect(writes, 'retirement cannot fabricate another authoritative transition').toBe(recoveryWrites);
         } finally {
             attachment?.dispose();
             edge.dispose();

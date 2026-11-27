@@ -131,6 +131,7 @@ export type OwnServerDeploymentRuntime = Readonly<{
     acquireTeardown?(request: Readonly<{ request: Extract<DeploymentReceiptDispatchV1, { actionId: 'deployments.teardown' }>;
         machineId: string; installationId: string }>, assertCurrent: () => Promise<void>):
         Promise<Awaited<ReturnType<NonNullable<OwnServerDeploymentRuntime['acquireRetention']>>> & Readonly<{
+            expectEnvironmentStop(scope: Readonly<{ homeServerIdentityId: string; environmentId: string }>): Promise<() => void>;
             retireEnvironmentObservers(scope: Readonly<{ homeServerIdentityId: string; environmentId: string }>): Promise<void>;
         }>>;
     acquireTeardownReview?(request: Readonly<{ machineId: string; installationId: string;
