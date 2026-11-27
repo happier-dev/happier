@@ -49,6 +49,7 @@ import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/e
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { artifactViewRoute } from '@/components/artifacts/artifactViewRoute';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { WorkflowRunStartRequestV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { ScmComparisonCaptureInputSchema, ScmComparisonCaptureOutputSchema, ScmStatusSnapshotResponseSchema } from '@happier-dev/protocol/scm';
@@ -243,6 +244,8 @@ let reviewInventoryBoundary: ((request: ServedHomeRequest) => Promise<Response>)
 let emittedWorkflowStarts: Array<ReturnType<typeof WorkflowRunStartRequestV1Schema.parse>>;
 let emittedHumanReviewerRequests: Array<ReturnType<typeof ReviewReviewersSetInputV1Schema.parse>>;
 let refuseWorkflowStart = false;
+let refuseReviewStart = false;
+let refusedReviewRequestId: string | null = null;
 let artifactStore: ReturnType<typeof createArtifactStoreBoundary>;
 let detachedInputs: Array<{ input: Record<string, unknown>; machineId: string }>;
 let outbound: Array<{ input: Extract<SessionMessageSendAuthoredInput, { message: string }>; machineId: string }>;
@@ -469,6 +472,8 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         emittedWorkflowStarts = [];
         emittedHumanReviewerRequests = [];
         refuseWorkflowStart = false;
+        refuseReviewStart = false;
+        refusedReviewRequestId = null;
         detachedInputs = [];
         outbound = [];
         modal.alert.mockClear();
@@ -599,6 +604,14 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
                     machineId: 'machine_1', ownerAccountId: 'account_1', origin: { kind: 'direct' } }) };
             },
         });
+        const reviewStart = await createExternalActionAccountHttpBoundary({ serverUrl, serverIdentityId,
+            accountId: 'account_1', machineId: 'machine_1', actionId: 'review.start', tokenEpoch: 0,
+            failure: readActionFailureEnvelope,
+            execute: (_input, context) => {
+                refusedReviewRequestId = context.requestId;
+                return { ok: false, errorCode: 'permission_denied', error: 'Permission denied', requestId: context.requestId };
+            },
+        });
         const messageSend = await createExternalActionAccountHttpBoundary({ serverUrl, serverIdentityId,
             accountId: 'account_1', machineId: 'machine_1', actionId: 'session.message.send', tokenEpoch: 0,
             execute: async (raw, { target }) => {
@@ -643,6 +656,12 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
                     headers: request.headers, signal: request.signal,
                     ...(request.body !== undefined ? { body: JSON.stringify(request.body) } : {}) });
                 if (workflowResponse) return workflowResponse;
+                if (refuseReviewStart) {
+                    const reviewResponse = await reviewStart.handle(request.url, { method: request.method,
+                        headers: request.headers, signal: request.signal,
+                        ...(request.body !== undefined ? { body: JSON.stringify(request.body) } : {}) });
+                    if (reviewResponse) return reviewResponse;
+                }
                 for (const boundary of [messageSend, messageDescriptor]) {
                     const response = await boundary.handle(request.url, { method: request.method,
                         headers: request.headers, signal: request.signal,
@@ -2425,6 +2444,21 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         expect(opened).not.toHaveBeenCalled();
         expect(modal.alert).not.toHaveBeenCalled();
         expect(input().props.value).toBe('Inspect this');
+    });
+    it('retains the typed Review refusal and request ID from the Home response', async () => {
+        refuseReviewStart = true;
+        await mount({ intent: 'review', sessionId: null, workspace: { machineId: 'machine_1', cwd: '/repo' },
+            initialActionInput: { scope: 'repository' },
+        });
+        await reviewers();
+        await send('Keep this draft');
+        expect(refusedReviewRequestId).toEqual(expect.any(String));
+        expect(input().props.value).toBe('Keep this draft');
+        expect(reviewRouterPush).not.toHaveBeenCalled();
+        const failure = screen.root.findByType(SurfaceStateCard);
+        expect(failure.props.reason).toContain(t('errors.permissionDenied'));
+        expect(failure.props.diagnosticCode).toBe('permission_denied');
+        expect(failure.props.diagnosticDetail).toContain(refusedReviewRequestId);
     });
     it('rejects a retained comparison resource with a malformed originating pane', async () => {
         const { createExecutionRunDetailsSurfaceRenderers } = await import('./executionRunDetailsSurfaceRenderers');

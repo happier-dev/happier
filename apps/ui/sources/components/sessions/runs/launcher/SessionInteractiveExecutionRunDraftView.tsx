@@ -4,6 +4,8 @@ import { ExecutionRunEngineRunnerPicker } from './ExecutionRunEngineRunnerPicker
 import { presentReviewLauncherReviewer } from './reviewLauncherReviewerPresentation';
 import { PersonalSessionModelRefSchema } from '@happier-dev/protocol/providers/selection/v2';
 import { ExecutionRunStartResponseSchema, readExecutionRunStartRunCreation } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { createActionExecuteFailureError, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { resolveExecutionRunImplicitRoleIdV1 } from '@happier-dev/protocol/prompts/roles/builtInRolesV1';
 import { resolveExecutionRunNotifyParentDefaultV1 } from '@happier-dev/protocol/execution/runs/executionRunNotifyParentDefaultV1';
 import type { DiscussionSelectionSourceV1 } from '@happier-dev/protocol/discussions/content';
@@ -48,7 +50,7 @@ import {
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import { ExecutionRunAgentMark } from '@/components/sessions/runs/ExecutionRunAgentMark';
 import { useExecutionRunMachineName } from '@/components/sessions/runs/details/useExecutionRunMachineName';
-import { readActionExecutionFailureRecord, resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { presentActionExecutionFailure, readActionExecutionFailureRecord, resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { resolveActionInputValidationError } from '@/sync/domains/actions/resolveActionInputValidationError';
 import { Typography } from '@/constants/Typography';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -339,7 +341,9 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
     const machineAgents = useMachineAgents({ machineId, serverId, load: Boolean(machineId) });
     const browserContextRuntime = useSessionBrowserContextRuntimeContext();
     const [phase, setPhase] = React.useState<'idle' | 'starting' | 'reconciling' | 'unresolved'>('idle');
-    const [error, setError] = React.useState<string | null>(null);
+    const [error, setError] = React.useState<string | ActionExecuteFailure | null>(null);
+    const failurePresentation = error && typeof error !== 'string' ? presentActionExecutionFailure(error) : null;
+    const errorMessage = typeof error === 'string' ? error : failurePresentation?.reason ?? null;
     const launcherDraftKey = executionRunLauncherDraftKey({
         intent,
         roleId: props.roleId,
@@ -582,8 +586,9 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
             // start are said out loud, not dropped; only a start where none did is refused.
             const runId = startedRunId;
             if (!runId) {
-                throw Object.assign(new Error(resolveActionExecutionFailureMessage(result, t('common.requestFailed')) ?? t('common.requestFailed')),
-                    { code: readActionExecutionFailureRecord(result)?.errorCode });
+                const failure = readActionFailureEnvelope(readActionExecutionFailureRecord(result));
+                if (failure) throw createActionExecuteFailureError(failure);
+                throw new Error(resolveActionExecutionFailureMessage(result, t('common.requestFailed')) ?? t('common.requestFailed'));
             }
             const notStarted = members.filter((member) => member.runId === null).map((member) => (
                 options.backendChoices.find((choice) => choice.targetKey === member.key || choice.backendId === member.key)?.title ?? member.key
@@ -607,9 +612,9 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
             setPhase('idle');
             if (cause instanceof ParticipantComposerSubmissionHeld) throw cause;
             const failureLabelKey = getSessionInputFailureLabelKey(cause);
-            setError(failureLabelKey
+            setError(readActionFailureEnvelope(cause) ?? (failureLabelKey
                 ? t(failureLabelKey)
-                : cause instanceof Error ? cause.message : t('common.requestFailed'));
+                : cause instanceof Error ? cause.message : t('common.requestFailed')));
             throw new ParticipantComposerSubmissionHeld();
         } finally {
             submitInFlightRef.current = false;
@@ -1466,15 +1471,21 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
                         : t('sessionDrafts.executionRunStart.reconciling')}
                 </Text>
             ) : null}
-            {error ? (
+            {failurePresentation && error && typeof error !== 'string' ? (
+                <SurfaceStateCard testID="execution-run-conversation-error" kind="error" size="line"
+                    title={t('common.error')} reason={failurePresentation.reason} diagnosticCode={error.errorCode}
+                    diagnosticDetail={failurePresentation.technicalDetails.filter(detail => detail.key !== 'code')
+                        .map(detail => `${detail.label}: ${detail.value}`).join('\n') || undefined}
+                    accessibilitySemantics="alert" />
+            ) : errorMessage ? (
                 <Text testID="execution-run-conversation-error" style={{ color: theme.colors.status?.error ?? theme.colors.text.primary }}>
-                    {error}
+                    {errorMessage}
                 </Text>
             ) : null}
             <PoliteAccessibilityStatus
                 statusTestID="execution-run-conversation-accessibility-status"
-                transitionKey={error ? `error:${error}` : `phase:${phase}`}
-                announcement={error ?? (phase === 'starting'
+                transitionKey={errorMessage ? `error:${errorMessage}` : `phase:${phase}`}
+                announcement={failurePresentation ? '' : errorMessage ?? (phase === 'starting'
                     ? t('sessionDrafts.executionRunStart.starting')
                     : phase === 'reconciling'
                         ? t('sessionDrafts.executionRunStart.reconciling')
