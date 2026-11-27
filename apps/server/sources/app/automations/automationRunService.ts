@@ -115,6 +115,7 @@ async function markRunAutomationChanged(params: { tx: Tx; accountId: string; run
     return await markAutomationRunSummaryChangedTx(params.tx, {
         accountId: params.accountId,
         automationId: params.run.automationId,
+        runId: params.run.id,
     });
 }
 

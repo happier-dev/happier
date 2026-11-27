@@ -1,6 +1,6 @@
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
-import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
+import { buildAutomationRunSummaryChangeEntityIdV1, isAccountCurrentnessEntityIdV1, TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import { workflowDefinitionArtifactSharingAdapterV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
 import { homeAccountChangeAffectsArtifactKinds } from '@/sync/runtime/orchestration/changesPlanner';
 import {
@@ -33,6 +33,7 @@ export function subscribeVisibleWorkflowRunListInvalidation(params: Readonly<{
     lifetime: ActiveServerAccountScopeLifetime;
     runId?: string;
     runIds?: readonly string[];
+    occurrence?: Readonly<{ automationId: string; readNotCurrent: () => boolean }>;
     /** Exact source whose live grants determine this demanded Run's access. */
     sourceArtifactId?: string | null;
     /** Sources currently demanded by the query owner, including exact Run-set windows. */
@@ -48,20 +49,29 @@ export function subscribeVisibleWorkflowRunListInvalidation(params: Readonly<{
         if (!areServerProfileIdentifiersEquivalent(event.serverId, params.lifetime.scope.serverId)) return;
         // Grant changes publish the source Artifact, and membership changes publish
         // Teams; neither needs to mutate the Run or advance its revision.
-        const changedSources = event.changeKinds?.includes('artifact') === true
-            ? [...new Set([
-                ...(params.sourceArtifactIds?.() ?? (params.sourceArtifactId ? [params.sourceArtifactId] : []))
-                    .filter(id => event.entityIds?.includes(id)),
-                ...(params.discoverSourceArtifacts === true && homeAccountChangeAffectsArtifactKinds(event,
-                    [workflowDefinitionArtifactSharingAdapterV1.kind]) ? event.changedWorkflowDefinitionIds ?? [] : []),
-            ])] : [];
+        const teamsChanged = event.entityIds?.includes(TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1) === true;
+        const hasArtifactChanges = event.changeKinds?.includes('artifact') === true;
+        const demandedSources = hasArtifactChanges || teamsChanged
+            ? params.sourceArtifactIds?.() ?? (params.sourceArtifactId ? [params.sourceArtifactId] : [])
+            : [];
+        const changedSources = hasArtifactChanges ? [...new Set([
+            ...demandedSources.filter(id => event.entityIds?.includes(id)),
+            ...(params.discoverSourceArtifacts === true && homeAccountChangeAffectsArtifactKinds(event,
+                [workflowDefinitionArtifactSharingAdapterV1.kind]) ? event.changedWorkflowDefinitionIds ?? [] : []),
+        ])] : [];
         const accessChanged = (params.source ?? 'workflow') === 'workflow'
-            && (params.runId === undefined || params.sourceArtifactId != null)
-            && (event.entityIds?.includes(TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1) === true
-                || changedSources.length > 0);
+            && (changedSources.length > 0 || (teamsChanged && (params.runId === undefined || demandedSources.length > 0)));
         if (!accessChanged && params.runIds && event.entityIds !== undefined && event.source !== 'connected'
             && !params.runIds.some(runId => event.entityIds?.includes(`workflow-run:${runId}`))) return;
-        if (!accessChanged && !accountChangeAffectsWorkflowRunList(event, params.runId, params.source)) return;
+        const occurrence = params.occurrence;
+        const occurrenceChanged = occurrence !== undefined && params.runId !== undefined && event.entityIds?.some(id =>
+            // The old coalescing key is still readable from retained change feeds.
+            id === buildAutomationRunSummaryChangeEntityIdV1(occurrence.automationId, params.runId)
+            || id === buildAutomationRunSummaryChangeEntityIdV1(occurrence.automationId)
+            // Clearing history or deleting the Automation can remove this occurrence.
+            || (id === occurrence.automationId && event.changeKinds?.includes('automation') === true)
+            || isAccountCurrentnessEntityIdV1(id)) === true;
+        if (!accessChanged && !occurrenceChanged && !accountChangeAffectsWorkflowRunList(event, params.runId, params.source)) return;
         if (!params.isVisibleWindowLoaded()) return;
         const runIds = !accessChanged && event.entityIds !== undefined && event.source !== 'connected'
             ? event.entityIds.filter(id => id.startsWith('workflow-run:')).map(id => id.slice('workflow-run:'.length))
@@ -71,7 +81,7 @@ export function subscribeVisibleWorkflowRunListInvalidation(params: Readonly<{
             ...(runIds?.length ? { runIds } : {}),
             ...(changedSources.length ? { sourceArtifactIds: changedSources } : {}),
         });
-    }, { reconnect: 'refresh' });
+    }, { reconnect: params.occurrence ? { readNotCurrent: params.occurrence.readNotCurrent } : 'refresh' });
     const retirement = params.lifetime.onRetire(unsubscribe);
     return () => {
         retirement.dispose();

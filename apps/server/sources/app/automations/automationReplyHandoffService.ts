@@ -302,6 +302,7 @@ async function publishAutomationRunMutationTx(
     const cursor = await markAutomationRunSummaryChangedTx(tx, {
         accountId: run.accountId,
         automationId: run.automationId,
+        runId: run.id,
     });
     afterTx(tx, () => {
         emitAutomationRunUpdated({ accountId: run.accountId, run, cursor: cursor.resolveCursor() });

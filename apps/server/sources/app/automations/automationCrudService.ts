@@ -2504,6 +2504,7 @@ export async function applyAutomationAccountEncryptionTransitionStageInTx(
             const cursor = await markAutomationRunSummaryChangedTx(params.tx, {
                 accountId: params.accountId,
                 automationId: candidate.item.origin.automationId,
+                runId: run.id,
             });
             afterTx(params.tx, () => {
                 emitAutomationRunUpdated({

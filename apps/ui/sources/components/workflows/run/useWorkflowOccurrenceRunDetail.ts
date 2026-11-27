@@ -2,14 +2,15 @@ import * as React from 'react';
 import { areServerAccountScopesEqual, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { useActiveServerAccountScopeLifetime, useAutomationRunById } from '@/sync/domains/state/storage';
+import { getStorage } from '@/sync/domains/state/storageStore';
+import { workflowRunStoreKey } from '@/sync/store/domains/workflowRuns';
 import { sync } from '@/sync/sync';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { formatAutomationErrorMessage } from '@/components/automations/automationErrorFormatting';
 import type { AutomationRunDetailRouteInspection } from '@/sync/domains/automations/automationRunDetailInspection';
 import type { WorkflowRunRouteTarget } from '@/sync/domains/workflows/workflowRunRoute';
-import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
-import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { subscribeVisibleWorkflowRunListInvalidation } from '@/sync/domains/workflows/workflowRunListInvalidation';
 import { executeOccurrenceRunAction } from './occurrenceRunActions';
 import { resolveWorkflowRunProblemPresentation } from '../presentation/workflowProblemPresentation';
 
@@ -210,9 +211,20 @@ export function useWorkflowOccurrenceRunDetail(props: Readonly<{
     React.useEffect(() => {
         if (props.active !== false) refresh();
     }, [props.active, refresh]);
-    React.useEffect(() => props.active === false || !props.serverId ? undefined : subscribeHomeAccountChange(event => {
-        if (areServerProfileIdentifiersEquivalent(event.serverId, props.serverId)) refresh();
-    }, { reconnect: { readNotCurrent: () => readNotCurrent.current } }), [props.active, props.serverId, refresh]);
+    React.useEffect(() => {
+        if (props.active === false || !props.serverId || !accountLifetime || !automationId || !runId) return;
+        return subscribeVisibleWorkflowRunListInvalidation({
+            lifetime: accountLifetime,
+            runId,
+            occurrence: { automationId, readNotCurrent: () => readNotCurrent.current },
+            sourceArtifactIds: () => {
+                const summary = getStorage().getState().workflowRunsById[workflowRunStoreKey(runId, accountLifetime.scope)]?.summary;
+                return summary?.sourceArtifactId ? [summary.sourceArtifactId] : [];
+            },
+            isVisibleWindowLoaded: () => true,
+            invalidate: refresh,
+        });
+    }, [props.active, props.serverId, accountLifetime, automationId, runId, refresh]);
 
     const handleCancel = React.useCallback(async () => {
         if (!runId || !run) return;

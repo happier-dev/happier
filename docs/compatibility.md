@@ -9372,13 +9372,14 @@ their final source binding is resolved later. Daemon and server must reload
 together for this development seam; no older-server fallback is provided.
 The 0.2 predecessor has no Workflow storage endpoint.
 
-Automation Runs use `automation-run-summary:<automationId>` on the existing
-`automation` Account changes feed. This separates Run-summary recovery from the
-definition's coalescing key. Current Event catalog, Action index and trigger
-readers only refresh on definition changes and their other established source
-facts. Run readers continue recovering from the existing change kind. Older
-readers that treat all Automation changes alike can still recover, and older
-servers' unqualified Automation rows still receive conservative recovery.
+Automation Runs use `automation-run-summary:<automationId>:<runId>` on the
+existing `automation` Account changes feed. Each Run coalesces independently.
+Addressed Run readers use the Run ID, while older coalesced
+`automation-run-summary:<automationId>` entries and unqualified Automation rows
+still receive conservative recovery for the originating Automation. Event
+catalog, Action index and trigger readers continue to recognize the summary
+prefix. Older list and Run readers continue to recover from the existing change
+kind.
 
 At `accepted-snapshot.resolve`, a scoped Automation freezes its Account-owned
 `scopeSessionId` into the Run's `originSessionId`; the server checks both the

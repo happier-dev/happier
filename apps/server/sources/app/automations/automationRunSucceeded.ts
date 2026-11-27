@@ -139,6 +139,7 @@ export async function applyAutomationRunTerminalEffectsTx(params: Readonly<{
     const cursor = await markAutomationRunSummaryChangedTx(params.tx, {
         accountId: params.accountId,
         automationId: run.automationId,
+        runId: run.id,
     });
     afterTx(params.tx, () => {
         emitAutomationRunTransition({

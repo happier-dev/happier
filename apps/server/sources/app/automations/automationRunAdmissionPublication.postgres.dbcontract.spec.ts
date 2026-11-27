@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { serializeAutomationStoredWorkflowDefinitionRecipeV2 } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
+import { buildAutomationRunSummaryChangeEntityIdV1 } from '@happier-dev/protocol/changes';
 import { db, initDbPostgres } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
 import { createDbMaintenanceClient, onDbClientQuery } from '@/storage/prisma';
@@ -95,8 +96,8 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Automation batc
             });
             expect(changes, 'three Run summaries preserve an unconsumed definition edit').toEqual([
                 { entityId: editedAutomationId, cursor: definitionCursor.resolveCursor() },
-                ...triggers.map(({ automationId }) => ({
-                    entityId: `automation-run-summary:${automationId}`, cursor: expect.any(Number),
+                ...triggers.map(({ automationId }, index) => ({
+                    entityId: buildAutomationRunSummaryChangeEntityIdV1(automationId, inserted[index].runId), cursor: expect.any(Number),
                 })),
             ]);
 

@@ -7,6 +7,7 @@ import {
     AutomationV3RunDetailSchema, AutomationV3RunListResponseSchema,
 } from "@happier-dev/protocol/automations/automationApiV3";
 import { WorkflowTriggerListResultV1Schema } from "@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1";
+import { buildAutomationRunSummaryChangeEntityIdV1 } from "@happier-dev/protocol/changes";
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 import { resolveWorkflowRunAccessInTx } from "@/app/workflows/workflowRunAccess";
@@ -133,6 +134,12 @@ describe("Automation current transport and retained 0.2 data", () => {
             expect(await readSet()).not.toHaveProperty("scheduleHolds");
             const runId = await admit(trigger);
             const privateRunId = await admit(privateTrigger);
+            const occurrenceChanges = await db.accountChange.findMany({
+                where: { accountId: account.id, kind: "automation", entityId: { in: [runId, privateRunId].map(id =>
+                    buildAutomationRunSummaryChangeEntityIdV1(automation.id, id)) } },
+                select: { entityId: true },
+            });
+            expect(occurrenceChanges).toHaveLength(2);
             await db.automationRun.update({ where: { id: runId }, data: { state: "running" } });
             // Isolate the two permissions: this Account may read the definition, while the
             // saved incumbent on its second trigger is private to another Account.

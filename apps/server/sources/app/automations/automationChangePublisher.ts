@@ -21,11 +21,12 @@ import { emitAutomationReplyHandoffWake } from "./automationScheduleWake";
 export function markAutomationRunSummaryChangedTx(tx: Tx, params: Readonly<{
     accountId: string;
     automationId: string;
+    runId: string;
 }>): Promise<AccountChangePublication> {
     return markAccountChanged(tx, {
         accountId: params.accountId,
         kind: 'automation',
-        entityId: buildAutomationRunSummaryChangeEntityIdV1(params.automationId),
+        entityId: buildAutomationRunSummaryChangeEntityIdV1(params.automationId, params.runId),
     });
 }
 

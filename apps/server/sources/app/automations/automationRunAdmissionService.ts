@@ -553,6 +553,7 @@ async function insertPreparedAutomationRunTx(params: Readonly<{
     const cursor = await markAutomationRunSummaryChangedTx(params.tx, {
         accountId: params.accountId,
         automationId: request.automationId,
+        runId: run.id,
     });
     if (missed) await params.tx.automationRunEvent.create({ data: {
         runId: run.id, ts: request.now, type: "run_missed", payload: { errorCode: missedReason },

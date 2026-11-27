@@ -1057,6 +1057,7 @@ export async function claimAutomationRun(params: {
                 cursor = await markAutomationRunSummaryChangedTx(tx, {
                     accountId: params.accountId,
                     automationId: run.automationId,
+                    runId: run.id,
                 });
             }
             const accountCurrentness = await fetchAutomationAccountCurrentnessWitnessTx(tx, params.accountId);

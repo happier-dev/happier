@@ -85,8 +85,9 @@ export type ChangeKind = z.infer<typeof ChangeKindSchema>;
 export const AUTOMATION_SOURCE_STATUS_CHANGE_ENTITY_ID = 'automation-source-status';
 const AUTOMATION_RUN_SUMMARY_CHANGE_PREFIX_V1 = 'automation-run-summary:';
 
-export function buildAutomationRunSummaryChangeEntityIdV1(automationId: string): string {
-  return AUTOMATION_RUN_SUMMARY_CHANGE_PREFIX_V1 + automationId;
+export function buildAutomationRunSummaryChangeEntityIdV1(automationId: string, runId?: string): string {
+  const legacyKey = AUTOMATION_RUN_SUMMARY_CHANGE_PREFIX_V1 + automationId;
+  return runId === undefined ? legacyKey : `${legacyKey}:${runId}`;
 }
 
 /** Run summaries occupy a separate coalescing key so they cannot overwrite a pending definition edit. */

@@ -12,6 +12,7 @@ import {
     AutomationDefinitionDetailSchema, AutomationDefinitionListItemSchema, AutomationV3RunListItemSchema, AutomationV3RunDetailSchema,
     type AutomationDefinitionDetail,
 } from '@happier-dev/protocol/automations/automationApiV3';
+import { buildAutomationRunSummaryChangeEntityIdV1 } from '@happier-dev/protocol/changes';
 import { MachinePoolViewV1Schema} from '@happier-dev/protocol/machines/pools/v1';
 import {
     sealAutomationRunResultStoredEnvelopeV1} from '@happier-dev/protocol/automations/automationReplyHandoffStoredContent';
@@ -604,6 +605,41 @@ describe('Sync Server/Account lifetime reset boundary', () => {
         expect(storage.getState().workflowRunsById).toBe(incumbent);
         await expect(sync.getAutomationRunDetailInspection(eventRunDetail.automationId, eventRunDetail.id))
             .resolves.toMatchObject({ detail: { revision: eventRunDetail.revision } });
+    });
+
+    it('reads addressed occurrence detail only on its exact or coarse Home wakes', async () => {
+        const { useWorkflowOccurrenceRunDetail } = await import('@/components/workflows/run/useWorkflowOccurrenceRunDetail');
+        const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+        const account = await captureOtherHomeAccount();
+        const detailPath = `${runPath()}/${eventRunDetail.id}`;
+        answer(detailPath, eventRunDetail, 'GET', otherHomeUrl);
+        const target = { kind: 'occurrence' as const, automationId: eventRunDetail.automationId, runId: eventRunDetail.id };
+        const hook = await renderHook(() => useWorkflowOccurrenceRunDetail({ target, serverId: account.serverId }));
+        const reads = () => requests.filter(request => request.origin === otherHomeUrl && request.path === detailPath).length;
+        try {
+            await vi.waitFor(() => expect(hook.getCurrent().run?.id).toBe(target.runId));
+            expect(reads()).toBe(1);
+            for (const entityId of ['workflow-run:unrelated', 'automation:unrelated']) {
+                await act(async () => publishHomeAccountChange(account.serverId, [entityId], { changeKinds: ['account'] }));
+            }
+            await act(async () => publishHomeAccountChange(account.serverId, [
+                buildAutomationRunSummaryChangeEntityIdV1(target.automationId, 'unrelated'),
+            ], { changeKinds: ['automation'] }));
+            const unrelatedReads = reads() - 1;
+            const beforeOccurrence = reads();
+            await act(async () => publishHomeAccountChange(account.serverId, [
+                buildAutomationRunSummaryChangeEntityIdV1(target.automationId, target.runId),
+            ], { changeKinds: ['automation'] }));
+            await vi.waitFor(() => expect(reads()).toBe(beforeOccurrence + 1));
+            const beforeExact = reads();
+            await act(async () => publishHomeAccountChange(account.serverId, [`workflow-run:${target.runId}`], { changeKinds: ['account'] }));
+            await vi.waitFor(() => expect(reads()).toBe(beforeExact + 1));
+            await act(async () => publishHomeAccountChange(account.serverId));
+            await vi.waitFor(() => expect(reads()).toBe(beforeExact + 2));
+            expect(unrelatedReads).toBe(0);
+        } finally {
+            await hook.unmount();
+        }
     });
 
     it('never labels another Home occurrence with the active Home same-id Automation definition', async () => {

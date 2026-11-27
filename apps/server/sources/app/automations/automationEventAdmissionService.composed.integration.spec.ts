@@ -2986,7 +2986,7 @@ describe("Automation Event admission", () => {
                 accountId_kind_entityId: {
                     accountId: ACCOUNT_ID,
                     kind: "automation",
-                    entityId: buildAutomationRunSummaryChangeEntityIdV1(AUTOMATION_ID),
+                    entityId: buildAutomationRunSummaryChangeEntityIdV1(AUTOMATION_ID, runId),
                 },
             },
             select: { cursor: true },
