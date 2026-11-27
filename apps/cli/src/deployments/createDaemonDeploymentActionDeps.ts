@@ -407,9 +407,10 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
         async readEnvironmentMetadata(request: Readonly<{ environmentId: string; context: ActionExecutorContext }>) {
             return (await readEnvironmentMetadata(request)).environment;
         },
-        async readEnvironment({ environmentId, targetLinkId, targetLinkScope, context }: Parameters<OwnServerDeploymentTargetHostInput['readEnvironment']>[0]): Promise<DeploymentEnvironmentDetailV1> {
+        async readEnvironment({ environmentId, targetLinkId, targetLinkScope, context }: Parameters<OwnServerDeploymentTargetHostInput['readEnvironment']>[0],
+            metadata?: Awaited<ReturnType<typeof readEnvironmentMetadata>>): Promise<DeploymentEnvironmentDetailV1> {
             const detail = await readDeploymentEnvironmentForHost({ environmentId, context }, {
-                readMetadata: readEnvironmentMetadata, open, assertCurrent,
+                readMetadata: metadata ? async () => metadata : readEnvironmentMetadata, open, assertCurrent,
             });
             // Some native deployment operations consume retained predecessor proofs.
             // Domain readers consume only the target link admitted for that Domain.
@@ -1076,9 +1077,10 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 return { ...projectDeploymentException(error, { signal: context.signal }), effectAttempted: true as const };
             }
         }
-        return request.actionId === 'deployments.teardown'
-            ? host.teardownBoundary ? injectedTeardown(request) : ownServerTeardown.execute(request)
-            : target.execute(request);
+        if (request.actionId !== 'deployments.teardown') return target.execute(request);
+        const openedEnvironment = await targetHostReaders.readEnvironment({ environmentId: request.input.environmentId,
+            targetLinkId: request.input.targetLinkId, context: request.context }, environment);
+        return host.teardownBoundary ? injectedTeardown(request, openedEnvironment) : ownServerTeardown.execute(request, openedEnvironment);
     };
     const platformVariables = createPlatformVariablesForHost({ withTargetRole: contributedTarget.withTargetRole,
         readEnvironment: targetHostReaders.readEnvironment });

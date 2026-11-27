@@ -495,15 +495,15 @@ export function createOwnServerTeardownForHost(host: Host) {
                 effectAttempted: false }; }
         },
         executeNative,
-        async execute(request: DeploymentReceiptDispatchV1) {
+        async execute(request: DeploymentReceiptDispatchV1, openedEnvironment?: DeploymentEnvironmentDetailV1) {
             if (request.actionId !== 'deployments.teardown') return failure('unsupported_action');
-            const environment = await host.readEnvironment({ environmentId: request.input.environmentId,
+            const environment = openedEnvironment ?? await host.readEnvironment({ environmentId: request.input.environmentId,
                 targetLinkId: request.input.targetLinkId, context: request.context });
             const link = select(environment, request.input.targetLinkId);
             if ('errorCode' in link) return link;
             if (link.members.length === 1 && link.members[0].machineId === host.machineId) {
                 const native = await acquireBoundary(request, environment, link);
-                try { return await createDeploymentTeardownExecutor({ ...host, boundary: native.boundary })(request); }
+                try { return await createDeploymentTeardownExecutor({ ...host, boundary: native.boundary })(request, environment); }
                 finally { await native.release(); }
             }
             const dispatch = async (mode: 'observe' | 'execute', operation: Parameters<DeploymentTeardownBoundary['observe']>[0]) => {
@@ -523,7 +523,7 @@ export function createOwnServerTeardownForHost(host: Host) {
             };
             return createDeploymentTeardownExecutor({ ...host, boundary: {
                 observe: operation => dispatch('observe', operation), execute: operation => dispatch('execute', operation),
-            } })(request);
+            } })(request, environment);
         },
     };
 }

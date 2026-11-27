@@ -85,7 +85,7 @@ export function createDeploymentTeardownExecutor(host: Pick<OwnServerDeploymentT
     'serverId' | 'machineId' | 'readEnvironment' | 'readReceipt' | 'writeTransition'> & Readonly<{
         boundary?: DeploymentTeardownBoundary;
     }>) {
-    return async (request: DeploymentReceiptDispatchV1): Promise<Result> => {
+    return async (request: DeploymentReceiptDispatchV1, openedEnvironment?: DeploymentEnvironmentDetailV1): Promise<Result> => {
         if (request.actionId !== 'deployments.teardown') return failure('unsupported_action');
         // The installed target must advertise actual owned-removal producers.
         // A missing producer cannot mark a receipt running or remove anything.
@@ -94,7 +94,7 @@ export function createDeploymentTeardownExecutor(host: Pick<OwnServerDeploymentT
         const read = () => host.readReceipt({ environmentId: request.input.environmentId,
             deploymentId: request.receipt.deploymentId, context: request.context });
         let receipt = await read();
-        const environment = await host.readEnvironment({ environmentId: request.input.environmentId,
+        const environment = openedEnvironment ?? await host.readEnvironment({ environmentId: request.input.environmentId,
             targetLinkId: request.input.targetLinkId, context: request.context });
         const link = environment.targetLinks.find(item => item.targetLink.id === request.input.targetLinkId)?.targetLink;
         const selected = environment.targetLinks.find(item => item.targetLink.id === environment.environment.runtimeTargetLinkId)?.targetLink;

@@ -345,6 +345,7 @@ it.skipIf(process.platform === 'win32').each(['local-remove-environment', 'local
                     return { ...native, nativeIo: { ...native.nativeIo, run } };
                 } };
             let writes = 0;
+            let environmentReads = 0;
             let privateHistoryOpens = 0;
             const otherLineage = { ...prior.deployment, id: 'unrelated-lineage', targetLinkId: 'foreign-target' };
             const otherEnvironment = { ...prior.deployment, id: 'unrelated-environment', environmentId: 'foreign-environment' };
@@ -367,7 +368,10 @@ it.skipIf(process.platform === 'win32').each(['local-remove-environment', 'local
             };
             const host: OwnServerDeploymentTargetHostInput = { credentials, serverId: 'home',
                 serverHttpBaseUrl: 'https://teardown-home.test', machineId: 'machine-a', runtime,
-                async readEnvironment() { return structuredClone(environment); },
+                async readEnvironment() {
+                    environmentReads++;
+                    return structuredClone(environment);
+                },
                 async readReceipt() { return structuredClone(receipt); },
                 async *readBuildHistory() {
                     privateHistoryOpens++;
@@ -543,6 +547,7 @@ it.skipIf(process.platform === 'win32').each(['local-remove-environment', 'local
                 expect(await teardown.admit(environment, link.id, forged, prepared.input, {})).toMatchObject({ ok: false });
             }
             const privateHistoryOpensBeforeEffect = privateHistoryOpens;
+            const environmentReadsBeforeEffect = environmentReads;
             const result = await teardown.execute({ actionId: 'deployments.teardown', input: {
                 serverId: 'home', environmentId: environment.environment.id, targetLinkId: link.id,
                 expectedRevision: environment.environment.revision, expectedTargetLinkRevision: link.revision,
@@ -555,6 +560,10 @@ it.skipIf(process.platform === 'win32').each(['local-remove-environment', 'local
                 deploymentId: receipt.deployment.id, deploymentRevision: receipt.deployment.revision, state: receipt.deployment.state },
                 context: { operationAcceptance: { operationId: receipt.deployment.actionOperationId, accept() {} } } });
             expect.soft(privateHistoryOpens - privateHistoryOpensBeforeEffect).toBe(0);
+            if (!remote) {
+                expect.soft(environmentReads - environmentReadsBeforeEffect,
+                    'Native teardown opens its Environment once per invocation').toBe(1);
+            }
             if (auditsImages || caddyPrimary || scenario === 'remote-already-absent' || scenario === 'remote-fleet-absent' || scenario === 'never-deployed' || scenario === 'remote-native' || scenario === 'remote-retry' || reconcile || scenario === 'remote-caddy') {
                 expect(result, JSON.stringify(result)).toMatchObject({ ok: true, state: 'succeeded' });
                 if (scenario === 'remote-fleet-absent') expect(receipt.content.teardown?.proofs.filter(proof => proof.step === 'removeTarget'))
