@@ -4,6 +4,7 @@ import type {
   ResolvedSystemTool as PluginResolvedSystemTool,
   SystemToolDiagnostic as PluginSystemToolDiagnostic,
 } from '@happier-dev/plugin-sdk/exec';
+import { projectPluginFailureText, type PluginDiagnosticData } from '@happier-dev/plugin-sdk';
 
 import { buildDeepSecCommand, type DeepSecReviewMode, type DeepSecThinkingLevel } from './command.js';
 import { buildDeepSecCostWarning, type DeepSecCostWarningResult } from './costWarning.js';
@@ -43,7 +44,14 @@ export type DeepSecTempFiles = Readonly<{
 
 export type DeepSecReviewRunResult =
   | Readonly<{
-      status: 'completed' | 'failed';
+      status: 'completed';
+      result: PluginProcessResult;
+      commentOutMarkdown: string;
+      exportedEntries?: readonly ParsedDeepSecCommentOutEntry[];
+    }>
+  | Readonly<{
+      status: 'failed';
+      diagnostic: PluginDiagnosticData;
       result: PluginProcessResult;
       commentOutMarkdown: string;
       exportedEntries?: readonly ParsedDeepSecCommentOutEntry[];
@@ -51,7 +59,7 @@ export type DeepSecReviewRunResult =
   | Readonly<{
       status: 'partial';
       stage: 'process';
-      diagnostics: readonly DeepSecRuntimeDiagnostic[];
+      diagnostics: readonly PluginDiagnosticData[];
       result: PluginProcessResult;
       commentOutMarkdown: string;
       exportedEntries?: readonly ParsedDeepSecCommentOutEntry[];
@@ -71,15 +79,8 @@ export type DeepSecReviewRunResult =
       commentOutMarkdown: '';
     }>;
 
-export type DeepSecRuntimeDiagnostic = Readonly<{
-  code: string;
-  severity: 'warning' | 'error';
-  messageKey: string;
-  detail: Readonly<{
-      exitCode: number | null;
-      signal: string | null;
-  }>;
-}>;
+/** Keep the plugin-root name while the SDK owns the diagnostic shape. */
+export type DeepSecRuntimeDiagnostic = PluginDiagnosticData;
 
 export type RunDeepSecReviewParams = Readonly<{
   cwd: string;
@@ -134,12 +135,22 @@ function readTermination(result: PluginProcessResult): Readonly<{ exitCode: numb
   return { exitCode: null, signal: null };
 }
 
-function processPartialDiagnostic(result: PluginProcessResult): DeepSecRuntimeDiagnostic {
+function processFailureDiagnostic(
+  result: PluginProcessResult,
+  phase: 'scan' | 'process' | 'export',
+  severity: 'warning' | 'error' = 'error',
+): PluginDiagnosticData {
+  if (result.termination.observed.kind === 'failed') return result.termination.observed.diagnostic;
+  const termination = readTermination(result);
+  const reason = new TextDecoder().decode(result.stderr).trim() || new TextDecoder().decode(result.stdout).trim();
+  const message = reason ? `DeepSec ${phase} failed: ${projectPluginFailureText(new Error(reason))}`
+    : termination.signal ? `DeepSec ${phase} stopped with signal ${termination.signal}.`
+      : `DeepSec ${phase} exited with code ${termination.exitCode}.`;
   return {
     code: 'deepsec_process_failed',
-    severity: 'warning',
-    messageKey: 'plugins.deepsec.runtime.partial',
-    detail: readTermination(result),
+    severity,
+    message,
+    details: { ...termination, phase, stdoutTruncated: result.stdoutTruncated, stderrTruncated: result.stderrTruncated },
   };
 }
 
@@ -288,13 +299,14 @@ export async function runDeepSecReview(params: RunDeepSecReviewParams): Promise<
       // existing export reads those records independently of the process exit.
       const exportPath = `${commentOutPath}.json`;
       const exportResult = await run(buildDeepSecCommand({ mode: 'repository_security_audit_export', exportPath }));
-      if (commandFailed(exportResult)) return { status: 'failed', result: exportResult, commentOutMarkdown: '' };
+      if (commandFailed(exportResult)) return { status: 'failed', diagnostic: processFailureDiagnostic(exportResult, 'export'),
+        result: exportResult, commentOutMarkdown: '' };
       const exportedEntries = parseDeepSecExport(await params.tempFiles.readText(exportPath));
       if (commandFailed(processResult)) {
         return {
           status: 'partial',
           stage: 'process',
-          diagnostics: [processPartialDiagnostic(processResult)],
+          diagnostics: [processFailureDiagnostic(processResult, 'process', 'warning')],
           result: processResult,
           commentOutMarkdown: '',
           exportedEntries,
@@ -303,13 +315,12 @@ export async function runDeepSecReview(params: RunDeepSecReviewParams): Promise<
       return { status: 'completed', result: exportResult, commentOutMarkdown: '', exportedEntries };
     }
     const commentOutMarkdown = commentOutPath ? await params.tempFiles.readText(commentOutPath) : '';
-    return {
-      // DeepSec direct mode writes this newly-created report only after agent
-      // error/quota checks. Exit 1 alone also represents those failures.
-      status: commandFailed(result, params.mode !== 'repository_security_audit' && Boolean(commentOutMarkdown.trim())) ? 'failed' : 'completed',
-      result,
-      commentOutMarkdown,
-    };
+    // DeepSec direct mode writes this newly-created report only after agent
+    // error/quota checks. Exit 1 alone also represents those failures.
+    return commandFailed(result, params.mode !== 'repository_security_audit' && Boolean(commentOutMarkdown.trim()))
+      ? { status: 'failed', diagnostic: processFailureDiagnostic(result, params.mode === 'repository_security_audit' ? 'scan' : 'process'),
+          result, commentOutMarkdown }
+      : { status: 'completed', result, commentOutMarkdown };
   } finally {
     try { await params.tempFiles.cleanup(); }
     catch { params.onCleanupFailure?.(); }

@@ -215,17 +215,7 @@ function createOutput(params: Readonly<{
     ? params.runResult.diagnostics
     : undefined;
   const failureDiagnostics = params.runResult.status === 'failed'
-    ? [{
-        code: 'deepsec_process_failed',
-        severity: 'error' as const,
-        messageKey: 'plugins.deepsec.runtime.failed',
-        detail: (() => {
-          const observed = params.runResult.result.termination.observed;
-          if (observed.kind === 'exit') return { exitCode: observed.exitCode, signal: null };
-          if (observed.kind === 'signal') return { exitCode: null, signal: observed.signal };
-          return { exitCode: null, signal: null };
-        })(),
-      }]
+    ? [params.runResult.diagnostic]
     : undefined;
   const output: ReviewFindingsV2 = {
     runRef: {
@@ -285,7 +275,7 @@ function createOutput(params: Readonly<{
       : selectedScopeDiagnostics
         ? { status: 'failed', error: { code: 'deepsec_scope_failed' } }
         : failureDiagnostics
-          ? { status: 'failed', error: { code: 'deepsec_process_failed' } }
+          ? { status: 'failed', error: { code: failureDiagnostics[0].code } }
           : {}),
     ...(readiness ? { readiness } : {}),
     ...(selectedScopeDiagnostics
@@ -449,6 +439,9 @@ function createRuntime(
       const findings = normalizeDeepSecFindings('exportedEntries' in runResult && runResult.exportedEntries
         ? runResult.exportedEntries : parseDeepSecCommentOutMarkdown(runResult.commentOutMarkdown));
       emit({ kind: 'output-delta', channel: 'assistant', text: createOutput({ runId: request.runId, findings, runResult }) });
+      if (runResult.status === 'failed') {
+        return { status: 'failed', diagnostic: runResult.diagnostic };
+      }
       return runResult.status === 'completed' || runResult.status === 'partial'
         ? { status: 'complete' }
         : { status: 'failed', diagnostic: {

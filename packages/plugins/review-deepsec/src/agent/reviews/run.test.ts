@@ -298,7 +298,7 @@ describe('runDeepSecReview', () => {
       exportedEntries: [],
       diagnostics: [{
         code: 'deepsec_process_failed',
-        detail: { exitCode: 2, signal: null },
+        details: { exitCode: 2, signal: null, phase: 'process' },
       }],
     });
     expect(cleanup).toHaveBeenCalledOnce();

@@ -558,31 +558,51 @@ describe('activate', () => {
     });
   });
 
-  it('publishes process failure evidence as a structured failed outcome', async () => {
+  it.each(['scan', 'process', 'export'] as const)('retains the safe native %s failure through its terminal outcome', async phase => {
+    const secret = 'deepsec-native-private-credential';
+    const reason = `Native ${phase} failed: api_key=${secret}; /private/deepsec/workspace/token.log`;
     const fixture = createRuntimeContext({
-      async run() {
-        return processResult(7);
+      async run(request) {
+        if (request.args?.[0] === phase) return {
+          ...processResult(7),
+          ...(phase === 'process' ? { termination: {
+            observed: { kind: 'signal' as const, signal: 'SIGTERM' }, requestedBy: { kind: 'none' as const },
+          } } : {}),
+          stderr: new TextEncoder().encode(reason),
+          stderrTruncated: true,
+        };
+        if (request.args?.[0] === 'export') {
+          const outPath = request.args[request.args.indexOf('--out') + 1];
+          await writeFile(outPath, '[]', 'utf8');
+        }
+        return processResult();
       },
     });
     const { runtime } = await createNativeDeepSecRuntime();
-    const opened = await runtime.executionRuns?.open(createOpenRequest({ runId: 'run-process-failed' }), fixture.context);
+    const opened = await runtime.executionRuns?.open(createOpenRequest({
+      runId: 'run-process-failed', mode: 'repository_security_audit',
+      profileLocalId: 'repository-security-audit', confirmedCostWarning: true,
+      engineId: 'agent:happier.review.deepsec/deepsec',
+    }), fixture.context);
     if (!opened) throw new Error('Expected native DeepSec execution run');
 
     const events = await watchToTerminal(opened);
     await opened.dispose();
 
-    expect(events.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic: { code: 'deepsec_process_failed' } });
+    const diagnostic = {
+      code: 'deepsec_process_failed', severity: phase === 'process' ? 'warning' : 'error',
+      message: expect.stringContaining(`Native ${phase} failed:`),
+      details: { phase, exitCode: phase === 'process' ? null : 7, signal: phase === 'process' ? 'SIGTERM' : null,
+        stdoutTruncated: false, stderrTruncated: true },
+    };
+    expect(events.at(-1)).toMatchObject(phase === 'process'
+      ? { kind: 'run-complete' } : { kind: 'run-failed', diagnostic });
     expect(readStructuredOutput(events)).toMatchObject({
-      status: 'failed',
-      error: { code: 'deepsec_process_failed' },
-      reviewOutcome: 'failed',
-      diagnostics: [{
-        code: 'deepsec_process_failed',
-        severity: 'error',
-        messageKey: 'plugins.deepsec.runtime.failed',
-        detail: { exitCode: 7, signal: null },
-      }],
+      reviewOutcome: phase === 'process' ? 'partial' : 'failed', diagnostics: [diagnostic],
     });
+    const serialized = JSON.stringify(events);
+    expect(serialized).not.toContain(secret);
+    expect(serialized).not.toContain('/private/deepsec/workspace/token.log');
   });
 
   it('selects repository audit mode from the canonical execution-run profile', async () => {
@@ -701,8 +721,7 @@ describe('activate', () => {
       diagnostics: [{
         code: 'deepsec_process_failed',
         severity: 'warning',
-        messageKey: 'plugins.deepsec.runtime.partial',
-        detail: { exitCode: 2, signal: null },
+        details: { exitCode: 2, signal: null, phase: 'process' },
       }],
       limits: { findingsTruncated: true, patchesTruncated: false },
     });
