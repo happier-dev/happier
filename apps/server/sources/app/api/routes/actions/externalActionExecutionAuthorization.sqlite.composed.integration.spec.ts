@@ -4012,6 +4012,60 @@ describe("external Action execution authorization", () => {
         } finally { await app.close(); }
     });
 
+    it('reads the requester’s accepted Project Setup under a terminal open root, and only under a shell-opening root', async () => {
+        const account = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
+        const other = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
+        const keyPair = tweetnacl.sign.keyPair();
+        const machine = await db.machine.create({ data: {
+            id: crypto.randomUUID(), accountId: account.id,
+            metadata: encodePlainMachineStoredContent({ host: 'primary', platform: 'linux', happyCliVersion: 'test',
+                homeDir: '/home/requester', happyHomeDir: '/home/requester/.happier' }),
+            dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64'),
+            metadataVersion: 1, installationId: crypto.randomUUID(),
+            installationPublicKey: new Uint8Array(keyPair.publicKey),
+        } });
+        const token = await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
+        const serverId = await getOrCreateServerIdentityId();
+        const { app } = await createApp('unrelated-team-route', false, undefined, undefined, false, artifactsRoutes);
+        try {
+            const mintRoot = async (actionId: 'machines.terminal.open' | 'machines.terminal.list', input: unknown) => {
+                const response = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
+                    headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: machine.id, envelope: {
+                        v: 1, requestId: crypto.randomUUID(), target: { kind: 'machine', machineId: machine.id },
+                        input: getActionSpec(actionId).inputSchema.parse(input) } } });
+                expect(response.statusCode, response.body).toBe(200);
+                return ExternalActionExecutionAuthorizationV1Schema.parse(response.json());
+            };
+            const createSetup = async (actorUserId: string) => {
+                const artifact = await createArtifact({ actorUserId, artifactId: crypto.randomUUID(),
+                    header: decodeBase64(encodePlainArtifactStoredContent({ kind: 'project_setup.v1', title: 'Accepted Setup' })),
+                    body: decodeBase64(encodePlainArtifactStoredContent({ body: JSON.stringify({ kind: 'project_setup.v1' }) })),
+                    dataEncryptionKey: decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
+                if (!artifact.ok) throw new Error(artifact.error);
+                return `/v1/artifacts/${encodeURIComponent(artifact.artifact.id)}`;
+            };
+            const acceptedPath = await createSetup(account.id);
+            const foreignPath = await createSetup(other.id);
+            const read = async (authorization: Awaited<ReturnType<typeof mintRoot>>, path: string, signedPath = path) => {
+                const projected = await projectExternalActionRequesterHttpAuthorization({ authorization, serverId,
+                    serverIdentityId: serverId, serverHttpBaseUrl: 'https://terminal-package-script.test', target: authorization.binding.target,
+                    installationId: machine.installationId!, privateKey: keyPair.secretKey, rootAdmitted: true });
+                // The package-script child spends the unchanged terminal root (effect = root), as the daemon does.
+                const headers = await projected?.requesterHttpProjection?.createRequestHeaders({
+                    effectActionId: authorization.binding.actionId, method: 'GET', path: signedPath });
+                if (!headers) throw new Error('Expected installed requester Setup read proof');
+                return (await app.inject({ method: 'GET', url: path, headers })).statusCode;
+            };
+            const open = await mintRoot('machines.terminal.open', { serverId, machineId: machine.id, terminalKey: 'pkg-dev',
+                cwd: '/home/requester/src/pkg', launch: { kind: 'package_script', runTargetId: 'pkg:dev' } });
+            expect.soft(await read(open, acceptedPath), 'the terminal open root reads its requester’s accepted Setup').toBe(200);
+            expect.soft(await read(open, foreignPath), 'Artifact access stays with the requester Account').toBe(404);
+            expect.soft(await read(open, foreignPath, acceptedPath), 'the installation proof binds the exact Artifact path').toBe(401);
+            const list = await mintRoot('machines.terminal.list', { serverId, machineId: machine.id });
+            expect.soft(await read(list, acceptedPath), 'a root that opens no shell gains no Artifact read').toBe(401);
+        } finally { await app.close(); }
+    });
+
     it.each(['projects.prepare', 'projects.trust.list'] as const)(
         'lists the requester’s Project Trust under %s only on the requester’s own Machine', async rootActionId => {
         const { PROJECT_TRUST_ROUTE_V1, ProjectTrustListResponseV1Schema } = await import('@happier-dev/protocol/workspaces/projectSetup/projectTrustRowV1');

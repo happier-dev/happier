@@ -3119,10 +3119,13 @@ function isProjectAccountMetadataHttpPurpose(verified: VerifiedExternalActionExe
     const url = new URL(proof.path, 'http://home.invalid');
     const method = proof.method.toUpperCase();
     if (MACHINE_TERMINAL_ACTION_IDS.some(id => id === actionId)) {
+        const opensShell = isMachineTerminalOpenOrRestartActionIdV1(actionId);
+        // A Project shell or package script reads the requester's accepted Setup
+        // under this root; Artifact ACLs retain access for this single-record read.
+        if (opensShell && readArtifactGetHttpPurpose(proof) !== null) return true;
         if (url.search !== '' || url.hash !== '' || method !== 'POST') return false;
         // Terminal discovery and shell admission can read the requester's accepted checkout.
         if (url.pathname === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) return ProjectAccountRowListRequestV1Schema.safeParse(proof.body).success;
-        const opensShell = isMachineTerminalOpenOrRestartActionIdV1(actionId);
         if (url.pathname === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/read` && (actionId === MACHINE_TERMINAL_LIST_ACTION_ID_V1 || opensShell)) {
             const read = ProjectAccountRowReadRequestV1Schema.safeParse(proof.body);
             return read.success && read.data.key.kind === 'workspace-ref'
