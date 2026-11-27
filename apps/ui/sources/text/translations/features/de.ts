@@ -9138,11 +9138,12 @@ const en = Shared_inboxWorkTranslations.en;
 
 const de: typeof en = {
     pageDescription: "Was dich braucht, was sich geändert hat und wer dich erwähnt hat.",
-    needsYouSummary: ({ approvals, decisions, blocked, failedActions, actions }: { approvals: number; decisions: number; blocked: number; failedActions: number; actions: number }) => {
+    needsYouSummary: ({ approvals, decisions, blocked, alerts, failedActions, actions }: { approvals: number; decisions: number; blocked: number; alerts: number; failedActions: number; actions: number }) => {
         const parts = [
             approvals > 0 ? `${approvals} ${approvals === 1 ? 'Freigabe' : 'Freigaben'}` : null,
             decisions > 0 ? `${decisions} ${decisions === 1 ? 'Entscheidung' : 'Entscheidungen'}` : null,
             blocked > 0 ? `${blocked} ${blocked === 1 ? 'blockierte Sitzung' : 'blockierte Sitzungen'}` : null,
+            alerts > 0 ? `${alerts} ${alerts === 1 ? 'Warnung' : 'Warnungen'}` : null,
             failedActions > 0 ? `${failedActions} ${failedActions === 1 ? 'fehlgeschlagene Aktion' : 'fehlgeschlagene Aktionen'}` : null,
             actions > 0 ? `${actions} ${actions === 1 ? 'Aktion zu prüfen' : 'Aktionen zu prüfen'}` : null,
         ].filter((part): part is string => part !== null);
@@ -9175,7 +9176,7 @@ const de: typeof en = {
     popover: {
         updates: ({ count }) => (count === 1 ? '1 Neuigkeit' : `${count} Neuigkeiten`),
     },
-    types: { approval: "Freigaben", decision: "Entscheidungen", blocked: "Blockiert" },
+    types: { approval: "Freigaben", decision: "Entscheidungen", blocked: "Blockiert", alert: "Warnungen" },
     days: { today: "Heute", earlier: "Früher" },
     mentionsEmpty: {
         title: "Keine Erwähnungen",

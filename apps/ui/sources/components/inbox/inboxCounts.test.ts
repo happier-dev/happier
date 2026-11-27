@@ -61,7 +61,16 @@ describe('Inbox counts', () => {
             actionOperationEntries: [{ reason: 'failed' }, { reason: 'failed' }, { reason: 'review_required' }],
         });
         const kinds = countInboxNeedsYouByKind(model);
-        expect(kinds).toEqual({ approvals: 2, decisions: 1, blocked: 0, failedActions: 2, actions: 1 });
+        expect(kinds).toEqual({ approvals: 2, decisions: 1, blocked: 0, alerts: 0, failedActions: 2, actions: 1 });
+        expect(Object.values(kinds).reduce((sum, count) => sum + count, 0)).toBe(countInboxNeedsYou(model));
+    });
+    it('names a notice that needs you as an alert, not as a blocked session (R19-D3 B)', () => {
+        const item = (key: string, kind: string) => ({ key, type: 'blocked', view: 'needs_you', producer: 'live',
+            source: { kind, id: key, serverId: 'home-a' } }) as unknown as InboxItem;
+        // A failing service's health notice and a Machine's removal reminder ask for the person, but no session is blocked.
+        const model = source({ items: [item('stuck', 'session'), item('health', 'account_notice'), item('removal', 'managed_machine')] });
+        const kinds = countInboxNeedsYouByKind(model);
+        expect(kinds).toMatchObject({ blocked: 1, alerts: 2 });
         expect(Object.values(kinds).reduce((sum, count) => sum + count, 0)).toBe(countInboxNeedsYou(model));
     });
 });

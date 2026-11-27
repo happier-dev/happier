@@ -9021,11 +9021,12 @@ const en = Shared_inboxWorkTranslations.en;
 
 const zhHans: typeof en = {
     pageDescription: "需要你处理的、发生变化的，以及提及你的人。",
-    needsYouSummary: ({ approvals, decisions, blocked, failedActions, actions }: { approvals: number; decisions: number; blocked: number; failedActions: number; actions: number }) => {
+    needsYouSummary: ({ approvals, decisions, blocked, alerts, failedActions, actions }: { approvals: number; decisions: number; blocked: number; alerts: number; failedActions: number; actions: number }) => {
         const parts = [
             approvals > 0 ? `${approvals} 个审批` : null,
             decisions > 0 ? `${decisions} 个决定` : null,
             blocked > 0 ? `${blocked} 个受阻会话` : null,
+            alerts > 0 ? `${alerts} 条告警` : null,
             failedActions > 0 ? `${failedActions} 个失败的操作` : null,
             actions > 0 ? `${actions} 个待检查的操作` : null,
         ].filter((part): part is string => part !== null);
@@ -9058,7 +9059,7 @@ const zhHans: typeof en = {
     popover: {
         updates: ({ count }) => `${count} 条动态`,
     },
-    types: { approval: "审批", decision: "决定", blocked: "受阻" },
+    types: { approval: "审批", decision: "决定", blocked: "受阻", alert: "告警" },
     days: { today: "今天", earlier: "更早" },
     mentionsEmpty: {
         title: "没有提及",

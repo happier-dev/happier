@@ -51,6 +51,22 @@ export function getInboxNeedsYouItemTypes() {
     return ['approval', 'decision', 'blocked'] as const;
 }
 
+/** How "Needs you" groups and names its rows, in reading order: what is asked of the person, then what is blocked. */
+export const INBOX_NEEDS_YOU_GROUPS = ['approval', 'decision', 'blocked', 'alert'] as const;
+export type InboxNeedsYouGroup = typeof INBOX_NEEDS_YOU_GROUPS[number];
+/** Notices that hold no session or run of their own: a failing service's health alert, a Machine's removal reminder. */
+const INBOX_ALERT_SOURCES: ReadonlySet<string> = new Set(['account_notice', 'managed_machine']);
+
+/**
+ * The one grouping of a "Needs you" row: its type, except that a blocking notice reads as an alert (R19-D3 B). It
+ * blocks nothing of its own, so the page must not count it among blocked sessions.
+ */
+export function inboxNeedsYouGroupOf(item: Pick<InboxItem, 'type' | 'source'>): InboxNeedsYouGroup | null {
+    if (item.type === 'approval' || item.type === 'decision') return item.type;
+    if (item.type !== 'blocked') return null;
+    return INBOX_ALERT_SOURCES.has(item.source.kind) ? 'alert' : 'blocked';
+}
+
 export type InboxMachineSignInTarget = Readonly<{
     kind: 'managed_machine_sign_in_approval';
     serverId: string;
@@ -452,7 +468,7 @@ export function buildInboxItems(input: InboxItemsInput, previous: readonly Inbox
 export function selectInboxItemsForView(items: readonly InboxItem[], view: InboxItemView): readonly InboxItem[] {
     const selected = items.filter(item => item.view === view);
     return view === 'needs_you'
-        ? getInboxNeedsYouItemTypes().flatMap(type => selected.filter(item => item.type === type))
+        ? INBOX_NEEDS_YOU_GROUPS.flatMap(group => selected.filter(item => inboxNeedsYouGroupOf(item) === group))
         : selected.sort((left, right) => right.createdAt - left.createdAt);
 }
 

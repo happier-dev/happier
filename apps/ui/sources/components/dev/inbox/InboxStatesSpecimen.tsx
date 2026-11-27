@@ -78,6 +78,13 @@ function signInItems(now: number): InboxItem[] {
     context: t('managedRetention.consequence.deleteAt', { time: formatAsOfTime(now + 26 * 60 * MINUTE) }),
     createdAt: now - 40 * MINUTE, read: false, focus: reminderFocus, pageRoute: resolveInboxItemPageRoute(reminderFocus),
     source: { kind: 'managed_machine', serverId: SERVER, id: 'managed-gpu' },
+  }, {
+    // A failing service's health notice: with the removal reminder it reads under Alerts, not as a blocked session.
+    key: `notice:${SERVER}:health-orders`, producer: 'notice', type: 'blocked', view: 'needs_you', title: 'Orders API is failing',
+    context: 'It stopped answering its health check on Build box. Open it to see the last log lines.',
+    createdAt: now - 12 * MINUTE, read: false, focus: { kind: 'notice', id: 'health-orders', serverId: SERVER },
+    pageRoute: resolveInboxItemPageRoute({ kind: 'notice', id: 'health-orders', serverId: SERVER }),
+    source: { kind: 'account_notice', id: 'health-orders', serverId: SERVER, displayName: null },
   }];
 }
 

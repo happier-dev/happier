@@ -2,11 +2,12 @@
 
 export const en = {
     pageDescription: 'What needs you, what changed and who mentioned you.',
-    needsYouSummary: ({ approvals, decisions, blocked, failedActions, actions }: { approvals: number; decisions: number; blocked: number; failedActions: number; actions: number }) => {
+    needsYouSummary: ({ approvals, decisions, blocked, alerts, failedActions, actions }: { approvals: number; decisions: number; blocked: number; alerts: number; failedActions: number; actions: number }) => {
         const parts = [
             approvals > 0 ? `${approvals} ${approvals === 1 ? 'approval' : 'approvals'}` : null,
             decisions > 0 ? `${decisions} ${decisions === 1 ? 'decision' : 'decisions'}` : null,
             blocked > 0 ? `${blocked} ${blocked === 1 ? 'blocked session' : 'blocked sessions'}` : null,
+            alerts > 0 ? `${alerts} ${alerts === 1 ? 'alert' : 'alerts'}` : null,
             failedActions > 0 ? `${failedActions} ${failedActions === 1 ? 'failed action' : 'failed actions'}` : null,
             actions > 0 ? `${actions} ${actions === 1 ? 'action to check' : 'actions to check'}` : null,
         ].filter((part): part is string => part !== null);
@@ -44,7 +45,7 @@ export const en = {
     popover: {
         updates: ({ count }: { count: number }) => (count === 1 ? '1 update' : `${count} updates`),
     },
-    types: { approval: "Approvals", decision: "Decisions", blocked: "Blocked" },
+    types: { approval: "Approvals", decision: "Decisions", blocked: "Blocked", alert: "Alerts" },
     days: { today: "Today", earlier: "Earlier" },
     mentionsEmpty: {
         title: "No mentions",

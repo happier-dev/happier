@@ -9081,11 +9081,12 @@ const en = Shared_inboxWorkTranslations.en;
 
 const ja: typeof en = {
     pageDescription: "あなたを待っていること、変わったこと、あなたをメンションした人。",
-    needsYouSummary: ({ approvals, decisions, blocked, failedActions, actions }: { approvals: number; decisions: number; blocked: number; failedActions: number; actions: number }) => {
+    needsYouSummary: ({ approvals, decisions, blocked, alerts, failedActions, actions }: { approvals: number; decisions: number; blocked: number; alerts: number; failedActions: number; actions: number }) => {
         const parts = [
             approvals > 0 ? `承認 ${approvals} 件` : null,
             decisions > 0 ? `判断 ${decisions} 件` : null,
             blocked > 0 ? `ブロック中のセッション ${blocked} 件` : null,
+            alerts > 0 ? `アラート ${alerts} 件` : null,
             failedActions > 0 ? `失敗したアクション ${failedActions} 件` : null,
             actions > 0 ? `確認が必要なアクション ${actions} 件` : null,
         ].filter((part): part is string => part !== null);
@@ -9118,7 +9119,7 @@ const ja: typeof en = {
     popover: {
         updates: ({ count }) => `更新 ${count} 件`,
     },
-    types: { approval: "承認", decision: "判断", blocked: "ブロック中" },
+    types: { approval: "承認", decision: "判断", blocked: "ブロック中", alert: "アラート" },
     days: { today: "今日", earlier: "それ以前" },
     mentionsEmpty: {
         title: "メンションはありません",

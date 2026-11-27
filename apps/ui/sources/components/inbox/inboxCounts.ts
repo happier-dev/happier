@@ -1,5 +1,5 @@
 import type { InboxModel } from '@/hooks/inbox/useInboxModel';
-import type { InboxItem } from './inboxItems';
+import { inboxNeedsYouGroupOf, type InboxItem } from './inboxItems';
 import { admittedInboxDiscussionOccurrences, inboxItemView, type InboxDiscussionSource } from './inboxItemProjection';
 
 /**
@@ -65,7 +65,7 @@ export type InboxCountSource = Readonly<{
 }>;
 
 export type InboxNeedsYouKinds = Readonly<{
-    approvals: number; decisions: number; blocked: number; failedActions: number; actions: number;
+    approvals: number; decisions: number; blocked: number; alerts: number; failedActions: number; actions: number;
 }>;
 
 /**
@@ -77,22 +77,25 @@ export function countInboxNeedsYouByKind(model: InboxCountSource & Readonly<{ it
     let approvals = model.openApprovals.length;
     let decisions = 0;
     let blocked = 0;
+    let alerts = 0;
     for (const item of model.items) {
         if (item.source.kind === 'approval' || !isInboxNeedsYouItem(item)) continue;
-        if (item.type === 'approval') approvals += 1;
-        else if (item.type === 'decision') decisions += 1;
+        const group = inboxNeedsYouGroupOf(item);
+        if (group === 'approval') approvals += 1;
+        else if (group === 'decision') decisions += 1;
+        else if (group === 'alert') alerts += 1;
         else blocked += 1;
     }
     let failedActions = 0;
     for (const entry of Array.from(model.actionOperationEntries)) if (entry?.reason === 'failed') failedActions += 1;
-    return { approvals, decisions, blocked, failedActions, actions: model.actionOperationEntries.length - failedActions };
+    return { approvals, decisions, blocked, alerts, failedActions, actions: model.actionOperationEntries.length - failedActions };
 }
 
 /** The "Needs you" view's share of the count. */
 export function countInboxNeedsYou(model: InboxCountSource): number {
     if (model.items) {
         const kinds = countInboxNeedsYouByKind({ ...model, items: model.items });
-        return kinds.approvals + kinds.decisions + kinds.blocked + kinds.failedActions + kinds.actions;
+        return kinds.approvals + kinds.decisions + kinds.blocked + kinds.alerts + kinds.failedActions + kinds.actions;
     }
     return countInboxItems({
         sessions: model.sessionPresentation.sessionsNeedingAttention.length,

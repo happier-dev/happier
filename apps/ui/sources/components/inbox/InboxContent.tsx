@@ -47,7 +47,7 @@ import { countInboxUpdates, hasInboxNeedsYouRows } from './inboxCounts';
 import { InboxWorkItemRow, presentInboxSessionStatus } from './workGroups/InboxWorkItemRow';
 import { buildInboxSessionContextLine } from './workGroups/inboxSessionContextLine';
 import { createInboxItemRoute, isFocusedInboxWorkItem } from './inboxItemFocus';
-import { getInboxNeedsYouItemTypes, selectInboxItemsForView, type InboxItem, type InboxItemType, type InboxItemView } from './inboxItems';
+import { INBOX_NEEDS_YOU_GROUPS, inboxNeedsYouGroupOf, selectInboxItemsForView, type InboxItem, type InboxItemType, type InboxItemView, type InboxNeedsYouGroup } from './inboxItems';
 import { InboxWorkRow } from './InboxWorkRow';
 import { InboxPluginSessionLines } from './InboxPluginSessionLines';
 import type { InboxPluginSessionRow } from './inboxItemProjection';
@@ -69,8 +69,11 @@ const ITEM_MARKS: Readonly<Record<InboxItemType, IconName>> = {
     approval: 'shield-check', decision: 'question', blocked: 'pause-circle', update: 'bell', mention: 'at',
 };
 
-/** Needs you reads by what is asked of the person (lab P4): approvals, then decisions, then what is blocked. */
-const NEEDS_YOU_TYPES = getInboxNeedsYouItemTypes().map(type => ({ type, icon: ITEM_MARKS[type], attention: type !== 'blocked' }));
+/** A notice that needs you (a failing service, a Machine about to be removed) is an alert, not blocked work. */
+const GROUP_MARKS: Readonly<Record<InboxItemType | InboxNeedsYouGroup, IconName>> = { ...ITEM_MARKS, alert: 'warning' };
+
+/** Needs you reads by what is asked of the person (lab P4): approvals, then decisions, then what is blocked, then alerts. */
+const NEEDS_YOU_TYPES = INBOX_NEEDS_YOU_GROUPS.map(type => ({ type, icon: GROUP_MARKS[type], attention: type === 'approval' || type === 'decision' }));
 
 const BoundReadyRow = React.memo(function BoundReadyRow(props: Readonly<{
     session: SessionPresentationRecord; presentationSource?: SessionListPresentationSource;
@@ -159,7 +162,7 @@ const InboxItemRow = React.memo(function InboxItemRow(props: Readonly<{
         ) : item.workStatus?.tone === 'danger' ? (
             // A failing item says so by its rose mark alone (InboxWorkRow keeps the word in quiet ink).
             <WorkStatusRowMark status={item.workStatus} testIDSuffix={`inbox.item.${item.key}`} />
-        ) : <Icon name={item.focus.kind === 'execution_run' ? item.type === 'approval' ? 'hand' : 'play-circle' : ITEM_MARKS[item.type]} size={18}
+        ) : <Icon name={item.focus.kind === 'execution_run' ? item.type === 'approval' ? 'hand' : 'play-circle' : GROUP_MARKS[inboxNeedsYouGroupOf(item) ?? item.type]} size={18}
             color={item.view === 'needs_you' ? theme.colors.state.attention.foreground : theme.colors.text.secondary} />}
         trailingAccessory={item.producer === 'notice' ? (
             <InboxDismissRowMenu testID={`inbox.item.${item.key}.dismiss`} onDismiss={dismiss}
@@ -367,7 +370,7 @@ function useInboxContentParts(props: InboxContentProps, segmentSize: number) {
     };
 
     const needsYouSections = React.useMemo(() => NEEDS_YOU_TYPES
-        .map((entry) => ({ ...entry, items: viewItems.filter((item) => item.type === entry.type) }))
+        .map((entry) => ({ ...entry, items: viewItems.filter((item) => inboxNeedsYouGroupOf(item) === entry.type) }))
         .filter((entry) => entry.items.length > 0), [viewItems]);
     // Updates and Mentions read newest first under the day they arrived (lab P4 "Today").
     const daySections = React.useMemo(() => {

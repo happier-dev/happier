@@ -9127,11 +9127,12 @@ const en = Shared_inboxWorkTranslations.en;
 
 const ca: typeof en = {
     pageDescription: "El que et necessita, el que ha canviat i qui t'ha mencionat.",
-    needsYouSummary: ({ approvals, decisions, blocked, failedActions, actions }: { approvals: number; decisions: number; blocked: number; failedActions: number; actions: number }) => {
+    needsYouSummary: ({ approvals, decisions, blocked, alerts, failedActions, actions }: { approvals: number; decisions: number; blocked: number; alerts: number; failedActions: number; actions: number }) => {
         const parts = [
             approvals > 0 ? `${approvals} ${approvals === 1 ? 'aprovació' : 'aprovacions'}` : null,
             decisions > 0 ? `${decisions} ${decisions === 1 ? 'decisió' : 'decisions'}` : null,
             blocked > 0 ? `${blocked} ${blocked === 1 ? 'sessió bloquejada' : 'sessions bloquejades'}` : null,
+            alerts > 0 ? `${alerts} ${alerts === 1 ? 'alerta' : 'alertes'}` : null,
             failedActions > 0 ? `${failedActions} ${failedActions === 1 ? 'acció fallida' : 'accions fallides'}` : null,
             actions > 0 ? `${actions} ${actions === 1 ? 'acció per revisar' : 'accions per revisar'}` : null,
         ].filter((part): part is string => part !== null);
@@ -9164,7 +9165,7 @@ const ca: typeof en = {
     popover: {
         updates: ({ count }) => (count === 1 ? '1 novetat' : `${count} novetats`),
     },
-    types: { approval: "Aprovacions", decision: "Decisions", blocked: "Bloquejades" },
+    types: { approval: "Aprovacions", decision: "Decisions", blocked: "Bloquejades", alert: "Alertes" },
     days: { today: "Avui", earlier: "Abans" },
     mentionsEmpty: {
         title: "Cap menció",

@@ -9156,7 +9156,7 @@ const en = Shared_inboxWorkTranslations.en;
 
 const pl: typeof en = {
     pageDescription: "Co na ciebie czeka, co się zmieniło i kto o tobie wspomniał.",
-    needsYouSummary: ({ approvals, decisions, blocked, failedActions, actions }: { approvals: number; decisions: number; blocked: number; failedActions: number; actions: number }) => {
+    needsYouSummary: ({ approvals, decisions, blocked, alerts, failedActions, actions }: { approvals: number; decisions: number; blocked: number; alerts: number; failedActions: number; actions: number }) => {
         const plural = (count: number, one: string, few: string, many: string) => {
             const ten = count % 10;
             const hundred = count % 100;
@@ -9166,6 +9166,7 @@ const pl: typeof en = {
             approvals > 0 ? plural(approvals, 'zatwierdzenie', 'zatwierdzenia', 'zatwierdzeń') : null,
             decisions > 0 ? plural(decisions, 'decyzja', 'decyzje', 'decyzji') : null,
             blocked > 0 ? plural(blocked, 'zablokowana sesja', 'zablokowane sesje', 'zablokowanych sesji') : null,
+            alerts > 0 ? plural(alerts, 'alert', 'alerty', 'alertów') : null,
             failedActions > 0 ? plural(failedActions, 'nieudana akcja', 'nieudane akcje', 'nieudanych akcji') : null,
             actions > 0 ? plural(actions, 'akcja do sprawdzenia', 'akcje do sprawdzenia', 'akcji do sprawdzenia') : null,
         ].filter((part): part is string => part !== null);
@@ -9198,7 +9199,7 @@ const pl: typeof en = {
     popover: {
         updates: ({ count }) => `Nowości: ${count}`,
     },
-    types: { approval: "Zatwierdzenia", decision: "Decyzje", blocked: "Zablokowane" },
+    types: { approval: "Zatwierdzenia", decision: "Decyzje", blocked: "Zablokowane", alert: "Alerty" },
     days: { today: "Dzisiaj", earlier: "Wcześniej" },
     mentionsEmpty: {
         title: "Brak wzmianek",
