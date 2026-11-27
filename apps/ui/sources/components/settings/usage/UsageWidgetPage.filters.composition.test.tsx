@@ -1328,12 +1328,12 @@ describe('mounted Usage page scope commands', () => {
             // The ownership refusal's Retry is the page's one Retry, which rereads the saved Views too (acceptance 11-22 #20).
             await waitForHomeGovernance(() => {
                 expect(reader!.readCurrentUiContext()!.commands.map(command => command.title)).toContain(t('usage.board.page.retryRead'));
+                // Retry and each read's diagnosis can publish independently. The one notice must disclose both failures (J-B8).
+                const both = screen.findHostByTestId(`${noticeId}-text`)?.props.accessibilityLabel;
+                expect(both).toContain(t('connectedServices.errors.quotaOwnershipUnproven', {}));
+                expect(both).toContain(t('usage.board.page.viewsReadFailed'));
             });
             expect(retryControls().map(node => node.props.testID)).toEqual(['usage-page.header.retry']);
-            // The one notice discloses both failures: the ownership consequence and the unread saved views (J-B8).
-            const both = screen.findHostByTestId(`${noticeId}-text`)?.props.accessibilityLabel;
-            expect(both).toContain(t('connectedServices.errors.quotaOwnershipUnproven', {}));
-            expect(both).toContain(t('usage.board.page.viewsReadFailed'));
             const readsBeforeRetry = savedViewsReads;
             savedViewsFailed = false;
             await screen.pressByTestIdAsync('usage-page.header.retry');
@@ -1348,6 +1348,7 @@ describe('mounted Usage page scope commands', () => {
             const diagnosis = screen.findHostByTestId(`${noticeId}-text`)?.props.accessibilityLabel;
             expect(diagnosis).toContain(ownershipRefused ? t('connectedServices.errors.quotaOwnershipUnproven', {}) : usageSourceTitle('quota'));
             if (accountingFails) expect(diagnosis).toContain(usageSourceTitle('accounting'));
+            if (viewsFail) expect(diagnosis).not.toContain(t('usage.board.page.viewsReadFailed'));
         });
         // An ownership refusal holds the switching order back and offers the page's one Retry too (acceptance 11-22 #20).
         expect(retryControls().map(node => node.props.testID)).toEqual(['usage-page.header.retry']);

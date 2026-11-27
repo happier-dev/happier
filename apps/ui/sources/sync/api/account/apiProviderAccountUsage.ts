@@ -4,11 +4,12 @@ import {
     createServerFetchForActiveServer,
     type ExpectedActiveServerFetchBasis,
 } from '@/sync/http/client';
+import { ConnectedServiceApiError } from './connectedServiceApiError';
 import { HappyError } from '@/utils/errors/errors';
 import { backoff } from '@/utils/timing/time';
 
 import { ProviderAccountUsageRecordIdSchema, type ProviderAccountUsageRecordId, type ProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol/connect/account-usage-primitives';
-import { QualifiedProviderAccountUsageReadErrorV4Schema, QualifiedProviderAccountUsageRecordResponseV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import { QualifiedProviderAccountUsageOwnershipErrorV4Schema, QualifiedProviderAccountUsageReadErrorV4Schema, QualifiedProviderAccountUsageRecordResponseV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { z } from 'zod/mini';
 import { ConnectedServiceQuotaGetInputV1Schema, QualifiedProviderAccountUsageHistoryRequestV4Schema, QualifiedProviderAccountUsageHistoryResponseV4Schema, openProviderAccountUsageRecordV4, createProviderAccountUsageHistoryEntryOpenerV4, projectProviderAccountUsageEnteredPriceV1, projectProviderAccountUsageQuotaReadV1, ProviderAccountUsageReadErrorV1, type ConnectedServiceQuotaGetInputV1, type ConnectedServiceQuotaGetResultV1, type ProviderAccountUsageHistoryWitnessV1 } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
 import { QualifiedConnectedServiceUsageSourceResolveV4Schema, QualifiedConnectedServiceUsageSourceResolutionV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
@@ -957,7 +958,12 @@ function admitProviderAccountUsageRead(response: UsageHttpObservation): Readonly
     }
     if (response.jsonFailure) throw response.jsonFailure.error;
     const json = response.json;
-    if (response.status === 409 && QualifiedProviderAccountUsageReadErrorV4Schema.safeParse(json).success) throw new ProviderAccountUsageReadErrorV1('provider_account_usage_content_mode_mismatch');
+    if (response.status === 409) {
+        const ownership = QualifiedProviderAccountUsageOwnershipErrorV4Schema.safeParse(json);
+        // A Home-authored ownership refusal survives the connected-service Action boundary.
+        if (ownership.success) throw new ConnectedServiceApiError({ code: ownership.data.error, status: response.status });
+        if (QualifiedProviderAccountUsageReadErrorV4Schema.safeParse(json).success) throw new ProviderAccountUsageReadErrorV1('provider_account_usage_content_mode_mismatch');
+    }
     if (!response.ok) {
         const code = extractErrorCode(json) ?? 'provider_account_usage_read_failed';
         throw new HappyError(code, false, { status: response.status, kind: 'server', code });
