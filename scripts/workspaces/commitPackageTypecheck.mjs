@@ -40,7 +40,7 @@ import { homedir, tmpdir } from 'node:os';
 import { basename, join, posix, relative, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { isDeepStrictEqual } from 'node:util';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { compilerDiagnosticFromLine } from '../testing/lib/compilerBaseline.mjs';
 import { diagnosticHunks, newDiagnostics } from './commitTypeCoherenceDiagnostics.mjs';
 import { WORKSPACE_BUNDLE_LOCK_BUSY_ERROR_CODE, withWorkspaceBundleLock } from './workspaceBundleLock.mjs';
@@ -1622,10 +1622,16 @@ async function workerRows(argv, entry) {
           // Read the selected tree's config even when its dependency generation
           // is already warm. Interactive checks use this same package/compiler owner.
           moveWorktree({ repo: request.repo, state, worktreeRev: request.ref, log: () => {} }, tree);
-          const { resolveTypeScriptCliInvocation } = await import('./resolveTypeScriptCliInvocation.mjs');
-          className = resolveTypeScriptCliInvocation({ args: ['-p', 'tsconfig.json'],
-            workspaceDir: join(state, 'worktree', scope), repoRoot: join(state, 'worktree'), env: workerEnv,
-          }).admissionClass;
+          // The archived runner has no dependencies. Resolve in the prepared
+          // tree, in a fresh process so another judged tree cannot reuse its modules.
+          const worktree = join(state, 'worktree');
+          const selector = pathToFileURL(join(worktree, 'scripts/workspaces/resolveTypeScriptCliInvocation.mjs')).href;
+          className = execFileSync(process.execPath, ['--input-type=module', '-e', `
+            import { resolveTypeScriptCliInvocation } from ${JSON.stringify(selector)};
+            process.stdout.write(resolveTypeScriptCliInvocation({ args: ['-p', 'tsconfig.json'],
+              workspaceDir: ${JSON.stringify(join(worktree, scope))}, repoRoot: ${JSON.stringify(worktree)},
+              env: process.env }).admissionClass);
+          `], { cwd: worktree, env: workerEnv, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] });
         }
         const command = admittedCommand(state, payload, false, projects, className, { trees: [tree], files: request.packages });
         const child = spawn(command[0], command.slice(1), { env: workerEnv, stdio: ['inherit', 'pipe', 'inherit'] });

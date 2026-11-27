@@ -1114,13 +1114,31 @@ test('an exact-tree worker reads the Git payload even when the source mirror can
   ]);
 });
 
-test('named app workers use package and compiler admission classes while gates retain their class', { skip: process.platform === 'win32' }, async t => {
+test('dependency-free archived app workers use prepared compiler admission classes while gates retain their class', { skip: process.platform === 'win32' }, async t => {
   const { repo, state, bin, write, git, admissionLog } = await exactTreeWorkerFixture(t);
   assert.match(readFileSync(admissionLog, 'utf8'), /admit gate-package-typecheck/u);
-  // Forward to the real selector and its dependencies; only SSH, admission and
-  // the compiler executable are fixture process boundaries.
-  await write('scripts/workspaces/resolveTypeScriptCliInvocation.mjs',
-    `export { resolveTypeScriptCliInvocation } from ${JSON.stringify(new URL('./resolveTypeScriptCliInvocation.mjs', import.meta.url).href)};`);
+  // Ship the real selector and its relative module closure. Dependencies exist
+  // only in the prepared judged worktree, never in the archived tooling root.
+  const source = fileURLToPath(new URL('../../', import.meta.url));
+  const { preProcessFile } = createRequire(import.meta.url)('typescript');
+  const copied = new Set();
+  const copyModule = async path => {
+    if (copied.has(path)) return;
+    copied.add(path);
+    const contents = readFileSync(join(source, path), 'utf8');
+    await write(path, contents);
+    for (const { fileName } of preProcessFile(contents).importedFiles) {
+      if (fileName.startsWith('.') && existsSync(join(source, dirname(path), fileName))) {
+        await copyModule(join(dirname(path), fileName));
+      }
+    }
+  };
+  await copyModule('scripts/workspaces/resolveTypeScriptCliInvocation.mjs');
+  await write('apps/stack/scripts/utils/dev_targets/remote_dependency_bootstrap.mjs', `
+import { symlinkSync } from 'node:fs';
+symlinkSync(${JSON.stringify(join(source, 'node_modules'))}, 'node_modules', 'dir');
+`);
+  git('add', '--', ...copied, 'apps/stack/scripts/utils/dev_targets/remote_dependency_bootstrap.mjs');
   for (const app of ['ui', 'cli', 'server']) {
     await write(`apps/${app}/package.json`, JSON.stringify({ name: `@fixture/${app}`, scripts: {
       'typecheck:source:finite': 'node ../../scripts/workspaces/runTypeScriptCli.mjs -p tsconfig.json',
