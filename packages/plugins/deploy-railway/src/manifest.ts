@@ -3,6 +3,7 @@ import { railwayHostAccess, railwayIdentity } from './platform/account.js';
 import { railwaySelectorSchema } from './platform/coordinates.js';
 import { coreActions, railwayLinkContentSchema } from './platform/coreActions.js';
 import { railwayScopeCreateActions } from './platform/createScope.js';
+import { railwayScopeDeleteActions } from './platform/deleteScope.js';
 import { domainActions } from './platform/domains.js';
 import { buildLogsAction, runtimeLogsAction } from './platform/logs.js';
 import { optionsAction, optionsInputTypes, optionsResources } from './platform/options.js';
@@ -26,7 +27,7 @@ export const plugin = definePlugin({
   },
   ui: { translations: locales.map(locale => ({ locale, resourceId: `i18n-${locale.toLowerCase()}` })) },
   inputTypes: optionsInputTypes,
-  actions: { ...coreActions, ...railwayScopeCreateActions, ...domainActions, ...variableActions, 'target-options-read': optionsAction,
+  actions: { ...coreActions, ...railwayScopeCreateActions, ...railwayScopeDeleteActions, ...domainActions, ...variableActions, 'target-options-read': optionsAction,
     'build-logs-read': buildLogsAction, 'runtime-logs-read': runtimeLogsAction },
   deploymentTargets: { runtime: {
     role: 'runtime', targetKind: 'railway', title: 'Railway', icon: 'server-outline',

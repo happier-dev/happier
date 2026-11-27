@@ -728,6 +728,23 @@ an environment in the selected project. Agents use the same approval-required
 plugin Actions, `happier.deploy.railway/actions/project-create` and
 `happier.deploy.railway/actions/environment-create`. Railway billing may apply.
 
+To delete a Railway scope, agents and CLI callers first invoke
+`happier.deploy.railway/actions/project-delete-preview` or
+`happier.deploy.railway/actions/environment-delete-preview`. Pass the returned
+scope and lists unchanged to the corresponding `project-delete` or
+`environment-delete` Action with the same Railway account and IDs. Review names
+the Railway resources and the visible Happier Environments and Links that will
+stop working. Happier retains those records. Railway databases appear in the
+service inventory, with Railway's known database templates also identified
+separately.
+
+If the Railway inventory grows or a reviewed name changes, the Action refuses
+before deletion. Preview and review again. Railway executes the cascade once by
+scope ID, so a resource created concurrently after the inventory read can be
+included. If Railway does not acknowledge deletion, Happier checks whether the
+scope is gone once. A scope whose absence could not be confirmed is returned as
+`kept-unchecked`.
+
 The protected Link and receipt carry provider coordinates as
 `providerEnvironment: { kind: 'native', selection }`. Each deployment target
 declares its closed `nativeSelectorSchema`. Protocol composes that schema into

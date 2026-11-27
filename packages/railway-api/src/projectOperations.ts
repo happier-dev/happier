@@ -17,6 +17,8 @@ const boolean = defineProtocolUnion([defineProtocolLiteral(true), defineProtocol
 const choice = defineProtocolObject({ id: text, name: text }, open);
 const choices = defineProtocolArray(choice);
 const optionalText = defineProtocolUnion([text, defineProtocolLiteral(null)]);
+const serviceChoice = defineProtocolObject({ id: text, name: text, templateId: optionalText.optional() }, open);
+const scopeEnvironment = defineProtocolObject({ id: text, name: text, projectId: text }, open);
 const pageInfo = defineProtocolObject({ endCursor: optionalText, hasNextPage: boolean }, open);
 const createdProject = defineProtocolObject({
   id: text, name: text, workspaceId: text,
@@ -24,7 +26,7 @@ const createdProject = defineProtocolObject({
 }, open);
 const createdEnvironment = defineProtocolObject({ id: text, name: text, projectId: text }, open);
 const connection = defineProtocolObject({
-  edges: defineProtocolArray(defineProtocolObject({ node: choice }, open)),
+  edges: defineProtocolArray(defineProtocolObject({ node: serviceChoice }, open)),
   pageInfo,
 }, open);
 const accountProjectsCursor = defineProtocolObject({
@@ -53,7 +55,7 @@ const environmentServices = defineProtocolObject({
 }, open);
 const volumeAttachment = defineProtocolObject({
   environmentId: text, serviceId: optionalText, volumeId: text,
-  deletedAt: optionalText, isPendingDeletion: boolean,
+  deletedAt: optionalText, isPendingDeletion: boolean, volume: choice.optional(),
 }, open);
 const volumeAttachments = defineProtocolObject({
   edges: defineProtocolArray(defineProtocolObject({ node: volumeAttachment }, open)), pageInfo,
@@ -71,12 +73,24 @@ const port = defineProtocolNumber({ integer: true, minimum: 1, maximum: 65535 })
 const tcpProxies = defineProtocolArray(defineProtocolObject({ domain: text, proxyPort: port, applicationPort: port }, open));
 const connectionFields = 'edges { node { id name } } pageInfo { hasNextPage endCursor }';
 const volumeAttachmentFields = 'edges { node { environmentId serviceId volumeId deletedAt isPendingDeletion } } pageInfo { hasNextPage endCursor }';
+const namedVolumeAttachmentFields = 'edges { node { environmentId serviceId volumeId deletedAt isPendingDeletion volume { id name } } } pageInfo { hasNextPage endCursor }';
 const deleteService = `mutation DeleteServiceInstance($id: String!, $environmentId: String!) {
   serviceDelete(id: $id, environmentId: $environmentId)
 }`;
 
 type Choice = ProtocolSchemaOutput<typeof choice>;
-type Page = Readonly<{ choices: Choice[]; nextCursor: string | null }>;
+type ServiceChoice = ProtocolSchemaOutput<typeof serviceChoice>;
+type Page<T = Choice> = Readonly<{ choices: T[]; nextCursor: string | null }>;
+type ScopeSelection = Readonly<{ projectId: string; environmentId?: string }>;
+type ScopeInventory = Readonly<{
+  scope: Choice;
+  environments: Choice[];
+  services: Choice[];
+  databases: Choice[];
+  volumes: Choice[];
+}>;
+const databaseTemplateCodes = ['postgres', 'mysql', 'redis', 'mongo'] as const;
+const databaseTemplates = databaseTemplateCodes.map(code => `${code}: template(code: "${code}") { id }`).join(' ');
 type ServiceSelection = Readonly<{
   projectId: string;
   environmentId: string;
@@ -109,7 +123,7 @@ function readNextCursor({ hasNextPage, endCursor }: ProtocolSchemaOutput<typeof 
   return endCursor;
 }
 
-function readChoicePage(value: unknown, after: string | null): Page {
+function readChoicePage(value: unknown, after: string | null): Page<ServiceChoice> {
   const parsed = connection.safeParse(value);
   if (!parsed.success) throw new NativeError('railway_invalid_response');
   return { choices: parsed.data.edges.map(edge => edge.node), nextCursor: readNextCursor(parsed.data.pageInfo, after) };
@@ -153,8 +167,8 @@ export function createRailwayProjectOperations(request: typeof fetch, signal?: A
     return { id, name };
   }
 
-  async function listPages(readPage: (after: string | null) => Promise<Page>): Promise<Choice[]> {
-    const choices: Choice[] = [];
+  async function listPages<T>(readPage: (after: string | null) => Promise<Page<T>>): Promise<T[]> {
+    const choices: T[] = [];
     let after: string | null = null;
     for (;;) {
       const page = await readPage(after);
@@ -210,18 +224,21 @@ export function createRailwayProjectOperations(request: typeof fetch, signal?: A
     return parsed.data;
   }
 
-  async function readProjectPage(projectId: string, field: 'environments' | 'services', after: string | null): Promise<Page> {
+  async function readProjectPage(projectId: string, field: 'environments' | 'services' | 'volumes', after: string | null,
+    includeServiceTemplate = false): Promise<Page<ServiceChoice>> {
+    const fields = includeServiceTemplate ? 'edges { node { id name templateId } } pageInfo { hasNextPage endCursor }' : connectionFields;
     const data = await graphql(
-      `query($projectId: String!, $after: String) { project(id: $projectId) { ${field}(after: $after) { ${connectionFields} } } }`,
+      `query($projectId: String!, $after: String) { project(id: $projectId) { ${field}(after: $after) { ${fields} } } }`,
       { projectId, after },
     );
     return readChoicePage(child(data.project, field), after);
   }
 
-  async function readEnvironmentServicesPage(projectId: string, environmentId: string, after: string | null, templateCode?: string) {
+  async function readEnvironmentServicesPage(projectId: string, environmentId: string, after: string | null, templateCode?: string,
+    includeServiceTemplate = false): Promise<Page<ServiceChoice>> {
     const templateInput = templateCode === undefined ? '' : ', $templateCode: String!';
     const templateQuery = templateCode === undefined ? '' : 'template(code: $templateCode) { id }';
-    const provenance = templateCode === undefined ? '' : 'service { templateId }';
+    const provenance = templateCode !== undefined || includeServiceTemplate ? 'service { templateId }' : '';
     const data = await graphql(`query($projectId: String!, $environmentId: String!, $after: String${templateInput}) {
       ${templateQuery}
       environment(id: $environmentId, projectId: $projectId) { id projectId serviceInstances(after: $after) {
@@ -236,7 +253,7 @@ export function createRailwayProjectOperations(request: typeof fetch, signal?: A
     const { edges, pageInfo } = parsed.data.serviceInstances;
     const choices = edges.flatMap(({ node }) => {
       if (node.deletedAt !== null || template && node.service?.templateId !== template.id) return [];
-      return [{ id: node.serviceId, name: node.serviceName }];
+      return [{ id: node.serviceId, name: node.serviceName, ...(includeServiceTemplate && node.service ? { templateId: node.service.templateId } : {}) }];
     });
     return { choices, nextCursor: readNextCursor(pageInfo, after) };
   }
@@ -294,9 +311,11 @@ export function createRailwayProjectOperations(request: typeof fetch, signal?: A
   async function readEnvironmentVolumeAttachments(
     projectId: string,
     { id, volumeInstances }: ProtocolSchemaOutput<typeof volumeEnvironment>,
+    includeNames = false,
   ) {
     const attachments: ProtocolSchemaOutput<typeof volumeAttachment>[] = [];
     let instances = volumeInstances;
+    const fields = includeNames ? namedVolumeAttachmentFields : volumeAttachmentFields;
     let after: string | null = null;
     for (;;) {
       for (const { node } of instances.edges) {
@@ -306,7 +325,7 @@ export function createRailwayProjectOperations(request: typeof fetch, signal?: A
       after = readNextCursor(instances.pageInfo, after);
       if (after === null) return attachments;
       const response = await graphql(`query($projectId: String!, $environmentId: String!, $after: String!) {
-        environment(id: $environmentId, projectId: $projectId) { id projectId volumeInstances(after: $after) { ${volumeAttachmentFields} } }
+        environment(id: $environmentId, projectId: $projectId) { id projectId volumeInstances(after: $after) { ${fields} } }
       }`, { projectId, environmentId: id, after });
       const next = volumeEnvironment.safeParse(response.environment);
       if (!next.success || next.data.id !== id || child(response.environment, 'projectId') !== projectId) {
@@ -352,6 +371,72 @@ export function createRailwayProjectOperations(request: typeof fetch, signal?: A
       url: `https://railway.com/project/${encodeURIComponent(projectId)}/volume/${encodeURIComponent(own.volumeId)}?environmentId=${encodeURIComponent(linkedEnvironment)}` };
   }
 
+  async function readScope(selection: ScopeSelection, includeInventory: boolean) {
+    const { projectId, environmentId } = selection;
+    const templates = includeInventory ? databaseTemplates : '';
+    if (environmentId === undefined) {
+      const response = await graphql(`query($projectId: String!) {
+        project(id: $projectId) { id name } ${templates}
+      }`, { projectId });
+      if (response.project === null) return null;
+      const scope = choice.safeParse(response.project);
+      if (!scope.success || scope.data.id !== projectId) throw new NativeError('railway_invalid_response');
+      return { scope: scope.data, response };
+    }
+    const volumes = includeInventory ? `volumeInstances { ${namedVolumeAttachmentFields} }` : '';
+    const response = await graphql(`query($projectId: String!, $environmentId: String!) {
+      environment(id: $environmentId, projectId: $projectId) { id name projectId ${volumes} } ${templates}
+    }`, { projectId, environmentId });
+    if (response.environment === null) return null;
+    const scope = scopeEnvironment.safeParse(response.environment);
+    if (!scope.success || scope.data.id !== environmentId || scope.data.projectId !== projectId) {
+      throw new NativeError('railway_invalid_response');
+    }
+    return { scope: { id: scope.data.id, name: scope.data.name }, response };
+  }
+
+  async function readScopeInventory(selection: ScopeSelection): Promise<ScopeInventory | null> {
+    const exact = await readScope(selection, true);
+    if (!exact) return null;
+    const { scope, response } = exact;
+    const { projectId, environmentId } = selection;
+    const templates = new Set(databaseTemplateCodes.flatMap(code => response[code] == null ? [] : [requireTemplateIdentity(response[code]).id]));
+    const [environments, services, volumes] = environmentId === undefined
+      ? await Promise.all([
+        listPages(after => readProjectPage(projectId, 'environments', after)),
+        listPages(after => readProjectPage(projectId, 'services', after, true)),
+        listPages(after => readProjectPage(projectId, 'volumes', after)),
+      ])
+      : await Promise.all([
+        [],
+        listPages(after => readEnvironmentServicesPage(projectId, environmentId, after, undefined, true)),
+        (async () => {
+          const initial = volumeEnvironment.safeParse(response.environment);
+          if (!initial.success) throw new NativeError('railway_invalid_response');
+          const attachments = await readEnvironmentVolumeAttachments(projectId, initial.data, true);
+          return attachments.map(({ volume, volumeId }) => {
+            if (!volume || volume.id !== volumeId) throw new NativeError('railway_invalid_response');
+            return volume;
+          });
+        })(),
+      ]);
+    const namedService = ({ id, name }: Choice) => ({ id, name });
+    return {
+      scope, environments, volumes,
+      services: services.map(namedService),
+      databases: services.filter(service => service.templateId != null && templates.has(service.templateId)).map(namedService),
+    };
+  }
+
+  async function deleteScope({ projectId, environmentId }: ScopeSelection): Promise<boolean> {
+    if (environmentId === undefined) {
+      const result = await graphql('mutation($id: String!) { projectDelete(id: $id) }', { id: projectId });
+      return result.projectDelete === true;
+    }
+    const result = await graphql('mutation($id: String!) { environmentDelete(id: $id) }', { id: environmentId });
+    return result.environmentDelete === true;
+  }
+
   async function deleteVolume(volumeId: string): Promise<void> {
     const data = await graphql('mutation($volumeId: String!) { volumeDelete(volumeId: $volumeId) }', { volumeId });
     if (data.volumeDelete !== true) throw new NativeError('railway_volume_delete_unconfirmed');
@@ -379,6 +464,9 @@ export function createRailwayProjectOperations(request: typeof fetch, signal?: A
     createProject,
     createEnvironment,
     deleteServiceInstance,
+    readScopeInventory,
+    deleteScope,
+    observeScopeAbsent: async (selection: ScopeSelection) => await readScope(selection, false) === null,
     readServiceVolume,
     deleteVolume,
     listProjects: (workspaceId?: string) => listPages(after => readProjectsPage(after, workspaceId)),
