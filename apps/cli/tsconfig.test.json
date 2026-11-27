@@ -4603,6 +4603,7 @@
     "src/workspaces/sync/workspaceSyncMutagenAdapter.test.ts",
     "src/workspaces/sync/workspaceSyncNativeConfinedFileSystem.test.ts",
     "src/workspaces/sync/workspaceSyncPreparation.test.ts",
+    "src/workspaces/sync/workspaceSyncRank7Decomposition.test.ts",
     "src/workspaces/sync/workspaceSyncRelationshipCreate.test.ts",
     "src/workspaces/sync/workspaceSyncRelationshipOwner.test.ts",
     "src/workspaces/sync/workspaceSyncRootOwnership.test.ts",

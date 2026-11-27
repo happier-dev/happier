@@ -2528,9 +2528,8 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
         failedIngressIds.add(activeIngressIds[index]!);
       }
     }
-    for (const [id, custody] of [...this.fences]) {
-      if (failedIngressIds.has(id)) continue;
-      const results = await Promise.allSettled(custody.ownedHandles.map(async (handle) => {
+    const releaseTrackedHandles = async (handles: readonly WorkspaceRootOwnershipHandle[]) => {
+      const results = await Promise.allSettled(handles.map(async (handle) => {
         this.pendingRootReleases.add(handle);
         this.notifyActivity();
         await handle.release();
@@ -2538,14 +2537,19 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
         this.notifyActivity();
         return handle;
       }));
-      const failedHandles: WorkspaceRootOwnershipHandle[] = [];
+      const failed: WorkspaceRootOwnershipHandle[] = [];
       for (let index = 0; index < results.length; index += 1) {
         const result = results[index]!;
         if (result.status === 'rejected') {
           cleanupFailures.push(result.reason);
-          failedHandles.push(custody.ownedHandles[index]!);
+          failed.push(handles[index]!);
         }
       }
+      return failed;
+    };
+    for (const [id, custody] of [...this.fences]) {
+      if (failedIngressIds.has(id)) continue;
+      const failedHandles = await releaseTrackedHandles(custody.ownedHandles);
       if (failedHandles.length === 0) {
         try {
           await this.releaseSharedHubParticipation(id);
@@ -2559,25 +2563,9 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
     }
     for (const [id, handles] of [...this.copyOwnedFences]) {
       if (failedIngressIds.has(id)) continue;
-      const results = await Promise.allSettled(handles.map(async (handle) => {
-        this.pendingRootReleases.add(handle);
-        this.notifyActivity();
-        await handle.release();
-        this.pendingRootReleases.delete(handle);
-        this.notifyActivity();
-        return handle;
-      }));
-      const failedHandles: WorkspaceRootOwnershipHandle[] = [];
-      for (let index = 0; index < results.length; index += 1) {
-        const result = results[index]!;
-        if (result.status === 'rejected') {
-          cleanupFailures.push(result.reason);
-          failedHandles.push(handles[index]!);
-        }
-      }
-      if (failedHandles.length === 0) this.copyOwnedFences.delete(id);
-      else this.copyOwnedFences.set(id, failedHandles);
+      const failedHandles = await releaseTrackedHandles(handles);
       if (failedHandles.length === 0) {
+        this.copyOwnedFences.delete(id);
         const releaseSource = this.copySourceReleases.get(id);
         if (releaseSource) {
           try {
@@ -2587,6 +2575,8 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
             cleanupFailures.push(error);
           }
         }
+      } else {
+        this.copyOwnedFences.set(id, failedHandles);
       }
     }
     for (const id of [...this.participantHubKeys.keys()]) {
@@ -2859,24 +2849,37 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
         if (this.statuses.delete(id)) this.notifyStatusWatch();
         this.reconcileStatusObservation(id);
       }
+      const publishFallback = async (
+        relationship: WorkspaceSyncRelationshipV1,
+        state: 'paused' | 'error',
+        opts?: Readonly<{ errorCode?: string; adopted?: WorkspaceSyncStatusV1; operationId?: string }>,
+      ): Promise<WorkspaceSyncStatusV1> => {
+        if (opts?.adopted) {
+          return this.publish({ ...opts.adopted, ...(opts.errorCode ? { errorCode: opts.errorCode } : { state }) });
+        }
+        const [alpha, beta] = await Promise.all([
+          this.resolveRef(relationship.alphaWorkspaceRefId, opts?.operationId),
+          this.resolveRef(relationship.betaWorkspaceRefId, opts?.operationId),
+        ]);
+        return this.publish({
+          relationshipId: relationship.relationshipId,
+          controllerMachineId: relationship.controllerMachineId,
+          state,
+          alphaPath: alpha?.rootPath ?? relationship.alphaWorkspaceRefId,
+          betaPath: beta?.rootPath ?? relationship.betaWorkspaceRefId,
+          mode: relationship.mode,
+          endpointStates: { alpha: null, beta: null },
+          conflictCount: 0,
+          lastCycleObservedAtMs: null,
+          ...(opts?.errorCode ? { errorCode: opts.errorCode } : {}),
+        });
+      };
       const statuses: WorkspaceSyncStatusV1[] = [];
       for (const relationship of activeRelationships) {
         const preparationError = failedPreparations.get(relationship.relationshipId);
         if (preparationError) {
           this.definitions.set(relationship.relationshipId, relationship);
-          const [alpha, beta] = await Promise.all([
-            this.resolveRef(relationship.alphaWorkspaceRefId, relationship.relationshipId),
-            this.resolveRef(relationship.betaWorkspaceRefId, relationship.relationshipId),
-          ]);
-          statuses.push(this.publish({
-            relationshipId: relationship.relationshipId,
-            controllerMachineId: relationship.controllerMachineId,
-            state: 'error', errorCode: preparationError,
-            alphaPath: alpha?.rootPath ?? relationship.alphaWorkspaceRefId,
-            betaPath: beta?.rootPath ?? relationship.betaWorkspaceRefId,
-            mode: relationship.mode, endpointStates: { alpha: null, beta: null },
-            conflictCount: 0, lastCycleObservedAtMs: null,
-          }));
+          statuses.push(await publishFallback(relationship, 'error', { errorCode: preparationError, operationId: relationship.relationshipId }));
           continue;
         }
         const adopted = existing.get(relationship.relationshipId);
@@ -2890,21 +2893,9 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
         try {
           await this.assertRelationshipOwnershipCurrent(relationship.relationshipId);
           if (holdPausedRelationshipIds.has(relationship.relationshipId)) {
-            const [alpha, beta] = await Promise.all([
-              this.resolveRef(relationship.alphaWorkspaceRefId),
-              this.resolveRef(relationship.betaWorkspaceRefId),
-            ]);
-            statuses.push(this.publish({ ...(adopted ?? {
-              relationshipId: relationship.relationshipId,
-              controllerMachineId: relationship.controllerMachineId,
-              state: 'paused',
-              alphaPath: alpha?.rootPath ?? relationship.alphaWorkspaceRefId,
-              betaPath: beta?.rootPath ?? relationship.betaWorkspaceRefId,
-              mode: relationship.mode,
-              endpointStates: { alpha: null, beta: null },
-              conflictCount: 0,
-              lastCycleObservedAtMs: null,
-            }), errorCode: recoveryHoldCodes.get(relationship.relationshipId) ?? 'workspace_sync_recovery_needed' }));
+            statuses.push(await publishFallback(relationship, 'paused', {
+              adopted, errorCode: recoveryHoldCodes.get(relationship.relationshipId) ?? 'workspace_sync_recovery_needed',
+            }));
             continue;
           }
           const status = recoveringOwnership
@@ -2922,45 +2913,11 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
         }
       }
       for (const relationship of disabledRelationships) {
-        const adopted = existing.get(relationship.relationshipId);
-        if (adopted) {
-          statuses.push(this.publish({ ...adopted, state: 'paused' }));
-          continue;
-        }
-        const [alpha, beta] = await Promise.all([
-          this.resolveRef(relationship.alphaWorkspaceRefId),
-          this.resolveRef(relationship.betaWorkspaceRefId),
-        ]);
-        statuses.push(this.publish({
-          relationshipId: relationship.relationshipId,
-          controllerMachineId: relationship.controllerMachineId,
-          state: 'paused',
-          alphaPath: alpha?.rootPath ?? relationship.alphaWorkspaceRefId,
-          betaPath: beta?.rootPath ?? relationship.betaWorkspaceRefId,
-          mode: relationship.mode,
-          endpointStates: { alpha: null, beta: null },
-          conflictCount: 0,
-          lastCycleObservedAtMs: null,
-        }));
+        statuses.push(await publishFallback(relationship, 'paused', { adopted: existing.get(relationship.relationshipId) }));
       }
       if (gitUnavailable) {
         for (const relationship of gitRelationships) {
-          const [alpha, beta] = await Promise.all([
-            this.resolveRef(relationship.alphaWorkspaceRefId),
-            this.resolveRef(relationship.betaWorkspaceRefId),
-          ]);
-          statuses.push(this.publish({
-            relationshipId: relationship.relationshipId,
-            controllerMachineId: relationship.controllerMachineId,
-            state: 'error',
-            alphaPath: alpha?.rootPath ?? relationship.alphaWorkspaceRefId,
-            betaPath: beta?.rootPath ?? relationship.betaWorkspaceRefId,
-            mode: relationship.mode,
-            endpointStates: { alpha: null, beta: null },
-            conflictCount: 0,
-            lastCycleObservedAtMs: null,
-            errorCode: 'git_selection_unavailable',
-          }));
+          statuses.push(await publishFallback(relationship, 'error', { errorCode: 'git_selection_unavailable' }));
         }
       }
       if (rejectUnavailableGit) {
