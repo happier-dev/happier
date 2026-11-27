@@ -7,6 +7,7 @@ import { resolveSessionAddressFromLocalState } from '@/sync/domains/session/reso
 export { undoSessionBotChange } from './sessionBotUndo';
 
 let execute: ReturnType<typeof createFrontDoorActionExecute> | null = null;
+const BOT: SessionBotV1 = Object.freeze({ kind: 'bot' });
 
 function addressFor(sessionId: string, scope?: Readonly<{ serverId?: string | null }>) {
     return scope?.serverId === undefined
@@ -26,6 +27,17 @@ export const sessionDisplayActions = {
         if (!address) return Promise.resolve({ ok: false as const, errorCode: 'session_not_selected', error: 'Session Home is unavailable or ambiguous' });
         execute ??= createFrontDoorActionExecute();
         return execute('session.bot.set', { sessionId: address.sessionId, bot }, { surface: 'ui', serverId: address.serverId });
+    },
+    /**
+     * Pause (an epoch time) or resume (`null`) a Bot's new work. The marker stays a Bot, and only while it
+     * still is one: a Bot demoted meanwhile is refused rather than promoted back.
+     */
+    setBotPausedAt(sessionId: string, pausedAt: number | null, scope?: Readonly<{ serverId?: string | null }>) {
+        const address = addressFor(sessionId, scope);
+        if (!address) return Promise.resolve({ ok: false as const, errorCode: 'session_not_selected', error: 'Session Home is unavailable or ambiguous' });
+        execute ??= createFrontDoorActionExecute();
+        return execute('session.bot.set', { sessionId: address.sessionId, bot: BOT, expectedBot: BOT, pausedAt },
+            { surface: 'ui', serverId: address.serverId });
     },
     /** A Bot's face: the concrete choice the picker shows (null clears every override). */
     setBotFace(sessionId: string, face: SessionBotFaceV1 | null, scope?: Readonly<{ serverId?: string | null }>) {

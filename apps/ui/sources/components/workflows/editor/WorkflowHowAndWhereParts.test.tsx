@@ -181,4 +181,56 @@ describe('More settings', () => {
     expect(screen.getTextContent()).not.toContain('Second opinion');
     await screen.unmount();
   });
+
+  it('edits Priority and the Concurrency limit as the trigger set reads them, committing the limit once', async () => {
+    const { createWorkflowEditorReadable } =
+      await import('./workflowEditorDraftStore');
+    const { WorkflowMoreSettings } = await import('./WorkflowMoreSettings');
+    const store = createWorkflowEditorReadable(createWorkflowEditorDraft({ draftId: 'd3' }));
+    const changes: unknown[] = [];
+    let dispatch: { priority: 'normal' | 'high'; maxActiveRuns: number | null } = { priority: 'normal', maxActiveRuns: null };
+    const render = () => (
+      <WorkflowMoreSettings
+        draftStore={store}
+        onChange={(next) => store.set(next)}
+        documentEditable
+        authoringFacts={undefined}
+        triggerDispatch={{ ...dispatch, onChange: (next) => { changes.push(next); dispatch = { ...dispatch, ...next }; } }}
+        testIDPrefix="wf"
+      />
+    );
+    const screen = await renderScreen(render());
+    // Closed: the calm defaults lead the summary.
+    expect(screen.getTextContent()).toContain(t('workflows.page.sections.prioritySummaryNormal'));
+    expect(screen.getTextContent()).toContain(t('workflows.page.sections.concurrencySummaryNone'));
+
+    await screen.pressByTestIdAsync('wf-more-settings-toggle');
+    await screen.pressByTestIdAsync('wf-more-settings-dispatch-priority:high');
+    expect(changes).toEqual([{ priority: 'high' }]);
+
+    // Typing commits nothing; leaving the field commits the limit once.
+    const field = () => textInput(screen, 'wf-more-settings-dispatch-concurrency');
+    await act(async () => { field().props.onChangeText('3'); });
+    expect(changes).toHaveLength(1);
+    await act(async () => { field().props.onBlur(); });
+    expect(changes).toEqual([{ priority: 'high' }, { maxActiveRuns: 3 }]);
+    await screen.update(render());
+    expect(field().props.value).toBe('3');
+
+    // Zero is refused in place and never written; a blank field clears the cap.
+    await act(async () => { field().props.onChangeText('0'); });
+    await act(async () => { field().props.onBlur(); });
+    expect(changes).toHaveLength(2);
+    expect(screen.getTextContent()).toContain(t('workflows.page.sections.concurrencyInvalid'));
+    await act(async () => { field().props.onChangeText(''); });
+    await act(async () => { field().props.onSubmitEditing(); });
+    expect(changes.at(-1)).toEqual({ maxActiveRuns: null });
+
+    // A value replaced from outside (Undo) replaces an edit in progress.
+    await act(async () => { field().props.onChangeText('9'); });
+    dispatch = { priority: 'high', maxActiveRuns: 5 };
+    await screen.update(render());
+    expect(field().props.value).toBe('5');
+    await screen.unmount();
+  });
 });

@@ -38,7 +38,7 @@ import {
 } from './workflowEditorDraftStore';
 import { WorkflowInputsEditor } from './WorkflowInputsEditor';
 import { WorkflowCardGutterRow, WorkflowKindCard } from './WorkflowKindCard';
-import { WorkflowMoreSettings } from './WorkflowMoreSettings';
+import { WorkflowMoreSettings, type WorkflowTriggerDispatchControl } from './WorkflowMoreSettings';
 import { renderWorkflowCardFieldRow } from './workflowCardFieldRow';
 import {
   formatWorkflowWhereSummary,
@@ -128,6 +128,8 @@ export function WorkflowHowAndWhereCard(
     bindExistingSession?: WorkflowSessionDrop['bind'];
     /** Saved source only: More settings' Last run. */
     workflowDefinitionId?: string;
+    /** More settings' Priority and Concurrency limit, while the workflow runs automatically. */
+    triggerDispatch?: WorkflowTriggerDispatchControl;
     description?: string;
     onChangeDescription?: (next: string) => void;
     /** `false`: the Sentence view's one card, which stands on the sentence's edge without the page's number column. */
@@ -384,6 +386,7 @@ export function WorkflowHowAndWhereCard(
           documentEditable={props.documentEditable}
           authoringFacts={props.authoringFacts}
           {...(props.workflowDefinitionId === undefined ? {} : { workflowDefinitionId: props.workflowDefinitionId })}
+          {...(props.triggerDispatch === undefined ? {} : { triggerDispatch: props.triggerDispatch })}
           {...(props.description === undefined ? {} : { description: props.description })}
           {...(props.onChangeDescription === undefined ? {} : { onChangeDescription: props.onChangeDescription })}
           testIDPrefix={props.testIDPrefix}

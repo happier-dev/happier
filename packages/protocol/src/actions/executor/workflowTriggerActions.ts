@@ -202,6 +202,7 @@ export type WorkflowTriggerActionsDependencies = Readonly<{
   prepareBirthTrigger?: (automationId: string, triggerId: string, trigger: AutomationTriggerDefinitionInput) => Promise<AutomationTriggerDefinitionInput>;
   openActionTrigger?: (automation: AutomationDefinitionDetail,
     trigger: Extract<AutomationDefinitionDetail['triggers'][number], { kind: 'action' }>) => Promise<import('../../automations/automationActionTriggerV1.js').AutomationActionTrigger>;
+  openOwnActionTrigger?: (reference: ActionAutomationSelectedTriggerV1) => Promise<import('../../automations/automationActionTriggerV1.js').AutomationActionTrigger>;
   openSharedActionTrigger?: (reference: ActionAutomationSelectedTriggerV1, caller: Caller)
     => Promise<import('../../automations/automationActionTriggerV1.js').AutomationActionTrigger>;
   openPluginEventTrigger?: (automation: AutomationDefinitionDetail,
@@ -995,6 +996,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
   const actions = {
     prepareActionMatching: (accountId: string) => createActionAutomationPrivateMatchingV1({ accountId,
       readDefinition: findRetained,
+      ...(deps.openOwnActionTrigger ? { readOwnDefinition: deps.openOwnActionTrigger } : {}),
       ...(deps.openSharedActionTrigger ? { readSharedDefinition: deps.openSharedActionTrigger } : {}),
       openTrigger: async (row, trigger) => {
         if (!deps.openActionTrigger) refuse('target_unavailable');

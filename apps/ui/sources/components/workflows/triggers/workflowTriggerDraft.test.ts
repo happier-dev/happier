@@ -85,6 +85,38 @@ describe('workflow trigger draft', () => {
         expect(restoreWorkflowTriggerSnapshot(saved, { ...snapshot, roleOverrides: [] }).context).toEqual({ roleOverrides: [] });
         expect(restoreWorkflowTriggerSnapshot(saved, { ...snapshot, visibleTeamId: null }).context).toEqual({ visibleTeamId: null });
     });
+    it('carries Priority and Concurrency limit through Undo history and writes them with the set on Save', async () => {
+        const workflow = '11111111-1111-4111-8111-111111111111';
+        const dispatch = { priority: 'high' as const, maxActiveRuns: 2 };
+        const draft = editWorkflowTriggerDraft(EMPTY_WORKFLOW_TRIGGER_DRAFT, { kind: 'setContext', context: dispatch });
+        const snapshot = WorkflowDraftTriggerSnapshotV1Schema.parse(captureWorkflowTriggerSnapshot(null, draft,
+            (clientId, triggerId) => ({ clientId, triggerId })));
+        expect(snapshot).toMatchObject(dispatch);
+        const restored = restoreWorkflowTriggerSnapshot(null, snapshot);
+        expect(restored.context).toEqual(dispatch);
+
+        const existing = recordingWriter();
+        await saveWorkflowTriggerDraft({ workflow, project: PROJECT, set: triggerSet(7, []), draft: restored,
+            writer: { ...existing.writer, update: async request => existing.writer.update(WorkflowTriggerUpdateRequestV1Schema.parse(request)) } });
+        expect(existing.calls).toEqual([['update', { automationId: 'set-1', expectedRevision: 7, patch: dispatch }]]);
+
+        const created = recordingWriter();
+        const withAdd = editWorkflowTriggerDraft(restored, { kind: 'add', clientId: 'nightly', trigger: { ...schedule('0 2 * * *'), enabled: true } });
+        await saveWorkflowTriggerDraft({ workflow, project: PROJECT, set: null, draft: withAdd,
+            writer: { ...created.writer, add: async request => created.writer.add(WorkflowTriggerAddRequestV1Schema.parse(request)) } });
+        expect(created.calls).toEqual([['add', { workflow, project: PROJECT, trigger: { ...schedule('0 2 * * *'), enabled: true }, ...dispatch }]]);
+
+        // A saved capped High set: the same values restore to no edit; clearing the cap sends null, Normal sends normal.
+        const saved = { ...triggerSet(8, []), ...dispatch };
+        expect(restoreWorkflowTriggerSnapshot(saved, snapshot)).toEqual(EMPTY_WORKFLOW_TRIGGER_DRAFT);
+        expect(captureWorkflowTriggerSnapshot(saved, EMPTY_WORKFLOW_TRIGGER_DRAFT, (clientId, triggerId) => ({ clientId, triggerId })))
+            .toMatchObject(dispatch);
+        expect(restoreWorkflowTriggerSnapshot(saved, { ...snapshot, maxActiveRuns: null }).context).toEqual({ maxActiveRuns: null });
+        expect(restoreWorkflowTriggerSnapshot(saved, { ...snapshot, priority: 'normal' }).context).toEqual({ priority: 'normal' });
+        // An uncapped Normal set reads the same as one that never chose either.
+        expect(restoreWorkflowTriggerSnapshot(triggerSet(8, []), { ...snapshot, priority: 'normal', maxActiveRuns: null }))
+            .toEqual(EMPTY_WORKFLOW_TRIGGER_DRAFT);
+    });
     it('keeps implicit Runs on implicit when restoring an untouched unsaved trigger snapshot', () => {
         const snapshot = captureWorkflowTriggerSnapshot(null, EMPTY_WORKFLOW_TRIGGER_DRAFT,
             (clientId, triggerId) => ({ clientId, triggerId }));

@@ -130,6 +130,7 @@ const WORKFLOW_PROBLEM_SHAPES = {
     legacy_conversion_unsupported: { repair: 'none', accessibilitySemantics: 'alert' },
     native_goal_owner: { repair: 'none', accessibilitySemantics: 'alert' },
     session_already_started: { repair: 'none', accessibilitySemantics: 'alert' },
+    bot_paused: { repair: 'none', accessibilitySemantics: 'alert' },
     pull_request_link_required: { repair: 'none', accessibilitySemantics: 'alert' },
     present_user_required: { repair: 'none', accessibilitySemantics: 'alert' },
 } as const satisfies Readonly<Record<WorkflowOperationErrorCodeV1, Omit<WorkflowProblemShape, 'messageKey'>>>;

@@ -17,6 +17,7 @@ import { DeploymentEnvironmentRefV1Schema } from '../deployments/deploymentEnvir
 import { AutomationTriggerDefinitionInputSchema } from '../automations/automationTriggerDefinition.js';
 import { PluginJsonSchemaV2Schema } from '../plugins/contributions/publicTypes.js';
 import { AutomationTriggerIdSchema } from '../automations/automationTriggerIdentity.js';
+import { AutomationV3RuleMaxConcurrentRunsSchema, AutomationV3RulePrioritySchema } from '../automations/automationApiV3.js';
 export {
   WORKFLOW_AUTHORING_ACTION_IDS,
   isWorkflowAuthoringActionId,
@@ -50,6 +51,9 @@ export const WorkflowDraftTriggerSnapshotV1Schema = lazyZodSchema(() => z.strict
   project: zMini.nullable(WorkflowProjectTargetV1Schema), inputs: z.record(z.string(), StrictJsonValueSchema),
   roleOverrides: z.optional(WorkflowRoleOverridesV1Schema),
   visibleTeamId: z.optional(z.nullable(WorkflowVisibleTeamIdV1Schema)),
+  /** How the set's Runs queue for an automation slot; absent reads as Normal and uncapped. */
+  priority: z.optional(AutomationV3RulePrioritySchema),
+  maxActiveRuns: z.optional(z.nullable(AutomationV3RuleMaxConcurrentRunsSchema)),
 }));
 export const WorkflowDraftSettingsV1Schema = lazyZodSchema(() => z.strictObject({
   description: z.string(), projectTarget: zMini.nullable(WorkflowProjectTargetV1Schema),

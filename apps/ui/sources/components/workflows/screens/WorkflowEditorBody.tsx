@@ -445,6 +445,8 @@ export type WorkflowEditorBodyProps = Readonly<{
     /** What a wait-mode "before an Action" trigger makes the Result decide (05 S4); absent when none is set. */
     resultDecides?: string | null;
     triggersSection?: React.ReactNode;
+    /** How the trigger set's Runs queue (More settings' Priority and Concurrency limit); absent without triggers. */
+    triggerDispatch?: React.ComponentProps<typeof WorkflowHowAndWhereCard>['triggerDispatch'];
     /** The same triggers as the Sentence view's When clause (round 1116c). */
     triggersSentence?: React.ReactNode;
     /** Live events' "Add to this workflow" (D11): adds that event's start to the triggers above; absent when they are not this person's to change. */
@@ -1599,6 +1601,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
         onSessionOptionsDemandChange: props.onSessionOptionsDemandChange,
         ...(sessionDrop === undefined ? {} : { bindExistingSession: sessionDrop.bind }),
         ...(props.currentWorkflowRef === null || props.currentWorkflowRef === undefined ? {} : { workflowDefinitionId: props.currentWorkflowRef }),
+        ...(props.triggerDispatch === undefined ? {} : { triggerDispatch: props.triggerDispatch }),
         ...(props.description === undefined ? {} : { description: props.description }),
         ...(props.onChangeDescription === undefined ? {} : { onChangeDescription: props.onChangeDescription }),
         testIDPrefix,

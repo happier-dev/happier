@@ -111,7 +111,7 @@ import { WorkflowEditorCurrentContext } from './WorkflowEditorCurrentContext';
 import { WorkflowExamplesSection } from '../library/WorkflowExamplesSection';
 import { WorkflowTriggerSection } from '../triggers/WorkflowTriggerSection';
 import { useWorkflowTriggerEditing } from '../triggers/useWorkflowTriggerEditing';
-import { editWorkflowTriggerDraft, EMPTY_WORKFLOW_TRIGGER_DRAFT, projectWorkflowTriggerEvents, projectWorkflowTriggerRows, WorkflowTriggerSnapshotRestoreError, type WorkflowTriggerSnapshot } from '../triggers/workflowTriggerDraft';
+import { editWorkflowTriggerDraft, EMPTY_WORKFLOW_TRIGGER_DRAFT, projectWorkflowTriggerEvents, projectWorkflowTriggerRows, readWorkflowTriggerDispatch, WorkflowTriggerSnapshotRestoreError, type WorkflowTriggerSetContextDraft, type WorkflowTriggerSnapshot } from '../triggers/workflowTriggerDraft';
 import { formatTriggerResultDecides } from '../triggers/formatTriggerSummary';
 import { useWorkflowEditorHistory, useWorkflowEditorHistoryLabels, workflowEditorSnapshotsEqual } from '../editor/useWorkflowEditorHistory';
 import { createWorkflowEditorReadable, useWorkflowEditorSelector, type WorkflowEditorDraftStore } from '../editor/workflowEditorDraftStore';
@@ -2118,6 +2118,10 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
     const onChangeTriggerDraft = useEventCallback((next: React.ComponentProps<typeof WorkflowTriggerSection>['draft']) => {
         editMountedDraft({ expectedDraftRevision: history.getRevision(), settings: { triggers: triggers.captureSnapshot(next) } }, t('workflows.editor.history.triggers'));
     });
+    // More settings' Priority and Concurrency limit are the trigger set's context: one trigger-draft edit, one Undo step.
+    const onChangeTriggerDispatch = useEventCallback((patch: Pick<WorkflowTriggerSetContextDraft, 'priority' | 'maxActiveRuns'>) => {
+        onChangeTriggerDraft(editWorkflowTriggerDraft(triggers.readDraft(), { kind: 'setContext', context: patch }));
+    });
     const companionExecution = useMountedActionExecution(activeAccountScope);
     const editCompanionTrigger = useEventCallback(async (
         patch: Pick<WorkflowDraftEditInputV1, 'triggerEdit'> | { settings: { triggers: JsonValue } },
@@ -2360,10 +2364,13 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
                         stepsUnsaved: definitionDraftDirty,
                         incomplete: triggerIncomplete,
                     } satisfies React.ComponentProps<typeof WorkflowTriggerSection>;
+                    const triggerRows = projectWorkflowTriggerRows(triggers.set, triggers.draft);
                     return { onSave: saveFromUi, triggersSummary: triggers.summary,
+                        ...(triggerRows.length === 0 ? {} : { triggerDispatch: {
+                            ...readWorkflowTriggerDispatch(triggers.set, triggers.draft), onChange: onChangeTriggerDispatch } }),
                         onAddTriggerWhen,
                         hasTriggerRow: triggers.hasTriggerRow, canUndoAddedTrigger, onUndoAddedTrigger,
-                        resultDecides: formatTriggerResultDecides(projectWorkflowTriggerRows(triggers.set, triggers.draft).map((row) => row.trigger)),
+                        resultDecides: formatTriggerResultDecides(triggerRows.map((row) => row.trigger)),
                         triggersSection: <WorkflowEditorTriggerSection draftStore={bodyDraftStore} {...section} />,
                         triggersSentence: <WorkflowEditorTriggerSection draftStore={bodyDraftStore} {...section} presentation="sentence" /> };
                 })() : {})}

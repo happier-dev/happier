@@ -973,6 +973,7 @@ const workflowProblemCopy = {
   changeUnavailable: { key: 'workflows.triggers.legacy.changeUnavailable', text: "This saved Workflow must be converted before it can be changed." },
   nativeGoalOwner: { key: 'workflows.problem.nativeGoalOwner', text: "The agent already keeps going toward goals on its own in this session." },
   sessionAlreadyStarted: { key: 'workflows.problem.sessionAlreadyStarted', text: "This session has already started. Session-start triggers can only be added when a session is created." },
+  botPaused: { key: 'workflows.problem.botPaused', text: 'This Bot is paused. Resume it in its session before starting new work.' },
   presentUserRequired: { key: 'settingsActions.reasons.presentUserRequired', text: "Review and approve this Action in the Happier app." },
   eventDeclarationNotCurrent: {
     key: 'workflows.problem.eventDeclarationNotCurrent',
@@ -1026,6 +1027,7 @@ export const WORKFLOW_OPERATION_PROBLEM_COPY_V1 = {
   legacy_conversion_unsupported: workflowProblemCopy.changeUnavailable,
   native_goal_owner: workflowProblemCopy.nativeGoalOwner,
   session_already_started: workflowProblemCopy.sessionAlreadyStarted,
+  bot_paused: workflowProblemCopy.botPaused,
   pull_request_link_required: workflowProblemCopy.needsRepair,
   present_user_required: workflowProblemCopy.presentUserRequired,
 } as const satisfies Record<WorkflowOperationErrorCodeV1, { key: string; text: string }>;

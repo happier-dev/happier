@@ -5,6 +5,7 @@ import { sameStrictJsonValue, type JsonValue } from '@happier-dev/protocol/json/
 import type { AutomationTriggerDefinition, AutomationTriggerDefinitionInput } from '@happier-dev/protocol/automations/automationTriggerDefinition';
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows/workflowWorkspaceV1';
 import type { WorkflowIntendedTriggerV1, WorkflowTriggerAddRequestV1, WorkflowTriggerRemoveRequestV1, WorkflowTriggerSetV1, WorkflowTriggerUpdateRequestV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import type { AutomationV3RulePriority } from '@happier-dev/protocol/automations/automationApiV3';
 
 import type { WorkflowTriggerWriteResult } from '@/sync/domains/workflows/workflowTriggerActions';
 import type { WorkflowDraftTriggerSnapshotV1 } from '@happier-dev/protocol/actions/workflowAuthoringAction';
@@ -22,14 +23,28 @@ export type WorkflowTriggerDraftUpdate = Readonly<{ trigger?: AutomationTriggerD
 
 /**
  * The trigger set's own context, the same for every trigger of this workflow (04 §5.4): its Runs on
- * machine and folder, constant input values, Roles and run visibility.
+ * machine and folder, constant input values, Roles and run visibility, and how its Runs queue for an
+ * automation slot (Priority; Concurrency limit, where `null` clears the cap).
  */
 export type WorkflowTriggerSetContextDraft = Readonly<{
     project?: WorkflowProjectTargetV1;
     inputs?: Readonly<Record<string, JsonValue>>;
     roleOverrides?: readonly RoleOverrideV1[];
     visibleTeamId?: string | null;
+    priority?: AutomationV3RulePriority;
+    maxActiveRuns?: number | null;
 }>;
+
+/** How the set's Runs queue, as saved or as edited: Normal and uncapped when the set never chose. */
+export function readWorkflowTriggerDispatch(set: WorkflowTriggerSetV1 | null, draft: WorkflowTriggerDraft): Readonly<{
+    priority: AutomationV3RulePriority;
+    maxActiveRuns: number | null;
+}> {
+    return {
+        priority: draft.context?.priority ?? set?.priority ?? 'normal',
+        maxActiveRuns: draft.context?.maxActiveRuns === undefined ? set?.maxActiveRuns ?? null : draft.context.maxActiveRuns,
+    };
+}
 
 export type WorkflowTriggerDraft = Readonly<{
     adds: readonly WorkflowTriggerDraftAdd[];
@@ -110,9 +125,13 @@ export function captureWorkflowTriggerSnapshot(
     // Before a set exists, Where remains the editor's default; history must not turn it into an override.
     const roleOverrides = draft.context?.roleOverrides ?? set?.context?.roleOverrides;
     const visibleTeamId = draft.context?.visibleTeamId === undefined ? set?.context?.visibleTeamId : draft.context.visibleTeamId;
+    const priority = draft.context?.priority ?? set?.priority;
+    const maxActiveRuns = draft.context?.maxActiveRuns === undefined ? set?.maxActiveRuns : draft.context.maxActiveRuns;
     return { rows, project: draft.context?.project ?? set?.project ?? null, inputs: draft.context?.inputs ?? set?.context?.inputs ?? {},
         ...(roleOverrides === undefined ? {} : { roleOverrides: [...roleOverrides] }),
-        ...(visibleTeamId === undefined ? {} : { visibleTeamId }) };
+        ...(visibleTeamId === undefined ? {} : { visibleTeamId }),
+        ...(priority === undefined ? {} : { priority }),
+        ...(maxActiveRuns === undefined ? {} : { maxActiveRuns }) };
 }
 
 /** Rebase a history snapshot onto the current saved set after any successful writes. */
@@ -141,12 +160,13 @@ export function restoreWorkflowTriggerSnapshot(set: WorkflowTriggerSetV1 | null,
         if (update.trigger?.kind === 'pluginEvent' && row.payloadSchema !== undefined) update.payloadSchema = row.payloadSchema;
         if (Object.keys(update).length) updates[saved.id] = update;
     }
-    const context: { project?: WorkflowProjectTargetV1; inputs?: Readonly<Record<string, JsonValue>>;
-        roleOverrides?: readonly RoleOverrideV1[]; visibleTeamId?: string | null } = {};
+    const context: { -readonly [Key in keyof WorkflowTriggerSetContextDraft]: WorkflowTriggerSetContextDraft[Key] } = {};
     if (snapshot.project && !sameStrictJsonValue(snapshot.project, set?.project)) context.project = snapshot.project;
     if (!sameStrictJsonValue(snapshot.inputs, set?.context?.inputs ?? {})) context.inputs = snapshot.inputs;
     if (!sameStrictJsonValue(snapshot.roleOverrides ?? [], set?.context?.roleOverrides ?? [])) context.roleOverrides = snapshot.roleOverrides ?? [];
     if ((snapshot.visibleTeamId ?? null) !== (set?.context?.visibleTeamId ?? null)) context.visibleTeamId = snapshot.visibleTeamId ?? null;
+    if ((snapshot.priority ?? 'normal') !== (set?.priority ?? 'normal')) context.priority = snapshot.priority ?? 'normal';
+    if ((snapshot.maxActiveRuns ?? null) !== (set?.maxActiveRuns ?? null)) context.maxActiveRuns = snapshot.maxActiveRuns ?? null;
     return { adds, updates, removes: (set?.triggers ?? []).filter((saved) => !retained.has(saved.id)).map((saved) => saved.id),
         ...(Object.keys(context).length ? { context } : {}) };
 }
@@ -361,6 +381,8 @@ export async function saveWorkflowTriggerDraft(params: Readonly<{
                     ...(context.inputs === undefined ? {} : { inputs: { ...context.inputs } }),
                     ...(context.roleOverrides === undefined ? {} : { roleOverrides: [...context.roleOverrides] }),
                     ...(context.visibleTeamId === undefined ? {} : { visibleTeamId: context.visibleTeamId }),
+                    ...(context.priority === undefined ? {} : { priority: context.priority }),
+                    ...(context.maxActiveRuns === undefined ? {} : { maxActiveRuns: context.maxActiveRuns }),
                 },
             });
             set = receipt.set;
@@ -384,6 +406,8 @@ export async function saveWorkflowTriggerDraft(params: Readonly<{
                 ...(set === null && context?.inputs !== undefined ? { inputs: { ...context.inputs } } : {}),
                 ...(set === null && context?.roleOverrides !== undefined ? { roleOverrides: [...context.roleOverrides] } : {}),
                 ...(set === null && context?.visibleTeamId !== undefined ? { visibleTeamId: context.visibleTeamId } : {}),
+                ...(set === null && context?.priority !== undefined ? { priority: context.priority } : {}),
+                ...(set === null && context?.maxActiveRuns !== undefined ? { maxActiveRuns: context.maxActiveRuns } : {}),
             });
             set = result.set;
             params.onAcknowledged?.({ kind: 'add', ...add },

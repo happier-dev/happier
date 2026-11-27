@@ -1019,6 +1019,7 @@ export const en = {
         legacyConversionUnsupported: 'This workflow cannot be changed here yet. It keeps running as it is.',
         nativeGoalOwner: 'The agent already keeps going toward goals on its own in this session.',
         sessionAlreadyStarted: 'This session has already started. Session-start triggers can only be added when a session is created.',
+        botPaused: 'This Bot is paused. Resume it in its session before starting new work.',
         generic: 'Happier could not finish that workflow request. Your work is unaffected.',
         needsRepair: 'This workflow has settings that need repairing before it can run.',
         targetUnavailable: 'The machine or agent this workflow needs is not available right now.',

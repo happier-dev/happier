@@ -11,6 +11,7 @@ import {
   setWorkflowDefaultField,
 } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import { resolveWorkflowStepSelectionV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
+import { AutomationV3RuleMaxConcurrentRunsSchema, type AutomationV3RulePriority } from '@happier-dev/protocol/automations/automationApiV3';
 
 import {
   SessionAuthoringControls,
@@ -25,6 +26,7 @@ import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
+import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { Popover } from '@/components/ui/popover';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -88,7 +90,38 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.text.primary,
   },
   rolesSheet: { paddingVertical: theme.space.s8 },
+  note: {
+    ...Typography.variant('meta'),
+    color: theme.colors.text.tertiary,
+  },
+  readOnlyValue: {
+    ...Typography.variant('label'),
+    color: theme.colors.text.primary,
+  },
+  dispatchField: { gap: theme.space.s4 },
 }));
+
+/**
+ * How the workflow's automatic Runs queue for an automation slot: the trigger set's Priority and optional
+ * Concurrency limit, read from the trigger draft owner. Absent `onChange` reads them without changing them.
+ */
+export type WorkflowTriggerDispatchControl = Readonly<{
+  priority: AutomationV3RulePriority;
+  /** `null`: no cap of its own. */
+  maxActiveRuns: number | null;
+  onChange?: (next: Readonly<{ priority?: AutomationV3RulePriority; maxActiveRuns?: number | null }>) => void;
+}>;
+
+function formatDispatchSummary(dispatch: WorkflowTriggerDispatchControl): readonly string[] {
+  return [
+    dispatch.priority === 'high'
+      ? t('workflows.page.sections.prioritySummaryHigh')
+      : t('workflows.page.sections.prioritySummaryNormal'),
+    dispatch.maxActiveRuns === null
+      ? t('workflows.page.sections.concurrencySummaryNone')
+      : t('workflows.page.sections.concurrencySummary', { count: dispatch.maxActiveRuns }),
+  ];
+}
 
 const readDefaults = (draft: WorkflowEditorDraft) => draft.defaults;
 const readRoles = (draft: WorkflowEditorDraft) => draft.roles;
@@ -112,6 +145,8 @@ export function WorkflowMoreSettings(
     authoringFacts: SessionAuthoringControlFacts | undefined;
     /** Saved source only; an unsaved draft has no runs. */
     workflowDefinitionId?: string;
+    /** Present while the workflow runs automatically and the trigger set is this person's to read. */
+    triggerDispatch?: WorkflowTriggerDispatchControl;
     description?: string;
     onChangeDescription?: (next: string) => void;
     testIDPrefix: string;
@@ -140,6 +175,7 @@ export function WorkflowMoreSettings(
   });
   const names = roleNames(roles);
   const summary = [
+    ...(props.triggerDispatch === undefined ? [] : formatDispatchSummary(props.triggerDispatch)),
     ...fieldSummary,
     ...(names.length === 0
       ? []
@@ -198,6 +234,9 @@ export function WorkflowMoreSettings(
       </HappierPressable>
       {!open ? null : (
         <View style={styles.body}>
+          {props.triggerDispatch === undefined ? null : (
+            <WorkflowTriggerDispatchRows dispatch={props.triggerDispatch} testIDPrefix={id} />
+          )}
           {/* Each field on the card's label track, named by its canonical title (round 1116b review). */}
           <SessionAuthoringControls
             presentation="selects"
@@ -233,6 +272,81 @@ export function WorkflowMoreSettings(
         </View>
       )}
     </View>
+  );
+}
+
+const PRIORITY_IDS: readonly AutomationV3RulePriority[] = ['normal', 'high'];
+
+/**
+ * Priority and Concurrency limit (work-loop factory lab `rule:v:more`). The limit commits once, when the field
+ * is left or submitted; the Protocol owner's schema decides what a limit may be, so a blank field clears it.
+ */
+function WorkflowTriggerDispatchRows(
+  props: Readonly<{ dispatch: WorkflowTriggerDispatchControl; testIDPrefix: string }>,
+): React.ReactElement {
+  const { dispatch } = props;
+  const savedText = dispatch.maxActiveRuns === null ? '' : String(dispatch.maxActiveRuns);
+  // An edit in progress belongs to the value it started from; Undo or a saved change replaces it.
+  const [edit, setEdit] = React.useState<Readonly<{ base: number | null; text: string }> | null>(null);
+  const text = edit !== null && edit.base === dispatch.maxActiveRuns ? edit.text : savedText;
+  const trimmed = text.trim();
+  const parsed = trimmed === '' ? null : /^\d+$/.test(trimmed)
+    ? AutomationV3RuleMaxConcurrentRunsSchema.safeParse(Number(trimmed)) : null;
+  const invalid = trimmed !== '' && parsed?.success !== true;
+  const tabs = React.useMemo(
+    () => PRIORITY_IDS.map((id) => ({
+      id,
+      label: id === 'high' ? t('workflows.page.sections.priorityHigh') : t('workflows.page.sections.priorityNormal'),
+    })),
+    [],
+  );
+  const commit = () => {
+    if (invalid || dispatch.onChange === undefined) return;
+    const next = parsed?.success === true ? parsed.data : null;
+    setEdit(null);
+    if (next !== dispatch.maxActiveRuns) dispatch.onChange({ maxActiveRuns: next });
+  };
+  const id = `${props.testIDPrefix}-dispatch`;
+  return (
+    <>
+      {renderWorkflowCardFieldRow('priority', t('workflows.page.sections.priorityRow'), dispatch.onChange === undefined ? (
+        <Text testID={`${id}-priority-readonly`} style={styles.readOnlyValue}>
+          {dispatch.priority === 'high' ? t('workflows.page.sections.priorityHigh') : t('workflows.page.sections.priorityNormal')}
+        </Text>
+      ) : (
+        <View style={styles.dispatchField}>
+          <SegmentedTabBar<AutomationV3RulePriority>
+            tabs={tabs}
+            activeTabId={dispatch.priority}
+            onSelectTab={(next) => { if (next !== dispatch.priority) dispatch.onChange?.({ priority: next }); }}
+            segmentSizing="content"
+            accessibilityLabel={t('workflows.page.sections.priorityRow')}
+            role="radiogroup"
+            testIDPrefix={`${id}-priority`}
+          />
+          <Text style={styles.note}>{t('workflows.page.sections.priorityNote')}</Text>
+        </View>
+      ))}
+      {renderWorkflowCardFieldRow('concurrency', t('workflows.page.sections.concurrencyRow'), (
+        <View style={styles.dispatchField}>
+          <FieldTextInput
+            value={text}
+            editable={dispatch.onChange !== undefined}
+            placeholder={t('workflows.page.sections.concurrencyNoLimit')}
+            accessibilityLabel={t('workflows.page.sections.concurrencyRow')}
+            keyboardType="number-pad"
+            inputMode="numeric"
+            returnKeyType="done"
+            error={invalid ? t('workflows.page.sections.concurrencyInvalid') : null}
+            onChangeText={(next) => setEdit({ base: dispatch.maxActiveRuns, text: next })}
+            onBlur={commit}
+            onSubmitEditing={commit}
+            testID={`${id}-concurrency`}
+          />
+          <Text style={styles.note}>{t('workflows.page.sections.concurrencyNote')}</Text>
+        </View>
+      ))}
+    </>
   );
 }
 
