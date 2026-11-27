@@ -272,9 +272,9 @@ To set environment variables for Claude:
 
 Remote Agent SDK mode uses a filtered environment by default, but **explicit** GUI/profile env vars (and connected-services auth env vars) are forwarded to the Claude subprocess so workflows like GitHub integration can work without leaking the full parent `process.env`.
 
-In development builds, Claude sessions inherit `PLAYWRIGHT_BROWSERS_PATH` when it is set in [the daemon's environment](/apps/daemon#forward-machine-environment-variables).
+Starting with CLI 0.2.22, Claude sessions inherit `PLAYWRIGHT_BROWSERS_PATH` when it is set in [the daemon's environment](/apps/daemon#forward-machine-environment-variables).
 
-In the development source, remote Agent SDK and unified-terminal sessions also inherit
+Remote Agent SDK and unified-terminal sessions also inherit
 `DBUS_SESSION_BUS_ADDRESS` when it is set in the session runner's environment. On Linux,
 this lets Claude and its tools reach the existing user session bus when the daemon
 was launched with its address.

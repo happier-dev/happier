@@ -52,7 +52,7 @@ Platform details:
 - **iOS** can show the tool/request name as a notification subtitle
 - **Android** uses dedicated channels for permission requests and action requests so users can tune them separately at the OS level
 
-Development builds add app-rendered Android action buttons to remote permission and input requests when the Android app, relay, and CLI all support the updated delivery path. This requires a new Android app build.
+Starting with app 0.2.23, server 0.2.22 and CLI 0.2.22, Android shows app-rendered action buttons on remote permission and input requests. This requires the new Android app build; with an older app, server or CLI, notifications use the previous delivery path.
 
 ## Webhook notifications
 
