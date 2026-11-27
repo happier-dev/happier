@@ -288,9 +288,14 @@ async function runExecutableHomeAuthentication(options: ExecuteHomeAuthenticatio
                     if (options.signal?.aborted || !await promptRetryGeneratedKeyModeResolution(options.signal)) return;
                 }
             }
+            // The Home registered this key's signing and content bindings for the new
+            // Account. A Plain Account keeps it as historical custody: it never becomes
+            // active on a Plain path, and it is the only material that can later prove
+            // those bindings when this device converts the Account to E2EE.
+            const generatedSecret = encodeBase64(secret, 'base64url');
             const committedCredentials: AuthCredentials = mode === 'plain'
-                ? { token: credentials.token }
-                : { token: credentials.token, secret: encodeBase64(secret, 'base64url') };
+                ? { token: credentials.token, secret: generatedSecret, custody: 'historical' }
+                : { token: credentials.token, secret: generatedSecret };
             if (mode === 'e2ee') await createEncryptionFromAuthCredentials(committedCredentials);
             if (options.signal?.aborted) return;
             await presentFirstKeyCredentialLifecycle({

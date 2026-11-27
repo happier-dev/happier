@@ -5,7 +5,8 @@ export type TokenOnlyAuthCredentials = Readonly<{
 /**
  * This device's own classification of the Account E2EE material it holds.
  * Absent means active: older stored shapes keep the downgrade pin. Only this
- * device writes `historical` (its own conversion, or the person's explicit
+ * device writes `historical` (its own conversion, its own Plain generated-key
+ * provisioning, or the person's explicit
  * reclassification); a Home's reported mode never does.
  */
 export type AccountE2eeMaterialCustody = Readonly<{ custody?: 'historical' }>;

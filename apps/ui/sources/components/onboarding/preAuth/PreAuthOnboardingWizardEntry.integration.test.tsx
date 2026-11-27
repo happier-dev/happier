@@ -502,7 +502,8 @@ describe('PreAuthOnboardingWizardEntry shell integration', () => {
         expect(modalAlertMock).not.toHaveBeenCalled();
         await vi.waitFor(() => {
             expect(authMock.loginWithCredentials).toHaveBeenCalledWith(
-                { token: 'account-token' },
+                // A Plain Account keeps its registered generated key as historical custody.
+                { token: 'account-token', secret: expect.any(String), custody: 'historical' },
                 { target: { serverId: 'server-a', serverUrl: 'https://relay.example.test' }, signInMethodId: 'key_challenge' },
             );
         });
@@ -613,7 +614,7 @@ describe('PreAuthOnboardingWizardEntry shell integration', () => {
         expect(serverFetchMock.mock.calls.filter(([path]) => path === '/v1/auth')).toHaveLength(1);
         expect(serverFetchMock.mock.calls.filter(([path]) => path === '/v1/account/encryption')).toHaveLength(2);
         expect(authMock.loginWithCredentials).toHaveBeenCalledWith(
-            { token: 'retained-account-token' },
+            { token: 'retained-account-token', secret: expect.any(String), custody: 'historical' },
             { target: { serverId: 'server-a', serverUrl: 'https://relay.example.test' }, signInMethodId: 'key_challenge' },
         );
         expect(modalAlertAsyncMock).toHaveBeenCalledWith('common.error', 'errors.operationFailed', [

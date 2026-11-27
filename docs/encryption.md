@@ -899,6 +899,12 @@ activate E2EE or supply keys to Plain content paths. Restore and conversion read
 the same stored credential. Re-enabling E2EE requires that material to match both
 registered key fingerprints; missing or mismatched material fails closed with
 `restore_required`. Restoring a key never creates replacement Account material.
+A Plain Account provisioned through a generated key (Welcome's "First time here")
+already has the signing and content bindings that key registered. The provisioning
+device keeps that genuine key with `custody: 'historical'` instead of discarding it,
+so its later Plain → E2EE conversion proves the registered fingerprints. A device
+without that material, such as one joined with token-only credentials, still fails
+closed with `restore_required`.
 If the device already pins genuine material for the same Account as active, an
 implicit restore preserves that pin across credential kinds even when the Home reports Plain; mode admission
 continues to refuse the unverified downgrade. Only an explicit custody write
