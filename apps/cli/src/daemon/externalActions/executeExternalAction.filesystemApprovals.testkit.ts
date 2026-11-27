@@ -26,7 +26,9 @@ import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/
 import { computeAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import { ApprovalRequestV2Schema, resolveApprovalExecutor } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionRequestEnvelopeSchema, ExternalActionRequestEnvelopeV1Schema,
-  ExternalActionResponseEnvelopeV1Schema, projectExternalActionHttpError, projectExternalActionRunNowIdempotencyKeyV1, projectExternalActionApprovalDecisionAdmissionV1, type ExternalActionRequestEnvelope } from '@happier-dev/protocol/actions/externalActionApi';
+  ExternalActionResponseEnvelopeV1Schema, projectExternalActionHttpError,
+  projectExternalActionDeploymentReadEnvelopeAdmissionV1, projectExternalActionDeploymentPreparationEnvelopeAdmissionV1,
+  projectExternalActionRunNowIdempotencyKeyV1, projectExternalActionApprovalDecisionAdmissionV1, type ExternalActionRequestEnvelope } from '@happier-dev/protocol/actions/externalActionApi';
 import { ProjectAccountRowMutationRequestV1Schema, ProjectAccountRowV1Schema, ProjectAccountRowListResponseV1Schema,
   ProjectAccountRowReadRequestV1Schema, ProjectAccountRowReadResponseV1Schema,
   ProjectAccountRowMutationResponseV1Schema, buildProjectAccountRowPhysicalKeyV1, type ProjectAccountRowV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
@@ -199,7 +201,8 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
   const serviceAction = actionId.startsWith('localServices.') || actionId.startsWith('machines.services.')
     || actionId === 'projects.service.relocate';
   const ingressRefusals = vi.spyOn(logger, 'warnLocalFile');
-  const deploymentAction = actionId.startsWith('deployments.');
+  const deploymentAction = actionId.startsWith('deployments.') || actionId === 'projects.readiness.read';
+  const workflowAction = actionId === 'workflow.trigger.run_now' || actionId === 'workflow.run.start';
   let deploymentChildDelivery: ((job: ReturnType<typeof DeploymentChildRpcV1Schema.parse>, result: unknown) => Promise<void>) | undefined;
   vi.spyOn(syncClient, 'createHappierSocket').mockImplementation(params => {
     // Substitute only the Home socket boundary; the transport adapter, RPC
@@ -471,7 +474,7 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
     const path = new URL(String(url)).pathname;
     networkPaths.push('FETCH ' + path);
     if (path !== '/v1/features' && path !== '/v1/features/authenticated') throw new Error('Unexpected Home fetch ' + path);
-    return Response.json({ features: actionId === 'workflow.trigger.run_now' ? { workflows: { enabled: true }, automations: { enabled: true } }
+    return Response.json({ features: workflowAction ? { workflows: { enabled: true }, automations: { enabled: true } }
       : deploymentAction ? { deployments: { enabled: true } }
       : serviceAction ? { localServices: { enabled: true,
       inventory: { enabled: true }, launcher: { enabled: true }, actions: { enabled: true }, managed: { enabled: true }, preview: { enabled: true } },
@@ -508,11 +511,16 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
       if (requestedActionId === 'approval.request.decide' && actorAccountId !== 'account') {
         rpcOutcomes.push({ phase: 'approval.reviewer.admission', actorAccountId });
       }
+      const admissionInput = { actionId: requestedActionId, envelope: request.envelope };
+      const deploymentReadAdmission = projectExternalActionDeploymentReadEnvelopeAdmissionV1(admissionInput);
+      const deploymentPreparationAdmission = projectExternalActionDeploymentPreparationEnvelopeAdmissionV1(admissionInput);
       return { status: 200, data: home ? await home.mintAuthorization(requestedActionId, request.envelope, authentication)
         : ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: `${requestedActionId}-home-root`, binding: {
           accountId: actorAccountId, custodianAccountId: cliPolicy?.machineCustodianAccountId ?? 'account', authentication,
           admittedMachineRole: cliPolicy?.machineRole ?? 'manage',
           ...mintActionAdmission(requestedActionId, request.envelope),
+          ...(deploymentReadAdmission ? { deploymentReadAdmission } : {}),
+          ...(deploymentPreparationAdmission ? { deploymentPreparationAdmission } : {}),
           // Home binds an installed Session's verified origin and source into its root.
           ...(request.sessionActionOrigin && request.sessionActionSource ? {
             sessionActionOrigin: request.sessionActionOrigin, sessionActionSource: request.sessionActionSource } : {}),
@@ -595,8 +603,12 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
         currentServerHttpBaseUrl: params.serverHttpBaseUrl, currentInstallationId: installation.installationId,
         externalActionMachineRequestPrivateKey: privateKey, verifyExecutionAuthorization: verifyRoot,
         resolveTarget, executor: owner, prepareRequesterAccountContext: prepareRequester });
-      if (result.kind !== 'response') throw new Error('Inspection ingress refused');
-      if (result.response.v !== 1) throw new Error('Inspection ingress returned an encrypted response');
+      if (result.kind === 'invalid_request') {
+        const refusal = projectExternalActionHttpError(result.errorCode, result.requestId, undefined, undefined,
+          undefined, undefined, result.failureCause, 'daemon');
+        return { status: refusal.statusCode, data: refusal.payload };
+      }
+      if (result.response.v === 2) return { status: 200, data: result.response };
       const parsedInspection = requestedActionId === 'projects.inspect' && result.response.execution.ok
         ? ProjectDefinitionInspectOutputSchema.safeParse(result.response.execution.result) : null;
       rpcOutcomes.push({ actionId: requestedActionId, ok: result.response.execution.ok, valid: parsedInspection?.success,
@@ -607,8 +619,8 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
     if (path === '/v1/artifacts') {
       const input = readCarrierMutation(body);
       artifact = { ...input, ownerAccountId: 'account', access: 'owner', encryptionMode: 'plain',
-        headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
-      return { status: 200, data: { id: input.id, headerVersion: 1, bodyVersion: 1 } };
+        publicAudience: 'none', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+      return { status: 200, data: { ...artifact, created: true } };
     }
     if (artifact && path === '/v1/artifacts/' + artifact.id) {
       const input = readCarrierMutation(body);
@@ -1058,7 +1070,7 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
     runtime: { serverId: 'srv_n2', serverHttpBaseUrl: params.serverHttpBaseUrl, machineId: ref.machineId,
       accountId: 'account', readCredentials: async () => { throw new Error('Admitted Open must use its requester projection'); },
       setupPreparation: { nativeIo: nativeIo.commandIo, platform: { os: 'linux', arch: 'x64' } } } });
-  const features = serviceAction || deploymentAction || actionId === 'workflow.trigger.run_now' || actionId === 'machines.terminal.open'
+  const features = serviceAction || deploymentAction || workflowAction || actionId === 'machines.terminal.open'
     ? await api.getServerFeaturesSnapshot({ refresh: true }) : undefined;
   api.setServerFeaturesSnapshotProvider(() => features);
   if (actionId === 'machines.terminal.open') {
@@ -1296,12 +1308,22 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
     composed.start();
     syncRuntimes.push(composed);
   }
+  const pluginChangeService = actionId === 'plugins.install'
+    ? await import('@/plugins/daemon/changeService').then(async ({ createDaemonPluginChangeService }) => {
+      const { createDaemonPathPluginChangePreparer } = await import('@/plugins/daemon/pathChangePreparer');
+      return createDaemonPluginChangeService({ prepare: createDaemonPathPluginChangePreparer({
+        happyHomeDir: configuration.happyHomeDir,
+        runtimeLifecycle: { prepare: async () => { throw new Error('The fixture must stop at Install & Trust review'); } },
+      }) });
+    }) : undefined;
+  if (pluginChangeService) onTestFinished(() => pluginChangeService.shutdown());
   const startRuntime = (machineClient: ApiMachineClient, machineId: string,
     origin: typeof resolveOrigin) => startDaemonSessionControlRuntime({ machineId, credentials,
     ...(worker ? { resolveProjectWorkerAction: () => createProjectWorkerAction({ machineId: target.machineId, serverId: 'srv_n2',
       serverHttpBaseUrl: params.serverHttpBaseUrl, credentials, accountId: 'account', admission: workerAdmission,
       isFiniteExecutionLive: () => actionId !== 'projects.service.relocate', isServiceExecutionLive: () => true }) } : {}),
     ...(pluginRuntime ? { pluginRuntimeController: pluginRuntime.controller } : {}),
+    ...(pluginChangeService ? { pluginChangeService } : {}),
     serverId: 'srv_n2', serverBaseUrl: params.serverHttpBaseUrl, externalActionAccountId: cliPolicy?.machineCustodianAccountId ?? 'account',
     api, connectedServicesMaterializationBaseDir: join(directory, 'connected-services'),
     ...(connectedAccountPurposeBindingRuntime ? { sessionConnectedAccountProcessRuntime: connectedAccountPurposeBindingRuntime } : {}),
@@ -1517,7 +1539,7 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
       } finally { output.restore(); process.exitCode = previousExitCode; }
     },
     async runSavedProfileMcp(input: unknown, requestedActionId: ActionId, installedDaemon = false) {
-      if (!features) throw new Error('Missing server features');
+      const serverFeaturesSnapshot = features ?? await api.getServerFeaturesSnapshot({ refresh: true });
       writeDaemonState({ pid: process.pid, startedAt: Date.now(), startedWithCliVersion: 'test',
         httpPort: runtime.controlPort, controlToken: runtime.controlToken, machineId: target.machineId, accountId: 'account' });
       // Standalone MCP receives its presentation policy through the command's environment snapshot.
@@ -1525,7 +1547,7 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
       const { mcp } = runWithServerHttpBaseUrl(params.serverHttpBaseUrl, () => createExternalMcpServer({
         credentials: cliCredentials, machineId: target.machineId,
         ...(installedDaemon ? {} : { daemonControlTarget: null }),
-        serverFeaturesSnapshot: features,
+        serverFeaturesSnapshot,
       }));
       const client = new Client({ name: 'managed-service-stop', version: '1' });
       const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();

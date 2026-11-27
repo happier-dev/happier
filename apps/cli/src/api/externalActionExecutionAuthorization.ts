@@ -873,6 +873,11 @@ type OriginalAccountActionInput = Readonly<{
   executeOnRequester: Readonly<{ input: unknown; run: () => Promise<ActionExecuteResult> }>;
 }>);
 
+/** Workspace Sync keeps original approval on the requester before admitting the native effect. */
+export function keepsOriginalWorkspaceSyncApprovalOnRequester(actionId: string): boolean {
+  return isWorkspaceSyncRelationshipControlActionId(actionId);
+}
+
 /** Home-bound managed effects, Sync writes, native Agent inventory, finite work, owned-copy review and terminal access need Machine
  * admission even on an own target. Workflow birth also needs the authenticated
  * requester custody that private root control does not carry. */

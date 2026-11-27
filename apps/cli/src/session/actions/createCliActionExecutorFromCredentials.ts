@@ -128,7 +128,7 @@ import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettin
 import { resolveFilesystemTransferCustodyFailure } from './filesystemTransferCustody';
 import { ensureCliActionPolicySettings } from './ensureCliActionPolicySettings';
 import { reconcileExternalActionTarget, requiresManagedMachineDaemonIngress, resolveManagedControlControllerTarget, resolveExternalActionMachineTarget, resolveSelectedExternalActionMachineTarget } from '@/daemon/externalActions/reconcileExternalActionTarget';
-import { dispatchLocalManagedMachineSetup, dispatchLocalManagedMachineSetupPlan, dispatchOriginalAccountAction, prepareOriginalAccountPresetAcquire, readExternalActionRequesterInvocation, requiresOriginalAccountMachineActionProof, resolveExternalActionServerRequestHeaders, type ExternalActionMachineRequestSigningKey } from '@/api/externalActionExecutionAuthorization';
+import { dispatchLocalManagedMachineSetup, dispatchLocalManagedMachineSetupPlan, dispatchOriginalAccountAction, keepsOriginalWorkspaceSyncApprovalOnRequester, prepareOriginalAccountPresetAcquire, readExternalActionRequesterInvocation, requiresOriginalAccountMachineActionProof, resolveExternalActionServerRequestHeaders, type ExternalActionMachineRequestSigningKey } from '@/api/externalActionExecutionAuthorization';
 import { prepareInstalledWorkflowActionAuthorizationResult } from '@/api/installedWorkflowActionAuthorization';
 import { projectRequesterAccountActionAuthorization } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { observeManagedChildApprovalExecution } from '@/api/managedChildApproval';
@@ -2161,7 +2161,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
           })) };
         }
       }
-      if (originalCliCaller && isWorkspaceSyncRelationshipControlActionId(actionId)) {
+      if (originalCliCaller && keepsOriginalWorkspaceSyncApprovalOnRequester(actionId)) {
         return {
           context: { ...context, actionRequestId: context.actionRequestId ?? randomUUID() },
           ...(admittedInput !== input ? { preparedSessionInput: admittedInput } : {}),
