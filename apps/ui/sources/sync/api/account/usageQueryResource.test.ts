@@ -9128,7 +9128,8 @@ describe('usage query captured Resource adapter', () => {
     } finally { for (const stop of stops) stop(); }
   });
 
-  it('reacquires overlapping exact Activity widgets once after a singleton Accounting refusal', async () => {
+  it.each(['settled', 'mixed Accounting read held'] as const)(
+    'reacquires overlapping exact Activity widgets after a singleton Accounting refusal (%s)', async readOrder => {
     const shared = 'previously-shared';
     const own = 'viewer-owned';
     const now = Date.UTC(2026, 10, 27, 12);
@@ -9137,9 +9138,19 @@ describe('usage query captured Resource adapter', () => {
     let revoked = false;
     let replacementReads = 0;
     const heldReplacement = createDeferred<void>();
+    const heldMixedAccounting = createDeferred<void>();
+    let mixedAccountingIssued = false;
+    let holdNextMixedAccounting = false;
+    let mixedRead: Promise<unknown> | undefined;
     const captured = await context(async request => {
       if (request.path === '/v2/usage/query') {
         const ids = (request.body as { filters?: { sessionIds?: string[] } }).filters?.sessionIds;
+        if (holdNextMixedAccounting && ids?.length === 2) {
+          holdNextMixedAccounting = false;
+          mixedAccountingIssued = true;
+          await heldMixedAccounting.promise;
+          return Response.json(value);
+        }
         return revoked && ids?.includes(shared)
           ? Response.json({ error: 'not_found' }, { status: 404 })
           : Response.json(value);
@@ -9178,15 +9189,17 @@ describe('usage query captured Resource adapter', () => {
     const shown = (entry: typeof entries[number]) => decodeUsageQueryResource(entry.getSnapshot().value!).results[0]!;
     const refreshes = [0, 0, 0];
     const firstWithdrawn = new Map<number, ReturnType<typeof shown>>();
+    const framesAfterWithdrawal: Array<{ entry: number; slice: ReturnType<typeof shown> }> = [];
     const stop = [...entries, unaffected].map((entry, index) => {
       let refreshing = false;
       return entry.subscribe(() => {
         const next = entry.getSnapshot().pending === 'refresh';
-        if (revoked && index < entries.length && !firstWithdrawn.has(index) && entry.getSnapshot().value) {
+        if (revoked && index < entries.length && entry.getSnapshot().value) {
           const frame = shown(entry);
-          if (frame.sources.some(source => source.source === 'accounting' && source.errorCode === 'denied')) {
+          if (!firstWithdrawn.has(index) && frame.sources.some(source => source.source === 'accounting' && source.errorCode === 'denied')) {
             firstWithdrawn.set(index, frame);
           }
+          if (firstWithdrawn.has(index)) framesAfterWithdrawal.push({ entry: index, slice: frame });
         }
         if (revoked && next && !refreshing) refreshes[index]!++;
         refreshing = next;
@@ -9208,13 +9221,18 @@ describe('usage query captured Resource adapter', () => {
       const ownLanes = entries.map(entry => shown(entry).howYouWork?.intervals?.lanes
         .filter(lane => lane.busy.some(segment => segment.startMs === ownStart)));
       expect(ownLanes.every(lanes => lanes?.length === 1)).toBe(true);
+      if (readOrder === 'mixed Accounting read held') {
+        holdNextMixedAccounting = true;
+        mixedRead = entries[0]!.refresh();
+        void mixedRead.catch(() => {});
+        await vi.waitFor(() => expect(mixedAccountingIssued, 'the mixed Accounting read started before refusal').toBe(true));
+      }
       revoked = true;
       clock.mockReturnValue(now + 1000);
       const trigger = entryFor(normalizeUsageQuery({ ...activity, session: shared, includeWorkEvidence: true }));
       await trigger.refresh({ supersede: false });
       expect(shown(trigger).sources).toContainEqual({ source: 'accounting', status: 'error', errorCode: 'denied' });
-      await vi.waitFor(() => expect(replacementReads).toBe(1));
-      expect(firstWithdrawn.size).toBe(2);
+      await vi.waitFor(() => expect(firstWithdrawn.size).toBe(2));
       entries.forEach((entry, index) => {
         const first = firstWithdrawn.get(index)!;
         expect(first.howYouWork?.intervals?.agentTimeMs, 'the first withdrawal frame excludes the refused Session').toBe(300);
@@ -9222,9 +9240,13 @@ describe('usage query captured Resource adapter', () => {
         const reopened = entryFor([activity, humanLoop][index]!);
         expect(shown(reopened).howYouWork?.intervals?.agentTimeMs, 'the warm reopen cannot revive the refused Session').toBe(300);
         expect(shown(reopened).howYouWork?.intervals?.lanes).toEqual(ownLanes[index]);
-        expect(entry.getSnapshot().pending).toBe('refresh');
+        expect(entry.getSnapshot().pending).not.toBe('idle');
       });
+      heldMixedAccounting.resolve();
+      await vi.waitFor(() => expect(replacementReads).toBe(1));
+      await flushHookEffects();
       heldReplacement.resolve();
+      await mixedRead;
       await vi.waitFor(() => {
         entries.forEach((entry, index) => {
           expect(entry.getSnapshot().pending).toBe('idle');
@@ -9236,13 +9258,23 @@ describe('usage query captured Resource adapter', () => {
           });
           expect(slice.accounting).toBeUndefined();
         });
-        expect(refreshes).toEqual([1, 1, 0]);
+        if (readOrder === 'settled') expect(refreshes).toEqual([1, 1, 0]);
+        else expect(refreshes[2]).toBe(0);
         expect(shown(unaffected)).toEqual(ownBefore);
         expect(replacementReads, 'the widgets share one physical re-read of Session evidence').toBe(1);
       });
       await flushHookEffects();
       expect(replacementReads).toBe(1);
-    } finally { heldReplacement.resolve(); stop.forEach(unsubscribe => unsubscribe()); clock.mockRestore(); }
+      for (const { entry, slice } of framesAfterWithdrawal) {
+        expect(slice.howYouWork?.intervals?.agentTimeMs, 'a later publication cannot restore refused Activity').toBe(300);
+        expect(slice.howYouWork?.intervals?.lanes).toEqual(ownLanes[entry]);
+      }
+    } finally {
+      heldMixedAccounting.resolve();
+      heldReplacement.resolve();
+      stop.forEach(unsubscribe => unsubscribe());
+      clock.mockRestore();
+    }
   });
 
   const fallbackWindows = ['fixed', 'rolling same day', 'rolling next day'] as const;

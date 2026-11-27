@@ -2592,48 +2592,49 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
             currentContent: current && !workAwaitingOwnRead ? content : undefined,
             content: admitted ? content : undefined, reusable: admitted && admission?.reusable === true };
     };
-    function withdrawRetainedActivity(sessionId: string): (content: ResourceContent) => ResourceContent {
-        const subtract = (slice: UsageQueryResultSlice, activity: UsageActivityAdmission | undefined, work?: UsageWorkSourceSnapshot) => {
-            if (!slice.howYouWork || !activity?.subjects.includes(sessionId)) return;
-            const retained = readRetainedActivityAfterRefusal(sharedContext, slice, activity, sessionInputs);
-            if (!retained) return;
-            return {
-                slice: projectRetainedUsageActivity(sharedContext, slice, slice, undefined, {
-                    ...retained, nowMs: activity.opened.nowMs, suppressions: owner.coachSuppressions, work,
-                }),
-                // Keep the admission's selection for the replacement, with only readable evidence.
-                activitySessions: { ...activity, opened: retained.admission.opened },
-            };
+    function projectActivityPublication(slice: UsageQueryResultSlice, activity: UsageActivityAdmission | undefined,
+        work?: UsageWorkSourceSnapshot) {
+        if (!slice.howYouWork || !activity?.subjects.some(id =>
+            sessionInputs.detailRefusal(id) instanceof UsageAccountingSliceRefusal)) return;
+        const retained = readRetainedActivityAfterRefusal(sharedContext, slice, activity, sessionInputs);
+        if (!retained) return;
+        return {
+            slice: projectRetainedUsageActivity(sharedContext, slice, slice, undefined, {
+                ...retained, nowMs: activity.opened.nowMs, suppressions: owner.coachSuppressions, work,
+            }),
+            // Keep the selected subject for the replacement but not its old evidence.
+            activitySessions: { ...activity, opened: retained.admission.opened },
         };
-        for (const [key, retained] of slicesByQuery) {
-            const replacement = subtract(retained.slice, retained.activitySessions, retained.workInput?.source);
-            if (replacement) slicesByQuery.set(key, { ...retained, ...replacement });
-        }
-        return content => {
-            const decoded = decodedValues.get(content);
-            const admission = decoded?.admission;
-            if (!decoded || !admission) return content;
-            let activitySessions: Map<string, UsageActivityAdmission> | undefined;
-            const results = decoded.value.results.map(slice => {
-                const activity = admission.activitySessions.get(slice.key);
-                const work = admission.workMachineInputs.find(input => input.queryKey === slice.key)?.source;
-                const replacement = subtract(slice, activity, work);
-                if (!replacement) return slice;
-                (activitySessions ??= new Map(admission.activitySessions)).set(slice.key, replacement.activitySessions);
-                return replacement.slice;
-            });
-            if (!activitySessions) return content;
-            const value = { ...decoded.value, results };
-            const replacement = createUsageQueryResourceContent(value);
-            decodedValues.set(replacement, { value, admission: { ...admission, activitySessions, reusable: false } });
-            return replacement;
-        };
+    }
+    function replaceActivityPublication(content: ResourceContent): ResourceContent {
+        const decoded = decodedValues.get(content);
+        const admission = decoded?.admission;
+        if (!decoded || !admission) return content;
+        let activitySessions: Map<string, UsageActivityAdmission> | undefined;
+        const results = decoded.value.results.map(slice => {
+            const activity = admission.activitySessions.get(slice.key);
+            const work = admission.workMachineInputs.find(input => input.queryKey === slice.key)?.source;
+            const replacement = projectActivityPublication(slice, activity, work);
+            if (!replacement) return slice;
+            (activitySessions ??= new Map(admission.activitySessions)).set(slice.key, replacement.activitySessions);
+            return replacement.slice;
+        });
+        if (!activitySessions) return content;
+        const value = { ...decoded.value, results };
+        const replacement = createUsageQueryResourceContent(value);
+        decodedValues.set(replacement, { value, admission: { ...admission, activitySessions, reusable: false } });
+        return replacement;
     }
     function replaceRefusedEvidence(sessionId: string, kind: UsageSessionEvidenceKind, origin?: string) {
         sessionEvidenceInputs = {};
         const sessionIds = new Set([sessionId]);
+        const accountingRefusal = kind === 'detail' && sessionInputs.detailRefusal(sessionId) instanceof UsageAccountingSliceRefusal;
+        if (accountingRefusal) for (const [key, retained] of slicesByQuery) {
+            const replacement = projectActivityPublication(retained.slice, retained.activitySessions, retained.workInput?.source);
+            if (replacement) slicesByQuery.set(key, { ...retained, ...replacement });
+        }
         const withdraw = kind === 'work' ? owner.withdrawSessionWork(sessionIds)
-            : sessionInputs.detailRefusal(sessionId) instanceof UsageAccountingSliceRefusal ? withdrawRetainedActivity(sessionId) : undefined;
+            : accountingRefusal ? replaceActivityPublication : undefined;
         if (withdraw) for (const read of entryReads.values()) read.replaceRetained(withdraw);
         owner.store.replaceRetainedValues((content, refreshIfDemanded, key) => {
             const basis = decodedValues.get(content)?.admission;
@@ -3116,6 +3117,26 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                         });
                         if (results.some((slice, index) => slice !== batch.results[index])) batch = { ...batch, results };
                         if (custodyChanged) reproject = undefined;
+                    }
+                    if (failureCode === undefined) {
+                        // The same projection applies whether this is a new
+                        // answer or an admitted read publishing after refusal.
+                        const results = batch.results.map(slice => {
+                            const admissions = acquiredActivitySessions.has(slice.key)
+                                ? acquiredActivitySessions : previousActivitySessions;
+                            const activity = admissions.get(slice.key);
+                            if (!activity) return slice;
+                            const work = slice.sources.find(source => source.source === 'work')?.status === 'pending'
+                                ? seedWorkInputs.get(slice.key)?.input : acquiredWorkInputs.get(slice.key);
+                            const replacement = projectActivityPublication(slice, activity, work?.source);
+                            if (!replacement) return slice;
+                            admissions.set(slice.key, replacement.activitySessions);
+                            return replacement.slice;
+                        });
+                        if (results.some((slice, index) => slice !== batch.results[index])) {
+                            batch = { ...batch, results };
+                            reproject = undefined;
+                        }
                     }
                     // Usage arrivals age the admitted answer; they do not revoke
                     // it. Publish completed facts with their original input basis,
