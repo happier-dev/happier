@@ -6,7 +6,7 @@ import * as React from 'react';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { act, type ReactTestInstance } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { renderHook as renderBareHook, renderScreen as renderBareScreen, standardCleanup } from '@/dev/testkit';
+import { createDeferred, renderHook as renderBareHook, renderScreen as renderBareScreen, standardCleanup } from '@/dev/testkit';
 import { createMountedCurrentUiContextWrapper } from '@/dev/testkit/harness/mountedCurrentUiContext';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
@@ -1962,8 +1962,8 @@ describe('Work and Coach widget bodies', () => {
     const admitted = [...contributions, contribution('slow', 's3', 't3')];
     const accounting = [{ query: workQuery, status: 'available' as const,
       value: { ...slice.accounting!, contributions: admitted } }];
-    const slow = Promise.withResolvers<void>();
-    const progress = Promise.withResolvers<UsageQueryResultSlice>();
+    const slow = createDeferred<void>();
+    const progress = createDeferred<UsageQueryResultSlice>();
     const project = (work: Awaited<ReturnType<typeof collectUsageWorkSources>>, previous?: UsageQueryBatchResult) =>
       resolveUsagePageAggregation({ queries: [workQuery], accounting, work, previous, nowMs: 1000 }, bundledUsageModelPriceCatalog);
     const renderWork = (state: UsageQueryResultSlice) => {

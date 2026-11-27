@@ -618,7 +618,7 @@ function evidenceResponse(body: unknown) {
   }) });
 }
 
-it('keeps the typed cause with the mounted Score hour while its exact replacement is pending', async () => {
+it('keeps the typed cause with the mounted Score hour through settlement', async () => {
   vi.spyOn(Date.prototype, 'getTimezoneOffset').mockReturnValue(-60);
   let holdEvidence: ReturnType<typeof createDeferred<void>> | undefined;
   const screen = await renderUsagePage('agents', accounting, undefined, undefined, undefined, undefined, {
@@ -663,12 +663,13 @@ it('keeps the typed cause with the mounted Score hour while its exact replacemen
   const scope = captureActiveServerAccountScopeLifetime()!.scope;
   const executeMounted = createFrontDoorActionExecute();
   const usageInput = { queries: [page.query] };
-  const invokeMounted = () => executeMounted('usage.query', usageInput, {
+  const caller = {
     surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
     serverId: scope.serverId, expectedAccountId: scope.accountId,
-  });
-  // The exact Action batch can reuse the page’s admitted hour while its own
-  // evidence response is still open. Keep that read in flight for this check.
+  } as const;
+  const invokeMounted = () => executeMounted('usage.query', usageInput, caller);
+  // A replacement may read new evidence or reuse the already admitted hour.
+  // Either first reply must carry the previously admitted typed cause.
   holdEvidence = createDeferred<void>();
   const gate = holdEvidence;
   let firstMounted: Awaited<ReturnType<typeof invokeMounted>>;
@@ -683,7 +684,6 @@ it('keeps the typed cause with the mounted Score hour while its exact replacemen
   const opening = readSlice(firstMounted.result);
   const readMuseHour = (result: UsageQueryBatchResult['results'][number]) => result.howYouWork?.agentCalendar?.hours
     .find(bucket => bucket.startMs === hour)?.agents.find(agent => agent.agentId === 'muse');
-  expect(opening.pending).toBe(true);
   expect(readMuseHour(opening)?.coverage.busy).toBe('partial');
   expect(readMuseHour(opening)?.metrics.busyMs).toBe(495_019);
   const openingCause = opening.sources.find(source => source.source === 'how_you_work:sessions')?.errorCode;
@@ -696,8 +696,9 @@ it('keeps the typed cause with the mounted Score hour while its exact replacemen
   });
   if (opening.pending) {
     expect(opening.sources).toContainEqual(expect.objectContaining({ source: 'how_you_work', status: 'pending' }));
-    const settled = await entry.acquire();
-    expect(settled.error).toBeUndefined();
+    const acquisition = entry.acquire(caller);
+    expect((await acquisition.accounting).ok).toBe(true);
+    await acquisition.evidenceCompletion;
   }
   const mounted = await invokeMounted();
   if (!mounted.ok) throw new Error(mounted.errorCode);
@@ -734,5 +735,5 @@ it('keeps the typed cause with the mounted Score hour while its exact replacemen
   expect(actionMs! - pageMs).toBeCloseTo(42_151, 5);
 
   await screen.unmount();
-  expect(openingCause, 'a pending Action with a retained partial hour carries the typed cause').toBe('encrypted_access_pending');
+  expect(openingCause, 'the first Action reply carries the typed cause').toBe('encrypted_access_pending');
 });
