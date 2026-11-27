@@ -23,6 +23,9 @@ const FAILURE_RECORD = /(?:^|\n)⚠ ([^\n]+)\s*$/u;
 const NATIVE_FAILURES: ReadonlyArray<readonly [RegExp, NativeFailure]> = [
   // Observed: Gemini API executor error carrying google.rpc.ErrorInfo reason API_KEY_INVALID.
   [/\breason:API_KEY_INVALID\b/u, { kind: 'auth_expired', limitCategory: 'auth_invalid', quotaScope: 'account' }],
+  // Observed (agy acp, 2026-11-27): "Individual quota reached. Please upgrade your subscription to
+  // increase your limits. Resets in 142h7m6s." — the account's plan quota, with its reset countdown.
+  [/Individual quota reached\./u, { kind: 'usage_limit', limitCategory: 'usage_limit', quotaScope: 'account' }],
   // Inferred rendering: CLI literal for an exhausted model quota.
   [/You have exhausted your quota on this model\./u, { kind: 'usage_limit', limitCategory: 'usage_limit', quotaScope: 'model' }],
   // Inferred rendering: the observed executor-error format with the google.rpc status of a 429.
@@ -44,6 +47,14 @@ function failureText(error: unknown): string | null {
   return typeof error === 'string' ? error : error instanceof Error ? error.message : text(record(error)?.message);
 }
 
+/** "Resets in 142h7m6s" (observed) as an absolute reset time; null when the message has no countdown. */
+function readResetsAtMs(message: string): number | null {
+  const match = /\bResets in (?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?/u.exec(message);
+  if (!match || (!match[1] && !match[2] && !match[3])) return null;
+  const seconds = (Number(match[1] ?? 0) * 60 + Number(match[2] ?? 0)) * 60 + Number(match[3] ?? 0);
+  return Date.now() + seconds * 1000;
+}
+
 /** The verification or appeal link the CLI prints with the message (inferred: the first https URL). */
 function readLink(message: string): string | null {
   const url = message.match(/https:\/\/[^\s<>"']+/u)?.[0]?.replace(/[.,;:)\]]+$/u, '');
@@ -58,6 +69,7 @@ export function classifyAgyRuntimeFailure(input: ConnectedServiceRuntimeFailureI
   const selection = record(input.selection);
   const revision = ConnectedServiceCredentialRevisionV1Schema.safeParse(selection?.credentialRevision);
   const link = failure.linkAction ? readLink(message) : null;
+  const resetsAtMs = failure.kind === 'usage_limit' ? readResetsAtMs(message) : null;
   return {
     kind: failure.kind, limitCategory: failure.limitCategory, serviceId: 'antigravity',
     profileId: text(selection?.activeProfileId ?? selection?.profileId), groupId: text(selection?.groupId),
@@ -65,8 +77,8 @@ export function classifyAgyRuntimeFailure(input: ConnectedServiceRuntimeFailureI
     credentialRevision: revision.success ? revision.data : null,
     sourceProviderAccountId: text(selection?.providerAccountId), sourceAccountLabel: text(selection?.providerEmail),
     failingAccessTokenFingerprint: text(selection?.credentialFingerprint),
-    resetsAtMs: null, retryAfterMs: null, quotaScope: failure.quotaScope, planType: null,
-    rateLimits: { limitCategory: failure.limitCategory, resetAtMs: null, retryAfterMs: null, quotaScope: failure.quotaScope },
+    resetsAtMs, retryAfterMs: null, quotaScope: failure.quotaScope, planType: null,
+    rateLimits: { limitCategory: failure.limitCategory, resetAtMs: resetsAtMs, retryAfterMs: null, quotaScope: failure.quotaScope },
     ...(link ? { action: { kind: 'open_url', url: link } as const } : {}),
     source: 'stable_provider_message',
   };
