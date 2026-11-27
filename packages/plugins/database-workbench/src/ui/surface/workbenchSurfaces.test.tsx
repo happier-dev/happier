@@ -350,7 +350,7 @@ describe('Database workbench surfaces', () => {
     } finally { await fixture.dispose(); }
   });
 
-  it('discloses a managed catalogue refusal and retries the selected schema', async () => {
+  it.each(['describe', 'catalogue'] as const)('discloses a managed %s refusal and retries the selected database', async (read) => {
     const target = { kind: 'managed_deployment', environment: { serverId: 'home', environmentId: 'env', projectSourceId: 'source' },
       targetLinkId: 'link', database: 'postgres', contribution: { pluginId: 'happier.deploy.supabase', contributionId: 'database' },
       platformProjectId: 'project', branchId: 'branch' } as const;
@@ -361,10 +361,15 @@ describe('Database workbench surfaces', () => {
     let allowRead = false;
     let refused = false;
     const executeAction = async (request: PluginUiTestkitExecuteActionInput): Promise<JsonValue> => {
-      if (request.action === databaseActionLocalIdV1(DATABASE_RELATIONS_LIST_ACTION_ID_V1) && !allowRead) {
-        expect(request.input).toMatchObject({ target, schema: 'public' });
-        refused = true;
-        return { ok: false, status: 'failed', code, reason: 'The provider is throttling catalogue reads.' };
+      const action = read === 'describe' ? DATABASE_DESCRIBE_ACTION_ID_V1 : DATABASE_RELATIONS_LIST_ACTION_ID_V1;
+      if (request.action === databaseActionLocalIdV1(action)) {
+        expect(request.input).toMatchObject(read === 'describe' ? { target } : { target, schema: 'public' });
+        if (!allowRead) {
+          refused = true;
+          return { ok: false, status: 'failed', code, reason: 'The provider refused the read.',
+            cause: { source: 'platform', code: '429', message: 'The provider is throttling catalogue reads.' } };
+        }
+        if (read === 'describe') return projectNativeJsonValueForTransport({ ok: true, operation: 'describe', descriptor: managed });
       }
       return base(request);
     };
@@ -373,7 +378,13 @@ describe('Database workbench surfaces', () => {
       authorPlugin: { id: 'happier.database', version: '0.0.0' }, surface: renderPage, subPath: path,
       surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: { pluginId: 'happier.database', localId: WORKBENCH_PAGE_VIEW_ID }, container: 'appPage' }, target: { kind: 'app' } }),
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
-      handlers: { ...connectionResourceHandlers(managed), executeAction },
+      handlers: {
+        ...connectionResourceHandlers(managed),
+        ...(read === 'describe' ? {
+          async watchResource() { throw new PluginError({ code: 'plugin_resource_transport_unavailable' }); },
+        } : {}),
+        executeAction,
+      },
     });
     try {
       await settle(20);
@@ -586,7 +597,7 @@ describe('Database workbench surfaces', () => {
   it('reopens a saved database when the person retries its failed connection read', async () => {
     const connection = connectionResourceHandlers();
     const watchResource = vi.fn(connection.watchResource)
-      .mockRejectedValueOnce(new Error('Connection unavailable'));
+      .mockRejectedValueOnce(new PluginError({ code: 'connection_unavailable', message: 'Connection unavailable' }));
     const fixture = await createPluginUiTestkit({
       identity: { instanceId: 'linked-retry', mountNonce: 'linked-retry' },
       authorPlugin: { id: 'happier.database', version: '0.0.0' },
@@ -597,7 +608,7 @@ describe('Database workbench surfaces', () => {
     });
     try {
       await settle(20);
-      expect(await fixture.getByText('Databases could not be read')).toBeTruthy();
+      expect(await fixture.getByText('Connection unavailable')).toBeTruthy();
       expect(document.body.textContent).not.toContain('Create read-only login');
       expect(watchResource).toHaveBeenCalledTimes(1);
       await fixture.press(await fixture.getByRole('button', { name: 'Try again' }));
@@ -1640,6 +1651,26 @@ describe('Database workbench surfaces', () => {
     }
   });
 
+  it.each(['servicesPanel', 'rightSidebarTab'] as const)('discloses a typed target-list refusal on %s', async container => {
+    const refusal = new PluginError({ code: 'database_machine_unavailable', message: 'The selected machine could not list databases.' });
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: container, mountNonce: 'target-list-refusal' },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' },
+      surface: container === 'servicesPanel' ? renderPanel : renderRail,
+      launchInput: projectNativeJsonValueForTransport({ scope }),
+      surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: {
+        pluginId: 'happier.database', localId: container === 'servicesPanel' ? 'databases-panel' : 'database-session-rail',
+      }, container }, target: container === 'servicesPanel' ? { kind: 'services' } : { kind: 'session', sessionId: 'session' } }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: { executeAction: async () => { throw refusal; } },
+    });
+    try {
+      await fixture.press(await fixture.findByRole('button', { name: 'Details' }));
+      expect(await fixture.getByText('Code: database_machine_unavailable')).toBeTruthy();
+      expect(await fixture.getByText(refusal.message)).toBeTruthy();
+    } finally { await fixture.dispose(); }
+  });
+
   it.each(['servicesPanel', 'rightSidebarTab'] as const)('connects a Saved Secret to the selected checkout from an empty %s', async (container) => {
     const connect = databaseActionLocalIdV1(DATABASE_TARGETS_CONNECT_ACTION_ID_V1);
     const forget = databaseActionLocalIdV1(DATABASE_TARGETS_FORGET_ACTION_ID_V1);
@@ -1712,12 +1743,18 @@ describe('Database workbench surfaces', () => {
     const target = { ...scope, source: { kind: 'sqlite_file' as const, path } };
     const selected: DatabaseDescriptorV1 = { ...descriptor, target, engine: 'sqlite', label: path, origin: { label: path } };
     const describe = databaseActionLocalIdV1(DATABASE_DESCRIBE_ACTION_ID_V1);
+    let denied = true;
     const dispatch = vi.fn<Parameters<typeof createPluginUiActionControlTestHost>[0]>(async request => {
       expect(request).toMatchObject({ action: describe, input: { operation: 'describe', target } });
+      if (denied) return { ok: true, result: { ok: false, status: 'failed', code: 'database_file_unavailable',
+        cause: { source: 'engine', code: 'SQLITE_CANTOPEN', message: 'SQLite could not open the database file.' } } };
       return { ok: true, result: projectNativeJsonValueForTransport({ ok: true, operation: 'describe', descriptor: selected }) };
     });
     const control = createPluginUiActionControlTestHost(dispatch);
     const openSurface = vi.fn<NonNullable<PluginUiTestkitHostHandlers['openSurface']>>(async () => {});
+    const presentActionFailure = vi.fn<NonNullable<PluginUiTestkitHostHandlers['presentActionFailure']>>(async ({ failure }) => ({
+      reason: failure.error ?? failure.errorCode, nextStep: null, technicalDetails: [],
+    }));
     const fixture = await createPluginUiTestkit({
       identity: { instanceId: container, mountNonce: 'selected-sqlite-file' },
       authorPlugin: { id: 'happier.database', version: '0.0.0' },
@@ -1728,7 +1765,7 @@ describe('Database workbench surfaces', () => {
       }, container },
       target: container === 'servicesPanel' ? { kind: 'services' } : { kind: 'session', sessionId: 'session' } }),
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
-      handlers: { executeAction: daemonAnswers([]), actionControl: control.handler, openSurface },
+      handlers: { executeAction: daemonAnswers([]), actionControl: control.handler, openSurface, presentActionFailure },
     });
     try {
       await fixture.press(await fixture.findByRole('button', { name: 'Connect a database' }));
@@ -1743,7 +1780,14 @@ describe('Database workbench surfaces', () => {
         field.dispatchEvent(new Event('input', { bubbles: true }));
       });
       await act(async () => control.press('Open SQLite file'));
-      expect(dispatch).toHaveBeenCalledTimes(1);
+      await settle();
+      expect(presentActionFailure).toHaveBeenCalledWith(expect.objectContaining({ failure: expect.objectContaining({
+        errorCode: 'database_file_unavailable', details: expect.objectContaining({ cause: { source: 'engine', code: 'SQLITE_CANTOPEN',
+          message: 'SQLite could not open the database file.' } }),
+      }) }));
+      denied = false;
+      await act(async () => control.press('Open SQLite file'));
+      expect(dispatch).toHaveBeenCalledTimes(2);
       expect(openSurface).toHaveBeenCalledWith(expect.objectContaining({
         view: expect.objectContaining({ localId: WORKBENCH_PAGE_VIEW_ID }),
         subPath: expect.stringContaining(encodeWorkbenchRootSubPath(target)),

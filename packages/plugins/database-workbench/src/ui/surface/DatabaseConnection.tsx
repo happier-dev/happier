@@ -3,7 +3,6 @@ import {
   DATABASE_DESCRIBE_ACTION_ID_V1, DATABASE_TARGETS_CONNECT_ACTION_ID_V1,
   DATABASE_TARGETS_FORGET_ACTION_ID_V1, DatabaseTargetsForgetResultV1Schema,
 } from '@happier-dev/database-protocol';
-import { PluginError } from '@happier-dev/plugin-sdk';
 import { databaseActionLocalIdV1, isPluginActionApprovalRequestCreated } from '@happier-dev/plugin-sdk/actions';
 import { DatabaseDescriptorV1Schema, type DatabaseDescriptorV1 } from '@happier-dev/plugin-sdk/database';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
@@ -13,6 +12,7 @@ import {
   projectPluginActionControlExecutionV1, projectPluginActionRejectionV1, usePluginHostApi, type PluginActionExecution,
 } from '@happier-dev/plugin-ui/hostApi';
 import { databaseActionSettlement } from '../actionSettlement.js';
+import { WorkbenchOperationError } from '../workbench.js';
 import type { WorkbenchLaunchInput } from './mount.js';
 import { openWorkbenchPage } from './openWorkbench.js';
 
@@ -159,9 +159,7 @@ function SQLiteFileConnection({ scope, onOpened, onCancel }: Readonly<{ scope: W
           }
           const result = settled.result;
           if (!result.ok) {
-            const message = ('cause' in result ? result.cause?.message : undefined)
-              ?? ('reason' in result ? result.reason : undefined);
-            setExecution(projectPluginActionRejectionV1(new PluginError({ code: result.code, message }), t));
+            setExecution(projectPluginActionRejectionV1(new WorkbenchOperationError(result), t));
             return;
           }
           if (result.operation === 'describe') {

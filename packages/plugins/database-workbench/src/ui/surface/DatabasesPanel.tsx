@@ -3,7 +3,6 @@ import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
 import {
   Button,
   EmptyState,
-  ErrorState,
   Icon,
   Item,
   ItemGroup,
@@ -23,6 +22,7 @@ import {
 } from './mount.js';
 import { openWorkbenchPage } from './openWorkbench.js';
 import { DatabaseConnection, DatabaseForget } from './DatabaseConnection.js';
+import { CatalogueReadFailure } from './CatalogueReadFailure.js';
 
 const PANEL_LOCATION = Object.freeze({
   targetKey: '',
@@ -122,21 +122,7 @@ function DatabaseRows(
   }
   if (status === 'loading' && targets.length === 0)
     return <LoadingState layout="line" rows={1} />;
-  if (status === 'unavailable') {
-    return (
-      <ErrorState
-        layout="line"
-        kind="unavailable"
-        title={translate(
-          'plugins.database.find.failed',
-          'Databases could not be read',
-        )}
-        details={error instanceof Error ? error.message : undefined}
-        onRetry={refresh}
-        retryLabel={translate('plugins.database.retry', 'Try again')}
-      />
-    );
-  }
+  if (status === 'unavailable') return <CatalogueReadFailure error={error} refresh={refresh} />;
   if (status === 'empty') {
     return (
       <Stack gap="xsmall">

@@ -4,7 +4,6 @@ import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/prot
 import {
   Button,
   EmptyState,
-  ErrorState,
   LoadingState,
   ItemGroup,
   Menu,
@@ -30,6 +29,7 @@ import { WorkbenchMain } from './WorkbenchPage.js';
 import { InsightsDetailsTab, InsightsRailList } from './insights/InsightsRail.js';
 import { AddTelemetrySetup } from './insights/InsightsSetup.js';
 import { DatabaseConnection, DatabaseForget } from './DatabaseConnection.js';
+import { CatalogueReadFailure } from './CatalogueReadFailure.js';
 import {
   databaseTargetKey,
   readWorkbenchLaunchInput,
@@ -196,23 +196,7 @@ function RailTab(
   }
   if (picker.status === 'loading' && picker.targets.length === 0)
     return <LoadingState layout="line" rows={6} rowShape="compact" />;
-  if (picker.status === 'unavailable') {
-    return (
-      <ErrorState
-        layout="line"
-        kind="unavailable"
-        title={translate(
-          'plugins.database.find.failed',
-          'Databases could not be read',
-        )}
-        details={
-          picker.error instanceof Error ? picker.error.message : undefined
-        }
-        onRetry={picker.refresh}
-        retryLabel={translate('plugins.database.retry', 'Try again')}
-      />
-    );
-  }
+  if (picker.status === 'unavailable') return <CatalogueReadFailure error={picker.error} refresh={picker.refresh} />;
   if (!current) {
     const telemetrySetup = identity?.tab === 'insights' && scope.kind === 'worktree'
       ? <AddTelemetrySetup scope={scope} />

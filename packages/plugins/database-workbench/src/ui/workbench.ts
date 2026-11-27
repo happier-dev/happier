@@ -11,6 +11,8 @@ import type {
     DatabaseStatsObservationV1,
 } from '@happier-dev/plugin-sdk/database';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
+import { PluginError } from '@happier-dev/plugin-sdk';
+import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import { workbenchTargetKey } from '../targetIdentity.js';
 import { inspectJsonCell } from './cellInspection.js';
 import { createConsoleState } from './consoleState.js';
@@ -27,8 +29,14 @@ import type {
     WorkbenchOptions, WorkbenchReview, WorkbenchCellState, WorkbenchActivityResource, WorkbenchControlBinding,
 } from './models.js';
 
-export class WorkbenchOperationError extends Error {
-    constructor(readonly failure: DatabaseFailureV1) { super('reason' in failure ? failure.reason ?? failure.code : failure.code); }
+export class WorkbenchOperationError extends PluginError {
+    constructor(readonly failure: DatabaseFailureV1) {
+        super({
+            code: failure.code,
+            message: ('cause' in failure ? failure.cause?.message : undefined) ?? ('reason' in failure ? failure.reason : undefined),
+            details: projectNativeJsonValueForTransport(failure),
+        });
+    }
 }
 function success<O extends Extract<DatabaseOperationResultV1, { ok: true }>['operation']>(result: DatabaseOperationResultV1, operation: O): Extract<DatabaseOperationResultV1, { ok: true; operation: O }> {
     if (!result.ok) throw new WorkbenchOperationError(result);

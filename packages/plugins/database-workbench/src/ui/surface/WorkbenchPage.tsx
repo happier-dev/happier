@@ -4,7 +4,6 @@ import type { DatabaseTargetV1 } from '@happier-dev/plugin-sdk/database';
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
 import {
   EmptyState,
-  ErrorState,
   ListDetailLayout,
   LoadingState,
   PageHeader,
@@ -31,6 +30,7 @@ import { RelationStructure } from './RelationStructure.js';
 import { StagedBar, StagedReview } from './StagedChanges.js';
 import { OverviewFacts } from './OverviewFacts.js';
 import { ReadAccessSetup } from './ReadAccessSetup.js';
+import { CatalogueReadFailure } from './CatalogueReadFailure.js';
 import { TableDirectory } from './TableDirectory.js';
 import { WorkbenchRail } from './WorkbenchRail.js';
 import {
@@ -129,23 +129,13 @@ function LinkedWorkbenchPage({ context, target, display, place, root }: Readonly
   place: WorkbenchPlace;
   root: boolean;
 }>) {
-  const translate = usePluginTranslation();
   const linked = useLinkedWorkbench(context, target, display);
   if (linked.status === 'loading') return <LoadingState layout="line" rows={1} />;
   if (linked.status === 'unavailable' && target.kind === 'managed_deployment'
     && isPluginError(linked.error) && linked.error.code === 'read_role_setup_required') {
     return <ReadAccessSetup target={target} display={display} onConfigured={linked.retry} />;
   }
-  if (linked.status === 'unavailable') return (
-    <ErrorState
-      layout="centered"
-      kind="unavailable"
-      title={translate('plugins.database.find.failed', 'Databases could not be read')}
-      details={linked.error instanceof Error ? linked.error.message : undefined}
-      onRetry={linked.retry}
-      retryLabel={translate('plugins.database.retry', 'Try again')}
-    />
-  );
+  if (linked.status === 'unavailable') return <CatalogueReadFailure error={linked.error} refresh={linked.retry} />;
   // Reading through the Account relay without a held connection changes nothing the person can act on, so the page
   // says nothing about it.
   return <MountedWorkbenchPage context={context} place={place} root={root}

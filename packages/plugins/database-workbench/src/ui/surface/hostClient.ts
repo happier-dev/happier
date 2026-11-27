@@ -21,6 +21,7 @@ import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/prot
 import { createPluginUiResourceStore } from '@happier-dev/plugin-ui/advanced';
 import { encodeWorkbenchSubPath, type WorkbenchTargetDisplay } from './subPath.js';
 import type { WorkbenchClient } from '../models.js';
+import { WorkbenchOperationError } from '../workbench.js';
 import { databaseOperationActions } from '../../operationActions.js';
 import { workbenchTargetKey } from '../../targetIdentity.js';
 
@@ -158,7 +159,7 @@ export function createHostWorkbenchClient(
       signal.throwIfAborted();
       if (snapshot) return { descriptor: snapshot.descriptor, connection: 'watch' };
       const result = await executeOperation({ operation: 'describe', target }, signal);
-      if (!result.ok) throw new PluginError({ code: result.code });
+      if (!result.ok) throw new WorkbenchOperationError(result);
       if (result.operation !== 'describe') throw new PluginError({ code: 'plugin_resource_result_invalid' });
       return { descriptor: result.descriptor, connection: 'standalone' };
     },
