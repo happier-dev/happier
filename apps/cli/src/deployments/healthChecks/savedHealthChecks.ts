@@ -477,8 +477,13 @@ export function createSavedHealthChecksHost(input: Readonly<{
                         serverId: input.serverId, machineId: subject.machineId, serviceId: subject.serviceId,
                     }, { signal });
                     signal.throwIfAborted();
-                    if (!('kind' in detail) || detail.kind !== 'service' || detail.service.serviceId !== subject.serviceId
-                        || detail.service.unavailableReason !== undefined) return unavailable('service_unavailable');
+                    if (!('kind' in detail)) return unavailable('service_unavailable');
+                    if (detail.kind === 'unavailable') return unavailable(detail.reason);
+                    if (detail.service.serviceId !== subject.serviceId) return unavailable('service_unavailable');
+                    if (detail.service.unavailableReason !== undefined) {
+                        throw new PluginError({ code: detail.service.unavailableReason, message: 'The saved health check is unavailable',
+                            retryable: false, ...(detail.service.failureCause ? { failureCause: detail.service.failureCause } : {}) });
+                    }
                     const vantage = observer.machineId === subject.machineId ? 'sameMachine' as const : 'outside' as const;
                     const admitted = checks.map(check => contributions.has(check.checkId)
                         ? { kind: 'contributed' as const, check }

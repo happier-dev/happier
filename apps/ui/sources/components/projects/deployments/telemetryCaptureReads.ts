@@ -127,10 +127,13 @@ function settle<T extends { ok: boolean }>(
   if (!parsed.success) {
     throw unreadableCapture();
   }
-  const data = parsed.data as T & { code?: unknown };
+  const data = parsed.data as T & { code?: unknown; reason?: unknown; cause?: { message?: unknown } };
   if (!data.ok) {
     const code = typeof data.code === 'string' ? data.code : 'telemetry_unavailable';
-    throw new HappyError(code, false, { code });
+    const message = typeof data.cause?.message === 'string'
+      ? data.cause.message
+      : typeof data.reason === 'string' ? data.reason : code;
+    throw new HappyError(message, false, { code, details: data });
   }
   return data as Extract<T, { ok: true }>;
 }

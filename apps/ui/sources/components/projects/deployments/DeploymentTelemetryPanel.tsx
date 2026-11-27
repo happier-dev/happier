@@ -55,6 +55,7 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 import { useServerScopedMachine, useServerScopedMachineLabel } from '@/sync/store/hooks';
 import { getPreferredLanguage, t } from '@/text';
 import { alertActionFailure } from '@/utils/errors/alertActionFailure';
+import { HappyError } from '@/utils/errors/errors';
 import { createDeploymentActions } from './deploymentActions';
 import { showDeploymentTelemetrySheet } from './DeploymentTelemetrySheet';
 import {
@@ -626,7 +627,7 @@ export function TelemetryMenu({ onOpenSettings = null, onAddTelemetry = null, op
 type RequestRead =
   | Readonly<{ kind: 'loading' }>
   | Readonly<{ kind: 'ready'; trace: Awaited<ReturnType<TelemetryCaptureReads['trace']>> }>
-  | Readonly<{ kind: 'unavailable'; code: string }>;
+  | Readonly<{ kind: 'unavailable'; code: string; reason?: string }>;
 
 /** A trace row's request (lab p7AddNow-trace): what it was, where its time went, its waterfall and its logs. */
 export function TelemetryRequestDetail(props: Readonly<{
@@ -659,7 +660,10 @@ export function TelemetryRequestDetail(props: Readonly<{
     reads.trace(traceId, controller.signal).then(
       trace => { if (!controller.signal.aborted) setRead({ kind: 'ready', trace }); },
       (error: unknown) => {
-        if (!controller.signal.aborted) setRead({ kind: 'unavailable', code: telemetryCaptureFailureCode(error) });
+        if (controller.signal.aborted) return;
+        const code = telemetryCaptureFailureCode(error);
+        const reason = error instanceof HappyError && error.message !== code ? error.message : undefined;
+        setRead({ kind: 'unavailable', code, reason });
       },
     );
     return () => controller.abort();
@@ -727,7 +731,7 @@ export function TelemetryRequestDetail(props: Readonly<{
         <SurfaceStateCard kind="loading" size="line" title={t('deploymentTelemetry.request.reading')} />
       ) : read.kind === 'unavailable' ? (
         <SurfaceStateCard testID="project-deployments.telemetry.request.unavailable" kind="unavailable" size="line"
-          title={t('deploymentTelemetry.request.unavailable')} diagnosticCode={read.code}
+          title={read.reason ?? t('deploymentTelemetry.request.unavailable')} diagnosticCode={read.code}
           action={{ label: t('common.retry'), onPress: () => setAttempt(value => value + 1) }} />
       ) : (
         <>

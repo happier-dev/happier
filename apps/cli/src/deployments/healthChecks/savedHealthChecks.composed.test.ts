@@ -947,6 +947,17 @@ describe('saved source finite native producer binding', () => {
                 expect.objectContaining({ signal: expect.any(AbortSignal) }));
             expect(dns).toHaveBeenCalledWith('private.example.test', 'A');
             expect(JSON.stringify(results)).not.toContain('private.example.test');
+            expect(detail.kind).toBe('service');
+            if (detail.kind !== 'service') throw new Error('Expected the service fixture');
+            const failureCause = { phase: 'machines.services.detail', errorClass: 'Error',
+                errorCode: 'denied', httpStatus: 403 } as const;
+            execute.mockResolvedValueOnce(MachineServicesDetailResultV1Schema.parse({ ...detail,
+                service: { ...detail.service, unavailableReason: 'denied', failureCause } }));
+            await expect(service!.read({ sourceInstanceId: 'health:subject', checkIds: ['tcp'] }))
+                .rejects.toMatchObject({ code: 'denied', data: { failureCause } });
+            execute.mockResolvedValueOnce(MachineServicesDetailResultV1Schema.parse({ kind: 'unavailable', reason: 'unsupported' }));
+            await expect(service!.read({ sourceInstanceId: 'health:subject', checkIds: ['tcp'] }))
+                .rejects.toMatchObject({ code: 'unsupported' });
             const remote = await adopted(sourceConfig, 'outside-observer');
             const remoteHost = createSavedHealthChecksHost({ serverId: 'server', homeServerIdentityId: 'server', resolveAdoptedDefinitionSet: () => remote.owner,
                 readObserver: () => remote.observer, now: () => 2200, readHeartbeatReceipt: receipts,

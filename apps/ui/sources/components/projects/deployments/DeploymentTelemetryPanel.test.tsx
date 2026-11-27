@@ -577,6 +577,36 @@ describe('Environment Telemetry tabs', () => {
     }
   });
 
+  it.each(['trace', 'log'] as const)('shows the collector refusal in the App request %s', async kind => {
+    const refusal = { ok: false, status: 'failed', code: 'telemetry_collector_read_failed',
+      reason: 'The collector refused the read.', cause: { source: 'platform', code: '503', message: 'The collector is restarting.' } };
+    const { invoke } = collector(call => {
+      if (call.actionId.endsWith('/capture/query/get')) return refusal;
+      const result = answers(call);
+      if (!call.actionId.endsWith('/capture/trace/get') || !('summaries' in result) || !result.summaries) return result;
+      if (kind === 'trace') return refusal;
+      return { ...result, summaries: result.summaries.map(item => item.kind === 'log' ? { ...item, bodyPrefixTruncated: true } : item) };
+    });
+    const reads = createTelemetryCaptureReads(invoke, { scope: lifetime.scope, collectorMachineId: 'collector',
+      environmentId: source.environmentId });
+    const screen = await renderScreen(
+      <AppPresentationPlatformProvider>
+        <CoreCollectionScope>
+          <TelemetryRequestDetail reads={reads} lifetime={lifetime} active request={request} locale="en" />
+        </CoreCollectionScope>
+      </AppPresentationPlatformProvider>,
+    );
+    try {
+      await settle();
+      if (kind === 'log') {
+        await screen.pressByTestIdAsync('telemetry.request.log.log-1.open');
+        await settle();
+        expect(screen.getTextContent()).toContain('TypeError: Cannot read properties of undefined');
+      }
+      expect(screen.getTextContent()).toContain('The collector is restarting.');
+    } finally { await screen.unmount(); }
+  });
+
   it.each(['request', 'endpoint', 'setup', 'Worktree request'] as const)('opens an editable Session draft with the selected %s and verification reads', async (feature) => {
     await prepareSessionDraftPersistenceStorage();
     const homes = createHomeGovernanceHarness();
