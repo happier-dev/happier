@@ -17,14 +17,22 @@ function number(value: unknown): number | null {
   const n = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : Number.NaN;
   return Number.isFinite(n) && n >= 0 ? n : null;
 }
-function malformed(): never { throw new ConnectedServiceQuotaFetchError('antigravity_quota_malformed', { quotaFetchErrorCode: 'malformed' }); }
+/** `reason` names the failed check so the refresh log shows why (fixed codes and provider ids only, never values). */
+function malformed(reason: string): never {
+  throw new ConnectedServiceQuotaFetchError(`antigravity_quota_malformed:${reason}`, { quotaFetchErrorCode: 'malformed' });
+}
+/** Provider tier ids and ineligibility reason codes from loadCodeAssist, for the log only. */
+function describeEntitlement(load: Record<string, unknown> | null): string {
+  const ids = (value: unknown, key: string) => Array.isArray(value) ? value.map(item => text(object(item)?.[key])).filter(Boolean).join('|') : '';
+  return `allowed=${ids(load?.allowedTiers, 'id') || '-'};ineligible=${ids(load?.ineligibleTiers, 'reasonCode') || '-'};paid=${text(object(load?.paidTier)?.id) ?? '-'}`;
+}
 
 function meter(value: unknown, groupName: string | null, modelId?: string): ConnectedServiceQuotaMeterV1 {
   const bucket = object(value);
   const bucketId = text(bucket?.bucketId);
-  if (!bucket || !bucketId) return malformed();
+  if (!bucket || !bucketId) return malformed('bucket_without_id');
   const fraction = number(bucket.remainingFraction);
-  if (fraction !== null && fraction > 1) return malformed();
+  if (fraction !== null && fraction > 1) return malformed('remaining_fraction_above_one');
   const remaining = number(bucket.remainingAmount);
   const limit = remaining !== null && fraction !== null && fraction > 0 ? remaining / fraction : null;
   const resetText = text(bucket.resetTime);
@@ -83,7 +91,7 @@ export function createAgyQuotaFetcher(deps: Readonly<{ fetchRuntime?: GoogleCode
       // on its first run; or a tier awaiting a user-defined project) has no quota to read yet.
       // That is unknown quota, never exhausted. An unidentified client offers no free tier.
       const onboardable = Array.isArray(load?.allowedTiers) && load.allowedTiers.some(tier => object(tier)?.id === 'free-tier');
-      return object(load?.currentTier) || onboardable ? snapshot([]) : malformed();
+      return object(load?.currentTier) || onboardable ? snapshot([]) : malformed(`no_project_or_tier:${describeEntitlement(load)}`);
     }
     const endpoint = object(load?.paidTier)?.usesGcpTos === true ? 'https://cloudcode-pa.googleapis.com' : 'https://daily-cloudcode-pa.googleapis.com';
     const response = object(await requestGoogleCodeAssist({ ...request, endpoint, method: 'retrieveUserQuotaSummary', body: { project } }));
@@ -92,22 +100,22 @@ export function createAgyQuotaFetcher(deps: Readonly<{ fetchRuntime?: GoogleCode
     if (Array.isArray(summary?.groups)) {
       meters = summary.groups.flatMap(value => {
         const group = object(value);
-        if (!group || (group.buckets !== undefined && !Array.isArray(group.buckets))) return malformed();
+        if (!group || (group.buckets !== undefined && !Array.isArray(group.buckets))) return malformed('summary_group_shape');
         return Array.isArray(group.buckets) ? group.buckets.map(bucket => meter(bucket, text(group.displayName))) : [];
       });
     } else if (Array.isArray(summary?.buckets)) {
       // Deprecated shape is explicitly documented by the bundled CCPA discovery schema.
       meters = summary.buckets.map(bucket => meter(bucket, null));
-    } else return malformed();
+    } else return malformed('summary_without_groups_or_buckets');
     // A successful empty summary has no shared allowance to display. The provider's
     // per-model quota endpoint preserves each exact model identity; no family folding.
     if (meters.length === 0) {
       const quota = object(await requestGoogleCodeAssist({ ...request, endpoint, method: 'retrieveUserQuota', body: { project } }));
-      if (!Array.isArray(quota?.buckets)) return malformed();
+      if (!Array.isArray(quota?.buckets)) return malformed('model_quota_without_buckets');
       meters = quota.buckets.map(value => {
         const bucket = object(value);
         const modelId = text(bucket?.modelId);
-        if (!bucket || !modelId) return malformed();
+        if (!bucket || !modelId) return malformed('model_bucket_without_model');
         const tokenType = text(bucket.tokenType);
         const quotaType = tokenType === 'TOKEN_TYPE_UNSPECIFIED' ? null : tokenType;
         // BucketInfo identifies request and weighted-token allowances independently.

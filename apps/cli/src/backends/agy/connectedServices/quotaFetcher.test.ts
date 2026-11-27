@@ -143,7 +143,12 @@ describe('Antigravity selected-account quota summary', () => {
   });
   it('keeps an unidentified-client entitlement malformed', async () => {
     const fetcher = createAgyQuotaFetcher({ fetchRuntime: async () => unsupportedClientResponse({ headers: {} })! });
-    await expect(fetcher.fetch({ record: record(), now: 2000, signal: new AbortController().signal })).rejects.toMatchObject({ quotaFetchErrorCode: 'malformed' });
+    // The reason names the failed check and the provider's own tier ids and ineligibility codes,
+    // so a refresh log tells an unidentified client apart from an account that is not onboarded.
+    await expect(fetcher.fetch({ record: record(), now: 2000, signal: new AbortController().signal })).rejects.toMatchObject({
+      quotaFetchErrorCode: 'malformed',
+      message: 'antigravity_quota_malformed:no_project_or_tier:allowed=standard-tier;ineligible=UNSUPPORTED_CLIENT;paid=-',
+    });
   });
 });
 
