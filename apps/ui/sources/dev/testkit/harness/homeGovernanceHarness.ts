@@ -16,6 +16,10 @@ import {
     setActiveServerId,
     upsertServerProfile,
 } from '@/sync/domains/server/serverProfiles';
+import {
+    ACCOUNT_ERASURE_PREVIEW_HTTP_PATH_V1,
+    AccountErasurePreviewResponseV1Schema,
+} from '@happier-dev/protocol/auth/accountErasureReview';
 import { AuthTokenProvenanceSchema } from '@happier-dev/protocol/auth/authToken';
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 
@@ -459,6 +463,9 @@ export function createHomeGovernanceHarness(): HomeGovernanceHarness {
                 record.answers.set('/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture() });
             }
             record.answers.set(`GET ${AUTHORING_MEMORY_ROUTE_V1}`, { body: AuthoringMemoryListResponseV1Schema.parse({ rows: [] }) });
+            record.answers.set(`GET ${ACCOUNT_ERASURE_PREVIEW_HTTP_PATH_V1}`, {
+                body: AccountErasurePreviewResponseV1Schema.parse({ sharedEnvironments: [] }),
+            });
             // Workflow library summaries ask only for one structural page's
             // definition ids; an unseeded Home has no Automation rows.
             record.answers.set('POST /v3/automations/query', { select: async (input, request) => {

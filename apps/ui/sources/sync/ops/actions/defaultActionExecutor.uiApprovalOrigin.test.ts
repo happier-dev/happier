@@ -380,12 +380,11 @@ describe('present-user UI approval origin at the Action host', () => {
             const body = encoded && typeof encoded === 'object' && 'body' in encoded && typeof encoded.body === 'string'
                 ? encoded.body : null;
             const proposal = body ? ApprovalRequestSchema.safeParse(JSON.parse(body)) : null;
-            if (proposal?.success && proposal.data.status === 'executing' && claimUnavailable
-                && (failure !== 'claimed' || failedClaims === 0)) {
+            if (proposal?.success && proposal.data.status === 'executing' && claimUnavailable) {
                 failedClaims += 1;
-                // Genuine Home HTTP boundary: one case loses an acknowledged
-                // claim after commit; the others refuse before its CAS.
-                if (failure === 'claimed') await store.handle(path, incoming.init);
+                // Genuine Home HTTP boundary: one case commits the claim once and loses
+                // its acknowledgement across the claim retries; the others refuse before its CAS.
+                if (failure === 'claimed' && failedClaims === 1) await store.handle(path, incoming.init);
                 return { status: 500, body: { error: 'Failed to update artifact' } };
             }
             const response = await store.handle(path, incoming.init);

@@ -403,8 +403,8 @@ export function useApprovalDecisionHandler(
                     const { status, execution } = receipt.data;
                     if ((status === 'executed' || status === 'failed' || status === 'outcome_unknown')
                         && execution?.ok === (status === 'executed')) outcome = { status, execution };
+                    else if (status === 'approved' || status === 'executing') outcome = await awaitObservedSettlement();
                 }
-                if (outcome === null) outcome = await awaitObservedSettlement();
             }
             if (!result.ok && outcome === null) requireActionSuccess(result);
             // A decision can be recorded successfully while its execution was refused.

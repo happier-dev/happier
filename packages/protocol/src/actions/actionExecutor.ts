@@ -791,6 +791,8 @@ function projectRequesterApprovalDecision(request: Pick<StoredApprovalRequestV2,
 export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Readonly<{
   /** The ordinary Artifact viewer uses the addressed audience without the Inbox's private notice admission. */
   artifactGetAudience?: 'addressed';
+  /** This host binds its own unsigned approval request IDs; do not fabricate one for unhosted surfaces. */
+  requireExplicitApprovalRequestId?: boolean;
 }>): Readonly<{
   prepare: (actionId: ActionId, input: unknown, context?: ActionExecutorContext,
     options?: import('./executor/types.js').ActionPrepareOptions) => Promise<ActionPrepareResult>;
@@ -987,8 +989,10 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
   }>): Promise<Readonly<{ ok: true; request: StoredApprovalRequestV2; artifactId: string }> | ActionExecuteFailure> {
     if (!deps.approvalsCreate) return { ok: false, errorCode: 'approvals_not_supported', error: 'approvals_not_supported' };
     const { actionId, input, context } = args;
-    // An unsigned native Ask needs an identity even when Automation selection has no rows.
-    const ctx = context.externalActionCredential || context.externalActionExecutionAuthorization
+    // An unsigned native Ask needs an identity even when Automation selection has no rows,
+    // unless the calling host explicitly owns request-ID minting for its admitted surfaces.
+    const ctx = hostOptions?.requireExplicitApprovalRequestId
+      || context.externalActionCredential || context.externalActionExecutionAuthorization
       || normalizeId(readRecord(args.actionArgs).creationKey)
       ? context : withInvocationRequestId(context);
     const pluginCaller = projectApprovalRequestPluginCaller(ctx.actionCaller);
@@ -3999,7 +4003,8 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
           && (ctx.externalActionExecutionAuthorization !== undefined || ctx.externalActionCredential !== undefined)) {
           return actionAutomationAdmissionUnavailableV1('selection_unavailable');
         }
-        if (selection.before.length > 0 || selection.after.length > 0) {
+        if ((selection.before.length > 0 || selection.after.length > 0)
+          && !hostOptions?.requireExplicitApprovalRequestId) {
           ctx = withInvocationRequestId(ctx);
         }
         ctx = { ...ctx, actionAutomationAdmission: createActionAutomationInvocationV1({
