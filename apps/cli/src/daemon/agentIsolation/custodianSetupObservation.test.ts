@@ -86,7 +86,8 @@ it('keeps member operation scope while the real enrolled-custodian child exposes
     // independent host-admitted response context. Knowing a task id is no grant.
     expect(await respond(member)).toMatchObject({ ok: false, error: { code: 'permission_denied' } });
     expect(await respond(manager)).toMatchObject({ ok: false, error: { code: 'permission_denied' } });
-    expect(native.launches).toEqual([]);
+    expect(native.launches).toHaveLength(1);
+    expect(await tasks.poll({ taskId: taskId!, cursor: 0 })).toMatchObject({ pendingPrompt: { kind: 'sudo.password' } });
     expect(native.mutations).toEqual([]);
     expect(await respond(owner)).toMatchObject({ ok: true });
     expect(await child).toMatchObject({ ok: true });

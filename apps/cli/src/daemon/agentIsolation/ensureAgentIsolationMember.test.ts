@@ -297,7 +297,8 @@ describe.skipIf(process.platform !== 'linux')('existing P11/P10 first-use member
       expect(await respond(member)).toMatchObject({ ok: false, error: { code: 'permission_denied' } });
       expect(await respond(manager)).toMatchObject({ ok: false, error: { code: 'permission_denied' } });
       expect(native.mutations).toEqual([]);
-      expect(native.launches).toEqual([]);
+      expect(native.launches).toHaveLength(1);
+      expect(await tasks.poll({ taskId: taskId!, cursor: 0 })).toMatchObject({ pendingPrompt: { kind: 'sudo.password' } });
       if (completion === 'cancel') {
         const operation = owned.items[0]!;
         expect(operation.cancellation).toBe('supported');
@@ -307,7 +308,7 @@ describe.skipIf(process.platform !== 'linux')('existing P11/P10 first-use member
           kind: 'found', operation: { state: 'cancelled' },
         });
         expect(native.mutations).toEqual([]);
-        expect(native.launches).toEqual([]);
+        expect(native.launches).toHaveLength(1);
         return;
       }
       expect(await respond(owner)).toMatchObject({ ok: true });
@@ -391,7 +392,9 @@ describe.skipIf(process.platform !== 'linux')('existing P11/P10 first-use member
           responseAuthorization: responseContext(owner) } }, { machineSystemTaskResponse: responseContext(caller) });
       expect(await respond(member)).toMatchObject({ ok: false, error: { code: 'permission_denied' } });
       expect(await respond(manager)).toMatchObject({ ok: false, error: { code: 'permission_denied' } });
-      expect(native.mutations).toEqual([]); expect(native.launches).toEqual([]);
+      expect(native.mutations).toEqual([]);
+      expect(native.launches).toHaveLength(1);
+      expect(await tasks.poll({ taskId: taskId!, cursor: 0 })).toMatchObject({ pendingPrompt: { kind: 'sudo.password' } });
       expect(await respond(owner)).toMatchObject({ ok: true });
       // Launch authority is withdrawn even when no resource owner can certify
       // physical cleanup. Inventory quiescence cannot supply that proof.
