@@ -115,20 +115,25 @@ and leave threads out of `listCandidates` unless the request carries
 `includeThreads: true`. An Agent that has no internal threads can ignore
 `includeThreads`.
 
-### Candidate index refresh
+### Browse ordering
 
-For a source that opts into the host's bounded candidate index, the host treats
-the source's newest-first precedence key as the mutation boundary. A root browse
-reads fresh head chunks until the first indexed row matches by both identity and
-projected content (the watermark), then publishes a new generation from the
-fresh head plus indexed rows whose identities were not seen ahead of that
-watermark. It re-sorts and re-digests the result; cursors from the replaced
-generation fail with the typed stale-cursor result. A changed projected row must
-advance that same precedence key so it moves into the refreshed head. Deletions
-are detected by typed hydration failure and periodic full validation. While an
-index is building, a changed anchored row is treated as a move-ahead and
-validation starts after the first identity-and-content watermark. A missing
-watermark or validation drift restarts the bounded crawl.
+In **0.3 development**, an unsearched `listCandidates` returns rows
+newest-activity-first and is served to Browse page by page as returned; the
+host keeps no candidate index. Order rows by a fact you can read cheaply for
+every session — a file's modification time or the provider's own recency
+column — and read titles, working directories and thread classification only
+for the rows a page returns. `pageExternalSessionCandidatesByActivity` from
+`@happier-dev/plugin-sdk/sessions/external` does the ordering, the
+continuation (an activity position, so a later page resumes strictly after the
+last row returned) and the lazy row reads; return `null` from its row reader
+for a row the listing excludes, such as an internal thread in a top-level
+listing.
+
+`readCandidateIndexState` hands back the opaque `candidateIndexState` you
+returned for a row the last time the host served it. Validate it against your
+own source facts (for example size and modification time) and reuse it to skip
+re-reading an unchanged row. Do not return `preparation`; Browse no longer has
+an index-building phase.
 
 ## Standard content search and indexing
 
@@ -234,7 +239,11 @@ when the call is cancelled or its deadline has passed.
 Set `observation.provider` to the registered Agent’s local ID (here,
 `fixture`) or its qualified contribution key (`<pluginId>/<localId>`).
 Keep the accounting source kind in `request.source.kind` and the source
-label in `observation.source`.
+label in `observation.source`. If the provider does not match the
+registration, the server rejects the observation with HTTP 400
+(`invalid-params`). This is the code to look for in source status.
+Development builds without typed refusal forwarding report
+`native_ingest_unsupported` instead.
 
 ```ts
 import {
@@ -415,6 +424,18 @@ result, so a non-record `raw` fails the whole page with the `agent_error`
 contribution failure instead of reaching a reader that cannot render it. Keep
 source-derived routing facts such as `messageRole` and `localId` beside `raw`,
 never inside it, so `raw` never has to be loosened to carry routing.
+
+### Unsupported native formats
+
+This applies to 0.3 development source only.
+
+Return the `format_unsupported` failure when this version of your plugin can't read the native store: an unrecognized schema, record layout or format version. Don't return an empty list or a generic `agent_error` for it.
+
+Set `message` to a short format token, for example `cursor_cli_store_format_unsupported`. A token is lowercase letters, digits, `_`, `.` and `-`, starting with a letter, and at most 96 characters. The host forwards the token as the failure's `error` detail. A message that isn't a token stays behind, and the code is sent on its own.
+
+The host answers with the outward code `agent_format_unsupported`, which is never retryable. Happier shows one localized message that names your Agent from the catalog and asks the person to update Happier.
+
+If a source holds both readable and unreadable conversations, list the unreadable ones as ordinary rows, and return `format_unsupported` when one of them is opened. That way the person still sees that those conversations exist.
 
 ## Paging, continuation, and recovery
 
