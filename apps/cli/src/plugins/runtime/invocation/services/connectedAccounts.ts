@@ -1,9 +1,10 @@
 import { Buffer } from 'node:buffer';
+import { createHash } from 'node:crypto';
 import { readConnectedAccountListLimit } from '@happier-dev/cli-common/connectedAccounts';
 import { projectActionFailureCauseV1, readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionErrorClassV1';
 import { logger } from '@/ui/logger';
-import { withActionFailureCauseDiagnostic, withActionFailureDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
+import { readActionOutputDiagnostic, withActionFailureCauseDiagnostic, withActionFailureDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import type { ActionOperationCredentialUseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { ConnectedAccountMaterializationRequestSchema } from '@happier-dev/protocol/connect/connected-account-purposes';
@@ -172,6 +173,7 @@ export type StablePluginConnectedAccountsHost = Readonly<{
 }>;
 
 export type StablePluginConnectedAccountsHostOptions = Readonly<{
+    diagnosticLocation?: Readonly<{ homeId?: string; machineId?: string }>;
     registerRawForRedaction(seed: PluginInvocationServicesSeed, value: string): void;
     registerExactForRedaction(seed: PluginInvocationServicesSeed, value: string): void;
 }>;
@@ -206,7 +208,15 @@ function materializationOutOfScope(): PluginError {
 
 /** Keep host failure facts, never credential values or arbitrary exception prose. */
 function materializationFailure(error: unknown, seed: PluginInvocationServicesSeed,
-    operation: 'materialize' | 'materialize_listed'): unknown {
+    operation: 'materialize' | 'materialize_listed', listing?: Readonly<{
+        scope: PluginConnectedAccountBindingScope;
+        matchedService: PluginConnectedAccountRef['service'] | undefined;
+        requestedAccountId: string;
+        exactPurposeBindingSubjectId: string | null;
+        hostStage: 'service_scope' | 'owner_materialization' | 'response_scope';
+        location?: StablePluginConnectedAccountsHostOptions['diagnosticLocation'];
+    }>): unknown {
+    const bindingStage = readActionOutputDiagnostic(error)?.source;
     const diagnostic = readUnexpectedActionErrorDiagnosticV1(error);
     const projected = projectActionFailureCauseV1(error, `connected_accounts.${operation}`);
     const authoredCode = readActionErrorCodeV1(error);
@@ -229,6 +239,22 @@ function materializationFailure(error: unknown, seed: PluginInvocationServicesSe
         logger.warnLocalFile('[connected-account-materialization-failed]', {
             correlationId: seed.correlationId, pluginId: seed.plugin.id, localId: seed.contribution.id,
             ...failureCause,
+            ...(listing && code === 'plugin_connected_account_binding_out_of_scope' ? {
+                surface: seed.surface,
+                contributionId: seed.contribution.qualifiedId,
+                homeId: seed.approvalContext?.serverIdentityId ?? seed.externalActionContext?.serverIdentityId ?? listing.location?.homeId ?? null,
+                machineId: listing.location?.machineId ?? seed.resolveCurrentPluginMaterializationRef?.()?.machineId ?? null,
+                requesterAccountPresent: seed.requesterAccount !== undefined,
+                purpose: listing.scope.purpose,
+                allowedServices: listing.scope.serviceRefs,
+                requestedService: listing.matchedService ?? null,
+                // The requested Account id comes from plugin input before membership is proven.
+                requestedAccountDigest: createHash('sha256').update(listing.requestedAccountId).digest('hex'),
+                exactPurposeBindingSubjectId: listing.exactPurposeBindingSubjectId,
+                bindingScope: listing.exactPurposeBindingSubjectId ? 'exact' : seed.session ? 'session' : 'account',
+                bindingStage: bindingStage === 'listed_purpose_resolution' || bindingStage === 'listed_target_account'
+                    || bindingStage === 'listed_credential_materialization' ? bindingStage : listing.hostStage,
+            } : {}),
             stackFrames: diagnostic.stackFrames,
         });
     } catch { /* File logging cannot replace the materialization failure. */ }
@@ -855,15 +881,17 @@ export function createStablePluginConnectedAccountsHost(
                     const requestSnapshot = snapshotListedMaterializationRequest(request);
                     assertCurrent(seed);
                     const scope = resolveScope(scopes, requestSnapshot.purpose);
-                    const serviceAuthorized = scope.serviceRefs.some((service) => (
+                    const matchedService = scope.serviceRefs.find((service) => (
                         service.pluginId === requestSnapshot.account.service.pluginId
                         && service.localId === requestSnapshot.account.service.localId
                     ));
-                    if (!serviceAuthorized) throw materializationOutOfScope();
                     const signals = combineSignals(seed.signal, options.signal);
                     let publicValues: readonly string[] = [];
-                    assertCurrent(seed);
+                    let hostStage: 'service_scope' | 'owner_materialization' | 'response_scope' = 'service_scope';
                     try {
+                        if (!matchedService) throw materializationOutOfScope();
+                        assertCurrent(seed);
+                        hostStage = 'owner_materialization';
                         const result = await runTracedExternalActionInnerStage('contributed.connected_account.materialize_listed', () => owner.materializeListedAccount({
                             ...authorizedPurpose(seed, scope),
                             ...(recordCurrentCredentialUse
@@ -879,6 +907,7 @@ export function createStablePluginConnectedAccountsHost(
                             signal: signals.signal,
                         }));
                         assertCurrent(seed);
+                        hostStage = 'response_scope';
                         const snapshot = snapshotMaterialization(
                             requestSnapshot.materialization,
                             result,
@@ -887,7 +916,11 @@ export function createStablePluginConnectedAccountsHost(
                         assertCurrent(seed);
                         return snapshot;
                     } catch (error) {
-                        throw materializationFailure(error, seed, 'materialize_listed');
+                        throw materializationFailure(error, seed, 'materialize_listed', {
+                            scope, matchedService, requestedAccountId: requestSnapshot.account.accountId,
+                            exactPurposeBindingSubjectId, hostStage,
+                            location: hostOptions?.diagnosticLocation,
+                        });
                     } finally {
                         signals.dispose();
                     }

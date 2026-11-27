@@ -3744,6 +3744,10 @@ export async function resolveExecutablePluginRuntimeRegistry(
         return caller && occurrenceId ? { caller, occurrenceId } : null;
     };
     invocationServiceOwners = createProductionPluginInvocationServiceOwners({
+        connectedAccountDiagnosticLocation: {
+            homeId: params?.accountExecution?.serverIdentityId ?? sessionCredentialsHomeServerIdentityId,
+            machineId: pluginActionMachineId,
+        },
         ...(deploymentTelemetry ? { deploymentTelemetry } : {}),
         readSecretSources: () => resolvedRuntimeRegistryOwner?.secretSources,
         resolveRetirementSignal: pluginId => resolveRuntimeConsumerLifecycle(pluginId).retirementSignal,

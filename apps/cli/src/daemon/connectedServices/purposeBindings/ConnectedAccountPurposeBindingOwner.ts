@@ -1,3 +1,4 @@
+import { withActionFailureDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import type { TeamCredentialDirectMaterialClient } from '../directMaterial/teamCredentialDirectMaterialClient';
 import type { TeamCredentialDirectMaterialConsumerV1 } from '@happier-dev/protocol/teams';
 import { isDeepStrictEqual } from 'node:util';
@@ -1628,15 +1629,24 @@ export function createConnectedAccountPurposeBindingOwner(
       ...(input.sessionId ? { sessionId: input.sessionId } : {}),
       signal: input.signal,
     });
-    const before = await readAuthorizedResolved(authorizationInput);
-    if (!before) throw bindingOutOfScope();
+    const markScopeRefusal = (error: unknown, phase: 'listed_purpose_resolution' | 'listed_target_account' |
+      'listed_credential_materialization'): never => {
+      if (isPluginError(error) && error.code === 'plugin_connected_account_binding_out_of_scope') {
+        try { withActionFailureDiagnostic(error, { phase, causeKind: 'access_denied' }); }
+        catch { /* The original scope refusal wins even if the error is frozen. */ }
+      }
+      throw error;
+    };
+    const before = await readAuthorizedResolved(authorizationInput)
+      .catch(error => markScopeRefusal(error, 'listed_purpose_resolution'));
+    if (!before) return markScopeRefusal(bindingOutOfScope(), 'listed_purpose_resolution');
     const assertConfiguredOrigin = await dependencies.assertTargetAccountMaterializable({
       target: before.target,
       observation: before.resolved.observation,
       account: input.account,
       request: input.request,
       signal: input.signal,
-    });
+    }).catch(error => markScopeRefusal(error, 'listed_target_account'));
     const materialization = await dependencies.materializeAccount({
       account: input.account,
       ...(assertConfiguredOrigin ? { assertConfiguredOrigin } : {}),
@@ -1644,7 +1654,7 @@ export function createConnectedAccountPurposeBindingOwner(
       ...(input.observeMaterializationPublicValues ? { observeMaterializationPublicValues: input.observeMaterializationPublicValues } : {}),
       request: input.request,
       signal: input.signal,
-    });
+    }).catch(error => markScopeRefusal(error, 'listed_credential_materialization'));
     input.signal.throwIfAborted();
     const recordCredentialUse = input.recordOperationCredentialUse ?? (input.exactPurposeBindingSubjectId
       ? purposeBindingsBySubjectId.get(input.exactPurposeBindingSubjectId)?.recordOperationCredentialUse

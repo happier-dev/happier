@@ -81,6 +81,7 @@ import type { PluginAccountSettingsRecordAdapter } from './settings';
 import { createProductionPluginSettingsHostFactory } from './settingsHost';
 import {
     createStablePluginConnectedAccountsHost,
+    type StablePluginConnectedAccountsHostOptions,
     type StablePluginConnectedAccountsOwner,
 } from './connectedAccounts';
 import type {
@@ -213,6 +214,7 @@ export function createProductionPluginInvocationServiceOwners(params?: Readonly<
     http?: StablePluginHttpHost;
     resources?: StablePluginResourcesOwner;
     connectedAccounts?: StablePluginConnectedAccountsOwner;
+    connectedAccountDiagnosticLocation?: StablePluginConnectedAccountsHostOptions['diagnosticLocation'];
     storagePaths?: PluginStorePaths;
     /** Binds the daemon database owned by the serving occurrence. */
     daemonDatabase?: Pick<StablePluginDaemonDatabaseHost, 'bind'>;
@@ -435,6 +437,7 @@ export function createProductionPluginInvocationServiceOwners(params?: Readonly<
         : null;
     const createConnectedAccountsHost = (owner: StablePluginConnectedAccountsOwner) =>
         createStablePluginConnectedAccountsHost(owner, {
+            diagnosticLocation: params?.connectedAccountDiagnosticLocation,
             registerRawForRedaction(seed, value) {
                 secretRedactor.registerRaw({
                     pluginId: seed.plugin.id,

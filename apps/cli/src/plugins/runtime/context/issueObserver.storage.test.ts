@@ -5,14 +5,18 @@ import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerpr
 import { projectPluginAccountCollectionDeclaration } from '@happier-dev/plugin-sdk/collections';
 import { TRIAGE_ISSUE_CHECKPOINT_COLLECTION_V1 } from '@happier-dev/triage-sources/runtime';
 import { createHttpCollectionBoundary } from './accountPluginDataStorage.testkit';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createTriageIssueEventSourceAdapterV1, TriageIssueEventSourceConfigV1Schema } from '@happier-dev/triage-sources/runtime';
 import { createPluginHttpFixture } from '@happier-dev/plugin-sdk/testing';
 import type { BackgroundServiceContext, PluginCheckpointedEventSourceDefinitionV1 } from '@happier-dev/plugin-sdk/background-services';
+import { logger } from '@/ui/logger';
+import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
+import { createStablePluginConnectedAccountsHost } from '../invocation/services/connectedAccounts';
+import type { PluginConnectedAccountBindingScope } from '../invocation/services/types';
 import { createAccountPluginDataStorageHost } from './accountPluginDataStorage';
 import { scanSentrySource } from '../../../../../../packages/plugins/sentry/src/source/operations';
 import { encodeSentryInstanceConfiguration } from '../../../../../../packages/plugins/sentry/src/instances/sentryInstanceConfiguration';
-import { SENTRY_CONNECTED_ACCOUNT_PURPOSE, SENTRY_SCOPE_SEPARATOR } from '../../../../../../packages/plugins/sentry/src/sentryContracts';
+import { SENTRY_ACTION_IDS, SENTRY_CONNECTED_ACCOUNT_PURPOSE, SENTRY_SCOPE_SEPARATOR } from '../../../../../../packages/plugins/sentry/src/sentryContracts';
 import recorded from '../../../../../../packages/plugins/sentry/src/fixtures/issuesListPage2.json' with { type: 'json' };
 
 const PLUGIN_ID = 'happier.sentry';
@@ -37,6 +41,82 @@ const definition = {
     } }, filter: null, maximumObservationAgeMs: null,
 } satisfies PluginCheckpointedEventSourceDefinitionV1;
 
+
+it('correlates a saved Sentry Watch refusal with the binding decision while the exact foreground read succeeds', async () => {
+    const signal = new AbortController().signal;
+    const account = instance.binding.account;
+    const purpose = { consumer: { pluginId: PLUGIN_ID, localId: SENTRY_ACTION_IDS.scan }, purpose: instance.binding.purpose };
+    const owner = createConnectedAccountPurposeBindingOwner({
+        credentialOwnerAccountId: 'watch-owner',
+        store: { read: async () => ({ v: 1, bindings: [] }), update: async () => { throw new Error('Read-only fixture'); },
+            subscribe: () => ({ dispose() {} }) },
+        selectTarget: async () => { throw new Error('Read-only fixture'); },
+        resolveTarget: async target => target.kind === 'account' ? { account: target.account, displayName: 'Watch account' } : null,
+        projectTargetAccounts: async () => { throw new Error('Sentry scan must use its exact Account'); },
+        assertTargetAccountMaterializable: async ({ target, account: requested }) => {
+            expect(target).toEqual({ kind: 'account', account });
+            expect(requested).toEqual(account);
+        },
+        materializeAccount: async () => ({ kind: 'httpHeaders', headers: { authorization: 'Bearer fixture-token' } }),
+    });
+    const selection = owner.activatePurposeBindings({
+        subject: { kind: 'operation', operationId: 'foreground-scan', consumer: purpose.consumer, isCurrent: () => !signal.aborted },
+        purposes: [purpose], bindings: [{ purpose, target: { kind: 'account', account } }],
+    });
+    const plugin = { id: PLUGIN_ID, version: '0.0.0' };
+    const scope: PluginConnectedAccountBindingScope = {
+        purpose: instance.binding.purpose, operations: ['use'], materializationKinds: ['httpHeaders'], serviceRefs: [account.service],
+    };
+    const host = createStablePluginConnectedAccountsHost(owner, {
+        diagnosticLocation: { homeId: 'watch-home', machineId: 'watch-machine' },
+        registerRawForRedaction() {},
+        registerExactForRedaction() {},
+    });
+    const foreground = host.bind({
+        plugin, contribution: { id: purpose.consumer.localId, qualifiedId: `${PLUGIN_ID}/actions/${SENTRY_ACTION_IDS.scan}` },
+        surface: 'plugin', occurrenceId: 'watch-fixture', correlationId: 'foreground', signal, isOccurrenceCurrent: () => true,
+    }, [scope], { exactPurposeBindingSubjectId: selection.subjectId });
+    const contribution = { id: 'issue-observer', qualifiedId: `${PLUGIN_ID}/backgroundServices/issue-observer` };
+    const backgroundSeed = {
+        plugin, contribution, surface: 'background', occurrenceId: 'watch-fixture', correlationId: 'observer',
+        signal, isOccurrenceCurrent: () => true,
+    } as const;
+    const background = host.bind(backgroundSeed, [scope]);
+    const withoutGrant = host.bind(backgroundSeed, []);
+    const http = createPluginHttpFixture({ request: async input => ({
+        status: 200, finalUrl: input.url, headers: {}, body: new TextEncoder().encode('[]'),
+    }) });
+    const warnings = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+    try {
+        const scan = { v: 1, instance, page: { kind: 'initial', limit: 100 } } as const;
+        const scanWith = (connectedAccounts: typeof foreground) => scanSentrySource(scan, {
+            signal, services: { connectedAccounts, http },
+        });
+        await expect(scanWith(foreground)).resolves.toMatchObject({ kind: 'complete' });
+        await expect(scanWith(background)).resolves.toMatchObject({
+            kind: 'failed', failure: { code: 'plugin_connected_account_binding_out_of_scope' },
+        });
+        const refusals = warnings.mock.calls.filter(([message]) => message === '[connected-account-materialization-failed]');
+        expect(refusals).toEqual([[
+            '[connected-account-materialization-failed]',
+            expect.objectContaining({
+                correlationId: 'observer', contributionId: contribution.qualifiedId, surface: 'background',
+                homeId: 'watch-home', machineId: 'watch-machine', requesterAccountPresent: false,
+                purpose: instance.binding.purpose, allowedServices: [account.service], requestedService: account.service,
+                requestedAccountDigest: expect.stringMatching(/^[0-9a-f]{64}$/), exactPurposeBindingSubjectId: null,
+                bindingScope: 'account', bindingStage: 'listed_purpose_resolution',
+            }),
+        ]]);
+        expect(JSON.stringify(refusals)).not.toMatch(/fixture-token|account-1/);
+        await expect(scanWith(withoutGrant)).resolves.toMatchObject({
+            kind: 'failed', failure: { code: 'plugin_connected_account_purpose_undeclared' },
+        });
+    } finally {
+        warnings.mockRestore();
+        selection.dispose();
+        host.retire();
+    }
+});
 
 describe('issue observer through real Account storage', () => {
     it.each(['plain', 'e2ee'] as const)('settles 257 %s checkpoints with set reads, quiet repeats and one genuine transition', async mode => {
