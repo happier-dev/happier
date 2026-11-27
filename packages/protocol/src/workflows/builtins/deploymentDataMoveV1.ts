@@ -162,7 +162,7 @@ export function createDeploymentDataMoveWorkflowV1(reviewed?: StatefulDeployment
     // The integrity decision for an unverified restore; the cutover's own approval follows as a separate step.
     { kind: 'wait', id: 'reviewCutover', name: 'Accept the restore without its integrity check',
       onlyWhen: equal(result('restore', ['verified'], { kind: 'outer', levels: depth - producers.restore! }), false),
-      document: document('PostgreSQL could not run its physical integrity check on the restored database because the amcheck extension is missing. The verified backup was restored and the destination is healthy. Complete this review only to accept the restore without that check. The cutover approval comes next: it is the separate decision to switch the app to the restored database.') },
+      document: document('The backup is restored and the destination is healthy. Its integrity check was skipped because the amcheck extension isn’t installed there. Approve to continue without that check; switching the app to the new database is a separate approval that comes next.') },
     ...sequence(cutover, depth, producers),
   ];
   const start: Phase[] = [...quiescence, { id: 'backup', name: 'Capture the final backup with source writes quiesced',
