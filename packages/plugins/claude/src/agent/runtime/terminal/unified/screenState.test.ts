@@ -724,7 +724,7 @@ describe('parseClaudeScreenState — effort default nudge (Claude Code 2.1.274, 
     expect(state.composerContent).toBe('first line of my draft\nsecond line of my draft');
   });
 
-  it.each(['Start', '1. Start'])('keeps a quoted numbered row inside the framed draft starting with %s', (firstLine) => {
+  it.each(['', 'Start', '1. Start'])('keeps a quoted numbered row inside the framed draft starting with %s', (firstLine) => {
     const screen = [
       '────────────────────',
       `❯ ${firstLine}`,
@@ -736,6 +736,7 @@ describe('parseClaudeScreenState — effort default nudge (Claude Code 2.1.274, 
     expect(parseClaudeScreenState(screen)).toMatchObject({
       composerContent: `${firstLine}\n─── Build check ───\n❯ 2. review the output`,
       inputBoxInteractive: true,
+      userDraftPresent: true,
       unrecognizedConfirmationDialogVisible: false,
     });
   });
