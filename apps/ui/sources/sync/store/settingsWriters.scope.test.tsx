@@ -36,6 +36,34 @@ async function moveToAnotherAccount(serverId: string) {
 }
 
 describe('useApplySettings Account scope binding', () => {
+    it('rejects an unsupported key before writing any of the requested preferences', async () => {
+        const account = await createAccount();
+        try {
+            const hook = await renderHook(() => useApplySettings());
+            const writes = account.settingsWrites.length;
+            const change = { useProfiles: true, unsupported: true };
+
+            await act(async () => {
+                await expect(hook.getCurrent()(change)).rejects.toMatchObject({ code: 'setting_not_found' });
+            });
+
+            expect(account.persistedSettings.useProfiles).toBe(false);
+            expect(account.settingsWrites).toHaveLength(writes);
+        } finally { await account.dispose(); }
+    });
+
+    it('propagates the Settings Action refusal for an invalid declared value', async () => {
+        const account = await createAccount();
+        try {
+            const hook = await renderHook(() => useApplySettings());
+            const invalid = 'true' as unknown as boolean;
+            await act(async () => {
+                await expect(hook.getCurrent()({ useProfiles: invalid })).rejects.toMatchObject({ code: 'invalid_setting_value' });
+            });
+            expect(account.persistedSettings.useProfiles).toBe(false);
+        } finally { await account.dispose(); }
+    });
+
     it('writes through the writer for the current Account and refuses it once the rendered Account is retired', async () => {
         const account = await createAccount();
         try {
@@ -47,7 +75,9 @@ describe('useApplySettings Account scope binding', () => {
 
             await moveToAnotherAccount(account.scope.serverId);
             expect(hook.getCurrent()).not.toBe(writerA);
-            await act(async () => { await writerA({ useProfiles: false }); });
+            await act(async () => {
+                await expect(writerA({ useProfiles: false })).rejects.toMatchObject({ code: 'action_account_scope_changed' });
+            });
 
             expect(account.persistedSettings.useProfiles).toBe(true);
             expect(account.settingsWrites).toHaveLength(writes);

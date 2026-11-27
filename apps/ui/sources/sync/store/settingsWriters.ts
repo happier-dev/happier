@@ -34,6 +34,7 @@ import { areAccountSettingsScopesEqual, type AccountSettingsScope } from '@/sync
 import { BUILT_IN_SETTINGS_DECLARATIONS_V1 } from '@happier-dev/protocol/actions/settings/settingsDeclarations';
 import { SettingsDeclarationValueV1Schema } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
 import { useSettingActionWriter } from '@/components/settings/catalog/useSettingActionWriter';
+import { HappyError } from '@/utils/errors/errors';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 
@@ -82,23 +83,28 @@ export function useApplySettings(): (change: SettingsWrite) => Promise<void> {
     if (typeof change === 'function') {
       const current = getStorage().getState();
       if (!(current.settingsScope === null && expectedSettingsScope === null)
-        && !areAccountSettingsScopesEqual(expectedSettingsScope, current.settingsScope)) return;
+        && !areAccountSettingsScopesEqual(expectedSettingsScope, current.settingsScope)) {
+        throw new HappyError('action_account_scope_changed', false, { code: 'action_account_scope_changed' });
+      }
       const next = change(current.settings);
       if (!next) return;
       delta = next;
     } else {
       delta = change;
     }
-    const declaredWrites = (Object.keys(delta) as Array<keyof SettingsWriteDelta>).flatMap(key => {
+    const declaredWrites = (Object.keys(delta) as Array<keyof SettingsWriteDelta>).map(key => {
       // Equivalent declaration aliases share this same whole-value intent.
       const declaration = directAccountSettingDeclarations.find(candidate => candidate.storage?.key === key);
-      if (!declaration) return [];
+      if (!declaration) throw new HappyError('setting_not_found', false, { code: 'setting_not_found' });
       const stored = delta[key];
       const value = declaration.storage?.invertBoolean && typeof stored === 'boolean' ? !stored : stored;
       const parsed = SettingsDeclarationValueV1Schema.safeParse(value);
-      return parsed.success ? [{ declaration, value: parsed.data }] : [];
+      if (!parsed.success) throw new HappyError('invalid_setting_value', false, { code: 'invalid_setting_value' });
+      return { declaration, value: parsed.data };
     });
-    for (const { declaration, value } of declaredWrites) await writeSetting(declaration, value);
+    for (const { declaration, value } of declaredWrites) {
+      requireActionSuccess(await writeSetting(declaration, value));
+    }
   }, [expectedSettingsScope, writeSetting]);
   return React.useCallback((change: SettingsWrite) => {
     const operation = apply(change);

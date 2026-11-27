@@ -443,7 +443,8 @@ describe('declared setting Action writer', () => {
         const probe = await renderHook(() => ({ account: useApplySettings(), local: useApplyLocalSettings() }));
         try {
             await act(async () => {
-                await probe.getCurrent().account({ sessionTerminalHost: 'tmux', sessionUseTmux: true });
+                await expect(probe.getCurrent().account({ sessionTerminalHost: 'tmux', sessionUseTmux: true }))
+                    .rejects.toMatchObject({ code: 'setting_not_found' });
                 await probe.getCurrent().local({ themeProfiles: DEFAULT_THEME_PROFILES_LOCAL_STATE });
             });
             expect(storage.getState().settings).toMatchObject({ sessionTerminalHost: 'none', sessionUseTmux: false });
@@ -866,7 +867,8 @@ describe('declared setting Action writer', () => {
             await renderScreen(<Probe />);
             await act(async () => {
                 profile![1](true);
-                await apply!({ useMachinePickerSearch: true, analyticsOptOut: true });
+                await expect(apply!({ useMachinePickerSearch: true, analyticsOptOut: true }))
+                    .rejects.toMatchObject({ code: 'action_disabled' });
             });
             expect(storage.getState().settings).toMatchObject({ useProfiles: false, useMachinePickerSearch: false, analyticsOptOut: false });
             expect(account.settingsWrites).toEqual([]);
@@ -885,15 +887,19 @@ describe('declared setting Action writer', () => {
             await act(async () => {
                 // The Action consumer must reject malformed runtime values, rather than storage coercing them.
                 // @ts-expect-error Deliberate runtime boundary input with the wrong scalar type.
-                await apply!({ useProfiles: 'true' });
+                await expect(apply!({ useProfiles: 'true' })).rejects.toMatchObject({ code: 'invalid_setting_value' });
             });
             expect(account.persistedSettings.useProfiles).toBe(false);
             expect(account.settingsWrites).toHaveLength(writes);
-            await act(async () => { await apply!({ useProfiles: undefined }); });
+            await act(async () => {
+                await expect(apply!({ useProfiles: undefined })).rejects.toMatchObject({ code: 'invalid_setting_value' });
+            });
             expect(account.persistedSettings.useProfiles).toBe(false);
             expect(account.settingsWrites).toHaveLength(writes);
             account.setRejectSettingsWrites(true);
-            await act(async () => { await apply!({ useProfiles: true }); });
+            await act(async () => {
+                await expect(apply!({ useProfiles: true })).rejects.toMatchObject({ code: 'action_failed' });
+            });
             expect(account.persistedSettings.useProfiles).toBe(false);
             expect(storage.getState().settings.useProfiles).toBe(false);
         } finally { standardCleanup(); await account.dispose(); }
@@ -918,13 +924,17 @@ describe('declared setting Action writer', () => {
             const retained = apply!;
             const writes = account.settingsWrites.length;
             await act(async () => { screen.tree.update(<></>); });
-            await act(async () => { await retained({ useProfiles: false }); });
+            await act(async () => {
+                await expect(retained({ useProfiles: false })).rejects.toMatchObject({ code: 'action_account_scope_changed' });
+            });
             expect(account.persistedSettings.useProfiles).toBe(true);
             expect(storage.getState().settings.useProfiles).toBe(true);
             expect(account.settingsWrites).toHaveLength(writes);
             const updater = vi.fn(() => ({ useProfiles: false }));
             await act(async () => { storage.setState({ settingsScope: { serverId: account.scope.serverId, accountId: 'another-account' } }); });
-            await act(async () => { await retained(updater); });
+            await act(async () => {
+                await expect(retained(updater)).rejects.toMatchObject({ code: 'action_account_scope_changed' });
+            });
             expect(updater).not.toHaveBeenCalled();
             expect(account.settingsWrites).toHaveLength(writes);
         } finally { standardCleanup(); await account.dispose(); }
