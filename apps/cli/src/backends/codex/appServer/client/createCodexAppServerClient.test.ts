@@ -190,6 +190,27 @@ describe('createCodexAppServerClient', () => {
         }, process.platform === 'win32' ? undefined : '/tmp');
     });
 
+    it.each([true, false])('uses the running daemon’s store proof, with explicit SQLite settings=%s', async configured => {
+        await withTempDir('codex-proxy-store-', async root => {
+            const sqliteHome = join(root, 'daemon-store');
+            await withFakeCodexAppServerWebSocket({ dir: root, loadedThreadIds: [], ...(configured ? { sqliteHome } : {}) }, async ({ proxyPath }) => {
+                const client = await createCodexAppServerClient({
+                    cwd: root,
+                    processEnv: createCodexAppServerProcessEnv(proxyPath, {
+                        CODEX_HOME: join(root, 'codex-home'), CODEX_SQLITE_HOME: join(root, 'decoy-store'),
+                    }),
+                    transport: { kind: 'daemonProxy' },
+                });
+                try {
+                    expect(client.readRuntimeSqliteHome).toBeTypeOf('function');
+                    await expect(client.readRuntimeSqliteHome?.()).resolves.toBe(configured ? sqliteHome : null);
+                } finally {
+                    await client.dispose();
+                }
+            });
+        }, process.platform === 'win32' ? undefined : '/tmp');
+    });
+
     it.each(['unixWebSocket', 'daemonProxy'] as const)('rejects an oversized declared frame before receiving its body over %s', async transportKind => {
         await withTempDir('codex-ws-ceiling-', async root => {
             const socketPath = process.platform === 'win32'

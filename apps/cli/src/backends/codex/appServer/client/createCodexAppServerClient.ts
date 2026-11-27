@@ -7,7 +7,7 @@ import { appendFile, rename, rm, stat } from 'node:fs/promises';
 import { expandHomeDirPath } from '@happier-dev/cli-common/providers';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 
-import type { CodexSqliteLaunch } from '../../connectedServices/codexStateFileNames';
+import { readNativeCodexSqliteHome, type CodexSqliteLaunch } from '../../connectedServices/codexStateFileNames';
 import { CODEX_APP_SERVER_OVERRIDE_ENV_KEYS, resolveCodexCliInvocation } from '../../utils/resolveCodexCliInvocation';
 import { readCodexNativeStartupVersion, withCodexNativeStartupLock } from '../../utils/withCodexNativeStartupLock';
 import { appendCodexCliConfigOverridesArgs } from '../../utils/appendCodexCliConfigOverridesArgs';
@@ -400,7 +400,7 @@ export async function createCodexAppServerClient(params: CreateCodexAppServerCli
         ?? readCodexAppServerRequestTimeoutMs('initialize', params.processEnv ?? process.env);
     return await withCodexNativeStartupLock(timeoutMs ?? Number.POSITIVE_INFINITY, async (configOverrides, runtimeStore) => (
         await createUnlockedCodexAppServerClient({ ...params, configOverrides, runtimeStore }, baseInvocation)
-    ), params.initializeRequestOptions?.signal, { processEnv, cwd: params.cwd, configOverrides: params.configOverrides, versionOutput });
+    ), params.initializeRequestOptions?.signal, { processEnv, cwd: params.cwd, configOverrides: params.configOverrides, versionOutput, runtimeStore: params.runtimeStore });
 }
 
 /** Warm managed disk-auth homes through the same native initialization owner. */
@@ -924,11 +924,17 @@ async function createUnlockedCodexAppServerClient(
         await notify('initialized');
 
         const store = params.runtimeStore;
+        // A proxy attaches to an independently launched daemon. Its environment
+        // cannot prove the daemon's store when the native config omits it.
+        const readEffectiveSqliteHome = transport.kind === 'daemonProxy'
+            ? (read: Parameters<CodexSqliteLaunch['readEffectiveSqliteHome']>[0]) =>
+                readNativeCodexSqliteHome({ cwd: params.cwd ?? process.cwd() }, read)
+            : store?.readEffectiveSqliteHome;
         return {
             request, notify, registerRequestHandler, registerNotificationHandler, onExit, dispose,
-            ...(store ? {
+            ...(readEffectiveSqliteHome ? {
                 readRuntimeSqliteHome: (options?: CodexAppServerRequestOptions) =>
-                    store.readEffectiveSqliteHome((method, input) => request(method, input, options)),
+                    readEffectiveSqliteHome((method, input) => request(method, input, options)),
             } : {}),
         };
     } catch (error) {

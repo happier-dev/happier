@@ -14,6 +14,7 @@ type StartupConfiguration = Readonly<{
   processEnv: NodeJS.ProcessEnv;
   cwd?: string;
   configOverrides?: readonly string[];
+  runtimeStore?: CodexSqliteLaunch | null;
   versionOutput: string;
 }>;
 
@@ -85,7 +86,7 @@ export async function withCodexNativeStartupLock<TResult>(
     ? `${parsed.major}.${parsed.minor}.${parsed.patch}` : null;
   const cwd = configuration?.cwd ?? process.cwd();
   const store = configuration
-    ? await resolveCodexSqliteLaunch({ env: configuration.processEnv, cwd, configOverrides: configuration.configOverrides })
+    ? configuration.runtimeStore ?? await resolveCodexSqliteLaunch({ env: configuration.processEnv, cwd, configOverrides: configuration.configOverrides })
     : null;
   const root = configuration && version && store?.sqliteHome ? await resolveStartupRoot(configuration, store.sqliteHome) : null;
   // Auth/config uncertainty retains global exclusion, but the materializer's

@@ -4142,22 +4142,24 @@ export function createCodexAppServerRuntime(params: Readonly<{
                         }
                     }
                     if (retainedThreadId) {
-                        return resumeThread(client, retainedThreadId, {
-                            signal: lifecycle.signal,
-                            preserveRequestedThreadId: true,
-                        }).then(async (resumedThread) => {
-                            await applyStartOrLoadResponse(
-                                client,
-                                resumedThread.nextThreadId,
-                                resumedThread.response,
-                            );
-                            return client;
-                        });
+                        try {
+                            const resumedThread = await resumeThread(client, retainedThreadId, {
+                                signal: lifecycle.signal,
+                                preserveRequestedThreadId: true,
+                            });
+                            lifecycle.signal.throwIfAborted();
+                            await applyStartOrLoadResponse(client, resumedThread.nextThreadId, resumedThread.response);
+                        } catch (error) {
+                            await client.dispose().catch(cleanupError => {
+                                logger.debug('[codex-app-server] Retained reattach cleanup failed', cleanupError);
+                            });
+                            throw error;
+                        }
                     }
                     return client;
                 })
                 .catch((error) => {
-                    clientPromise = null;
+                    if (clientLifecycle === lifecycle) clientPromise = null;
                     throw error;
                 });
         }
@@ -4174,7 +4176,8 @@ export function createCodexAppServerRuntime(params: Readonly<{
         if (options?.emitUndeliverablePrompts !== false) {
             emitAllPendingProviderPromptsAsUndeliverable();
         }
-        clientLifecycle?.abort();
+        const lifecycle = clientLifecycle;
+        lifecycle?.abort();
         clientLifecycle = undefined;
         const activeClientPromise = clientPromise;
         clientPromise = null;
@@ -4189,8 +4192,11 @@ export function createCodexAppServerRuntime(params: Readonly<{
             return;
         }
         try {
-            const client = await activeClientPromise;
-            await client.dispose(options?.pendingTurnError
+            const client = await activeClientPromise.catch(error => {
+                if (lifecycle?.signal.aborted && error instanceof Error && error.name === 'AbortError') return null;
+                throw error;
+            });
+            await client?.dispose(options?.pendingTurnError
                 ? { pendingRequestError: options.pendingTurnError }
                 : undefined);
         } finally {
@@ -4214,9 +4220,10 @@ export function createCodexAppServerRuntime(params: Readonly<{
         }>,
     ): Promise<Readonly<{ nextThreadId: string; response: unknown }>> => {
         historyBoundary.beginHydration();
-        const resumeRequestOptions = { timeoutMs: null } as const;
+        const signalOptions = options.signal ? { signal: options.signal } : {};
+        const resumeRequestOptions = { timeoutMs: null, ...signalOptions } as const;
         const recoveryReadRequestOptions = options.allowOversizedResponseRecovery
-            ? { timeoutMs: readCodexAppServerResumeRecoveryTimeoutMs(runtimeEnv) }
+            ? { timeoutMs: readCodexAppServerResumeRecoveryTimeoutMs(runtimeEnv), ...signalOptions }
             : undefined;
         const readResumedThreadHistory = async (): Promise<unknown> => {
             const startedAt = Date.now();
@@ -4265,7 +4272,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
         };
         await reconcileCodexResumeRolloutPath({
             env: runtimeEnv, vendorResumeId: requestedThreadId, cwd: params.directory,
-            sqliteHome: await client.readRuntimeSqliteHome?.({ signal: options.signal }) ?? null,
+            sqliteHome: await client.readRuntimeSqliteHome?.(signalOptions) ?? null,
         });
         options.signal?.throwIfAborted();
         let response: unknown;

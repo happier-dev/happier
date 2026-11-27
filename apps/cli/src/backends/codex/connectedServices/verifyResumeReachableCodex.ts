@@ -12,6 +12,7 @@ import {
   normalizeCodexVendorResumeId,
   resolveExistingCodexRolloutPath,
 } from '@/backends/codex/utils/codexSessionFiles';
+import { withCodexAppServerClient } from '../appServer/client/withCodexAppServerClient';
 import { resolveCodexSqliteLaunch } from './codexStateFileNames';
 import { reconcileCodexResumeRolloutPath } from './reconcileCodexResumeRolloutPath';
 import { resolveConfiguredCodexHome } from '@/backends/codex/utils/resolveConfiguredCodexHome';
@@ -71,7 +72,13 @@ export async function verifyResumeReachableCodex(
 
   const acceptReachablePath = async (resolvedPath: string): Promise<VerifyResumeReachableResult> => {
     const env = { ...input.targetMaterializedEnv, CODEX_HOME: codexHome };
-    const { sqliteHome } = await resolveCodexSqliteLaunch({ env, cwd: input.cwd, materialized: true });
+    const store = await resolveCodexSqliteLaunch({ env, cwd: input.cwd, materialized: true });
+    const sqliteHome = store.sqliteHome ?? await withCodexAppServerClient({
+      processEnv: env,
+      cwd: input.cwd,
+      runtimeStore: store,
+      run: async client => await client.readRuntimeSqliteHome?.() ?? null,
+    }).catch(() => null);
     const reconciled = await reconcileCodexResumeRolloutPath({
       env,
       vendorResumeId,

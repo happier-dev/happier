@@ -131,12 +131,20 @@ export async function resolveCodexSqliteLaunch(params: Readonly<{
   return {
     launchPin,
     sqliteHome,
-    readEffectiveSqliteHome: async request => sqliteHome ?? await readNativeCodexSqliteHome(params, request),
+    readEffectiveSqliteHome: async request => sqliteHome ?? await readNativeCodexSqliteHome({
+      cwd: params.cwd,
+      fallbackHome: () => {
+        const environment = params.env.CODEX_SQLITE_HOME?.trim();
+        return environment
+          ? resolve(params.cwd, expandHomeDirPath(environment, params.env))
+          : resolve(params.cwd, resolveConfiguredCodexHome(params.env));
+      },
+    }, request),
   };
 }
 
-async function readNativeCodexSqliteHome(
-  params: Readonly<{ env: NodeJS.ProcessEnv; cwd: string }>,
+export async function readNativeCodexSqliteHome(
+  params: Readonly<{ cwd: string; fallbackHome?: () => string }>,
   request: ReadNativeCodexConfig,
 ): Promise<string | null> {
   try {
@@ -148,12 +156,7 @@ async function readNativeCodexSqliteHome(
     const config = asRecord(asRecord(configured)?.config);
     if ((requirements !== null && !asRecord(requirements)) || !config) return null;
     const nativePath = asRecord(requirements)?.sqliteHome ?? config.sqlite_home;
-    if (nativePath == null) {
-      const environment = params.env.CODEX_SQLITE_HOME?.trim();
-      return environment
-        ? resolve(params.cwd, expandHomeDirPath(environment, params.env))
-        : resolve(params.cwd, resolveConfiguredCodexHome(params.env));
-    }
+    if (nativePath == null) return params.fallbackHome?.() ?? null;
     if (typeof nativePath !== 'string') return null;
     const path = nativePath.startsWith('file:') ? fileURLToPath(nativePath) : nativePath;
     return isAbsolute(path) ? path : null;

@@ -33,6 +33,7 @@ import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { createSessionProviderInputConsumer } from '@/agent/runtime/sessionInput/SessionProviderInputConsumer';
 import { ProviderCliNotFoundError } from '@/runtime/managedTools/requireProviderCliCommand';
 import { readCodexTurnFailureSettlement } from '@/backends/codex/runtime/sessionTurnLifecycle';
+import { createDeferred } from '@/testkit/async/deferred';
 import { waitForCondition } from '@/testkit/async/waitFor';
 import { createApiSessionClientFixture, createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
@@ -7067,6 +7068,52 @@ describe('createCodexAppServerRuntime', () => {
         expect(resumedThreadIndex).toBeGreaterThan(processExitIndex);
         expect(nextTurnIndex).toBeGreaterThan(resumedThreadIndex);
         expect(requestLog.filter((entry) => entry.method === 'thread/resume')).toHaveLength(1);
+    });
+
+    it('disposes the acquired process when reset cancels retained reattach', async () => {
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-reattach-abort-');
+        const enteredResume = createDeferred();
+        const releasedResume = createDeferred();
+        let clientCount = 0;
+        let replacementDispose: ReturnType<typeof vi.fn> | undefined;
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            onThinkingChange: vi.fn(),
+            session: createMutableApiSessionClientFixture({ metadata: createRuntimeMetadata(root) }),
+            createClient: async () => {
+                const client = await createCodexAppServerClient({ cwd: root });
+                if (++clientCount === 1) return client;
+                replacementDispose = vi.fn(client.dispose);
+                return {
+                    ...client,
+                    dispose: replacementDispose,
+                    readRuntimeSqliteHome: async options => {
+                        enteredResume.resolve();
+                        await Promise.race([releasedResume.promise, new Promise<void>(resolve => {
+                            options?.signal?.addEventListener('abort', () => resolve(), { once: true });
+                        })]);
+                        return null;
+                    },
+                };
+            },
+        });
+        try {
+            await runtime.startOrLoad({});
+            await runtime.sendPrompt('nonterminal-error-then-process-exit').catch(() => undefined);
+            await waitForCondition(async () => (await readRequestLog(requestLogPath))
+                .some(entry => entry.method === 'test/process-exit'), {
+                timeoutMs: 1_000, intervalMs: 2, label: 'provider process exit',
+            });
+            const nextPrompt = runtime.sendPrompt('after-exit').catch(() => undefined);
+            await enteredResume.promise;
+            await expect(runtime.reset()).resolves.toBeUndefined();
+            expect(replacementDispose).toHaveBeenCalledOnce();
+            await nextPrompt;
+        } finally {
+            releasedResume.resolve();
+            await runtime.reset().catch(() => undefined);
+            if (replacementDispose && !replacementDispose.mock.calls.length) await replacementDispose();
+        }
     });
 
     it('does not let an unknown terminal id claim a pending turn before its provider id is observed', async () => {
