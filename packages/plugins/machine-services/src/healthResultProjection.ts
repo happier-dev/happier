@@ -139,9 +139,23 @@ function windowHistory(history: NonNullable<HealthResultProjection['checks'][num
     return { ...history, days, uptimePercent: uptime(totals.up, totals.down, totals.degraded) };
 }
 
+type RetainedResult = HealthResultProjection['checks'][number]['result'];
+
+function projectRetainedResponseTime(result: RetainedResult): RetainedResult {
+    const cause = result.cause;
+    if (result.latencyMs === undefined || cause?.httpStatus !== undefined || cause?.kind !== 'http') return result;
+    // Older observers recorded elapsed probe time even when HTTP never answered.
+    const { latencyMs: _elapsed, ...observation } = result;
+    return observation;
+}
+
 /** Reads expire old buckets too, even when the observer is disconnected. No
  * clock extrapolation fills the unobserved portion of the window. */
 export function healthResultProjectionAt(value: HealthResultProjection, at: number): HealthResultProjection {
-    return { ...value, checks: value.checks.map(check => ({ ...check, ...windowRecentResults(check, at),
-        ...(check.history ? { history: windowHistory(check.history, at) } : {}) })) };
+    return { ...value, checks: value.checks.map(check => {
+        const recent = windowRecentResults(check, at);
+        return { ...check, ...recent, result: projectRetainedResponseTime(check.result),
+            ...(recent.recentResults ? { recentResults: recent.recentResults.map(projectRetainedResponseTime) } : {}),
+            ...(check.history ? { history: windowHistory(check.history, at) } : {}) };
+    }) };
 }

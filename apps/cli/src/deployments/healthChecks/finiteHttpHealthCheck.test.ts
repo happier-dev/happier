@@ -253,6 +253,7 @@ describe('finite saved HTTP and certificate health', () => {
         const url = `http://127.0.0.1:${address.port}/health`;
         const refused = await readHttpHealthCheckV1(admitted(url), context(url));
         expect(refused.status).toBe('down');
+        expect(refused).not.toHaveProperty('latencyMs');
         expect(refused.cause).toMatchObject({
             reason: 'connection', requiredFact: 'reachableHealthEndpoint', remedy: expect.any(String),
         });
@@ -265,6 +266,7 @@ describe('finite saved HTTP and certificate health', () => {
         }); });
         const unresolved = await readHttpHealthCheckV1(admitted(url), context(url));
         expect(unresolved.status).toBe('down');
+        expect(unresolved).not.toHaveProperty('latencyMs');
         expect(unresolved.cause).toMatchObject({
             reason: 'dns', requiredFact: 'resolvableHealthEndpoint', remedy: expect.any(String),
         });
@@ -291,6 +293,7 @@ describe('finite saved HTTP and certificate health', () => {
         const url = 'http://127.0.0.1:8080/health';
         const observation = await readHttpHealthCheckV1(admitted(url), context(url));
         expect(observation).toMatchObject({ status: 'down', cause: { reason, remedy: expect.any(String) } });
+        expect(observation).not.toHaveProperty('latencyMs');
         expect(JSON.stringify(observation)).not.toContain('private-');
     });
 

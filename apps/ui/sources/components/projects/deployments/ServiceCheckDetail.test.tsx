@@ -7,6 +7,7 @@ import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonV
 import { createHealthCheckSourceInstanceIdV1 } from '@happier-dev/plugin-sdk';
 import { plugin as healthPlugin } from '../../../../../../packages/plugins/machine-services/src/manifest';
 import { HEALTH_KINDS_ACTION_ID } from '../../../../../../packages/plugins/machine-services/src/healthCatalog';
+import { healthResultProjectionAt } from '../../../../../../packages/plugins/machine-services/src/healthResultProjection';
 import { publishCommittedAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
 import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection';
 import { PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY } from '@/sync/domains/plugins/ui/projectionUnion';
@@ -54,8 +55,8 @@ const NOW = Date.UTC(2026, 10, 15, 10, 0, 0);
 
 // LIVE-FID-1115: opening a Check whose recent results hold a failure crashed the app ("Happier UI theme is
 // unavailable") because a result's state word used the plugin-ui Status outside any plugin-ui scope.
-it('opens a Check with a recent failing result and says that result in words', async () => {
-  const remedy = 'Check that the service is listening and that its port is reachable from the selected observer.';
+it('shows the fix without a response time for retained connection refusals in Checks', async () => {
+  const remedy = 'Start the service or correct its port so the check can connect.';
   const row = {
     kind: 'configuredCheck',
     key: 'check-1',
@@ -71,7 +72,7 @@ it('opens a Check with a recent failing result and says that result in words', a
     definitionFacts: { kind: 'loading' },
     lastResults: {
       kind: 'available',
-      checks: [
+      checks: healthResultProjectionAt({ v: 1, members: [], checks: [
         {
           checkId: 'c1',
           result: {
@@ -82,10 +83,10 @@ it('opens a Check with a recent failing result and says that result in words', a
               kind: 'http', vantage: 'sameMachine', observerMachineId: 'observer',
               reason: 'connection', requiredFact: 'reachableHealthEndpoint', remedy,
             },
-            evidence: { kind: 'none' },
+            evidence: { v: 1, items: [] },
           },
         },
-      ],
+      ] }, NOW).checks,
     },
   } as never;
 
@@ -99,6 +100,8 @@ it('opens a Check with a recent failing result and says that result in words', a
   expect(result).toBeTruthy();
   expect(screen.getTextContent()).toContain('Down');
   expect(screen.getTextContent()).toContain(remedy);
+  expect(screen.getTextContent()).not.toContain('4 ms');
+  expect(screen.getTextContent()).not.toContain('connection ·');
 });
 
 it.each([

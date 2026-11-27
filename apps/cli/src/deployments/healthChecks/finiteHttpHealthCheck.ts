@@ -60,22 +60,22 @@ function nativeFailure(error: unknown, url: string) {
 
 const nativeFailureFacts = {
     tls: { requiredFact: 'validEndpointTlsConnection',
-        remedy: 'Check the endpoint TLS configuration, certificate chain, hostname and validity from the selected observer.' },
+        remedy: 'Fix the endpoint’s TLS certificate, chain or hostname so the check can connect.' },
     dns: { requiredFact: 'resolvableHealthEndpoint',
-        remedy: 'Check the endpoint DNS records from the selected observer.' },
+        remedy: 'Fix the endpoint’s DNS records so the Machine running the check can resolve it.' },
     connection: { requiredFact: 'reachableHealthEndpoint',
-        remedy: 'Check that the service is listening and that its port is reachable from the selected observer.' },
+        remedy: 'Start the service or correct its port so the check can connect.' },
     connection_reset: { requiredFact: 'completedHealthEndpointResponse',
-        remedy: 'Check why the endpoint, proxy or network closes the HTTP connection before the probe completes.' },
+        remedy: 'Check why the service or its proxy closed the request before responding.' },
     timeout: { requiredFact: 'timelyHealthEndpointResponse',
-        remedy: 'Check why the endpoint did not respond in time from the selected observer.' },
+        remedy: 'Check why the service or its proxy did not answer in time.' },
     http_port_blocked: { requiredFact: 'allowedHealthEndpointPort',
         disclosure: 'The HTTP client blocks this port before making a connection',
-        remedy: 'Choose an HTTP endpoint on a port the observer can check.' },
+        remedy: 'Choose a port that allows HTTP requests from the Machine running the check.' },
 } as const;
 
 function result(check: AdmittedHttpHealthCheckV1, kind: 'http' | 'certificate',
-    context: HealthCheckFiniteLeafContextV1, startedAt: number, status: HealthCheckResultV1['status'],
+    context: HealthCheckFiniteLeafContextV1, startedAt: number | undefined, status: HealthCheckResultV1['status'],
     facts: Parameters<typeof finiteHealthCheckResult>[5]): HealthCheckResultV1 {
     const observedAt = context.now();
     return finiteHealthCheckResult(check, kind, observedAt, startedAt, status, facts);
@@ -86,7 +86,7 @@ async function observe(check: AdmittedHttpHealthCheckV1, context: HealthCheckFin
     context.signal.throwIfAborted();
     const startedAt = context.now();
     const target = readHealthCheckHttpTargetV1(check.target);
-    if (!target) return result(check, kind, context, startedAt, 'unknown', {
+    if (!target) return result(check, kind, context, undefined, 'unknown', {
         reason: 'not_checked', disclosure: 'No HTTP health probe is configured',
         requiredFact: 'healthProbeEndpoint', remedy: 'Configure the check endpoint before running the health probe.',
     });
@@ -126,12 +126,12 @@ async function observe(check: AdmittedHttpHealthCheckV1, context: HealthCheckFin
         if (error instanceof Error && error.name === 'AbortError') throw error;
         const failure = nativeFailure(error, url);
         if (failure === 'http_port_blocked' || (failure && (failure === 'tls' || kind === 'http'))) {
-            return result(check, kind, context, startedAt, failure === 'http_port_blocked' ? 'unknown' : 'down',
+            return result(check, kind, context, undefined, failure === 'http_port_blocked' ? 'unknown' : 'down',
                 { reason: failure, ...nativeFailureFacts[failure] });
         }
         logger.warnLocalFile('[Deployment health] HTTP observation incomplete',
             projectActionFailureCauseV1(error, `deployment.health.${kind}`, { allowUnknownErrorCode: false }));
-        return result(check, kind, context, startedAt, 'unknown', { reason: 'transport_incomplete' });
+        return result(check, kind, context, undefined, 'unknown', { reason: 'transport_incomplete' });
     }
     context.signal.throwIfAborted();
     if (kind === 'http') {

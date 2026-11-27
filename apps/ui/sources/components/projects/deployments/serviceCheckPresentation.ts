@@ -509,14 +509,16 @@ export function serviceCheckMonitorSummary(
 export function serviceCheckCauseText(cause: RetainedCheck['result']['cause'] | null | undefined): string | null {
   if (!cause) return null;
   const k = 'projects.deployments.services' as const;
+  const answered = cause.httpStatus !== undefined && cause.expectStatus !== undefined && cause.httpStatus !== cause.expectStatus
+    ? t(`${k}.causeAnswered`, { status: String(cause.httpStatus), expected: String(cause.expectStatus) })
+    : null;
+  const missingKeyword = cause.keywordMatched === false ? t(`${k}.causeKeywordMissing`) : null;
   return [
-    cause.httpStatus !== undefined && cause.expectStatus !== undefined && cause.httpStatus !== cause.expectStatus
-      ? t(`${k}.causeAnswered`, { status: String(cause.httpStatus), expected: String(cause.expectStatus) })
-      : null,
-    cause.keywordMatched === false ? t(`${k}.causeKeywordMissing`) : null,
-    cause.reason ?? null,
+    cause.remedy,
+    answered,
+    missingKeyword,
+    !cause.remedy && !answered && !missingKeyword ? cause.reason : null,
     t(cause.vantage === 'outside' ? `${k}.causeFromOutside` : `${k}.causeFromSameMachine`),
-    cause.remedy ?? null,
   ].filter((part): part is string => Boolean(part)).join(' · ');
 }
 
