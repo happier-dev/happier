@@ -135,14 +135,13 @@ impl Outbox {
         }
     }
 
-    /// Returns once the exit frame was acknowledged, or the client that received it
-    /// went away (a runner that stopped the Agent may exit before acknowledging):
-    /// either way nobody is left to tell, so the holder can leave.
+    /// Returns once the Session has accepted the final output, including exit.
+    /// A detached client leaves the same replay tail for its successor.
     pub fn wait_exit_acknowledged(&self) {
         let state = self.state.lock().unwrap();
         let _state = self
             .changed
-            .wait_while(state, |state| !(state.exit_queued && (state.unacked.is_empty() || state.client.is_none())))
+            .wait_while(state, |state| !(state.exit_queued && state.unacked.is_empty()))
             .unwrap();
     }
 
@@ -222,14 +221,28 @@ mod tests {
     }
 
     #[test]
-    fn exit_wait_ends_when_the_client_that_received_it_leaves() {
+    fn detached_final_tail_stays_until_replayed_and_acknowledged() {
         let outbox = Arc::new(Outbox::new());
         let generation = outbox.attach(Box::new(Sink::default()), |_| b"{}".to_vec()).unwrap();
+        outbox.send(b'o', b"last chunk");
         outbox.send(b'x', b"{}");
         outbox.detach(generation);
-        // Streams-closed after the exit never waits for a client.
         outbox.send_if_attached(b'z', b"{}");
-        outbox.wait_exit_acknowledged();
+        let waiter = {
+            let outbox = outbox.clone();
+            std::thread::spawn(move || outbox.wait_exit_acknowledged())
+        };
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let still_waiting = !waiter.is_finished();
+        let second = Sink::default();
+        outbox.attach(Box::new(second.clone()), |_| b"{}".to_vec()).unwrap();
+        let replay = second.frames();
+        outbox.ack(3);
+        waiter.join().unwrap();
+        assert!(still_waiting);
+        assert_eq!(seqs(&replay), vec![1, 2, 3]);
+        assert_eq!(replay.iter().map(|(kind, _)| *kind).collect::<Vec<_>>(), b"Hoxz");
+        assert_eq!(&replay[1].1[8..], b"last chunk");
     }
 
     #[test]
