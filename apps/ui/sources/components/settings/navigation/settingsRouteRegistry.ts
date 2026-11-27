@@ -16,6 +16,8 @@ type SettingsRouteChromeDefinition = Readonly<{
     titleKey?: TranslationKeyNoParams;
     headerBackTitleKey?: TranslationKeyNoParams;
     headerShown?: boolean;
+    /** The page draws its own large title, so the header keeps only the way back. */
+    blankHeaderTitle?: true;
 }>;
 
 const SETTINGS_ROUTE_CHROME_DEFINITIONS: readonly SettingsRouteChromeDefinition[] = [
@@ -55,8 +57,8 @@ const SETTINGS_ROUTE_CHROME_DEFINITIONS: readonly SettingsRouteChromeDefinition[
     { name: 'notifications', titleKey: 'settings.notifications' },
     { name: 'notifications/push', titleKey: 'settingsNotifications.push.troubleshootTitle' },
     { name: 'pets', titleKey: 'settingsPets.title' },
-    // Title follows the server's bits (Plans & Supporter / Support Happier); set by the route.
-    { name: 'plan' },
+    // The page draws its own title, which follows the server's bits (Plans & Supporter / Support Happier).
+    { name: 'plan', blankHeaderTitle: true },
     { name: 'profiles', titleKey: 'settingsFeatures.profiles' },
     { name: 'prompts/assets', titleKey: 'promptLibrary.externalAssets' },
     { name: 'prompts/docs/[id]', titleKey: 'promptLibrary.editPrompt' },
@@ -126,6 +128,8 @@ export function getSettingsStackScreenDefinitions(
         };
         if (definition.titleKey) {
             options.headerTitle = t(definition.titleKey);
+        } else if (definition.blankHeaderTitle) {
+            options.headerTitle = '';
         }
         return {
             name: definition.name,
