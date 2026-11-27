@@ -234,3 +234,11 @@ test('immutable APK recovery installs the release verifier runtime before promot
   assert.ok(publish.steps.findIndex((step) => step.uses === './.github/actions/install-pnpm-dependencies')
     < publish.steps.findIndex((step) => step.name === 'Recover rolling APK projection from immutable bytes'));
 });
+
+test('optional store arguments expand safely under macOS bash 3.2 set -u', () => {
+  // bash 3.2 treats "${empty[@]}" as unbound under set -u, so the empty non-production array failed preview iOS builds.
+  const source = fs.readFileSync(path.join(repoRoot, '.github/workflows/build-ui-mobile-local.yml'), 'utf8');
+  const expansions = [...source.matchAll(/\S*"\$\{store_args\[@\]\}"\S*/g)].map(([text]) => text);
+  assert.ok(expansions.length > 0);
+  for (const text of expansions) assert.equal(text, '${store_args[@]+"${store_args[@]}"}');
+});

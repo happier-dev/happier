@@ -154,8 +154,11 @@ const expoBuildPropertiesPlugin = [
         },
     },
 ];
+// The plugin also carries the release Gradle heap override (local EAS builds set it).
 const shouldUseAndroidReleaseShrinkerPlugin =
-    androidEnableMinifyInReleaseBuilds || androidEnableShrinkResourcesInReleaseBuilds;
+    androidEnableMinifyInReleaseBuilds ||
+    androidEnableShrinkResourcesInReleaseBuilds ||
+    Boolean(androidGradleJvmArgsOverride);
 const nativeSshTransportEnabled = readBoolEnv('HAPPIER_ENABLE_NATIVE_SSH', false);
 const terminalNativeRendererEnabled = process.env.HAPPIER_ENABLE_TERMINAL_NATIVE === '1';
 const nativeAutolinkingSearchPaths = [
