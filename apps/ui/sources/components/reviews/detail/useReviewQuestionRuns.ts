@@ -70,7 +70,7 @@ export function useReviewQuestionRuns(params: Readonly<{
             return { runId: summary.runRef.runId, backendId: summary.runRef.backendId,
                 reviewerLabel: round?.reviewerDisplayNames?.[summary.reviewerId] ?? summary.runRef.backendId,
                 sessionId, followUp: resolveReviewFollowUpAvailability(summary.runRef, { sessionId }),
-                overviewMarkdown: '', questions: summary.questions, assumptions: summary.assumptions,
+                overviewMarkdown: summary.overviewMarkdown ?? '', questions: summary.questions, assumptions: summary.assumptions,
                 findings: [], commentByFindingId: EMPTY_COMMENTS, originalByFindingId: {}, threadsByFindingId: {}, threadRefsByFindingId: {} };
         });
     }, [params.enabled, summaries, round]);

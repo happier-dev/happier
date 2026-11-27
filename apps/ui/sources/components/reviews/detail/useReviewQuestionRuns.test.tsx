@@ -75,6 +75,7 @@ it.each(['settled', 'running', 'legacy'] as const)('%s round reads only the requ
         reviewerDisplayNames: { first: 'Security' },
         ...(kind === 'legacy' ? {} : { reviewerQuestionSummaries: [{ reviewerId: 'first',
             runRef: { runId: 'r1', callId: 'call', backendId: 'claude' },
+            overviewMarkdown: 'Generated files could not be inspected.',
             questions: [{ id: 'q', text: 'Which boundary?', status: 'open' as const }],
             assumptions: [{ id: 'a', text: 'Single writer' }] }] }) };
     let latest: ReturnType<typeof useReviewQuestionRuns> | undefined;
@@ -83,7 +84,7 @@ it.each(['settled', 'running', 'legacy'] as const)('%s round reads only the requ
     try {
         if (kind === 'settled') {
             expect(latest?.state).toEqual({ kind: 'ready' });
-            expect(latest?.members).toMatchObject([{ reviewerLabel: 'Security', questions: round.reviewerQuestionSummaries![0]!.questions,
+            expect(latest?.members).toMatchObject([{ reviewerLabel: 'Security', overviewMarkdown: 'Generated files could not be inspected.', questions: round.reviewerQuestionSummaries![0]!.questions,
                 assumptions: round.reviewerQuestionSummaries![0]!.assumptions }]);
         } else {
             await vi.waitFor(() => expect(latest?.state.kind).toBe('unavailable'));

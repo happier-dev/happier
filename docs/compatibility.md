@@ -10893,9 +10893,12 @@ The server's activity projection keeps its existing schema.
 
 Unreleased 0.3 settled Review rounds retain optional `reviewerQuestionSummaries`
 in the existing Artifact body. Native terminal publication and Workflow completion
-receipts supply each reviewer's questions, assumptions and run provenance to the
+receipts supply each reviewer's narrative, questions, assumptions and run provenance to the
 record settlement owner. Findings reads this projection without contacting a
 Machine; running rounds and older settled rounds without it retain live reads.
+The optional `overviewMarkdown` retains reviewer coverage and omission explanations.
+Earlier stored summaries without it remain readable but have no retained narrative;
+they do not trigger a Machine read or claim that coverage was checked again.
 An empty array means settlement retained no questions. No envelope, Account-mode,
 server metadata, migration or wire epoch changes; strict development readers need
 matching Protocol and UI sources.

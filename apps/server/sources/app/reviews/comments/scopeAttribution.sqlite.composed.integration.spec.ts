@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { randomUUID } from 'node:crypto';
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 import tweetnacl from 'tweetnacl';
@@ -45,10 +46,82 @@ installSessionFilesViewBoundaries({ platformOS: 'web', reactNativeOverrides: {
     ...createCapturingSectionListMock().module,
     useWindowDimensions: () => ({ width: 1440, height: 1000, scale: 1, fontScale: 1 }),
 } });
+/** The physical app inventory is immutable after Availability's first Account publication. */
+async function prepareReviewEvidenceAppPackage() {
+    const { definePlugin } = await import('@happier-dev/plugin-sdk');
+    const { prepareAuthenticationInventory } = await import('../../../../../ui/sources/dev/testkit/fixtures/connectedAccountAuthentication');
+    const { projectBundledPluginUiDeclaration } = await import('../../../../../cli/scripts/build-owned/bundledPlugins/uiDeclarations.mjs');
+    const { installBundledPluginUiDeclarationsForTests } = await import('../../../../../ui/sources/dev/testkit/mocks/bundledPluginUiAssets');
+    const { PLUGIN_MANIFEST: githubManifest } = await import('../../../../../../packages/plugins/scm-github/src/manifest');
+    const { PLUGIN_MANIFEST: triageManifest } = await import('../../../../../../packages/plugins/triage/src/manifest');
+    const projectPath = await mkdtemp(join(tmpdir(), 'happier-review-evidence-package-'));
+    const namespace = 'qa.review.evidence';
+    const evidence = 'Reload the connection after signing out.';
+    const artifactTarget = { artifactId: 'account-runtime', exportName: 'activateAccount' };
+    const { ReviewCommentGetRequestV1Schema } = await import('@happier-dev/protocol/reviews/comments/actions');
+    const extensionPlugin = definePlugin({ id: namespace, version: '1.0.0', displayName: 'Review evidence fixture',
+        actions: { 'inspect-evidence': { title: 'Inspect persisted evidence', readOnly: true, dangerLevel: 'safe',
+            surfaces: ['ui', 'plugin'], execution: { target: 'account', account: artifactTarget, invokingUi: true },
+            inputSchema: { type: 'object', properties: { reviewId: { type: 'string' }, commentId: { type: 'string' } },
+                required: ['reviewId', 'commentId'], additionalProperties: false },
+            resultSchema: { type: 'object', additionalProperties: true },
+            run: async (input, context) => context.services.actions.execute('reviews.comments.get', ReviewCommentGetRequestV1Schema.parse(input)) } },
+        ui: { views: [{ id: 'finding-evidence', container: 'reviewFinding', target: { kind: 'app' },
+            renderer: 'finding-evidence', title: 'Review evidence' },
+            { id: 'review-evidence', container: 'appPage', target: { kind: 'app', context: 'review' },
+                renderer: 'finding-evidence', title: 'Evidence overview' }],
+            renderers: [{ id: 'finding-evidence', kind: 'reactNative', artifact: 'finding-evidence',
+                requiredHostMethods: ['context', 'executeAction'] }] } });
+    const entryPath = join(projectPath, 'finding-evidence.tsx');
+    await writeFile(entryPath, `import * as React from 'react';
+import { Pressable, Text } from 'react-native';
+export function activateAccount(api) {
+    api.actions.register('inspect-evidence', async (input, context) =>
+        context.services.actions.execute('reviews.comments.get', input, { signal: context.signal }));
+}
+function FindingEvidence(renderContext) {
+    const review = renderContext.surface.mount.review;
+    const [read, setRead] = React.useState(null);
+    if (review.kind === 'page') return React.createElement(Text,
+        { testID: 'plugin-evidence:page' }, 'Review evidence page ' + review.reviewId);
+    return React.createElement(React.Fragment, null,
+        React.createElement(Text, null, review.extension.reproduction),
+        React.createElement(Pressable, { testID: 'plugin-evidence:inspect',
+            onPress: async () => setRead(await renderContext.hostApi.executeAction('inspect-evidence',
+                { reviewId: review.reviewId, commentId: review.commentId })) },
+            React.createElement(Text, null, 'Inspect persisted evidence')),
+        read && React.createElement(Text, { testID: 'plugin-evidence:read' }, JSON.stringify(read)));
+}
+export function renderSurface(context) { return React.createElement(FindingEvidence, context); }
+`);
+    const packaged = { artifacts: [] as unknown[], declarations: [] as unknown[], files: new Map<number, Uint8Array>(), reads: 0 };
+    await prepareAuthenticationInventory(packaged, { manifest: extensionPlugin.manifest, target: artifactTarget,
+        entryPath, projectPath, packageName: '@qa/review-evidence',
+        additionalArtifacts: [{ target: { artifactId: 'finding-evidence', exportName: 'renderSurface' }, entryPath }] });
+    // Only the app's physical package inventory is substituted. Availability
+    // admits the real authored manifests and stamps the mounted caller custody.
+    const declarations = await Promise.all([
+        { manifest: githubManifest, packageName: '@happier-dev/plugins-scm-github' },
+        { manifest: triageManifest, packageName: '@happier-dev/plugins-triage' },
+    ].map(({ manifest, packageName }) => projectBundledPluginUiDeclaration({ packageName,
+        packageVersion: manifest.version, manifest, artifactGraphs: [] })));
+    if (declarations.some(declaration => !declaration)) throw new Error('Missing authored plugin declaration');
+    const restoreInventory = installBundledPluginUiDeclarationsForTests([
+        ...declarations.filter(declaration => declaration !== undefined),
+        ...packaged.declarations as readonly import('../../../../../ui/sources/sync/domains/plugins/availability/bundledPluginUiArtifactInventory').PluginHostBundledUiDeclaration[],
+    ]);
+    return { namespace, evidence, packaged, projectPath, restoreInventory };
+}
+const reviewEvidencePackage = await prepareReviewEvidenceAppPackage();
 await prepareSessionFilesViewTestkit();
 let harness: LightSqliteHarness;
 beforeAll(async () => { harness = await createLightSqliteHarness({ tempDirPrefix: 'happier-review-attribution-', initAuth: true, initEncrypt: true }); }, 120_000);
-afterAll(async () => { standardCleanup(); await harness?.close(); });
+afterAll(async () => {
+    standardCleanup();
+    await harness?.close();
+    reviewEvidencePackage.restoreInventory();
+    await rm(reviewEvidencePackage.projectPath, { recursive: true, force: true });
+});
 
 it('retains captured scope through persisted comments and detail without treating Seen before as pre-existing', async () => {
     const account = await db.account.create({ data: { id: 'alice', encryptionMode: 'plain' } });
@@ -391,58 +464,15 @@ it('shows authorized Hunt history counts without inheriting another Review human
 
 it('opens one persisted finding from PR, Inbox and Review across Sessions and rounds with one human decision', async () => {
     const { act } = await import('react-test-renderer');
-    const { definePlugin } = await import('@happier-dev/plugin-sdk');
     const { Asset } = await import('expo-asset');
     const { File } = await import('expo-file-system');
     const { AppShellPluginUiProjectionProvider } = await import('../../../../../ui/sources/components/appShell/plugins/AppShellPluginUiProjection');
+    const { waitForTestEvent } = await import('../../../../../ui/sources/dev/testkit');
     const { registerPluginAvailabilityRoutes } = await import('../../plugins/availability/routes');
     const { PluginAvailabilityActionHttpPathsV1 } = await import('@happier-dev/protocol/plugins/availability');
     const { setActivePluginAccountAvailabilityIntent } = await import('../../../../../ui/sources/sync/api/plugins/availability/setActivePluginAccountAvailabilityIntent');
-    const { prepareAuthenticationInventory } = await import('../../../../../ui/sources/dev/testkit/fixtures/connectedAccountAuthentication');
     const { installBundledPluginUiArtifactsForTests } = await import('../../../../../ui/sources/dev/testkit/mocks/bundledPluginUiAssets');
-    const namespace = 'qa.review.evidence';
-    const evidence = 'Reload the connection after signing out.';
-    const artifactTarget = { artifactId: 'account-runtime', exportName: 'activateAccount' };
-    const { ReviewCommentGetRequestV1Schema } = await import('@happier-dev/protocol/reviews/comments/actions');
-    const extensionPlugin = definePlugin({ id: namespace, version: '1.0.0', displayName: 'Review evidence fixture',
-        actions: { 'inspect-evidence': { title: 'Inspect persisted evidence', readOnly: true, dangerLevel: 'safe',
-            surfaces: ['ui', 'plugin'], execution: { target: 'account', account: artifactTarget, invokingUi: true },
-            inputSchema: { type: 'object', properties: { reviewId: { type: 'string' }, commentId: { type: 'string' } },
-                required: ['reviewId', 'commentId'], additionalProperties: false },
-            resultSchema: { type: 'object', additionalProperties: true },
-            run: async (input, context) => context.services.actions.execute('reviews.comments.get', ReviewCommentGetRequestV1Schema.parse(input)) } },
-        ui: { views: [{ id: 'finding-evidence', container: 'reviewFinding', target: { kind: 'app' },
-            renderer: 'finding-evidence', title: 'Review evidence' },
-            { id: 'review-evidence', container: 'appPage', target: { kind: 'app', context: 'review' },
-                renderer: 'finding-evidence', title: 'Evidence overview' }],
-            renderers: [{ id: 'finding-evidence', kind: 'reactNative', artifact: 'finding-evidence',
-                requiredHostMethods: ['context', 'executeAction'] }] } });
-    const entryPath = join(harness.baseDir, 'finding-evidence.tsx');
-    await writeFile(entryPath, `import * as React from 'react';
-import { Pressable, Text } from 'react-native';
-export function activateAccount(api) {
-    api.actions.register('inspect-evidence', async (input, context) =>
-        context.services.actions.execute('reviews.comments.get', input, { signal: context.signal }));
-}
-function FindingEvidence(renderContext) {
-    const review = renderContext.surface.mount.review;
-    const [read, setRead] = React.useState(null);
-    if (review.kind === 'page') return React.createElement(Text,
-        { testID: 'plugin-evidence:page' }, 'Review evidence page ' + review.reviewId);
-    return React.createElement(React.Fragment, null,
-        React.createElement(Text, null, review.extension.reproduction),
-        React.createElement(Pressable, { testID: 'plugin-evidence:inspect',
-            onPress: async () => setRead(await renderContext.hostApi.executeAction('inspect-evidence',
-                { reviewId: review.reviewId, commentId: review.commentId })) },
-            React.createElement(Text, null, 'Inspect persisted evidence')),
-        read && React.createElement(Text, { testID: 'plugin-evidence:read' }, JSON.stringify(read)));
-}
-export function renderSurface(context) { return React.createElement(FindingEvidence, context); }
-`);
-    const packaged = { artifacts: [] as unknown[], declarations: [] as unknown[], files: new Map<number, Uint8Array>(), reads: 0 };
-    await prepareAuthenticationInventory(packaged, { manifest: extensionPlugin.manifest, target: artifactTarget,
-        entryPath, projectPath: harness.baseDir, packageName: '@qa/review-evidence',
-        additionalArtifacts: [{ target: { artifactId: 'finding-evidence', exportName: 'renderSurface' }, entryPath }] });
+    const { namespace, evidence, packaged } = reviewEvidencePackage;
     // Only physical package/Expo bytes are substituted; admission, projection,
     // executable activation and contributed Action dispatch use their real owners.
     const restoreArtifacts = installBundledPluginUiArtifactsForTests(packaged.artifacts as import('../../../../../ui/sources/sync/domains/plugins/availability/bundledPluginUiArtifactInventory').BundledPluginUiAppArtifactInventory);
@@ -471,11 +501,7 @@ export function renderSurface(context) { return React.createElement(FindingEvide
     const { captureActiveServerAccountScopeLifetime } = await import('../../../../../ui/sources/sync/domains/scope/activeServerAccountScope');
     const { readPluginAccountAvailability } = await import('../../../../../ui/sources/sync/domains/plugins/availability/projection');
     const { getSyncSingleton } = await import('../../../../../ui/sources/sync/runtime/getSyncSingleton');
-    const { projectBundledPluginUiDeclaration } = await import('../../../../../cli/scripts/build-owned/bundledPlugins/uiDeclarations.mjs');
-    const { installBundledPluginUiDeclarationsForTests } = await import('../../../../../ui/sources/dev/testkit/mocks/bundledPluginUiAssets');
     const { createHomeHubArtifactHttpBoundary } = await import('../../../../../ui/sources/dev/testkit/harness/homeHubArtifactHttpBoundary');
-    const { PLUGIN_MANIFEST: githubManifest } = await import('../../../../../../packages/plugins/scm-github/src/manifest');
-    const { PLUGIN_MANIFEST: triageManifest } = await import('../../../../../../packages/plugins/triage/src/manifest');
     const { resetReviewRunCommentsForTests } = await import('../../../../../ui/sources/sync/domains/reviews/comments/reviewRunComments');
     const { ArtifactView } = await import('../../../../../ui/sources/components/artifacts/ArtifactView');
     const { ReviewActivityFeed } = await import('../../../../../ui/sources/components/reviews/detail/ReviewActivityFeed');
@@ -546,18 +572,6 @@ export function renderSurface(context) { return React.createElement(FindingEvide
 
             const serverIdentityId = await getOrCreateServerIdentityId();
             const openFixture = async () => {
-                // Only the app's physical package inventory is substituted. Availability
-                // admits the real authored manifests and stamps the mounted caller custody.
-                const declarations = await Promise.all([
-                    { manifest: githubManifest, packageName: '@happier-dev/plugins-scm-github' },
-                    { manifest: triageManifest, packageName: '@happier-dev/plugins-triage' },
-                ].map(({ manifest, packageName }) => projectBundledPluginUiDeclaration({ packageName,
-                    packageVersion: manifest.version, manifest, artifactGraphs: [] })));
-                if (declarations.some(declaration => !declaration)) throw new Error('Missing authored plugin declaration');
-                const restoreInventory = installBundledPluginUiDeclarationsForTests([
-                    ...declarations.filter(declaration => declaration !== undefined),
-                    ...(extensionEnabled ? packaged.declarations as readonly import('../../../../../ui/sources/sync/domains/plugins/availability/bundledPluginUiArtifactInventory').PluginHostBundledUiDeclaration[] : []),
-                ]);
                 const homeBoundary = createHomeHubArtifactHttpBoundary(account.id);
                 const mounted = await createSessionFilesViewFixture({ serverUrl: origin, credentials: { token },
                     featureOverrides: { features: { plugins: { enabled: true, ui: { enabled: true,
@@ -571,8 +585,7 @@ export function renderSurface(context) { return React.createElement(FindingEvide
                 } });
                 await getSyncSingleton().refreshPluginAccountAvailability();
                 return { ...mounted, render: (element: React.ReactElement) => mounted.render(
-                    React.createElement(AppShellPluginUiProjectionProvider, null, element)),
-                    async dispose() { try { await mounted.dispose(); } finally { restoreInventory(); } } };
+                    React.createElement(AppShellPluginUiProjectionProvider, null, element)) };
             };
             const readArtifact = async (sourceServerId: string): Promise<DecryptedArtifact> => {
                 const row = await artifacts.read(reviewId);
@@ -636,7 +649,7 @@ export function renderSurface(context) { return React.createElement(FindingEvide
                     presentation: 'page', focusThreadId: initial.id }));
                 try {
                     await vi.waitFor(() => expect(screen.findHostByTestId(`review-finding:${initial.id}`)).not.toBeNull());
-                    await vi.waitFor(() => expect(screen.getTextContent()).toContain(evidence));
+                    await waitForTestEvent(screen.subscribe, () => expect(screen.getTextContent()).toContain(evidence));
                     await screen.pressByTestIdAsync('plugin-evidence:inspect');
                     await vi.waitFor(() => expect(screen.findHostByTestId('plugin-evidence:read')).not.toBeNull());
                     expect(screen.getTextContent()).toContain(initial.id);
@@ -762,7 +775,8 @@ it('retains reviewer omission explanations, partial coverage and question states
             expect(published).toMatchObject({ reviewOutcome: 'partial', overviewMarkdown: explanation,
                 questions: modelOutput.questions });
             expect(await records.read(reviewId)).toMatchObject({ rounds: [{ state: 'partial',
-                runs: [{ kind: 'execution', machineId, sessionId, runId }] }] });
+                runs: [{ kind: 'execution', machineId, sessionId, runId }],
+                reviewerQuestionSummaries: [{ overviewMarkdown: explanation }] }] });
             expect(await db.reviewComment.count({ where: { reviewId } })).toBe(1);
             let unavailable = false;
             const fixture = await createSessionFilesViewFixture({ serverUrl: origin, credentials: { token }, sessionId,
@@ -807,7 +821,8 @@ it('retains reviewer omission explanations, partial coverage and question states
                     await act(async () => notifyExecutionRunActivityFromUpdate(fixture.scope.serverId, {
                         type: 'execution-run-updated', sessionId, run: { runId },
                     }));
-                    await vi.waitFor(() => expect(screen.findByTestId('review-detail:questions-unavailable')).not.toBeNull());
+                    expect(fixture.requests.filter(request => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_GET)).toHaveLength(0);
+                    expect(screen.findByTestId('review-detail:questions-unavailable')).toBeNull();
                     expect(screen.getTextContent()).toContain(explanation);
                     expect(screen.findByTestId(`review-finding:${finding.id}`)).not.toBeNull();
                     expect(screen.getTextContent()).toContain(modelOutput.questions[0]!.text);
@@ -1030,7 +1045,6 @@ it('persists a mounted gutter comment through a cold PR read while keeping Viewe
     const { PluginUiProvider } = await import('@happier-dev/plugin-ui/advanced');
     const { Button } = await import('@happier-dev/plugin-ui/components');
     const { ArtifactView } = await import('../../../../../ui/sources/components/artifacts/ArtifactView');
-    const { ReviewCommentCard } = await import('../../../../../ui/sources/components/reviews/ReviewCommentCard');
     const { router } = await import('expo-router');
     const { GithubHappierReviewSummary } = await import('../../../../../../packages/plugins/scm-github/src/ui/detail/happierReviewSummary');
     const { GITHUB_TRIAGE_CONTRIBUTION_LOCAL_ID_V1 } = await import('../../../../../../packages/plugins/scm-github/src/triage/contribution');
@@ -1209,7 +1223,7 @@ it('persists a mounted gutter comment through a cold PR read while keeping Viewe
                                 await vi.waitFor(() => expect(reader.findAllByType(WorkspaceScmReviewBody)).toHaveLength(1));
                                 await act(async () => { reader.findByType(WorkspaceScmReviewBody).findAll(node => typeof node.props.onLayout === 'function')[0]
                                     ?.props.onLayout({ nativeEvent: { layout: { width: 900, height: 360 } } }); });
-                                await vi.waitFor(() => expect(reader.findAllByType(ReviewCommentCard).map(card => card.props.comment.id), reader.getTextContent()).toContain(saved.id));
+                                await vi.waitFor(() => expect(reader.findByTestId(`review-comment-${saved.id}`), reader.getTextContent()).not.toBeNull());
                                 expect(reader.getTextContent()).toContain(body);
                                 expect(await db.reviewComment.count({ where: { reviewId } })).toBe(1);
                             } finally { await reader.unmount(); }

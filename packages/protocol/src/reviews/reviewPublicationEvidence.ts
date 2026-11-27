@@ -8,9 +8,10 @@ import { z } from '../zodRuntimePolicy.js';
 import { SessionRuntimeIssueV1Schema } from '../sessions/control/runtimeIssueV1.js';
 import { ActionExecuteFailureSchema } from '../actions/actionExecutionResult.js';
 
-/** The bounded question/assumption projection already shown by Review detail; no findings or transcript. */
+/** Reviewer narrative, questions and assumptions shown by Review detail; no findings or transcript. */
 export const ReviewQuestionSummaryV1Schema = lazyZodSchema(() => z.strictObject({
   runRef: z.strictObject(ExecutionRunStructuredRunRefSchema.shape),
+  overviewMarkdown: z.optional(z.string()),
   questions: z.array(z.strictObject(ReviewQuestionSchema.shape)),
   assumptions: z.array(z.strictObject(ReviewAssumptionSchema.shape)),
 }));
@@ -21,6 +22,7 @@ export function projectReviewQuestionSummaryV1(value: unknown): ReviewQuestionSu
   const raw = readRecord(value);
   if (!raw) return undefined;
   const parsed = createStoredReadSchema(ReviewQuestionSummaryV1Schema).safeParse({ runRef: raw.runRef,
+    ...(typeof raw.overviewMarkdown === 'string' ? { overviewMarkdown: raw.overviewMarkdown } : {}),
     questions: raw.questions ?? [], assumptions: raw.assumptions ?? [] });
   return parsed.success ? parsed.data : undefined;
 }
