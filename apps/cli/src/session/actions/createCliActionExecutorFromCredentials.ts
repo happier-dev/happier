@@ -69,7 +69,7 @@ import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '@ha
 import { withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { ACTION_INVOKE_ACTION_ID_V1, ActionIdSchema, isApprovalRequestObservationActionIdV1, isLocalServiceStopActionIdV1, isWorkspaceSyncRelationshipWriteActionId, SESSION_SPAWN_CONNECTED_SERVICES_LIST_ACTION_ID_V1, WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { TELEMETRY_COSTS_READ_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
-import { USAGE_QUERY_ACTION_ID_V1 } from '@happier-dev/protocol/usage/usageActionIdsV1';
+import { isUsageAppCallsReadParentActionIdV1 } from '@happier-dev/protocol/usage/usageActionIdsV1';
 import { isSelectedDeploymentDatabaseReadV1, projectDeploymentReadAdmissionV1, projectDeploymentTelemetryReadAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
 import { isSettingsDeclarationActionIdV1, SettingsDeclarationActionInputSchemasV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
 import { deploymentPreparationOperationForActionV1 } from '@happier-dev/protocol/deployments/deploymentPreparationAdmissionV1';
@@ -1671,7 +1671,9 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       async ({ actionId, input, context }) => {
         const root = context.externalActionExecutionAuthorization?.binding;
         const target = context.externalActionTarget;
-        if (root?.actionId === USAGE_QUERY_ACTION_ID_V1 && 'authentication' in root && root.authentication.kind === 'account'
+        const scopedUsage = root && !('authentication' in root) && !!root.grant.targets?.environments?.length;
+        if (root && isUsageAppCallsReadParentActionIdV1(root.actionId)
+          && (scopedUsage || 'authentication' in root && root.authentication.kind === 'account')
           && !root.sessionActionOrigin && !root.workflowActionOrigin && context.requiredContributedActionDangerLevel === 'safe'
           && target?.kind === 'machine' && !target.project) {
           const collectorRead = projectDeploymentTelemetryReadAdmissionV1(actionId, input);
@@ -1683,7 +1685,8 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
             }
             return dispatchOriginalAccountAction({ actionId, input, target, credentials,
               requestId: context.actionRequestId, invocation, authority: context.authority,
-              serverIdentityId: root.serverIdentityId, serverHttpBaseUrl: resolveActionServerApiUrl(), signal: context.signal });
+              serverIdentityId: root.serverIdentityId, serverHttpBaseUrl: resolveActionServerApiUrl(), signal: context.signal,
+              ...(scopedUsage ? { usageCollectorParent: context } : {}) });
           }
         }
         if (params.pluginActionExecutionOwner === 'current_process') {

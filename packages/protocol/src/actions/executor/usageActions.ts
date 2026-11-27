@@ -23,10 +23,13 @@ import { projectUsageModelPriceDelivery, UsageModelPriceReadInputSchema } from '
 import { PublicProfileReadResultV1Schema, type PublicProfileReadResultV1 } from '../../account/publicProfilePublication.js';
 import { composePublicUsageRecap } from '../../usage/composePublicUsageRecap.js';
 import { projectUsageQueryDelivery } from '../../usage/projectUsageQueryDelivery.js';
+import { readUsageAppCallsEnvironmentIds } from '../../usage/usageVocabularyV1.js';
+import { isUsageAppCallsReadParentActionIdV1 } from '../../usage/usageActionIdsV1.js';
 import { projectUsageQueryResultIssues } from '../../usage/usageAnalyticsContracts.js';
 
 export type UsageActionReadChild = (actionId: 'deployments.environments.list' | 'action.invoke' | typeof USAGE_PRICE_ACTION_IDS.get,
-  input: unknown, operation?: Readonly<{ signal?: AbortSignal; externalActionTarget?: { kind: 'machine'; machineId: string } }>) =>
+  input: unknown, operation?: Readonly<{ signal?: AbortSignal; externalActionTarget?: { kind: 'machine'; machineId: string } }>,
+  admittedEnvironmentIds?: readonly string[]) =>
   Promise<ActionExecuteResult>;
 
 export type UsageActionPorts = Readonly<{
@@ -47,6 +50,10 @@ export type UsageActionPorts = Readonly<{
   deliverRecap?(file: UsageRecapImageResult, intent: UsageRecapDeliveryInput['intent'], context: ActionExecutorContext): Promise<UsageRecapDeliveryOutcome>;
   readPublicProfile?(context: ActionExecutorContext): Promise<PublicProfileReadResultV1 | ActionExecuteFailure>;
 }>;
+
+function bindUsageReadChild(readChild: UsageActionReadChild, environmentIds: readonly string[]): UsageActionReadChild {
+  return (action, input, operation) => readChild(action, input, operation, environmentIds);
+}
 
 const failure = (errorCode: string, details?: ActionExecuteFailure['details']): ActionExecuteFailure =>
   ({ ok: false, errorCode, error: errorCode, ...(details === undefined ? {} : { details }) });
@@ -79,7 +86,11 @@ export async function executeUsageAction(actionId: UsageActionId, value: unknown
     const scope = projectApiTokenUsageQueryV1(context.externalActionCredential?.grant, input, recapSourceSelection);
     if (!scope.ok) return scope;
     const { queries } = normalizeUsageQueryBatchInput(scope.input);
-    const raw = await ports.query({ queries }, context, readChild);
+    const child = readChild && context.externalActionCredential?.grant?.targets?.environments?.length
+      && isUsageAppCallsReadParentActionIdV1(actionId)
+      ? bindUsageReadChild(readChild, [...new Set(queries.flatMap(query => readUsageAppCallsEnvironmentIds(query.sources) ?? []))])
+      : readChild;
+    const raw = await ports.query({ queries }, context, child);
     if (context.signal?.aborted) return failure('cancelled');
     const refusal = readActionFailureEnvelope(raw);
     if (refusal) return refusal;

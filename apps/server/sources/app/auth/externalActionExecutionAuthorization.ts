@@ -107,7 +107,8 @@ import { isDeploymentDomainDnsActionIdV1, isDeploymentEnvironmentMetadataReadAct
     DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_DATA_SIZE_ACTION_ID_V1, DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1, DEPLOYMENT_LOGS_READ_ACTION_ID_V1, DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1, DEPLOYMENT_RECEIPT_LIST_ACTION_ID_V1, DEPLOYMENT_DEPLOY_ACTION_ID_V1,
     DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { readDeploymentReferenceServiceListEnvironmentIdV1, readDeploymentReviewedChildV1 } from '@happier-dev/protocol/actions/specs/deploymentPreparationScope';
-import { DeploymentCancelTransitionInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { TELEMETRY_COSTS_READ_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
+import { DeploymentEnvironmentListInputV1Schema, DeploymentCancelTransitionInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { EnvironmentSecretLaunchAdmissionInputV1Schema, EnvironmentSecretAdmissionRequestV1Schema } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
 import { DeploymentEnvironmentUpdateStorageInputV1Schema, DeploymentBindingsSetStorageInputV1Schema } from '@happier-dev/protocol/deployments/deploymentStorageInputsV1';
 import { isMachineConnectorSecretGrantHttpPurpose } from '@/app/deployments/machineConnectorSecretGrantAuthorization';
@@ -234,7 +235,7 @@ import { SCM_REVIEWED_MARKS_KV_PREFIX, buildScmReviewedMarksKey } from '@happier
 import { UsageAnalyticsQueryBatchRequestSchema, UsageAnalyticsQueryRequestSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { USAGE_SESSION_EVIDENCE_PATH, UsageSessionEvidenceRequestSchema } from '@happier-dev/protocol/usage/usageSessionEvidence';
 import { accountUsageRoutePaths } from '@/app/api/routes/account/accountUsageRoutePaths';
-import { USAGE_PRICE_ACTION_IDS, USAGE_QUERY_ACTION_ID_V1, isUsagePriceActionIdV1, isUsagePublicRecapActionIdV1, isUsagePrivateRecapActionIdV1 } from '@happier-dev/protocol/usage/usageActionIdsV1';
+import { USAGE_PRICE_ACTION_IDS, isUsageAppCallsReadParentActionIdV1, isUsagePriceActionIdV1, isUsagePublicRecapActionIdV1, isUsagePrivateRecapActionIdV1 } from '@happier-dev/protocol/usage/usageActionIdsV1';
 import { KvMutationRequestSchema } from '@/app/kv/kvMutate';
 import { USAGE_COACH_SUPPRESSIONS_KV_KEY } from '@happier-dev/protocol/usage/coach/coachActions';
 import { bindPublicProfilePreparedHttpRequestV1, isHomeDomainActionIdV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
@@ -1162,7 +1163,7 @@ async function readCurrentExternalActionPrincipal(
     const principal = await auth.verifyCurrentApiTokenPrincipal(binding, undefined, reader);
     if (!principal || !isApiTokenGrantWithinV1(binding.grant, principal.grant)) return null;
     const qualifiedAction = parseQualifiedPluginActionId(binding.actionId);
-    if (!evaluateApiTokenGrantV1({
+    if (!binding.usageCollectorParent && !evaluateApiTokenGrantV1({
         grant: principal.grant,
         actionId: qualifiedAction ? "action.invoke" : readExternalActionCredentialActionId(binding),
         contributedActionAdmission: 'pre_open',
@@ -1386,11 +1387,48 @@ function hasMatchingExecutionEffectFamily(rootActionId: string, effectActionId: 
         || root.success && effect.success && root.data === effect.data;
 }
 
-/** Private Usage evidence reads retain their original signed Action root. */
-function isPersonalUsageReadEffect(rootActionId: string, effectActionId: string): boolean {
-    if (effectActionId === DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1 || effectActionId === USAGE_PRICE_ACTION_IDS.get) {
-        return rootActionId === USAGE_QUERY_ACTION_ID_V1;
+function readScopedUsageAppCallsGrant(binding: ExternalActionExecutionAuthorizationBindingV1) {
+    return !('authentication' in binding) && binding.grant.targets?.environments?.length
+        && isUsageAppCallsReadParentActionIdV1(binding.actionId) ? binding.grant : undefined;
+}
+
+/** The signed HTTP purpose owns the finite collector mint and relay of a scoped Usage parent. */
+function isScopedUsageCollectorHttpPurpose(binding: ExternalActionExecutionAuthorizationBindingV1,
+    proof: ExternalActionExecutionRequestProof): boolean {
+    const grant = readScopedUsageAppCallsGrant(binding);
+    if (!grant || proof.method.toUpperCase() !== 'POST') return false;
+    const request = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(proof.body);
+    if (!request.success) return false;
+    const { machineId, envelope, executionAuthorization, ...issuance } = request.data;
+    if (Object.keys(issuance).some(key => key !== 'v')
+        || envelope.v !== 2 || !envelope.telemetryCollectorCodec || envelope.pluginInvocation
+        || envelope.target.kind !== 'machine' || envelope.target.project || envelope.target.machineId !== machineId
+        || !isApiTokenGrantTargetMemberV1(grant, envelope.target)) return false;
+    const read = envelope.deploymentReadAdmission;
+    if (read?.actionId !== ACTION_INVOKE_ACTION_ID_V1 || !('telemetryCollector' in read)
+        || formatQualifiedPluginActionId(read.action) !== TELEMETRY_COSTS_READ_ACTION_ID_V1
+        || read.telemetryCollector.serverId !== binding.serverIdentityId
+        || !read.telemetryCollector.environmentIds.every(id => grant.targets?.environments?.includes(id))) return false;
+    if (proof.path === bindExternalActionExecutionAuthorizationHttpPathV1(ACTION_INVOKE_ACTION_ID_V1)) {
+        return executionAuthorization === undefined;
     }
+    const child = executionAuthorization?.binding;
+    return proof.path === `${EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1}${ACTION_INVOKE_ACTION_ID_V1}`
+        && child?.usageCollectorParent?.requestId === binding.requestId
+        && child.usageCollectorParent.requestEnvelopeDigest === binding.requestEnvelopeDigest
+        && !('authentication' in child) && !('authentication' in binding)
+        && child.credentialId === binding.credentialId && child.principalId === binding.principalId
+        && sameManagedInput(child.grant, grant)
+        && isExternalActionAuthorizationBoundToEnvelope(child, { actionId: ACTION_INVOKE_ACTION_ID_V1, machineId, envelope });
+}
+
+/** Private Usage evidence reads retain their original signed Action root. */
+function isPersonalUsageReadEffect(binding: ExternalActionExecutionAuthorizationBindingV1, effectActionId: string): boolean {
+    const rootActionId = binding.actionId;
+    if (effectActionId === DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1 || effectActionId === USAGE_PRICE_ACTION_IDS.get) {
+        return isUsageAppCallsReadParentActionIdV1(rootActionId);
+    }
+    if (effectActionId === ACTION_INVOKE_ACTION_ID_V1) return readScopedUsageAppCallsGrant(binding) !== undefined;
     if (rootActionId === 'usage.calendar.export') return effectActionId === 'connectedServices.quota.get';
     return (rootActionId === 'usage.query' || rootActionId === 'usage.export'
         || isUsagePrivateRecapActionIdV1(rootActionId)
@@ -1831,7 +1869,7 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
         workflowDiscussion: isWorkflowDiscussionPreparationEffect(binding.actionId, effectActionId),
         workflowDeploymentRead: isWorkflowDeploymentApprovalScopeReadEffect(binding, effectActionId),
         memory: isMemoryExposureReadEffect(binding.actionId, effectActionId),
-        personalUsage: isPersonalUsageReadEffect(binding.actionId, effectActionId),
+        personalUsage: isPersonalUsageReadEffect(binding, effectActionId),
         personalSavedSecret: personalSavedSecretResourceMutationActionIdV1(binding.actionId) === effectActionId,
         publicProfile: isPublicProfilePreparationEffect(binding.actionId, effectActionId),
         teamUsage: isTeamCredentialUsageExportReadEffect(binding.actionId, effectActionId),
@@ -3978,7 +4016,8 @@ async function isAccountActionHttpPurpose(verified: VerifiedSignedChildRequest,
     if (isExternalActionConnectedSubscriptionPriceHttpPurpose(verified.binding, verified.effectActionId, proof)) return true;
     // Environment names live in private headers. Listing opens only that
     // projection; the Artifact owner retains requester per-record access.
-    if ((root === DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1 || root === USAGE_QUERY_ACTION_ID_V1) && verified.effectActionId === root
+    if ((root === DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1 || isUsageAppCallsReadParentActionIdV1(root))
+        && !readScopedUsageAppCallsGrant(verified.binding) && verified.effectActionId === root
         && proof.method.toUpperCase() === 'POST' && proof.path === '/v1/artifacts/read') {
         const read = ArtifactReadHeadersBatchInputV1Schema.safeParse(proof.body);
         return read.success && sameManagedInput(proof.body, read.data)
@@ -4091,11 +4130,21 @@ async function isAccountActionHttpPurpose(verified: VerifiedSignedChildRequest,
         }
     }
     if (verified.signedChildPurpose.sibling.personalUsage) {
-        if (verified.effectActionId === DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1 || verified.effectActionId === USAGE_PRICE_ACTION_IDS.get) {
+        const scopedGrant = readScopedUsageAppCallsGrant(verified.binding);
+        if (verified.effectActionId === ACTION_INVOKE_ACTION_ID_V1) return isScopedUsageCollectorHttpPurpose(verified.binding, proof);
+        if (verified.effectActionId === DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1) {
+            if (scopedGrant) {
+                const list = DeploymentEnvironmentListInputV1Schema.safeParse(proof.routeInput);
+                if (!list.success || list.data.serverId !== verified.binding.serverIdentityId || !list.data.environmentIds?.length
+                    || !list.data.environmentIds.every(id => scopedGrant.targets?.environments?.includes(id))
+                    || Object.keys(list.data).some(key => !['serverId', 'environmentIds', 'cursor'].includes(key))) return false;
+            }
             return isAccountActionHttpOperation(verified.effectActionId, proof);
         }
-        if (verified.effectActionId === 'connectedServices.quota.get') return isQuotaReadHttpPurpose(proof);
+        if (verified.effectActionId === USAGE_PRICE_ACTION_IDS.get) return isAccountActionHttpOperation(verified.effectActionId, proof);
+        if (verified.effectActionId === 'connectedServices.quota.get') return !scopedGrant && isQuotaReadHttpPurpose(proof);
         if (proof.method.toUpperCase() === 'POST') {
+            if (scopedGrant) return false;
             const admitted = proof.path === accountUsageRoutePaths.analyticsQuery
                 ? UsageAnalyticsQueryRequestSchema.safeParse(proof.body).success
                 : proof.path === accountUsageRoutePaths.analyticsQueryBatch

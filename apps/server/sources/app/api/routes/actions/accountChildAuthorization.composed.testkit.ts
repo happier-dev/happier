@@ -1,4 +1,19 @@
 import { expect, it } from 'vitest';
+import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { TELEMETRY_COSTS_READ_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
+import { bindExternalActionExecutionAuthorizationHttpPathV1, ExternalActionExecutionAuthorizationV1Schema,
+    ExternalActionRequestEnvelopeV1Schema, EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
+import { sealManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { sealExternalActionRequestV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
+import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { USAGE_PRIVATE_RECAP_ACTION_IDS, USAGE_QUERY_ACTION_ID_V1 } from '@happier-dev/protocol/usage/usageActionIdsV1';
+import { auth } from '@/app/auth/auth';
+import { encodeExternalActionResolvedTargetV1, signExternalActionMachineRequestV1 }
+    from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
+    EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, EXTERNAL_ACTION_RESOLVED_TARGET_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
 import { decodeBase64 } from 'privacy-kit';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
 import { DEFAULT_PUBLIC_PROFILE_POLICY_V1 } from '@happier-dev/protocol/account/publicProfile';
@@ -9,7 +24,7 @@ import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
-import { storedPlainPrivateLabel } from '@/testkit/privateLabelFixture';
+import { plainPrivateLabel, storedPlainPrivateLabel } from '@/testkit/privateLabelFixture';
 import { createCliTeamCredentialUsageExportAction } from '../../../../../../cli/src/session/actions/teamCredentialUsageExportAction';
 import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { createArtifact } from '@/app/artifacts/artifactWriteService';
@@ -25,6 +40,15 @@ import { registerAccountPublicProfileRoutes } from '../account/registerAccountPu
 import { createReviewedChildAuthorizationFixture } from './reviewedChildAuthorization.composed.testkit';
 
 type Fixture = Awaited<ReturnType<typeof createReviewedChildAuthorizationFixture>>;
+function signedUsageHeaders(input: Omit<Parameters<typeof signExternalActionMachineRequestV1>[0], 'privateKey'>, privateKey: Uint8Array) {
+    return { 'content-type': 'application/json',
+        [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: input.effectActionId,
+        [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: input.authorizationToken,
+        [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ ...input, privateKey }),
+        [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(input.target),
+    };
+}
+
 const content = { v: 1 as const, parts: [{ t: 'text' as const, text: 'Reviewed passage' }] };
 
 async function artifact(f: Fixture) {
@@ -114,6 +138,102 @@ export function registerAccountChildAuthorizationComposedTests(): void {
                     headers: await f.headers(root, { effectActionId: 'deployments.environments.get', method: 'GET', path }) });
                 expect(response.statusCode, response.body).toBe(status);
                 if (status === 200) expect(response.json()).toMatchObject({ ok: true, environment: { id: environment.id } });
+            }
+        } finally { await app.close(); await f.app.close(); }
+    });
+
+    it('mints the signed Usage collector child for the original scoped token and refuses other operands', async () => {
+        const f = await createReviewedChildAuthorizationFixture();
+        const app = createAuthenticatedTestApp({ authentication: 'real' });
+        registerDeploymentRoutes(app);
+        await app.ready();
+        try {
+            const serverId = await getOrCreateServerIdentityId();
+            const source = await inTx(tx => createProjectSourceInTx(tx, f.account.id, { serverId,
+                requestKey: crypto.randomUUID(), name: 'Usage test', audience: [] }));
+            if (!source.ok) throw new Error(source.error);
+            const content = await createArtifact({ actorUserId: f.account.id, artifactId: crypto.randomUUID(),
+                header: decodeBase64(encodePlainArtifactStoredContent({ kind: 'deployment-environment.v1', title: 'App' })),
+                body: decodeBase64(encodePlainArtifactStoredContent({ body: JSON.stringify(createDeploymentEnvironmentDetailV1().content) })),
+                dataEncryptionKey: decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
+            if (!content.ok) throw new Error(content.error);
+            const data = { projectSourceId: source.source.id, createdByAccountId: f.account.id,
+                protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
+                controllerMachineId: f.machine.id, buildMachineId: f.machine.id, telemetryMachineId: f.machine.id,
+                telemetryAppLlmCostEnabled: true, contentArtifactId: content.artifact.id,
+                contentHeaderVersion: content.artifact.headerVersion, contentBodyVersion: content.artifact.bodyVersion } as const;
+            const selected = await db.deploymentEnvironment.create({ data });
+            const foreign = await db.deploymentEnvironment.create({ data });
+            const machineId = f.machine.id;
+            const target = { kind: 'machine', machineId } as const;
+            const grant = { ...API_TOKEN_FULL_GRANT_V1, actions: { families: ['usage' as const], ids: [] },
+                targets: { sessions: [], machines: [machineId], environments: [selected.id] } };
+            const pat = await auth.createApiToken({ accountId: f.account.id, tokenId: crypto.randomUUID(),
+                label: plainPrivateLabel('Usage app only'), grant });
+            const mintPath = bindExternalActionExecutionAuthorizationHttpPathV1(ACTION_INVOKE_ACTION_ID_V1);
+            let credentialId: string | undefined;
+            const randomBytes = (size: number) => new Uint8Array(crypto.getRandomValues(new Uint8Array(size)));
+            const material = { type: 'dataKey' as const, machineKey: randomBytes(32) };
+            const collectorRequest = (environmentId: string, collectorMachineId: string = machineId) => {
+                if (!credentialId) throw new Error('Usage credential is required');
+                const requestId = crypto.randomUUID();
+                const action = parseQualifiedPluginActionId(TELEMETRY_COSTS_READ_ACTION_ID_V1)!;
+                const input = { action, input: { source: { kind: 'environment', serverId, environmentId },
+                    since: 100, until: 200, granularity: 'hour' } };
+                const envelope = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: { serverIdentityId: serverId, accountId: f.account.id,
+                    credentialId, actionId: ACTION_INVOKE_ACTION_ID_V1, requestId,
+                    target: { kind: 'machine', machineId: collectorMachineId } },
+                    material, input, randomBytes });
+                return { v: 1, machineId: collectorMachineId, envelope: { ...envelope, telemetryCollectorCodec: true } };
+            };
+            for (const actionId of [USAGE_QUERY_ACTION_ID_V1, USAGE_PRIVATE_RECAP_ACTION_IDS.compose]) {
+                const query = projectNativeJsonValueForTransport(normalizeUsageQuery({}));
+                const input = actionId === USAGE_QUERY_ACTION_ID_V1 ? { queries: [query] } : { query, selectedFields: ['tokens'] };
+                const root = await f.app.inject({ method: 'POST',
+                    url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
+                    headers: { authorization: `Bearer ${pat.token}` }, payload: { v: 1, machineId,
+                        envelope: ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: crypto.randomUUID(), target, input }) } });
+                expect(root.statusCode, root.body).toBe(200);
+                const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(root.json());
+                if ('authentication' in authorization.binding) throw new Error('Expected the original Usage token');
+                credentialId = authorization.binding.credentialId;
+                const send = async (url: string, method: 'GET' | 'POST', effectActionId: string, body?: unknown) => {
+                    const signed = { authorizationToken: authorization.token, installationId: f.machine.installationId!,
+                        requestId: authorization.binding.requestId, target, effectActionId, method, path: url, body };
+                    return (method === 'GET' ? app : f.app).inject({ method, url,
+                        headers: signedUsageHeaders(signed, f.keyPair.secretKey),
+                        ...(body === undefined ? {} : { payload: JSON.stringify(body) }) });
+                };
+                const list = (environmentId?: string) => send(
+                    `/v1/deployments/environments?serverId=${serverId}${environmentId ? `&environmentIds=${environmentId}` : ''}`,
+                    'GET', 'deployments.environments.list');
+                const selectedList = await list(selected.id);
+                expect(selectedList.statusCode, selectedList.body).toBe(200);
+                expect(selectedList.json().items.map((row: { id: string }) => row.id)).toEqual([selected.id]);
+                expect((await list()).statusCode).toBe(401);
+                expect((await list(foreign.id)).statusCode).toBe(401);
+
+                const request = collectorRequest(selected.id);
+                const child = await send(mintPath, 'POST', ACTION_INVOKE_ACTION_ID_V1, request);
+                expect(child.statusCode, child.body).toBe(200);
+                const { telemetryReadInstallationPublicKey, ...issued } = ExternalActionExecutionAuthorizationV1Schema.parse(child.json());
+                expect(issued.binding).toMatchObject({
+                    credentialId, principalId: authorization.binding.principalId, grant,
+                    usageCollectorParent: { requestId: authorization.binding.requestId,
+                        requestEnvelopeDigest: authorization.binding.requestEnvelopeDigest },
+                });
+                if (!telemetryReadInstallationPublicKey) throw new Error('The admitted collector needs an installation key');
+                const executionAuthorization = sealManagedControllerActionCodecV1({ authorization: issued, material,
+                    installationPublicKey: new Uint8Array(f.keyPair.publicKey), randomBytes });
+                const relayPath = `${EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1}${ACTION_INVOKE_ACTION_ID_V1}`;
+                const priorDispatches = f.dispatchPrincipals.length;
+                await send(relayPath, 'POST', ACTION_INVOKE_ACTION_ID_V1, { ...request, executionAuthorization });
+                expect(f.dispatchPrincipals.slice(priorDispatches)).toMatchObject([{ credentialId, grant }]);
+                expect((await send(mintPath, 'POST', ACTION_INVOKE_ACTION_ID_V1, collectorRequest(foreign.id))).statusCode).toBe(401);
+                expect((await send(mintPath, 'POST', ACTION_INVOKE_ACTION_ID_V1,
+                    collectorRequest(selected.id, crypto.randomUUID()))).statusCode).toBe(401);
+                expect((await f.app.inject({ method: 'POST', url: mintPath,
+                    headers: { authorization: `Bearer ${pat.token}` }, payload: request })).statusCode).toBeGreaterThanOrEqual(400);
             }
         } finally { await app.close(); await f.app.close(); }
     });

@@ -408,6 +408,7 @@ export type ExternalActionGrantEvaluationContext = Readonly<{ input?: unknown;
     managedMachineAdmission?: import('@happier-dev/protocol/machines/machineAccessV1').SocketRpcMachineAdmissionContextV1
         & import('./externalActionExecutionAuthorization').ExternalActionExecutionMachineAdmissionFacts;
     browserSessionId?: string;
+    usageCollectorParent?: ExternalActionExecutionAuthorizationBindingV1;
     callerAuthority?: import('@happier-dev/protocol/actions/externalActionBindingAuthority').ExternalActionBindingAuthorityV1;
     workflowAdmission?: WorkflowExternalActionAdmission;
     managedCreationAdmission?: import('./externalActionManagedAdmission').ManagedCreationChildAdmission;
@@ -1077,7 +1078,13 @@ class AuthModule {
             }
         }
         const { readExternalActionCredentialActionId } = await import('./externalActionExecutionAuthorization');
-        const admission = evaluateApiTokenGrantV1({ grant: supplied.grant,
+        const usageParent = context.usageCollectorParent;
+        if (supplied.usageCollectorParent && (!usageParent || 'authentication' in usageParent
+            || supplied.usageCollectorParent.requestId !== usageParent.requestId
+            || supplied.usageCollectorParent.requestEnvelopeDigest !== usageParent.requestEnvelopeDigest
+            || supplied.credentialId !== usageParent.credentialId || supplied.principalId !== usageParent.principalId
+            || !sameStrictJsonValue(supplied.grant, usageParent.grant))) throw refuse('usage_collector_parent');
+        const admission = supplied.usageCollectorParent ? { ok: true as const } : evaluateApiTokenGrantV1({ grant: supplied.grant,
             actionId: qualifiedAction ? "action.invoke" : readExternalActionCredentialActionId(supplied), contributedQualifiedId,
             contributedActionAdmission: 'pre_open',
             automationAdmission: 'pre_open',

@@ -1,3 +1,5 @@
+import { TELEMETRY_COSTS_READ_ACTION_ID_V1 } from './actionIdsDatabaseV1.js';
+import { formatQualifiedPluginActionId } from '../plugins/actions/qualifiedActionId.js';
 import { ResourceTeamShareScopeV1Schema } from '../teams/resourceGrantAccessV1.js';
 import { ManagedAdmissionPresetContentV1Schema } from '../machines/managed/managedMachinePresetContentCarrierV1.js';
 import { ManagedMachinePresetV1BaseSchema } from '../machines/managed/managedMachinePresetStructureV1.js';
@@ -1586,6 +1588,11 @@ const externalActionExecutionAuthorizationRoutingShapeV1 = () => ({
     accountEncryptionMode: z.optional(AccountEncryptionModeSchema),
     requesterOperationRead: z.optional(z.literal(true)),
     telemetryCollectorCodec: z.optional(z.literal(true)),
+    /** Home-issued lineage for the exact collector read of an admitted scoped Usage root. */
+    usageCollectorParent: z.optional(z.strictObject({
+      requestId: ExternalActionRequestIdV1Schema,
+      requestEnvelopeDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
+    })),
     sessionActionOrigin: z.optional(SessionActionRpcOriginV1Schema),
     sessionActionSource: z.optional(ExternalActionSessionSourceV1Schema),
     workflowActionOrigin: z.optional(ExternalActionWorkflowOriginV1Schema),
@@ -1739,9 +1746,17 @@ export const ExternalActionExecutionAuthorizationBindingV1Schema = lazyZodSchema
   }
   const telemetry = value.deploymentReadAdmission && 'telemetryCollector' in value.deploymentReadAdmission
     ? value.deploymentReadAdmission.telemetryCollector : undefined;
+  const scopedUsageCollector = value.usageCollectorParent !== undefined && !('authentication' in value)
+    && !!value.grant.targets?.environments?.length && value.deploymentReadAdmission?.actionId === ACTION_INVOKE_ACTION_ID_V1
+    && 'telemetryCollector' in value.deploymentReadAdmission
+    && formatQualifiedPluginActionId(value.deploymentReadAdmission.action) === TELEMETRY_COSTS_READ_ACTION_ID_V1;
+  if (value.usageCollectorParent && (!value.telemetryCollectorCodec || !scopedUsageCollector)) {
+    context.addIssue({ code: 'custom', path: ['usageCollectorParent'], message: 'Usage child lineage binds only its scoped collector read.' });
+  }
   if (telemetry && telemetry.serverId !== value.serverIdentityId
     || value.telemetryCollectorCodec && (!telemetry || value.sessionActionOrigin || value.sessionActionSource || value.workflowActionOrigin
-      || value.target.kind !== 'machine' || value.target.project || !('authentication' in value) || value.authentication.kind !== 'account')
+      || value.target.kind !== 'machine' || value.target.project
+      || !scopedUsageCollector && (!('authentication' in value) || value.authentication.kind !== 'account'))
     || value.deploymentTelemetryRead && (!telemetry || !sameStrictJsonValue(
       value.deploymentTelemetryRead.map(environment => environment.environmentId), telemetry.environmentIds))) {
     context.addIssue({ code: 'custom', path: ['deploymentTelemetryRead'], message: 'Telemetry facts belong to their exact Home and Environment operands.' });

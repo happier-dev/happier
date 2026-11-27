@@ -3,6 +3,8 @@ import { readAdmittedManagedCreationChildInTx, type ManagedCreationChildAdmissio
 import { MACHINE_ADMIN_ACCESS_SET_ACTION_ID_V1 } from '@happier-dev/protocol/machines/adminAccessActionIdsV1';
 import { MACHINE_AGENT_ISOLATION_PREVIEW_ACTION_ID_V1, MACHINE_AGENT_ISOLATION_SET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/machine/agentIsolationActionIdsV1';
 import { MACHINE_SETUP_APPLY_ACTION_ID_V1, SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1, isManagedEnrollmentRecoveryChildV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { isUsageAppCallsReadParentActionIdV1 } from '@happier-dev/protocol/usage/usageActionIdsV1';
+import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { readExternalActionRequestPrincipal } from './requestPrincipal';
 import { readExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { isExternalActionManagedWakeRootV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -342,10 +344,15 @@ async function readAdmittedRootRelay(app: Fastify, request: FastifyRequest, acti
     if (!root) return refuseRootRelay('authorization_token');
     if (root.serverIdentityId !== await getOrCreateServerIdentityId()) return refuseRootRelay('server_identity');
     if (root.accountId !== request.userId || !isExternalActionHomeRelayAccountEligible(root)) return refuseRootRelay('principal');
-    // The presented binding, envelope and header must be exactly the signed root's.
+    const signedParent = request.externalActionExecutionAuthorizationBinding;
+    const usageParent = root.usageCollectorParent;
+    if (usageParent && (request.externalActionExecutionAuthorized !== true || request.externalActionEffectActionId !== actionId
+        || signedParent?.requestId !== usageParent.requestId
+        || signedParent.requestEnvelopeDigest !== usageParent.requestEnvelopeDigest)) return refuseRootRelay('proof_shape');
+    // A signed Usage parent can relay only the exact child admitted by its signed HTTP purpose.
     if (!sameManagedInput(root, authorization.binding)
         || !isExternalActionAuthorizationBoundToEnvelope(root, { actionId, machineId: body.machineId, envelope: body.envelope })
-        || request.externalActionExecutionAuthorized === true
+        || !usageParent && request.externalActionExecutionAuthorized === true
             && request.headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER] !== authorization.token) return refuseRootRelay('proof_shape');
     if (request.authTokenLegacy === true && !(isExternalActionWorkflowActionIdV1(actionId) && root.workflowActionOrigin)
         && (request.authTokenKind !== 'account' || !root.sessionActionOrigin || !root.sessionActionSource
@@ -690,6 +697,16 @@ export function registerExternalActionRoutes(
             let principal = readExternalActionRequestPrincipal(request, request.params.actionId, body.success ? body.data : undefined);
             if (principal === 'present_user_required') return sendExternalActionHttpError(reply, principal);
             const requestPrincipal = principal;
+            const parent = request.externalActionExecutionAuthorizationBinding;
+            // The authenticator has verified the installed signer's finite Usage purpose against this exact body.
+            const usageCollectorParent = actionId.success && actionId.data === ACTION_INVOKE_ACTION_ID_V1
+                && request.externalActionExecutionAuthorized === true && request.externalActionEffectActionId === actionId.data
+                && parent && !('authentication' in parent) && parent.grant.targets?.environments?.length
+                && isUsageAppCallsReadParentActionIdV1(parent.actionId) && body.success && body.data.envelope.v === 2 && body.data.envelope.telemetryCollectorCodec
+                ? parent : undefined;
+            if (usageCollectorParent && principal) {
+                principal = projectExternalActionBoundPrincipal(usageCollectorParent, principal);
+            }
             let continuation: Awaited<ReturnType<typeof readManagedGuestContinuation>> = null;
             let handoffContinuation: Awaited<ReturnType<typeof readHandoffContinuation>> = null;
             let handoffPreflight: Awaited<ReturnType<typeof readHandoffPreflight>> = null;
@@ -865,7 +882,7 @@ export function registerExternalActionRoutes(
             const requesterOperationRead = body.data.envelope.v === 2 && body.data.envelope.requesterOperationRead;
             const telemetryCollectorCodec = body.data.envelope.v === 2 && body.data.envelope.telemetryCollectorCodec;
             if (telemetryCollectorCodec && (!deploymentReadAdmission || !('telemetryCollector' in deploymentReadAdmission)
-                || !('authentication' in principal) || principal.authentication.kind !== 'account'
+                || !usageCollectorParent && (!('authentication' in principal) || principal.authentication.kind !== 'account')
                 || body.data.sessionActionOrigin || body.data.sessionActionSource || body.data.workflowActionOrigin
                 || body.data.envelope.pluginInvocation || body.data.envelope.managedCreationCodec)) {
                 return sendExternalActionHttpError(reply, 'invalid_envelope', body.data.envelope.requestId);
@@ -949,6 +966,9 @@ export function registerExternalActionRoutes(
                     ...(approvalDecisionAdmission ? { approvalDecisionAdmission } : {}),
                     ...(deploymentReadAdmission ? { deploymentReadAdmission } : {}),
                     ...(telemetryCollectorCodec ? { telemetryCollectorCodec } : {}),
+                    ...(usageCollectorParent ? { usageCollectorParent: {
+                        requestId: usageCollectorParent.requestId, requestEnvelopeDigest: usageCollectorParent.requestEnvelopeDigest,
+                    } } : {}),
                     ...(deploymentPreparationAdmission ? { deploymentPreparationAdmission } : {}),
                     ...(presetPreparationAdmission ? { presetPreparationAdmission } : {}),
                     ...(registryAppUpdateAdmission ? { registryAppUpdateAdmission } : {}),
@@ -988,6 +1008,7 @@ export function registerExternalActionRoutes(
                     ...('managedCreationRecovery' in admission && admission.managedCreationRecovery === true
                         ? { managedCreationRecovery: true } : {}),
                     managedMachineAdmission: admission,
+                    ...(usageCollectorParent ? { usageCollectorParent } : {}),
                     callerAuthority: principal.authority,
                     browserSessionId: body.data.envelope.v === 2 ? body.data.envelope.browserSessionId : undefined,
                     input: projectExternalActionMintInput({

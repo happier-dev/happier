@@ -14,8 +14,7 @@ import { enforceExternalActionResponseEnvelopeLimitV1 } from '@happier-dev/proto
 import { projectUsageAccountingSessionIds, projectUsageAccountingSessionMembership } from '@happier-dev/protocol/usage/usageAccountingMembership';
 import { getUsageQueryKey, normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { usageAppCallsSourceId } from '@happier-dev/plugin-sdk/usage';
-import { USAGE_PRICE_ACTION_IDS, USAGE_QUERY_ACTION_ID_V1 } from '@happier-dev/protocol/usage/usageActionIdsV1';
-import { DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { USAGE_PRIVATE_RECAP_ACTION_IDS, USAGE_QUERY_ACTION_ID_V1 } from '@happier-dev/protocol/usage/usageActionIdsV1';
 import { UsageQueryBatchResultSchema } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { USAGE_SESSION_EVIDENCE_PATH, UsageSessionEvidenceRequestSchema, UsageSessionEvidenceResponseSchema } from '@happier-dev/protocol/usage/usageSessionEvidence';
 import { UsageFileResultSchema } from '@happier-dev/protocol/usage/usageExport';
@@ -120,7 +119,7 @@ describe('CLI and MCP personal usage Account transport', () => {
     const target = { kind: 'machine' as const, machineId: 'collector' };
     const grant = ApiTokenGrantV1Schema.parse({
       ...API_TOKEN_FULL_GRANT_V1,
-      actions: { families: [], ids: [USAGE_QUERY_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1, USAGE_PRICE_ACTION_IDS.get] },
+      actions: { families: ['usage'], ids: [] },
       targets: { sessions: [], machines: [target.machineId], environments: ['staging'] },
     });
     const externalActionCredential = { accountId: 'account', principalId: 'principal', credentialId: 'credential', grant };
@@ -132,6 +131,10 @@ describe('CLI and MCP personal usage Account transport', () => {
       },
     });
     const source = { kind: 'environment', serverId: 'home', environmentId: 'staging' };
+    let collectorMachineId = target.machineId;
+    const listEnvironments = vi.fn(async (_actionId: string, _input: unknown) => ({ ok: true as const, nextCursor: null,
+      items: [createDeploymentEnvironmentHeaderV1({ id: 'staging', serverId: 'home', telemetryMachineId: collectorMachineId })] }));
+    const routeCollector = vi.fn();
     const executor = createActionExecutor({
       ...createUnavailableActionTransportDeps(),
       ...createAccountServerActionDeps({
@@ -139,9 +142,10 @@ describe('CLI and MCP personal usage Account transport', () => {
         externalActionMachineRequestPrivateKey: tweetnacl.sign.keyPair().secretKey,
         externalActionMachineInstallationId: 'installation',
       }),
-      deploymentAction: async () => ({ ok: true, nextCursor: null,
-        items: [createDeploymentEnvironmentHeaderV1({ id: 'staging', serverId: 'home', telemetryMachineId: target.machineId })] }),
-      routeHostChildAction: async ({ input }) => {
+      deploymentAction: listEnvironments,
+      routeHostChildAction: async ({ input, context }) => {
+        routeCollector(input);
+        expect(context.externalActionTarget).toEqual(target);
         expect(input).toMatchObject({ input: { source, since: 100, until: 200 } });
         return { ok: true, result: { ok: true, source, since: 100, until: 200,
           items: [{ bucketStartMs: 0, provider: null, modelId: null, requestedModel: null, operation: null, callCount: 3,
@@ -156,10 +160,11 @@ describe('CLI and MCP personal usage Account transport', () => {
       includeQuota: true, includeQuotaHistory: true, includeSessionEvidence: true, includeWorkEvidence: true, includeActivity: true,
     };
     try {
-      const result = await executor.execute(USAGE_QUERY_ACTION_ID_V1, { queries: [requested] }, {
-        surface: 'api', serverId: 'home', externalActionTarget: target, externalActionCredential,
+      const context = {
+        surface: 'api' as const, serverId: 'home', externalActionTarget: target, externalActionCredential,
         externalActionExecutionAuthorization: authorization,
-      });
+      };
+      const result = await executor.execute(USAGE_QUERY_ACTION_ID_V1, { queries: [requested] }, context);
       if (!result.ok) throw new Error(JSON.stringify(result));
       const { results } = UsageQueryBatchResultSchema.parse(result.result);
       expect(results).toHaveLength(1);
@@ -191,6 +196,29 @@ describe('CLI and MCP personal usage Account transport', () => {
       expect(requests.filter(path => path === USAGE_SESSION_EVIDENCE_PATH || path.startsWith('/v2/usage/')
         || path.includes('/provider-account-usage/'))).toEqual([]);
       expect(socketBoundary).not.toHaveBeenCalled();
+      const recapAction = USAGE_PRIVATE_RECAP_ACTION_IDS.compose;
+      const recapContext = { ...context, externalActionExecutionAuthorization: {
+        ...authorization, binding: { ...authorization.binding, actionId: recapAction },
+      } };
+      expect(await executor.execute(recapAction, { query: normalizeUsageQuery(requested), selectedFields: ['tokens'] }, recapContext))
+        .toMatchObject({ ok: true, result: { kind: 'composed', facts: { tokens: { total: 12 } } } });
+      const foreign = { ...requested, sources: [usageAppCallsSourceId('production')] };
+      const outOfScope = { ok: false, errorCode: 'credential_scope_denied', details: { reason: 'environment_not_granted' } };
+      expect(await executor.execute(USAGE_QUERY_ACTION_ID_V1, { queries: [foreign] }, context)).toMatchObject(outOfScope);
+      expect(await executor.execute(recapAction, { query: normalizeUsageQuery(foreign), selectedFields: ['tokens'] }, recapContext))
+        .toMatchObject(outOfScope);
+      expect(listEnvironments.mock.calls.map(([, input]) => input)).toEqual([
+        { serverId: 'home', environmentIds: ['staging'] }, { serverId: 'home', environmentIds: ['staging'] },
+      ]);
+      const before = routeCollector.mock.calls.length;
+      collectorMachineId = 'foreign-machine';
+      expect(await executor.execute(USAGE_QUERY_ACTION_ID_V1, { queries: [requested] }, context))
+        .toMatchObject({ ok: true, result: { results: [{ sources: expect.arrayContaining([
+          expect.objectContaining({ source: 'accounting', status: 'error', errorCode: 'credential_scope_denied' }),
+        ]) }] } });
+      expect(routeCollector).toHaveBeenCalledTimes(before);
+      expect(await executor.execute('deployments.environments.list', { serverId: 'home' }, context))
+        .toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
     } finally { await app.close(); }
   });
 

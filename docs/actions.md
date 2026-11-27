@@ -4147,8 +4147,11 @@ The reader and delivery both consume the projected queries. Private recap
 passes its explicit source selection to the same grant projection before the
 read. An Account-wide private recap keeps its existing source selection rules.
 The grant owner permits the Usage query, accounting export and private recap
-paths to use this projection. App calls can still read the public model price
-catalog under the Action grant. The grant owner refuses Usage Actions that
+paths to use this projection. For Usage query and private recap, host child
+admission carries the projected Environment selection and original Machine grant
+into the exact Environment list, collector read, and model price lookup. Home
+binds the collector to the signed Usage request and its original token principal.
+The grant owner refuses Usage Actions that
 cannot scope their Account evidence or effects to app sources, including
 history reads, quota calendar exports and Coach, before dispatch. Those Actions
 and queries that select only sources outside the grant return `credential_scope_denied`

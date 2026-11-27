@@ -28,7 +28,6 @@ export async function mintExternalActionExecutionAuthorization(input: Readonly<{
   actionId: string;
   envelope: ExternalActionRequestEnvelope;
   machineId: string;
-  pat: string;
   serverHttpBaseUrl: string;
   authorityCeiling?: 'account_automation';
   sessionActionOrigin?: ExternalActionExecutionAuthorizationRequestV1['sessionActionOrigin'];
@@ -39,25 +38,31 @@ export async function mintExternalActionExecutionAuthorization(input: Readonly<{
   managedContinuation?: ExternalActionExecutionAuthorizationRequestV1['managedContinuation'];
   nativeCredentialSpawnChild?: ExternalActionExecutionAuthorizationRequestV1['nativeCredentialSpawnChild'];
   signal?: AbortSignal;
-}>): Promise<ExternalActionAuthorizationHttpResult> {
+}> & (
+  | Readonly<{ pat: string; signRequest?: never }>
+  | Readonly<{ pat?: never; signRequest(path: string, body: unknown): Promise<Readonly<Record<string, string>> | null> }>
+)): Promise<ExternalActionAuthorizationHttpResult> {
   const path = bindExternalActionExecutionAuthorizationHttpPathV1(input.actionId);
   let response;
   try {
-    response = await axios.post<unknown>(
-      `${input.serverHttpBaseUrl}${path}`,
-      { v: 1, machineId: input.machineId, envelope: input.envelope,
+    const body = { v: 1, machineId: input.machineId, envelope: input.envelope,
         ...(input.sessionActionOrigin ? { sessionActionOrigin: input.sessionActionOrigin } : {}),
         ...(input.workflowActionOrigin ? { workflowActionOrigin: input.workflowActionOrigin } : {}),
         ...(input.executionAuthorization ? { executionAuthorization: input.executionAuthorization } : {}),
         ...(input.sessionActionSource ? { sessionActionSource: input.sessionActionSource } : {}),
         ...(input.managedContinuation ? { managedContinuation: input.managedContinuation } : {}),
         ...(input.nativeCredentialSpawnChild ? { nativeCredentialSpawnChild: input.nativeCredentialSpawnChild } : {}),
-        ...(input.installationProof ? { installationProof: input.installationProof } : {}) },
+        ...(input.installationProof ? { installationProof: input.installationProof } : {}) };
+    const headers = input.signRequest ? await input.signRequest(path, body)
+      : { Authorization: `Bearer ${input.pat}`, 'Content-Type': 'application/json',
+        ...(input.authorityCeiling === 'account_automation'
+          || readAuthTokenProvenance(decodeJwtPayload(input.pat), { allowLegacyHome: false })?.provenance.kind === 'terminal'
+          ? { [AUTHORITY_CEILING_HEADER_V1]: 'account_automation' } : {}) };
+    if (!headers) return { ok: false, code: 'admission_unavailable' };
+    response = await axios.post<unknown>(
+      `${input.serverHttpBaseUrl}${path}`, body,
       {
-        headers: { Authorization: `Bearer ${input.pat}`, 'Content-Type': 'application/json',
-          ...(input.authorityCeiling === 'account_automation'
-            || readAuthTokenProvenance(decodeJwtPayload(input.pat), { allowLegacyHome: false })?.provenance.kind === 'terminal'
-            ? { [AUTHORITY_CEILING_HEADER_V1]: 'account_automation' } : {}) },
+        headers,
         // An admitted Action owns cancellation; authorization preparation must
         // not impose a shorter lifetime on that still-current operation.
         timeout: input.signal ? 0 : 15_000,

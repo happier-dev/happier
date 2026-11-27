@@ -853,6 +853,8 @@ type OriginalAccountActionInput = Readonly<{
     Promise<ActionExecuteResult>) => Promise<ActionExecuteResult>;
   /** Host-private requester custody already disclosed to this exact installed target. */
   requesterCustody?: ExternalActionExecutionAuthorizationV1;
+  /** Signed Usage child transport uses the original token proof for mint and relay. */
+  usageCollectorParent?: ActionExecutorContext;
   /** Host-private installed Run origin. Home reads consent from that Run, never from this caller. */
   installedWorkflow?: Readonly<{
     context: ActionExecutorContext; machineId: string; installationId: string; privateKey: ExternalActionMachineRequestSigningKey;
@@ -1192,6 +1194,16 @@ async function prepareOriginalAccountAction(
   // authentication and the destination owns its Action admission.
   const telemetryRead = !workflow && !input.executeOnRequester && input.target.kind === 'machine' && !input.target.project
     && provenance?.provenance.kind === 'account' ? projectDeploymentTelemetryReadAdmissionV1(input.actionId, input.input) : undefined;
+  const usageContext = input.usageCollectorParent;
+  const usageParent = usageContext?.externalActionExecutionAuthorization?.binding;
+  if (usageContext && (!usageParent || 'authentication' in usageParent || !telemetryRead
+    || usageParent.accountId !== accountId || usageParent.serverIdentityId !== input.serverIdentityId)) {
+    return fail('admission_unavailable', 'dispatch.usage_collector_parent');
+  }
+  const usageToken = usageParent && 'credentialId' in usageParent ? usageParent : undefined;
+  const signUsageRequest = usageContext ? (path: string, body: unknown) =>
+    resolveExternalActionRequesterServerRequestHeaders({ context: usageContext, effectActionId: input.actionId,
+      serverHttpBaseUrl: homeUrl, method: 'POST', path, body }) : undefined;
   if (telemetryRead && telemetryRead.telemetryCollector.serverId !== input.serverIdentityId)
     return fail('server_target_mismatch');
   let machines: Awaited<ReturnType<typeof listCurrentAccountMachines>> | undefined;
@@ -1414,8 +1426,9 @@ async function prepareOriginalAccountAction(
   const actionId = ExternalActionActionIdV1Schema.parse(input.actionId);
   const requestId = input.requestId;
   const binding = (mode.mode === 'e2ee' || telemetryRead) && material ? { serverIdentityId: input.serverIdentityId!, accountId,
-    ...(workflowBinding && !('authentication' in workflowBinding) ? { credentialId: workflowBinding.credentialId }
-      : { authentication: { kind: authentication.data.kind, tokenEpoch: authentication.data.tokenEpoch } }),
+    ...(usageToken ? { credentialId: usageToken.credentialId }
+      : workflowBinding && !('authentication' in workflowBinding) ? { credentialId: workflowBinding.credentialId }
+        : { authentication: { kind: authentication.data.kind, tokenEpoch: authentication.data.tokenEpoch } }),
     actionId, requestId, target: input.target } satisfies ExternalActionEncryptionBindingV2 : undefined;
   const idempotencyKey = projectExternalActionRunNowIdempotencyKeyV1(actionId, input.input);
   const workflowPreparation = workflowPlacement?.kind === 'bound' ? workflowPlacement.workflowPreparation : undefined;
@@ -1570,7 +1583,7 @@ async function prepareOriginalAccountAction(
       return fail('admission_unavailable', 'dispatch.retained_requester_installation');
     }
     const minted = await phase('mint_authorization', () => mintExternalActionExecutionAuthorization({ actionId, envelope, machineId: destinationId,
-      pat: input.credentials.token, serverHttpBaseUrl: homeUrl,
+      ...(signUsageRequest ? { signRequest: signUsageRequest } : { pat: input.credentials.token }), serverHttpBaseUrl: homeUrl,
       ...(nativeCredentialSpawnChild ? { nativeCredentialSpawnChild } : {}),
       ...(input.managedContinuation ? { managedContinuation: input.managedContinuation } : {}),
       ...(input.authority === 'account_automation' ? { authorityCeiling: 'account_automation' as const } : {}),
@@ -1583,8 +1596,14 @@ async function prepareOriginalAccountAction(
     // Home's authority is signed alongside the operand; compare the request
     // against the canonical operand projection without re-deciding that fact.
     const managedOperand = projectExternalActionManagedAdmissionOperandV1(root.managedAdmission);
-    if (!('authentication' in root) || root.authentication.kind !== authentication.data.kind
-      || root.authentication.tokenEpoch !== authentication.data.tokenEpoch || root.accountId !== accountId
+    const matchesRequester = usageToken
+      ? !('authentication' in root) && root.credentialId === usageToken.credentialId
+        && root.principalId === usageToken.principalId && sameStrictJsonValue(root.grant, usageToken.grant)
+        && root.usageCollectorParent?.requestId === usageToken.requestId
+        && root.usageCollectorParent.requestEnvelopeDigest === usageToken.requestEnvelopeDigest
+      : 'authentication' in root && root.authentication.kind === authentication.data.kind
+        && root.authentication.tokenEpoch === authentication.data.tokenEpoch;
+    if (!matchesRequester || root.accountId !== accountId
       || root.serverIdentityId !== input.serverIdentityId || root.machineId !== destinationId
       || (telemetryRead ? !root.telemetryCollectorCodec || !root.deploymentTelemetryRead || !sameStrictJsonValue(root.deploymentReadAdmission, telemetryRead)
         : root.custodianAccountId !== custodianAccountId || root.installationId !== installed?.installationId)
@@ -1663,10 +1682,13 @@ async function prepareOriginalAccountAction(
         admittedBody = ExternalActionExecutionAuthorizationRequestV1Schema.parse({ v: 1, machineId: destinationId, envelope,
           executionAuthorization: authorization });
       } catch (error) { return parseActionExecuteFailure(error) ?? fail('content_unavailable'); }
+      const deliveryHeaders = signUsageRequest
+        ? await signUsageRequest(`${EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1}${actionId}`, admittedBody) : headers;
+      if (!deliveryHeaders) return fail('admission_unavailable', 'dispatch.usage_collector_signature');
       return { deliver: () => {
         const surface = invocation?.surface === 'cli' && invocation.caller.kind === 'host' && !input.requesterCustody
           ? 'cli' : invocation?.surface === 'agent' ? 'agent' : null;
-        return deliverExternalActionRequest({ actionId, serverHttpBaseUrl: homeUrl, body: admittedBody, envelope, headers,
+        return deliverExternalActionRequest({ actionId, serverHttpBaseUrl: homeUrl, body: admittedBody, envelope, headers: deliveryHeaders,
           ...(material ? { material } : {}), ...(binding ? { binding } : {}),
           ...(signal ? { signal } : {}), isCurrent,
           ...(surface ? { onIssued: () => {

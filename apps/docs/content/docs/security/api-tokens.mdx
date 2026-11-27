@@ -44,7 +44,9 @@ permission modes and websites. Content access is a separate choice.
 If a token's grant names specific Environments, Usage queries, accounting exports
 and private recaps default to the app sources in those Environments. When you
 select sources for a query, accounting export or private recap, Happier includes
-only the sources in the grant. In the development preview, the query omits quota,
+only the sources in the grant. In the development preview, a Usage grant can
+read App calls in those Environments when it also includes the collector Machine.
+The query omits quota,
 connected-account pools, Work, and Session or Activity evidence even when
 requested. Selections that contain only sources outside the grant return
 `credential_scope_denied` with reason `environment_not_granted`. Actions that
