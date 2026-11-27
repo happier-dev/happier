@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { coordinateTrackedSessionHandoff } from './sessionHandoffCoordinator';
 import { computeWorkspaceSyncPolicyDigest } from '@/workspaces/sync/workspaceSyncTypes';
 import { createWorkspaceSyncHandoffAdapter } from '@/workspaces/sync/workspaceSyncHandoffAdapter';
+import { admitSessionHandoffExistingState, createSessionHandoffPreflightMachineRpc } from '@/session/handoff/sessionHandoffPreflightMachineRpc';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 const allFilesPolicyInput = {
   v: 1 as const,
@@ -99,6 +101,36 @@ function createDeps(overrides: Record<string, unknown> = {}) {
 }
 
 describe('tracked session handoff coordinator', () => {
+  it('probes both peers concurrently before checking the target existing state', async () => {
+    const calls: Array<{ machineId: string; method: string }> = [];
+    let inFlight = 0;
+    let peak = 0;
+    const rpc = createSessionHandoffPreflightMachineRpc({
+      callMachine: async ({ machineId, method }) => {
+        calls.push({ machineId, method });
+        if (method === RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET) {
+          peak = Math.max(peak, ++inFlight);
+          await Promise.resolve();
+          inFlight -= 1;
+          return { protocolVersion: 3, atomicTargetResume: true, targetCleanup: true, existingState: true };
+        }
+        expect(inFlight).toBe(0);
+        return { ok: true };
+      },
+    });
+    await expect(admitSessionHandoffExistingState({
+      credentials: { token: 'test-token', encryption: null }, rpc,
+      request: { sessionId: 'session-1', sourceMachineId: 'source-machine', targetMachineId: 'target-machine',
+        targetPath: '/repo', sourceSessionStorageMode: 'persisted' },
+    })).resolves.toBeNull();
+    expect(calls).toEqual([
+      { machineId: 'source-machine', method: RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET },
+      { machineId: 'target-machine', method: RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET },
+      { machineId: 'target-machine', method: RPC_METHODS.DAEMON_SESSION_HANDOFF_EXISTING_STATE_CHECK_V3 },
+    ]);
+    expect(peak).toBe(2);
+  });
+
   it('leaves the source untouched when the target cannot resolve existing native state', async () => {
     const { deps } = createDeps({
       checkExistingTarget: vi.fn(async () => ({ ok: false, errorCode: 'existing_session_state_unavailable', error: 'Turn session data transfer on.' })),

@@ -608,7 +608,10 @@ describe('callMachineRpc', () => {
       expect(readRpcErrorCode(outcome)).toBe(failure === 'unavailable' ? RPC_ERROR_CODES.METHOD_NOT_AVAILABLE : RPC_ERROR_CODES.FORBIDDEN);
       if (failure === 'denied') expect(outcome).toMatchObject({ message: 'Target denied the handoff capability request' });
     }
-    expect(socket.emit.mock.calls.filter(([event]) => event === SOCKET_RPC_EVENTS.CALL)).toHaveLength(1);
+    const methods = socket.emit.mock.calls.filter(([event]) => event === SOCKET_RPC_EVENTS.CALL)
+      .map(([, packet]) => packet.method);
+    expect(methods.sort()).toEqual(['machine-source', 'machine-target']
+      .map(machineId => `${machineId}:${RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET}`));
   });
 
   it('keeps exact Machine projection requests on the captured Home', async () => {

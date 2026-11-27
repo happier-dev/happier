@@ -125,10 +125,16 @@ export async function admitSessionHandoffExistingState(input: Readonly<{
 }>): Promise<Failure | null> {
   const signal = input.signal ?? input.context?.signal;
   const { rpc, ...transportInput } = input;
-  for (const machineId of new Set([input.request.sourceMachineId, input.request.targetMachineId])) {
-    signal?.throwIfAborted();
-    const raw = await rpc({ ...transportInput, machineId, method: RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET });
-    signal?.throwIfAborted();
+  const peers = new Set([input.request.sourceMachineId, input.request.targetMachineId]);
+  signal?.throwIfAborted();
+  const capabilities = await Promise.allSettled([...peers].map(async machineId => await rpc({
+    ...transportInput, machineId, method: RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET,
+  })));
+  signal?.throwIfAborted();
+  // Keep source-first refusal precedence when both independent reads fail.
+  for (const result of capabilities) {
+    if (result.status === 'rejected') throw result.reason;
+    const raw = result.value;
     const failure = SessionHandoffExistingStateCheckResponseV3Schema.safeParse(raw);
     if (failure.success && !failure.data.ok) return { ok: false, errorCode: failure.data.errorCode, error: failure.data.error ?? failure.data.errorCode };
     const capability = SessionHandoffCapabilityV3Schema.safeParse(raw);
