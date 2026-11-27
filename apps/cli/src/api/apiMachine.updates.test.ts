@@ -6,6 +6,9 @@ import { openEncryptedDataKeyEnvelopeV1, sealEncryptedDataKeyEnvelopeV1 } from '
 import { signAccountContentKeyBindingV1 } from '@happier-dev/protocol/crypto/accountContentKeyBindingV1';
 import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
 import { computeMachineOwnerEnvelopeFingerprintV1 } from '@happier-dev/protocol/machines/machineOwnerEnvelopeFingerprintV1';
+import { buildProviderAccountUsageRefreshChangeV1, type ChangeEntry } from '@happier-dev/protocol/changes';
+import { buildProviderAccountUsageMaterialChangesV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
+import { buildProviderAccountUsageRecordId } from '@happier-dev/protocol/connect/accountUsage';
 import { MachineRecipientKeyEnvelopeCommitInputV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { createSessionOwnerMetadataV1, projectSessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { sealSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
@@ -15,6 +18,7 @@ import { readMachineFinitePolicyV1 } from '@happier-dev/protocol/machines/machin
 import { decodeBase64, decrypt, encodeBase64, encrypt, getRandomBytes } from './encryption';
 
 import { bindApiSessionSocketMock, bindApiSessionSocketSequenceMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { createDeferred } from '@/testkit/async/deferred';
 import { MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 import { MachineUpdateMetadataRequestSchema, MachineUpdateStateRequestSchema } from '@happier-dev/protocol/machines/metadataUpdate';
 import type { MachineAgentInventoryObservation } from '@/capabilities/snapshots/machineAgentInventory';
@@ -203,10 +207,11 @@ describe('ApiMachineClient updates', () => {
     } finally { await client.shutdown(); }
   });
 
-  it.each(['machine', 'machineRecipientAccess'] as const)('reads empty recipient work once and repairs the later %s change through the Manage holder', async (changeKind) => {
+  it.each(['machine', 'machineRecipientAccess'] as const)('keeps quota refresh out of Machine reads and repairs the later %s change through the Manage holder', async (changeKind) => {
     // afterEach resets the module graph; bind the filesystem boundary used by
     // this case's actual ApiMachine, not a retired top-level module instance.
     const persistence = await import('@/persistence');
+    const { createDaemonManagedMachinePolicyRuntime, readManagedMachinePolicyCensus } = await import('@/daemon/startup/managedMachinePolicyRuntime');
     // The request-local Home context must belong to this same reset module
     // graph; a retired AsyncLocalStorage instance cannot scope ApiMachine.
     const { runWithServerHttpBaseUrl } = await import('./client/serverHttpBaseUrl');
@@ -232,15 +237,17 @@ describe('ApiMachineClient updates', () => {
     vi.spyOn(persistence, 'readStoredCredentialsForServerId').mockResolvedValue(credential);
     let savedCursor = 0;
     vi.spyOn(persistence, 'readAccountChangesCursor').mockImplementation(async () => savedCursor);
-    let acknowledgeInitial!: () => void;
-    let acknowledgeJoin!: () => void;
-    const initialCommitted = new Promise<void>(resolve => { acknowledgeInitial = resolve; });
-    const joinCommitted = new Promise<void>(resolve => { acknowledgeJoin = resolve; });
+    const initialCommitted = createDeferred();
+    const refreshCommitted = createDeferred();
+    const observationCommitted = createDeferred();
+    const joinCommitted = createDeferred();
     vi.spyOn(persistence, 'writeAccountChangesCursor').mockImplementation(async (accountId, cursor) => {
       if (accountId !== 'bob') return;
       savedCursor = cursor;
-      if (cursor === 1) acknowledgeInitial();
-      if (cursor === 2) acknowledgeJoin();
+      if (cursor === 1) initialCommitted.resolve();
+      if (cursor === 2) refreshCommitted.resolve();
+      if (cursor === 4) observationCommitted.resolve();
+      if (cursor === 5) joinCommitted.resolve();
     });
     const publishedContent = {
       metadata: encodeBase64(encrypt(key, 'dataKey', { host: 'alice', platform: 'linux', happyCliVersion: '0.3', homeDir: '/home/alice', happyHomeDir: '/home/alice/.happier' })),
@@ -254,7 +261,7 @@ describe('ApiMachineClient updates', () => {
         // The Home selects by exact kind, so an unsubscribed producer never reaches this page.
         const query = new URL(url).searchParams;
         const subscribed = query.get('kinds')?.split(',').includes(changeKind);
-        const cursor = teamJoined ? 2 : 1;
+        const cursor = teamJoined ? 5 : 1;
         return { status: 200, data: { changes: subscribed && Number(query.get('after')) < cursor
           ? [{ cursor, kind: changeKind, entityId: 'alice-machine', changedAt: cursor }] : [], nextCursor: cursor } };
       }
@@ -279,6 +286,11 @@ describe('ApiMachineClient updates', () => {
       delivered = openEncryptedDataKeyEnvelopeV1({ envelope: decodeBase64(input.recipientKeyEnvelopes[0]!.encryptedDataKey), recipientSecretKeyOrSeed: recipient.secretKey });
       return { status: 200, data: { appliedRecipientAccountIds: ['later-team-member'], skippedRecipientAccountIds: [] } };
     });
+    const policyPath = 'https://holder-home.test/v1/machines/managed/controller/policies';
+    const post = vi.spyOn(axios, 'post').mockImplementation(async (url: string) => {
+      expect(url).toBe(policyPath);
+      return { status: 200, data: { machines: [], targets: [] } };
+    });
     const socket = createApiSessionSocketStub();
     bindApiSessionSocketSequenceMock(ioMock, [socket, createApiSessionSocketStub()]);
     const { ApiMachineClient } = await import('./apiMachine');
@@ -286,7 +298,16 @@ describe('ApiMachineClient updates', () => {
       id: 'bob-executor', encryptionMode: 'e2ee', encryptionKey: key, encryptionVariant: 'dataKey', dataEncryptionKey: caller,
       metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
     }));
-    client.onConnectedServicesProjection(async () => {});
+    const refreshedRecords: string[] = [];
+    client.onConnectedServicesProjection(async change => { refreshedRecords.push(...(change.quotaRefreshRecordIds ?? [])); });
+    const policy = createDaemonManagedMachinePolicyRuntime({
+      apiMachine: client,
+      readCensus: signal => readManagedMachinePolicyCensus({
+        homeId: 'fixture-home', controller: { machineId: 'bob-executor', installationId: 'installation' },
+        custodianAccountId: 'bob', privateKey: signing.secretKey, token, serverUrl: 'https://holder-home.test', signal,
+      }),
+      executePolicy: async () => { throw new Error('No managed policy expected'); },
+    });
     await seedActiveAccountSnapshot(token);
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     try {
@@ -294,8 +315,14 @@ describe('ApiMachineClient updates', () => {
         url === 'https://holder-home.test/v1/machines/alice-machine/data-key-envelopes?state=action_required',
       ).length;
       const home = 'https://holder-home.test';
+      const publish = (id: string, after: number, nextCursor: number, changes: ChangeEntry[]) =>
+        runWithServerHttpBaseUrl(home, () => socket.trigger('update', {
+          id, seq: nextCursor, createdAt: nextCursor, body: { t: 'account-change',
+            rows: { v: 1, after, page: { changes, nextCursor } },
+          },
+        }));
       runWithServerHttpBaseUrl(home, () => client.connect());
-      await initialCommitted;
+      await initialCommitted.promise;
       expect(worklistReads()).toBe(1);
       expect(delivered).toBeNull();
       expect(axios.patch).not.toHaveBeenCalled();
@@ -303,24 +330,43 @@ describe('ApiMachineClient updates', () => {
       const snapshotReads = () => vi.mocked(axios.get).mock.calls.filter(([url]) =>
         /^\/v1\/machines\/[^/]+$/.test(new URL(url).pathname),
       ).length;
+      const allWorklistReads = () => vi.mocked(axios.get).mock.calls.filter(([url]) =>
+        /^\/v1\/machines\/[^/]+\/data-key-envelopes$/.test(new URL(url).pathname),
+      ).length;
       const snapshots = snapshotReads();
+      const worklists = allWorklistReads();
+      await policy.notifyChanged();
+      const policyReads = () => post.mock.calls.filter(([url]) => url === policyPath).length;
+      const initialPolicyReads = policyReads();
+      expect(initialPolicyReads).toBeGreaterThan(0);
       await vi.advanceTimersByTimeAsync(600_000);
       expect(worklistReads()).toBe(1);
       expect(snapshotReads()).toBe(snapshots);
       expect(socket.emit.mock.calls.filter(([event]) => event === 'machine-alive')).toHaveLength(10);
 
+      const recordId = buildProviderAccountUsageRecordId({ providerId: 'quota-provider', accountSubjectId: 'work',
+        subjectKind: 'account', quotaScope: 'account' });
+      publish('quota-refresh', 1, 2, [{ ...buildProviderAccountUsageRefreshChangeV1(recordId), cursor: 2, changedAt: 2 }]);
+      await refreshCommitted.promise;
+      expect(refreshedRecords).toEqual([recordId]);
+      publish('quota-observation', 2, 4, buildProviderAccountUsageMaterialChangesV1(recordId)
+        .map((change, index) => ({ ...change, cursor: 3 + index, changedAt: 3 + index })));
+      await observationCommitted.promise;
+      expect(snapshotReads()).toBe(snapshots);
+      expect(allWorklistReads()).toBe(worklists);
+      expect(policyReads()).toBe(initialPolicyReads);
+
       teamJoined = true;
-      runWithServerHttpBaseUrl(home, () => socket.trigger('update', {
-        id: 'team-member-joined', seq: 2, createdAt: 2, body: { t: 'account-change',
-          rows: { v: 1, after: 1, page: {
-            changes: [{ cursor: 2, kind: changeKind, entityId: 'alice-machine', changedAt: 2 }], nextCursor: 2,
-          } } },
-      }));
-      await joinCommitted;
+      publish('team-member-joined', 4, 5, [{ cursor: 5, kind: changeKind, entityId: 'alice-machine', changedAt: 5 }]);
+      await joinCommitted.promise;
+      expect(snapshotReads()).toBe(snapshots + 1);
       expect(worklistReads()).toBe(3); // The new grant uses one page and one confirmation after its write.
+      expect(allWorklistReads()).toBe(worklists + 2);
+      expect(policyReads()).toBe(initialPolicyReads);
       expect(axios.patch).toHaveBeenCalledTimes(1);
       expect(delivered).toEqual(key);
     } finally {
+      await policy.stop();
       await client.shutdown();
       vi.useRealTimers();
     }
