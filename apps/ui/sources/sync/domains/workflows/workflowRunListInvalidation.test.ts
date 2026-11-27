@@ -128,6 +128,34 @@ describe('subscribeVisibleWorkflowRunListInvalidation', () => {
         subscriptions.forEach((unsubscribe) => unsubscribe());
     });
 
+    it('a primary-Home reconnect does not re-read a loaded window: the catch-up publishes the Runs that changed while away', () => {
+        const invalidate = vi.fn();
+        let readNotCurrent = false;
+        const unsubscribe = subscribeVisibleWorkflowRunListInvalidation({
+            lifetime: buildLifetime(), isVisibleWindowLoaded: () => true, readNotCurrent: () => readNotCurrent, invalidate });
+        try {
+            publishHomeAccountChange('server-a', undefined, { source: 'connected', changesCatchUp: true });
+            expect(invalidate).toHaveBeenCalledTimes(0);
+            // The catch-up's exact Run publication still refreshes that Run.
+            publishHomeAccountChange('server-a', ['workflow-run:run-a']);
+            expect(invalidate.mock.calls).toEqual([[{ summaryCurrent: false, runIds: ['run-a'] }]]);
+            // A window whose last read failed retries on the reconnect.
+            readNotCurrent = true;
+            publishHomeAccountChange('server-a', undefined, { source: 'connected', changesCatchUp: true });
+            expect(invalidate).toHaveBeenCalledTimes(2);
+        } finally { unsubscribe(); }
+    });
+
+    it('a reader without read state still re-reads on a primary-Home reconnect', () => {
+        const invalidate = vi.fn();
+        const unsubscribe = subscribeVisibleWorkflowRunListInvalidation({
+            lifetime: buildLifetime(), runId: 'run-a', isVisibleWindowLoaded: () => true, invalidate });
+        try {
+            publishHomeAccountChange('server-a', undefined, { source: 'connected', changesCatchUp: true });
+            expect(invalidate).toHaveBeenCalledTimes(1);
+        } finally { unsubscribe(); }
+    });
+
     it('conservatively invalidates a loaded visible window for a content-free wake', () => {
         const invalidate = vi.fn();
         const unsubscribe = subscribeVisibleWorkflowRunListInvalidation({

@@ -42,8 +42,16 @@ export function subscribeVisibleWorkflowRunListInvalidation(params: Readonly<{
     discoverSourceArtifacts?: boolean;
     source?: 'workflow' | 'automation';
     isVisibleWindowLoaded: () => boolean;
+    /**
+     * Run rows and their access facts are in the changes feed, so a primary-Home reconnect's
+     * catch-up publishes each Run that changed while away. A reader that reports its read state
+     * hears the reconnect only as a retry while its last read did not succeed; a reader without
+     * one re-reads on every reconnect.
+     */
+    readNotCurrent?: () => boolean;
     invalidate: (options: WorkflowRunListInvalidation) => void;
 }>): () => void {
+    const readNotCurrent = params.occurrence?.readNotCurrent ?? params.readNotCurrent;
     const unsubscribe = subscribeHomeAccountChange((event) => {
         if (!params.lifetime.isCurrent()) return;
         if (!areServerProfileIdentifiersEquivalent(event.serverId, params.lifetime.scope.serverId)) return;
@@ -81,7 +89,7 @@ export function subscribeVisibleWorkflowRunListInvalidation(params: Readonly<{
             ...(runIds?.length ? { runIds } : {}),
             ...(changedSources.length ? { sourceArtifactIds: changedSources } : {}),
         });
-    }, { reconnect: params.occurrence ? { readNotCurrent: params.occurrence.readNotCurrent } : 'refresh' });
+    }, { reconnect: readNotCurrent ? { readNotCurrent } : 'refresh' });
     const retirement = params.lifetime.onRetire(unsubscribe);
     return () => {
         retirement.dispose();
