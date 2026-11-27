@@ -237,7 +237,7 @@ export function createSessionBoundScmAction(
       v: 1, kind: 'targeted_action_rpc', target: workspace, input: request,
     });
     const executeMachineScmAction = async (machineId: string | null, selectedInput: Readonly<Record<string, unknown>>,
-      sessionAuthorization = context.rpcSessionAuthorization, sessionRoot?: string, ownsScmSessionWorkspace?: true) => {
+      sessionAuthorization = context.rpcSessionAuthorization, sessionRoot?: string, hasEditableScmSessionWorkspace?: true) => {
       const selectedTarget = context.externalActionTarget?.kind === 'machine' ? context.externalActionTarget : undefined;
       const root = workspace?.rootPath ?? sessionRoot ?? selectedTarget?.project?.directory;
       const [{ bindScmActionToSessionWorkspace }, { tryAcquireAuthoritativePluginRuntimeRegistryLease }, { executeCapturedMachineAction }] = await Promise.all([import("@/scm/actions/placement"), import("@/plugins/runtime/reload/runtimeLease"), import("@/api/machine/capturedMachineAction")]);
@@ -353,7 +353,7 @@ export function createSessionBoundScmAction(
         invoke: options => callMachineAction({ machineId, serverId: context.serverId ?? undefined, method, request,
           ...(sessionAuthorization ? { authorization: sessionAuthorization } : {}),
           context, effectActionId: actionId,
-          ...(ownsScmSessionWorkspace ? { ownsScmSessionWorkspace } : {}),
+          ...(hasEditableScmSessionWorkspace ? { hasEditableScmSessionWorkspace } : {}),
           authority: context.authority, exactMachine: true,
           // SCM reads, like effects, belong to the containing Action lifetime.
           timeoutMs: null,
@@ -488,10 +488,11 @@ export function createSessionBoundScmAction(
     const { isScmRpcOperationActive } = await import('@/scm/rpc/operationContext');
     if (!retainedReviewAction || !isScmRpcOperationActive()) {
       if (!sessionMachineId) return { ok: false, errorCode: 'machine_not_selected', error: 'machine_not_selected' };
+      const accessLevel = transport.rawSession.effectiveAccess?.level;
       return await executeMachineScmAction(sessionMachineId, sessionBoundInput,
         context.rpcSessionAuthorization ?? (resolveSocketRpcSessionAuthorization(getActionSpec(actionId).bindings?.rpcMethod ?? '')
           ? { kind: 'session.write', sessionId: transport.sessionId } : undefined), workingDirectory,
-        transport.rawSession.effectiveAccess?.level === 'owner' ? true : undefined);
+        accessLevel === 'edit' || accessLevel === 'owner' ? true : undefined);
     }
 
     if (actionId.startsWith('scm.diffSummary.') && !await localReviewHomeCurrent()) {

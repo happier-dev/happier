@@ -11418,6 +11418,12 @@ derive placement;
 the host remains the filesystem-policy owner. Policy refusal returns
 `INVALID_PATH` and does not mutate the rejected target.
 
+With Machine isolation off, a reviewed Action's local repository read for a Can
+use guest runs on the daemon when Home grants edit or owner access to the
+selected Session. The SCM handler confines the read to that Session's workspace
+root and enforces member-folder boundaries. A view-only Session receives a
+Machine admission refusal before SCM runs.
+
 The development storage catalog consumes this same SCM contribution's optional
 `worktree.retire` / `worktree.reinstate` handlers and `worktreeRetention` capability.
 Git retirement moves a registered linked checkout and locks it with its Trash entry

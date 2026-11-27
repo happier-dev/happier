@@ -558,6 +558,7 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
     const f = await fixture({ admissionCurrent: false,
       ...(isolation === 'disabled' ? { sourceRuntimeIsolation: 'disabled', memberIdentityUnavailable: true } : {}) });
     const ownRepository = isolation === 'enabled' ? f.memberRepository : await repository(f.directory, 'guest-project');
+    const sharedRepository = await repository(f.directory, 'team-project');
     const target = { kind: 'machine', machineId: f.machineId } as const;
     const accountId = 'member-account';
     const requestId = 'review-start';
@@ -593,6 +594,7 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
     if (!('context' in reviewed)) throw new Error(`Expected reviewed child: ${JSON.stringify(reviewed)}`);
     const ownSession = 'c111111111111111111111111';
     const foreignSession = 'c222222222222222222222222';
+    const sharedSession = 'c333333333333333333333333';
     const token = 'reviewed-guest-fixture';
     const params = {
       token, credentials: { token, encryption: null }, sessionId: '', mode: 'plain' as const, ctx: null,
@@ -603,15 +605,19 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
       if (path === '/v1/account/encryption/currentness') {
         return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
       }
-      if (path === `/v2/sessions/${ownSession}` || path === `/v2/sessions/${foreignSession}`) {
-        const own = path.endsWith(ownSession);
+      const sessionId = path.slice('/v2/sessions/'.length);
+      if (path.startsWith('/v2/sessions/') && [ownSession, foreignSession, sharedSession].includes(sessionId)) {
+        const own = sessionId === ownSession;
+        const shared = sessionId === sharedSession;
+        const grant = shared ? 'edit' : 'view';
         return { status: 200, data: { session: createSessionRecordFixture({
-          id: own ? ownSession : foreignSession, encryptionMode: 'plain', machineId: f.machineId,
-          metadata: JSON.stringify({ path: own ? ownRepository : f.ownerRepository }),
+          id: sessionId, encryptionMode: 'plain', machineId: f.machineId,
+          metadata: JSON.stringify({ path: own ? ownRepository : shared ? sharedRepository : f.ownerRepository }),
           effectiveAccess: {
-            v: 1, level: own ? 'owner' : 'view', sources: own ? [{ kind: 'owner' }] : [],
+            v: 1, level: own ? 'owner' : grant,
+            sources: own ? [{ kind: 'owner' }] : [{ kind: 'team', teamId: 'review-team', requiredByTeamPolicy: false }],
             capabilities: projectSessionAccessCapabilitiesV1({ owner: own,
-              grants: own ? [] : [{ accessLevel: 'view', canApprovePermissions: false }] }),
+              grants: own ? [] : [{ accessLevel: grant, canApprovePermissions: false }] }),
           },
         }) } };
       }
@@ -646,13 +652,21 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
       expect(os.runAs).toEqual(expect.arrayContaining([expect.objectContaining({ uid: 2401 })]));
     } else {
       expect(daemonGit().length).toBeGreaterThan(0);
+      const sharedResponse = await status(sharedSession);
+      expect(sharedResponse, JSON.stringify(sharedResponse)).toMatchObject({ success: true, snapshot: { repo: { isRepo: true } } });
     }
     const readCount = gitLaunches().length;
-    for (const cwd of [f.ownerRepository, f.otherMemberRepository]) {
-      expect(await status(ownSession, cwd)).toMatchObject({ success: false });
-    }
-    expect(await status(foreignSession)).toMatchObject({ success: false,
+    expect(await status(ownSession, f.ownerRepository)).toMatchObject({ success: false, errorCode: 'INVALID_PATH' });
+    expect(await status(ownSession, f.otherMemberRepository)).toMatchObject({ success: false,
       errorCode: isolation === 'enabled' ? 'INVALID_PATH' : 'BACKEND_UNAVAILABLE' });
+    if (isolation === 'enabled') {
+      expect(await status(foreignSession)).toMatchObject({ success: false, errorCode: 'INVALID_PATH' });
+    } else {
+      expect(await status(sharedSession, f.ownerRepository)).toMatchObject({ success: false, errorCode: 'INVALID_PATH' });
+      await expect(status(foreignSession)).rejects.toMatchObject({
+        rpcErrorCode: RPC_ERROR_CODES.FORBIDDEN, effectAttempted: false,
+      });
+    }
     expect(gitLaunches()).toHaveLength(readCount);
     expect([...new Set(os.runAs.map(run => run.uid))]).toEqual(isolation === 'enabled' ? [2401] : []);
   });

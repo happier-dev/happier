@@ -64,8 +64,8 @@ export type RpcLocalActionContext = Readonly<Partial<Pick<
     requesterWorkAttributionV1?: RequesterWorkAttributionV1;
     /** Captured Account Environment read; never serialized or accepted from a Process DTO. */
     processEnvironmentRead?: (target: Readonly<{ serverId: string; environmentId: string }>) => Promise<boolean>;
-    /** The Session SCM owner resolved this request inside the requester's own Session workspace. */
-    ownsScmSessionWorkspace?: true;
+    /** Home granted the requester edit or owner access to this Session workspace. */
+    hasEditableScmSessionWorkspace?: true;
 }>;
 
 /** Content-free, host-owned operation observations; never part of an RPC DTO. */

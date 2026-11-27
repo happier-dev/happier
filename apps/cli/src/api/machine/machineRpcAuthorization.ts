@@ -1307,18 +1307,18 @@ export function doesWorkspaceSyncTargetRequestMatchRouting(
 }
 
 /** A raw receipt admits the method. A retained Use root admits local reads in
- * its member folder, or in its already resolved own Session workspace. */
+ * its member folder, or inside a resolved Session workspace it can edit. */
 function selectRequesterWorkspacePlacement(
   identity: HostRequesterExecutionIdentity,
   method: string,
-  admission: 'machine' | 'owned_session' | 'member_folder' | 'owner_only',
+  admission: 'machine' | 'editable_session' | 'member_folder' | 'owner_only',
   readPolicy: MachineRpcAdmissionBoundary['readAgentIsolation'],
 ): 'owner' | 'daemon' | 'member' | 'unavailable' {
   if (isHostRequesterUnrestrictedOwner(identity)) return 'owner';
   if (identity.kind !== 'isolated' || admission === 'owner_only') return 'unavailable';
   const personOrAccountAutomation = identity.presentPerson === true || identity.accountAutomation === true;
-  const daemonScope = admission === 'machine' || (admission === 'owned_session' && personOrAccountAutomation);
-  if (daemonScope && isRequesterOwnWorkPlacedOnDaemonForHost(identity, readPolicy)) return 'daemon';
+  const daemonScope = admission === 'machine' || (admission === 'editable_session' && personOrAccountAutomation);
+  if (isRequesterOwnWorkPlacedOnDaemonForHost(identity, readPolicy)) return daemonScope ? 'daemon' : 'unavailable';
   return personOrAccountAutomation && (isScmMemberFolderRpcMethod(method) || isScmHostingCredentialRpcMethod(method))
     ? 'member' : 'unavailable';
 }
@@ -1804,7 +1804,7 @@ export async function authorizeMachineRpcRequest(
         if (identity.kind === 'unknown') return forbidden('machine_admission');
         const useRead = localRepositoryRead && retainedRequester?.authorization.binding.admittedMachineRole === 'use';
         const placement = selectRequesterWorkspacePlacement(identity, method, useRead
-          ? request.localActionContext?.ownsScmSessionWorkspace ? 'owned_session' : 'member_folder'
+          ? request.localActionContext?.hasEditableScmSessionWorkspace ? 'editable_session' : 'member_folder'
           : 'owner_only', machine.readAgentIsolation);
         if (placement === 'unavailable') return forbidden('machine_admission');
         if (request.signal?.aborted || (retainedRequester && !await retainedRequester.isCurrent())) return forbidden('request_cancelled');
