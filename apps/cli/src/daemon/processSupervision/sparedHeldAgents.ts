@@ -36,7 +36,7 @@ export function createSparedHeldAgentCustody(input: Readonly<{
      * exact-turn end), once the spared Agent is ended instead of adopted.
      */
     endTurn: (tracked: Pick<TrackedSession, 'pid' | 'sessionRunnerPid' | 'happySessionId' | 'activeTurnId'>) => Promise<void>;
-    probe?: (held: SessionHeldAgentV1) => Promise<boolean>;
+    probe?: typeof probeAdoptableSessionHolder;
     /**
      * A Session placed on a target (`managedTargetPlacement`): its holder and
      * Agent run there, so their pids are the target's. The probe and the end of
@@ -108,7 +108,11 @@ export function createSparedHeldAgentCustody(input: Readonly<{
             const held = tracked.heldAgentsV1?.find(agent => agent.role === 'primary');
             const sessionId = tracked.happySessionId?.trim();
             const placed = tracked.spawnOptions?.managedTargetPlacement !== undefined;
-            if (!held || !sessionId || !await isHeldAgentAlive(tracked, held)) return null;
+            if (!held || !sessionId) return null;
+            const canRecover = placed
+                ? await isHeldAgentAlive(tracked, held)
+                : await probe(held, { acceptExitedTail: true });
+            if (!canRecover) return null;
             const evidence = resolveTrackedSessionExitSettlementEvidence(tracked);
             spared.set(sessionId, { pid: evidence.pid, sessionRunnerPid: evidence.sessionRunnerPid,
                 happySessionId: sessionId, activeTurnId: evidence.activeTurnId, held, placedOwner: placed ? tracked : null });

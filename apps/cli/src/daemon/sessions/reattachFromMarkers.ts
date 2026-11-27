@@ -29,7 +29,7 @@ import {
   restoreMarkerSpawnOptions,
 } from '../reattach';
 import { buildTrackedSessionFromMarker } from './trackedSessionFromMarker';
-import { probeAdoptableSessionHolder, stopDetachedLocalSessionHolder, type SessionHeldAgentV1 } from '@/subprocess/supervision/sessionHolder';
+import { probeAdoptableSessionHolder, stopDetachedLocalSessionHolder } from '@/subprocess/supervision/sessionHolder';
 import {
   clearSessionMarkerConnectedServiceRestartIntent,
   hashProcessCommand,
@@ -673,7 +673,7 @@ export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
   loadTerminalHostAdapters?: unknown;
   readProcessIdentityByPidFn?: typeof readProcessIdentityByPid;
   /** Whether a held Agent is alive and adoptable, from its holder (record, socket, PIDs). */
-  probeHeldAgent?: (held: SessionHeldAgentV1) => Promise<boolean>;
+  probeHeldAgent?: typeof probeAdoptableSessionHolder;
 }>): Promise<ReattachTrackedSessionsFromMarkersResult> {
   const { trackedSessionsByKey, credentials, deviceLocalSecretStorage } = params;
   const orphanedDeadDaemonSessions: OrphanedDeadDaemonSession[] = [];
@@ -694,7 +694,7 @@ export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
         const heldAgent = marker.heldAgentsV1?.find(agent => agent.role === 'primary');
         // The runner ended (its crash, or this daemon's predecessor's death) but its Agent is
         // still held: an adoptable Agent is a known state for the respawn owner, not a dead host.
-        if (heldAgent && marker.startedBy === 'daemon' && sessionId && await probeHeldAgent(heldAgent)) {
+        if (heldAgent && marker.startedBy === 'daemon' && sessionId && await probeHeldAgent(heldAgent, { acceptExitedTail: true })) {
           const restored = restoreMarkerSpawnOptions({
             marker,
             ...(marker.processCommand ? { command: marker.processCommand } : {}),

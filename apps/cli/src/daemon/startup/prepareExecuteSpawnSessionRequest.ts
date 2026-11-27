@@ -274,8 +274,12 @@ export async function prepareExecuteSpawnSessionRequest(
             errorMessage: `Configured ACP backend '${configuredBackendId}' is unavailable.`,
         };
     }
+    // A crash respawn that adopts the held Agent re-enters its live Session: the adopt
+    // contract answers the load from the held handshake, so the provider is never asked
+    // to resume and its resume support is not a precondition.
+    const requiresProviderResume = !options.adoptSessionHolder;
     if (effectiveResume) {
-        if (configuredBackendId !== null) {
+        if (requiresProviderResume && configuredBackendId !== null) {
             // The declared contribution's selected Account definition owns
             // load-session support, not a per-definition Agent identity.
             // The resume token is the provider Session id, and attach metadata
@@ -296,7 +300,7 @@ export async function prepareExecuteSpawnSessionRequest(
                 errorMessage: 'Unknown backend target',
             };
         }
-        if (configuredBackendId === null) {
+        if (requiresProviderResume && configuredBackendId === null) {
             const ok = await isSessionResumeSupported({
                 agentId: catalogAgentId,
                 ...(runtimeSelection.runtimeDescriptorV1

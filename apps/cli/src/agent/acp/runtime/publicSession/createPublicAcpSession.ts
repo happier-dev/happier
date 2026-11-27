@@ -2119,7 +2119,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
       sendRequest: AgentSessionSendRequest,
       sendOptions?: AgentExecutionRunConversationSendOptionsV1,
     ): Promise<AgentSessionSendResult> {
-      if (disposed || runtimeEnded || dependencies.signal.aborted || !dependencies.isCurrent()) {
+      if (backend.isDrainingExitedHolder() || disposed || runtimeEnded || dependencies.signal.aborted || !dependencies.isCurrent()) {
         return {
           status: 'unavailable' as const,
           diagnostic: publicationFailureDiagnostic ?? diagnostic('acp_runtime_unavailable'),
@@ -2474,7 +2474,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
       updateOptions?: Readonly<{ signal?: AbortSignal }>,
     ): Promise<AgentSessionConfigurationResult> {
       const applyUpdate = async (): Promise<AgentSessionConfigurationResult> => {
-        if (disposed || runtimeEnded || dependencies.signal.aborted || !dependencies.isCurrent()) {
+        if (backend.isDrainingExitedHolder() || disposed || runtimeEnded || dependencies.signal.aborted || !dependencies.isCurrent()) {
           return {
             status: 'unavailable',
             diagnostic: publicationFailureDiagnostic ?? diagnostic('acp_runtime_unavailable'),
@@ -2654,7 +2654,8 @@ async function createPublicAcpConversationFromAwaitableAdapter(
         logger.debug(`[${dependencies.agentId}] Failed to import replay history (non-fatal)`, error);
       }
     }
-    if (initialConfiguration) {
+    // An exited Agent has no live controls to update before its held events drain.
+    if (initialConfiguration && !backend.isDrainingExitedHolder()) {
       const result = await applyConfigurationControls(
         initialConfiguration,
         null,

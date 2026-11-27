@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import axios from 'axios';
 import { AccountSettingsSchema } from '@happier-dev/protocol';
 
@@ -6,6 +6,9 @@ import { logger } from '@/ui/logger';
 import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
 import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import {
     mapExternalTakeoverLaunchPlanToSpawnOptions,
 } from '@/api/session/external/takeover/mapExternalTakeoverLaunchPlanToSpawnOptions';
@@ -189,6 +192,27 @@ describe('prepareExecuteSpawnSessionRequest logging privacy', () => {
     });
 
     it('propagates an unexpected private profile transport failure without persisting its details', async () => {
+        const runtime = await createAuthoredAdmittedPluginRuntimeFixture({
+            controller: pluginReloadController,
+            plugins: [{
+                manifest: createPluginManifestV2Fixture({
+                    id: 'happier.fixture.logging-privacy',
+                    contributes: { agents: [{
+                        id: PRIVATE_BACKEND_ID,
+                        title: 'Private fixture Agent',
+                        runtime: { kind: 'custom' },
+                        primary: 'sessions',
+                        capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
+                    }] },
+                }),
+                files: { 'daemon.mjs': `export function activate(api) {
+                    api.agents.register('${PRIVATE_BACKEND_ID}', () => ({ sessions: {
+                        async open() { throw new Error('Unexpected Agent launch'); }
+                    } }));
+                }` },
+            }],
+        });
+        onTestFinished(() => runtime.dispose());
         const privateError = new Error(
             `Unexpected failure for ${PRIVATE_DIRECTORY} and ${PRIVATE_ENVIRONMENT_VALUE}`,
         );

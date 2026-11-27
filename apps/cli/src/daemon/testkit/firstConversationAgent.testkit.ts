@@ -93,6 +93,7 @@ export function createFirstConversationAgentFixture(promptMarker: string, option
         ${options.nativeAcp ? `return await context.protocols.acp.open(request, {
           transport: { kind: 'stdio', executable: { kind: 'systemTool', id: 'native-cli' },
             args: [fileURLToPath(new URL('./native-acp.mjs', import.meta.url))] },
+          ${options.fixedDefaultPermission ? "definition: { mcp: { policy: 'pass_through' }, permissionModeMapping: { default: 'default' } }," : ''}
         });` : ''}
         ${options.nativeSession ? 'const nativeOpenId = globalThis.crypto.randomUUID();' : ''}
         ${options.nativeSession ? `if (request.kind === 'resume' && request.providerSessionId !== ${JSON.stringify(options.nativeSession.providerSessionId)}) throw new Error('Native resume changed the provider Session id');` : ''}

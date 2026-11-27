@@ -105,7 +105,10 @@ export function createAcpNdJsonStream(
       } finally {
         reader.releaseLock();
       }
-      if (terminalError === null) controller.close();
+      if (terminalError === null) {
+        await adoption?.waitForExitedReplayRelease();
+        controller.close();
+      }
     },
   });
 

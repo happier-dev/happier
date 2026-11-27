@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { Duplex, PassThrough } from 'node:stream';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -115,6 +116,155 @@ createInterface({ input: process.stdin }).on('line', line => {
   }, 20);
 });
 `;
+
+it('uses the retained Pi session identity and drains an exited Agent without sending another command', async () => {
+    const incoming = new PassThrough();
+    const outgoing = new PassThrough();
+    const channel = Duplex.from({ readable: incoming, writable: outgoing });
+    const holder = new SessionHolderChild('/unused-exit-fixture.sock', 'primary');
+    const delivered: Record<string, unknown>[] = [];
+    try {
+        holder.attachSocket(channel, () => undefined);
+        const adoption = createSessionHolderAdoption({
+            child: holder,
+            handshake: JSON_STREAM_ADOPT_HANDSHAKES.commandResponse,
+            deliver: frame => { delivered.push(frame); },
+        });
+        const hello = Buffer.from(JSON.stringify({
+            protocol: 1, holderPid: 1, agentPid: 2, replayFrom: 41,
+            exit: { code: 42, signal: null },
+            meta: {
+                v: 1, role: 'primary', handshake: { state: { sessionId: 'pi-session-1' } },
+                inFlight: [], nextId: 0, generation: 0,
+            },
+        }));
+        const header = Buffer.alloc(5);
+        header.write('H');
+        header.writeUInt32BE(hello.length, 1);
+        incoming.write(Buffer.concat([header, hello]));
+
+        await expect(adoption!.adopted).resolves.toBe(true);
+        const tail = { type: 'message_update', n: 40 };
+        expect(adoption!.incoming(tail)).toBeNull();
+        await expect(adoption!.outgoing({ type: 'get_state', id: 'read' })).resolves.toBeNull();
+        expect(delivered).toEqual([
+            { type: 'response', id: 'read', success: true, data: { sessionId: 'pi-session-1' } },
+        ]);
+        adoption!.release();
+        expect(delivered.at(-1)).toBe(tail);
+        await expect(adoption!.outgoing({ type: 'prompt', id: 'next' })).rejects.toMatchObject({
+            code: 'session_holder_agent_exited',
+        });
+    } finally {
+        holder.detach();
+        incoming.destroy();
+        outgoing.destroy();
+    }
+});
+
+it.each(['exited on attach', 'exits before Session admission'] as const)('publishes the ACP tail before SDK EOF when the Agent %s', async timing => {
+    const incoming = new PassThrough();
+    const outgoing = new PassThrough();
+    const holder = new SessionHolderChild('/unused-acp-exit-fixture.sock', 'primary');
+    try {
+        holder.attachSocket(Duplex.from({ readable: incoming, writable: outgoing }), () => undefined);
+        let stdout!: ReadableStreamDefaultController<Uint8Array>;
+        const stream = createAcpNdJsonStream(
+            new WritableStream<Uint8Array>(),
+            new ReadableStream<Uint8Array>({
+                start(controller) {
+                    stdout = controller;
+                },
+            }),
+            { sessionHolderAdoption: deliver =>
+                createSessionHolderAdoption({ child: holder, handshake: ACP_SESSION_HOLDER_HANDSHAKE, deliver }) },
+        );
+        const hello = Buffer.from(JSON.stringify({
+            protocol: 1, holderPid: 1, agentPid: 2, replayFrom: 41,
+            ...(timing === 'exited on attach' ? { exit: { code: 42, signal: null } } : {}),
+            meta: { v: 1, role: 'primary', handshake: {}, inFlight: [], nextId: 0, generation: 0 },
+        }));
+        const header = Buffer.alloc(5);
+        header.write('H');
+        header.writeUInt32BE(hello.length, 1);
+        incoming.write(Buffer.concat([header, hello]));
+        const adoption = stream.sessionHolderAdoption!;
+        await expect(adoption.adopted).resolves.toBe(true);
+        stdout.enqueue(Buffer.from('{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"agent-session-1"}}\n'));
+        if (timing === 'exits before Session admission') {
+            const exit = Buffer.from(JSON.stringify({ code: 42, signal: null }));
+            const exitFrame = Buffer.alloc(13 + exit.length);
+            exitFrame.write('x');
+            exitFrame.writeUInt32BE(8 + exit.length, 1);
+            exitFrame.writeBigUInt64BE(42n, 5);
+            exit.copy(exitFrame, 13);
+            const observedExit = new Promise<void>(resolve => holder.once('exit', () => resolve()));
+            incoming.write(exitFrame);
+            await observedExit;
+        }
+        stdout.close();
+        await new Promise<void>(resolve => setImmediate(resolve));
+        const reader = stream.readable.getReader();
+        adoption.release();
+        await expect(reader.read()).resolves.toMatchObject({
+            value: { method: 'session/update', params: { sessionId: 'agent-session-1' } }, done: false,
+        });
+        await expect(reader.read()).resolves.toMatchObject({ done: true });
+    } finally {
+        holder.detach();
+        incoming.destroy();
+        outgoing.destroy();
+    }
+});
+
+it('delivers a cached Pi Session read and the exited tail after physical stdout EOF', async () => {
+    const incoming = new PassThrough();
+    const outgoing = new PassThrough();
+    const holder = new SessionHolderChild('/unused-pi-eof-fixture.sock', 'primary');
+    try {
+        holder.attachSocket(Duplex.from({ readable: incoming, writable: outgoing }), () => undefined);
+        const stdout = new PassThrough();
+        const records: unknown[] = [];
+        const writes: string[] = [];
+        const stream = createJsonStreamProcessClient({
+            process: { pid: 2, exit: new Promise(() => undefined), writeStdin: async () => undefined,
+                kill: () => undefined, dispose: async () => undefined },
+            stdout,
+            write: async record => { writes.push(record); },
+            sessionHolderAdoption: deliver =>
+                createSessionHolderAdoption({ child: holder, handshake: JSON_STREAM_ADOPT_HANDSHAKES.commandResponse, deliver }),
+        });
+        stream.client.subscribe(record => { records.push(record); });
+
+        const hello = Buffer.from(JSON.stringify({
+            protocol: 1, holderPid: 1, agentPid: 2, replayFrom: 41,
+            exit: { code: 42, signal: null },
+            meta: { v: 1, role: 'primary', handshake: { state: { sessionId: 'pi-session-1' } }, inFlight: [], nextId: 0, generation: 0 },
+        }));
+        const header = Buffer.alloc(5);
+        header.write('H');
+        header.writeUInt32BE(hello.length, 1);
+        incoming.write(Buffer.concat([header, hello]));
+        await expect(stream.sessionHolderAdoption!.adopted).resolves.toBe(true);
+        const tail = { type: 'message_update', n: 40 };
+        stdout.end(JSON.stringify(tail) + '\n');
+        const exitError = new Error('Pi exited');
+        stream.settleExit(exitError);
+        await new Promise<void>(resolve => setImmediate(resolve));
+
+        await expect(stream.client.writeRecord({ type: 'get_state', id: 'read' })).resolves.toEqual({ kind: 'written' });
+        await expect(stream.client.closed).rejects.toBe(exitError);
+        expect(records).toEqual([
+            { type: 'response', id: 'read', success: true, data: { sessionId: 'pi-session-1' } },
+            tail,
+        ]);
+        expect(writes).toEqual([]);
+    } finally {
+        holder.detach();
+        incoming.destroy();
+        outgoing.destroy();
+    }
+});
 
 const describeHolder = cargoAvailable ? describe : describe.skip;
 

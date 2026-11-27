@@ -22,7 +22,7 @@ import { createRegisteredSessionStateFieldMutation } from '@/api/session/client/
 import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
 import type { RegisterProviderAcceptedEffect } from '@/agent/runtime/session/input/providerInputOutcome';
 import { createKeyedStreamedTranscriptBridge } from '@/api/session/createKeyedStreamedTranscriptBridge';
-import { acceptHeldSessionTerminalTurn } from '@/subprocess/supervision/sessionHolder';
+import { acceptHeldSessionTerminalTurn, hasExitingHeldSessionTranscript } from '@/subprocess/supervision/sessionHolder';
 import { HOLDER_REPLAY_METADATA_KEY, type CommittedHolderReplayRow } from '@/api/session/streamedTranscriptWriter/holderReplayCoverage';
 import { isTerminalSessionTurnMutationAction } from '@/api/session/sessionTurnStatusSnapshot';
 import type { Metadata, PermissionMode } from '@/api/types';
@@ -1011,7 +1011,13 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
     }
     if (message.kind === 'runtime-ended') {
       runtimeEndedWithoutCleanExit = true;
-      requestRuntimeEndedTermination();
+      if (message.cause === 'processExited' && hasExitingHeldSessionTranscript()) {
+        // Transcript replay and terminal turn publication still need the
+        // Session transport and its current cancellation scope.
+        void drainRuntimeTranscriptProjections().then(() => requestRuntimeEndedTermination());
+      } else {
+        requestRuntimeEndedTermination();
+      }
     }
   };
   let unsubscribeRuntimeEvents = (): void => undefined;

@@ -150,6 +150,27 @@ describe('prepareExecuteSpawnSessionRequest Account-configured ACP resume admiss
         });
     });
 
+    it('admits a crash respawn that adopts the held Agent without provider load-session support', async () => {
+        // The adopted Agent's live Session is re-entered from the held handshake; the provider is never asked to resume.
+        const adoptSessionHolder = { socketPath: '/tmp/holder.sock', holderPid: 101, agentPid: 102 };
+        const results = await Promise.all([undefined, adoptSessionHolder].map(async adopt => await prepareExecuteSpawnSessionRequest({
+            request: {
+                options: {
+                    directory: '/tmp/configured-acp-resume', machineId: 'machine-1',
+                    backendTarget: { kind: 'backend', backendId: CONFIGURED_BACKEND_ID, configuredBackendId: CONFIGURED_BACKEND_ID, sourceKind: 'configured' },
+                    resume: PROVIDER_SESSION_ID, approvedNewDirectoryCreation: true, ...(adopt ? { adoptSessionHolder: adopt } : {}),
+                },
+                accountSettings: {}, acpCatalogSnapshot: readyCatalog(false), credentials: { token: 'token', encryption: null },
+            },
+            validateEnvVarRecordStrict,
+        })));
+        const refusals = results.filter(result => 'type' in result && result.type === 'error'
+            && result.errorCode === SPAWN_SESSION_ERROR_CODES.RESUME_NOT_SUPPORTED);
+        // Only the fresh resume (no held Agent) is refused.
+        expect(refusals).toHaveLength(1);
+        expect(results[1]).toMatchObject({ effectiveResume: PROVIDER_SESSION_ID });
+    });
+
     it('fails closed when the configured backend is absent from the admitted Account snapshot', async () => {
         const result = await prepareConfiguredAcpResume({ acpCatalogSnapshot: { status: 'ready', revision: 4, record: { v: 1, definitions: [] } } });
 

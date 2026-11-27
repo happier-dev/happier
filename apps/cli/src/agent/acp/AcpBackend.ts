@@ -1573,7 +1573,9 @@ export class AcpBackend implements CatalogAcpBackend {
       this.acpSessionId = normalized;
       logger.debug(`[AcpBackend] Session loaded: ${normalized}`);
 
-      const initialSessionResponse = await this.applyInitialSessionMode(sessionResponse);
+      const initialSessionResponse = this.isDrainingExitedHolder()
+        ? sessionResponse
+        : await this.applyInitialSessionMode(sessionResponse);
       this.seedSessionModesFromSessionResponse(initialSessionResponse);
       await this.seedSessionModelsFromSessionResponse(initialSessionResponse);
       this.seedSessionConfigOptionsFromSessionResponse(initialSessionResponse);
@@ -2497,6 +2499,12 @@ export class AcpBackend implements CatalogAcpBackend {
   hasHolderTranscriptCredit(): boolean {
     return this.options.sessionHolderTranscriptCredit === true && this.process instanceof SessionHolderChild
       && this.process.role === 'primary';
+  }
+
+  /** An exited primary holder is attached only to drain the existing Session. */
+  isDrainingExitedHolder(): boolean {
+    return this.adoptingHeldAgent && this.process instanceof SessionHolderChild
+      && this.process.role === 'primary' && this.process.hasExitedAgent;
   }
 
   /** After adopt: the Agent is still answering the previous runner's prompt (resumed as this backend's turn). */
@@ -3443,7 +3451,11 @@ export class AcpBackend implements CatalogAcpBackend {
           restart = true;
         }
       }
-      if (restart) {
+      if (this.disposed) {
+        // Runner termination disposes concurrently with this cancellation; dispose owns native
+        // close and process teardown, so reopening (and replaying) the session only delays Stop.
+        await sourceStopped;
+      } else if (restart) {
         await this.cleanupInitializedProcessConnection({ graceMs: 250 });
         await sourceStopped;
         await this.loadSession(sessionId);

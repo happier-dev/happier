@@ -224,9 +224,10 @@ fn serve(args: &ServeArgs) {
             Err(_) => continue,
         };
         let stored_meta = meta.lock().unwrap().clone();
+        let observed_exit = exit.lock().unwrap().clone();
         let hello = |replay_from: u64| {
             json!({ "protocol": frame::PROTOCOL_VERSION, "holderPid": holder_pid, "agentPid": agent_pid, "replayFrom": replay_from,
-                "meta": stored_meta })
+                "meta": stored_meta, "exit": observed_exit })
                 .to_string()
                 .into_bytes()
         };

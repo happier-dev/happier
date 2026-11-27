@@ -94,7 +94,7 @@ export type SessionHolderHandshake = Readonly<{
     /** Stored value for a handshake answer (defaults to the result). */
     record?: (method: string, params: unknown, result: unknown) => unknown;
     /** Local answer to an adopter's handshake request, or undefined to send it to the Agent. */
-    answer?: (method: string, params: unknown, stored: unknown) => unknown;
+    answer?: (method: string, params: unknown, stored: unknown, agentExited: boolean) => unknown;
     /** Notifications that belong to the handshake and are not sent again on adopt. */
     notifications?: readonly string[];
     /**
@@ -122,6 +122,8 @@ export type SessionHolderAdoption = Readonly<{
     toWireId(id: WireId): WireId;
     /** The adopter knows the Session again: deliver the Agent output held so far. */
     release(): void;
+    /** EOF from an already-exited Agent does not discard output held for Session admission. */
+    waitForExitedReplayRelease(): Promise<void> | undefined;
 }>;
 
 function readWireId(value: unknown): WireId | null {
@@ -208,13 +210,13 @@ export const JSON_STREAM_CONTROL_HANDSHAKE: SessionHolderHandshake = Object.free
 });
 
 /**
- * A command/response stream has no handshake to skip. Its session-open state
- * read (`get_state`) is re-sent, and the held Agent output reaches the adopter
- * once that answer told it which session it is in.
+ * The session-open state read reaches a live Agent. An exited Agent's recorded
+ * state identifies its Session for the adopter before the held output is released.
  */
 export const JSON_STREAM_COMMAND_HANDSHAKE: SessionHolderHandshake = Object.freeze({
     codec: JSON_STREAM_COMMAND_FRAME_CODEC,
-    requests: Object.freeze({}),
+    requests: Object.freeze({ get_state: 'state' }),
+    answer: (_method, _params, stored, agentExited) => agentExited ? stored : undefined,
     readyAfter: Object.freeze(['get_state']),
 });
 
@@ -261,6 +263,8 @@ export function createSessionHolderAdoption(input: Readonly<{
     const held = new Map<WireId, { method: string; settle(answer: Answer): void; response: Promise<Answer> }>();
     const readyMethods = new Set(input.handshake.readyAfter);
     let ready = true;
+    let completeReplayRelease: (() => void) | undefined;
+    let replayReleased: Promise<void> | undefined;
     // Output reaches `incoming` only after the hello, so the state is set first.
     const attached = holder.attached.then(() => {
         const state = isAdoptState(holder.adoptedMeta) ? holder.adoptedMeta : null;
@@ -275,10 +279,13 @@ export function createSessionHolderAdoption(input: Readonly<{
             const response = new Promise<Answer>(resolve => { settle = resolve; });
             held.set(entry.id, { method: entry.method, settle, response });
         }
-        ready = input.handshake.readyAfter.length > 0 && !input.handshake.readyAfter.some(method => {
+        ready = !holder.hasExitedAgent && input.handshake.readyAfter.length > 0 && !input.handshake.readyAfter.some(method => {
             const key = input.handshake.requests[method];
             return key !== undefined && key in handshake;
         });
+        if (!ready) {
+            replayReleased = new Promise(resolve => { completeReplayRelease = resolve; });
+        }
         return true;
     });
     const waiting: Frame[] = [];
@@ -312,6 +319,7 @@ export function createSessionHolderAdoption(input: Readonly<{
             const routed = route(frame);
             if (routed) input.deliver(routed);
         }
+        completeReplayRelease?.();
     };
 
     function route(frame: Frame): Frame | null {
@@ -372,7 +380,12 @@ export function createSessionHolderAdoption(input: Readonly<{
         heldTurn,
         async outgoing(frame: Frame): Promise<Frame | null> {
             await attached;
+            const agentExited = previous !== null && holder.hasExitedAgent;
+            const refuseExitedRequest = () => {
+                throw Object.assign(new Error('The held Agent exited before adoption'), { code: 'session_holder_agent_exited' });
+            };
             if (codec.turn?.opens(frame)) {
+                if (agentExited) return refuseExitedRequest();
                 turnsInFlight += 1;
                 // The state reaches the holder before the turn's bytes do.
                 publish();
@@ -380,14 +393,14 @@ export function createSessionHolderAdoption(input: Readonly<{
             }
             const notification = codec.readNotification(frame);
             if (notification !== null) {
-                return previous && input.handshake.notifications?.includes(notification) ? null : frame;
+                return agentExited || (previous && input.handshake.notifications?.includes(notification)) ? null : frame;
             }
             const request = codec.readRequest(frame);
-            if (!request) return frame; // An answer to an Agent request keeps the Agent's id.
+            if (!request) return agentExited ? null : frame; // A live Agent's request keeps its id.
             const key = input.handshake.requests[request.method];
             if (previous && key !== undefined && key in handshake) {
                 const stored = handshake[key];
-                const answer = input.handshake.answer ? input.handshake.answer(request.method, request.params, stored) : stored;
+                const answer = input.handshake.answer ? input.handshake.answer(request.method, request.params, stored, agentExited) : stored;
                 if (answer !== undefined) {
                     input.deliver(codec.answerFrame(request.id, answer));
                     // After the answer, never before it: the client learns the Session first.
@@ -395,6 +408,7 @@ export function createSessionHolderAdoption(input: Readonly<{
                     return null;
                 }
             }
+            if (agentExited) return refuseExitedRequest();
             const wireId = toWire(request.id);
             inFlight.set(wireId, { method: request.method, params: key !== undefined ? request.params : undefined });
             if (typeof wireId === 'number') nextId = Math.max(nextId, wireId + 1);
@@ -419,5 +433,6 @@ export function createSessionHolderAdoption(input: Readonly<{
         heldRequests: () => [...held.entries()].map(([id, entry]) => Object.freeze({ id, method: entry.method, response: entry.response })),
         toWireId: (id: WireId) => toWire(id),
         release,
+        waitForExitedReplayRelease: () => holder.hasExitedAgent ? replayReleased : undefined,
     });
 }

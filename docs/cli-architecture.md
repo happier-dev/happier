@@ -8700,7 +8700,9 @@ Session transcript writers before closing the channels
 spares and resumes the Sessions in a current host using the same adoption path
 as a crash. Primary ACP holders retain stdout until the transcript accepts its
 records into durable custody. On adoption, an already committed record can
-return its existing receipt by byte coverage.
+return its existing receipt by byte coverage. A Session can adopt an exited
+local Agent to deliver retained stdout and record the terminal turn before
+acknowledging the exit. This adoption refuses new Agent requests.
 
 Not yet built: per-Session memory ceilings and stderr inside the host. Session MCP
 needs no per-Session bridge process: Agents launch the holder's `mcp-relay` mode and

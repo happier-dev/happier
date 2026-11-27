@@ -119,7 +119,9 @@ export function registerSessionMcpRelayAcceptor(scope: object, acceptor: Session
 
 export type SessionHolderHello = Readonly<{ protocol: number; holderPid: number; agentPid: number; replayFrom: number;
     /** The last state a client stored with the `meta` op (null until then). */
-    meta?: unknown }>;
+    meta?: unknown;
+    /** An already-exited Agent still has an output tail to replay. */
+    exit?: Readonly<{ code: number | null; signal: number | null }> | null }>;
 
 /**
  * `primary`: the Session's own Agent, the only one the daemon spares when a
@@ -188,7 +190,8 @@ export type SessionHolderTarget = Readonly<{
 
 export type AgentSessionHolderLaunch =
     | Readonly<{ kind: 'spawn'; executablePath: string; socketPath: string; role: SessionHolderRole; target?: SessionHolderTarget }>
-    | Readonly<{ kind: 'adopt'; socketPath: string; role: 'primary'; turnId?: string; target?: SessionHolderTarget }>;
+    | Readonly<{ kind: 'adopt'; socketPath: string; role: 'primary'; turnId?: string; target?: SessionHolderTarget;
+        expected?: Readonly<{ holderPid: number; agentPid: number }> }>;
 
 export type SessionHolderLaunch = Readonly<{
     executablePath: string;
@@ -237,9 +240,10 @@ export function resolveSessionProcessHolderLaunch(input: Readonly<{ role?: Sessi
             return Object.freeze({ kind: 'adopt', socketPath: token.socketPath, role: 'primary',
                 ...(token.turnId ? { turnId: token.turnId } : {}), target: connectSessionTarget(placement) });
         }
-        // The Agent may have ended between the daemon's check and this launch: start a new one.
-        if (token && isPidPresent(token.holderPid) && isPidPresent(token.agentPid)) {
+        // The recorded holder can still serve the tail of an Agent that has exited.
+        if (token && isPidPresent(token.holderPid)) {
             return Object.freeze({ kind: 'adopt', socketPath: token.socketPath, role: 'primary',
+                expected: { holderPid: token.holderPid, agentPid: token.agentPid },
                 ...(token.turnId ? { turnId: token.turnId } : {}) });
         }
     }
@@ -565,6 +569,14 @@ export function acceptHeldSessionTerminalTurn(): void {
     for (const client of attachedHolderClients) client.acceptScopedTranscriptTurn(scope);
 }
 
+export function hasExitingHeldSessionTranscript(): boolean {
+    const scope = currentSessionHolderScope();
+    for (const client of attachedHolderClients) {
+        if (client.hasScopedTranscriptExit(scope)) return true;
+    }
+    return false;
+}
+
 type PendingHolderCreditFrame = {
     unread: Array<readonly [start: number, end: number]>;
     terminal: boolean;
@@ -620,6 +632,12 @@ export class SessionHolderChild extends ChildProcess {
     /** The Session this client serves (its Session MCP endpoint takes the relays the holder carries). */
     private readonly holderScope = currentSessionHolderScope();
     private holderInstanceId: string | undefined;
+    /** The hello can report a terminal Agent before replay reaches its exit frame. */
+    private exitedOnAttach = false;
+
+    get hasExitedAgent(): boolean {
+        return this.exitedOnAttach || this.exitSeen;
+    }
     private transcriptCredit: HolderTranscriptCredit | undefined;
 
     constructor(socketPath: string, role: SessionHolderRole = 'auxiliary', target?: SessionHolderTarget) {
@@ -844,7 +862,11 @@ export class SessionHolderChild extends ChildProcess {
             const failure = this.workspaceChannelFailure(socket.errored);
             for (const [id, resolve] of this.pendingReplies) resolve({ id, ...failure });
             this.pendingReplies.clear();
-            if (this.closed || this.exitSeen) return;
+            if (this.closed) return;
+            if (this.exitSeen) {
+                if (!this.streamsEnded) this.emit('holderDisconnected');
+                return;
+            }
             if (this.finiteWorkspaceChannel) {
                 this.closed = true;
                 this.holderConnectionFailed = true;
@@ -943,6 +965,10 @@ export class SessionHolderChild extends ChildProcess {
         this.acceptTranscriptExit();
     }
 
+    hasScopedTranscriptExit(scope: object): boolean {
+        return scope === this.holderScope && this.transcriptCredit !== undefined && this.exitSeen;
+    }
+
     /** The existing Session turn owner has durably settled the exited Agent. */
     acceptTranscriptExit(): void {
         if (!this.transcriptCredit || !this.exitSeen) return;
@@ -980,6 +1006,7 @@ export class SessionHolderChild extends ChildProcess {
                 this.attachmentLive = true;
                 this.reattaching = false;
                 this.adoptedMeta = hello.meta ?? null;
+                this.exitedOnAttach = hello.exit != null;
                 // The socket nonce and native holder PID survive attachment changes.
                 // A placed holder can reuse an address when replaced.
                 if (this.role === 'primary') {
@@ -1356,7 +1383,7 @@ export function attachSessionHolderChild(socketPath: string, role: SessionHolder
 
 /** The runner exit owner released this local hold instead of handing it to a successor. */
 export async function stopDetachedLocalSessionHolder(held: SessionHeldAgentV1): Promise<void> {
-    if (held.relaySocketPath || !isPidPresent(held.agentPid)) return;
+    if (held.relaySocketPath) return;
     await stopLocalSessionHolderAgent(held);
 }
 
@@ -1373,16 +1400,21 @@ async function stopLocalSessionHolderAgent(input: Readonly<{ socketPath: string;
     });
     if (!held) return;
     try {
-        const exited = new Promise<boolean>(resolve => {
-            held.once('exit', () => resolve(true));
+        const drained = new Promise<boolean>(resolve => {
+            held.once('close', () => resolve(true));
             held.once('holderDisconnected', () => resolve(false));
         });
-        // An attached client's delivery (the Agent's exit included) waits until it resumes.
+        // This is explicit disposal of a hold with no successor. Consume the
+        // remaining pipes so the holder can leave after its final credit.
+        held.stdout?.resume();
+        held.stderr?.resume();
         held.resumeDelivery();
         held.kill('SIGKILL');
-        if (!await exited) logger.warn('[SessionHolder] Agent holder disconnected before its exit was observed');
-    } finally {
+        if (await drained) return; // The child ends its channel after writing final credit.
+        logger.warn('[SessionHolder] Agent holder disconnected before its streams closed');
+    } catch (error) {
         held.detach();
+        throw error;
     }
 }
 
@@ -1442,13 +1474,17 @@ export function attachSessionHolderWorkspaceChannel(channel: Duplex): Promise<Se
 
 /**
  * Daemon-side check before sparing a crashed runner's Agent: the holder at this
- * address is the recorded one, its Agent is alive, and its client stored adopt
- * state (so a respawned runner can take the Agent over). Attaching as a probe
+ * address is the recorded one and its client stored adopt state. An exited
+ * Agent can still have an outstanding tail to drain. Attaching as a probe
  * acknowledges nothing, so the replay stays for the adopter.
  */
-export function probeAdoptableSessionHolder(held: SessionHeldAgentV1): Promise<boolean> {
-    if (!isPidPresent(held.holderPid) || !isPidPresent(held.agentPid)) return Promise.resolve(false);
-    return readAdoptableHolderHello(connect(held.socketPath), held);
+export function probeAdoptableSessionHolder(held: SessionHeldAgentV1,
+    options?: Readonly<{ acceptExitedTail?: boolean }>): Promise<boolean> {
+    if (!isSessionHolderSocketPath(held.socketPath) || !isPidPresent(held.holderPid)) return Promise.resolve(false);
+    if (!options?.acceptExitedTail && !isPidPresent(held.agentPid)) return Promise.resolve(false);
+    return readAdoptableHolderHello(connect(held.socketPath), held,
+        hello => (options?.acceptExitedTail === true && hello.exit != null)
+            || (hello.exit == null && isPidPresent(held.agentPid)));
 }
 
 function holderHelloMatches(hello: SessionHolderHello, expected: Readonly<{ holderPid?: number; agentPid?: number }>): boolean {
@@ -1462,7 +1498,8 @@ function holderHelloMatches(hello: SessionHolderHello, expected: Readonly<{ hold
  * holder and Agent and carries the stored primary adopt state. Reads the hello
  * only, so the replay stays for the adopter; the channel is closed after.
  */
-export function readAdoptableHolderHello(channel: Duplex, held: SessionHeldAgentV1): Promise<boolean> {
+export function readAdoptableHolderHello(channel: Duplex, held: SessionHeldAgentV1,
+    acceptsAgent?: (hello: SessionHolderHello) => boolean): Promise<boolean> {
     return new Promise((resolve) => {
         let buffered = Buffer.alloc(0);
         let settled = false;
@@ -1478,7 +1515,8 @@ export function readAdoptableHolderHello(channel: Duplex, held: SessionHeldAgent
             try {
                 const hello = JSON.parse(buffered.subarray(FRAME_HEADER_BYTES, FRAME_HEADER_BYTES + length).toString('utf8')) as SessionHolderHello;
                 const meta = hello.meta as { role?: unknown } | null | undefined;
-                finish(holderHelloMatches(hello, held) && meta?.role === 'primary');
+                finish(holderHelloMatches(hello, held) && meta?.role === 'primary'
+                    && acceptsAgent?.(hello) !== false);
             } catch {
                 finish(false);
             }
@@ -1492,11 +1530,20 @@ export function readAdoptableHolderHello(channel: Duplex, held: SessionHeldAgent
  * state known) or `error` when the holder is gone. Input written earlier is sent
  * first after attach; the replay is delivered after the caller's listeners exist.
  */
-export function adoptSessionHolderChild(launch: Readonly<{ socketPath: string; role: SessionHolderRole; turnId?: string; target?: SessionHolderTarget }>): SessionHolderChild {
+export function adoptSessionHolderChild(launch: Readonly<{ socketPath: string; role: SessionHolderRole; turnId?: string; target?: SessionHolderTarget;
+    expected?: Readonly<{ holderPid: number; agentPid: number }> }>): SessionHolderChild {
     const child = new SessionHolderChild(launch.socketPath, launch.role, launch.target);
     const environment = sessionProcessEnvironment();
     const sessionId = readHostedSessionScope()?.sessionId;
     connectHolder(child, (hello) => {
+        if (launch.expected && !holderHelloMatches(hello, launch.expected)) {
+            child.detach();
+            const error = Object.assign(new Error('Session holder identity does not match the recorded Agent'),
+                { code: 'session_holder_identity_mismatch', syscall: 'spawn' });
+            child.abandonPendingInput(error);
+            child.emit('error', error);
+            return;
+        }
         // A target's pids are not this Machine's: the held target Agent has no local pid.
         if (launch.target) child.remoteAgentPid = hello.agentPid;
         else Object.defineProperty(child, 'pid', { value: hello.agentPid, writable: true, configurable: true });

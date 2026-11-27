@@ -15,7 +15,6 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
-import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES_V1 } from '@happier-dev/protocol/generated/agents/bundledAgentIdentitiesV1';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { configuration, reloadConfiguration } from '@/configuration';
 import { readOrCreateInstallationIdentity } from '@/daemon/identity/store';
@@ -32,7 +31,6 @@ import { CLI_API_TOKEN_ENV, CLI_API_TOKEN_HANDOFF_ENV } from '@/auth/cliApiToken
 import { PROCESS_OWNER_ENV_KEY } from '@/processes/ownerTag';
 import { waitForProcessExit } from '@/testkit/process/spawn';
 import { isSessionHostProcessCommand } from '@/daemon/sessionHost/daemonSessionHost';
-import { resolveCheckpointIntervalMs } from '@/api/session/streamedTranscriptWriter/env';
 
 /**
  * Phase-3 session host gate: a real source daemon (Bun by default, the shipped runtime; set
@@ -40,11 +38,10 @@ import { resolveCheckpointIntervalMs } from '@/api/session/streamedTranscriptWri
  * per-Session holders and a held fixture ACP Agent, against the workflow server testkit.
  * 1. N=1/3/10: host USS/PSS, daemon USS, process census, time to open each Session.
  * 2. Soak at N=10 (host lag sampler = 100 ms timer preloaded into the Bun processes).
- * 3. Host SIGKILL mid-turn at N=3: one new host, same Agent pids, turns complete; the owner-accepted
- *    crash contract (OWNER-RULINGS 2026-11-14: ack-on-save parked) allows losing only the chunks in
- *    flight at the kill (delivered to the runner, not yet in a saved transcript checkpoint), never a
- *    saved one, with no duplicates.
- * 4. Host update: the daemon restarts from another runtime identity (a `versions/<v>` path
+ * 3. Host SIGKILL mid-turn at N=3: one new host, same Agents, one settled turn per Session, and
+ *    all emitted chunks present exactly once in order.
+ * 4. An Agent exits after host SIGKILL: accept its final stdout and settle its turn before the holder leaves.
+ * 5. Host update: the daemon restarts from another runtime identity (a `versions/<v>` path
  *    before, the checkout after) while turns stream; the old host hands over (exit 75).
  * Scratch measurement harness (gated). Results and logs: HAPPIER_SESSION_HOST_GATE_DIR.
  * HAPPIER_SESSION_HOST_GATE_INSTALL=<install home> with HAPPIER_SESSION_HOST_GATE_VERSION_A/_B runs
@@ -60,6 +57,7 @@ const LONG_CHUNKS = 240;
 const LONG_CHUNK_PERIOD_MS = 250;
 const SHORT_CHUNK_PERIOD_MS = 50;
 const gateRuntime = process.env.HAPPIER_SESSION_HOST_GATE_RUNTIME === 'node' ? 'node' : 'bun';
+const gateBun = process.env.HAPPIER_SESSION_HOST_GATE_BUN ?? 'bun';
 const soakMs = Number(process.env.HAPPIER_SESSION_HOST_GATE_SOAK_MS ?? 120_000);
 const bundleEntry = process.env.HAPPIER_SESSION_HOST_GATE_ENTRY === 'bundle';
 // Comma list of phases to run (open = N=1/3/10 + soak + stop): reruns of crash/update skip the rest.
@@ -67,16 +65,18 @@ const bundleEntry = process.env.HAPPIER_SESSION_HOST_GATE_ENTRY === 'bundle';
 const gateSettleMs = Number(process.env.HAPPIER_SESSION_HOST_GATE_SETTLE_MS ?? 0);
 const gateInstallHome = process.env.HAPPIER_SESSION_HOST_GATE_INSTALL?.trim() || null;
 const gateInstallVersions = [process.env.HAPPIER_SESSION_HOST_GATE_VERSION_A, process.env.HAPPIER_SESSION_HOST_GATE_VERSION_B];
-const gatePhases = new Set((process.env.HAPPIER_SESSION_HOST_GATE_PHASES ?? 'open,crash,update').split(',').map(phase => phase.trim()));
+const gatePhases = new Set((process.env.HAPPIER_SESSION_HOST_GATE_PHASES ?? 'open,crash,crash-exit,update').split(',').map(phase => phase.trim()));
 
 function agentSource(stateDirectory: string): string {
   return String.raw`
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 const state = ${JSON.stringify(stateDirectory)};
 appendFileSync(state + '/pids', process.pid + ' ' + process.cwd() + '\n');
-const send = message => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...message }) + '\n');
+const record = message => JSON.stringify({ jsonrpc: '2.0', ...message }) + '\n';
+const send = message => process.stdout.write(record(message));
+const modes = { currentModeId: 'default', availableModes: [{ id: 'default', name: 'Default' }] };
 // Like a real ACP Agent: launch the configured stdio Happier MCP server (the holder relay) as a
 // child, initialize it, list its tools and call one; record the outcome per Agent pid.
 const startMcp = servers => {
@@ -101,17 +101,32 @@ const startMcp = servers => {
 createInterface({ input: process.stdin }).on('line', line => {
   const request = JSON.parse(line);
   appendFileSync(state + '/methods', process.pid + ' ' + (request.method ?? 'response') + '\n');
-  if (request.method === 'initialize') return send({ id: request.id, result: { protocolVersion: 1, agentCapabilities: {} } });
-  if (request.method === 'session/new') { startMcp(request.params?.mcpServers ?? []); return send({ id: request.id, result: { sessionId: 'acp-held-' + process.pid } }); }
-  if (request.method === 'session/load') return send({ id: request.id, result: {} });
+  if (request.method === 'initialize') return send({ id: request.id, result: { protocolVersion: 1, agentCapabilities: { loadSession: true } } });
+  if (request.method === 'session/new') { startMcp(request.params?.mcpServers ?? []); return send({ id: request.id, result: { sessionId: 'acp-held-' + process.pid, modes } }); }
+  if (request.method === 'session/load') return send({ id: request.id, result: { modes } });
+  if (request.method === 'session/set_mode') return send(request.params.modeId === 'default'
+    ? { id: request.id, result: {} }
+    : { id: request.id, error: { code: -32602, message: 'Unsupported fixture mode' } });
   if (request.method !== 'session/prompt') return request.id === undefined ? undefined : send({ id: request.id, result: {} });
   const total = JSON.stringify(request.params.prompt ?? '').includes('LONG') ? ${LONG_CHUNKS} : ${SHORT_CHUNKS};
+  const exitsDuringCrash = JSON.stringify(request.params.prompt ?? '').includes('EXIT_AFTER_CRASH');
+  const chunk = n => record({ method: 'session/update', params: { sessionId: request.params.sessionId,
+    update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'chunk-' + n + ' ' } } } });
   let n = 0;
   const timer = setInterval(() => {
-    n += 1;
-    send({ method: 'session/update', params: { sessionId: request.params.sessionId,
-      update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'chunk-' + n + ' ' } } } });
-    appendFileSync(state + '/chunks-' + process.pid, n + '\n');
+    const emitted = state + '/chunks-' + process.pid;
+    if (exitsDuringCrash && existsSync(state + '/exit-after-crash-' + process.pid)) {
+      clearInterval(timer);
+      // Two complete records in one pipe write, followed by exit without a prompt response.
+      process.stdout.write(chunk(n + 1) + chunk(n + 2), () => {
+        appendFileSync(emitted, (n + 1) + '\n' + (n + 2) + '\n');
+        process.exit(42);
+      });
+      return;
+    }
+    if (exitsDuringCrash && n >= 5) return;
+    process.stdout.write(chunk(++n));
+    appendFileSync(emitted, n + '\n');
     if (n === total) { clearInterval(timer); send({ id: request.id, result: { stopReason: 'end_turn' } }); }
   }, total > ${SHORT_CHUNKS} ? ${LONG_CHUNK_PERIOD_MS} : ${SHORT_CHUNK_PERIOD_MS});
 });
@@ -223,21 +238,16 @@ it.skipIf(process.env.HAPPIER_RUN_SESSION_HOST_GATE !== '1')(
   await seedTestServerProfile({ id: serverId, homeId: home.homeId, serverUrl: home.baseUrl });
   await writeCredentialsTokenOnly({ token: home.installedToken });
   reloadConfiguration();
-  const agentIdentity = BUNDLED_AGENT_CONTRIBUTION_IDENTITIES_V1.codex!;
   // Runners deny path-only runtimes by name (bundle and source): run the fixture Agent through a renamed copy.
   const agentRuntime = join(directory, 'shgate-acp-agent');
   await cp(process.execPath, agentRuntime);
-  // Crash/update respawns adopt the held Agent, which needs no provider resume: the fixture declares none.
-  const conversation = createFirstConversationAgentFixture('SHGATE', { nativeAcp: { source: agentSource(agentState),
-    executablePath: agentRuntime } });
+  const conversation = createFirstConversationAgentFixture('SHGATE', {
+    fixedDefaultPermission: true,
+    nativeAcp: { source: agentSource(agentState), executablePath: agentRuntime, resumable: true },
+  });
+  const agentIdentity = { pluginId: conversation.manifest.id, localId: conversation.manifest.contributes.agents[0]!.id };
   plugin = await runWithServerHttpBaseUrl(boundHome.baseUrl, () => createAuthoredAdmittedPluginRuntimeFixture({ happyHomeDir: directory,
-    plugins: [{ ...conversation, manifest: { ...conversation.manifest, id: agentIdentity.pluginId,
-      contributes: { ...conversation.manifest.contributes,
-        agents: conversation.manifest.contributes.agents.map(agent => ({ ...agent, id: agentIdentity.localId })) } },
-      files: { ...conversation.files, 'daemon.mjs': `import { factory } from './agent.mjs';
-        export function activate(api) { api.agents.register(${JSON.stringify(agentIdentity.localId)}, factory, {
-          sessionRunnerFactory: { module: './agent.mjs', export: 'factory', runtimeApiVersion: 1 } }); }` },
-      includeAvailability: true, replaceExisting: true }] }));
+    plugins: [{ ...conversation, includeAvailability: true }] }));
   const repository = fileURLToPath(new URL('../../../../../', import.meta.url));
   const pidLog = join(gateDir, 'pids.txt');
   const recordPid = async (pid: number, role: string) => {
@@ -273,7 +283,7 @@ it.skipIf(process.env.HAPPIER_RUN_SESSION_HOST_GATE !== '1')(
         { cwd: repository, env: { ...process.env, NODE_OPTIONS: `--import=${pathToFileURL(lagPreload).href}` },
           stdio: ['ignore', 'pipe', 'pipe'] })
       : gateRuntime === 'bun'
-      ? spawn(process.env.HAPPIER_SESSION_HOST_GATE_BUN ?? 'bun', [entry, 'daemon', 'start-sync'], { cwd: repository,
+      ? spawn(gateBun, [entry, 'daemon', 'start-sync'], { cwd: repository,
         env: { ...process.env, BUN_OPTIONS: `${bundleEntry ? '' : '--conditions=happier-source '}--preload ${lagPreload}`,
           HAPPIER_CLI_SUBPROCESS_RUNTIME: 'bun', HAPPIER_CLI_SUBPROCESS_ENTRYPOINT: entry }, stdio: ['ignore', 'pipe', 'pipe'] })
       : spawn(process.execPath, [...bundleEntry ? [] : ['--conditions=happier-source', '--import',
@@ -374,18 +384,34 @@ it.skipIf(process.env.HAPPIER_RUN_SESSION_HOST_GATE !== '1')(
     })), sessionWorkspace);
     if (!birth?.ok) throw new Error(`Session birth refused ${JSON.stringify(birth)}`);
     const created = SessionSpawnNewActionResultV1Schema.parse(birth.result);
-    if (created.type !== 'success') throw new Error('Session did not start');
+    if (created.type !== 'success') {
+      const outcome = created.type === 'error' ? created.code : created.outcome;
+      throw new Error(`Session did not start (${created.type}: ${outcome})`);
+    }
     const actionMs = performance.now() - started;
     const hostPid = await waitFor(async () => (await listChildren()).find(child => child.happySessionId === created.sessionId)?.pid, 'listed');
     const listedMs = performance.now() - started;
     await recordPid(hostPid, 'session-host');
     return { sessionId: created.sessionId, workspace: sessionWorkspace, actionMs: round(actionMs), listedMs: round(listedMs), hostPid };
   };
+  const chunkCount = async (agentPid: number) => (await readLines(`chunks-${agentPid}`)).length;
   const agentOf = async (session: GateSession) => session.agentPid ??= await waitFor(async () => {
-    const row = (await agentRows()).find(agent => agent.cwd === session.workspace);
-    if (row) await recordPid(row.pid, `agent ${session.sessionId}`);
-    return row?.pid;
-  }, `agent of ${session.sessionId}`);
+    const candidates = (await agentRows()).filter(agent => agent.cwd === session.workspace && isAlive(agent.pid)).reverse();
+    for (const { pid } of candidates) {
+      if (await chunkCount(pid) === 0) continue;
+      await recordPid(pid, `agent ${session.sessionId}`);
+      return pid;
+    }
+    return null;
+  }, `streaming Agent of ${session.sessionId}`);
+  const agentMethods = async (pids: readonly number[]) => {
+    const methods = (await readLines('methods')).map(line => line.split(' '));
+    return pids.map(pid => {
+      const mine = methods.filter(([owner]) => owner === String(pid)).map(([, method]) => method);
+      return { initialize: mine.filter(m => m === 'initialize').length, prompt: mine.filter(m => m === 'session/prompt').length,
+        load: mine.filter(m => m === 'session/load').length };
+    });
+  };
   const turnsOf = async (ids: readonly string[]) => (await boundHome.readWorkflowSessionEffects()).turns.filter(turn => ids.includes(turn.sessionId));
   const waitTurnsSettled = async (group: readonly GateSession[], timeoutMs = 180_000) => await waitFor(async () => {
     const turns = await turnsOf(group.map(s => s.sessionId));
@@ -393,7 +419,6 @@ it.skipIf(process.env.HAPPIER_RUN_SESSION_HOST_GATE !== '1')(
     const open = new Set(['running', 'in_progress', 'waiting', 'pending']);
     return turns.length >= group.length && turns.every(turn => !open.has(turn.status)) ? turns : null;
   }, 'turns settled', timeoutMs);
-  const chunkCount = async (agentPid: number) => (await readLines(`chunks-${agentPid}`)).length;
   const census = async (group: readonly GateSession[]) => {
     const procs = await readProcs();
     const byPid = new Map(procs.map(row => [row.pid, row]));
@@ -448,14 +473,25 @@ it.skipIf(process.env.HAPPIER_RUN_SESSION_HOST_GATE !== '1')(
       over100: inWindow.reduce((sum, line) => sum + line.over100!, 0), over1000: inWindow.reduce((sum, line) => sum + line.over1000!, 0), exit };
   };
   const stopGroup = async (group: readonly GateSession[]) => {
+    const { holders: holderPids } = await census(group);
     const state = await readDaemonState();
     for (const s of group) await stopDaemonSession(s.sessionId, { target: state! }).catch(() => undefined);
     const hostPids = [...new Set(group.map(s => s.hostPid))];
     const agentPids = group.map(s => s.agentPid).filter((pid): pid is number => pid !== undefined);
-    return { hostExited: await Promise.all(hostPids.map(pid => waitForProcessExit(pid, { timeoutMs: 60_000 }))),
-      agentsExited: await Promise.all(agentPids.map(pid => waitForProcessExit(pid, { timeoutMs: 60_000 }))) };
+    const waitForExit = (pid: number) => waitForProcessExit(pid, { timeoutMs: 60_000 });
+    const [hostExited, agentsExited, holdersExited] = await Promise.all([
+      Promise.all(hostPids.map(waitForExit)),
+      Promise.all(agentPids.map(waitForExit)),
+      Promise.all(holderPids.map(waitForExit)),
+    ]);
+    return { hostExited, agentsExited, holdersExited };
   };
-  const results: Record<string, unknown> = { runtime: gateRuntime, entry: bundleEntry ? 'bundle' : 'source', bun: process.env.HAPPIER_SESSION_HOST_GATE_RUNTIME === 'node' ? null : 'bun', startedAt: new Date().toISOString() };
+  const expectStopped = (result: Awaited<ReturnType<typeof stopGroup>>, sessionCount: number) => {
+    expect(result.hostExited).toEqual([true]);
+    expect(result.agentsExited).toEqual(Array.from({ length: sessionCount }, () => true));
+    expect(result.holdersExited).toEqual(Array.from({ length: sessionCount }, () => true));
+  };
+  const results: Record<string, unknown> = { runtime: gateRuntime, entry: bundleEntry ? 'bundle' : 'source', bun: gateRuntime === 'bun' ? gateBun : null, startedAt: new Date().toISOString() };
   const save = async () => await writeFile(join(gateDir, 'results.json'), JSON.stringify(results, null, 1));
 
   // 1+2. N = 1, 3, 10 (2-chunk turns), then the soak at N=10.
@@ -512,6 +548,7 @@ it.skipIf(process.env.HAPPIER_RUN_SESSION_HOST_GATE !== '1')(
   await waitFor(async () => (await Promise.all(crashAgents.map(chunkCount))).every(count => count >= 5) || null, 'crash: chunks streaming');
   const crashHosts = [...new Set(crashGroup.map(s => s.hostPid))];
   const agentLinesBefore = (await agentRows()).length;
+  const methodsBefore = await agentMethods(crashAgents);
   // Saved before the kill (in a transcript checkpoint the server holds): must all survive.
   const savedBeforeKill = await Promise.all(crashGroup.map(async s => await transcriptChunkNumbers(s.sessionId)));
   const chunksAtKill = await Promise.all(crashAgents.map(chunkCount));
@@ -528,16 +565,11 @@ it.skipIf(process.env.HAPPIER_RUN_SESSION_HOST_GATE !== '1')(
   const relistedMs = round(performance.now() - killedAt);
   for (const pid of respawned) await recordPid(pid, 'session-host (after crash)');
   const crashTurns = await waitTurnsSettled(crashGroup, 300_000);
-  const crashMethods = (await readLines('methods')).map(line => line.split(' '));
   results.crash = { n: crashGroup.length, killedHosts: crashHosts, newHosts: [...new Set(respawned)], relistedMs, chunksAtKill,
     chunksAtKillExit, savedBeforeKill: savedBeforeKill.map(seen => ({ count: seen.length, max: Math.max(0, ...seen) })),
     agentsBefore: crashAgents, agentsAlive: crashAgents.map(isAlive), newAgentProcesses: (await agentRows()).length - agentLinesBefore,
     turnStatuses: crashTurns.map(turn => turn.status),
-    agentMethods: crashAgents.map(pid => {
-      const mine = crashMethods.filter(([owner]) => owner === String(pid)).map(([, method]) => method);
-      return { initialize: mine.filter(m => m === 'initialize').length, prompt: mine.filter(m => m === 'session/prompt').length,
-        load: mine.filter(m => m === 'session/load').length };
-    }),
+    methodsBefore, agentMethods: await agentMethods(crashAgents),
     agentSent: await Promise.all(crashAgents.map(chunkCount)),
     transcripts: await Promise.all(crashGroup.map(async (s, i) => {
       const transcript = await transcriptChunks(s.sessionId);
@@ -554,7 +586,47 @@ it.skipIf(process.env.HAPPIER_RUN_SESSION_HOST_GATE !== '1')(
   await save();
   }
 
-  // 4. Host update: daemon restarts from another runtime identity while turns stream.
+  const crashExitGroup: GateSession[] = [];
+  if (gatePhases.has('crash-exit')) {
+    const session = await openSession('SHGATE LONG EXIT_AFTER_CRASH');
+    crashExitGroup.push(session);
+    const agentPid = await agentOf(session);
+    await waitFor(async () => (await chunkCount(agentPid)) >= 5 || null, 'crash-exit: turn streaming');
+    const { holders } = await census(crashExitGroup);
+    expect(holders).toHaveLength(1);
+    const [holderPid] = holders as [number];
+    const originalAgentCount = (await agentRows()).length;
+    const methodsBefore = await agentMethods([agentPid]);
+
+    // Keep this fixture's daemon from starting a successor until the Agent has exited.
+    expect(daemonA.child.kill('SIGSTOP')).toBe(true);
+    try {
+      process.kill(session.hostPid, 'SIGKILL');
+      expect(await waitForProcessExit(session.hostPid, { timeoutMs: 10_000 })).toBe(true);
+      await writeFile(join(agentState, `exit-after-crash-${agentPid}`), '');
+      expect(await waitForProcessExit(agentPid, { timeoutMs: 10_000 })).toBe(true);
+      expect(isAlive(holderPid)).toBe(true);
+    } finally {
+      daemonA.child.kill('SIGCONT');
+    }
+
+    const turns = await waitTurnsSettled(crashExitGroup, 300_000);
+    const agentSent = await chunkCount(agentPid);
+    await waitFor(async () => (await transcriptChunkNumbers(session.sessionId)).includes(agentSent) || null,
+      'crash-exit: final stdout committed');
+    results.crashExit = {
+      turnStatuses: turns.map(turn => turn.status),
+      agentSent,
+      newAgentProcesses: (await agentRows()).length - originalAgentCount,
+      methodsBefore, agentMethods: await agentMethods([agentPid]),
+      transcript: await transcriptChunks(session.sessionId),
+      holderExited: await waitForProcessExit(holderPid, { timeoutMs: 60_000 }),
+    };
+    console.info('[shgate] crash-exit', JSON.stringify(results.crashExit));
+    await save();
+  }
+
+  // 5. Host update: daemon restarts from another runtime identity while turns stream.
   const updateGroup: GateSession[] = [];
   let daemonB: Awaited<ReturnType<typeof startGateDaemon>> | undefined;
   if (gatePhases.has('update')) {
@@ -563,6 +635,7 @@ it.skipIf(process.env.HAPPIER_RUN_SESSION_HOST_GATE !== '1')(
   await waitFor(async () => (await Promise.all(updateAgents.map(chunkCount))).every(count => count >= 5) || null, 'update: chunks streaming');
   const oldHosts = [...new Set(updateGroup.map(s => s.hostPid))];
   const updateAgentLinesBefore = (await agentRows()).length;
+  const methodsBefore = await agentMethods(updateAgents);
   daemonA.child.kill('SIGTERM');
   const [daemonAExitCode, daemonASignal] = await daemonA.closed as [number | null, NodeJS.Signals | null];
   const chunksAtRestart = await Promise.all(updateAgents.map(chunkCount));
@@ -578,7 +651,6 @@ it.skipIf(process.env.HAPPIER_RUN_SESSION_HOST_GATE !== '1')(
   const movedMs = round(performance.now() - restartAt);
   for (const pid of moved) await recordPid(pid, 'session-host (after update)');
   const updateTurns = await waitTurnsSettled(updateGroup, 300_000);
-  const updateMethods = (await readLines('methods')).map(line => line.split(' '));
   const daemonBLog = await readFile(join(gateDir, 'daemon-b-current.log'), 'utf8').catch(() => '');
   const newHostCommand = (await readFile(`/proc/${moved[0]}/cmdline`, 'utf8').catch(() => '')).replaceAll('\0', ' ');
   results.update = { n: updateGroup.length, oldHosts, oldHostAliveAfterDaemonStop, daemonAExit: { code: daemonAExitCode, signal: daemonASignal },
@@ -586,11 +658,7 @@ it.skipIf(process.env.HAPPIER_RUN_SESSION_HOST_GATE !== '1')(
     newHosts: [...new Set(moved)], newHostRunsCheckoutEntry: newHostCommand.includes(gateInstallHome ? installedVersionDir(realEntry) : realEntry), movedMs, chunksAtRestart,
     agentsBefore: updateAgents, agentsAlive: updateAgents.map(isAlive), newAgentProcesses: (await agentRows()).length - updateAgentLinesBefore,
     turnStatuses: updateTurns.map(turn => turn.status),
-    agentMethods: updateAgents.map(pid => {
-      const mine = updateMethods.filter(([owner]) => owner === String(pid)).map(([, method]) => method);
-      return { initialize: mine.filter(m => m === 'initialize').length, prompt: mine.filter(m => m === 'session/prompt').length,
-        load: mine.filter(m => m === 'session/load').length };
-    }),
+    methodsBefore, agentMethods: await agentMethods(updateAgents),
     agentSent: await Promise.all(updateAgents.map(chunkCount)),
     transcripts: await Promise.all(updateGroup.map(s => transcriptChunks(s.sessionId))),
     handoverRequestLogged: /asked to hand over/.test(daemonBLog) };
@@ -598,28 +666,42 @@ it.skipIf(process.env.HAPPIER_RUN_SESSION_HOST_GATE !== '1')(
   console.info('[shgate] update', JSON.stringify(results.update));
   results.stopUpdate = await stopGroup(updateGroup);
   }
-  results.finalCensus = await census([...sessions, ...crashGroup, ...updateGroup]);
+  results.finalCensus = await census([...sessions, ...crashGroup, ...crashExitGroup, ...updateGroup]);
   results.daemonB = { pid: daemonB?.child.pid ?? null };
   await save();
 
   // Gate verdicts (after every measurement is saved).
   type PhaseVerdict = { newHosts: number[]; agentsAlive: boolean[]; newAgentProcesses: number; turnStatuses: string[];
-    transcripts: { missing: number[]; duplicated: number[]; max: number }[] };
+    methodsBefore: Awaited<ReturnType<typeof agentMethods>>;
+    agentMethods: Awaited<ReturnType<typeof agentMethods>>;
+    transcripts: { missing: number[]; duplicated: number[]; max: number; inOrder: boolean }[] };
   if (gatePhases.has('crash')) {
   const crash = results.crash as PhaseVerdict;
   expect(crash.newHosts).toHaveLength(1);
   expect(crash.agentsAlive.every(Boolean)).toBe(true);
   expect(crash.newAgentProcesses).toBe(0);
-  expect(crash.turnStatuses.every(status => status === 'completed')).toBe(true);
-  // Accepted crash loss (ack-on-save parked): only chunks in flight at the kill. The streamed
-  // transcript writer saves a streaming segment at most one checkpoint interval after its previous
-  // save was acknowledged, so the unsaved tail is at most one interval of output plus the chunk
-  // delivered while that acknowledgement was in transit.
-  const inFlightBound = Math.ceil(resolveCheckpointIntervalMs(undefined) / LONG_CHUNK_PERIOD_MS) + 1;
-  for (const transcript of crash.transcripts as (PhaseVerdict['transcripts'][number] & { lostSaved: number[]; outsideInFlight: number[] })[]) {
-    expect(transcript).toMatchObject({ duplicated: [], lostSaved: [], outsideInFlight: [], max: LONG_CHUNKS });
-    expect(transcript.missing.length).toBeLessThanOrEqual(inFlightBound);
+  expect(crash.turnStatuses).toEqual(crashGroup.map(() => 'completed'));
+  expect(crash.agentMethods).toEqual(crash.methodsBefore);
+  for (const transcript of crash.transcripts) {
+    expect(transcript).toMatchObject({ missing: [], duplicated: [], inOrder: true, max: LONG_CHUNKS });
   }
+  expectStopped(results.stopCrash as Awaited<ReturnType<typeof stopGroup>>, crashGroup.length);
+  }
+  if (gatePhases.has('crash-exit')) {
+    const ended = results.crashExit as {
+      turnStatuses: string[];
+      agentSent: number;
+      newAgentProcesses: number;
+      methodsBefore: PhaseVerdict['methodsBefore'];
+      agentMethods: PhaseVerdict['agentMethods'];
+      transcript: PhaseVerdict['transcripts'][number];
+      holderExited: boolean;
+    };
+    expect(ended.turnStatuses).toEqual(['failed']);
+    expect(ended.newAgentProcesses).toBe(0);
+    expect(ended.agentMethods).toEqual(ended.methodsBefore);
+    expect(ended.transcript).toMatchObject({ missing: [], duplicated: [], inOrder: true, max: ended.agentSent });
+    expect(ended.holderExited).toBe(true);
   }
   if (gatePhases.has('update')) {
   const update = results.update as PhaseVerdict & { oldHosts: number[]; oldHostExitCodes: (number | null)[] };
@@ -627,8 +709,12 @@ it.skipIf(process.env.HAPPIER_RUN_SESSION_HOST_GATE !== '1')(
   expect(update.newHosts).toHaveLength(1);
   expect(update.agentsAlive.every(Boolean)).toBe(true);
   expect(update.newAgentProcesses).toBe(0);
-  expect(update.turnStatuses.every(status => status === 'completed')).toBe(true);
-  for (const transcript of update.transcripts) expect(transcript).toMatchObject({ missing: [], duplicated: [], max: LONG_CHUNKS });
+  expect(update.turnStatuses).toEqual(updateGroup.map(() => 'completed'));
+  expect(update.agentMethods).toEqual(update.methodsBefore);
+  for (const transcript of update.transcripts) {
+    expect(transcript).toMatchObject({ missing: [], duplicated: [], inOrder: true, max: LONG_CHUNKS });
+  }
+  expectStopped(results.stopUpdate as Awaited<ReturnType<typeof stopGroup>>, updateGroup.length);
   }
   completed = true;
 }, 7_200_000);
