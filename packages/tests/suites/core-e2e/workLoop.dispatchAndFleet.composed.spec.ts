@@ -233,8 +233,9 @@ it('claims authored High work before older Normal work, then releases a capped R
     WorkflowTriggerWriteResultV1Schema.parse(await person('workflow.trigger.add', {
       ...dispatch,
       target: { kind: 'inline', definition: { version: 1, defaults: {
+        conversation: { kind: 'fresh' },
         agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
-      }, blocks: [{ kind: 'step', id: 'work', inputMode: 'none',
+      }, blocks: [{ kind: 'step', id: 'work',
         document: { text, references: [], attachments: [] }, input: [], result: { kind: 'text' } }] } },
       project: { machineId: machine.target.machineId, directory: machine.workspaceDir },
       trigger: { kind: 'schedule', enabled: true,
