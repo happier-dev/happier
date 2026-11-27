@@ -458,6 +458,12 @@ remains trusted executable code.
 Declare the view's `container`, `target`, and `renderer` in
 `definePlugin(...)`; the host registry decides whether that exact pair can be
 mounted. The generated `appPage` + `app` view is the portable starting point.
+In unreleased 0.3 development source, `appPage` + `deploymentEnvironment`
+embeds a contributed page after Data in Environment Overview. People can
+expand it in the same Environment. The host mounts supported renderers from
+the current Environment read and releases the mount when it closes or access
+is withdrawn. See [Environment pages](/plugins/ui/configuration-pages#environment-pages).
+
 In 0.3 development source, an `appPage` may also declare an optional `description`,
 either a literal or `{ key, fallback }`, just like its title. The host resolves it
 from the declaration for the identity header while the executable surface loads.

@@ -1,6 +1,7 @@
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import { projectPrepareResultSchema } from './platform/prepare.js';
-import { accountActions, pluginIdentity } from './platform/accountActions.js';
+import { accountActions } from './platform/accountActions.js';
+import { pluginIdentity, runtimeTargetId } from './identity.js';
 import { uploadAction } from './platform/upload.js';
 import { targetInputTypes, targetOptionsResources } from './platform/options.js';
 import { vercelGitIntegrations } from './platform/operations.js';
@@ -10,6 +11,16 @@ export const plugin = definePlugin({
   ...pluginIdentity,
   entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   activation: { events: [] },
+  ui: {
+    views: [{
+      id: 'environment-provider', container: 'appPage', target: { kind: 'deploymentEnvironment' },
+      title: 'Vercel project', renderer: 'environment-provider-native',
+    }],
+    renderers: [{
+      id: 'environment-provider-native', kind: 'reactNative', artifact: 'environment-provider',
+      requiredHostMethods: ['readResource', 'watchResource'],
+    }],
+  },
   hostAccess: { required: [{ id: 'vercel-api', capability: 'network', reason: 'Inspect the selected Vercel project and manage its reviewed deployments.',
     scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://api.vercel.com' }], methods: ['GET', 'POST', 'PATCH', 'DELETE'] },
   }, { id: 'deploy.manage', capability: 'connectedAccounts', reason: 'Use the selected Vercel deployment account.',
@@ -21,7 +32,7 @@ export const plugin = definePlugin({
   resources: { 'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' }, ...targetOptionsResources },
   inputTypes: targetInputTypes,
   // Vercel client getPollingDelay starts at one second; only demanded pending receipts use this cadence.
-  deploymentTargets: { runtime: { statusIntervalMs: 1000, role: 'runtime', title: 'Vercel', targetKind: 'vercel', icon: 'server-outline',
+  deploymentTargets: { [runtimeTargetId]: { statusIntervalMs: 1000, role: 'runtime', title: 'Vercel', targetKind: 'vercel', icon: 'server-outline',
     description: 'Hosting for web apps · builds from your repository',
     plans: [
       {

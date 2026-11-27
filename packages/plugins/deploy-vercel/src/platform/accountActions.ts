@@ -24,5 +24,3 @@ export const accountActions: NonNullable<DefinePluginInput<Readonly<Record<
   ...variableActions,
   ...domainActions,
 };
-
-export const pluginIdentity = { id: 'happier.deploy.vercel', version: '0.0.0', displayName: 'Vercel deployments' } as const;

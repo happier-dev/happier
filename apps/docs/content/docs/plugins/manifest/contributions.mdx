@@ -306,6 +306,16 @@ host; this section describes unreleased 0.3 source.
 
 ## Deployment target declarations (0.3 development source)
 
+To give people a page alongside the Environment's deployment and data records,
+declare a `ui.views` entry with `container: 'appPage'` and
+`target: { kind: 'deploymentEnvironment' }`. Set `renderer` to a renderer
+declared by your plugin. The view and `deploymentTargets` serve different
+purposes. The view adds presentation, and the target declaration registers
+the Actions the deployment host can invoke.
+
+Follow the [Environment page example](/plugins/ui/configuration-pages#environment-pages)
+to wire the renderer and consume the selected Environment.
+
 Declare runtime target metadata through `definePlugin`. For a plugin that already
 declares the four referenced Actions, add:
 

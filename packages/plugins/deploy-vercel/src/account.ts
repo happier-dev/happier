@@ -1,5 +1,6 @@
 import { definePlugin } from '@happier-dev/plugin-sdk';
-import { accountActions, pluginIdentity } from './platform/accountActions.js';
+import { accountActions } from './platform/accountActions.js';
+import { pluginIdentity } from './identity.js';
 import { targetInputTypes, targetOptionsResources } from './platform/options.js';
 
 // Consume the same declaration map through the SDK's Account handler adapter.

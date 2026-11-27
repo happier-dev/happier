@@ -128,6 +128,36 @@ export const renderSurface = defineUiSurface(ReviewBotSettings);
 components rendered at static props — show the real thing the option changes,
 not a drawing of it.
 
+## Environment pages
+
+In unreleased 0.3 development source, an installed deployment plugin can
+contribute a page to Environment Overview. Add this entry to `ui.views` in
+`definePlugin` and point it to a renderer in your `ui.renderers`:
+
+```ts
+{
+  id: 'deployment-details',
+  container: 'appPage',
+  target: { kind: 'deploymentEnvironment' },
+  title: 'Deployment details',
+  renderer: 'deployment-details-native',
+}
+```
+
+For a React Native renderer, declare its artifact and the Host methods it
+uses. Call `useSurfaceContext()` from `@happier-dev/plugin-ui` and narrow
+`target.kind` to `deploymentEnvironment`. The target supplies `serverId`,
+`projectSourceId`, `environmentId`, and `controllerMachineId` from the admitted
+Environment read. Use `machineId` only when present. Platform targets can have
+no Target Machine, and their Controller Machine has its own role.
+
+Use these coordinates to address Resources and Actions. Each call retains its
+own authorization. For example, `useLivePluginResource` can watch the
+`deployments.environments.list` Host read with `serverId`, `projectSourceId`,
+and `environmentIds: [environmentId]`. Declare `readResource` and `watchResource`
+for that renderer so the shared hook releases its demand when the page closes.
+Keep provider work in the deployment target's [registered Actions](/plugins/manifest/contributions#deployment-target-declarations-03-development-source).
+
 ## Project pages
 
 In the 0.3 Developer Preview source contract, a plugin can add a full Project

@@ -6,6 +6,7 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
+    "./happier-plugin-ui/environment-provider": "./src/ui/environmentProvider.tsx",
     "./happier-plugin-ui/account-runtime": { "happier-source": "./src/accountRuntime.ts", "default": "./dist/accountRuntime.js" },
     ".": {
       "happier-source": "./src/index.ts",
@@ -19,14 +20,16 @@
     }
   },
   "files": [
+    "src",
     "assets",
     "dist",
     ".happier-plugin", ".happier-plugin-build",
     "package.json"
   ],
   "scripts": {
+    "build:ui": "happier-plugin-build-ui",
     "tsc": "node ../../../scripts/workspaces/runTypeScriptCli.mjs",
-    "build": "node ../../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
+    "build": "node ../../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json --happier-staged-output-script build:ui",
     "build:finite": "pnpm --silent run build",
     "project:finite": "node --experimental-strip-types ../../../apps/cli/scripts/build-owned/checkBundledPluginWorkspace.mjs",
     "test": "../../../apps/stack/bin/hstack-exec --script=test:local",
@@ -44,6 +47,8 @@
   },
   "devDependencies": {
     "@types/node": "^22.15.3",
+    "@types/react": "19.2.0",
+    "react": "19.2.0",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"
   }
