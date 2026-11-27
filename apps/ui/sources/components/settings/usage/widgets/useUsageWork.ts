@@ -6,7 +6,7 @@ import type { UsageWorkContribution } from '@happier-dev/protocol/usage/usageOut
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
-import { useMachineDisplayById, useSessionListRowsByServerId } from '@/sync/store/hooks';
+import { useMachineDisplayById } from '@/sync/store/hooks';
 import { getSessionMachineLabel, resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
 import { formatUsageCalendarDate } from '@/sync/domains/usage/usageCalendarPresentation';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
@@ -18,7 +18,7 @@ import {
   type UsageWorkMoneyBasis,
   type UsageWorkSessionIdentity,
 } from './usageWorkPresentation';
-import { useUsageAnalyticsView, useUsageProjectAnchorOf, useUsageProjectNames, usageMachinePlace } from './usageBodyKit';
+import { useUsageAnalyticsView, useUsageProjectAnchorOf, useUsageProjectNames, usageMachinePlace, useUsageSessionRows } from './usageBodyKit';
 import { buildUsageRouteParams } from '../usageRouteParams';
 import { usageCostKindPhrase } from '../usageCostPresentation';
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
@@ -127,9 +127,8 @@ export function useUsageWorkSessionNavigation(
   machineIds: readonly string[] = EMPTY_MACHINE_IDS,
 ) {
   const metric = UsageAccountingMetricSchema.parse(query.metric);
-  const sessionHomes = React.useMemo(() => [serverId], [serverId]);
-  const renderablesByHome = useSessionListRowsByServerId(sessionHomes);
-  const renderables = renderablesByHome[serverId];
+  const sessionIds = React.useMemo(() => sessions.map(row => row.sessionId), [sessions]);
+  const renderables = useUsageSessionRows(serverId, sessionIds);
   // The display owner retains opened names through an unavailable inventory.
   // A cold read can still name the exact Machine from its retained Session host.
   const selectedMachineNames = useMachineDisplayById(React.useCallback(displays => {
@@ -167,9 +166,8 @@ export function useUsageWorkSessionNavigation(
   }, [sessions, renderables, serverId, machinePlace, query.timeZoneOffsetMinutes, isSessionVisible]);
   const sessionLabel = React.useCallback(
     (sessionId: string) => !isSessionVisible({ sessionId, serverId }) ? t('session.untitled')
-      : displaySessionLabels.get(sessionId)
-        ?? (renderables?.[sessionId] ? getSessionName(renderables[sessionId]!, serverId) : t('session.untitled')),
-    [displaySessionLabels, renderables, serverId, isSessionVisible],
+      : displaySessionLabels.get(sessionId) ?? t('session.untitled'),
+    [displaySessionLabels, serverId, isSessionVisible],
   );
   const router = useRouter();
   const navigateSession = React.useCallback(

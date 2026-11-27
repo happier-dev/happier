@@ -30,6 +30,8 @@ import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreferenc
 import { useDeviceType } from '@/utils/platform/responsive';
 import { useWidgetPresentation } from '@happier-dev/plugin-ui';
 import { WidgetFrameBodyRowsContext, useWidgetBodyRowHeight } from '@/components/widgets/frame/widgetFrameBody';
+import type { SessionListRowStateByServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
+import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { useRegisterUsageBodyReadingPlaceholder } from './usageBodyHeightMemory';
 import {
   buildUsageAnalyticsViewModel,
@@ -48,9 +50,10 @@ import { getUsageHistoryReadOperation } from '@/sync/api/account/usageHistoryRea
 import { formatExactCount } from '@/components/ui/navigation/tabBadge/tabBadgeModel';
 export { usageSourceTitle, usageAgentTitle, usageDimensionLabel } from '@/sync/domains/usage/usageLabels';
 import { useUsageWidgetPageHasCoverageDetail, useUsageWidgetPageNothingRecorded } from './usageWidgetBatch';
-import { useProjectAccountRows } from '@/sync/domains/workspaces/projectAccountRows';
-import { useAllMachines, useWorkspaceRefs } from '@/sync/domains/state/storage';
-import { useSessionSelector } from '@/sync/store/hooks';
+import { useShallow } from 'zustand/react/shallow';
+import { useProjectAccountRows, type ProjectAccountRowsSnapshot } from '@/sync/domains/workspaces/projectAccountRows';
+import { useAllMachines } from '@/sync/domains/state/storage';
+import { useSessionListRowsByServerId, useSessionSelector, type SessionListRowChanges } from '@/sync/store/hooks';
 import { isSessionAccessRecipient } from '@/sync/engine/sessions/normalizeSessionAccessProjection';
 import { selectProjectChoiceMachineNames } from '@/sync/domains/machines/identity/projectChoiceMachineNames';
 import { createProjectAnchorOfKeyV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
@@ -62,6 +65,38 @@ import { isWidgetResourceQuietRefresh } from '@/components/widgets/frame/widgetF
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { readUsageSourceStates } from './usageSourceSelection';
+
+const EMPTY_USAGE_SESSION_ROWS: Readonly<Record<string, SessionListRenderableSession>> = Object.freeze({});
+
+/** Usage labels follow only the Session rows referenced by the admitted facts on this Home. */
+export function useUsageSessionRows(serverId: string, sessionIds: readonly string[]) {
+  const select = React.useMemo(() => {
+    const demanded = new Set(sessionIds);
+    let selected = EMPTY_USAGE_SESSION_ROWS;
+    return (rows: SessionListRowStateByServerId, changes: SessionListRowChanges | null) => {
+      const bucket = rows[serverId];
+      // Home retirement can remove the whole bucket, including row-only reads.
+      if (!bucket) return (selected = EMPTY_USAGE_SESSION_ROWS);
+      if (changes) {
+        let intersects = false;
+        for (const id of changes.sessionIds) {
+          if (!demanded.has(id)) continue;
+          intersects = true;
+          break;
+        }
+        if (!intersects) return selected;
+      }
+      const next: Record<string, SessionListRenderableSession> = {};
+      for (const id of demanded) {
+        const row = bucket[id];
+        if (row) next[id] = row;
+      }
+      selected = next;
+      return selected;
+    };
+  }, [serverId, sessionIds]);
+  return useSessionListRowsByServerId(sessionIds.length > 0 ? [serverId] : [], select);
+}
 
 /** What every Usage body receives from the one dispatcher: admitted facts, never a fetch handle. */
 export type UsageBodyProps = Readonly<{
@@ -173,9 +208,19 @@ function useUsageAnalyticsAccounting(accounting: UsageQueryResultSlice['accounti
  * `joinedKey` (a cache key) and `resolve` stay put through an unrelated census refresh.
  */
 export function useUsageProjectAnchorOf(serverId: string): Readonly<{ joinedKey: string; resolve: (key: string) => string }> {
-  const workspaceRefs = useWorkspaceRefs();
-  const joinedKey = React.useMemo(() => JSON.stringify(workspaceRefs.filter(ref => ref.projectKey !== undefined && ref.projectKey !== ref.id)
-    .map(ref => [ref.serverId, ref.id, ref.projectKey]).sort()), [workspaceRefs]);
+  const selectJoinedKey = React.useMemo(() => {
+    let previousRefs: ProjectAccountRowsSnapshot['workspaceRefs'] | undefined;
+    let key = '[]';
+    return (rows: ProjectAccountRowsSnapshot | null) => {
+      const refs = rows?.workspaceRefs;
+      if (refs === previousRefs) return key;
+      previousRefs = refs;
+      key = JSON.stringify((refs ?? []).filter(ref => ref.projectKey !== undefined && ref.projectKey !== ref.id)
+        .map(ref => [ref.serverId, ref.id, ref.projectKey]).sort());
+      return key;
+    };
+  }, []);
+  const joinedKey = useProjectAccountRows(selectJoinedKey);
   return React.useMemo(() => {
     const joined = (JSON.parse(joinedKey) as Array<[string, string, string]>).map(([refServerId, id, projectKey]) => ({
       id, serverId: refServerId, projectKey, machineId: '', rootPath: '', createdAtMs: 0 }));
@@ -188,14 +233,17 @@ type UsageProjectNameFact = Readonly<{ key: string; label?: string; machineIds?:
 const NO_PROJECT_NAME_FACTS: readonly UsageProjectNameFact[] = [];
 
 export function useUsageProjectOptionFacts(serverId: string, enabled = true) {
-  const rows = useProjectAccountRows();
-  return React.useMemo(() => {
-    if (!enabled || !rows || rows.status === 'locked' || rows.status === 'refused'
+  const rows = useProjectAccountRows(useShallow(rows => {
+    if (!rows || rows.status === 'locked' || rows.status === 'refused'
       || !areServerProfileIdentifiersEquivalent(rows.scope.serverId, serverId)) return undefined;
+    return { workspaceRefs: rows.workspaceRefs, organizations: rows.organizations };
+  }), enabled);
+  return React.useMemo(() => {
+    if (!rows) return undefined;
     const { projectGroups, hiddenProjectGroups } = projectProjectListV1({ serverId, workspaceRefs: rows.workspaceRefs,
       organizations: rows.organizations, normalizeServerId: resolveServerProfileScopeIdForIdentifier });
     return projectUsageOptionFacts([...projectGroups, ...hiddenProjectGroups], rows.organizations);
-  }, [rows, serverId, enabled]);
+  }, [rows, serverId]);
 }
 
 export function useUsageProjectChoiceMachineNames(enabled = true) {

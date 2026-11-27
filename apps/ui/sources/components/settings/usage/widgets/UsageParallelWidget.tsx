@@ -7,10 +7,7 @@ import {
   IntervalTimeline,
 } from '@happier-dev/plugin-ui/presentation';
 import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFrameBodyCaption';
-import {
-  useAllMachines,
-  useSessionListRowsByServerId,
-} from '@/sync/store/hooks';
+import { useAllMachines } from '@/sync/store/hooks';
 import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import { resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
 import type { Machine } from '@/sync/domains/state/storageTypes';
@@ -26,6 +23,7 @@ import {
   isUsageReadOutstanding,
   usageAgentTitle,
   useUsagePluginTheme,
+  useUsageSessionRows,
   type UsageBodyProps,
 } from './usageBodyKit';
 import {
@@ -72,9 +70,6 @@ function UsageParallelWidgetOriginal(props: UsageBodyProps) {
   const agentColor = useUsageAgentColor();
   const chartTheme = useUsagePluginTheme();
   const width = useWidgetPresentation()?.geometry?.width;
-  const sessionHomes = React.useMemo(() => [props.serverId], [props.serverId]);
-  const sessionRows = useSessionListRowsByServerId(sessionHomes);
-  const sessions = sessionRows[props.serverId];
   const isSessionVisible = useSessionRecordingVisibility();
   // Lanes consume display names, never daemon runtime/presence: select the names so
   // live resource publications cannot re-render the chart.
@@ -86,6 +81,11 @@ function UsageParallelWidgetOriginal(props: UsageBodyProps) {
       ? null
       : (howYouWork?.todayInParallel ?? null);
   const lanes = howYouWork?.intervals?.lanes;
+  const sessionIds = React.useMemo(() => today ? (lanes ?? []).flatMap(lane => {
+    const id = readUsageWorkSessionId(lane.workId);
+    return id === null ? [] : [id];
+  }) : [], [lanes, today]);
+  const sessions = useUsageSessionRows(props.serverId, sessionIds);
   const groups = React.useMemo(
     () =>
       today && lanes

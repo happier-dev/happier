@@ -7,6 +7,7 @@ import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { act, type ReactTestInstance } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDeferred, renderHook as renderBareHook, renderScreen as renderBareScreen, standardCleanup } from '@/dev/testkit';
+import { createCommittedFiberRenderCounter, readTestRendererRoot } from '@/dev/testkit/performance/committedFiberCounts';
 import { createMountedCurrentUiContextWrapper } from '@/dev/testkit/harness/mountedCurrentUiContext';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
@@ -57,7 +58,7 @@ import { getMachineContributionRegistryProjectionRevision } from '@/sync/ops/mac
 import { UsageWorkMarks, UsageWorkSectionTitle, usageWorkLinksNotice } from './UsageWorkParts';
 import { usageAgentTitle, usageSourceTitle } from '@/sync/domains/usage/usageLabels';
 import { UsageSessionValueWidget } from './UsageSessionValueWidget';
-import { UsageSessionPageHost } from './usageBodyKit';
+import { UsageSessionPageHost, useUsageSessionRows } from './usageBodyKit';
 import { UsageWorkAutopsy } from './UsageWorkAutopsy';
 import { UsageHumanLoopWidget } from './UsageHumanLoopWidget';
 import { UsageParallelWidget } from './UsageParallelWidget';
@@ -76,6 +77,7 @@ import { WidgetPresentationProvider } from '@happier-dev/plugin-ui';
 import { resolveUsageHowYouWork } from '@happier-dev/protocol/usage/resolveUsageHowYouWork';
 import { buildProviderAccountUsageRecordId, ProviderAccountUsageSnapshotV1Schema } from '@happier-dev/protocol/connect/account-usage-primitives';
 import { projectProviderAccountUsageQuotaReadV1 } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
+import { buildProjectAccountRowPhysicalKeyV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
 import { createProjectAccountRowsSync } from '@/sync/engine/projects/projectAccountRowsSync';
 import { WidgetFrameBodyCaptionContext } from '@/components/widgets/frame/widgetFrameBodyCaption';
@@ -324,6 +326,127 @@ describe('Work and Coach widget bodies', () => {
     }
   });
 
+  it('commits once per mounted Work body for a displayed Session change and stays quiet otherwise', async () => {
+    const serverId = actionHome!.homes.work!.id;
+    const previous = storage.getState();
+    const homeProps = { ...props, serverId };
+    const original = createSessionListRenderableSessionFixture({ id: 's1', metadataVersion: 1,
+      metadata: { name: 'Original Work Session', path: '/work', machineId: 'machine', host: 'original-work-host' } });
+    const publish = (...rows: (typeof original)[]) =>
+      storage.getState().applyServerScopedSessionListRows(serverId, rows, { source: 'rowOnly', mode: 'append' });
+    storage.setState({ machineDisplayById: {}, machines: {} });
+    publish(original);
+    const commits = { ledger: 0, value: 0, outcomes: 0, autopsy: 0 };
+    const screen = await renderScreen(<>
+      <React.Profiler id="ledger" onRender={() => { commits.ledger++; }}>
+        <UsageProjectLedgerWidget {...homeProps} id="usage_project_ledger" testID="quiet-ledger" />
+      </React.Profiler>
+      <React.Profiler id="value" onRender={() => { commits.value++; }}>
+        <UsageSessionValueWidget {...homeProps} id="usage_session_value" testID="quiet-value" />
+      </React.Profiler>
+      <React.Profiler id="outcomes" onRender={() => { commits.outcomes++; }}>
+        <UsageOutcomesWidget {...homeProps} id="usage_outcomes" testID="quiet-outcomes" />
+      </React.Profiler>
+      <React.Profiler id="autopsy" onRender={() => { commits.autopsy++; }}>
+        <UsageWorkAutopsy {...homeProps} query={normalizeUsageQuery({ ...query, session: 's1' })} testID="quiet-autopsy" />
+      </React.Profiler>
+    </>);
+    try {
+      await screen.pressByTestIdAsync('quiet-ledger.project.p1.toggle');
+      await screen.pressByTestIdAsync(`quiet-outcomes.pr.${work.outcomes[0]!.key}.toggle`);
+      const linkedRows = () => [
+        screen.findByTestId('quiet-ledger.project.p1.session.open.s1')?.props.accessibilityLabel,
+        screen.findByTestId(`quiet-outcomes.pr.${work.outcomes[0]!.key}.session.open.s1`)?.props.accessibilityLabel,
+      ];
+      const sessionValue = () => screen.findByTestId('quiet-value.open.s1')?.props.accessibilityLabel;
+      const autopsyShows = (host: string) => screen.findByTestId('quiet-autopsy.summary')!
+        .findAll(node => node.children.some(child => typeof child === 'string' && child.includes(host))).length > 0;
+      for (const label of [...linkedRows(), sessionValue()]) expect.soft(label).toContain('Original Work Session');
+      expect.soft(autopsyShows('original-work-host')).toBe(true);
+
+      const before = { ...commits };
+      for (let i = 0; i < 10; i++) {
+        await act(async () => publish(createSessionListRenderableSessionFixture({ id: `offscreen-${i}` })));
+      }
+      expect.soft(commits).toEqual(before);
+      await act(async () => publish({ ...original, metadataVersion: 2,
+        metadata: { ...original.metadata!, name: 'Renamed Work Session', host: 'renamed-work-host' } }));
+      for (const label of [...linkedRows(), sessionValue()]) expect.soft(label).toContain('Renamed Work Session');
+      expect.soft(autopsyShows('renamed-work-host')).toBe(true);
+      expect({
+        ledger: commits.ledger - before.ledger,
+        value: commits.value - before.value,
+        outcomes: commits.outcomes - before.outcomes,
+        autopsy: commits.autopsy - before.autopsy,
+      }).toEqual({ ledger: 1, value: 1, outcomes: 1, autopsy: 1 });
+    } finally {
+      await screen.unmount();
+      storage.setState(previous, true);
+    }
+  });
+
+  it('skips demanded Session ids on disjoint row deltas and rereads when the delta is unknown', async () => {
+    const serverId = actionHome!.homes.work!.id;
+    const previous = storage.getState();
+    const displayed = createSessionListRenderableSessionFixture({ id: 'demanded', metadataVersion: 1,
+      metadata: { name: 'Original', path: '/work' } });
+    const demand = [displayed.id, 'other-demand'];
+    const publish = (...rows: (typeof displayed)[]) =>
+      storage.getState().applyServerScopedSessionListRows(serverId, rows, { source: 'rowOnly', mode: 'append' });
+    publish(displayed, createSessionListRenderableSessionFixture({ id: 'other-demand' }));
+    let readCountForPublication = () => 0;
+    // Measure the fresh bucket before the hook reads it. The producer's copy of the previous bucket
+    // increments the previous publication's counter, so it does not count as selector work.
+    const unsubscribe = storage.subscribe((state, previousState) => {
+      const bucket = state.sessionListRowsByServerId[serverId];
+      if (!bucket || bucket === previousState.sessionListRowsByServerId[serverId]) return;
+      let reads = 0;
+      for (const id of demand) {
+        const row = bucket[id];
+        if (row) Object.defineProperty(bucket, id, {
+          configurable: true, enumerable: true,
+          get() { reads++; return row; },
+        });
+      }
+      readCountForPublication = () => reads;
+    });
+    const hook = await renderHook(() => useUsageSessionRows(serverId, demand));
+    try {
+      expect(hook.getCurrent()[displayed.id]?.metadata?.name).toBe('Original');
+      let demandedReads = 0;
+      const firstRevision = storage.getState().sessionListRenderableDelta.revision;
+      for (let i = 0; i < 10; i++) {
+        const unrelated = createSessionListRenderableSessionFixture({ id: `unrelated-${i}` });
+        await act(async () => publish(unrelated));
+        expect(storage.getState().sessionListRenderableDelta.changedSessionIds).toEqual([unrelated.id]);
+        demandedReads += readCountForPublication();
+      }
+      expect(storage.getState().sessionListRenderableDelta.revision).toBe(firstRevision + 10);
+      expect.soft(demandedReads).toBe(0);
+
+      const renamed = { ...displayed, metadataVersion: 2, metadata: { ...displayed.metadata!, name: 'Renamed' } };
+      await act(async () => publish(renamed));
+      expect(hook.getCurrent()[displayed.id]?.metadata?.name).toBe('Renamed');
+      await act(async () => storage.setState(state => ({
+        sessionListRowsByServerId: { ...state.sessionListRowsByServerId, [serverId]: {} },
+      })));
+      expect(hook.getCurrent()[displayed.id]).toBeUndefined();
+      await act(async () => {
+        publish(renamed);
+        storage.getState().applyServerScopedSessionListRows(serverId,
+          [createSessionListRenderableSessionFixture({ id: 'ordinary' })], { source: 'ordinary', mode: 'append' });
+      });
+      expect(hook.getCurrent()[displayed.id]?.metadata?.name).toBe('Renamed');
+      await act(async () => storage.getState().clearSessionListRowsForServerScope(serverId));
+      expect(storage.getState().sessionListRenderableDelta.removedSessionIds).toContain('ordinary');
+      expect(hook.getCurrent()[displayed.id]).toBeUndefined();
+    } finally {
+      unsubscribe();
+      await hook.unmount();
+      storage.setState(previous, true);
+    }
+  });
+
   it('conceals hidden Work Session labels and restores them after sharing without changing the drill target', async () => {
     const previous = storage.getState();
     const serverId = actionHome!.homes.work!.id;
@@ -333,12 +456,26 @@ describe('Work and Coach widget bodies', () => {
     storage.setState({ sessionListRowsByServerId: { [serverId]: { [row.id]: row } } });
     storage.getState().applySettingsLocal({ sessionListHiddenTagIdsWhileRecording: { [serverId]: ['private'] } });
     storage.getState().setSessionTagAssignmentsOptimistic(serverId, row.id, ['private']);
-    const hook = await renderHook(() => useUsageWork(slice, query, serverId));
+    let workRenders = 0;
+    const hook = await renderHook(() => {
+      workRenders++;
+      return useUsageWork(slice, query, serverId);
+    });
     try {
       expect(hook.getCurrent().sessionLabel('s1')).toBe('Private usage project');
+      const before = workRenders;
+      for (let i = 0; i < 10; i++) {
+        await act(async () => {
+          const rows = storage.getState().sessionListRowsByServerId;
+          const unrelated = createSessionListRenderableSessionFixture({ id: `other-${i}` });
+          storage.setState({ sessionListRowsByServerId: { ...rows,
+            [serverId]: { ...rows[serverId], [unrelated.id]: unrelated } } });
+        });
+      }
+      expect.soft(workRenders - before, 'Work renders for 10 unrelated Session rows').toBe(0);
       await act(async () => { setScreenSharingPrivacyActive(true); });
       expect(hook.getCurrent().sessionLabel('s1')).toBe(t('session.untitled'));
-      hook.getCurrent().openSession('s1');
+      await act(async () => { hook.getCurrent().openSession('s1'); });
       expect(vi.mocked(router.push).mock.calls.at(-1)?.[0]).toContain('/session/s1/usage');
       await act(async () => { setScreenSharingPrivacyActive(false); });
       expect(hook.getCurrent().sessionLabel('s1')).toBe('Private usage project');
@@ -348,26 +485,50 @@ describe('Work and Coach widget bodies', () => {
   it('conceals hidden parallel timeline Session labels while retaining the measured intervals', async () => {
     const previous = storage.getState();
     const server = actionHome!.homes.work!;
-    const row = createSessionListRenderableSessionFixture({ id: 's1', metadata: {
+    const row = createSessionListRenderableSessionFixture({ id: 's1', metadataVersion: 1, metadata: {
       name: 'Private parallel project', path: '/private-parallel', host: 'host', machineId: 'machine',
     } });
-    storage.setState({ sessionListRowsByServerId: { [server.id]: { [row.id]: row } } });
+    const publish = (...rows: (typeof row)[]) =>
+      storage.getState().applyServerScopedSessionListRows(server.id, rows, { source: 'rowOnly', mode: 'append' });
+    publish(row);
     storage.getState().applySettingsLocal({ sessionListHiddenTagIdsWhileRecording: { [server.id]: ['private'] } });
     storage.getState().setSessionTagAssignmentsOptimistic(server.id, row.id, ['private']);
     const howYouWork = resolveUsageHowYouWork({ period: { startMs: 0, endMs: 1000 }, timeZoneOffsetMinutes: 0, nowMs: 500,
       detail: { status: 'available', facts: [{ workId: JSON.stringify(['s1', 't1']), evidenceId: 't1', agentId: 'claude',
         machineId: 'machine', kind: 'busy', startMs: 10, endMs: 800 }] } });
-    const screen = await renderScreen(<UsageParallelWidget {...props} serverId={server.id} slice={{ ...slice, howYouWork }}
-      presentation={{ style: 'timeline' }} id="usage_parallel" testID="private-parallel" />);
+    const timelineCounts = createCommittedFiberRenderCounter();
+    let readRoot: ReturnType<typeof readTestRendererRoot> | undefined;
+    const screen = await renderScreen(<React.Profiler id="parallel" onRender={() => { if (readRoot) timelineCounts.onCommitRoot(readRoot()); }}>
+      <UsageParallelWidget {...props} serverId={server.id} slice={{ ...slice, howYouWork }}
+        presentation={{ style: 'timeline' }} id="usage_parallel" testID="private-parallel" />
+    </React.Profiler>);
+    readRoot = readTestRendererRoot(screen.tree.root);
+    const body = screen.findAllByType(UsageParallelWidget)[0]!.children.find(
+      (child): child is ReactTestInstance => typeof child !== 'string',
+    )!;
     const intervals = () => screen.findAllByType(IntervalTimeline)[0]!.props.intervals;
     try {
+      await act(async () => {});
       expect(JSON.stringify(intervals())).toContain('Private parallel project');
       const count = intervals().length;
+      timelineCounts.start();
+      for (let i = 0; i < 10; i++) {
+        await act(async () => publish(createSessionListRenderableSessionFixture({ id: `other-${i}` })));
+      }
+      expect.soft(timelineCounts.read().commitsFor(body.type), 'body commits for ten unrelated Session rows').toBe(0);
+      expect.soft(timelineCounts.read().commitsFor(IntervalTimeline), 'chart commits for ten unrelated Session rows').toBe(0);
+      timelineCounts.start();
+      await act(async () => publish({ ...row, metadataVersion: 2,
+        metadata: { ...row.metadata!, name: 'Renamed parallel project' } }));
+      expect.soft(timelineCounts.read().commitsFor(body.type), 'body commits for one published rename').toBe(1);
+      expect.soft(timelineCounts.read().commitsFor(IntervalTimeline), 'chart commits for one published rename').toBe(1);
+      timelineCounts.stop();
+      expect(JSON.stringify(intervals())).toContain('Renamed parallel project');
       await act(async () => { setScreenSharingPrivacyActive(true); });
-      expect(JSON.stringify(intervals())).not.toContain('Private parallel project');
+      expect(JSON.stringify(intervals())).not.toContain('Renamed parallel project');
       expect(intervals()).toHaveLength(count);
       await act(async () => { setScreenSharingPrivacyActive(false); });
-      expect(JSON.stringify(intervals())).toContain('Private parallel project');
+      expect(JSON.stringify(intervals())).toContain('Renamed parallel project');
     } finally { setScreenSharingPrivacyActive(false); await screen.unmount(); storage.setState(previous, true); }
   });
 
@@ -1070,6 +1231,86 @@ describe('Work and Coach widget bodies', () => {
       storage.setState(previous, true);
     }
   });
+  it('renders the Usage Project anchor only when a checkout joins a Project', async () => {
+    const { WorkspaceRefV1Schema } = await import('@/sync/domains/workspaces/workspaceRefModel');
+    const { useUsageProjectAnchorOf } = await import('./usageBodyKit');
+    const previous = storage.getState();
+    const scope = { serverId: actionHome!.homes.work!.id, accountId: 'work-account' };
+    const rows = { scope, status: 'ready' as const, coverage: 'complete' as const,
+      relationships: [], revisionsByPhysicalKey: {}, organizations: [] };
+    const checkout = WorkspaceRefV1Schema.parse({ id: 'checkout', serverId: scope.serverId,
+      machineId: 'machine', rootPath: '/checkout', createdAtMs: 0 });
+    storage.setState({ profileScope: scope, projectAccountRows: { ...rows, workspaceRefs: [] } });
+    let renders = 0;
+    const hook = await renderHook(() => {
+      renders++;
+      return useUsageProjectAnchorOf(scope.serverId);
+    });
+    try {
+      const before = renders;
+      for (let i = 0; i < 10; i++) {
+        await act(async () => storage.setState({ projectAccountRows: { ...rows,
+          workspaceRefs: [{ ...checkout, createdAtMs: i }] } }));
+      }
+      expect.soft(renders - before).toBe(0);
+      expect(hook.getCurrent().resolve(checkout.id)).toBe(checkout.id);
+      await act(async () => storage.setState({ projectAccountRows: { ...rows,
+        workspaceRefs: [{ ...checkout, projectKey: 'joined-project' }] } }));
+      expect(hook.getCurrent().resolve(checkout.id)).toBe('joined-project');
+      expect(renders - before).toBe(1);
+    } finally {
+      await hook.unmount();
+      storage.setState({ profileScope: previous.profileScope, projectAccountRows: previous.projectAccountRows });
+    }
+  });
+
+  it('keeps Usage Project joins and options quiet through revision-only census publications', async () => {
+    const { WorkspaceRefV1Schema } = await import('@/sync/domains/workspaces/workspaceRefModel');
+    const { useUsageProjectAnchorOf, useUsageProjectOptionFacts } = await import('./usageBodyKit');
+    const previous = storage.getState();
+    const scope = { serverId: actionHome!.homes.work!.id, accountId: 'work-account' };
+    const checkout = WorkspaceRefV1Schema.parse({ id: 'checkout', serverId: scope.serverId,
+      projectKey: 'project', machineId: 'machine', rootPath: '/checkout', createdAtMs: 0 });
+    const rows = { scope, status: 'ready' as const, coverage: 'complete' as const,
+      relationships: [], revisionsByPhysicalKey: {}, organizations: [], workspaceRefs: [checkout] };
+    let renders = 0;
+    const hook = await renderHook(() => {
+      renders++;
+      return { anchor: useUsageProjectAnchorOf(scope.serverId), options: useUsageProjectOptionFacts(scope.serverId) };
+    });
+    try {
+      const publish = (next: typeof rows) => storage.getState().applyProjectAccountRowsForScope(scope, next);
+      await act(async () => {
+        storage.setState({ profileScope: scope });
+        storage.getState().activateProjectAccountRowsScope(scope);
+        publish(rows);
+      });
+      const refs = storage.getState().projectAccountRows!.workspaceRefs;
+      const filter = vi.spyOn(refs, 'filter');
+      try {
+        expect(hook.getCurrent().anchor.resolve(checkout.id)).toBe('project');
+        expect(hook.getCurrent().options?.get('project')?.machineIds).toEqual(['machine']);
+        const before = renders;
+        const checkoutKey = buildProjectAccountRowPhysicalKeyV1({ kind: 'workspace-ref', serverId: scope.serverId, id: checkout.id });
+        for (let i = 0; i < 10; i++) {
+          await act(async () => publish({ ...rows, revisionsByPhysicalKey: { [checkoutKey]: i } }));
+          expect(storage.getState().projectAccountRows?.workspaceRefs).toBe(refs);
+        }
+        expect(storage.getState().projectAccountRows?.revisionsByPhysicalKey[checkoutKey]).toBe(9);
+        expect.soft(filter).not.toHaveBeenCalled();
+        expect.soft(renders - before).toBe(0);
+        await act(async () => publish({ ...rows, workspaceRefs: [{ ...checkout, projectKey: 'moved-project', machineId: 'moved-machine' }],
+          revisionsByPhysicalKey: { [checkoutKey]: 10 } }));
+        expect(hook.getCurrent().anchor.resolve(checkout.id)).toBe('moved-project');
+        expect(hook.getCurrent().options?.get('moved-project')?.machineIds).toEqual(['moved-machine']);
+        expect(renders - before).toBe(1);
+      } finally { filter.mockRestore(); }
+    } finally {
+      await hook.unmount();
+      storage.setState({ profileScope: previous.profileScope, projectAccountRows: previous.projectAccountRows });
+    }
+  });
+
   it('keeps managed Project names without inventing a Machine identity', async () => {
     const { WorkspaceRefV1Schema } = await import('@/sync/domains/workspaces/workspaceRefModel');
     const previous = storage.getState();
