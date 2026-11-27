@@ -287,7 +287,8 @@ export function createMachineStorageStore(clients: MachineStorageClients) {
             if (report) summaries.publish(input, { kind: 'summary_overlay', summary: { ...report, pile: page.summary } });
             return retainDeep(current, { status: 'ready', page: reconcilePile(current.page, page), pending: !!queue?.writes.length });
         },
-        failRefresh: state => retainDeep(state, { ...state, status: 'error' }), applySnapshot: (_state, update) => update,
+        failRefresh: state => retainDeep(state, { status: 'error', page: state.page, pending: state.pending }),
+        applySnapshot: (_state, update) => update,
     });
     const publishPile = (input: MachineStorageKey, base: MachineStoragePileView) => {
         const page = projectPile(input, base);
@@ -367,12 +368,10 @@ export function createMachineStorageStore(clients: MachineStorageClients) {
     async function setPile(input: MachineStoragePileSetInput): Promise<MachineStorageResult<MachineStoragePileResultV1>> {
         const key = machineKey(input);
         if (!piles.getState(input).page) await piles.read(input);
-        const page = piles.getState(input).page;
+        const { page, failure } = piles.getState(input);
         if (input.signal?.aborted) return { ok: false, reason: 'request_failed' };
         if (!page) {
-            const status = piles.getState(input).status;
-            const response: MachineStorageResult<MachineStoragePileResultV1> = { ok: false,
-                reason: status === 'not_reported' ? 'older_happier' : status === 'policy_unavailable' ? 'policy_unavailable' : 'request_failed' };
+            const response: MachineStorageFailure = failure ?? { ok: false, reason: 'request_failed' };
             reportPolicyFailure(input, response);
             return response;
         }

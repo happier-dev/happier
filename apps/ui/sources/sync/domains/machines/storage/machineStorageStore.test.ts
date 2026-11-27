@@ -746,11 +746,27 @@ describe('machine storage subscription owner', () => {
         release(); releaseCategory(); h.store.reset();
     });
 
+    it('returns the typed pile-read refusal when a write cannot load its prerequisite', async () => {
+        const h = harness();
+        boundary.reply.mockImplementation(async (action: string) => {
+            if (action === 'machines.storage.pile.get') return {
+                ok: false, errorCode: 'policy_unavailable', error: 'Storage policy is unavailable',
+            };
+            throw new Error(`Unexpected storage Action: ${action}`);
+        });
+
+        expect(await h.store.setPile({ ...key, clear: true })).toMatchObject({
+            ok: false, reason: 'policy_unavailable', errorCode: 'policy_unavailable',
+        });
+        expect(h.store.getPile(key).status).toBe('policy_unavailable');
+        expect(boundary.reply.mock.calls.map(([action]) => action)).toEqual(['machines.storage.pile.get']);
+    });
+
     it('keeps older-daemon pile mutation unavailable without hiding its supported summary', async () => {
         const h = harness();
         await h.store.read(key);
         boundary.reply.mockImplementation(async (action: string) => action === 'machines.storage.pile.get' ? unavailable : success(summary()));
-        expect(await h.store.setPile({ ...key, clear: true })).toEqual({ ok: false, reason: 'older_happier' });
+        expect(await h.store.setPile({ ...key, clear: true })).toMatchObject({ ok: false, reason: 'older_happier' });
         expect(h.store.getState(key).status).toBe('ready');
         expect(boundary.reply.mock.calls.some(([action]) => action === 'machines.storage.pile.set')).toBe(false);
     });
