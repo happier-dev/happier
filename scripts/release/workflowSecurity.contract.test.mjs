@@ -230,6 +230,16 @@ const exceptions = {
   'release-source-validation.yml/ci': { rules: ['actor-admission'], reason: 'Public exact-source CI verification with a read-only token.', matches: publicReadJob },
   'release-verify.yml/verify_candidate_identity': { rules: ['actor-admission'], reason: 'Public signed candidate verification with a read-only token.', matches: publicReadJob },
   'resolve-release-resume.yml/resolve': { rules: ['actor-admission'], reason: 'Public prior-run and digest verification with a read-only token.', matches: publicReadJob },
+  'perf-comment-v0-3.yml/comment': {
+    rules: ['trusted-control', 'actor-admission'],
+    reason: 'Owner W2 (2026-11-18): report-only sticky PR comment from trusted default-branch control; the head run identity only selects the open pull request, and its artifact is read as data.',
+    matches: (workflow, job) => Object.keys(events(workflow)).join() === 'workflow_run'
+      && !hasSecrets({ env: workflow.env, job }) && job.environment === undefined && job.permissions === undefined
+      && JSON.stringify(workflow.permissions) === JSON.stringify({ contents: 'read', actions: 'read', 'pull-requests': 'write' })
+      && trustedCheckouts(job)
+      && job.steps.every((step) => !String(step.run ?? '').includes('${{'))
+      && !/workflow_run\.head_/.test(JSON.stringify(job.steps.map(({ env: _env, ...step }) => step))),
+  },
 };
 
 async function securityViolations(workflows, rule, options = {}) {
@@ -272,7 +282,7 @@ async function securityViolations(workflows, rule, options = {}) {
       }
       if (rule === 'trusted-control' && Object.keys(events(workflow))
         .some((event) => ['pull_request_target', 'workflow_run', 'issue_comment', 'issues'].includes(event))) {
-        if (/github\.event\.(?:pull_request\.(?:head|merge)|workflow_run\.head_)/.test(JSON.stringify(job))) {
+        if (!allowed && /github\.event\.(?:pull_request\.(?:head|merge)|workflow_run\.head_)/.test(JSON.stringify(job))) {
           violations.push(`${label}: untrusted event head reaches trusted control`);
         }
         for (const step of job.steps ?? []) {

@@ -901,9 +901,9 @@ jobs:
 
   # v0.3 pushes run only the journey tests whose import graph reaches the
   # change (pnpm test:affected, Vitest related mode): e2e-core selects its own
-  # core-e2e files, and this job shards the selected ui-e2e specs. The full
-  # suites run nightly through tests-dispatch.yml on v0.3 (scheduled from the
-  # default branch). Informational: not part of the Gate verdict.
+  # core-e2e files, and this job shards the selected ui-e2e specs. The scheduled
+  # run executes the full suites (e2e-core, e2e-core-slow, ui-e2e, daemon and
+  # unit lanes). Informational: not part of the Gate verdict.
   journey-select:
     name: Journeys — select tests reaching the change
     needs: [gate-prepare]
@@ -1207,7 +1207,7 @@ jobs:
     runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2204 }}
     timeout-minutes: 120
     outputs:
-      command_executed: ${{ inputs.select_jobs_explicitly || steps.changes.outputs.ui_e2e == 'true' }}
+      command_executed: ${{ inputs.select_jobs_explicitly || github.event_name == 'schedule' || steps.changes.outputs.ui_e2e == 'true' }}
     env:
       # UI E2E boots Expo web; keep web assets available to avoid CI-only runtime surprises.
       HAPPIER_UI_VENDOR_WEB_ASSETS: "1"
@@ -1218,7 +1218,8 @@ jobs:
 
       - name: Detect UI E2E-relevant changes
         id: changes
-        if: ${{ !inputs.select_jobs_explicitly }}
+        # A schedule has no push or pull-request base to compare; it runs every shard.
+        if: ${{ !inputs.select_jobs_explicitly && github.event_name != 'schedule' }}
         uses: dorny/paths-filter@v3
         with:
           filters: |
@@ -1241,19 +1242,19 @@ jobs:
               - 'pnpm-workspace.yaml'
 
       - name: Skip UI E2E (no relevant changes)
-        if: ${{ !inputs.select_jobs_explicitly && steps.changes.outputs.ui_e2e != 'true' }}
+        if: ${{ !inputs.select_jobs_explicitly && github.event_name != 'schedule' && steps.changes.outputs.ui_e2e != 'true' }}
         run: |
           echo "UI E2E skipped: no relevant changes."
 
       - name: Setup Node
-        if: inputs.select_jobs_explicitly || steps.changes.outputs.ui_e2e == 'true'
+        if: inputs.select_jobs_explicitly || github.event_name == 'schedule' || steps.changes.outputs.ui_e2e == 'true'
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version-file: .node-version
 
 
       - name: Install dependencies
-        if: inputs.select_jobs_explicitly || steps.changes.outputs.ui_e2e == 'true'
+        if: inputs.select_jobs_explicitly || github.event_name == 'schedule' || steps.changes.outputs.ui_e2e == 'true'
         env:
           npm_config_production: "false"
         uses: ./.github/actions/install-pnpm-dependencies
@@ -1261,11 +1262,11 @@ jobs:
           args: --frozen-lockfile
 
       - name: Install Playwright browsers
-        if: inputs.select_jobs_explicitly || steps.changes.outputs.ui_e2e == 'true'
+        if: inputs.select_jobs_explicitly || github.event_name == 'schedule' || steps.changes.outputs.ui_e2e == 'true'
         run: npx playwright install --with-deps chromium
 
       - name: Install sqlite3 (if missing)
-        if: inputs.select_jobs_explicitly || steps.changes.outputs.ui_e2e == 'true'
+        if: inputs.select_jobs_explicitly || github.event_name == 'schedule' || steps.changes.outputs.ui_e2e == 'true'
         run: |
           if command -v sqlite3 >/dev/null 2>&1; then
             sqlite3 --version
@@ -1276,7 +1277,7 @@ jobs:
           sqlite3 --version
 
       - name: Run UI E2E
-        if: inputs.select_jobs_explicitly || steps.changes.outputs.ui_e2e == 'true'
+        if: inputs.select_jobs_explicitly || github.event_name == 'schedule' || steps.changes.outputs.ui_e2e == 'true'
         run: |
           set -euo pipefail
           if [ -z "$UI_E2E_SPECS" ]; then
@@ -1306,11 +1307,11 @@ jobs:
           pnpm run test:e2e:ui -- "${specs[@]}"
 
       - name: Run dedicated Voice UI E2E
-        if: (inputs.select_jobs_explicitly || steps.changes.outputs.ui_e2e == 'true') && matrix.shard == 1 && env.UI_E2E_SPECS == ''
+        if: (inputs.select_jobs_explicitly || github.event_name == 'schedule' || steps.changes.outputs.ui_e2e == 'true') && matrix.shard == 1 && env.UI_E2E_SPECS == ''
         run: pnpm run test:e2e:ui:voice
 
       - name: Upload UI E2E artifacts (Playwright)
-        if: (inputs.select_jobs_explicitly || steps.changes.outputs.ui_e2e == 'true') && failure()
+        if: (inputs.select_jobs_explicitly || github.event_name == 'schedule' || steps.changes.outputs.ui_e2e == 'true') && failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: ${{ inputs.artifact_namespace != '' && format('{0}-', inputs.artifact_namespace) || '' }}ui-e2e-playwright-artifacts-shard-${{ matrix.shard }}-of-18
@@ -3493,7 +3494,8 @@ jobs:
           path: .project/logs/e2e
 
   e2e-core-slow:
-    if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (inputs.select_jobs_explicitly && inputs.run_e2e_core_slow) }}
+    # Explicit selections, and this workflow's own nightly schedule (a scheduled caller selects explicitly).
+    if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && ((inputs.select_jobs_explicitly && inputs.run_e2e_core_slow) || (!inputs.select_jobs_explicitly && github.event_name == 'schedule')) }}
     needs: [trusted_ref_guard]
     name: Core E2E (slow, packages/tests, server-light, sqlite)
     runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2204 }}

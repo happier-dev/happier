@@ -1,0 +1,92 @@
+name: CI — v0.3 web boot weight PR comment
+
+# Owner ruling 2026-11-18 (W2): one sticky base-versus-head web boot weight comment per
+# pull request into v0.3. workflow_run fires only from the default branch, so this file
+# lives on the default branch. It is the only workflow with comment-write permission and it never runs
+# pull-request code: it checks out its own trusted default-branch commit for the renderer and
+# reads the PR run's perf-web-boot-weight artifact as data. The head run's identity is only
+# matched against open pull requests; it is never checked out or interpolated into shell. The renderer accepts only
+# plain measurement data. Growth is reported, never blocking.
+on:
+  workflow_run:
+    workflows: ["CI — Tests"]
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: write
+
+jobs:
+  comment:
+    name: Update the web boot weight comment
+    if: ${{ github.event.workflow_run.event == 'pull_request' }}
+    runs-on: ubuntu-24.04
+    # A handful of API calls and one small render; GitHub's job limit is the hang guard otherwise.
+    timeout-minutes: 10
+    steps:
+      - name: Resolve the open pull request into v0.3 at this exact head
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_OWNER: ${{ github.event.workflow_run.head_repository.owner.login }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          set -euo pipefail
+          pr="$(gh api -X GET "repos/$GITHUB_REPOSITORY/pulls" -f state=open -f base=v0.3 -f head="$HEAD_OWNER:$HEAD_BRANCH" \
+            --jq "[.[] | select(.head.sha == \"$HEAD_SHA\")][0] // empty | \"\(.number) \(.base.sha)\"")"
+          if [ -z "$pr" ]; then
+            echo "No open v0.3 pull request at $HEAD_SHA (closed, other base, or the head moved); nothing to update."
+            exit 0
+          fi
+          read -r number base_sha <<< "$pr"
+          echo "number=$number" >> "$GITHUB_OUTPUT"
+          echo "base_sha=$base_sha" >> "$GITHUB_OUTPUT"
+      - name: Checkout the trusted renderer
+        if: ${{ steps.pr.outputs.number != '' }}
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Setup Node
+        if: ${{ steps.pr.outputs.number != '' }}
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .node-version
+      - name: Download head and exact-base measurements
+        if: ${{ steps.pr.outputs.number != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_RUN_ID: ${{ github.event.workflow_run.id }}
+          BASE_SHA: ${{ steps.pr.outputs.base_sha }}
+        run: |
+          set -euo pipefail
+          gh run download "$HEAD_RUN_ID" --repo "$GITHUB_REPOSITORY" -n perf-web-boot-weight -D "$RUNNER_TEMP/head" \
+            || echo "::notice::The PR run published no web boot weight."
+          base_run="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/tests.yml/runs?event=push&head_sha=$BASE_SHA&per_page=20" \
+            --jq '[.workflow_runs[] | select(.head_branch == "v0.3")][0].id // empty')"
+          if [ -n "$base_run" ]; then
+            gh run download "$base_run" --repo "$GITHUB_REPOSITORY" -n perf-web-boot-weight -D "$RUNNER_TEMP/base" \
+              || echo "::notice::Exact-base run $base_run published no web boot weight."
+          fi
+      - name: Render and update the sticky comment
+        if: ${{ steps.pr.outputs.number != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUMBER: ${{ steps.pr.outputs.number }}
+        run: |
+          set -euo pipefail
+          if [ ! -f "$RUNNER_TEMP/head/web-boot-weight.json" ]; then exit 0; fi
+          node scripts/pipeline/perf/web-boot-weight.mjs --candidate "$RUNNER_TEMP/head/web-boot-weight.json" \
+            --baseline "$RUNNER_TEMP/base/web-boot-weight.json" --summary "$RUNNER_TEMP/comment.md"
+          marker='<!-- happier-web-boot-weight -->'
+          existing="$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$NUMBER/comments" \
+            --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\"))) | .id" | head -n 1)"
+          if [ -n "$existing" ]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$existing" -F body=@"$RUNNER_TEMP/comment.md" > /dev/null
+          else
+            gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$NUMBER/comments" -F body=@"$RUNNER_TEMP/comment.md" > /dev/null
+          fi

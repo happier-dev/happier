@@ -198,7 +198,10 @@ test('reusable tests callers explicitly select jobs without inheriting caller ev
       withoutV03GateSkip(parsed?.jobs?.[job]?.if),
       job === 'self-host-schtasks-e2e'
         ? "${{ (inputs.select_jobs_explicitly && inputs.run_self_host_schtasks) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_self_host_schtasks == 'true') }}"
-        : `\${{ inputs.select_jobs_explicitly && inputs.${input} }}`,
+        : job === 'e2e-core-slow'
+          // This workflow's own nightly schedule runs the full journeys; a scheduled caller selects explicitly.
+          ? "${{ (inputs.select_jobs_explicitly && inputs.run_e2e_core_slow) || (!inputs.select_jobs_explicitly && github.event_name == 'schedule') }}"
+          : `\${{ inputs.select_jobs_explicitly && inputs.${input} }}`,
       `${job} must honor explicit reusable inputs even when GitHub preserves the caller event`,
     );
   }
