@@ -73,6 +73,11 @@ on:
         description: "Type exactly: promote <target> from <source> (or: reset <target> from <source>)"
         required: true
         type: string
+      preserve_target_descendant:
+        description: "Synchronization only: retain newer target commits when the candidate is already included"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -257,9 +262,13 @@ jobs:
           INPUT_DRY_RUN: ${{ inputs.dry_run }}
           INPUT_ALLOW_RESET: ${{ inputs.allow_reset }}
           INPUT_CONFIRM: ${{ inputs.confirm }}
+          INPUT_PRESERVE_TARGET_DESCENDANT: ${{ inputs.preserve_target_descendant == true }}
         run: |
           set -euo pipefail
           run_promote_branch() {
+            if [ "$INPUT_PRESERVE_TARGET_DESCENDANT" = "true" ]; then
+              set -- "$@" --preserve-target-descendant
+            fi
             node scripts/pipeline/run.mjs promote-branch \
               --source "$INPUT_SOURCE" \
               "$@" \

@@ -3,6 +3,7 @@
 import { parseArgs } from 'node:util';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import { resolveAuthorizedReleaseSource } from './resolve-authorized-release-source.mjs';
 
 const FULL_GIT_SHA = /^[0-9a-f]{40}$/;
 
@@ -150,7 +151,7 @@ function appendSummary(filePath, markdown) {
   fs.appendFileSync(filePath, markdown, 'utf8');
 }
 
-function main() {
+async function main() {
   const { values } = parseArgs({
     options: {
       source: { type: 'string' },
@@ -159,6 +160,7 @@ function main() {
       mode: { type: 'string' },
       'dry-run': { type: 'boolean', default: false },
       'allow-reset': { type: 'string', default: 'false' },
+      'preserve-target-descendant': { type: 'boolean', default: false },
       confirm: { type: 'string', default: '' },
       'summary-file': { type: 'string', default: '' },
     },
@@ -210,11 +212,24 @@ function main() {
   const sourceRefApi = repo ? `repos/${repo}/git/ref/heads/${source}` : `repos/OWNER/REPO/git/ref/heads/${source}`;
   const targetRefApi = repo ? `repos/${repo}/git/ref/heads/${target}` : `repos/OWNER/REPO/git/ref/heads/${target}`;
 
-  const resolvedSourceSha = run('gh', ['api', sourceRefApi, '--jq', '.object.sha'], { env: ghEnv, dryRun }).trim();
-  const sourceSha = resolvedSourceSha || authorizedSourceSha;
-  if (!dryRun && sourceSha !== authorizedSourceSha) {
-    fail(`Source branch '${source}' no longer resolves to authorized SHA '${authorizedSourceSha}' (currently '${sourceSha || 'unavailable'}').`);
-  }
+  // A release promotes its pinned candidate: the source branch may advance after
+  // selection, but must still contain the candidate (the canonical resolver decides).
+  const assertSourceStillAuthorized = async () => {
+    try {
+      return (await resolveAuthorizedReleaseSource({
+        repoRoot: process.cwd(),
+        remoteUrl: 'origin',
+        sourceRef: `refs/heads/${source}`,
+        authorizedSha: authorizedSourceSha,
+        allowSourceAncestor: true,
+      })).sha;
+    } catch (error) {
+      return fail(`Source branch '${source}' no longer contains authorized SHA '${authorizedSourceSha}': ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+  const sourceSha = dryRun
+    ? run('gh', ['api', sourceRefApi, '--jq', '.object.sha'], { env: ghEnv, dryRun }).trim() || authorizedSourceSha
+    : await assertSourceStillAuthorized();
   const targetSha = run('gh', ['api', targetRefApi, '--jq', '.object.sha'], { env: ghEnv, dryRun }).trim();
 
   const compareBase = targetSha || target;
@@ -266,6 +281,13 @@ function main() {
 
   if (mode === 'fast_forward') {
     const status = String(compare.status ?? '').trim();
+    // Syncing a published release back to development retains later development
+    // commits. Release destinations do not opt in: they must equal the candidate.
+    if (!dryRun && status === 'behind' && values['preserve-target-descendant'] === true) {
+      console.log(`[pipeline] ${target} already contains the authorized source SHA; preserving newer target commits.`);
+      appendSummary(summaryFile, '- result: `candidate already included; newer target preserved`\n\n');
+      return;
+    }
     if (!dryRun && status !== 'ahead' && status !== 'identical') {
       fail(`Cannot fast-forward: compare status is '${status}'. Use mode=reset or resolve divergence first.`);
     }
@@ -275,10 +297,7 @@ function main() {
 
   if (!repo) fail('Missing repo for update operation.');
 
-  const currentSourceSha = run('gh', ['api', sourceRefApi, '--jq', '.object.sha'], { env: ghEnv }).trim();
-  if (currentSourceSha !== authorizedSourceSha) {
-    fail(`Source branch '${source}' no longer resolves to authorized SHA '${authorizedSourceSha}' (currently '${currentSourceSha || 'unavailable'}').`);
-  }
+  await assertSourceStillAuthorized();
 
   const updateApi = `repos/${repo}/git/refs/heads/${target}`;
   const force = mode === 'reset';
@@ -298,4 +317,4 @@ function main() {
   }
 }
 
-main();
+main().catch((error) => fail(error instanceof Error ? error.message : String(error)));

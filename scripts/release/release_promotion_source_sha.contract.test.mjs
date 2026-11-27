@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import YAML from 'yaml';
@@ -268,4 +269,49 @@ test('channel promotion consumes the admitted source branch and syncs the named 
   }
   assert.equal(channel.jobs.sync_dev.with.target, 'v0.3');
   assert.equal(channel.jobs.sync_dev.with.confirm, 'promote v0.3 from main');
+});
+
+test('a selected release candidate stays pinned after its source branch advances', () => {
+  const root = mkdtempSync(resolve(tmpdir(), 'happier-release-pinned-candidate-'));
+  const git = (cwd, args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  git(root, ['init', '-q', 'work']);
+  const work = resolve(root, 'work');
+  git(work, ['config', 'user.name', 'Release Test']);
+  git(work, ['config', 'user.email', 'release-test@example.invalid']);
+  git(work, ['commit', '-q', '--allow-empty', '-m', 'validated candidate']);
+  const candidate = git(work, ['rev-parse', 'HEAD']);
+  git(work, ['commit', '-q', '--allow-empty', '-m', 'later merge']);
+  git(root, ['init', '-q', '--bare', 'remote.git']);
+  git(work, ['remote', 'add', 'origin', resolve(root, 'remote.git')]);
+  git(work, ['push', '-q', 'origin', 'HEAD:refs/heads/v0.3']);
+  const plan = () => JSON.parse(execFileSync(process.execPath, [
+    pipelineCli, 'release', '--confirm', 'release dev to preview and main',
+    '--repository', 'happier-dev/happier', '--deploy-environment', 'preview-and-production', '--dry-run', '--json',
+    '--operation-id', 'rel_pinned_candidate', '--release-notes-id', '2026-10-08.1', '--source-sha', candidate,
+  ], { cwd: work, env: { ...process.env, HAPPIER_PIPELINE_REPO_ROOT: work }, encoding: 'utf8', timeout: RELEASE_CLI_DRY_RUN_TIMEOUT_MS }));
+  assert.equal(plan().authorizedPromotionSourceSha, candidate);
+});
+
+test('the channel preflight admits a pinned candidate once and later jobs consume that decision', () => {
+  const channel = YAML.parse(readFileSync(resolve(repoRoot, '.github/workflows/release-channel.yml'), 'utf8'));
+  const bind = channel.jobs.release_preflight.steps.find((step) => step.id === 'source');
+  assert.match(bind.run, /resolve-authorized-release-source\.mjs/);
+  assert.match(bind.run, /--allow-source-ancestor/);
+  assert.match(bind.run, /--authorized-sha "\$AUTHORIZED_PROMOTION_SOURCE_SHA"/);
+  const planningSource = channel.jobs.plan.steps.find((step) => step.id === 'planning_source');
+  assert.match(planningSource.run, /AUTHORIZED_PROMOTION_SOURCE_SHA/, 'planning still checks out exactly the candidate');
+  assert.doesNotMatch(planningSource.run, /ls-remote/, 'planning must not re-decide the source branch tip');
+});
+
+test('only development synchronization may retain a target already containing the release candidate', () => {
+  const channel = YAML.parse(readFileSync(resolve(repoRoot, '.github/workflows/release-channel.yml'), 'utf8'));
+  const promote = YAML.parse(readFileSync(resolve(repoRoot, '.github/workflows/promote-branch.yml'), 'utf8'));
+  assert.equal(channel.jobs.sync_dev.with.preserve_target_descendant, true);
+  for (const job of [channel.jobs.promote_main, channel.jobs.promote_preview]) {
+    assert.notEqual(job.with.preserve_target_descendant, true);
+  }
+  assert.equal(promote.on.workflow_call.inputs.preserve_target_descendant.default, false);
+  const step = Object.values(promote.jobs).flatMap((job) => job.steps ?? []).find((item) => item.name === 'Promote branch (pipeline)');
+  assert.equal(step.env.INPUT_PRESERVE_TARGET_DESCENDANT, '${{ inputs.preserve_target_descendant == true }}');
+  assert.match(step.run, /--preserve-target-descendant/);
 });

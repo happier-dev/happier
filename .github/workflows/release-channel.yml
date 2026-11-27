@@ -371,6 +371,22 @@ jobs:
         run: |
           set -euo pipefail
           node scripts/pipeline/release/validate-release-dispatch.mjs
+      # A selected candidate stays pinned while its source branch advances; it must
+      # still be reachable from that branch. The canonical resolver decides once here.
+      - name: Admit the pinned release candidate
+        id: source
+        if: ${{ inputs.dry_run != true && inputs.authorized_promotion_source_sha != '' }}
+        env:
+          AUTHORIZED_PROMOTION_SOURCE_SHA: ${{ inputs.authorized_promotion_source_sha }}
+          RESUME_RUN_ID: ${{ inputs.resume_run_id }}
+          SOURCE_REF: ${{ steps.dispatch.outputs.source_ref }}
+        run: |
+          set -euo pipefail
+          source_ref="refs/heads/$SOURCE_REF"
+          if [ -n "$RESUME_RUN_ID" ]; then source_ref="$AUTHORIZED_PROMOTION_SOURCE_SHA"; fi
+          node scripts/pipeline/github/resolve-authorized-release-source.mjs \
+            --source-ref "$source_ref" --authorized-sha "$AUTHORIZED_PROMOTION_SOURCE_SHA" \
+            --allow-source-ancestor --remote origin
       - name: Record explicit maintainer overrides
         if: ${{ inputs.waive_ci == true || inputs.waive_validation_suites != '' }}
         env:
@@ -457,7 +473,6 @@ jobs:
         env:
           AUTHORIZED_PROMOTION_SOURCE_SHA: ${{ inputs.authorized_promotion_source_sha }}
           DRY_RUN: ${{ inputs.dry_run }}
-          SOURCE_REF: ${{ needs.release_preflight.outputs.source_ref }}
         run: |
           set -euo pipefail
           checked_out_sha="$(git rev-parse HEAD)"
@@ -465,13 +480,9 @@ jobs:
           if [ "$DRY_RUN" = "true" ]; then
             exit 0
           fi
-          current_source_sha="$(git ls-remote --exit-code origin "refs/heads/$SOURCE_REF" | awk 'NR == 1 { print $1 }')"
+          # release_preflight admitted the candidate against its source branch.
           if [ "$checked_out_sha" != "$AUTHORIZED_PROMOTION_SOURCE_SHA" ]; then
             echo "Release planning checkout does not match authorized promotion source SHA." >&2
-            exit 1
-          fi
-          if [ "$current_source_sha" != "$AUTHORIZED_PROMOTION_SOURCE_SHA" ]; then
-            echo "Source branch '$SOURCE_REF' no longer resolves to the authorized promotion source SHA." >&2
             exit 1
           fi
 
@@ -1632,6 +1643,7 @@ jobs:
       dry_run: false
       allow_reset: false
       confirm: promote v0.3 from main
+      preserve_target_descendant: true
 
   promote_github_latest:
     name: Mark published components Latest after channel promotion

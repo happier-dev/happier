@@ -109,6 +109,17 @@ synchronized target Git root cannot be proved, fail closed. Do not guess another
 checkout, copy credentials into the VM, install a VM-local conductor, or use a
 personal GitHub login.
 
+A release dispatched with `--source-sha <full-40-character-sha>` stays pinned to
+that candidate. The source branch may gain later commits; the channel preflight
+admits the candidate once, through
+`scripts/pipeline/github/resolve-authorized-release-source.mjs`, when it is still
+reachable from the source branch, and planning, validation, promotion and resume
+keep using that SHA. Promotion fast-forwards the target branch to the candidate
+itself, and a target that is ahead of or divergent from it still fails. Only the
+post-release synchronization back into the development line opts in to keeping
+newer development commits that already contain the candidate; it still rejects
+divergent history.
+
 ### Preview release (v0.3 → preview)
 
 The 0.3 development source and hosted workflow-control ref are `v0.3`.
