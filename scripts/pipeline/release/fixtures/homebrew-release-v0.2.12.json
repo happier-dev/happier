@@ -1,0 +1,78 @@
+{
+  "_source": "Trimmed from the public GitHub API for happier-dev/happier releases cli-v0.2.12 and ui-desktop-v0.2.12 (2026-09-25).",
+  "cli": {
+    "release": {
+      "tag_name": "cli-v0.2.12",
+      "draft": false,
+      "prerelease": false,
+      "assets": [
+        {
+          "name": "checksums-happier-v0.2.12.txt",
+          "browser_download_url": "https://github.com/happier-dev/happier/releases/download/cli-v0.2.12/checksums-happier-v0.2.12.txt",
+          "digest": "sha256:e86b6480cdac743082078feb61c6ce07c04b4e7dafdaa8d8f8e87ffa075046ee"
+        },
+        {
+          "name": "checksums-happier-v0.2.12.txt.minisig",
+          "browser_download_url": "https://github.com/happier-dev/happier/releases/download/cli-v0.2.12/checksums-happier-v0.2.12.txt.minisig",
+          "digest": "sha256:aac07166da6b6cd477d892618364552f4c0ebe8972d77392de1bd48568167f2c"
+        },
+        {
+          "name": "happier-v0.2.12-darwin-arm64.tar.gz",
+          "browser_download_url": "https://github.com/happier-dev/happier/releases/download/cli-v0.2.12/happier-v0.2.12-darwin-arm64.tar.gz",
+          "digest": "sha256:e687d32d84af95f6b19a29cf1559f4ebd56b949b3ea0ce76340235039047a576"
+        },
+        {
+          "name": "happier-v0.2.12-darwin-x64.tar.gz",
+          "browser_download_url": "https://github.com/happier-dev/happier/releases/download/cli-v0.2.12/happier-v0.2.12-darwin-x64.tar.gz",
+          "digest": "sha256:cce41bbcf314b67464dc667bd871ed4f9599da66fa3c6b4292479f9ed0aefd76"
+        },
+        {
+          "name": "happier-v0.2.12-linux-arm64.tar.gz",
+          "browser_download_url": "https://github.com/happier-dev/happier/releases/download/cli-v0.2.12/happier-v0.2.12-linux-arm64.tar.gz",
+          "digest": "sha256:bfa15e2aa79a6dbd0a714c7e0a6d51be011a43ddde2f4f453d6458b15b430e82"
+        },
+        {
+          "name": "happier-v0.2.12-linux-x64.tar.gz",
+          "browser_download_url": "https://github.com/happier-dev/happier/releases/download/cli-v0.2.12/happier-v0.2.12-linux-x64.tar.gz",
+          "digest": "sha256:8978265ce7677bd3f0a0f2f734304bb551452c962b7d46f8f34420892a01fa7e"
+        },
+        {
+          "name": "happier-v0.2.12-windows-x64.tar.gz",
+          "browser_download_url": "https://github.com/happier-dev/happier/releases/download/cli-v0.2.12/happier-v0.2.12-windows-x64.tar.gz",
+          "digest": "sha256:907bf58f6116456ad72cdbb83c309669dc5bf5c7906e0fdc1f7af69065cf0687"
+        }
+      ]
+    },
+    "checksums": "8978265ce7677bd3f0a0f2f734304bb551452c962b7d46f8f34420892a01fa7e  happier-v0.2.12-linux-x64.tar.gz\nbfa15e2aa79a6dbd0a714c7e0a6d51be011a43ddde2f4f453d6458b15b430e82  happier-v0.2.12-linux-arm64.tar.gz\ncce41bbcf314b67464dc667bd871ed4f9599da66fa3c6b4292479f9ed0aefd76  happier-v0.2.12-darwin-x64.tar.gz\ne687d32d84af95f6b19a29cf1559f4ebd56b949b3ea0ce76340235039047a576  happier-v0.2.12-darwin-arm64.tar.gz\n907bf58f6116456ad72cdbb83c309669dc5bf5c7906e0fdc1f7af69065cf0687  happier-v0.2.12-windows-x64.tar.gz\n8ffaeacf1679b01dfbd64289edafd8c790be2ef750aa463c913ada0aa85c5404  darwin-arm64.cli.json\n195b01f0f8eb321c500ae039f5bad90448fe3fb6f68d2711fc3c032f30358a90  darwin-x64.cli.json\n4f7d2b7942cb9265407bf4fede875a63449073d596f1a51fc485edb4f88edd76  darwin-arm64.json\nd2fde69acd161d1aeb096a88905db98ac7aece6044f455bb8f4257ae46cd67a3  darwin-x64.json\na626fd981a31e9e2f5fad2248cd9a86a385908843262f186df90dbf185f12d2a  latest.json\n31b2d438926a819661a0c1db3ecda44e8028e1524673d33520ef8f1487c882b5  linux-arm64.json\n30d97d504961f2fa2499060d43d93eff30a9f11ceb2cdaf1a1336ec2fe1e09f2  linux-x64.json\nb38a982b03e58447b976a5624b9cd9e560b62d6b2d9718b604cc65720059e58c  windows-x64.json\n"
+  },
+  "desktop": {
+    "release": {
+      "tag_name": "ui-desktop-v0.2.12",
+      "draft": false,
+      "prerelease": false,
+      "assets": [
+        {
+          "name": "checksums-happier-ui-desktop-v0.2.12.txt",
+          "browser_download_url": "https://github.com/happier-dev/happier/releases/download/ui-desktop-v0.2.12/checksums-happier-ui-desktop-v0.2.12.txt",
+          "digest": "sha256:09c425a9181f10e4ab090c84a5c5691a81d3c6a369507ba1596f369b3e3ff3f8"
+        },
+        {
+          "name": "checksums-happier-ui-desktop-v0.2.12.txt.minisig",
+          "browser_download_url": "https://github.com/happier-dev/happier/releases/download/ui-desktop-v0.2.12/checksums-happier-ui-desktop-v0.2.12.txt.minisig",
+          "digest": "sha256:5cf98825fe4f61e0f0303c6a69cdc410eadb3244eb707a5fa7258ee0f83a1c97"
+        },
+        {
+          "name": "happier-ui-desktop-darwin-aarch64-v0.2.12.dmg",
+          "browser_download_url": "https://github.com/happier-dev/happier/releases/download/ui-desktop-v0.2.12/happier-ui-desktop-darwin-aarch64-v0.2.12.dmg",
+          "digest": "sha256:b9536e3244b30c891b4310bdcf892738682a84ad3f1afee00b9e64a9146eb509"
+        },
+        {
+          "name": "happier-ui-desktop-darwin-x86_64-v0.2.12.dmg",
+          "browser_download_url": "https://github.com/happier-dev/happier/releases/download/ui-desktop-v0.2.12/happier-ui-desktop-darwin-x86_64-v0.2.12.dmg",
+          "digest": "sha256:cc85a7d049a0d52fcd11d310d65310349a8535477789021303ea034a110451a9"
+        }
+      ]
+    },
+    "checksums": "7fbdf07eb5e0e6bd23bf0adbbbb4cd2a3b16cc1b1e80d0c14597578b486b2e10  happier-ui-desktop-darwin-aarch64-v0.2.12.app.tar.gz\nb540af4469ca4babe65478473c8d1246a1b7d0ff5b1b110a38e2574e663250f0  happier-ui-desktop-darwin-aarch64-v0.2.12.app.tar.gz.sig\nb9536e3244b30c891b4310bdcf892738682a84ad3f1afee00b9e64a9146eb509  happier-ui-desktop-darwin-aarch64-v0.2.12.dmg\n0e2bff5a50d5921607eb3b83fa347f47fb2eb31047cea8a557dffddf4ee0f5c6  happier-ui-desktop-darwin-x86_64-v0.2.12.app.tar.gz\n27f88fec2ab6b50604d74aa8ac1539c61436c8256ee67c295009058ae277f8ae  happier-ui-desktop-darwin-x86_64-v0.2.12.app.tar.gz.sig\ncc85a7d049a0d52fcd11d310d65310349a8535477789021303ea034a110451a9  happier-ui-desktop-darwin-x86_64-v0.2.12.dmg\n1318fe593df87782ff5857dd6e401c07d93cdfe6b6aeb02271c81aab58894548  happier-ui-desktop-linux-x86_64-v0.2.12.AppImage\nd39ec7cdd5a4e3b5a4f7ae428a968ed4affed1a78bc831e38c62b121b68d4b45  happier-ui-desktop-linux-x86_64-v0.2.12.AppImage.sig\nb00268fa30ba239a678c03a8136016435aa236fd0858228b072735d5bfe552c5  happier-ui-desktop-linux-x86_64-v0.2.12.deb\nd19badd3d69051e163bc9dc080acbeaca70070fffe3facb7dced2d43cdd44e64  happier-ui-desktop-linux-x86_64-v0.2.12.deb.sha256\na5aa218b0e1bf7fb896bbeb6f255746499b030eef7ca2683d6d9f5852b643ffb  happier-ui-desktop-linux-x86_64-v0.2.12.rpm\ndf88a704ad846e9de218712afafe7cc4b8e289d862b743df04f20551e9f2ae34  happier-ui-desktop-linux-x86_64-v0.2.12.rpm.sha256\nfeeddad3d0e5831b292315c5afbbd1f7987589dd38424a4f617633b57491807d  happier-ui-desktop-windows-x86_64-v0.2.12.exe\ne57ea17d07c227bd66f1ea819901ddf922b7192ed1c6fb7b63b60d3b8ccbb72c  happier-ui-desktop-windows-x86_64-v0.2.12.exe.sig\nbc34644980d128f80a8c96c082372c8f87a5142c95663846ccb267abac84251d  latest.json\n"
+  }
+}

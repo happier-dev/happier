@@ -302,6 +302,10 @@ test('channel promotion failure does not erase independently published products 
     assert.equal(status.surfaces.find((surface) => surface.id === 'github_latest')?.state, state);
     assert.equal(status.terminal, state);
   }
+  const tapFailure = projectReleaseStatus('standard', { ...base, REQUEST_HOMEBREW: 'true', HOMEBREW_RESULT: 'failure' });
+  assert.equal(tapFailure.surfaces.find((surface) => surface.id === 'homebrew_tap')?.state, 'failed');
+  assert.equal(tapFailure.surfaces.find((surface) => surface.id === 'server_rolling_release')?.state, 'complete');
+  assert.equal(tapFailure.terminal, 'failed');
   const preview = projectReleaseStatus('standard', { ...base, RELEASE_CHANNEL: 'preview', CHANNEL_PROMOTION_RESULT: 'success', GITHUB_LATEST_RESULT: 'skipped' });
   assert.equal(preview.surfaces.find((surface) => surface.id === 'github_latest')?.state, 'not_requested');
   assert.equal(preview.terminal, 'complete');
