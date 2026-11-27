@@ -157,7 +157,8 @@ class RecordingEncoderError extends Error {
   }
 
   get failureCause() {
-    return readActionFailureCauseV1({ ...projectActionFailureCauseV1(this.cause, 'recording.encoder'),
+    return readActionFailureCauseV1({ ...projectActionFailureCauseV1(
+      this.cause instanceof Error ? this.cause : createGenericFailure(this.cause), 'recording.encoder'),
       nativeErrorCode: this.outcome.signal ? `signal_${this.outcome.signal.toLowerCase()}`
         : this.outcome.exitCode !== null ? `exit_${this.outcome.exitCode}` : 'process_error',
       nativeErrorReason: this.outcome.stderrClass });
@@ -275,10 +276,13 @@ class FfmpegBrowserRecordingStreamFrameEncoder implements BrowserRecordingStream
       while (this.pendingFrame || this.writtenFrames < targetFrames) {
         if (this.state.failure || this.child.stdin.destroyed) throw this.fail();
         if (this.child.stdin.writableNeedDrain) {
-          await Promise.race([
-            once(this.child.stdin, 'drain'),
-            this.closePromise.then(() => { throw this.fail(); }),
+          const closed = await Promise.race([
+            once(this.child.stdin, 'drain').then(() => false),
+            this.closePromise.then(() => true),
           ]);
+          // A losing close callback still runs after drain. Only the active wait
+          // may classify an early close as failure; normal exit must stay successful.
+          if (closed) throw this.fail();
         }
         this.flushPendingFrame();
         if (!this.pendingFrame && this.writtenFrames < targetFrames) {

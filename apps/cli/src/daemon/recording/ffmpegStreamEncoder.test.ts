@@ -35,6 +35,52 @@ const recording: RecordingSession = {
 };
 
 describe('recording encoder output ownership', () => {
+  it.each(['drained', 'closed'] as const)('settles a backpressured stop when the pipe is %s', async outcome => {
+    const directory = await mkdtemp(join(tmpdir(), 'happier-encoder-drain-'));
+    let releaseWrite: (() => void) | undefined;
+    let outputPath = '';
+    const child = Object.assign(new EventEmitter(), {
+      stdin: new Writable({
+        highWaterMark: 1,
+        write(_chunk, _encoding, callback) {
+          if (!releaseWrite) releaseWrite = callback;
+          else queueMicrotask(callback);
+        },
+        final(callback) { callback(); queueMicrotask(() => child.emit('close', 0, null)); },
+      }),
+      kill: () => true,
+    });
+    try {
+      const factory = createFfmpegBrowserRecordingStreamFrameEncoderFactory({
+        workingDirectory: directory, resolveFfmpegBinaryPath: async () => '/fixture/ffmpeg',
+        spawnFfmpeg: (_binary, args) => {
+          outputPath = args.at(-1)!;
+          writeFileSync(outputPath, 'encoded recording');
+          queueMicrotask(() => child.emit('spawn'));
+          return child;
+        },
+      });
+      const encoder = await factory({ recording, outputMimeType: 'video/webm' });
+      encoder.appendFrame({ sequence: 1, timestampMs: 1_000, payloadKind: 'image_keyframe', payload: Buffer.from('frame') });
+      const result = encoder.finish({ recording, frameCount: 1, durationMs: 160 });
+      if (outcome === 'drained') {
+        releaseWrite!();
+        const artifact = await result;
+        expect(artifact.byteSize).toBe(Buffer.byteLength('encoded recording'));
+        expect(artifact.source.kind).toBe('local-file');
+        await expect(readFile(outputPath, 'utf8')).resolves.toBe('encoded recording');
+        await artifact.cleanup?.();
+      } else {
+        child.emit('close', 0, null);
+        await expect(result).rejects.toMatchObject({ failureCause: { errorClass: 'Error', nativeErrorCode: 'exit_0' } });
+      }
+      await expect(readFile(outputPath)).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      child.emit('close', 0, null);
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('shares one capability read and refreshes it when the executable identity changes', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'happier-encoder-capabilities-'));
     const binary = join(directory, 'managed-encoder');
