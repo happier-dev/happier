@@ -104,6 +104,7 @@ export const optionsInputTypes = {
 
 export const optionsInputHints = { fields: paths.slice(0, 3).map((path, index) => ({ path, title: titles[index]!, required: true,
   widget: 'select' as const, inputType: { pluginId: railwayIdentity.id, localId: types[index]! },
+  optionsDraftDependencies: paths.slice(0, index),
   ...(index === 0 ? {} : { visibleWhen: { op: 'truthy' as const, path: paths[index - 1]! } }),
 })) };
 
@@ -111,6 +112,7 @@ export const createOptionsInputHints = { fields: [
   optionsInputHints.fields[0]!,
   { path: 'providerEnvironment', title: titles[1], required: true, widget: 'select' as const,
     inputType: { pluginId: railwayIdentity.id, localId: 'railway-create-environment' },
+    optionsDraftDependencies: [paths[0]],
     visibleWhen: { op: 'truthy' as const, path: 'providerAccountId' } },
   { path: 'resourceName', title: 'Service name', widget: 'text' as const, required: true },
   { path: 'productionBranch', title: 'GitHub branch', widget: 'text' as const, required: true },

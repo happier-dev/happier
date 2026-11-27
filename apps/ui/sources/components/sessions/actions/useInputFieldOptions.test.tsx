@@ -358,11 +358,12 @@ describe('qualified input field options scope', () => {
             code: screen.findByTestId('draft-participant.options')?.props.accessibilityHint }).toEqual({ status: 'ready', code: undefined });
         await screen.unmount();
     });
-    it('keeps the Railway workspace options through Project name keystrokes', async () => {
+    it.each(['workspace', 'create environment'] as const)('keeps Railway %s options through unrelated keystrokes', async (scenario) => {
         const { manifest } = await import('../../../../../../packages/plugins/deploy-railway/src/manifest');
-        const action = manifest.contributes.actions?.find(entry => entry.id === 'project-create');
-        const field = action?.inputHints?.fields.find(entry => entry.path === 'workspaceId');
-        if (!action || !field) throw new Error('Expected the authored Railway workspace field');
+        const platformCreate = scenario === 'create environment';
+        const action = manifest.contributes.actions?.find(entry => entry.id === (platformCreate ? 'service-create' : 'project-create'));
+        const field = action?.inputHints?.fields.find(entry => entry.path === (platformCreate ? 'providerEnvironment' : 'workspaceId'));
+        if (!action || !field) throw new Error('Expected the authored Railway picker field');
         const actionId = `${manifest.id}/actions/${action.id}`;
         const origin = 'https://railway-workspace-options.example';
         const serverIdentityId = 'srv_railway_workspace_options';
@@ -377,10 +378,10 @@ describe('qualified input field options scope', () => {
         rpc.read.mockResolvedValue({ actionId, fieldPath: field.path, optionsSourceId: null,
             options: [{ value: 'workshop', label: 'Workshop' }] });
 
-        const WorkspaceOptions = ({ name }: { name: string }) => {
+        const WorkspaceOptions = ({ name, project = 'orders' }: { name: string; project?: string }) => {
             const { binding } = useServerCredentialAccountScopeBinding(serverId);
             const options = useInputFieldOptions({ serverId, machineId: 'controller-a', enabled: !!binding, accountLifetime: binding,
-                requests: [{ actionId, field, draftInput: { name } }] });
+                requests: [{ actionId, field, draftInput: platformCreate ? { resourceName: name, productionBranch: name, providerAccountId: project } : { name } }] });
             return <View>{options.state(field).options.map(option => <Text key={option.label}>{option.label}</Text>)}</View>;
         };
         const screen = await renderScreen(<WorkspaceOptions name="" />);
@@ -392,6 +393,13 @@ describe('qualified input field options scope', () => {
                 await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Workshop'));
             }
             expect(rpc.read).toHaveBeenCalledTimes(1);
+            if (platformCreate) {
+                rpc.read.mockResolvedValue({ actionId, fieldPath: field.path, optionsSourceId: null,
+                    options: [{ value: 'staging', label: 'Staging' }] });
+                await screen.update(<WorkspaceOptions name="Ced" project="inventory" />);
+                await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Staging'));
+                expect(rpc.read).toHaveBeenCalledTimes(2);
+            }
         } finally { await screen.unmount(); }
     });
 
