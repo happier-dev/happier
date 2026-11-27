@@ -280,6 +280,13 @@ const DESTINATION_REACHABILITY_PROOF_REFS_BY_SLOT: Readonly<
     productionShell: 'MachinePluginPageTab',
     decidingTest: 'MachinePageScreenPluginUse',
   },
+  'appPage:deploymentEnvironment': {
+    declaration: 'ui.views',
+    projection: 'buildPluginProjectionV2',
+    launcherOrOpenPath: 'DeploymentEnvironmentPluginPages',
+    productionShell: 'DeploymentEnvironmentDetail',
+    decidingTest: 'BundledDeploymentEnvironmentPage',
+  },
   'settingsPage:app': {
     declaration: 'ui.settingsPages',
     projection: 'buildPluginProjectionV2',
@@ -452,6 +459,13 @@ const DESTINATION_REACHABILITY_SOURCE_PROOFS_V1 = [
   },
   {
     stage: 'launcherOrOpenPath',
+    ref: 'DeploymentEnvironmentPluginPages',
+    sourcePath: 'apps/ui/sources/components/projects/deployments/DeploymentEnvironmentPluginPages.tsx',
+    codeIdentifier: 'usePluginPageCatalogActivationHandler()',
+    supportedSlotKeys: ['appPage:deploymentEnvironment'],
+  },
+  {
+    stage: 'launcherOrOpenPath',
     ref: 'useResolvedSettingsPageCatalog',
     sourcePath: 'apps/ui/sources/components/settings/catalog/runtime/useResolvedSettingsPageCatalog.ts',
     codeIdentifier: 'export function useResolvedSettingsPageCatalog',
@@ -516,6 +530,17 @@ const DESTINATION_REACHABILITY_SOURCE_PROOFS_V1 = [
     sourcePath: 'apps/ui/sources/components/machines/page/MachinePluginPageTab.tsx',
     codeIdentifier: '<PluginPageContent pluginId={pluginId}',
     supportedSlotKeys: ['appPage:machine'],
+  },
+  {
+    stage: 'productionShell',
+    ref: 'DeploymentEnvironmentDetail',
+    sourcePath: 'apps/ui/sources/components/projects/deployments/DeploymentEnvironmentDetail.tsx',
+    codeIdentifier: '<DeploymentEnvironmentPluginPages lifetime={props.lifetime} target={pluginTarget}',
+    additionalSourceChecks: [{
+      sourcePath: 'apps/ui/sources/components/projects/deployments/DeploymentEnvironmentPluginPages.tsx',
+      codeIdentifier: '<PluginSurfacePlacementHost',
+    }],
+    supportedSlotKeys: ['appPage:deploymentEnvironment'],
   },
   {
     stage: 'productionShell',
@@ -600,6 +625,13 @@ const DESTINATION_REACHABILITY_SOURCE_PROOFS_V1 = [
     sourcePath: 'apps/ui/sources/components/machines/page/MachinePageScreen.pluginUse.composed.test.tsx',
     codeIdentifier: "opens the addressed owner installed materialization Machine page",
     supportedSlotKeys: ['appPage:machine'],
+  },
+  {
+    stage: 'decidingTest',
+    ref: 'BundledDeploymentEnvironmentPage',
+    sourcePath: 'apps/ui/sources/sync/domains/plugins/availability/hostBundledAccountPage.composed.test.tsx',
+    codeIdentifier: 'mounts a bundled Environment page only for the exact admitted read and retires it on withdrawal',
+    supportedSlotKeys: ['appPage:deploymentEnvironment'],
   },
   {
     stage: 'decidingTest',
@@ -823,7 +855,9 @@ const MAINTAINED_AUTHORED_DESTINATION_DECLARATIONS_V1 = [
  * shape, and it could not fail on a gain: a real `detailsPane:session` view
  * added to the public-authoring example left this ceiling green and stale.
  */
-const DESTINATION_SLOTS_WITHOUT_MAINTAINED_AUTHORED_DECLARATION = [] as const satisfies readonly DestinationSlotKey[];
+const DESTINATION_SLOTS_WITHOUT_MAINTAINED_AUTHORED_DECLARATION = [
+  'appPage:deploymentEnvironment', // Exercised by the bundled fixture until the provider page lands.
+] as const satisfies readonly DestinationSlotKey[];
 
 /**
  * The container/target TUPLE an authored view declares. The tuple, not the

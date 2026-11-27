@@ -145,6 +145,24 @@ describe('plugin UI destination declaration grammar', () => {
 });
 
 describe('plugin UI destination binding normalization', () => {
+  it('admits an Environment app page without letting its manifest supply a different Environment', () => {
+    const declaration = {
+      id: 'environment-details', renderer: 'details', container: 'appPage',
+      target: { kind: 'deploymentEnvironment' },
+    };
+    expect(PluginUiViewV2Schema.safeParse(declaration).success).toBe(true);
+    expect(normalizePluginUiDestinationBindingV1({
+      pluginId: 'acme.deployments', destinationId: declaration.id, rendererId: declaration.renderer,
+      container: declaration.container, target: declaration.target,
+    })).toMatchObject({
+      container: 'appPage', targetKind: 'deploymentEnvironment',
+      target: declaration.target, surfaceContextPlacement: 'deploymentEnvironmentSurface',
+    });
+    expect(PluginUiViewV2Schema.safeParse({
+      ...declaration, target: { ...declaration.target, environmentId: 'another-environment' },
+    }).success).toBe(false);
+  });
+
   it('admits a public Machine page through the registry without accepting Services-panel masquerades', () => {
     const declaration = {
       id: 'machine-tools', renderer: 'machine-renderer', container: 'appPage',

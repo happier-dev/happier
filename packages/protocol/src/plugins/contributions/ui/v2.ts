@@ -66,6 +66,7 @@ import {
 import {
   PluginSurfaceAppTargetV1Schema,
   PluginSurfaceBrowserTargetV1Schema,
+  PluginSurfaceDeploymentEnvironmentTargetV1Schema,
   PluginSurfaceMachineTargetV1Schema,
   PluginSurfaceProjectTargetV1Schema,
   PluginSurfaceServicesTargetV1Schema,
@@ -375,6 +376,7 @@ const PluginUiViewTargetSchemaByKindV1 = Object.freeze({
   session: PluginSurfaceSessionTargetV1Schema,
   project: PluginSurfaceProjectTargetV1Schema,
   machine: PluginSurfaceMachineTargetV1Schema,
+  deploymentEnvironment: PluginSurfaceDeploymentEnvironmentTargetV1Schema,
   browser: PluginSurfaceBrowserTargetV1Schema,
   services: PluginSurfaceServicesTargetV1Schema,
 } satisfies Readonly<Record<PluginUiViewDestinationTargetKindV1, z.ZodMiniType<PluginSurfaceTargetV1>>>);

@@ -48,17 +48,6 @@ for (const keyword of [
 }
 const validateExternalManifest = externalManifestAjv.compile(createPluginManifestJsonSchemaV2());
 
-function targetForSlot(kind: string): Record<string, unknown> {
-  switch (kind) {
-    case 'app': return { kind };
-    case 'session': return { kind };
-    case 'project': return { kind };
-    case 'browser': return { kind, browserViewIdPath: 'browserViewId' };
-    case 'services': return { kind };
-    default: throw new Error(`Unknown Registry target kind '${kind}'.`);
-  }
-}
-
 function manifestForDestinationBindingSlot(slot: typeof PLUGIN_UI_DESTINATION_BINDING_SLOTS_V1[number]) {
   const renderer = {
     id: 'slot-renderer',
@@ -89,7 +78,9 @@ function manifestForDestinationBindingSlot(slot: typeof PLUGIN_UI_DESTINATION_BI
         views: [{
           id: 'slot-view',
           container: slot.container,
-          target: targetForSlot(slot.targetKind),
+          target: slot.targetKind === 'browser'
+            ? { kind: slot.targetKind, browserViewIdPath: 'browserViewId' }
+            : { kind: slot.targetKind },
           renderer: renderer.id,
         }],
       },

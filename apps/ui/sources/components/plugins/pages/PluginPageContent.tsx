@@ -34,7 +34,7 @@ import { buildPluginDetailRoute } from '@/components/settings/plugins/model/plug
 import { usePluginDetailNavigation } from './pluginDetailNavigation';
 import { PluginPageNavigationContext } from './pluginPageNavigationContext';
 
-import type { AppShellPluginUiProjectionValue } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import type { PluginUiProjectionCurrentness } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 import { isAppShellPluginCatalogPending } from '@/components/appShell/plugins/projectionAvailability';
 import { resolvePluginPageView, type PluginPage } from './pluginPages';
 import type { PluginUiPolicyEvaluationContext } from '@/sync/domains/plugins/ui/policy';
@@ -76,10 +76,10 @@ const PLUGIN_PAGE_COLUMN_EDGE_PX = HAPPIER_PAGE_METRICS.sheetInsetPx;
 function PluginPageRouteActions(props: Readonly<{
     pluginId: string;
     page: PluginPage | null;
-    projection: AppShellPluginUiProjectionValue['pluginUiProjection'];
+    projection: PluginUiProjectionCurrentness['pluginUiProjection'];
     surfaceTarget?: Parameters<typeof usePluginSurfaceExecutionOrigin>[0]['surfaceTarget'];
     contextualExecutionTarget?: React.ComponentProps<typeof PluginSurfacePlacementHost>['contextualExecutionTarget'];
-    accountLifetime: AppShellPluginUiProjectionValue['accountLifetime'];
+    accountLifetime: PluginUiProjectionCurrentness['accountLifetime'];
     compact: boolean;
     headerActions: Omit<React.ComponentProps<typeof PluginPageHeaderActions>, 'isDaemonExecutionCurrent'> | null;
 }>): React.ReactElement {
@@ -121,12 +121,14 @@ export function PluginPageContent(props: Readonly<{
      * (`replacePageLocation` `view`) finds that view's title. Absent: the chrome names the mounted page.
      */
     views?: readonly PluginPage[];
-    projection: AppShellPluginUiProjectionValue;
+    projection: PluginUiProjectionCurrentness;
     routePathFor: (subPath: string, view: string | null) => string;
     /** The declared view the route names (`?view=`): the chrome titles it from the first frame of a cold load. */
     initialView?: string | null;
     contextualExecutionTarget?: React.ComponentProps<typeof PluginSurfacePlacementHost>['contextualExecutionTarget'];
     projectContext?: React.ComponentProps<typeof PluginSurfacePlacementHost>['projectContext'];
+    deploymentEnvironment?: React.ComponentProps<typeof PluginSurfacePlacementHost>['deploymentEnvironment'];
+    isHostCurrent?: React.ComponentProps<typeof PluginSurfacePlacementHost>['isHostCurrent'];
     reviewContext?: React.ComponentProps<typeof PluginSurfacePlacementHost>['reviewContext'];
     policyContext?: PluginUiPolicyEvaluationContext;
     appChrome?: boolean;
@@ -175,7 +177,8 @@ export function PluginPageContent(props: Readonly<{
     const isPageHeaderActionCurrent = React.useCallback(() => (
         !pageHeaderActionScope.signal.aborted
         && accountLifetime?.isCurrent() === true
-    ), [accountLifetime, pageHeaderActionScope]);
+        && props.isHostCurrent?.() !== false
+    ), [accountLifetime, pageHeaderActionScope, props.isHostCurrent]);
     const appTargetBinding = usePluginSurfaceDestinationNavigationBinding();
     // A page contributes no local resolver: every mounted surface delegates
     // through the one app-target binding installed by the shell.
@@ -500,18 +503,21 @@ export function PluginPageContent(props: Readonly<{
                         largeTitle={largeTitle} entryDetail={props.entryDetail === true}
                         // A Machine or Project page is a tab under that host's own header (plan 30 §3.7): that header is its
                         // identity, so a page still loading draws no second title that leaves when it arrives.
-                        identityOwner={page.target.kind === 'machine' || page.target.kind === 'project' ? 'host' : 'page'}>
+                        identityOwner={page.target.kind === 'app' ? 'page' : 'host'}>
                     <PluginPageNavigationContext.Provider value={detailNavigation.projection}>
                     <PluginSurfacePlacementHost
                         placement={page.placement}
                         contextualExecutionTarget={props.contextualExecutionTarget}
                         projectContext={props.projectContext}
+                        deploymentEnvironment={props.deploymentEnvironment}
+                        isHostCurrent={props.isHostCurrent}
                         reviewContext={props.reviewContext}
                         projectId={props.projectContext?.target?.checkout?.id}
                         policyContext={props.policyContext}
                         pluginUiProjection={projection.pluginUiProjection}
-                        machineId={page.target.kind === 'machine' ? page.target.machineId : projection.machineId}
-                        serverId={page.target.kind === 'machine' ? page.target.serverId : projection.serverId}
+                        machineId={page.target.kind === 'machine' ? page.target.machineId : page.target.kind === 'deploymentEnvironment' ? null : projection.machineId}
+                        serverId={page.target.kind === 'machine' || page.target.kind === 'deploymentEnvironment'
+                            ? page.target.serverId : projection.serverId}
                         platform={projection.platform}
                         binding={binding}
                         subPath={props.subPath}

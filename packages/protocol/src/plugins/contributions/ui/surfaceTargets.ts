@@ -28,6 +28,10 @@ export const PluginSurfaceMachineTargetV1Schema = lazyZodSchema(() => z.strictOb
   machineIdPath: z.optional(z.string().check(z.trim(), z.minLength(1))),
 }));
 
+export const PluginSurfaceDeploymentEnvironmentTargetV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('deploymentEnvironment'),
+}));
+
 export const PluginSurfaceBrowserTargetV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('browser'),
   browserViewIdPath: z.string().check(z.trim(), z.minLength(1)),
@@ -47,6 +51,7 @@ export const PluginSurfaceTargetV1Schema = lazyZodSchema(() => z.discriminatedUn
   PluginSurfaceProjectTargetV1Schema,
   PluginSurfaceAppTargetV1Schema,
   PluginSurfaceMachineTargetV1Schema,
+  PluginSurfaceDeploymentEnvironmentTargetV1Schema,
   PluginSurfaceBrowserTargetV1Schema,
   PluginSurfaceServicesTargetV1Schema,
 ]));

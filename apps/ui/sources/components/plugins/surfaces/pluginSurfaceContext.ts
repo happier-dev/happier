@@ -99,6 +99,7 @@ export type PluginSurfaceTargetFacts = Readonly<{
     session?: Extract<PluginSurfaceTarget, { kind: 'session' }> | null;
     /** Supplied by the canonical admitted Project context, never a checkout-address alias. */
     project?: ProjectSurfaceTargetV1 | null;
+    deploymentEnvironment?: Extract<PluginSurfaceTarget, { kind: 'deploymentEnvironment' }>;
     /** The addressed Machine, independently of the plugin's selected execution origin. */
     serverId?: string | null;
     machineId?: string | null;
@@ -138,6 +139,7 @@ export type PluginSurfaceTargetUnavailableReason =
     | 'session_target_identity_unavailable'
     | 'project_target_identity_unavailable'
     | 'machine_target_identity_unavailable'
+    | 'deployment_environment_target_identity_unavailable'
     | 'browser_target_identity_unavailable';
 
 /**
@@ -220,6 +222,10 @@ export function resolvePluginSurfaceTarget(
                     ...(homeId ? { homeId } : {}), ...(installationId ? { installationId } : {}) })
                 : unresolvedTarget('machine_target_identity_unavailable');
         }
+        case 'deploymentEnvironment':
+            return facts.deploymentEnvironment
+                ? resolvedTarget(facts.deploymentEnvironment)
+                : unresolvedTarget('deployment_environment_target_identity_unavailable');
         case 'services':
             return resolvedTarget({ kind: 'services',
                 ...(facts.project ? { project: facts.project } : {}),
@@ -291,6 +297,9 @@ export function getPluginSurfaceTargetAuthorityKey(target: PluginSurfaceTarget):
             return JSON.stringify([target.kind, target.projectKey]);
         case 'machine':
             return JSON.stringify([target.kind, target.serverId, target.machineId, target.homeId ?? null, target.installationId ?? null]);
+        case 'deploymentEnvironment':
+            return JSON.stringify([target.kind, target.serverId, target.projectSourceId, target.environmentId,
+                target.controllerMachineId, target.machineId ?? null]);
         case 'browser':
             return JSON.stringify([target.kind, target.targetId, target.origin ?? null]);
     }

@@ -26,6 +26,7 @@ import { formatElapsedDuration } from '@/components/machines/durationWords';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { DeploymentTelemetryPanel } from './DeploymentTelemetryPanel';
+import { DeploymentEnvironmentPluginPages } from './DeploymentEnvironmentPluginPages';
 import { KeyboardStickyFooter } from '@/components/ui/keyboardAvoidance/KeyboardStickyFooter';
 import { PagePinnedBar } from '@/components/ui/layout/PagePinnedBar';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
@@ -332,6 +333,17 @@ export const DeploymentEnvironmentDetail = React.memo(
     );
     // Build and controller Machines are named too, so Settings still names them while nothing is linked.
     const controllerMachineId = detail?.environment.controllerMachineId ?? null;
+    const environmentSourceId = detail?.environment.projectSourceId;
+    const environmentServerId = detail?.environment.serverId;
+    const pluginTargetMachineId = runtime?.source.kind === 'host' && machineIds.length === 1 ? machineIds[0] : undefined;
+    const pluginTarget = React.useMemo<React.ComponentProps<typeof DeploymentEnvironmentPluginPages>['target'] | null>(
+      () => environmentServerId && environmentSourceId && detailEnvironmentId && controllerMachineId ? {
+        kind: 'deploymentEnvironment', serverId: environmentServerId, projectSourceId: environmentSourceId,
+        environmentId: detailEnvironmentId, controllerMachineId,
+        ...(pluginTargetMachineId ? { machineId: pluginTargetMachineId } : {}),
+      } : null,
+      [environmentServerId, environmentSourceId, detailEnvironmentId, controllerMachineId, pluginTargetMachineId],
+    );
     const buildMachineId = detail?.environment.buildMachineId ?? null;
     const namedMachineIds = React.useMemo(
       () => [...new Set([...machineIds, ...(controllerMachineId ? [controllerMachineId] : []), ...(buildMachineId ? [buildMachineId] : [])])],
@@ -1378,6 +1390,10 @@ export const DeploymentEnvironmentDetail = React.memo(
                 onOpen={props.onOpenDatabase}
                 onBackups={() => openTab('settings', 'backups')}
                 onAdd={() => { openAddDatabase?.(); }} />
+              {props.lifetime && pluginTarget && environment.snapshot.status !== 'unavailable'
+                && props.demand.mounted && props.demand.visible && props.demand.focused ? (
+                <DeploymentEnvironmentPluginPages lifetime={props.lifetime} target={pluginTarget} />
+              ) : null}
               {/* A stored definition's own section already says previews follow a repository: one cause, said once
                   (PAGE-ACCEPT-176 R10-D9). */}
               {previewAvailability !== 'preview'

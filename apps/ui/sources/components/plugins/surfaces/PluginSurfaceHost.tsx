@@ -222,6 +222,7 @@ import {
     usePluginSurfacePreferredAgent,
     usePluginSessionSurfaceTarget,
     type PluginSurfaceEnvironment,
+    type PluginSurfaceTargetFacts,
     type PluginSurfaceTargetResolution,
 } from './pluginSurfaceContext';
 import { resolvePluginSidebarResourceContext } from './pluginSurfaceMountBinding';
@@ -1837,6 +1838,7 @@ function PluginSurfaceHostMount(props: Readonly<(
     /** §3.2: the exact identities this placement owns for its declared target. */
     projectId?: string | null;
     projectContext?: ProjectWidgetAreaContextV1 | null;
+    deploymentEnvironment?: PluginSurfaceTargetFacts['deploymentEnvironment'];
     pluginUiProjection?: PluginUiProjectionModel | null;
     localServicePreviewState?: LocalServicePreviewState | null;
     platform?: LocalServicePreviewPlatform;
@@ -2438,6 +2440,7 @@ function PluginSurfaceHostMount(props: Readonly<(
         agentId: props.agentId,
         session: sessionTarget,
         project: projectContext?.target,
+        deploymentEnvironment: props.deploymentEnvironment,
         browserTarget: declaredBrowserTarget,
     }), [
         declaredBrowserTarget?.kind,
@@ -2448,6 +2451,7 @@ function PluginSurfaceHostMount(props: Readonly<(
         props.agentId,
         sessionTarget,
         projectContext?.target,
+        props.deploymentEnvironment,
         props.serverId,
         props.machineId,
         props.sessionId,
@@ -4363,6 +4367,7 @@ export function PluginSurfacePlacementHost(props: Readonly<{
     agentId?: string | null;
     projectId?: string | null;
     projectContext?: ProjectWidgetAreaContextV1 | null;
+    deploymentEnvironment?: PluginSurfaceTargetFacts['deploymentEnvironment'];
     pluginUiProjection?: PluginUiProjectionModel | null;
     localServicePreviewState?: LocalServicePreviewState | null;
     platform?: LocalServicePreviewPlatform;
@@ -4404,6 +4409,7 @@ export function PluginSurfacePlacementHost(props: Readonly<{
             agentId={props.agentId}
             projectId={props.projectId}
             projectContext={props.projectContext}
+            deploymentEnvironment={props.deploymentEnvironment}
             pluginUiProjection={props.pluginUiProjection}
             localServicePreviewState={props.localServicePreviewState}
             platform={props.platform}

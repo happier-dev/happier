@@ -638,7 +638,8 @@ function openResolvedPluginPage(input: Readonly<{
             return { ok: false, code: 'unsupported_method', reason: 'plugin_surface_open_launch_input_unsupported' };
         }
     }
-    const routePath = page.target.kind === 'machine' || (page.target.kind === 'app' && page.target.context)
+    const routePath = page.target.kind === 'machine' || page.target.kind === 'deploymentEnvironment'
+        || (page.target.kind === 'app' && page.target.context)
         ? buildPluginPageRoutePath({ ...page.target, pluginId: page.pluginId, localId: page.localId, subPath })
         : appendPluginPageRouteSubPath(page.routePath, subPath);
     if (request.presentation === 'window') {

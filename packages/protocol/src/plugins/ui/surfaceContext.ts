@@ -18,6 +18,8 @@ import { PluginUiJsonValueV1Schema } from '../contributions/ui/json.js';
 import { PluginIdSchema } from '../pluginId.js';
 import { PluginUiInstanceKeyV1Schema, PluginUiLaunchInputV1Schema, PluginUiSubPathV1Schema, type PluginUiInstanceKeyV1 } from './semanticCommands.js';
 import { ProjectSourceV1Schema } from '../../projects/sources/projectSourceV1.js';
+import { DeploymentEnvironmentRefV1Schema } from '../../deployments/deploymentEnvironmentRefV1.js';
+import { DeploymentIdentifierV1Schema } from '../../deployments/deploymentIdentifiersV1.js';
 import { WorkspaceRefV1WriteSchema } from '../../workspaces/workspaceRefV1.js';
 import { ScmHostingRepositoryIdentityV1Schema } from '../../scm/hostingRepositoryIdentity.js';
 import { WidgetSurfaceRefV1Schema } from '../../widgets/widgetInstanceV1.js';
@@ -124,6 +126,12 @@ export const PluginUiHostApiSurfaceTargetV1Schema = lazyZodSchema(() => z.discri
     /** Verified Home identity and current enrolled installation, when the host has those facts. */
     homeId: z.optional(PluginUiHostApiSurfaceNonBlankStringV1Schema),
     installationId: z.optional(PluginUiHostApiSurfaceNonBlankStringV1Schema),
+  }),
+  z.strictObject({
+    ...z.pick(DeploymentEnvironmentRefV1Schema, { serverId: true, projectSourceId: true, environmentId: true }).shape,
+    kind: z.literal('deploymentEnvironment'),
+    controllerMachineId: DeploymentIdentifierV1Schema,
+    machineId: z.optional(DeploymentIdentifierV1Schema),
   }),
   z.strictObject({
     kind: z.literal('session'),

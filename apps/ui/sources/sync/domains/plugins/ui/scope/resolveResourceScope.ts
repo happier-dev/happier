@@ -2,6 +2,7 @@ import type {
     PluginSessionResourceTargetV1,
 } from '@happier-dev/protocol/plugins/ui';
 
+import { PluginUiTargetKindV1Schema } from '@happier-dev/protocol/plugins/contributions/ui';
 import type { PluginSurfaceTargetKind } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
 
 /**
@@ -37,23 +38,6 @@ export type PluginSurfaceResourceScopeResolution =
         resourceScope: readonly PluginSessionResourceTargetV1[];
     }>
     | Readonly<{ declared: false; reason: PluginSurfaceTargetUndeclaredReason }>;
-
-/**
- * Closure-bound to the target vocabulary: the record below must name every member
- * of `PluginSurfaceTargetKind` (itself derived from the protocol schema), so a kind
- * added to the manifest contract fails to compile here rather than falling into a
- * silent default.
- */
-const SURFACE_TARGET_KINDS: ReadonlySet<PluginSurfaceTargetKind> = new Set(
-    Object.keys({
-        session: true,
-        project: true,
-        machine: true,
-        app: true,
-        browser: true,
-        services: true,
-    } satisfies Record<PluginSurfaceTargetKind, true>) as readonly PluginSurfaceTargetKind[],
-);
 
 function asRecord(value: unknown): UnknownRecord | null {
     return value && typeof value === 'object' && !Array.isArray(value)
@@ -103,6 +87,7 @@ function deriveResourceScope(
         }
         case 'browser':
         case 'machine':
+        case 'deploymentEnvironment':
         case 'app':
             // App + browser surfaces have no derivable session-resource scope from
             // the surface target alone (browser scope is the browser-view, handled
@@ -127,11 +112,11 @@ export function resolveResourceScope(
     surfaceTarget: unknown,
 ): PluginSurfaceResourceScopeResolution {
     const target = asRecord(surfaceTarget);
-    const rawKind = target && typeof target.kind === 'string' ? target.kind : null;
-    if (!target || !rawKind || !SURFACE_TARGET_KINDS.has(rawKind as PluginSurfaceTargetKind)) {
+    const kind = PluginUiTargetKindV1Schema.safeParse(target?.kind);
+    if (!target || !kind.success) {
         return Object.freeze({ declared: false as const, reason: 'surface_target_undeclared' as const });
     }
-    const targetKind = rawKind as PluginSurfaceTargetKind;
+    const targetKind = kind.data;
     return Object.freeze({
         declared: true as const,
         targetKind,

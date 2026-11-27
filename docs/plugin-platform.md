@@ -3103,6 +3103,22 @@ navigation, Local Act form context and release-read authority keys. This public
 hint remains independent of the acknowledged-link placement operation; removing
 an old caller callback does not remove those consumers or grant them authority.
 
+In 0.3 development, an installed plugin can contribute a page to an Environment
+with `ui.views` using `container: 'appPage'` and
+`target: { kind: 'deploymentEnvironment' }`. The host admits the declaration
+through the shared surface catalog and selects a supported renderer as it does
+for other contributed pages. Environment Overview embeds the page after Data
+and can expand it through the shared page host.
+
+Narrow `SurfaceContext.target.kind` to `deploymentEnvironment` to read the
+qualified `serverId`, `projectSourceId`, `environmentId`, and
+`controllerMachineId`. `machineId` is present when the selected runtime target
+identifies a Machine. These fields identify the record and carry no binding
+material. Resource reads and Actions retain their own admission. The host mounts
+the page from the current Environment read and retires the mount when the page
+is hidden or the read loses access. The Environment read remains available to
+agents through `deployments.environments.get`.
+
 In 0.3 development, an Agent's Account settings can contribute an inline
 `ui.views` surface with role `agentSettings`, App target and content presentation.
 The existing scoped settings section mounts it inside its one Account projection.

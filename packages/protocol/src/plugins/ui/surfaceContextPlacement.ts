@@ -16,6 +16,7 @@ export const PluginUiSurfacePlacementV1Schema = lazyZodSchema(() => z.enum([
   'sessionHeaderAction',
   'projectSurface',
   'machineSurface',
+  'deploymentEnvironmentSurface',
   'appSurface',
   'browserSurface',
   'rightSidebarSurface',

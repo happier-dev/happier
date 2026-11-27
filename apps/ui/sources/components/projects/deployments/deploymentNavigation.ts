@@ -41,6 +41,7 @@ type DeploymentEnvironmentAddress = Readonly<{
     database?: string;
     /** Open the existing Detach review for this target. */
     detachTargetLinkId?: string;
+    pluginPage?: Readonly<{ pluginId: string; localId: string; subPath?: string; view?: string | null }>;
 }>;
 
 /** Native Environment identity never needs a checkout/WorkspaceRef; `deploymentId` opens one of its receipts. */
@@ -57,6 +58,13 @@ export function deploymentEnvironmentRoute(input: DeploymentEnvironmentAddress) 
             ...(input.setup ? { deploymentSetup: input.setup } : {}),
             ...(input.database ? { deploymentService: input.database } : {}),
             ...(input.detachTargetLinkId ? { deploymentDetachTarget: input.detachTargetLinkId } : {}),
+            ...(input.pluginPage ? {
+                deploymentPlugin: input.pluginPage.pluginId,
+                deploymentPluginPage: input.pluginPage.localId,
+                ...(input.pluginPage.subPath ? { deploymentPluginPath: input.pluginPage.subPath } : {}),
+                ...(input.pluginPage.view && input.pluginPage.view !== input.pluginPage.localId
+                    ? { deploymentPluginView: input.pluginPage.view } : {}),
+            } : {}),
         },
     };
 }
@@ -93,5 +101,8 @@ export function buildDeploymentEnvironmentHref(input: DeploymentEnvironmentAddre
         + ('deploymentSection' in params ? `&deploymentSection=${encodeURIComponent(params.deploymentSection!)}` : '')
         + ('deploymentSetup' in params ? `&deploymentSetup=${encodeURIComponent(params.deploymentSetup!)}` : '')
         + ('deploymentService' in params ? `&deploymentService=${encodeURIComponent(params.deploymentService!)}` : '')
-        + ('deploymentDetachTarget' in params ? `&deploymentDetachTarget=${encodeURIComponent(params.deploymentDetachTarget!)}` : '');
+        + ('deploymentDetachTarget' in params ? `&deploymentDetachTarget=${encodeURIComponent(params.deploymentDetachTarget!)}` : '')
+        + ('deploymentPlugin' in params ? `&deploymentPlugin=${encodeURIComponent(params.deploymentPlugin!)}&deploymentPluginPage=${encodeURIComponent(params.deploymentPluginPage!)}` : '')
+        + ('deploymentPluginPath' in params ? `&deploymentPluginPath=${encodeURIComponent(params.deploymentPluginPath!)}` : '')
+        + ('deploymentPluginView' in params ? `&deploymentPluginView=${encodeURIComponent(params.deploymentPluginView!)}` : '');
 }

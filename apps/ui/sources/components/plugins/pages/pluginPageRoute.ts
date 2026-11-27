@@ -2,6 +2,8 @@ import { normalizePluginUiSubPathV1, PluginUiDestinationReferenceV1Schema } from
 import { machinePageHref } from '@/components/machines/page/machinePageHref';
 import { artifactViewRoute } from '@/components/artifacts/artifactViewRoute';
 import { readTriageEntryRouteSegmentV1, TRIAGE_APP_PAGE_DESTINATION_V1 } from '@happier-dev/triage-protocol/v1';
+import { buildDeploymentEnvironmentHref } from '@/components/projects/deployments/deploymentNavigation';
+import type { PluginUiHostApiSurfaceTargetV1 } from '@happier-dev/protocol/plugins/ui';
 
 /** Read the raw path before URL can erase traversal segments. */
 export function parsePluginProjectPageRoutePath(href: string): Readonly<{
@@ -79,10 +81,14 @@ export type PluginPageTarget = Readonly<{ kind: 'app'; context?: Readonly<{ kind
     serverId?: string | null;
     rawWorktreeId?: string | null;
     rawActiveRootPath?: string | null;
-}> | Readonly<{ kind: 'machine'; serverId: string; machineId: string }>;
+}> | Readonly<{ kind: 'machine'; serverId: string; machineId: string }>
+    | Pick<Extract<PluginUiHostApiSurfaceTargetV1, { kind: 'deploymentEnvironment' }>, 'kind' | 'serverId' | 'projectSourceId' | 'environmentId'>;
 
 export function pluginPageTargetKey(target: PluginPageTarget): string {
     if (target.kind === 'machine') return JSON.stringify(['machine', target.serverId, target.machineId]);
+    if (target.kind === 'deploymentEnvironment') {
+        return JSON.stringify([target.kind, target.serverId, target.projectSourceId, target.environmentId]);
+    }
     return target.kind === 'app' ? target.context ? JSON.stringify(['app', 'review', target.context.reviewId]) : 'app' : JSON.stringify([
         'project', target.serverId ?? null, target.workspaceRefId,
         target.rawWorktreeId ?? null, target.rawActiveRootPath ?? null,
@@ -117,6 +123,11 @@ export function buildPluginPageRoutePath(input: PluginPageTarget & Readonly<{
         }
         case 'project': return buildPluginProjectPageRoutePath(input);
         case 'machine': return buildPluginMachinePageRoutePath(input);
+        case 'deploymentEnvironment': {
+            const subPath = normalizePluginUiSubPathV1(input.subPath ?? '');
+            if (subPath === null) throw new Error('plugin_surface_open_sub_path_invalid');
+            return buildDeploymentEnvironmentHref({ ...input, tab: 'overview', pluginPage: { ...input, subPath } });
+        }
     }
 }
 
