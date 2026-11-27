@@ -9,7 +9,7 @@ import {
 } from '../content';
 import type { HandlerContext, HandlerResult, SessionUpdate } from '../types';
 import { mergeToolCallSnapshot } from './mergeToolCallSnapshot';
-import type { AcpToolCallSnapshot } from './types';
+import { isAcpToolCallTerminalStatus, type AcpToolCallSnapshot } from './types';
 
 export type AcpToolCallUpdateSource = 'tool_call' | 'tool_call_update';
 
@@ -47,15 +47,9 @@ function hasOwn(value: object, key: PropertyKey): boolean {
 function normalizeStatus(value: unknown): AcpToolCallSnapshot['status'] | undefined {
   return value === 'pending'
     || value === 'in_progress'
-    || value === 'completed'
-    || value === 'failed'
-    || value === 'cancelled'
+    || isAcpToolCallTerminalStatus(value)
     ? value
     : undefined;
-}
-
-function isTerminalStatus(status: AcpToolCallSnapshot['status'] | undefined): boolean {
-  return status === 'completed' || status === 'failed' || status === 'cancelled';
 }
 
 function extractTerminalOutputData(update: SessionUpdate): string | null {
@@ -92,7 +86,7 @@ function buildSnapshotPatch(params: Readonly<{
   const terminalOutputData = extractTerminalOutputData(update);
   if (hasExplicitOutput) patch.rawOutput = extractToolOutput(update);
   else if (
-    isTerminalStatus(status)
+    isAcpToolCallTerminalStatus(status)
     && terminalOutputData !== null
   ) {
     patch.rawOutput = {
@@ -101,7 +95,7 @@ function buildSnapshotPatch(params: Readonly<{
     };
   }
   else if (
-    (status === 'completed' || status === 'failed' || status === 'cancelled')
+    isAcpToolCallTerminalStatus(status)
     && (Array.isArray(update.rawInput) || Array.isArray(update.input))
   ) {
     patch.rawOutput = extractToolOutput(update);
@@ -132,7 +126,7 @@ function buildTerminalResult(
   status: AcpToolCallSnapshot['status'],
   snapshot: AcpToolCallSnapshot,
 ): Readonly<{ value: unknown; isError?: boolean }> | undefined {
-  if (status !== 'completed' && status !== 'failed' && status !== 'cancelled') return undefined;
+  if (!isAcpToolCallTerminalStatus(status)) return undefined;
   if (!hasOwn(snapshot, 'rawOutput')) return undefined;
   if (status === 'completed') return { value: withAcpResultMetadata(snapshot.rawOutput, snapshot) };
 
@@ -188,14 +182,14 @@ export function projectToolCallUpdate(
 
   if (!wasActive) {
     ctx.clearIdleTimeout();
-    ctx.emit({ type: 'status', status: 'running' });
+    ctx.emit({ type: 'status', status: 'running', toolCallId });
     logger.debug(`[AcpBackend] Tool call started: ${toolCallId} (${kind}) from ${source}`);
   }
   const accepted = ctx.toolCalls.observe(patch, {
     terminalResult: buildTerminalResult(merged.status, merged),
   });
   if (!accepted) return { handled: true };
-  if (source === 'tool_call_update' && !isTerminalStatus(merged.status)) {
+  if (source === 'tool_call_update' && !isAcpToolCallTerminalStatus(merged.status)) {
     emitTerminalOutputFromMeta(update, ctx, toolCallId);
   }
 

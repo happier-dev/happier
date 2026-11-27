@@ -25,6 +25,7 @@ import {
     type DismissedCliWarnings,
 } from '@/agents/runtime/cliWarnings';
 import { canAgentResume } from '@/agents/runtime/resumeCapabilities';
+import { readSessionAuthoringBackendOptionState } from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
 import { isAgentSelectableForNewSession, resolveProfileAvailabilityForNewSession } from '@/components/sessions/new/modules/newSessionAgentSelection';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -190,7 +191,10 @@ export function useNewSessionAvailabilityState(params: Readonly<{
             out[id] = canSelectAgentWithoutDetectedCli({
                 agentId: id,
                 settings: params.settings,
-                agentOptionState: params.agentNewSessionOptionStateByAgentId[id] ?? null,
+                agentOptionState: readSessionAuthoringBackendOptionState(
+                    { kind: 'builtInAgent', agentId: id },
+                    params.agentNewSessionOptionStateByAgentId,
+                ),
             });
         }
         return out;

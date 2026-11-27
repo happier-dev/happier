@@ -183,6 +183,29 @@ describe('AcpBackend spawn environment', () => {
     });
   }, 20_000);
 
+  it.each([
+    { open: 'new', loadSessionId: null },
+    { open: 'load', loadSessionId: 'existing-session' },
+  ] as const)('tells process-launch preparation which session the process will load ($open)', async ({ open, loadSessionId }) => {
+    await withTempDir('happier-acp-spawn-env-', async (dir) => {
+      const prepareProcessLaunch = vi.fn(async () => ({}));
+      const backend = new AcpBackend({
+        agentName: 'test',
+        cwd: dir,
+        command: process.execPath,
+        args: [writeEnvCapturingAcpAgentScript({ dir })],
+        prepareProcessLaunch,
+      });
+
+      try {
+        await (open === 'load' ? backend.loadSession('existing-session') : backend.startSession());
+        expect(prepareProcessLaunch).toHaveBeenCalledWith({ loadSessionId });
+      } finally {
+        await backend.dispose();
+      }
+    });
+  }, 20_000);
+
   it('cleans prepared launch state after session creation fails and prepares a retry afresh', async () => {
     await withTempDir('happier-acp-spawn-env-', async (dir) => {
       const scriptPath = writeFailingNewSessionAcpAgentScript({ dir });

@@ -1,4 +1,5 @@
 import type { AgentId } from '@happier-dev/agents';
+import { getProviderCliRuntimeSpec } from '@happier-dev/agents';
 
 import { readProviderCliOverride, resolveProviderCliCommand } from './providerCliResolution';
 
@@ -7,6 +8,39 @@ export class ProviderCliNotFoundError extends ReferenceError {
   constructor(agentId: AgentId, opts: Readonly<{ processEnv?: NodeJS.ProcessEnv }> = {}) {
     super(buildMissingProviderCliCommandErrorMessage(agentId, opts));
     this.name = 'ProviderCliNotFoundError';
+  }
+}
+
+/**
+ * The provider CLI resolved and started, but its version cannot serve the requested launch.
+ * The message names the minimum and the vendor's own update command, so it is shown as is.
+ */
+export class ProviderCliVersionUnsupportedError extends Error {
+  readonly agentId: AgentId;
+  readonly foundVersion: string | null;
+  readonly minimumVersion: string;
+  /** The vendor's own updater (`<binary> <nativeUpdate.args>`), when the catalog declares one. */
+  readonly updateCommand: string | null;
+
+  constructor(params: Readonly<{
+    agentId: AgentId;
+    /** What needs the newer CLI, as the sentence subject (e.g. "Connected Antigravity accounts"). */
+    requiredFor: string;
+    foundVersion: string | null;
+    minimumVersion: string;
+  }>) {
+    const spec = getProviderCliRuntimeSpec(params.agentId);
+    const foundVersion = params.foundVersion?.trim() || null;
+    const updateCommand = spec.nativeUpdate ? [spec.binaryName, ...spec.nativeUpdate.args].join(' ') : null;
+    super(
+      `${params.requiredFor} need ${spec.title} ${params.minimumVersion} or newer${foundVersion ? ` (found ${foundVersion})` : ''}. `
+      + (updateCommand ? `Run \`${updateCommand}\` on this machine, then try again.` : `Update ${spec.title} on this machine, then try again.`),
+    );
+    this.name = 'ProviderCliVersionUnsupportedError';
+    this.agentId = params.agentId;
+    this.foundVersion = foundVersion;
+    this.minimumVersion = params.minimumVersion;
+    this.updateCommand = updateCommand;
   }
 }
 

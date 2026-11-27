@@ -18,6 +18,8 @@ export type BuiltInAcpConfig = Readonly<{
   promptImageSupport: BuiltInAcpYesNoAuto;
   /** Whether Happier's MCP server list is passed to the ACP session/new request. */
   mcpServers?: 'pass' | 'drop';
+  /** Advertise ACP form elicitation (`elicitation/create`) and answer it as structured questions. */
+  formElicitation?: boolean;
   /** A mode id, or ordered candidates resolved against advertised modes. Null means no override. */
   permissionModeMapping?: Readonly<Partial<Record<PermissionMode, string | readonly string[] | null>>>;
 }>;
@@ -76,15 +78,26 @@ export const BUILT_IN_ACP_CONFIG: Readonly<Partial<Record<AgentId, BuiltInAcpCon
   },
   agy: {
     agentId: 'agy',
-    // The interactive CLI remains `agy`; the CLI catalog replaces this launch
-    // command with the ensured managed registry artifact for ACP sessions.
-    launcher: { command: providerLauncherCommand('agy'), args: [] },
+    // The CLI provider adds the profile (`--gemini-dir`) and, for connected accounts, file token storage.
+    launcher: { command: providerLauncherCommand('agy'), args: ['acp'] },
     transportProfile: 'generic',
     supportsLoadSession: true,
     supportsModes: 'auto',
     supportsModels: 'auto',
     promptImageSupport: 'auto',
     mcpServers: 'pass',
+    // agy 1.5.18 `ask_question` sends form elicitations; without the capability it prints the options as text.
+    formElicitation: true,
+    // agy 1.5.18 always advertises default, accept-edits and plan; auto only on eligible accounts.
+    // It has no read-only or bypass mode: read-only keeps its asking mode, and yolo takes the most
+    // permissive advertised mode while the provider-enforced handler approves the remaining prompts.
+    permissionModeMapping: {
+      default: null,
+      'read-only': 'default',
+      'safe-yolo': ['auto', 'accept-edits'],
+      yolo: ['auto', 'accept-edits'],
+      plan: 'plan',
+    },
   },
   fx: {
     agentId: 'fx',

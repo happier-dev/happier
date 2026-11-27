@@ -5360,9 +5360,6 @@ localTailscale: {
       codexAcp: {
         title: "Codex ACP アダプター",
       },
-      agyAcpServer: {
-          title: "Agy ACP サーバー",
-      },
       githubCli: {
         title: "GitHub コマンドライン",
       },
@@ -5683,18 +5680,6 @@ localTailscale: {
       reinstallTitle: "Codex ACP を再インストールしますか？",
       description:
         "これはスレッドの読み込み/再開に対応した、Codex 向けの実験的な ACP アダプターをインストールします。",
-    },
-    agyAcpBanner: {
-        title: "Agy ACP サーバー",
-        install: "インストール",
-        update: "更新",
-        reinstall: "再インストール",
-    },
-    agyAcpInstallModal: {
-        installTitle: "Agy ACP サーバーをインストールしますか？",
-        updateTitle: "Agy ACP サーバーを更新しますか？",
-        reinstallTitle: "Agy ACP サーバーを再インストールしますか？",
-        description: "Agy セッションで使用する公式の固定版 Agy ACP サーバーをインストールします。対話型の agy CLI は個別にインストールしたままです。",
     },
         githubCliBanner: {
             title: 'GitHub CLI',
@@ -6984,7 +6969,7 @@ localTailscale: {
       customColorTitle: 'カスタムカラー',
       customColorMessage: '色を選ぶか、16進数の値を入力してください。',
       invalidColor: '#3A7BD5 のような16進数の値を使ってください。',
-      removeColor: '色を削除',
+      resetColor: '色をリセット',
       inheritedFromProject: 'プロジェクトから',
       customColorLabel: ({ hex }: { hex: string }) => `カスタムカラー ${hex}`,
       colors: { blue: '青', green: '緑', orange: 'オレンジ', yellow: '黄', red: '赤', indigo: '藍', purple: '紫' },
