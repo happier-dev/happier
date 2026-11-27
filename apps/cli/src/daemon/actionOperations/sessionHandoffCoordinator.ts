@@ -93,10 +93,10 @@ function readFailure(value: unknown, fallback: string): Failure | null {
   const errorCode = typeof record.errorCode === 'string' && record.errorCode.trim()
     ? record.errorCode.trim()
     : fallback;
-  const error = typeof record.error === 'string' && record.error.trim()
-    ? record.error.trim()
-    : errorCode;
-  return { ok: false, errorCode, error };
+  const failure = readActionFailureEnvelope({ ...record, errorCode })!;
+  return { ...failure,
+    ...(failure.failureCause !== undefined || errorCode === 'target_unavailable'
+      ? { failureCause: projectActionFailureCauseV1(failure, `session.handoff.${fallback}`) } : {}) };
 }
 
 function readThrownFailure(error: unknown, fallback: string): Failure {

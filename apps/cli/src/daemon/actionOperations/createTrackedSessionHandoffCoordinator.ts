@@ -12,6 +12,7 @@ import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executo
 import { SessionHandoffWorkspaceCaptureResultV3Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { sessionControlUnavailable } from '@/session/shared/sessionControlFailure';
 
 import { encodeRequesterCredentials, type StoredCredentials } from '@/persistence';
 import { resolveMachineRpcExternalActionEffectV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
@@ -468,7 +469,11 @@ export function createTrackedSessionHandoffCoordinator(deps: CoordinatorDeps) {
 
     let spawnResult: unknown;
     let spawnNonce: string | null = null;
-    let acceptedHandoffId: string | null = null;
+    const root = hostInput.context?.externalActionExecutionAuthorization;
+    let admittedContinuation: Readonly<{
+      handoffId: string;
+      authorization: NonNullable<typeof root>;
+    }> | null = null;
     const workspaceHandoffMethods = new Set<string>([
       RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3,
       RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3,
@@ -482,28 +487,36 @@ export function createTrackedSessionHandoffCoordinator(deps: CoordinatorDeps) {
         return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
       }
       try {
-        const root = hostInput.context?.externalActionExecutionAuthorization;
         let externalAction: Parameters<MachineCall>[0]['externalAction'];
         if (root) {
           const boundary = deps.handoffAuthorization;
           const phaseInput = request && typeof request === 'object'
             && Reflect.get(request, 'kind') === 'requester_session_handoff_bootstrap_v1' ? Reflect.get(request, 'input') : request;
           const requestHandoffId = phaseInput && typeof phaseInput === 'object' ? readNonEmptyString(Reflect.get(phaseInput, 'handoffId')) : null;
-          const handoffId = requestHandoffId ?? acceptedHandoffId;
-          const custody = handoffId && boundary ? await boundary.sourceExportStore.load(handoffId) : null;
+          const handoffId = requestHandoffId ?? admittedContinuation?.handoffId;
+          const custody = admittedContinuation === null && handoffId && boundary
+            ? await boundary.sourceExportStore.load(handoffId) : null;
           const signer = boundary?.readSourceInstallation();
           const admission = root.binding.handoffAdmission;
           const actionId = resolveMachineRpcExternalActionEffectV1(method, root.binding,
-            { machineId, installationId: root.binding.handoffAdmission?.targetInstallationId ?? '' });
+            { machineId, installationId: admission?.targetInstallationId ?? '' });
           if (!boundary || !handoffId || !signer || !admission || !actionId
-            || custody?.acceptedHandoffAuthorization?.token !== root.token
-            || custody.sessionId !== sessionId || custody.sourceMachineId !== source.sourceMachineId
-            || custody.targetMachineId !== targetMachineId || admission.sessionId !== sessionId
-            || admission.sourceMachineId !== source.sourceMachineId || admission.targetMachineId !== targetMachineId
-            || signer.machineId !== admission.sourceMachineId || signer.installationId !== admission.sourceInstallationId) {
-            return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+            || signer.machineId !== admission.sourceMachineId || signer.installationId !== admission.sourceInstallationId
+            || (admittedContinuation !== null && admittedContinuation.handoffId !== handoffId)) {
+            return sessionControlUnavailable('session.handoff.continuation.custody');
           }
-          const childAuthorization = await prepareExternalActionHandoffContinuationAuthorization({ authorization: custody.acceptedHandoffAuthorization,
+          if (!admittedContinuation) {
+            // The source export has already accepted this root. Keep the admitted value for
+            // this invocation; subsequent effects still bind and sign their own request.
+            if (custody?.acceptedHandoffAuthorization?.token !== root.token
+              || custody.sessionId !== sessionId || custody.sourceMachineId !== source.sourceMachineId
+              || custody.targetMachineId !== targetMachineId || admission.sessionId !== sessionId
+              || admission.sourceMachineId !== source.sourceMachineId || admission.targetMachineId !== targetMachineId) {
+              return sessionControlUnavailable('session.handoff.continuation.custody');
+            }
+            admittedContinuation = { handoffId, authorization: custody.acceptedHandoffAuthorization };
+          }
+          const childAuthorization = await prepareExternalActionHandoffContinuationAuthorization({ authorization: admittedContinuation.authorization,
             handoffId, actionId, input: request, machineId, sourceMachineId: signer.machineId,
             sourceInstallationId: signer.installationId, privateKey: signer.privateKey, serverHttpBaseUrl: boundary.serverHttpBaseUrl,
             ...(credentials.encryption ? { material: credentials.encryption } : {}), ...(signal ? { signal } : {}) });
@@ -513,9 +526,8 @@ export function createTrackedSessionHandoffCoordinator(deps: CoordinatorDeps) {
           const currentSigner = boundary.readSourceInstallation();
           if (!authorization || !currentSigner || currentSigner.machineId !== signer.machineId
             || currentSigner.installationId !== signer.installationId) {
-            return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+            return sessionControlUnavailable('session.handoff.continuation.authorization');
           }
-          acceptedHandoffId = handoffId;
           externalAction = { context: { ...hostInput.context!, authority: 'account_automation',
             defaultSessionMachineId: signer.machineId, externalActionTarget: authorization.binding.target,
             externalActionExecutionAuthorization: authorization }, effectActionId: actionId,

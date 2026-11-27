@@ -304,7 +304,8 @@ describe('createTrackedSessionHandoffCoordinator', () => {
     });
   });
 
-  it.each(['refuses without sending requester custody', 'continuation', 'linked_workspace', 'relationship', 'retired_linked_workspace'] as const)(
+  it.each(['refuses without sending requester custody', 'continuation', 'different custody root',
+    'rotated signer', 'linked_workspace', 'relationship', 'retired_linked_workspace'] as const)(
     'handles a cold requester handoff: %s', async scenario => {
     let phase = 'prepare requester custody and Home boundaries';
     onTestFailed(() => console.error('Cold requester Project handoff fixture failed', { scenario, phase }));
@@ -313,6 +314,7 @@ describe('createTrackedSessionHandoffCoordinator', () => {
       const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(32));
       const targetKeys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(33));
       const targetCustodian = scenario === 'refuses without sending requester custody' ? 'carol' : 'alice';
+      const continuationRefused = scenario === 'different custody root' || scenario === 'rotated signer';
       const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'accepted-original-root', binding: {
         accountId: 'bob', accountEncryptionMode: 'plain', authentication: { kind: 'account', tokenEpoch: 7 }, serverIdentityId: 'srv_bob',
         machineId: 'source', custodianAccountId: 'alice', installationId: 'source-installation', actionId: 'session.handoff',
@@ -324,8 +326,11 @@ describe('createTrackedSessionHandoffCoordinator', () => {
           sourceInstallationId: 'source-installation', targetInstallationId: 'target-installation' },
       } });
       const store = createSessionHandoffSourceExportStore({ activeServerDir });
+      const loadCustody = vi.spyOn(store, 'load');
       await store.save({ handoffId: 'handoff-cold', sessionId, sourceMachineId: 'source', targetMachineId: 'target',
-        exportedAtMs: 1, acceptedHandoffAuthorization: root });
+        exportedAtMs: 1, acceptedHandoffAuthorization: scenario === 'different custody root'
+          ? { ...root, token: 'a-different-accepted-root' } : root });
+      let continuationMints = 0;
       // Only Home HTTP and the target Machine transport are substituted.
       vi.spyOn(axios, 'get').mockImplementation(async url => {
         const path = new URL(String(url)).pathname;
@@ -410,9 +415,10 @@ describe('createTrackedSessionHandoffCoordinator', () => {
           } } };
         }
         expect(request.handoffContinuation).toEqual({ authorization: root, handoffId: 'handoff-cold' });
+        continuationMints++;
         return { status: 200, data: { v: 1, token: 'target-child', binding: { ...root.binding,
-          machineId: 'target', installationId: 'target-installation', target: request.envelope.target,
-          actionId: 'session.handoff.prepare_target', requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
+          machineId: request.machineId, installationId: `${request.machineId}-installation`, target: request.envelope.target,
+          actionId: decodeURIComponent(new URL(String(url)).pathname.split('/')[3]!), requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
           handoffContinuation: { rootRequestId: root.binding.requestId,
             rootRequestEnvelopeDigest: root.binding.requestEnvelopeDigest, handoffId: 'handoff-cold' },
         } } };
@@ -531,6 +537,8 @@ describe('createTrackedSessionHandoffCoordinator', () => {
         lifecycle: { start: async () => { throw new Error('Unexpected native start'); }, stop: async () => undefined },
         localServerId: 'bob-home', localMachineId: 'source', resolveWorkspaceRef: () => null,
         rootOwnershipManager: createWorkspaceRootOwnershipManager({ lockDirectory: join(activeServerDir, 'workspace-locks') }) });
+      let statusReads = 0;
+      let sourceInstallationId = 'source-installation';
       const callMachine = vi.fn(async (request: Parameters<typeof import('@/session/transport/rpc/machineRpc').callMachineRpc>[0]) => {
         expect(request.externalAction?.context.externalActionExecutionAuthorization).toMatchObject({ token: 'target-child',
           binding: { sessionActionOrigin: root.binding.sessionActionOrigin } });
@@ -540,30 +548,46 @@ describe('createTrackedSessionHandoffCoordinator', () => {
         }
         expect(typeof request.externalAction?.context.externalActionExecutionAuthorization?.requesterAccountProjection?.sealRequesterAccountContext)
           .toBe('function');
+        if (request.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_ABORT_V3) {
+          expect(request.request).toMatchObject({ handoffId: 'handoff-cold', reason: 'target_transport_reached' });
+          return { ok: true, status: { handoffId: 'handoff-cold', status: 'aborted',
+            phase: 'finalizing', recoveryActions: [] } };
+        }
+        if (request.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3) {
+          expect(request.request).toEqual({ handoffId: 'handoff-cold' });
+          if (scenario === 'rotated signer') sourceInstallationId = 'rotated-source-installation';
+          if (++statusReads === 1) return { status: { handoffId: 'handoff-cold', status: 'in_progress',
+            phase: 'preparing', transportStrategy: 'direct_peer', recoveryActions: [] } };
+          return { ok: false, errorCode: 'target_transport_reached', error: 'target_transport_reached' };
+        }
         expect(request.request).toMatchObject({ kind: 'requester_session_handoff_bootstrap_v1',
           input: { handoffId: 'handoff-cold', sessionId, sourceMachineId: 'source', targetMachineId: 'target' },
           requesterBootstrap: { credentials: { token: 'bob-ordinary' } } });
-        return { ok: false, errorCode: 'target_transport_reached', error: 'target_transport_reached' };
+        return { ok: false, errorCode: 'not_found', error: 'pending' };
       });
       const coordinate = createTrackedSessionHandoffCoordinator({ expectedAccountServerId: 'bob-home',
         readCredentials: async () => ({ token: 'bob-ordinary', encryption: null }), callMachine,
-        handoffAuthorization: { sourceExportStore: createSessionHandoffSourceExportStore({ activeServerDir }),
+        wait: async () => {},
+        handoffAuthorization: { sourceExportStore: store,
           serverHttpBaseUrl: 'https://bob-home.test', readSourceInstallation: () => ({ machineId: 'source',
-            installationId: 'source-installation', privateKey: keys.secretKey }) },
+            installationId: sourceInstallationId, privateKey: keys.secretKey }) },
         workspaceSyncAdapter: createWorkspaceSyncHandoffAdapter({ sync,
           bootstrap: async () => { throw new Error('Unexpected workspace materialization'); } }),
       });
       phase = 'coordinate requester handoff and workspace membership';
-      expect(await runWithServerHttpBaseUrl('https://bob-home.test', () => coordinate({ operationId: root.binding.requestId,
+      const outcome = await runWithServerHttpBaseUrl('https://bob-home.test', () => coordinate({ operationId: root.binding.requestId,
         actionInput: { sessionId, targetMachineId: 'target', targetPath: '/target',
-          ...(scenario === 'continuation' ? {} : { workspaceAction: scenario === 'relationship'
+          ...(scenario === 'continuation' || continuationRefused ? {} : { workspaceAction: scenario === 'relationship'
             ? { kind: 'relationship', relationshipId: 'requester-relationship', flushBeforeCommit: true } : { kind: 'linked_workspace' } }) },
         context: { surface: 'rpc', externalActionExecutionAuthorization: root, requesterSessionBootstrap: requester! }, signal: new AbortController().signal,
         start: async () => ({ ok: true, result: { handoffId: 'handoff-cold', targetPath: '/target', endpointCandidates: [],
           status: { handoffId: 'handoff-cold', sessionId, sourceMachineId: 'source', targetMachineId: 'target',
             status: 'in_progress', phase: 'preparing', transportStrategy: 'direct_peer', recoveryActions: [] } } }),
         publishOwnerUpdate: () => undefined,
-      }))).toMatchObject({ ok: false, errorCode: scenario === 'continuation' ? 'target_transport_reached'
+      }));
+      if (continuationRefused) expect(outcome).toMatchObject({ ok: false, errorCode: 'target_unavailable',
+        failureCause: { phase: 'session.handoff.continuation.custody' } });
+      else expect(outcome, JSON.stringify(outcome)).toMatchObject({ ok: false, errorCode: scenario === 'continuation' ? 'target_transport_reached'
         : scenario === 'retired_linked_workspace' ? 'project_requester_authority_unavailable' : 'relationship_source_mismatch' });
       phase = 'settle installed Project subscription after requester handoff';
       await installedRuntime.whenProjectsSettled();
@@ -573,7 +597,16 @@ describe('createTrackedSessionHandoffCoordinator', () => {
       expect(getActiveProjectAccountRowsSnapshot()?.scopeKey).toBe(installedSnapshot.scopeKey);
       expect(await installedRuntime.managedWorkspaceSync.listRelationships({ workspaceRefId: installedRefs[0]!.id })).toEqual(beforeRelationships);
       expect(callMachine.mock.calls.map(([request]) => request.method)).toEqual(scenario === 'continuation'
-        ? [RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET, RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3] : []);
+        ? [RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET, RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3,
+          RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3, RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3,
+          RPC_METHODS.DAEMON_SESSION_HANDOFF_ABORT_V3, RPC_METHODS.DAEMON_SESSION_HANDOFF_ABORT_V3]
+        : scenario === 'different custody root' ? [RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET]
+        : scenario === 'rotated signer' ? [RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET,
+          RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3, RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3] : []);
+      expect(continuationMints).toBe(scenario === 'continuation' ? 5 : scenario === 'rotated signer' ? 2 : 0);
+      // A rejected root remains unbound, including both abort attempts.
+      expect(loadCustody).toHaveBeenCalledTimes(scenario === 'different custody root' ? 3
+        : scenario === 'continuation' || scenario === 'rotated signer' ? 1 : 0);
       // Prove subscription wiring as well as initial loading: a real installed refresh must change discovery.
       installedRows[installedRows.length - 1] = ProjectAccountRowV1Schema.parse({ key: graphKey, revision: 2,
         content: { t: 'plain', v: { key: graphKey, value: { relationships: [] } } } });
