@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { glyphFieldDurationS, glyphFrame } from '@happier-dev/brand/glyph-scene';
-import { welcomePlanetPose } from '@happier-dev/brand/planet-placement';
 import { Text, TextInput, View } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -385,7 +384,7 @@ describe('UnauthenticatedSplitShell', () => {
             );
             const slot = later.findByTestId('unauth-shell-footer-accessory');
             expect(slot?.findAll((node) => node.props?.testID === 'footer-accessory').length).toBeGreaterThan(0);
-            // After the step's column, right-aligned in the band over the planet: its own row, never over a title.
+            // After the step's column, right-aligned in its scroll: its own row, never over a title.
             const slotStyle = flattenStyle(slot?.props.style);
             expect(slotStyle.position).toBeUndefined();
             expect(slotStyle.justifyContent).toBe('flex-end');
@@ -402,25 +401,23 @@ describe('UnauthenticatedSplitShell', () => {
         }
     });
 
-    it('ends a step\'s scrolling column above the planet so a tall form never runs into its glyphs', async () => {
+    it('gives a step\'s column the whole window, scrolling over the planet with its actions never faded', async () => {
         for (const layout of ['desktop', 'compact'] as const) {
             setLayoutFixture(layout);
-            const pane = layout === 'desktop' ? { width: 1224, height: 765 } : { width: 390, height: 844 };
             const screen = await renderScreen(
-                <UnauthenticatedSplitShell stepId="host_relay_remote" isWelcomeStep={false}>
+                <UnauthenticatedSplitShell stepId="host_relay_remote" isWelcomeStep={false} footerAccessory={<Text testID="footer-accessory">updates</Text>}>
                     <FakeBody label="ssh form" />
                 </UnauthenticatedSplitShell>,
             );
-            await act(async () => {
-                const layoutEvent = { nativeEvent: { layout: { x: 0, y: 0, ...pane } } };
-                screen.findHostByTestId('welcome-atmosphere')?.props.onLayout(layoutEvent);
-                screen.findHostByTestId('unauth-shell-workflow-pane')?.props.onLayout(layoutEvent);
-            });
-            const limb = welcomePlanetPose('deep', pane, { phone: layout === 'compact' }).limb;
-            const band = flattenStyle(screen.findHostByTestId('unauth-shell-planet-band')?.props.style);
-            // The scroll viewport is the pane above this band: it stops a clearance above the planet's limb.
-            expect(pane.height - Number(band.minHeight)).toBeLessThan(limb);
-            expect(pane.height - Number(band.minHeight)).toBeGreaterThan(limb - 48);
+            const scroll = screen.findHostByTestId('unauth-shell-workflow-scroll');
+            // Nothing but the scroll column takes the pane's height: no band held back over the planet, and the
+            // corner control scrolls with the column instead of reserving a strip under it.
+            expect(screen.findAllByTestId('unauth-shell-planet-band')).toEqual([]);
+            expect(scroll?.findAll((node) => node.props?.testID === 'footer-accessory').length).toBeGreaterThan(0);
+            const scrollStyle = flattenStyle(scroll?.props.style);
+            expect(scrollStyle.flex).toBe(1);
+            // No edge mask: a step's last control is never drawn through a fade.
+            expect(JSON.stringify(scrollStyle)).not.toMatch(/mask/i);
             await screen.unmount();
         }
     });

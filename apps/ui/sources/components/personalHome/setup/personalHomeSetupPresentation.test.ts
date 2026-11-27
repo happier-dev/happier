@@ -128,6 +128,9 @@ describe('presentPersonalHomeSetup', () => {
     expect(older.title).not.toBe(silent.title);
     expect(older.status).not.toContain('features endpoint');
     expect(silent.status).not.toContain('ECONNREFUSED');
+    // The older Home's action runs the controller's update through the same choice, so it says Update.
+    expect(older.kind === 'failure' && older.retryLabel).toBe(t('personalHome.bootstrap.setupState.updateAction'));
+    expect(silent.kind === 'failure' && silent.retryLabel).toBe(t('common.retry'));
   });
 
   it('says a setup failure in human words from its typed reason, never the raw diagnostic', () => {

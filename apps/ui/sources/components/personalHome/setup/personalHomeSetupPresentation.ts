@@ -92,14 +92,14 @@ export function presentPersonalHomeSetup(
         status: t('personalHome.bootstrap.existingRuntimeCredentials.body'),
       };
     }
-    // "Use this local Home" failed. The two endpoint reasons the controller types get their own words; the
-    // controller exposes no update operation here, so "older version" says where the update lives instead of
-    // offering a button that could not run it.
+    // "Use this local Home" failed. The two endpoint reasons the controller types get their own words. For an
+    // older Home the same choice, pressed again, runs the controller's update of that Home (it reads the failure's
+    // code), so its action is named Update.
     if (code === 'personal_home_endpoint_update_required') {
       return {
         kind: 'failure',
         retry: 'use-existing',
-        retryLabel: t('common.retry'),
+        retryLabel: t('personalHome.bootstrap.setupState.updateAction'),
         title: t('personalHome.bootstrap.setupState.endpointUpdateRequiredTitle'),
         status: t('personalHome.bootstrap.setupState.endpointUpdateRequiredStatus'),
       };
