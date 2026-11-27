@@ -980,7 +980,7 @@ function AppBoot({ onRestart }: Readonly<{ onRestart: () => void }>) {
     );
     if (tracking) {
         providers = (
-            <PostHogProvider client={tracking} autocapture={{ captureScreens: false }}>
+            <PostHogProvider client={tracking.client} autocapture={{ captureScreens: false }}>
                 <SettingsAnalyticsRuntime />
                 {providers}
             </PostHogProvider>

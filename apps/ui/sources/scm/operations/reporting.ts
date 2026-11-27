@@ -8,7 +8,7 @@ import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScop
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 export interface ScmOperationTracker {
-    capture(event: string, props?: Record<string, unknown>): void;
+    capture(event: string, props?: Record<string, unknown>, options?: Readonly<{ serverId?: string | null }>): void;
 }
 
 type ScmOperationSurface = 'files' | 'file' | 'commit' | 'update';
@@ -84,7 +84,7 @@ export function reportSessionScmOperation(input: {
         has_detail: Boolean(input.detail),
         detail_length: input.detail?.length ?? 0,
         ...(input.outcome ? { outcome: input.outcome.kind } : {}),
-    });
+    }, { serverId: input.serverId ?? null });
 }
 
 export function reportWorkspaceScmOperation(input: {
@@ -126,5 +126,5 @@ export function reportWorkspaceScmOperation(input: {
         has_detail: Boolean(input.detail),
         detail_length: input.detail?.length ?? 0,
         ...(input.outcome ? { outcome: input.outcome.kind } : {}),
-    });
+    }, { serverId: input.scope.serverId });
 }

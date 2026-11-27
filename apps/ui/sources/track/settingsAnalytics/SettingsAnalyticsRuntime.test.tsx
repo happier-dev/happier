@@ -62,6 +62,9 @@ vi.mock('expo-constants', () => ({
 import { SettingsAnalyticsRuntime } from './SettingsAnalyticsRuntime';
 import { renderScreen } from '@/dev/testkit';
 
+// The device_user key is analytics-only: keyed by the person's anonymous id, never the raw installation id.
+const deviceUserKey = (anonymousUserId: string) => expect.stringMatching(new RegExp(`^${anonymousUserId}:[0-9a-f]{32}$`));
+
 
 describe('SettingsAnalyticsRuntime', () => {
     beforeEach(async () => {
@@ -110,13 +113,14 @@ describe('SettingsAnalyticsRuntime', () => {
         );
         expect(trackingMock.group).toHaveBeenCalledWith(
             'device_user',
-            'anon-user:install-123',
+            deviceUserKey('anon-user'),
             expect.objectContaining({
                 local_setting__themePreference: 'dark',
                 local_derived__uiFontScaleBucket: 'large',
             }),
         );
         expect(trackingMock.flush).toHaveBeenCalledTimes(1);
+        expect(JSON.stringify(trackingMock.group.mock.calls)).not.toContain('install-123');
     });
 
     it('does not resync unchanged snapshots on equivalent rerenders', async () => {
@@ -191,7 +195,7 @@ describe('SettingsAnalyticsRuntime', () => {
             storage.getState().applyLocalSettings({ themePreference: 'light' }, { persist: false });
         });
         expect(commits.mock.calls.length - baseline).toBe(1);
-        expect(trackingMock.group).toHaveBeenLastCalledWith('device_user', 'anon-user:install-123',
+        expect(trackingMock.group).toHaveBeenLastCalledWith('device_user', deviceUserKey('anon-user'),
             expect.objectContaining({ local_setting__themePreference: 'light' }));
     });
 
@@ -219,11 +223,13 @@ describe('SettingsAnalyticsRuntime', () => {
         expect(trackingMock.group).toHaveBeenNthCalledWith(
             2,
             'device_user',
-            'anon-user-2:install-123',
+            deviceUserKey('anon-user-2'),
             expect.objectContaining({
                 local_setting__themePreference: 'dark',
             }),
         );
         expect(trackingMock.flush).toHaveBeenCalledTimes(2);
+        const [firstKey, secondKey] = trackingMock.group.mock.calls.map((call) => String(call[1]).split(':')[1]);
+        expect(firstKey).not.toBe(secondKey);
     });
 });

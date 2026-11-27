@@ -87,8 +87,9 @@ describe('tracking (feature gate)', () => {
         expect(options).toEqual(expect.objectContaining({
             host: 'https://example.posthog.test',
         }));
-        expect(posthogOptInSpy).toHaveBeenCalledTimes(1);
-        expect(posthogOptOutSpy).not.toHaveBeenCalled();
+        // No Account settings are known on this device yet: PostHog stays off until they are.
+        expect(posthogOptOutSpy).toHaveBeenCalledTimes(1);
+        expect(posthogOptInSpy).not.toHaveBeenCalled();
     });
 
     it('defaults mobile analytics to the project PostHog region when no host is configured', async () => {
@@ -106,11 +107,12 @@ describe('tracking (feature gate)', () => {
 
     it('applies persisted analytics opt-out before sync bootstrap runs', async () => {
         process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY = '';
-        kvStore.set('settings', JSON.stringify({
-            settings: { analyticsOptOut: true },
-            version: 7,
-        }));
         vi.resetModules();
+        const { saveActiveAccountSettingsScope, saveAccountSettings } = await import('@/sync/domains/state/accountSettingsPersistence');
+        const { settingsParse } = await import('@/sync/domains/settings/settings');
+        const scope = { serverId: 'srv_gate', accountId: 'acct_gate' };
+        saveActiveAccountSettingsScope(scope);
+        saveAccountSettings(scope, settingsParse({ analyticsOptOut: true }), 7);
 
         const mod = await import('./tracking');
         expect(mod.tracking).not.toBeNull();

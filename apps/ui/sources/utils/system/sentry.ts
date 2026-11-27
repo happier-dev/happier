@@ -1,4 +1,3 @@
-import { MMKV } from 'react-native-mmkv';
 import { Platform } from 'react-native';
 // Named imports: Metro's inline requires then load the SDK only when crash reporting actually runs.
 import {
@@ -19,7 +18,7 @@ import type { FeatureId } from '@happier-dev/protocol/features/catalog';
 import { config } from '@/config';
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
 import { desktopHostKind } from '@/utils/platform/desktopHost';
-import { readStorageScopeFromEnv, scopedStorageId } from '@/utils/system/storageScope';
+import { loadStartupAccountPrivacyChoices } from '@/sync/domains/state/startupAccountSettings';
 import { redactSentryPublicShareTelemetry } from '@/utils/system/sentryPublicShareRedaction';
 
 declare global {
@@ -32,7 +31,6 @@ declare global {
 const CRASH_REPORTS_FEATURE_ID = 'app.crashReports' as const satisfies FeatureId;
 const IOS_REPLAY_DEFAULT_DISABLED_MAJOR_VERSION = 26;
 let cachedReplayIntegration: any | null = null;
-const isWebRuntime = typeof window !== 'undefined' && typeof document !== 'undefined';
 
 function parseBooleanEnv(raw: string | undefined, defaultValue: boolean): boolean {
     const parsed = parseOptionalBooleanEnv(raw);
@@ -81,31 +79,16 @@ function resolveReplayEnabled(): boolean {
     return parseBooleanEnv(STATIC_SENTRY_ALLOW_REPLAY_ON_IOS_26, false);
 }
 
-function readPersistedCrashReportsOptOut(): boolean {
-    try {
-        const storageScope = isWebRuntime ? null : readStorageScopeFromEnv();
-        const storage = storageScope ? new MMKV({ id: scopedStorageId('default', storageScope) }) : new MMKV();
-        const rawSettings = storage.getString('settings');
-        if (!rawSettings) return false;
-
-        const parsed = JSON.parse(rawSettings) as {
-            settings?: {
-                crashReportsOptOut?: unknown;
-            };
-        };
-        return parsed.settings?.crashReportsOptOut === true;
-    } catch {
-        return false;
-    }
-}
-
-function resolveCrashReportsOptOut(): boolean {
+/** The Account's crash-report choice, or null while this device does not know its settings yet. */
+function resolveCrashReportsOptOut(): boolean | null {
     if (typeof globalThis.__HAPPIER_CRASH_REPORTS_OPTOUT__ === 'boolean') {
         return globalThis.__HAPPIER_CRASH_REPORTS_OPTOUT__;
     }
-    const optOut = readPersistedCrashReportsOptOut();
-    globalThis.__HAPPIER_CRASH_REPORTS_OPTOUT__ = optOut;
-    return optOut;
+    const startupChoices = loadStartupAccountPrivacyChoices();
+    // Unknown stays uncached: the settings owner decides through applyCrashReportsOptOut.
+    if (!startupChoices) return null;
+    globalThis.__HAPPIER_CRASH_REPORTS_OPTOUT__ = startupChoices.crashReportsOptOut;
+    return startupChoices.crashReportsOptOut;
 }
 
 function resolveSentryEnv() {
@@ -215,7 +198,7 @@ function applySentryRuntimeContext(): void {
 export function initializeSentryOnce(): void {
     if (globalThis.__HAPPIER_SENTRY_INIT__) return;
     if (getFeatureBuildPolicyDecision(CRASH_REPORTS_FEATURE_ID) === 'deny') return;
-    if (resolveCrashReportsOptOut()) return;
+    if (resolveCrashReportsOptOut() !== false) return;
 
     const resolved = resolveSentryEnv();
     if (!resolved) return;
@@ -288,7 +271,7 @@ export function applyCrashReportsOptOut(optOut: boolean): void {
 
 export function wrapWithSentryIfEnabled<T extends ComponentType<any>>(Component: T): T {
     if (getFeatureBuildPolicyDecision(CRASH_REPORTS_FEATURE_ID) === 'deny') return Component;
-    if (resolveCrashReportsOptOut()) return Component;
+    if (resolveCrashReportsOptOut() !== false) return Component;
     if (!resolveSentryEnv()) return Component;
 
     // Ensure init happens before wrap to avoid Sentry "App Start Span" warnings.
@@ -304,7 +287,7 @@ export function captureExceptionIfEnabled(
     }>,
 ): void {
     if (getFeatureBuildPolicyDecision(CRASH_REPORTS_FEATURE_ID) === 'deny') return;
-    if (resolveCrashReportsOptOut()) return;
+    if (resolveCrashReportsOptOut() !== false) return;
     if (!resolveSentryEnv()) return;
 
     initializeSentryOnce();
@@ -318,7 +301,7 @@ export function captureExceptionIfEnabled(
 
 export function addBreadcrumbIfEnabled(breadcrumb: Parameters<typeof addBreadcrumb>[0]): void {
     if (getFeatureBuildPolicyDecision(CRASH_REPORTS_FEATURE_ID) === 'deny') return;
-    if (resolveCrashReportsOptOut()) return;
+    if (resolveCrashReportsOptOut() !== false) return;
     if (!resolveSentryEnv()) return;
 
     initializeSentryOnce();

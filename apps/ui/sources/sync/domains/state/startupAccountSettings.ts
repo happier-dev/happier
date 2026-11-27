@@ -16,3 +16,22 @@ export function loadStartupAccountSettings(): Readonly<{ scope: AccountSettingsS
         return { scope, settings: settingsDefaults };
     }
 }
+
+/**
+ * The active Account's privacy choices as this device last acknowledged them, or null while
+ * they are not known here yet (no active Account, or no settings version read from its Home).
+ * Telemetry stays off until this is known, so a new device never reports with default-on settings.
+ */
+export function loadStartupAccountPrivacyChoices(): Readonly<{ analyticsOptOut: boolean; crashReportsOptOut: boolean }> | null {
+    try {
+        const scope = loadActiveAccountSettingsScope();
+        if (!scope) return null;
+        const loaded = loadAccountSettings(scope);
+        if (loaded.version === null) return null;
+        const settings = settingsParse(loaded.settings);
+        return { analyticsOptOut: settings.analyticsOptOut, crashReportsOptOut: settings.crashReportsOptOut };
+    } catch (error) {
+        console.error('Failed to read account privacy choices for startup', error);
+        return null;
+    }
+}

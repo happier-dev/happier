@@ -2,6 +2,7 @@ import { Platform } from 'react-native';
 import { config } from '@/config';
 import { LogLevel, PaywallResult } from '@/sync/domains/purchases/types';
 import { log } from '@/log';
+import type { PaywallErrorCode } from '@/track';
 
 export async function syncPurchases(params: {
     serverID: string;
@@ -152,7 +153,7 @@ export async function presentPaywall(params: {
     trackPaywallPurchased: () => void;
     trackPaywallCancelled: () => void;
     trackPaywallRestored: () => void;
-    trackPaywallError: (error: string) => void;
+    trackPaywallError: (code: PaywallErrorCode) => void;
     syncPurchases: () => Promise<void>;
     shouldContinue?: () => boolean;
 }): Promise<{ success: boolean; purchased?: boolean; error?: string }> {
@@ -175,7 +176,7 @@ export async function presentPaywall(params: {
         // Check if RevenueCat is initialized
         if (!revenueCatInitialized) {
             const error = 'RevenueCat not initialized';
-            trackPaywallError(error);
+            trackPaywallError('not_initialized');
             return { success: false, error };
         }
 
@@ -215,13 +216,13 @@ export async function presentPaywall(params: {
             case PaywallResult.ERROR:
             default: {
                 const errorMsg = 'Failed to present paywall';
-                trackPaywallError(errorMsg);
+                trackPaywallError('presentation_failed');
                 return { success: false, error: errorMsg };
             }
         }
     } catch (error: any) {
         const errorMessage = error.message || 'Failed to present paywall';
-        trackPaywallError(errorMessage);
+        trackPaywallError('exception');
         return { success: false, error: errorMessage };
     }
 }

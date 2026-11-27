@@ -17,7 +17,7 @@ import { buildAccountSettingsSnapshot } from './buildAccountSettingsSnapshot';
 import { buildFeatureAnalyticsSnapshot } from './buildFeatureAnalyticsSnapshot';
 import { buildLocalSettingsSnapshot } from './buildLocalSettingsSnapshot';
 import { diffAnalyticsProperties } from './diffAnalyticsSnapshot';
-import { getDeviceAnalyticsId } from './deviceAnalyticsIdentity';
+import { deriveDeviceUserGroupKey, getDeviceAnalyticsId } from './deviceAnalyticsIdentity';
 import { flushTrackingClient } from './flushTrackingClient';
 
 const accountAnalyticsKeys = [...new Set([
@@ -85,7 +85,7 @@ export function SettingsAnalyticsRuntime() {
         if (deviceAnalyticsId) {
             const changedLocalProperties = diffAnalyticsProperties(previousLocalPropertiesRef.current, localSnapshot.properties);
             if (changedLocalProperties) {
-                tracking.group('device_user', `${anonymousUserId}:${deviceAnalyticsId}`, changedLocalProperties);
+                tracking.group('device_user', deriveDeviceUserGroupKey(anonymousUserId, deviceAnalyticsId), changedLocalProperties);
                 didEmitAnalyticsUpdate = true;
             }
         }

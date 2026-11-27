@@ -507,6 +507,8 @@ describe('app/_layout init resilience', () => {
 
     it('wraps the root layout with Sentry.wrap', async () => {
         process.env.EXPO_PUBLIC_SENTRY_DSN = 'https://examplePublicKey@o0.ingest.sentry.io/0';
+        // The active Account's settings are known on this device and allow crash reports.
+        (globalThis as { __HAPPIER_CRASH_REPORTS_OPTOUT__?: boolean }).__HAPPIER_CRASH_REPORTS_OPTOUT__ = false;
         await importRootLayout();
         expect(sentryWrapMock).toHaveBeenCalledTimes(1);
         expect(typeof sentryWrapMock.mock.calls[0]?.[0]).toBe('function');

@@ -1,3 +1,5 @@
+import { classifyScmOperationErrorCode, ScmOperationErrorCodeSchema, type ScmOperationErrorCode } from '@happier-dev/protocol/scm';
+
 import { tracking } from '@/track';
 
 const STATUS_SYNC_ERROR_DEDUPE_WINDOW_MS = 60_000;
@@ -14,31 +16,13 @@ function normalizeErrorMessage(error: unknown): string {
     return 'Unknown source-control status sync error';
 }
 
-function readScmErrorCode(error: unknown): string | undefined {
-    if (!error || typeof error !== 'object') {
+/** Only the canonical code leaves the device; free text, paths and remotes never do. */
+function readScmErrorCode(error: unknown): ScmOperationErrorCode | undefined {
+    if (!error || typeof error !== 'object' || !('scmErrorCode' in error)) {
         return undefined;
     }
-    if (!('scmErrorCode' in error)) {
-        return undefined;
-    }
-    const code = (error as { scmErrorCode?: unknown }).scmErrorCode;
-    return typeof code === 'string' && code.length > 0 ? code : undefined;
-}
-
-function hashProjectKey(projectKey: string): string {
-    // FNV-1a 32-bit hash is sufficient for local telemetry bucketing.
-    let hash = 0x811c9dc5;
-    for (let index = 0; index < projectKey.length; index += 1) {
-        hash ^= projectKey.charCodeAt(index);
-        hash = Math.imul(hash, 0x01000193);
-    }
-    return (hash >>> 0).toString(16).padStart(8, '0');
-}
-
-function getProjectScope(projectKey: string): string {
-    const separatorIndex = projectKey.indexOf(':');
-    if (separatorIndex <= 0) return 'unknown';
-    return projectKey.slice(0, separatorIndex);
+    const parsed = ScmOperationErrorCodeSchema.safeParse((error as { scmErrorCode?: unknown }).scmErrorCode);
+    return parsed.success ? parsed.data : undefined;
 }
 
 function shouldEmitError(bucketKey: string, now: number): boolean {
@@ -60,22 +44,21 @@ function shouldEmitError(bucketKey: string, now: number): boolean {
 
 export function reportScmStatusSyncError(input: {
     projectKey: string;
+    /** The server the project belongs to, when the caller knows it. */
+    serverId?: string;
     error: unknown;
 }): void {
-    const message = normalizeErrorMessage(input.error);
-    const errorCode = readScmErrorCode(input.error);
-    const projectFingerprint = hashProjectKey(input.projectKey);
-    const bucketKey = `${projectFingerprint}:${message}`;
+    // Dedupe stays local: the project key and message only shape the bucket.
+    const bucketKey = `${input.projectKey}:${normalizeErrorMessage(input.error)}`;
     const now = Date.now();
     if (!shouldEmitError(bucketKey, now)) {
         return;
     }
+    const errorCode = readScmErrorCode(input.error);
     tracking?.capture('scm_status_sync_failed', {
-        projectScope: getProjectScope(input.projectKey),
-        projectFingerprint,
-        message,
-        ...(errorCode ? { errorCode } : {}),
-    });
+        errorCode: errorCode ?? 'unknown',
+        errorCategory: classifyScmOperationErrorCode(errorCode),
+    }, { serverId: input.serverId ?? null });
 }
 
 export function resetScmStatusSyncErrorReportingForTests(): void {

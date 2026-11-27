@@ -119,7 +119,8 @@ beforeEach(() => {
     appConfig.variant = 'preview';
     appConfig.identityVariant = undefined;
     delete hostGlobals.__HAPPIER_SENTRY_INIT__;
-    delete hostGlobals.__HAPPIER_CRASH_REPORTS_OPTOUT__;
+    // Cases start with the Account's choice known and allowing crash reports.
+    hostGlobals.__HAPPIER_CRASH_REPORTS_OPTOUT__ = false;
     for (const key of MANAGED_ENV_KEYS) delete process.env[key];
     process.env.EXPO_PUBLIC_SENTRY_DSN = DEFAULT_DSN;
     vi.resetModules();
@@ -285,6 +286,44 @@ describe('utils/system/sentry (crash reports opt-out)', () => {
         // Re-enabling should allow init again (guard cleared on close).
         applyCrashReportsOptOut(false);
         expect(sentry.init).toHaveBeenCalledTimes(2);
+    });
+
+    async function startWithPersistedAccountSettings(settings: Record<string, unknown> | null) {
+        delete hostGlobals.__HAPPIER_CRASH_REPORTS_OPTOUT__;
+        const { getPersistenceStorage } = await import('@/sync/domains/state/persistenceStorage');
+        getPersistenceStorage().clearAll();
+        if (settings) {
+            const { saveActiveAccountSettingsScope, saveAccountSettings } = await import('@/sync/domains/state/accountSettingsPersistence');
+            const { settingsParse } = await import('@/sync/domains/settings/settings');
+            const scope = { serverId: 'srv_sentry', accountId: 'acct_sentry' };
+            saveActiveAccountSettingsScope(scope);
+            saveAccountSettings(scope, settingsParse(settings), 2);
+        }
+        return await import('./sentry');
+    }
+
+    it('does not start on a device that does not know the Account settings yet, until they allow it', async () => {
+        const { initializeSentryOnce, wrapWithSentryIfEnabled, applyCrashReportsOptOut } = await startWithPersistedAccountSettings(null);
+        const Root = () => null;
+
+        initializeSentryOnce();
+        expect(wrapWithSentryIfEnabled(Root)).toBe(Root);
+        expect(sentry.init).not.toHaveBeenCalled();
+
+        applyCrashReportsOptOut(false);
+        expect(sentry.init).toHaveBeenCalledTimes(1);
+    });
+
+    it('starts at launch when the known Account settings allow crash reports', async () => {
+        const { initializeSentryOnce } = await startWithPersistedAccountSettings({ crashReportsOptOut: false });
+        initializeSentryOnce();
+        expect(sentry.init).toHaveBeenCalledTimes(1);
+    });
+
+    it('stays off at launch when the known Account settings opt out', async () => {
+        const { initializeSentryOnce } = await startWithPersistedAccountSettings({ crashReportsOptOut: true });
+        initializeSentryOnce();
+        expect(sentry.init).not.toHaveBeenCalled();
     });
 
     it('wraps components when crash reports are enabled', async () => {

@@ -43,7 +43,7 @@ describe('reportSessionScmOperation', () => {
             has_path: true,
             has_detail: true,
             detail_length: 5,
-        });
+        }, { serverId: null });
     });
 
     it('retains typed recovery evidence in the log and sends only its kind to telemetry', () => {
@@ -52,7 +52,7 @@ describe('reportSessionScmOperation', () => {
         const outcome: ScmOperationOutcome = { v: 1, kind: 'outcome_unknown', errorCode: 'COMMAND_OUTCOME_UNKNOWN', reconciliation: { kind: 'repository_status', cwd: '/private/repo' }, nextActions: [{ kind: 'refresh' }], message: 'private diagnostics' };
         reportSessionScmOperation({ state: { appendSessionProjectScmOperation }, sessionId: 's', operation: 'commit', status: 'failed', outcome, surface: 'commit', tracking: { capture } });
         expect(appendSessionProjectScmOperation).toHaveBeenCalledWith('s', expect.objectContaining({ outcome }));
-        expect(capture).toHaveBeenCalledWith('scm_operation_result', expect.objectContaining({ outcome: 'outcome_unknown', error_code: 'COMMAND_OUTCOME_UNKNOWN', error_category: 'command' }));
+        expect(capture).toHaveBeenCalledWith('scm_operation_result', expect.objectContaining({ outcome: 'outcome_unknown', error_code: 'COMMAND_OUTCOME_UNKNOWN', error_category: 'command' }), { serverId: null });
         expect(JSON.stringify(capture.mock.calls)).not.toContain('/private/repo');
         expect(JSON.stringify(capture.mock.calls)).not.toContain('private diagnostics');
     });
@@ -75,11 +75,11 @@ describe('reportSessionScmOperation', () => {
             ['scm_operation_result', {
                 operation: 'commit', status: 'success', surface: 'files', error_code: 'none', error_category: 'none',
                 has_path: false, has_detail: true, detail_length: 12,
-            }],
+            }, { serverId: null }],
             ['scm_operation_result', {
                 operation: 'commit', status: 'failed', surface: 'files', error_code: 'COMMAND_FAILED', error_category: 'command',
                 has_path: false, has_detail: true, detail_length: 29,
-            }],
+            }, { serverId: null }],
         ]);
     });
 });
@@ -119,6 +119,8 @@ describe('reportWorkspaceScmOperation', () => {
                 status: 'success',
                 surface: 'files',
             }),
+            // The event belongs to the workspace's server, which decides its server_kind.
+            { serverId: 'server-1' },
         );
     });
 

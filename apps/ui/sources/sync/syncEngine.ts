@@ -3914,16 +3914,17 @@ class Sync {
             this.updatesSubscribed = true;
         }
 
-        // Sync initial PostHog opt-out state with stored settings
-        if (!this.embedSessionScope && tracking) {
+        // Stored settings decide telemetry only once this device has read them from the Home;
+        // until then analytics stays held and crash reports stay off (the server baseline decides).
+        if (!this.embedSessionScope && storage.getState().settingsVersion !== null) {
             const currentSettings = storage.getState().settings;
             if (currentSettings.analyticsOptOut) {
-                tracking.optOut();
+                tracking?.optOut();
             } else {
-                tracking.optIn();
+                tracking?.optIn();
             }
+            applyCrashReportsOptOut(currentSettings.crashReportsOptOut);
         }
-        if (!this.embedSessionScope) applyCrashReportsOptOut(storage.getState().settings.crashReportsOptOut);
 
         // Core admission and independent background queues share one bootstrap owner.
         fireAndForget(this.bootstrapSync(), { tag: 'Sync.bootstrapSync' });

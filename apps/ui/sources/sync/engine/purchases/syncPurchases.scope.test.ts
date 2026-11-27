@@ -118,4 +118,27 @@ describe('syncPurchases scope guards', () => {
         expect(result.success).toBe(false);
         expect(syncPurchases).not.toHaveBeenCalled();
     });
+
+    it('reports paywall failures as codes, never the SDK error text', async () => {
+        const { presentPaywall } = await import('./syncPurchases');
+        const trackPaywallError = vi.fn();
+        const base = {
+            trackPaywallPresented: vi.fn(),
+            trackPaywallPurchased: vi.fn(),
+            trackPaywallCancelled: vi.fn(),
+            trackPaywallRestored: vi.fn(),
+            trackPaywallError,
+            syncPurchases: vi.fn(),
+        };
+
+        await presentPaywall({ ...base, revenueCatInitialized: false });
+        revenueCatMock.presentPaywall.mockResolvedValueOnce('error');
+        await presentPaywall({ ...base, revenueCatInitialized: true });
+        revenueCatMock.presentPaywall.mockRejectedValueOnce(new Error('card ending 4242 for alice@example.com declined'));
+        const thrown = await presentPaywall({ ...base, revenueCatInitialized: true });
+
+        expect(trackPaywallError.mock.calls).toEqual([['not_initialized'], ['presentation_failed'], ['exception']]);
+        // The caller still sees the message; only telemetry is reduced to a code.
+        expect(thrown.error).toContain('declined');
+    });
 });

@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const captureMock = vi.hoisted(() => vi.fn());
+const identifyMock = vi.hoisted(() => vi.fn());
 
 vi.mock('./tracking', () => ({
-    tracking: { capture: captureMock },
+    tracking: { capture: captureMock, identify: identifyMock },
 }));
 
-import { trackAuthEnrollmentTransientRetry } from './index';
+import { initializeTracking, trackAuthEnrollmentTransientRetry } from './index';
 
 describe('auth enrollment tracking', () => {
     beforeEach(() => {
@@ -20,5 +21,11 @@ describe('auth enrollment tracking', () => {
             flow: 'account_qr',
             outcome: 'transient_retry',
         });
+    });
+
+    it('identifies the person by the anonymous id alone', () => {
+        initializeTracking('anon-0123456789abcdef');
+
+        expect(identifyMock).toHaveBeenCalledWith('anon-0123456789abcdef');
     });
 });

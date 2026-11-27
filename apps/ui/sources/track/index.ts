@@ -17,7 +17,7 @@ function publishTrackingAnonymousUserIdChange() {
 export function initializeTracking(anonymousUserId: string) {
     trackingAnonymousUserId = anonymousUserId;
     publishTrackingAnonymousUserIdChange();
-    tracking?.identify(anonymousUserId, { name: anonymousUserId });
+    tracking?.identify(anonymousUserId);
 }
 
 export function getTrackingAnonymousUserId(): string | null {
@@ -64,14 +64,6 @@ export function trackMessageSent() {
     tracking?.capture('message_sent');
 }
 
-export function trackVoiceRecording(action: 'start' | 'stop') {
-    tracking?.capture('voice_recording', { action });
-}
-
-export function trackPermissionResponse(allowed: boolean) {
-    tracking?.capture('permission_response', { allowed });
-}
-
 /**
  * Paywall events
  */
@@ -95,8 +87,11 @@ export function trackPaywallRestored() {
     tracking?.capture('paywall_restored');
 }
 
-export function trackPaywallError(error: string) {
-    tracking?.capture('paywall_error', { error });
+/** Paywall failures leave the device as a code; the SDK's message stays local. */
+export type PaywallErrorCode = 'not_initialized' | 'presentation_failed' | 'exception';
+
+export function trackPaywallError(code: PaywallErrorCode) {
+    tracking?.capture('paywall_error', { error_code: code });
 }
 
 /**
