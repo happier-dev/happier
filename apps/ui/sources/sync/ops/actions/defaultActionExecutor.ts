@@ -5065,6 +5065,34 @@ type VoiceActionExecutorBinding = Readonly<{
       accountContext.assertCurrent();
       return result;
     },
+    sessionExport: async ({ input, context }) => {
+      if (!accountContext) return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
+      const { exportAccountTranscripts, exportSessionTranscript } = await import('@/sync/api/session/exportAccountTranscripts');
+      const { saveFileBytes, saveFileStream } = await import('@/sync/runtime/files/saveFileBytes');
+      const { signal } = context;
+      const { format, sessionId, seqs } = input;
+      const opts = { scope: accountContext.accountLifetime.scope, format, signal };
+      const isCurrent = () => {
+        accountContext.assertCurrent();
+        throwIfAborted(signal);
+        return true;
+      };
+      if (sessionId === undefined) {
+        let archive: Awaited<ReturnType<typeof exportAccountTranscripts>> | undefined;
+        const status = await saveFileStream({
+          fileName: 'happier-transcripts.zip', mimeType: 'application/zip', UTI: 'public.zip-archive', action: 'save', isCurrent,
+        }, async write => { archive = await exportAccountTranscripts({ ...opts, write }); });
+        return { saved: status === 'saved', ...archive };
+      }
+      const text = await exportSessionTranscript({ ...opts, sessionId, seqs });
+      if (text === null) return { saved: false, skippedExternalCount: 1 };
+      const json = format === 'json';
+      const status = await saveFileBytes({
+        bytes: new TextEncoder().encode(text), fileName: `session.${json ? 'json' : 'md'}`,
+        mimeType: json ? 'application/json' : 'text/markdown', action: 'save', isCurrent,
+      });
+      return { saved: status === 'saved' };
+    },
     sessionTranscriptGet: async (input) => {
       // Natural Voice references acquire their exact Home at the target resolver,
       // after the outer executor's Account capture. Borrow that resolved Home's

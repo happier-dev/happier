@@ -38,6 +38,7 @@ const SessionExportInputSchema = z.strictObject({
     ctx.addIssue({ code: 'custom', message: 'seqs requires sessionId', path: ['seqs'] });
   }
 }));
+export type SessionExportInput = z.infer<typeof SessionExportInputSchema>;
 const NoticedRetentionRuleSchema = z.object({ retentionDays: natural, noticeDays: natural, floorAt: natural });
 const RetentionTickSchema = z.object({ atMs: natural, messages: natural, pinned: z.boolean(), leaving: z.boolean() });
 const UI_SURFACES = { ui: true, voice: false, agent: false, mcp: false, cli: false, rpc: false, api: false } as const;

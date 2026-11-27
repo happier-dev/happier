@@ -206,6 +206,7 @@ import type { SessionListQueryV1 } from '../../sessions/listing/query.js';
 import type { SessionManagerSetActionInputV1, SessionManagerSetResultV1 } from '../../sessions/follow/sessionManagerV1.js';
 import type { SessionListViewV1 } from '../../sessions/awareness/action.js';
 import type { WaitActionInputV1, WaitOwnerResultV1 } from '../specs/wait.js';
+import type { SessionExportInput } from '../specs/plans.js';
 import type { WaitOwnerOptionsV1 } from './waitAction.js';
 import type { ReviewCommentActionIdV1 } from '../../reviews/comments/actions.js';
 import type { ReviewCommentPrincipalHeaderV1 } from '../../reviews/comments/actions.js';
@@ -3225,6 +3226,8 @@ export type ActionExecutorDeps = Readonly<{
     /** Revalidate the captured runtime/operation binding immediately before effects. */
     isCurrent: () => boolean | Promise<boolean>;
   }> | null>;
+
+  sessionExport?: (args: Readonly<{ input: SessionExportInput; context: ActionExecutorContext }>) => Promise<unknown>;
 
   /**
    * Narrow client-side transcript implementation hook. It runs only after

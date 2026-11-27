@@ -244,6 +244,7 @@ import type { ApprovalStaleReason } from '../approvals/approvalExecutionFailure.
 import type { SessionResumeRequestV1 } from '../sessions/control/sessionResumeRequestV1.js';
 import type { SessionGoalSetRequestV1 } from '../sessions/work/state/sessionWorkStateRpc.js';
 import { WaitActionInputV1Schema } from './specs/wait.js';
+import type { SessionExportInput } from './specs/plans.js';
 import { ActionOperationActionIdV1Schema, ActionOperationActionInputSchemasV1 } from './specs/actionOperations.js';
 import { readActionFailureEnvelope, readFailureEnvelopeDetails } from './executor/actionFailureEnvelope.js';
 import { AccountNoticeArtifactBodyV1Schema, readAccountNoticeArtifactV1, readOwnedNoticeArtifactV1, ACCOUNT_NOTICE_ARTIFACT_KIND_V1, USAGE_NOTICE_ARTIFACT_KIND_V1 } from '../activity/usageNoticeArtifactV1.js';
@@ -4976,6 +4977,11 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
         return completeActionResult(await deps.sessionAuthoringOpen({
           input: (admittedInput as z.infer<typeof SessionAuthoringOpenV1Schema>), context: ctx,
         }));
+      }
+
+      if (actionId === 'session.export') {
+        if (!deps.sessionExport) return clientActionUnavailable(actionId);
+        return completeActionResult(await deps.sessionExport({ input: admittedInput as SessionExportInput, context: ctx }));
       }
 
       if (SESSION_TRANSCRIPT_ACTION_ID_SET.has(actionId) && deps.sessionTranscriptAction) {

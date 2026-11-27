@@ -6,6 +6,8 @@ import { createExpoFileSystemFileMock } from '@/dev/testkit/mocks/expoFileSystem
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { createPlainSessionByIdResponseFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { buildSessionMessagesPath } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
 
 const native = vi.hoisted(() => ({
   fileSystem: null as ReturnType<typeof createExpoFileSystemFileMock> | null,
@@ -24,6 +26,7 @@ await loadSyncSingletonForTests();
 const { storage } = await import('@/sync/domains/state/storage');
 const { exportMachineServiceLogIndex } = await import('@/components/machines/services/exportMachineServiceLogIndex');
 const { createUiClientActionReverseHandler } = await import('./clientActionReverseDispatch');
+const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
 const initialState = storage.getState();
 
 describe('file exports through answering-client Action composition', () => {
@@ -57,6 +60,33 @@ describe('file exports through answering-client Action composition', () => {
       .toEqual({ v: 1, execution: { ok: true, result: { status: 'saved' } } });
     expect(handedOff).toEqual([[...new TextEncoder().encode(text)], [...new TextEncoder().encode(text)]]);
     expect(native.fileSystem!.files.size).toBe(0);
+  });
+
+  it('saves the selected plaintext transcript from the admitted Home as JSON', async () => {
+    const accountId = 'export-owner';
+    const serverId = await homes.addHome({ name: 'Exports', serverUrl: 'https://export.test',
+      accountId, currentAccount: true, accountEncryptionMode: 'plain' });
+    const sessionId = 'export-session';
+    homes.answer(serverId, `GET /v2/sessions/${sessionId}`, {
+      body: createPlainSessionByIdResponseFixture(createSessionFixture({ id: sessionId, encryptionMode: 'plain', currentStorageState: 'hosted' })),
+    });
+    const messagesPath = buildSessionMessagesPath({ sessionId, scope: 'all' });
+    const message = (seq: number, text: string) => ({
+      id: `message-${seq}`, seq, localId: null, sidechainId: null, createdAt: seq, updatedAt: seq,
+      content: { t: 'plain', v: { role: 'user', content: { type: 'text', text } } },
+    });
+    homes.answer(serverId, `GET ${messagesPath}`, {
+      body: { messages: [message(2, 'keep this'), message(1, 'leave this out')], nextBeforeSeq: null, hasMore: false },
+    });
+    let saved: unknown;
+    native.handoff.mockImplementation(async ({ fileUri }) => {
+      saved = JSON.parse(new TextDecoder().decode(Uint8Array.from(native.fileSystem!.files.get(fileUri)!)));
+      return { canceled: false };
+    });
+    const result = await createDefaultActionExecutor().execute('session.export', { sessionId, seqs: [2], format: 'json' },
+      { surface: 'ui', serverId, expectedAccountId: accountId });
+    expect(result).toEqual({ ok: true, result: { saved: true } });
+    expect(saved).toMatchObject([{ seq: 2, text: 'keep this' }]);
   });
 
   it('refuses disabled UI file exports before writing any native file', async () => {

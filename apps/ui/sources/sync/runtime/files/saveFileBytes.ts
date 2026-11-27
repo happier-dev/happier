@@ -4,6 +4,7 @@ import { t } from '@/text';
 import { dataUriBytes } from '@/utils/files/dataUriBytes';
 
 import { downloadWebFile } from './downloadWebFile';
+import { createWebDownloadFileSink } from '@/hooks/workspaces/transfers/webDownloadFileSink';
 import { createNativeCacheFileSink, shareNativeCacheFile, type NativeCacheFileSink } from './nativeCacheFileSink';
 import { desktopHostKind, invokeDesktopHost } from '@/utils/platform/desktopHost';
 import { createDesktopDownloadFileSink, openInDefaultApp } from './openInDefaultApp';
@@ -64,6 +65,26 @@ export async function saveFileBytes(input: FileHandoffInput & Readonly<{ bytes: 
         return 'saved';
     }
     return saveNativeFile(input, sink => sink.writeBytes(input.bytes));
+}
+
+/** Writes a file incrementally before handing it to the platform. */
+export async function saveFileStream(input: FileHandoffInput, fill: (write: (bytes: Uint8Array) => Promise<void>) => Promise<void>): Promise<'saved' | 'canceled'> {
+    if (Platform.OS !== 'web') return saveNativeFile(input, sink => fill(sink.writeBytes));
+
+    const sink = await createWebDownloadFileSink({ expectedSizeBytes: 0, maxBytes: Number.MAX_SAFE_INTEGER });
+    let handedOff = false;
+    try {
+        await fill(sink.writeBytes);
+        await sink.close();
+        const file = await sink.getFile();
+        if (input.isCurrent?.() === false) return 'canceled';
+        input.onHandoff?.();
+        downloadWebFile(file, input.fileName, sink.cleanup);
+        handedOff = true;
+        return 'saved';
+    } finally {
+        if (!handedOff) await sink.cleanup();
+    }
 }
 
 /** Reuses completed preview bytes; native file copies stay outside the JS heap. */
