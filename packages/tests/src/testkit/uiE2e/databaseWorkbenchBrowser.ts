@@ -28,7 +28,7 @@ export async function startDatabaseWorkbenchBrowser(params: Readonly<{
     env: { ...process.env, TSX_TSCONFIG_PATH: join(repoRoot, 'apps/cli/tsconfig.runtime.json') },
   });
   const messages = on(child, 'message', { close: ['disconnect', 'exit'] });
-  const exit = once(child, 'close');
+  const exit = once(child, 'exit');
   void exit.catch(() => {}); // The command or stop reports the process error.
   let ui: StartedUiWeb | undefined;
 
