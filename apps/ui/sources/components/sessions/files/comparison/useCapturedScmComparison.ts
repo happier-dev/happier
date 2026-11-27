@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readUiScmActionFailure } from '@/sync/ops/scm/scmActionInvocation';
 import type { ScmComparison } from '@happier-dev/protocol/scm/comparison';
 import { createRpcCallError, RpcError } from '@happier-dev/protocol/rpcErrors';
 import type { SessionScmReviewComparison } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
@@ -13,6 +15,13 @@ import { scmComparisonKey } from './filesComparison';
 import { useCapturedFileByPath } from './useCapturedFileByPath';
 import { resolvePathRelativeToRoot } from '@/utils/path/resolvePathRelativeToRoot';
 import { t } from '@/text';
+
+function readCapturedComparisonError(error: unknown): NonNullable<CapturedScmRead['error']> {
+    const failure = readUiScmActionFailure(error) ?? undefined;
+    const code = failure?.errorCode ?? (error instanceof RpcError ? error.rpcErrorCode : undefined);
+    return { failure, message: error instanceof Error ? error.message : t('scmComparison.unsupportedReason'),
+        ...(code ? { code } : {}) };
+}
 
 /** Active Files reads evidence from the machine owner; a pinned identity is never recaptured. */
 export function useCapturedScmComparison(params: Readonly<{
@@ -124,6 +133,8 @@ export function useCapturedScmComparison(params: Readonly<{
                                 input: { cwd: comparison.repository.rootPath, comparisonId: comparison.id,
                                     source: comparison.source, path: file.path } });
                             if (!response.success || !('capturedFile' in response) || !response.capturedFile) {
+                                const refusal = readUiScmActionFailure(response);
+                                if (refusal) throw createActionExecuteFailureError(refusal);
                                 const message = response.error ?? t('scmComparison.unsupportedReason');
                                 throw createRpcCallError({ error: message, errorCode: response.errorCode });
                             }
@@ -135,13 +146,13 @@ export function useCapturedScmComparison(params: Readonly<{
                 } else {
                     setState((previous) => ({ key, comparison: previous?.key === key ? previous.comparison : null,
                         page: previous?.key === key ? previous.page : null,
-                        error: { message: result.error, ...(result.errorCode ? { code: result.errorCode } : {}) }, loading: false }));
+                        error: { message: result.error, ...(result.errorCode ? { code: result.errorCode } : {}),
+                            failure: readUiScmActionFailure(result) ?? undefined }, loading: false }));
                 }
             } catch (error) {
                 if (current()) setState((previous) => ({ key, comparison: previous?.key === key ? previous.comparison : null,
                     page: previous?.key === key ? previous.page : null,
-                    error: { message: error instanceof Error ? error.message : t('scmComparison.unsupportedReason'),
-                        ...(error instanceof RpcError ? { code: error.rpcErrorCode } : {}) }, loading: false }));
+                    error: readCapturedComparisonError(error), loading: false }));
             }
         };
         void read();
@@ -162,18 +173,22 @@ export function useCapturedScmComparison(params: Readonly<{
                 input: { cwd: previous.repository.rootPath, source: previous.source, comparisonId: previous.id,
                     projection: { kind: 'index', cursor, limit: pageSizeRef.current! } } });
             if (!current()) return;
-            if (!result.success) throw createRpcCallError({ error: result.error, errorCode: result.errorCode });
+            if (!result.success) {
+                const refusal = readUiScmActionFailure(result);
+                if (refusal) throw createActionExecuteFailureError(refusal);
+                throw createRpcCallError({ error: result.error, errorCode: result.errorCode });
+            }
             setState(state => state?.key === key ? { ...state, loading: false, error: null, page: result.page ?? null,
                 comparison: { ...previous, inventory: { ...previous.inventory,
                     files: [...previous.inventory.files, ...result.comparison.inventory.files] } } } : state);
         } catch (error) {
             if (current()) setState(state => state?.key === key ? { ...state, loading: false,
-                error: { message: error instanceof Error ? error.message : t('scmComparison.unsupportedReason'),
-                    ...(error instanceof RpcError ? { code: error.rpcErrorCode } : {}) } } : state);
+                error: readCapturedComparisonError(error) } : state);
         }
     }, [scope, binding, visible, key, params.host, params.comparisonSessionId, params.active, demandReady]);
     return { comparison: scope && sourceAvailable ? knownOnly ?? visible?.comparison ?? null : null,
         page: knownOnly ? null : visible?.page ?? null, loadMore,
         error: !sourceAvailable ? t('scmComparison.unsupportedReason') : knownOnly ? null : visible?.error?.message ?? null,
+        failure: knownOnly ? null : visible?.error?.failure ?? null,
         loading: sourceAvailable && !knownOnly && (visible?.loading ?? Boolean(scope && machine && params.active !== false)), retry };
 }

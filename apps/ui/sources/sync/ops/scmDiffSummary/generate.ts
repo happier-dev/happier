@@ -36,7 +36,7 @@ import {
 } from '@/sync/domains/scm/diffSummary/state';
 import type { ScmDiffSummaryHost } from './results';
 import type { ScmReviewComparisonSelector } from '@/sync/domains/scm/diffSummary/selection';
-import { invokeUiScmAction, type UiScmActionExecutor } from '@/sync/ops/scm/scmActionInvocation';
+import { invokeUiScmAction, readUiScmActionFailure, type UiScmActionFailure, type UiScmActionExecutor } from '@/sync/ops/scm/scmActionInvocation';
 import { sessionExecutionRunGet } from '@/sync/ops/sessionExecutionRuns';
 import { getPreferredLanguage } from '@/text';
 import { readServerAccountScopeOwnerLifetime, serverAccountScopeKeySuffix, type ServerAccountScope, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -52,9 +52,9 @@ export type ScmDiffSummaryGenerateRpc = (
     opts?: Readonly<{ serverId?: string | null; scope?: ServerAccountScope; signal?: AbortSignal }>,
 ) => Promise<ScmDiffSummaryGenerateOutput | { success: false; error: string; errorCode?: string }>;
 
-export type CapturedScmFileResponse = ScmDiffFileResponse | Readonly<{ success: false; error?: string; errorCode: string }>;
+export type CapturedScmFileResponse = ScmDiffFileResponse | UiScmActionFailure | Readonly<{ success: false; error?: string; errorCode: string }>;
 
-export type ScmComparisonCaptureResult = ScmComparisonCaptureOutput | Readonly<{ success: false; error: string; errorCode?: string }>;
+export type ScmComparisonCaptureResult = ScmComparisonCaptureOutput | (Partial<UiScmActionFailure> & Readonly<{ success: false; error: string }>);
 export type ScmComparisonCaptureRpc = (
     sessionId: string,
     request: ScmComparisonCaptureInput,
@@ -301,6 +301,8 @@ export function createScmDiffSummaryOperations(deps: ScmDiffSummaryOperationsDep
             schema: ScmComparisonCaptureOutputSchema, context: actionContext(params), executor: deps.actionExecutor,
             shouldContinue: current });
         if (!current()) return retired();
+        const refusal = readUiScmActionFailure(result);
+        if (refusal) { const { ok: _ok, ...failure } = refusal; return { ...failure, success: false }; }
         const parsed = ScmComparisonCaptureOutputSchema.safeParse(result);
         if (parsed.success) return parsed.data;
         const error = readOperationError(result);
@@ -318,6 +320,8 @@ export function createScmDiffSummaryOperations(deps: ScmDiffSummaryOperationsDep
                 ...(sessionId ? { sessionId } : {}) } },
             schema: ScmDiffFileResponseSchema, context: actionContext(params), executor: deps.actionExecutor,
             shouldContinue: current });
+        const refusal = readUiScmActionFailure(result);
+        if (refusal) { const { ok: _ok, ...failure } = refusal; return { ...failure, success: false }; }
         const parsed = ScmDiffFileResponseSchema.safeParse(result);
         if (parsed.success) return parsed.data;
         const failure = readOperationError(result);

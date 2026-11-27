@@ -307,6 +307,7 @@ export function useFileChangesReview(params: FileChangesReviewParams) {
     turnNumber,
     status,
     error,
+    ...(changes.failure ? { failure: changes.failure } : {}),
     unifiedDiff,
     capturedFile,
     comparison: captured,

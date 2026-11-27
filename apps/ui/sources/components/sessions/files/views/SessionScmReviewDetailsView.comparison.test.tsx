@@ -20,6 +20,22 @@ afterEach(async () => {
 });
 
 describe('SessionScmReviewDetailsView (comparison)', () => {
+    it('exposes the admitted request id when This session capture is refused', async () => {
+        const { readActionFailureDetails } = await import('@/dev/testkit/fixtures/actionFailureDetails');
+        fixture = await createSessionFilesViewFixture({ rpc: request => request.method === RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE
+            ? { ok: false, error: 'invalid_parameters', errorCode: 'invalid_parameters' } : undefined });
+        const { SessionScmReviewDetailsView } = await import('./SessionScmReviewDetailsView');
+        const screen = await fixture.render(<SessionScmReviewDetailsView sessionId="s1" serverId={fixture.home.id}
+            scopeId="session:s1" target={{ comparison: { kind: 'session' }, view: 'files' }} />);
+        const { WorkspaceScmReviewBody } = await import('@/components/projects/scm/WorkspaceScmReviewBody');
+        // The test renderer has no viewport measurement; deliver the layout boundary's visible-row result.
+        await act(async () => screen.findByType(WorkspaceScmReviewBody).props.onVisibleFileRowCountChange(20));
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('invalid_parameters'));
+        await screen.pressByTestIdAsync('captured-comparison-loading-details-toggle');
+        const details = readActionFailureDetails(screen.getTextContent());
+        expect(details.requestId).toMatch(/^[0-9a-f]{8}-[0-9a-f-]{27}$/i);
+    });
+
     it('retains a captured comparison after retry and admits File actions only while a File page is mounted', async () => {
         const comparison = ScmComparisonSchema.parse({ id: 'a'.repeat(64),
             source: { kind: 'turnCheckpoint', turnId: 'turn_1' }, repository: { rootPath: '/tmp/repo' },

@@ -1,3 +1,4 @@
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type {
     ExecutionRunPublicState} from '@happier-dev/protocol/execution/runs/responseSchemas';
 import type { ExecutionRunResolvedSelection } from '@happier-dev/protocol/execution/runs/requestedConfiguration';
@@ -65,7 +66,7 @@ export type ScmDiffSummaryEntry = Readonly<{
     /** Display-only retained values; latestOutput remains the producer's wire facts. */
     displayOutputs: ScmDiffSummaryOutputs | null;
     /** `endedPartway`: the output kept what it wrote and stopped before the end (an unclassified cause stays diagnostic). */
-    error: Readonly<{ message: string; code?: string; endedPartway?: true }> | null;
+    error: Readonly<{ message: string; code?: string; endedPartway?: true; failure?: ActionExecuteFailure }> | null;
 }>;
 
 /** Captured reads follow the same Account/host owner as generated readings, across view lifetimes. */

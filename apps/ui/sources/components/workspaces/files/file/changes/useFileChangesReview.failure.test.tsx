@@ -58,6 +58,25 @@ describe('File changes dependency settlement', () => {
         expect(screen.getTextContent()).not.toContain('unexpected-diff');
     });
 
+    it('keeps the capture refusal request id reachable through Technical details', async () => {
+        const { readActionFailureDetails } = await import('@/dev/testkit/fixtures/actionFailureDetails');
+        fixture = await createSessionFilesViewFixture({ rootPath: '/repo', rpc: request => {
+            if (request.method !== RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE) return undefined;
+            return { ok: false, error: 'invalid_parameters', errorCode: 'invalid_parameters' };
+        } });
+        const currentFixture = fixture;
+        function Probe() {
+            const review = useFileChangesReview({ scope: currentFixture.scope, sessionId: 's1', filePath: 'a.ts',
+                liveDiff: null, refreshLiveDiff: () => {}, onChangesScopeChange: () => {}, active: true });
+            return <FileChangesBody review={review} keyboardActive={false}>{() => null}</FileChangesBody>;
+        }
+        const screen = await fixture.render(<Probe />);
+        await vi.waitFor(() => expect(screen.findByTestId('file-changes-error')).not.toBeNull());
+        await screen.pressByTestIdAsync('file-changes-error-details-toggle');
+        const details = readActionFailureDetails(screen.getTextContent());
+        expect(details.requestId).toMatch(/^[0-9a-f]{8}-[0-9a-f-]{27}$/i);
+    });
+
     it('renders a Git-backed captured comparison through the file review consumer', async () => {
         fixture = await createSessionFilesViewFixture({ rootPath: '/repo', rpc: request => {
             if (request.method !== RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE) return undefined;

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { formatActionFailureDetails } from '@/utils/errors/alertActionFailure';
 import { presentDiffHunkKeep } from '@/components/ui/code/diff/hunks/diffHunkKeepLabels';
 import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -225,6 +226,10 @@ export function FileChangesBody(
     return (
       <SurfaceStateCard
         testID="file-changes-error"
+        diagnosticCode={review.failure?.errorCode}
+        diagnosticDetail={review.failure ? formatActionFailureDetails({ code: review.failure.errorCode,
+          failureCause: review.failure.failureCause,
+          context: review.failure.requestId ? { requestId: review.failure.requestId } : undefined }) : undefined}
         kind="error"
         size="line"
         title={review.error ?? t('hunkReview.noticeUnavailable')}

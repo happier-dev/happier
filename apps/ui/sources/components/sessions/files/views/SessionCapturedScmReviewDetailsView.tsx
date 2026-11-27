@@ -19,6 +19,7 @@ import { selectScmDiffSummaryProducerModel } from '@/sync/domains/scm/diffSummar
 import { useReviewComposerHandoff } from '@/components/sessions/reviews/comments/useReviewComposerHandoff';
 import { DestinationBodyLoading } from '@/components/appShell/workspace/DestinationBodyLoading';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { formatActionFailureDetails } from '@/utils/errors/alertActionFailure';
 import { useSession } from '@/sync/domains/state/storage';
 import { useScmReviewLimits } from '@/scm/review/useScmReviewLimits';
 import { useWorkspaceScopeForSession } from '@/sync/domains/session/resolveWorkspaceScopeForSession';
@@ -140,6 +141,10 @@ export function SessionCapturedScmReviewDetailsView(props: SessionScmReviewDetai
                 <SurfaceStateCard testID="captured-comparison-loading" kind="error"
                     title={scopeLabel}
                     reason={captured.error ?? t('scmComparison.scopePicker.unavailable')}
+                    diagnosticCode={captured.failure?.errorCode}
+                    diagnosticDetail={captured.failure ? formatActionFailureDetails({ code: captured.failure.errorCode,
+                        failureCause: captured.failure.failureCause,
+                        context: captured.failure.requestId ? { requestId: captured.failure.requestId } : undefined }) : undefined}
                     action={{ label: t('common.retry'), onPress: captured.retry }} />
             </>}
         </>}

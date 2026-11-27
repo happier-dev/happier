@@ -50,6 +50,6 @@ export function useFileChangesScope(params: Readonly<{
     }, [selection.capture, params.refreshLiveDiff, captured.retry]);
     const live = !selection.capture;
     return { options, current, setScope, selector, turnId, live, readOnly: selection.readOnly, comparison: live ? null : captured.comparison,
-        loading: live ? false : captured.loading, error: live ? null : captured.error,
+        failure: live ? null : captured.failure, loading: live ? false : captured.loading, error: live ? null : captured.error,
         refresh, refreshAfterAction: refresh };
 }
