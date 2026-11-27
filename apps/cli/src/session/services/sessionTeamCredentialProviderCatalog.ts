@@ -23,7 +23,12 @@ export async function readSessionTeamCredentialProviderModels(input: Readonly<{
   signal: AbortSignal;
 }>): Promise<TeamCredentialResourceCatalogEntryV1['providerModels']> {
   const requirements = readLeasedAgentProviderRequirements(input);
-  if (!requirements) throw new SessionTeamCredentialLaunchUnavailableError('agent_unavailable', 'agent_requirements');
+  if (!requirements) {
+    const code = input.lease.registry.contributes.agentDefinitionsById.has(input.agentId)
+      ? 'provider_incompatible_with_agent'
+      : 'agent_unavailable';
+    throw new SessionTeamCredentialLaunchUnavailableError(code, 'agent_requirements');
+  }
   const supported = readSessionTeamCredentialApplications(input, requirements);
   const application = input.application;
   const applications = application ? supported.filter(candidate => isSameTeamCredentialBrokerApplication(candidate, application)) : supported;

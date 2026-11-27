@@ -39,6 +39,19 @@ const resourceDisplayName = projectPrivateLabelForRecipientV1({
 });
 
 describe('Session Team runtime catalog', () => {
+  it('distinguishes Muse without a Provider adapter from an absent Agent before reading Home', async () => {
+    const worker = await createManagedRunLaunchFixture({ includeBundledDeclarations: true });
+    try {
+      const request = { lease: worker.lease, homeDomainAction: async (): Promise<never> => { throw new Error('Home must not be read'); },
+        resourceId: 'resource', teamId: 'team', deliveryMode: 'brokered' as const, signal: new AbortController().signal };
+      expect(worker.contributes.agentDefinitionsById.has('muse')).toBe(true);
+      await expect(readSessionTeamCredentialProviderModels({ ...request, agentId: 'absent-agent', agentTargetKey: 'agent:happier.agent.muse/muse' }))
+        .rejects.toMatchObject({ code: 'agent_unavailable' });
+      await expect(readSessionTeamCredentialProviderModels({ ...request, agentId: 'muse', agentTargetKey: 'agent:happier.agent.muse/muse' }))
+        .rejects.toMatchObject({ code: 'provider_incompatible_with_agent' });
+    } finally { await worker.cleanup(); }
+  });
+
   it.each([false, true])('launches the exact offered Team model without directory discovery (experimental=%s)', async experimental => {
     const worker = await createManagedRunLaunchFixture({ experimental, acceptedCredentialFormats: ['raw', 'bearer'],
       supportsReasoningEffort: true, reasoningEffortValues: PROVIDER_REASONING_EFFORT_LEVELS_V1,
