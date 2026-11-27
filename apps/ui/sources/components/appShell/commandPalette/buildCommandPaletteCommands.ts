@@ -263,6 +263,7 @@ export function buildCommandPaletteCommands(
     ].filter(Boolean).join(' · ') || undefined,
     icon: 'sparkle', category: t('commandPalette.commands.actionsCategory'),
     action: async () => { await favorite.apply(); },
+    invokeAction: favorite.invokeAction,
   });
 
   if (params.themeCommands) cmds.push({

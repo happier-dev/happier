@@ -9,6 +9,8 @@ import type { ComposerRefV1 } from '@happier-dev/protocol/plugins/ui/composerRef
 import type { SessionExecutionTargetV1 } from '@happier-dev/protocol/sessions/creation/sessionExecutionTargetV1';
 import type { SessionDirectoryIntentV1 } from '@happier-dev/protocol/sessions/creation/sessionDirectoryIntentV1';
 import type { NewSessionDraftAgentIntent, NewSessionDraftModelIntent } from '@happier-dev/protocol/actions/appShellActionFamily';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { composerRefV1Key } from '@happier-dev/protocol/plugins/ui/composerRef';
 import type {
     CurrentSessionPresentationIntentResultV1,
@@ -3167,6 +3169,7 @@ export type SessionComposerModelFavorite = Readonly<{
     current: boolean;
     /** Switches the Session to this model through the composer's model selection (`session.model.set`). */
     apply: () => Promise<boolean>;
+    invokeAction?: (context: ActionExecutorContext) => Promise<ActionExecuteResult>;
 }>;
 
 /** The exact Session composer's favourite models, read once by a surface as it opens; none without a composer. */

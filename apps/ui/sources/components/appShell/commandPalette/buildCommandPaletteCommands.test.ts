@@ -18,6 +18,7 @@ import {
   type PluginContributedActionCurrentSnapshot,
 } from '@/components/plugins/actions/pluginContributedActionController';
 import { buildCommandPaletteCommands } from './buildCommandPaletteCommands';
+import { executeCommandPaletteAction, registerCommandPaletteActionCatalog } from './commandPaletteActionRuntime';
 import { buildCommandPaletteSelectionListSections } from './buildCommandPaletteSelectionListSections';
 import { filterSelectionListSections } from '@/components/ui/selectionList/filterSelectionListSections';
 import { readSessionComposerModelFavorites, registerSessionComposerPresentationTarget } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
@@ -456,12 +457,14 @@ describe('buildCommandPaletteCommands', () => {
     const address = { serverId: 'server-a', sessionId: 'session-1' } as const;
     const applyOpus = vi.fn(async () => true);
     const applySonnet = vi.fn(async () => true);
+    const refusal = { ok: false, errorCode: 'policy_disabled', error: 'policy_disabled:session.model.set' } as const;
+    const invokeSonnet = vi.fn(async () => refusal);
     const unregister = registerSessionComposerPresentationTarget(address, {
       readRevision: () => 0,
       replace: () => 0,
       readModelFavorites: () => [
         { key: 'opus', label: 'Opus 5.5', reasoningEffort: 'high', sourceLabel: null, current: true, apply: applyOpus },
-        { key: 'sonnet', label: 'Sonnet 5.5', reasoningEffort: 'medium', sourceLabel: 'OpenRouter — Work', current: false, apply: applySonnet },
+        { key: 'sonnet', label: 'Sonnet 5.5', reasoningEffort: 'medium', sourceLabel: 'OpenRouter — Work', current: false, apply: applySonnet, invokeAction: invokeSonnet },
       ],
     });
     try {
@@ -486,6 +489,21 @@ describe('buildCommandPaletteCommands', () => {
       await favorites[1]?.action();
       expect(applySonnet).toHaveBeenCalledTimes(1);
       expect(applyOpus).not.toHaveBeenCalled();
+      const releaseCatalog = registerCommandPaletteActionCatalog(() => commands);
+      try {
+        const context = { surface: 'agent' as const, executeOrdinaryChildAction: vi.fn() };
+        await expect(executeCommandPaletteAction({ actionId: 'ui.command_palette.list', input: {}, context }))
+          .resolves.toMatchObject({ ok: true, result: { commands: expect.arrayContaining([
+            expect.objectContaining({ id: 'session.model.favorite:sonnet', title: 'Use favorite model Sonnet 5.5' }),
+          ]) } });
+        await expect(executeCommandPaletteAction({
+          actionId: 'ui.command_palette.invoke', input: { commandId: 'session.model.favorite:sonnet' }, context,
+        })).resolves.toEqual(refusal);
+        expect(invokeSonnet).toHaveBeenCalledExactlyOnceWith(context);
+        expect(applySonnet).toHaveBeenCalledTimes(1);
+      } finally {
+        releaseCatalog();
+      }
     } finally {
       unregister();
     }

@@ -5843,7 +5843,7 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
         if (!deps.uiCommandPaletteAction) {
           return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         }
-        return await deps.uiCommandPaletteAction({ actionId, input: parsed.data, context: ctx });
+        return await deps.uiCommandPaletteAction({ actionId, input: parsed.data, context: withOrdinaryChildAction(ctx) });
       }
       if (actionId === 'ui.pet.choose') {
         return deps.uiPetChooseAction

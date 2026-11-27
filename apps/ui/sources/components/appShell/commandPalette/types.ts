@@ -1,5 +1,7 @@
 import type { IconName } from '@/components/ui/icons/Icon';
 import type { ThemeMiniatureData } from '@/theme/profiles/themeProfileTypes';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 
 /**
  * One admitted command produced by `buildCommandPaletteCommands`. It is the
@@ -10,6 +12,8 @@ export interface Command {
     id: string;
     /** Commands already governed by an Action keep that Action's caller policy. */
     actionSpecId?: string;
+    /** A command with an Action can supply its ordinary child invocation for automation. */
+    invokeAction?: (context: ActionExecutorContext) => Promise<ActionExecuteResult>;
     /** Construction-owned semantic used by Search to avoid duplicate empty-state recents. */
     kind?: 'recentSession';
     /** Intentionally useful before the user has entered a Search query. */

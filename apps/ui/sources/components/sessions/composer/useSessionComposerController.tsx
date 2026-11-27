@@ -3932,6 +3932,19 @@ export function useSessionComposerController({
         fireAndForget(publishAcpConfigOptionOverride(configId, valueId), { tag: 'SessionView.updateAcpConfigOptionOverride' });
     }, [publishAcpConfigOptionOverride]);
 
+    const readSelectableModelActionInput = React.useCallback((ref: PersonalSessionModelRef | null, modelOptionsContext?: SessionModelOptionsContext) => {
+        if (!agentId || !canSelectModel) return null;
+        const mode = ref?.modelId ?? 'default';
+        if (ref && !('source' in ref) && ref.providerConnectionId === null
+            && !isModelSelectableForSession(agentId, composerOptionsInput, mode, modelOptionsContext)) return null;
+        return buildExistingSessionModelActionInput({
+            sessionId,
+            ...(ref && 'source' in ref ? { modelSelection: ref }
+                : { modelId: mode, providerConnectionId: ref?.providerConnectionId ?? null }),
+            applyTiming: session.active === true ? 'next_prompt' : 'immediate',
+        });
+    }, [agentId, canSelectModel, composerOptionsInput, sessionId, session.active]);
+
     // Resolves whether the Session took the model (applied, armed for the next message, or awaiting
     // its restart), so a card's option value is written only for a model the Session holds.
     const publishModelSelection = React.useCallback(async (ref: PersonalSessionModelRef | null, modelOptionsContext?: SessionModelOptionsContext): Promise<boolean> => {
@@ -3940,17 +3953,11 @@ export function useSessionComposerController({
         const failureFallback = t(ref && isSessionModelRefSourceBound(ref)
             ? 'settingsProviders.models.connectionUnavailable'
             : 'common.requestFailed');
-        const mode = ref?.modelId ?? 'default';
         const intentBaselineUpdatedAt = durableModelSelectionIntentUpdatedAt;
-        if (ref && !('source' in ref) && ref.providerConnectionId === null
-            && !isModelSelectableForSession(agentId, composerOptionsInput, mode, modelOptionsContext)) return false;
+        const input = readSelectableModelActionInput(ref, modelOptionsContext);
+        if (!input) return false;
         try {
-            const result = await actionExecutor.execute('session.model.set', buildExistingSessionModelActionInput({
-                sessionId,
-                ...(ref && 'source' in ref ? { modelSelection: ref }
-                    : { modelId: mode, providerConnectionId: ref?.providerConnectionId ?? null }),
-                applyTiming: session.active === true ? 'next_prompt' : 'immediate',
-            }), {
+            const result = await actionExecutor.execute('session.model.set', input, {
                 surface: 'ui',
                 defaultSessionId: sessionId,
                 serverId: sessionRouteServerId,
@@ -4003,14 +4010,12 @@ export function useSessionComposerController({
     }, [
         actionExecutor,
         agentId,
+        canSelectModel,
         presentUnavailableModelTransition,
-        hasWriteAccess,
         durableModelSelectionIntentUpdatedAt,
         sessionId,
-        session.active,
-        ownerMetadata,
         sessionRouteServerId,
-        composerOptionsInput,
+        readSelectableModelActionInput,
     ]);
     const publishTeamCredentialModelSelection = React.useCallback(async (
         teamCredentialModel: TeamCredentialProviderModelSelectionV1,
@@ -4766,17 +4771,34 @@ export function useSessionComposerController({
         return projectFavoriteModelEntries(
             settings.currentFavoriteModelSelectionsV1 ?? [],
             { backendTargetKey: modelPickerAgentTargetKey },
-        ).map(entry => ({
-            key: entry.key,
-            label: entry.label,
-            ...(entry.reasoningEffort ? { reasoningEffort: entry.reasoningEffort } : {}),
-            sourceLabel: entry.sourceLabel,
-            current: entry.key === selected,
-            apply: () => publishFavoriteModelSelection(
-                resolveCanonicalNativeModelSelectionRef(existingSessionNativeModels, entry.ref),
-                entry.reasoningEffort,
-            ),
-        }));
+        ).map((entry): SessionComposerModelFavorite => {
+            const ref = resolveCanonicalNativeModelSelectionRef(existingSessionNativeModels, entry.ref);
+            const effort = entry.reasoningEffort;
+            return {
+                key: entry.key,
+                label: entry.label,
+                ...(effort ? { reasoningEffort: effort } : {}),
+                sourceLabel: entry.sourceLabel,
+                current: entry.key === selected,
+                apply: () => publishFavoriteModelSelection(ref, effort),
+                invokeAction: async ({ executeOrdinaryChildAction, serverId }) => {
+                    if (!executeOrdinaryChildAction || (serverId && serverId !== sessionRouteServerId)) {
+                        return { ok: false, errorCode: 'unsupported_action', error: 'command_palette_entry_unavailable' };
+                    }
+                    const input = readSelectableModelActionInput(ref);
+                    if (!input) return { ok: false, errorCode: 'target_unavailable', error: 'model_selection_unavailable' };
+                    const outcome = await executeOrdinaryChildAction('session.model.set', input);
+                    if (!outcome.ok || effort === undefined || ActionApprovalRequestCreatedResultSchema.safeParse(outcome.result).success) {
+                        return outcome;
+                    }
+                    return executeOrdinaryChildAction(SESSION_CONFIG_OPTION_SET_ACTION_ID_V1, buildExistingSessionConfigOptionActionInput({
+                        sessionId,
+                        configId: PROVIDER_REASONING_EFFORT_OPTION_ID,
+                        valueId: effort,
+                    }));
+                },
+            };
+        });
     };
     const requestComposerActionChipOpen = (chipKey: string, anchorRef?: React.RefObject<View | null>): boolean => {
         if (!readSurfaceFocused() || !readSurfacePresented() || !hasComposerActionChip(chipKey)) return false;
