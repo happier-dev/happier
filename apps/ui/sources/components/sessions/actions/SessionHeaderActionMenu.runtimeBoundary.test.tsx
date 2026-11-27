@@ -294,6 +294,12 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
             const { t } = await import('@/text');
             expect(modalAlert).toHaveBeenLastCalledWith(t('common.error'), expect.any(String),
                 expect.arrayContaining([expect.objectContaining({ text: t('approvals.technicalDetails') })]));
+            const buttons = modalAlert.mock.calls.at(-1)?.[2];
+            const technical = buttons?.find((button: { text?: string }) => button.text === t('approvals.technicalDetails'));
+            technical?.onPress?.();
+            const details = String(modalAlert.mock.calls.at(-1)?.[1]);
+            expect(details).toContain(`${t('common.error')}: home_forbidden`);
+            expect(details).not.toContain('[object Object]');
         } finally { await screen.unmount(); }
     });
 

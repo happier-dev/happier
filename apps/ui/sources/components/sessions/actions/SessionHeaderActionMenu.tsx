@@ -257,8 +257,8 @@ function readCurrentSessionActionTargetSnapshot(
 
 function showSessionHeaderActionError(error: unknown): void {
   if (error instanceof HappyError) {
-    alertActionFailure({ reason: error.message, code: error.code ?? null, requestId: error.requestId,
-      context: { ...readSafeFailureDetails(error.details), ...error.failureCause,
+    alertActionFailure({ reason: error.message, code: error.code ?? null, requestId: error.requestId, failureCause: error.failureCause,
+      context: { ...readSafeFailureDetails(error.details),
         ...(error.effectAttempted === undefined ? {} : { effectAttempted: error.effectAttempted }) } });
     return;
   }
