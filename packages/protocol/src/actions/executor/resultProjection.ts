@@ -20,6 +20,7 @@ import { ActionOperationAcceptedResultSchema, readActionAutomationNoticesV1, wit
   projectActionFailureCauseV1, readActionErrorCodeV1, readUnexpectedActionErrorDiagnosticV1, type ActionFailureCauseV1, type ActionExecuteFailure } from '../actionExecutionResult.js';
 import { redactBugReportSensitiveText } from '../../bugs/reports/redaction.js';
 import { getActionSpec } from '../actionSpecs.js';
+import { ExternalActionAuthorizationRefusalPhaseSchema } from '../externalActionAuthorizationRefusalPhase.js';
 import { OpenProjectResultV1Schema } from '../../projects/openProjectV1.js';
 import { ExecutionRunSendResponseSchema, ExecutionRunStopResponseSchema } from '../../execution/runs/responseSchemas.js';
 import type { ActionExecuteResult } from './types.js';
@@ -124,10 +125,18 @@ export function normalizeActionExecutorThrownError(error: unknown, phase?: strin
     catch { /* A private cause accessor cannot replace the original failure. */ }
   }
   const failure = carried ?? classifyActionExecutorThrownError(error, fallbackErrorCode, phase);
+  const failureCause = readCarriedActionFailureCause(error) ?? failure.failureCause ?? projectActionFailureCauseV1(error, phase);
+  const prefix = 'home.authorization.';
+  const closedPhase = failureCause.phase.startsWith(prefix)
+    ? ExternalActionAuthorizationRefusalPhaseSchema.safeParse(failureCause.phase.slice(prefix.length))
+    : undefined;
+  // The Home phase is a closed diagnostic. An exact match excludes free-form text
+  // under the authorization label, which still goes through secret redaction.
+  const message = closedPhase?.success
+    && failure.error === `action_forbidden (home_signed_authorization_rejected:${closedPhase.data})`
+    ? failure.error : redactBugReportSensitiveText(failure.error);
   // Native Action adapters spread these fields into a failure; terminal projection removes the sidecar.
-  const normalized = withActionFailureCauseDiagnostic({ ...failure, error: redactBugReportSensitiveText(failure.error),
-    failureCause: readCarriedActionFailureCause(error) ?? failure.failureCause ?? projectActionFailureCauseV1(error, phase) },
-    error, phase ?? 'dispatch');
+  const normalized = withActionFailureCauseDiagnostic({ ...failure, error: message, failureCause }, error, phase ?? 'dispatch');
   return carryActionFailureDiagnostic(normalized, normalized, { enumerable: true });
 }
 

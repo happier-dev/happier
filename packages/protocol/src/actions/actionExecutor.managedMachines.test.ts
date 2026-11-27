@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1 } from '../account/settings/sessionAgentSpawnPolicyV1.js';
 import { API_TOKEN_FULL_GRANT_V1 } from '../auth/apiTokenGrant.js';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
+import { createActionExecuteFailureError } from './actionExecutionResult.js';
 import { ApprovalRequestV1Schema, type ApprovalRequest } from '../approvals/approvalRequestV1.js';
 import { buildApprovalRequestArtifactHeaderV1 } from '../approvals/approvalArtifactHeaderV1.js';
 import { ManagedAcquireInputV1Schema, MachineSetupApplyInputV1Schema } from '../machines/managed/actionsV1.js';
@@ -299,6 +300,26 @@ describe('managed Machine Action executor', () => {
       presentUserConfirmation: { actionId: 'machines.managed.acquire' } }))
       .toEqual({ ok: false, errorCode: 'ssh_command_failed', error: valid ? message : 'The SSH command failed.',
         failureCause: { phase: 'machines.managed.acquire', errorClass: 'Error', errorCode: 'ssh_command_failed', httpStatus: null } });
+  });
+
+  it('keeps a closed Home refusal readable in Acquire and still removes credential-shaped content', async () => {
+    const errorCode = 'action_forbidden';
+    const failureCause = { phase: 'home.authorization.resolved_target', errorClass: 'HttpStatusError',
+      errorCode, httpStatus: 403 };
+    const reason = 'action_forbidden (home_signed_authorization_rejected:resolved_target)';
+    const executor = createActionExecutor({ managedMachineAction: async () => {
+      throw createActionExecuteFailureError({ ok: false, errorCode, error: message, failureCause });
+    } } as ActionExecutorDeps);
+    const context = { surface: 'cli', authority: 'present_user',
+      presentUserConfirmation: { actionId: 'machines.managed.acquire' } } as const;
+    let message = reason;
+    expect.soft(await executor.execute('machines.managed.acquire', acquireInput, context))
+      .toMatchObject({ ok: false, errorCode, error: reason, failureCause });
+
+    message = 'action_forbidden (home_signed_authorization_rejected:PRIVATE_PROOF) token=PRIVATE_TOKEN';
+    const unsafe = await executor.execute('machines.managed.acquire', acquireInput, context);
+    expect(unsafe).toMatchObject({ ok: false, errorCode, failureCause });
+    expect(JSON.stringify(unsafe)).not.toMatch(/PRIVATE_PROOF|PRIVATE_TOKEN/);
   });
 
   it('retains the unreachable Home address without exposing native enrollment diagnostics', async () => {
