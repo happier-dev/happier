@@ -1727,10 +1727,15 @@ describe('Channels outward-delivery supervisor', () => {
     const generation = new AbortController();
     const state = new MemoryCollection();
     const deliveries = new MemoryCollection();
-    await state.put(connectionRow(), { expectedRevision: 'absent' });
     for (let index = 0; index < 100; index += 1) {
       const id = `foreign-binding-${index}`;
-      await state.put({ ...bindingRow(), id, 'binding-id': id }, { expectedRevision: 'absent' });
+      const connectionId = `foreign-connection-${index}`;
+      await state.put({ ...connectionRow(), id: connectionId, 'connection-id': connectionId }, { expectedRevision: 'absent' });
+      await state.put({ ...bindingRow(), id, 'binding-id': id, 'connection-id': connectionId }, { expectedRevision: 'absent' });
+    }
+    for (let index = 0; index < PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1; index += 1) {
+      const connectionId = `earlier-unbound-connection-${index}`;
+      await state.put({ ...connectionRow(), id: connectionId, 'connection-id': connectionId }, { expectedRevision: 'absent' });
     }
     const changes = new Set<() => void>();
     // Collection observation and Machine placement are host boundaries. The
@@ -1741,6 +1746,11 @@ describe('Channels outward-delivery supervisor', () => {
       return { dispose() { changes.delete(notify); } };
     };
     const reads = vi.spyOn(state, 'get');
+    const queries = vi.spyOn(state, 'query');
+    const connectionPages = () => queries.mock.calls.filter(([query]) =>
+      query.index === CHANNEL_STATE_INDEX_ID.byKind
+      && (query.prefix?.[0] === 'connection' || query.prefixes?.some(prefix => prefix[0] === 'connection'))).length;
+    const connectionReads = () => reads.mock.calls.filter(([id]) => id.startsWith('foreign-connection-')).length;
     const execute = vi.fn(async (action: string) => action === 'session.permission.remote.pending.list'
       ? emptyPendingPermissionPage()
       : { ok: true, projection: 'externalShareableV1', sessionId: 'session-1', scannedThroughSeq: 0,
@@ -1758,17 +1768,21 @@ describe('Channels outward-delivery supervisor', () => {
     try {
       await vi.advanceTimersByTimeAsync(0);
       expect(bindingReads()).toBe(0);
-      expect(reads).toHaveBeenCalledTimes(1);
+      expect.soft(connectionReads()).toBe(0);
+      expect.soft(connectionPages()).toBe(1);
       expect(execute).not.toHaveBeenCalled();
       await vi.advanceTimersByTimeAsync(60_000);
-      expect(reads).toHaveBeenCalledTimes(1);
+      expect.soft(connectionReads()).toBe(0);
+      expect.soft(connectionPages()).toBe(1);
 
       for (let index = 0; index < 50; index += 1) for (const changed of changes) changed();
       await vi.advanceTimersByTimeAsync(0);
       expect(bindingReads()).toBe(0);
-      expect(reads).toHaveBeenCalledTimes(2);
+      expect.soft(connectionReads()).toBe(0);
+      expect.soft(connectionPages()).toBe(2);
       await vi.advanceTimersByTimeAsync(60_000);
-      expect(reads).toHaveBeenCalledTimes(2);
+      expect.soft(connectionReads()).toBe(0);
+      expect.soft(connectionPages()).toBe(2);
 
       // Real placement recovery still discovers all admitted local work.
       placed = true;

@@ -100,9 +100,10 @@ export function createProviderBrokerMachineCarrierTunnelOpen(input: Readonly<{
 }>): (request: Readonly<{
   brokerOpen: Extract<BrokerOpenResponse, { ok: true }>;
   refreshBrokerOpen?: (signal?: AbortSignal) => Promise<BrokerRefreshOpenResponse>;
+  openedForThisDial?: true;
   signal?: AbortSignal;
 }>) => Promise<ProviderBrokerMachineCarrierTunnel> {
-  return async ({ brokerOpen: brokerOpenInput, refreshBrokerOpen, signal }) => {
+  return async ({ brokerOpen: brokerOpenInput, refreshBrokerOpen, openedForThisDial, signal }) => {
     signal?.throwIfAborted();
     const brokerOpen = BrokerOpenResponseSchema.parse(brokerOpenInput);
     if (!brokerOpen.ok) {
@@ -245,10 +246,12 @@ export function createProviderBrokerMachineCarrierTunnelOpen(input: Readonly<{
       }
     };
     const fixedAdmission = watcher || payload.v === 3 || payload.v === 2 && payload.consumer.kind === 'execution_run';
-    // A signed Run open owns its admission until the existing grant expiry.
-    // Sessions still refresh before dial and for each later carrier stream.
-    let firstHandshake = fixedAdmission ? handshake : refreshBrokerOpen ? await refreshHandshake() : null;
     const sessionConsumerId = !watcher && payload.v === 1 && payload.consumer.kind === 'session' ? payload.consumer.sessionId : undefined;
+    // A Session can spend the grant opened for this dial on its first stream.
+    // Pre-opened Session grants and later streams still refresh through Home.
+    let firstHandshake = fixedAdmission || (sessionConsumerId && openedForThisDial)
+      ? handshake
+      : refreshBrokerOpen ? await refreshHandshake() : null;
     const transportInput: ProviderBrokerMachineCarrierTransportOpenInput = {
       alpn: MACHINE_ALPN,
       remoteEndpointId: payload.target.endpointId,

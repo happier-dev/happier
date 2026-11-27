@@ -16,6 +16,16 @@ import { createCurrentConversationConnectionFixture } from './testkit/currentCon
 import { pollGithubIssueCommentsForChannels } from '../../scm-github/src/observations/githubIssueCommentPollRuntime.js';
 type CollectionListener = (notice: PluginCollectionInvalidation) => void;
 
+type PollTestSelection = Readonly<{
+  prefix?: readonly unknown[];
+  prefixes?: readonly (readonly unknown[])[];
+}>;
+
+function matchesCollectionKey(selection: PollTestSelection, key: readonly string[]): boolean {
+  return (selection.prefixes ?? [selection.prefix ?? []]).some(prefix =>
+    prefix.every((value, index) => value === key[index]));
+}
+
 function connectionRows(count: number): readonly Readonly<{
   rowId: string;
   revision: number;
@@ -118,7 +128,7 @@ describe('Checkpointed poll supervisor', () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
     const generation = new AbortController();
-    const watchers: Array<{ index: string; prefix: readonly unknown[]; notify(event: { kind: 'changed' | 'reset'; changeCursor: number }): void }> = [];
+    const watchers: Array<PollTestSelection & { index: string; notify: CollectionListener }> = [];
     const waitingConnection = createCurrentConversationConnectionFixture({ connectionId: 'connection-2', authority: {
       providerPluginId: 'example.channel.provider', providerContributionSelection: { contributionId: 'test-provider' },
       providerSetupInput: {}, credentialRef: null,
@@ -159,14 +169,15 @@ describe('Checkpointed poll supervisor', () => {
     const supervisor = createIngressSupervisor();
     const running = supervisor.run({ ...context, services: { ...context.services,
       storage: { account: { collection: () => ({ get,
-        query: async (request: Readonly<{ index?: string; prefix?: readonly unknown[] }>) => ({
+        query: async (request: PollTestSelection & Readonly<{ index?: string }>) => ({
           rows: request.prefix?.[0] === 'connection' ? rows
-            : request.index === CHANNEL_STATE_INDEX_ID.byConnectionKindV1 && request.prefix?.[0] === 'connection-1'
-              ? [{ rowId: `${request.prefix[1]}-1`, revision: inputRevision, value: {
-                id: `${request.prefix[1]}-1`, 'record-kind': request.prefix[1], 'connection-id': 'connection-1',
-              } }] : [], changeCursor: 1,
+            : request.index === CHANNEL_STATE_INDEX_ID.byConnectionKindV1
+              ? ['binding', 'checkpoint'].filter(kind => matchesCollectionKey(request, ['connection-1', kind]))
+                .map(kind => ({ rowId: `${kind}-1`, revision: inputRevision, value: {
+                  id: `${kind}-1`, 'record-kind': kind, 'connection-id': 'connection-1',
+                } })) : [], changeCursor: 1,
         }),
-        watch: (request: Readonly<{ index: string; prefix: readonly unknown[] }>, notify: (event: { kind: 'changed' | 'reset'; changeCursor: number }) => void) => {
+        watch: (request: PollTestSelection & Readonly<{ index: string }>, notify: CollectionListener) => {
           const watch = { ...request, notify }; watchers.push(watch);
           return { dispose() { const index = watchers.indexOf(watch); if (index >= 0) watchers.splice(index, 1); } };
         },
@@ -177,7 +188,7 @@ describe('Checkpointed poll supervisor', () => {
     const publish = (connectionId: string, recordKind: string) => {
       for (const watch of [...watchers]) {
         const key = watch.index === CHANNEL_STATE_INDEX_ID.byConnectionKindV1 ? [connectionId, recordKind] : [recordKind];
-        if (watch.prefix.every((value, index) => value === key[index])) watch.notify({ kind: 'changed', changeCursor: 2 });
+        if (matchesCollectionKey(watch, key)) watch.notify({ kind: 'changed', changeCursor: 2 });
       }
     };
     try {
@@ -280,7 +291,7 @@ describe('Checkpointed poll supervisor', () => {
   it('does not rediscover connections for unrelated writes or ingress maintenance, and discovers a changed connection', async () => {
     vi.useFakeTimers();
     const generation = new AbortController();
-    const watchers: Array<{ kind?: string; notify(): void }> = [];
+    const watchers: Array<PollTestSelection & { index: string; notify: CollectionListener }> = [];
     const rowFor = (index: number) => {
       const connectionId = `connection-${index}`;
       const value = createCurrentConversationConnectionFixture({ connectionId,
@@ -296,33 +307,41 @@ describe('Checkpointed poll supervisor', () => {
     };
     let rows = [rowFor(1)];
     const get = vi.fn(async (rowId: string) => rows.find(row => row.rowId === rowId) ?? null);
-    const query = vi.fn(async (request: Readonly<{ prefix?: readonly unknown[] }>) => ({
+    const query = vi.fn(async (request: PollTestSelection & Readonly<{ index: string }>) => ({
       rows: request.prefix?.[0] === 'connection' ? rows : [], changeCursor: 1,
     }));
     const context = backgroundContext(generation.signal);
     const supervisor = createIngressSupervisor();
     const running = supervisor.run({ ...context, services: { ...context.services,
       storage: { account: { collection: () => ({ query, get,
-        watch: (request: Readonly<{ prefix?: readonly string[] }>, notify: () => void) => {
-          watchers.push({ kind: request.prefix?.[0], notify }); return { dispose() {} };
+        watch: (request: PollTestSelection & Readonly<{ index: string }>, notify: CollectionListener) => {
+          watchers.push({ ...request, notify }); return { dispose() {} };
         },
       }) } }, events: { ...context.services.events, plugin: { emit: async () => ({ subscriberCount: 0 }) } },
     } as unknown as PluginServices });
-    const publish = (kind: string) => {
-      for (const watch of watchers) if (watch.kind === undefined || watch.kind === kind) watch.notify();
+    let changeCursor = 1;
+    const publish = (kind: string, connectionId: string) => {
+      changeCursor += 1;
+      for (const watch of watchers) {
+        const key = watch.index === CHANNEL_STATE_INDEX_ID.byConnectionKindV1 ? [connectionId, kind] : [kind];
+        if (matchesCollectionKey(watch, key)) watch.notify({ kind: 'changed', changeCursor });
+      }
     };
     const connectionReads = () => query.mock.calls.filter(([request]) => request.prefix?.[0] === 'connection').length;
+    const pollInputReads = () => query.mock.calls.filter(([request]) => request.index === CHANNEL_STATE_INDEX_ID.byConnectionKindV1).length;
     try {
       await vi.advanceTimersByTimeAsync(0);
       const initial = connectionReads();
+      const initialPollInputs = pollInputReads();
       for (let index = 0; index < 10; index += 1) {
-        publish('pairing-request');
-        publish('ingress-obligation');
+        publish('pairing-request', 'connection-1');
+        publish('ingress-obligation', 'connection-1');
         await vi.advanceTimersByTimeAsync(0);
       }
       expect(connectionReads()).toBe(initial);
+      expect(pollInputReads()).toBe(initialPollInputs);
       rows = [...rows, rowFor(2)];
-      publish('connection');
+      publish('connection', 'connection-2');
       await vi.advanceTimersByTimeAsync(0);
       expect(connectionReads()).toBe(initial + 1);
       expect(get).toHaveBeenCalledWith('connection-2', { signal: expect.any(AbortSignal) });
@@ -445,13 +464,13 @@ describe('Checkpointed poll supervisor', () => {
     const supervisor = createIngressSupervisor();
     const running = supervisor.run({ ...context, services: { ...context.services,
       storage: { account: { collection: () => ({ get,
-        query: async (request: Readonly<{ prefix?: readonly unknown[] }>) => ({
+        query: async (request: PollTestSelection) => ({
           rows: request.prefix?.[0] === 'connection' ? connectionRows(1)
-            : request.prefix?.[1] === 'binding' ? [{ rowId: 'binding-1', revision: bindingRevision,
+            : matchesCollectionKey(request, ['connection-1', 'binding']) ? [{ rowId: 'binding-1', revision: bindingRevision,
               value: { id: 'binding-1', 'record-kind': 'binding', 'connection-id': 'connection-1' } }] : [], changeCursor: bindingRevision,
         }),
-        watch: (request: Readonly<{ prefix?: readonly unknown[] }>, notify: CollectionListener) => {
-          if (request.prefix?.[1] === 'binding') invalidateBinding = () => notify({ kind: 'changed', changeCursor: bindingRevision });
+        watch: (request: PollTestSelection, notify: CollectionListener) => {
+          if (matchesCollectionKey(request, ['connection-1', 'binding'])) invalidateBinding = () => notify({ kind: 'changed', changeCursor: bindingRevision });
           return { dispose() {} };
         },
       }) } },
@@ -487,13 +506,15 @@ describe('Checkpointed poll supervisor', () => {
     let notify: CollectionListener | undefined;
     let revision = 1;
     let changeCursor = 10;
-    const query = vi.fn(async (request: Readonly<{ prefix?: readonly unknown[] }>) => ({
+    const query = vi.fn(async (request: PollTestSelection) => ({
       rows: request.prefix?.[0] === 'connection' ? connectionRows(1)
-        : request.prefix?.[1] === kind ? [{ rowId: `${kind}-1`, revision,
+        : matchesCollectionKey(request, ['connection-1', kind]) ? [{ rowId: `${kind}-1`, revision,
           value: { id: `${kind}-1`, 'record-kind': kind, 'connection-id': 'connection-1' } }] : [],
       changeCursor,
     }));
-    const inputReads = () => query.mock.calls.filter(([request]) => request.prefix?.[1] === kind).length;
+    const inputReads = () => query.mock.calls.filter(([request]) => request.prefix?.[0] === 'connection-1'
+      || request.prefixes?.some(prefix => prefix[0] === 'connection-1')).length;
+    const selections: PollTestSelection[] = [];
     const runPoll = vi.fn<NonNullable<IngressSupervisorOptions['runPoll']>>()
       .mockResolvedValue({ kind: 'ineligible' });
     if (parked) runPoll.mockRejectedValueOnce(new PluginError({ code: 'plugin_collection_invalid_value',
@@ -504,8 +525,10 @@ describe('Checkpointed poll supervisor', () => {
     const running = supervisor.run({ ...context, services: { ...context.services,
       storage: { account: { collection: () => ({
         query,
-        watch: (request: Readonly<{ prefix?: readonly unknown[] }>, listener: NonNullable<typeof notify>) => {
-          if (request.prefix?.[1] === kind) notify = listener;
+        watch: (request: PollTestSelection, listener: NonNullable<typeof notify>) => {
+          if (matchesCollectionKey(request, ['connection-1', kind])) notify = listener;
+          if (matchesCollectionKey(request, ['connection-1', 'binding'])
+            || matchesCollectionKey(request, ['connection-1', 'checkpoint'])) selections.push(request);
           return { dispose() {} };
         },
       }) } },
@@ -515,6 +538,9 @@ describe('Checkpointed poll supervisor', () => {
       expect(runPoll).toHaveBeenCalledTimes(1);
       expect(notify).toBeDefined();
       const startupReads = inputReads();
+      expect.soft(selections).toHaveLength(1);
+      expect.soft(selections.some(selection => matchesCollectionKey(selection, ['connection-1', 'ingress-obligation']))).toBe(false);
+      expect.soft(startupReads).toBe(1);
       for (const coveredCursor of [8, 9, 10]) {
         notify?.({ kind: 'changed', changeCursor: coveredCursor });
         await vi.advanceTimersByTimeAsync(1_000);
@@ -559,13 +585,13 @@ describe('Checkpointed poll supervisor', () => {
     const context = backgroundContext(generation.signal, undefined, logger);
     const collection = {
       get,
-      query: async (request: Readonly<{ prefix?: readonly unknown[] }>) => ({
+      query: async (request: PollTestSelection) => ({
         rows: request.prefix?.[0] === 'connection' ? connectionRows(1)
-          : request.prefix?.[1] === 'checkpoint' ? [{ rowId: 'checkpoint-1', revision: checkpointRevision,
+          : matchesCollectionKey(request, ['connection-1', 'checkpoint']) ? [{ rowId: 'checkpoint-1', revision: checkpointRevision,
             value: { id: 'checkpoint-1', 'record-kind': 'checkpoint', 'connection-id': 'connection-1' } }] : [], changeCursor: checkpointRevision,
       }),
-      watch: (request: Readonly<{ prefix?: readonly unknown[] }>, notify: CollectionListener) => {
-        if (request.prefix?.[1] === 'checkpoint') invalidateCheckpoint = () => notify({ kind: 'changed', changeCursor: checkpointRevision });
+      watch: (request: PollTestSelection, notify: CollectionListener) => {
+        if (matchesCollectionKey(request, ['connection-1', 'checkpoint'])) invalidateCheckpoint = () => notify({ kind: 'changed', changeCursor: checkpointRevision });
         return { dispose() {} };
       },
     };
@@ -888,7 +914,7 @@ describe('Checkpointed poll supervisor', () => {
 
     await expect(supervisor.run(context)).resolves.toBeUndefined();
 
-    expect(queryCalls).toBe(4); // Two discovery attempts, then one binding and checkpoint snapshot.
+    expect(queryCalls).toBe(3); // Two discovery attempts, then one poll-input snapshot.
     expect(runPoll).toHaveBeenCalledTimes(1);
     expect(now).toBe(2_001_000);
     await supervisor.dispose();
@@ -1007,7 +1033,7 @@ describe('Checkpointed poll supervisor', () => {
 
     expect(logger.warn).not.toHaveBeenCalled();
     expect(dueWorkCalls).toBe(2);
-    expect(queryCalls).toBe(4); // Recovery discovers once, then snapshots the two watched inputs.
+    expect(queryCalls).toBe(3); // Recovery discovers once, then snapshots both watched inputs together.
     expect(JSON.stringify(logger.warn.mock.calls)).not.toContain('secret');
     await supervisor.dispose();
   });

@@ -303,12 +303,8 @@ function isUnattemptedPermissionWait(record: ConversationOutwardDeliveryRecord):
 
 async function readCurrentBindingIds(context: BackgroundServiceContext): Promise<readonly string[]> {
   const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
-  const bindingIds: string[] = [];
-  // Select this runtime's work before expanding a connection into its bindings.
-  // Shared-Account changes can concern another Machine's whole binding set.
-  // This existing pass-local observation is discovery only: every effect still
-  // re-reads its connection and placement at the canonical final check.
-  const connectionCurrentness = new Map<string, boolean>();
+  const bindings: Array<{ bindingId: string; connectionId: string }> = [];
+  const connectionIds = new Set<string>();
   let cursor: string | undefined;
   do {
     const page = await collection.query({
@@ -322,22 +318,35 @@ async function readCurrentBindingIds(context: BackgroundServiceContext): Promise
       const bindingId = bindingIdFromRow(row.value, row.rowId);
       const connectionId = bindingConnectionIdFromRow(row.value, row.rowId);
       if (bindingId === undefined || connectionId === undefined) continue;
-      let current = connectionCurrentness.get(connectionId);
-      if (current === undefined) {
-        const row = asChannelStateRow(await collection.get(connectionId, { signal: context.signal }));
-        if (row === undefined) current = false;
-        else {
-          const connection = readConversationConnectionUpdateRow({ row, connectionId });
-          current = connection.lifecycle.enabled && connection.lifecycle.deletionState === 'none'
-            && await hasCurrentConversationExecutionPlacement(context, connection.transportOrigin);
-        }
-        connectionCurrentness.set(connectionId, current);
-      }
-      if (current) bindingIds.push(bindingId);
+      bindings.push({ bindingId, connectionId });
+      connectionIds.add(connectionId);
     }
     cursor = page.nextCursor;
   } while (cursor !== undefined && !context.signal.aborted);
-  return bindingIds;
+
+  // A batch has at most one row per exact prefix, within one Collection page.
+  // Each effect reads current placement at its own authority boundary.
+  const placedConnections = new Set<string>();
+  const candidates = [...connectionIds];
+  for (let start = 0; start < candidates.length && !context.signal.aborted; start += PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1) {
+    const page = await collection.query({
+      index: CHANNEL_STATE_INDEX_ID.byKind,
+      prefixes: candidates.slice(start, start + PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1)
+        .map(connectionId => [CHANNEL_STATE_RECORD_KIND.connection, connectionId]),
+      order: 'asc',
+      limit: PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1,
+    }, { signal: context.signal });
+    for (const stored of page.rows) {
+      const row = asChannelStateRow(stored);
+      if (row === undefined) continue;
+      const connection = readConversationConnectionUpdateRow({ row, connectionId: row.rowId });
+      if (connection.lifecycle.enabled && connection.lifecycle.deletionState === 'none'
+        && await hasCurrentConversationExecutionPlacement(context, connection.transportOrigin)) {
+        placedConnections.add(row.rowId);
+      }
+    }
+  }
+  return bindings.filter(({ connectionId }) => placedConnections.has(connectionId)).map(({ bindingId }) => bindingId);
 }
 
 /**

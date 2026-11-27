@@ -286,7 +286,8 @@ export class MemoryCollection<TValue extends Record<string, unknown> = Record<st
       .filter((row) => {
         if (row.deleted === true) return false;
         if (input.index === CHANNEL_STATE_INDEX_ID.byKind) {
-          return row.value['record-kind'] === prefix;
+          return relationPrefixes.some(([kind, id]) => row.value['record-kind'] === kind
+            && (id === undefined || row.rowId === id));
         }
         if (input.index === CHANNEL_STATE_INDEX_ID.byIngressDue) {
           const dueAt = row.value['due-at'];
@@ -294,8 +295,8 @@ export class MemoryCollection<TValue extends Record<string, unknown> = Record<st
             && matchesTestCollectionNumericRange(dueAt, input.range);
         }
         if (input.index === CHANNEL_STATE_INDEX_ID.byConnectionKindV1) {
-          return row.value['connection-id'] === prefix
-            && row.value['record-kind'] === input.prefix?.[1];
+          return relationPrefixes.some(([connectionId, kind]) => row.value['connection-id'] === connectionId
+            && row.value['record-kind'] === kind);
         }
         if (input.index === CHANNEL_STATE_INDEX_ID.byPullRequestSessionBindingV1) {
           return relationPrefixes.some(([kind, prBinding, sessionId]) => row.value['record-kind'] === kind

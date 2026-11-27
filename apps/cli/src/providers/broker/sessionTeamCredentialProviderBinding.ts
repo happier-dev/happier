@@ -73,6 +73,7 @@ type SessionTeamCredentialProviderBindingOpenDependencies = Readonly<{
   openTunnel(request: Readonly<{
     brokerOpen: Extract<ProviderBrokerOpenResponseV1, { ok: true }>;
     refreshBrokerOpen: (signal?: AbortSignal) => Promise<ProviderBrokerOpenResponseV1>;
+    openedForThisDial?: true;
     signal?: AbortSignal;
   }>): Promise<BrokerTunnel>;
 }>;
@@ -269,6 +270,7 @@ async function openBrokeredSessionTeamCredentialProviderBinding(
   const discovery = createProviderBrokerEndpointDiscovery();
   const tunnel = await discovery.openTunnel(() => input.openTunnel({
     brokerOpen: opened,
+    ...(consumer.kind === 'session' ? { openedForThisDial: true } : {}),
     // An established tunnel renews by presenting the prior signed authority it
     // already holds. How the Home first selected this exact target is not a
     // runtime renewal policy, so every established open refreshes the same way.

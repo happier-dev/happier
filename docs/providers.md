@@ -2278,6 +2278,9 @@ and the per-stream grant's `refreshOutcome` with `refreshElapsedMs` when request
 The refresh outcome distinguishes an unanswered refresh from an accepted,
 refused or failed refresh. Its elapsed time is the completed refresh duration,
 or the time still pending when discovery fails.
+A Team Session's initial dial uses the grant opened for that dial for its first
+stream, with the existing signature, endpoint and expiry checks. A pre-opened
+Session grant refreshes before dial, and later streams refresh through Home.
 A refused Home grant refresh, including the first refresh before dial, is retained as
 `broker_refresh_refused` before older native transport can turn it into a closed
 socket or an HTTP refusal without a broker-code header. Team launch refusals

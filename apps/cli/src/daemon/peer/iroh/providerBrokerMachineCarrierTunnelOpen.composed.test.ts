@@ -950,7 +950,7 @@ describe('createProviderBrokerMachineCarrierTunnelOpen', () => {
     expect(opened).toBe(2);
   });
 
-  it.each(['first', 'later'] as const)('rejects an expired witness before the %s stream opens', async stream => {
+  it.each(['first', 'same dial first', 'later'] as const)('rejects an expired witness before the %s stream opens', async stream => {
     const openHttpTunnel = vi.fn<DaemonMachineIrohRuntime['openHttpTunnel']>(async () => ({
       localPort: 41_004, localCapability: 'f'.repeat(64), remoteEndpointId: targetEndpoint,
       observedPath: 'direct' as const, close: vi.fn(async () => undefined),
@@ -966,12 +966,13 @@ describe('createProviderBrokerMachineCarrierTunnelOpen', () => {
       runtime: { endpoint: { endpointId: initiatorEndpoint }, openHttpTunnel } as never,
       resolveTrustRoots: () => [root], nowMs: () => now,
     });
-    await open({ brokerOpen: brokerOpen(), refreshBrokerOpen });
+    await open({ brokerOpen: brokerOpen(), refreshBrokerOpen,
+      ...(stream === 'same dial first' ? { openedForThisDial: true } : {}) });
     const provider = openHttpTunnel.mock.calls[0]?.[0].handshakeProvider;
-    if (stream === 'first') now = 20_000;
+    if (stream !== 'later') now = 20_000;
     if (stream === 'later') await expect(provider?.()).resolves.toMatchObject({ kind: 'provider_broker' });
     await expect(provider?.()).rejects.toMatchObject({ code: 'grant_expired' });
-    expect(refreshBrokerOpen).toHaveBeenCalledTimes(stream === 'first' ? 1 : 2);
+    expect(refreshBrokerOpen).toHaveBeenCalledTimes(stream === 'same dial first' ? 0 : stream === 'first' ? 1 : 2);
   });
 
   it('rejects either a substituted open witness or a tampered signed endpoint before dialing', async () => {

@@ -7447,6 +7447,13 @@ unopened by delete finalization. The finalizer still rereads current lifecycle
 and execution placement before cleanup, and resumes retained work after a
 conflict or restart through the existing outward wake.
 
+Outward binding discovery batches exact connection IDs from the binding rows,
+then selects bindings placed on the current runtime. Delivery and deletion
+admit current placement at their own effect boundaries. The checkpointed poll
+supervisor watches both input kinds through one Collection selection per
+connection and reads their revisions together. Binding and checkpoint changes
+retain their respective scheduling effects.
+
 In unreleased 0.3 source, Channels `channel-deliveries` V6 adds the
 `by-terminal-updated-at` index through an identity V5→V6 migration. Retention
 selects expired terminal rows in the Collection query and reads one future row

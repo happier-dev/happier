@@ -7,6 +7,7 @@ import {
 
 import {
   CHANNEL_STATE_COLLECTION,
+  CHANNEL_STATE_FIELD,
   CHANNEL_STATE_INDEX_ID,
   CHANNEL_STATE_RECORD_KIND,
 } from './collections.js';
@@ -37,10 +38,21 @@ type Clock = Readonly<{
 type JsonRecord = Readonly<Record<string, JsonValue>>;
 
 type WatchedPollInput = {
-  revision?: string;
+  revision?: Readonly<{ binding: string; checkpoint: string }>;
   coveredChangeCursor?: number;
   pending?: PluginCollectionInvalidation;
 };
+
+function pollInputSelection(connectionId: string) {
+  return {
+    index: CHANNEL_STATE_INDEX_ID.byConnectionKindV1,
+    prefixes: [
+      [connectionId, CHANNEL_STATE_RECORD_KIND.binding],
+      [connectionId, CHANNEL_STATE_RECORD_KIND.checkpoint],
+    ],
+    order: 'asc',
+  } as const;
+}
 
 function coversPollInputNotice(input: WatchedPollInput, notice: PluginCollectionInvalidation): boolean {
   return notice.kind === 'changed' && input.coveredChangeCursor !== undefined
@@ -210,8 +222,8 @@ export function createIngressSupervisor(
     const wake = createSupervisorWake(supervisorController.signal);
     // null parks a permanent boundary failure until stored input changes;
     // Infinity remains an ordinary ineligible connection awaiting its watch.
-    const pollDeadlines = new Map<string, { revision: number; deadline: number | null; retryAt?: number; durablePush?: true; desiredKey?: string; thrownFailures?: number; observations: readonly { dispose(): void }[];
-      inputs: Map<'binding' | 'checkpoint', WatchedPollInput> }>();
+    const pollDeadlines = new Map<string, { revision: number; deadline: number | null; retryAt?: number; durablePush?: true; desiredKey?: string; thrownFailures?: number;
+      input: WatchedPollInput; observation: { dispose(): void } }>();
     let discoverConnections = true;
     const observations: Array<{ dispose(): void }> = [];
     // The polls this generation started and has not yet seen settle, keyed by
@@ -299,7 +311,7 @@ export function createIngressSupervisor(
               const currentIds = new Set(connections.map(connection => connection.connectionId));
               for (const [id, schedule] of pollDeadlines) if (!currentIds.has(id)) {
                 pollDeadlines.delete(id);
-                for (const observation of schedule.observations) observation.dispose();
+                schedule.observation.dispose();
               }
               for (const { connectionId, ...schedule } of connections) {
                 const current = pollDeadlines.get(connectionId);
@@ -308,66 +320,62 @@ export function createIngressSupervisor(
                 const unchanged = current !== undefined && (schedule.durablePush
                   ? current.desiredKey === schedule.desiredKey
                   : current.revision === schedule.revision);
-                const inputs = current?.inputs ?? new Map<'binding' | 'checkpoint', WatchedPollInput>([
-                  ['binding', {}], ['checkpoint', {}],
-                ]);
-                const connectionObservations = current?.observations ?? [...inputs].map(([kind, input]) =>
-                  collection.watch({ index: CHANNEL_STATE_INDEX_ID.byConnectionKindV1,
-                    prefix: [connectionId, kind], order: 'asc' }, notice => {
-                    if (notice.kind === 'reset') {
-                      // A restore can rebase the AccountChange cursor backwards.
-                      input.coveredChangeCursor = undefined;
-                    } else if (
-                      coversPollInputNotice(input, notice)
-                      || input.pending?.kind === 'reset'
-                      || (input.pending !== undefined && notice.changeCursor <= input.pending.changeCursor)
-                    ) return;
-                    input.pending = notice;
-                    wake.wake();
-                  }));
-                const next = unchanged ? current : { ...schedule, inputs, observations: connectionObservations, deadline: 0 };
+                const input: WatchedPollInput = current?.input ?? {};
+                const observation = current?.observation ?? collection.watch(pollInputSelection(connectionId), notice => {
+                  if (notice.kind === 'reset') {
+                    // A restore can rebase the AccountChange cursor backwards.
+                    input.coveredChangeCursor = undefined;
+                  } else if (
+                    coversPollInputNotice(input, notice)
+                    || input.pending?.kind === 'reset'
+                    || (input.pending !== undefined && notice.changeCursor <= input.pending.changeCursor)
+                  ) return;
+                  input.pending = notice;
+                  wake.wake();
+                });
+                const next = unchanged ? current : { ...schedule, input, observation, deadline: 0 };
                 pollDeadlines.set(connectionId, next);
               }
             }
             for (const [connectionId, schedule] of pollDeadlines) {
-              let next = schedule;
-              for (const [kind, input] of next.inputs) {
-                const notice = takePollInputNotice(input);
-                if (input.revision !== undefined && (notice === undefined || coversPollInputNotice(input, notice))) continue;
-                const revisions: Array<readonly [string, number]> = [];
-                let cursor: string | undefined;
-                let coveredChangeCursor = Number.POSITIVE_INFINITY;
-                try {
-                  do {
-                    const page = await collection.query({ index: CHANNEL_STATE_INDEX_ID.byConnectionKindV1,
-                      prefix: [connectionId, kind], order: 'asc', limit: PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1,
-                      ...(cursor === undefined ? {} : { cursor }),
-                    }, { signal: supervisorController.signal });
-                    for (const row of page.rows) revisions.push([row.rowId, row.revision]);
-                    // Each page is a separate snapshot. A later page can only
-                    // vouch for its own rows, not the ones already traversed.
-                    coveredChangeCursor = Math.min(coveredChangeCursor, page.changeCursor);
-                    cursor = page.nextCursor;
-                  } while (cursor !== undefined);
-                } catch (error) {
-                  input.pending ??= notice;
-                  throw error;
-                }
-                // A reset delivered during this read still requires a query in
-                // the new cursor domain. Keep it pending for the next wake.
-                if (input.pending?.kind !== 'reset') input.coveredChangeCursor = coveredChangeCursor;
-                const revision = JSON.stringify(revisions);
-                // Watch resets describe delivery continuity, not an input
-                // edit. Only changed stored rows release this connection.
-                if (input.revision !== undefined && input.revision !== revision) {
-                  if (kind === 'binding') invalidateProviderConnections();
-                  if (kind === 'binding' ? !next.durablePush : next.deadline === null) {
-                    next = { ...next, deadline: 0, thrownFailures: 0 };
-                    pollDeadlines.set(connectionId, next);
+              const input = schedule.input;
+              const notice = takePollInputNotice(input);
+              if (input.revision !== undefined && (notice === undefined || coversPollInputNotice(input, notice))) continue;
+              const bindings: Array<readonly [string, number]> = [];
+              const checkpoints: Array<readonly [string, number]> = [];
+              let cursor: string | undefined;
+              let coveredChangeCursor = Number.POSITIVE_INFINITY;
+              try {
+                do {
+                  const page = await collection.query({ ...pollInputSelection(connectionId), limit: PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1,
+                    ...(cursor === undefined ? {} : { cursor }),
+                  }, { signal: supervisorController.signal });
+                  for (const row of page.rows) {
+                    const kind = row.value[CHANNEL_STATE_FIELD.recordKind];
+                    if (kind === CHANNEL_STATE_RECORD_KIND.binding) bindings.push([row.rowId, row.revision]);
+                    else if (kind === CHANNEL_STATE_RECORD_KIND.checkpoint) checkpoints.push([row.rowId, row.revision]);
                   }
-                }
-                input.revision = revision;
+                  // Each page only covers its own rows.
+                  coveredChangeCursor = Math.min(coveredChangeCursor, page.changeCursor);
+                  cursor = page.nextCursor;
+                } while (cursor !== undefined);
+              } catch (error) {
+                input.pending ??= notice;
+                throw error;
               }
+              // A reset arriving during the read requires a new snapshot.
+              if (input.pending?.kind !== 'reset') input.coveredChangeCursor = coveredChangeCursor;
+              const revision = { binding: JSON.stringify(bindings), checkpoint: JSON.stringify(checkpoints) };
+              // Only a changed input releases the stored schedule.
+              if (input.revision !== undefined) {
+                const bindingChanged = input.revision.binding !== revision.binding;
+                const checkpointChanged = input.revision.checkpoint !== revision.checkpoint;
+                if (bindingChanged) invalidateProviderConnections();
+                if ((bindingChanged && !schedule.durablePush) || (checkpointChanged && schedule.deadline === null)) {
+                  pollDeadlines.set(connectionId, { ...schedule, deadline: 0, thrownFailures: 0 });
+                }
+              }
+              input.revision = revision;
             }
           } catch (error) {
             if (supervisorController.signal.aborted) break;
@@ -461,7 +469,7 @@ export function createIngressSupervisor(
         }
       } finally {
         for (const observation of observations) observation.dispose();
-        for (const schedule of pollDeadlines.values()) for (const observation of schedule.observations) observation.dispose();
+        for (const schedule of pollDeadlines.values()) schedule.observation.dispose();
         wake.dispose();
         // Provider I/O this generation started still belongs to it. Resolving
         // while a poll is outstanding would let the replacement generation

@@ -902,7 +902,7 @@ describe('Session Team credential Provider binding', () => {
     },
   );
 
-  it.each(['refresh before dial', 'refresh socket close', 'refresh HTTP refusal', 'accepted refresh socket close', 'HTTP refusal'] as const)(
+  it.each(['refresh before dial', 'refresh socket close', 'refresh HTTP refusal', 'first stream socket close', 'HTTP refusal'] as const)(
     'preserves the discovery refusal through the real carrier: %s', async failure => {
       const originalCause = projectActionFailureCauseV1(Object.assign(new TypeError('Bearer private-http-refusal'), { code: 'ECONNREFUSED' }));
       const diagnostic = vi.spyOn(logger, 'warnLocalFile');
@@ -975,12 +975,16 @@ describe('Session Team credential Provider binding', () => {
         openBroker: async () => {
           homeReads++;
           return (failure === 'refresh before dial' && homeReads === 2)
-            || ((failure === 'refresh socket close' || failure === 'refresh HTTP refusal') && homeReads === 3)
+            || ((failure === 'refresh socket close' || failure === 'refresh HTTP refusal') && homeReads === 2)
             ? { ok: false, reasonCode: 'resource_unavailable' } : opened;
         },
-        openTunnel,
+        // Exercise the transport's ordinary pre-opened path as well as the
+        // immediate Session dial through the same typed refusal boundary.
+        openTunnel: request => openTunnel(failure === 'refresh before dial'
+          ? { brokerOpen: request.brokerOpen, refreshBrokerOpen: request.refreshBrokerOpen, signal: request.signal }
+          : request),
       }).then(() => null, (error: unknown) => error);
-      const code = failure === 'accepted refresh socket close' ? 'provider_endpoint_unavailable' : 'resource_unavailable';
+      const code = failure === 'first stream socket close' ? 'provider_endpoint_unavailable' : 'resource_unavailable';
       expect(refused).toBeInstanceOf(SessionTeamCredentialLaunchUnavailableError);
       expect(refused).toMatchObject({ code });
       if (failure === 'HTTP refusal') {
@@ -988,17 +992,18 @@ describe('Session Team credential Provider binding', () => {
         expect(JSON.stringify(refused)).not.toContain('private-http-refusal');
       }
       expect(classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error: refused }))
-        .toMatchObject({ source: failure === 'accepted refresh socket close' ? 'agent_session_error' : 'team_credential', code });
+        .toMatchObject({ source: failure === 'first stream socket close' ? 'agent_session_error' : 'team_credential', code });
       expect(adapter.materialize).not.toHaveBeenCalled();
-      // One initial open and one refresh per stream; refusals cause no repolls.
-      expect(homeReads).toBe(failure === 'refresh socket close' || failure === 'refresh HTTP refusal' ? 3 : 2);
+      // The fresh Session grant serves the first stream. A pre-opened
+      // grant or a subsequent stream still checks Home.
+      expect(homeReads).toBe(failure === 'first stream socket close' || failure === 'HTTP refusal' ? 1 : 2);
       expect(endpointReads).toBe(failure === 'refresh before dial' ? 0 : 1);
       expect(nativeOpens).toBe(failure === 'refresh before dial' ? 0 : 2);
       expect(close).toHaveBeenCalledTimes(failure === 'refresh before dial' ? 0 : 2);
-      expect(readFailureDiagnostic).toHaveBeenCalledTimes(failure === 'accepted refresh socket close' ? 1 : 0);
-      if (failure === 'accepted refresh socket close') expect(diagnostic).toHaveBeenCalledWith(
+      expect(readFailureDiagnostic).toHaveBeenCalledTimes(failure === 'first stream socket close' ? 1 : 0);
+      if (failure === 'first stream socket close') expect(diagnostic).toHaveBeenCalledWith(
         '[ProviderBroker] Endpoint discovery refused', expect.objectContaining({
-          discoveryCause: 'socket_closed', refreshOutcome: 'accepted',
+          discoveryCause: 'socket_closed', refreshOutcome: 'not_requested',
           closingSide: 'initiator', closingStage: 'stream_decision',
         }),
       );

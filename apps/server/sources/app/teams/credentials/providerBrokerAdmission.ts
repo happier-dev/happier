@@ -888,8 +888,8 @@ async function openTeamCredentialProviderBrokerWithPrincipal(
             executionRun,
         }), { isolationLevel: 'ReadCommitted' });
         // A job the resource revision moved past (withdrawal, restoration,
-        // policy or placement edit) is over and is never renewed. Sessions
-        // refresh before each carrier stream, so this refresh is the consumer's
+        // policy or placement edit) is over and is never renewed. After using
+        // the open grant for the first stream, each Session refresh is its
         // next admission boundary: the open admission below decides it against
         // the revision the request names and refuses a withdrawal as one.
         if (!job.ok && job.refusalReason !== 'broker_job_resource_moved') return job;
