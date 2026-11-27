@@ -23,14 +23,10 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { useHomeAccountRoster } from '@/hooks/home/useHomeAccountRoster';
-import { useHomeSettingsWithCompanion, type HomeSettingsWithCompanion } from '@/hooks/home/useHomeSettingsWithCompanion';
-import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { useHomeSettings } from '@/hooks/home/useHomeSettings';
+import { useHomeAdministrationRead } from '@/hooks/home/useHomeAdministrationRead';
+import { homeMailDeliveryRead, homeReachabilityRead } from '@/sync/engine/home/governance/homeAdministrationReads';
 import { resolveAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
-import {
-    getHomeMailDelivery,
-    getHomeReachability,
-    type HomeGovernanceQueryOutcome,
-} from '@/sync/ops/home/homeGovernanceOperations';
 import { t } from '@/text';
 
 import { HomePendingRestartAttentionRow, useHomeServerRelease } from '../runtime/HomeRuntimeSections';
@@ -66,22 +62,6 @@ import {
     type HomeSignInPlatformId,
     type HomeSignInPlatformNeed,
 } from '../signInProviders/homeSignInPlatforms';
-
-/** The two reads only their server owners can answer, each kept with its own outcome. */
-type OverviewCompanion = Readonly<{
-    mail: HomeGovernanceQueryOutcome<HomeMailDeliveryReadinessV1>;
-    reach: HomeGovernanceQueryOutcome<HomeReachabilityV1>;
-}>;
-
-/**
- * Mail readiness and reachability ride along with `home.settings.get` (the pending/ignored/fixed
- * facts). Each keeps its own outcome, so a Home that answers one and not the other still shows the
- * one it answered and says which it could not read.
- */
-async function readOverviewCompanion(scope: ServerAccountScope): Promise<HomeGovernanceQueryOutcome<OverviewCompanion>> {
-    const [mail, reach] = await Promise.all([getHomeMailDelivery({ scope }), getHomeReachability({ scope })]);
-    return { kind: 'succeeded', value: { mail, reach } };
-}
 
 const PUBLIC_ADDRESS_KEY = SERVER_CONFIG.HAPPIER_PUBLIC_SERVER_URL.key;
 
@@ -229,13 +209,25 @@ const HomeOverviewHeader = React.memo(function HomeOverviewHeader(props: Readonl
     );
 });
 
-type OverviewReads = HomeSettingsWithCompanion<OverviewCompanion>;
+type OverviewReads = ReturnType<typeof useHomeSettings> & Readonly<{
+    mail: ReturnType<typeof useHomeAdministrationRead<HomeMailDeliveryReadinessV1>>['snapshot'];
+    reach: ReturnType<typeof useHomeAdministrationRead<HomeReachabilityV1>>['snapshot'];
+}>;
 
 const HomeOverview = React.memo(function HomeOverview(props: Readonly<{ context: HomeAdministrationContext }>) {
     const { context } = props;
     const navigation = useHomeConsoleNavigation();
     // One read of each owner for the whole page; attention and facts both render from it.
-    const reads = useHomeSettingsWithCompanion(context.scope, context.projection.capabilities.viewAdministration, readOverviewCompanion);
+    const enabled = context.projection.capabilities.viewAdministration;
+    const settings = useHomeSettings(context.scope, enabled);
+    const { snapshot: mail, refresh: refreshMail } = useHomeAdministrationRead(homeMailDeliveryRead, enabled ? context.scope : null);
+    const { snapshot: reach, refresh: refreshReach } = useHomeAdministrationRead(homeReachabilityRead, enabled ? context.scope : null);
+    const reload = React.useCallback(async (reason?: Parameters<typeof settings.reload>[0]) => {
+        refreshMail();
+        refreshReach();
+        await settings.reload(reason);
+    }, [refreshMail, refreshReach, settings.reload]);
+    const reads = React.useMemo(() => ({ ...settings, mail, reach, reload }), [settings, mail, reach, reload]);
     return (
         <>
             <HomeOverviewAttention context={context} reads={reads} />
@@ -257,17 +249,17 @@ const HomeOverviewAttention = React.memo(function HomeOverviewAttention(props: R
     const serverId = context.scope.serverId;
     if (!context.projection.capabilities.viewAdministration) return null;
 
-    const mail = reads.companion?.mail.kind === 'succeeded' ? reads.companion.mail.value : null;
-    const reach = reads.companion?.reach.kind === 'succeeded' ? reads.companion.reach.value : null;
+    const mail = reads.mail?.failure ? null : reads.mail?.data ?? null;
+    const reach = reads.reach?.failure ? null : reads.reach?.data ?? null;
     const items = resolveHomeOverviewAttention({ serverId, settings: reads.settings, mail, reach });
     const homeServerIds = [serverId];
     const failures = [
         reads.failure && !reads.settings ? { id: 'settings', reason: t('homeGovernance.overviewPage.settingsFailed') } : null,
-        reads.companion?.mail.kind === 'failed' ? { id: 'email', reason: t('homeGovernance.overviewPage.emailFailed') } : null,
-        reads.companion?.reach.kind === 'failed' ? { id: 'reach', reason: t('homeGovernance.overviewPage.reachFailed') } : null,
+        reads.mail?.failure ? { id: 'email', reason: t('homeGovernance.overviewPage.emailFailed') } : null,
+        reads.reach?.failure ? { id: 'reach', reason: t('homeGovernance.overviewPage.reachFailed') } : null,
     ].filter((failure): failure is { id: string; reason: string } => failure !== null);
     // Until every owner has answered once, the section keeps its place with quiet placeholders.
-    const loading = (reads.loading && !reads.settings && !reads.failure) || reads.companion === null;
+    const loading = (reads.loading && !reads.settings && !reads.failure) || (!mail && !reads.mail?.failure) || (!reach && !reads.reach?.failure);
     if (!loading && items.length === 0 && failures.length === 0) return null;
 
     const toneColor = (tone: AttentionTone) => tone === 'danger'
@@ -355,18 +347,26 @@ function isActiveOwner(row: HomeAccountRowV1): boolean {
 /** Who owns the Home, and how many people it has (lab `hcOverview-A` Ownership). */
 const HomeOverviewOwnership = React.memo(function HomeOverviewOwnership(props: Readonly<{ context: HomeAdministrationContext }>) {
     const { context } = props;
-    const router = useRouter();
-    const canList = context.projection.capabilities.manageAccounts;
-    const roster = useHomeAccountRoster(context.scope, canList);
+    if (!context.projection.capabilities.manageAccounts) return null;
+    const { activeOwners, totalAccountCount, totalAdminCount } = context.projection;
+    return activeOwners && totalAccountCount !== undefined ? (
+        <ItemGroup title={t('homeGovernance.overviewPage.ownership')}>
+            <HomeOverviewOwnershipRows context={context} owners={activeOwners} people={totalAccountCount}
+                more={false} admins={totalAdminCount ?? null} />
+        </ItemGroup>
+    ) : <LegacyHomeOverviewOwnership context={context} />;
+});
+
+function LegacyHomeOverviewOwnership({ context }: Readonly<{ context: HomeAdministrationContext }>) {
+    const roster = useHomeAccountRoster(context.scope, true);
     const owners = roster.rows.filter(isActiveOwner);
     // The roster pages by age, and owners need not be the oldest Accounts: read on (through the
     // roster's own pages) until every active owner the Home counts is listed.
     const ownersMissing = owners.length < context.projection.activeOwnerCount;
     const { hasMore, loadMore, status } = roster;
     React.useEffect(() => {
-        if (canList && ownersMissing && hasMore && status === 'ready') loadMore();
-    }, [canList, hasMore, loadMore, ownersMissing, status]);
-    if (!canList) return null;
+        if (ownersMissing && hasMore && status === 'ready') loadMore();
+    }, [hasMore, loadMore, ownersMissing, status]);
 
     const settled = roster.status === 'ready' || roster.rows.length > 0;
     return (
@@ -388,50 +388,62 @@ const HomeOverviewOwnership = React.memo(function HomeOverviewOwnership(props: R
                     accessibilityLabel={t('homeGovernance.overviewPage.ownership')}
                 />
             ) : settled ? (
-                <>
-                    {owners.map((row) => {
-                        const person = resolveAccountDisplayName({
-                            profile: row.profile,
-                            accountId: row.accountId,
-                            signInEmail: row.authentication.signInEmail,
-                            viewerAccountId: context.scope.accountId,
-                        });
-                        return (
-                            <Item
-                                key={row.accountId}
-                                testID={`home-overview-owner:${row.accountId}`}
-                                title={person.name}
-                                subtitle={person.viewer && person.named
-                                    ? t('homeGovernance.overviewPage.ownerYou')
-                                    : homeRoleLabel('owner')}
-                                leftElement={<Avatar id={row.accountId} size={PAGE_LIST_METRICS.rowIdentityMarkPx} imageUrl={row.profile.avatarUrl ?? null} monogram={person.named ? person.name : null} />}
-                                mode="info"
-                                showChevron={false}
-                            />
-                        );
-                    })}
-                    <Item
-                        testID="home-overview-people"
-                        title={t('homeGovernance.people')}
-                        // A navigation row carries its glyph; the page column keeps its title on the owners' edge.
-                        icon={<Icon name="user-circle" />}
-                        subtitle={t('homeGovernance.overviewPage.peopleSummary', {
-                            people: roster.total ?? roster.rows.length,
-                            more: roster.total === null && roster.hasMore,
-                            owners: context.projection.activeOwnerCount,
-                            // The Home pages owners, then admins, then members: the admins are all listed once the
-                            // roster is complete or has reached its first member.
-                            admins: roster.hasMore && !roster.rows.some((row) => row.homeRole === 'member')
-                                ? null
-                                : roster.rows.filter((row) => row.homeRole === 'admin').length,
-                        })}
-                        onPress={() => router.push(homeAdministrationPeoplePath(context.scope.serverId) as never)}
-                    />
-                </>
+                <HomeOverviewOwnershipRows context={context}
+                    owners={owners}
+                    people={roster.total ?? roster.rows.length} more={roster.total === null && roster.hasMore}
+                    admins={roster.hasMore && !roster.rows.some(row => row.homeRole === 'member')
+                        ? null : roster.rows.filter(row => row.homeRole === 'admin').length} />
             ) : null}
         </ItemGroup>
     );
-});
+}
+
+function HomeOverviewOwnershipRows({ context, owners, people, more, admins }: Readonly<{
+    context: HomeAdministrationContext;
+    owners: NonNullable<HomeGovernanceProjectionV1['activeOwners']>;
+    people: number;
+    more: boolean;
+    admins: number | null;
+}>) {
+    const router = useRouter();
+    return (
+        <>
+            {owners.map((row) => {
+                const person = resolveAccountDisplayName({
+                    profile: row.profile,
+                    accountId: row.accountId,
+                    viewerAccountId: context.scope.accountId,
+                });
+                return (
+                    <Item
+                        key={row.accountId}
+                        testID={`home-overview-owner:${row.accountId}`}
+                        title={person.name}
+                        subtitle={person.viewer && person.named
+                            ? t('homeGovernance.overviewPage.ownerYou')
+                            : homeRoleLabel('owner')}
+                        leftElement={<Avatar id={row.accountId} size={PAGE_LIST_METRICS.rowIdentityMarkPx} imageUrl={row.profile.avatarUrl ?? null} monogram={person.named ? person.name : null} />}
+                        mode="info"
+                        showChevron={false}
+                    />
+                );
+            })}
+            <Item
+                testID="home-overview-people"
+                title={t('homeGovernance.people')}
+                // A navigation row carries its glyph; the page column keeps its title on the owners' edge.
+                icon={<Icon name="user-circle" />}
+                subtitle={t('homeGovernance.overviewPage.peopleSummary', {
+                    people,
+                    more,
+                    owners: context.projection.activeOwnerCount,
+                    admins,
+                })}
+                onPress={() => router.push(homeAdministrationPeoplePath(context.scope.serverId) as never)}
+            />
+        </>
+    );
+}
 
 /** The login methods this Home offers now, by name, and who may create an account. */
 function signInSummary(projection: HomeGovernanceProjectionV1): string {
@@ -527,7 +539,7 @@ const HomeOverviewFacts = React.memo(function HomeOverviewFacts(props: Readonly<
     const serverId = context.scope.serverId;
     const canView = context.projection.capabilities.viewAdministration;
     const release = useHomeServerRelease(serverId, canView);
-    const reach = reads.companion?.reach.kind === 'succeeded' ? reads.companion.reach.value : null;
+    const reach = reads.reach?.failure ? null : reads.reach?.data ?? null;
     const flavor = release.flavor === 'full'
         ? t('homeGovernance.runtime.flavorFull')
         : release.flavor === 'light' ? t('homeGovernance.runtime.flavorLight') : null;
@@ -558,7 +570,7 @@ const HomeOverviewFacts = React.memo(function HomeOverviewFacts(props: Readonly<
                             : undefined}
                         onPress={() => router.push(homeAdministrationReachPath(serverId) as never)}
                     />
-                ) : reads.companion?.reach.kind === 'failed' ? null : (
+                ) : reads.reach?.failure ? null : (
                     <ItemLoadStateRows testID="home-overview-address-loading" state={{ kind: 'loading' }} rows={1} />
                 )
             ) : null}

@@ -1,6 +1,7 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 
+import { AccountDisplayProfileV1Schema } from '../../account/accountDisplayProfileV1.js';
 import { HomeCapabilitiesV1Schema } from './capabilities.js';
 import {
   HomeAdmissionModeV1Schema,
@@ -179,6 +180,14 @@ export const HomeGovernanceProjectionV1Schema = lazyZodSchema(() => z.strictObje
   policy: HomeGovernancePolicyProjectionV1Schema,
   setupState: HomeGovernanceSetupStateV1Schema,
   activeOwnerCount: z.number().check(z.int(), z.minimum(0)),
+  // Sent only to readers selecting administration_with_ownership. Older
+  // strict readers continue to receive the original administration shape.
+  activeOwners: z.optional(z.array(z.strictObject({
+    accountId: z.string().check(z.minLength(1)),
+    profile: AccountDisplayProfileV1Schema,
+  }))),
+  totalAccountCount: z.optional(z.number().check(z.int(), z.minimum(0))),
+  totalAdminCount: z.optional(z.number().check(z.int(), z.minimum(0))),
   teamsEnabled: z.boolean(),
   // Optional for the same reason as the policy reads above: a Home that has not
   // been replaced yet simply does not report these facts, and the surface shows

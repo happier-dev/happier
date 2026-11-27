@@ -167,12 +167,14 @@ describe('useHomeAccountRoster shared resource', () => {
         await waitForHomeGovernance(() => expect(hook.getCurrent().rows).toEqual([c]));
         expect(hook.getCurrent().rows).toEqual([c]);
         await hook.unmount();
-        const gapRead = createDeferred<void>();
-        harness.answer(homeB, PATH, { body: { items: [b], nextCursor: null }, respondAfter: gapRead.promise });
+        const reads = harness.requestsFor(PATH).length;
         const remount = await renderHook(() => useHomeAccountRoster({ serverId: homeB, accountId: 'actor-b' }, true));
         expect(remount.getCurrent().rows).toEqual([c]);
-        expect(remount.getCurrent().status).toBe('loading');
-        await act(async () => { gapRead.resolve(); });
+        expect(remount.getCurrent().status).toBe('ready');
+        expect(harness.requestsFor(PATH)).toHaveLength(reads);
+
+        harness.answer(homeB, PATH, { body: { items: [b], nextCursor: null } });
+        await act(async () => { publishHomeAccountChange(homeB); });
         await waitForHomeGovernance(() => expect(remount.getCurrent().status).toBe('ready'));
         expect(remount.getCurrent().rows).toEqual([b]);
     });

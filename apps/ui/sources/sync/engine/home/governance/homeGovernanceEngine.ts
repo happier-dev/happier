@@ -14,11 +14,13 @@ import {
     applyHomeGovernanceFailure,
     applyHomeGovernanceProjection,
     beginHomeGovernanceLoad,
+    clearHomeGovernanceSnapshotsForServer,
     getHomeGovernanceSnapshot,
     invalidateHomeGovernanceSnapshot,
     invalidateHomeGovernanceSnapshotsForServer,
     type HomeGovernanceSnapshotError,
 } from '@/sync/store/home/governance/homeGovernanceSnapshots';
+import { subscribeAccountCatalogInvalidation } from '@/sync/engine/settings/accountCatalogInvalidation';
 import { isHomeAdministrationAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 
 /**
@@ -56,16 +58,21 @@ function toSnapshotError(failure: HomeActionFailure): HomeGovernanceSnapshotErro
 }
 
 const loader = createScopedSnapshotLoader<HomeGovernanceTarget>({
+    subscribeRetainedInvalidation: subscribeAccountCatalogInvalidation,
     load: async ({ scope }, loadContext) => {
         beginHomeGovernanceLoad(scope);
-        const result = await queryHomeGovernanceAction({
+        const read = (input: Readonly<{ projection?: 'administration_with_ownership' }>) => queryHomeGovernanceAction({
             scope,
             actionId: 'home.governance.get',
-            input: {},
+            input,
             parse: value => HomeGovernanceProjectionV1Schema.safeParse(value),
             signal: loadContext.signal,
             isCurrent: loadContext.isCurrent,
         });
+        let result = await read({ projection: 'administration_with_ownership' });
+        if (result.kind === 'failed' && result.failure.code === 'invalid_home_input' && !loadContext.signal.aborted) {
+            result = await read({});
+        }
         if (loadContext.signal.aborted) return;
         if (result.kind === 'succeeded') {
             applyHomeGovernanceProjection({
@@ -94,6 +101,10 @@ const loader = createScopedSnapshotLoader<HomeGovernanceTarget>({
         invalidateHomeGovernanceSnapshot(scope);
     },
     matchesWake: isHomeAdministrationAccountChange,
+    onCredentialMutation: (event, { scope }) => {
+        clearHomeGovernanceSnapshotsForServer(scope.serverId);
+        return event.kind === 'credentials_set';
+    },
 });
 
 /**

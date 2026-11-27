@@ -61,7 +61,7 @@ function changedRows(before: ReturnType<typeof rowProps>, after: ReturnType<type
 }
 
 describe('Team mounted-row costs', () => {
-    it('reads one Team and roster per cold Members open and return', async () => {
+    it('reads one Team and roster on cold Members open and zero on return', async () => {
         const { address } = await setup();
         const items = Array.from({ length: 400 }, (_, index) => teamMembershipFixture({
             id: `member-${index}`, accountId: `account-${index}`,
@@ -78,7 +78,7 @@ describe('Team mounted-row costs', () => {
         await expectHomePageReadCosts({
             home, mount: () => renderScreen(page, { wrapper: NativeRoute }), leave: <></>, returnTo: page,
             settled: screen => expect(rowProps(screen, 'team-members-row:').size).toBeGreaterThan(3),
-            cold: reads, returning: reads,
+            cold: reads, returning: { '/v1/teams/get': 0, [rosterPath]: 0 },
         });
     });
 

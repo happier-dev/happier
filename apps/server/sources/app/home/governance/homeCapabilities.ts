@@ -147,6 +147,8 @@ export async function authorizeHomeAccountErasureActorInTx(
     return { status: "authorized", actor, authority };
 }
 
+export const ACTIVE_HOME_OWNER_WHERE = { homeRole: "owner", status: "active" } as const;
+
 /**
  * The canonical last-owner predicate: `homeRole = owner AND status = active`.
  * Writes made earlier in the same transaction are visible here, so a
@@ -158,8 +160,7 @@ export async function countActiveHomeOwnersInTx(
 ): Promise<number> {
     return await tx.account.count({
         where: {
-            homeRole: "owner",
-            status: "active",
+            ...ACTIVE_HOME_OWNER_WHERE,
             ...(options?.excludeAccountId ? { id: { not: options.excludeAccountId } } : {}),
         },
     });

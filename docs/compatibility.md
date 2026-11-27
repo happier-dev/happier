@@ -864,6 +864,12 @@ Matching Protocol, CLI and bundled Machine recipes reload together in 0.3
 development. Earlier readers can refuse the new operand, and earlier
 records with unknown first presence keep that origin.
 
+## Home Overview ownership (unreleased 0.3)
+
+Home Overview asks `home.governance.get` for the optional `administration_with_ownership` projection. The server checks Account-management authority within the governance read before returning the active owners' display profiles, total Accounts, and total administrators. The default administrative and `session_defaults` requests keep their existing response shapes for strict readers.
+
+An older server can reject the projection as `invalid_home_input`. The UI then retries the default governance read and uses the roster for the Overview ownership section when ownership fields are absent. Other typed failures retain their existing recovery paths.
+
 ## Home guest CLI source (unreleased 0.3)
 
 `/v1/features` advertises optional `capabilities.guestCli` with the closed identity

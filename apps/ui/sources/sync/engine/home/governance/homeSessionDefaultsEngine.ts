@@ -2,6 +2,7 @@ import { HomeSessionDefaultsProjectionV1Schema } from '@happier-dev/protocol/hom
 import { serverAccountScopeKeySuffix, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { createScopedSnapshotLoader, type ScopedLoadTarget } from '@/sync/engine/scope/scopedSnapshotLoader';
 import { queryHomeGovernanceAction } from '@/sync/ops/home/homeGovernanceActionExecution';
+import { subscribeAccountCatalogInvalidation } from '@/sync/engine/settings/accountCatalogInvalidation';
 import { isHomeAdministrationAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import {
     applyHomeSessionDefaultsFailure,
@@ -9,10 +10,12 @@ import {
     getHomeSessionDefaultsSnapshot,
     invalidateHomeSessionDefaultsSnapshot,
     invalidateHomeSessionDefaultsSnapshotsForServer,
+    retireHomeSessionDefaultsSnapshot,
 } from '@/sync/store/home/governance/homeSessionDefaultsSnapshots';
 
 type DefaultsTarget = ScopedLoadTarget & Readonly<{ scope: ServerAccountScope }>;
 const loader = createScopedSnapshotLoader<DefaultsTarget>({
+    subscribeRetainedInvalidation: subscribeAccountCatalogInvalidation,
     load: async ({ scope }, context) => {
         const result = await queryHomeGovernanceAction({
             scope, actionId: 'home.governance.get', input: { projection: 'session_defaults' },
@@ -37,6 +40,10 @@ const loader = createScopedSnapshotLoader<DefaultsTarget>({
     invalidateServer: invalidateHomeSessionDefaultsSnapshotsForServer,
     invalidateTarget: ({ scope }) => invalidateHomeSessionDefaultsSnapshot(scope),
     matchesWake: isHomeAdministrationAccountChange,
+    onCredentialMutation(event, { scope }) {
+        retireHomeSessionDefaultsSnapshot(scope);
+        return event.kind === 'credentials_set';
+    },
 });
 
 /** The shared loader owns first load, returning observers, push and cancellation. */

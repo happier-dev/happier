@@ -54,6 +54,7 @@ import { resolveAuthPolicyFromEnv } from "@/app/auth/authPolicy";
 import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { readHomeGovernancePolicyInTx, type HomeGovernancePolicyRecord } from "./governancePolicy";
 import {
+    ACTIVE_HOME_OWNER_WHERE,
     assertHomeOwnershipSurvivesTransitionInTx,
     authorizeHomeAccountErasureActorInTx,
     authorizeHomeGovernanceMutationInTx,
@@ -269,10 +270,10 @@ type HomeGovernanceReadInput = Readonly<{
     teamsEnabled: boolean;
     env: NodeJS.ProcessEnv;
     emailDeliveryReady: boolean;
-    projection?: 'session_defaults';
+    projection?: 'session_defaults' | 'administration_with_ownership';
 }>;
 export function readHomeGovernanceProjectionInTx(tx: Tx, input: HomeGovernanceReadInput & { projection: 'session_defaults' }): Promise<HomeGovernanceResult<HomeSessionDefaultsProjectionV1>>;
-export function readHomeGovernanceProjectionInTx(tx: Tx, input: HomeGovernanceReadInput & { projection?: undefined }): Promise<HomeGovernanceResult<HomeGovernanceProjectionV1>>;
+export function readHomeGovernanceProjectionInTx(tx: Tx, input: HomeGovernanceReadInput & { projection?: 'administration_with_ownership' }): Promise<HomeGovernanceResult<HomeGovernanceProjectionV1>>;
 export function readHomeGovernanceProjectionInTx(tx: Tx, input: HomeGovernanceReadInput): Promise<HomeGovernanceResult<HomeGovernanceProjectionV1 | HomeSessionDefaultsProjectionV1>>;
 export async function readHomeGovernanceProjectionInTx(tx: Tx, input: HomeGovernanceReadInput): Promise<HomeGovernanceResult<HomeGovernanceProjectionV1 | HomeSessionDefaultsProjectionV1>> {
     if (input.projection === 'session_defaults') {
@@ -298,7 +299,11 @@ export async function readHomeGovernanceProjectionInTx(tx: Tx, input: HomeGovern
     const viewer = authorization.actor;
     const policy = await readHomeGovernancePolicyInTx(tx);
     const authenticationOptions = await projectHomeAuthenticationOptionsV1(tx, input.env, input.emailDeliveryReady, policy);
+    const ownership = input.projection === 'administration_with_ownership' && authorization.authority.manageAccounts
+        ? await readHomeOverviewOwnershipInTx(tx)
+        : undefined;
     return { status: "ok", result: {
+        ...ownership,
         identityServices: projectHomeIdentityDeploymentServicesV1(input.env),
         viewer: { accountId: viewer.accountId, homeRole: viewer.homeRole, status: viewer.status },
         capabilities: resolveHomeCapabilitiesV1({
@@ -308,10 +313,29 @@ export async function readHomeGovernanceProjectionInTx(tx: Tx, input: HomeGovern
         }),
         policy: projectHomeGovernancePolicyV1(policy),
         setupState: "owned",
-        activeOwnerCount,
+        activeOwnerCount: ownership?.activeOwners.length ?? activeOwnerCount,
         teamsEnabled: input.teamsEnabled,
         authenticationOptions,
     } };
+}
+
+async function readHomeOverviewOwnershipInTx(tx: Tx) {
+    const [owners, counts] = await Promise.all([
+        tx.account.findMany({
+            where: ACTIVE_HOME_OWNER_WHERE,
+            select: ACCOUNT_DISPLAY_PROFILE_SELECT,
+            orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        }),
+        tx.account.groupBy({ by: ["homeRole"], _count: { _all: true } }),
+    ]);
+    return {
+        activeOwners: owners.map(owner => ({
+            accountId: owner.id,
+            profile: projectAccountDisplayProfileV1(owner),
+        })),
+        totalAccountCount: counts.reduce((total, row) => total + row._count._all, 0),
+        totalAdminCount: counts.find(row => row.homeRole === "admin")?._count._all ?? 0,
+    };
 }
 
 /**

@@ -12,7 +12,7 @@ export const HomeGovernanceActionIdV1Schema = lazyZodSchema(() => z.enum(HOME_GO
  * from the authenticated request, never from caller-supplied input.
  */
 export const HomeGovernanceGetInputV1Schema = lazyZodSchema(() => z.strictObject({
-  projection: z.optional(z.literal('session_defaults')),
+  projection: z.optional(z.enum(['session_defaults', 'administration_with_ownership'])),
 }));
 
 /**

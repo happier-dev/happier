@@ -209,6 +209,33 @@ describe("Home governance routes", () => {
         expect((await read()).json()).toEqual({ isEmpty: true });
     });
 
+    it("projects the active owners and total People count only for administrators requesting ownership", async () => {
+        const app = createTestApp();
+        const owner = await createAccount("owner");
+        const admin = await createAccount("admin");
+        const inactiveOwner = await createAccount("owner", "disabled");
+        const member = await createAccount("member");
+        const path = "/v1/home/governance/get";
+        const input = { projection: "administration_with_ownership" };
+
+        const result = await post(app, path, admin.token, input);
+        expect(result.statusCode, result.body).toBe(200);
+        expect(result.json()).toMatchObject({
+            activeOwnerCount: 1,
+            activeOwners: [{ accountId: owner.accountId, profile: expect.any(Object) }],
+            totalAccountCount: 4,
+            totalAdminCount: 1,
+        });
+        expect(result.body).not.toContain(inactiveOwner.accountId);
+        const denied = await post(app, path, member.token, input);
+        expect(denied.statusCode).toBe(403);
+        expect(denied.json()).toEqual({ error: "home_governance_forbidden" });
+        const legacy = await post(app, path, admin.token, {});
+        expect(legacy.statusCode).toBe(200);
+        expect(legacy.json()).not.toHaveProperty("activeOwners");
+        expect(legacy.json()).not.toHaveProperty("totalAccountCount");
+    });
+
     it("reports owner setup without disclosing the administrative projection", async () => {
         const app = createTestApp();
         const first = await createAccount("member");

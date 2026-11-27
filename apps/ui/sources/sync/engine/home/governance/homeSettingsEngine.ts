@@ -1,6 +1,7 @@
 import { serverAccountScopeKeySuffix, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { createScopedSnapshotLoader, type ScopedLoadTarget } from '@/sync/engine/scope/scopedSnapshotLoader';
 import { getHomeSettings } from '@/sync/ops/home/homeGovernanceOperations';
+import { subscribeAccountCatalogInvalidation } from '@/sync/engine/settings/accountCatalogInvalidation';
 import { isHomeAdministrationAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import {
     applyHomeSettingsFailure,
@@ -17,11 +18,12 @@ const targetFor = (scope: ServerAccountScope): Target => ({ key: serverAccountSc
 
 /** Registry reads share the existing exact-scope wake, single-flight and observer-gap lifecycle. */
 const loader = createScopedSnapshotLoader<Target>({
+    subscribeRetainedInvalidation: subscribeAccountCatalogInvalidation,
     async load({ scope }, context) {
         const loading = beginHomeSettingsLoad(scope);
-        const outcome = await getHomeSettings({ scope });
+        const outcome = await getHomeSettings({ scope, signal: context.signal });
         // A settings write can adopt a newer admitted projection while this read is in flight.
-        if (getHomeSettingsSnapshot(scope) !== loading) return;
+        if (context.signal.aborted || getHomeSettingsSnapshot(scope) !== loading) return;
         if (outcome.kind === 'succeeded') applyHomeSettingsProjection(scope, outcome.value, context.isCurrent());
         else applyHomeSettingsFailure(scope, outcome.failure);
     },
@@ -37,10 +39,6 @@ const loader = createScopedSnapshotLoader<Target>({
         return event.kind === 'credentials_set';
     },
 });
-
-export function retainHomeSettingsInvalidation(scope: ServerAccountScope) {
-    return loader.retain(targetFor(scope));
-}
 
 export function observeHomeSettings(scope: ServerAccountScope): () => void {
     return loader.observe(targetFor(scope));

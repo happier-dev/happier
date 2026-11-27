@@ -75,6 +75,30 @@ afterEach(async () => {
 });
 
 describe('teamsDirectoryEngine', () => {
+    it('keeps Team Overview current across a tab gap and reads once after its Teams wake', async () => {
+        const serverId = await addHome('Home', 'https://team-tab-gap.example');
+        await setActiveServerId(serverId, { scope: 'device' });
+        const scope = createServerAccountScope(serverId, 'account')!;
+        const address = createTeamAddress(serverId, 't1')!;
+        let name = 'Before';
+        runtimeFetchMock.mockImplementation(async () => new Response(JSON.stringify(team('t1', name)), { status: 200 }));
+        const release = observeTeam(scope, address);
+        await waitForHomeGovernance(() => expect(getTeamSnapshot(scope, address)?.data?.name).toBe(name));
+        release();
+        const revisit = observeTeam(scope, address);
+        expect(getTeamSnapshot(scope, address)?.stale).toBe(false);
+        expect(runtimeFetchMock).toHaveBeenCalledTimes(1);
+        revisit();
+        name = 'After';
+        publishHomeAccountChange(serverId, [TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1]);
+        expect(getTeamSnapshot(scope, address)?.stale).toBe(true);
+        expect(runtimeFetchMock).toHaveBeenCalledTimes(1);
+        const reopen = observeTeam(scope, address);
+        await waitForHomeGovernance(() => expect(getTeamSnapshot(scope, address)?.data?.name).toBe(name));
+        expect(runtimeFetchMock).toHaveBeenCalledTimes(2);
+        reopen();
+    });
+
     it('pushes Source-derived hasSetup changes to both observed Team summaries without manual refresh', async () => {
         const homeA = await addHome('Home A', 'https://home-source-setup.example');
         await setActiveServerId(homeA, { scope: 'device' });

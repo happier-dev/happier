@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { HOME_ACCOUNT_PAGE_LIMIT_DEFAULT_V1, HomeAccountListResultV1Schema } from '@happier-dev/protocol/home/governance';
+import { HOME_ACCOUNT_PAGE_LIMIT_DEFAULT_V1, HomeAccountListResultV1Schema, HomeGovernanceProjectionV1Schema } from '@happier-dev/protocol/home/governance';
 
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { homeDomainActionPathForMethod } from '@/app/api/routes/actions/homeDomainActionRoute';
@@ -64,6 +64,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('H
             }, async app => {
                 const reads = [
                     { url: homeDomainActionPathForMethod('home.governance.get', 'POST'), payload: {} },
+                    { url: homeDomainActionPathForMethod('home.governance.get', 'POST'), payload: { projection: 'administration_with_ownership' } },
                     { url: homeDomainActionPathForMethod('home.governance.eligibility.get', 'POST'), payload: {} },
                     { url: homeDomainActionPathForMethod('home.accounts.list', 'POST'), payload: {} },
                     { url: homeDomainActionPathForMethod('home.accounts.get', 'POST'), payload: { accountId: owner.id } },
@@ -105,6 +106,12 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('H
                             expect(body.total).toBe(accounts);
                             expect(body.items).toHaveLength(Math.min(accounts, HOME_ACCOUNT_PAGE_LIMIT_DEFAULT_V1));
                             expect(body.nextCursor !== null).toBe(accounts > HOME_ACCOUNT_PAGE_LIMIT_DEFAULT_V1);
+                        }
+                        if ('projection' in read.payload && read.payload.projection === 'administration_with_ownership') {
+                            const body = HomeGovernanceProjectionV1Schema.parse(response.json());
+                            expect(body.totalAccountCount).toBe(accounts);
+                            expect(body.activeOwners?.map(owner => owner.accountId)).toEqual([owner.id]);
+                            expect(statements.some(({ query }) => /BTRIM|SUBSTR/i.test(query))).toBe(false);
                         }
                         measured.push({
                             url: read.url,

@@ -145,7 +145,8 @@ function createHomeGovernanceActionSpecs() {
       approvalPolicy: { uiConfirmation: 'direct' },
       description: 'Rebuild this Personal Home’s derived search index from its canonical transcript rows.',
       safety: 'danger', sideEffectClass: 'danger', cliPath: ['home', 'search', 'rebuild'],
-      path: '/v1/home/search/rebuild', inputSchema: HomeGovernanceGetInputV1Schema,
+      path: '/v1/home/search/rebuild',
+      inputSchema: lazyZodSchema(() => z.strictObject({ projection: z.optional(z.literal('session_defaults')) })),
       outputSchema: lazyZodSchema(() => z.strictObject({ ok: z.literal(true) })),
     }),
     // The existing server search owner requires present-user admission.

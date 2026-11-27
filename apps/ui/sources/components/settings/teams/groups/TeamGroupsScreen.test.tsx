@@ -93,7 +93,7 @@ afterEach(() => {
 });
 
 describe('TeamGroupsScreen', () => {
-    it('reads one Team and the active Groups sequence per cold open and return', async () => {
+    it('reads one Team and the active Groups sequence on cold open and zero on return', async () => {
         const serverId = await addManagedHome();
         harness.answer(serverId, GROUPS_LIST_PATH, {
             body: { items: [teamGroupFixture()], nextCursor: null },
@@ -103,7 +103,7 @@ describe('TeamGroupsScreen', () => {
         await expectHomePageReadCosts({
             home: harness, mount: () => renderGroups(serverId), leave: <></>, returnTo: page,
             settled: screen => expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('team-groups-row:group-1'),
-            cold: reads, returning: reads,
+            cold: reads, returning: { [TEAM_GET_PATH]: 0, [GROUPS_LIST_PATH]: 0 },
         });
     });
 

@@ -30,10 +30,10 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useHomeSettingsWithCompanion } from '@/hooks/home/useHomeSettingsWithCompanion';
 import { useServerFeaturesSnapshotForServerId } from '@/sync/domains/features/featureDecisionRuntime';
+import { readServerAccountScopeOwnerLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { Modal } from '@/modal';
-import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { homeReachabilityRead } from '@/sync/engine/home/governance/homeAdministrationReads';
 import {
-    getHomeReachability,
     setHomeIrohMode,
     setHomeSettings,
 } from '@/sync/ops/home/homeGovernanceOperations';
@@ -64,7 +64,6 @@ const RELAY_POLICY_KEY = SERVER_CONFIG.HAPPIER_IROH_RELAY_POLICY.key;
 const RELAY_URLS_KEY = SERVER_CONFIG.HAPPIER_IROH_RELAY_URLS.key;
 const LOADING: ItemLoadState = Object.freeze({ kind: 'loading' as const });
 
-const readReachability = (scope: ServerAccountScope) => getHomeReachability({ scope });
 
 function entryFor(settings: HomeSettingsProjectionV1 | null, key: string): HomeSettingEntryV1 | undefined {
     return settings?.entries.find((entry) => entry.key === key);
@@ -319,7 +318,7 @@ const ReachPage = React.memo(function ReachPage(props: Readonly<{ context: HomeA
     const { capabilities } = context.projection;
     const canView = capabilities.viewAdministration;
     const isOwner = capabilities.manageHomeSettings;
-    const reads = useHomeSettingsWithCompanion(context.scope, canView, readReachability);
+    const reads = useHomeSettingsWithCompanion(context.scope, canView, homeReachabilityRead);
     const features = useServerFeaturesSnapshotForServerId(context.scope.serverId, { enabled: canView });
     const deploymentManaged = features.status === 'ready' && features.features.capabilities.serverRelease?.flavor === 'full';
     const [irohBusy, setIrohBusy] = React.useState(false);
@@ -409,11 +408,12 @@ const ReachPage = React.memo(function ReachPage(props: Readonly<{ context: HomeA
     }, [writeSetting]);
 
     const setIroh = React.useCallback(async (enabled: boolean) => {
+        const credential = context.credentialLifetime && readServerAccountScopeOwnerLifetime(context.credentialLifetime);
         setIrohBusy(true);
         try {
             const outcome = await setHomeIrohMode({ scope: context.scope, mode: enabled ? 'enabled' : 'disabled' });
             if (outcome.kind === 'succeeded') {
-                reads.adoptCompanion(outcome.value);
+                if (credential?.isCurrent()) reads.adoptCompanion(outcome.value);
                 return;
             }
             if (outcome.kind === 'approval_pending') {

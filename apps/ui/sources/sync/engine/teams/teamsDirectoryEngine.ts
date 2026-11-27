@@ -21,6 +21,7 @@ import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/
 import {
     serverAccountScopeKeySuffix,
     type ServerAccountScope,
+    type ServerAccountScopeLifetime,
 } from '@/sync/domains/scope/serverAccountScope';
 import {
     serverAccountScopedTeamKey,
@@ -31,6 +32,7 @@ import {
     type ScopedLoadTarget,
 } from '@/sync/engine/scope/scopedSnapshotLoader';
 import { loadTeamPageRange } from '@/sync/engine/teams/loadTeamPageRange';
+import { readTeamSharedResourcesSummary } from '@/sync/ops/teams/teamSharedResources';
 import { listTeamMembers } from '@/sync/ops/teams/teamMemberReadOperations';
 import { isHomeAdministrationAccountChange, subscribeHomeCredentialChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import {
@@ -53,6 +55,10 @@ import {
     getTeamCredentialResourceSnapshot,
     getTeamCredentialResourcesSnapshot,
     applyTeamFailure,
+    applyTeamSharedResourcesSummary,
+    applyTeamSharedResourcesSummaryFailure,
+    getTeamSharedResourcesSummarySnapshot,
+    invalidateTeamSharedResourcesSummary,
     clearTeamsSnapshotsForServer,
     applyTeamGroupFailure,
     applyTeamGroupProjection,
@@ -205,6 +211,8 @@ function teamTargetFor(scope: ServerAccountScope, address: TeamAddress): TeamTar
 }
 
 const teamLoader = createScopedSnapshotLoader<TeamTarget>({
+    subscribeRetainedInvalidation: subscribeAccountCatalogInvalidation,
+    onCredentialMutation: () => false,
     load: async ({ scope, address }, loadContext) => {
         beginTeamLoad(scope, address);
         const result = await runTeamAction({
@@ -244,6 +252,43 @@ const teamLoader = createScopedSnapshotLoader<TeamTarget>({
         || event.entityIds?.includes(TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1) === true
         || event.entityIds?.includes(PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1) === true,
 });
+
+type SharedSummaryTarget = TeamTarget & Readonly<{ lifetime: ServerAccountScopeLifetime }>;
+const sharedSummaryLoader = createScopedSnapshotLoader<SharedSummaryTarget>({
+    subscribeRetainedInvalidation: subscribeAccountCatalogInvalidation,
+    onCredentialMutation: () => false,
+    async load({ scope, address, lifetime }, context) {
+        invalidateTeamSharedResourcesSummary(scope, address);
+        const outcome = await readTeamSharedResourcesSummary({ scope, address, signal: context.signal });
+        if (context.signal.aborted || !lifetime.isCurrent()) return;
+        if (outcome.kind === 'succeeded') {
+            applyTeamSharedResourcesSummary(scope, address, outcome.value.kinds, lifetime, context.isCurrent());
+        } else {
+            applyTeamSharedResourcesSummaryFailure(scope, address, outcome.failure, lifetime);
+        }
+    },
+    shouldLoadOnObserve: ({ scope, address }) => (getTeamSharedResourcesSummarySnapshot(scope, address)?.status ?? 'loading') === 'loading',
+    invalidateServer: () => {},
+    prepareWake: () => true,
+    invalidateTarget: ({ scope, address }) => invalidateTeamSharedResourcesSummary(scope, address),
+    matchesWake: event => event.teamSharedResourcesAffect !== false
+        || event.entityIds?.includes(TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1) === true
+        || event.entityIds?.includes(TEAM_CREDENTIAL_MATERIAL_ACCOUNT_CHANGE_ENTITY_ID_V1) === true,
+});
+
+export function observeTeamSharedResourcesSummary(target: Readonly<{
+    scope: ServerAccountScope; address: TeamAddress; lifetime: ServerAccountScopeLifetime;
+}>): () => void {
+    const team = teamTargetFor(target.scope, target.address);
+    return team ? sharedSummaryLoader.observe({ ...team, lifetime: target.lifetime }) : () => {};
+}
+
+export async function refreshTeamSharedResourcesSummary(target: Readonly<{
+    scope: ServerAccountScope; address: TeamAddress; lifetime: ServerAccountScopeLifetime;
+}>): Promise<void> {
+    const team = teamTargetFor(target.scope, target.address);
+    if (team) await sharedSummaryLoader.refresh({ ...team, lifetime: target.lifetime });
+}
 
 /**
  * Directory keys currently fetching a continuation page. This guards only
@@ -351,6 +396,9 @@ function membersTargetFor(scope: ServerAccountScope, address: TeamAddress, filte
 }
 
 const membersLoader = createScopedSnapshotLoader<TeamMembersTarget>({
+    subscribeRetainedInvalidation: subscribeAccountCatalogInvalidation,
+    shouldRetainInvalidation: ({ query }) => query === '',
+    onCredentialMutation: () => false,
     load: async ({ scope, address, filter, query, queryKey }, context) => {
         const loadedRowCount = getTeamMembersSnapshot(scope, address, queryKey)?.data?.length ?? 0;
         beginTeamMembersLoad(scope, address, queryKey);
@@ -361,7 +409,7 @@ const membersLoader = createScopedSnapshotLoader<TeamMembersTarget>({
         });
         // Sign-out and the last observer retire this sequence while its request
         // may still be pending. Its old answer cannot recreate those private rows.
-        if (!outcome || getTeamMembersSnapshot(scope, address, queryKey) !== begun) return;
+        if (context.signal.aborted || !outcome || getTeamMembersSnapshot(scope, address, queryKey) !== begun) return;
         if (outcome.kind === 'succeeded') {
             applyTeamMembersPage({ scope, address, queryKey, ...outcome.value, current: context.isCurrent() });
         } else applyTeamMembersFailure({ scope, address, queryKey, error: outcome.failure });
@@ -372,8 +420,7 @@ const membersLoader = createScopedSnapshotLoader<TeamMembersTarget>({
     },
     invalidateServer: invalidateTeamsSnapshotsForServer,
     invalidateTarget: ({ scope, address, query, queryKey }, reason) => {
-        // An unobserved search has no reader and retires. The roster itself keeps its last-known rows, only no longer
-        // current, so a return to Members paints them at once while its first observer revalidates them.
+        // Free-form searches retire with demand. The roster keeps its rows and receives wakes offscreen.
         if (reason === 'observer-gap' && query !== '') retireTeamMembersSnapshot(scope, address, queryKey);
         else invalidateTeamMembersSnapshot(scope, address, queryKey);
     },
@@ -440,6 +487,8 @@ function groupsTargetFor(
 }
 
 const groupsLoader = createScopedSnapshotLoader<TeamGroupsTarget>({
+    subscribeRetainedInvalidation: subscribeAccountCatalogInvalidation,
+    onCredentialMutation: () => false,
     load: async ({ scope, address, archived, queryKey }, loadContext) => {
         const loadedRowCount = getTeamGroupsSnapshot(scope, address, queryKey)?.data?.length ?? 0;
         beginTeamGroupsLoad(scope, address, queryKey);
@@ -501,6 +550,8 @@ function groupTargetFor(
 }
 
 const groupLoader = createScopedSnapshotLoader<TeamGroupTarget>({
+    subscribeRetainedInvalidation: subscribeAccountCatalogInvalidation,
+    onCredentialMutation: () => false,
     load: async ({ scope, address, groupId }, loadContext) => {
         beginTeamGroupLoad(scope, address, groupId);
         const result = await getTeamGroup({ scope, address, groupId, signal: loadContext.signal });
@@ -569,6 +620,8 @@ function credentialResourcesTargetFor(
  * door so per-Action settings apply. The shared loader owns demand and freshness.
  */
 const credentialResourcesLoader = createScopedSnapshotLoader<TeamCredentialResourcesTarget>({
+    subscribeRetainedInvalidation: subscribeAccountCatalogInvalidation,
+    onCredentialMutation: () => false,
     load: async ({ scope, address, filter, queryKey }, loadContext) => {
         beginTeamCredentialResourcesLoad(scope, address, queryKey);
         let outcome: Awaited<ReturnType<typeof listTeamCredentialResources>>;
@@ -649,6 +702,8 @@ function credentialResourceTargetFor(
 
 /** One exact administration read for detail/editor/usage routes. */
 const credentialResourceLoader = createScopedSnapshotLoader<TeamCredentialResourceTarget>({
+    subscribeRetainedInvalidation: subscribeAccountCatalogInvalidation,
+    onCredentialMutation: () => false,
     load: async ({ scope, address, resourceId }, loadContext) => {
         beginTeamCredentialResourceLoad(scope, address, resourceId);
         let outcome: Awaited<ReturnType<typeof getTeamCredentialResource>>;
@@ -1008,6 +1063,7 @@ export async function loadMoreTeamGroups(
 export function resetTeamsDirectoryEngineForTests(): void {
     loader.resetForTests();
     teamLoader.resetForTests();
+    sharedSummaryLoader.resetForTests();
     groupsLoader.resetForTests();
     membersLoader.resetForTests();
     groupLoader.resetForTests();

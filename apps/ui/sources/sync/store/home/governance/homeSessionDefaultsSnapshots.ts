@@ -56,6 +56,12 @@ export function invalidateHomeSessionDefaultsSnapshotsForServer(serverId: string
     if (changed) for (const listener of [...listeners]) listener();
 }
 
+export function retireHomeSessionDefaultsSnapshot(scope: ServerAccountScope): void {
+    if (snapshots.delete(serverAccountScopeKeySuffix(scope))) {
+        for (const listener of [...listeners]) listener();
+    }
+}
+
 export function resetHomeSessionDefaultsSnapshotsForTests(): void {
     snapshots.clear();
     listeners.clear();

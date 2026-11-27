@@ -390,8 +390,7 @@ describe('HomeAdministrationFeaturesScreen', () => {
     it('reads the registry once across a cold open and return within the Home console', async () => {
         const serverId = await addHome();
         harness.answer(serverId, SETTINGS_GET, { body: featuresProjection() });
-        const { HomeSettingsLifetime } = await import('@/hooks/home/homeSettingsLifetime');
-        const frame = (page: React.ReactNode) => <HomeSettingsLifetime serverId={serverId}>{page}</HomeSettingsLifetime>;
+        const frame = (page: React.ReactNode) => <>{page}</>;
         const page = frame(<HomeAdministrationFeaturesScreen serverId={serverId} />);
         await expectHomePageReadCosts({
             home: harness,
@@ -399,7 +398,7 @@ describe('HomeAdministrationFeaturesScreen', () => {
             leave: frame(null), returnTo: page,
             settled: screen => expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('home-feature:workflows'),
             cold: { [GOVERNANCE_PATH]: 1, [SETTINGS_GET]: 1 },
-            returning: { [GOVERNANCE_PATH]: 1, [SETTINGS_GET]: 0 },
+            returning: { [GOVERNANCE_PATH]: 0, [SETTINGS_GET]: 0 },
         });
     });
 

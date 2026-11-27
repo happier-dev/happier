@@ -376,11 +376,13 @@ export function claimHomeWithCode(params: Readonly<{
  */
 export function listHomeAccounts(params: Readonly<{
     scope: ServerAccountScope;
+    signal?: AbortSignal;
     cursor?: string | null;
     limit?: number;
 }>): Promise<HomeGovernanceQueryOutcome<HomeAccountListResultV1>> {
     return query({
         scope: params.scope,
+        ...(params.signal ? { signal: params.signal } : {}),
         actionId: 'home.accounts.list',
         input: {
             ...(params.cursor ? { cursor: params.cursor } : {}),
@@ -396,10 +398,12 @@ export function listHomeAccounts(params: Readonly<{
  */
 export function getHomeAccount(params: Readonly<{
     scope: ServerAccountScope;
+    signal?: AbortSignal;
     accountId: string;
 }>): Promise<HomeGovernanceQueryOutcome<HomeAccountDetailV1>> {
     return query({
         scope: params.scope,
+        ...(params.signal ? { signal: params.signal } : {}),
         actionId: 'home.accounts.get',
         input: { accountId: params.accountId },
         parse: (value) => HomeAccountDetailV1Schema.safeParse(value),
@@ -452,9 +456,11 @@ async function mutateForValue<TValue>(params: Readonly<{
 /** The Home's effective configuration, one entry per registry key, with each value's source. */
 export function getHomeSettings(params: Readonly<{
     scope: ServerAccountScope;
+    signal?: AbortSignal;
 }>): Promise<HomeGovernanceQueryOutcome<HomeSettingsProjectionV1>> {
     return query({
         scope: params.scope,
+        ...(params.signal ? { signal: params.signal } : {}),
         actionId: 'home.settings.get',
         input: {},
         parse: (value) => HomeSettingsProjectionV1Schema.safeParse(value),
@@ -517,9 +523,11 @@ export function readHomeSettingsInvalidFailure(
 /** Whether this Home can send mail: a configured transport and a link a mail can carry. */
 export function getHomeMailDelivery(params: Readonly<{
     scope: ServerAccountScope;
+    signal?: AbortSignal;
 }>): Promise<HomeGovernanceQueryOutcome<HomeMailDeliveryReadinessV1>> {
     return query({
         scope: params.scope,
+        ...(params.signal ? { signal: params.signal } : {}),
         actionId: 'home.mailDelivery.get',
         input: {},
         parse: (value) => HomeMailDeliveryReadinessV1Schema.safeParse(value),
@@ -561,9 +569,11 @@ export function listHomeAudit(params: Readonly<{
 /** How this Home is reached: effective addresses with their sources, the host's access method, direct connections. */
 export function getHomeReachability(params: Readonly<{
     scope: ServerAccountScope;
+    signal?: AbortSignal;
 }>): Promise<HomeGovernanceQueryOutcome<HomeReachabilityV1>> {
     return query({
         scope: params.scope,
+        ...(params.signal ? { signal: params.signal } : {}),
         actionId: 'home.reachability.get',
         input: {},
         parse: (value) => HomeReachabilityV1Schema.safeParse(value),

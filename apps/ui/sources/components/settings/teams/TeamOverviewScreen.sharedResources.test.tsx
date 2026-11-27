@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { bindHomeDomainActionHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
 import { TEAM_SHARED_RESOURCES_SUMMARY_ACTION_ID_V1 } from '@happier-dev/protocol/teams/actionIdsV1';
 import type { TeamSharedResourceSummaryRowV1 } from '@happier-dev/protocol/teams/teamShareableResourceKindV1';
+import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import { PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { act } from 'react-test-renderer';
 
@@ -11,6 +12,8 @@ import {
   renderScreen,
   standardCleanup,
   teamCapabilitiesFixture,
+  teamGroupFixture,
+  teamMembershipFixture,
   teamSummaryFixture,
 } from '@/dev/testkit';
 import {
@@ -39,6 +42,17 @@ const detailsPane = vi.hoisted(() => ({ available: false }));
 vi.mock('@/components/appShell/panes/details/detailsPaneAvailability', () => ({
   useDetailsPaneAvailable: () => detailsPane.available,
 }));
+
+// Keep the actual tab lifecycles and render native virtualized rows without a measured viewport.
+vi.mock('@legendapp/list/react-native', async () => {
+  const { createLegendListModuleMock } = await import('@/dev/testkit/mocks/legendList');
+  return createLegendListModuleMock({ renderItemLimit: 8 });
+});
+
+vi.mock('@react-navigation/native', async () => {
+  const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
+  return createReactNavigationNativeMock();
+});
 
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
@@ -118,6 +132,47 @@ describe('Team overview: Shared with this Team', () => {
     </React.Profiler>);
     expect(committedIds[0]).toEqual(expect.arrayContaining(['team-overview-identity', sharedRow]));
     expect(committedIds.flat()).not.toContain('team-loading');
+    await screen.unmount();
+  });
+
+  it('opens each Team tab once, reopens Overview without a read, and refreshes it on a Team wake', async () => {
+    const serverId = await addHome([{ kind: 'machines', status: 'available', count: 2 }]);
+    const { TeamMembersScreen } = await import('./members/TeamMembersScreen');
+    const { TeamGroupsScreen } = await import('./groups/TeamGroupsScreen');
+    const { NavigationContext, useNavigation } = await import('@react-navigation/native');
+    function NativeRoute({ children }: React.PropsWithChildren) {
+      return <NavigationContext.Provider value={useNavigation()}>{children}</NavigationContext.Provider>;
+    }
+    harness.answer(serverId, '/v1/teams/get', { body: teamSummaryFixture({
+      capabilities: teamCapabilitiesFixture({ viewRoster: true, manageMembers: true, manageGroups: true }),
+    }) });
+    const roster = '/v1/teams/members/list';
+    const groups = '/v1/teams/groups/list';
+    harness.answer(serverId, roster, { body: { items: [teamMembershipFixture()], nextCursor: null } });
+    harness.answer(serverId, groups, { body: { items: [teamGroupFixture()], nextCursor: null } });
+    const overview = <InPanes serverId={serverId} teamId="team-1" />;
+    const screen = await renderScreen(overview, { wrapper: NativeRoute });
+    await vi.waitFor(() => expect(ids(screen)).toContain('team-overview-shared:machines'));
+    await screen.update(<TeamMembersScreen serverId={serverId} teamId="team-1" />);
+    await vi.waitFor(() => expect(ids(screen)).toContain('team-members-row:membership-1'));
+    await screen.update(<TeamGroupsScreen serverId={serverId} teamId="team-1" />);
+    await vi.waitFor(() => expect(ids(screen)).toContain('team-groups-row:group-1'));
+    const requestsBeforeReturn = harness.requests.length;
+    await screen.update(overview);
+    await vi.waitFor(() => expect(ids(screen)).toContain('team-overview-shared:machines'));
+    expect(harness.requests.slice(requestsBeforeReturn)).toEqual([]);
+    for (const path of ['/v1/teams/get', roster, groups, SUMMARY.path]) {
+      expect(harness.requestsFor(path)).toHaveLength(1);
+    }
+    harness.answer(serverId, SUMMARY.path, {
+      body: { teamId: 'team-1', kinds: [{ kind: 'sessions', status: 'available', count: 3 }] },
+    });
+    await act(async () => { publishHomeAccountChange(serverId, [TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1]); });
+    await vi.waitFor(() => expect(ids(screen)).toContain('team-overview-shared:sessions'));
+    expect(ids(screen)).not.toContain('team-overview-shared:machines');
+    expect(harness.requestsFor(SUMMARY.path)).toHaveLength(2);
+    expect(harness.requestsFor(roster)).toHaveLength(1);
+    expect(harness.requestsFor(groups)).toHaveLength(1);
     await screen.unmount();
   });
 
@@ -230,6 +285,7 @@ describe('Team overview: Shared with this Team', () => {
       body: { teamId: 'team-1', kinds: [{ kind: 'machinePresets', status: 'unavailable', count: null, reason: code }] },
       respondAfter: new Promise<void>((resolve) => { answerSummary = resolve; }),
     });
+    await act(async () => { publishHomeAccountChange(serverId, [TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1]); });
     const presetPath = '/v1/machines/presets/list';
     harness.answer(serverId, presetPath, { status, body: { kind: 'refused', code } });
     const screen = await renderScreen(overview());

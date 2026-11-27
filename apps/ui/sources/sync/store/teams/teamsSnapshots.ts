@@ -548,11 +548,19 @@ export function getTeamSharedResourcesSummarySnapshot(
     return snapshot?.lifetime.isCurrent() ? snapshot : null;
 }
 
+export function invalidateTeamSharedResourcesSummary(scope: ServerAccountScope, address: TeamAddress): void {
+    const current = getTeamSharedResourcesSummarySnapshot(scope, address);
+    if (!current || current.status === 'loading') return;
+    sharedResourceSummaries.set(sharedResourceSummaryKey(scope, address), Object.freeze({ ...current, status: 'loading' }));
+    notify([sliceKey(scope, 'sharedResources')]);
+}
+
 export function applyTeamSharedResourcesSummary(
     scope: ServerAccountScope,
     address: TeamAddress,
     data: readonly TeamSharedResourceSummaryRowV1[],
     lifetime: ServerAccountScopeLifetime,
+    current = true,
 ): void {
     const previous = getTeamSharedResourcesSummarySnapshot(scope, address);
     sharedResourceSummaries.set(sharedResourceSummaryKey(scope, address), Object.freeze({
@@ -560,7 +568,7 @@ export function applyTeamSharedResourcesSummary(
         address,
         lifetime: readServerAccountScopeOwnerLifetime(lifetime),
         data: retainKeyedRows(previous?.data ?? null, data, teamSharedResourceSummaryRowKeyV1),
-        status: 'ready',
+        status: current ? 'ready' : 'loading',
         error: null,
     }));
     notify([sliceKey(scope, 'sharedResources')]);

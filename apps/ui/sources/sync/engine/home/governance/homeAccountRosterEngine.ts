@@ -1,6 +1,7 @@
 import { serverAccountScopeKeySuffix, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { createScopedSnapshotLoader, type ScopedLoadTarget } from '@/sync/engine/scope/scopedSnapshotLoader';
 import { listHomeAccounts } from '@/sync/ops/home/homeGovernanceOperations';
+import { subscribeAccountCatalogInvalidation } from '@/sync/engine/settings/accountCatalogInvalidation';
 import { isHomeAdministrationAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import {
     applyHomeAccountRosterFailure,
@@ -15,20 +16,23 @@ import {
 type RosterTarget = ScopedLoadTarget & Readonly<{ scope: ServerAccountScope }>;
 const targetFor = (scope: ServerAccountScope): RosterTarget => ({ key: serverAccountScopeKeySuffix(scope), serverId: scope.serverId, scope });
 
-/** One paged resource for every People list, rail and overview on the exact Home/Account. */
+/** One paged resource for every People list and rail on the exact Home/Account. */
 const loader = createScopedSnapshotLoader<RosterTarget>({
+    subscribeRetainedInvalidation: subscribeAccountCatalogInvalidation,
     load: async ({ scope }, context) => {
         const previous = getHomeAccountRosterSnapshot(scope);
         const more = previous?.status === 'loading_more' && !previous.stale;
         const cursor = more ? previous.cursor : null;
         if (!more) beginHomeAccountRosterLoad(scope, false);
-        const outcome = await listHomeAccounts({ scope, ...(cursor ? { cursor } : {}) });
+        const outcome = await listHomeAccounts({ scope, ...(cursor ? { cursor } : {}), signal: context.signal });
+        if (context.signal.aborted) return;
         if (outcome.kind === 'failed') applyHomeAccountRosterFailure(scope, outcome.failure);
         else applyHomeAccountRosterPage(scope, outcome.value, more, context.isCurrent());
     },
-    // Extra consumers join this observation period, including its settled failure.
-    // The loader itself revalidates after the last observer leaves.
-    shouldLoadOnObserve: ({ scope }) => getHomeAccountRosterSnapshot(scope) === null,
+    shouldLoadOnObserve: ({ scope }) => {
+        const snapshot = getHomeAccountRosterSnapshot(scope);
+        return !snapshot || snapshot.stale;
+    },
     invalidateServer: invalidateHomeAccountRosterSnapshotsForServer,
     invalidateTarget: ({ scope }) => invalidateHomeAccountRosterSnapshot(scope),
     matchesWake: isHomeAdministrationAccountChange,

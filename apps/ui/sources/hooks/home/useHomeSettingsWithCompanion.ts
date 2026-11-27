@@ -2,11 +2,11 @@ import * as React from 'react';
 import type { HomeSettingsProjectionV1 } from '@happier-dev/protocol/home/governance';
 
 import type { HomeActionFailure as HomeDomainFailure } from '@/sync/ops/home/homeActionOutcome';
-import { serverAccountScopeKeySuffix, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import type { HomeGovernanceQueryOutcome } from '@/sync/ops/home/homeGovernanceOperations';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import type { HomeAdministrationRead } from '@/sync/engine/home/governance/homeAdministrationReads';
 import { observeHomeSettings, refreshHomeSettings, type HomeSettingsRefreshReason } from '@/sync/engine/home/governance/homeSettingsEngine';
-import { adoptHomeSettingsProjection, getHomeSettingsSnapshot, subscribeHomeSettingsAdoptions, subscribeHomeSettingsSnapshots } from '@/sync/store/home/governance/homeSettingsSnapshots';
-import { useHomeSettingsLifetime } from './homeSettingsLifetime';
+import { adoptHomeSettingsProjection, getHomeSettingsSnapshot, subscribeHomeSettingsSnapshots } from '@/sync/store/home/governance/homeSettingsSnapshots';
+import { useHomeAdministrationRead } from './useHomeAdministrationRead';
 
 export type HomeSettingsWithCompanion<TCompanion, TSettings = HomeSettingsProjectionV1> = Readonly<{
     /** Selected settings from the last answer, retained after a transient failed read. */
@@ -27,13 +27,6 @@ export type HomeSettingsWithCompanion<TCompanion, TSettings = HomeSettingsProjec
     adoptCompanion: (companion: TCompanion) => void;
 }>;
 
-type State<TCompanion> = Readonly<{
-    scopeKey: string;
-    companion: TCompanion | null;
-    companionLoading: boolean;
-    companionFailure: HomeDomainFailure | null;
-}>;
-
 /**
  * The two reads of a Home console page that edits registry settings: the effective settings (values,
  * sources, locks, pending restart state) and one companion read only its server owner can answer —
@@ -45,9 +38,9 @@ export function useHomeSettingsWithCompanion<TCompanion>(
     scope: ServerAccountScope | null,
     enabled: boolean,
     /** `null` for a page whose settings need no companion read (Features, Data). */
-    readCompanion: ((scope: ServerAccountScope) => Promise<HomeGovernanceQueryOutcome<TCompanion>>) | null,
+    resource: HomeAdministrationRead<TCompanion> | null,
 ): HomeSettingsWithCompanion<TCompanion> {
-    return useHomeSettingsReads(scope, enabled, readCompanion, selectAllSettings);
+    return useHomeSettingsReads(scope, enabled, resource, selectAllSettings);
 }
 
 function selectAllSettings(settings: HomeSettingsProjectionV1): HomeSettingsProjectionV1 {
@@ -65,14 +58,12 @@ export function useHomeSettingsSelection<TSettings>(
 function useHomeSettingsReads<TCompanion, TSettings>(
     scope: ServerAccountScope | null,
     enabled: boolean,
-    readCompanion: ((scope: ServerAccountScope) => Promise<HomeGovernanceQueryOutcome<TCompanion>>) | null,
+    resource: HomeAdministrationRead<TCompanion> | null,
     selectSettings: (settings: HomeSettingsProjectionV1) => TSettings,
 ): HomeSettingsWithCompanion<TCompanion, TSettings> {
     const serverId = scope?.serverId ?? '';
     const accountId = scope?.accountId ?? '';
     const capturedScope = React.useMemo(() => serverId && accountId ? { serverId, accountId } : null, [serverId, accountId]);
-    const scopeKey = capturedScope ? serverAccountScopeKeySuffix(capturedScope) : '';
-    const retain = useHomeSettingsLifetime();
     const readSettings = React.useMemo(() => {
         let lastSnapshot: ReturnType<typeof getHomeSettingsSnapshot> = null;
         let selection: Pick<HomeSettingsWithCompanion<TCompanion, TSettings>, 'settings' | 'loading' | 'failure'> = {
@@ -95,78 +86,32 @@ function useHomeSettingsReads<TCompanion, TSettings>(
         enabled && capturedScope ? subscribeHomeSettingsSnapshots(capturedScope, listener) : () => {}
     ), [enabled, capturedScope]);
     const settings = React.useSyncExternalStore(subscribeSettings, readSettings, readSettings);
-    const [state, setState] = React.useState<State<TCompanion>>(() => ({ scopeKey, companion: null, companionLoading: readCompanion !== null, companionFailure: null }));
-    const generation = React.useRef(0);
-    const currentScopeKey = React.useRef(scopeKey);
-    React.useLayoutEffect(() => { currentScopeKey.current = scopeKey; }, [scopeKey]);
-    const readCompanionRef = React.useRef(readCompanion);
-    readCompanionRef.current = readCompanion;
-    const hasCompanion = readCompanion !== null;
-
-    const refreshCompanion = React.useCallback((currentGeneration: number) => {
-        const read = readCompanionRef.current;
-        if (!read || currentScopeKey.current !== scopeKey) return;
-        setState((previous) => ({ ...previous, scopeKey, companionLoading: true }));
-        void (async () => {
-            const companion = await read({ serverId, accountId });
-            if (currentGeneration !== generation.current || currentScopeKey.current !== scopeKey) return;
-            setState((previous) => companion.kind === 'succeeded'
-                ? { ...previous, companion: companion.value, companionLoading: false, companionFailure: null }
-                : { ...previous, companionLoading: false, companionFailure: companion.failure });
-        })();
-    }, [serverId, accountId, scopeKey]);
-
+    const companion = useHomeAdministrationRead(resource, enabled ? capturedScope : null);
+    const { refresh, adopt } = companion;
     const load = React.useCallback(async (reason?: HomeSettingsRefreshReason) => {
-        if (!enabled || !capturedScope || currentScopeKey.current !== scopeKey) return;
-        const currentGeneration = (generation.current += 1);
-        refreshCompanion(currentGeneration);
-        await refreshHomeSettings(capturedScope, reason);
-    }, [enabled, capturedScope, scopeKey, refreshCompanion]);
-
-    // Only another Home (or another Account on it) starts from nothing. A read that is merely
-    // re-enabled or repeated keeps the last answer on screen, so a settled page and its unsaved
-    // edits never fall back to a loading state.
-    React.useEffect(() => {
-        generation.current += 1;
-        setState({ scopeKey, companion: null, companionLoading: readCompanionRef.current !== null, companionFailure: null });
-        return () => { generation.current += 1; };
-    }, [scopeKey]);
-
-    React.useEffect(() => {
         if (!enabled || !capturedScope) return;
-        retain?.(capturedScope);
-        return observeHomeSettings(capturedScope);
-    }, [enabled, capturedScope, retain]);
+        refresh();
+        await refreshHomeSettings(capturedScope, reason);
+    }, [enabled, capturedScope, refresh]);
 
     React.useEffect(() => {
-        if (!enabled || !capturedScope || !hasCompanion) return;
-        return subscribeHomeSettingsAdoptions(capturedScope, () => refreshCompanion(generation.current += 1));
-    }, [enabled, capturedScope, hasCompanion, refreshCompanion]);
-
-    React.useEffect(() => {
-        if (enabled && capturedScope) refreshCompanion(generation.current += 1);
-    }, [enabled, capturedScope, refreshCompanion]);
+        if (enabled && capturedScope) return observeHomeSettings(capturedScope);
+    }, [enabled, capturedScope]);
 
     const adoptSettings = React.useCallback((settings: HomeSettingsProjectionV1) => {
         if (!capturedScope) return;
         adoptHomeSettingsProjection(capturedScope, settings);
     }, [capturedScope]);
 
-    const adoptCompanion = React.useCallback((companion: TCompanion) => {
-        if (currentScopeKey.current !== scopeKey) return;
-        generation.current += 1;
-        setState({ scopeKey, companion, companionLoading: false, companionFailure: null });
-    }, [scopeKey]);
-
     return React.useMemo(() => Object.freeze({
         settings: settings.settings,
-        companion: state.scopeKey === scopeKey ? state.companion : null,
+        companion: companion.snapshot?.data ?? null,
         loading: settings.loading,
         failure: settings.failure,
-        companionLoading: state.scopeKey === scopeKey ? state.companionLoading : readCompanion !== null,
-        companionFailure: state.scopeKey === scopeKey ? state.companionFailure : null,
+        companionLoading: companion.snapshot?.loading ?? resource !== null,
+        companionFailure: companion.snapshot?.failure ?? null,
         reload: load,
         adoptSettings,
-        adoptCompanion,
-    }), [settings, state, scopeKey, readCompanion, load, adoptSettings, adoptCompanion]);
+        adoptCompanion: adopt,
+    }), [settings, companion.snapshot, resource, load, adoptSettings, adopt]);
 }

@@ -229,6 +229,49 @@ describe('Home console Overview (A)', () => {
         expect(routerPush).toHaveBeenCalledWith(`/settings/home/${home}/email`);
     });
 
+    it('revisits Overview, Email and Reach without reading settled snapshots or the People roster again', async () => {
+        const home = await addHome();
+        windowState.width = 390;
+        const owner = homeAccountRowFixture('account-ada', { homeRole: 'owner' });
+        harness.answer(home, GOVERNANCE_PATH, { body: {
+            ...homeGovernanceProjectionFixture({ activeOwnerCount: 1 }),
+            activeOwners: [{ accountId: owner.accountId, profile: owner.profile }],
+            totalAccountCount: 40,
+        } });
+        const { HomeAdministrationEmailScreen } = await import('./HomeAdministrationEmailScreen');
+        const { HomeAdministrationReachScreen } = await import('./HomeAdministrationReachScreen');
+        const screen = await renderOverview(home);
+        const revisit = (page: React.ReactNode) => screen.update(
+            <HomeConsoleShell serverId={home} rail="console">{page}</HomeConsoleShell>,
+        );
+        await waitForHomeGovernance(() => expect(ids(screen)).toContain('home-overview-owner:account-ada'));
+        await waitForHomeGovernance(() => expect(ids(screen)).toContain('home-overview-address'));
+        await revisit(<HomeAdministrationEmailScreen serverId={home} />);
+        await revisit(<HomeAdministrationReachScreen serverId={home} />);
+        await revisit(<HomeAdministrationOverviewScreen serverId={home} />);
+        expect(ids(screen)).toContain('home-overview-owner:account-ada');
+        expect(screen.getTextContent()).toContain('people=40');
+        for (const path of [GOVERNANCE_PATH, SETTINGS_PATH, MAIL_PATH, REACH_PATH]) {
+            expect(harness.requestsFor(path), path).toHaveLength(1);
+        }
+        expect(harness.requestsFor(ACCOUNTS_PATH)).toHaveLength(0);
+    });
+
+    it('uses the legacy governance response and People roster after an older Home refuses the projection', async () => {
+        const home = await addHome();
+        harness.answer(home, GOVERNANCE_PATH, { select: input => (
+            typeof input === 'object' && input !== null && 'projection' in input
+                ? { status: 400, body: { error: 'invalid_home_input' } }
+                : { body: homeGovernanceProjectionFixture() }
+        ) });
+        const screen = await renderOverview(home);
+        await waitForHomeGovernance(() => expect(ids(screen)).toContain('home-overview-owner:account-ada'));
+        expect(harness.requestsFor(GOVERNANCE_PATH).map(request => request.input)).toEqual([
+            { projection: 'administration_with_ownership' }, {},
+        ]);
+        expect(harness.requestsFor(ACCOUNTS_PATH)).toHaveLength(1);
+    });
+
     it('drops healthy rows, and states a failed read in its own section while the rest still render', async () => {
         const home = await addHome();
         harness.answer(home, MAIL_PATH, { status: 500, body: { error: 'internal' } });

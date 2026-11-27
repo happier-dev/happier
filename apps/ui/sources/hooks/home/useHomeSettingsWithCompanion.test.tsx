@@ -45,6 +45,8 @@ const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/
 const { resetHomeSettingsEngineForTests } = await import('@/sync/engine/home/governance/homeSettingsEngine');
 const { resetHomeSettingsSnapshotsForTests, getHomeSettingsSnapshot, subscribeHomeSettingsSnapshots } = await import('@/sync/store/home/governance/homeSettingsSnapshots');
 
+const { homeReachabilityRead } = await import('@/sync/engine/home/governance/homeAdministrationReads');
+
 const SETTINGS_GET = '/v1/home/settings/get';
 
 beforeEach(async () => {
@@ -61,16 +63,15 @@ afterEach(() => {
 describe('useHomeSettingsWithCompanion', () => {
     it('keeps an accepted companion mutation when an older reload answers later', async () => {
         const { useHomeSettingsWithCompanion } = await import('./useHomeSettingsWithCompanion');
-        const { getHomeReachability, setHomeIrohMode } = await import('@/sync/ops/home/homeGovernanceOperations');
+        const { setHomeIrohMode } = await import('@/sync/ops/home/homeGovernanceOperations');
         const serverId = await harness.addHome({ name: 'Home A', serverUrl: 'https://companion-adoption.example', accountId: 'account-admin' });
         const scope = { serverId, accountId: 'account-admin' };
         const reachPath = '/v1/home/reachability/get';
-        const read = (current: typeof scope) => getHomeReachability({ scope: current });
         const original = homeReachabilityFixture();
         const accepted = homeReachabilityFixture({ iroh: { ...original.iroh, mode: 'disabled', state: 'retired', endpointId: null } });
         harness.answer(serverId, SETTINGS_GET, { body: homeSettingsProjectionFixture({ revision: 3 }) });
         harness.answer(serverId, reachPath, { body: original });
-        const hook = await renderHook(() => useHomeSettingsWithCompanion(scope, true, read));
+        const hook = await renderHook(() => useHomeSettingsWithCompanion(scope, true, homeReachabilityRead));
         await waitForHomeGovernance(() => expect(hook.getCurrent().companion?.iroh.mode).toBe('enabled'));
         const held = createDeferred<void>();
         harness.answer(serverId, reachPath, { body: original, respondAfter: held.promise });
@@ -94,17 +95,15 @@ describe('useHomeSettingsWithCompanion', () => {
     it('refreshes only a demanded companion when a sibling writer adopts settings', async () => {
         const { useHomeSettingsWithCompanion } = await import('./useHomeSettingsWithCompanion');
         const { useHomeSettings } = await import('./useHomeSettings');
-        const { getHomeReachability } = await import('@/sync/ops/home/homeGovernanceOperations');
         const serverId = await harness.addHome({ name: 'Home A', serverUrl: 'https://settings-sibling-writer.example', accountId: 'account-admin' });
         const scope = { serverId, accountId: 'account-admin' };
         const reachPath = '/v1/home/reachability/get';
-        const readReach = (scope: Readonly<{ serverId: string; accountId: string }>) => getHomeReachability({ scope });
         harness.answer(serverId, SETTINGS_GET, { body: homeSettingsProjectionFixture({ revision: 3 }) });
         harness.answer(serverId, reachPath, { body: homeReachabilityFixture({ publicAddress: { url: 'https://before.example', source: 'home' } }) });
         const hook = await renderHook(() => ({
             writer: useHomeSettings(scope, true),
-            companion: useHomeSettingsWithCompanion(scope, true, readReach),
-            disabled: useHomeSettingsWithCompanion(scope, false, readReach),
+            companion: useHomeSettingsWithCompanion(scope, true, homeReachabilityRead),
+            disabled: useHomeSettingsWithCompanion(scope, false, homeReachabilityRead),
         }));
         await waitForHomeGovernance(() => expect(hook.getCurrent().companion.companion?.publicAddress.url).toBe('https://before.example'));
         expect(harness.requestsFor(SETTINGS_GET)).toHaveLength(1);
@@ -188,7 +187,7 @@ describe('useHomeSettingsWithCompanion', () => {
         expect(hook.getCurrent().settings).toBeNull();
     });
 
-    it('loads settings only on demand, shares them across console pages, and refreshes on intent, wake, and console return', async () => {
+    it('loads settings only on demand, shares them across console pages, refreshes on intent and wake, and retains across console return', async () => {
         const { useHomeSettingsWithCompanion } = await import('./useHomeSettingsWithCompanion');
         const serverId = await harness.addHome({ name: 'Shared Home', serverUrl: 'https://shared-settings.example', accountId: 'account-admin' });
         const scope = { serverId, accountId: 'account-admin' };
@@ -223,21 +222,20 @@ describe('useHomeSettingsWithCompanion', () => {
         await screen.update(React.createElement(React.Fragment));
         await screen.update(consolePage('data'));
         await waitForHomeGovernance(() => expect(current.loading).toBe(false));
-        expect(harness.requestsFor(SETTINGS_GET)).toHaveLength(4);
+        expect(current.settings?.revision).toBe(4);
+        expect(harness.requestsFor(SETTINGS_GET)).toHaveLength(3);
     });
 
     it('does not expose settings or companions from a previous Account or accept its pending answers', async () => {
         const { useHomeSettingsWithCompanion } = await import('./useHomeSettingsWithCompanion');
-        const { getHomeReachability } = await import('@/sync/ops/home/homeGovernanceOperations');
         const serverId = await harness.addHome({ name: 'Home A', serverUrl: 'https://settings-account-switch.example', accountId: 'account-a' });
         let release!: () => void;
         const pending = new Promise<void>((resolve) => { release = resolve; });
         const path = '/v1/home/reachability/get';
-        const read = (scope: Readonly<{ serverId: string; accountId: string }>) => getHomeReachability({ scope });
         harness.answer(serverId, SETTINGS_GET, { body: homeSettingsProjectionFixture({ revision: 3 }), respondAfter: pending });
         harness.answer(serverId, path, { body: homeReachabilityFixture(), respondAfter: pending });
         const hook = await renderHook(
-            (props: Readonly<{ accountId: string }>) => useHomeSettingsWithCompanion({ serverId, accountId: props.accountId }, true, read),
+            (props: Readonly<{ accountId: string }>) => useHomeSettingsWithCompanion({ serverId, accountId: props.accountId }, true, homeReachabilityRead),
             { initialProps: { accountId: 'account-a' } },
         );
         await waitForHomeGovernance(() => expect(harness.requestsFor(SETTINGS_GET)).toHaveLength(1));
@@ -258,14 +256,12 @@ describe('useHomeSettingsWithCompanion', () => {
 
     it('settles a failed companion independently, retaining the last answer through a failed refresh and recovering on Retry', async () => {
         const { useHomeSettingsWithCompanion } = await import('./useHomeSettingsWithCompanion');
-        const { getHomeReachability } = await import('@/sync/ops/home/homeGovernanceOperations');
         const serverId = await harness.addHome({ name: 'Home A', serverUrl: 'https://home-a.example', accountId: 'account-admin' });
         const scope = { serverId, accountId: 'account-admin' };
         const path = '/v1/home/reachability/get';
-        const read = (current: typeof scope) => getHomeReachability({ scope: current });
         harness.answer(serverId, SETTINGS_GET, { body: homeSettingsProjectionFixture({ revision: 3 }) });
         harness.answer(serverId, path, { status: 503, body: { error: 'temporarily_unavailable' } });
-        const hook = await renderHook(() => useHomeSettingsWithCompanion(scope, true, read));
+        const hook = await renderHook(() => useHomeSettingsWithCompanion(scope, true, homeReachabilityRead));
         await waitForHomeGovernance(() => expect(hook.getCurrent().settings?.revision).toBe(3));
         expect(harness.requestsFor(path)).toHaveLength(1);
         expect(hook.getCurrent().companionFailure?.retryable).toBe(true);

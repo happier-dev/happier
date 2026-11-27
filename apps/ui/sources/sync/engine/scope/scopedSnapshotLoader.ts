@@ -104,6 +104,8 @@ export function createScopedSnapshotLoader<TTarget extends ScopedLoadTarget>(par
      * creates no connection demand, background reads or mutation authority.
      */
     subscribeRetainedInvalidation?: (target: TTarget, handlers: ScopedSnapshotRetainedInvalidation) => () => void;
+    /** A demand-only target, such as an arbitrary search query, releases its wake subscription with its last observer. */
+    shouldRetainInvalidation?: (target: TTarget) => boolean;
     /**
      * false: only a released observation keeps this retention. A finite read (a mutation completion, a one-shot
      * refresh) then takes no wake or credential custody, so a refusal it receives or a write its own maintenance makes
@@ -405,7 +407,7 @@ export function createScopedSnapshotLoader<TTarget extends ScopedLoadTarget>(par
     }
 
     async function withFiniteDemand(target: TTarget, read: () => Promise<void>): Promise<void> {
-        if (params.subscribeRetainedInvalidation && params.retainFiniteReads !== false) {
+        if (params.subscribeRetainedInvalidation && params.shouldRetainInvalidation?.(target) !== false && params.retainFiniteReads !== false) {
             // A non-observing consumer (for example Voice) can be the first
             // reader. Its admitted snapshot needs the same withdrawal signals.
             retainInvalidation(target);
@@ -552,7 +554,7 @@ export function createScopedSnapshotLoader<TTarget extends ScopedLoadTarget>(par
             };
         },
         observe(target) {
-            if (params.subscribeRetainedInvalidation) retainInvalidation(target);
+            if (params.subscribeRetainedInvalidation && params.shouldRetainInvalidation?.(target) !== false) retainInvalidation(target);
             const entry = observed.get(target.key);
             const returnedAfterObserverGap = !entry && (revalidateOnNextObserve.delete(target.key)
                 || inFlight.has(target.key) && !retainedTargets.has(target.key));

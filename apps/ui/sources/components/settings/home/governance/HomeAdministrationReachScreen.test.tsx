@@ -16,6 +16,7 @@ import {
     installHomeGovernanceBoundaries,
     waitForHomeGovernance,
 } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { collectRenderedTestIds } from '@/dev/testkit/render/collectRenderedTestIds';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 
@@ -287,6 +288,33 @@ describe('HomeAdministrationReachScreen', () => {
         await waitForHomeGovernance(() => expect(harness.requestsFor(IROH_SET)).toHaveLength(1));
         expect(harness.requestsFor(IROH_SET)[0]?.input).toEqual({ mode: 'disabled' });
         await waitForHomeGovernance(() => expect(screen.findByTestId('home-reach-iroh-switch')?.props.value).toBe(false));
+    });
+
+    it('keeps the current Reach snapshot when a write admitted by retired credentials answers late', async () => {
+        const home = await addHome();
+        const reach = homeReachabilityFixture();
+        const pending = createDeferred<void>();
+        harness.answer(home, SETTINGS_GET, { body: reachSettings() });
+        harness.answer(home, REACH_GET, { body: reach });
+        harness.answer(home, IROH_SET, {
+            body: homeReachabilityFixture({ iroh: { ...reach.iroh, mode: 'disabled', state: 'retired', endpointId: null } }),
+            respondAfter: pending.promise,
+        });
+        const screen = await renderReach(home);
+        const { Modal } = await import('@/modal');
+        vi.mocked(Modal.confirm).mockResolvedValueOnce(true);
+        await act(async () => {
+            screen.findByTestId('home-reach-iroh-switch')?.props.onValueChange(false);
+        });
+        await waitForHomeGovernance(() => expect(harness.requestsFor(IROH_SET)).toHaveLength(1));
+        try {
+            await act(async () => { await harness.switchAccount(home, 'another-account'); });
+            await act(async () => { await harness.switchAccount(home, `account-${home}`, { currentAccount: true }); });
+            await waitForHomeGovernance(() => expect(screen.findByTestId('home-reach-iroh-switch')?.props.value).toBe(true));
+        } finally {
+            await act(async () => { pending.resolve(); });
+        }
+        expect(screen.findByTestId('home-reach-iroh-switch')?.props.value).toBe(true);
     });
 
     it('names each deployment-fixed key once, as a code chip, never as caption text', async () => {

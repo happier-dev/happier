@@ -6,7 +6,7 @@ import type {
 
 import type { HomeActionFailure as HomeDomainFailure } from '@/sync/ops/home/homeActionOutcome';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import { getHomeMailDelivery } from '@/sync/ops/home/homeGovernanceOperations';
+import { homeMailDeliveryRead } from '@/sync/engine/home/governance/homeAdministrationReads';
 
 import { useHomeSettingsWithCompanion } from './useHomeSettingsWithCompanion';
 
@@ -25,15 +25,13 @@ export type HomeEmailSettings = Readonly<{
     adoptSettings: (settings: HomeSettingsProjectionV1) => void;
 }>;
 
-const readReadiness = (scope: ServerAccountScope) => getHomeMailDelivery({ scope });
-
 /**
  * The Email page's two reads of one exact Home: the effective settings (values and sources) and
  * whether mail can be sent. Readiness belongs to the mail owner on the server, so it is always
  * re-read after a write rather than derived here from the settings.
  */
 export function useHomeEmailSettings(scope: ServerAccountScope | null, enabled: boolean): HomeEmailSettings {
-    const reads = useHomeSettingsWithCompanion(scope, enabled, readReadiness);
+    const reads = useHomeSettingsWithCompanion(scope, enabled, homeMailDeliveryRead);
     return React.useMemo(() => Object.freeze({
         settings: reads.settings,
         readiness: reads.companion,
