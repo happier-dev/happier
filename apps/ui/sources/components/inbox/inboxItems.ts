@@ -391,7 +391,7 @@ export function buildInboxItems(input: InboxItemsInput, previous: readonly Inbox
                 reviewSubjectLabel(review.subjectKind),
                 formatReviewRequesterByline(reviewRequesterPrincipal(review.requestedBy, input.accountServerId),
                     input.reviewRequesterNames, input.viewerAccountId),
-            ].join(' · ') } : {};
+            ].filter(label => label !== null).join(' · ') } : {};
             rows.push({ ...row, ...failing, ...reviewByline, ...(entry.expectedDuring ? { expectedDuring: entry.expectedDuring } : {}) });
         }
     }

@@ -603,13 +603,14 @@ export function ReviewDetailHost(props: Readonly<{
       </View>
     );
   }
+  const requesterByline = formatReviewRequesterByline(requester, names, scope?.accountId);
   const meta = [
     // What it read: a branch Review by its refs ("04996b5 vs main", U8 R5 L1), others by their subject word.
     ...(review ? [{ key: 'subject', ...reviewSubjectFact(review.subjectKind, record.rounds.at(-1)?.comparisonCapture?.input.source) }] : []),
     ...(record.rounds.length > 0 ? [{ key: 'round', text: t('reviewWalkthrough.detail.round', { round: lastOrdinal }) }] : []),
     ...(record.rounds[0] ? [{ key: 'started', text: t('reviewWalkthrough.detail.startedAt', {
       time: formatShortRelativeTime(record.rounds[0].startedAt) }) }] : []),
-    { key: 'requester', text: formatReviewRequesterByline(requester, names, scope?.accountId) },
+    ...(requesterByline === null ? [] : [{ key: 'requester', text: requesterByline }]),
     // Who it reaches, once it reaches anyone (the Artifact audience owner's words); a private Review says nothing.
     ...(audience?.shared ? [{ key: 'audience', icon: 'users' as const, text: audience.team
       ? t('artifacts.browser.facts.sharedWithTeam', { team: audience.team }) : t('artifacts.browser.facts.shared') }] : []),

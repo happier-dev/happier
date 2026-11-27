@@ -589,14 +589,14 @@ describe('one Inbox row projection', () => {
         };
         const requested = buildInboxItems({ ...named, notices: [reviewNotice(true)] }, rows);
         expect(requested[1]).toMatchObject({
-            sourceLabel: `${t('reviewWalkthrough.detail.requestedFromYou')} · ${t('reviewWalkthrough.collection.subjectPullRequest')} · Requested by Unknown`,
+            sourceLabel: `${t('reviewWalkthrough.detail.requestedFromYou')} · ${t('reviewWalkthrough.collection.subjectPullRequest')}`,
             source: { displayName: 'Acme Review' },
         });
         expect(buildInboxItems({ ...named, notices: [reviewNotice(true)] }, requested)).toBe(requested);
         const pendingOnly = buildInboxItems({ ...named, notices: [reviewNotice(false)] }, requested);
         expect(pendingOnly[1]).not.toBe(requested[1]);
         expect(pendingOnly[1]).toMatchObject({
-            sourceLabel: `${t('reviewWalkthrough.collection.needsYourDecision')} · ${t('reviewWalkthrough.collection.subjectPullRequest')} · Requested by Unknown`,
+            sourceLabel: `${t('reviewWalkthrough.collection.needsYourDecision')} · ${t('reviewWalkthrough.collection.subjectPullRequest')}`,
             source: { displayName: 'Acme Review' },
         });
         expect(buildInboxItems({ ...named, notices: [reviewNotice(false)] }, pendingOnly)).toBe(pendingOnly);

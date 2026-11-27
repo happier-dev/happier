@@ -109,10 +109,15 @@ it('names the admitted requester on a Review whose Machine belongs to another pe
   } finally { await screen.unmount(); }
 });
 
-it('shows the requester as unknown for a Review recorded without one', async () => {
-  const screen = await renderReview({ reviewId: 'historical-review-requester', state: 'completed', comments: [] });
+it.each([
+  { requestedBy: undefined },
+  { requestedBy: { actorKind: 'agent', sessionId: 'agent-session' } },
+  { requestedBy: { actorKind: 'workflow', runId: 'workflow-run' } },
+] satisfies { requestedBy: ActionActorV1 | undefined }[])('omits the requester byline without a known person (%j)', async ({ requestedBy }) => {
+  const screen = await renderReview({ reviewId: 'review-without-person', state: 'completed', comments: [],
+    ...(requestedBy ? { requestedBy } : {}) });
   try {
-    expect(screen.getTextContent()).toContain('Requested by Unknown');
+    expect(screen.getTextContent()).not.toContain('Requested by');
   } finally { await screen.unmount(); }
 });
 

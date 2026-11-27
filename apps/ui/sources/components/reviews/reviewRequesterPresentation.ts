@@ -14,11 +14,12 @@ export function formatReviewRequesterByline(
   principal: ReturnType<typeof reviewRequesterPrincipal>,
   names: ReadonlyMap<string, string> | null | undefined,
   viewerAccountId: string | null | undefined,
-): string {
-  const name = principal ? presentSharePrincipal({
+): string | null {
+  if (!principal) return null;
+  const name = presentSharePrincipal({
     ref: principal,
     name: names?.get(sharePrincipalKey(principal)) ?? null,
     viewerAccountId: viewerAccountId ?? null,
-  }).displayName : t('common.unknown');
+  }).displayName;
   return `${t('detailPages.approval.contextTitle')} ${name}`;
 }
