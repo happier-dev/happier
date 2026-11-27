@@ -113,6 +113,20 @@ const databaseActionDeclarations = {
     [database.UI_DATABASE_OPEN_ACTION_ID_V1]: { ...read, title: 'Open database', placementBindings: ['commandPalette', 'secondary'] },
     [database.UI_DATABASE_NAVIGATE_ACTION_ID_V1]: { ...read, title: 'Navigate database', placementBindings: ['toolbar', 'contextMenu'] },
     [database.UI_DATABASE_DRAFT_READ_ACTION_ID_V1]: { ...read, title: 'Read database draft' },
+    [database.UI_DATABASE_HISTORY_CLEAR_ACTION_ID_V1]: {
+        title: 'Clear database history',
+        description: 'Clear SQL history for the addressed Workbench on the answering device and keep the current draft.',
+        dangerLevel: 'writesLocal',
+        readOnly: false,
+        placementBindings: [],
+        approvalInputCustody: 'live_only',
+        confirmationWhen: { presentUserUi: true, cli: true },
+        confirmation: {
+            title: 'Clear database history?',
+            body: 'Clear the SQL history for this database on the answering device. Keep the current SQL draft.',
+            confirmLabel: 'Clear history',
+        },
+    },
     [database.DATABASE_STATS_READ_ACTION_ID_V1]: { ...read, title: 'Read database statistics' },
     [database.DATABASE_ACTIVITY_CANCEL_ACTION_ID_V1]: {
         ...targetWrite, title: 'Cancel database activity', placementBindings: ['rowAction'], approvalScope: 'environment',

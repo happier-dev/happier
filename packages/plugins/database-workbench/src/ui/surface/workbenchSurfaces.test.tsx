@@ -17,6 +17,7 @@ import {
     DATABASE_TARGETS_FORGET_ACTION_ID_V1,
     DATABASE_TARGETS_LIST_ACTION_ID_V1,
     UI_DATABASE_DRAFT_READ_ACTION_ID_V1,
+    UI_DATABASE_HISTORY_CLEAR_ACTION_ID_V1,
     UI_DATABASE_NAVIGATE_ACTION_ID_V1,
 } from '@happier-dev/database-protocol';
 import { databaseActionLocalIdV1, type PluginClientActionHandler } from '@happier-dev/plugin-sdk/actions';
@@ -119,7 +120,7 @@ function connectionResourceHandlers(connected = descriptor) {
   };
 }
 
-it('addresses one mounted Workbench and admits draft disclosure at P3 before reading device state', async () => {
+it('addresses one mounted Workbench and scopes device history clearing without changing the SQL draft', async () => {
   const entries = new Map<string, { value: unknown; refs: number; dispose(): void }>();
   const sharedScope: PluginEphemeralSharedScope = {
     acquire<T>(key: string, create: () => { value: T; dispose(): void }) {
@@ -135,13 +136,20 @@ it('addresses one mounted Workbench and admits draft disclosure at P3 before rea
     target: { artifactId: WORKBENCH_PAGE_ARTIFACT_ID, exportName: 'activate', platform: 'web' } });
   const navigate = registration.registration('actions', databaseActionLocalIdV1(UI_DATABASE_NAVIGATE_ACTION_ID_V1));
   const read = registration.registration('actions', databaseActionLocalIdV1(UI_DATABASE_DRAFT_READ_ACTION_ID_V1));
+  const clearHistory = registration.registration('actions', databaseActionLocalIdV1(UI_DATABASE_HISTORY_CLEAR_ACTION_ID_V1));
   expect(navigate).toBeTypeOf('function');
   expect(read).toBeTypeOf('function');
   if (!navigate || !read) throw new Error('Mounted Workbench Actions were not registered');
   const replacePageLocation = vi.fn<NonNullable<PluginUiTestkitHostHandlers['replacePageLocation']>>(async ({ subPath }) => subPath);
-  const deviceState = vi.fn<NonNullable<PluginUiTestkitHostHandlers['deviceState']>>(() => ({
-    status: 'ready', value: { sql: 'select 42', history: [{ sql: 'select 1' }] },
-  }));
+  const saved = new Map<string, JsonValue>();
+  const initialConsole = { sql: 'select 42', history: [{ sql: 'select 1' }] };
+  const deviceState = vi.fn<NonNullable<PluginUiTestkitHostHandlers['deviceState']>>(request => {
+    if (request.operation === 'write') {
+      saved.set(request.key, request.value);
+      return { status: 'ready', value: request.value };
+    }
+    return { status: 'ready', value: saved.get(request.key) ?? initialConsole };
+  });
   const mountId = 'addressed-workbench';
   const daemon = daemonAnswers([descriptor]);
   const requestRead = vi.fn<(request: PluginUiTestkitExecuteActionInput) => Promise<JsonValue>>()
@@ -176,6 +184,18 @@ it('addresses one mounted Workbench and admits draft disclosure at P3 before rea
     expect(requestRead).toHaveBeenLastCalledWith(expect.objectContaining({
       action: databaseActionLocalIdV1(DATABASE_ACCESS_READ_ACTION_ID_V1), input: { target: descriptor.target },
     }));
+    expect(clearHistory).toBeTypeOf('function');
+    if (!clearHistory) throw new Error('Mounted Workbench history Action was not registered');
+    await expect(clearHistory({ address: { mountId: 'different-mount' } }, context))
+      .resolves.toEqual({ status: 'unavailable' });
+    requestRead.mockRejectedValueOnce(new PluginError({ code: 'database_agent_access_none' }));
+    await expect(clearHistory({ address }, context)).rejects.toMatchObject({ code: 'database_agent_access_none' });
+    expect(saved.size).toBe(0);
+    await act(async () => {
+      await expect(clearHistory({ address }, context)).resolves.toEqual({ status: 'cleared' });
+    });
+    expect([...saved.values()]).toEqual([{ sql: 'select 42', history: [] }]);
+    await expect(read({ address, section: 'history' }, context)).resolves.toEqual({ status: 'ready', history: [] });
     await act(async () => {
       await expect(navigate({ address, mode: 'data', relation: invoices,
         filters: { kind: 'null', column: 'number', isNull: false } }, context))
@@ -188,7 +208,7 @@ it('addresses one mounted Workbench and admits draft disclosure at P3 before rea
     await registration.dispose();
   }
   await expect(read({ address: { mountId }, section: 'draft' }, context)).resolves.toEqual({ status: 'unavailable' });
-  expect(requestRead).toHaveBeenCalledTimes(3);
+  await expect(clearHistory?.({ address: { mountId } }, context)).resolves.toEqual({ status: 'unavailable' });
 });
 
 /** The daemon's Action results for a small Postgres database; the host Action boundary is the only fake. */

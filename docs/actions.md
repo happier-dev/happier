@@ -2391,6 +2391,14 @@ owner as the page controls. Draft Read admits Access Read for the selected
 database under the invoking principal before reading either the current SQL
 draft or SQL-only History from the answering device.
 
+History Clear (`happier.database/actions/ui/history/clear`) uses the same
+published `mountId` and selected-database read admission. Its Client Action
+asks for confirmation by default and clears that database's SQL history on the
+answering device while preserving the current draft. A missing or closed mount
+returns `unavailable`. To save a row export on the answering App from a
+Session, pass the CSV or JSON text returned by `happier.database/actions/rows/export`
+to `files.save`. The App asks the person to choose the destination.
+
 When a deployment is missing its writer, the Workbench keeps the staged edits.
 The manager configures the writer through `deployments.bindings.set` with the
 selected service or managed data target, then applies the same review again.

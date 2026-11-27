@@ -1,4 +1,4 @@
-import { DATABASE_ACCESS_READ_ACTION_ID_V1, UI_DATABASE_DRAFT_READ_ACTION_ID_V1, UI_DATABASE_NAVIGATE_ACTION_ID_V1, UI_DATABASE_OPEN_ACTION_ID_V1 } from '@happier-dev/database-protocol';
+import { DATABASE_ACCESS_READ_ACTION_ID_V1, UI_DATABASE_DRAFT_READ_ACTION_ID_V1, UI_DATABASE_HISTORY_CLEAR_ACTION_ID_V1, UI_DATABASE_NAVIGATE_ACTION_ID_V1, UI_DATABASE_OPEN_ACTION_ID_V1 } from '@happier-dev/database-protocol';
 import type { PluginClientApi, PluginEphemeralSharedScope } from '@happier-dev/plugin-sdk';
 import { databaseActionLocalIdV1, databaseActionMetadata, type PluginActionDefinition, type PluginClientActionContext } from '@happier-dev/plugin-sdk/actions';
 import { DatabaseAccessReadResultV1Schema, DatabaseDescriptorV1Schema, DatabaseFilterV1Schema, DatabaseRelationV1Schema, type DatabaseDescriptorV1 } from '@happier-dev/plugin-sdk/database';
@@ -11,6 +11,7 @@ import { WORKBENCH_PAGE_ARTIFACT_ID, WORKBENCH_PAGE_VIEW_ID } from './views.js';
 const localId = databaseActionLocalIdV1(UI_DATABASE_OPEN_ACTION_ID_V1);
 const navigateId = databaseActionLocalIdV1(UI_DATABASE_NAVIGATE_ACTION_ID_V1);
 const draftReadId = databaseActionLocalIdV1(UI_DATABASE_DRAFT_READ_ACTION_ID_V1);
+const historyClearId = databaseActionLocalIdV1(UI_DATABASE_HISTORY_CLEAR_ACTION_ID_V1);
 const accessReadId = databaseActionLocalIdV1(DATABASE_ACCESS_READ_ACTION_ID_V1);
 const client = {
     scopes: ['global'],
@@ -25,6 +26,7 @@ const navigateInput = defineProtocolObject({ address, ...navigateFields }, { pol
 const draftReadInput = defineProtocolObject({
     address, section: defineProtocolUnion([defineProtocolLiteral('draft'), defineProtocolLiteral('history')]),
 }, { policy: 'closed' });
+const historyClearInput = defineProtocolObject({ address }, { policy: 'closed' });
 const unavailable = { status: 'unavailable' } as const;
 const unavailableSchema = defineProtocolObject({ status: defineProtocolLiteral(unavailable.status) }, { policy: 'closed' });
 const inputSchema = defineProtocolObject({
@@ -58,6 +60,14 @@ export const openWorkbenchActions = {
             defineProtocolObject({ status: defineProtocolLiteral('ready'), history: defineProtocolArray(
                 defineProtocolObject({ sql: defineProtocolString() }, { policy: 'closed' }),
             ) }, { policy: 'closed' }),
+        ]),
+    },
+    [historyClearId]: {
+        ...databaseActionMetadata[UI_DATABASE_HISTORY_CLEAR_ACTION_ID_V1], ...client,
+        surfaces: ['ui', 'agent', 'mcp', 'cli'],
+        inputSchema: historyClearInput,
+        resultSchema: defineProtocolUnion([unavailableSchema,
+            defineProtocolObject({ status: defineProtocolLiteral('cleared') }, { policy: 'closed' }),
         ]),
     },
 } satisfies Record<string, PluginActionDefinition>;
@@ -102,6 +112,24 @@ async function withMountedWorkbench<T>(
     }
 }
 
+async function withAdmittedConsoleText<T>(
+    context: PluginClientActionContext,
+    mountId: string,
+    invoke: (text: ReturnType<WorkbenchInstance['console']>['text']) => Promise<T> | T,
+) {
+    return withMountedWorkbench(context, mountId, async ({ instance, targetKey }, current) => {
+        // Use the invocation capability so Access Read sees the requester, regardless of who owns the page.
+        const target = instance.target(targetKey).target;
+        const rawAdmission = await context.ui.executeAction(accessReadId,
+            projectNativeJsonValueForTransport({ target }), { signal: context.signal });
+        const admission = DatabaseAccessReadResultV1Schema.safeParse(rawAdmission);
+        if (!admission.success || !current()) return unavailable;
+        const { text } = instance.console(targetKey);
+        await text.load();
+        return current() ? invoke(text) : unavailable;
+    });
+}
+
 /** Send a location intent through the same surface navigation port on the panel and the Action. */
 export async function openWorkbenchPage(
     ui: Pick<PluginUiHostApi, 'openSurface'>,
@@ -130,20 +158,17 @@ export function activateWorkbenchClientActions(api: PluginClientApi): void {
     });
     api.actions.register(draftReadId, (raw, context) => {
         const { address, section } = draftReadInput.parse(raw);
-        return withMountedWorkbench(context, address.mountId, async ({ instance, targetKey }, current) => {
-            // The invocation capability preserves the requesting surface and principal. The mounted host
-            // capability belongs to the person using the page and cannot admit this disclosure.
-            const target = instance.target(targetKey).target;
-            const rawAdmission = await context.ui.executeAction(accessReadId,
-                projectNativeJsonValueForTransport({ target }), { signal: context.signal });
-            const admission = DatabaseAccessReadResultV1Schema.safeParse(rawAdmission);
-            if (!admission.success || !current()) return unavailable;
-            const console = instance.console(targetKey);
-            await console.text.load();
-            if (!current()) return unavailable;
-            const value = console.text.get();
+        return withAdmittedConsoleText(context, address.mountId, text => {
+            const value = text.get();
             return section === 'draft' ? { status: 'ready', sql: value.sql }
                 : projectNativeJsonValueForTransport({ status: 'ready', history: value.history });
+        });
+    });
+    api.actions.register(historyClearId, (raw, context) => {
+        const { address } = historyClearInput.parse(raw);
+        return withAdmittedConsoleText(context, address.mountId, async text => {
+            await text.clearHistory();
+            return { status: 'cleared' };
         });
     });
 }

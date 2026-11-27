@@ -2050,6 +2050,7 @@
 | `./database` | `TelemetryMetricsReadResultV1` | type | any |
 | `./database` | `TelemetryMetricsReadResultV1Schema` | value | any |
 | `./database` | `UI_DATABASE_DRAFT_READ_ACTION_ID_V1` | value | any |
+| `./database` | `UI_DATABASE_HISTORY_CLEAR_ACTION_ID_V1` | value | any |
 | `./database` | `UI_DATABASE_NAVIGATE_ACTION_ID_V1` | value | any |
 | `./database` | `UI_DATABASE_OPEN_ACTION_ID_V1` | value | any |
 | `./database` | `captureSummaryFailed` | value | any |

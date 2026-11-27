@@ -544,6 +544,7 @@ const FEATURE_PROTOCOL_SDK_IMPORT_ALLOWLIST: Readonly<Record<string, ReadonlySet
         'TelemetryMetricsReadResultV1',
         'TelemetryMetricsReadResultV1Schema',
         'UI_DATABASE_DRAFT_READ_ACTION_ID_V1',
+        'UI_DATABASE_HISTORY_CLEAR_ACTION_ID_V1',
         'UI_DATABASE_NAVIGATE_ACTION_ID_V1',
         'UI_DATABASE_OPEN_ACTION_ID_V1',
         'readProductionCaptureFindingGroupKeyV1',
