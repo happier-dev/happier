@@ -13,8 +13,8 @@ import { projectRegistryMarketplacePage, type PluginMarketplaceDiscoverPage,
 import type { PluginListingRouteParams } from './pluginsSurfaceRoutes';
 import type { RegistryFailureStatus } from '@/registries/describeRegistrySourceStatus';
 
-type CatalogSelection = PluginListingRouteParams | Readonly<Omit<RegistryItemPointerV1, 'version'> & { version?: string }>;
-type CatalogQuery = Readonly<{ text: string; sourceId: string | null; sourceIds?: readonly string[]; listing?: CatalogSelection }>;
+export type PluginCatalogSelection = PluginListingRouteParams | Readonly<Omit<RegistryItemPointerV1, 'version'> & { version?: string }>;
+type CatalogQuery = Readonly<{ text: string; sourceId: string | null; sourceIds?: readonly string[]; listing?: PluginCatalogSelection }>;
 
 export type PluginCatalogState = Readonly<{
     execution: ReturnType<typeof useMountedActionExecution>;
@@ -50,7 +50,7 @@ export type PluginCatalogState = Readonly<{
 type PluginCatalogParams = Readonly<{
     enabled?: boolean;
     browse?: boolean;
-    selection?: CatalogSelection;
+    selection?: PluginCatalogSelection;
     /** Shared Add uses the same producer with its mounted search/source draft. */
     query?: Readonly<{ text: string; sourceId: string | null; sourceIds?: readonly string[] }>;
     initialSourceId?: string;

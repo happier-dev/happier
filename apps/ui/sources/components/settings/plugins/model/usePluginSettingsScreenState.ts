@@ -28,7 +28,7 @@ import type { PluginDevLoopActionIdV1 } from '@happier-dev/protocol/actions/acti
 import { reviewManagedResourceRemoval } from '@/components/settings/machines/managed/reviewManagedResourceRemoval';
 import type { ManagedResourceDispositionV1 } from '@happier-dev/protocol/machines/managed/managedDependencyV1';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
-import { usePluginCatalog } from './usePluginCatalog';
+import { usePluginCatalog, type PluginCatalogSelection, type PluginCatalogState } from './usePluginCatalog';
 import { usePluginInstallReviewSet } from './usePluginInstallReviewSet';
 import { buildPluginCatalogInstallInput } from './buildPluginCatalogInstallInput';
 import type { PluginGitSourceV1 } from '@happier-dev/protocol/plugins/source-spec';
@@ -275,11 +275,17 @@ export type PluginGitSourcePreviewResult =
     | Readonly<{ kind: 'preview'; preview: z.infer<typeof PluginGitPreviewActionOutputSchema> }>
     | Readonly<{ kind: 'failed'; message: string }>;
 
-export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolean; management?: boolean; initialView?: PluginSettingsViewId; listing?: PluginListingRouteParams; initialCatalogSourceId?: string }> = {}): PluginSettingsScreenState {
+export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolean; management?: boolean; initialView?: PluginSettingsViewId; listing?: PluginCatalogSelection; initialCatalogSourceId?: string }> = {}): PluginSettingsScreenState & Pick<PluginCatalogState, 'selectedItem'> {
     const layoutPresented = useLayoutPresentationActive();
     const presented = params.focused !== false && layoutPresented;
     const [activeView, setActiveView] = React.useState<PluginSettingsViewId>(params.initialView ?? 'installed');
-    const managementDemanded = presented && (params.management ?? (activeView === 'installed' || params.listing !== undefined));
+    const catalog = usePluginCatalog({ enabled: presented && (activeView === 'discover' || params.listing !== undefined), browse: activeView === 'discover',
+        selection: params.listing, initialSourceId: params.initialCatalogSourceId });
+    // Store's native reference acquires listing operations once its exact item resolves.
+    const defaultManagement = params.listing
+        ? 'pluginId' in params.listing || catalog.selectedItem !== null
+        : activeView === 'installed';
+    const managementDemanded = presented && (params.management ?? defaultManagement);
     const activeServer = useActiveServerSnapshot();
     const availabilityReader = useActivePluginAccountAvailabilityReader();
     const accountInstalledAdmission = React.useMemo(() => availabilityReader?.readInstalledPlugins() ?? null, [availabilityReader]);
@@ -326,8 +332,6 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
     const resolveCurrentExecutionTarget = administration.resolveCurrentExecutionTarget;
     const isDaemonSettingsTargetCurrent = administration.isTargetCurrent;
 
-    const catalog = usePluginCatalog({ enabled: presented && (activeView === 'discover' || params.listing !== undefined), browse: activeView === 'discover',
-        selection: params.listing, initialSourceId: params.initialCatalogSourceId });
     const { discoverEntries } = catalog;
     const installReviewSet = usePluginInstallReviewSet({ resolveInstallEntry: catalog.resolveInstallEntry,
         candidates: administrationTargetSelection.candidates, getSignal: installedExecution.getSignal });

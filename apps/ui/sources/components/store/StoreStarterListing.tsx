@@ -8,11 +8,22 @@ import { useOpenNewApp } from '@/components/projects/starters/newAppPresentation
 import { StoreItemMark } from './catalog/StoreItemMark';
 import { t } from '@/text';
 
+export type StoreStarterListingState = Readonly<{
+    config: CapabilityListingConfig<RegistryItemV1>;
+    item: RegistryItemV1 | null;
+    resolving: boolean;
+    error: ReturnType<typeof useRegistryItem>['error'];
+    status: ReturnType<typeof useRegistryItem>['status'];
+    refresh: ReturnType<typeof useRegistryItem>['refresh'];
+}>;
+
 /** The registry owns the read; New app owns using the saved starter. */
-export function useStoreStarterListing(reference: MarketplaceCatalogReferenceV1) {
-    const selected = reference.type === 'registryItem' && reference.kind === 'starter' ? reference : null;
-    const read = useRegistryItem({ kind: 'starter', sourceId: selected?.sourceId ?? '', itemId: selected?.itemId ?? '',
-        ...(selected?.version ? { version: selected.version } : {}) }, selected !== null);
+export function StoreStarterListing({ reference, children }: Readonly<{
+    reference: Extract<MarketplaceCatalogReferenceV1, { type: 'registryItem' }>;
+    children: (state: StoreStarterListingState) => React.ReactNode;
+}>): React.ReactNode {
+    const read = useRegistryItem({ kind: 'starter', sourceId: reference.sourceId, itemId: reference.itemId,
+        ...(reference.version ? { version: reference.version } : {}) });
     const openNewApp = useOpenNewApp();
     const config = React.useMemo<CapabilityListingConfig<RegistryItemV1>>(() => ({
         catalog: { itemKey: item => item.summary.itemId },
@@ -25,5 +36,5 @@ export function useStoreStarterListing(reference: MarketplaceCatalogReferenceV1)
         } } }),
         testID: 'store.starter',
     }), [openNewApp]);
-    return { config, item: read.item, resolving: read.loading, error: read.error, status: read.status, refresh: read.refresh };
+    return children({ config, item: read.item, resolving: read.loading, error: read.error, status: read.status, refresh: read.refresh });
 }

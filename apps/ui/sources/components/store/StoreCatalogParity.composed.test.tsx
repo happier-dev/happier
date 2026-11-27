@@ -171,6 +171,23 @@ it.each([true, false])('R6 Add reaches the existing install Action and preserves
     expect(dialogs.confirm).not.toHaveBeenCalled();
 });
 
+it.each(['page', 'pane'] as const)('opens one exact plugin catalog owner on a Store %s', async presentation => {
+    const { answer, sourceId, sourceUrl } = await setup(`exact-plugin-${presentation}`, 'plugin');
+    answer('/catalog.json', { body: createRegistryPluginCatalogFixture({ sourceUrl,
+        entries: [{ pluginId: 'some.plugin', title: 'Pinned Plugin', version: '1.2.3' }] }) });
+    const { StorePluginListing } = await import('./StorePluginListing');
+    const { PluginListingPane, PluginListingScreen, PluginListingView } = await import('@/components/settings/plugins/listing/PluginListingScreen');
+    const screen = await renderScreen(<StoreListingBody reference={{ type: 'registryItem', kind: 'plugin',
+        sourceId, itemId: 'some.plugin', version: '1.2.3' }} presentation={presentation} onClose={() => {}} />);
+    await waitForHomeGovernance(() => expect(screen.findByTestId('settings.plugins.listing.header')).toBeTruthy());
+    const view = screen.findAllByType(PluginListingView)[0];
+    expect(view?.props).toMatchObject({ sourceId, pluginId: 'some.plugin', version: '1.2.3' });
+    // Both native containers use the same composed listing. These components
+    // own catalog acquisition; PluginListingView itself only presents it.
+    expect(screen.findAllByType(StorePluginListing).length + screen.findAllByType(PluginListingPane).length
+        + screen.findAllByType(PluginListingScreen).length).toBe(1);
+});
+
 it('R8/H5 uses the same catalog identity fallback in Store, Settings and Discover', async () => {
     const { answer, sourceId, sourceUrl } = await setup('plugin-identity', 'plugin');
     answer('/catalog.json', { body: createRegistryPluginCatalogFixture({ sourceUrl,

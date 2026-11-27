@@ -18,10 +18,7 @@ import type { CapabilityAddModalConfig } from '@/components/capabilities/add/Cap
 import { RegistrySourcesUnavailable } from '@/components/capabilities/add/RegistrySourcesUnavailable';
 import { PluginListingRoute } from '@/components/settings/plugins/listing/PluginListingRoute';
 import { CorePluginUiPresentationScope } from '@/components/plugins/surfaces/CorePluginUiPresentationScope';
-import {
-  PluginListingPane,
-  PluginListingScreen,
-} from '@/components/settings/plugins/listing/PluginListingScreen';
+import { PluginListingView } from '@/components/settings/plugins/listing/PluginListingScreen';
 import { buildStoreListingRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 import { usePluginsOpenItem } from '@/components/settings/plugins/model/usePluginsOpenItem';
 import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
@@ -423,11 +420,7 @@ function ListingContent(
       return state.resolving ? loading : catalogFailure(state.config.catalog.sourceFailures);
     case 'plugin':
       if (state.listing)
-        return props.presentation === 'pane' ? (
-          <PluginListingPane {...state.listing} />
-        ) : (
-          <PluginListingScreen {...state.listing} />
-        );
+        return <PluginListingView {...state.listing} state={state.state} presentation={props.presentation} listingRequested />;
       if (state.resolving) return loading;
       return state.error ? (
         <ListingState

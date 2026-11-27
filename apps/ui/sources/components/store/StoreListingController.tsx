@@ -21,7 +21,7 @@ import { StoreSkillListing, type StoreSkillListingState } from './StoreSkillList
 import { StoreAgentListing, type StoreAgentListingState } from './StoreAgentListing';
 import { StorePluginListing, type StorePluginListingState } from './StorePluginListing';
 import { resolveStoreContributionRoute } from './catalog/useStoreOpenReference';
-import { useStoreStarterListing } from './StoreStarterListing';
+import { StoreStarterListing, type StoreStarterListingState } from './StoreStarterListing';
 import { StoreItemMark } from './catalog/StoreItemMark';
 import { presentBrowserExtensionInstallForm } from './submitBrowserExtensionMutation';
 import { StoreThemeListingController } from './StoreThemeListingController';
@@ -37,11 +37,13 @@ type BrowserExtensionListingState = Readonly<{
 }>;
 
 /** Catalog selection and presentation only; the existing browser Action owns acquisition, review and restart. */
-function useBrowserExtensionListing(reference: MarketplaceCatalogReferenceV1): BrowserExtensionListingState {
-    const selected = reference.type === 'registryItem' && reference.kind === 'browserExtension' ? reference : null;
-    const read = useRegistryItem({ kind: 'browserExtension', sourceId: selected?.sourceId ?? '',
-        itemId: selected?.itemId ?? '', ...(selected?.version ? { version: selected.version } : {}) }, selected !== null);
-    const sourceTitle = useRegistrySourceDescriptor(selected?.sourceId ?? '', selected !== null)?.title;
+function StoreBrowserExtensionListing({ reference, children }: Readonly<{
+    reference: Extract<MarketplaceCatalogReferenceV1, { type: 'registryItem' }>;
+    children: (state: BrowserExtensionListingState) => React.ReactNode;
+}>): React.ReactNode {
+    const read = useRegistryItem({ kind: 'browserExtension', sourceId: reference.sourceId,
+        itemId: reference.itemId, ...(reference.version ? { version: reference.version } : {}) });
+    const sourceTitle = useRegistrySourceDescriptor(reference.sourceId)?.title;
     const scope = useAccountSettingsScope();
     const execution = useMountedActionExecution(scope);
     const { binding, execute, getSignal } = execution;
@@ -66,7 +68,7 @@ function useBrowserExtensionListing(reference: MarketplaceCatalogReferenceV1): B
             } } }),
         testID: 'store.browserExtension',
     }), [read.item, read.loading, execution.ready, binding, execute, getSignal, seedMachineId, seedProfileId, sourceTitle]);
-    return { config, item: read.item, resolving: read.loading, error: read.error, status: read.status, refresh: read.refresh };
+    return children({ config, item: read.item, resolving: read.loading, error: read.error, status: read.status, refresh: read.refresh });
 }
 
 export type StoreListingState =
@@ -76,7 +78,7 @@ export type StoreListingState =
     | (Readonly<{ kind: 'agent' }> & StoreAgentListingState)
     | (Readonly<{ kind: 'plugin' }> & StorePluginListingState)
     | (Readonly<{ kind: 'browserExtension' }> & BrowserExtensionListingState)
-    | (Readonly<{ kind: 'starter' }> & ReturnType<typeof useStoreStarterListing>)
+    | (Readonly<{ kind: 'starter' }> & StoreStarterListingState)
     | Readonly<{ kind: 'continuation'; href: string }>
     | Readonly<{ kind: 'unavailable' }>;
 
@@ -89,8 +91,6 @@ export function StoreListingController(props: Readonly<{
 }>): React.ReactNode {
     const { reference, children, onClose } = props;
     const router = useRouter();
-    const browserExtension = useBrowserExtensionListing(reference);
-    const starter = useStoreStarterListing(reference);
     const openMcp = React.useCallback<NonNullable<React.ComponentProps<typeof StoreMcpListing>['onAdded']>>((serverId, options) => {
         const result = runGuardedNavigation(() => router.push(mcpServerRoute(serverId, options) as never));
         if (result !== true) fireAndForget(result, { tag: 'StoreListingController.mcp' });
@@ -107,8 +107,10 @@ export function StoreListingController(props: Readonly<{
     switch (reference.kind) {
         case 'theme': return <StoreThemeListingController key={key} listing={reference}>
             {view => children({ kind: 'theme', view })}</StoreThemeListingController>;
-        case 'starter': return children({ kind: 'starter', ...starter });
-        case 'browserExtension': return children({ kind: 'browserExtension', ...browserExtension });
+        case 'starter': return <StoreStarterListing key={key} reference={reference}>
+            {state => children({ kind: 'starter', ...state })}</StoreStarterListing>;
+        case 'browserExtension': return <StoreBrowserExtensionListing key={key} reference={reference}>
+            {state => children({ kind: 'browserExtension', ...state })}</StoreBrowserExtensionListing>;
         case 'mcpServer': return <StoreMcpListing key={key} selection={reference} onClose={onClose} onAdded={openMcp} continuationId={props.continuationId}>
             {state => children({ kind: 'mcpServer', ...state })}</StoreMcpListing>;
         case 'skill': return <StoreSkillListing key={key} selection={reference} onClose={onClose} onAdded={openSkill}>
