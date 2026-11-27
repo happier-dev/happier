@@ -277,6 +277,35 @@ describe('ActionInputFormModal', () => {
         } finally { await act(async () => { form.retire(); }); }
     });
 
+    it('says under an empty required field that it is needed, and submits only once it is filled', async () => {
+        const submit = vi.fn(async (_candidate: Readonly<Record<string, unknown>>) => ({ ok: true }));
+        const form = createActionInputForm({
+            presentation: { title: 'Leave a note', description: null, inputHints: { fields: [
+                { path: 'note', title: 'Note', widget: 'text', required: true },
+                { path: 'tone', title: 'Tone', widget: 'text' },
+            ] } },
+            submit,
+        });
+        const setChrome = vi.fn();
+        try {
+            const screen = await renderScreen(<ActionInputFormModal form={form} onClose={vi.fn()} setChrome={setChrome} />);
+            const press = async () => {
+                const button = findSubmitButton(setChrome.mock.calls.at(-1)?.[0] as ChromeWithFooter);
+                if (!button) throw new Error('Expected form submit');
+                await act(async () => { button.props.onPress?.(); await Promise.resolve(); });
+            };
+            expect(screen.getTextContent()).not.toContain('pluginRuntime.requiredFieldMissing');
+            await press();
+            // The owner would refuse an empty required value: the form says so where it is, and sends nothing.
+            expect(submit).not.toHaveBeenCalled();
+            expect(screen.getTextContent()).toContain('pluginRuntime.requiredFieldMissing');
+            await act(async () => { form.replaceInput({ ...form.getInput(), note: 'Ship it' }); });
+            expect(screen.getTextContent()).not.toContain('pluginRuntime.requiredFieldMissing');
+            await press();
+            expect(submit.mock.calls[0]?.[0]).toMatchObject({ note: 'Ship it' });
+        } finally { await act(async () => { form.retire(); }); }
+    });
+
     it('names a hosted setup with the host heading and continues with it', async () => {
         const setChrome = vi.fn();
         const form = createActionInputForm({

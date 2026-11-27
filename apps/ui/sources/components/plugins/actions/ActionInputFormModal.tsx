@@ -62,6 +62,16 @@ function isSuccessfulSubmit(
     return outcome.kind === 'settled' && outcome.outcome.ok;
 }
 
+/** A required field the person left empty: its owner would refuse the input, so the form says so first. */
+function isMissingRequiredValue(
+    field: Readonly<{ path: string; required?: boolean }>,
+    input: Readonly<Record<string, unknown>>,
+): boolean {
+    if (field.required !== true) return false;
+    const value = readInputPath(input, field.path);
+    return value === undefined || value === null || (typeof value === 'string' && value.trim() === '');
+}
+
 export type ReadSubmittedActionOption = (fieldPath: string) => Readonly<{ value: string; label: string }> | undefined;
 
 export type ValidateActionInput = (
@@ -92,6 +102,8 @@ export function ActionInputFormModal(props: ActionInputFormModalProps): React.Re
     const onRetireRef = React.useRef(props.onRetire);
     onRetireRef.current = props.onRetire;
     const [error, setError] = React.useState<ReturnType<typeof presentActionExecutionFailure> | null>(null);
+    // Set by a press while a shown required field is empty; each such field then says so until it is filled.
+    const [requiredAsked, setRequiredAsked] = React.useState(false);
 
     React.useEffect(() => {
         const unsubscribe = props.form.subscribe(() => refresh());
@@ -136,6 +148,11 @@ export function ActionInputFormModal(props: ActionInputFormModalProps): React.Re
 
     const submit = React.useCallback(() => {
         if (props.form.isSubmitting() || props.validateInput?.(props.form.getInput())) return;
+        const current = props.form.getInput();
+        if (shownFields.some(field => isMissingRequiredValue(field, current))) {
+            setRequiredAsked(true);
+            return;
+        }
         props.onSubmitOptions?.(path => {
             const field = fields.find(candidate => candidate.path === path);
             const value = readInputPath(props.form.getInput(), path);
@@ -176,7 +193,7 @@ export function ActionInputFormModal(props: ActionInputFormModalProps): React.Re
                 setError(presentActionExecutionFailure({ ok: false, ...normalizeActionExecutorThrownError(error) }, t('pluginRuntime.unavailableGeneric')));
             }
         })();
-    }, [fieldOptions.resolveOptions, fields, props.form, props.onClose, props.onSubmitOptions, props.validateInput]);
+    }, [fieldOptions.resolveOptions, fields, props.form, props.onClose, props.onSubmitOptions, props.validateInput, shownFields]);
 
     const repairConnectedAccounts = React.useCallback(() => {
         // A fresh open after repair re-resolves the form's options on its admitted target.
@@ -248,7 +265,8 @@ export function ActionInputFormModal(props: ActionInputFormModalProps): React.Re
                 editable={!pending}
                 busy={pending}
                 resolveFieldOptions={fieldOptions.resolveOptions}
-                resolveFieldIssue={(field) => field.path === fieldIssuePath ? validation?.message : undefined}
+                resolveFieldIssue={(field) => field.path === fieldIssuePath ? validation?.message
+                    : requiredAsked && isMissingRequiredValue(field, input) ? t('pluginRuntime.requiredFieldMissing') : undefined}
                 onPatch={(patch) => {
                     setError(null);
                     props.form.replaceInput({ ...props.form.getInput(), ...patch });

@@ -1451,6 +1451,42 @@ describe('Plugin Account Availability reader', () => {
             .toBe(projection?.workItemsById[`${manifests[1]!.id}/work-items`]);
     });
 
+    it('completes a released Account Action form from its input schema and keeps the author\'s localized fields', () => {
+        const artifactGraph = PluginUiArtifactsManifestEntryV2Schema.parse({
+            artifactId: 'account-actions', tier: 'reactNative', entry: 'react-native/account-actions/entry.cjs.bundle',
+            digest: artifactDigest,
+            files: [{ relativePath: 'react-native/account-actions/entry.cjs.bundle', digest: artifactDigest, byteSize: 1 }],
+            builtWith: { bundler: 'esbuild', version: '1.0.0' }, executable: { exports: ['activate'] }, hostUiApiRange: '^1.0.0',
+        });
+        const toneTitle = { key: 'fields.tone', fallback: 'Tone' };
+        const manifest = PluginPortableReleaseManifestV1Schema.parse({
+            ...intentRead().release!.normalizedManifest,
+            contributes: { actions: [{ id: 'note', title: 'Leave a note', scopes: ['global'], surfaces: ['ui'],
+                placementBindings: ['commandPalette'], dangerLevel: 'safe',
+                execution: { target: 'account', account: { artifactId: artifactGraph.artifactId, exportName: 'activate' } },
+                inputHints: { fields: [{ path: 'tone', title: toneTitle, widget: 'text' }] },
+                inputSchema: { type: 'object', properties: {
+                    note: { type: 'string', minLength: 1, title: 'Note', description: 'What the note says.' },
+                    tone: { type: 'string' },
+                }, required: ['note'], additionalProperties: false }, resultSchema: { type: 'object' } }] },
+        });
+        const response = PluginAccountAvailabilityIntentReadResponseV1Schema.parse({
+            ...intentRead(), release: { ...intentRead().release!, normalizedManifest: manifest,
+                uiSlots: [{ contributionId: 'note', artifactId: artifactGraph.artifactId, tier: artifactGraph.tier,
+                    platform: 'web', artifactDigest, hostUiApiRange: artifactGraph.hostUiApiRange, artifactGraph }] },
+            uiArtifacts: [],
+        });
+        const store = createPluginAccountAvailabilityReaderStore();
+        store.replace({ scope, snapshot: snapshot({ intentReads: [{ pluginId: manifest.id, response }], materializations: [], snapshots: [] }) });
+        const action = store.bind(scope).readAccountUiProjection()?.actionsById[`${manifest.id}/note`];
+        // The same completed fields the daemon projects: the schema's required note is a field, and the
+        // author's own field keeps its translation descriptor for the presenting host.
+        expect(action?.inputHints?.fields).toEqual([
+            { path: 'tone', title: toneTitle, widget: 'text' },
+            { path: 'note', title: 'Note', description: 'What the note says.', widget: 'text', required: true },
+        ]);
+    });
+
     it.each(['account', 'client'] as const)('projects current %s Actions and exact graphs without a Machine, retiring disabled and replaced custody', (target) => {
         const hostedFile = { relativePath: 'hosted-web/account-hosted/index.html', bytes: new TextEncoder().encode('<main>Account hosted page</main>') };
         const hostedGraph = PluginUiArtifactsManifestEntryV2Schema.parse({

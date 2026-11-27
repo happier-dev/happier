@@ -21095,6 +21095,7 @@ settingsSession: {
   },
     pluginRuntime: {
       invalidParameters: "La requête de cette action a été rejetée car elle est invalide. Vérifiez les données saisies et réessayez.",
+      requiredFieldMissing: "Remplissez ce champ pour continuer.",
         actionFailed: "Cette action a échoué. Vérifie son résultat avant de réessayer.",
         actionUnavailable: "Cette action est indisponible. Vérifie le plugin et la connexion à la machine.",
         actionStale: "Cette action n’est plus à jour. Rouvre-la pour continuer.",

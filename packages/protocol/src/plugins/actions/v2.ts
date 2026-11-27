@@ -533,6 +533,19 @@ export function normalizePluginActionInputHintsV2(
   return deriveActionInputHints(inputSchema, authored);
 }
 
+/**
+ * The host presentation of completed Action input hints: every field the schema
+ * completes, with the author's own fields and form copy kept as authored so the
+ * presenting host resolves their translations. Each projection producer reads this.
+ */
+export function overlayPluginActionAuthoredInputHintsV2(
+  completed: ActionInputHints,
+  authored: PluginActionInputHintsV2 | undefined,
+): PluginActionInputHintsV2 {
+  const authoredByPath = new Map(authored?.fields.map(field => [field.path, field]));
+  return { ...completed, ...authored, fields: completed.fields.map(field => authoredByPath.get(field.path) ?? field) };
+}
+
 /** Normalizes the bounded author declaration into the incumbent Action slash field. */
 export function normalizePluginActionSlashV2(
   slash: PluginActionSlashV2 | undefined,

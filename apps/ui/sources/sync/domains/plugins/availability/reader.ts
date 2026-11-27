@@ -20,6 +20,7 @@ import {
     type PluginAccountExecutionSelectionV1,
 } from '@happier-dev/protocol/plugins/availability';
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
+import { normalizePluginActionInputHintsV2, overlayPluginActionAuthoredInputHintsV2 } from '@happier-dev/protocol/plugins/actions/v2';
 import { derivePluginAccountExecutionArtifactSlots, derivePluginContributionRegistrationRights } from '@happier-dev/protocol/plugins/contributions/catalog';
 import { PluginUiArtifactsManifestEntryV2Schema, isPluginUiExecutableArtifactHostCompatibleV1, PLUGIN_UI_HOST_API_VERSION_V1,
     type PluginUiArtifactsManifestEntryV2, type PluginUiArtifactDigestV1 } from '@happier-dev/protocol/plugins/ui';
@@ -172,6 +173,19 @@ export type PluginAccountAvailabilityReleaseClassificationV1 = Readonly<{
             reason: 'disabled' | 'plugin_mismatch' | 'release_unavailable' | 'non_portable';
         }>;
 }>;
+
+/**
+ * An Account Action's form is the one the daemon projects for its own Actions
+ * (`apps/cli/.../normalize/actionInput.ts`): fields completed from the input
+ * schema, with the author's localized fields kept for the presenting host.
+ */
+function projectAccountActionInputHints(action: Readonly<{
+    inputHints?: Parameters<typeof normalizePluginActionInputHintsV2>[0];
+    inputSchema?: Parameters<typeof normalizePluginActionInputHintsV2>[1];
+}>): Readonly<{ inputHints?: ReturnType<typeof overlayPluginActionAuthoredInputHintsV2> }> {
+    const completed = normalizePluginActionInputHintsV2(action.inputHints, action.inputSchema);
+    return completed ? { inputHints: overlayPluginActionAuthoredInputHintsV2(completed, action.inputHints) } : {};
+}
 
 export function projectPluginAccountAvailabilityMaterializationIdentity(
     materialization: PluginMachineMaterializationV1,
@@ -2196,7 +2210,7 @@ function deriveAccountUiProjection(input: Readonly<{
                 pluginVersion: manifest.version, occurrenceId: custodyId, title: action.title,
                 ...(action.description ? { description: action.description } : {}),
                 ...(action.icon ? { icon: action.icon } : {}),
-                ...(action.inputHints ? { inputHints: action.inputHints } : {}),
+                ...projectAccountActionInputHints(action),
                 scopes: action.scopes, surfaces: action.surfaces, execution,
                 ...(action.sessionTarget ? { sessionTarget: action.sessionTarget } : {}),
                 placementBindings: action.placementBindings, dangerLevel: action.dangerLevel,

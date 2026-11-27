@@ -1,5 +1,5 @@
 import type { ActionInputHints, PluginActionContributionV2 } from '@happier-dev/protocol';
-import { normalizePluginActionInputHintsV2 } from '@happier-dev/protocol/plugins/actions/v2';
+import { normalizePluginActionInputHintsV2, overlayPluginActionAuthoredInputHintsV2 } from '@happier-dev/protocol/plugins/actions/v2';
 import { defineDerivedDeclarationField, forwardDeclarationField, readPrecomputedDeclarationField } from '@happier-dev/protocol/plugins/contributions/deferredDeclarationFields';
 import type { ResolvedActionLocalizedPresentation } from '../types';
 
@@ -25,15 +25,7 @@ export function projectPluginActionLocalizedPresentation(
   definition: PluginActionContributionV2,
   projected: Readonly<{ inputHints: ActionInputHints | null }>,
 ): ResolvedActionLocalizedPresentation {
-  const authored = definition.inputHints;
-  const localize = (inputHints: ActionInputHints) => {
-    const authoredByPath = new Map(authored?.fields.map(field => [field.path, field]));
-    return {
-      ...inputHints,
-      ...authored,
-      fields: inputHints.fields.map(field => authoredByPath.get(field.path) ?? field),
-    };
-  };
+  const localize = (inputHints: ActionInputHints) => overlayPluginActionAuthoredInputHintsV2(inputHints, definition.inputHints);
   const presentation: Record<string, unknown> = {
     title: definition.title,
     ...(definition.description === undefined ? {} : { description: definition.description }),

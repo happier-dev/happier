@@ -21131,6 +21131,7 @@ settingsSession: {
   },
     pluginRuntime: {
       invalidParameters: "このアクションのリクエストは無効なため拒否されました。入力内容を確認して、もう一度お試しください。",
+      requiredFieldMissing: "続行するには、この項目を入力してください。",
         actionFailed: "このアクションは失敗しました。再試行する前に結果を確認してください。",
         actionUnavailable: "このアクションは利用できません。プラグインとマシンの接続を確認してください。",
         actionStale: "このアクションは最新ではありません。もう一度開いて続行してください。",

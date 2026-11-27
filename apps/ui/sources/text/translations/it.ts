@@ -21223,6 +21223,7 @@ settingsSession: {
   },
     pluginRuntime: {
       invalidParameters: "La richiesta di questa azione è stata rifiutata perché non valida. Controlla i dati e riprova.",
+      requiredFieldMissing: "Compila questo campo per continuare.",
         actionFailed: "Questa azione non è riuscita. Controlla il risultato prima di riprovare.",
         actionUnavailable: "Questa azione non è disponibile. Controlla il plugin e la connessione alla macchina.",
         actionStale: "Questa azione non è più attuale. Riaprila per continuare.",
