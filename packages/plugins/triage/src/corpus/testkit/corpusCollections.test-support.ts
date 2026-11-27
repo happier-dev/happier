@@ -1,5 +1,10 @@
 import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol';
-import type { PluginAccountCollection } from '@happier-dev/plugin-sdk/collections';
+import { derivePluginCollectionIdentityTagV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import {
+    createInMemoryAccountCollection,
+    type InMemoryAccountCollection,
+    type PluginAccountCollection,
+} from '@happier-dev/plugin-sdk/collections';
 
 import type { CorpusCollectionsV1 } from '../collections/bindCorpusCollections.js';
 import {
@@ -7,10 +12,6 @@ import {
     CORPUS_SOURCE_INSTANCES_COLLECTION,
     CORPUS_USER_MARKS_COLLECTION,
 } from '../collections/definitions.js';
-import {
-    createInMemoryAccountCollection,
-    type InMemoryAccountCollection,
-} from '../collections/inMemoryAccountCollection.js';
 import type { CorpusStoredValueV1 } from '../collections/handles.js';
 import type { TriageListEntriesInputV1 } from '../../actions/listEntriesProtocol.js';
 import { readActiveConfiguredSourceRows } from '../configuration/readConfiguredSourceRows.js';
@@ -69,8 +70,17 @@ export function createTestkitCorpusCollections(options: Readonly<{
     const material = accountEncryptionMode === 'e2ee'
         ? options.material ?? testkitAccountMaterial(1)
         : null;
+    const pluginId = 'happier.triage';
     const bind = (definition: Parameters<typeof createInMemoryAccountCollection>[0]['definition']) =>
-        createInMemoryAccountCollection({ definition, accountEncryptionMode, material });
+        createInMemoryAccountCollection({
+            definition,
+            pluginId,
+            ...(accountEncryptionMode === 'e2ee' ? {
+                identityTag: async ({ field, components }) => derivePluginCollectionIdentityTagV1({
+                    accountEncryptionMode, material, pluginId, collectionId: definition.id, field, components,
+                }),
+            } : {}),
+        });
 
     const sourceInstances = bind(CORPUS_SOURCE_INSTANCES_COLLECTION);
     const sessionLinks = bind(CORPUS_SESSION_LINKS_COLLECTION);
