@@ -6,12 +6,13 @@ import type { TriageEntrySessionStartPhaseV1 } from '../../sessions/entrySession
 import type { TriageNewSessionFailureV1 } from './newSessionSeedCommand.js';
 
 /**
- * A Session id or canonical pending creation answers for the logical start.
+ * A Session id or a resumable creation answers for the logical start.
  * An early refusal only answers for its dispatch, not an earlier lost reply.
  * Both single and bulk controllers use this before releasing unknown custody.
  */
 export function resolvesTriageUnknownSessionStartV1(result: TriageStartEntrySessionResultV1): boolean {
   return result.type === 'creationPending'
+    || (result.type === 'creationFailed' && result.preparedReviewWorkspace !== undefined)
     || result.type === 'linkPending'
     || result.type === 'openPending'
     || result.type === 'linked'

@@ -205,6 +205,7 @@ export type TriageEntrySessionStartResultV1 = (
         failureCode: Extract<PluginActionResultById['session.spawn_new'], { type: 'error' }>['code'];
         failureCause?: ReturnType<typeof ActionFailureCauseV1Schema.parse>;
         spawnFailure: JsonValue;
+        committedSessionId?: SessionId;
         creationKey: string;
         workspace: TriageEntrySessionWorkspaceFactsV1;
     }>
@@ -302,8 +303,11 @@ async function completeEntrySessionDestination(
         ...('reason' in result ? { reason: result.reason } : {}),
         ...('details' in result ? { details: result.details } : {}),
     };
-    return { type: 'creationFailed', failureCode: result.code,
-        ...failure, spawnFailure, creationKey: creationKey!, workspace: input.workspace };
+    return {
+        type: 'creationFailed', failureCode: result.code,
+        ...failure, spawnFailure, creationKey: creationKey!, workspace: input.workspace,
+        ...('sessionId' in result && result.sessionId !== undefined ? { committedSessionId: result.sessionId } : {}),
+    };
 }
 
 async function linkDeliverThenOpen(

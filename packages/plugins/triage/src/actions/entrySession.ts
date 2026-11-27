@@ -225,9 +225,19 @@ function projectStartResult(
                 ...(preparedReviewWorkspace === undefined ? {} : { preparedReviewWorkspace }),
             };
         }
-        case 'creationFailed':
-            return { v: 1, type: 'creationFailed', failureCode: result.failureCode, spawnFailure: result.spawnFailure,
-                ...(result.failureCause === undefined ? {} : { failureCause: result.failureCause }) };
+        case 'creationFailed': {
+            const preparedReviewWorkspace = result.committedSessionId === undefined
+                ? undefined
+                : preparedReviewWorkspaceForWire(result.workspace);
+            return {
+                v: 1,
+                type: 'creationFailed',
+                failureCode: result.failureCode,
+                spawnFailure: result.spawnFailure,
+                ...(result.failureCause === undefined ? {} : { failureCause: result.failureCause }),
+                ...(preparedReviewWorkspace === undefined ? {} : { preparedReviewWorkspace }),
+            };
+        }
         case 'workspacePreparationFailed':
             return {
                 v: 1,
@@ -241,11 +251,11 @@ function projectStartResult(
     }
 }
 
-/** Carries source-returned facts across a link/open retry without rerunning SCM. */
+/** Carries source-returned facts across a start retry without rerunning SCM. */
 function preparedReviewWorkspaceForWire(
     workspace: Extract<
         TriageEntrySessionStartResultV1,
-        Readonly<{ type: 'opened' | 'linked' | 'creationPending' | 'linkPending' | 'openPending' }>
+        Readonly<{ type: 'opened' | 'linked' | 'creationPending' | 'creationFailed' | 'linkPending' | 'openPending' }>
     >['workspace'],
 ) {
     if (workspace.kind !== 'preparedReviewWorkspace') return undefined;

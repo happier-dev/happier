@@ -87,6 +87,12 @@ Matching declarations, handlers and readers reload together at the 0.3 direct
 cut. The scoped `../0.2` frontier at `fc0e319f0ed` has no Triage plugin or
 Triage source protocol. No persisted field, migration or wire epoch changes.
 
+The same cut adds an optional prepared workspace to a creation refusal when
+the Session creator already committed the Session. The launcher presents the
+typed refusal and retries creation with the original key and workspace after
+the user acts on the remedy. The prepared workspace uses the existing resume
+input and requires no new persisted state.
+
 ## Initial Task relationship failure causes (unreleased 0.3)
 
 The closed Triage `tasks/create-v1` aggregate result optionally carries

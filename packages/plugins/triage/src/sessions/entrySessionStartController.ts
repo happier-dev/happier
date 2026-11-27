@@ -605,12 +605,11 @@ export function createTriageEntrySessionStartController(
          */
         unresolved?: TriageEntrySessionStartCustodyV1,
     ): Promise<void> => {
-        // Custody is retained for exactly the arms a retry can resume, and
-        // released for every terminal one. A `creationFailed` is terminal by the
-        // orchestrator's own rule — no Session id is disclosed — so the next
-        // visible press is a new logical request with a new key.
+        // A refused launch can resume when the start returns the prepared
+        // workspace for a committed Session. Keep its original creation key.
         const retained = retainedStartInput(input);
         const resumable: TriageEntrySessionStartCustodyV1 | null = result.type === 'creationPending'
+            || (result.type === 'creationFailed' && result.preparedReviewWorkspace !== undefined)
             ? {
                 actionId: request.action.actionId,
                 input: retained,

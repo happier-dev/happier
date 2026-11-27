@@ -733,14 +733,12 @@ const startEntrySessionResult = defineProtocolUnion([
     }, { policy: 'closed' }),
     defineProtocolObject({
         v: defineProtocolLiteral(1),
-        /**
-         * Terminal for this attempt. No Session id is disclosed even by a
-         * creation conflict, so none can be fabricated, linked or opened.
-         */
         type: defineProtocolLiteral('creationFailed'),
         failureCode: defineProtocolString().optional(),
         failureCause: ActionFailureCauseV1ProtocolSchema.optional(),
         spawnFailure: defineProtocolJsonValue().optional(),
+        /** The creator committed the Session. Retry its launch with the admitted workspace and the same key. */
+        preparedReviewWorkspace: TriageStartEntrySessionPreparedReviewWorkspaceV1Schema.optional(),
     }, { policy: 'closed' }),
     defineProtocolObject({
         v: defineProtocolLiteral(1),
