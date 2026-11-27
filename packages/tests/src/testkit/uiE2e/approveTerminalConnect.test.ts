@@ -218,18 +218,21 @@ describe('approveTerminalConnect', () => {
 
   it('accepts confirmed CLI authentication when the browser loses the approval surface without navigating', async () => {
     let approvalVisible = true;
-    const cliAuthentication = Promise.withResolvers<void>();
+    let resolveCliAuthentication!: () => void;
+    const cliAuthentication = new Promise<void>(resolve => {
+      resolveCliAuthentication = resolve;
+    });
     const page = createPage({
       visibleTestIdCount: () => approvalVisible ? 1 : 0,
       onVisibleClick: () => {
         approvalVisible = false;
-        cliAuthentication.resolve();
+        resolveCliAuthentication();
       },
       waitForURL: async () => { throw new Error('still on the terminal connect route'); },
     });
 
     await expect(approveTerminalConnect({
-      page, timeoutMs: 1_000, cliAuthentication: cliAuthentication.promise,
+      page, timeoutMs: 1_000, cliAuthentication,
     })).resolves.toBeUndefined();
   });
 });
