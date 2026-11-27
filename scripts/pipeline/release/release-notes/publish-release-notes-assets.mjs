@@ -20,7 +20,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { readdir } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
@@ -28,6 +28,25 @@ const REQUIRED_BUNDLE_FILES = Object.freeze([
     'release-notes__manifest.json',
     'release-notes__assets-index.json',
 ]);
+
+async function readJsonBundleFile(filePath) {
+    try {
+        return JSON.parse(await readFile(filePath, 'utf-8'));
+    } catch (error) {
+        throw new Error(`Failed to read release notes bundle file ${filePath}: ${error?.message ?? error}`);
+    }
+}
+
+/** A bundle generated with no authored release notes and no media has nothing to publish. */
+async function isEmptyGeneratedBundle(inDir) {
+    const manifest = await readJsonBundleFile(join(inDir, 'release-notes__manifest.json'));
+    const assetsIndex = await readJsonBundleFile(join(inDir, 'release-notes__assets-index.json'));
+    const releaseCount = Array.isArray(manifest?.releases) ? manifest.releases.length : 0;
+    const assetCount = assetsIndex?.assets && typeof assetsIndex.assets === 'object'
+        ? Object.keys(assetsIndex.assets).length
+        : 0;
+    return releaseCount === 0 && assetCount === 0;
+}
 
 function parseFlags(argv) {
     const map = new Map();
@@ -86,6 +105,10 @@ async function main() {
         console.warn(`[release-notes] no files to upload from ${inDir}`);
         return;
     }
+    if (await isEmptyGeneratedBundle(inDir)) {
+        console.log(`[release-notes] no authored release notes or media assets to publish from ${inDir}; skipping GitHub release upload.`);
+        return;
+    }
 
     // Ensure release exists (idempotent; ignore failure if already present).
     try {
@@ -99,6 +122,8 @@ async function main() {
             '--repo', repo,
             '--title', 'Release notes assets',
             '--notes', 'Rolling tag for in-app release-notes story media. Updated by CI.',
+            // A rolling media tag must never become the repository's Latest release.
+            '--latest=false',
         ], { dryRun });
     }
 

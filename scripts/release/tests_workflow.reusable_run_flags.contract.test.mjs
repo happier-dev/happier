@@ -88,7 +88,8 @@ test('push runs keep their complete verdict; only superseded pull request runs s
   const parsed = YAML.parse(await readWorkflow('.github/workflows/tests.yml'));
   assert.equal(
     parsed?.concurrency?.group,
-    "tests-${{ github.workflow }}-${{ github.ref }}${{ inputs.artifact_namespace != '' && format('-{0}', inputs.artifact_namespace) || '' }}",
+    // The event keeps a scheduled run and a push to the same ref from replacing each other's pending run.
+    "tests-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}${{ inputs.artifact_namespace != '' && format('-{0}', inputs.artifact_namespace) || '' }}",
     'the reusable tests workflow must not share its caller concurrency group and cancel the caller',
   );
   const cancels = (event_name, ref_name) => evaluateWorkflowExpression(parsed.concurrency['cancel-in-progress'], { event_name, ref_name });

@@ -221,7 +221,7 @@ on:
         type: string
 
 concurrency:
-  group: tests-${{ github.workflow }}-${{ github.ref }}${{ inputs.artifact_namespace != '' && format('-{0}', inputs.artifact_namespace) || '' }}
+  group: tests-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}${{ inputs.artifact_namespace != '' && format('-{0}', inputs.artifact_namespace) || '' }}
   # Push runs keep their complete exact-SHA verdict: nightly and release source
   # validation consume dev/preview verdicts (verify-existing-ci.mjs), and on
   # v0.3 several sessions push faster than a run lasts, so cancelling would
@@ -3600,6 +3600,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .node-version
       - name: Fetch 0.2 dev history
         run: git fetch --no-tags --filter=blob:none origin '+refs/heads/dev:refs/remotes/origin/dev'
       - name: Report undispositioned 0.2 pipeline commits
