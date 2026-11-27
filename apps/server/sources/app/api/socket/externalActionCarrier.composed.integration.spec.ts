@@ -196,9 +196,12 @@ describe("external Action server-to-daemon request carrier", () => {
         await harness.close();
     });
 
-    it('retains a shared Machine Resource watch for the signed Account and refuses another Account holding the same packet', async () => {
+    it.each([
+        { description: 'retains a shared Machine Resource watch for the signed Account', ownerUseWatch: false },
+        { description: 'updates the mounted request count for a Use watch on an owned Machine', ownerUseWatch: true },
+    ])('$description and refuses another Account holding the same packet', async ({ ownerUseWatch }) => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
-        const requester = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const requester = ownerUseWatch ? owner : await db.account.create({ data: { encryptionMode: 'plain' } });
         const other = await db.account.create({ data: { encryptionMode: 'plain' } });
         const installationId = randomUUID();
         await db.machine.create({ data: {
@@ -209,14 +212,16 @@ describe("external Action server-to-daemon request carrier", () => {
             active: true, operationProtocolCapabilitiesRevision: 1,
             operationProtocolCapabilities: { externalActionExecutionAuthorization: { protocolVersions: [1] } },
         } });
-        const team = await db.team.create({ data: { name: 'Service observers' } });
-        await db.teamMembership.createMany({ data: [owner.id, requester.id].map(accountId => ({
-            teamId: team.id, accountId, role: 'member',
-        })) });
-        const grant = await inTx(tx => setMachineAccessGrantInTx(tx, {
-            actorAccountId: owner.id, machineId, principal: { kind: 'team', teamId: team.id }, level: 'view',
-        }));
-        expect(grant).toMatchObject({ kind: 'saved', readiness: 'ready' });
+        if (!ownerUseWatch) {
+            const team = await db.team.create({ data: { name: 'Service observers' } });
+            await db.teamMembership.createMany({ data: [owner.id, requester.id].map(accountId => ({
+                teamId: team.id, accountId, role: 'member',
+            })) });
+            const grant = await inTx(tx => setMachineAccessGrantInTx(tx, {
+                actorAccountId: owner.id, machineId, principal: { kind: 'team', teamId: team.id }, level: 'view',
+            }));
+            expect(grant).toMatchObject({ kind: 'saved', readiness: 'ready' });
+        }
         const actionId = 'machines.services.list';
         const serverId = await getOrCreateServerIdentityId();
         const actionInput = { serverId, machineId };
@@ -225,11 +230,23 @@ describe("external Action server-to-daemon request carrier", () => {
                 params: { machineId, subscriptionId: 'services', resource: { hostRead: actionId, input: actionInput } } } } };
         const app = createAuthenticatedTestApp({ authentication: 'real' });
         const io = new Server(app.server, { path: '/v1/updates', transports: ['websocket'] });
-        const forwardRpc = vi.fn(async ({ targetUserId, callParams }) => {
+        let retainedRequests = 5;
+        let mountedRequests = retainedRequests;
+        const forwardRpc = vi.fn(async ({ targetUserId, callParams, cancellation, continuationReturn }) => {
             expect(targetUserId).toBe(owner.id);
             const received = ExternalActionDaemonDispatchRequestSchema.parse(callParams);
             expect(received.principal.accountId).toBe(requester.id);
             expect(received.executionAuthorization?.binding.installationId).toBe(installationId);
+            expect(received.executionAuthorization?.binding.admittedMachineRole).toBe('use');
+            if (ownerUseWatch) {
+                expect(continuationReturn).toBeDefined();
+                const daemonSocketId = 'collector-daemon';
+                cancellation.onTargetSelected({ id: daemonSocketId });
+                io.to(continuationReturn.socketId).emit(SOCKET_RPC_EVENTS.CONTINUATION, {
+                    requestId: continuationReturn.requestId, senderSocketId: daemonSocketId,
+                    notification: true, params: { count: retainedRequests },
+                });
+            }
             const prepared = prepareExternalActionResponseEnvelopeV1({ v: 1, actionId, requestId: received.envelope.requestId,
                 execution: { ok: true, result: { ok: true, subscriptionId: 'services', digest: `sha256:${'a'.repeat(64)}` } } });
             return { ok: true as const, result: createExternalActionDaemonDispatchResponseV1(prepared) };
@@ -251,7 +268,11 @@ describe("external Action server-to-daemon request carrier", () => {
             const minted = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
                 headers: { authorization: `Bearer ${token}` }, payload: request });
             expect(minted.statusCode, minted.body).toBe(200);
-            const executionAuthorization = ExternalActionExecutionAuthorizationV1Schema.parse(minted.json());
+            const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(minted.json());
+            // Collector reads sign Use even when the same Account owns the hosting Machine.
+            const executionAuthorization = ownerUseWatch
+                ? await auth.mintExternalActionExecutionAuthorization({ ...authorization.binding, admittedMachineRole: 'use' })
+                : authorization;
             const endpoint = await app.listen({ host: '127.0.0.1', port: 0 });
             for (const bearer of [token, otherToken]) {
                 const socket = ioClient(endpoint, { path: '/v1/updates', transports: ['websocket'], auth: { token: bearer } });
@@ -260,7 +281,14 @@ describe("external Action server-to-daemon request carrier", () => {
             }
             const packet = { method: `${machineId}:${RPC_METHODS.DAEMON_PLUGIN_UI_HOST_RESOURCE_FOLLOW}`,
                 requestId: 'parked-resource', continuation: true, timeoutMs: null, params: { ...request, executionAuthorization } };
-            await expect(sockets[0]!.timeout(5_000).emitWithAck(SOCKET_RPC_EVENTS.CALL, packet)).resolves.toMatchObject({ ok: true });
+            sockets[0]!.on(SOCKET_RPC_EVENTS.CONTINUATION, frame => {
+                if (frame.requestId === packet.requestId && frame.notification) mountedRequests = frame.params.count;
+            });
+            retainedRequests += 1;
+            const acknowledgement = await sockets[0]!.timeout(5_000).emitWithAck(SOCKET_RPC_EVENTS.CALL, packet);
+            if (ownerUseWatch) expect({ mountedRequests, retainedRequests }, JSON.stringify(acknowledgement))
+                .toEqual({ mountedRequests: 6, retainedRequests: 6 });
+            expect(acknowledgement).toMatchObject({ ok: true });
             await expect(sockets[1]!.timeout(5_000).emitWithAck(SOCKET_RPC_EVENTS.CALL, packet)).resolves
                 .toMatchObject({ ok: false, errorCode: 'RPC_FORBIDDEN' });
             await db.account.update({ where: { id: requester.id }, data: { tokenEpoch: { increment: 1 } } });

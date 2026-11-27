@@ -58,8 +58,10 @@ export async function forwardHostResourceWatch(input: Readonly<{
     if (!admittedMachine || admittedMachine.installationId !== root.installationId
         || admittedMachine.custodianAccountId !== root.custodianAccountId) return refused(RPC_ERROR_CODES.FORBIDDEN);
     if (input.continuation.cancellation.signal.aborted) return refused(RPC_ERROR_CODES.FORBIDDEN);
+    // Current Machine access can be broader than the signed Resource admission.
+    const role = root.admittedMachineRole === 'use' ? 'use' : admittedMachine.role;
     const result = await input.forward({ actionId: root.actionId, envelope, executionAuthorization, principal,
-        admittedMachine, admittedAuthenticationEvidence: credential.authenticationEvidence }, {
+        admittedMachine: { ...admittedMachine, role }, admittedAuthenticationEvidence: credential.authenticationEvidence }, {
         signal: input.continuation.cancellation.signal, continuation: input.continuation,
     });
     if (result.kind === 'response') return { ok: true as const, result: result.prepared.response };
