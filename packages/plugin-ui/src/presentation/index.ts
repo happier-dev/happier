@@ -47,3 +47,17 @@ export { HappierCollapsibleBody, type HappierCollapsibleBodyActionProps } from '
 // Host-only: the core controller and its public plugin bindings use the same Automations section and picker.
 export { HappierAutomationsSection, type HappierAutomationsSectionBindings } from './automations/AutomationsSection.js';
 export { HappierAutomationSubjectPicker, type HappierAutomationSubjectPickerRow } from './automations/AutomationSubjectPicker.js';
+// Host-only: the media gallery's tiles and line model (Files gallery, Details gallery, Session Media).
+export {
+  HAPPIER_MEDIA_GRID_METRICS,
+  HappierMediaFolderTile,
+  HappierMediaGridFootLine,
+  HappierMediaGridHeading,
+  HappierMediaGridRow,
+  HappierMediaTile,
+  HappierMediaTileSkeleton,
+  buildHappierMediaGridLines,
+  resolveHappierMediaGridGeometry,
+  type HappierMediaGridLine,
+  type HappierMediaGridSection,
+} from './collection/MediaGrid.js';

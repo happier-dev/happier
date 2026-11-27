@@ -64,6 +64,9 @@ import {
     subscribeIrohMachineTransferLifecycleAvailability,
 } from '@/sync/runtime/nativeIrohTunnels/machineTransferLifecycle';
 import { WorkspaceRepositoryTreeList, type WorkspaceRepositoryTreeWebDropTarget } from './WorkspaceRepositoryTreeList';
+import { retryableLazy } from '@/components/ui/performance/retryableLazy';
+import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
+import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 
 export type WorkspaceRepositoryTreeBrowserViewProps = Readonly<{
     /**
@@ -117,6 +120,18 @@ export type WorkspaceRepositoryTreeBrowserViewProps = Readonly<{
      * page's table — compact controls without another search, the name goes into the folder, the chevron opens it inline —
      * keeping this browser's row actions, uploads, drops and transfers.
      */
+    /**
+     * A host's gallery wiring (lab pr974): where a folder's "Open as gallery" lands when there is room beside (a Session
+     * opens a Details tab), and this Session's Media for the toolbar's Media option. Without `openFolder` the pane itself
+     * switches to the folder's gallery (a phone, a Project's Files).
+     */
+    gallery?: Readonly<{
+        openFolder?: ((path: string, event?: unknown) => void) | null;
+        openFolderBeside?: ((path: string, event?: unknown) => void) | null;
+        media?: React.ReactNode;
+        openMediaBeside?: ((event?: unknown) => void) | null;
+        targetSession?: SessionAddress | null;
+    }> | null;
     folderPage?: Readonly<{
         path: string;
         onOpenFolder: (path: string) => void;
@@ -139,6 +154,10 @@ export type WorkspaceRepositoryTreeBrowserViewProps = Readonly<{
 }>;
 
 const FILL_BODY_STYLE = { flex: 1, minHeight: 0 } as const;
+// The gallery loads when a pane first shows one: the tree's own Files pane stays as light as before.
+const FolderGalleryView = retryableLazy(async () => ({
+    default: (await import('@/components/workspaces/files/gallery/FolderGalleryView')).FolderGalleryView,
+}));
 const COMPOSED_BODY_STYLE = { flexGrow: 0, flexShrink: 1, minHeight: 0 } as const;
 
 function BrowserPaneHeader(props: Readonly<{ action: React.ReactNode; line?: PaneHeaderLine | null }>) {
@@ -162,6 +181,7 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
     );
     const { visibilityMode, setVisibilityMode, gitIgnoreAvailable, setGitIgnoreAvailable, revealedPaths, revealPath, latestRequest,
         changedOnly: storedChangedOnly, setChangedOnly: setShowChangedOnly, detailsMode, setDetailsMode,
+        view: storedView, setView, showGallery, galleryPath,
         searchQuery: uncontrolledSearchQuery, setSearchQuery: setUncontrolledSearchQuery } = useRepositoryTreeBrowserState(tryBuildWorkspaceCacheKey(workspaceScope) ?? '');
     // Changed-only and file-query modes belong to the tree; a Code page always lists its folder.
     const machine = useServerScopedMachine(workspaceScope.serverId, workspaceScope.machineId);
@@ -181,6 +201,9 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
             : selectScmChangedFiles(effectiveScmSnapshot).length || 'none' as const;
     // Changed only belongs to the tree; a Code page always lists its folder.
     const showChangedOnly = props.folderPage ? false : storedChangedOnly && changedCount !== 'none';
+    // A gallery belongs to a pane's Files, never to a Code page or a widget; Media only where the host has one.
+    const galleryHost = props.folderPage ? null : props.gallery ?? null;
+    const view = props.folderPage ? 'list' : storedView === 'media' && !galleryHost?.media ? 'list' : storedView;
     const launchQuickOpen = useQuickOpenFilesLauncher({ scope: workspaceScope, sessionId: props.sessionId });
     const serverSnapshot = useServerFeaturesSnapshotForServerId(workspaceScope.serverId, {
         enabled: Boolean(workspaceScope.serverId) && machineRpcTargetAvailable,
@@ -643,6 +666,30 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
         } : null,
     }), [fileMenuAccountScope, props.fileLinkTarget, sessionIdForFiles, workspaceScope]);
 
+    const openGalleryFolder = galleryHost?.openFolder ?? null;
+    const openFolderAsGallery = React.useMemo(() => props.folderPage ? null
+        : (path: string, event?: unknown) => (openGalleryFolder ? openGalleryFolder(path, event) : showGallery(path)),
+    [openGalleryFolder, props.folderPage, showGallery]);
+    const openGalleryFolderBeside = galleryHost?.openFolderBeside ?? null;
+    const openFolderBeside = React.useMemo(() => openGalleryFolderBeside ? (path: string, event?: unknown) => {
+        openGalleryFolderBeside(path, event);
+        // The folder now has the big view; the pane goes back to its list (lab SG2e).
+        setView('list');
+    } : null, [openGalleryFolderBeside, setView]);
+    const showFolderAsList = React.useCallback((path: string) => {
+        setView('list');
+        if (path) handleRevealPath(path, true);
+    }, [handleRevealPath, setView]);
+    const changeChangedOnly = React.useCallback((next: boolean) => {
+        if (view === 'media') setView('list');
+        setShowChangedOnly(next);
+    }, [setShowChangedOnly, setView, view]);
+    const galleryToolbar = React.useMemo(() => galleryHost ? {
+        galleryView: { mode: view === 'gallery' ? 'gallery' as const : 'list' as const,
+            onChange: (mode: 'list' | 'gallery') => (mode === 'gallery' ? showGallery(galleryPath) : setView('list')) },
+        media: galleryHost.media ? { selected: view === 'media', onSelect: () => setView('media') } : null,
+        onOpenMediaBeside: galleryHost.openMediaBeside ?? null,
+    } : null, [galleryHost, galleryPath, setView, showGallery, view]);
     const defaultRenderRowActions = React.useCallback<NonNullable<WorkspaceRepositoryTreeBrowserViewProps['renderRowActions']>>((node, control) => {
         if (node.type !== 'file' && node.type !== 'directory') return null;
         const nodeKind: 'file' | 'directory' = node.type === 'file' ? 'file' : 'directory';
@@ -661,7 +708,7 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
                 fileMenuContext={nodeKind === 'file' ? { ...fileMenuContext,
                     machineReachable: machineRpcTargetAvailable,
                     open: fileMenuContext?.open ?? (() => handleTreeOpenFile(node.path)),
-                } : undefined}
+                } : openFolderAsGallery ? { openAsGallery: () => openFolderAsGallery(node.path) } : undefined}
                 folderCreation={nodeKind === 'directory' ? { newFolder: allowCreateActions, upload: transferActionsAvailable } : null}
                 onSelect={(itemId) => {
                     if (itemId === 'repository-tree-menuitem-new-folder') createFolder(node.path);
@@ -671,7 +718,7 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
                 control={control}
             />
         );
-    }, [allowCreateActions, createFolder, handleTreeOpenFile, machineRpcTargetAvailable, props.buildFileMenuContext, props.fileHref, rowActions, rowShareTarget, transferActionsAvailable, uploadInto]);
+    }, [allowCreateActions, createFolder, handleTreeOpenFile, machineRpcTargetAvailable, openFolderAsGallery, props.buildFileMenuContext, props.fileHref, rowActions, rowShareTarget, transferActionsAvailable, uploadInto]);
 
     // This pane has no header of its own, so its + menu ends the toolbar (the session pane's header carries it).
     // Only a real name goes into "Couldn't list files on {machine}": a Machine still loading has a placeholder title,
@@ -828,10 +875,11 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
                     showSearch={showSearchBar}
                     changedOnly={showChangedOnly}
                     changedCount={changedCount}
-                    onChangedOnlyChange={setShowChangedOnly}
+                    onChangedOnlyChange={changeChangedOnly}
                     detailsMode={detailsMode}
                     onDetailsModeChange={setDetailsMode}
-                    onCollapseAll={!showChangedOnly && expandedPaths.length > 0 ? collapseAll : null}
+                    onCollapseAll={!showChangedOnly && view === 'list' && expandedPaths.length > 0 ? collapseAll : null}
+                    {...galleryToolbar}
                     onRefresh={refresh}
                     refreshing={treeRootLoading}
                     trailing={props.createMenuPlacement === 'paneHeader' ? undefined : createMenu}
@@ -876,7 +924,25 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
                     })}
                 </>
             ) : null}
-            {composed ? composed({ controls: composedControls, body: dropZone, status: actionApproval.approvalId ? approvalNotice('inline') : null }) : dropZone}
+            {composed ? composed({ controls: composedControls, body: dropZone, status: actionApproval.approvalId ? approvalNotice('inline') : null })
+                : view === 'media' && galleryHost?.media && !shouldShowSearchResults ? galleryHost.media
+                : view === 'gallery' && !shouldShowSearchResults ? (
+                    <React.Suspense fallback={<PaneLoadingFallback />}>
+                    <FolderGalleryView
+                        scope={workspaceScope}
+                        folderPath={galleryPath}
+                        rootLabel={rootLabel}
+                        online={machineRpcTargetAvailable}
+                        presentation="pane"
+                        machineName={machineName}
+                        onNavigate={showGallery}
+                        onShowAsList={showFolderAsList}
+                        onOpenBeside={openFolderBeside}
+                        onOpenFile={props.onOpenFile}
+                        targetSession={galleryHost?.targetSession ?? null}
+                    />
+                    </React.Suspense>
+                ) : dropZone}
         </View>
         </CheckoutReachabilityScope>
     );

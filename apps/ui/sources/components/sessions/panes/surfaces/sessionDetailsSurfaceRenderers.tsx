@@ -1,8 +1,11 @@
 import { BotTemplateEditor } from '@/components/sessions/bots/templates/BotTemplateEditor';
 import { readBotTemplateEditorResource } from '@/components/sessions/bots/templates/botTemplateEditorDestination';
 import * as React from 'react';
+import { t } from '@/text';
 
 import { readFileTabChanges, readSessionScmReviewTarget } from '@/components/sessions/panes/url/sessionPaneUrlState';
+import { createWorkspaceGalleryDetailsTab, readGalleryDetailsResource } from '@/components/appShell/panes/details/galleryDetailsTab';
+import { SessionGalleryDetailsView } from '@/components/sessions/panes/details/SessionGalleryDetailsView';
 
 import type {
     DetailsSurfaceRendererV1,
@@ -362,6 +365,28 @@ export function createSessionDetailsSurfaceRenderers(
             onOpenTarget: openBrowserViewTarget,
             nowMs: options.nowMs,
         }),
+        {
+            // A folder's or this Session's media as a gallery (lab pr974 SG2).
+            id: 'session-gallery',
+            owner: 'session',
+            order: 10,
+            canRender: (input) => readGalleryDetailsResource(input.tab.resource) !== null,
+            render: (input) => {
+                const resource = readGalleryDetailsResource(input.tab.resource);
+                if (!resource) return null;
+                return (
+                    <SessionGalleryDetailsView
+                        sessionId={options.sessionId}
+                        serverId={options.serverId ?? null}
+                        resource={resource}
+                        onNavigate={(path) => input.callbacks.replaceTab?.(input.tab.key,
+                            createWorkspaceGalleryDetailsTab({ kind: 'gallery', path }, path.split('/').at(-1) || t('files.projectRoot')),
+                            { intent: input.tab.isPreview ? 'preview' : 'pinned' })}
+                        onOpenFile={(path) => options.openFileTab(path, 'default')}
+                    />
+                );
+            },
+        },
         {
             id: 'session-file',
             owner: 'session',

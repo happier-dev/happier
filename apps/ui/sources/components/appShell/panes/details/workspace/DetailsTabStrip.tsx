@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { readGalleryDetailsResource } from '@/components/appShell/panes/details/galleryDetailsTab';
 import { useUnistyles } from 'react-native-unistyles';
 import { DocumentTabStrip, type DocumentTabPresentation, type DocumentTabStripTestIds } from '@/components/ui/navigation/DocumentTabStrip';
 import { FileIcon } from '@/components/ui/media/FileIcon';
@@ -55,6 +56,11 @@ const DETAILS_TAB_GLYPHS: Readonly<Record<string, IconName>> = {
 /** The glyph a Details tab's chip carries (a file chip draws its file type instead). */
 export function resolveDetailsTabGlyph(tab: DetailsTabState, resolveTabIconName?: ((tab: DetailsTabState) => string | null | undefined) | null): IconName {
     if (tab.kind === 'file') return 'file';
+    // A folder's gallery carries its folder; this Session's Media its pictures (lab pr974 SG2).
+    if (tab.kind === 'gallery') {
+        const resource = readGalleryDetailsResource(tab.resource);
+        return resource && 'scope' in resource ? 'image' : 'folder';
+    }
     return (resolveTabIconName?.(tab) ?? DETAILS_TAB_GLYPHS[tab.kind] ?? 'circle') as IconName;
 }
 

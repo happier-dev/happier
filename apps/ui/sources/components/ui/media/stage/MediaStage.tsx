@@ -617,6 +617,23 @@ function StageCapsule(props: Readonly<{ children: React.ReactNode }>) {
   );
 }
 
+/**
+ * A phone's strip (lab pr974 ST1): neighbours narrow, the current one wide and always centred, above the bottom bar
+ * in thumb reach. Its cells have two widths, so the list's layout reads them from here.
+ */
+const PHONE_STRIP = { narrow: 28, narrowHeight: 40, wide: 62, wideHeight: 44, gap: 2, wideMargin: 6 } as const;
+const PHONE_NARROW_STRIDE = PHONE_STRIP.narrow + PHONE_STRIP.gap;
+const PHONE_WIDE_STRIDE = PHONE_STRIP.wide + PHONE_STRIP.gap + PHONE_STRIP.wideMargin * 2;
+
+/** Where a strip cell stands: wide-stride squares on wide screens; on a phone the current cell is the wide one. */
+export function resolveStageStripCellLayout(index: number, current: number, phone: boolean, stride: number): Readonly<{ length: number; offset: number }> {
+  if (!phone) return { length: stride, offset: stride * index };
+  return {
+    length: index === current ? PHONE_WIDE_STRIDE : PHONE_NARROW_STRIDE,
+    offset: PHONE_NARROW_STRIDE * index + (index > current ? PHONE_WIDE_STRIDE - PHONE_NARROW_STRIDE : 0),
+  };
+}
+
 function StripThumb(
   props: Readonly<{
     item: MediaStageItem;
@@ -624,6 +641,7 @@ function StripThumb(
     enabled: boolean;
     onPress: () => void;
     label: string;
+    phone: boolean;
   }>,
 ) {
   const { theme } = useUnistyles();
@@ -641,15 +659,18 @@ function StripThumb(
       onPress={props.onPress}
       style={[
         stageStyles.thumb,
+        props.phone ? (props.selected ? stageStyles.phoneThumbWide : stageStyles.phoneThumb) : null,
         props.selected ? { borderColor: theme.colors.border.focus } : null,
       ]}
     >
-      <View style={stageStyles.thumbInner}>
+      <View style={[stageStyles.thumbInner, props.phone ? stageStyles.phoneThumbInner : null]}>
         {picture && preview.status === 'loaded' ? (
           <MediaPicture
             kind={props.item.kind === 'svg' ? 'svg' : 'image'}
             uri={preview.uri}
-            size={{ width: STRIP_THUMB_SIZE, height: STRIP_THUMB_SIZE }}
+            size={props.phone
+              ? { width: props.selected ? PHONE_STRIP.wide : PHONE_STRIP.narrow, height: props.selected ? PHONE_STRIP.wideHeight : PHONE_STRIP.narrowHeight }
+              : { width: STRIP_THUMB_SIZE, height: STRIP_THUMB_SIZE }}
                     fit="cover"
             style={stageStyles.thumbImage}
           />
@@ -662,7 +683,7 @@ function StripThumb(
                   ? 'file-text'
                   : 'image'
             }
-            size={20}
+            size={props.phone ? 14 : 20}
             color={theme.colors.text.secondary}
           />
         )}
@@ -677,6 +698,7 @@ function StageGalleryStrip(props: Readonly<{
   index: number;
   enabled: boolean;
   width: number;
+  phone: boolean;
   onSelect: (index: number) => void;
 }>) {
   const { theme } = useUnistyles();
@@ -689,6 +711,7 @@ function StageGalleryStrip(props: Readonly<{
   React.useEffect(() => { list.current?.scrollToIndex({ index: props.index, viewPosition: 0.5, animated: false }); }, [props.index]);
   const extraData = React.useMemo(() => ({ index: props.index, enabled: props.enabled, visible }), [props.index, props.enabled, visible]);
   const stride = STRIP_THUMB_SIZE + theme.space.s4;
+  const { phone, index: current } = props;
   return <FlatList
     ref={list}
     testID="media-stage-gallery"
@@ -696,16 +719,16 @@ function StageGalleryStrip(props: Readonly<{
     data={props.items}
     extraData={extraData}
     initialScrollIndex={props.index}
-    initialNumToRender={Math.max(1, Math.ceil(props.width / stride))}
-    getItemLayout={(_items, index) => ({ length: stride, offset: stride * index, index })}
+    initialNumToRender={Math.max(1, Math.ceil(props.width / (phone ? PHONE_NARROW_STRIDE : stride)))}
+    getItemLayout={(_items, index) => ({ ...resolveStageStripCellLayout(index, current, phone, stride), index })}
     keyExtractor={(_item, index) => String(index)}
     onViewableItemsChanged={onViewableItemsChanged}
     style={{ maxWidth: props.width }}
-    contentContainerStyle={stageStyles.stripRow}
+    contentContainerStyle={phone ? stageStyles.phoneStripRow : stageStyles.stripRow}
     accessibilityRole="tablist"
     accessibilityLabel={t('files.viewer.stageGallery', { count: props.items.length })}
     renderItem={({ item, index }) => <StripThumb item={item} selected={index === props.index}
-      enabled={props.enabled && visible.has(index)} label={item.title} onPress={() => props.onSelect(index)} />}
+      enabled={props.enabled && visible.has(index)} label={item.title} phone={phone} onPress={() => props.onSelect(index)} />}
   />;
 }
 
@@ -760,7 +783,8 @@ export function MediaStage(props: MediaStageProps & CustomModalInjectedProps) {
   const stageItems = React.useMemo(() => heldFrame
     ? gallery.items.map((entry, index) => (index === heldFrame.index ? heldFrame.item : entry)) : gallery.items, [gallery.items, heldFrame]);
   const multiple = gallery.items.length > 1;
-  const showStrip = !phone && multiple;
+  // Every multi-item gallery shows where you are in it, on phones too (lab pr974 ST1).
+  const showStrip = multiple;
   // The active viewer holds these bytes for its lifetime; flight and Save follow that exact preview, including Retry.
   const currentPreview = heldPreview?.index === gallery.index ? heldPreview : null;
 
@@ -1182,7 +1206,7 @@ export function MediaStage(props: MediaStageProps & CustomModalInjectedProps) {
               ) : null}
             </View>
           )}
-          {annotation || zoomPercent !== null || item.openFile || savable || immersiveControl || annotatable ? (
+          {annotation || zoomPercent !== null || item.openFile || item.showInChat || savable || immersiveControl || annotatable ? (
             // One capsule that reshapes on the travel spring between viewing and annotating (MIS §8.1).
             <Animated.View layout={capsuleLayout}>
             <StageCapsule>
@@ -1197,6 +1221,19 @@ export function MediaStage(props: MediaStageProps & CustomModalInjectedProps) {
                 />
               ) : (
               <>
+              {item.showInChat && !phone ? (
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={item.showInChat}
+                  style={stageStyles.capsuleLabelButton}
+                  testID="media-stage-show-in-chat"
+                >
+                  <Icon name="chat-circle" size={16} color={theme.colors.text.primary} />
+                  <Text variant="body" emphasis="medium" style={{ color: theme.colors.text.primary }}>
+                    {t('files.pane.gallery.showInChat')}
+                  </Text>
+                </Pressable>
+              ) : null}
               {annotatable && !phone ? (
                 <StageAnnotateEntry
                   tooltip={withShortcut(t('files.annotate.annotate'), annotateShortcut)}
@@ -1300,22 +1337,27 @@ export function MediaStage(props: MediaStageProps & CustomModalInjectedProps) {
           </Animated.View>
         ) : null}
 
-        {showStrip && !annotation ? (
+        {showStrip && !annotation && !(phone && immersive) ? (
           <Animated.View
             entering={FadeIn.duration(motionTokens.overlay.panel.enterMs)}
             exiting={FadeOut.duration(reducedMotion ? motionTokens.overlay.panel.reducedMotionFadeMs : motionTokens.overlay.panel.exitMs)}
-            style={[stageStyles.stripDock, { bottom: theme.space.s16 }]}
+            style={[stageStyles.stripDock, { bottom: phone ? insets.bottom + theme.space.s24 + TOP_BAR_HEIGHT + theme.space.s12 : theme.space.s16 }]}
             pointerEvents="box-none"
           >
-            <GlassPanel
-              radius={theme.space.s16}
-              shadowLevel={2}
-              innerShadow={false}
-              style={stageStyles.strip}
-            >
-              <StageGalleryStrip items={gallery.items} index={gallery.index} enabled={phase === 'open'}
-                width={Math.max(STRIP_THUMB_SIZE, window.width - theme.space.s16 * 2)} onSelect={goTo} />
-            </GlassPanel>
+            {phone ? (
+              <StageGalleryStrip items={gallery.items} index={gallery.index} enabled={phase === 'open'} phone
+                width={window.width} onSelect={goTo} />
+            ) : (
+              <GlassPanel
+                radius={theme.space.s16}
+                shadowLevel={2}
+                innerShadow={false}
+                style={stageStyles.strip}
+              >
+                <StageGalleryStrip items={gallery.items} index={gallery.index} enabled={phase === 'open'} phone={false}
+                  width={Math.max(STRIP_THUMB_SIZE, window.width - theme.space.s16 * 2)} onSelect={goTo} />
+              </GlassPanel>
+            )}
           </Animated.View>
         ) : null}
         {annotation && !phone ? (
@@ -1333,7 +1375,7 @@ export function MediaStage(props: MediaStageProps & CustomModalInjectedProps) {
           </View>
         ) : null}
 
-        {phone && !annotation && (multiple || item.openFile || annotatable) ? (
+        {phone && !annotation && (multiple || item.openFile || item.showInChat || annotatable) ? (
           <View
             style={[
               stageStyles.stripDock,
@@ -1377,6 +1419,15 @@ export function MediaStage(props: MediaStageProps & CustomModalInjectedProps) {
               ) : null}
               {annotatable ? (
                 <StageAnnotateEntry tooltip={t('files.annotate.annotate')} onPress={enterAnnotate} phone busy={readingFrame} />
+              ) : null}
+              {item.showInChat ? (
+                <IconButton
+                  variant="plain"
+                  iconName="chat-circle"
+                  accessibilityLabel={t('files.pane.gallery.showInChat')}
+                  onPress={item.showInChat}
+                  testID="media-stage-show-in-chat"
+                />
               ) : null}
               {item.openFile ? (
                 <Pressable
@@ -1478,6 +1529,14 @@ const stageStyles = StyleSheet.create((theme) => ({
   capsulePlaceholder: {
     width: TOP_BAR_HEIGHT,
   },
+  capsuleLabelButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.space.s6,
+    height: 36,
+    paddingHorizontal: theme.space.s12,
+    borderRadius: 18,
+  },
   titleSpacer: {
     flex: 1,
   },
@@ -1518,6 +1577,27 @@ const stageStyles = StyleSheet.create((theme) => ({
   stripRow: {
     flexDirection: 'row',
     gap: theme.space.s4,
+  },
+  phoneStripRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: PHONE_STRIP.gap,
+  },
+  phoneThumb: {
+    width: PHONE_STRIP.narrow,
+    height: PHONE_STRIP.narrowHeight,
+    borderRadius: theme.space.s4,
+    borderWidth: 0,
+    opacity: 0.8,
+  },
+  phoneThumbWide: {
+    width: PHONE_STRIP.wide,
+    height: PHONE_STRIP.wideHeight,
+    marginHorizontal: PHONE_STRIP.wideMargin,
+    borderRadius: theme.space.s6,
+  },
+  phoneThumbInner: {
+    borderRadius: theme.space.s4,
   },
   thumb: {
     width: STRIP_THUMB_SIZE,

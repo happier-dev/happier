@@ -45,6 +45,8 @@ export type FileMenuContext = Readonly<{
     readBlame?: boolean;
     open?: FileMenuRun;
     openBeside?: FileMenuRun;
+    /** A folder's pictures as a gallery (lab pr974 SG2e): a Details tab where there is room, else the pane itself. */
+    openAsGallery?: FileMenuRun;
     openWithBlame?: FileMenuRun;
     toggleWrap?: FileMenuRun;
     chooseBackground?: FileMenuRun;
@@ -123,6 +125,8 @@ function item(input: Readonly<{
 export const FILE_MENU_ITEMS: readonly FileMenuItem[] = [
     item({ id: 'open', group: 'open', titleKey: 'common.open', callback: c => c.open, surfaces: ['treeRow'] }),
     item({ id: 'openBeside', group: 'open', titleKey: 'files.pane.menu.openBeside', callback: c => c.openBeside, surfaces: ['treeRow'] }),
+    item({ id: 'openAsGallery', group: 'open', titleKey: 'files.pane.gallery.openAsGallery', callback: c => c.openAsGallery,
+        surfaces: ['treeRow'], visible: c => c.isDirectory === true }),
     item({ id: 'openWithBlame', group: 'open', titleKey: 'files.pane.menu.openWithBlame', callback: c => c.openWithBlame,
         surfaces: ['treeRow'], visible: c => c.readBlame === true && !c.isDirectory }),
     item({ id: 'wrap', group: 'view', titleKey: 'files.pane.menu.wrap', callback: c => c.toggleWrap, surfaces: pageSurfaces }),

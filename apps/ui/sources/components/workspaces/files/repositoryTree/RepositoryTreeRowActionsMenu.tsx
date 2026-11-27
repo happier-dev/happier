@@ -47,6 +47,7 @@ type RepositoryTreeRowActionItem = Omit<ItemAction, 'onPress'>;
 const FILE_MENU_ITEM_ICONS: Readonly<Record<string, ItemAction['icon']>> = {
     open: 'eye',
     openBeside: 'square-split-horizontal',
+    openAsGallery: 'squares-four',
     openWithBlame: 'clock-counter-clockwise',
     copyPath: 'copy',
     copyLink: 'link',

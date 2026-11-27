@@ -91,3 +91,15 @@ describe('one file menu inventory across page, phone and tree', () => {
         expect(resolveFileMenuItems({ ...context, platform: 'web' }, 'page')).toEqual([]);
     });
 });
+
+describe('Open as gallery (lab pr974 SG2e)', () => {
+    it('is a folder row item only, and runs the host gallery opener', async () => {
+        const openAsGallery = vi.fn();
+        const folder = resolveFileMenuItems({ ...base, isDirectory: true, openAsGallery }, 'treeRow');
+        expect(folder.map(item => item.id)).toContain('openAsGallery');
+        await folder.find(item => item.id === 'openAsGallery')?.run();
+        expect(openAsGallery).toHaveBeenCalledOnce();
+        expect(resolveFileMenuItems({ ...base, isDirectory: false, openAsGallery }, 'treeRow').some(item => item.id === 'openAsGallery')).toBe(false);
+        expect(resolveFileMenuItems({ ...base, isDirectory: true, openAsGallery }, 'page').some(item => item.id === 'openAsGallery')).toBe(false);
+    });
+});

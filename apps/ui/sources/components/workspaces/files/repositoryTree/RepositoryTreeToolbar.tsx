@@ -14,13 +14,15 @@ import {
 import { Icon } from '@/components/ui/icons/Icon';
 import { KeyboardCommandHint, useKeyboardCommandHintLabel } from '@/components/ui/keyboard/KeyHint';
 import {
+  SEGMENTED_TAB_ICON_SIZE_PX,
   SegmentedTabBar,
   type SegmentedTab,
 } from '@/components/ui/navigation/SegmentedTabBar';
 import { formatExactCount } from '@/components/ui/navigation/tabBadge/tabBadgeModel';
 import { t } from '@/text';
 
-type TreeShow = 'all' | 'changed';
+type TreeShow = 'all' | 'changed' | 'media';
+type TreeView = 'list' | 'gallery';
 
 /** A digit-wide blank (U+2007 FIGURE SPACE) standing in for a count that has not arrived. */
 const PENDING_COUNT_SLOT = '\u2007';
@@ -64,6 +66,15 @@ export type RepositoryTreeToolbarProps = Readonly<{
     available?: boolean;
     onChange: (mode: 'project' | 'all') => void;
   }> | null;
+  /**
+   * A Session's own media as the segment's last option, always shown and never counted (lab pr974 SM1: a count
+   * would arrive late and widen the segment).
+   */
+  media?: Readonly<{ selected: boolean; onSelect: () => void }> | null;
+  /** List | Gallery for the folder in view (lab SG1): drawn only while All shows the files. */
+  galleryView?: Readonly<{ mode: TreeView; onChange: (mode: TreeView) => void }> | null;
+  /** Media shows its gallery beside, in the Details pane (lab SG2f), in the slot List | Gallery leaves. */
+  onOpenMediaBeside?: ((event?: unknown) => void) | null;
 }>;
 
 /**
@@ -79,6 +90,7 @@ export const RepositoryTreeToolbar = React.memo(function RepositoryTreeToolbar(
   // The field starts on the pane's text edge; the trailing ⋯ ends where the pane header's ⋯ does.
   const contentInsetPx = usePaneContentInsetPx();
   const [viewMenuOpen, setViewMenuOpen] = React.useState(false);
+  const [searchOpened, setSearchOpened] = React.useState(false);
   const iconColor = theme.colors.text.secondary;
   const prefix = props.testIDPrefix;
   // The gap the toolbar leaves between its controls (the stylesheet's `row` and `inline` gaps): each
@@ -94,6 +106,10 @@ export const RepositoryTreeToolbar = React.memo(function RepositoryTreeToolbar(
     onQuickOpen,
     searchValue,
   } = props;
+  // Three options and the view toggle need the field's width: Go to file moves into the View menu until chosen
+  // (lab pr974 SG1 draws it as a glyph; the shared segmented control is wider than the lab's, so the glyph would
+  // push the menu onto a second line in the Files pane), and folds back when it is left empty.
+  const searchCollapsed = props.media != null && props.showSearch !== false && searchValue.length === 0 && !searchOpened;
   // The ⌘P control is its keycaps: where they are not drawn (a finger, no key bound) nothing is pressable.
   const quickOpenHintDrawn = useKeyboardCommandHintLabel('search.files') !== null;
   const projectViewAvailable = visibility?.available === true;
@@ -103,6 +119,14 @@ export const RepositoryTreeToolbar = React.memo(function RepositoryTreeToolbar(
 
   const viewItems = React.useMemo((): readonly DropdownMenuItem[] => {
     const items: DropdownMenuItem[] = [];
+    if (searchCollapsed) {
+      items.push({
+        id: `${prefix}-go-to-file`,
+        testID: `${prefix}-go-to-file`,
+        title: t('projects.code.goToFile'),
+        icon: <Icon name="magnifying-glass" size={16} color={iconColor} />,
+      });
+    }
     // Without ignore rules there is nothing to hide: the choice only exists when it can change the list.
     if (visibility && projectViewAvailable) {
       items.push(
@@ -147,6 +171,7 @@ export const RepositoryTreeToolbar = React.memo(function RepositoryTreeToolbar(
     onCollapseAll,
     prefix,
     projectViewAvailable,
+    searchCollapsed,
     showAllFiles,
     visibility,
   ]);
@@ -154,7 +179,8 @@ export const RepositoryTreeToolbar = React.memo(function RepositoryTreeToolbar(
   const selectViewItem = React.useCallback(
     (itemId: string) => {
       setViewMenuOpen(false);
-      if (itemId === `${prefix}-project-files`) visibility?.onChange('project');
+      if (itemId === `${prefix}-go-to-file`) setSearchOpened(true);
+      else if (itemId === `${prefix}-project-files`) visibility?.onChange('project');
       else if (itemId === `${prefix}-all-files`) visibility?.onChange('all');
       else if (itemId === `${prefix}-toggle-details`)
         onDetailsModeChange(!detailsMode);
@@ -223,35 +249,66 @@ export const RepositoryTreeToolbar = React.memo(function RepositoryTreeToolbar(
   // Two options, both always visible: a segmented view switch (lab FB1 "All | Changed 4"), at the
   // toolbar's one control height so it stands level with Go to file and the View menu.
   const changedCount = props.changedCount;
+  const media = props.media ?? null;
+  const mediaOffered = media !== null;
   const showTabs = React.useMemo(
-    (): ReadonlyArray<SegmentedTab<TreeShow>> | null =>
-      changedCount === 'none'
-        ? null
-        : [
-            {
-              id: 'all',
-              label: t('files.pane.showAll'),
-              testID: `${prefix}-show-all`,
-            },
-            {
-              id: 'changed',
-              label: t('files.pane.showChanged'),
-              testID: `${prefix}-show-changed`,
-              // Unknown: a one-digit slot (a figure space) holds the count's room, so the count fills it
-              // instead of widening the segment when the snapshot answers.
-              count: changedCount === null ? PENDING_COUNT_SLOT : formatExactCount(changedCount),
-            },
-          ],
-    [changedCount, prefix],
+    (): ReadonlyArray<SegmentedTab<TreeShow>> | null => {
+      const changed: SegmentedTab<TreeShow> | null = changedCount === 'none' ? null : {
+        id: 'changed',
+        label: t('files.pane.showChanged'),
+        testID: `${prefix}-show-changed`,
+        // Unknown: a one-digit slot (a figure space) holds the count's room, so the count fills it
+        // instead of widening the segment when the snapshot answers.
+        count: changedCount === null ? PENDING_COUNT_SLOT : formatExactCount(changedCount),
+      };
+      if (!changed && !mediaOffered) return null;
+      return [
+        { id: 'all', label: t('files.pane.showAll'), testID: `${prefix}-show-all` },
+        ...(changed ? [changed] : []),
+        ...(mediaOffered ? [{ id: 'media' as const, label: t('files.pane.gallery.media'), testID: `${prefix}-show-media` }] : []),
+      ];
+    },
+    [changedCount, mediaOffered, prefix],
   );
+  const selectMedia = media?.onSelect;
   const selectShow = React.useCallback(
-    (next: TreeShow) => onChangedOnlyChange(next === 'changed'),
-    [onChangedOnlyChange],
+    (next: TreeShow) => (next === 'media' ? selectMedia?.() : onChangedOnlyChange(next === 'changed')),
+    [onChangedOnlyChange, selectMedia],
   );
+  const activeShow: TreeShow = media?.selected ? 'media' : props.changedOnly ? 'changed' : 'all';
+  const galleryView = activeShow === 'all' ? props.galleryView ?? null : null;
+  const changeGalleryView = galleryView?.onChange;
+  const viewTabs = React.useMemo((): ReadonlyArray<SegmentedTab<TreeView>> => [
+    { id: 'list', label: t('files.pane.gallery.list'), testID: `${prefix}-view-list`,
+      icon: <Icon name="list-bullets" size={SEGMENTED_TAB_ICON_SIZE_PX} color={iconColor} /> },
+    { id: 'gallery', label: t('files.pane.gallery.gallery'), testID: `${prefix}-view-gallery`,
+      icon: <Icon name="squares-four" size={SEGMENTED_TAB_ICON_SIZE_PX} color={iconColor} /> },
+  ], [iconColor, prefix]);
+  const viewToggle = galleryView && changeGalleryView ? (
+    <SegmentedTabBar<TreeView>
+      tabs={viewTabs}
+      activeTabId={galleryView.mode}
+      onSelectTab={changeGalleryView}
+      segmentSizing="content"
+      accessibilityLabel={t('files.pane.gallery.viewLabel')}
+      testIDPrefix={`${prefix}-view-mode`}
+    />
+  ) : activeShow === 'media' && props.onOpenMediaBeside ? (
+    <IconButton
+      testID={`${prefix}-media-beside`}
+      variant="plain"
+      size={32}
+      interactiveTargetGapPx={controlGap}
+      iconName="square-split-horizontal"
+      accessibilityLabel={t('files.pane.gallery.openBeside')}
+      tooltip={t('files.pane.gallery.openBeside')}
+      onPress={props.onOpenMediaBeside}
+    />
+  ) : null;
   const segment = showTabs ? (
     <SegmentedTabBar<TreeShow>
       tabs={showTabs}
-      activeTabId={props.changedOnly ? 'changed' : 'all'}
+      activeTabId={activeShow}
       onSelectTab={selectShow}
       segmentSizing="content"
       accessibilityLabel={t('files.pane.showLabel')}
@@ -297,16 +354,21 @@ export const RepositoryTreeToolbar = React.memo(function RepositoryTreeToolbar(
 
   return (
     <View testID={`${prefix}-toolbar`} style={[styles.row, { paddingLeft: contentInsetPx, paddingRight: contentInsetPx / 2 }]}>
-      <View style={styles.field}>
-        <CompactSearchField
-          testID={`${prefix}-search`}
-          value={searchValue}
-          onChangeText={props.onSearchValueChange}
-          placeholder={t('projects.code.goToFile')}
-          trailing={fieldTrailing}
-        />
-      </View>
+      {searchCollapsed ? null : (
+        <View style={styles.field}>
+          <CompactSearchField
+            testID={`${prefix}-search`}
+            value={searchValue}
+            onChangeText={props.onSearchValueChange}
+            placeholder={t('projects.code.goToFile')}
+            trailing={fieldTrailing}
+            autoFocus={mediaOffered && searchOpened}
+            onBlur={mediaOffered ? () => setSearchOpened(false) : undefined}
+          />
+        </View>
+      )}
       {segment}
+      {viewToggle}
       {viewMenu}
       {props.trailing}
       {close}

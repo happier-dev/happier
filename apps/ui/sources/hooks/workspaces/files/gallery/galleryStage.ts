@@ -20,7 +20,7 @@ export function createGalleryPreviewInput(
     };
 }
 
-type StageActions = (item: GalleryMediaItem) => Partial<Pick<MediaStageItem, 'subtitle' | 'originRef' | 'openFile' | 'targetSession'>>;
+type StageActions = (item: GalleryMediaItem) => Partial<Pick<MediaStageItem, 'subtitle' | 'originRef' | 'openFile' | 'showInChat' | 'targetSession'>>;
 export function createGalleryStageItems(items: readonly GalleryMediaItem[], actions?: StageActions): readonly MediaStageItem[] {
     return items.map(item => ({
         kind: item.kind, title: item.name, source: createGalleryPreviewInput(item, true),

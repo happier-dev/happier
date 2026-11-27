@@ -164,6 +164,39 @@ describe('canonical media stage opener', () => {
             expect(screen.findAllByType(MediaStage)).toHaveLength(0);
         } finally { await screen.unmount(); }
     });
+    it('shows a phone gallery its strip above the bottom bar and pages from a thumb (lab pr974 ST1)', async () => {
+        const { openMediaStage } = await import('./useMediaStage');
+        windowSize.width = 390; windowSize.height = 844;
+        const screen = await renderScreen(<InjectedAuthProvider credentials={null}><ModalProvider><></></ModalProvider></InjectedAuthProvider>);
+        try {
+            const items: MediaStageItem[] = Array.from({ length: 5 }, (_, index) => ({ kind: 'image', title: `Shot ${index}`, source: { enabled: true, source: { kind: 'uri', uri: `blob:shot-${index}` } } }));
+            await act(async () => { openMediaStage(items, 1); });
+            const list = screen.findByTestId('media-stage-gallery')!;
+            expect(list.props.data).toHaveLength(5);
+            // The current thumb is the wide one: its neighbours after it move along by the difference.
+            expect(list.props.getItemLayout(items, 1).length).toBeGreaterThan(list.props.getItemLayout(items, 0).length);
+            expect(list.props.getItemLayout(items, 2).offset).toBe(list.props.getItemLayout(items, 1).offset + list.props.getItemLayout(items, 1).length);
+            const third = screen.findAll(node => typeof node.type === 'string' && node.props.accessibilityLabel === 'Shot 3' && typeof node.props.onPress === 'function')[0];
+            await act(async () => third.props.onPress());
+            expect(screen.findByTestId('media-stage-image')!.props.source).toEqual({ uri: 'blob:shot-3' });
+        } finally { windowSize.width = 1024; windowSize.height = 900; await screen.unmount(); }
+    });
+
+    it('offers Show in chat only for a picture that came with a message', async () => {
+        const { openMediaStage } = await import('./useMediaStage');
+        const screen = await renderScreen(<InjectedAuthProvider credentials={null}><ModalProvider><></></ModalProvider></InjectedAuthProvider>);
+        try {
+            const showInChat = vi.fn();
+            const items: MediaStageItem[] = [
+                { kind: 'image', title: 'Attached.png', source: { enabled: true, source: { kind: 'uri', uri: 'blob:a' } }, showInChat },
+                { kind: 'image', title: 'Capture.png', source: { enabled: true, source: { kind: 'uri', uri: 'blob:b' } } },
+            ];
+            await act(async () => { openMediaStage(items, 0); });
+            await act(async () => screen.findByTestId('media-stage-show-in-chat')!.props.onPress());
+            expect(showInChat).toHaveBeenCalledOnce();
+        } finally { await screen.unmount(); }
+    });
+
     it('admits only visible cached strip pictures while retaining every scrollable gallery item', async () => {
         const { openMediaStage } = await import('./useMediaStage');
         const screen = await renderScreen(<InjectedAuthProvider credentials={null}><ModalProvider><></></ModalProvider></InjectedAuthProvider>);

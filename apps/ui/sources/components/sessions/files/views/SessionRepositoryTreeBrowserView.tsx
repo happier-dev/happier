@@ -27,6 +27,10 @@ import type { FileMenuContext } from '@/components/workspaces/files/file/fileMen
 import { applyFileDiscardAction } from '@/scm/operations/applyFileDiscardAction';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useHappierTouchPrimaryPointer } from '@happier-dev/plugin-ui/environment';
+import { useSessionGalleryOpener } from '@/components/sessions/panes/details/useSessionGalleryOpenActions';
+import { retryableLazy } from '@/components/ui/performance/retryableLazy';
+import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
+import { useDeviceType } from '@/utils/platform/responsive';
 
 const styles = StyleSheet.create({
     root: { flex: 1 },
@@ -45,6 +49,10 @@ function SessionFilesRootHeading(props: Readonly<{ label: string }>) {
 }
 
 const ignoreUnavailableAction = () => {};
+// Media loads when it is first chosen.
+const SessionMediaGalleryView = retryableLazy(async () => ({
+    default: (await import('@/components/workspaces/files/gallery/SessionMediaGalleryView')).SessionMediaGalleryView,
+}));
 function UnavailableSessionFiles(props: Readonly<{
     rootLabel: string;
     machineName: string | null;
@@ -123,6 +131,32 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
             sessionPath: rootPath, file, snapshot: scmSnapshot ?? null, scmWriteEnabled, commitStrategy, surface: 'files' }) } };
     }, [changedFiles, commitStrategy, props.sessionId, rootPath, scmSnapshot, scmWriteEnabled, serverId]);
 
+    // A folder's gallery opens big in Details beside the pane; a phone's Files tab is already the full-screen host,
+    // so there the pane itself switches (lab pr974 SG2).
+    const phone = useDeviceType() === 'phone';
+    const openSessionGallery = useSessionGalleryOpener({ sessionId: props.sessionId, serverId: serverId ?? null });
+    const { onOpenFile } = props;
+    const gallery = React.useMemo(() => {
+        const folderTitle = (path: string) => path ? path.split('/').at(-1) ?? path : rootLabel;
+        return {
+            openFolder: phone ? null : (path: string, event?: unknown) => {
+                openSessionGallery({ kind: 'gallery', path }, { title: folderTitle(path), event });
+            },
+            openFolderBeside: phone ? null : (path: string, event?: unknown) => {
+                openSessionGallery({ kind: 'gallery', path }, { title: folderTitle(path), event, beside: true });
+            },
+            media: (
+                <React.Suspense fallback={<PaneLoadingFallback />}>
+                    <SessionMediaGalleryView sessionId={props.sessionId} serverId={serverId ?? null} presentation="pane" onOpenFile={onOpenFile} />
+                </React.Suspense>
+            ),
+            openMediaBeside: phone ? null : (event?: unknown) => {
+                openSessionGallery({ kind: 'gallery', scope: 'session-media' }, { title: t('files.pane.gallery.media'), event, beside: true });
+            },
+            targetSession: serverId ? { sessionId: props.sessionId, serverId } : null,
+        };
+    }, [onOpenFile, openSessionGallery, phone, props.sessionId, rootLabel, serverId]);
+
     if (!scope) return <UnavailableSessionFiles rootLabel={rootLabel} machineName={machineName}
         machineScope={displayMachineScope} paneHeaderLine={chrome.paneHeaderLine} />;
     return (
@@ -145,6 +179,7 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
             paneHeaderLine={chrome.paneHeaderLine}
             scrollProps={chrome.scrollProps}
             scrollOverlay={chrome.scrollOverlay}
+            gallery={gallery}
         />
     );
 });

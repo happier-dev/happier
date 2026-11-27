@@ -1,6 +1,29 @@
 
 
 export type FilesPaneTranslations = Readonly<{
+    gallery: Readonly<{
+        media: string;
+        list: string;
+        gallery: string;
+        viewLabel: string;
+        openBeside: string;
+        openAsGallery: string;
+        showAsList: string;
+        up: string;
+        unknownDay: string;
+        otherFiles: (params: Readonly<{ count: number; names: string }>) => string;
+        pictureCount: (params: Readonly<{ count: number }>) => string;
+        folderCount: (params: Readonly<{ count: number }>) => string;
+        truncated: (params: Readonly<{ count: string }>) => string;
+        loadTheRest: string;
+        emptyFolder: string;
+        mediaEmptyTitle: string;
+        mediaEmptyReason: string;
+        mediaFailed: string;
+        capturesUnreadable: string;
+        showInChat: string;
+        showInChatFailed: string;
+    }>;
     menu: Readonly<{
         openBeside: string;
         openWithBlame: string;
@@ -456,5 +479,28 @@ export const filesPaneTranslationsEnglish = { en: {
             editLoading: "The language server is still loading the project. Try again in a moment.",
             editFailed: "Couldn’t get the changes. Try again.",
             outcomeUnknown: "The change may have been written. Check the files before trying again.",
+        },
+        gallery: {
+            media: "Media",
+            list: "List",
+            gallery: "Gallery",
+            viewLabel: "View as",
+            openBeside: "Open beside",
+            openAsGallery: "Open as gallery",
+            showAsList: "Show as list",
+            up: "Up one folder",
+            unknownDay: "Date unknown",
+            otherFiles: ({ count, names }) => String(count) + " " + (count === 1 ? "other file" : "other files") + " · " + names,
+            pictureCount: ({ count }) => String(count) + " " + (count === 1 ? "picture or video" : "pictures and videos"),
+            folderCount: ({ count }) => String(count) + " " + (count === 1 ? "folder" : "folders"),
+            truncated: ({ count }) => "Showing " + count + " · more weren’t loaded",
+            loadTheRest: "Load the rest",
+            emptyFolder: "No pictures or videos here",
+            mediaEmptyTitle: "No pictures in this Session yet",
+            mediaEmptyReason: "Pictures you attach, images the agent makes and screen captures collect here.",
+            mediaFailed: "Couldn’t list this Session’s media",
+            capturesUnreadable: "Screen captures aren’t readable on this Machine",
+            showInChat: "Show in chat",
+            showInChatFailed: "Couldn’t find that message",
         },
     } } as const satisfies Pick<Record<string, FilesPaneTranslations>, "en">;

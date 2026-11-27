@@ -27,6 +27,8 @@ export type MediaStageItem = Readonly<{
     alphaCapable?: boolean;
     originRef?: React.RefObject<View | null>;
     openFile?: () => void;
+    /** The message this picture came with (Session Media): the stage's one labelled action (lab pr974 SM1j). */
+    showInChat?: () => void;
     edit?: StagePictureEdit;
     /** Tray Edit marks opens directly in the same stage mode. */
     annotate?: boolean;
