@@ -259,6 +259,11 @@ function DeploymentDatabaseMoveCutoverSheet(props: Readonly<{ prepared: Prepared
           testID={`project-deployments.move.stopped:${service.serviceId}`} title={service.composeService}
           detail={t('projects.deployments.move.stopped')} mode="info" />)}
       </ItemGroup>
+      {/* Consequences lead (design review 2): what leaves the app is its own fact, never a line under Destination that reads as the destination losing it. */}
+      <ItemGroup title={t('projects.deployments.databaseMoveRemovedService')}>
+        <Item testID="project-deployments.move.removed" title={props.sourceService}
+          subtitle={t('projects.deployments.databaseMoveRemovedServiceKept')} mode="info" />
+      </ItemGroup>
       <ItemGroup title={t('projects.deployments.databaseMoveDestination')}>
         <Item title={props.name} mode="info" />
       </ItemGroup>
@@ -266,11 +271,6 @@ function DeploymentDatabaseMoveCutoverSheet(props: Readonly<{ prepared: Prepared
       <ItemGroup title={t('projects.deployments.databaseMoveBindings')}>
         {props.prepared.patch.bindings.set.map(binding => <Item key={binding.name} testID={`project-deployments.move.variable:${binding.name}`}
           title={binding.name} subtitle={moveVariableChange(binding, props.name)} mode="info" />)}
-      </ItemGroup>
-      {/* What leaves the app is its own fact, never a line under Destination that reads as the destination losing it. */}
-      <ItemGroup title={t('projects.deployments.databaseMoveRemovedService')}>
-        <Item testID="project-deployments.move.removed" title={props.sourceService}
-          subtitle={t('projects.deployments.databaseMoveRemovedServiceKept')} mode="info" />
       </ItemGroup>
       <ItemGroup title={t('projects.deployments.databaseMoveDefinition')}>
         <CodeBlockView code={storedComposeDocumentText(props.prepared.patch.definition.document)} language="yaml" showCopyButton showHeaderRow={false} />

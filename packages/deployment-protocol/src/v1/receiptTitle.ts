@@ -33,7 +33,16 @@ const OPERATION_HEADLINES = {
     },
 } as const satisfies Record<ReceiptOperation, Record<OperationState, string>>;
 
+/** A removal with no version of its own (a provider resource) still says it removed, never the deploy word. */
+const UNVERSIONED_TEARDOWN_HEADLINES = {
+    running: 'projects.deployments.receipt.titleRemoving',
+    succeeded: 'projects.deployments.receipt.titleRemoved',
+    failed: 'projects.deployments.receipt.titleRemoveFailed',
+    cancelled: 'projects.deployments.receipt.titleRemoveCancelled',
+} as const satisfies Record<OperationState, string>;
+
 type HeadlineKey = (typeof OPERATION_HEADLINES)[ReceiptOperation][OperationState]
+    | (typeof UNVERSIONED_TEARDOWN_HEADLINES)[OperationState]
     | 'projects.deployments.headlineQueued' | 'projects.deployments.headlineUnknown';
 
 /** The host's English locale and headless clients use the same Receipt copy. */
@@ -54,6 +63,10 @@ export const DEPLOYMENT_RECEIPT_HEADLINE_COPY_EN = {
     'projects.deployments.receipt.headlineRemoved': ({ sha }) => `Removed ${sha}`,
     'projects.deployments.receipt.headlineRemoveFailed': ({ sha }) => `Couldn’t remove ${sha}`,
     'projects.deployments.receipt.headlineRemoveCancelled': ({ sha }) => `Removal of ${sha} cancelled`,
+    'projects.deployments.receipt.titleRemoving': () => 'Removing',
+    'projects.deployments.receipt.titleRemoved': () => 'Removed',
+    'projects.deployments.receipt.titleRemoveFailed': () => 'Couldn’t remove',
+    'projects.deployments.receipt.titleRemoveCancelled': () => 'Removal cancelled',
     'projects.deployments.headlineQueued': ({ sha }) => `${sha} is queued`,
     'projects.deployments.headlineUnknown': ({ sha }) => `Couldn’t confirm ${sha}`,
 } satisfies Record<HeadlineKey, (params: TitleParams) => string>;
@@ -85,7 +98,10 @@ export function deploymentReceiptTitleV1(
     },
 ): string {
     const state = deploymentSettledReceiptStateV1(receipt.state);
-    if (revisionLabel === null) return copy.state(state);
+    if (revisionLabel === null) {
+        return receipt.operation === 'teardown' && state !== 'queued' && state !== 'outcome_unknown'
+            ? copy.headline(UNVERSIONED_TEARDOWN_HEADLINES[state], { sha: '' }) : copy.state(state);
+    }
     if (state === 'queued') return copy.headline('projects.deployments.headlineQueued', { sha: revisionLabel });
     if (state === 'outcome_unknown') return copy.headline('projects.deployments.headlineUnknown', { sha: revisionLabel });
     return copy.headline(OPERATION_HEADLINES[receipt.operation][state], { sha: revisionLabel });

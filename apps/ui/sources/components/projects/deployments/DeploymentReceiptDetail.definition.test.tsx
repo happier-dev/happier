@@ -222,6 +222,9 @@ describe('retained stored deployment source', () => {
       await waitForReceipt(screen);
       const expected = key === 'projects.deployments.review.railwayVolumeKept' ? t(key, { count: 2 }) : t(key);
       expect(screen.getTextContent()).toContain(expected);
+      // A removal is titled by its change and has no deploy outcome card saying "Deployed" again.
+      expect(screen.findByTestId('project-deployments.receipt.outcome.succeeded')).toBeNull();
+      expect(screen.getTextContent()).not.toContain(t('projects.deployments.stateSucceeded'));
       const openLink = screen.findHostByTestId('project-deployments.receipt.volumeRemoval.open');
       if (volumeRemoval.kind !== 'kept') {
         expect(openLink).toBeNull();

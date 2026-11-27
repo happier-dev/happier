@@ -682,7 +682,8 @@ export const DeploymentReceiptDetail = React.memo(
                   : undefined}
                 details={failureCode ? [failureCode] : undefined}
               />
-            ) : deployment.state === 'succeeded' ? (
+            ) : deployment.state === 'succeeded' && deployment.operation !== 'teardown' ? (
+              // A removal's title already says it removed; what happened to its data follows, never a "Deployed" card.
               <SucceededOutcome
                 serverId={props.serverId}
                 accountId={props.accountId}

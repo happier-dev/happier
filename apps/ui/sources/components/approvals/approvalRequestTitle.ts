@@ -16,7 +16,8 @@ import { readPluginInstallApprovalChange, readPluginInstallSourceName } from './
 import { useApprovalReferenceReading } from './approvalReferenceReading';
 import { useIncomingDiscussionApprovalNames } from './useIncomingDiscussionApprovalNames';
 import type { ActionApprovalPresentationInput } from './actionApprovalPresentation';
-import { describeDeploymentReviewDecision, readDeploymentReviewApproval } from './DeploymentReviewApprovalFacts';
+import { describeDeploymentEnvironmentUpdateDecision, describeDeploymentReviewDecision, readDeploymentEnvironmentUpdateApproval,
+  readDeploymentReviewApproval } from './DeploymentReviewApprovalFacts';
 
 export type ApprovalRequestTitleInput = Pick<ActionApprovalPresentationInput, 'execution' | 'executionOriginV1' | 'incomingDiscussionNames'> & Readonly<{
     storedTitle: string | null | undefined;
@@ -30,6 +31,7 @@ export type ApprovalRequestTitleInput = Pick<ActionApprovalPresentationInput, 'e
     status?: ApprovalRequest['status'];
     preview?: unknown;
     subject?: string | null;
+    /** The Environment a health trigger or an Environment update names, once its name is read. */
     triggerEnvironmentName?: string | null;
     /** Session ids the request carries; a legacy " — <id>" suffix naming one of them is dropped. */
     sessionIds?: ReadonlyArray<string | null | undefined>;
@@ -90,7 +92,10 @@ export function resolveApprovalRequestTitle(
   // A deploy, Create or Delete leads with the decision its host reviewed ("Create orders-api on Railway"), never the
   // Action's name: the page, its Inbox row and its retained tab read it from here.
   const reviewedDecision = describeDeploymentReviewDecision(readDeploymentReviewApproval({ preview: input.preview }), actionId || null, null);
-  const title = reviewedDecision ? reviewedDecision.title : subjectName && actionTitle ? `${actionTitle} · ${subjectName}` :
+  // An Environment update names the Environment it changes once its name is read, never "Update deployment environment".
+  const environmentUpdateTitle = reviewedDecision ? null
+    : describeDeploymentEnvironmentUpdateDecision(readDeploymentEnvironmentUpdateApproval(input), input.triggerEnvironmentName ?? null);
+  const title = reviewedDecision ? reviewedDecision.title : environmentUpdateTitle ? environmentUpdateTitle : subjectName && actionTitle ? `${actionTitle} · ${subjectName}` :
     generated
       ? (presentation.title ?? actionTitle ?? t('inbox.work.rows.approvalUntitled'))
       : firstLine;
@@ -167,7 +172,8 @@ export function useApprovalRequestTitle(input: ApprovalRequestTitleInput, server
   const reference = readActionApprovalSubject({ ...input, actionId: input.actionId ?? '' });
   const reading = useApprovalReferenceReading(reference, reference?.id ?? '', serverId);
   // A subject still being read is not a name yet; the title gains it once the read lands.
-  const environmentId = readPluginEventTriggerApprovalEnvironmentId(input);
+  const environmentId = readPluginEventTriggerApprovalEnvironmentId(input)
+    ?? readDeploymentEnvironmentUpdateApproval(input)?.environmentId ?? null;
   const { name: triggerEnvironmentName } = useEnvironmentName(serverId, environmentId);
   return resolveApprovalRequestTitle({ ...input, incomingDiscussionNames, triggerEnvironmentName,
       subject: reading.named && !reading.resolving ? reading.text : null });

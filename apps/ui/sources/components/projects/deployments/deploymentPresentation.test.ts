@@ -80,7 +80,8 @@ describe('data cleanup receipt presentation', () => {
         const receipt = createDeploymentReceiptHeaderV1({ operation: 'teardown', state: 'failed' });
         const { source } = projectDeploymentReceiptSourceFactsV1(content);
         expect(source).toBeNull();
-        expect(deploymentReceiptTitle(receipt, null)).toBe(deploymentStateLabel('failed'));
+        // No application source: the title still names the failed removal, never a bare state word.
+        expect(deploymentReceiptTitle(receipt, null)).toBe(t('projects.deployments.receipt.titleRemoveFailed'));
     });
 });
 
@@ -106,6 +107,13 @@ describe('receipt titles name the operation the receipt records', () => {
     it.each(['running', 'succeeded', 'failed', 'cancelled'] as const)('%s: every operation reads differently', (state) => {
         const titles = operations.map(operation => headline(operation, state));
         expect(new Set(titles).size).toBe(operations.length);
+    });
+
+    // A provider removal has no version of its own: its title still says it removed, never "Deployed".
+    it.each(['running', 'succeeded', 'failed', 'cancelled'] as const)('%s: a removal with no version never reads as a deploy', (state) => {
+        const title = (operation: 'deploy' | 'teardown') => deploymentReceiptTitle(createDeploymentReceiptHeaderV1({ operation, state }), null);
+        expect(title('teardown')).not.toBe(title('deploy'));
+        expect(deploymentReceiptTitleV1(createDeploymentReceiptHeaderV1({ operation: 'teardown', state }), null)).toBe(title('teardown'));
     });
 
     it.each(operations)('gives %s evidence the same title as the failed Receipt', (operation) => {

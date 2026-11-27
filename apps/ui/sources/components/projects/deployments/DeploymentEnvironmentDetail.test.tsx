@@ -1848,6 +1848,7 @@ describe('Project deployments page', () => {
         });
       } } : {}) });
     const { ModalProvider } = await import('@/modal');
+    const { t } = await import('@/text');
     const { DeploymentTeardownActionInputV1Schema } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
     const { ActionExecuteFailureSchema } = await import('@happier-dev/protocol/actions/actionExecutionResult');
     homes.answer(scope.serverId, `GET /v1/deployments/environments/${detail.environment.id}`, { body: {
@@ -1932,6 +1933,9 @@ describe('Project deployments page', () => {
         await act(async () => {
           screen.findByTestId('project-deployments.disposition.volume.app_data.confirmation')?.props.onChangeText('app_data');
         });
+        // The irreversible fact is said with the others before the confirm: which volume goes, with its data.
+        expect(screen.findByTestId('project-deployments.disposition.fact.deletes')).not.toBeNull();
+        expect(screen.getTextContent()).toContain(t('projects.deployments.factDeletesValue', { names: 'app_data', count: 1 }));
       }
       if (inventoryFailure) {
         const errorId = 'project-deployments.disposition.volumes.error';
@@ -1963,6 +1967,8 @@ describe('Project deployments page', () => {
       }
       const previousTeardowns = homes.requestsFor('/v1/actions/deployments.teardown').length;
       const previousDeletions = homes.requestsFor(deletionPath).length;
+      const { Modal } = await import('@/modal');
+      vi.mocked(Modal.alertAsync).mockClear();
       await screen.pressByTestIdAsync('project-deployments.disposition.confirm');
       await waitForHomeGovernance(() => {
         if (detach) expect(screen.findByTestId('project-deployments.environment') === null,
@@ -1973,6 +1979,13 @@ describe('Project deployments page', () => {
       });
       expect(homes.requestsFor(deletionPath)).toHaveLength(previousDeletions + (neverDeployed || detach ? 1 : 0));
       expect(homes.requestsFor(`/v1/deployments/environments/${detail.environment.id}/targets/target-link/unlink`)).toHaveLength(0);
+      // After a removal that deleted data, the person is told what went before the page leaves the Environment.
+      if (removed && !neverDeployed && !inventoryFailure) {
+        expect(vi.mocked(Modal.alertAsync).mock.calls.map(call => call[0]))
+          .toEqual([t('projects.deployments.removedOutcomeTitle', { name: detail.content.name })]);
+        expect(String(vi.mocked(Modal.alertAsync).mock.calls[0]?.[1]))
+          .toContain(t('projects.deployments.removedOutcomeDeleted', { names: 'app_data', count: 1 }));
+      }
       if (removed) expect(screen.findByTestId('project-deployments.disposition')).toBeNull();
       else {
         expect(done).not.toHaveBeenCalled();

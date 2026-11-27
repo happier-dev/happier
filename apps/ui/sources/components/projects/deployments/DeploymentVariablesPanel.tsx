@@ -67,6 +67,7 @@ import { isRecord } from '@happier-dev/protocol/common/records';
 import { useMountedShouldContinue } from '@/hooks/ui/useMountedShouldContinue';
 import type { DeploymentPlatformLinkActions } from './DeploymentPlatformTargetSheet';
 import { useProviderDatabaseReferenceChoices } from './railwayDatabaseVariables';
+import { deploymentBindingSourceTitle, deploymentVariableFactTitle } from './deploymentBindingSource';
 const providerKeyOf = (fact: DeploymentTargetVariableMetadataV1) => fact.key;
 type ProviderSaveResult = NonNullable<Extract<DeploymentBindingsSetResultV1, { ok: true }>['providerVariables']>;
 
@@ -324,7 +325,7 @@ export const DeploymentVariablesPanel = React.memo(
                   numberOfLines={2}
                   style={{ color: theme.colors.text.secondary }}
                 >
-                  {`${phaseLabel(row.phase)} · ${sourceTitle(row.binding, props.environmentName, secretName)}`}
+                  {`${phaseLabel(row.phase)} · ${deploymentBindingSourceTitle(row.binding, props.environmentName, secretName)}`}
                   {rowRotation(row, rotated) !== null ? <>{' · '}<RotatedWord
                     testID={`project-deployments.environment.variable.${row.name}.rotated`} /></> : null}
                 </Text>
@@ -372,7 +373,7 @@ export const DeploymentVariablesPanel = React.memo(
                 },
               ],
         accessibilityLabel: (row) =>
-          `${row.name}, ${phaseLabel(row.phase)}, ${sourceTitle(row.binding, props.environmentName, secretName)}`,
+          `${row.name}, ${phaseLabel(row.phase)}, ${deploymentBindingSourceTitle(row.binding, props.environmentName, secretName)}`,
         testID: (row) => `project-deployments.environment.variable.${row.name}`,
         // Provider comparison needs both values even beside the Environment list.
         ...(providerColumn ? { columnsOverflow: 'scroll' as const } : {}),
@@ -449,7 +450,7 @@ export const DeploymentVariablesPanel = React.memo(
       if (source.kind === 'reference') {
         return `${source.export} from ${environmentName(source.environmentId) ?? t('projects.deployments.sourceAnotherEnvironment')}`;
       }
-      return sourceTitle({ source }, environmentName).toLowerCase();
+      return deploymentBindingSourceTitle({ source }, environmentName).toLowerCase();
     }, [catalog, environmentName]);
     const savedName = (source: SecretSource) =>
       catalog.find((entry) => entry.ref === source.ref)?.name ?? t('projects.deployments.sourceSavedSecret');
@@ -648,13 +649,13 @@ export const DeploymentVariablesPanel = React.memo(
             valueControl={adding === 'fact' ? <>
               <DropdownMenu testID="project-deployments.environment.variables.add.fact-choice"
                 open={factOpen} onOpenChange={setFactOpen}
-                items={DeploymentVariableFactOptionsV1.map(value => ({ id: value, title: factTitle(value) }))}
+                items={DeploymentVariableFactOptionsV1.map(value => ({ id: value, title: deploymentVariableFactTitle(value) }))}
                 selectedId={fact} onSelect={value => {
                   const selected = DeploymentVariableFactOptionsV1.find(choice => choice === value);
                   if (selected) setFact(selected);
                   setFactOpen(false);
                 }} itemTrigger={{ title: t('projects.deployments.settingsSections.previewEditor.addFact'),
-                  detailFormatter: () => factTitle(fact), itemProps: { accessoryLayout: 'adaptive' } }} />
+                  detailFormatter: () => deploymentVariableFactTitle(fact), itemProps: { accessoryLayout: 'adaptive' } }} />
               {fact === 'domainUrl' ? props.domainRead ? <DeploymentEnvironmentDomainSelect {...props.domainRead}
                 environmentId={props.environmentId} selectedId={factDomainId} onSelect={setFactDomainId}
                 disabled={draft.saving} title={t('projects.deployments.factDomainUrl')}
@@ -1586,7 +1587,7 @@ function ValueSource(
   }>,
 ) {
   const { theme } = useUnistyles();
-  const title = sourceTitle(props.binding, props.environmentName, props.secretName);
+  const title = deploymentBindingSourceTitle(props.binding, props.environmentName, props.secretName);
   const source = props.binding.source;
   const value = source.kind === 'value' && source.value.length > 0;
   // One line (lab envVars): the row's glyph already says the kind, so a secret adds only its revision.
@@ -1657,46 +1658,6 @@ function sourceIcon(kind: VariableBinding['source']['kind']) {
       return 'link' as const;
     default:
       return 'code' as const;
-  }
-}
-
-function sourceTitle(
-  binding: Pick<VariableBinding, 'source'>,
-  environmentName: (id: string) => string | null,
-  secretName?: (ref: string) => string | null,
-): string {
-  const source = binding.source;
-  switch (source.kind) {
-    case 'secret':
-      return secretName?.(source.ref) ?? t('projects.deployments.sourceSavedSecret');
-    case 'value':
-      return source.value.length > 0
-        ? source.value
-        : t('projects.deployments.sourceValue');
-    case 'reference':
-      return t('projects.deployments.sourceReference', {
-        output: source.export,
-        environment:
-          environmentName(source.environmentId) ??
-          t('projects.deployments.sourceAnotherEnvironment'),
-      });
-    case 'deploymentFact':
-      return factTitle(source.fact);
-  }
-}
-
-function factTitle(fact: DeploymentVariableFactV1): string {
-  switch (fact) {
-    case 'primaryUrl':
-      return t('projects.deployments.factPrimaryUrl');
-    case 'commitSha':
-      return t('projects.deployments.factCommitSha');
-    case 'deploymentId':
-      return t('projects.deployments.factDeploymentId');
-    case 'environmentName':
-      return t('projects.deployments.factEnvironmentName');
-    case 'domainUrl':
-      return t('projects.deployments.factDomainUrl');
   }
 }
 

@@ -159,6 +159,9 @@ function DeploymentDispositionSheet(
         : props.running
           ? t('projects.deployments.deleteConfirmRemove', { name: props.name })
           : t('projects.deployments.deleteConfirm', { name: props.name });
+  // The volumes this removal deletes, by the names the person typed; said as a fact before and as the outcome after.
+  const deletedVolumes = choice === 'remove' && volumeReview
+    ? volumeReview.filter(volume => volumeChoices[volume.name] === 'delete').map(volume => volumeDisplayName(volume.name)) : [];
   const { onClose, onApproval, onDone, run } = props;
   const confirm = async () => {
     if (busy || (choice === 'remove' && (!props.canRemove || !domainsReady || !volumesReady || !volumesConfirmed || !resourceConfirmed))) return;
@@ -179,6 +182,16 @@ function DeploymentDispositionSheet(
           t('projects.deployments.factSecretsValue'),
           t('projects.deployments.factCostsValue', { machine }),
         ].join('\n\n'));
+      } else if (choice === 'remove' && outcome.kind === 'deleted') {
+        // The Environment and its receipts leave with it, so what went is said once here, before its page closes.
+        const stopped = props.running && props.services?.length ? props.services.join(', ') : null;
+        if (stopped || deletedVolumes.length) {
+          await Modal.alertAsync(t('projects.deployments.removedOutcomeTitle', { name: props.name }), [
+            stopped ? t('projects.deployments.removedOutcomeStopped', { services: stopped }) : null,
+            deletedVolumes.length ? t('projects.deployments.removedOutcomeDeleted',
+              { names: deletedVolumes.join(', '), count: deletedVolumes.length }) : null,
+          ].filter(Boolean).join('\n\n'));
+        }
       }
       onDone(outcome);
       return;
@@ -277,6 +290,12 @@ function DeploymentDispositionSheet(
             key: 'stops',
             label: t('projects.deployments.factStops'),
             value: stopsValue,
+          }] : []),
+          // The irreversible fact, as soon as a volume is set to Delete.
+          ...(deletedVolumes.length ? [{
+            key: 'deletes',
+            label: t('projects.deployments.factDeletes'),
+            value: t('projects.deployments.factDeletesValue', { names: deletedVolumes.join(', '), count: deletedVolumes.length }),
           }] : []),
           ...(props.running ? [{
             key: 'frees',

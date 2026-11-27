@@ -35,7 +35,8 @@ vi.mock('@/text', async () => {
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
-const { DeploymentReviewApprovalFacts, describeDeploymentReviewDecision, readDeploymentReviewApproval } = await import('./DeploymentReviewApprovalFacts');
+const { DeploymentReviewApprovalFacts, describeDeploymentReviewDecision, readDeploymentReviewApproval,
+  readDeploymentEnvironmentUpdateApproval, describeDeploymentEnvironmentUpdateFields, describeDeploymentEnvironmentUpdateDecision } = await import('./DeploymentReviewApprovalFacts');
 
 
 const { ApprovalIncludedSteps, readApprovalIncludedSteps } = await import('./ApprovalIncludedSteps');
@@ -474,4 +475,45 @@ it.each([false, true])('presents name-only Compose use warnings from the host re
   expect(screen.findHostByTestId('facts.risks')).not.toBeNull();
   expect(screen.getTextContent()).toContain('LOG_LEVEL');
   expect(screen.getTextContent()).toContain('REDIS_URL');
+});
+
+describe('an Environment update approval (a data Move cutover) reads as what it changes', () => {
+  // The Move's cutover request as the Workflow sends it: exact ids, revisions, Compose text and a secret reference.
+  const document = 'services:\n  web:\n    image: app:1\n    environment:\n      DATABASE_URL: postgres://happier:${DB_MOVE_PASSWORD}@${DB_MOVE_HOST}:${DB_MOVE_PORT}/app\n';
+  const secretRef = 'happier:shared-secret:v1:9b2558ae-476f-436c-b63b-e4fca6098553';
+  const actionArgs = { serverId: 'server-1', environmentId: 'env-app', expectedRevision: 4, contentArtifactId: '786dc6c9-0f58-831a-be04-e2fe84052d00',
+    contentHeaderVersion: 1, contentBodyVersion: 1,
+    patch: { definition: { from: 'compose', document, profiles: [], services: ['web'], primaryService: 'web' },
+      bindings: { set: [
+        { purpose: 'variable', phase: 'runtime', name: 'DB_MOVE_HOST', source: { kind: 'reference', environmentId: 'env-reporting', export: 'postgres', via: 'auto', component: 'host' } },
+        { purpose: 'variable', phase: 'runtime', name: 'DB_MOVE_PORT', source: { kind: 'reference', environmentId: 'env-reporting', export: 'postgres', via: 'auto', component: 'port' } },
+        { purpose: 'variable', phase: 'runtime', name: 'DB_MOVE_PASSWORD', source: { kind: 'secret', ref: secretRef, resourceRevision: 1 } },
+      ], remove: [] } } };
+
+  it('names the Environment, what stops and what each variable reads, with no ids, Compose text or secret reference', () => {
+    const approval = readDeploymentEnvironmentUpdateApproval({ actionId: 'deployments.environments.update', actionArgs });
+    expect(approval).not.toBeNull();
+    const { rows } = describeDeploymentEnvironmentUpdateFields(approval!, { name: 'Harbor QA', services: ['web', 'postgres'] },
+      { 'env-reporting': 'Reporting' });
+    const facts = rows.map(row => row.kind === 'value' ? `${row.title}=${row.value}` : row.kind);
+    expect(facts).toEqual([
+      'projects.deployments.review.environment=Harbor QA',
+      'projects.deployments.review.updateRemovesServices=postgres',
+      'DB_MOVE_HOST=projects.deployments.sourceReference',
+      'DB_MOVE_PORT=projects.deployments.sourceReference',
+      'DB_MOVE_PASSWORD=projects.deployments.sourceSavedSecret',
+      'projects.deployments.review.updateDefinition=projects.deployments.review.updateDefinitionChanged',
+    ]);
+    const shown = JSON.stringify(rows);
+    for (const raw of ['env-app', 'env-reporting', '786dc6c9', secretRef, 'DATABASE_URL']) expect(shown).not.toContain(raw);
+    expect(describeDeploymentEnvironmentUpdateDecision(approval, 'Harbor QA')).toBe('projects.deployments.review.decisionUpdateEnvironment');
+  });
+
+  it('keeps the generic reading for a preview or a settings-only update', () => {
+    expect(readDeploymentEnvironmentUpdateApproval({ actionId: 'deployments.environments.update',
+      actionArgs: { ...actionArgs, mode: 'preview' } })).toBeNull();
+    expect(readDeploymentEnvironmentUpdateApproval({ actionId: 'deployments.environments.update',
+      actionArgs: { ...actionArgs, patch: { protection: 'production' } } })).toBeNull();
+    expect(readDeploymentEnvironmentUpdateApproval({ actionId: 'deployments.deploy', actionArgs })).toBeNull();
+  });
 });

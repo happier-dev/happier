@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_ROLLBACK_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_ROLLBACK_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DeploymentEnvironmentUpdatePatchV1Schema, type DeploymentEnvironmentUpdateInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { deploymentRevisionLabelV1 as deploymentRevisionLabel } from '@happier-dev/deployments';
 import { formatHappierDataBytes, joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 import { areDeploymentSourceLabelsEqualV1, DeploymentApprovalReviewV1Schema, DeploymentRemovalApprovalReviewV1Schema, type DeploymentRemovalReviewV1, type DeploymentApprovalReviewV1, type DeploymentFolderReviewRevisionV1, type DeploymentPlatformCreateReviewV1, type DeploymentMachineReviewV1, type DeploymentReviewRevisionV1, type DeploymentReviewRiskKindV1, type DeploymentReviewServiceV1, type DeploymentReviewV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
@@ -9,6 +10,8 @@ import { type ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRe
 import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 
 import { DeploymentVolumeRemovalFact } from '@/components/projects/deployments/DeploymentVolumeRemovalFact';
+import { deploymentBindingSourceTitle } from '@/components/projects/deployments/deploymentBindingSource';
+import { useEnvironmentName, useEnvironmentRecord } from '@/components/projects/deployments/useEnvironmentName';
 import { useProjectSourceName } from '@/components/projects/sources/useProjectSources';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
@@ -656,3 +659,129 @@ const ReviewFields = React.memo(function ReviewFields(props: Readonly<{
     </>
   );
 });
+
+type EnvironmentUpdatePatch = NonNullable<DeploymentEnvironmentUpdateInputV1['patch']>;
+
+/** An Environment update that changes what runs or what it connects to: its own admitted input is the exact effect. */
+export type DeploymentEnvironmentUpdateApproval = Readonly<{
+  environmentId: string;
+  definition: EnvironmentUpdatePatch['definition'];
+  bindings: EnvironmentUpdatePatch['bindings'];
+}>;
+
+/**
+ * An Environment update approval reads as what it changes, from the request's own arguments (the exact effect it
+ * runs with): no host review exists for it. Only a content change (its definition or its variables) reads this way;
+ * a preview or a setting-only update keeps the generic reading.
+ */
+export function readDeploymentEnvironmentUpdateApproval(
+  request: Readonly<{ actionId?: string | null; actionArgs?: unknown }>,
+): DeploymentEnvironmentUpdateApproval | null {
+  if (request.actionId !== DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1) return null;
+  const args = readRecord(request.actionArgs);
+  if (args.mode !== undefined || typeof args.environmentId !== 'string') return null;
+  const patch = DeploymentEnvironmentUpdatePatchV1Schema.safeParse(args.patch);
+  if (!patch.success || (!patch.data.definition && !patch.data.bindings)) return null;
+  return { environmentId: args.environmentId, definition: patch.data.definition, bindings: patch.data.bindings };
+}
+
+type EnvironmentNames = Readonly<Record<string, string>>;
+
+/** Names every Environment the update's variables read from, one read each, so the hook count stays fixed. */
+function NamedEnvironments(props: Readonly<{
+  serverId: string | null;
+  ids: readonly string[];
+  names?: EnvironmentNames;
+  children: (names: EnvironmentNames) => React.ReactNode;
+}>): React.ReactNode {
+  const [id, ...rest] = props.ids;
+  if (id === undefined) return props.children(props.names ?? {});
+  return <NamedEnvironment {...props} id={id} rest={rest} />;
+}
+
+function NamedEnvironment(props: Readonly<{
+  serverId: string | null;
+  id: string;
+  rest: readonly string[];
+  names?: EnvironmentNames;
+  children: (names: EnvironmentNames) => React.ReactNode;
+}>) {
+  const { name } = useEnvironmentName(props.serverId, props.id);
+  const names = React.useMemo(() => (name ? { ...props.names, [props.id]: name } : props.names), [props.names, props.id, name]);
+  return <NamedEnvironments serverId={props.serverId} ids={props.rest} names={names}>{props.children}</NamedEnvironments>;
+}
+
+/** The facts an Environment update changes, consequences first: what stops, then what each variable reads. */
+export function describeDeploymentEnvironmentUpdateFields(
+  approval: DeploymentEnvironmentUpdateApproval,
+  current: Readonly<{ name: string | null; services: readonly string[] | null }>,
+  environmentNames: EnvironmentNames,
+): ApprovalFieldsPresentation {
+  const nextServices = approval.definition?.services;
+  const removed = nextServices && current.services ? current.services.filter(service => !nextServices.includes(service)) : [];
+  const added = nextServices && current.services ? nextServices.filter(service => !current.services!.includes(service)) : [];
+  const set = (approval.bindings?.set ?? []).flatMap(binding => binding.purpose === 'variable' ? [binding] : []);
+  const removedVariables = (approval.bindings?.remove ?? []).flatMap(binding => binding.purpose === 'variable' ? [binding] : []);
+  return { rows: [
+    ...field('environmentUpdate.environment', t('projects.deployments.review.environment'), current.name),
+    ...field('environmentUpdate.removedServices', t('projects.deployments.review.updateRemovesServices'), removed.join(', '), {
+      note: removed.length ? t('projects.deployments.review.updateRemovesServicesNote') : undefined }),
+    ...field('environmentUpdate.addedServices', t('projects.deployments.review.updateAddsServices'), added.join(', ')),
+    ...set.map((binding, index) => ({ kind: 'value' as const, path: `environmentUpdate.variables.${index}`, title: binding.name,
+      value: deploymentBindingSourceTitle(binding, id => environmentNames[id] ?? null) })),
+    ...removedVariables.map((binding, index) => ({ kind: 'value' as const, path: `environmentUpdate.removedVariables.${index}`,
+      title: binding.name, value: t('projects.deployments.review.updateVariableRemoved') })),
+    // The definition reads as one fact; its exact Compose text stays under Technical details.
+    ...field('environmentUpdate.definition', t('projects.deployments.review.updateDefinition'),
+      approval.definition ? t('projects.deployments.review.updateDefinitionChanged') : null),
+  ], unrepresentable: null };
+}
+
+/**
+ * An Environment update's approval (a Move's cutover, a Connect change): what changes, in words, through the same
+ * fields card a deploy review uses. The request's exact ids, Compose text and secret references stay one press away
+ * under Technical details.
+ */
+export const DeploymentEnvironmentUpdateApprovalFacts = React.memo(function DeploymentEnvironmentUpdateApprovalFacts(props: Readonly<{
+  approval: DeploymentEnvironmentUpdateApproval;
+  serverId: string | null;
+  testID: string;
+  technicalRows?: ApprovalFieldsPresentation['rows'];
+}>) {
+  const { approval } = props;
+  const record = useEnvironmentRecord(props.serverId, approval.environmentId);
+  const content = record.value?.content;
+  const name = content?.name ?? null;
+  const services = content ? content.definition.kind === 'stored' ? content.definition.services : null : null;
+  const referenced = React.useMemo(() => [...new Set((approval.bindings?.set ?? []).flatMap(binding =>
+    binding.purpose === 'variable' && binding.source.kind === 'reference' ? [binding.source.environmentId] : []))], [approval.bindings]);
+  return <NamedEnvironments serverId={props.serverId} ids={referenced}>
+    {(names) => <EnvironmentUpdateFields approval={approval} name={name} services={services} names={names}
+      serverId={props.serverId} testID={props.testID} technicalRows={props.technicalRows} />}
+  </NamedEnvironments>;
+});
+
+const EnvironmentUpdateFields = React.memo(function EnvironmentUpdateFields(props: Readonly<{
+  approval: DeploymentEnvironmentUpdateApproval;
+  name: string | null;
+  services: readonly string[] | null;
+  names: EnvironmentNames;
+  serverId: string | null;
+  testID: string;
+  technicalRows?: ApprovalFieldsPresentation['rows'];
+}>) {
+  const presentation = React.useMemo(() => {
+    const facts = describeDeploymentEnvironmentUpdateFields(props.approval, { name: props.name, services: props.services }, props.names);
+    return { ...facts, rows: [...facts.rows, ...props.technicalRows ?? []] };
+  }, [props.approval, props.name, props.services, props.names, props.technicalRows]);
+  return <ActionApprovalFieldsCard presentation={presentation} anatomy="page" serverId={props.serverId}
+    title={t('projects.deployments.review.updateWhatTitle')} testID={`${props.testID}.fields`} />;
+});
+
+/** The decision an Environment update leads with, once its Environment has a name ("Update Harbor QA"). */
+export function describeDeploymentEnvironmentUpdateDecision(
+  approval: DeploymentEnvironmentUpdateApproval | null,
+  environmentName: string | null,
+): string | null {
+  return approval && environmentName ? t('projects.deployments.review.decisionUpdateEnvironment', { environment: environmentName }) : null;
+}

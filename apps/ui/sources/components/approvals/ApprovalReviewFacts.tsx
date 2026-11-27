@@ -41,7 +41,8 @@ import { PetImportConfirmationCard } from './PetImportConfirmationCard';
 import { readPetImportConfirmationV1 } from '@happier-dev/protocol/pets/importActionV1';
 import { ComputerActionApprovalCard, describeComputerActionApproval, type ComputerActionApproval } from './ComputerActionApprovalCard';
 import { ComputerApprovalCapture } from './ComputerApprovalCapture';
-import { DeploymentReviewApprovalFacts, describeDeploymentFolderReviewFiles, isDeploymentRemovalReview, readDeploymentReviewApproval } from './DeploymentReviewApprovalFacts';
+import { DeploymentEnvironmentUpdateApprovalFacts, DeploymentReviewApprovalFacts, describeDeploymentFolderReviewFiles, isDeploymentRemovalReview,
+  readDeploymentEnvironmentUpdateApproval, readDeploymentReviewApproval } from './DeploymentReviewApprovalFacts';
 import { ProjectCommandApprovalFacts, readProjectCommandApproval } from './ProjectCommandApprovalFacts';
 import { ReviewApplyCoverageFact } from './ReviewApplyCoverageFact';
 import { describeApprovalRequestFields, resolveApprovalVisualPreview } from './approvalFieldValues';
@@ -85,6 +86,8 @@ export function ApprovalReviewFacts(props: ApprovalReviewFactsInput & Readonly<{
   const request = React.useMemo(() => ({ actionId, actionArgs, preview, status: props.status, execution: props.execution }),
     [actionId, actionArgs, preview, props.status, props.execution]);
   const deployment = React.useMemo(() => readDeploymentReviewApproval(request), [request]);
+  // An Environment update has no host review: its own arguments are the exact change it makes.
+  const environmentUpdate = React.useMemo(() => deployment ? null : readDeploymentEnvironmentUpdateApproval(request), [deployment, request]);
   const template = React.useMemo(() => readDeploymentTemplateApprovalReview(preview), [preview]);
   const domainSetup = React.useMemo((): DeploymentDomainNativeSetupReviewV1['domainNativeSetup'] | null => {
     if (actionId !== DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1) return null;
@@ -109,16 +112,16 @@ export function ApprovalReviewFacts(props: ApprovalReviewFactsInput & Readonly<{
   // Hatch pet's import request: its preview card is the confirmation (Add to my pets is approving it).
   const petImport = React.useMemo(() => readPetImportConfirmationV1(request), [request]);
   const handoff = React.useMemo(() => HandoffTargetReplacementApprovalV1Schema.safeParse(readRecord(preview).handoffTargetReplacementApproval), [preview]);
-  const generic = !deployment && !template && !command && !computer && !edit && !resource && !props.resourceProposal && !petImport;
+  const generic = !deployment && !environmentUpdate && !template && !command && !computer && !edit && !resource && !props.resourceProposal && !petImport;
   const fields = React.useMemo(() => generic && props.fields === undefined ? describeApprovalRequestFields(request) : null, [generic, props.fields, request]);
-  // A teardown reads by its typed facts; the request's own ids stay one press away under Technical details.
-  const removalTechnicalRows = React.useMemo(() => isDeploymentRemovalReview(deployment)
+  // A teardown or an Environment update reads by its facts; the request's own ids stay one press away under Technical details.
+  const removalTechnicalRows = React.useMemo(() => isDeploymentRemovalReview(deployment) || environmentUpdate
     ? describeApprovalRequestFields(request).rows.flatMap(row => row.kind === 'value' ? [{ ...row, technical: true as const }] : [])
-    : undefined, [deployment, request]);
+    : undefined, [deployment, environmentUpdate, request]);
   const reboot = readRecord(readRecord(preview).machineRebootReview);
   return <>
     <ApprovalPreviewFacts request={request} preview={preview} serverId={serverId} />
-    {props.summaryPlacement !== 'host' && !deployment && !template && !computer && readApprovalPreviewSummary(preview, request) ? (
+    {props.summaryPlacement !== 'host' && !deployment && !environmentUpdate && !template && !computer && readApprovalPreviewSummary(preview, request) ? (
       <ItemGroup><SectionContentRow testID={`${testID}.preview`}>
         <ApprovalPreviewSummary preview={preview} request={request} serverId={serverId} />
       </SectionContentRow></ItemGroup>
@@ -131,6 +134,8 @@ export function ApprovalReviewFacts(props: ApprovalReviewFactsInput & Readonly<{
     {visual ? <ApprovalVisualPreview preview={visual} artifactId={props.artifactId ?? testID} serverId={serverId} testID={`${testID}.visual`} /> : null}
     {deployment ? <DeploymentReviewApprovalFacts approval={deployment} serverId={serverId} technicalRows={removalTechnicalRows}
       testID={`${testID}.deployment-review`} decided={props.decided} /> : null}
+    {environmentUpdate ? <DeploymentEnvironmentUpdateApprovalFacts approval={environmentUpdate} serverId={serverId}
+      technicalRows={removalTechnicalRows} testID={`${testID}.environment-update`} /> : null}
     {domainSetup?.length ? <ItemGroup title={t('projects.deployments.review.domainSetupTitle')}>
       {domainSetup.map(machine => <DomainSetupMachineRow key={machine.machineId} machine={machine}
         serverId={serverId} testID={`${testID}.domain-setup.${machine.machineId}`} />)}
