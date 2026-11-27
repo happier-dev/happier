@@ -44,7 +44,7 @@ export function observeTransitionTargetSpawn(
   // A Pending wake has no transition nonce. It may carry the same admitted
   // input, but it must prove its own preflight refusal before recovery resumes.
   const samePendingRetry = previous.state === 'credential_refused'
-    && spawnNonce === undefined && previous.launch.localId === pendingRequestId;
+    && !spawnNonce && previous.launch.localId === pendingRequestId;
   if (!originalLaunch && !samePendingRetry) {
     attempts.delete(sessionId);
     return;

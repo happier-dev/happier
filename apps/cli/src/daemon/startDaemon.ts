@@ -3086,7 +3086,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
               const authorization = normalizedOptions.executionAuthorization;
               transitionLaunch = observeTransitionTargetSpawn(
                 normalizedExistingSessionId,
-                requestedSpawnNonce ?? undefined,
+                requestedSpawnNonce,
                 authorization?.provenance === 'user_request' ? authorization.requestId : undefined,
               );
             }
