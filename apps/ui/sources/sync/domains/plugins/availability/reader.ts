@@ -1013,6 +1013,16 @@ function readInstalledPluginsAdmission(
 
 type InstalledPluginRows = Extract<PluginAccountInstalledPluginsAdmission, { kind: 'available' }>['plugins'];
 
+function projectInstalledActionTitles(actions: PluginHostBundledUiDeclaration['actionTitles']) {
+    return actions?.length
+        ? { actionTitlesById: Object.freeze(Object.fromEntries(actions.map(({ id, title }) => [id, title]))) }
+        : {};
+}
+
+function readBundledActionTitles(bundle: PluginHostBundledUiDeclaration | undefined) {
+    return bundle?.normalizedManifest ? bundle.normalizedManifest.contributes.actions : bundle?.actionTitles;
+}
+
 /** The same declaration projection serves census ingestion and a single bundle's fulfillment. */
 function readInstalledPluginRows(state: AvailabilityProjectionState, scope: ServerAccountScope,
     materializations: readonly PluginMachineMaterializationV1[], previous: InstalledPluginRows,
@@ -1091,6 +1101,8 @@ function readInstalledPluginRows(state: AvailabilityProjectionState, scope: Serv
                 source: { kind: materialization.sourceClass, locator: materialization.materializationId },
                 ...(declaration?.executionTarget ? { executionTarget: declaration.executionTarget } : {}),
                 ...(declaration ? { declaredExecution: readManifestDeclaredExecution(declaration) } : {}),
+                ...projectInstalledActionTitles(contributorDeclaration
+                    ? contributorDeclaration.contributes.actions : bundle?.actionTitles),
             }, registrySources, skills, storeKinds, subjectKinds);
             // A new declaration (a full manifest replacing its summary) often
             // carries the same UI facts; keep the incumbent model whole then.
@@ -2296,6 +2308,7 @@ function deriveAccountUiProjection(input: Readonly<{
             id: bundle.pluginId, displayName: bundle.displayName,
             version: bundle.pluginVersion, enabled: true, source: { kind: 'bundled' as const, locator: bundle.packageName },
             ...(bundle.declaredExecution ? { declaredExecution: bundle.declaredExecution } : {}),
+            ...projectInstalledActionTitles(readBundledActionTitles(bundle)),
         }])), ...Object.fromEntries(selections.filter(selected => (selected.release && selected.manifest.contributes.ui !== undefined)
             || selected.manifest.contributes.actions?.some(action => action.execution.target !== 'daemon')
             || selected.manifest.contributes.workItems?.length || selected.manifest.contributes.dragSources?.length
@@ -2313,6 +2326,8 @@ function deriveAccountUiProjection(input: Readonly<{
                     : { kind: 'bundled', locator: bundle!.packageName },
                 ...(selected.release ? { declaredExecution: readManifestDeclaredExecution(selected.manifest) }
                     : bundle?.declaredExecution ? { declaredExecution: bundle.declaredExecution } : {}),
+                ...projectInstalledActionTitles(selected.release
+                    ? selected.manifest.contributes.actions : readBundledActionTitles(bundle)),
             }]; })) }),
     }) : null;
     const retained = retainAccountUiProjectionRows(previous?.model, model);

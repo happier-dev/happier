@@ -13585,6 +13585,8 @@ The CLI publisher [`generateBundledPluginEntries.ts`](../apps/cli/scripts/build-
 
 The first-paint index carries the authored fallback titles of bundled Health Check kinds. Saved Checks use those titles until their current declaration is available. The full Check schemas remain on demand with the other declarations.
 
+The first-paint index carries authored Action titles and their referenced translations. An approval can name a reviewed Action from the matching installed declaration while its executable catalog is still loading. Reading a title requires no declaration fetch and grants no execution authority.
+
 Full per-plugin declaration bodies are JSON `.bundle` assets read through the existing Expo asset byte transport. Their schemas and copy remain available on demand without becoming JavaScript modules or source-map inputs, including in the single-graph development web bundle. The first-paint discovery index remains JavaScript. Last-good inventory retention can still read previously emitted declaration modules while new inventories reference content-addressed JSON assets.
 
 In 0.3 development source, the CLI publisher emits locator paths and metadata,

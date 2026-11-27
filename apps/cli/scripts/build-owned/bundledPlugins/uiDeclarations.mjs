@@ -45,6 +45,7 @@ export async function projectBundledPluginUiFirstPaintDeclaration(declaration) {
     runtime: { apiVersion: 1 }, contributes: {} }).contributes.ui;
   const actions = (contributes.actions ?? []).filter(action => action.execution.target === 'account')
     .map(({ inputSchema, resultSchema, ...descriptor }) => descriptor);
+  const actionTitles = (contributes.actions ?? []).map(({ id, title }) => ({ id, title }));
   const healthCheckKindTitles = (contributes.healthCheckKinds ?? []).map(({ id, title }) =>
     ({ id, title: resolvePluginLocalizedStringV2Text(title) }));
   const presentationManifest = { ...normalizedManifest, contributes: {
@@ -78,12 +79,14 @@ export async function projectBundledPluginUiFirstPaintDeclaration(declaration) {
   };
   visit(entries);
   visit(presentationManifest);
+  visit(actionTitles);
   for (const [id, entry] of Object.entries(entriesById)) {
     if (entry.contributionKind !== 'translations') continue;
     entries[id] = { ...entry, ...(entry.bundles ? { bundles: Object.fromEntries(Object.entries(entry.bundles)
       .map(([locale, bundle]) => [locale, Object.fromEntries(Object.entries(bundle).filter(([key]) => keys.has(key)))])) } : {}) };
   }
   return { ...identity, entriesById: entries, presentationManifest,
+    ...(actionTitles.length > 0 ? { actionTitles } : {}),
     ...(healthCheckKindTitles.length > 0 ? { healthCheckKindTitles } : {}),
     targetedPluginIds: [...new Set((contributes.targetedPluginContributions ?? []).map(row => row.target.pluginId))].sort() };
 }

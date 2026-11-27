@@ -4,9 +4,8 @@ import { PluginContributionIdentityV1Schema, type PluginContributionIdentityV1 }
 import { presentManagedAcquireStep } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 
 import { useAppShellPluginUiDeclarationProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
-import { resolvePluginProjectedActionPresentation } from '@/sync/domains/plugins/ui/actionPresentation';
+import { createPluginProjectedActionTitleResolver } from '@/sync/domains/plugins/ui/actionPresentation';
 import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
-import { createPluginUiProjectedActionResolver } from '@/sync/domains/plugins/ui/projection';
 import { getTranslationValue, t, tLoose } from '@/text';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -120,14 +119,14 @@ const IncludedStepFields = React.memo(function IncludedStepFields(props: Readonl
   const projection = useAppShellPluginUiDeclarationProjection();
   const localize = usePluginLocalizedTextResolver({ projection });
   const titles = React.useMemo(() => {
-    const resolveAction = createPluginUiProjectedActionResolver(projection?.actionsById);
+    const resolveActionTitle = createPluginProjectedActionTitleResolver(projection);
     return props.steps.map(({ action, role, keepsOn, title }) => {
       if (title !== undefined) return title;
       // The outcome a person approves ("always on"), not the generic "change when a machine stops".
       if (keepsOn) return t('approvals.includedStepKeepAlwaysOn');
       if (typeof action === 'string') return readApprovalActionTitle(action) ?? t('approvals.includedStepUnnamed');
-      const projected = resolveAction(action);
-      if (projected) return resolvePluginProjectedActionPresentation({ pluginId: action.pluginId, presentation: projected, projection, localize }).title;
+      const actionTitle = resolveActionTitle(action);
+      if (actionTitle !== undefined) return localize(action.pluginId, actionTitle);
       const step = props.managedAcquire ? presentManagedAcquireStep(role) : null;
       if (step) return typeof getTranslationValue(step.labelKey) === 'string' ? tLoose(step.labelKey) : step.label;
       const plugin = projection?.installedPackagesById[action.pluginId]?.displayName;

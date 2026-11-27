@@ -75,6 +75,8 @@ export function arePluginUiMaterializationsEquivalent(
 
 export type PluginUiInstalledPackageProjection = PluginProjectionInstalledPackageV2 & Readonly<{
     declaredExecution?: PluginUiDeclaredExecution;
+    /** Authored titles of known installed Actions, independent of the executable catalog. */
+    actionTitlesById?: Readonly<Record<string, PluginLocalizedStringV2>>;
     /** Host-private coverage fact from a full describe, never restored presentation. */
     resourceDeclarationsComplete?: true;
 }>;

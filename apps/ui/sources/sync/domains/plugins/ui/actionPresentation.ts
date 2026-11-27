@@ -1,9 +1,10 @@
 import { normalizeInputHintsText as normalizeActionInputHintsText, type InputHints as ActionInputHints } from '@happier-dev/protocol/inputs/inputFields';
 import type { PluginLocalizedStringV2 } from '@happier-dev/protocol/plugins/contributions/public-types';
 import type { PluginProjectedActionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 
 import { resolvePluginLocalizedText, type PluginLocalizedTextResolver } from './i18n';
-import type { PluginUiProjectionModel } from './projection';
+import { createPluginUiProjectedActionResolver, type PluginUiProjectionModel } from './projection';
 
 /**
  * The wire-carried presentation subset of an admitted Action. Keeping this
@@ -20,6 +21,17 @@ export type ResolvedPluginProjectedActionPresentation = Readonly<{
     description: string | null;
     inputHints: ActionInputHints | null;
 }>;
+
+/** Resolves presentation for an exact Action already known to the caller. */
+export function createPluginProjectedActionTitleResolver(projection: PluginUiProjectionModel | null) {
+    const resolveAction = createPluginUiProjectedActionResolver(projection?.actionsById);
+    return ({ pluginId, localId }: PluginContributionIdentityV1): PluginLocalizedStringV2 | undefined => {
+        const action = resolveAction({ pluginId, localId });
+        if (action) return action.title;
+        const titles = projection?.installedPackagesById[pluginId]?.actionTitlesById;
+        return titles && Object.hasOwn(titles, localId) ? titles[localId] : undefined;
+    };
+}
 
 function resolveActionText(params: Readonly<{
     value: PluginLocalizedStringV2;

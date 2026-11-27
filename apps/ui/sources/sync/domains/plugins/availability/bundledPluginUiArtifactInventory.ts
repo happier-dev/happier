@@ -4,6 +4,7 @@ import type { PluginUiArtifactsManifestEntryV2 } from '@happier-dev/protocol/plu
 import type { PluginDeclaredUiEntriesV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { PluginCollectionContractRefV1 } from '@happier-dev/protocol/plugins/data/collectionContractRefV1';
 import type { PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plugins/availability';
+import type { PluginActionContributionV2 } from '@happier-dev/protocol/plugins/actions/v2';
 
 /** Declaration facts for cold presentation; never an occurrence or execution grant. */
 export type PluginUiDeclaredExecution = Readonly<{
@@ -23,6 +24,8 @@ export type PluginHostBundledUiDeclaration = Readonly<{
     hasMachineRecipes?: boolean;
     /** Authored Check titles for presentation before full declarations load. */
     healthCheckKindTitles?: readonly Readonly<{ id: string; title: string }>[];
+    /** Authored titles for known Actions while the full declaration stays lazy. */
+    actionTitles?: readonly Pick<PluginActionContributionV2, 'id' | 'title'>[];
     entriesById: PluginDeclaredUiEntriesV1;
     /** Validated authored facts retained by the existing bundled declaration producer. */
     normalizedManifest?: PluginPortableReleaseManifestV1;
