@@ -184,6 +184,19 @@ function cloneCachedArtifactFiles(
     }));
 }
 
+/**
+ * The hot entry is one of its file set's files: the Artifact lease hands over the entry file's own
+ * bytes. When the entry views exactly those bytes, keep one private copy, since the cache never hands
+ * out its own arrays (reads clone). Comparing contents instead would cost an interpreted pass per byte.
+ */
+function retainedEntryBytes(bytes: Uint8Array, input: readonly PluginReactNativeCachedArtifactFile[] | undefined,
+    files: readonly PluginReactNativeCachedArtifactFile[] | undefined, entryRelativePath: string | undefined): Uint8Array {
+    const index = entryRelativePath && input ? input.findIndex((file) => file.relativePath === entryRelativePath) : -1;
+    const source = index >= 0 ? input![index]!.bytes : undefined;
+    return source && files && source.buffer === bytes.buffer && source.byteOffset === bytes.byteOffset
+        && source.byteLength === bytes.byteLength ? files[index]!.bytes : cloneBytes(bytes);
+}
+
 function isSameInstalledArtifact(
     installed: PluginReactNativeCachedArtifact,
     entry: Readonly<{
@@ -660,14 +673,15 @@ export function createPluginReactNativeBundleCache(
                 // remounts its surfaces) is not a new install, so it copies and compares no bytes.
                 return Object.freeze({ ok: true, cacheKey });
             }
+            const files = entry.files ? cloneCachedArtifactFiles(entry.files) : undefined;
             programs.delete(cacheKey);
             entries.set(cacheKey, Object.freeze({
                 identity: entry.identity,
                 cacheKey,
-                bytes: cloneBytes(entry.bytes),
+                bytes: retainedEntryBytes(entry.bytes, entry.files, files, entry.entryRelativePath),
                 format: entry.format,
                 ...(entry.entryRelativePath ? { entryRelativePath: entry.entryRelativePath } : {}),
-                ...(entry.files ? { files: cloneCachedArtifactFiles(entry.files) } : {}),
+                ...(files ? { files } : {}),
             }));
             if (entry.accountScope) {
                 hotEntryAccountScopes.set(cacheKey, accountScopeKey(entry.accountScope));

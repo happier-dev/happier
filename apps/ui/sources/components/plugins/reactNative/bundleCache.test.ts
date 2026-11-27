@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import { setFlagsFromString } from 'node:v8';
+import { runInNewContext } from 'node:vm';
 
 import {
     computePluginUiArtifactFileSetSha256DigestV1,
@@ -977,4 +979,23 @@ describe('React Native bundle cache', () => {
         expect(cache.readInstalledArtifact(identity)).toBeNull();
     });
 
+
+    it('holds an installed file-set artifact entry once, not once as `bytes` and again as its entry file', () => {
+        setFlagsFromString('--expose-gc');
+        const collect: () => void = runInNewContext('gc');
+        setFlagsFromString('--no-expose-gc');
+        const entry = new Uint8Array(8 * 1024 * 1024).fill(97);
+        const files = [{ relativePath: 'index.bundle', digest: computePluginUiArtifactSha256DigestV1(entry), byteSize: entry.byteLength, bytes: entry }];
+        const cache = createPluginReactNativeBundleCache();
+        collect();
+        const before = process.memoryUsage().arrayBuffers;
+        expect(cache.putInstalledArtifact({ identity, bytes: entry, format: 'plainJs', entryRelativePath: 'index.bundle', files }).ok).toBe(true);
+        collect();
+        const retainedMiB = (process.memoryUsage().arrayBuffers - before) / (1024 * 1024);
+        expect(Math.round(retainedMiB)).toBe(8);
+        // Readers still receive detached copies of both views.
+        const read = cache.readInstalledArtifact(identity);
+        expect(read?.bytes).not.toBe(read?.files?.[0]?.bytes);
+        expect(read?.files?.[0]?.bytes.byteLength).toBe(entry.byteLength);
+    });
 });
