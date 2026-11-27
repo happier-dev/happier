@@ -4,7 +4,8 @@ import { renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createSessionListQuerySourceHarness } from '@/dev/testkit/harness/sessionListQuerySourceHarness';
 import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { ReviewStartBody } from './ReviewStartBody';
-import { reviewReviewerIdForSelectionV1 } from '@happier-dev/protocol/reviews/reviewStart';
+import { ReviewStartInputSchema, reviewReviewerIdForSelectionV1 } from '@happier-dev/protocol/reviews/reviewStart';
+import { ScmComparisonSourceSchema } from '@happier-dev/protocol/scm/comparison';
 import { SelectionList } from '@/components/ui/selectionList';
 import { t } from '@/text';
 import { resolveExecutionRunLauncherBackendChoices } from './resolveExecutionRunLauncherBackendChoices';
@@ -180,6 +181,30 @@ it('asks what to review first and records the chosen change area in the draft', 
     expect(order[0]).toBe('review-start-subject');
     await screen.pressByTestIdAsync('review-start-subject:all');
     expect(input.changeType).toBe('all');
+    await screen.unmount();
+});
+it('reviews the staged index when selected, then replaces its source when the person chooses pending, all or a branch', async () => {
+    let input: Record<string, unknown> = { changeType: 'uncommitted', instructions: 'Review the staged QA fixture',
+        sessionId: 'qa-p03-session', reviewers: [{ kind: 'engine', engineId: 'claude' }] };
+    const props = () => ({ input,
+        onChange: ((update) => { input = typeof update === 'function' ? update(input) : update; }) satisfies React.Dispatch<React.SetStateAction<Record<string, unknown>>>,
+        source: { enabled: true, sections: [], selectedIds: new Set<string>(), where: null },
+        subject: { options: ['committed', 'uncommitted', 'all'] as const,
+            branch: { head: 'main', defaultBase: 'origin/main', renderBase: () => null } },
+        choices: [], transcriptAvailable: false, walkthrough: false, disabled: false });
+    const screen = await renderScreen(<ReviewStartBody {...props()} />);
+    for (const next of ['uncommitted', 'all', 'branch'] as const) {
+        await screen.pressByTestIdAsync('review-start-subject:committed');
+        const admitted = ReviewStartInputSchema.parse(input);
+        expect(ScmComparisonSourceSchema.parse(admitted.source)).toEqual({ kind: 'workingTree', area: 'included' });
+        expect(admitted.changeType).toBe('uncommitted');
+        await screen.update(<ReviewStartBody {...props()} />);
+        expect(screen.findByTestId('review-start-subject:committed')?.props.accessibilityState).toMatchObject({ selected: true });
+        await screen.pressByTestIdAsync(`review-start-subject:${next}`);
+        expect(input.source).toBeUndefined();
+        expect(input.changeType).toBe(next === 'branch' ? 'committed' : next);
+        await screen.update(<ReviewStartBody {...props()} />);
+    }
     await screen.unmount();
 });
 // U8 R2 SB2: a branch is one of the things to review, compared with a base the person picks from the branch list.

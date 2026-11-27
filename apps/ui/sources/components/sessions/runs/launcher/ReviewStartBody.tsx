@@ -6,6 +6,7 @@ import { ReviewStartSubject } from '@/components/reviews/start/ReviewStartSubjec
 import { ContextualStartComposerBody, useContextualStartComposer, useContextualStartParticipantSource, type ContextualStartSource } from '@/components/sessions/authoring/ContextualStartComposer';
 import type { ExecutableParticipantSelectionV1 } from '@happier-dev/protocol/discussions/executableParticipants';
 import { ReviewChangeTypeSchema, reviewReviewerIdForSelectionV1, type ReviewChangeType } from '@happier-dev/protocol/reviews/reviewStart';
+import { ScmComparisonSourceSchema } from '@happier-dev/protocol/scm/comparison';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { presentSharePrincipal, sharePrincipalKey } from '@/components/sharing/sharePrincipalPresentation';
 import { ReviewPersonRequirementControl } from '@/components/reviews/ReviewPersonRequirementControl';
@@ -81,18 +82,25 @@ export function ReviewStartBody(props: Props) {
             }))) }];
     }));
     const changeType = ReviewChangeTypeSchema.safeParse(props.input.changeType);
+    const comparisonSource = ScmComparisonSourceSchema.safeParse(props.input.source);
+    const staged = comparisonSource.success && comparisonSource.data.kind === 'workingTree' && comparisonSource.data.area === 'included';
     const branch = props.subject?.branch ?? null;
     const baseBranch = readReviewBaseBranch(props.input);
-    const subjectValue = branch && baseBranch !== null ? 'branch' as const
+    const subjectValue = staged ? 'committed' as const : branch && baseBranch !== null ? 'branch' as const
         : changeType.success ? changeType.data : props.subject?.options[0];
     return <View>
         {props.subject && props.subject.options.length > 0 && subjectValue ? <ReviewStartSubject options={props.subject.options}
             branch={branch ? { head: branch.head } : null}
             value={subjectValue} detail={props.subject.detail}
             disabled={props.disabled}
-            onChange={value => props.onChange(previous => value === 'branch'
-                ? { ...previous, changeType: 'committed', base: { kind: 'branch', baseBranch: readReviewBaseBranch(previous) || branch?.defaultBase || '' } }
-                : { ...previous, changeType: value, base: { kind: 'none' } })}>
+            onChange={value => props.onChange(previous => {
+                const { source: _previousSource, ...input } = previous;
+                if (value === 'branch') return { ...input, changeType: 'committed',
+                    base: { kind: 'branch', baseBranch: readReviewBaseBranch(previous) || branch?.defaultBase || '' } };
+                if (value === 'committed') return { ...input, changeType: 'uncommitted',
+                    source: { kind: 'workingTree', area: 'included' }, base: { kind: 'none' } };
+                return { ...input, changeType: value, base: { kind: 'none' } };
+            })}>
             {branch && baseBranch !== null ? branch.renderBase(baseBranch || null,
                 next => props.onChange(previous => ({ ...previous, base: { kind: 'branch', baseBranch: next } }))) : null}
         </ReviewStartSubject> : null}
