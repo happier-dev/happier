@@ -96,14 +96,15 @@ async function readSelectedDatabase(account: LazyActionAccountContext, signal: A
     data: Extract<DeploymentSelectedDatabaseV1, { kind: 'selfHosted' }>['data'] | undefined,
     links: readonly DeploymentTargetLinkChoiceV1['targetLink'][]): Promise<DeploymentReadResultV1<DeploymentSelectedDatabaseV1 | null>> {
     if (data) return { ok: true, value: { kind: 'selfHosted', data } };
-    const target = links.find(link => link.id === key && link.role === 'data' && link.source.kind === 'plugin'
-        && link.deletedAtMs === undefined);
+    const target = links.find(link => link.id === key && link.role === 'data' && link.source.kind === 'plugin');
     if (!target) return { ok: true, value: null };
+    const detached = target.state === 'detached' || target.detachedAtMs !== undefined;
+    if (target.deletedAtMs !== undefined && !detached) return { ok: true, value: null };
     const opened = await openTargetLinks(account, [target], signal);
     if (!opened.ok) return opened;
     const link = opened.value[0];
     if (!link) return failure('deployment_content_unavailable');
-    return { ok: true, value: { kind: target.state === 'detached' || target.detachedAtMs !== undefined ? 'detached' : 'managed', link } };
+    return { ok: true, value: { kind: detached ? 'detached' : 'managed', link } };
 }
 type EnvironmentPage = Extract<ReturnType<typeof DeploymentEnvironmentListResultV1Schema.parse>, { ok: true }>;
 export type DeploymentEnvironmentNamePage = Readonly<Pick<EnvironmentPage, 'nextCursor' | 'coverage'> & {

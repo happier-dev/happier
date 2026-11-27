@@ -836,6 +836,60 @@ describe('deployment scoped read transport', () => {
         } finally { account.dispose(); }
     });
 
+    it('opens the exact tombstoned detached database for cleanup and excludes a removed neighbor', async () => {
+        const serverId = await homes.addHome({ name: 'Detached database', serverUrl: 'https://detached-database.test',
+            accountId: 'alice', accountEncryptionMode: 'plain' });
+        const base = createDeploymentEnvironmentHeaderV1({ serverId, owner: { kind: 'account', accountId: 'alice' } });
+        const { runtimeTargetLinkId: _runtime, ...environment } = base;
+        const detail = createDeploymentEnvironmentDetailV1({ environment, targetLinks: [] });
+        const service = { pluginId: 'com.example.database', localId: 'database' };
+        const detached = createDeploymentTargetLinkHeaderV1({
+            id: 'detached-data', environmentId: environment.id, role: 'data', targetKind: 'database',
+            source: { kind: 'plugin', contribution: service }, machines: [], members: [],
+            state: 'detached', deletedAtMs: 2000, detachedAtMs: 2000, updatedAtMs: 2000,
+        });
+        const removed = createDeploymentTargetLinkHeaderV1({
+            ...detached, id: 'removed-data', contentArtifactId: 'removed-data-artifact',
+            state: 'configured', detachedAtMs: undefined,
+        });
+        const content = {
+            providerIdentity: { providerAccountId: 'team', providerResourceId: 'project', providerEnvironment: 'main' },
+            providerEnvironment: { kind: 'native', selection: { branchId: 'main' } },
+            credentialPrincipal: { kind: 'account', accountId: 'alice',
+                purpose: { consumer: { ...service, localId: 'projects-link' }, purpose: 'database' },
+                target: { kind: 'account', account: { service, accountId: 'database-token' } } },
+        };
+        const path = `/v1/deployments/environments/${environment.id}`;
+        homes.answer(serverId, path, { body: { ok: true, environment, targetLinks: [removed, detached] } });
+        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        const account = await captureLazyActionAccountContext(serverId);
+        try {
+            await account.createArtifactDocument({ artifactId: environment.contentArtifactId,
+                header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: 'Detached database' },
+                body: JSON.stringify(detail.content) });
+            await account.createArtifactDocument({ artifactId: detached.contentArtifactId,
+                header: { kind: DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, title: 'Detached link' },
+                body: JSON.stringify(content) });
+            const transport = createDeploymentReadTransport(account.accountLifetime);
+            const options = { signal: new AbortController().signal };
+            const start = homes.requests.length;
+            const opened = await transport.listDataServicePage(account.accountLifetime.scope,
+                { environmentId: environment.id, database: detached.id }, options);
+            expect(opened).toMatchObject({ ok: true, value: { items: [{ selected: {
+                address: { kind: 'detached', link: { targetLink: detached, content } },
+            } }] } });
+            const requests = homes.requests.slice(start);
+            expect(requests.filter(request => request.path.split('?')[0] === path)).toHaveLength(1);
+            expect(requests.filter(request => request.path === '/v1/artifacts/read').map(request => request.input))
+                .toEqual([{ artifactIds: [environment.contentArtifactId] }, { artifactIds: [detached.contentArtifactId] }]);
+            expect(requests.some(request => /\/v1\/actions\/(action.invoke|deployments.data.size)/.test(request.path))).toBe(false);
+
+            const missing = await transport.listDataServicePage(account.accountLifetime.scope,
+                { environmentId: environment.id, database: removed.id }, options);
+            expect(missing).toMatchObject({ ok: true, value: { items: [{ selected: { address: null } }] } });
+        } finally { account.dispose(); }
+    });
+
     it('keeps a later preview page in an all-pages receipt observation and does no hidden or unrelated receipt reads', async () => {
         const serverId = await homes.addHome({ name: 'Preview pages', serverUrl: 'https://preview-pages.test', accountId: 'alice', active: false });
         const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
