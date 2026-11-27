@@ -152,21 +152,24 @@ describe('usage day summaries PostgreSQL storage', () => {
             let queries = 0;
             const scans: Plan[] = [];
             const rankedScans: Plan[] = [];
+            const queryWithPlan = async <T>(query: TemplateStringsArray | Prisma.Sql, ...values: unknown[]): Promise<T> => {
+                queries++;
+                if ('sql' in query && query.sql.includes('"ProviderAccountUsageHistory"')) {
+                    const explained = await tx.$queryRaw<Array<{ 'QUERY PLAN': Array<{ Plan: Plan }> }>>(
+                        prismaRuntime.sql`EXPLAIN (ANALYZE, FORMAT JSON) ${query}`);
+                    const history = historyScans(explained[0]!['QUERY PLAN'][0]!.Plan);
+                    scans.push(...history);
+                    if (query.sql.includes('COUNT(*) OVER')) rankedScans.push(...history);
+                }
+                return tx.$queryRaw<T>(query, ...values);
+            };
             const storage = {
                 providerAccountUsageDaySummary: tx.providerAccountUsageDaySummary,
                 providerAccountUsageHistory: tx.providerAccountUsageHistory,
                 $executeRaw: tx.$executeRaw,
-                $queryRaw: async <T>(query: TemplateStringsArray | Prisma.Sql, ...values: unknown[]): Promise<T> => {
-                    queries++;
-                    if ('sql' in query && query.sql.includes('"ProviderAccountUsageHistory"')) {
-                        const explained = await tx.$queryRaw<Array<{ 'QUERY PLAN': Array<{ Plan: Plan }> }>>(
-                            prismaRuntime.sql`EXPLAIN (ANALYZE, FORMAT JSON) ${query}`);
-                        const history = historyScans(explained[0]!['QUERY PLAN'][0]!.Plan);
-                        scans.push(...history);
-                        if (query.sql.includes('COUNT(*) OVER')) rankedScans.push(...history);
-                    }
-                    return tx.$queryRaw<T>(query, ...values);
-                },
+                // This fixture awaits queries inside an interactive transaction.
+                $queryRaw: <T>(query: TemplateStringsArray | Prisma.Sql, ...values: unknown[]): Prisma.PrismaPromise<T> =>
+                    Object.defineProperty(queryWithPlan<T>(query, ...values), Symbol.toStringTag, { value: 'PrismaPromise' }) as Prisma.PrismaPromise<T>,
             };
             const query = { ...key, range: { startAtMs: 0, endAtMs: 86_400_000 },
                 includeMissingDays: true, requireClockBounds: true, requireCompact: true };
