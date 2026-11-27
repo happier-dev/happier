@@ -4,7 +4,7 @@ import { DeploymentIdentifierV1Schema as id } from './deploymentIdentifiersV1.js
 import { ActionOperationAddressV1Schema } from '../actions/operations/addressV1.js';
 import { MachineElevatedNotAppliedResultV1Schema, MachineElevationFailureV1Schema } from '../machines/adminAccessV1.js';
 import { ExternalActionAuthorizationRefusalPhaseSchema } from '../actions/externalActionAuthorizationRefusalPhase.js';
-import { deploymentCollectorTailscaleSourceFailureV1, deploymentDomainIdInUseV1, DeploymentFailureRecoveryV1Schema } from './deploymentFailureRecoveryV1.js';
+import { deploymentDomainIdInUseV1, DeploymentFailureRecoveryV1Schema } from './deploymentFailureRecoveryV1.js';
 
 export const DeploymentDomainCloudflareRecoveryV1Schema = lazyZodSchema(() => z.strictObject({
     kind: z.literal('adopt'), tunnelId: id,
@@ -39,7 +39,6 @@ export const DeploymentDomainNativeRequiredFactV1Schema = lazyZodSchema(() => z.
     'reachabilityPosture', 'cloudflarePreparation', 'activeDomainMembers', 'domainIngress',
     'memberCaddyObservation', 'privateCaddyListener', 'sharedTunnelOrigin',
     'edgeCaddyMachine', 'publicCaddyObservation', 'publicCaddyListener', ...deploymentDomainCaddyRequiredFactsV1,
-    deploymentCollectorTailscaleSourceFailureV1.requiredFact,
 ]), DeploymentFailureRecoveryV1Schema.shape.requiredFact]));
 const DeploymentDomainIdInUseDetailsV1Schema = lazyZodSchema(() => z.strictObject({
     // These address the submitted Action, never the Environment holding the ID.

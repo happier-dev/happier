@@ -28,7 +28,6 @@ export {
   runTailscaleStatusJson,
   runTailscaleCurrentProfileId,
   runTailscaleOperatorObservation,
-  observeTailscaleForwardedSource,
   runTailscaleUp,
   runTailscaleVersion,
   sanitizeTailscaleEnv,

@@ -351,11 +351,6 @@ const occupiedCheckoutRecovery = recovery(
 );
 
 export const DEPLOYMENT_COLLECTOR_PRIVATE_BINDING_FAILURE_PHASE_V1 = 'deployment.telemetry.collector.private_binding';
-export const deploymentCollectorTailscaleSourceFailureV1 = {
-    requiredFact: 'collectorTailscalePreservedSource',
-    phase: 'deployment.telemetry.collector.tailscale_source_rewritten',
-} as const;
-
 export const deploymentDomainIdInUseV1 = {
     reason: 'domain_id_in_use',
     requiredFact: 'domainId',
@@ -427,10 +422,6 @@ function recoveryFor(details: Record<string, unknown>, errorCode?: string, reque
     if (sourceFile) return sourceFile;
     if (code === 'deployment_source_unavailable' && request?.pullRequestHead) return pullRequestHeadRecovery;
     const fact = failure?.requiredFact ?? details.requiredFact;
-    if (code === 'private_scope_unenforceable' && (fact === deploymentCollectorTailscaleSourceFailureV1.requiredFact
-        || failureCause?.phase === deploymentCollectorTailscaleSourceFailureV1.phase))
-        return recovery('This Machine hides callers’ private-network addresses, so the collector cannot accept private traffic. Use a public collector Domain or have an administrator configure source preservation on a dedicated collector Machine. This setting affects subnet routing. Then review Add address or verify the existing address again.',
-            'domains', 'Open Domains');
     if (code === 'private_scope_unenforceable' && fact === 'reachabilityPosture')
         return recovery('This Machine has no ready native interface for the selected private network. Configure the network’s native interface on the Machine, then use Add address in Domains to review the private route again.',
             'domains', 'Open Domains');

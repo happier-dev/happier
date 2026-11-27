@@ -350,7 +350,7 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                                         collectorMachineId, deployment: snapshot.deployment,
                                         context: request.context });
                                     if (route.kind !== 'ready') return route.reason === 'private_scope_unenforceable'
-                                        ? refuse(route.reason, route.failure?.details, route.failure?.failureCause ?? {
+                                        ? refuse(route.reason, undefined, {
                                             phase: DEPLOYMENT_COLLECTOR_PRIVATE_BINDING_FAILURE_PHASE_V1,
                                             errorClass: 'Error', errorCode: route.reason, httpStatus: null })
                                         : refuse('collector_unreachable', { reason: route.reason });

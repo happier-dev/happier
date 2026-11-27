@@ -3480,17 +3480,7 @@ longer matches, launch returns
 `private_scope_unenforceable`. In the affected Environment, use Add address
 for the telemetry collector in Domains and review the private route to settle
 the binding again. Verify reads the current Machine state and records the
-result on the Domain. For a Tailscale private collector, Add, Verify and
-launch also read the local source NAT preference. Default Linux Tailscale
-and Docker bridge forwarding can rewrite callers’ addresses with zero
-advertised routes. When Happier observes that rewriting on Linux, it reports
-the private collector placement as unavailable. An unreadable preference or
-administrator-managed routing rules do not produce this refusal.
-The administrator can use a dedicated collector Machine configured to preserve
-peer addresses, or review a public collector Domain. Happier leaves Tailscale
-preferences under the administrator's control. Changing source NAT can affect
-subnet routing and exit nodes.
-[Tailscale subnet routing](https://tailscale.com/docs/features/subnet-routers#disable-snat).
+result on the Domain.
 The review carries the Machine identity without the route address or bearer.
 Home admits these launch reads for the accepted build or member child
 (`readAcceptedLaunchCollectorInTx`): the collector Machine the Environment

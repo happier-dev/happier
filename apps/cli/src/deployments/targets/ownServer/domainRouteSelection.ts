@@ -1,8 +1,7 @@
 import type { MachineDeploymentDomainReferenceV1 } from '@happier-dev/protocol/machines/machineDeploymentDomainReferenceV1';
-import { ActionExecuteFailureSchema, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { selectPublicTelemetryCollectorDomainV1, type PublicTelemetryCollectorDomainInputV1,
     type PublicTelemetryCollectorDomainResultV1 } from '@happier-dev/protocol/deployments/deploymentDomainContentV1';
-import { deploymentCollectorTailscaleSourceFailureV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import type { NativeCaddyObservationResult } from '@happier-dev/cli-common/machineSetup';
 import { readCloudflareNamedControllerSelection } from '@happier-dev/cli-common/relayAccess';
 import { accessProviderRefsEqualV1, type MachinePrivateNetworkObservationV1 } from '@happier-dev/protocol/plugins/contributions/accessProviders';
@@ -214,7 +213,7 @@ function createDomainContentReader(input: DomainInventoryInput) {
 }
 
 export type TelemetryCollectorDomainEndpoint = PublicTelemetryCollectorDomainResultV1 & Readonly<{
-    failure?: DeploymentActionFailureV1 | ActionExecuteFailure;
+    failure?: DeploymentActionFailureV1;
 }>;
 
 export type TelemetryCollectorPlacement = Readonly<{ kind: 'ready'; machineId: string; installationId: string;
@@ -277,9 +276,6 @@ export async function readTelemetryCollectorDomainForHost(input: PrivateCollecto
             const observed = DeploymentDomainMachineTopologyV1Schema.safeParse(response);
             if (!observed.success) {
                 const refusal = ActionExecuteFailureSchema.safeParse(response);
-                if (refusal.success && refusal.data.errorCode === 'private_scope_unenforceable'
-                    && refusal.data.failureCause?.phase === deploymentCollectorTailscaleSourceFailureV1.phase)
-                    return { kind: 'unavailable', reason: refusal.data.errorCode, failure: refusal.data };
                 return { kind: 'unavailable', reason: refusal.success ? refusal.data.errorCode : 'collector_route_unavailable' };
             }
             const topology = observed.data;

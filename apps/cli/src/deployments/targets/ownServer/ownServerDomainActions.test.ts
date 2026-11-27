@@ -4,7 +4,7 @@ import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/te
 import { ExternalActionExecutionAuthorizationV1Schema, projectDeploymentNativeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
-import { deploymentCollectorTailscaleSourceFailureV1, readDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import { readDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { DeploymentDomainTransitionInputV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { DeploymentDomainHeaderV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { createOwnServerDomainActions, prepareOwnServerTeardownDomainReviewedChildren } from './ownServerDomainActions';
@@ -78,21 +78,16 @@ describe('Environment Domain retirement', () => {
 });
 
 
-it.each([DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1, 'deployments.domains.verify'] as const)(
-    'settles both collector captures before returning the typed private refusal from %s', async actionId => {
+it('settles both collector captures before returning the typed private refusal from reviewed Add', async () => {
     const base = createDeploymentEnvironmentDetailV1();
     const environment = { ...base, environment: { ...base.environment, telemetryMachineId: 'collector-app' } };
     const link = environment.targetLinks[0]!.targetLink;
     const machine = { machineId: 'machine', installationId: 'installed', dockerEngineId: 'engine' };
     const content = { contentArtifactId: 'collector-domain-content', contentHeaderVersion: 1, contentBodyVersion: 1 };
     const serverId = environment.environment.serverId;
-    const verify = actionId === 'deployments.domains.verify';
-    const input = verify
-        ? { serverId, environmentId: environment.environment.id, domainId: 'collector-domain', expectedDomainRevision: 1,
-            expectedRevision: environment.environment.revision, requestKey: 'verify-collector' }
-        : { serverId, environmentId: environment.environment.id, targetLinkId: link.id, domainId: 'collector-domain',
-            expectedRevision: environment.environment.revision, expectedTargetLinkRevision: link.revision, requestKey: 'reviewed-add', ...content };
-    const requiredFact = verify ? deploymentCollectorTailscaleSourceFailureV1.requiredFact : 'reachabilityPosture';
+    const actionId = DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1;
+    const input = { serverId, environmentId: environment.environment.id, targetLinkId: link.id, domainId: 'collector-domain',
+        expectedRevision: environment.environment.revision, expectedTargetLinkRevision: link.revision, requestKey: 'reviewed-add', ...content };
     const target = { kind: 'machine' as const, machineId: machine.machineId };
     const envelope = { v: 1 as const, requestId: 'request', target, input };
     const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'fixture', binding: {
@@ -106,7 +101,7 @@ it.each([DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1, 'deployments.domains.verify'] as co
             machineId: machine.machineId, installationId: machine.installationId, requestId: envelope.requestId,
             actionOperationId: 'domain-op', nativeServer: listener } }));
     const domain = DeploymentDomainHeaderV1Schema.parse({ v: 1, id: input.domainId, environmentId: input.environmentId,
-        targetLinkId: link.id, state: verify ? 'active' : 'pending', revision: 1, ...content, createdAtMs: 1, updatedAtMs: 1, createdByAccountId: 'owner', placements });
+        targetLinkId: link.id, state: 'pending', revision: 1, ...content, createdAtMs: 1, updatedAtMs: 1, createdByAccountId: 'owner', placements });
     const calls: unknown[] = [];
     // Network boundaries stand in for the installed child and Home. The native suite
     // verifies the actual observer/signing path and Home verifies proofs on write.
@@ -134,7 +129,7 @@ it.each([DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1, 'deployments.domains.verify'] as co
                 if (job.kind !== 'domain') return unexpected();
                 const proof = { version: 1, algorithm: 'ed25519', signature: Buffer.alloc(64).toString('base64url') };
                 return job.capture.listener === 'privateOrigin' ? { capture: job.capture, proof, state: 'warning',
-                    networkExposure: { kind: 'unavailable', reason: 'private_scope_unenforceable', requiredFact } }
+                    networkExposure: { kind: 'unavailable', reason: 'private_scope_unenforceable', requiredFact: 'reachabilityPosture' } }
                     : { capture: job.capture, proof, state: 'active',
                         networkExposure: { kind: 'ready', listener: 'public', localOrigin: true, fallback: false, listeners: [] } };
             },
@@ -143,9 +138,9 @@ it.each([DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1, 'deployments.domains.verify'] as co
             originalActionEnvelope: envelope, operationAcceptance: { operationId: 'domain-op', accept() {} } });
         expect(calls).toEqual([[{ listener: 'privateOrigin', state: 'warning', kind: 'unavailable' },
             { listener: 'public', state: 'active', kind: 'ready' }]]);
-        expect(result).toMatchObject({ ok: false, errorCode: 'private_scope_unenforceable', details: { requiredFact } });
+        expect(result).toMatchObject({ ok: false, errorCode: 'private_scope_unenforceable', details: { requiredFact: 'reachabilityPosture' } });
         expect(readDeploymentFailureRecoveryV1('private_scope_unenforceable', 'details' in result ? result.details : undefined)).toMatchObject({
-            remedy: expect.stringContaining(verify ? 'hides callers' : 'native interface'), nextAction: { destination: 'domains' },
+            remedy: expect.stringContaining('native interface'), nextAction: { destination: 'domains' },
         });
     } finally { transition.mockRestore(); }
 });

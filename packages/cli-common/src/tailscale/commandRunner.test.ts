@@ -10,7 +10,6 @@ import {
   runTailscaleStatusJson,
   runTailscaleStatus,
   runTailscaleOperatorObservation,
-  observeTailscaleForwardedSource,
   runTailscaleDown,
   runTailscaleUp,
   runTailscaleFunnelDisable,
@@ -136,19 +135,6 @@ describe('runTailscaleOperatorObservation', () => {
       .rejects.toMatchObject({ name: 'AbortError' });
     expect(runCommand).not.toHaveBeenCalled();
   });
-});
-
-it('does not use Linux forwarded-source inference on macOS', async () => {
-  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
-  Object.defineProperty(process, 'platform', { ...platform, value: 'darwin' });
-  try {
-    const runCommand = vi.fn<TailscaleCommandRunner>(async request => ({ ...request,
-      exitCode: 0, stdout: '{"NetfilterMode":2,"NoSNAT":false}', stderr: '' }));
-    expect(await observeTailscaleForwardedSource({ tailscaleBin: '/bin/tailscale' }, { runCommand })).toBe('unknown');
-    expect(runCommand).not.toHaveBeenCalled();
-  } finally {
-    Object.defineProperty(process, 'platform', platform);
-  }
 });
 
 // OS boundary: make accidental controller-local inference observable for SSH runners.

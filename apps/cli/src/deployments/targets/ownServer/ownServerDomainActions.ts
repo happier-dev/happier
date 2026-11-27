@@ -624,7 +624,7 @@ export function createOwnServerDomainActions(host: Readonly<{
                     headers, data: body, ...(context.signal ? { signal: context.signal } : {}), validateStatus: () => true });
                 const settled = DeploymentActionOutputSchemasV1[actionId].safeParse(response.data);
                 if (!settled.success) return failure('outcome_unknown', nativeScope);
-                if (settled.data.ok && (isDeploymentDomainAddActionIdV1(actionId) || actionId === 'deployments.domains.verify')) {
+                if (settled.data.ok && isDeploymentDomainAddActionIdV1(actionId)) {
                     const refused = observations.find(({ capture, networkExposure }) => capture.desired
                         && capture.listener === 'privateOrigin' && networkExposure?.kind === 'unavailable'
                         && networkExposure.reason === 'private_scope_unenforceable')?.networkExposure;

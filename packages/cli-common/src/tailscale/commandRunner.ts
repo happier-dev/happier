@@ -366,9 +366,14 @@ function tailscaleCommandArgs(params: RunTailscaleParams, args: readonly string[
   return [`--socket=${params.socketPath}`, ...args];
 }
 
-async function readNativePreferences(params: RunTailscaleParams, deps: RunTailscaleDeps): Promise<Record<string, unknown> | null> {
+/** Read only OperatorUser from native prefs; login and Running never grant mutation authority. */
+export async function runTailscaleOperatorObservation(
+  params: RunTailscaleParams & Readonly<{ daemonUsername: string | null }>,
+  deps: RunTailscaleDeps = {},
+): Promise<MachineAdminAccessObservationV1['tailscaledOperator']> {
   const signal = resolveTailscaleCommandSignal(params);
   signal?.throwIfAborted();
+  if (!params.daemonUsername) return { authorization: 'unknown' };
   try {
     const command = await resolveCommand(params, deps);
     const result = await resolveCommandRunner(deps)({ command,
@@ -376,38 +381,15 @@ async function readNativePreferences(params: RunTailscaleParams, deps: RunTailsc
       timeoutMs: resolveTailscaleCommandTimeoutMs(params, 750), ...(signal ? { signal } : {}),
     });
     signal?.throwIfAborted();
-    if (result.exitCode !== 0) return null;
+    if (result.exitCode !== 0) return { authorization: 'unknown' };
     const prefs: unknown = JSON.parse(result.stdout);
-    return prefs && typeof prefs === 'object' && !Array.isArray(prefs) ? prefs as Record<string, unknown> : null;
+    if (typeof prefs !== 'object' || prefs === null || Array.isArray(prefs)
+      || !('OperatorUser' in prefs) || typeof prefs.OperatorUser !== 'string') return { authorization: 'unknown' };
+    return { authorization: prefs.OperatorUser === params.daemonUsername ? 'allowed' : 'denied' };
   } catch {
     signal?.throwIfAborted();
-    return null;
+    return { authorization: 'unknown' };
   }
-}
-
-/** Read only OperatorUser from native prefs; login and Running never grant mutation authority. */
-export async function runTailscaleOperatorObservation(
-  params: RunTailscaleParams & Readonly<{ daemonUsername: string | null }>,
-  deps: RunTailscaleDeps = {},
-): Promise<MachineAdminAccessObservationV1['tailscaledOperator']> {
-  resolveTailscaleCommandSignal(params)?.throwIfAborted();
-  if (!params.daemonUsername) return { authorization: 'unknown' };
-  const prefs = await readNativePreferences(params, deps);
-  if (typeof prefs?.OperatorUser !== 'string') return { authorization: 'unknown' };
-  return { authorization: prefs.OperatorUser === params.daemonUsername ? 'allowed' : 'denied' };
-}
-
-/** The native Linux router marks forwarded tailnet traffic independently of advertised routes. */
-export async function observeTailscaleForwardedSource(
-  params: RunTailscaleParams = {},
-  deps: RunTailscaleDeps = {},
-): Promise<'preserved' | 'rewritten' | 'unknown'> {
-  if (process.platform !== 'linux') return 'unknown';
-  const prefs = await readNativePreferences(params, deps);
-  // Tailscale persists NetfilterOn as 2 (types/preftype/netfiltermode.go).
-  // Off and nodivert can have administrator-owned hooks we cannot infer from these prefs.
-  if (prefs?.NetfilterMode !== 2 || typeof prefs.NoSNAT !== 'boolean') return 'unknown';
-  return prefs.NoSNAT ? 'preserved' : 'rewritten';
 }
 
 export async function runTailscaleVersion(params: RunTailscaleParams = {}, deps: RunTailscaleDeps = {}): Promise<string> {
