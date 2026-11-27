@@ -1,5 +1,5 @@
 // @happier-test-preparation source-condition
-import { readIndexedBundledDeclarationManifest } from '../../../cli/src/plugins/projection/registry/builtIn/declarationAssetFormat.mjs';
+import { readIndexedBundledDeclarationManifest, renderIndexedBundledDeclaration } from '../../../cli/src/plugins/projection/registry/builtIn/declarationAssetFormat.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { execFile, spawn } from 'node:child_process';
@@ -116,7 +116,12 @@ test('daemon revision trees publish voice graphs at their declared plugin roots 
     await mkdir(join(root, 'src'), { recursive: true });
     const declarationPath = join(repoDir, 'apps/cli/assets/bundled-plugin-manifests', `${directory}.json`);
     await mkdir(dirname(declarationPath), { recursive: true });
-    await writeFile(declarationPath, JSON.stringify(manifest));
+    await writeFile(declarationPath, renderIndexedBundledDeclaration({
+      summary: { v: 1, declarationDigest: manifest.id, canonicalDeclarationDigest: manifest.id,
+        manifest, inputHintsByActionId: {} },
+      inputSchema: { valuesByActionId: {} },
+      resultSchema: { valuesByActionId: {} },
+    }));
     await writeFile(join(root, 'package.json'), JSON.stringify({ name, version: '0.0.0', type: 'module', exports }));
     await writeFile(join(root, 'src/index.ts'), 'export {};');
     await writeFile(join(root, 'src/voice.ts'), directory === 'voice-broken' ? 'export function activate( {'

@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { listBundledPluginUiArtifactExports } from '../../ui/scripts/generateBundledPluginUiArtifacts.mjs';
+import { readIndexedBundledDeclarationManifest } from '../src/plugins/projection/registry/builtIn/declarationAssetFormat.mjs';
 import { bundledPluginManifestAssetRelativePath } from './build-owned/bundledPlugins/manifestAssetPath.mjs';
 
 /** Source CLI locators read workspace package roots. Materialize their graphs
@@ -16,8 +17,8 @@ export async function prepareSourceCliPluginUiArtifacts({ repoRoot, workspaceNam
     const root = resolve(repoRoot, 'packages/plugins', directory);
     const packageJson = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'));
     if (listBundledPluginUiArtifactExports(packageJson).length === 0) continue;
-    plugins.push({ directory, loadManifest: async () => JSON.parse(
-      await readFile(resolve(repoRoot, 'apps/cli', bundledPluginManifestAssetRelativePath(directory)), 'utf8'),
+    plugins.push({ directory, loadManifest: () => readIndexedBundledDeclarationManifest(
+      resolve(repoRoot, 'apps/cli', bundledPluginManifestAssetRelativePath(directory)),
     ) });
     artifactOutputDirs[directory] = resolve(root, 'dist/happier-plugin-ui');
   }
