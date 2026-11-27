@@ -335,6 +335,7 @@ export function useManagedControllerScope(
         selection={selection}
         groupTitle={t('managedMachines.config.managedFrom')}
         selectionPolicy="lastKnown"
+        currentUiContextDraftCommandScope="machine.administration.controller"
         chipOpen={pickerOpen}
         onChipOpenChange={setPickerOpen}
         disabled={input.selectorDisabled === true}

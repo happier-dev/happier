@@ -100,6 +100,8 @@ export type MachineAdministrationTargetSelectorProps = Readonly<{
      */
     chipOpen?: boolean;
     onChipOpenChange?: (open: boolean) => void;
+    /** Opt in only for choices owned by the mounted page or draft. */
+    currentUiContextDraftCommandScope?: string;
 }>;
 
 function targetStatusDetail(kind: Exclude<MachineAdministrationTargetStateV1['kind'], 'unselected'>): string {
@@ -439,7 +441,7 @@ export function useMachineAdministrationTargetFilter(
         ? props.selection.state.kind
         : undefined;
     const changeTarget = useTargetChange(props.selection.changeIntent);
-    const { selection, resolveCandidateAvailability, resolveCandidatePresentation, selectionPolicy } = props;
+    const { selection, resolveCandidateAvailability, resolveCandidatePresentation, selectionPolicy, currentUiContextDraftCommandScope } = props;
     const selectedServerId = selectedRow?.serverId ?? null;
     // Like the compact section, a chip with a stored target stays openable: a consumer reading only that row
     // still recovers a missing target, and its choices are read once the chooser opens.
@@ -454,12 +456,14 @@ export function useMachineAdministrationTargetFilter(
             selectionPolicy={selectionPolicy}
             testIDPrefix={testIDPrefix}
             maxHeight={maxHeight}
+            onRequestClose={close}
+            currentUiContextDraftCommandScope={currentUiContextDraftCommandScope}
             onSelect={(machine) => changeTarget(() => {
                 selection.selectTarget(machine.target);
                 close();
             })}
         />
-    ), [changeTarget, resolveCandidateAvailability, resolveCandidatePresentation, selectedServerId, selection, selectionPolicy, testIDPrefix]);
+    ), [changeTarget, currentUiContextDraftCommandScope, resolveCandidateAvailability, resolveCandidatePresentation, selectedServerId, selection, selectionPolicy, testIDPrefix]);
     return {
         id: props.filterId ?? 'machine',
         label: props.chipLabel ?? groupTitle,
@@ -565,6 +569,8 @@ MachineAdministrationTargetSelector.happierHeaderFold = (
         icon: 'desktop',
         title: hasTarget ? `${label} · ${current.title}` : current.title,
         ...(props.disabled ? { disabled: true } : {}),
+        commandScope: props.currentUiContextDraftCommandScope,
+        onOpen: () => props.onChipOpenChange?.(true),
         controlledOpen: (open, onOpenChange) => ({
             chipOpen: open || props.chipOpen === true,
             onChipOpenChange: (next: boolean) => { onOpenChange(next); props.onChipOpenChange?.(next); },
@@ -585,6 +591,8 @@ function MachineTargetChipList(props: Readonly<{
     selectionPolicy: MachineAdministrationTargetSelectorProps['selectionPolicy'];
     testIDPrefix: string;
     maxHeight: number;
+    onRequestClose: () => void;
+    currentUiContextDraftCommandScope?: string;
     onSelect: (machine: MachineAdministrationPickerMachine) => void;
 }>) {
     const { resolveCandidateAvailability, resolveCandidatePresentation, selectionPolicy } = props;
@@ -617,6 +625,9 @@ function MachineTargetChipList(props: Readonly<{
     return (
         <View style={resolveMachineChipListStyle()}>
         <NewSessionMachineSelectionContent<MachineAdministrationPickerMachine>
+            currentUiContextDraftCommandScope={props.currentUiContextDraftCommandScope}
+            currentUiContextForegroundOverlay
+            onRequestClose={props.onRequestClose}
             groups={groups}
             selectedMachine={selectedMachine}
             selectedServerId={props.selectedServerId}

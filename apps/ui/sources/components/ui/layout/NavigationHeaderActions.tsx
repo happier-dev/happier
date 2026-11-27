@@ -1,6 +1,7 @@
 import type { IconName } from '@/components/ui/icons/Icon';
 import * as React from 'react';
 import { Dimensions, View } from 'react-native';
+import { useCurrentUiContextLocalCommands, useRetainedCurrentUiContextNode, type CurrentUiContextLocalCommand } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { useDestinationRouteNavigation as useNavigation } from '@/components/appShell/workspace/destinationInstanceContext';
 import { StyleSheet } from 'react-native-unistyles';
 
@@ -15,6 +16,7 @@ import { HEADER_ACTIONS_GAP_PX, PageHeaderMenu, PageHeaderStateSwitch, type Page
 import { readHappierPageOperation } from '@happier-dev/plugin-ui/presentation';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { CLEARED_HEADER_RIGHT, ownChromeHeaderRight } from '@/components/navigation/ownChromeHeaderItems';
+import { useRetainedPluginSurfaceFocusNode } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 /**
  * How a chooser (a header's Machine chip) reads once a phone bar folds it into "⋯": one ordinary row (its glyph and
@@ -27,6 +29,8 @@ export type HeaderFoldedChooser<Props> = Readonly<{
     icon: IconName;
     testID?: string;
     disabled?: boolean;
+    commandScope?: string;
+    onOpen?: () => void;
     controlledOpen: (open: boolean, onOpenChange: (open: boolean) => void) => Partial<Props>;
 }>;
 
@@ -40,6 +44,11 @@ function readHeaderFoldedChooser(node: React.ReactElement): HeaderFoldedChooser<
 
 type FoldedChooser = Readonly<{ element: React.ReactElement; declaration: HeaderFoldedChooser<Record<string, unknown>> }>;
 
+function FoldedChooserCommands(props: Readonly<{ commands: readonly CurrentUiContextLocalCommand[] }>) {
+    useCurrentUiContextLocalCommands(props.commands);
+    return null;
+}
+
 // Context controls can contain an entity's existing overflow (directly, in a View, or
 // in a setting anchor). Lift its operations into the navigation overflow instead of
 // nesting a second popover whose selection is lost when the outer one dismisses.
@@ -47,6 +56,7 @@ function foldContextActions(actions: React.ReactNode, openChooser: (id: string) 
     const operations: PageHeaderMenuAction[] = [];
     // A chooser folds into one ordinary row; the chooser itself stays mounted by the bar to open its own list.
     const choosers: FoldedChooser[] = [];
+    const chooserCommands: CurrentUiContextLocalCommand[] = [];
     // An entity's one state switch ("Enabled") is its state, not an operation: it stays visible on the
     // bar beside the menu instead of hiding in a strip above the menu's rows.
     const barControls: React.ReactElement[] = [];
@@ -67,11 +77,19 @@ function foldContextActions(actions: React.ReactNode, openChooser: (id: string) 
             const chooser = readHeaderFoldedChooser(node);
             if (chooser) {
                 choosers.push({ element: node, declaration: chooser });
+                const open = () => {
+                    openChooser(chooser.id);
+                    chooser.onOpen?.();
+                };
+                if (chooser.commandScope && !chooser.disabled) {
+                    chooserCommands.push({ key: chooser.id, title: chooser.title,
+                        description: `${chooser.commandScope}.open`, invoke: open });
+                }
                 operations.push({
                     id: chooser.id, title: chooser.title, icon: chooser.icon, opensChooser: true,
                     ...(chooser.testID ? { testID: chooser.testID } : {}),
                     ...(chooser.disabled ? { disabled: true } : {}),
-                    onSelect: () => openChooser(chooser.id),
+                    onSelect: open,
                 });
                 return null;
             }
@@ -176,7 +194,7 @@ function foldContextActions(actions: React.ReactNode, openChooser: (id: string) 
     const content = retainControls(actions);
     // Destructive operations close the menu, whatever order the page drew them in.
     const ordered = [...operations.filter(operation => !operation.destructive), ...operations.filter(operation => operation.destructive)];
-    return { operations: ordered, content: hasContent ? content : undefined, openRequested, barControls, choosers };
+    return { operations: ordered, content: hasContent ? content : undefined, openRequested, barControls, choosers, chooserCommands };
 }
 
 export type NavigationHeaderAction = Readonly<{
@@ -259,6 +277,20 @@ export function useNavigationHeaderActions(input: Readonly<{
     // The folded chooser whose own list is open (its row was chosen in "⋯"), if any.
     const [openChooserId, setOpenChooserId] = React.useState<string | null>(null);
     const foldedActions = React.useMemo(() => foldContextActions(actions, setOpenChooserId), [actions]);
+    const chooserNodes = React.useMemo(() => foldedActions.choosers.length > 0 ? (
+        <>
+            {foldedActions.chooserCommands.length > 0 ? <FoldedChooserCommands commands={foldedActions.chooserCommands} /> : null}
+            {foldedActions.choosers.map(({ element, declaration }) => (
+                <View key={declaration.id} style={stylesheet.foldedChooser}>
+                    {React.cloneElement(element, declaration.controlledOpen(openChooserId === declaration.id,
+                        (open) => { if (!open) setOpenChooserId(current => current === declaration.id ? null : current); }))}
+                </View>
+            ))}
+        </>
+    ) : null, [foldedActions.choosers, foldedActions.chooserCommands, openChooserId]);
+    // A navigator may mount its header outside the page's command and focus providers.
+    const retainedChoosers = useRetainedPluginSurfaceFocusNode(useRetainedCurrentUiContextNode(chooserNodes));
+    const headerChoosers = chooserNodes && retainedChoosers;
     // A bar too narrow for everything gives up its own controls (a state switch) to "⋯" first, and its primary only
     // after that; "⋯" itself is never cut. Folded controls return when the window grows past where they did not fit.
     const [barControlsFoldedAt, setBarControlsFoldedAt] = React.useState<number | null>(null);
@@ -310,12 +342,7 @@ export function useNavigationHeaderActions(input: Readonly<{
                             />
                         </HeaderFitSlot>
                     ) : null}
-                    {foldedActions.choosers.map(({ element, declaration }) => (
-                        <View key={declaration.id} style={stylesheet.foldedChooser}>
-                            {React.cloneElement(element, declaration.controlledOpen(openChooserId === declaration.id,
-                                (open) => { if (!open) setOpenChooserId(current => current === declaration.id ? null : current); }))}
-                        </View>
-                    ))}
+                    {headerChoosers}
                     {menuShown || trailing ? (
                         <HeaderFitSlot end>
                             {menuShown ? <PageHeaderMenu actions={foldedActions.operations} content={menuContent}
@@ -355,7 +382,7 @@ export function useNavigationHeaderActions(input: Readonly<{
         };
         // `key` carries the structured actions' rendered fields; context nodes keep their own props.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [navigation, key, actions, foldedActions, routeContextActions, trailing, barControlsFolded, openChooserId]);
+    }, [navigation, key, actions, foldedActions, routeContextActions, trailing, barControlsFolded, headerChoosers]);
 }
 
 /**

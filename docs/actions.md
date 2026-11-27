@@ -11809,6 +11809,13 @@ outside these presentation commands.
 HTTP request expansion remains person-only because it reads selected bodies and
 cookies; after the person opens it, a mounted Collapse command may close it.
 
+The folded Machine row in managed-machine setup publishes an opener for the
+controller chooser. Read the current context again after opening it and invoke
+an enabled Machine's command to update the mounted setup. Its choices retire
+when the chooser closes. The chooser uses the same controller selection as the
+phone menu. To set a saved Machine scope, call `settings.set` with
+`machines.administrationTarget`.
+
 In unreleased 0.3 source, each presented Workspace sync relationship row also
 publishes a Details command through that inventory. It opens the same details
 view as pressing the row and retires when the row leaves the presented surface.
