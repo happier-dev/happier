@@ -37,7 +37,7 @@ describe('machineWorkspaceFileList', () => {
         const { t } = await import('@/text');
         const { MachinePathBrowserView } = await import('@/components/ui/pathBrowser/MachinePathBrowserModal');
         respond = async (request) => request.actionId === FILESYSTEM_BROWSER_ACTION_IDS_V1.listFiles
-            ? { ok: false, errorCode: 'MACHINE_RPC_FAILED', error: 'relay failed' }
+            ? { ok: false, errorCode, error: 'Transport refused' }
             : { ok: true, path: '/repo', entries: [], truncated: false };
         const screen = await renderScreen(React.createElement(MachinePathBrowserView, {
             machineId: 'm1', serverId, rootDirectoryPath: '/repo', variant: 'popover',
