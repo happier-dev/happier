@@ -16,11 +16,14 @@ import {
   usePluginTheme,
   usePluginTranslation,
 } from '@happier-dev/plugin-ui';
+import { projectPluginActionRejectionV1 } from '@happier-dev/plugin-ui/hostApi';
 import {
   CapacityBar,
   HAPPIER_DATA_METRICS,
   HAPPIER_PAGE_METRICS,
+  HappierDisclosureChevron,
   HappierPressable,
+  HappierStateDetails,
   IntervalTimeline,
   formatHappierDuration,
 } from '@happier-dev/plugin-ui/components';
@@ -60,7 +63,7 @@ export function projectCapturedLogBody(
 type BodyState =
   | Readonly<{ kind: 'loading' }>
   | Readonly<{ kind: 'ready'; body: CapturedLogBody | null }>
-  | Readonly<{ kind: 'unavailable' }>;
+  | Readonly<{ kind: 'unavailable'; error: unknown }>;
 
 /** The log card keeps the sheet's row insets; its lines stack at the code line height, as the lab's log block. */
 const CAPTURE_LOG_LINES_INSET = Object.freeze({
@@ -278,7 +281,7 @@ export function CapturedLogLines({
     settle(id, { kind: 'loading' });
     readBody(id).then(
       (body) => settle(id, { kind: 'ready', body }),
-      () => settle(id, { kind: 'unavailable' }),
+      (error: unknown) => settle(id, { kind: 'unavailable', error }),
     );
   };
   return (
@@ -349,6 +352,7 @@ function CapturedLogLine({
   testID?: string;
 }>): React.ReactElement {
   const text = usePluginTranslation();
+  const theme = usePluginTheme();
   const severity = captureSeverityWord(log.severityNumber);
   const tone = captureSeverityTone(log.severityNumber);
   const failing = tone === 'danger';
@@ -356,17 +360,17 @@ function CapturedLogLine({
   const truncated = log.bodyPrefixTruncated === true;
   const clock = captureClockOf(locale, log.at);
   const service = showService && log.serviceName ? log.serviceName : null;
-  // An open line reads its whole message in place of the cut start; a reading or failed open says so instead.
+  const failure = React.useMemo(() => body?.kind === 'unavailable'
+    && typeof (body.error as { code?: unknown } | null)?.code === 'string'
+    ? projectPluginActionRejectionV1(body.error, text) : null, [body, text]);
+  const diagnostic = failure?.status === 'error' || failure?.status === 'outcomeUnknown' ? failure : null;
+  // Keep the captured prefix while the full body is reading or refused.
   const message =
-    body === undefined
+    body?.kind !== 'ready'
       ? prefix === null
         ? null
         : `${prefix}${truncated ? '…' : ''}`
-      : body.kind === 'loading'
-        ? `${prefix ?? ''}…`
-        : body.kind === 'unavailable'
-          ? text('plugins.telemetry.exceptions.logUnavailable', 'The collector didn’t return this line.')
-          : (body.body?.text ?? text('plugins.telemetry.exceptions.logEmpty', 'This line has no message.'));
+      : (body.body?.text ?? text('plugins.telemetry.exceptions.logEmpty', 'This line has no message.'));
   // Lines wrap rather than cut: on a phone the clock leaves the message room, so no line is a dead end.
   // The clock, level and service are the line's fixed lead; the message is its own column, so a long one wraps
   // under its own first word rather than back under the clock.
@@ -404,6 +408,21 @@ function CapturedLogLine({
       ) : (
         line
       )}
+      {body?.kind === 'unavailable' ? (
+        <>
+          <Text variant="meta" tone="secondary" value={
+            diagnostic?.message ?? text('plugins.telemetry.exceptions.logUnavailable', 'The collector didn’t return this line.')
+          } />
+          {diagnostic ? (
+            <HappierStateDetails
+              label={text('plugins.telemetry.request.failureDetails', 'Details')}
+              details={diagnostic.code}
+              align="start"
+              renderCaret={(expanded) => <HappierDisclosureChevron expanded={expanded} color={theme.colors.secondaryText} />}
+            />
+          ) : null}
+        </>
+      ) : null}
       {body?.kind === 'ready' && body.body?.secretMaskingIncomplete ? (
         <Text variant="meta" tone="secondary" value={text('plugins.telemetry.capture.logMaskingIncomplete', 'Log text may contain secrets.')} />
       ) : null}

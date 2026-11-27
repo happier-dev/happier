@@ -9,16 +9,20 @@
 
 import * as React from 'react';
 import {
-  ErrorState,
+  Action,
   LoadingState,
   useExecutePluginAction,
   usePluginTranslation,
   type PluginActionExecution,
 } from '@happier-dev/plugin-ui';
+import { projectPluginActionRejectionV1 } from '@happier-dev/plugin-ui/hostApi';
 import { formatHappierDuration } from '@happier-dev/plugin-ui/components';
 import { DATABASE_CAPTURE_QUERY_GET_ACTION_ID_V1, DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1, DatabaseCaptureQueryGetResultV1Schema, DatabaseCaptureTraceGetResultV1Schema, type DatabaseCaptureSourceV1, type DatabaseCaptureTraceGetResultV1 } from '@happier-dev/database-protocol';
 import { databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
 import { PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1 } from '@happier-dev/plugin-sdk/storage';
+import type { DatabaseFailureV1 } from '@happier-dev/plugin-sdk/database';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
+import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 
 import {
   TELEMETRY_PLUGIN_ID,
@@ -40,13 +44,14 @@ type Trace = Extract<DatabaseCaptureTraceGetResultV1, { ok: true }>;
 type TraceState =
   | Readonly<{ kind: 'loading' }>
   | Readonly<{ kind: 'ready'; trace: Trace }>
-  | Readonly<{ kind: 'unavailable'; code: string }>;
-function failureCode(execution: PluginActionExecution<unknown>): string {
-  return execution.status === 'error' || execution.status === 'outcomeUnknown'
-    ? execution.code
-    : 'telemetry_trace_unreadable';
-}
+  | Readonly<{ kind: 'unavailable'; execution: PluginActionExecution }>;
 
+function captureReadError(failure: DatabaseFailureV1): PluginError {
+  const cause = 'cause' in failure ? failure.cause : undefined;
+  const reason = 'reason' in failure ? failure.reason : undefined;
+  return new PluginError({ code: failure.code, message: cause?.message ?? reason,
+    details: projectNativeJsonValueForTransport(failure) });
+}
 
 function useOccurrenceTrace(
   source: DatabaseCaptureSourceV1,
@@ -54,6 +59,7 @@ function useOccurrenceTrace(
   signal: AbortSignal,
 ): Readonly<{ state: TraceState; retry: () => void }> {
   const { execute } = useExecutePluginAction(TRACE_ACTION);
+  const text = usePluginTranslation();
   const [state, setState] = React.useState<TraceState>({ kind: 'loading' });
   const [attempt, setAttempt] = React.useState(0);
   React.useEffect(() => {
@@ -79,22 +85,26 @@ function useOccurrenceTrace(
       )
         return;
       if (execution.status !== 'success') {
-        setState({ kind: 'unavailable', code: failureCode(execution) });
+        setState({ kind: 'unavailable', execution });
         return;
       }
       const parsed = DatabaseCaptureTraceGetResultV1Schema.safeParse(
         execution.result,
       );
-      if (!parsed.success)
-        setState({ kind: 'unavailable', code: 'telemetry_trace_unreadable' });
-      else if (!parsed.data.ok)
-        setState({ kind: 'unavailable', code: parsed.data.code });
-      else setState({ kind: 'ready', trace: parsed.data });
+      if (parsed.success && parsed.data.ok) {
+        setState({ kind: 'ready', trace: parsed.data });
+        return;
+      }
+      const failure = parsed.success && !parsed.data.ok ? captureReadError(parsed.data) : new PluginError({
+        code: 'telemetry_trace_unreadable',
+        message: text('plugins.telemetry.exceptions.requestUnavailable', 'The request isn’t available'),
+      });
+      setState({ kind: 'unavailable', execution: projectPluginActionRejectionV1(failure, text) });
     })();
     return () => {
       current = false;
     };
-  }, [attempt, execute, signal, source, traceId]);
+  }, [attempt, execute, signal, source, text, traceId]);
   const retry = React.useCallback(() => setAttempt((value) => value + 1), []);
   return { state, retry };
 }
@@ -147,15 +157,15 @@ function RequestLogs({
   signal: AbortSignal;
 }>): React.ReactElement | null {
   const { execute } = useExecutePluginAction(DETAIL_ACTION);
+  const text = usePluginTranslation();
   const readBody = React.useCallback<CapturedLogBodyReader>(async (id) => {
     const execution = await execute({ source: trace.source, id }, { signal });
-    const parsed =
-      execution.status === 'success'
-        ? DatabaseCaptureQueryGetResultV1Schema.safeParse(execution.result)
-        : null;
-    if (!parsed?.success || !parsed.data.ok) throw new Error('telemetry_log_unavailable');
+    if (execution.status === 'error' || execution.status === 'outcomeUnknown') throw execution;
+    const parsed = execution.status === 'success' ? DatabaseCaptureQueryGetResultV1Schema.safeParse(execution.result) : null;
+    if (!parsed?.success) throw new PluginError({ code: 'telemetry_log_unavailable', message: text('plugins.telemetry.exceptions.logUnavailable', 'The collector didn’t return this line.') });
+    if (!parsed.data.ok) throw captureReadError(parsed.data);
     return projectCapturedLogBody(parsed.data.detail);
-  }, [execute, signal, trace.source]);
+  }, [execute, signal, text, trace.source]);
   return (
     <CapturedRequestLogs
       trace={trace}
@@ -213,17 +223,7 @@ function OccurrenceTrace({
       />
     );
   if (state.kind === 'unavailable')
-    return (
-      <ErrorState
-        kind="unavailable"
-        title="The request isn’t available"
-        titleKey="plugins.telemetry.exceptions.requestUnavailable"
-        description="The collector didn’t return this occurrence’s request. Its stack is above."
-        descriptionKey="plugins.telemetry.exceptions.requestUnavailable.description"
-        details={state.code}
-        onRetry={retry}
-      />
-    );
+    return <Action.Failure execution={state.execution} onRetry={retry} />;
   return (
     <>
       <RequestWaterfall

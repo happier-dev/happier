@@ -371,6 +371,28 @@ describe('the Happier exception detail', () => {
     expect(calls.filter((call) => call.localId === 'capture/query/get')).toHaveLength(1);
   });
 
+  it.each(['capture/trace/get', 'capture/query/get'])('shows the collector cause when %s refuses the read', async (action) => {
+    const { page } = await mount((await detailInput(false, 'stack-trace')) as unknown as JsonValue,
+      async (input, localId) => localId === action
+        ? { ok: false, status: 'failed', code: 'telemetry_collector_read_failed', reason: 'The collector refused the read.',
+          cause: { source: 'platform', code: '503', message: 'The collector is restarting.' } }
+        : collectorRead(input, localId));
+    if (action === 'capture/query/get') {
+      await vi.waitFor(async () => {
+        await expect(page.getByText('Logs from this request')).resolves.toBeDefined();
+      });
+      const line = (await page.getAllByRole('button')).find((target) => target.name?.includes('error'));
+      expect(line).toBeDefined();
+      await page.press(line!);
+    }
+    await vi.waitFor(async () => {
+      await expect(page.getByText('The collector is restarting.')).resolves.toBeDefined();
+    });
+    await page.press(await page.getByRole('button', { name: 'Details' }));
+    await expect(page.getByText(action === 'capture/trace/get'
+      ? 'Code: telemetry_collector_read_failed' : 'telemetry_collector_read_failed')).resolves.toBeDefined();
+  });
+
   it('sends a Team-shared issue to its owner’s collector instead of reading', async () => {
     const { page, calls } = await mount(
       (await detailInput(true, 'occurrences')) as unknown as JsonValue,
