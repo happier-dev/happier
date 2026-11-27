@@ -212,6 +212,8 @@ import type {
 } from '../../providerEvents.js';
 import {
   createClaudeProviderActivityLedger,
+  isReplayClaudeAgentSdkMessage,
+  type ClaudeProviderTaskActivity,
 } from '../../remote/sdk/providerActivity.js';
 import {
   applyClaudeProviderTaskActivity,
@@ -753,8 +755,22 @@ export function createClaudeUnifiedTerminalTurnOperations(
   const usageObservationListeners = new Set<(observation: ClaudeUsageObservation) => void>();
   let currentProviderModel = params.providerModel;
   const completionWaiters = new Set<TurnCompletionWaiter>();
-  let publishedAssistantReply: Readonly<{ turnId: string; text: string }> | null = null;
-  let pendingStopReply: Readonly<{ turnId: string; text: string }> | null = null;
+  type TurnCompletionEvidence = Readonly<{
+    source: 'hook' | 'transcript' | 'compaction' | 'stale-screen';
+    nativeBoundaryId?: string | null;
+    hookPromptId?: string | null;
+    replyRowId?: string | null;
+  }>;
+  let acceptedPromptEvidence: Readonly<{ turnId: string; nativeId: string }> | null = null;
+  let publishedAssistantReply: Readonly<{ turnId: string; text: string; rowId: string }> | null = null;
+  let pendingStopReply: Readonly<{ turnId: string; text: string; evidence: TurnCompletionEvidence }> | null = null;
+  let turnTasks: {
+    turnId: string;
+    awaitingNotification: Set<string>;
+    // A foreground Stop with work outstanding keeps the Happier turn open.
+    // From then on, only the native chain rooted at its task notification can close it.
+    reactionRows: Set<string> | null;
+  } | null = null;
   const publishedFailureTurnIds = new Set<string>();
   const observedCompactionCompletedEventIds = new Set<string>();
   const providerActivityLedger = createClaudeProviderActivityLedger();
@@ -884,7 +900,8 @@ export function createClaudeUnifiedTerminalTurnOperations(
       if (observation) await nativeRuntime.observeTerminalLifecycle(observation);
     },
     onObserveRow: async (row, observation) => {
-      if (isClaudeUnifiedPrimaryTranscriptRow(row, observation.providerSessionId)) {
+      const primary = isClaudeUnifiedPrimaryTranscriptRow(row, observation.providerSessionId);
+      if (primary) {
         adoptProviderSessionId({
           providerSessionId: observation.providerSessionId,
           transcriptPath: observation.transcriptPath,
@@ -906,7 +923,8 @@ export function createClaudeUnifiedTerminalTurnOperations(
       }
       if (!observation.historicalReplay) await resumeChoiceStartupHandler?.observeTranscript(row);
       // Replay pages already display ordinary tool results; only task projections are runtime-owned there.
-      const orderedTaskResult = isClaudeTaskLifecycleResultEnvelope(readClaudeTaskLifecycleEnvelope(row));
+      const taskLifecycle = readClaudeTaskLifecycleEnvelope(row);
+      const orderedTaskResult = isClaudeTaskLifecycleResultEnvelope(taskLifecycle);
       const toolResultSource = !observation.historicalReplay && (!orderedTaskResult || observation.orderedSource)
         ? observation.projectedTaskResult !== undefined ? observation.projectedTaskResult : row
         : replayingSource ? observation.projectedTaskResult : undefined;
@@ -940,8 +958,18 @@ export function createClaudeUnifiedTerminalTurnOperations(
         workflowRuntime.observeTranscriptMessage(row, { historicalReplay: true });
         return;
       }
-      if (observation.orderedSource && state.activeTurnId
-        && isClaudeUnifiedPrimaryTranscriptRow(row, observation.providerSessionId) && row.type === 'assistant') {
+      const payload = projectClaudeTranscriptRowToProviderPayload({
+        providerSessionId: observation.providerSessionId,
+        row,
+        suppressPriorEraTurnClosure: observation.historicalReplay,
+      });
+      const taskActivity = observation.historicalReplay ? null : observeProviderTaskActivity(row, observation.providerSessionId);
+      const orderedPrimary = observation.orderedSource && primary && !isReplayClaudeAgentSdkMessage(row);
+      const belongsToTurn = orderedPrimary && observeOrderedTurnTaskRow(row, taskActivity, {
+        notification: taskLifecycle?.subtype === 'task_notification',
+        independentPrompt: row.type === 'user' && payload?.kind === 'text',
+      });
+      if (belongsToTurn && state.activeTurnId && row.type === 'assistant') {
         const classification = classifyClaudeNativeTranscriptRow(row);
         const text = classification.content.kind === 'message' ? classification.content.text : null;
         const localId = buildClaudeJsonlProviderFactLocalIdFromParts({ type: row.type, id: row.uuid });
@@ -952,7 +980,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
               emittedAtMs: readClaudeJsonlRowTimestampMs(row) ?? Date.now(), turnId: state.activeTurnId,
               agentId: CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID, localId, body: { type: 'message', message: text } },
           });
-          publishedAssistantReply = { turnId: state.activeTurnId, text: text.trim() };
+          publishedAssistantReply = { turnId: state.activeTurnId, text: text.trim(), rowId: row.uuid };
         }
       }
       const commands = readClaudeNativeCommands(row);
@@ -962,11 +990,6 @@ export function createClaudeUnifiedTerminalTurnOperations(
           event: { kind: 'available-commands', sessionId: params.happierSessionId, emittedAtMs: Date.now(), commands },
         });
       }
-      const payload = projectClaudeTranscriptRowToProviderPayload({
-        providerSessionId: observation.providerSessionId,
-        row,
-        suppressPriorEraTurnClosure: observation.historicalReplay,
-      });
       if (
         payload?.kind === 'slash_command'
         && parseSpecialCommand(payload.text ?? '').type === 'compact'
@@ -1011,17 +1034,15 @@ export function createClaudeUnifiedTerminalTurnOperations(
         });
       }
       // ONE raw channel, two provider-clean sources: goal status + workflow activity.
-      if (!observation.historicalReplay) {
-        observeProviderTaskActivity(row, observation.providerSessionId);
-      }
       goalRuntime.source.observeTranscriptMessage(row);
       params.observeTodoWrite?.(row);
       workflowRuntime.observeTranscriptMessage(row, { historicalReplay: observation.historicalReplay });
       if (pendingStopReply?.turnId === state.activeTurnId
         && publishedAssistantReply?.turnId === state.activeTurnId
         && pendingStopReply?.text === publishedAssistantReply?.text) {
+        const evidence = pendingStopReply.evidence;
         pendingStopReply = null;
-        completeForegroundTurn();
+        completeForegroundTurn({ ...evidence, replyRowId: publishedAssistantReply.rowId });
       }
     },
   });
@@ -2110,7 +2131,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
             await publishProviderTaskInventory('scheduled-wake');
           }
           // SubagentStart may refresh only an admitted ID; SubagentStop may clear only its exact ID.
-          if (!bufferedNativeStart) observeProviderTaskActivity(payload, providerSessionId);
+          const taskActivity = bufferedNativeStart ? null : observeProviderTaskActivity(payload, providerSessionId);
           const lifecycleObservation = mapClaudeUnifiedHookLifecyclePayload(payload, params.happierSessionId);
           const hookEventName = readNonEmptyString(payload.hook_event_name)
             ?? readNonEmptyString(payload.hookEventName)
@@ -2118,15 +2139,31 @@ export function createClaudeUnifiedTerminalTurnOperations(
           if (hookEventName === 'SessionEnd' && !isSidechainSessionHook(payload)) {
             reconcileProviderActivityAfterHostLoss();
           }
+          const taskTurn = readActiveTurnTasks();
+          if (taskActivity?.type === 'terminal' && taskActivity.sessionId === state.providerSessionId
+            && taskTurn && !taskTurn.reactionRows && !isSidechainSessionHook(payload)) {
+            // A foreground TaskOutput/TaskStop can observe the task's result itself.
+            taskTurn.awaitingNotification.delete(taskActivity.taskId);
+          }
           const stopReplyText = hookEventName === 'Stop'
             ? readNonEmptyString(payload.last_assistant_message) ?? readNonEmptyString(payload.lastAssistantMessage)
             : null;
           // Stop can arrive before the ordered transcript follower. Retain its
           // native completion evidence until that exact reply reaches the same
           // text/turn channel as SDK output, before the host settles the Run.
-          if (lifecycleObservation?.type === 'completion_candidate' && state.activeTurnId && stopReplyText
-            && (publishedAssistantReply?.turnId !== state.activeTurnId || publishedAssistantReply.text !== stopReplyText)) {
-            pendingStopReply = { turnId: state.activeTurnId, text: stopReplyText };
+          if (lifecycleObservation?.type === 'completion_candidate') {
+            const evidence: TurnCompletionEvidence = {
+              source: 'hook',
+              nativeBoundaryId: lifecycleObservation.turnId,
+              hookPromptId: readClaudeProviderIdentityValue(payload.prompt_id) ?? readClaudeProviderIdentityValue(payload.promptId),
+            };
+            const activeReply = publishedAssistantReply?.turnId === state.activeTurnId ? publishedAssistantReply : null;
+            if (state.activeTurnId && stopReplyText && activeReply?.text !== stopReplyText) {
+              pendingStopReply = { turnId: state.activeTurnId, text: stopReplyText, evidence };
+            } else {
+              recordProviderActivity();
+              completeForegroundTurn({ ...evidence, replyRowId: stopReplyText ? activeReply?.rowId ?? null : null });
+            }
           } else if (lifecycleObservation) {
             await nativeRuntime.observeTerminalLifecycle(lifecycleObservation);
           }
@@ -2421,12 +2458,30 @@ export function createClaudeUnifiedTerminalTurnOperations(
     });
   }
 
-  function publishActiveTurnComplete(nowMs: number): void {
+  function logTurnCompletionProvenance(turnId: string, emittedAtMs: number, evidence: TurnCompletionEvidence, providerAccepted = state.providerAccepted): void {
+    params.ctx.logger.info('[ClaudeUnifiedTerminal] turn completion provenance', {
+      sessionId: params.happierSessionId,
+      turnId,
+      providerSessionId: state.providerSessionId,
+      emittedAtMs,
+      source: evidence.source,
+      nativeBoundaryId: evidence.nativeBoundaryId ?? null,
+      hookPromptId: evidence.hookPromptId ?? null,
+      acceptedNativePromptId: acceptedPromptEvidence?.turnId === turnId ? acceptedPromptEvidence.nativeId : null,
+      lastNativeReplyId: publishedAssistantReply?.turnId === turnId ? publishedAssistantReply.rowId : null,
+      providerAccepted,
+      dispatchAttemptInFlight: state.dispatchAttemptInFlight,
+    });
+  }
+
+  function publishActiveTurnComplete(nowMs: number, evidence: TurnCompletionEvidence): void {
     const turnId = state.activeTurnId;
-    if (state.lastTurnFailure) return;
-    if (!turnId || publishedTerminalLifecycleTurnIds.has(turnId)) return;
+    const wasProviderAccepted = state.providerAccepted;
+    state.providerAccepted = true;
+    if (state.lastTurnFailure || !turnId || publishedTerminalLifecycleTurnIds.has(turnId)) return;
     promptEchoSuppressor.clearAcceptedPromptEchoes();
     publishedTerminalLifecycleTurnIds.add(turnId);
+    logTurnCompletionProvenance(turnId, nowMs, evidence, wasProviderAccepted);
     publishClaudeUnifiedTurnComplete({
       handlers,
       logger: params.ctx.logger,
@@ -2501,6 +2556,8 @@ export function createClaudeUnifiedTerminalTurnOperations(
       nativeResumeTurnBarrier?.observeTerminal();
     }
     promptEchoSuppressor.clearAcceptedPromptEchoes();
+    turnTasks = null;
+    acceptedPromptEvidence = null;
     staleTurnDemandActive = false;
     stopStaleTurnWake();
     state.activePromptText = null;
@@ -2677,7 +2734,42 @@ export function createClaudeUnifiedTerminalTurnOperations(
     return true;
   }
 
-  function completeForegroundTurn(): void {
+  function readActiveTurnTasks() {
+    return turnTasks?.turnId === state.activeTurnId ? turnTasks : null;
+  }
+
+  function observeOrderedTurnTaskRow(
+    row: Readonly<Record<string, unknown>>,
+    activity: ClaudeProviderTaskActivity | null,
+    provenance: Readonly<{ notification: boolean; independentPrompt: boolean }>,
+  ): boolean {
+    const turnId = state.activeTurnId;
+    if (!turnId || !state.providerAccepted || state.turnCompleted) return true;
+    const taskTurn = readActiveTurnTasks();
+    const rowId = readClaudeProviderIdentityValue(row.uuid);
+    if (provenance.notification) {
+      if (row.type === 'user' && rowId && activity?.type === 'terminal'
+        && taskTurn?.awaitingNotification.delete(activity.taskId) && taskTurn.reactionRows) {
+        taskTurn.reactionRows.clear();
+        taskTurn.reactionRows.add(rowId);
+      }
+      return false;
+    }
+    if (taskTurn?.reactionRows) {
+      const parentId = readClaudeProviderIdentityValue(row.parentUuid) ?? readClaudeProviderIdentityValue(row.parent_uuid);
+      if (!rowId || !parentId || provenance.independentPrompt || !taskTurn.reactionRows.has(parentId)) return false;
+      taskTurn.reactionRows.add(rowId);
+    }
+    if (activity?.type === 'started' && !activity.parentTaskId
+      && (activity.admission === 'launch' || activity.admission === 'resume')) {
+      turnTasks = taskTurn ?? { turnId, awaitingNotification: new Set(), reactionRows: null };
+      turnTasks.awaitingNotification.add(activity.taskId);
+    }
+    return true;
+  }
+
+  function completeForegroundTurn(evidence: TurnCompletionEvidence): void {
+    nativeResumeTurnBarrier?.observeTerminal();
     // A queued control (e.g. `/effort`) can pop a dialog into the now-idle session with no further
     // screen observation. Re-arm the bounded turn-end dialog probe so it is surfaced, not silent —
     // for both the terminal-origin and the accepted-prompt completion paths.
@@ -2686,16 +2778,23 @@ export function createClaudeUnifiedTerminalTurnOperations(
       return;
     }
     if (!state.activeTurnId && !state.providerAccepted) return;
-    state.providerAccepted = true;
-    publishActiveTurnComplete(Date.now());
+    const taskTurn = readActiveTurnTasks();
+    if (taskTurn?.awaitingNotification.size) {
+      taskTurn.reactionRows ??= new Set();
+      stopStaleTurnWake();
+      return;
+    }
+    const replyRowId = evidence.source === 'transcript' ? evidence.nativeBoundaryId : evidence.replyRowId;
+    if (taskTurn?.reactionRows && (!replyRowId || !taskTurn.reactionRows.has(replyRowId))) return;
+    publishActiveTurnComplete(Date.now(), evidence);
     state.turnCompleted = true;
     settleTurnCompletionWaiters();
     if (state.turnCompleted) resetCompletedTurnState();
     scheduleTurnEndDialogProbes();
   }
 
-  function observeProviderTaskActivity(row: unknown, providerSessionId?: string): void {
-    observeClaudeProviderTaskActivity({
+  function observeProviderTaskActivity(row: unknown, providerSessionId?: string): ClaudeProviderTaskActivity | null {
+    return observeClaudeProviderTaskActivity({
       row,
       ...(providerSessionId ? { providerSessionId } : {}),
       ledger: providerActivityLedger,
@@ -3285,7 +3384,8 @@ export function createClaudeUnifiedTerminalTurnOperations(
   }
 
   function staleTurnRecoveryNeeded(): boolean {
-    return !state.disposed
+    const taskTurn = readActiveTurnTasks();
+    return !taskTurn?.reactionRows && !taskTurn?.awaitingNotification.size && !state.disposed
       && staleTurnDemandActive
       && (state.turnInFlight || state.terminalOriginTurnInFlight);
   }
@@ -3325,6 +3425,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
       return;
     }
     const inputState = await params.ctx.agentRuntime.terminalHost.captureInputState(handle).catch(() => null);
+    if (!staleTurnRecoveryNeeded()) return;
     if (!inputState || !inputState.stable) {
       ensureStaleTurnWake();
       return;
@@ -3340,6 +3441,8 @@ export function createClaudeUnifiedTerminalTurnOperations(
       ensureStaleTurnWake();
       return;
     }
+    if (!staleTurnRecoveryNeeded()) return;
+    if (state.activeTurnId) logTurnCompletionProvenance(state.activeTurnId, Date.now(), { source: 'stale-screen' });
     params.ctx.logger.warn('[ClaudeUnifiedTerminal] stale turn reconciled as ended', {
       sessionId: params.happierSessionId,
       silentForMs,
@@ -3638,6 +3741,8 @@ export function createClaudeUnifiedTerminalTurnOperations(
     },
     beginProviderTurn(turnId) {
       requestedManualCompactionId = null;
+      turnTasks = null;
+      acceptedPromptEvidence = null;
       publishedAssistantReply = null;
       pendingStopReply = null;
       publishProviderTaskInventory('new-turn');
@@ -3927,6 +4032,8 @@ export function createClaudeUnifiedTerminalTurnOperations(
       }
       if (providerActivityLedger.clearScheduledWake()) await publishProviderTaskInventory('scheduled-wake-interrupted');
       publishActiveTurnCancelled(Date.now(), 'user');
+      turnTasks = null;
+      acceptedPromptEvidence = null;
       state.turnInFlight = false;
       state.activeTurnId = null;
       state.activePromptText = null;
@@ -4209,6 +4316,8 @@ export function createClaudeUnifiedTerminalTurnOperations(
           state.lastTurnFailure = null;
           publishedAssistantReply = null;
           pendingStopReply = null;
+          turnTasks = null;
+          acceptedPromptEvidence = null;
           publishProviderTaskInventory('runtime-dispose');
           lastTurnProgressPublishedAtMs = null;
           recentPrimaryProviderUnavailableForPromptDelivery = null;
@@ -4249,6 +4358,8 @@ export function createClaudeUnifiedTerminalTurnOperations(
         };
         const acceptedQueuedPrompt = await nativeRuntime.confirmProviderAcceptance(providerAcceptanceEvidence);
         if (acceptedQueuedPrompt) {
+          const nativeId = observation.acceptanceEvidenceId ?? observation.turnId;
+          if (state.activeTurnId && nativeId) acceptedPromptEvidence = { turnId: state.activeTurnId, nativeId };
           if (observation.source === 'transcript' && observation.turnId) {
             await markHostPromptEchoConsumed(observation.turnId);
           }
@@ -4305,8 +4416,9 @@ export function createClaudeUnifiedTerminalTurnOperations(
         const completesActiveCompactPrompt = acceptedCompactPrompt || isCompactPromptText(state.activePromptText);
         arbiter.observeCompaction({ phase: 'completed' });
         if (completesActiveCompactPrompt) {
-          state.providerAccepted = true;
-          publishActiveTurnComplete(Date.now());
+          publishActiveTurnComplete(Date.now(), {
+            source: 'compaction', nativeBoundaryId: observation.agentEventId ?? observation.turnId ?? null,
+          });
           state.turnCompleted = true;
           settleTurnCompletionWaiters();
           // Compaction completion also transitions to idle; a queued command dialog can pop here too.
@@ -4326,8 +4438,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
         return;
       }
       if (observation.type === 'completion_candidate') {
-        nativeResumeTurnBarrier?.observeTerminal();
-        completeForegroundTurn();
+        completeForegroundTurn({ source: observation.source, nativeBoundaryId: observation.turnId });
         return;
       }
       if (observation.type === 'completion_candidate_invalidated') {
@@ -4413,6 +4524,8 @@ export function createClaudeUnifiedTerminalTurnOperations(
         if (consumeTerminalOriginTurnCompletion()) return;
         state.dispatchAttemptInFlight = false;
         publishActiveTurnCancelled(Date.now(), observation.reason);
+        turnTasks = null;
+        acceptedPromptEvidence = null;
         state.turnInFlight = false;
         state.activeTurnId = null;
         state.activePromptText = null;

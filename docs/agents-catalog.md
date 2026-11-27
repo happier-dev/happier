@@ -1528,6 +1528,13 @@ binding uses its own credential transport rather than requiring native CLI login
 
 #### Claude plugin runtime contracts (development)
 
+In 0.3 development, the Claude unified terminal keeps an accepted Happier turn
+open when Claude stops its foreground turn with detached tasks it launched still
+outstanding. The ordered native notification for one of those tasks links its
+follow-up to the same Happier turn. That turn settles on its final reply once the
+owned tasks have been accounted for, or on cancellation, failure or process exit.
+Session input results still use the accepted turn and its committed final reply.
+
 Claude resolves the config directory from explicit Session launch values and
 the Session host's inherited selectors. The native launch and Session runtime
 descriptor use that same selection. An explicit unset of `CLAUDE_CONFIG_DIR`

@@ -725,6 +725,100 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
     expect(binding).toBeNull();
   });
 
+  it('settles the captured reviewer input on its detached Agent continuation', async () => {
+    const transcripts = createManualTranscriptFollowFixture();
+    const ctx = createPluginContextFixture(createTerminalHostFixture().service, createEventsFixture().service, {
+      transcripts: transcripts.service,
+    });
+    const sessionId = 'cut-54-reviewer-replay';
+    const providerSessionId = 'claude-provider-session-1';
+    const operations = createClaudeUnifiedTerminalProviderOperations({
+      ctx, directory: '/tmp/claude-project', happierSessionId: sessionId,
+      hostPreference: 'zellij', launchEnv: {}, permissionMode: 'default',
+    });
+    const session = createClaudeNativeSessionRuntimeFromOperations(operations, {
+      kind: 'create', sessionId, cwd: '/tmp/claude-project',
+    }, { session: { services: {
+      activeInput: { bind: () => ({ dispose() {} }) }, models: { bind: () => ({ dispose() {} }) },
+    } } } as unknown as AgentSessionRuntimeContext);
+    const events: AgentSessionRuntimeEvent[] = [];
+    const subscription = session.watch(event => events.push(event));
+    const turnId = 'review-turn';
+    const prompt = 'Review and return the structured result.';
+    const interim = 'The background Agent is running. I will review its findings.';
+    const reply = '{"verdict":"ready"}';
+    const completed = () => events.filter(event => event.kind === 'turn-complete');
+    const emit = async (row: Readonly<Record<string, JsonValue>> & { uuid: string }) => {
+      const scoped = { ...row, sessionId: providerSessionId };
+      await transcripts.emitRow(scoped);
+      await session.observeSourceTranscript!({ providerSessionId, sourceId: row.uuid, row: scoped });
+    };
+    const assistant = (
+      uuid: string, parentUuid: string, content: JsonValue, stop_reason: 'tool_use' | 'end_turn',
+    ) => emit({ type: 'assistant', uuid, parentUuid, message: { role: 'assistant', content, stop_reason } });
+    try {
+      await operations.startProviderSession();
+      const hook = vi.mocked(ctx.agentRuntime.sessionHooks.startServer).mock.calls[0]?.[0].onSessionHook;
+      if (!hook || !session.observeSourceTranscript) throw new Error('native transcript transport was not registered');
+      await hook(providerSessionId, { hook_event_name: 'SessionStart', session_id: providerSessionId,
+        source: 'startup', transcript_path: '/tmp/claude-provider-session-1.jsonl' });
+      await expect(session.send({ inputIds: ['review-input'], input: { text: prompt },
+        delivery: { kind: 'newTurn', turnId } })).resolves.toEqual({ status: 'admitted' });
+      await hook(providerSessionId, { hook_event_name: 'UserPromptSubmit', session_id: providerSessionId,
+        prompt_id: 'reviewer-prompt', prompt });
+
+      // Cut 54 replay-reviewer-native.redacted.jsonl rows 67–86. Keep the parent
+      // links and native async result shape, substituting IDs and private text.
+      await emit({ type: 'user', uuid: 'input', parentUuid: 'warmup-stop', promptId: 'reviewer-prompt',
+        message: { role: 'user', content: prompt } });
+      await assistant('launch', 'input', [
+        { type: 'tool_use', id: 'agent-call', name: 'Agent', input: { run_in_background: true } },
+      ], 'tool_use');
+      await emit({ ...claudeAsyncAgentLaunchAck({ taskId: 'review-agent', toolUseId: 'agent-call', uuid: 'launch-ack' }),
+        parentUuid: 'launch' });
+      await assistant('interim-thinking', 'launch-ack', [{ type: 'thinking', thinking: 'waiting' }], 'end_turn');
+      await assistant('interim', 'interim-thinking', [{ type: 'text', text: interim }], 'end_turn');
+      await hook(providerSessionId, { hook_event_name: 'Stop', session_id: providerSessionId, last_assistant_message: interim });
+      await emit({ type: 'system', subtype: 'stop_hook_summary', uuid: 'interim-stop', parentUuid: 'interim' });
+      expect(completed(), 'foreground Stop must leave the exact input pending').toEqual([]);
+
+      await emit({ type: 'user', uuid: 'unrelated-notification', parentUuid: 'interim-stop',
+        origin: { kind: 'task-notification' }, message: { role: 'user',
+          content: '<task-notification><task-id>other-agent</task-id><status>stopped</status></task-notification>' } });
+      await assistant('unrelated-reply', 'unrelated-notification', [{ type: 'text', text: 'Unrelated task' }], 'end_turn');
+      expect(completed(), 'an earlier task must not settle the reviewer').toEqual([]);
+
+      const notice = '<task-notification><task-id>review-agent</task-id><tool-use-id>agent-call</tool-use-id><status>completed</status></task-notification>';
+      await hook(providerSessionId, { hook_event_name: 'UserPromptSubmit', session_id: providerSessionId, prompt: notice });
+      await emit({ type: 'user', uuid: 'notification', parentUuid: 'unrelated-reply', promptId: 'notification-prompt',
+        origin: { kind: 'task-notification', producer: 'session-task' }, message: { role: 'user', content: notice } });
+      expect(completed(), 'notification must leave the input pending for the reply').toEqual([]);
+      await assistant('review-thinking', 'notification', [{ type: 'thinking', thinking: 'reviewing' }], 'end_turn');
+      await hook(providerSessionId, { hook_event_name: 'Stop', session_id: providerSessionId,
+        prompt_id: 'notification-prompt', last_assistant_message: reply });
+      expect(completed(), 'Stop must wait for the ordered reply').toEqual([]);
+      await assistant('review', 'review-thinking', [{ type: 'text', text: reply }], 'end_turn');
+      await emit({ type: 'system', subtype: 'stop_hook_summary', uuid: 'review-stop', parentUuid: 'review' });
+
+      expect(events.filter(event => event.kind === 'input-accepted')).toMatchObject([
+        { inputIds: ['review-input'], delivery: { kind: 'newTurn', turnId } },
+      ]);
+      expect(events.filter(event => event.kind === 'transcript-message-committed' || event.kind === 'turn-complete')).toMatchObject([
+        { kind: 'transcript-message-committed', turnId, role: 'assistant', text: interim },
+        { kind: 'transcript-message-committed', turnId, role: 'assistant', text: reply },
+        { kind: 'turn-complete', turnId },
+      ]);
+      expect(ctx.logger.info).toHaveBeenCalledWith('[ClaudeUnifiedTerminal] turn completion provenance', {
+        sessionId, turnId, providerSessionId, emittedAtMs: expect.any(Number), source: 'hook',
+        nativeBoundaryId: null, hookPromptId: 'notification-prompt', acceptedNativePromptId: 'prompt:reviewer-prompt',
+        lastNativeReplyId: 'review', providerAccepted: true, dispatchAttemptInFlight: false,
+      });
+    } finally {
+      subscription.dispose();
+      await session.dispose();
+    }
+  });
+
   it.each(['before', 'after', 'no task'] as const)(
     'commits the admitted turn reply before completion (detached notification: %s)',
     async (notificationTiming) => {

@@ -69,7 +69,7 @@ describe('Claude shared runtime helpers', () => {
       },
       logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
       logPrefix: '[test]',
-    })).toBe(true);
+    })).toMatchObject({ type: 'terminal', sessionId: 'wrong-session', taskId: 'missing' });
     expect(publish).not.toHaveBeenCalled();
   });
 
@@ -91,7 +91,7 @@ describe('Claude shared runtime helpers', () => {
       row: {
         type: 'system', subtype: 'task_started', session_id: 's1', task_id: 't1', task_type: 'local_workflow',
       },
-    })).toBe(true);
+    })).toMatchObject({ type: 'started', sessionId: 's1', taskId: 't1' });
     expect(publish).toHaveBeenLastCalledWith({ state: 'active', activeCount: 1 });
 
     expect(observeClaudeProviderTaskActivity({
@@ -99,7 +99,7 @@ describe('Claude shared runtime helpers', () => {
       row: {
         type: 'system', subtype: 'task_notification', session_id: 's1', task_id: 't1', status: 'completed',
       },
-    })).toBe(true);
+    })).toMatchObject({ type: 'terminal', sessionId: 's1', taskId: 't1' });
     expect(publish).toHaveBeenLastCalledWith({ state: 'idle', activeCount: 0 });
   });
 
@@ -124,7 +124,7 @@ describe('Claude shared runtime helpers', () => {
         tool_name: 'Agent',
         tool_response: { status: 'async_launched', agentId: 'agent-1' },
       },
-    })).toBe(true);
+    })).toMatchObject({ type: 'started', sessionId: 's1', taskId: 'agent-1' });
     expect(publish).toHaveBeenLastCalledWith({ state: 'active', activeCount: 1 });
 
     expect(observeClaudeProviderTaskActivity({
@@ -135,7 +135,7 @@ describe('Claude shared runtime helpers', () => {
         agent_id: 'agent-1',
         error: 'authentication_failed',
       },
-    })).toBe(true);
+    })).toMatchObject({ type: 'terminal', sessionId: 's1', taskId: 'agent-1' });
     expect(publish).toHaveBeenLastCalledWith({ state: 'idle', activeCount: 0 });
   });
 });

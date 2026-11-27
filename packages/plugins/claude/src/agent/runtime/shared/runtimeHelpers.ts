@@ -157,12 +157,11 @@ export function observeClaudeProviderTaskActivity(params: Readonly<{
   runtimeActivityPublisher: ClaudeRuntimeActivityPublisher;
   logger: ClaudeRuntimeLogger;
   logPrefix: string;
-}>): boolean {
-  if (isReplayClaudeAgentSdkMessage(params.row)) return false;
+}>): ClaudeProviderTaskActivity | null {
+  if (isReplayClaudeAgentSdkMessage(params.row)) return null;
   const activity = readClaudeProviderTaskActivity(params.row, params.providerSessionId);
-  if (!activity) return false;
-  applyClaudeProviderTaskActivity({ ...params, activity });
-  return true;
+  if (activity) applyClaudeProviderTaskActivity({ ...params, activity });
+  return activity;
 }
 
 export function applyClaudeProviderTaskActivity(params: Readonly<{
