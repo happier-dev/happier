@@ -1,3 +1,6 @@
+// PostgreSQL's MAX_STARTUP_PACKET_LENGTH covers the version and parameters, excluding the length word.
+const MAX_STARTUP_PACKET_LENGTH = 10_000;
+
 /** PostgreSQL v3 framing. Skipped payloads (auth, result rows, COPY) are never buffered. */
 export class PostgresFrames {
     private readonly header = Buffer.alloc(8);
@@ -12,7 +15,7 @@ export class PostgresFrames {
         private startup: boolean,
         private readonly retain: (tag: string) => boolean,
         private readonly receive: (tag: string, body: Buffer) => void,
-        private readonly receiveStartup: (code: number) => void,
+        private readonly receiveStartup: (code: number, body: Buffer) => void,
     ) {}
 
     disable(): void { this.stopped = true; this.body = undefined; }
@@ -33,23 +36,28 @@ export class PostgresFrames {
                 if (this.startup) {
                     this.startup = false;
                     this.tag = '';
-                    this.receiveStartup(this.header.readInt32BE(4));
+                    if (length - 4 > MAX_STARTUP_PACKET_LENGTH) throw new Error('Invalid PostgreSQL startup packet length');
+                    this.body = Buffer.alloc(this.remaining);
                 } else {
                     this.tag = String.fromCharCode(this.header[0]!);
                     this.body = this.retain(this.tag) ? Buffer.alloc(this.remaining) : undefined;
                 }
                 this.bodyBytes = 0;
-                if (this.remaining === 0 && this.tag && !this.stopped) this.receive(this.tag, this.body ?? Buffer.alloc(0));
+                if (this.remaining === 0) this.receiveFrame();
             } else {
                 const count = Math.min(this.remaining, bytes.length - offset);
                 this.body?.set(bytes.subarray(offset, offset + count), this.bodyBytes);
                 offset += count; this.bodyBytes += count; this.remaining -= count;
-                if (this.remaining === 0 && this.tag) {
-                    const body = this.body; this.body = undefined;
-                    this.receive(this.tag, body ?? Buffer.alloc(0));
-                }
+                if (this.remaining === 0) this.receiveFrame();
             }
         }
+    }
+
+    private receiveFrame(): void {
+        const body = this.body ?? Buffer.alloc(0);
+        this.body = undefined;
+        if (this.tag) this.receive(this.tag, body);
+        else this.receiveStartup(this.header.readInt32BE(4), body);
     }
 }
 

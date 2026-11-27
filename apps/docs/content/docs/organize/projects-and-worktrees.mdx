@@ -168,9 +168,10 @@ When the database has an **Automations** section, it shows automations for that
 target.
 
 For a Worktree database with local capture, open **Insights → Queries** to see
-statements captured for the selected database. Open a statement for its masked
-detail. If it belongs to a captured request, choose **Inspect request** to see
-any likely N+1 findings for that request.
+statements captured for the selected database. PostgreSQL connections to another
+database on the same service appear only in Worktree capture. Open a statement
+for its masked detail. If it belongs to a captured request, choose **Inspect
+request** to see any likely N+1 findings for that request.
 
 An agent reading Worktree capture must select a database. The database's agent
 access level determines whether the agent can read its captured queries.

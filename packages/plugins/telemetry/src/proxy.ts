@@ -4,7 +4,7 @@ import { PostgresWireTracker, type WireCoverage, type WireObservation } from './
 
 export type PostgresProxyOptions = {
     listenHost: '127.0.0.1' | '::1'; listenPort: number; upstream: { host: string; port: number };
-    onObservation: (observation: WireObservation) => void; onCoverage?: (coverage: WireCoverage) => void;
+    onObservation: (observation: WireObservation, database?: string) => void; onCoverage?: (coverage: WireCoverage) => void;
 };
 export type PostgresProxy = { host: '127.0.0.1' | '::1'; port: number; setRecording(enabled: boolean): void; stop(): Promise<void> };
 

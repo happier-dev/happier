@@ -11,7 +11,13 @@ import { createCaptureSqliteFixture } from '../testing/sqlite.js';
 import type { WireObservation } from './tracker';
 
 function frame(tag: string, value = ''): Buffer { const body = Buffer.from(value); const header = Buffer.alloc(5); header.write(tag); header.writeInt32BE(body.length + 4, 1); return Buffer.concat([header, body]); }
-function startup(): Buffer { const data = Buffer.alloc(8); data.writeInt32BE(8); data.writeInt32BE(196608, 4); return data; }
+function startup(database?: string): Buffer {
+    const parameters = database ? Buffer.from(`user\0user\0database\0${database}\0\0`) : Buffer.alloc(0);
+    const header = Buffer.alloc(8);
+    header.writeInt32BE(header.length + parameters.length);
+    header.writeInt32BE(196608, 4);
+    return Buffer.concat([header, parameters]);
+}
 async function readBytes(socket: Socket, length: number): Promise<Buffer> {
     const parts: Buffer[] = []; let received = 0;
     while (received < length) { const value: Buffer = socket.read() ?? await new Promise<Buffer>(resolve => socket.once('data', resolve)); parts.push(value); received += value.length; }
@@ -53,8 +59,9 @@ describe('loopback Postgres proxy', () => {
         let shared: Awaited<ReturnType<typeof bindLocalCapture>> | undefined;
         try {
             const ready = frame('Z', 'I');
-            client.write(startup());
-            expect(await readBytes(database, 8)).toEqual(startup());
+            const startupPacket = startup('db');
+            client.write(startupPacket);
+            expect(await readBytes(database, startupPacket.length)).toEqual(startupPacket);
             database.write(ready);
             expect(await readBytes(client, ready.length)).toEqual(ready);
             const execute = async (value: number) => {

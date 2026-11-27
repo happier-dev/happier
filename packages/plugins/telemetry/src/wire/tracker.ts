@@ -1,3 +1,4 @@
+import { isUtf8 } from 'node:buffer';
 import { PostgresFrames, WireReader } from './frames.js';
 import { normalizePostgresqlStatement, postgresqlStatementRanges } from '@happier-dev/databases/postgresql';
 
@@ -16,7 +17,7 @@ export type WireTransactionObservation = {
 };
 export type WireObservation = WireExecutionObservation | WireTransactionObservation;
 export type WireCoverage = { reason: 'ssl' | 'cancel' | 'unsupported-startup' | 'unknown-message' | 'malformed-frame' | 'unsupported-statement' | 'copy' | 'observer-failed'; connectionId: string };
-export type WireTrackerOptions = { connectionId: string; onObservation: (observation: WireObservation) => void; onCoverage?: (coverage: WireCoverage) => void };
+export type WireTrackerOptions = { connectionId: string; onObservation: (observation: WireObservation, database?: string) => void; onCoverage?: (coverage: WireCoverage) => void };
 
 type Statement = { rawSql: string; typeOids: number[] };
 type Portal = { statement: Statement; parameters: WireParameter[] };
@@ -44,14 +45,31 @@ export class PostgresWireTracker {
     private transaction: Transaction | undefined;
     private executionSequence = 0;
     private transactionSequence = 0;
+    private database: string | undefined;
 
     constructor(private readonly options: WireTrackerOptions) {
-        this.client = new PostgresFrames(true, tag => 'QPBECD'.includes(tag), (tag, body) => this.clientFrame(tag, body), code => {
+        this.client = new PostgresFrames(true, tag => 'QPBECD'.includes(tag), (tag, body) => this.clientFrame(tag, body), (code, body) => {
             if (code === 80877103) this.unsupported('ssl');
             else if (code === 80877102) this.unsupported('cancel');
             else if (code < 196608 || code > 196610) this.unsupported('unsupported-startup');
+            else this.database = this.readStartupDatabase(body);
         });
         this.server = new PostgresFrames(false, tag => 'CEZ'.includes(tag), (tag, body) => this.serverFrame(tag, body), () => {});
+    }
+
+    private readStartupDatabase(body: Buffer): string | undefined {
+        if (!body.length || !isUtf8(body)) return undefined;
+        const reader = new WireReader(body);
+        let database: string | undefined;
+        let user: string | undefined;
+        for (let key = reader.string(); key; key = reader.string()) {
+            const value = reader.string();
+            if (key === 'database') database = value;
+            else if (key === 'user') user = value;
+        }
+        reader.end();
+        // PostgreSQL defaults the database to the startup user.
+        return database || user || undefined;
     }
 
     frontend(bytes: Buffer): void { this.feed(this.client, bytes); }
@@ -200,7 +218,7 @@ export class PostgresWireTracker {
         this.transaction = { id: `${this.options.connectionId}:t${++this.transactionSequence}`, executionIds: [], startedAt, monotonicStart };
     }
     private emit(observation: WireObservation): void {
-        try { this.options.onObservation(observation); } catch { this.coverage('observer-failed'); }
+        try { this.options.onObservation(observation, this.database); } catch { this.coverage('observer-failed'); }
     }
     private coverage(reason: WireCoverage['reason']): void { try { this.options.onCoverage?.({ reason, connectionId: this.options.connectionId }); } catch { /* Observation failures cannot affect relay. */ } }
     private unsupported(reason: WireCoverage['reason']): void { this.coverage(reason); this.close(); }

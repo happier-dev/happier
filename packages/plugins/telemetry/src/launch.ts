@@ -1,4 +1,5 @@
 import { createCanonicalJsonSigningInput, type PluginWorktreeDatabaseMemberV1 } from '@happier-dev/plugin-sdk';
+import { parseDatabaseConnectionUrl } from '@happier-dev/databases/connection';
 import { startPostgresProxy } from './proxy.js';
 import type { CapturePartition, CaptureRuntime } from './runtime.js';
 
@@ -10,7 +11,7 @@ export type CaptureUrlOffer = Readonly<{
 }>;
 type Proxy = Awaited<ReturnType<typeof startPostgresProxy>>;
 type Receiver = Awaited<ReturnType<CaptureRuntime['acquireReceiver']>>;
-type ProxySlot = {proxy:Proxy; users:Set<symbol>; recorders:Set<symbol>; attribution:{ databaseMemberKey?: string }};
+type ProxySlot = {proxy:Proxy; users:Set<symbol>; recorders:Set<symbol>; attribution:{ binding?: { database: string; memberKey: string } }};
 type ReceiverSlot = {receiver:Receiver; users:Set<symbol>};
 // These are actual live socket references, never persisted assignments or a port allocator.
 const proxySlots = new WeakMap<CaptureRuntime,Map<string,Promise<ProxySlot>>>();
@@ -22,12 +23,18 @@ type LocalPartition = Required<Pick<CapturePartition, 'partition' | 'physicalRoo
 async function acquireProxy(runtime:CaptureRuntime,context:LocalPartition,offer:CaptureUrlOffer) {
  const { partition } = context;
  const active=slots(proxySlots,runtime),key=JSON.stringify([partition,offer.assignedPort,offer.upstream]);
- const databaseMemberKey = offer.databaseMember === undefined ? undefined : createCanonicalJsonSigningInput(offer.databaseMember);
+ const database = offer.databaseMember && parseDatabaseConnectionUrl(offer.original).database;
+ const binding = database && offer.databaseMember
+  ? { database, memberKey: createCanonicalJsonSigningInput(offer.databaseMember) }
+  : undefined;
  let pending=active.get(key);
  if(!pending){
-  const attribution = { databaseMemberKey };
+  const attribution: ProxySlot['attribution'] = { binding };
   pending=startPostgresProxy({listenHost:'127.0.0.1',listenPort:offer.assignedPort,upstream:offer.upstream,
-   onObservation:observation=>runtime.observeWire(observation,context,attribution.databaseMemberKey),
+   onObservation: (observation, observedDatabase) => {
+    const selected = attribution.binding;
+    runtime.observeWire(observation, context, selected && observedDatabase === selected.database ? selected.memberKey : undefined);
+   },
    onCoverage:coverage=>{ if(coverage.reason !== 'cancel') runtime.recordCoverage(partition,coverage.reason,context.physicalRootIdentity); },
   }).then(proxy=>({proxy,users:new Set<symbol>(),recorders:new Set<symbol>(),attribution}));
   active.set(key,pending);
@@ -35,7 +42,8 @@ async function acquireProxy(runtime:CaptureRuntime,context:LocalPartition,offer:
  }
  const slot=await pending,token=Symbol();
  // A shared listener can keep live connections after either lease ends.
- if (slot.attribution.databaseMemberKey !== databaseMemberKey) slot.attribution.databaseMemberKey = undefined;
+ const current = slot.attribution.binding;
+ if (current?.memberKey !== binding?.memberKey || current?.database !== binding?.database) slot.attribution.binding = undefined;
  slot.users.add(token);slot.recorders.add(token);slot.proxy.setRecording(true);
  let released:Promise<void>|undefined;
  const stopRecording=()=>{slot.recorders.delete(token);if(!slot.recorders.size)slot.proxy.setRecording(false);};
