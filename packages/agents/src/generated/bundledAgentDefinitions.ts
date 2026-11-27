@@ -185,6 +185,9 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     "antigravity"
   ],
   "sessionModeDescriptor": {
+    "agentModeIds": [
+      "plan"
+    ],
     "runtimeSwitch": "acp-setSessionMode",
     "semantics": "agent-modes",
     "source": "acp"

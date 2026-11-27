@@ -9,6 +9,12 @@ export const AgentSessionModeDescriptorSchema = lazyZodSchema(() => z.strictObje
   source: z.enum(['none', 'acp', 'provider-native']),
   semantics: z.enum(['none', 'policy-presets', 'agent-modes']),
   runtimeSwitch: z.enum(['none', 'metadata-gating', 'acp-setSessionMode', 'provider-native']),
+  /**
+   * Native modes that change what kind of turn runs (for example `plan`), declared when every other
+   * advertised mode is an approval level owned by the permission mapping. Mode then offers Build
+   * (the mapped permission mode) plus these; without it, Mode lists every advertised mode.
+   */
+  agentModeIds: z.optional(z.readonly(z.array(z.string().check(z.trim(), z.minLength(1))).check(z.minLength(1)))),
 }));
 export type AgentSessionModeDescriptor = Readonly<z.infer<typeof AgentSessionModeDescriptorSchema>>;
 

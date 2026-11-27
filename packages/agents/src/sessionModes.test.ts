@@ -10,10 +10,22 @@ import {
   CANONICAL_AGENT_SESSION_MODES,
   getAgentSessionModeDescriptor,
   getAgentSessionModesKind,
+  resolveSessionAgentModeId,
 } from './sessionModes.js';
 import { getAgentAdvancedModeCapabilities } from './advancedModes.js';
 
 describe('sessionModes', () => {
+  it('separates Antigravity agent modes from its native approval levels', () => {
+    const descriptor = getAgentSessionModeDescriptor('antigravity');
+    expect(descriptor).toMatchObject({ agentModeIds: ['plan'] });
+    expect(resolveSessionAgentModeId(descriptor, 'plan')).toBe('plan');
+    for (const approvalOrClear of ['default', 'accept-edits', 'auto', '', null]) {
+      expect(resolveSessionAgentModeId(descriptor, approvalOrClear)).toBeNull();
+    }
+    // Agents without the declaration keep raw native mode ids.
+    expect(resolveSessionAgentModeId(getAgentSessionModeDescriptor('codebuddy'), 'acceptEdits')).toBe('acceptEdits');
+  });
+
   it('exposes structured session mode descriptors for representative agents', () => {
     expect(getAgentSessionModeDescriptor('claude')).toEqual({
       source: 'provider-native',

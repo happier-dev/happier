@@ -15,7 +15,7 @@ describe('Antigravity agent definition', () => {
   });
   it('admits negotiated ACP modes without inventing static choices', () => {
     expect(AGENT_DEFINITION).toMatchObject({
-      sessionModeDescriptor: { source: 'acp', semantics: 'agent-modes', runtimeSwitch: 'acp-setSessionMode' },
+      sessionModeDescriptor: { source: 'acp', semantics: 'agent-modes', runtimeSwitch: 'acp-setSessionMode', agentModeIds: ['plan'] },
       sessionModesKind: 'acpAgentModes',
     });
     expect(AGENT_DEFINITION.core).not.toHaveProperty('sessionModes');

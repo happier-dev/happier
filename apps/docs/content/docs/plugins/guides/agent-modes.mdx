@@ -17,6 +17,11 @@ owns the ACP runtime from the declaration.
 
 See [declarative ACP versus custom ACP](/plugins/agent-runtimes/acp).
 
+When a native ACP inventory mixes Agent behavior modes with approval levels,
+set the optional `sessionModeDescriptor.agentModeIds` to the native IDs for
+Agent behavior. Approval mapping still uses the Agent's permission declaration.
+Omit the list to keep the native mode IDs as published.
+
 ## 2. Custom execution-run-only Agent
 
 Use this for bounded tasks that are not interactive Sessions. Declare

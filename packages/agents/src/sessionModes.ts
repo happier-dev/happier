@@ -65,3 +65,17 @@ export function getAgentSessionModesKind(agentId: AgentId): AgentSessionModesKin
   const descriptor = getAgentSessionModeDescriptor(agentId);
   return descriptor == null ? null : descriptorToSessionModesKind(descriptor);
 }
+
+/**
+ * Happier's agent mode for a native mode id. A descriptor that declares `agentModeIds` keeps only
+ * those ids; any other id (an approval level the permission mapping owns, a persisted override from
+ * an earlier build, or a clear) is Build, returned as null. Other agents keep raw native ids.
+ */
+export function resolveSessionAgentModeId(
+  descriptor: AgentSessionModeDescriptor | null | undefined,
+  modeId: string | null | undefined,
+): string | null {
+  const id = typeof modeId === 'string' ? modeId.trim() : '';
+  if (!id) return null;
+  return !descriptor?.agentModeIds || descriptor.agentModeIds.includes(id) ? id : null;
+}

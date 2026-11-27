@@ -265,6 +265,11 @@ catalog. Permission intent normalization consumes the resolved descriptor;
 absent descriptor or other semantics normalize it to `read-only`. Planning
 retains the read-only privilege ceiling. Native permission labels remain owned
 by the Agent's declared native mapping rather than a host Agent-name group.
+A descriptor may supply `agentModeIds` to identify the native modes that carry
+Agent behavior. The shared resolver returns an empty Agent mode for other
+native IDs when the list is supplied. Antigravity declares `plan`; its approval
+levels continue through its permission mapping. A descriptor without the list
+keeps its native mode IDs.
 
 In 0.3 development, an Agent's manifest `providerRequirements` also supports
 Account-only Provider model browsing. The existing bundled-plugin generator

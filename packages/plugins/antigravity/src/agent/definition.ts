@@ -46,6 +46,7 @@ export const AGENT_DEFINITION = Object.freeze({
   // through the one compatibility reader instead of silently re-enabling a
   // disabled Agent. These ids name settings keys only; no runtime is restored.
   enablementCompatibilityBackendIds: ['antigravity-localharness', 'antigravity-terminal'],
-  sessionModeDescriptor: { source: 'acp', semantics: 'agent-modes', runtimeSwitch: 'acp-setSessionMode' },
+  // Its default/accept-edits/auto modes are approval levels owned by permissions; Plan is the one agent mode.
+  sessionModeDescriptor: { source: 'acp', semantics: 'agent-modes', runtimeSwitch: 'acp-setSessionMode', agentModeIds: ['plan'] },
   sessionModesKind: 'acpAgentModes',
 } as const);

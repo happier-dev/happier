@@ -239,6 +239,7 @@ export {
   CANONICAL_AGENT_SESSION_MODES,
   getAgentSessionModeDescriptor,
   getAgentSessionModesKind,
+  resolveSessionAgentModeId,
   type AgentSessionModeDescriptor,
   type AgentSessionModeSemantics,
   type AgentSessionModeSource,
