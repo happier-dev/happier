@@ -64,10 +64,10 @@ describe('createSettingsDomain local settings analytics', () => {
         api.getState().applyLocalSettings({
             themePreference: 'dark',
             uiFontScale: 1.35,
-            sidebarWidthPx: 420,
+            petsCompanionSizeScale: 1.5,
         }, { source: 'ui' });
 
-        expect(loadLocalSettings()).toMatchObject({ themePreference: 'dark', uiFontScale: 1.35, sidebarWidthPx: 420 });
+        expect(loadLocalSettings()).toMatchObject({ themePreference: 'dark', uiFontScale: 1.35, petsCompanionSizeScale: 1.5 });
         expect(mocks.tracking.capture).toHaveBeenCalledWith(
             'setting_changed',
             expect.objectContaining({
@@ -82,12 +82,12 @@ describe('createSettingsDomain local settings analytics', () => {
         expect(mocks.tracking.capture).toHaveBeenCalledWith(
             'setting_changed',
             expect.objectContaining({
-                setting_key: 'sidebarWidthPx',
+                setting_key: 'petsCompanionSizeScale',
                 scope: 'local_setting',
                 identity_scope: 'device_user',
                 source: 'ui',
-                prev_value: 'small',
-                next_value: 'medium',
+                prev_value: 'default',
+                next_value: 'xlarge',
             }),
         );
         expect(mocks.tracking.capture).toHaveBeenCalledTimes(2);

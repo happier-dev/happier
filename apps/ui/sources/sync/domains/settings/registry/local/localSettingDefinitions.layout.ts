@@ -5,10 +5,7 @@ import { StoredNavigationSurfacePlacementsV1Schema } from '../../navigationPlace
 import { DEFAULT_RIGHT_PREFERRED_PX, DEFAULT_SESSION_WIDTH_PX } from '@/components/ui/panels/paneBreakpoints';
 import { HAPPIER_NEEDS_YOU_HIGHLIGHTS } from '@happier-dev/plugin-ui/presentation';
 
-import {
-    objectKeyCount,
-    serializePaneSizePxBucket,
-} from './localSettingDefinitions.shared';
+import { objectKeyCount } from './localSettingDefinitions.shared';
 
 const TERMINAL_ARROW_PAD_PLACEMENT_SCHEMA = z.strictObject({
     side: z.enum(['left', 'right']),
@@ -83,14 +80,6 @@ export const LAYOUT_LOCAL_SETTING_DEFINITIONS = {
         default: DEFAULT_RIGHT_PREFERRED_PX,
         description: 'Preferred right pane dock width in px',
         storageScope: 'local',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'bucket',
-            privacy: 'bucketed',
-            identityScope: 'device_user',
-            serializeCurrent: serializePaneSizePxBucket(300, 480),
-        },
     },
     detailsPaneWidthPx: {
         schema: z.number(),
@@ -98,28 +87,12 @@ export const LAYOUT_LOCAL_SETTING_DEFINITIONS = {
         default: 600,
         description: 'Preferred details pane dock width in px',
         storageScope: 'local',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'bucket',
-            privacy: 'bucketed',
-            identityScope: 'device_user',
-            serializeCurrent: serializePaneSizePxBucket(300, 480),
-        },
     },
     bottomPaneHeightPx: {
         schema: z.number(),
         default: 320,
         description: 'Preferred bottom pane dock height in px',
         storageScope: 'local',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'bucket',
-            privacy: 'bucketed',
-            identityScope: 'device_user',
-            serializeCurrent: serializePaneSizePxBucket(225, 360),
-        },
     },
     newSessionDockedWidthPx: {
         schema: z.nullable(z.number()),
@@ -128,14 +101,6 @@ export const LAYOUT_LOCAL_SETTING_DEFINITIONS = {
         default: null,
         description: 'Preferred Docked New session card width in px',
         storageScope: 'local',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'bucket',
-            privacy: 'bucketed',
-            identityScope: 'device_user',
-            serializeCurrent: (widthPx: number | null) => widthPx === null ? 'large' : serializePaneSizePxBucket(464, 720)(widthPx),
-        },
     },
     terminalRendererPreference: {
         schema: z.catch((<I extends z.core.$ZodType, O extends z.core.$ZodType>(input: I, output: O) => new z.ZodMiniPipe({ type: 'pipe', in: input, out: output }) as z.ZodMiniPipe<I, O>)(z.transform((value) => value === 'native-experimental' ? 'native' : value), z.enum(['auto', 'xterm-webview', 'native'])), 'auto'),

@@ -332,10 +332,10 @@ describe('emitLocalSettingChangedEvents', () => {
 
     it('captures bucketed preferences without publishing retained device history', () => {
         emitLocalSettingChangedEvents({
-            previousSettings: { ...localSettingsDefaults, sidebarWidthPx: 420 },
+            previousSettings: { ...localSettingsDefaults, petsCompanionSizeScale: 1 },
             nextSettings: localSettingsParse({
                 ...localSettingsDefaults,
-                sidebarWidthPx: 220,
+                petsCompanionSizeScale: 1.5,
                 acknowledgedCliVersions: {
                     'machine-a': '1.2.3',
                     'machine-b': '2.0.0',
@@ -347,13 +347,13 @@ describe('emitLocalSettingChangedEvents', () => {
         expect(mocks.tracking.capture).toHaveBeenCalledWith(
             'setting_changed',
             expect.objectContaining({
-                setting_key: 'sidebarWidthPx',
+                setting_key: 'petsCompanionSizeScale',
                 scope: 'local_setting',
                 identity_scope: 'device_user',
                 source: 'ui',
                 value_kind: 'bucket',
-                prev_value: 'medium',
-                next_value: 'small',
+                prev_value: 'default',
+                next_value: 'xlarge',
             }),
         );
 

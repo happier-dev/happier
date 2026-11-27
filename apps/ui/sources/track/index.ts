@@ -1,3 +1,5 @@
+import { clearAnalyticsPropertiesSent } from '@/sync/domains/state/analyticsSendState';
+
 import { tracking } from './tracking';
 
 // Re-export tracking for direct access
@@ -51,6 +53,8 @@ export function trackLogout() {
     trackingAnonymousUserId = null;
     publishTrackingAnonymousUserIdChange();
     tracking?.reset();
+    // reset() drops the SDK's identity and $groups, so person and group properties are sent in full again.
+    clearAnalyticsPropertiesSent();
 }
 
 /**

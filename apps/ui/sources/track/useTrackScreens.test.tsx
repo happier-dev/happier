@@ -69,6 +69,24 @@ describe('useTrackScreens', () => {
         expect(recordActionMock).toHaveBeenCalledWith('screen.navigate', { route: 'settings' });
     });
 
+    it('sends the root route as one home screen', async () => {
+        trackingState.value = { screen: screenMock };
+        useSegmentsMock.mockReturnValue(['(app)']);
+
+        await renderScreen(<HookProbe />);
+
+        expect(screenMock.mock.calls).toEqual([['home']]);
+    });
+
+    it('sends no screen while the router has resolved no segments', async () => {
+        trackingState.value = { screen: screenMock };
+        useSegmentsMock.mockReturnValue([]);
+
+        await renderScreen(<HookProbe />);
+
+        expect(screenMock).toHaveBeenCalledTimes(0);
+    });
+
     it('redacts dynamic id-like segments in recorded routes', async () => {
         useSegmentsMock.mockReturnValue(['(app)', 'session', '[id]', 'file']);
 

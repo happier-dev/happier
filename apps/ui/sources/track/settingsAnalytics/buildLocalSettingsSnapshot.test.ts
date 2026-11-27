@@ -5,19 +5,11 @@ import { localSettingsDefaults, localSettingsParse } from '@/sync/domains/settin
 import { buildLocalSettingsSnapshot } from './buildLocalSettingsSnapshot';
 
 describe('buildLocalSettingsSnapshot', () => {
-    it('buckets pane pixels independently of retired window bases', () => {
-        const smallBasis = buildLocalSettingsSnapshot(localSettingsParse({ sidebarWidthPx: 420, sidebarWidthBasisPx: 600 }));
-        const largeBasis = buildLocalSettingsSnapshot(localSettingsParse({ sidebarWidthPx: 420, sidebarWidthBasisPx: 2560 }));
-        expect(smallBasis.properties.local_setting__sidebarWidthPx).toBe(largeBasis.properties.local_setting__sidebarWidthPx);
-        expect(typeof smallBasis.properties.local_setting__sidebarWidthPx).toBe('string');
-    });
     it('tracks preferences while keeping retained device history out of analytics', () => {
         const snapshot = buildLocalSettingsSnapshot(localSettingsParse({
             ...localSettingsDefaults,
             themePreference: 'dark',
             uiFontScale: 1.24,
-            sidebarCollapsed: true,
-            sidebarWidthPx: 220,
             uiMultiPanePanelsEnabled: false,
             sessionsRightPaneDefaultOpen: true,
             detailsPaneTabsBehavior: 'persistent',
@@ -62,17 +54,12 @@ describe('buildLocalSettingsSnapshot', () => {
             desktopOverlayShowSessionCount: false,
             desktopOverlayShowPreviewText: true,
             desktopOverlayCompactStyle: 'panel',
-            rightPaneWidthPx: 360,
-            detailsPaneWidthPx: 420,
-            bottomPaneHeightPx: 180,
             acknowledgedCliVersions: {
                 'machine-a': '1.2.3',
                 'machine-b': '2.0.0',
             },
         }));
         expect(snapshot.properties.local_setting__themePreference).toBe('dark');
-        expect(snapshot.properties.local_setting__sidebarCollapsed).toBe(true);
-        expect(snapshot.properties.local_setting__sidebarWidthPx).toBe('small');
         expect(snapshot.properties.local_setting__uiMultiPanePanelsEnabled).toBe(false);
         expect(snapshot.properties.local_setting__sessionsRightPaneDefaultOpen).toBe(true);
         expect(snapshot.properties.local_setting__detailsPaneTabsBehavior).toBe('persistent');
@@ -117,9 +104,6 @@ describe('buildLocalSettingsSnapshot', () => {
         expect(snapshot.properties.local_setting__homeScreenWidgetsMode).toBeUndefined();
         expect(snapshot.properties.local_setting__homeScreenWidgetsShowPreviewText).toBeUndefined();
         expect(snapshot.properties.local_setting__homeScreenWidgetsShowMachinePath).toBeUndefined();
-        expect(snapshot.properties.local_setting__rightPaneWidthPx).toBe('medium');
-        expect(snapshot.properties.local_setting__detailsPaneWidthPx).toBe('medium');
-        expect(snapshot.properties.local_setting__bottomPaneHeightPx).toBe('small');
         expect(snapshot.properties).not.toHaveProperty('local_setting__sessionsListStorageFilter');
         expect(snapshot.properties.local_setting__acknowledgedCliVersions).toBeUndefined();
         expect(snapshot.properties.local_derived__uiFontScaleBucket).toBe('large');

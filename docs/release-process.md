@@ -1022,6 +1022,11 @@ only for the production build identity; a dev or preview identity (`internaldev`
 `internalpreview`, `publicdev`, `preview`) sends no analytics unless
 `EXPO_PUBLIC_POSTHOG_KEY_<IDENTITY>` (for example `EXPO_PUBLIC_POSTHOG_KEY_PREVIEW`)
 is set for its build (`apps/ui/app.config.js`).
+Store and desktop app builds take the PostHog key from `EXPO_PUBLIC_POSTHOG_KEY`
+only for the production build identity; a dev or preview identity (`internaldev`,
+`internalpreview`, `publicdev`, `preview`) sends no analytics unless
+`EXPO_PUBLIC_POSTHOG_KEY_<IDENTITY>` (for example `EXPO_PUBLIC_POSTHOG_KEY_PREVIEW`)
+is set for its build (`apps/ui/app.config.js`).
 
 The webapp image is generic and bakes no analytics or Sentry keys. The hosted UI
 gets them at container start from Dokploy application env:

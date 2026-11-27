@@ -194,6 +194,21 @@ const androidReleaseShrinkerPlugin = shouldUseAndroidReleaseShrinkerPlugin
 const appVariant = appEnvironmentConfig.logicalVariant;
 const appIdentityVariant = appEnvironmentConfig.id;
 
+// The one owner of which PostHog key a build sends to. Only production (store) builds use the shared
+// EXPO_PUBLIC_POSTHOG_KEY; a dev or preview identity (internaldev, internalpreview, publicdev,
+// preview) sends nowhere unless a key is set for that identity, e.g. EXPO_PUBLIC_POSTHOG_KEY_PREVIEW,
+// so test builds never land in the production project.
+function resolvePostHogKey(identityVariant) {
+    const names = identityVariant === 'production'
+        ? ['EXPO_PUBLIC_POSTHOG_KEY', 'EXPO_PUBLIC_POSTHOG_API_KEY']
+        : [`EXPO_PUBLIC_POSTHOG_KEY_${String(identityVariant).toUpperCase()}`];
+    for (const name of names) {
+        const value = String(process.env[name] ?? '').trim();
+        if (value) return value;
+    }
+    return undefined;
+}
+
 // If APP_ENV is unknown, fall back to development-safe defaults to avoid generating
 // an invalid Expo config with undefined identifiers.
 const name = nameOverride || appEnvironmentConfig.name;
@@ -633,7 +648,7 @@ const baseExpoConfig = {
                 ...(terminalNativeEvidenceBuildIdentity
                     ? { terminalNativeEvidenceBuildIdentity }
                     : {}),
-                postHogKey: process.env.EXPO_PUBLIC_POSTHOG_KEY || process.env.EXPO_PUBLIC_POSTHOG_API_KEY,
+                postHogKey: resolvePostHogKey(appIdentityVariant),
                 revenueCatAppleKey: process.env.EXPO_PUBLIC_REVENUE_CAT_APPLE,
                 revenueCatGoogleKey: process.env.EXPO_PUBLIC_REVENUE_CAT_GOOGLE,
                 revenueCatStripeKey: process.env.EXPO_PUBLIC_REVENUE_CAT_STRIPE,

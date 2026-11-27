@@ -1,11 +1,12 @@
 import React from 'react';
 import { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { localSettingsDefaults, type LocalSettings } from '@/sync/domains/settings/localSettings';
 import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
 import { storage } from '@/sync/domains/state/storageStore';
 import { getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
+import { clearAnalyticsPropertiesSent } from '@/sync/domains/state/analyticsSendState';
 import * as accountSnapshots from './buildAccountSettingsSnapshot';
 
 const { trackingMock, analyticsRuntimeState } = vi.hoisted(() => ({
@@ -231,5 +232,77 @@ describe('SettingsAnalyticsRuntime', () => {
         expect(trackingMock.flush).toHaveBeenCalledTimes(2);
         const [firstKey, secondKey] = trackingMock.group.mock.calls.map((call) => String(call[1]).split(':')[1]);
         expect(firstKey).not.toBe(secondKey);
+    });
+
+    describe('across launches on this device', () => {
+        const DAY_MS = 24 * 60 * 60 * 1000;
+
+        async function launch() {
+            const screen = await renderScreen(<SettingsAnalyticsRuntime />);
+            await screen.unmount();
+        }
+
+        beforeEach(() => {
+            trackingMock.identify.mockReset();
+            trackingMock.group.mockReset();
+            trackingMock.flush.mockReset();
+            trackingMock.flush.mockResolvedValue(undefined);
+            vi.spyOn(Date, 'now').mockReturnValue(Date.UTC(2026, 10, 1, 9));
+        });
+
+        afterEach(() => {
+            vi.restoreAllMocks();
+        });
+
+        it('sends 0 identify and 0 group for an unchanged snapshot on the next launch', async () => {
+            await launch();
+            expect(trackingMock.identify).toHaveBeenCalledTimes(1);
+            expect(trackingMock.group).toHaveBeenCalledTimes(1);
+
+            await launch();
+
+            expect(trackingMock.identify).toHaveBeenCalledTimes(1);
+            expect(trackingMock.group).toHaveBeenCalledTimes(1);
+            expect(trackingMock.flush).toHaveBeenCalledTimes(1);
+        });
+
+        it('sends only the changed values on the next launch', async () => {
+            await launch();
+            await act(async () => {
+                storage.getState().applySettingsLocal({ sessionListDensity: 'narrow' });
+            });
+
+            await launch();
+
+            expect(trackingMock.identify).toHaveBeenCalledTimes(2);
+            const [, sent] = trackingMock.identify.mock.calls[1] ?? [];
+            expect(sent).toMatchObject({ acct_setting__sessionListDensity: 'narrow' });
+            expect(sent).not.toHaveProperty('acct_setting__analyticsOptOut');
+            expect(trackingMock.group).toHaveBeenCalledTimes(1);
+        });
+
+        it('sends the full snapshot again once a day has passed', async () => {
+            await launch();
+            vi.spyOn(Date, 'now').mockReturnValue(Date.UTC(2026, 10, 1, 9) + DAY_MS);
+
+            await launch();
+
+            expect(trackingMock.identify).toHaveBeenCalledTimes(2);
+            expect(trackingMock.identify).toHaveBeenLastCalledWith('anon-user', expect.objectContaining({
+                acct_setting__analyticsOptOut: false,
+                acct_setting__sessionListDensity: 'cozy',
+            }));
+            expect(trackingMock.group).toHaveBeenCalledTimes(2);
+        });
+
+        it('sends the full snapshot again after the sent record is forgotten at logout', async () => {
+            await launch();
+            clearAnalyticsPropertiesSent();
+
+            await launch();
+
+            expect(trackingMock.identify).toHaveBeenCalledTimes(2);
+            expect(trackingMock.group).toHaveBeenCalledTimes(2);
+        });
     });
 });

@@ -14,8 +14,6 @@ const ENV_KEYS = [
     'EXPO_PUBLIC_HAPPIER_FILES_PREVIEW_MAX_BYTES',
     'EXPO_PUBLIC_HAPPY_FILES_PREVIEW_MAX_BYTES',
     'EXPO_PUBLIC_FILES_PREVIEW_MAX_BYTES',
-    'EXPO_PUBLIC_POSTHOG_KEY',
-    'EXPO_PUBLIC_POSTHOG_API_KEY',
 ] as const;
 
 describe('loadAppConfig env aliases', () => {
@@ -91,21 +89,6 @@ describe('loadAppConfig env aliases', () => {
             env: { EXPO_PUBLIC_FILES_PREVIEW_MAX_BYTES: '789' },
             read: (c: ReturnType<typeof loadAppConfig>) => c.filesPreviewMaxBytes,
             expected: 789,
-        },
-        {
-            name: 'uses the PostHog API key alias when the key is missing',
-            env: { EXPO_PUBLIC_POSTHOG_API_KEY: 'phc_test_api_key' },
-            read: (c: ReturnType<typeof loadAppConfig>) => c.postHogKey,
-            expected: 'phc_test_api_key',
-        },
-        {
-            name: 'prefers the PostHog key over the API key alias',
-            env: {
-                EXPO_PUBLIC_POSTHOG_KEY: 'phc_test_key',
-                EXPO_PUBLIC_POSTHOG_API_KEY: 'phc_test_api_key',
-            },
-            read: (c: ReturnType<typeof loadAppConfig>) => c.postHogKey,
-            expected: 'phc_test_key',
         },
     ])('$name', ({ env, read, expected }) => {
         Object.assign(process.env, env);

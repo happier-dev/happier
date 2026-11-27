@@ -463,7 +463,7 @@ export class ScmStatusSync {
             const failure = scmFallbackError(error, { method: RPC_METHODS.SCM_STATUS_SNAPSHOT, request: {} });
             this.publishWorkspaceFailure(scope, activeKey, { ...failure, code: failure.errorCode, message: failure.error }, failure.actionErrorCode);
             if (failure.errorCode === SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED) this.projectAutoRefreshSuspended.add(activeKey);
-            reportScmStatusSyncError({ projectKey: activeKey, serverId: scope.serverId, error });
+            reportScmStatusSyncError({ serverId: scope.serverId, error });
         } finally {
             if (recovering) projectManager.setWorkspaceScmRecoveryInFlight(scope, false);
             if (pendingPage && this.projectEntriesRequests.get(projectKey) === pendingPage) this.projectEntriesRequests.delete(projectKey);
@@ -983,7 +983,7 @@ export class ScmStatusSync {
             if (failure.errorCode === SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED) {
                 this.projectAutoRefreshSuspended.add(scheduledProjectKey);
             }
-            reportScmStatusSyncError({ projectKey, error });
+            reportScmStatusSyncError({ error });
         }
     }
 

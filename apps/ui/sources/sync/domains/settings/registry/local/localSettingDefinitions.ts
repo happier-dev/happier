@@ -13,7 +13,6 @@ import { z } from 'zod/mini';
 import { ACTIVITY_SURFACE_LOCAL_SETTING_DEFINITIONS } from './localSettingDefinitions.activitySurfaces';
 import { LAYOUT_LOCAL_SETTING_DEFINITIONS } from './localSettingDefinitions.layout';
 import { FILES_LOCAL_SETTING_DEFINITIONS } from './localSettingDefinitions.files';
-import { serializePaneSizePxBucket } from './localSettingDefinitions.shared';
 import {
     DEFAULT_THEME_PROFILES_LOCAL_STATE,
     ThemeProfileDeviceSelectionSchema,
@@ -231,7 +230,6 @@ const localSettingInputs = {
         default: false,
         description: 'Collapse the permanent sidebar on tablets',
         storageScope: 'local',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'device_user' },
     },
     titleStripThemeToggleVisible: {
         schema: z.boolean(),
@@ -245,14 +243,6 @@ const localSettingInputs = {
         default: HAPPIER_SHELL_COLUMN_DEFAULT_WIDTH_PX,
         description: 'Preferred sidebar width in px',
         storageScope: 'local',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'bucket',
-            privacy: 'bucketed',
-            identityScope: 'device_user',
-            serializeCurrent: serializePaneSizePxBucket(300, 480),
-        },
     },
     settingsNavSidebarEnabled: {
         schema: z.boolean(),
@@ -266,14 +256,6 @@ const localSettingInputs = {
         default: 230,
         description: 'Preferred settings navigation sidebar width in px',
         storageScope: 'local',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'bucket',
-            privacy: 'bucketed',
-            identityScope: 'device_user',
-            serializeCurrent: serializePaneSizePxBucket(240, 420),
-        },
     },
     uiMultiPanePanelsEnabled: {
         schema: z.boolean(),

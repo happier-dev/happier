@@ -1,6 +1,6 @@
 import { config } from '@/config';
 import { isEmbedWindowContext } from '@/embed/isEmbedWindowContext';
-import PostHog from 'posthog-react-native';
+import PostHog, { type PostHogOptions } from 'posthog-react-native';
 import { isHappierCloudServerUrl } from '@happier-dev/cli-common/happierCloud';
 import type { FeatureId } from '@happier-dev/protocol/features/catalog';
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
@@ -27,6 +27,20 @@ const ANALYTICS_FEATURE_ID = 'app.analytics' as const satisfies FeatureId;
 const POSTHOG_DEFAULT_HOST = 'https://eu.i.posthog.com';
 
 type TrackingProperties = NonNullable<Parameters<PostHog['capture']>[1]>;
+
+type BeforeSendHook = Extract<NonNullable<PostHogOptions['before_send']>, (event: never) => unknown>;
+type CaptureEvent = Parameters<BeforeSendHook>[0];
+
+/**
+ * Screen views are counted, not attached to the person: `$screen` is sent personless. The SDK's
+ * capture() sets `$process_person_profile` itself after reading event properties
+ * (posthog-react-native 4.24.1, @posthog/core 1.14.1), so only before_send, which runs after it,
+ * can decide it.
+ */
+function sendScreenViewsPersonless(event: CaptureEvent): CaptureEvent {
+    if (!event || event.event !== '$screen') return event;
+    return { ...event, properties: { ...event.properties, $process_person_profile: false } };
+}
 
 /**
  * Whether the active Account allows analytics. `pending` means this device does not know the
@@ -86,6 +100,7 @@ function createTrackingClient(): TrackingClient {
         disableRemoteConfig: true,
         preloadFeatureFlags: false,
         disableSurveys: true,
+        before_send: sendScreenViewsPersonless,
     });
     // Held calls of a pending device. Bounded by the session: they leave on the first decision.
     const held: Array<(posthog: PostHog) => void> = [];

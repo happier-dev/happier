@@ -6,9 +6,13 @@ import React from "react";
 import { projectParameterFreeRoute } from './parameterFreeRouteProjection';
 
 export function useTrackScreens() {
-    const route = projectParameterFreeRoute(useSegments()).route;
+    const segments = useSegments();
+    const route = projectParameterFreeRoute(segments).route;
+    // No segments yet means the router has not resolved a route: that is not a screen view. The
+    // root route still has its group segments and is sent as `home`.
+    const resolved = segments.length > 0;
     React.useEffect(() => {
-        tracking?.screen(route);
+        if (resolved) tracking?.screen(route);
         recordBugReportUserAction('screen.navigate', { route });
-    }, [route]); // NOTE: NO PARAMS HERE - we dont want to leak anything at all, except very basic stuff
+    }, [resolved, route]); // NOTE: NO PARAMS HERE - we dont want to leak anything at all, except very basic stuff
 }

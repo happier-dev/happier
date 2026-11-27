@@ -1,24 +1,35 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { capture } = vi.hoisted(() => ({
+const { capture, analyticsUser } = vi.hoisted(() => ({
     capture: vi.fn(),
+    analyticsUser: { id: 'anon-1' as string | null },
 }));
 
 vi.mock('@/track', () => ({
     tracking: {
         capture,
     },
+    getTrackingAnonymousUserId: () => analyticsUser.id,
 }));
 
-import {
-    reportScmStatusSyncError,
-    resetScmStatusSyncErrorReportingForTests,
-} from './errorReporting';
+import { getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
+
+import { reportScmStatusSyncError } from './errorReporting';
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function fail(scmErrorCode?: string, message = 'snapshot failed') {
+    reportScmStatusSyncError({
+        error: scmErrorCode ? Object.assign(new Error(message), { scmErrorCode }) : new Error(message),
+    });
+}
 
 describe('reportScmStatusSyncError', () => {
     beforeEach(() => {
         capture.mockReset();
-        resetScmStatusSyncErrorReportingForTests();
+        analyticsUser.id = 'anon-1';
+        getPersistenceStorage().clearAll();
+        vi.spyOn(Date, 'now').mockReturnValue(Date.UTC(2026, 10, 1, 9));
     });
 
     afterEach(() => {
@@ -27,7 +38,6 @@ describe('reportScmStatusSyncError', () => {
 
     it('reports only the error code and category, never paths, hostnames or raw error text', () => {
         reportScmStatusSyncError({
-            projectKey: 'srv_self.example.internal:machine:/home/alice/repo',
             serverId: 'srv_self.example.internal',
             error: Object.assign(new Error('fatal: could not read from /home/alice/repo (git@example.internal)'), {
                 scmErrorCode: 'COMMAND_FAILED',
@@ -42,65 +52,55 @@ describe('reportScmStatusSyncError', () => {
     });
 
     it('reports an unknown failure without its message', () => {
-        reportScmStatusSyncError({ projectKey: 'machine:/repo', error: new Error('/home/alice/secret-repo exploded') });
+        reportScmStatusSyncError({ error: new Error('/home/alice/secret-repo exploded') });
 
         expect(capture.mock.calls[0]?.[1]).toEqual({ errorCode: 'unknown', errorCategory: expect.any(String) });
         expect(JSON.stringify(capture.mock.calls)).not.toContain('alice');
     });
 
-    it('throttles duplicate error reports for the same project+message bucket', () => {
-        const now = vi.spyOn(Date, 'now').mockReturnValue(1_000);
-
-        reportScmStatusSyncError({
-            projectKey: 'machine:/repo',
-            error: new Error('snapshot failed'),
-        });
-        reportScmStatusSyncError({
-            projectKey: 'machine:/repo',
-            error: new Error('snapshot failed'),
-        });
+    it('reports 3 identical failures in a day once', () => {
+        fail('COMMAND_FAILED');
+        fail('COMMAND_FAILED');
+        fail('COMMAND_FAILED');
 
         expect(capture).toHaveBeenCalledTimes(1);
+    });
 
-        now.mockReturnValue(31_000);
-        reportScmStatusSyncError({
-            projectKey: 'machine:/repo',
-            error: new Error('snapshot failed'),
-        });
+    it('reports each error code once a day, whatever the error text', () => {
+        fail('COMMAND_FAILED', 'one');
+        fail('COMMAND_FAILED', 'two');
+        fail('NOT_REPOSITORY');
+        fail();
+        fail(undefined, 'other text');
+
+        expect(capture.mock.calls.map(([, properties]) => (properties as { errorCode: string }).errorCode))
+            .toEqual(['COMMAND_FAILED', 'NOT_REPOSITORY', 'unknown']);
+    });
+
+    it('reports the same error code again once a day has passed, also after a relaunch', () => {
+        const now = vi.spyOn(Date, 'now');
+        now.mockReturnValue(1_000_000);
+        fail('COMMAND_FAILED');
+        now.mockReturnValue(1_000_000 + DAY_MS - 1);
+        fail('COMMAND_FAILED');
         expect(capture).toHaveBeenCalledTimes(1);
 
-        now.mockReturnValue(62_000);
-        reportScmStatusSyncError({
-            projectKey: 'machine:/repo',
-            error: new Error('snapshot failed'),
-        });
+        now.mockReturnValue(1_000_000 + DAY_MS);
+        fail('COMMAND_FAILED');
         expect(capture).toHaveBeenCalledTimes(2);
     });
 
-    it('evicts stale dedupe buckets when the cache grows to high cardinality', () => {
-        const now = vi.spyOn(Date, 'now');
-        now.mockReturnValue(1_000);
+    it('counts the day per analytics user, and reports nothing while signed out', () => {
+        analyticsUser.id = null;
+        fail('COMMAND_FAILED');
+        expect(capture).toHaveBeenCalledTimes(0);
 
-        reportScmStatusSyncError({
-            projectKey: 'machine:/repo',
-            error: new Error('retriable failure'),
-        });
-        expect(capture).toHaveBeenCalledTimes(1);
+        analyticsUser.id = 'anon-1';
+        fail('COMMAND_FAILED');
+        analyticsUser.id = 'anon-2';
+        fail('COMMAND_FAILED');
+        fail('COMMAND_FAILED');
 
-        for (let index = 0; index < 512; index += 1) {
-            reportScmStatusSyncError({
-                projectKey: `machine:/repo-${index}`,
-                error: new Error(`error-${index}`),
-            });
-        }
-
-        // Still inside the first report's dedupe window: only its eviction lets it emit again.
-        now.mockReturnValue(2_000);
-        reportScmStatusSyncError({
-            projectKey: 'machine:/repo',
-            error: new Error('retriable failure'),
-        });
-
-        expect(capture).toHaveBeenCalledTimes(514);
+        expect(capture).toHaveBeenCalledTimes(2);
     });
 });

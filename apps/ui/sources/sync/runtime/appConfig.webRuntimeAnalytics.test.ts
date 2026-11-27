@@ -3,8 +3,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('expo-modules-core', () => ({
   requireOptionalNativeModule: () => null,
 }));
+const manifestApp = vi.hoisted(() => ({ value: {} as Record<string, unknown> }));
 vi.mock('expo-constants', () => ({
-  default: { expoConfig: { extra: { app: {} } } },
+  default: {
+    get expoConfig() {
+      return { extra: { app: manifestApp.value } };
+    },
+  },
 }));
 
 import { loadAppConfig } from './appConfig';
@@ -39,6 +44,7 @@ describe('loadAppConfig (PostHog from the web runtime config)', () => {
   });
 
   afterEach(() => {
+    manifestApp.value = {};
     vi.unstubAllGlobals();
     if (previousDev === undefined) delete globalWithDev.__DEV__;
     else globalWithDev.__DEV__ = previousDev;
@@ -50,7 +56,7 @@ describe('loadAppConfig (PostHog from the web runtime config)', () => {
   });
 
   it('prefers the container-start key and host over build-time values', () => {
-    process.env.EXPO_PUBLIC_POSTHOG_KEY = 'phc_build_time';
+    manifestApp.value = { identityVariant: 'production', postHogKey: 'phc_build_time' };
     process.env.EXPO_PUBLIC_POSTHOG_HOST = 'https://build.posthog.example';
     stubWebRuntimeConfig({
       posthogKey: ' phc_runtime ',
@@ -64,7 +70,7 @@ describe('loadAppConfig (PostHog from the web runtime config)', () => {
   });
 
   it('keeps build-time values when the runtime config leaves them empty or malformed', () => {
-    process.env.EXPO_PUBLIC_POSTHOG_KEY = 'phc_build_time';
+    manifestApp.value = { identityVariant: 'production', postHogKey: 'phc_build_time' };
     process.env.EXPO_PUBLIC_POSTHOG_HOST = 'https://build.posthog.example';
     stubWebRuntimeConfig({ posthogKey: '', posthogHost: { url: 'x' } });
 

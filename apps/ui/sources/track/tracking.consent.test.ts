@@ -82,6 +82,21 @@ describe('tracking consent', () => {
     getPersistenceStorage().clearAll();
   });
 
+  it('sends screen views personless and leaves other events as the SDK built them', async () => {
+    await importTracking();
+
+    // The SDK's capture() sets $process_person_profile itself after the event properties, so
+    // only its before_send hook, which runs last, can decide it for $screen.
+    const beforeSend = (posthog.constructed[0] ?? {}).before_send as (
+      event: { event: string; properties: Record<string, unknown> },
+    ) => { event: string; properties: Record<string, unknown> } | null;
+    expect(
+      beforeSend({ event: '$screen', properties: { $screen_name: 'home', $process_person_profile: true } }),
+    ).toEqual({ event: '$screen', properties: { $screen_name: 'home', $process_person_profile: false } });
+    const appOpened = { event: 'app_opened', properties: { $process_person_profile: true } };
+    expect(beforeSend(appOpened)).toBe(appOpened);
+  });
+
   it('never asks PostHog for lifecycle events, remote config, flags or surveys', async () => {
     await importTracking();
 
