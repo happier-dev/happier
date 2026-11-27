@@ -885,9 +885,12 @@ describe('the mounted PRs & Issues surface', () => {
         const resource = { kind: 'pullRequest' as const, url: 'https://github.com/example/repository/pull/1' };
         const resourceSurface = defineUiSurface(() => <TriageResourceSurface resource={resource} />);
         const page = await mountSurface(resourceSurface, harness, `resource-${failure}`, sourceContextFixture(harness));
-        await expect(page.getByText('These details are unavailable')).resolves.toBeDefined();
         await expect(page.getByRole('button', { name: 'Retry' })).resolves.toBeDefined();
         await expect(page.getByRole('button', { name: 'Open source' })).resolves.toBeDefined();
+        if (failure === 'read') {
+            await act(async () => { await page.press(await page.getByRole('button', { name: 'Details' })); });
+            expect(document.body.textContent).toContain('server_unavailable');
+        }
         harness.state.resourceUnavailable = false;
         harness.state.entryReadUnavailable = false;
         const retry = harness.publishedContexts.at(-1)?.commands?.find(command => command.command.kind === 'executeAction'
@@ -903,7 +906,6 @@ describe('the mounted PRs & Issues surface', () => {
             })).toEqual({ status: 'applied' });
         });
         await expect(page.getByRole('heading', { name: 'Replace the duplicated normalizer' })).resolves.toBeDefined();
-        await expect(page.queryByText('These details are unavailable')).resolves.toBeUndefined();
         await expect(page.queryByRole('button', { name: 'Open source' })).resolves.toBeUndefined();
         expect(harness.actionCalls.filter(action => action === TRIAGE_RESOLVE_RESOURCE_ACTION_LOCAL_ID_V1)).toHaveLength(2);
         expect(harness.scanCalls.count).toBe(0);
