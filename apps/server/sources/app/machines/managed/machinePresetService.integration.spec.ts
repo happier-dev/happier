@@ -1441,17 +1441,19 @@ describe("Machine preset relational owner", () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const member = await db.account.create({ data: { encryptionMode: 'plain' } });
         const controller = await seedCurrentProvisioner(owner.id, homeId);
-        const id = 'preset-member-local-reuse';
+        const id = `preset-member-local-reuse-${end}`;
         expect((await requestPreset(owner.id, 'create', taggedPlainPreset({ id, homeId,
             owner: { kind: 'account', accountId: owner.id }, name: 'Kept member guest', privateFields: { launch },
-            controller, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false }))).statusCode).toBe(200);
+            controller, retention: { kind: 'unused', afterMs: 3_600_000, effect: 'stop' }, wakeOnAcceptedMessage: false }))).statusCode).toBe(200);
         // The Home's signed Session child supplies the installed controller's Machine policy admission.
         const request = (requestId: string) => ({ custodianAccountId: owner.id, requesterAccountId: member.id,
             machinePolicySandbox: true as const, requestEnvelopeDigest: requestId, input: { requestId, continuationPresent: false,
                 acquisitionMode: 'resource-bound' as const, reuseIdle: true as const,
-                input: { selection: { kind: 'preset' as const, homeId, id, revision: 0 }, controller } } });
+                input: { selection: { kind: 'preset' as const, homeId, id, revision: 0 }, controller,
+                    retention: { kind: 'until-delete' as const } } } });
         const firstRequest = request(`member-local-first-${end}`);
         const first = await admitManagedAcquire(firstRequest);
+        expect(first.machine.retention).toEqual({ kind: 'until-delete' });
         await db.managedMachine.update({ where: { id: first.machine.id }, data: { allocation: 'bound' } });
         const birth = { homeId, managedId: first.machine.id, controller };
         const admitBirth = () => inTx(tx => validateManagedCreationBirthInTx(tx, { accountId: member.id, birth }));

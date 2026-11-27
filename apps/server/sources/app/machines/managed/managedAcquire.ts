@@ -171,7 +171,10 @@ export async function admitManagedAcquire(params: Readonly<{
                 if (presetContentOverride && presetContentOverride.content.t !== presetContent.content.t) {
                     throw new ManagedMachineError('account_mode_mismatch');
                 }
-                const retention = selected.preset.retention
+                // The reviewed Machine policy owns the lifetime of its shared-kept Session guest.
+                const sharedKeptRetention = params.machinePolicySandbox && request.reuseIdle
+                    && review.retention?.kind === 'until-delete' ? review.retention : undefined;
+                const retention = sharedKeptRetention ?? selected.preset.retention
                     ?? (selected.delegated ? request.presetPolicy?.retention : review.retention ?? request.presetPolicy?.retention);
                 const wakeOnAcceptedMessage = selected.preset.wakeOnAcceptedMessage
                     ?? (selected.delegated ? request.presetPolicy?.wakeOnAcceptedMessage : review.wakeOnAcceptedMessage ?? request.presetPolicy?.wakeOnAcceptedMessage);

@@ -179,7 +179,7 @@ export async function deleteSessionWithRecipientsInTx(
         afterSessionWriteBoundary: async () => {
             if (session.archivedAt === null && session.managedCreationId) {
                 await applyManagedCreationScopeEndInTx(tx, { managedId: session.managedCreationId, accountId: session.accountId,
-                    source: { kind: 'session', sessionId: session.id }, endedAt: Date.now(), releaseBindingOnly: true });
+                    source: { kind: 'session', sessionId: session.id }, endedAt: Date.now(), sessionDeleted: true });
             }
             await publishSessionProviderBrokerConsumersChangedInTx(tx, params.sessionId);
             recipientCursors.push(...await markAccountsChanged(tx, { accountIds: [...recipientAccountIds],

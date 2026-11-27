@@ -114,7 +114,7 @@ export async function bindManagedCreationScopeRetentionInTx(tx: Tx, row: StoredM
 /** Session/Run owners emit or withdraw their end; submitted native effects retain their settlement owner. */
 export async function applyManagedCreationScopeEndInTx(tx: Tx, input: Readonly<{
     managedId: string | null; accountId: string; source: ManagedMachineBirthSourceV1; endedAt: number | null;
-    releaseBindingOnly?: true;
+    sessionDeleted?: true;
 }>): Promise<void> {
     if (!input.managedId) return;
     // Serialize the admission write with birth and merge in any earlier controller update.
@@ -130,7 +130,8 @@ export async function applyManagedCreationScopeEndInTx(tx: Tx, input: Readonly<{
         && !await tx.session.findFirst({ where: { id: { not: input.source.sessionId },
             accountId: input.accountId, managedCreationId: row.id, archivedAt: null },
             select: { id: true } });
-    const changedScope = !input.releaseBindingOnly && scope && sameManagedInput(scope.source, input.source)
+    const endsCreationScope = !input.sessionDeleted || admission.acquisitionMode === 'resource-bound';
+    const changedScope = endsCreationScope && scope && sameManagedInput(scope.source, input.source)
         && (input.endedAt === null ? scope.endedAt !== undefined : scope.endedAt === undefined)
         ? scope : undefined;
     if (!release && !changedScope) return;

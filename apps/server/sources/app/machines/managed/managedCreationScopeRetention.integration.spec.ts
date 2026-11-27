@@ -476,7 +476,7 @@ describe('creation scope retention at the real archive owner', () => {
         });
 
         // 2) Unenrolled resource-bound rows: ended session with unused(afterMs: 0, delete) admits delete; until-delete refuses permission_denied.
-        const endedScope = { effect: 'delete' as const, source: { kind: 'session' as const, sessionId: randomUUID() }, endedAt: Date.now() };
+        const scope = { effect: 'delete' as const, source: { kind: 'session' as const, sessionId: randomUUID() } };
         const unusedBoundRow = await db.managedMachine.create({
             data: {
                 homeId,
@@ -484,13 +484,13 @@ describe('creation scope retention at the real archive owner', () => {
                 controllerMachineId: controller.id,
                 controllerInstallationId: controller.installationId!,
                 admittedActionRequestId: randomUUID(),
-                admittedInput: { enrollmentAccountId: custodian.id, acquisitionMode: 'resource-bound', creationScopeRetention: endedScope },
+                admittedInput: { enrollmentAccountId: custodian.id, acquisitionMode: 'resource-bound', creationScopeRetention: scope },
                 launch,
                 resource,
                 allocation: 'bound',
                 creationState: 'active',
                 desired: 'stop',
-                retention: { kind: 'unused', afterMs: 0, effect: 'delete' },
+                retention: { kind: 'until-delete' },
                 wakeOnAcceptedMessage: false,
             },
         });
@@ -512,18 +512,24 @@ describe('creation scope retention at the real archive owner', () => {
             },
         });
 
+        await db.session.create({ data: { id: scope.source.sessionId, accountId: custodian.id, tag: randomUUID(),
+            metadata: '{}', encryptionMode: 'plain', managedCreationId: unusedBoundRow.id } });
+        expect(await deleteOwnedSession({ reason: 'user_request', ownerAccountId: custodian.id,
+            sessionId: scope.source.sessionId })).toEqual({ ok: true });
+        const endedBoundRow = await db.managedMachine.findUniqueOrThrow({ where: { id: unusedBoundRow.id } });
+        expect(projectManagedMachine(endedBoundRow).creationScopeRetention).toEqual({ ...scope, endedAt: expect.any(Number) });
         await expect(admitManagedPolicy({
             custodianAccountId: custodian.id,
             input: {
                 homeId,
                 managedId: unusedBoundRow.id,
-                expectedIntentRevision: 0,
+                expectedIntentRevision: endedBoundRow.intentRevision,
                 requestId: randomUUID(),
                 controller: controllerRef,
                 purpose: { kind: 'retention' },
             },
         })).resolves.toMatchObject({
-            machine: { id: unusedBoundRow.id, desired: 'delete', desiredWhen: 'now', intentRevision: 1 },
+            machine: { id: unusedBoundRow.id, desired: 'delete', desiredWhen: 'now', intentRevision: endedBoundRow.intentRevision + 1 },
             replayed: false,
         });
         expect(await db.managedMachine.findUniqueOrThrow({ where: { id: unusedBoundRow.id } })).toMatchObject({

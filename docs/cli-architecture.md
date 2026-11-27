@@ -1491,9 +1491,12 @@ requester and Session creation tag, and prepares the workspace on that Machine.
 For a Can-use member, the installed controller opens its Account-owned configured
 preset. Home binds acquisition to the signed Session child and its exact
 controller, and the member remains the Session requester.
-Retry retains that mode and resource identity. Shared-kept selection uses the
-existing managed row and Session association, scoped to the same custody, preset
-revision and controller. A nonarchived Session keeps its association occupied.
+Retry retains that mode and resource identity. The reviewed shared-kept Machine
+policy uses Keep until Delete for its Session guest. Shared-kept selection uses
+the existing managed row and Session association, scoped to the same custody,
+preset revision and controller. A nonarchived Session keeps its association occupied.
+For a Fresh resource-bound guest, Archive and direct Delete end the exact
+admitted Session scope so Home can admit the retained cleanup policy.
 Archiving or deleting the final Session on a Can-use member's guest releases the
 member's birth binding. A new acquisition may rebind the held guest after
 admission. Retrying the original acquisition cannot restore the binding.
