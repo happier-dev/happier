@@ -19585,6 +19585,7 @@ settingsSession: {
               addCheckUnavailableOnMachine: ({ machine }: { machine: string }) => `Auf ${machine} kann gerade keine Prüfung hinzugefügt werden.`,
               addCheckSaving: "Prüfung wird hinzugefügt…",
               addCheckFailed: "Die Prüfung wurde nicht hinzugefügt.",
+              openSavedCheck: "Gespeicherte Prüfung öffnen",
               checkEditOpening: ({ machine }: { machine: string }) => `Die Einstellungen dieser Prüfung werden auf ${machine} gelesen…`,
               checkSaving: "Diese Prüfung wird gespeichert…",
               checkMachineOffline: ({ machine }: { machine: string }) => `${machine} ist offline. Bring sie wieder online oder prüfe von einer anderen Machine aus.`,

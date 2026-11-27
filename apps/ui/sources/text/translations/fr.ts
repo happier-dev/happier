@@ -19372,6 +19372,7 @@ settingsSession: {
           addCheckUnavailableOnMachine: ({ machine }: { machine: string }) => `Impossible d’ajouter une vérification sur ${machine} pour le moment.`,
           addCheckSaving: "Ajout de la vérification…",
           addCheckFailed: "La vérification n’a pas été ajoutée.",
+          openSavedCheck: "Ouvrir la vérification enregistrée",
           checkEditOpening: ({ machine }: { machine: string }) => `Lecture des réglages de cette vérification sur ${machine}…`,
           checkSaving: "Enregistrement de cette vérification…",
           checkMachineOffline: ({ machine }: { machine: string }) => `${machine} est hors ligne. Remettez-la en ligne ou contrôlez depuis une autre Machine.`,

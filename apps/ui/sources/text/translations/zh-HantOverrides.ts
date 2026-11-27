@@ -14280,6 +14280,7 @@ settingsSession: {
                 addCheckUnavailableOnMachine: ({ machine }: { machine: string }) => `目前無法在 ${machine} 上新增檢查。`,
                 addCheckSaving: "正在新增檢查…",
                 addCheckFailed: "未新增檢查。",
+                openSavedCheck: "開啟已儲存的檢查",
                 checkEditOpening: ({ machine }: { machine: string }) => `正在 ${machine} 上讀取此檢查的設定…`,
                 checkSaving: "正在儲存此檢查…",
                 checkMachineOffline: ({ machine }: { machine: string }) => `${machine} 已離線。請讓它重新上線，或改由另一台 Machine 檢查。`,

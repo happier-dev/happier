@@ -26,6 +26,7 @@ import {
 import { readPluginSurfaceEphemeralMountBinding } from '@/components/plugins/surfaces/pluginSurfaceMountBinding';
 import type { BoundPluginSurfaceBinding } from '@/components/plugins/surfaces/boundPluginSurfaceController';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { Text } from '@/components/ui/text/Text';
 import { useUnistyles } from 'react-native-unistyles';
 import { useMachineListForServer, useServerScopedMachineLabel } from '@/sync/store/hooks';
@@ -63,7 +64,12 @@ const subscribeToNoWatcherChoices = () => () => {};
 export type PluginEventAutomationSetupSurfaceRefusal = Readonly<{
     failure: PluginUiActionFailureV1;
     reason: string;
+    /** Where the host leads when the remedy is elsewhere ("Edit the saved source…"), shown at "Check from". */
+    remedy?: SetupIssueRemedy;
 }>;
+
+export type SetupIssueRemedy = Readonly<{ label: string; onPress: () => void }>;
+type SetupOriginIssueState = Readonly<{ message: string; remedy?: SetupIssueRemedy }>;
 
 /**
  * The open setup sheet after its form completed: the draft stays mounted, its Save busy, until the write settles.
@@ -180,7 +186,7 @@ type SetupSurfaceModalProps = Readonly<{
     chooseWatcher?: (machineId: string, draft: unknown) => boolean;
 }> & CustomModalInjectedProps;
 
-type SetupSurfaceIssueStore = Readonly<{ get: () => string | undefined; subscribe: (listener: () => void) => () => void }>;
+type SetupSurfaceIssueStore = Readonly<{ get: () => SetupOriginIssueState | undefined; subscribe: (listener: () => void) => () => void }>;
 const noIssue = () => undefined;
 
 function PluginEventAutomationSetupSurfaceModal(
@@ -275,7 +281,8 @@ function PluginEventAutomationSetupSurfaceModal(
         launchInput={props.launchInput} />;
     const origin = props.originLabel ? <SetupOriginRow label={props.originLabel} machineId={props.machineId}
         serverId={props.serverId} watcherChoices={hasDraft ? watcherChoices : undefined}
-        chooseWatcher={chooseWatcher} {...(originIssue ? { issue: originIssue } : {})} /> : null;
+        chooseWatcher={chooseWatcher} {...(originIssue ? { issue: originIssue.message,
+            ...(originIssue.remedy ? { issueRemedy: originIssue.remedy } : {}) } : {})} /> : null;
     // The picker owns its plugin's Run-on picker, so an offline Machine's "Choose another" opens it here.
     return (
         <PluginModalCardFooterSlotContext.Provider value={footerSlot.set}>
@@ -289,10 +296,17 @@ function PluginEventAutomationSetupSurfaceModal(
 }
 
 /** The shared field issue line, in the plugin forms' theme, so "Check from" says its remedy as the fields below do. */
-function SetupOriginIssue(props: Readonly<{ message: string }>) {
+function SetupOriginIssue(props: Readonly<{ message: string; remedy?: SetupIssueRemedy }>) {
     const { theme } = useUnistyles();
-    return <HappierValidationMessage testID="plugin-event-automation-setup-surface-origin-issue"
+    const line = <HappierValidationMessage testID="plugin-event-automation-setup-surface-origin-issue"
         message={props.message} theme={usePluginUiTheme(theme)} accessibilityLiveRegion="polite" />;
+    if (!props.remedy) return line;
+    // A remedy that lives elsewhere leads there, under the sentence that names it.
+    return <View style={{ alignItems: 'flex-start', gap: theme.space.s4 }}>
+        {line}
+        <TextLinkButton testID="plugin-event-automation-setup-surface-origin-remedy" label={props.remedy.label}
+            onPress={props.remedy.onPress} />
+    </View>;
 }
 
 /** Where the setup runs, as the sheet's first field (the composer preselects the surface's Machine). */
@@ -304,9 +318,11 @@ export function SetupOriginRow(props: Readonly<{
     chooseWatcher: (machineId: string) => boolean;
     /** A refused write's remedy for where the check runs, shown at this field as the form's own fields show theirs. */
     issue?: string;
+    /** Leads to that remedy when it lives elsewhere. */
+    issueRemedy?: SetupIssueRemedy;
 }>) {
     const { theme } = useUnistyles();
-    const issue = props.issue ? <SetupOriginIssue message={props.issue} /> : null;
+    const issue = props.issue ? <SetupOriginIssue message={props.issue} {...(props.issueRemedy ? { remedy: props.issueRemedy } : {})} /> : null;
     const machine = useServerScopedMachineLabel(props.serverId, props.machineId);
     const all = useMachineListForServer(props.serverId);
     // The composer's usable watchers (21fe08b30ac): choosing another moves the open form there with what was typed.
@@ -384,9 +400,9 @@ export async function presentPluginEphemeralInputSurface(params: EphemeralInputS
         let pending: PluginEventAutomationSetupSurfaceSettlement | null = null;
         let heldReply: ((reply: PluginUiJsonValueV1 | null) => void) | null = null;
         let presentationSignal: AbortSignal | undefined;
-        let originIssue: string | undefined;
+        let originIssue: SetupOriginIssueState | undefined;
         const originIssueListeners = new Set<() => void>();
-        const setOriginIssue = (next: string | undefined) => {
+        const setOriginIssue = (next: SetupOriginIssueState | undefined) => {
             if (next === originIssue) return;
             originIssue = next;
             originIssueListeners.forEach(listener => listener());
@@ -435,7 +451,8 @@ export async function presentPluginEphemeralInputSurface(params: EphemeralInputS
                     ...(params.originLabel ? [] : [atOrigin])].filter(Boolean).join(' ');
                 const details = PluginUiJsonValueV1Schema.safeParse(refusal.failure.details);
                 phase = 'open';
-                setOriginIssue(params.originLabel ? atOrigin : undefined);
+                setOriginIssue(params.originLabel && atOrigin
+                    ? { message: atOrigin, ...(refusal.remedy ? { remedy: refusal.remedy } : {}) } : undefined);
                 const replyToForm = heldReply;
                 heldReply = null;
                 replyToForm(createPluginSurfaceHostApiError(refusal.failure.errorCode, [], message, {

@@ -82,3 +82,23 @@ it('offers the usable watchers as a Machine field and moves the open form to the
   );
   expect(fact.findAllByType(SessionMachineField)).toHaveLength(0);
 });
+
+// R15 Add check nit: a refusal that names a remedy elsewhere ("Edit the saved source…") leads there from "Check from".
+it('offers the refusal remedy beside the issue at "Check from" and leads there on press', async () => {
+  const scope = { serverId: 'home', accountId: 'account' };
+  storage.setState({ profileScope: scope });
+  const openSaved = vi.fn();
+  const screen = await renderScreen(
+    <SetupOriginRow
+      label="Check from"
+      machineId="machine-a"
+      serverId={scope.serverId}
+      chooseWatcher={() => false}
+      issue="This source already uses a different Machine."
+      issueRemedy={{ label: 'Open saved check', onPress: openSaved }}
+    />,
+  );
+  expect(screen.getTextContent()).toContain('This source already uses a different Machine.');
+  await screen.pressByTestIdAsync('plugin-event-automation-setup-surface-origin-remedy');
+  expect(openSaved).toHaveBeenCalledTimes(1);
+});

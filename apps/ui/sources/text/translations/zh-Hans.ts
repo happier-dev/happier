@@ -19118,6 +19118,7 @@ settingsSession: {
           addCheckUnavailableOnMachine: ({ machine }: { machine: string }) => `目前无法在 ${machine} 上添加检查。`,
           addCheckSaving: "正在添加检查…",
           addCheckFailed: "未添加检查。",
+          openSavedCheck: "打开已保存的检查",
           checkEditOpening: ({ machine }: { machine: string }) => `正在 ${machine} 上读取此检查的设置…`,
           checkSaving: "正在保存此检查…",
           checkMachineOffline: ({ machine }: { machine: string }) => `${machine} 已离线。请让它重新上线，或改由另一台 Machine 检查。`,

@@ -19412,6 +19412,7 @@ settingsSession: {
           addCheckUnavailableOnMachine: ({ machine }: { machine: string }) => `現在 ${machine} ではチェックを追加できません。`,
           addCheckSaving: "チェックを追加しています…",
           addCheckFailed: "チェックは追加されませんでした。",
+          openSavedCheck: "保存済みのチェックを開く",
           checkEditOpening: ({ machine }: { machine: string }) => `${machine} でこのチェックの設定を読み込んでいます…`,
           checkSaving: "このチェックを保存しています…",
           checkMachineOffline: ({ machine }: { machine: string }) => `${machine} はオフラインです。オンラインに戻すか、別の Machine からチェックしてください。`,

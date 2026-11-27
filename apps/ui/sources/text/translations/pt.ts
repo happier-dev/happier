@@ -19604,6 +19604,7 @@ settingsSession: {
           addCheckUnavailableOnMachine: ({ machine }: { machine: string }) => `Não é possível adicionar uma verificação em ${machine} agora.`,
           addCheckSaving: "A adicionar a verificação…",
           addCheckFailed: "A verificação não foi adicionada.",
+          openSavedCheck: "Abrir a verificação salva",
           checkEditOpening: ({ machine }: { machine: string }) => `A ler as definições desta verificação em ${machine}…`,
           checkSaving: "A guardar esta verificação…",
           checkMachineOffline: ({ machine }: { machine: string }) => `${machine} está offline. Coloque-a online ou verifique a partir de outra Machine.`,

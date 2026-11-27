@@ -10,6 +10,9 @@ import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol
 import { PluginEventAutomationEditor } from '@/components/automations/editor/PluginEventAutomationEditor';
 import type { PluginEventAutomationSetupSurfaceRefusal } from '@/components/automations/editor/presentPluginEventAutomationSetupSurface';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { readAddCheckRefusalRemedyTarget } from './addCheckRefusalRemedy';
+import { buildServiceCheckHref } from './deploymentNavigation';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { addWorkflowTrigger, listWorkflowTriggerPage, updateWorkflowTrigger } from '@/sync/domains/workflows/workflowTriggerActions';
 import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
@@ -33,7 +36,7 @@ type Configured = Extract<Settlement, { kind: 'configured' }>;
 type SavedSource = Pick<WorkflowTriggerHealthSourceV1, 'automationId' | 'triggerId'> & { templateVersion: number };
 type SavedSourceRead =
   | { kind: 'loading' }
-  | { kind: 'ready'; source: SavedSource | null }
+  | { kind: 'ready'; source: SavedSource | null; sources: readonly Pick<WorkflowTriggerHealthSourceV1, 'automationId' | 'triggerId'>[] }
   | { kind: 'failed'; failure: PluginUiActionFailureV1 };
 
 function workflowActionFailure(error: unknown): PluginUiActionFailureV1 {
@@ -78,6 +81,7 @@ export function AddCheckSetup(
 ) {
   const { environmentId } = props.deploymentEnvironment;
   const { lifetime } = props;
+  const router = useRouter();
   const hasSeed = Boolean(props.seed);
   const [sourceRead, setSourceRead] = React.useState<SavedSourceRead>({ kind: 'loading' });
   const [sourceReadAttempt, retrySourceRead] = React.useReducer(value => value + 1, 0);
@@ -95,7 +99,8 @@ export function AddCheckSetup(
         setSourceRead({ kind: 'failed', failure: { ok: false, errorCode: 'source_unavailable' } });
       } else {
         setSourceRead({ kind: 'ready', source: source?.templateVersion === undefined ? null
-          : { automationId: source.automationId, triggerId: source.triggerId, templateVersion: source.templateVersion } });
+          : { automationId: source.automationId, triggerId: source.triggerId, templateVersion: source.templateVersion },
+          sources: healthSources.map(({ automationId, triggerId }) => ({ automationId, triggerId })) });
       }
     }, error => {
       if (!signal.aborted && lifetime.isCurrent()) setSourceRead({ kind: 'failed', failure: workflowActionFailure(error) });
@@ -130,7 +135,16 @@ export function AddCheckSetup(
         setUnsettledWrite(failure);
         return undefined;
       }
-      return { failure, reason: presented.reason };
+      // "Edit the saved source to change its Machine" leads to that saved source (R15).
+      const remedyTarget = sourceRead.kind === 'ready'
+        ? readAddCheckRefusalRemedyTarget(failure, sourceRead.sources, sourceRead.source) : undefined;
+      return { failure, reason: presented.reason, ...(remedyTarget ? { remedy: {
+        label: t('projects.deployments.services.openSavedCheck'),
+        onPress: () => {
+          props.onClose();
+          router.push(buildServiceCheckHref(remedyTarget) as never);
+        },
+      } } : {}) };
     }
     fireAndForget(sync.refreshAutomations());
     props.onClose();

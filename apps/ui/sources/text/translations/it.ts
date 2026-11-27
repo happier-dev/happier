@@ -19500,6 +19500,7 @@ settingsSession: {
           addCheckUnavailableOnMachine: ({ machine }: { machine: string }) => `Al momento non è possibile aggiungere un controllo su ${machine}.`,
           addCheckSaving: "Aggiunta del controllo…",
           addCheckFailed: "Il controllo non è stato aggiunto.",
+          openSavedCheck: "Apri il controllo salvato",
           checkEditOpening: ({ machine }: { machine: string }) => `Lettura delle impostazioni di questo controllo su ${machine}…`,
           checkSaving: "Salvataggio di questo controllo…",
           checkMachineOffline: ({ machine }: { machine: string }) => `${machine} è offline. Riportala online o controlla da un’altra Machine.`,

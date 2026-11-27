@@ -19498,6 +19498,7 @@ settingsSession: {
           addCheckUnavailableOnMachine: ({ machine }: { machine: string }) => `Ahora no se puede añadir una comprobación en ${machine}.`,
           addCheckSaving: "Añadiendo la comprobación…",
           addCheckFailed: "No se añadió la comprobación.",
+          openSavedCheck: "Abrir la comprobación guardada",
           checkEditOpening: ({ machine }: { machine: string }) => `Leyendo los ajustes de esta comprobación en ${machine}…`,
           checkSaving: "Guardando esta comprobación…",
           checkMachineOffline: ({ machine }: { machine: string }) => `${machine} está sin conexión. Vuelve a conectarla o comprueba desde otra Machine.`,

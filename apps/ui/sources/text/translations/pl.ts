@@ -19323,6 +19323,7 @@ settingsSession: {
           addCheckUnavailableOnMachine: ({ machine }: { machine: string }) => `Na ${machine} nie można teraz dodać sprawdzenia.`,
           addCheckSaving: "Dodawanie sprawdzenia…",
           addCheckFailed: "Sprawdzenie nie zostało dodane.",
+          openSavedCheck: "Otwórz zapisane sprawdzenie",
           checkEditOpening: ({ machine }: { machine: string }) => `Odczytywanie ustawień tego sprawdzenia na ${machine}…`,
           checkSaving: "Zapisywanie tego sprawdzenia…",
           checkMachineOffline: ({ machine }: { machine: string }) => `${machine} jest offline. Włącz ją ponownie lub sprawdzaj z innej Machine.`,

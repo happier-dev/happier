@@ -22868,6 +22868,7 @@ const enProjects = {
         addCheckUnavailableOnMachine: ({ machine }: { machine: string }) => `Adding a check isn’t available on ${machine} right now.`,
         addCheckSaving: "Adding the check…",
         addCheckFailed: "The check wasn’t added.",
+        openSavedCheck: "Open saved check",
         checkEditOpening: ({ machine }: { machine: string }) => `Reading this check’s settings on ${machine}…`,
         checkSaving: "Saving this check…",
         checkMachineOffline: ({ machine }: { machine: string }) => `${machine} is offline. Bring it online, or check from another Machine.`,

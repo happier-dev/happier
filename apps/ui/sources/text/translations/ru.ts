@@ -19452,6 +19452,7 @@ settingsSession: {
           addCheckUnavailableOnMachine: ({ machine }: { machine: string }) => `Сейчас на ${machine} нельзя добавить проверку.`,
           addCheckSaving: "Добавляем проверку…",
           addCheckFailed: "Проверка не добавлена.",
+          openSavedCheck: "Открыть сохранённую проверку",
           checkEditOpening: ({ machine }: { machine: string }) => `Читаем настройки этой проверки на ${machine}…`,
           checkSaving: "Сохраняем эту проверку…",
           checkMachineOffline: ({ machine }: { machine: string }) => `${machine} не в сети. Подключите её или проверяйте с другой Machine.`,
