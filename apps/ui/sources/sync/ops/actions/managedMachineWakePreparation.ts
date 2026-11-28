@@ -124,8 +124,7 @@ export function createUiManagedMachineWakeReads(account: LazyActionAccountContex
                 account.assertCurrent();
                 const [opened] = await openManagedMachineReadSnapshots(account.accountLifetime.scope, [result], context.signal);
                 account.assertCurrent();
-                return opened?.launch ? opened
-                    : { ok: false as const, errorCode: 'content_unavailable', error: 'content_unavailable' };
+                return opened ?? null;
             } catch (error) {
                 const code = context.signal?.aborted ? 'cancelled'
                     : error instanceof ManagedMachineActionError ? error.code : 'managed_request_failed';

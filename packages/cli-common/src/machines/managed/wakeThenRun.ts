@@ -1,4 +1,4 @@
-import type { ManagedMachineV1, ManagedMachineRefV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { isManagedOpaquePresetMachineV1, type ManagedMachineV1, type ManagedMachineRefV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ActionAdmittedExecutionV1, ActionExecutorContext, ActionExecutorDeps, ActionExecuteFailure, ActionExecuteResult, ActionMachineRuntimeDemandV1, ActionPreparedMachineTargetV1, HostReviewedChildrenPreparationV1 } from '@happier-dev/protocol/actions/executor/types';
 import type { ManagedMachineActionInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { MANAGED_POWER_SET_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
@@ -83,8 +83,13 @@ export async function prepareManagedMachineWakeChildren(
         ...(executePrepared ? { executeAdmittedAction: (execution: ActionAdmittedExecutionV1) => executePrepared({
             ...execution, machineRuntime: { machineId, ...(demand.serverId ? { serverId: demand.serverId } : {}) } }) } : {}),
     };
-    const powerInput = resolveManagedMachineRuntimeV1(machine, machineId, target.reachable).inspectionRequired
-        ? managedMachineWakePowerInput(machine) : undefined;
+    const runtime = resolveManagedMachineRuntimeV1(machine, machineId, target.reachable);
+    // The guest's live runtime needs only Home's lifecycle facts. Private preset
+    // configuration is still required to prepare native work for a parked guest.
+    if (!runtime.ready && isManagedOpaquePresetMachineV1(machine)) {
+        return { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' };
+    }
+    const powerInput = runtime.inspectionRequired ? managedMachineWakePowerInput(machine) : undefined;
     return prepareManagedWakePlan(reads, machine, powerInput, managed => ({
         machineId, ...(demand.serverId ? { serverId: demand.serverId } : {}), managed,
     }), executePrepared);

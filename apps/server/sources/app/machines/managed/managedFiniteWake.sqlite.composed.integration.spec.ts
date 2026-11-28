@@ -1640,7 +1640,8 @@ describe('finite managed wake original Action authority (real storage)', () => {
         registerExternalActionRoutes(app, { dispatch: async () => { throw new Error('Custody verification must not execute'); } });
         await app.ready();
         const path = bindExternalActionExecutionAuthorizationVerifyHttpPathV1('projects.script.run');
-        const verify = (target: unknown = test.target, privateKey: Uint8Array = test.controllerKeys.secretKey) => {
+        const verify = (target: unknown = test.target, privateKey: Uint8Array = test.controllerKeys.secretKey,
+            installationId = test.target.controller.installationId) => {
             const body = { v: 1, managedFiniteWakeTarget: target };
             return app.inject({ method: 'POST', url: path, payload: body, headers: {
                 [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: root.token,
@@ -1648,7 +1649,7 @@ describe('finite managed wake original Action authority (real storage)', () => {
                 [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(root.binding.target),
                 [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
                     authorizationToken: root.token, effectActionId: root.binding.actionId, target: root.binding.target,
-                    installationId: root.binding.installationId, requestId: root.binding.requestId,
+                    installationId, requestId: root.binding.requestId,
                     method: 'POST', path, body, privateKey,
                 }),
             } });
@@ -1662,6 +1663,7 @@ describe('finite managed wake original Action authority (real storage)', () => {
             expect((await verify({ ...test.target, controller: { ...test.target.controller, installationId: randomUUID() } })).statusCode).toBe(401);
             expect((await verify({ ...test.target, origin: { kind: 'finite-command', actionRequestId: randomUUID() } })).statusCode).toBe(401);
             expect((await verify(test.target, test.guestKeys.secretKey)).statusCode).toBe(401);
+            expect((await verify(test.target, test.controllerKeys.secretKey, root.binding.installationId)).statusCode).toBe(401);
             await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: test.account.id, machineId: test.controller.id,
                 principal: { kind: 'account', accountId: requester.id }, level: 'view' }));
             expect((await verify()).statusCode).toBe(401);

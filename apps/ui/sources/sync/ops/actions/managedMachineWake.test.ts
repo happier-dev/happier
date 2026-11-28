@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ManagedMachineReadV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { createActionExecutor, createHostReviewedChildPortV1, readHostReviewedChildOperationV1 } from '@happier-dev/protocol/actions/actionExecutor';
@@ -213,6 +214,45 @@ describe('managed explicit execution readiness', () => {
             const result = await plan.executeAdmittedAction({ actionId, input, context,
                 execute: async (_original, target) => ({ ok: true, result: target }) });
             expect(result).toEqual({ ok: true, result: { machineId: 'guest' } });
+        } finally { signal.abort(); account.dispose(); await homes.dispose(); }
+    });
+
+    it.each(['running', 'stopped'] as const)('uses a shared guest’s %s lifecycle facts without the custodian’s preset key', async power => {
+        const homeId = 'srv_shared_terminal';
+        const guest = 'shared-guest';
+        const read = ManagedMachineReadV1Schema.parse({
+            machine: { id: 'managed', homeId, custodianAccountId: 'owner', enrolledMachineId: guest,
+                controller: { machineId: 'controller', installationId: 'controller-installation' },
+                preset: { id: 'preset', revision: 1, contentEncryptionMode: 'e2ee' },
+                allocation: 'bound', creationState: 'active', desired: power === 'running' ? 'start' : 'stop',
+                desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true,
+                observation: { availability: 'present', power, storage: 'retained', observedAt: 1 } },
+            presetContent: { content: { t: 'encrypted', c: Buffer.alloc(48).toString('base64') }, recipientEnvelope: null },
+        });
+        const homes = await serveAccountHomes({ homes: [
+            { key: 'a', serverUrl: 'https://shared-terminal.test', serverIdentityId: homeId, accountId: 'member' },
+        ], route: request => request.path === '/v1/machines/managed/actions/get' ? Response.json(read) : undefined });
+        const account = await captureLazyActionAccountContext(homes.homes.a!.id);
+        const signal = new AbortController();
+        const context = { surface: 'ui' as const, signal: signal.signal };
+        const actionId = 'machines.terminal.open' as const;
+        const input = { machineId: guest, serverId: account.serverId, terminalKey: 'own-shell' };
+        try {
+            storage.getState().applyMachines([createMachineFixture({ id: guest, active: power === 'running',
+                presenceProtocolVersion: 1, managedMachineRef: { homeId, managedId: 'managed' } })], false,
+                { sourceServerId: account.serverId, sourceAccountId: account.accountId });
+            observeMachinePresenceForTest(account.accountLifetime.scope, [guest]);
+            const plan = await prepareUiManagedMachineWake({ actionId, input, context,
+                machineRuntimeDemand: { target: { kind: 'machine', machineId: guest } } }, account);
+            if (power === 'stopped') {
+                expect(plan).toMatchObject({ ok: false, errorCode: 'content_unavailable' });
+                return;
+            }
+            expect(plan).toMatchObject({ children: [] });
+            if (!plan || 'ok' in plan || !plan.executeAdmittedAction) throw new Error('Expected runtime preparation');
+            expect(await plan.executeAdmittedAction({ actionId, input, context,
+                execute: async (_original, target) => ({ ok: true, result: target }) }))
+                .toEqual({ ok: true, result: { machineId: guest } });
         } finally { signal.abort(); account.dispose(); await homes.dispose(); }
     });
 

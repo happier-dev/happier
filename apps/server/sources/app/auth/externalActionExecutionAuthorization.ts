@@ -2251,8 +2251,10 @@ async function verifyCommon(
     let boundMachineKeySigned: boolean | undefined;
     const verifyBoundMachineKey = () => boundMachineKeySigned ??=
         Boolean(machine?.installationPublicKey && verifySignature(machine.installationPublicKey));
+    const controllerInstallationId = custody?.target.controller?.installationId;
     let signatureCurrent = custody
-        ? verifySignature(decodeBase64(custody.installationPublicKey, 'base64url'))
+        ? controllerInstallationId !== undefined
+            && verifySignature(decodeBase64(custody.installationPublicKey, 'base64url'), controllerInstallationId)
         : verifyBoundMachineKey();
     const boundMachineSigned = signatureCurrent;
     if (managedExecWake && !boundMachineSigned) return refuse('machine_signature');
