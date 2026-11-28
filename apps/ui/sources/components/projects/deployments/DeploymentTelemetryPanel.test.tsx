@@ -1009,10 +1009,10 @@ describe('Environment Telemetry tabs', () => {
   });
 
   it.each([
-    { name: 'the shared collector when no owned Machine is online', shared: true, otherMachines: false, machineId: 'collector' },
-    { name: 'the Account’s own online Machine for a shared collector', shared: true, otherMachines: true, machineId: 'observer' },
-    { name: 'the owned collector', shared: false, otherMachines: false, machineId: 'collector' },
-  ])('offers Add a check… to managers and opens on $name', async ({ shared, otherMachines, machineId }) => {
+    { name: 'the Account’s own Machine when it comes online', shared: true, waitsForOwnedMachine: true, machineId: 'observer' },
+    { name: 'the Account’s own online Machine for a shared collector', shared: true, waitsForOwnedMachine: false, machineId: 'observer' },
+    { name: 'the owned collector', shared: false, waitsForOwnedMachine: false, machineId: 'collector' },
+  ])('offers Add a check… to managers and opens on $name', async ({ shared, waitsForOwnedMachine, machineId }) => {
     const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
     const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
     const { selectWorkflowAutomationDetailsFixture } = await import('@/dev/testkit/harness/workflowAutomationHttpBoundary');
@@ -1031,13 +1031,12 @@ describe('Environment Telemetry tabs', () => {
     homes.answer(serverId, 'POST /v3/automations/query', { select: input => ({
       body: selectWorkflowAutomationDetailsFixture([], input),
     }) });
-    await publishMachineInventoryForTest(scope, [
+    const currentMachines = [
       createMachineFixture({ id: 'collector', isShared: shared, active: true, activeAt: Date.now() }),
-      ...(otherMachines ? [
-        createMachineFixture({ id: 'observer-offline', isShared: false, active: false, activeAt: 1 }),
-        createMachineFixture({ id: 'observer', isShared: false, active: true, activeAt: Date.now() }),
-      ] : []),
-    ]);
+      ...(shared ? [createMachineFixture({ id: 'observer', isShared: false,
+        active: !waitsForOwnedMachine, activeAt: waitsForOwnedMachine ? 1 : Date.now() })] : []),
+    ];
+    await publishMachineInventoryForTest(scope, currentMachines);
     const detail = setUpDetail();
     const { invoke } = collector(call => answers(call, { ...source, serverId }));
     const screen = await renderScreen(panel(invoke, {
@@ -1052,6 +1051,20 @@ describe('Environment Telemetry tabs', () => {
         expect.objectContaining({ id: 'add-check', label: 'Add a check…' }),
       ]));
       await act(async () => row.props.onSecondaryAction('add-check'));
+      if (waitsForOwnedMachine) {
+        const refusal = 'project-deployments.telemetry.add-check.collector-refused';
+        await waitForHomeGovernance(() => {
+          expect(screen.findByTestId(refusal)).not.toBeNull();
+        });
+        expect(screen.getTextContent()).toContain('Connect one of your Machines, then try adding the check again.');
+        await screen.pressByTestIdAsync(`${refusal}-details-toggle`);
+        expect(screen.getTextContent()).toContain('event_watcher_not_current');
+        expect(screen.findAllByType(PluginEventAutomationEditor)).toEqual([]);
+
+        await publishMachineInventoryForTest(scope, currentMachines.map(machine => machine.id === machineId
+          ? { ...machine, active: true, activeAt: Date.now() }
+          : machine));
+      }
       await waitForHomeGovernance(() => {
         expect(screen.findAllByType(PluginEventAutomationEditor).map(editor => editor.props.authoringMachineId))
           .toEqual([machineId]);

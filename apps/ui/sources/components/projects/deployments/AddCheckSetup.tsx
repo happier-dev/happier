@@ -168,7 +168,11 @@ export function AddCheckSetup(
     : NO_CHECK_MACHINE_CANDIDATES, [inventory]);
   const presence = useMachinePresenceSummaries(serverId, ownedMachineIds, props.lifetime);
   const fallbackMachineId = ownedMachineIds[presence.findIndex(machine => machine.reachability === 'reachable')];
-  const waitingForCollector = needsOwnedMachine && !fallbackMachineId && inventoryStatus === 'loading';
+  const needsFallback = needsOwnedMachine && !fallbackMachineId;
+  const awaitingOwnedPresence = needsFallback && (inventory === null || presence.some(machine => machine.reachability === 'unknown'));
+  const waitingForCollector = needsFallback
+    && (inventoryStatus === 'loading' || (inventoryStatus === 'idle' && awaitingOwnedPresence));
+  const collectorRefused = needsFallback && inventoryStatus === 'idle' && !awaitingOwnedPresence;
   const seed = React.useMemo(() => props.seed && fallbackMachineId
     ? { ...props.seed, monitoringMachineId: fallbackMachineId }
     : props.seed, [props.seed, fallbackMachineId]);
@@ -196,6 +200,17 @@ export function AddCheckSetup(
           reason={presentAddCheckWriteFailure(sourceRead.failure).reason}
           diagnosticCode={sourceRead.failure.errorCode}
           action={{ label: t('common.retry'), onPress: retrySourceRead }}
+        />
+      ) : collectorRefused ? (
+        <SurfaceStateCard
+          testID={`${props.testID}.collector-refused`}
+          size="line"
+          kind="unavailable"
+          title={t('projects.deployments.services.addCheckFailed')}
+          reason={t('projects.deployments.monitoring.addCheckCollectorOwnership')}
+          diagnosticCode={AUTOMATION_EVENT_WATCHER_NOT_CURRENT}
+          accessibilitySemantics="alert"
+          action={{ label: t('common.close'), onPress: props.onClose }}
         />
       ) : waitingForCollector || (hasSeed && sourceRead.kind === 'loading') ? (
         <SurfaceStateCard
