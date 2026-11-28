@@ -29,8 +29,8 @@ it('reuses one native connection for its requester, refuses a second requester, 
     const ui = await connectUiPersonActionClient({ ...fixture.personActionConnection,
       accountSecret: fixture.owner.auth.accountSigningSeed, presentedMachineAction: { action,
         target: { serverIdentityId: fixture.serverId, machineId } } });
-    await waitFor(ui.isPresentedMachineActionReady, { context: 'selected database Action presentation' });
     try {
+      await waitFor(ui.isPresentedMachineActionReady, { context: 'selected database Action presentation' });
       const projection = await machinePluginUiTargetedContributionsRead(machineId,
         { pluginId: DATABASE_PLUGIN_ID_V1, serverId: ui.serverId });
       if (!projection.supported) throw new Error('Database projection unavailable ' + projection.reason);
@@ -41,9 +41,9 @@ it('reuses one native connection for its requester, refuses a second requester, 
         subscriptionIdPrefix: 'selected-database' });
       const watch = await client.watchResource(DATABASE_CONNECTION_RESOURCE_ID_V1, () => undefined,
         { input: { operation: 'describe', target } });
-      const invocation = (sql: string, subscriptionId = watch.subscriptionId) => ({
+      const invocation = (sql: string) => ({
         action,
-        input: { operation: 'statement.run', mode: 'read', target, subscriptionId, statement: { sql, parameters: [] } },
+        input: { operation: 'statement.run', mode: 'read', target, subscriptionId: watch.subscriptionId, statement: { sql, parameters: [] } },
       });
       const execute = (sql: string) =>
         ui.executeConfirmed('action.invoke', invocation(sql), { externalActionTarget,
@@ -64,13 +64,13 @@ it('reuses one native connection for its requester, refuses a second requester, 
         const knownGood = await read();
         expect(knownGood).toEqual({ type: 'text', value: admittedBackend });
         console.info('DBW_HELD_NATIVE_REUSE', { admittedBackend });
-        const writesBefore = await fixture.postgres.sql('dbw_neighbor',
+        const selectedReadCount = () => fixture.postgres.sql('dbw_neighbor',
           "SELECT coalesce(sum(calls), 0)::text FROM pg_stat_statements WHERE dbid = (SELECT oid FROM pg_database WHERE datname = 'dbw_selected') AND query LIKE 'SELECT pg_backend_pid()%AS dbw_held_pid'");
+        const readsBefore = await selectedReadCount();
         const refused = await other.execute('action.invoke', invocation('SELECT pg_backend_pid()::text AS dbw_held_pid'), { externalActionTarget });
         expect(refused).toMatchObject({ ok: false, errorCode: 'access_denied' });
         console.info('DBW_HELD_REQUESTER_REFUSAL', 'access_denied');
-        expect(await fixture.postgres.sql('dbw_neighbor',
-          "SELECT coalesce(sum(calls), 0)::text FROM pg_stat_statements WHERE dbid = (SELECT oid FROM pg_database WHERE datname = 'dbw_selected') AND query LIKE 'SELECT pg_backend_pid()%AS dbw_held_pid'")).toBe(writesBefore);
+        expect(await selectedReadCount()).toBe(readsBefore);
         expect(await read()).toEqual(knownGood);
         const active = execute('SELECT pg_sleep(600) /* DBW_R018_WATCH_RETIRE */');
         const activity = () => fixture.postgres.sql('dbw_selected',
