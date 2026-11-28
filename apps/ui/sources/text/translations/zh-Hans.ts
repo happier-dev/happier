@@ -5253,6 +5253,8 @@ export const zhHans: TranslationStructure = {
   },
 
   newSession: {
+    modelMissingFromCatalogTitle: "Codex 列表中缺少已配置的模型",
+    modelMissingFromCatalogMessage: ({ model }: { model: string }) => `Codex 的模型列表中没有 CLI 设置中指定的 ${model}。请返回并选择列表中的模型，或在所选设备上更新 Codex。`,
     terminalHostUnavailableTitle: "终端宿主不可用",
     terminalHostUnavailableBody: ({ host }: { host: string }) => `请在此设备上安装或更新 ${host} 并重启其服务器，或选择其他终端宿主。草稿已保留。`,
     ...newSessionMcpTranslationExtension,

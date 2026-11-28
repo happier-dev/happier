@@ -31,6 +31,7 @@ const PI_PREFLIGHT_MODELS: PreflightModelList = {
 
 async function setupUseCreateNewSessionHarness(params: Readonly<{
     publishModelsSeedError?: Error;
+    confirm?: boolean;
 }> = {}) {
     const updateSessionPermissionModeSpy = vi.fn();
     const updateSessionModelModeSpy = vi.fn();
@@ -39,7 +40,7 @@ async function setupUseCreateNewSessionHarness(params: Readonly<{
     });
     const captureExceptionSpy = vi.fn();
     const modalAlertSpy = vi.fn((..._args: unknown[]) => {});
-    const modalConfirmSpy = vi.fn(async () => false);
+    const modalConfirmSpy = vi.fn(async () => params.confirm ?? false);
     const applySettingsSpy = vi.fn((..._args: unknown[]) => {});
     const refreshSessionsSpy = vi.fn(async () => {});
     const refreshAutomationsSpy = vi.fn(async () => {});
@@ -215,6 +216,7 @@ async function setupUseCreateNewSessionHarness(params: Readonly<{
         captureExceptionSpy,
         machineSpawnNewSessionSpy,
         modalAlertSpy,
+        modalConfirmSpy,
         folderAssignmentHttp,
         materializeNewSessionCheckoutSpy,
     };
@@ -228,11 +230,15 @@ async function runCreateSession(
         agentType: AgentId;
         modelMode?: ModelMode;
         preflightModels?: PreflightModelList | null;
+        readMissingConfiguredModel?: (target: Readonly<{ cwd: string; machineId: string; serverId: string }>) => string | null;
+        checkoutCreationDraft?: { kind: 'git_worktree'; displayName: string; baseRef: string };
+        requestedPath?: string;
         targetServerId?: string;
         backendTarget?: BackendTargetRefV1;
         targetFolder?: NewSessionTargetFolderV1 | null;
     }>,
 ): Promise<void> {
+    const { requestedPath } = params;
     let handleCreateSession: null | (() => Promise<void>) = null;
     const settings = { experiments: false } as unknown as Settings;
     const machineEnvPresence: UseMachineEnvPresenceResult = {
@@ -250,6 +256,8 @@ async function runCreateSession(
             router: { push: vi.fn(), replace: vi.fn() },
             selectedMachineId: 'm1',
             selectedPath: '/tmp',
+            checkoutCreationDraft: params.checkoutCreationDraft,
+            getRequestedPath: requestedPath !== undefined ? () => requestedPath : undefined,
             selectedMachine: { metadata: {} },
             setIsCreating: vi.fn(),
             setIsResumeSupportChecking: vi.fn(),
@@ -275,6 +283,7 @@ async function runCreateSession(
             allowedTargetServerIds: [params.targetServerId ?? TARGET_SERVER_ID],
             targetFolder: params.targetFolder ?? null,
             preflightModels: params.preflightModels,
+            readMissingConfiguredModel: params.readMissingConfiguredModel,
         });
 
         handleCreateSession = hook.handleCreateSession as () => Promise<void>;
@@ -298,6 +307,71 @@ afterEach(() => {
 });
 
 describe('useCreateNewSession model list seeding', () => {
+    const codexCatalog = {
+        availableModels: [{ id: 'older-model', name: 'Older model' }],
+        supportsFreeform: false,
+        configuredModelId: 'newer-model',
+    };
+
+    it('starts a new worktree without warning about the source checkout model', async () => {
+        const harness = await setupUseCreateNewSessionHarness();
+        harness.materializeNewSessionCheckoutSpy.mockResolvedValueOnce({
+            success: true as const,
+            path: '/tmp-worktree',
+            sessionPath: '/tmp-worktree',
+            repositoryRootPath: '/tmp',
+        });
+        await runCreateSession(harness, {
+            agentType: 'codex',
+            checkoutCreationDraft: { kind: 'git_worktree', displayName: 'new-branch', baseRef: 'main' },
+            readMissingConfiguredModel: () => codexCatalog.configuredModelId,
+        });
+
+        expect(harness.modalConfirmSpy).not.toHaveBeenCalled();
+        expect(harness.machineSpawnNewSessionSpy).toHaveBeenCalledWith(expect.objectContaining({ directory: '/tmp-worktree' }));
+    });
+
+    it('warns before launching a configured model missing from the Codex catalog', async () => {
+        const harness = await setupUseCreateNewSessionHarness();
+
+        const readMissingConfiguredModel = vi.fn(() => codexCatalog.configuredModelId);
+        await runCreateSession(harness, {
+            agentType: 'codex',
+            requestedPath: '/tmp/edited-path',
+            preflightModels: codexCatalog,
+            readMissingConfiguredModel,
+        });
+
+        expect(readMissingConfiguredModel).toHaveBeenCalledWith({ cwd: '/tmp/edited-path', machineId: 'm1', serverId: TARGET_SERVER_ID });
+        expect(harness.modalConfirmSpy).toHaveBeenCalledWith(
+            'newSession.modelMissingFromCatalogTitle',
+            'newSession.modelMissingFromCatalogMessage',
+            expect.any(Object),
+        );
+        expect(harness.machineSpawnNewSessionSpy).not.toHaveBeenCalled();
+        expect(harness.materializeNewSessionCheckoutSpy).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        { modelMode: 'older-model', ready: true, confirm: false },
+        { modelMode: 'default', ready: false, confirm: false },
+        { modelMode: 'default', ready: true, confirm: true },
+    ])('allows launch with model $modelMode, catalog ready $ready, confirmation $confirm', async ({ modelMode, ready, confirm }) => {
+        const harness = await setupUseCreateNewSessionHarness({ confirm });
+
+        const readMissingConfiguredModel = vi.fn(() => ready ? codexCatalog.configuredModelId : null);
+        await runCreateSession(harness, {
+            agentType: 'codex',
+            modelMode,
+            preflightModels: codexCatalog,
+            readMissingConfiguredModel,
+        });
+
+        if (modelMode !== 'default') expect(readMissingConfiguredModel).not.toHaveBeenCalled();
+        expect(harness.modalConfirmSpy).toHaveBeenCalledTimes(confirm ? 1 : 0);
+        expect(harness.machineSpawnNewSessionSpy).toHaveBeenCalledTimes(1);
+    });
+
     it('seeds sessionModelsV1 from the wizard preflight probe for a dynamic agent without static models', async () => {
         const harness = await setupUseCreateNewSessionHarness();
 

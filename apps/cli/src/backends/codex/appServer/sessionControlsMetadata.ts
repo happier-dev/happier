@@ -49,6 +49,7 @@ export type CodexAppServerSessionControlsSnapshot = Readonly<{
     currentModeId: string | null;
     availableModels: SessionModelOption[];
     modelsObserved: boolean;
+    configuredModelId?: string;
     currentModelId: string | null;
     configOptions: SessionConfigOption[];
 }>;
@@ -102,21 +103,24 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     return value as Record<string, unknown>;
 }
 
-function readListEntries(value: unknown): unknown[] | null {
+function readList(value: unknown): { entries: unknown[]; nextCursor: unknown } | null {
     // Codex app-server responses are usually list-like objects with `data`/`items`, but some
-    // call sites may accidentally pass the JSON-RPC envelope (result wrapper). Be liberal in
-    // what we accept so model-scoped options aren't dropped on cold start.
+    // call sites may pass the JSON-RPC envelope (result wrapper).
     let current: unknown = value;
     for (let depth = 0; depth < 3; depth += 1) {
-        if (Array.isArray(current)) return current;
+        if (Array.isArray(current)) return { entries: current, nextCursor: null };
         const record = asRecord(current);
         if (!record) return null;
-        if (Array.isArray(record.items)) return record.items;
-        if (Array.isArray(record.data)) return record.data;
+        const entries = Array.isArray(record.items) ? record.items : record.data;
+        if (Array.isArray(entries)) return { entries, nextCursor: record.nextCursor };
         if (record.result === undefined) return null;
         current = record.result;
     }
     return null;
+}
+
+function readListEntries(value: unknown): unknown[] | null {
+    return readList(value)?.entries ?? null;
 }
 
 function normalizeReasoningEffortLabel(value: string): string {
@@ -408,6 +412,7 @@ export function resolveCodexAppServerCollaborationModeSelection(params: Readonly
 export async function readCodexAppServerSessionControls(params: Readonly<{
     client: JsonRpcClient;
     authMethod?: string | null;
+    configuredModelCwd?: string;
     currentModeId?: string | null;
     currentModelId?: string | null;
     currentReasoningEffort?: string | null;
@@ -415,12 +420,17 @@ export async function readCodexAppServerSessionControls(params: Readonly<{
 }>): Promise<CodexAppServerSessionControlsSnapshot> {
     // Best-effort: Codex app-server endpoints can be feature-gated or versioned. If one endpoint is
     // unavailable, still return whatever we can (most importantly the model list + options).
-    const [modesSettled, modelsSettled] = await Promise.allSettled([
+    const [modesSettled, modelsSettled, configSettled] = await Promise.allSettled([
         params.client.request('collaborationMode/list', {}),
         params.client.request('model/list', {}),
+        params.configuredModelCwd !== undefined
+            ? params.client.request('config/read', { cwd: params.configuredModelCwd, includeLayers: false })
+            : undefined,
     ]);
     const modesResponse = modesSettled.status === 'fulfilled' ? modesSettled.value : null;
     const modelsResponse = modelsSettled.status === 'fulfilled' ? modelsSettled.value : null;
+    const configResponse = configSettled.status === 'fulfilled' ? asRecord(configSettled.value) : null;
+    const configuredModelId = normalizeString(asRecord(configResponse?.config)?.model);
 
     const availableModesWithMasks = normalizeCollaborationModeMasks(modesResponse);
     const availableModes = availableModesWithMasks.map(({ id, name, description }) => ({
@@ -441,14 +451,17 @@ export async function readCodexAppServerSessionControls(params: Readonly<{
     const currentModelId = availableModels.some((entry) => entry.id === params.currentModelId)
         ? params.currentModelId ?? null
         : resolveCurrentId(modelsResponse, availableModels, { fallbackToFirst: true });
-    const modelEntries = readListEntries(modelsResponse);
-    const modelsObserved = modelEntries !== null && (modelEntries.length === 0 || availableModels.length > 0);
+    const modelList = readList(modelsResponse);
+    const modelsObserved = modelList !== null && (modelList.entries.length === 0 || availableModels.length > 0);
+    // The picker can show a partial list, but absence from the first page cannot justify a warning.
+    const catalogComplete = modelsObserved && modelList?.nextCursor == null;
 
     return {
         availableModes,
         currentModeId,
         availableModels,
         modelsObserved,
+        ...(configuredModelId && catalogComplete ? { configuredModelId } : {}),
         currentModelId,
         configOptions: [],
     };

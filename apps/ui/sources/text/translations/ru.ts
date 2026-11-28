@@ -5348,6 +5348,8 @@ export const ru: TranslationStructure = {
   },
 
   newSession: {
+    modelMissingFromCatalogTitle: "Настроенной модели нет в списке Codex",
+    modelMissingFromCatalogMessage: ({ model }: { model: string }) => `В списке моделей Codex нет модели ${model}, выбранной в настройках CLI. Вернитесь, чтобы выбрать модель из списка, или обновите Codex на выбранной машине.`,
     terminalHostUnavailableTitle: "Терминал недоступен",
     terminalHostUnavailableBody: ({ host }: { host: string }) => `Установите или обновите ${host} и перезапустите его сервер на этой машине либо выберите другой терминал. Черновик сохранён.`,
     ...newSessionMcpTranslationExtension,

@@ -11,9 +11,14 @@ async function readControls(params: Readonly<{
     timeoutMs: number;
     accountSettings?: Readonly<Record<string, unknown>> | null;
     processEnv?: NodeJS.ProcessEnv;
+    includeConfiguredModel?: boolean;
+    signal?: AbortSignal;
+    onNativeCleanup?: (cleanup: () => Promise<void>) => void;
 }>): Promise<Awaited<ReturnType<typeof readCodexAppServerSessionControls>> | null> {
     const processEnv = {
         ...(params.processEnv ?? process.env),
+        // config/read includes unrelated local settings. Keep its payload out of optional RPC traces.
+        ...(params.includeConfiguredModel ? { HAPPIER_CODEX_APP_SERVER_RPC_LOG_PATH: undefined } : {}),
         // Ensure slow `model/list` does not silently downgrade the UI to static models (which have no model options).
         HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS: String(Math.max(250, Math.min(60_000, Math.trunc(params.timeoutMs)))),
     };
@@ -23,10 +28,13 @@ async function readControls(params: Readonly<{
         cwd: params.cwd,
         accountSettings: params.accountSettings ?? null,
         timeoutMs: params.timeoutMs,
+        signal: params.signal,
+        onCleanup: params.onNativeCleanup,
         run: async (client) =>
             readCodexAppServerSessionControls({
                 client,
                 authMethod,
+                ...(params.includeConfiguredModel ? { configuredModelCwd: params.cwd } : {}),
             }),
     });
     return result.ok ? result.value : null;
@@ -60,13 +68,12 @@ export const codexPreflightSessionControlsProbeAdapter: PreflightSessionControls
         };
     },
     probeModelsRaw: async (params) => {
-        const controls = await readControls({
-            cwd: params.cwd,
-            timeoutMs: params.timeoutMs,
-            accountSettings: params.accountSettings ?? null,
-            processEnv: params.processEnv,
-        });
-        return controls?.modelsObserved ? controls.availableModels : null;
+        const controls = await readControls(params);
+        if (!controls?.modelsObserved) return null;
+        return {
+            availableModels: controls.availableModels,
+            ...(controls.configuredModelId ? { configuredModelId: controls.configuredModelId } : {}),
+        };
     },
     probeModesRaw: async (params) => {
         const controls = await readControls({

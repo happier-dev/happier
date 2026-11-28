@@ -20,6 +20,14 @@ npm install -g @openai/codex
 codex --version
 ```
 
+## When a model is missing
+
+Happier gets the model picker from the Codex app-server on the selected machine. The Codex version on that machine can differ from the version on your current device or the version bundled with your ChatGPT desktop app. In the machine details, open **Detected CLIs** to check the installed Codex path and version.
+
+When you start a new session with **Use CLI settings**, Happier can warn if live model discovery for the launch directory completed while the setup screen was open and the catalog omits the configured model. Starting a session never waits for this check. Go back and choose a listed model, or update the Codex installation on the target machine and refresh the model picker. The catalog shows what the runtime advertises. A successful turn confirms access for the selected account.
+
+If you connected to an existing shared Codex daemon, run `codex app-server daemon version` on that machine with the same `CODEX_HOME` to check the running version. Update the Codex installation and restart the shared daemon when it is idle before reconnecting.
+
 ## Local authentication in Happier
 
 Codex supports machine-local auth management in:

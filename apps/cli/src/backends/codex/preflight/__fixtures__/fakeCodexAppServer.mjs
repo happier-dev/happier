@@ -114,6 +114,11 @@ rl.on('line', (line) => {
     return;
   }
 
+  if (method === 'config/read' && msg.id !== undefined && process.env.HAPPIER_TEST_CONFIGURED_MODEL) {
+    write({ id: msg.id, result: { config: { model: process.env.HAPPIER_TEST_CONFIGURED_MODEL } } });
+    return;
+  }
+
   if (method === 'collaborationMode/list' && msg.id !== undefined) {
     handleCollaborationModeList(msg);
     return;

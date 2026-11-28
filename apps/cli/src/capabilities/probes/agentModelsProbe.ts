@@ -49,6 +49,7 @@ export type ProbedAgentModelsResult = Readonly<{
   provider: CatalogAgentId;
   availableModels: ReadonlyArray<ProbedAgentModel>;
   supportsFreeform: boolean;
+  configuredModelId?: string;
   source: 'dynamic' | 'static';
   cacheable?: boolean;
   observedAt?: number;
@@ -65,6 +66,7 @@ const agentModelsProbeCache = new AsyncTtlCache<ProbedAgentModelsResult>({
 
 const ProbeModelsObservationSchema = lazySchema(() => z.object({
   availableModels: z.array(z.unknown()),
+  configuredModelId: z.string().trim().min(1).optional(),
   observedAt: z.number().finite().nonnegative().optional(),
   refreshError: z.boolean().optional(),
   source: z.enum(['dynamic', 'static']).optional(),
@@ -467,6 +469,7 @@ export async function probeAgentModelsBestEffort(params: {
   processEnv?: NodeJS.ProcessEnv;
   connectedServiceSelectionCacheKey?: string | null;
   bypassCache?: boolean;
+  includeConfiguredModel?: boolean;
   signal?: AbortSignal;
   deadlineAt?: number;
   onNativeCleanup?: import('./catalogProbeLifecycle').RegisterNativeCatalogCleanup;
@@ -498,14 +501,15 @@ export async function probeAgentModelsBestEffort(params: {
     : null;
   const usesProviderOwnedCache = preflightModelsAdapter?.modelProbeCachePolicy === 'provider-owned';
 
+  const needsLiveProbe = params.bypassCache || params.includeConfiguredModel;
   const cached = agentModelsProbeCache.get(cacheKey);
-  if (!params.bypassCache && !usesProviderOwnedCache && cached?.kind === 'success' && agentModelsProbeCache.isFresh(cached, nowMs)) return cached.value;
+  if (!needsLiveProbe && !usesProviderOwnedCache && cached?.kind === 'success' && agentModelsProbeCache.isFresh(cached, nowMs)) return cached.value;
 
   const runProbe = async (): Promise<ProbedAgentModelsResult> => {
     params.signal?.throwIfAborted();
     const cached2 = agentModelsProbeCache.get(cacheKey);
     const nowMs2 = Date.now();
-    if (!params.bypassCache && !usesProviderOwnedCache && cached2?.kind === 'success' && agentModelsProbeCache.isFresh(cached2, nowMs2)) return cached2.value;
+    if (!needsLiveProbe && !usesProviderOwnedCache && cached2?.kind === 'success' && agentModelsProbeCache.isFresh(cached2, nowMs2)) return cached2.value;
 
     const fallback = buildStatic(params.agentId);
     const failedResult = (): ProbedAgentModelsResult => {
@@ -561,11 +565,13 @@ export async function probeAgentModelsBestEffort(params: {
     }
 
     if (preflightModelsAdapter?.probeModelsRaw) {
-      let provenance: { observedAt?: number; refreshError?: boolean; source?: 'dynamic' | 'static' } = {};
+      let provenance: Pick<ProbedAgentModelsResult, 'configuredModelId' | 'observedAt' | 'refreshError'>
+        & { source?: ProbedAgentModelsResult['source'] } = {};
       const probePreflightModelsOnce = async (): Promise<ProbedAgentModel[] | null> => {
         const modelsRaw = await preflightModelsAdapter.probeModelsRaw!({
           backendTarget: params.backendTarget,
           bypassCache: params.bypassCache,
+          includeConfiguredModel: params.includeConfiguredModel,
           cwd,
           timeoutMs,
           deadlineAt: params.deadlineAt,
@@ -580,6 +586,7 @@ export async function probeAgentModelsBestEffort(params: {
         const envelope = ProbeModelsObservationSchema.safeParse(modelsRaw);
         if (envelope.success) {
           provenance = {
+            ...(envelope.data.configuredModelId ? { configuredModelId: envelope.data.configuredModelId } : {}),
             ...(envelope.data.observedAt !== undefined ? { observedAt: envelope.data.observedAt } : {}),
             ...(envelope.data.refreshError !== undefined ? { refreshError: envelope.data.refreshError } : {}),
             ...(envelope.data.source ? { source: envelope.data.source } : {}),
@@ -600,16 +607,18 @@ export async function probeAgentModelsBestEffort(params: {
           && cached2?.kind === 'success' && cached2.value.source === 'dynamic') {
           return failedResult();
         }
+        const { configuredModelId, ...catalogProvenance } = provenance;
         const res: ProbedAgentModelsResult = {
           ...fallback, availableModels: models, source: 'dynamic',
-          ...(provenance.source !== 'static' ? { observedAt: Date.now() } : {}),
-          ...provenance,
-          ...(provenance.refreshError ? { cacheable: false } : {}),
+          ...(catalogProvenance.source !== 'static' ? { observedAt: Date.now() } : {}),
+          ...catalogProvenance,
+          ...(catalogProvenance.refreshError ? { cacheable: false } : {}),
         };
         if (!usesProviderOwnedCache) {
           agentModelsProbeCache.setSuccess(cacheKey, res, { nowMs: nowMs2, ttlMs: provenance.refreshError ? PROBE_MODELS_FAILURE_TTL_MS : PROBE_MODELS_SUCCESS_TTL_MS });
         }
-        return res;
+        return params.includeConfiguredModel && configuredModelId && !res.refreshError && res.source === 'dynamic'
+          ? { ...res, configuredModelId } : res;
       }
       // A raw hook owns the provider's complete discovery and any runtime-specific
       // fallback. Failure must not silently start a second catalog observation.
@@ -693,7 +702,8 @@ export async function probeAgentModelsBestEffort(params: {
     }
   };
 
-  const result = usesProviderOwnedCache || params.signal
+  // A configured-model observation cannot share an ordinary catalog probe.
+  const result = usesProviderOwnedCache || params.signal || params.includeConfiguredModel
     ? await runProbe()
     : await agentModelsProbeCache.runDedupe(cacheKey, runProbe);
   return usesProviderOwnedCache ? { ...result, cacheable: false } : result;

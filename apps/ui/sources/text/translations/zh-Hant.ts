@@ -4879,6 +4879,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     },
 
   newSession: {
+    modelMissingFromCatalogTitle: "Codex 清單中缺少已設定的模型",
+    modelMissingFromCatalogMessage: ({ model }: { model: string }) => `Codex 的模型清單中沒有 CLI 設定中指定的 ${model}。請返回並選擇清單中的模型，或在所選裝置上更新 Codex。`,
     terminalHostUnavailableTitle: '終端宿主無法使用',
     terminalHostUnavailableBody: ({ host }: { host: string }) => `請在此裝置上安裝或更新 ${host} 並重新啟動其伺服器，或選擇其他終端宿主。草稿已保留。`,
     ...newSessionMcpTranslationExtension,

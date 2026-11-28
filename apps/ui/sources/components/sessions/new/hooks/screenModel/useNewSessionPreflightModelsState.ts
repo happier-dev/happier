@@ -8,7 +8,7 @@ import {
 
 import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
 import { resolveProviderAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
-import { discoverMachineModels } from '@/sync/ops/modelDiscovery';
+import { discoverMachineModels, type LaunchModelAdvisoryTarget } from '@/sync/ops/modelDiscovery';
 import { getModelOptionsForAgentTypeOrPreflight, type PreflightModelList } from '@/sync/domains/models/modelOptions';
 import { buildDynamicModelProbeCacheKey } from '@/sync/domains/models/dynamicModelProbeCacheKey';
 import {
@@ -28,6 +28,7 @@ import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 
 export function useNewSessionPreflightModelsState(params: Readonly<{
     enabled?: boolean;
+    observeConfiguredModel?: boolean;
     backendTarget: BackendTargetRefV1;
     selectedMachineId: string | null;
     capabilityServerId: string;
@@ -38,6 +39,7 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
 }>): Readonly<{
     preflightModels: PreflightModelList | null;
     preflightModelsTargetKey: string | null;
+    readMissingConfiguredModel: (target: LaunchModelAdvisoryTarget) => string | null;
     modelOptions: ReturnType<typeof getModelOptionsForAgentTypeOrPreflight>;
     probe: Readonly<{
         phase: 'idle' | 'loading' | 'refreshing';
@@ -58,7 +60,9 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
     const lastCacheKeyRef = React.useRef<string | null>(null);
     const staticFallbackRetryRef = React.useRef<Readonly<{ scopeKey: string | null; attempts: number }> | null>(null);
 
+    const missingConfiguredModel = React.useRef<{ key: string; modelId: string; list: PreflightModelList } | null>(null);
     const onRefresh = React.useCallback(() => {
+        missingConfiguredModel.current = null;
         setRefreshNonce((n) => n + 1);
     }, []);
 
@@ -105,6 +109,12 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
         [probeContextCacheKeySuffixParts, profileId],
     );
 
+    const modelProbeParams = React.useMemo(() => ({
+        timeoutMs: NEW_SESSION_CAPABILITY_PROBE_TIMEOUT_MS,
+        ...(profileId ? { profileId } : {}),
+        ...probeContextCapabilityParams,
+        ...(connectedServices ? { connectedServices } : {}),
+    }), [profileId, probeContextCapabilityParams, connectedServices]);
     const preflightModelsKey = React.useMemo(() => {
         return buildDynamicModelProbeCacheKey({
             machineId: params.selectedMachineId,
@@ -116,7 +126,18 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
         });
     }, [backendTargetKey, params.capabilityServerId, params.cwd, params.selectedMachineId, probeCacheKeySuffixParts, connectedServicesKey]);
 
+    const cwd = params.cwd?.trim() ?? '';
+    const { capabilityServerId, selectedMachineId, observeConfiguredModel } = params;
+    const readMissingConfiguredModel = React.useCallback((target: LaunchModelAdvisoryTarget): string | null => {
+        const observation = missingConfiguredModel.current;
+        return params.enabled !== false && observeConfiguredModel && observation?.key === preflightModelsKey
+            && observation.list === preflightModelsRef.current
+            && target.cwd === cwd && target.serverId === capabilityServerId && target.machineId === selectedMachineId
+            ? observation.modelId : null;
+    }, [capabilityServerId, cwd, observeConfiguredModel, params.enabled, preflightModelsKey, selectedMachineId]);
+
     React.useEffect(() => {
+        missingConfiguredModel.current = null;
         const core = getAgentCore(agentType);
         if (!preflightModelsKey || core.model.dynamicProbe === 'static-only' || core.model.supportsSelection !== true) {
             setPreflightModels(null);
@@ -135,6 +156,10 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
         const scopeStable = lastCacheKeyRef.current === preflightModelsKey;
         lastCacheKeyRef.current = preflightModelsKey;
         const applyEntry = (entry: DynamicModelProbeCacheEntry | null) => {
+            if (entry?.kind !== 'success' || entry.errorUpdatedAt !== undefined
+                || entry.value !== missingConfiguredModel.current?.list) {
+                missingConfiguredModel.current = null;
+            }
             if (entry?.kind === 'success') {
                 setPreflightModels(entry.value);
                 preflightModelsRef.current = entry.value;
@@ -184,7 +209,6 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
             scheduleRetry(cacheEntry);
         } else {
             setProbePhase(preflightModelsRef.current ? 'refreshing' : 'loading');
-            const cwd = typeof params.cwd === 'string' ? params.cwd.trim() : '';
             void discoverMachineModels({
                 cacheKey: preflightModelsKey,
                 agentType,
@@ -192,16 +216,17 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
                 serverId: params.capabilityServerId,
                 backendTarget,
                 bypassCache: force,
+                includeConfiguredModel: observeConfiguredModel && cwd !== '',
                 capabilityParams: {
-                    timeoutMs: NEW_SESSION_CAPABILITY_PROBE_TIMEOUT_MS,
-                    ...(profileId ? { profileId } : {}),
-                    ...probeContextCapabilityParams,
-                    ...(connectedServices ? { connectedServices } : {}),
+                    ...modelProbeParams,
                     ...(cwd ? { cwd } : {}),
                 },
-            }).then((entry) => {
+            }).then(({ entry, missingConfiguredModelId }) => {
                 if (cancelled) return;
                 applyEntry(entry);
+                if (missingConfiguredModelId && entry?.kind === 'success') {
+                    missingConfiguredModel.current = { key: preflightModelsKey, modelId: missingConfiguredModelId, list: entry.value };
+                }
                 setProbePhase('idle');
                 if (dynamicModelProbeRetryAt(entry) === null) staticFallbackRetryRef.current = null;
                 scheduleRetry(entry);
@@ -212,7 +237,7 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
             unsubscribe();
             if (retryTimeout) clearTimeout(retryTimeout);
         };
-    }, [agentType, backendTarget, backendTargetKey, preflightModelsKey, params.enabled, params.capabilityServerId, params.cwd, params.selectedMachineId, profileId, refreshNonce, retryNonce, probeContextCapabilityParams, connectedServices]);
+    }, [agentType, backendTarget, backendTargetKey, preflightModelsKey, params.enabled, capabilityServerId, cwd, selectedMachineId, observeConfiguredModel, refreshNonce, retryNonce, modelProbeParams]);
 
     const hasCurrentIdentity = lastCacheKeyRef.current === preflightModelsKey;
     const currentModels = hasCurrentIdentity ? preflightModels : null;
@@ -228,5 +253,11 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
         ...(dynamicProbeEnabled && preflightModelsKey && params.enabled !== false ? { onRefresh } : {}),
     }), [hasCurrentIdentity, probePhase, refreshedAt, probeError, dynamicProbeEnabled, preflightModelsKey, params.enabled, onRefresh]);
 
-    return { preflightModels: currentModels, preflightModelsTargetKey: currentModels ? preflightModelsTargetKey : null, modelOptions, probe };
+    return {
+        preflightModels: currentModels,
+        preflightModelsTargetKey: currentModels ? preflightModelsTargetKey : null,
+        readMissingConfiguredModel,
+        modelOptions,
+        probe,
+    };
 }

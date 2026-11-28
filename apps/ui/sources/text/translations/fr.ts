@@ -5047,6 +5047,8 @@ export const fr: TranslationStructure = {
     },
 
     newSession: {
+        modelMissingFromCatalogTitle: "Le modèle configuré ne figure pas dans la liste Codex",
+        modelMissingFromCatalogMessage: ({ model }: { model: string }) => `La liste des modèles de Codex ne contient pas ${model}, le modèle défini dans les paramètres de la CLI. Reviens en arrière pour choisir un modèle de la liste ou mets à jour Codex sur la machine sélectionnée.`,
       terminalHostUnavailableTitle: "Hôte de terminal indisponible",
       terminalHostUnavailableBody: ({ host }: { host: string }) => `Installez ou mettez à jour ${host} et redémarrez son serveur sur cette machine, ou choisissez un autre hôte de terminal. Votre brouillon est conservé.`,
         ...newSessionMcpTranslationExtension,

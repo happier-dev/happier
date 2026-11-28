@@ -5400,6 +5400,8 @@ export const es: TranslationStructure = {
   },
 
   newSession: {
+    modelMissingFromCatalogTitle: "El modelo configurado no aparece en la lista de Codex",
+    modelMissingFromCatalogMessage: ({ model }: { model: string }) => `La lista de modelos de Codex no incluye ${model}, el modelo elegido en la configuración de la CLI. Vuelve atrás para elegir un modelo de la lista o actualiza Codex en la máquina seleccionada.`,
     terminalHostUnavailableTitle: "Host de terminal no disponible",
     terminalHostUnavailableBody: ({ host }: { host: string }) => `Instala o actualiza ${host} y reinicia su servidor en esta máquina, o elige otro host de terminal. Se conserva tu borrador.`,
     ...newSessionMcpTranslationExtension,

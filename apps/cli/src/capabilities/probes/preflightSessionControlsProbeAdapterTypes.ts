@@ -24,6 +24,7 @@ export type PreflightSessionControlsProbeParams = Readonly<{
   /** Private host lifecycle hook: register only cleanup of resources actually acquired. */
   onNativeCleanup?: RegisterNativeCatalogCleanup;
   bypassCache?: boolean;
+  includeConfiguredModel?: boolean;
   profileId?: string | null;
   accountSettings?: Readonly<Record<string, unknown>> | null;
   credentials?: Credentials | null;

@@ -69,6 +69,7 @@ async function withProbeFixture(
               HAPPIER_CODEX_APP_SERVER_BIN: nativeFixture,
               HAPPIER_FAKE_CODEX_APP_SERVER_DELAY_MS: '1',
               HAPPIER_TEST_CONTROL_PROCESS_CAPTURE_FILE: capturePath,
+              HAPPIER_TEST_CONFIGURED_MODEL: 'fixture-default',
             },
             ...params,
           },
@@ -103,6 +104,17 @@ describe('capabilities.invoke control probes through the real catalog and native
     await withProbeFixture(async ({ cwd, capturePath, invoke }) => {
       expectObservedControls(await invoke(method, { cwd: join(cwd, 'missing', 'child'), timeoutMs: 1234 }), method);
       expect(JSON.parse(await readFile(capturePath, 'utf8'))).toMatchObject({ cwd, rpcTimeoutMs: 1034 });
+    });
+  });
+
+  it('reports the configured model only when discovery used the requested directory', async () => {
+    await withProbeFixture(async ({ cwd, invoke }) => {
+      await expect(invoke('probeModels', { includeConfiguredModel: true })).resolves.toMatchObject({
+        ok: true, result: { configuredModelId: 'fixture-default' },
+      });
+      const fallback = await invoke('probeModels', { includeConfiguredModel: true, cwd: join(cwd, 'missing') });
+      expectObservedControls(fallback, 'probeModels');
+      expect(fallback).not.toHaveProperty('result.configuredModelId');
     });
   });
 

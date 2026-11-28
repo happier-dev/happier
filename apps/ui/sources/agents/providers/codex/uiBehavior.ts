@@ -140,6 +140,7 @@ export const CODEX_UI_BEHAVIOR_OVERRIDE: AgentUiBehavior = {
         ],
     },
     newSession: {
+        observeConfiguredModel: true,
         getPreflightIssues: getCodexNewSessionPreflightIssues,
         getRelevantInstallableDepKeys: getCodexNewSessionRelevantInstallableDepKeys,
     },

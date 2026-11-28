@@ -5685,6 +5685,8 @@ localTailscale: {
   },
 
   newSession: {
+    modelMissingFromCatalogTitle: "設定したモデルが Codex の一覧にありません",
+    modelMissingFromCatalogMessage: ({ model }: { model: string }) => `CLI 設定で指定した ${model} が Codex のモデル一覧にありません。戻って一覧からモデルを選ぶか、選択したマシンの Codex を更新してください。`,
     terminalHostUnavailableTitle: "ターミナルホストを利用できません",
     terminalHostUnavailableBody: ({ host }: { host: string }) => `このマシンで ${host} をインストールまたは更新してサーバーを再起動するか、別のターミナルホストを選択してください。下書きは保持されます。`,
     ...newSessionMcpTranslationExtension,
