@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { RegistryCatalogItemSummary } from '@/registries/registryBrandMark';
 import { useAppList, useDeploymentStarterList, type useStarterList } from '@/components/store/catalog/storeRegistryLists';
@@ -264,6 +264,21 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   const appCatalog = useAppList({ query: search }, { presented: step === 'start' });
   // An app chosen in Browse all apps comes back as a tile here, selected, even when it is not among the first apps.
   const [chosenCatalogApp, setChosenCatalogApp] = React.useState<RegistryCatalogItemSummary | null>(null);
+  // Back from the chooser the chosen tile is brought into view: on a phone the catalog sits below the fold.
+  const [revealChosenApp, setRevealChosenApp] = React.useState(0);
+  const bodyScrollRef = React.useRef<ScrollView>(null);
+  const bodyContentRef = React.useRef<View>(null);
+  const catalogTilesRef = React.useRef<View>(null);
+  React.useEffect(() => {
+    if (revealChosenApp === 0) return;
+    const frame = requestAnimationFrame(() => {
+      const content = bodyContentRef.current;
+      const scroller = bodyScrollRef.current;
+      if (!content || !scroller || !catalogTilesRef.current) return;
+      catalogTilesRef.current.measureLayout(content, (_x, y) => scroller.scrollTo({ y: Math.max(0, y - theme.space.s24), animated: true }));
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [revealChosenApp, theme.space.s24]);
   const catalogApps = React.useMemo(() => {
     const first = appCatalog.items.slice(0, CATALOG_TILES);
     if (!chosenCatalogApp || first.some((item) => catalogDoor(item) === catalogDoor(chosenCatalogApp))) return first;
@@ -389,6 +404,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
       onChoose: (item) => {
         setChosenCatalogApp(item);
         chooseDoor(catalogDoor(item));
+        setRevealChosenApp((count) => count + 1);
       },
     });
   };
@@ -858,7 +874,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
             >
               <NewAppCatalogReadFailure read={appCatalog} hasVisibleItems={catalogTiles.length > 0} testID="newApp.appCatalogFailure" />
               {catalogTiles.length > 0 ? (
-                <View>
+                <View ref={catalogTilesRef} collapsable={false}>
                   <SelectionTiles
                     density="compact"
                     // One rhythm: two columns in every section of the dialog (journey-deploy jdF-src).
@@ -1221,7 +1237,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
           The auto step's catalog read waits on the same sources, so it keeps them read. */}
       <PluginSurfaceProjectionDemand accountScope={scope} presents="allInstallations" sections={REGISTRY_SOURCE_PROJECTION_SECTIONS}
         enabled={step === 'start' || step === 'auto'} />
-      <ItemList testID="newApp.body" style={styles.list}>
+      <ItemList ref={bodyScrollRef} innerViewRef={bodyContentRef} testID="newApp.body" style={styles.list}>
         {body}
       </ItemList>
       {dialog || (!primary && !autoSecondary && !making) ? null : (
