@@ -9,7 +9,7 @@ import { isRecord } from '@happier-dev/protocol/common/records';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { DeploymentEnvironmentContentV1, DeploymentTargetLinkContentV1 } from '@happier-dev/deployments/contracts/v1';
-import type { DeploymentDomainContentV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
+import type { DeploymentDomainAddressOfferResultV1, DeploymentDomainContentV1, DeploymentDomainDnsComparisonV1, DeploymentDomainDnsPreviewResultV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import type {
   DeploymentReadControllerV1,
   DeploymentReadDemandV1,
@@ -47,11 +47,13 @@ import { DeploymentDomainsList, projectDeploymentBuiltInAddresses, type Deployme
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { Modal } from '@/modal';
 import { inlineAddDraftKey, INLINE_ADD_OPEN, useInlineAddDraftField } from './inlineAddDraft';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { DomainDnsComparison } from './DomainDnsComparison';
 
 type DomainActions = Pick<
   ReturnType<typeof createDeploymentActions>,
   'addDomain' | 'removeDomain' | 'verifyDomain'
-> & Partial<Pick<ReturnType<typeof createDeploymentActions>, 'setBindings' | 'previewDomainDns' | 'createDomainDns'>>
+> & Partial<Pick<ReturnType<typeof createDeploymentActions>, 'setBindings' | 'previewDomainDns' | 'offerDomainAddress' | 'createDomainDns'>>
   & Readonly<{ inspectPlatformTarget?: DomainIngressInspection }>;
 type EnvironmentContent = DeploymentEnvironmentContentV1;
 /** Where visitors reach a new address: the Environment's own Caddy, or a Cloudflare tunnel. */
@@ -186,8 +188,13 @@ export function DeploymentDomainsPanel(
     if (!editing) return;
     const input = domainOperands(props.environmentId, editing, item);
     if (item.content.hostname !== null) {
-      await press(() => editing.actions.verifyDomain(input));
-      return;
+      let evidence: { revision: number; comparison: DeploymentDomainDnsComparisonV1 } | undefined;
+      await press(async () => {
+        const result = await editing.actions.verifyDomain(input);
+        if (result.ok && result.dnsComparison) evidence = { revision: result.domain.revision, comparison: result.dnsComparison };
+        return result;
+      });
+      return evidence;
     }
     const assignedHostname = (await Modal.prompt(t('projects.deployments.domainAddressAssigned'), undefined, {
       placeholder: t('projects.deployments.domainFieldHost'),
@@ -296,10 +303,15 @@ export function DeploymentDomainsPanel(
           onCancel={() => setAdding(false)}
           checkDns={editing.actions.previewDomainDns ? async (content) => {
             const link = editing.targetLink!;
-            const result = await editing.actions.previewDomainDns!({ environmentId: props.environmentId,
+            return editing.actions.previewDomainDns!({ environmentId: props.environmentId,
               expectedRevision: editing.environmentRevision, targetLinkId: link.id,
               expectedTargetLinkRevision: link.revision, content });
-            return projectDeploymentDomainDnsReadinessV1(result.dnsHealth);
+          } : undefined}
+          offerAddress={editing.actions.offerDomainAddress ? async (target) => {
+            const link = editing.targetLink!;
+            return editing.actions.offerDomainAddress!({ environmentId: props.environmentId,
+              expectedRevision: editing.environmentRevision, targetLinkId: link.id,
+              expectedTargetLinkRevision: link.revision, content: { hostname: null, target } });
           } : undefined}
           onAdd={async (content) => {
             const link = editing.targetLink!;
@@ -456,13 +468,15 @@ function DomainAddForm(
     notice: React.ReactNode;
     onCancel: () => void;
     /** The native DNS check of this exact draft (verify Action, preview mode); absent where the route is not native. */
-    checkDns?: (content: DeploymentDomainContentV1) => Promise<DeploymentDomainDnsReadinessV1>;
+    checkDns?: (content: DeploymentDomainContentV1) => Promise<DeploymentDomainDnsPreviewResultV1>;
+    offerAddress?: (target: { service: string; containerPort: number }) => Promise<DeploymentDomainAddressOfferResultV1['addressOffer']>;
     onAdd: (content: DeploymentDomainContentV1) => void | Promise<void>;
   }>,
 ) {
   const [addressKind, setAddressKind] = useInlineAddDraftField<'custom' | 'assigned'>(props.draftKey, 'addressKind', 'custom');
   const assigned = props.generatedDomains && addressKind === 'assigned';
   const [hostname, setHostname] = useInlineAddDraftField(props.draftKey, 'hostname', '');
+  const [generatedHostname, setGeneratedHostname] = useInlineAddDraftField<string | null>(props.draftKey, 'generatedHostname', null);
   const host = hostname.trim().toLowerCase();
   const [committedHostname, setCommittedHostname] = React.useState(host);
   const initialService = props.services.length === 0 || props.services.includes(props.initialService ?? '')
@@ -508,6 +522,7 @@ function DomainAddForm(
   });
   const containerPort = Number(port);
   const portValid = /^\d+$/.test(port) && containerPort >= 1 && containerPort <= 65535;
+  const offerAddress = !provider && !needsSelection ? props.offerAddress : undefined;
   const routePath = path.trim();
   // The outside check is optional: left empty, the Domain owner checks / and accepts any answer below 500.
   const checkPathText = checkPath.trim();
@@ -540,6 +555,7 @@ function DomainAddForm(
     if (!checkValid || !(service.trim().length > 0 && portValid && pathValid && (!needsSelection || !!ingress))) return null;
     return {
       hostname: host,
+      ...(offerAddress && host === generatedHostname ? { addressKind: 'generatedCaddy' as const } : {}),
       target: {
         service: service.trim(),
         containerPort,
@@ -598,7 +614,7 @@ function DomainAddForm(
           <FieldTextInput
             testID="project-deployments.environment.domains.add.host"
             value={hostname}
-            onChangeText={setHostname}
+            onChangeText={next => { setGeneratedHostname(null); setHostname(next); }}
             onBlur={() => setCommittedHostname(host)}
             autoCapitalize="none"
             autoFocus
@@ -668,6 +684,9 @@ function DomainAddForm(
             />}
           </FieldItem>
         </View>
+        {offerAddress ? <GeneratedDomainOffer key={JSON.stringify([service, containerPort])}
+          busy={props.busy || !portValid || !service.trim()} request={() => offerAddress({ service: service.trim(), containerPort })}
+          choose={value => { setHostname(value); setGeneratedHostname(value); setCommittedHostname(value); }} /> : null}
         {/* The simple link flow is address, where it reaches and the app (TUNNEL-LIVE-1119): path, redirect, access and the
             outside check all have defaults, so they wait under Advanced; check page and status share one line. */}
         <ExpandableItem testID="project-deployments.environment.domains.add.advanced" expanded={advanced} onExpandedChange={setAdvanced}
@@ -829,7 +848,7 @@ function DomainDnsRecordsForm(props: Readonly<{
 
 type DnsCheck = Readonly<{ key: string }> & (
   | Readonly<{ status: 'checking' }>
-  | Readonly<{ status: 'checked'; readiness: DeploymentDomainDnsReadinessV1 }>
+  | Readonly<{ status: 'checked'; readiness: DeploymentDomainDnsReadinessV1; comparison?: DeploymentDomainDnsComparisonV1 }>
   | Readonly<{ status: 'failed'; code: string }>
 );
 
@@ -840,7 +859,7 @@ type DnsCheck = Readonly<{ key: string }> & (
 function DomainDnsCheck(props: Readonly<{
   content: DeploymentDomainContentV1;
   machine: string;
-  check: (content: DeploymentDomainContentV1) => Promise<DeploymentDomainDnsReadinessV1>;
+  check: (content: DeploymentDomainContentV1) => Promise<DeploymentDomainDnsPreviewResultV1>;
 }>) {
   const { content, check } = props;
   const key = JSON.stringify(content);
@@ -848,7 +867,8 @@ function DomainDnsCheck(props: Readonly<{
   const run = React.useCallback(() => {
     setResult({ key, status: 'checking' });
     const settle = (next: DnsCheck) => setResult(previous => previous?.key === key ? next : previous);
-    check(content).then(readiness => settle({ key, status: 'checked', readiness }),
+    check(content).then(value => settle({ key, status: 'checked', readiness: projectDeploymentDomainDnsReadinessV1(value.dnsHealth),
+      comparison: value.dnsComparison }),
       (error: unknown) => settle({ key, status: 'failed', code: readDiagnosticCode(error) }));
   }, [check, content, key]);
   const current = result?.key === key ? result : null;
@@ -859,23 +879,59 @@ function DomainDnsCheck(props: Readonly<{
   if (current?.status === 'checking')
     return <SurfaceStateCard testID={`${testID}.checking`} kind="loading" size="line" title={t('projects.deployments.domainDnsUnchecked', vars)} />;
   const state = current?.status === 'failed' ? 'unavailable' : current?.readiness.state ?? 'not_checked';
+  const comparison = current?.status === 'checked' ? current.comparison : undefined;
+  const mismatch = current?.status === 'checked' && current.readiness.reason === 'dns_mismatch';
+  const comparisonDetails = mismatch || comparison?.expectedIpv4 === null
+    ? <DomainDnsComparison mismatch={mismatch} comparison={comparison} generated={content.addressKind === 'generatedCaddy'} />
+    : null;
+  const withComparison = (status: React.ReactNode) => comparisonDetails
+    ? <View style={styles.form}>{status}{comparisonDetails}</View> : status;
   switch (state) {
     case 'missing':
-      return <SurfaceStateCard testID={`${testID}.missing`} kind="warning" size="line" title={t('projects.deployments.domainDnsMissing', { host })}
-        reason={t('projects.deployments.domainDnsMissingBody', { machine: props.machine })} action={again} />;
+      return withComparison(<SurfaceStateCard testID={`${testID}.missing`} kind="warning" size="line" title={t('projects.deployments.domainDnsMissing', { host })}
+        reason={t('projects.deployments.domainDnsMissingBody', { machine: props.machine })} action={again} />);
     case 'not_this_machine':
-      return <SurfaceStateCard testID={`${testID}.elsewhere`} kind="warning" size="line" title={t('projects.deployments.domainDnsElsewhere', vars)}
-        reason={t('projects.deployments.domainDnsElsewhereBody', { machine: props.machine })} action={again} />;
+      return withComparison(<SurfaceStateCard testID={`${testID}.elsewhere`} kind="warning" size="line" title={t('projects.deployments.domainDnsElsewhere', vars)}
+        reason={mismatch ? undefined : t('projects.deployments.domainDnsElsewhereBody', { machine: props.machine })} action={again} />);
     case 'ready':
-      return <SurfaceStateCard testID={`${testID}.ready`} kind="success" size="line" title={t('projects.deployments.domainDnsReady', vars)} action={again} />;
+      return withComparison(<SurfaceStateCard testID={`${testID}.ready`} kind="success" size="line" title={t('projects.deployments.domainDnsReady', vars)} action={again} />);
     case 'unavailable':
-      return <SurfaceStateCard testID={`${testID}.unavailable`} kind="unavailable" size="line" title={t('projects.deployments.domainDnsUnavailable', { host })}
+      return withComparison(<SurfaceStateCard testID={`${testID}.unavailable`} kind="unavailable" size="line" title={t('projects.deployments.domainDnsUnavailable', { host })}
         diagnosticCode={current?.status === 'failed' ? current.code : current?.status === 'checked' ? current.readiness.reason ?? undefined : undefined}
-        action={again} />;
+        action={again} />);
     default:
       return <SurfaceStateCard testID={`${testID}.unchecked`} kind="empty" size="line" title={t('projects.deployments.domainDnsUnchecked', vars)}
         action={{ label: t('projects.deployments.domainDnsCheck'), onPress: run, testID: `${testID}.action` }} />;
   }
+}
+
+function GeneratedDomainOffer(props: Readonly<{
+  busy: boolean;
+  request: () => Promise<DeploymentDomainAddressOfferResultV1['addressOffer']>;
+  choose: (hostname: string) => void;
+}>) {
+  const [offer, setOffer] = React.useState<DeploymentDomainAddressOfferResultV1['addressOffer']>();
+  const [loading, setLoading] = React.useState(false);
+  const [failure, setFailure] = React.useState<string>();
+  const id = 'project-deployments.environment.domains.add.offer';
+  const ask = async () => {
+    setLoading(true);
+    setFailure(undefined);
+    try { setOffer(await props.request()); }
+    catch (error) { setFailure(readDiagnosticCode(error)); }
+    finally { setLoading(false); }
+  };
+  return <View style={styles.form}>
+    {offer?.status !== 'available' ? <RoundButton testID={id} size="small" display="secondary"
+      title={t('projects.deployments.editors.domainGenerateAddress')} disabled={props.busy || loading} onPress={() => void ask()} /> : null}
+    {offer?.status === 'available' ? <>
+      <Text variant="meta">{t('projects.deployments.editors.domainGeneratedCaveat')}</Text>
+      {offer.choices.map(({ hostname, ingressIpv4 }) => <Item key={hostname} title={hostname} subtitle={ingressIpv4}
+        testID={`${id}.${ingressIpv4}`} onPress={() => { props.choose(hostname); setOffer(undefined); }} />)}
+    </> : null}
+    {offer?.status === 'unavailable' || failure ? <SurfaceStateCard kind="unavailable" size="line"
+      title={t('projects.deployments.editors.domainGeneratedUnavailable')} diagnosticCode={failure} /> : null}
+  </View>;
 }
 
 function readDiagnosticCode(error: unknown): string {

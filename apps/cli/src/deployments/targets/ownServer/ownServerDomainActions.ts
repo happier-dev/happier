@@ -14,7 +14,8 @@ import {
 } from '@happier-dev/protocol';
 import { DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import {
-    DeploymentDomainObservationV1Schema, DeploymentDomainTransitionInputV1Schema,
+    DeploymentDomainMutationResultV1Schema, DeploymentDomainObservationV1Schema, DeploymentDomainTransitionInputV1Schema, DeploymentDomainVerifyChildResultV1Schema,
+    type DeploymentDomainDnsComparisonV1,
     DeploymentDomainMachineTopologyV1Schema, type DeploymentDomainHeaderV1, type DeploymentDomainTopologyV1,
 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentDomainReviewChildRpcV1Schema, type DeploymentDomainReviewChildRpcV1 } from '@happier-dev/protocol/deployments/deploymentChildRpcV1';
@@ -599,6 +600,7 @@ export function createOwnServerDomainActions(host: Readonly<{
                 // Retire a changed route before replacing the same exact native id.
                 // Both effects spend the captured admission, not another Action.
                 const observations = [];
+                let dnsComparison: DeploymentDomainDnsComparisonV1 | undefined;
                 for (const capture of [...captures.filter(capture => !capture.desired), ...captures.filter(capture => capture.desired)]) {
                     context.signal?.throwIfAborted();
                     const cloudflareConnector = privateContent && cloudflareDomainConnectorForTarget(privateContent, capture.placement);
@@ -617,6 +619,14 @@ export function createOwnServerDomainActions(host: Readonly<{
                             'failureCause' in result ? result.failureCause : undefined,
                             'effectAttempted' in result ? result.effectAttempted : undefined,
                             { ...nativeScope, tunnelId: undefined, machineId: capture.placement.machineId });
+                    if (actionId === 'deployments.domains.verify') {
+                        const observation = DeploymentDomainVerifyChildResultV1Schema.safeParse(result);
+                        if (!observation.success) return failure('invalid_action_transport_output');
+                        const { dnsComparison: comparison, ...semantic } = observation.data;
+                        if (capture.desired && capture.listener === 'public') dnsComparison = comparison;
+                        observations.push(semantic);
+                        continue;
+                    }
                     const observation = DeploymentDomainObservationV1Schema.safeParse(result);
                     if (!observation.success) return failure('invalid_action_transport_output');
                     observations.push(observation.data);
@@ -635,7 +645,7 @@ export function createOwnServerDomainActions(host: Readonly<{
                 issued = true;
                 const response = await axios.request<unknown>({ method: 'POST', url: `${host.serverHttpBaseUrl}${path}`,
                     headers, data: body, ...(context.signal ? { signal: context.signal } : {}), validateStatus: () => true });
-                const settled = DeploymentActionOutputSchemasV1[actionId].safeParse(response.data);
+                const settled = DeploymentDomainMutationResultV1Schema.safeParse(response.data);
                 if (!settled.success) return failure('outcome_unknown', nativeScope);
                 if (settled.data.ok && isDeploymentDomainAddActionIdV1(actionId)) {
                     const refused = observations.find(({ capture, networkExposure }) => capture.desired
@@ -645,7 +655,8 @@ export function createOwnServerDomainActions(host: Readonly<{
                         requiredFact: refused.requiredFact, remedy: refused.remedy,
                     });
                 }
-                return { ...settled.data, ...(settled.data.ok && tunnel ? { tunnel } : {}) };
+                return { ...settled.data, ...(settled.data.ok && tunnel ? { tunnel } : {}),
+                    ...(settled.data.ok && dnsComparison ? { dnsComparison } : {}) };
             } catch (error) {
                 const diagnostic = issued ? projectDeploymentFailure('outcome_unknown', error, 'deployment.domain.native_execution')
                     : projectDeploymentException(error, { signal: context.signal, phase: 'deployment.domain.native_execution' });

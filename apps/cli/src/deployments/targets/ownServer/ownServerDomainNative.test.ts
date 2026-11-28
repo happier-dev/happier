@@ -2,6 +2,7 @@ import axios from 'axios';
 import { createHash } from 'node:crypto';
 import { createDeploymentSourceMaterializationPort } from './exactCommitRelease';
 import { createScmBackendRegistry } from '@/scm/registry';
+import os from 'node:os';
 import { Resolver } from 'node:dns/promises';
 import { spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
@@ -101,6 +102,9 @@ it.each([
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', verify: true, dns: 'unavailable' },
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', verify: true, publicListener: true },
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', verify: true, publicListener: true, dns: 'missing' },
+    { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', verify: true, preview: true, dns: 'mismatch' },
+    { encryptionMode: 'e2ee', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', verify: true, publicListener: true, dns: 'mismatch' },
+    { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', verify: true, preview: true, publicListener: true, offer: true },
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', verify: true, publicListener: true, dns: 'unavailable' },
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', verify: true, publicListener: true, dns: 'ipv6' },
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none' },
@@ -121,13 +125,17 @@ it.each([
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', collectorTopology: 'userspaceAdd' },
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', collectorTopology: 'boundAdd' },
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', collectorTopology: 'userspacePublicAdd', publicListener: true },
-] as const)('settles captured $encryptionMode Domain custody (cutover: $cutover, missing engine: $missingEngine, mismatched engine: $mismatchedEngine, connector: $connectorRetirement, artifact refusal: $artifactRefusal, diagnostic: $diagnostic, Desktop: $desktop, preview: $preview, public: $publicListener, DNS: $dns, collector topology: $collectorTopology)', async scenario => withSocketTempDir(async directory => {
+] as const)('settles captured $encryptionMode Domain custody (cutover: $cutover, missing engine: $missingEngine, mismatched engine: $mismatchedEngine, connector: $connectorRetirement, artifact refusal: $artifactRefusal, diagnostic: $diagnostic, Desktop: $desktop, preview: $preview, public: $publicListener, DNS: $dns, collector topology: $collectorTopology, offer: $offer)', async scenario => withSocketTempDir(async directory => {
     const { encryptionMode, missingEngine, mismatchedEngine, cutover, connectorRetirement } = scenario;
     const verifying = 'verify' in scenario && scenario.verify;
     const preview = 'preview' in scenario && scenario.preview;
     let artifactReads = 0;
     const desktop = 'desktop' in scenario && scenario.desktop;
     const dns = 'dns' in scenario ? scenario.dns : 'ready';
+    const offer = 'offer' in scenario && scenario.offer;
+    vi.spyOn(os, 'networkInterfaces').mockReturnValue(dns === 'mismatch' || offer ? { eth0: [
+        { address: '93.184.216.34', family: 'IPv4', internal: false, netmask: '255.255.255.0', mac: '00:00:00:00:00:00', cidr: '93.184.216.34/24' },
+    ] } : {});
     const publicListener = 'publicListener' in scenario && scenario.publicListener;
     const listener = publicListener ? 'public' as const : 'privateOrigin' as const;
     const collectorTopology = 'collectorTopology' in scenario && scenario.collectorTopology;
@@ -297,7 +305,7 @@ it.each([
             actionOperationId: 'removal-operation', requestId: 'private-deployment-request' };
         const previewInput = { mode: 'preview', serverId: placement.serverId, environmentId: placement.environmentId,
             expectedRevision: environment.environment.revision, targetLinkId: link.id, expectedTargetLinkRevision: link.revision,
-            requestKey: 'preview', content: domain };
+            requestKey: 'preview', content: offer ? { hostname: null, target: domain.target } : domain };
         const job = DeploymentChildRpcV1Schema.parse(preview ? { v: 1, kind: 'domainDns',
             actionId: 'deployments.domains.verify', machineId: placement.machineId, installationId: placement.installationId,
             input: previewInput } : { v: 1, kind: 'domain',
@@ -631,6 +639,27 @@ it.each([
             expect(resolveDns).not.toHaveBeenCalled();
             return;
         }
+        if (offer) {
+            expect(rawResult).toMatchObject({ ok: true, environmentId: placement.environmentId,
+                addressOffer: { status: 'available', audience: 'public', lifetime: 'temporary', choices: [
+                    { hostname: expect.stringMatching(/^[a-z0-9]+\.93-184-216-34\.sslip\.io$/u), ingressIpv4: '93.184.216.34' },
+                ] } });
+            expect(resolveDns).not.toHaveBeenCalled();
+            expect(mutations).toEqual([]);
+            expect(artifactReads).toBe(0);
+            return;
+        }
+        if (dns === 'mismatch') {
+            expect(rawResult).toMatchObject({ dnsComparison: { expectedIpv4: '93.184.216.34',
+                answered: { A: ['192.0.2.1'], AAAA: ['2001:db8::1'] } },
+                dnsHealth: { status: 'down', cause: { kind: 'dns', reason: 'dns_mismatch' } } });
+            const { dnsComparison: _, ...semantic } = rawResult as Record<string, unknown>;
+            expect(JSON.stringify(semantic)).not.toMatch(/93\.184\.216\.34|192\.0\.2\.1|2001:db8::1/);
+            expect(resolveDns).toHaveBeenCalledTimes(2);
+            expect(mutations).toEqual([]);
+            if (!preview) expect(DeploymentDomainObservationV1Schema.parse(semantic).state).toBe('warning');
+            return;
+        }
         if (preview) {
             expect(rawResult).toMatchObject({ ok: true, environmentId: placement.environmentId,
                 dnsHealth: { status: dns === 'missing' ? 'down' : 'unknown', cause: { kind: 'dns',
@@ -661,8 +690,10 @@ it.each([
             return;
         }
         if (verifying) {
-            const observation = DeploymentDomainObservationV1Schema.parse(rawResult);
+            const { dnsComparison, ...semantic } = rawResult as Record<string, unknown>;
+            const observation = DeploymentDomainObservationV1Schema.parse(semantic);
             if (publicListener) {
+                expect(dnsComparison).toMatchObject({ expectedIpv4: null });
                 const status = dns === 'missing' ? 'down' : dns === 'unavailable' ? 'unknown' : 'up';
                 expect(observation).toMatchObject({ state: status === 'up' ? 'active' : 'warning', dnsHealth: { status } });
                 expect(resolveDns).toHaveBeenCalledTimes(2);
@@ -674,6 +705,7 @@ it.each([
                 expect(publicHttpServer.routes).toEqual([material.tls!.redirectRoute]);
                 expect(JSON.stringify(observation.dnsHealth)).not.toMatch(/app\.example\.test|192\.0\.2\.1|2001:db8::1/);
             } else {
+                expect(dnsComparison).toBeUndefined();
                 expect(observation).not.toHaveProperty('dnsHealth');
                 expect(resolveDns).not.toHaveBeenCalled();
                 expect(observation).toMatchObject({ state: 'active' });

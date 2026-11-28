@@ -51,6 +51,11 @@ function answerStrings(value: unknown): readonly string[] {
  * never another source's DNS query. Missing/mismatch differs from unavailable DNS. */
 export async function readDnsHealthCheckV1(check: HealthCheckObservationBasisV1 & HealthCheckDnsConfigV1,
     context: Context): Promise<HealthCheckResultV1> {
+    return (await readDnsAnswerHealthCheckV1(check, context)).health;
+}
+
+export async function readDnsAnswerHealthCheckV1(check: HealthCheckObservationBasisV1 & HealthCheckDnsConfigV1,
+    context: Context): Promise<{ health: HealthCheckResultV1; answers: string[] | null }> {
     context.signal.throwIfAborted();
     const startedAt = context.now();
     const resolver = new Resolver();
@@ -58,10 +63,11 @@ export async function readDnsHealthCheckV1(check: HealthCheckObservationBasisV1 
     context.signal.addEventListener('abort', cancel, { once: true });
     let status: HealthCheckResultV1['status'];
     let reason: string;
+    let answers: string[] | null;
     try {
         const resolved: unknown = await resolver.resolve(check.hostname, check.recordType);
         context.signal.throwIfAborted();
-        const answers = (Array.isArray(resolved) ? resolved : [resolved]).flatMap(answerStrings);
+        answers = (Array.isArray(resolved) ? resolved : [resolved]).flatMap(answerStrings);
         const matched = check.expectedAnswer === undefined || answers.includes(check.expectedAnswer);
         status = answers.length > 0 && matched ? 'up' : 'down';
         reason = answers.length === 0 ? 'dns_missing' : matched ? 'dns_matched' : 'dns_mismatch';
@@ -69,6 +75,7 @@ export async function readDnsHealthCheckV1(check: HealthCheckObservationBasisV1 
         context.signal.throwIfAborted();
         const code = nativeCode(error);
         status = code === 'ENODATA' || code === 'ENOTFOUND' ? 'down' : 'unknown';
+        answers = status === 'down' ? [] : null;
         reason = status === 'down' ? 'dns_missing' : 'resolver_unavailable';
         if (status === 'unknown') logger.warnLocalFile('[Deployment health] DNS observation unavailable',
             projectActionFailureCauseV1(error, 'deployment.health.dns', { allowUnknownErrorCode: false }));
@@ -78,6 +85,6 @@ export async function readDnsHealthCheckV1(check: HealthCheckObservationBasisV1 
     const remedy = reason === 'dns_missing' ? 'Configure the DNS record, then verify again.'
         : reason === 'dns_mismatch' ? 'Correct the DNS record, then verify again.'
         : reason === 'resolver_unavailable' ? 'Restore DNS resolver access, then verify again.' : undefined;
-    return finiteHealthCheckResult(check, 'dns', context.now(), startedAt, status,
-        { reason, recordType: check.recordType, ...(remedy ? { remedy } : {}) });
+    return { answers, health: finiteHealthCheckResult(check, 'dns', context.now(), startedAt, status,
+        { reason, recordType: check.recordType, ...(remedy ? { remedy } : {}) }) };
 }

@@ -17,11 +17,15 @@ export { DeploymentDomainProviderResultV1Schema, type DeploymentDomainProviderRe
 
 const path = z.string().check(z.startsWith('/'));
 
+export const DeploymentDomainNativeTargetV1Schema = lazyZodSchema(() => z.strictObject({
+    service: text, kind: z.optional(z.literal('native')),
+    containerPort: z.number().check(z.int(), z.minimum(1), z.maximum(65535)),
+    path: z.optional(path), redirectTo: z.optional(text),
+}));
 const domainAuthoredContent = () => ({
     hostname: z.nullable(text),
-    target: z.union([z.strictObject({ service: text, kind: z.optional(z.literal('native')),
-        containerPort: z.number().check(z.int(), z.minimum(1), z.maximum(65535)),
-        path: z.optional(path), redirectTo: z.optional(text) }),
+    addressKind: z.optional(z.literal('generatedCaddy')),
+    target: z.union([DeploymentDomainNativeTargetV1Schema,
     z.strictObject({ kind: z.literal('telemetry'), service: z.optional(z.never()), containerPort: z.optional(z.never()),
         path: z.optional(z.never()), redirectTo: z.optional(z.never()) }),
     z.strictObject({ kind: z.literal('provider'), zone: z.optional(DeploymentDomainProviderZoneV1Schema), service: z.optional(z.never()), containerPort: z.optional(z.never()),
@@ -49,6 +53,7 @@ const supportsMaintenancePage = (content: { target: { kind?: string }; maintenan
     content.maintenancePage === undefined || content.target.kind === undefined || content.target.kind === 'native';
 const hasValidDomainHostname = (content: {
     hostname: string | null;
+    addressKind?: 'generatedCaddy';
     target: z.output<ReturnType<typeof domainAuthoredContent>['target']>;
     providerObservation?: unknown;
     healthCheck?: unknown;
@@ -56,7 +61,9 @@ const hasValidDomainHostname = (content: {
     cloudflarePreparation?: unknown;
     tls?: unknown;
     basicAuth?: unknown;
-}) => content.hostname !== null || (
+}) => content.addressKind === 'generatedCaddy'
+    ? content.hostname !== null && (content.target.kind === undefined || content.target.kind === 'native')
+    : content.hostname !== null || (
     content.target.kind === 'provider' && !content.target.zone && !content.providerObservation
     && !content.healthCheck && !content.ingress && !content.cloudflarePreparation && !content.tls && !content.basicAuth
 );

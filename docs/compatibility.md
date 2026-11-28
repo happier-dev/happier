@@ -15802,14 +15802,20 @@ persisted envelope changes.
 
 ## Domain DNS draft verification (unreleased 0.3)
 
-The existing `deployments.domains.verify` Action adds a strict `mode: 'preview'`
-input and a DNS-only preview result. Attached verification retains its existing
-input and Domain result. Its admitted `domainDns` child uses exact Machine and
-installation routing; private Domain content remains in the encrypted child
-body and is excluded from the public routing projection. Protocol, Home, CLI
-and UI adapters adopt these closed unions together in development. Older strict
-development readers reject the unfamiliar variant; no epoch, migration,
-retained preview record or compatibility adapter is introduced. The inspected
+The existing `deployments.domains.verify` Action accepts `mode: 'preview'`
+for a DNS check or a generated Caddy address offer. A native service draft with
+`hostname: null` asks for an offer on the selected ingress Machine. Its local
+interface observation supplies public IPv4 choices, including typed unavailability.
+Selecting a choice uses ordinary Domain Add. The authored hostname and optional
+`addressKind: 'generatedCaddy'` are retained in Domain content.
+
+Draft Check and attached Verify can return the expected ingress IPv4 and the A
+and AAAA answers in their protected Action result. Domain headers, Home
+transitions and signed Machine observations carry only semantic readiness.
+The admitted child uses exact Machine and installation routing. Private Domain
+content stays in the mode-correct child body, outside the routing projection.
+Protocol, Home, CLI and UI adapters adopt these closed unions together in
+development. Existing retained Domain content remains readable. The inspected
 `../0.2` frontier `dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf` has no
 `packages/protocol/src/deployments` contract and no local change at that path.
 

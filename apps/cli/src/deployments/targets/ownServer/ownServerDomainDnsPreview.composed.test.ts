@@ -6,14 +6,17 @@ import { DeploymentChildRpcV1Schema, projectDeploymentChildRoutingV1,
 import { readDeploymentEnvironmentForHost } from '@/deployments/readEnvironmentForHost';
 import { createOwnServerDomainActions } from './ownServerDomainActions';
 
-it.each(['direct', 'edge', 'stale', 'ambiguous', 'cloudflare', 'provider'] as const)(
+it.each(['direct', 'edge', 'offer', 'stale', 'ambiguous', 'cloudflare', 'provider'] as const)(
     'previews DNS through the real Domain controller for %s ingress without retained writes', async scenario => {
     const detail = createDeploymentEnvironmentDetailV1();
     const link = detail.targetLinks[0]!.targetLink;
-    if (scenario === 'edge') detail.content.ingress = { kind: 'edgeCaddy', edgeMachineId: 'edge' };
+    const edge = scenario === 'edge' || scenario === 'offer';
+    if (edge) detail.content.ingress = { kind: 'edgeCaddy', edgeMachineId: 'edge' };
     if (scenario === 'cloudflare') detail.content.ingress = { kind: 'cloudflareTunnel' };
     if (scenario === 'ambiguous') link.members.push({ machineId: 'second', installationId: 'second-installation', state: 'active' });
-    const result = { ok: true as const, environmentId: detail.environment.id, dnsHealth: { status: 'up' as const,
+    const result = scenario === 'offer' ? { ok: true as const, environmentId: detail.environment.id,
+        addressOffer: { status: 'unavailable', reason: 'ingress_ipv4_unavailable' } }
+        : { ok: true as const, environmentId: detail.environment.id, dnsHealth: { status: 'up' as const,
         evidence: { v: 1 as const, items: [{ source: { kind: 'alert' as const, label: 'DNS' },
             author: { kind: 'process' as const }, text: 'Target token observed' }] } } };
     const jobs: DeploymentDomainDnsChildRpcV1[] = [];
@@ -49,15 +52,15 @@ it.each(['direct', 'edge', 'stale', 'ambiguous', 'cloudflare', 'provider'] as co
     const input = { mode: 'preview' as const, serverId: detail.environment.serverId, environmentId: detail.environment.id,
         targetLinkId: link.id, expectedRevision: detail.environment.revision + (scenario === 'stale' ? 1 : 0),
         expectedTargetLinkRevision: link.revision, requestKey: 'draft-check',
-        content: { hostname: 'draft.example.test', target: scenario === 'provider'
+        content: { hostname: scenario === 'offer' ? null : 'draft.example.test', target: scenario === 'provider'
             ? { kind: 'provider' as const } : { service: 'app', containerPort: 8080 } } };
     const controller = createOwnServerDomainActions(host);
     const observed = await controller('deployments.domains.verify', input, {});
-    if (scenario === 'direct' || scenario === 'edge') {
+    if (scenario === 'direct' || edge) {
         expect(observed).toEqual(result);
         expect(jobs).toHaveLength(1);
-        expect(jobs[0]).toMatchObject({ input, machineId: scenario === 'edge' ? 'edge' : link.members[0]!.machineId,
-            installationId: scenario === 'edge' ? 'edge-installation' : link.members[0]!.installationId });
+        expect(jobs[0]).toMatchObject({ input, machineId: edge ? 'edge' : link.members[0]!.machineId,
+            installationId: edge ? 'edge-installation' : link.members[0]!.installationId });
     } else {
         expect(observed).toMatchObject({ ok: false, errorCode: scenario === 'stale' ? 'deployment_conflict'
             : scenario === 'ambiguous' ? 'required_fact_unavailable' : 'native_route_unavailable' });

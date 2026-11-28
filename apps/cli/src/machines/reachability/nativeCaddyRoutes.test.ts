@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import os from 'node:os';
+import { describe, expect, it, vi } from 'vitest';
+import { readCaddyGeneratedAddressOffer } from '@happier-dev/cli-common/relayAccess';
 import tweetnacl from 'tweetnacl';
 import { materializeCaddyDomainRouteV1, type CaddyDomainRouteInput } from '@/deployments/targets/ownServer/caddyRouteMaterialization';
 import { caddyPublicHttpServerId, materializeCaddyInitialConfigV1 } from '@/deployments/targets/ownServer/caddyRouteMaterialization';
@@ -285,6 +287,30 @@ describe('native Caddy Domain placement owner', () => {
         expect((await native.owner.observe({ placement, route })).kind).toBe('active');
         expect((await native.owner.activate({ placement, route })).kind).toBe('active');
         expect(native.writes).toHaveLength(count);
+    });
+
+    it('installs and removes the selected generated name through ordinary Domain ownership', async () => {
+        const networkInterfaces = vi.spyOn(os, 'networkInterfaces').mockReturnValue({ eth0: [
+            { address: '10.8.0.2', family: 'IPv4', internal: false, netmask: '255.255.255.0', mac: '', cidr: '10.8.0.2/24' },
+            { address: '100.100.0.8', family: 'IPv4', internal: false, netmask: '255.192.0.0', mac: '', cidr: '100.100.0.8/10' },
+            { address: '93.184.216.34', family: 'IPv4', internal: false, netmask: '255.255.255.0', mac: '', cidr: '93.184.216.34/24' },
+            { address: '8.8.4.4', family: 'IPv4', internal: false, netmask: '255.255.255.0', mac: '', cidr: '8.8.4.4/24' },
+        ] });
+        let offer: ReturnType<typeof readCaddyGeneratedAddressOffer>;
+        try { offer = readCaddyGeneratedAddressOffer(); }
+        finally { networkInterfaces.mockRestore(); }
+        expect(offer.status).toBe('available');
+        if (offer.status !== 'available') throw new Error('Expected an address offer');
+        expect(offer.choices.map(choice => choice.ingressIpv4)).toEqual(['8.8.4.4', '93.184.216.34']);
+        const hostname = offer.choices[1]!.hostname;
+        const native = caddyBoundary();
+        const generated: CaddyDomainRouteInput = { ...route, listener: 'public', peerOrigins: [],
+            domain: { ...route.domain, hostname, addressKind: 'generatedCaddy' }, publicTls: { kind: 'managed' } };
+        expect((await native.owner.activate({ placement, route: generated })).kind).toBe('active');
+        expect(native.server.routes).toContainEqual(expect.objectContaining({ match: [expect.objectContaining({ host: [hostname] })] }));
+        expect((await native.owner.remove({ placement, route: generated })).kind).toBe('removed');
+        expect(native.server.routes).toEqual([native.foreign]);
+        expect(await native.owner.observe({ placement, route: generated })).toEqual({ kind: 'absent' });
     });
 
     it('changes the edge endpoint set only with the admitted prior material and refuses a foreign expanded host', async () => {

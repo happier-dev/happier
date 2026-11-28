@@ -1121,6 +1121,32 @@ describe('Environment → Domains: whether the address reaches this Machine (#2)
     items: [{ source: { kind: 'alert' as const, label: 'DNS' }, author: { kind: 'process' as const },
       text: 'DNS finite observation' }] } });
 
+  it('reviews a generated public address and submits its hostname through ordinary Domain Add', async () => {
+    const base = createDeploymentEnvironmentDetailV1();
+    const detail = { ...base, content: { ...base.content, ingress: undefined } };
+    const hostname = 'test.93-184-216-34.sslip.io';
+    const offerDomainAddress = vi.fn().mockResolvedValue({ status: 'available', audience: 'public',
+      lifetime: 'temporary', choices: [{ hostname, ingressIpv4: '93.184.216.34' }] });
+    const actions = { ...domainActions(detail), offerDomainAddress };
+    const { screen, controller, settle } = await renderDomains(detail, [], actions);
+    try {
+      expect(await settle(id)).not.toBeNull();
+      await screen.pressByTestIdAsync(id);
+      await act(async () => {
+        screen.changeTextByTestId(`${id}.service`, 'web');
+        screen.changeTextByTestId(`${id}.port`, '3000');
+      });
+      await screen.pressByTestIdAsync(`${id}.offer`);
+      expect(actions.addDomain).not.toHaveBeenCalled();
+      expect(await settle(`${id}.offer.93.184.216.34`)).not.toBeNull();
+      await screen.pressByTestIdAsync(`${id}.offer.93.184.216.34`);
+      await screen.pressByTestIdAsync(`${id}.save`);
+      await vi.waitFor(() => expect(actions.addDomain.mock.calls[0]?.[0]).toMatchObject({ content: {
+        hostname, addressKind: 'generatedCaddy', target: { service: 'web', containerPort: 3000 },
+      } }));
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+
   it('checks a complete draft only when asked, says what the native check found, and forgets it when the address changes', async () => {
     const base = createDeploymentEnvironmentDetailV1();
     const detail = { ...base, content: { ...base.content, ingress: undefined } };

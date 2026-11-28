@@ -7648,6 +7648,9 @@ export type ActionDtoShape_26d8a96778213565 = [
         action: 'skip';
     }
 ][0];
+export type ActionDtoShape_26e5fbf5be54a0b1 = [
+    undefined | ActionDtoShape_5624a951face1d97[]
+][0];
 export type ActionDtoShape_26ec4979c8749cb6 = [
     {
         profileId: string;
@@ -16480,6 +16483,15 @@ export type ActionDtoShape_561d54c32741efc3 = [
 export type ActionDtoShape_56208fb7e9c2ea51 = [
     undefined | ActionDtoShape_df49db38c4539a0c
 ][0];
+export type ActionDtoShape_5624a951face1d97 = [
+    {
+        machineId: string;
+        installationId: string;
+        nativeServer: string;
+        listener: 'privateOrigin' | 'public';
+        observation: ActionDtoShape_b67522a1ffbf2f7b;
+    }
+][0];
 export type ActionDtoShape_562b9fac02556d02 = [
     {
         path: string;
@@ -16755,6 +16767,14 @@ export type ActionDtoShape_57ace75d0dca7b0d = [
         targetMachineId: null | string;
         connectedAccountPurposes: ActionDtoShape_39124cdfc56da63e[];
         connectedAccountPurposeBindingPolicy?: ActionDtoShape_c12e8a19f43ba440;
+    }
+][0];
+export type ActionDtoShape_57b15f93202b8a91 = [
+    {
+        kind: 'unavailable';
+        reason: string;
+        requiredFact?: 'activeDomainMembers' | 'caddyAdminConfig' | 'caddyAdminSocket' | 'caddyContainer' | 'caddyListeners' | 'caddyMountedSeed' | 'caddyPublishedBindings' | 'caddyRoutedNetworks' | 'cloudflarePreparation' | 'collectorTailscalePreservedSource' | 'deploymentActionResult' | 'domainIngress' | 'edgeCaddyMachine' | 'memberCaddyObservation' | 'nativeExecutionResult' | 'networkExposure' | 'privateCaddyListener' | 'publicCaddyListener' | 'publicCaddyObservation' | 'reachabilityPosture' | 'sharedTunnelOrigin' | undefined;
+        remedy?: string | undefined;
     }
 ][0];
 export type ActionDtoShape_57c60ec13a397258 = [
@@ -25329,6 +25349,9 @@ export type ActionDtoShape_85df41dae34fbe91 = [
         source: 'background' | 'external' | 'history' | 'sidechain';
     }
 ][0];
+export type ActionDtoShape_85e84ae02dbb5002 = [
+    undefined | ActionDtoShape_ff248d78d224738a
+][0];
 export type ActionDtoShape_85ed4658c58152d1 = [
     ActionDtoShape_8e258693dccfe286 & {
         clientId?: string | undefined;
@@ -31358,6 +31381,12 @@ export type ActionDtoShape_a66a0d16f309e8b7 = [
         sourceSelection?: 'happier_only' | 'whole_usage' | undefined;
     }
 ][0];
+export type ActionDtoShape_a6753e77ad9d9ed1 = [
+    {
+        A: null | string[];
+        AAAA: null | string[];
+    }
+][0];
 export type ActionDtoShape_a67c0cc7a404c401 = [
     {
         v: 1;
@@ -34131,6 +34160,9 @@ export type ActionDtoShape_b670a22aedced999 = [
         version: 1;
         mode: 'none';
     } | ActionDtoShape_67e657f00fb41260
+][0];
+export type ActionDtoShape_b67522a1ffbf2f7b = [
+    ActionDtoShape_0212626ebf686f97 | ActionDtoShape_57b15f93202b8a91
 ][0];
 export type ActionDtoShape_b67cd13f715c120a = [
     {
@@ -39768,6 +39800,31 @@ export type ActionDtoShape_d3bba8126e6310e8 = [
         source: ActionDtoShape_486060f8b7394ffe;
     }
 ][0];
+export type ActionDtoShape_d3be86b626cfeac9 = [
+    {
+        createdByAccountId: string;
+        createdAtMs: number;
+        updatedAtMs: number;
+        contentArtifactId: string;
+        contentHeaderVersion: number;
+        contentBodyVersion: number;
+        v: 1;
+        id: string;
+        environmentId: string;
+        targetLinkId: string;
+        revision: number;
+        state: 'active' | 'applying' | 'failed' | 'pending' | 'removing' | 'warning';
+        observedAtMs?: number | undefined;
+        placements?: ActionDtoShape_585761ae4296a96a;
+        provider?: true | undefined;
+        providerPlacement?: ActionDtoShape_c1d57404ed9b8732;
+        operationAddress?: ActionDtoShape_241131dbd6e0e56b;
+        dnsHealth?: ActionDtoShape_98a9f0e0865226a5;
+        routedReplicas?: ActionDtoShape_9fee120f1173c86f;
+        networkExposure?: ActionDtoShape_26e5fbf5be54a0b1;
+        deletedAtMs?: number | undefined;
+    }
+][0];
 export type ActionDtoShape_d3c23d0cd7d9a1c1 = [
     {
         kind: 'team';
@@ -40555,6 +40612,22 @@ export type ActionDtoShape_d9176896c0c5639b = [
 ][0];
 export type ActionDtoShape_d91f84b6bfec9dfa = [
     ActionDtoShape_d3401ba8dca9de75 | ActionDtoShape_e74c5ed8987b3cb6 | ActionDtoShape_758ae39500b57f37
+][0];
+export type ActionDtoShape_d922d7034720370d = [
+    {
+        hostname: null | string;
+        target: ActionDtoShape_aaf12f969d3c5bf3;
+        addressKind?: 'generatedCaddy' | undefined;
+        providerObservation?: ActionDtoShape_70a3759e0f2731df;
+        healthCheck?: ActionDtoShape_7065fcdef1929b93;
+        ingress?: ActionDtoShape_ab0fd3147b429df5;
+        cloudflarePreparation?: ActionDtoShape_5fdc65587b800014;
+        tls?: ActionDtoShape_b64a6700bd4629ca;
+        basicAuth?: undefined | {
+            username: string;
+        };
+        maintenancePage?: boolean | undefined;
+    }
 ][0];
 export type ActionDtoShape_d93c3027b629b18f = [
     string | ActionDtoShape_a3772375c0262535 | ActionDtoShape_b7bbcf4948c45b76 | ActionDtoShape_8539b5164cd85b57 | ActionDtoShape_02645041612f69fa
@@ -47366,6 +47439,12 @@ export type ActionDtoShape_ff1d938486d32642 = [
         ok: true;
         kind: 'plugins.settings.get';
         data: ActionDtoShape_8d8acaefc964f850;
+    }
+][0];
+export type ActionDtoShape_ff248d78d224738a = [
+    {
+        expectedIpv4: null | string;
+        answered: ActionDtoShape_a6753e77ad9d9ed1;
     }
 ][0];
 export type ActionDtoShape_ff27351c18c8efa5 = [

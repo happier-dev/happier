@@ -6,7 +6,7 @@ import { MachineServicesListResultV1Schema } from '@happier-dev/protocol/actions
 import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
 import { z } from 'zod/mini';
 import type { DeploymentActionInputSchemasV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { DeploymentDomainMutationResultV1Schema, DeploymentActionOutputSchemasV1, DeploymentEnvironmentCreateResultV1Schema, DeploymentEnvironmentCreateActionResultV1Schema, type DeploymentEnvironmentCreateInputV1, type DeploymentEnvironmentCreateIntentInputV1, type DeploymentTargetLinkInputV1, type DeploymentTargetLinkIntentInputV1, type DeploymentTargetLinkProviderIntentInputV1, type DeploymentTargetLinkCreateIntentInputV1, type DeploymentEnvironmentHeaderV1, type DeploymentEnvironmentUpdateInputV1, type DeploymentDeployInputV1, type DeploymentRollbackInputV1, type DeploymentTargetUnlinkInputV1, type DeploymentEnvironmentDeleteInputV1, type DeploymentCancelInputV1, type DeploymentRestartInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentDomainAttachedVerifyResultV1Schema, DeploymentActionOutputSchemasV1, DeploymentEnvironmentCreateResultV1Schema, DeploymentEnvironmentCreateActionResultV1Schema, type DeploymentEnvironmentCreateInputV1, type DeploymentEnvironmentCreateIntentInputV1, type DeploymentTargetLinkInputV1, type DeploymentTargetLinkIntentInputV1, type DeploymentTargetLinkProviderIntentInputV1, type DeploymentTargetLinkCreateIntentInputV1, type DeploymentEnvironmentHeaderV1, type DeploymentEnvironmentUpdateInputV1, type DeploymentDeployInputV1, type DeploymentRollbackInputV1, type DeploymentTargetUnlinkInputV1, type DeploymentEnvironmentDeleteInputV1, type DeploymentCancelInputV1, type DeploymentRestartInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { DeploymentBindingsPatchInputV1, DeploymentTeardownActionInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { type DeploymentDeployIntentInputV1 } from '@happier-dev/protocol/deployments/deploymentDeployIntentV1';
 import type { DeploymentPromoteIntentInputV1 } from '@happier-dev/protocol/deployments/deploymentPromoteIntentV1';
@@ -30,7 +30,7 @@ import { EnvironmentSecretBindingInputV1Schema } from '@happier-dev/protocol/dep
 import { HappyError } from '@/utils/errors/errors';
 import { randomUUID } from '@/platform/randomUUID';
 import { DeploymentDomainContentV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
-import { DeploymentDomainDnsPreviewResultV1Schema, type DeploymentDomainAddInputV1, type DeploymentDomainAttachedVerifyInputV1, type DeploymentDomainPreviewInputV1, type DeploymentDomainRemoveInputV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
+import { DeploymentDomainAddressOfferResultV1Schema, DeploymentDomainDnsPreviewResultV1Schema, type DeploymentDomainAddInputV1, type DeploymentDomainAttachedVerifyInputV1, type DeploymentDomainPreviewInputV1, type DeploymentDomainRemoveInputV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import type { DeploymentEnvironmentContentV1 } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentBackupConfigureInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupConfigureV1';
 import { isDeploymentTelemetrySetRefusalV1, type DeploymentEnvironmentTelemetrySetInputV1, type DeploymentEnvironmentTelemetrySetSuccessV1,
@@ -66,7 +66,7 @@ export type DeploymentUiDomainInput = Omit<DeploymentDomainRemoveInputV1, 'serve
 export type DeploymentUiTelemetryInput = Pick<DeploymentEnvironmentTelemetrySetInputV1, 'collector' | 'capabilities' | 'confirmDelete' | 'rotate' | 'publicCollectorDomain'>;
 /** The host Action's typed pre-write refusals, kept with their details so the sheet recovers in place. */
 export type DeploymentUiTelemetryResult = DeploymentEnvironmentTelemetrySetSuccessV1
-    | Readonly<{ ok: false; error: DeploymentTelemetrySetRefusalV1; details?: unknown }>
+    | Readonly<{ ok: false; error: DeploymentTelemetrySetRefusalV1; details?: unknown; failureCause?: HappyError['failureCause'] }>
     | Extract<z.infer<typeof DeploymentActionOutputSchemasV1['deployments.environments.telemetry.set']>, { ok: false }>;
 
 export type DeploymentUiDomainDnsPreviewInput = Omit<DeploymentDomainPreviewInputV1, 'serverId' | 'mode' | 'requestKey'>
@@ -325,12 +325,23 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
             if (!result.ok) throw new HappyError(result.error, false, { code: result.error, details: result });
             return DeploymentDomainDnsPreviewResultV1Schema.parse(result);
         },
+        async offerDomainAddress(input: DeploymentUiDomainDnsPreviewInput, operation?: UiActionOperation) {
+            assertCurrent();
+            const result = DeploymentActionOutputSchemasV1['deployments.domains.verify'].parse(await invoke(
+                'deployments.domains.verify', { ...input, mode: 'preview', requestKey: input.requestKey ?? randomUUID(),
+                    serverId: lifetime.scope.serverId }, operation));
+            assertCurrent();
+            if (!result.ok) throw new HappyError(result.error, false, { code: result.error, details: result });
+            return DeploymentDomainAddressOfferResultV1Schema.parse(result).addressOffer;
+        },
         /** The controller re-observes the address or verifies the reviewed provider assignment. */
         async verifyDomain(input: Omit<DeploymentDomainAttachedVerifyInputV1, 'serverId' | 'requestKey'> & Readonly<{ requestKey?: string }>,
             operation?: UiActionOperation) {
             assertCurrent();
-            return DeploymentDomainMutationResultV1Schema.parse(await invoke('deployments.domains.verify', {
+            const result = DeploymentDomainAttachedVerifyResultV1Schema.parse(await invoke('deployments.domains.verify', {
                 ...input, requestKey: input.requestKey ?? randomUUID(), serverId: lifetime.scope.serverId }, operation));
+            assertCurrent();
+            return result;
         },
         /** The controller prepares record values from the retained provider observation. */
         async createDomainDns(input: Omit<DeploymentDomainDnsInputV1, 'serverId' | 'requestKey'> & Readonly<{ requestKey?: string }>, operation?: UiActionOperation) {
@@ -400,7 +411,7 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
                         expectedRevision: environment.revision, ...input }, operation));
             } catch (error) {
                 if (error instanceof HappyError && isDeploymentTelemetrySetRefusalV1(error.code)) {
-                    return { ok: false, error: error.code, ...(error.details === undefined ? {} : { details: error.details }) };
+                    return { ok: false, error: error.code, details: error.details, failureCause: error.failureCause };
                 }
                 throw error;
             }

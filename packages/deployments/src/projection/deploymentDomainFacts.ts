@@ -101,7 +101,7 @@ export function projectDeploymentDomainDnsReadinessV1(
     const facts = finiteCause(health);
     const reason = typeof facts.reason === 'string' ? facts.reason : null;
     if (reason === 'dns_missing') return { state: 'missing', reason };
-    if (reason === 'dns_not_this_machine') return { state: 'not_this_machine', reason };
+    if (reason === 'dns_mismatch' || reason === 'dns_not_this_machine') return { state: 'not_this_machine', reason };
     if (reason === 'dns_ready') return { state: 'ready', reason };
     return { state: health.status === 'unknown' && reason !== 'not_checked' ? 'unavailable' : 'not_checked', reason };
 }

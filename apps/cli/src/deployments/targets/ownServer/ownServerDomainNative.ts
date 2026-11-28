@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 import { homedir } from 'node:os';
+import { readCaddyExpectedIngressIpv4, readCaddyGeneratedAddressOffer } from '@happier-dev/cli-common/relayAccess';
 import {
     observeNativeCaddyContainer, connectNativeCaddyNetworks, createNativeCaddyAdminExchange, hashNativeCaddyPassword, checkNativeCaddyPortAvailability,
     type MachineSetupNativeCommand, type MachineSetupNativeCommandResult,
@@ -189,8 +190,8 @@ export function createOwnServerDomainNative(host: Readonly<{
             return readDeploymentDomainArtifactV1(reference, await host.open(reference.contentArtifactId, context));
         })();
         if (!opened.ok) return refuse(opened.error, undefined, opened.failureCause);
-        if (opened.content.hostname === null) return refuse('target_mismatch');
-        const domain: DeploymentDomainContentV1 & { hostname: string } = { ...opened.content, hostname: opened.content.hostname };
+        if (opened.content.hostname === null && job.kind !== 'domainDns') return refuse('target_mismatch');
+        const domain: DeploymentDomainContentV1 = opened.content;
         const removing = job.kind === 'domain' ? !job.capture.desired : isDeploymentDomainRemoveActionIdV1(job.actionId);
         const observing = job.kind === 'domain' && job.actionId === 'deployments.domains.verify';
         const withoutWorkload = removing || observing || job.kind === 'domainDns';
@@ -392,30 +393,37 @@ export function createOwnServerDomainNative(host: Readonly<{
         const acquired = await acquire(job, context);
         try {
             const { identity, caddy, domain, signal } = acquired;
+            if (domain.hostname === null) return { ok: true as const, environmentId: job.input.environmentId,
+                addressOffer: readCaddyGeneratedAddressOffer() };
+            const expectedIpv4 = readCaddyExpectedIngressIpv4(domain.hostname);
             const selection = selectDomainPublicCaddyServer({ machineId: host.machineId, caddy });
             if (selection.status !== 'ready' || caddy.status !== 'ready') {
                 const basis = { observer: { machineId: host.machineId, installationId: identity.installationId },
                     vantage: 'sameMachine' as const, signal, startedAt: Date.now() };
                 const health = await readNativeCaddyDnsReadiness(domain.hostname, basis, async () =>
-                    nativeCaddyDnsResult(basis, 'unknown', 'dns_public_listener_unavailable'));
+                    nativeCaddyDnsResult(basis, 'unknown', 'dns_public_listener_unavailable'), expectedIpv4);
                 return { ok: true as const, environmentId: job.input.environmentId,
+                    dnsComparison: health.dnsComparison,
                     dnsHealth: { status: health.status, cause: health.cause, evidence: health.evidence } };
             }
             const native = createNativeCaddyRoutes({ machineId: host.machineId, installationId: identity.installationId,
                 privateKey: decodeBase64(identity.privateKey, 'base64url'),
                 exchange: createNativeCaddyAdminExchange(caddy.adminSocketPath) });
             const health = await native.checkDnsReadiness({ hostname: domain.hostname,
-                nativeServer: selection.nativeServer, listener: 'public', signal });
+                nativeServer: selection.nativeServer, listener: 'public', signal, expectedIpv4 });
             if (!('status' in health)) return refuse('reason' in health ? health.reason : 'native_route_unavailable',
                 'details' in health ? health.details : undefined, 'failureCause' in health ? health.failureCause : undefined);
             return { ok: true as const, environmentId: job.input.environmentId,
+                dnsComparison: health.dnsComparison,
                 dnsHealth: { status: health.status, cause: health.cause, evidence: health.evidence } };
         } finally { await acquired.release(); }
     }
     async function execute(job: DeploymentDomainChildRpcV1, context: ActionExecutorContext) {
         const acquired = await acquire(job, context);
         try {
-            const { domain, signal, identity } = acquired;
+            const { domain: content, signal, identity } = acquired;
+            if (content.hostname === null) return refuse('target_mismatch');
+            const domain = { ...content, hostname: content.hostname };
             const signObservation = (observation: DeploymentDomainObservationBodyV1) => ({ ...observation,
                 proof: signMachineInstallationProof({ payload: deploymentDomainObservationProofPayloadV1({
                     expectedDomainRevision: job.expectedDomainRevision, observation }), privateKey: identity.privateKey }) });
@@ -435,13 +443,16 @@ export function createOwnServerDomainNative(host: Readonly<{
                 ...(basicAuth ? { basicAuth } : {}), ...(job.capture.listener === 'public' ? { publicTls } : {}) };
             const signServingObservation = async (observation: DeploymentDomainObservationBodyV1) => {
                 if (job.capture.listener !== 'public') return signObservation(observation);
+                const verifying = job.actionId === 'deployments.domains.verify';
                 const health = await native.checkDnsReadiness({ hostname: domain.hostname,
-                    nativeServer: job.capture.placement.nativeServer, listener: job.capture.listener, signal });
+                    nativeServer: job.capture.placement.nativeServer, listener: job.capture.listener, signal,
+                    expectedIpv4: readCaddyExpectedIngressIpv4(domain.hostname) });
                 if (!('status' in health)) return refuse('reason' in health ? health.reason : 'native_route_unavailable',
                     'details' in health ? health.details : undefined, 'failureCause' in health ? health.failureCause : undefined);
-                return signObservation({ ...observation,
+                const signed = signObservation({ ...observation,
                     state: health.status === 'up' ? observation.state : 'warning',
                     dnsHealth: { status: health.status, cause: health.cause, evidence: health.evidence } });
+                return verifying ? { ...signed, dnsComparison: health.dnsComparison } : signed;
             };
             const connector = job.cloudflareConnector;
             const settleConnector = async (remove: boolean) => {

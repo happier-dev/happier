@@ -343,11 +343,17 @@ const SPECIMEN_DOMAINS = [
   { id: 'admin', hostname: 'admin.happier.dev', target: { service: 'admin', containerPort: 8080 }, basicAuth: { username: 'ops' }, state: 'warning' as const },
   { id: 'status', hostname: 'status.happier.dev', target: { service: 'status', containerPort: 3001 }, tls: { kind: 'custom' as const }, state: 'failed' as const },
 ];
+const specimenDnsComparison = { expectedIpv4: '192.0.2.10', answered: { A: ['192.0.2.20'], AAAA: [] } };
+const specimenDnsHealth = {
+  status: 'down' as const,
+  cause: { kind: 'dns' as const, reason: 'dns_mismatch', vantage: 'sameMachine' as const, observerMachineId: 'machine-a' },
+  evidence: { v: 1 as const, items: [] },
+};
 
 /**
  * `?tabs=` decides what the Domains, Checks & alerts, Backups and Previews reads answer: `populated` (default),
  * `empty`, `loading`, `error`, `denied`, `paged` (Domains continue to a second page), `notNeeded` (backups) and
- * `team` (a Team Environment) or `railway-domains` (Railway staging with its addresses, receipt and variables).
+ * `team` (a Team Environment), `dns-mismatch`, or `railway-domains` (Railway staging with its addresses, receipt and variables).
  * `railway-database` also links a database to the same Railway environment.
  */
 function tabFixtures(tabs: string, environmentId: string, runtimeTargetLinkId: string) {
@@ -365,6 +371,15 @@ function tabFixtures(tabs: string, environmentId: string, runtimeTargetLinkId: s
     if (tabs === 'error') return { ok: false, failure: { code: 'deployment_unavailable', retryable: true } };
     if (tabs === 'denied') return { ok: false, failure: { code: 'deployment_access_denied', retryable: false } };
     if (tabs === 'empty') return { ok: true, value: { items: [], nextCursor: null } };
+    if (tabs === 'dns-mismatch') {
+      const mismatch = domainItem(SPECIMEN_DOMAINS[0]!);
+      return { ok: true, value: { items: [
+        { ...mismatch, domain: { ...mismatch.domain, state: 'warning', dnsHealth: specimenDnsHealth } },
+        { ...domainItem(SPECIMEN_DOMAINS[0]!), title: 'demo.192-0-2-10.sslip.io',
+          domain: { ...mismatch.domain, id: 'domain-temporary', contentArtifactId: 'domain-content-temporary' },
+          content: { ...mismatch.content, hostname: 'demo.192-0-2-10.sslip.io', addressKind: 'generatedCaddy' } },
+      ], nextCursor: null } };
+    }
     if (railwayTabs(tabs)) {
       const fixture = domainItem(SPECIMEN_DOMAINS[0]!);
       return { ok: true, value: { items: [
@@ -695,7 +710,18 @@ function specimenActions(deploy: string, restore: string | undefined, tabs: stri
     },
     addDomain: unsupported,
     removeDomain: unsupported,
-    verifyDomain: unsupported,
+    verifyDomain: async (input: { environmentId: string; domainId: string; expectedDomainRevision: number }) => {
+      if (tabs !== 'dns-mismatch' || input.domainId !== 'domain-api') return unsupported();
+      return { ok: true as const, dnsComparison: specimenDnsComparison,
+        domain: { v: 1 as const, id: input.domainId, environmentId: input.environmentId, targetLinkId: 'link-machine',
+          revision: input.expectedDomainRevision, state: 'warning' as const,
+          contentArtifactId: 'domain-content-api', contentHeaderVersion: 1, contentBodyVersion: 1,
+          createdByAccountId: ACCOUNT, createdAtMs: SPECIMEN_NOW, updatedAtMs: SPECIMEN_NOW, dnsHealth: specimenDnsHealth } };
+    },
+    ...(tabs === 'dns-mismatch' ? {
+      offerDomainAddress: async () => ({ status: 'available' as const, audience: 'public' as const, lifetime: 'temporary' as const,
+        choices: [{ hostname: 'draft.192-0-2-10.sslip.io', ingressIpv4: '192.0.2.10' }] }),
+    } : {}),
     setController: unsupported,
     updateEnvironment: unsupported,
     rollback: async () => {

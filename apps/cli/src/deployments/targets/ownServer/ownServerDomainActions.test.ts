@@ -14,6 +14,47 @@ import { DeploymentDomainContentV1Schema } from '@happier-dev/protocol/deploymen
 
 const unexpected = async (): Promise<never> => { throw new Error('Provider Domain retirement must not reach this port'); };
 
+it('returns native DNS operands from attached Verify outside the Home transition and header', async () => {
+    const content = { contentArtifactId: 'domain-content', contentHeaderVersion: 1, contentBodyVersion: 1 };
+    const input = { serverId: 'home', environmentId: 'environment', domainId: 'domain',
+        expectedRevision: 1, expectedDomainRevision: 1, requestKey: 'verify' };
+    const placement = { serverId: input.serverId, environmentId: input.environmentId, domainId: input.domainId,
+        targetLinkId: 'link', accountId: 'owner', machineId: 'machine',
+        installationId: 'installed', actionOperationId: 'operation', requestId: 'request', nativeServer: 'happier_public' };
+    const capture = { desired: true, listener: 'public' as const, dockerEngineId: 'engine', content, placement };
+    const domain = DeploymentDomainHeaderV1Schema.parse({
+        v: 1, id: input.domainId, environmentId: input.environmentId, targetLinkId: 'link', state: 'active',
+        revision: 1, ...content, createdAtMs: 1, updatedAtMs: 1, createdByAccountId: 'owner', placements: [capture],
+    });
+    const dnsComparison = { expectedIpv4: '93.184.216.34', answered: { A: ['192.0.2.1'], AAAA: [] } };
+    const settled = { ...domain, state: 'warning' as const, revision: 2 };
+    const transition = vi.spyOn(axios, 'request').mockImplementation(async request => {
+        const body = DeploymentDomainTransitionInputV1Schema.parse(request?.data);
+        expect(body.observations[0]).toMatchObject({ capture, state: 'warning' });
+        expect(JSON.stringify(body)).not.toMatch(/93\.184\.216\.34|192\.0\.2\.1/);
+        return { status: 200, data: { ok: true, environmentId: input.environmentId, revision: 1, domain: settled } };
+    });
+    try {
+        const actions = createOwnServerDomainActions({ serverId: input.serverId, machineId: 'machine',
+            serverHttpBaseUrl: 'https://home.test', credentials: { token: 'fixture', encryption: null },
+            storage: async () => ({ ok: true, environmentId: input.environmentId, revision: 1, domain }),
+            open: async () => ({ artifactId: content.contentArtifactId, header: { kind: 'deployment-domain.v1', title: 'App' },
+                revision: { headerVersion: 1, bodyVersion: 1 }, body: JSON.stringify({
+                    hostname: 'app.example.test', target: { service: 'web', containerPort: 3000 },
+                }) }),
+            readEnvironment: unexpected, readReceipt: unexpected, readInstallation: unexpected,
+            createContent: unexpected, persistPreparedContent: unexpected, headers: async () => ({}),
+            async dispatch(job) {
+                if (job.kind !== 'domain') return unexpected();
+                return { capture: job.capture, state: 'warning', dnsComparison,
+                    proof: { version: 1, algorithm: 'ed25519', signature: Buffer.alloc(64).toString('base64url') } };
+            },
+        });
+        expect(await actions('deployments.domains.verify', input, {})).toMatchObject({ ok: true, domain: settled, dnsComparison });
+        expect(transition).toHaveBeenCalledOnce();
+    } finally { transition.mockRestore(); }
+});
+
 describe('Environment Domain retirement', () => {
     it.each([false, true])('reviews another target Link Domain only for whole Environment removal: %s', async removeEnvironment => {
         const domain = DeploymentDomainHeaderV1Schema.parse({ v: 1, id: 'runtime-domain', environmentId: 'environment',

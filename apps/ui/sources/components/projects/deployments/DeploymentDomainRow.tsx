@@ -9,6 +9,7 @@ import {
   type DeploymentReadDemandV1,
 } from '@happier-dev/deployments';
 import type { ActionOperationGetV1Response } from '@happier-dev/protocol/actions/operations/v1';
+import type { DeploymentDomainDnsComparisonV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { isRecord } from '@happier-dev/protocol/common/records';
 import { DeploymentDomainCloudflareRecoveryV1Schema, type DeploymentDomainCloudflareRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentDomainFailureV1';
 
@@ -34,6 +35,7 @@ import { ServicesPageList } from './DeploymentEnvironmentRows';
 import { useMachineDisplayNamesById } from '@/sync/store/hooks';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { FailureInvestigationActions } from '@/components/inbox/detail/FailureInvestigationActions';
+import { DomainDnsComparison } from './DomainDnsComparison';
 
 export type { DomainCredentialRole, DomainItem } from './deploymentDomainAttention';
 
@@ -41,7 +43,7 @@ type DomainRowItem = DomainItem & Readonly<{ attached: boolean }>;
 
 /** What a page can do to its addresses; absent where it cannot write (the rows stay read-only). */
 export type DeploymentDomainRowActions = Readonly<{
-  verify: (item: DomainItem) => void;
+  verify: (item: DomainItem) => void | Promise<{ revision: number; comparison: DeploymentDomainDnsComparisonV1 } | undefined>;
   remove: (item: DomainItem) => void;
   configureChecks?: (item: DomainItem, anchorRef: React.RefObject<View | null>) => void;
   /** Credentials this address's content asks for that no binding supplies; absent where the page cannot bind. */
@@ -277,7 +279,8 @@ function domainRowControlsShown(item: DomainRowItem, facts: DomainRowFacts, cont
   const observation = item.content.providerObservation;
   const addRecords = Boolean(context.actions?.addDnsRecords) && state !== 'removing' && observation?.state === 'pending'
     && observation.dns.length > 0;
-  return adoptTunnel || checkAgain || addRecords || Boolean(observation?.failureCause);
+  return adoptTunnel || checkAgain || addRecords || Boolean(observation?.failureCause)
+    || projectDeploymentDomainDnsReadinessV1(item.domain.dnsHealth).reason === 'dns_mismatch';
 }
 
 /** The list's row context, for the module-level row hook. */
@@ -374,17 +377,19 @@ function DomainCertificate(props: Readonly<{ item: DomainItem }>) {
 /** What sets an address apart on its second line (the record to add, a wrong answer, a redirect, a password), or null. */
 function domainBylineLead(item: DomainItem, context: DomainRowContext): Readonly<{ records: readonly string[]; lead: string | null }> {
   const { content } = item;
-  const dns = projectDeploymentDomainDnsReadinessV1(item.domain.dnsHealth).state;
+  const dns = projectDeploymentDomainDnsReadinessV1(item.domain.dnsHealth);
   const records = content.providerObservation?.dns.map(record =>
     t('projects.deployments.editors.domainAddRecord', { type: record.type, name: record.name, value: record.value })) ?? [];
   const lead = records.length > 0 ? records.join(' · ')
-    : dns === 'missing' && context.machineName ? t('projects.deployments.domainDnsMissingBody', { machine: context.machineName })
-    : dns === 'not_this_machine' && context.machineName ? t('projects.deployments.domainDnsElsewhereBody', { machine: context.machineName })
+    : dns.state === 'missing' && context.machineName ? t('projects.deployments.domainDnsMissingBody', { machine: context.machineName })
+    : dns.state === 'not_this_machine' && dns.reason !== 'dns_mismatch' && context.machineName
+      ? t('projects.deployments.domainDnsElsewhereBody', { machine: context.machineName })
     // A wrong answer says what came back (lab svcDom "answers 502"): the Domain health owner's observed status.
     : item.health?.needsYou?.cause === 'http' && item.health.needsYou.httpStatus !== undefined
       ? t('projects.deployments.editors.domainAnswers', { status: item.health.needsYou.httpStatus })
     : content.target.kind !== 'provider' && content.target.redirectTo ? t('projects.deployments.domainRedirect', { target: content.target.redirectTo })
     : content.basicAuth ? t('projects.deployments.domainTagBasicAuth')
+    : content.addressKind === 'generatedCaddy' ? t('projects.deployments.editors.domainGeneratedPublic')
     : null;
   return { records, lead };
 }
@@ -445,6 +450,13 @@ function DomainRowControls(props: Readonly<{ item: DomainRowItem; context: Domai
   const narrowWindow = useWindowDimensions().width < PAGE_LIST_METRICS.rowStackBelowWidthPx;
   const id = `project-deployments.environment.domains.${item.domain.id}`;
   const verify = context.actions?.verify;
+  const [evidence, setEvidence] = React.useState<{ revision: number; comparison: DeploymentDomainDnsComparisonV1 }>();
+  const comparison = evidence?.revision === item.domain.revision ? evidence.comparison : undefined;
+  const verifyWithEvidence = async () => {
+    if (!verify || context.disabled) return;
+    setEvidence(await verify(item) || undefined);
+  };
+  const mismatch = projectDeploymentDomainDnsReadinessV1(item.domain.dnsHealth).reason === 'dns_mismatch';
   const failureDetails: unknown = failure?.details;
   const recovery = DeploymentDomainCloudflareRecoveryV1Schema.safeParse(isRecord(failureDetails) ? failureDetails.recovery : undefined);
   const adopt = context.actions?.adopt;
@@ -454,7 +466,7 @@ function DomainRowControls(props: Readonly<{ item: DomainRowItem; context: Domai
   ) : null;
   const checkAgain = !adoptTunnel && attention && attention.checkAgain !== false && verify && state !== 'removing' ? (
     <RoundButton testID={`${id}.checkAgain`} size="small" display="secondary" title={t('projects.deployments.domainCheckAgain')}
-      disabled={context.disabled} onPress={() => verify(item)} />
+      disabled={context.disabled} onPress={() => void verifyWithEvidence()} />
   ) : null;
   // Only a failed address carries the investigation beside it (lab svcDom: a row says its state; G5); the
   // investigation keeps its own outcome and placement line, so it stays in the row rather than a menu.
@@ -490,6 +502,9 @@ function DomainRowControls(props: Readonly<{ item: DomainRowItem; context: Domai
     <ItemGroupRowPositionBoundary>
       {failure ? <ApprovalTechnicalDetails lines={presentActionFailureTechnicalDetails(failure)} /> : null}
       {providerDetails ? <ApprovalTechnicalDetails lines={providerDetails} /> : null}
+      {mismatch || comparison?.expectedIpv4 === null ? <DomainDnsComparison mismatch={mismatch} comparison={comparison}
+        generated={item.content.addressKind === 'generatedCaddy'}
+        onOpen={verify && !comparison ? () => void verifyWithEvidence() : undefined} /> : null}
     </ItemGroupRowPositionBoundary>
   </View>;
 }

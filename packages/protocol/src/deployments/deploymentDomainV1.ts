@@ -1,6 +1,6 @@
 import { z } from '../zodRuntimePolicy.js';
 import { DeploymentDomainNativeRequiredFactV1Schema } from './deploymentDomainFailureV1.js';
-import { DeploymentDomainAuthoredContentV1Schema } from './deploymentDomainContentV1.js';
+import { DeploymentDomainAuthoredContentV1Schema, DeploymentDomainNativeTargetV1Schema } from './deploymentDomainContentV1.js';
 import { MachineCaddyPrivateBindingV1Schema } from '../machines/setup/machineFirewallV1.js';
 import { DeploymentAppMachineBindingV1Schema } from '../machines/machinePublishedContentV1.js';
 export { DeploymentDomainContentV1Schema, type DeploymentDomainContentV1 } from './deploymentDomainContentV1.js';
@@ -232,16 +232,35 @@ export type DeploymentDomainAttachedVerifyInputV1 = z.infer<typeof DeploymentDom
 /** Private finite draft inspection; no Domain or Artifact is allocated. */
 export const DeploymentDomainPreviewInputV1Schema = lazyZodSchema(() => z.strictObject({
     ...environment, mode: z.literal('preview'), targetLinkId: id, expectedRevision: revision,
-    expectedTargetLinkRevision: revision, requestKey: id, content: DeploymentDomainAuthoredContentV1Schema,
+    expectedTargetLinkRevision: revision, requestKey: id, content: z.union([
+        DeploymentDomainAuthoredContentV1Schema,
+        z.strictObject({ hostname: z.null(), target: DeploymentDomainNativeTargetV1Schema }),
+    ]),
 }));
 export type DeploymentDomainPreviewInputV1 = z.infer<typeof DeploymentDomainPreviewInputV1Schema>;
 export const DeploymentDomainVerifyInputV1Schema = lazyZodSchema(() => z.union([
     DeploymentDomainAttachedVerifyInputV1Schema, DeploymentDomainPreviewInputV1Schema,
 ]));
+/** Private result evidence. Domain observation and header schemas carry only the outcome. */
+export const DeploymentDomainDnsComparisonV1Schema = lazyZodSchema(() => z.strictObject({
+    expectedIpv4: z.nullable(z.ipv4()),
+    answered: z.strictObject({ A: z.nullable(z.array(z.ipv4())), AAAA: z.nullable(z.array(z.ipv6())) }),
+}));
+export type DeploymentDomainDnsComparisonV1 = z.infer<typeof DeploymentDomainDnsComparisonV1Schema>;
 export const DeploymentDomainDnsPreviewResultV1Schema = lazyZodSchema(() => z.strictObject({
     ok: z.literal(true), environmentId: id, dnsHealth: domainDnsHealth(),
+    dnsComparison: z.optional(DeploymentDomainDnsComparisonV1Schema),
 }));
 export type DeploymentDomainDnsPreviewResultV1 = z.infer<typeof DeploymentDomainDnsPreviewResultV1Schema>;
+export const DeploymentDomainAddressOfferResultV1Schema = lazyZodSchema(() => z.strictObject({
+    ok: z.literal(true), environmentId: id,
+    addressOffer: z.discriminatedUnion('status', [
+        z.strictObject({ status: z.literal('available'), audience: z.literal('public'), lifetime: z.literal('temporary'),
+            choices: z.array(z.strictObject({ hostname: id, ingressIpv4: z.ipv4() })).check(z.minLength(1)) }),
+        z.strictObject({ status: z.literal('unavailable'), reason: z.literal('ingress_ipv4_unavailable') }),
+    ]),
+}));
+export type DeploymentDomainAddressOfferResultV1 = z.infer<typeof DeploymentDomainAddressOfferResultV1Schema>;
 export const DeploymentDomainObservationBodyV1Schema = lazyZodSchema(() => z.strictObject({
     capture: DeploymentDomainPlacementV1Schema, state: z.enum(['active', 'warning', 'failed', 'removed']),
     networkExposure: z.optional(DeploymentDomainNetworkExposureV1Schema),
@@ -252,6 +271,9 @@ export const DeploymentDomainObservationBodyV1Schema = lazyZodSchema(() => z.str
     { message: 'Removed observations require exact native absence.' })));
 export const DeploymentDomainObservationV1Schema = lazyZodSchema(() => z.extend(DeploymentDomainObservationBodyV1Schema, {
     proof: MachineInstallationProofV1Schema,
+}));
+export const DeploymentDomainVerifyChildResultV1Schema = lazyZodSchema(() => z.extend(DeploymentDomainObservationV1Schema, {
+    dnsComparison: z.optional(DeploymentDomainDnsComparisonV1Schema),
 }));
 export const DeploymentDomainTransitionInputV1Schema = lazyZodSchema(() => z.strictObject({ ...domain,
     expectedDomainRevision: revision, observations: z.array(DeploymentDomainObservationV1Schema),

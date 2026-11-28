@@ -1,6 +1,7 @@
 import type { HealthCheckResultV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { readDnsHealthCheckV1 } from '@/deployments/healthChecks/finiteNetworkHealthCheck';
+import type { DeploymentDomainDnsComparisonV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
+import { readDnsAnswerHealthCheckV1 } from '@/deployments/healthChecks/finiteNetworkHealthCheck';
 import { finiteHealthCheckResult, type HealthCheckObservationBasisV1 } from '@/deployments/healthChecks/finiteHealthCheckResult';
 
 type Context = HealthCheckObservationBasisV1 & Readonly<{ signal: AbortSignal; startedAt: number }>;
@@ -11,19 +12,25 @@ export function nativeCaddyDnsResult(context: Context, status: HealthCheckResult
     return finiteHealthCheckResult(context, 'dns', Date.now(), context.startedAt, status, { reason, ...facts });
 }
 
-/** Reuse the native DNS owner; either address family can serve the hostname. */
-export async function readNativeCaddyDnsResolution(hostname: string, context: Context): Promise<HealthCheckResultV1> {
-    const results = await Promise.all((['A', 'AAAA'] as const).map(recordType => readDnsHealthCheckV1(
-        { ...context, hostname, recordType }, { signal: context.signal, now: Date.now })));
-    return results.find(result => result.status === 'up')
-        ?? results.find(result => result.status === 'unknown') ?? results[0]!;
-}
-
 /** DNS resolution does not depend on an applied route or an installed listener. */
-export async function readNativeCaddyDnsReadiness<T>(hostname: string, context: Context,
-    probe: () => Promise<T>): Promise<HealthCheckResultV1 | T> {
-    const resolution = await readNativeCaddyDnsResolution(hostname, context);
-    return resolution.status === 'up' ? probe() : resolution;
+export async function readNativeCaddyDnsReadiness<T extends object>(hostname: string, context: Context,
+    probe: () => Promise<T>, expectedIpv4: string | null | undefined):
+    Promise<(HealthCheckResultV1 | T) & { dnsComparison?: DeploymentDomainDnsComparisonV1 }> {
+    const [ipv4, ipv6] = await Promise.all([
+        readDnsAnswerHealthCheckV1({ ...context, hostname, recordType: 'A' }, { signal: context.signal, now: Date.now }),
+        readDnsAnswerHealthCheckV1({ ...context, hostname, recordType: 'AAAA' }, { signal: context.signal, now: Date.now }),
+    ]);
+    let resolution = ipv4.health;
+    if (expectedIpv4) {
+        if (ipv4.answers?.some(answer => answer !== expectedIpv4) || ipv4.answers?.length === 0 && ipv6.answers?.length) {
+            resolution = nativeCaddyDnsResult(context, 'down', 'dns_mismatch', { recordType: 'A' });
+        }
+    } else if (ipv6.health.status === 'up' || ipv4.health.status === 'down' && ipv6.health.status === 'unknown') {
+        if (ipv4.health.status !== 'up') resolution = ipv6.health;
+    }
+    const result = resolution.status === 'up' ? await probe() : resolution;
+    return expectedIpv4 === undefined ? result : { ...result,
+        dnsComparison: { expectedIpv4, answered: { A: ipv4.answers, AAAA: ipv6.answers } } };
 }
 
 /** This token proves routing, not TLS or application health. Never follow redirects

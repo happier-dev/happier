@@ -118,6 +118,17 @@ type DeploymentEditorsTranslations = Readonly<{
   domainServing: string;
   /** A platform's own stable address (*.vercel.app, *.workers.dev), listed first and read-only. */
   domainBuiltIn: string;
+  domainGenerateAddress: string;
+  domainGeneratedCaveat: string;
+  domainGeneratedUnavailable: string;
+  domainGeneratedPublic: string;
+  domainDnsPointsElsewhere: string;
+  domainDnsExpected: string;
+  domainDnsPointsAt: string;
+  domainDnsNext: string;
+  domainDnsGeneratedNext: string;
+  domainDnsEvidenceUnavailable: string;
+  domainDnsNoRecords: string;
   domainUnattached: string;
   domainCertificateExpires: (params: { date: string }) => string;
   domainAddRecord: (params: { type: string; name: string; value: string }) => string;
@@ -136,6 +147,20 @@ type DeploymentEditorsTranslations = Readonly<{
   diagnosisNetwork: string;
   diagnosisHttp: string;
 }>;
+
+const generatedAddressCopy = {
+  domainGenerateAddress: 'Generate temporary address',
+  domainGeneratedCaveat: 'Public. The name exposes the ingress IP. Certificate issuance shares a rate limit with other sslip.io names.',
+  domainGeneratedUnavailable: 'This ingress has no observed public IPv4. Enter your own domain to continue.',
+  domainGeneratedPublic: 'Temporary · Public',
+  domainDnsPointsElsewhere: 'Points elsewhere',
+  domainDnsExpected: 'Expected',
+  domainDnsPointsAt: 'Points at',
+  domainDnsNext: 'Correct the DNS record and check again.',
+  domainDnsGeneratedNext: 'Generate a replacement address and remove this one.',
+  domainDnsEvidenceUnavailable: 'Unavailable',
+  domainDnsNoRecords: 'No records',
+} as const;
 
 export const deploymentEditorsTranslations = {
   en: {
@@ -198,6 +223,7 @@ export const deploymentEditorsTranslations = {
     domainColumnCertificate: 'Certificate',
     domainColumnState: 'State',
     domainServing: 'Serving',
+    ...generatedAddressCopy,
     domainBuiltIn: 'Built-in address',
     domainUnattached: 'Unattached',
     domainCertificateExpires: ({ date }) => `expires ${date}`,
@@ -334,6 +360,7 @@ export const deploymentEditorsTranslations = {
     domainColumnCertificate: 'Сертификат',
     domainColumnState: 'Состояние',
     domainServing: 'Работает',
+    ...generatedAddressCopy,
     domainBuiltIn: 'Встроенный адрес',
     domainUnattached: 'Не привязан',
     domainCertificateExpires: ({ date }) => `истекает ${date}`,
@@ -469,6 +496,7 @@ export const deploymentEditorsTranslations = {
     domainColumnCertificate: 'Certyfikat',
     domainColumnState: 'Stan',
     domainServing: 'Działa',
+    ...generatedAddressCopy,
     domainBuiltIn: 'Wbudowany adres',
     domainUnattached: 'Nieprzypisana',
     domainCertificateExpires: ({ date }) => `wygasa ${date}`,
@@ -605,6 +633,7 @@ export const deploymentEditorsTranslations = {
     domainColumnCertificate: 'Certificado',
     domainColumnState: 'Estado',
     domainServing: 'Sirviendo',
+    ...generatedAddressCopy,
     domainBuiltIn: 'Dirección integrada',
     domainUnattached: 'Sin vincular',
     domainCertificateExpires: ({ date }) => `caduca el ${date}`,
@@ -741,6 +770,7 @@ export const deploymentEditorsTranslations = {
     domainColumnCertificate: 'Certificat',
     domainColumnState: 'État',
     domainServing: 'En service',
+    ...generatedAddressCopy,
     domainBuiltIn: 'Adresse intégrée',
     domainUnattached: 'Non rattaché',
     domainCertificateExpires: ({ date }) => `expire le ${date}`,
@@ -877,6 +907,7 @@ export const deploymentEditorsTranslations = {
     domainColumnCertificate: 'Certificato',
     domainColumnState: 'Stato',
     domainServing: 'Attivo',
+    ...generatedAddressCopy,
     domainBuiltIn: 'Indirizzo integrato',
     domainUnattached: 'Non collegato',
     domainCertificateExpires: ({ date }) => `scade il ${date}`,
@@ -1012,6 +1043,7 @@ export const deploymentEditorsTranslations = {
     domainColumnCertificate: 'Certificado',
     domainColumnState: 'Estado',
     domainServing: 'Servindo',
+    ...generatedAddressCopy,
     domainBuiltIn: 'Endereço integrado',
     domainUnattached: 'Não vinculado',
     domainCertificateExpires: ({ date }) => `expira em ${date}`,
@@ -1148,6 +1180,7 @@ export const deploymentEditorsTranslations = {
     domainColumnCertificate: 'Certificat',
     domainColumnState: 'Estat',
     domainServing: 'En servei',
+    ...generatedAddressCopy,
     domainBuiltIn: 'Adreça integrada',
     domainUnattached: 'Sense vincular',
     domainCertificateExpires: ({ date }) => `caduca el ${date}`,
@@ -1283,6 +1316,7 @@ export const deploymentEditorsTranslations = {
     domainColumnCertificate: 'Zertifikat',
     domainColumnState: 'Status',
     domainServing: 'Aktiv',
+    ...generatedAddressCopy,
     domainBuiltIn: 'Integrierte Adresse',
     domainUnattached: 'Nicht verbunden',
     domainCertificateExpires: ({ date }) => `läuft ab am ${date}`,
@@ -1418,6 +1452,7 @@ export const deploymentEditorsTranslations = {
     domainColumnCertificate: '证书',
     domainColumnState: '状态',
     domainServing: '正在服务',
+    ...generatedAddressCopy,
     domainBuiltIn: '内置地址',
     domainUnattached: '未关联',
     domainCertificateExpires: ({ date }) => `${date} 到期`,
@@ -1553,6 +1588,7 @@ export const deploymentEditorsTranslations = {
     domainColumnCertificate: '憑證',
     domainColumnState: '狀態',
     domainServing: '服務中',
+    ...generatedAddressCopy,
     domainBuiltIn: '內建位址',
     domainUnattached: '未連結',
     domainCertificateExpires: ({ date }) => `${date} 到期`,
@@ -1688,6 +1724,7 @@ export const deploymentEditorsTranslations = {
     domainColumnCertificate: '証明書',
     domainColumnState: '状態',
     domainServing: '稼働中',
+    ...generatedAddressCopy,
     domainBuiltIn: '組み込みアドレス',
     domainUnattached: '未接続',
     domainCertificateExpires: ({ date }) => `${date} に期限切れ`,

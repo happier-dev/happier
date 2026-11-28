@@ -272,7 +272,8 @@ export function createNativeCaddyRoutes(host: Readonly<{
     };
     /** A finite hostname proof through the existing public HTTP listener. It
      * creates no persistent state and removes only this invocation's exact route. */
-    const checkDnsReadiness = async (request: Readonly<{ hostname: string; nativeServer: string; listener: 'public' | 'privateOrigin'; signal?: AbortSignal }>): Promise<HealthCheckResultV1 | NativeCaddyRouteResult> => {
+    const checkDnsReadiness = async (request: Readonly<{ hostname: string; nativeServer: string;
+        listener: 'public' | 'privateOrigin'; signal?: AbortSignal; expectedIpv4?: string | null }>) => {
         if (request.signal?.aborted) return { kind: 'cancelled', reason: 'cancelled' };
         const signal = request.signal ?? new AbortController().signal;
         const context = { observer: { machineId: host.machineId, installationId: host.installationId },
@@ -311,7 +312,7 @@ export function createNativeCaddyRoutes(host: Readonly<{
                 }
             }
             return result;
-        }); } catch (error) { return dnsFailure(error, signal, 'deployment.domain.dns.resolve'); }
+        }, request.expectedIpv4); } catch (error) { return dnsFailure(error, signal, 'deployment.domain.dns.resolve'); }
     };
     const activate = async (request: ActivationRequest & Readonly<{ expected?: CaddyDomainRouteMaterial }>): Promise<NativeCaddyRouteResult> => {
         const refusal = admitted(request); if (refusal) return refusal;

@@ -37,7 +37,9 @@ export async function previewOwnServerDomainDns(input: DeploymentDomainPreviewIn
     const failure = ActionExecuteFailureSchema.safeParse(result);
     if (failure.success) return failure.data;
     const parsed = DeploymentActionOutputSchemasV1['deployments.domains.verify'].safeParse(result);
-    if (!parsed.success || parsed.data.ok && (!('dnsHealth' in parsed.data) || parsed.data.environmentId !== input.environmentId))
+    if (!parsed.success || parsed.data.ok && (!('environmentId' in parsed.data)
+        || parsed.data.environmentId !== input.environmentId
+        || (input.content.hostname === null ? !('addressOffer' in parsed.data) : !('dnsHealth' in parsed.data))))
         return projectDeploymentFailure('invalid_action_transport_output');
     return parsed.data;
 }

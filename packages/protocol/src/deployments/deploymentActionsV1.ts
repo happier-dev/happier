@@ -104,7 +104,8 @@ export { DeploymentBindingsPatchInputV1Schema, type DeploymentBindingsPatchInput
   DeploymentEnvironmentSecretScopeV1Schema, type DeploymentEnvironmentSecretScopeV1 } from './deploymentBindingPatchV1.js';
 export * from './deploymentDomainV1.js';
 import { DeploymentDomainHeaderV1Schema, DeploymentDomainAddInputV1Schema, DeploymentDomainRemoveInputV1Schema,
-  DeploymentDomainVerifyInputV1Schema, DeploymentDomainDnsPreviewResultV1Schema, DeploymentDomainGetInputV1Schema, DeploymentDomainListInputV1Schema } from './deploymentDomainV1.js';
+  DeploymentDomainVerifyInputV1Schema, DeploymentDomainDnsPreviewResultV1Schema, DeploymentDomainGetInputV1Schema,
+  DeploymentDomainListInputV1Schema, DeploymentDomainAddressOfferResultV1Schema, DeploymentDomainDnsComparisonV1Schema } from './deploymentDomainV1.js';
 import { DeploymentPendingAdmissionV1Schema } from './deploymentPendingAdmissionV1.js';
 export { DeploymentPendingAdmissionV1Schema, type DeploymentPendingAdmissionV1 } from './deploymentPendingAdmissionV1.js';
 export { DeploymentAcceptedExecutionV1Schema, type DeploymentAcceptedExecutionV1 } from './deploymentAcceptedExecutionV1.js';
@@ -419,8 +420,14 @@ export const DeploymentEnvironmentMaintenanceSetResultV1Schema = lazyZodSchema((
       artifactId: DeploymentIdentifierV1Schema }),
   ])),
 }));
+const domainMutationSuccess = () => ({ ...result, domain: DeploymentDomainHeaderV1Schema,
+  tunnel: z.optional(DeploymentDomainTunnelDispositionV1Schema) });
 export const DeploymentDomainMutationResultV1Schema = lazyZodSchema(() => z.union([
-  z.strictObject({ ...result, domain: DeploymentDomainHeaderV1Schema, tunnel: z.optional(DeploymentDomainTunnelDispositionV1Schema) }),
+  z.strictObject(domainMutationSuccess()),
+  DeploymentDomainIdInUseFailureV1Schema, DeploymentActionFailureV1Schema,
+]));
+export const DeploymentDomainAttachedVerifyResultV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ ...domainMutationSuccess(), dnsComparison: z.optional(DeploymentDomainDnsComparisonV1Schema) }),
   DeploymentDomainIdInUseFailureV1Schema, DeploymentActionFailureV1Schema,
 ]));
 export const DeploymentDomainListResultV1Schema = lazyZodSchema(() => z.union([
@@ -869,7 +876,9 @@ export const DeploymentActionOutputSchemasV1 = lazyDefinition(() => ({
   [DEPLOYMENT_ENVIRONMENT_MAINTENANCE_SET_ACTION_ID_V1]: DeploymentEnvironmentMaintenanceSetResultV1Schema,
   'deployments.domains.add': DeploymentDomainMutationResultV1Schema,
   'deployments.domains.remove': DeploymentDomainMutationResultV1Schema,
-  'deployments.domains.verify': lazyZodSchema(() => z.union([DeploymentDomainMutationResultV1Schema, DeploymentDomainDnsPreviewResultV1Schema])),
+  'deployments.domains.verify': lazyZodSchema(() => z.union([
+    DeploymentDomainAttachedVerifyResultV1Schema, DeploymentDomainDnsPreviewResultV1Schema, DeploymentDomainAddressOfferResultV1Schema,
+  ])),
   'deployments.domains.get': DeploymentDomainMutationResultV1Schema,
   'deployments.domains.list': DeploymentDomainListResultV1Schema,
   'deployments.domains.page': DeploymentDomainPageResultV1Schema,
