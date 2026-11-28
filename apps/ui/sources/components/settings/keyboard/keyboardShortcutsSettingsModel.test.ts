@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { Settings } from '@/sync/domains/settings/settings';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { SESSION_ACTION_MARK_UNREAD_ID } from '@happier-dev/protocol/sessions/actions/sessionActionIds';
 
 import {
     buildKeyboardShortcutResetDelta,
@@ -29,6 +30,16 @@ const isolatedOverrideSettings = {
 };
 
 describe('keyboardShortcutsSettingsModel', () => {
+    it('keeps the Session action title when a shortcut has custom keys', () => {
+        const commandId = `session.action:${SESSION_ACTION_MARK_UNREAD_ID}`;
+        const model = buildKeyboardShortcutSettingsModel({
+            settings: { ...baseSettings, keyboardShortcutOverridesV1: { [commandId]: [{ binding: 'Mod+Shift+U' }] } },
+            platform: 'macos', surface: 'web',
+        });
+        expect(model.commandRows.find(row => row.commandId === commandId)).toMatchObject({
+            titleKey: 'sessionInfo.markSessionUnread', hasOverride: true,
+        });
+    });
     it('keeps predecessor override rules readable when a catalog shortcut is added', () => {
         // 0.2 4df6e9e1: registry/keyboardShortcutSettingSchemas.ts accepts this persisted rule shape.
         const overrides = { 'settings.open': [{ binding: 'Mod+,', platforms: ['macos'] as const, blockedSurfaces: ['native'] as const, allowInEditable: true }] };

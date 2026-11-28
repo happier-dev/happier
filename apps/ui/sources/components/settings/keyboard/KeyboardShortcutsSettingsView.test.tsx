@@ -9,6 +9,7 @@ import { createProviderSettingsAccountHarness } from '@/dev/testkit/harness/prov
 const routerSetParamsSpy = vi.fn();
 const modalShowSpy = vi.fn();
 const modalAlertSpy = vi.fn();
+const routeState = vi.hoisted(() => ({ params: {} as Record<string, string>, height: 20000 }));
 let settingsFixture: typeof settingsDefaults;
 let capturedShortcutModalProps: {
     defaultValue?: string;
@@ -19,14 +20,13 @@ let capturedShortcutModalProps: {
 // (widgets/NearViewportWindow.test.tsx); these cases drive rows in every group.
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    const window = { width: 1440, height: 20000, scale: 1, fontScale: 1 };
-    return createReactNativeWebMock({ Dimensions: { get: () => window } });
+    return createReactNativeWebMock({ Dimensions: { get: () => ({ width: 390, height: routeState.height, scale: 1, fontScale: 1 }) } });
 });
 
 vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock({ router: { setParams: routerSetParamsSpy } }).module;
+    return createExpoRouterMock({ params: () => routeState.params, router: { setParams: routerSetParamsSpy } }).module;
 });
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
@@ -68,6 +68,8 @@ describe('KeyboardShortcutsSettingsView', () => {
         };
         await account.restore({ settings: settingsFixture });
         capturedShortcutModalProps = null;
+        routeState.params = {};
+        routeState.height = 20000;
         modalShowSpy.mockImplementation((config) => {
             capturedShortcutModalProps = config.props as typeof capturedShortcutModalProps;
             return 'shortcut-capture-modal';
@@ -101,6 +103,23 @@ describe('KeyboardShortcutsSettingsView', () => {
         // The duplicate Mod+K binding names both commands in one conflict row.
         const conflict = screen.findAll(node => node.props.testID === 'settings-keyboard-shortcuts-conflict-duplicate:commandPalette.open:session.new' && node.props.title)[0];
         expect(conflict?.props.title).toBe('settingsKeyboard.commands.commandPaletteOpen · settingsKeyboard.commands.sessionNew');
+    });
+
+    it('mounts and highlights an off-screen Session action requested by Settings search with its catalog title', async () => {
+        const { SESSION_ACTION_MARK_UNREAD_ID } = await import('@happier-dev/protocol/sessions/actions/sessionActionIds');
+        const commandId = `session.action:${SESSION_ACTION_MARK_UNREAD_ID}`;
+        const anchor = `keyboard.${commandId}`;
+        routeState.params = { setting: anchor };
+        routeState.height = 844;
+        const scrollIntoView = vi.fn();
+        const { KeyboardShortcutsSettingsView } = await import('./KeyboardShortcutsSettingsView');
+        const screen = await renderSettingsView(<KeyboardShortcutsSettingsView />, {
+            createNodeMock: element => element.props.nativeID === `setting-${anchor}` ? { scrollIntoView } : null,
+        });
+        expect(screen.findAll(node => node.props.testID === `settings-keyboard-shortcut-row-${commandId}` && node.props.title)[0]?.props.title)
+            .toBe('sessionInfo.markSessionUnread');
+        expect(screen.findByTestId(`setting-reveal.${anchor}`)).toBeTruthy();
+        await vi.waitFor(() => expect(scrollIntoView).toHaveBeenCalledWith(expect.objectContaining({ block: 'center' })));
     });
 
     it('opens a conflict at the command it names: the row expands and the page reveals it', async () => {
