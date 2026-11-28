@@ -2,7 +2,6 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { localStackSourceRuntimeRoot } from './localSourceRuntimeBootstrap.mjs';
-import { loadCliCommonWorkspacesModule } from '../../../scripts/workspaces/loadCliCommonWorkspacesModule.mjs';
 import { resolveWorkspaceBuildMode, WORKSPACE_BUILD_MODE_ENV } from '../../../scripts/workspaces/workspaceChildBuildEnv.mjs';
 import { resolveBundledWorkspaceSyncModulePath } from '../scripts/runtime/resolveBundledWorkspaceSyncModulePath.mjs';
 import { coerceHappyMonorepoRootFromPath } from '../scripts/utils/paths/paths.mjs';
@@ -29,6 +28,7 @@ async function bundledWorkspacePackagesAreHealthy({
   env,
 }) {
   try {
+    const { loadCliCommonWorkspacesModule } = await import('../../../scripts/workspaces/loadCliCommonWorkspacesModule.mjs');
     const cliCommonWorkspacesModule = await loadCliCommonWorkspacesModule(
       repoRoot,
       env,

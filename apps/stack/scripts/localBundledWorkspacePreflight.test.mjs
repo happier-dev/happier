@@ -1,3 +1,4 @@
+// @happier-test-preparation source-condition
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -12,6 +13,25 @@ const scriptsDir = dirname(fileURLToPath(import.meta.url));
 const stackDir = resolve(scriptsDir, '..');
 const preflightModulePath = resolve(stackDir, 'bin', 'localBundledWorkspacePreflight.mjs');
 const bundleWorkspaceDepsModulePath = resolve(stackDir, 'scripts', 'bundleWorkspaceDeps.mjs');
+
+test('metadata preflight leaves the workspace builder unloaded', async () => {
+  const loader = new URL('../../../scripts/workspaces/loadCliCommonWorkspacesModule.mjs', import.meta.url).href;
+  const result = await runNodeCapture(['--input-type=module', '-e', `
+    import { registerHooks } from 'node:module';
+    let workspaceBuilderLoads = 0;
+    registerHooks({ load(url, context, nextLoad) {
+      if (url === ${JSON.stringify(loader)}) workspaceBuilderLoads++;
+      return nextLoad(url, context);
+    } });
+    const { isBundledWorkspaceMetadataInvocation, refreshLocalBundledWorkspacePackages } =
+      await import(${JSON.stringify(pathToFileURL(preflightModulePath).href)});
+    const argv = ['--help'];
+    await refreshLocalBundledWorkspacePackages(${JSON.stringify(stackDir)}, { argv });
+    console.log(JSON.stringify({ metadata: isBundledWorkspaceMetadataInvocation(argv), workspaceBuilderLoads }));
+  `]);
+  assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), { metadata: true, workspaceBuilderLoads: 0 });
+});
 
 function writeJson(path, value) {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, 'utf8');

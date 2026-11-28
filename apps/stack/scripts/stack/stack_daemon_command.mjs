@@ -5,7 +5,6 @@ import { findExistingStackCredentialPath } from '../utils/auth/credentials_paths
 import { parseArgs } from '../utils/cli/args.mjs';
 import { printResult, wantsHelp } from '../utils/cli/cli.mjs';
 import { isTty, promptSelect, withRl } from '../utils/cli/wizard.mjs';
-import { checkDaemonState, daemonStatusSummary, startLocalDaemonWithAuth, stopLocalDaemon } from '../daemon.mjs';
 import { getComponentDir, getRepoDir, resolveStackBaseDir, resolveStackEnvPath } from '../utils/paths/paths.mjs';
 import { redactFailureDiagnostic, run } from '../utils/proc/proc.mjs';
 import { resolveServerUrls } from '../utils/server/urls.mjs';
@@ -122,6 +121,7 @@ async function startStackDaemonIdentity({ context, stackName, identity, restart 
   const { cliBin, cliEntrypoint, cliNodeEntrypoint, cliCommand, cliCommandArgs, cliHomeDir,
     internalServerUrl, publicServerUrl, runtimePath, envForIdentity, runtimeProvenance,
     sourceRuntimeLaunchUpdate } = context;
+  const { startLocalDaemonWithAuth } = await import('../daemon.mjs');
   if (!refreshSelectedSource) {
     await recordStackRuntimeDaemonDesiredState(runtimePath, 'running', { cliIdentity: identity });
   }
@@ -325,6 +325,7 @@ export async function runStackDaemonCommand({ rootDir, stackName, argv, json, em
           ...(startResult?.started === false ? { started: false, reason: startResult.reason } : {}) };
       }
 
+      const { checkDaemonState, daemonStatusSummary, stopLocalDaemon } = await import('../daemon.mjs');
       if (action === 'stop') {
         // Publish desire before retirement. Join the existing launch lock so a
         // start already in flight cannot outlive a completed explicit stop.

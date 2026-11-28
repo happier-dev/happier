@@ -1,3 +1,4 @@
+// @happier-test-preparation source-condition
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -6,6 +7,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { runNodeCapture } from '../testkit/core/run_node_capture.mjs';
+import { createTempFixture } from '../testkit/core/temp_fixture.mjs';
+import { sanitizeStackTestRunnerEnv } from '../utils/test/test_env.mjs';
 
 import { requiresStackDaemonPreflight } from './stack_happier_daemon_preflight.mjs';
 
@@ -22,6 +25,44 @@ test('requiresStackDaemonPreflight considers Session creation for target-aware p
 test('requiresStackDaemonPreflight keeps daemon preflight for resume and attach paths', () => {
   assert.equal(requiresStackDaemonPreflight(['resume']), true);
   assert.equal(requiresStackDaemonPreflight(['attach']), true);
+});
+
+test('preflight context resolves the selected daemon endpoint without loading daemon lifecycle in the caller', async (t) => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-preflight-context-' });
+  const cliHomeDir = fixture.path('cli');
+  const daemonModule = new URL('../daemon.mjs', import.meta.url).href;
+  const sourceRuntime = fileURLToPath(new URL('../../../../packages/cli-common/registerSourceRuntime.mjs', import.meta.url));
+  const result = await runNodeCapture(['--import', sourceRuntime, '--input-type=module', '-e', `
+    import { registerHooks } from 'node:module';
+    let lifecycleLoads = 0;
+    registerHooks({ load(url, context, nextLoad) {
+      if (url === ${JSON.stringify(daemonModule)}) lifecycleLoads++;
+      return nextLoad(url, context);
+    } });
+    const { resolveStackDaemonCommandContext } = await import(${JSON.stringify(new URL('./stack_daemon_command.mjs', import.meta.url).href)});
+    const { cliHomeDir, internalServerUrl } = await resolveStackDaemonCommandContext({
+      rootDir: ${JSON.stringify(fileURLToPath(new URL('../../', import.meta.url)))},
+      stackName: 'preflight-context',
+      identity: 'default',
+      env: process.env,
+      activeRuntimeState: null,
+    });
+    console.log(JSON.stringify({ cliHomeDir, internalServerUrl, lifecycleLoads }));
+  `], {
+    env: {
+      ...sanitizeStackTestRunnerEnv(process.env, { isolatedStackRoot: fixture.root }),
+      HAPPIER_STACK_STACK: 'preflight-context',
+      HAPPIER_STACK_RUNTIME_MODE: 'source',
+      HAPPIER_STACK_CLI_HOME_DIR: cliHomeDir,
+      HAPPIER_STACK_SERVER_PORT: '43123',
+    },
+  });
+  assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), {
+    cliHomeDir,
+    internalServerUrl: 'http://127.0.0.1:43123',
+    lifecycleLoads: 0,
+  });
 });
 
 test('ensureStackDaemonPreflight preserves canonical runtime provenance from daemon command context', async () => {
