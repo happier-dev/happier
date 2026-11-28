@@ -28,7 +28,7 @@ import { completeActionResult } from '../resultProjection.js';
 import { HomeConnectInputSchema, MachineAddCommandInputSchema, MACHINE_ADD_SSH_ACTION_IDS, MACHINE_ADD_SSH_INPUT_SCHEMAS, MACHINE_PAGE_ACTION_IDS, MACHINE_PAGE_ACTION_INPUT_SCHEMAS, type MachineAddSshActionId, type MachinePageActionId } from '../../specs/machineConnection.js';
 import { MachineManagedInstallationRespondInputSchema } from '../../specs/machineConnection.js';
 import type { PersonalHomeCreateInputSchema } from '../../specs/machineConnection.js';
-import { MACHINE_PAIRING_CANCEL_ACTION_ID_V1, PERSONAL_HOME_CREATE_ACTION_ID_V1 } from '../../specs/machineConnectionActionIdsV1.js';
+import { MACHINE_ACTIVITY_LIST_ACTION_ID, MACHINE_DOCTOR_SNAPSHOT_ACTION_ID, MACHINE_PAIRING_CANCEL_ACTION_ID_V1, PERSONAL_HOME_CREATE_ACTION_ID_V1 } from '../../specs/machineConnectionActionIdsV1.js';
 import { MachineAddLocalStartInputSchema } from '../../specs/machineConnection.js';
 import { isMachineTerminalActionId, MACHINE_TERMINAL_ACTION_INPUT_SCHEMAS } from '../../specs/machineTerminal.js';
 import type { ActionExecuteResult, ActionExecutorContext } from '../types.js';
@@ -310,6 +310,14 @@ export async function dispatchMachineControls3(inv: Pick<CoreInvocation, 'action
         return completeActionResult(await deps.machinePairingCancel(
           parsed.data as AdmittedActionInputById[typeof MACHINE_PAIRING_CANCEL_ACTION_ID_V1], ctx));
       }
+      if (actionId === MACHINE_ACTIVITY_LIST_ACTION_ID) {
+        const input = parsed.data as AdmittedActionInputById[typeof MACHINE_ACTIVITY_LIST_ACTION_ID];
+        if (ctx.serverId && input.serverId && !isSameHome(input.serverId, ctx.serverId, ctx)) {
+          return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
+        }
+        if (!deps.machineActivityList) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
+        return completeActionResult(await deps.machineActivityList(input, ctx));
+      }
       if ((MACHINE_PAGE_ACTION_IDS as readonly string[]).includes(actionId)) {
         const id = actionId as MachinePageActionId;
         const input = parsed.data as z.infer<(typeof MACHINE_PAGE_ACTION_INPUT_SCHEMAS)[typeof id]>;
@@ -317,6 +325,10 @@ export async function dispatchMachineControls3(inv: Pick<CoreInvocation, 'action
           return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
         }
         if (!deps.machinePageAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+        if (id === MACHINE_DOCTOR_SNAPSHOT_ACTION_ID && ctx.externalActionTarget?.kind === 'machine'
+          && input.machineId !== ctx.externalActionTarget.machineId) {
+          return { ok: false, errorCode: 'machine_target_mismatch', error: 'machine_target_mismatch' };
+        }
         return completeActionResult(await deps.machinePageAction({ actionId: id, input, context: ctx }));
       }
       if (isMachineTerminalActionId(actionId)) {

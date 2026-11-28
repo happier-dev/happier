@@ -6,6 +6,8 @@ import { collectBugReportMachineDiagnosticsSnapshotForBugReport } from '@/diagno
 import { BugReportDiagnosticsRequestSchema } from '@happier-dev/protocol/bugs/reports/machineDiagnostics';
 import type { BugReportMachineDiagnosticsSnapshot } from '@happier-dev/protocol';
 import { projectIdentityFreeDiagnosticLogTail, projectIdentityFreeMachineDiagnostics } from '@/diagnostics/identityFreeMachineDiagnostics';
+import { projectMachineDoctorSnapshotForAction } from '@happier-dev/protocol/diagnostics/doctorSnapshot';
+import { MachineDoctorSnapshotActionInputV1Schema } from '@happier-dev/protocol/actions/specs/machineConnection';
 import { configuration } from '@/configuration';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
@@ -142,6 +144,22 @@ export function registerMachineDiagnosticsRpcHandlers(params: Readonly<{
   const { rpcHandlerManager } = params;
   const admission = params.filesystemEffectAdmission ?? createFilesystemEffectAdmission();
   const executor = params.actionExecutor ?? createBugReportDiagnosticsRpcActionExecutor();
+
+  rpcHandlerManager.registerHandler(RPC_METHODS.MACHINES_DOCTOR_SNAPSHOT, async (rawParams, context) => {
+    const request = MachineDoctorSnapshotActionInputV1Schema.safeParse(rawParams);
+    if (!request.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+    if (!context?.machineAdmission) {
+      return { ok: false, errorCode: 'machine_access_denied', error: 'machine_access_denied' };
+    }
+    if (context.machineAdmission.machineId !== request.data.machineId) {
+      return { ok: false, errorCode: 'machine_target_mismatch', error: 'machine_target_mismatch' };
+    }
+    context.signal.throwIfAborted();
+    const { buildDoctorSnapshot } = await import('@/ui/doctorSnapshot');
+    const snapshot = await buildDoctorSnapshot();
+    context.signal.throwIfAborted();
+    return projectMachineDoctorSnapshotForAction(snapshot);
+  });
 
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_LOG_TAIL, async (rawParams: any, context) => {
     const failure = await admission.rpc(context);

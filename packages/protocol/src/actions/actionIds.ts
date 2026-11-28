@@ -199,7 +199,7 @@ import { DEPLOYMENT_ACTION_IDS_V1, DEPLOYMENT_SUGGESTION_ACTION_IDS_V1, DEPLOYME
 import { CODE_INTELLIGENCE_ACTION_IDS } from './codeIntelligenceActionIdsV1.js';
 import { z } from '../zodRuntimePolicy.js';
 import { isProjectWorkspaceSyncOpenActionV1 } from './projectActionIdsV1.js';
-import { MACHINE_ADD_SSH_ACTION_IDS, MACHINE_PAGE_ACTION_IDS, MACHINE_MANAGED_INSTALLATION_ACTION_IDS, MACHINE_PAIRING_CANCEL_ACTION_ID_V1, PERSONAL_HOME_CREATE_ACTION_ID_V1 } from './specs/machineConnectionActionIdsV1.js';
+import { MACHINE_ADD_SSH_ACTION_IDS, MACHINE_PAGE_ACTION_IDS, MACHINE_ACTIVITY_LIST_ACTION_ID, MACHINE_MANAGED_INSTALLATION_ACTION_IDS, MACHINE_PAIRING_CANCEL_ACTION_ID_V1, PERSONAL_HOME_CREATE_ACTION_ID_V1 } from './specs/machineConnectionActionIdsV1.js';
 import { LOCAL_DAEMON_SERVICE_ACTION_IDS } from './specs/localDaemonServiceActionIdsV1.js';
 import { USAGE_ACTION_IDS, USAGE_COACH_ACTION_IDS } from '../usage/usageActionIdsV1.js';
 import { MACHINE_ACCESS_ACTION_IDS, MACHINE_ACCESS_GRANT_SET_ACTION_ID_V1, MACHINE_WORK_SUMMARY_ACTION_IDS } from './specs/machine/accessActionIdsV1.js';
@@ -536,7 +536,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'machines.agents.install.cancel',
   ],
   machine_agent_sign_in: ['machines.agents.signIn.start', 'machines.agents.signIn.status', 'machines.agents.signIn.cancel', 'machines.agents.signIn.restart'],
-  machine_connection: ['homes.connect', 'homes.reconnect', PERSONAL_HOME_CREATE_ACTION_ID_V1, 'machines.add.command', 'machines.add.local.start', MACHINE_ADD_LOCAL_CANCEL_ACTION_ID_V1, 'machines.pairing.create', MACHINE_PAIRING_CANCEL_ACTION_ID_V1, ...MACHINE_PAGE_ACTION_IDS, ...MACHINE_TERMINAL_ACTION_IDS, ...MACHINE_ADD_SSH_ACTION_IDS, ...MACHINE_MANAGED_INSTALLATION_ACTION_IDS],
+  machine_connection: ['homes.connect', 'homes.reconnect', PERSONAL_HOME_CREATE_ACTION_ID_V1, 'machines.add.command', 'machines.add.local.start', MACHINE_ADD_LOCAL_CANCEL_ACTION_ID_V1, 'machines.pairing.create', MACHINE_PAIRING_CANCEL_ACTION_ID_V1, ...MACHINE_PAGE_ACTION_IDS, MACHINE_ACTIVITY_LIST_ACTION_ID, ...MACHINE_TERMINAL_ACTION_IDS, ...MACHINE_ADD_SSH_ACTION_IDS, ...MACHINE_MANAGED_INSTALLATION_ACTION_IDS],
   local_daemon_services: [...LOCAL_DAEMON_SERVICE_ACTION_IDS, ...MACHINE_SERVICE_ACTION_IDS],
   machine_access: MACHINE_ACCESS_ACTION_IDS,
   machine_work_summary: MACHINE_WORK_SUMMARY_ACTION_IDS,

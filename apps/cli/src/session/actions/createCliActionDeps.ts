@@ -238,6 +238,10 @@ import type { prepareActiveAccountRoleOverrides } from '@/settings/prompts/hydra
 
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
+import { ActionOperationListV1ResponseSchema } from '@happier-dev/protocol/actions/operations/v1';
+import { ACTION_OPERATION_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
+import { decodeDeploymentReceiptHistoryPageV1, DeploymentEnvironmentListResultV1Schema, hasDeploymentReceiptContentV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { readDeploymentReceiptActionFactsV1 } from '@happier-dev/deployments/contracts/v1';
 import { prepareProjectSourceDeploymentRecipientsV1, withDeploymentEnvironmentRecipientDeliveryV1, type DeploymentContentRecipientPortsV1 } from '@happier-dev/deployments';
 import { readProjectDeploymentDefaultsForHost } from '@/deployments/readProjectDeploymentDefaultsForHost';
@@ -1919,6 +1923,44 @@ export function createCliActionDeps(params: CliActionDepsParams,
     machineAgentSignInCancel: machineInventoryDeps.machineAgentSignInCancel,
     machineAgentSignInRestart: machineInventoryDeps.machineAgentSignInRestart,
     actionOperationAction: machineDeps.actionOperationAction,
+    machineActivityList: async ({ serverId = projectHomeId, ...query }, context) => {
+      const refused = await admitAccountStorage(serverId, context);
+      if (refused) return refused;
+      const accountId = context.externalActionExecutionAuthorization?.binding.accountId ?? homeAccountId;
+      if (!accountId) return executionRunActionFailure('not_authenticated');
+      const { readDeploymentActivityPageV1, projectDeploymentReceiptHistoryPageV1 } = await import('@happier-dev/deployments');
+      const machineIds = query.kind === 'receipt' || query.machineId ? [] : (
+        await inventoryDeps.machinesList!({ serverId }, context)
+      ).items.map(machine => machine.id);
+      const failure = (code: string) => createActionExecuteFailureError({ ok: false, errorCode: code, error: code });
+      return readDeploymentActivityPageV1({ scope: { serverId, accountId }, query, machineIds, signal: context.signal, owners: {
+        async listEnvironments(cursor) {
+          const raw = await deploymentStorage('deployments.environments.list', { serverId, cursor, projectSourceId: query.projectSourceId,
+            ...(query.environmentId ? { environmentIds: [query.environmentId] } : {}) }, context);
+          if ('errorCode' in raw) throw createActionExecuteFailureError(raw);
+          const page = DeploymentEnvironmentListResultV1Schema.parse(raw);
+          if (!page.ok) throw failure(page.error);
+          return page;
+        },
+        async listReceipts(environmentId, cursor, filters) {
+          const raw = await deploymentStorage('deployments.receipts.list', { serverId, environmentId, cursor, ...filters }, context);
+          if ('errorCode' in raw) throw createActionExecuteFailureError(raw);
+          const page = decodeDeploymentReceiptHistoryPageV1(raw, environmentId);
+          if (!page.ok) throw failure(page.error);
+          const documents = await Promise.allSettled(page.items.map(row =>
+            hasDeploymentReceiptContentV1(row) ? readAdmittedDeploymentArtifact(row.contentArtifactId, context) : null));
+          context.signal?.throwIfAborted();
+          return projectDeploymentReceiptHistoryPageV1(page, documents.map(read => read.status === 'fulfilled' ? read.value : null));
+        },
+        async listOperations(machineId, cursor, filters) {
+          const raw = await machineDeps.actionOperationAction!({ actionId: ACTION_OPERATION_LIST_ACTION_ID_V1,
+            input: { serverId, machineId, cursor, ...filters }, context, signal: context.signal });
+          const refused = readActionFailureEnvelope(raw);
+          if (refused) throw createActionExecuteFailureError(refused);
+          return ActionOperationListV1ResponseSchema.parse(raw);
+        },
+      } });
+    },
     machinePageAction: machineDeps.machinePageAction,
     machineTerminalAction: machineDeps.machineTerminalAction,
     machineAgentInstallStart: machineDeps.machineAgentInstallStart,

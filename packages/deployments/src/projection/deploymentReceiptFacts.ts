@@ -2,7 +2,8 @@ import type { DeploymentReceiptDetailV1, DeploymentReceiptFailureV1, DeploymentS
 import type { DeploymentReviewRevisionV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 import type { DeploymentLogsReadInputV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
 import { hasDeploymentReceiptContentV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { deploymentRevisionShortLabelV1 } from '@happier-dev/deployment-protocol/v1';
+import { deploymentRevisionShortLabelV1, readDeploymentReceiptArtifactV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentArtifactDocumentV1 } from '@happier-dev/protocol/deployments/deploymentArtifactContentReferenceV1';
 import { getDeploymentTargetLinkLineageV1, isDeploymentRollbackSourceEligibleV1 } from '@happier-dev/deployments/contracts/v1';
 import { areDeploymentSourceLabelsEqualV1, projectDeploymentDowntimeClassV1, projectDeploymentReviewRevisionV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 
@@ -122,6 +123,29 @@ export function projectDeploymentReceiptHistoryEntryV1({ content, deployment }: 
     return { source, historyTitle, failure: content.failure ?? null, machineIds,
         steps: [...content.steps, ...content.machineResults.flatMap(member =>
             member.steps.map(step => ({ ...step, machineId: member.machineId })))] };
+}
+
+/** Project the opened rows once for Fleet Activity and Environment history. */
+export function projectDeploymentReceiptHistoryPageV1(
+    page: Readonly<{ items: readonly DeploymentReceiptHeaderV1[]; nextCursor: string | null }>,
+    documents: readonly (DeploymentArtifactDocumentV1 | null | undefined)[],
+): DeploymentReceiptHistoryV1 {
+    const items: DeploymentReceiptHistoryV1['items'] = [];
+    let coverage: DeploymentReceiptHistoryV1['coverage'];
+    for (const [index, row] of page.items.entries()) {
+        const { requiredFact: _requiredFact, remedy: _remedy, ...receipt }:
+            typeof row & { requiredFact?: string; remedy?: string } = row;
+        if (!hasDeploymentReceiptContentV1(receipt)) {
+            items.push(receipt);
+            continue;
+        }
+        const opened = readDeploymentReceiptArtifactV1(receipt, documents[index] ?? null);
+        if (!opened.ok) { coverage = 'partial'; continue; }
+        const facts = projectDeploymentReceiptHistoryEntryV1({ deployment: receipt, content: opened.content });
+        items.push({ ...receipt, actor: opened.content.actor ?? null, title: facts.historyTitle ?? opened.title, source: facts.source, failure: facts.failure,
+            machineIds: [...facts.machineIds], steps: [...facts.steps] });
+    }
+    return { ok: true, ...page, items, ...(coverage === undefined ? {} : { coverage }) };
 }
 
 /** Private source presentation from the opened receipt, without execution step/log trees. */

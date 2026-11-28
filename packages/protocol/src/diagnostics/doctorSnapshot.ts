@@ -363,6 +363,26 @@ export const DoctorSnapshotSchema = lazyZodSchema(() => z.object({
 
 export type DoctorSnapshot = z.infer<typeof DoctorSnapshotSchema>;
 
+/** Machine health for Action callers. Open diagnostics never cross this boundary. */
+export const MachineDoctorSnapshotActionResultV1Schema = lazyZodSchema(() => z.strictObject({
+  capturedAt: NonEmptyString,
+  daemon: z.nullable(z.strictObject({ running: z.boolean(), healthy: z.nullable(z.boolean()) })),
+  backgroundService: z.nullable(z.strictObject({
+    installed: z.boolean(), running: z.boolean(), healthy: z.nullable(z.boolean()),
+  })),
+}));
+
+export function projectMachineDoctorSnapshotForAction(snapshot: DoctorSnapshot):
+    z.infer<typeof MachineDoctorSnapshotActionResultV1Schema> {
+  const daemon = snapshot.daemonStatus?.daemon;
+  const service = snapshot.serviceHealth?.backgroundService;
+  return {
+    capturedAt: snapshot.capturedAt,
+    daemon: daemon ? { running: daemon.running, healthy: daemon.healthy ?? null } : null,
+    backgroundService: service ? { installed: service.installed, running: service.running, healthy: service.healthy } : null,
+  };
+}
+
 export function sanitizeDoctorSnapshotUrls(snapshot: DoctorSnapshot): DoctorSnapshot {
   return {
     ...snapshot,

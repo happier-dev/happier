@@ -3,12 +3,13 @@ import { DeploymentRuntimeReinstallV1Schema } from '@happier-dev/protocol/deploy
 
 import { DeploymentEnvironmentContentStoredReadV1Schema, DeploymentEnvironmentHeaderV1Schema } from '../artifacts/deploymentEnvironmentContent.js';
 import { DeploymentTargetLinkContentV1Schema, DeploymentTargetLinkHeaderV1Schema } from '../targets/deploymentTargetContracts.js';
-import { DeploymentContentV1Schema, DeploymentReceiptFailureV1Schema, DeploymentReceiptHeaderV1Schema, DeploymentStepV1Schema } from '../artifacts/deploymentReceiptRecord.js';
+import { DeploymentContentV1Schema, DeploymentReceiptHeaderV1Schema, DeploymentStepV1Schema } from '../artifacts/deploymentReceiptRecord.js';
 import { DeploymentIdentifierV1Schema } from '../artifacts/deploymentIdentity.js';
 import { DeploymentEnvironmentHealthAggregateV1Schema } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { DeploymentReviewRevisionV1Schema, projectDeploymentReviewRevisionV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 import { DeploymentCancellationConsequenceV1Schema, type DeploymentCancellationConsequenceV1 } from '@happier-dev/protocol/deployments/deploymentStateV1';
 import { DeploymentControllerAvailabilityV1Schema, hasDeploymentReceiptContentV1, type DeploymentReceiptGetInputV1, type DeploymentReceiptGetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentReceiptHistoryItemV1Schema } from '@happier-dev/protocol/deployments/deploymentActivityPageV1';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { projectDeploymentReceiptInvestigationV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
@@ -56,13 +57,7 @@ export type DeploymentEnvironmentCollectionV1 = z.infer<typeof DeploymentEnviron
 
 /** Visible history facts projected from the page's opened contents; older transports may omit them. */
 export const DeploymentReceiptHistoryV1Schema = z.strictObject({
-    ok: z.literal(true), items: z.array(z.extend(DeploymentReceiptHeaderV1Schema, { title: z.optional(z.string()),
-        /** Historical execution placement from this receipt's opened content, never today's target link. */
-        machineIds: z.optional(z.array(DeploymentIdentifierV1Schema)),
-        /** Opened receipt progress, including member steps; timing remains the execution owner's fact. */
-        steps: z.optional(z.array(z.extend(DeploymentStepV1Schema, { machineId: z.optional(DeploymentIdentifierV1Schema) }))),
-        source: z.optional(z.nullable(DeploymentReviewRevisionV1Schema)),
-        failure: z.optional(z.nullable(DeploymentReceiptFailureV1Schema)) })),
+    ok: z.literal(true), items: z.array(DeploymentReceiptHistoryItemV1Schema),
     nextCursor: z.nullable(DeploymentIdentifierV1Schema),
     coverage: collectionCoverage,
 });

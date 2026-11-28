@@ -1,7 +1,7 @@
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { DeploymentEnvironmentHeaderV1, DeploymentReceiptHistoryV1 } from '@happier-dev/deployments/contracts/v1';
 import type { ActionOperationListV2Request, ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
-import type { DeploymentActivityQueryV1, DeploymentActivityCursorV1 } from '@happier-dev/protocol/deployments/deploymentActivityPageV1';
+import type { DeploymentActivityItemV1, DeploymentActivityPageV1, DeploymentActivityQueryV1, DeploymentActivityCursorV1 } from '@happier-dev/protocol/deployments/deploymentActivityPageV1';
 import type { DeploymentReadScopeV1 } from '../controller/deploymentReadControllerTypes.js';
 import { DeploymentActivityQueryV1Schema } from '@happier-dev/protocol/deployments/deploymentActivityPageV1';
 import { isDeploymentActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
@@ -15,16 +15,7 @@ export type DeploymentActivityReadOwnersV1 = Readonly<{
     listOperations(machineId: string, cursor?: string,
         filters?: Pick<ActionOperationListV2Request, 'actorAccountId' | 'createdAtFromMs' | 'createdAtToMs'>): Promise<Page<ActionOperationSnapshotV1>>;
 }>;
-export type DeploymentActivityItemV1 = Readonly<{ id: string; requestedAtMs: number }> & (
-    | Readonly<{ kind: 'receipt'; environment: DeploymentEnvironmentHeaderV1; receipt: Receipt }>
-    | Readonly<{ kind: 'operation'; operation: ActionOperationSnapshotV1 }>
-);
-export type DeploymentActivityPageV1 = Readonly<{
-    items: readonly DeploymentActivityItemV1[];
-    nextCursor: DeploymentActivityCursorV1 | null;
-    coverage: 'complete' | 'partial';
-    unavailableSources: readonly Readonly<{ kind: 'environment' | 'machine'; id: string; code: string }>[];
-}>;
+export type { DeploymentActivityItemV1, DeploymentActivityPageV1 } from '@happier-dev/protocol/deployments/deploymentActivityPageV1';
 /** Receipts use their existing newest-request-first order; operation lists may be active-first.
  * No background work: the host invokes this read on demand or its existing typed push. */
 export async function readDeploymentActivityPageV1(input: Readonly<{

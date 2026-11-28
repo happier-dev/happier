@@ -33,7 +33,7 @@ import { readMachineRows } from '@/sync/api/machines/machineRowsApi';
 import { createFrontDoorUiActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { HappyError } from '@/utils/errors/errors';
 import { domainHealthObserver, environmentCollectionHealthObserver, environmentHealthObserver } from './observeEnvironmentHealth';
-import { projectDeploymentReceiptHistoryEntryV1, projectDeploymentReceiptUrlFactsV1, projectDeploymentReceiptSourceFactsV1,
+import { projectDeploymentReceiptHistoryPageV1, projectDeploymentReceiptUrlFactsV1, projectDeploymentReceiptSourceFactsV1,
     deploymentDataTargetOperands, readDeploymentDatabaseRuntimeNameV1, selectDeploymentRuntimeTargetLinkV1, isDeploymentDatabaseMoveCandidateV1 } from '@happier-dev/deployments';
 import { DEPLOYMENT_DATA_SIZE_ACTION_ID_V1, DEPLOYMENT_DOMAIN_LIST_ACTION_ID_V1, DEPLOYMENT_RECEIPT_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { readDeploymentDomainServingUrlV1, selectPublicTelemetryCollectorDomainV1 } from '@happier-dev/protocol/deployments/deploymentDomainContentV1';
@@ -738,25 +738,8 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
             // Open this one page in a batch through the mode-aware Account owner, never one request per row.
             const contents = await readArtifactsByRow(page.items.map(row => row.contentArtifactId),
                 ids => account.readArtifactContents(ids, { signal: options.signal }));
-            const items = [];
-            let coverage: DeploymentEnvironmentCollectionV1['coverage'];
-            for (const [index, row] of page.items.entries()) {
-                // The History view projects the recorded Artifact failure.
-                const { requiredFact: _requiredFact, remedy: _remedy, ...receipt }:
-                    typeof row & { requiredFact?: string; remedy?: string } = row;
-                if (!hasDeploymentReceiptContentV1(receipt)) {
-                    items.push(receipt);
-                    continue;
-                }
-                const read = contents[index];
-                if (!read || read.status !== 'fulfilled') { coverage = 'partial'; continue; }
-                const opened = readDeploymentReceiptArtifactV1(receipt, read.value);
-                if (!opened.ok) { coverage = 'partial'; continue; }
-                const facts = projectDeploymentReceiptHistoryEntryV1({ deployment: receipt, content: opened.content });
-                items.push({ ...receipt, title: facts.historyTitle ?? opened.title, source: facts.source, failure: facts.failure,
-                    machineIds: [...facts.machineIds], steps: [...facts.steps] });
-            }
-            return { ok: true, value: { ...page, items, ...(coverage === undefined ? {} : { coverage }) } };
+            return { ok: true, value: projectDeploymentReceiptHistoryPageV1(page,
+                contents.map(read => read?.status === 'fulfilled' ? read.value : null)) };
         }),
         readReceipt,
     } satisfies DeploymentReadTransportV1;

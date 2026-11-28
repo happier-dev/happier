@@ -3,6 +3,8 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { createActionExecutor } from '@happier-dev/protocol/actions';
+import { normalizeActionsSettingsV1, setActionApprovalOverride } from '@happier-dev/protocol/actions/actionSettings';
 
 import { registerMachineDiagnosticsRpcHandlers } from './rpcHandlers.diagnostics';
 import { RpcHandlerManager } from '../rpc/RpcHandlerManager';
@@ -17,6 +19,8 @@ import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
+import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
+import * as machineRpc from '@/session/transport/rpc/machineRpc';
 
 type Handler = (data: unknown, context?: RpcHandlerContext) => Promise<unknown> | unknown;
 
@@ -31,6 +35,69 @@ function createRpcHandlerManager(): { handlers: Map<string, Handler>; registerHa
 }
 
 describe('registerMachineDiagnosticsRpcHandlers', () => {
+  it('refreshes redacted Doctor status through the Agent Action on the exact admitted Machine', async () => {
+    await withConfiguredDaemonTestHome({ prefix: 'happier-agent-doctor-' }, async ({ homeDir }) => {
+      const doctor = 'machines.doctor.snapshot';
+      const privateIdentity = 'private-doctor-account';
+      await writeAccountChangesCursor(privateIdentity, 3);
+      await mkdir(configuration.logsDir, { recursive: true });
+      const logPath = join(configuration.logsDir, 'private-doctor.log');
+      await writeFile(logPath, 'PRIVATE_DOCTOR_LOG_BYTES');
+
+      const manager = new RpcHandlerManager({ scopePrefix: 'target', encryptionMode: 'plain' });
+      registerMachineDiagnosticsRpcHandlers({ rpcHandlerManager: manager,
+        filesystemEffectAdmission: createFilesystemEffectAdmission({ resolveHomeServerIdentityId: async () => 'home' }) });
+      const receivingAdmission: RpcHandlerContext = { signal: new AbortController().signal, callerAuthority: 'account_automation',
+        machineAdmission: { actorAccountId: 'requester', custodianAccountId: privateIdentity, machineId: 'target',
+          installationId: 'installation', role: 'use', encryptionMode: 'plain' }, verifyMachineAdmissionCurrent: async () => true };
+      const token = `header.${Buffer.from(JSON.stringify({ sub: 'requester' })).toString('base64url')}.signature`;
+      const credentials = { token, encryption: null };
+      const executor = createActionExecutor(createCliActionDeps({ token, credentials, sessionId: 'cli-global',
+        mode: 'plain', ctx: null, serverId: 'home', serverIdentityId: 'home' }));
+      const settings = setActionApprovalOverride({ settings: normalizeActionsSettingsV1({}), actionId: doctor,
+        surface: 'agent', approvalRequired: false });
+      const context = { surface: 'agent' as const, authority: 'account_automation' as const, serverId: 'home',
+        externalActionTarget: { kind: 'machine' as const, machineId: 'target' }, actionsSettings: settings };
+      let ingress: RpcHandlerContext | undefined = receivingAdmission;
+      // The authenticated network hop is the boundary. Keep the Action executor,
+      // receiving registrar and Doctor inventory builder real.
+      const transport = vi.spyOn(machineRpc, 'callExactMachineRpc').mockImplementation(async request => {
+        expect(request.credentials).toEqual(credentials);
+        expect(request.machineId).toBe('target');
+        expect(request.method).toBe(doctor);
+        return await manager.invokeLocal(doctor, request.request, { rpcContext: ingress });
+      });
+      try {
+        writeDaemonState({ pid: process.pid, httpPort: 1, startedAt: 1, startedWithCliVersion: 'fixture',
+          daemonLogPath: logPath, machineControlReady: false });
+        const first = await executor.execute(doctor, { machineId: 'target', serverId: 'home' }, context);
+        expect(first, first.ok ? undefined : first.errorCode).toMatchObject({ ok: true, result: { daemon: { running: true, healthy: false } } });
+        for (const privateValue of [privateIdentity, homeDir, configuration.serverUrl, 'PRIVATE_DOCTOR_LOG_BYTES']) {
+          expect(JSON.stringify(first)).not.toContain(privateValue);
+        }
+        expect(first).not.toHaveProperty('result.settings');
+        expect(first).not.toHaveProperty('result.daemon.pid');
+
+        writeDaemonState({ pid: process.pid, httpPort: 1, startedAt: 1, startedWithCliVersion: 'fixture', daemonLogPath: logPath });
+        await expect(executor.execute(doctor, { machineId: 'target', serverId: 'home' }, context))
+          .resolves.toMatchObject({ ok: true, result: { daemon: { running: true, healthy: null } } });
+        await expect(executor.execute(doctor, { machineId: 'another', serverId: 'home' }, context))
+          .resolves.toMatchObject({ ok: false, errorCode: 'machine_target_mismatch' });
+        await expect(executor.execute(doctor, { machineId: 'target', serverId: 'other-home' }, context))
+          .resolves.toMatchObject({ ok: false, errorCode: 'server_target_mismatch' });
+
+        ingress = { ...receivingAdmission, machineAdmission: { ...receivingAdmission.machineAdmission!, machineId: 'peer' } };
+        await expect(executor.execute(doctor, { machineId: 'target', serverId: 'home' }, context))
+          .resolves.toMatchObject({ ok: false, errorCode: 'machine_target_mismatch' });
+        ingress = undefined;
+        await expect(executor.execute(doctor, { machineId: 'target', serverId: 'home' }, context))
+          .resolves.toMatchObject({ ok: false, errorCode: 'machine_access_denied' });
+      } finally {
+        transport.mockRestore();
+      }
+    });
+  });
+
   it('admits one three-log recipe once without rechecking authority between finite reads', async () => {
     await withConfiguredDaemonTestHome({ prefix: 'happier-diagnostic-one-admission-' }, async ({ homeDir }) => {
       const { writeSessionMarker } = await import('@/daemon/sessionRegistry');
@@ -169,7 +236,7 @@ describe('registerMachineDiagnosticsRpcHandlers', () => {
       expect(JSON.stringify(denied)).not.toContain('SELECTED_RPC_LOG_BODY');
       expect(denied).toMatchObject({ ok: false, errorCode: 'filesystem_identity_custody_unavailable' });
       const lifetime = new AbortController();
-      const owner: RpcHandlerContext = { signal: lifetime.signal, callerAuthority: 'account_automation',
+      const receivingAdmission: RpcHandlerContext = { signal: lifetime.signal, callerAuthority: 'account_automation',
         machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'machine',
           installationId: 'installation', role: 'manage', encryptionMode: 'plain' }, verifyMachineAdmissionCurrent: async () => true };
       const accepted = await collect(input, owner);
@@ -211,7 +278,7 @@ describe('registerMachineDiagnosticsRpcHandlers', () => {
       const lifetime = new AbortController();
       let retireDuringRead = false;
       let reads = 0;
-      const owner: RpcHandlerContext = { signal: lifetime.signal, callerAuthority: 'account_automation',
+      const receivingAdmission: RpcHandlerContext = { signal: lifetime.signal, callerAuthority: 'account_automation',
         machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'machine',
           installationId: 'installation', role: 'manage', encryptionMode: 'plain' }, verifyMachineAdmissionCurrent: async () => true };
       registerMachineDiagnosticsRpcHandlers({ rpcHandlerManager: manager as unknown as RpcHandlerManager,
@@ -270,7 +337,7 @@ describe('registerMachineDiagnosticsRpcHandlers', () => {
       } = { rpcHandlerManager: manager,
         filesystemEffectAdmission: createFilesystemEffectAdmission({ resolveHomeServerIdentityId: async () => 'home' }) };
       registerMachineDiagnosticsRpcHandlers(params);
-      const owner: RpcHandlerContext = { signal: new AbortController().signal, callerAuthority: 'present_user',
+      const receivingAdmission: RpcHandlerContext = { signal: new AbortController().signal, callerAuthority: 'present_user',
         machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'machine',
           installationId: 'installation', role: 'manage', encryptionMode: 'plain' }, verifyMachineAdmissionCurrent: async () => true };
       const denied: RpcHandlerContext[] = [

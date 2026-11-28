@@ -126,6 +126,12 @@ export function createCliMachineActionDeps(
       });
     },
     machinePageAction: async ({ actionId, input, context }) => {
+      if (actionId === RPC_METHODS.MACHINES_DOCTOR_SNAPSHOT) {
+        return callMachineAction({ machineId: input.machineId, serverId: input.serverId,
+          method: RPC_METHODS.MACHINES_DOCTOR_SNAPSHOT, request: input, context,
+          effectActionId: actionId, authority: context.authority, exactMachine: true,
+          ...(context.signal ? { signal: context.signal } : {}) });
+      }
       if (actionId === MACHINE_CAPABILITIES_DETECT_ACTION_ID) {
         const { machineId, serverId } = input;
         const { buildMachineDetailsCapabilitiesDetectRequest } = await import('@happier-dev/agents');

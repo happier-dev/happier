@@ -369,27 +369,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
     exactMachine?: true;
     timeoutMs?: number | null;
   }>) => Promise<unknown>;
-}> & SessionStoredContentCryptoContext): Pick<
-  ActionExecutorDeps,
-  | 'pathsListRecent'
-  | 'machinesList'
-  | 'machineDetail'
-  | 'deploymentSuggestionTargets'
-  | 'deploymentSuggestionForges'
-  | 'machineRecipesRead'
-  | 'serversList'
-  | 'reviewEnginesList'
-  | 'agentsBackendsList'
-  | 'agentsConnectedDefaultRoutesRead'
-  | 'readAccountAcpCatalog'
-  | 'agentsModelsList'
-  | 'sessionModesList'
-  | 'agentsConfigOptionsList'
-  | 'agentsSessionModesList'
-  | 'spawnProfilesList'
-  | 'spawnConnectedServicesList'
-  | 'spawnMcpServersPreview'
-> & Required<Pick<ActionExecutorDeps, 'readAccountAcpCatalog' | 'agentsModelsList' | 'machinesList' | 'spawnConnectedServicesList'>> {
+}> & SessionStoredContentCryptoContext) {
   const metadataReaders = new Map<string, () => Promise<Record<string, unknown> | null>>();
   let accountProfilePromise: Promise<AccountProfile | null> | null = null;
   if (params.readCurrentSessionMetadata) metadataReaders.set(params.sessionId, params.readCurrentSessionMetadata);
@@ -1209,5 +1189,25 @@ export function createCliActionInventoryDeps(params: Readonly<{
         : [];
       return { sessionId, items };
     },
-  };
+  } satisfies Pick<
+  ActionExecutorDeps,
+  | 'pathsListRecent'
+  | 'machinesList'
+  | 'machineDetail'
+  | 'deploymentSuggestionTargets'
+  | 'deploymentSuggestionForges'
+  | 'machineRecipesRead'
+  | 'serversList'
+  | 'reviewEnginesList'
+  | 'agentsBackendsList'
+  | 'agentsConnectedDefaultRoutesRead'
+  | 'readAccountAcpCatalog'
+  | 'agentsModelsList'
+  | 'sessionModesList'
+  | 'agentsConfigOptionsList'
+  | 'agentsSessionModesList'
+  | 'spawnProfilesList'
+  | 'spawnConnectedServicesList'
+  | 'spawnMcpServersPreview'
+> & Required<Pick<ActionExecutorDeps, 'readAccountAcpCatalog' | 'agentsModelsList' | 'machinesList' | 'spawnConnectedServicesList'>>;
 }

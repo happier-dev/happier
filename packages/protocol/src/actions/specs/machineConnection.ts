@@ -1,5 +1,5 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
-import { MACHINE_ADD_SSH_ACTION_IDS, MACHINE_PAGE_ACTION_IDS, MACHINE_PAIRING_CANCEL_ACTION_ID_V1, PERSONAL_HOME_CREATE_ACTION_ID_V1 } from './machineConnectionActionIdsV1.js';
+import { MACHINE_ADD_SSH_ACTION_IDS, MACHINE_PAGE_ACTION_IDS, MACHINE_DOCTOR_SNAPSHOT_ACTION_ID, MACHINE_ACTIVITY_LIST_ACTION_ID, MACHINE_PAIRING_CANCEL_ACTION_ID_V1, PERSONAL_HOME_CREATE_ACTION_ID_V1 } from './machineConnectionActionIdsV1.js';
 export { MACHINE_ADD_SSH_ACTION_IDS, MACHINE_PAGE_ACTION_IDS, MACHINE_MANAGED_INSTALLATION_ACTION_IDS } from './machineConnectionActionIdsV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { RPC_METHODS } from '../../rpc/methods.js';
@@ -14,11 +14,19 @@ import { ManagedMachineEnrollmentIdentityV1Schema } from '../../machines/managed
 import { RemoteHostAuthModeV1Schema } from '../../remoteHosts/remoteHostSchemasV1.js';
 import { redactObservationInputPaths } from './observationRedaction.js';
 import { actionInputServerId } from './definition.js';
+import { MachineDoctorSnapshotActionResultV1Schema } from '../../diagnostics/doctorSnapshot.js';
+import { DeploymentActivityQueryV1Schema, DeploymentActivityPageV1Schema } from '../../deployments/deploymentActivityPageV1.js';
 export { MachineTerminalOpenInputSchema, MachineTerminalListInputSchema } from './machineTerminal.js';
 
 const id = z.string().check(z.trim(), z.minLength(1));
 export type MachinePageActionId = typeof MACHINE_PAGE_ACTION_IDS[number];
 const machineTarget = { serverId: z.optional(id), machineId: id };
+export const MachineDoctorSnapshotActionInputV1Schema = lazyZodSchema(() => z.strictObject({
+  ...machineTarget, refresh: z.optional(z.boolean()),
+}));
+export const MachineActivityListActionInputV1Schema = lazyZodSchema(() => z.extend(DeploymentActivityQueryV1Schema, {
+  serverId: z.optional(id),
+}));
 export const MachineManagedInstallationRespondInputSchema = lazyZodSchema(() => {
   const correlation = { serverId: id, homeId: id, managedId: id, operationId: id, taskId: id };
   return z.discriminatedUnion('purpose', [
@@ -69,6 +77,7 @@ export const MachineReplacementOutputSchema = lazyZodSchema(() => z.union([
   z.strictObject({ ok: z.literal(false), status: z.number().check(z.int()), error: z.string() }),
 ]));
 export const MACHINE_PAGE_ACTION_INPUT_SCHEMAS = {
+  [MACHINE_DOCTOR_SNAPSHOT_ACTION_ID]: MachineDoctorSnapshotActionInputV1Schema,
   'machines.metadata.update': MachineMetadataUpdateInputSchema,
   'machines.daemon.stop': MachineStopDaemonInputSchema,
   'machines.remove': MachineRemoveInputSchema,
@@ -79,6 +88,7 @@ export const MACHINE_PAGE_ACTION_INPUT_SCHEMAS = {
   'machines.replacement.clear': MachineReplacementClearInputSchema,
 } as const;
 export const MACHINE_PAGE_ACTION_OUTPUT_SCHEMAS = {
+  [MACHINE_DOCTOR_SNAPSHOT_ACTION_ID]: MachineDoctorSnapshotActionResultV1Schema,
   'machines.runs.list': DaemonExecutionRunListResponseSchema,
   'machines.metadata.update': lazyZodSchema(() => z.strictObject({ version: z.number().check(z.int(), z.nonnegative()) })),
   'machines.daemon.stop': lazyZodSchema(() => z.strictObject({ message: z.string() })),
@@ -181,6 +191,34 @@ const clientSurfaces = { ui: true, voice: false, agent: true, mcp: true, cli: tr
 const setupClientSurfaces = { ...clientSurfaces, cli: false } as const;
 function createMachineConnectionActionSpecs() {
   return [
+  {
+    id: MACHINE_DOCTOR_SNAPSHOT_ACTION_ID, title: 'Read Machine Doctor',
+    description: 'Read fresh Machine Doctor health for one Machine without logs, paths, or Account identity.',
+    approvalPolicy: { agentDefault: 'authority' }, approval: { result: 'required' },
+    safety: 'safe', sideEffectClass: 'read', executionPlacement: 'machine', placements: [],
+    surfaces: clientSurfaces,
+    bindings: { mcpToolName: 'machines_doctor_snapshot', rpcMethod: RPC_METHODS.MACHINES_DOCTOR_SNAPSHOT },
+    cli: { commands: [{ path: ['machines', 'doctor', 'snapshot'], visibility: 'canonical' }] },
+    toolExposure: { agent: 'discoverable_only', mcp: 'discoverable_only' },
+    inputSchema: MachineDoctorSnapshotActionInputV1Schema, outputSchema: MachineDoctorSnapshotActionResultV1Schema,
+    invocationServerIdForInput: actionInputServerId(MachineDoctorSnapshotActionInputV1Schema, input => input.serverId),
+    inputHints: { fields: [{ path: 'serverId', title: 'Home ID', widget: 'text' },
+      { path: 'machineId', title: 'Machine ID', widget: 'text', required: true }] },
+  },
+  {
+    id: MACHINE_ACTIVITY_LIST_ACTION_ID, title: 'List Fleet Activity',
+    description: 'Read a page of deployment receipts and Machine operations visible to this Account.',
+    approvalPolicy: { agentDefault: 'authority' }, approval: { result: 'required' },
+    safety: 'safe', sideEffectClass: 'read', executionPlacement: 'account', placements: [],
+    surfaces: clientSurfaces, bindings: { mcpToolName: 'machines_activity_list' },
+    cli: { commands: [{ path: ['machines', 'activity', 'list'], visibility: 'canonical' }] },
+    toolExposure: { agent: 'discoverable_only', mcp: 'discoverable_only' },
+    inputSchema: MachineActivityListActionInputV1Schema, outputSchema: DeploymentActivityPageV1Schema,
+    invocationServerIdForInput: actionInputServerId(MachineActivityListActionInputV1Schema, input => input.serverId),
+    inputHints: { fields: [{ path: 'serverId', title: 'Home ID', widget: 'text' },
+      { path: 'limit', title: 'Page size', widget: 'number', required: true },
+      { path: 'cursor', title: 'Continuation cursor', widget: 'json' }] },
+  },
   {
     id: 'machines.capabilities.detect', approval: { result: 'none' }, title: 'Refresh machine Tools',
     description: 'Run the Tools Check again operation and return refresh status. Capability facts remain in the existing cache and inventory readers.',

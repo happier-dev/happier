@@ -2530,6 +2530,8 @@ export type ActionExecutorDeps = Readonly<{
   localDaemonServiceAction?: (actionId: LocalDaemonServiceActionId, input: unknown, context: ActionExecutorContext) => Promise<unknown>;
   machinePairingCreate?: (input: z.infer<typeof MachinePairingCreateInputSchema>, context: ActionExecutorContext) => Promise<z.infer<typeof MachinePairingCreateOutputSchema> | ActionExecuteFailure>;
   machinePairingCancel?: (input: z.infer<typeof MachinePairingCancelInputSchema>, context: ActionExecutorContext) => Promise<z.infer<typeof MachinePairingCancelOutputSchema> | ActionExecuteFailure>;
+  machineActivityList?: (input: z.infer<typeof import('../specs/machineConnection.js').MachineActivityListActionInputV1Schema>,
+    context: ActionExecutorContext) => Promise<unknown>;
   machinePageAction?: (request: Readonly<{ actionId: MachinePageActionId; input: MachinePageActionInput; context: ActionExecutorContext }>) => Promise<unknown>;
   machineTerminalAction?: (request: Readonly<{ actionId: MachineTerminalActionId; input: MachineTerminalActionInput; context: ActionExecutorContext; signal?: AbortSignal }>) => Promise<unknown>;
   serversList?: (args: Readonly<{ limit?: number }>) => Promise<unknown>;

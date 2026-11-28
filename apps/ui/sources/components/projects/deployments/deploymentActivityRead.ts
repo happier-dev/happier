@@ -9,11 +9,11 @@ import { createDeploymentReadTransport } from './deploymentReadTransport';
 /** One finite history read for Services, Project and Machine; presentation owns its existing push demand.
  * machineIds is the mounted host's authenticated Machine inventory, never another discovery registry. */
 export async function readDeploymentActivityPage(lifetime: ServerAccountScopeLifetime,
-    query: DeploymentActivityQueryV1, machineIds: readonly string[], options: Readonly<{ signal: AbortSignal }>) {
+    query: DeploymentActivityQueryV1, machineIds: readonly string[], options: Readonly<{ signal?: AbortSignal }>) {
     const controller = new AbortController();
     const cancel = () => controller.abort();
-    options.signal.addEventListener('abort', cancel, { once: true });
-    if (options.signal.aborted) cancel();
+    options.signal?.addEventListener('abort', cancel, { once: true });
+    if (options.signal?.aborted) cancel();
     const retirement = lifetime.onRetire(cancel);
     const readOptions = { signal: controller.signal };
     const transport = createDeploymentReadTransport(lifetime);
@@ -48,6 +48,6 @@ export async function readDeploymentActivityPage(lifetime: ServerAccountScopeLif
         return page;
     } finally {
         retirement.dispose();
-        options.signal.removeEventListener('abort', cancel);
+        options.signal?.removeEventListener('abort', cancel);
     }
 }

@@ -3986,6 +3986,21 @@ type VoiceActionExecutorBinding = Readonly<{
       accountContext?.assertCurrent();
       return result;
     },
+    ...(accountContext ? { machineActivityList: async ({ serverId: _serverId, ...query }, context) => {
+      accountContext.assertCurrent();
+      const { readDeploymentActivityPage } = await import('@/components/projects/deployments/deploymentActivityRead');
+      const { resolveServerScopedMachines } = await import('@/sync/domains/machines/resolveServerScopedMachines');
+      const state = storage.getState();
+      const { scope } = accountContext.accountLifetime;
+      const machines = resolveServerScopedMachines({ serverId: scope.serverId, activeServerId: getActiveServerSnapshot().serverId,
+        activeMachines: Object.values(state.machines), machineListByServerId: state.machineListByServerId,
+        machineListStatusByServerId: state.machineListStatusByServerId });
+      if (query.kind !== 'receipt' && !query.machineId && !machines) {
+        return { ok: false, errorCode: 'machine_inventory_unavailable', error: 'machine_inventory_unavailable' };
+      }
+      return readDeploymentActivityPage(accountContext.accountLifetime, query, machines?.map(row => row.id) ?? [],
+        { signal: context.signal });
+    } } satisfies Pick<ActionExecutorDeps, 'machineActivityList'> : {}),
     ...createMachineConnectionActionDeps({ ...(accountContext ? { account: accountContext } : {}), runner: opts?.homeRuntimeRunner,
       homePairingDelivery: opts?.homePairingDelivery, homeAddressDelivery: opts?.homeAddressDelivery,
       personalHomeSshDraftSecrets: opts?.personalHomeSshDraftSecrets }),

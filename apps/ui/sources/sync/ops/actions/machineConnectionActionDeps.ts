@@ -63,6 +63,12 @@ export function createMachineConnectionActionDeps(options: Readonly<{ runner?: S
         ...(options.account ? { personalHomeCreate: createPersonalHomeCreateAction(options.account, options.runner, options.personalHomeSshDraftSecrets) } : {}),
         machinePageAction: async ({ actionId, input, context }) => {
             const serverId = input.serverId ?? context.serverId ?? getActiveServerId();
+            if (actionId === RPC_METHODS.MACHINES_DOCTOR_SNAPSHOT) {
+                return readMachineActionRpcResult(await machineRpcWithServerScope({ machineId: input.machineId,
+                    serverId, accountId: options.account?.accountId ?? context.runtimeAccountId,
+                    method: RPC_METHODS.MACHINES_DOCTOR_SNAPSHOT,
+                    payload: input, ...(context.signal ? { signal: context.signal } : {}) }));
+            }
             if (actionId === MACHINE_RUN_MARKERS_LIST_ACTION_ID) {
                 return readMachineActionRpcResult(await machineRpcWithServerScope({ machineId: input.machineId,
                     serverId, accountId: options.account?.accountId ?? context.runtimeAccountId,

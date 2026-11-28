@@ -305,6 +305,8 @@ const DIRECT_EPHEMERAL_POLICIES = Object.freeze([
   actionSpecServerRequired(RPC_METHODS.MACHINES_REBOOT, 'destructive_or_recovery_mutation',
     'Manage admits an explicit Machine reboot; maintenance and administrator authorization remain at the target.',
     'machines.reboot', 'manage') satisfies MachineRpcRoutePolicyV1,
+  serverRequired(RPC_METHODS.MACHINES_DOCTOR_SNAPSHOT, 'auth',
+    'Use reads only closed Machine health fields. Full diagnostics retain their separate admission.', 'use'),
   directEphemeral(RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST, 'Daemon-local execution run registry read; no server persistence, transcript write, or cross-device fanout.', 'use'),
   directEphemeral(RPC_METHODS.DAEMON_EXECUTION_RUN_BROKER_AUTHORITY_RESOLVE, 'Nonce- and Home-bound exact-Machine Run currentness read for broker admission; no credential or durable proof.', 'use'),
   directEphemeral(RPC_METHODS.DAEMON_MEMORY_STATUS, 'Daemon-local memory worker status read with no mutation or server persistence.', 'use'),
