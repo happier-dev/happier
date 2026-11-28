@@ -439,12 +439,12 @@ describe('ApiSessionClient durable mutation outbox', () => {
           type: 'tool-result', id: 'result', callId: 'shell', output: { stdout: 'synthetic stdout', exitCode: 0 },
         }, { localId: 'result', createdAt: 101, toolNormalizationSource, provenance, admission });
         const result = transcript.find(row => row.localId === 'result');
-        expect(result).toBeDefined();
         if (transport === 'session_transcript_observation_v2') {
-          expect(result?.toolOutputPart).toMatchObject({ t: 'plain', v: { fields: { stdout: 'synthetic stdout' } } });
+          expect(result).toMatchObject({ v: 2, toolOutputPart: { t: 'plain', v: { fields: { stdout: 'synthetic stdout' } } } });
           expect(JSON.stringify(result?.content)).not.toContain('synthetic stdout');
         } else {
-          expect(result?.toolOutputPart).toBeUndefined();
+          expect(result).toMatchObject({ v: 1 });
+          expect(result).not.toHaveProperty('toolOutputPart');
           expect(JSON.stringify(result?.content)).toContain('synthetic stdout');
         }
       } finally {
