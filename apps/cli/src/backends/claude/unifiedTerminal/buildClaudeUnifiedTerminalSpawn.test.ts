@@ -83,7 +83,7 @@ async function readLaunchSpecFromSpawn(spawn: ClaudeUnifiedTerminalSpawn): Promi
 
 describe('buildClaudeUnifiedTerminalSpawn', () => {
   const tempDirs: string[] = [];
-  it.each([false, true])('applies configured Happier attribution at the native terminal launch boundary (%s)', async (enabled) => {
+  it.each([undefined, false, true])('applies Happier attribution unless disabled at the native terminal launch boundary (%s)', async (enabled) => {
     await withPatchedEnv({ CLAUDE_CODE_ENTRYPOINT: 'sdk-ts', CLAUDECODE: '1' }, async () => {
       const spawn = await buildClaudeUnifiedTerminalSpawn({
         path: '/workspace/project',
@@ -97,7 +97,7 @@ describe('buildClaudeUnifiedTerminalSpawn', () => {
         },
       });
       const launch = await readLaunchSpecFromSpawn(spawn);
-      expect(spawn.spawnEnv.CLAUDE_CODE_ENTRYPOINT).toBe(enabled ? 'happier' : undefined);
+      expect(spawn.spawnEnv.CLAUDE_CODE_ENTRYPOINT).toBe(enabled === false ? undefined : 'happier');
       expect(launch.env?.CLAUDE_CODE_ENTRYPOINT).toBeUndefined();
       expect(launch.env?.CLAUDECODE).toBeUndefined();
     });
@@ -153,6 +153,7 @@ describe('buildClaudeUnifiedTerminalSpawn', () => {
     });
     const launch = await readLaunchSpecFromSpawn(spawn);
     const args = launch.args ?? [];
+    expect(args.flatMap((arg, index) => arg === '--model' ? [args[index + 1]] : [])).toEqual([input.model]);
     expect(args.flatMap((arg, index) => arg === '--effort' ? [args[index + 1]] : []))
       .toEqual(input.expected ? [input.expected] : []);
     expect(args).toContain('existing-native-session');

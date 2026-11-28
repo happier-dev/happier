@@ -464,7 +464,9 @@ export async function createConnectedServicePoolRecoveryFixture(input: Readonly<
       for (const outbox of turnOutboxes.values()) await outbox.close();
       resetRuntimeAuthFailureReportOutboxDrainSchedulerForTests();
       controlTransport.report = null; axios.defaults.adapter = originalAdapter;
-      Object.defineProperty(configuration, 'activeServerDir', serverDir); vi.unstubAllEnvs(); await rm(root, { recursive: true, force: true });
+      Object.defineProperty(configuration, 'activeServerDir', serverDir); vi.unstubAllEnvs();
+      // A durable-store write can still land in the tree while it is removed (ENOTEMPTY seen in CI); rm retries that.
+      await rm(root, { recursive: true, force: true, maxRetries: 5 });
     },
   };
 }

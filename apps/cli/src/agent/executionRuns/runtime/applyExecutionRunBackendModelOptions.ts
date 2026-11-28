@@ -91,6 +91,9 @@ export function withExecutionRunBackendModelOptions(
         options.modelApply?.method === 'config_option'
         && modelConfigOptionId
         && typeof target.setSessionConfigOption === 'function'
+        // A session that does not advertise the model option takes the model through set_model.
+        && (typeof target.getSessionConfigOptionsState !== 'function'
+          || (readConfigOptions() ?? []).some((option) => option.id === modelConfigOptionId))
       ) {
         await target.setSessionConfigOption(sessionId, modelConfigOptionId, resolvedModelId);
       } else if (typeof target.setSessionModel === 'function') {

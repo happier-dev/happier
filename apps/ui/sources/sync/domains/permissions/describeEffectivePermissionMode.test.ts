@@ -34,6 +34,26 @@ describe('describeEffectivePermissionMode', () => {
         expect(result.reasons.find((reason) => reason.code === 'mode_mapped_for_provider')?.params?.providerMode).toBe(expected);
     });
 
+    it('describes the agy approval mode chosen by the permission selector and Plan as the only Mode override', () => {
+        const metadata = buildMetadata({ sessionModesV1: {
+            v: 1, provider: 'agy', updatedAt: 1, currentModeId: 'accept-edits',
+            availableModes: [{ id: 'default', name: 'Default' }, { id: 'accept-edits', name: 'Accept edits' }, { id: 'plan', name: 'Plan' }, { id: 'auto', name: 'Auto' }],
+        } });
+        const yolo = describeEffectivePermissionMode({ agentType: 'agy', selectedMode: 'yolo', applyTiming: 'immediate', metadata });
+        expect(yolo.nativeModeLabel).toBe('Accept edits');
+        expect(yolo.reasons.find((reason) => reason.code === 'mode_mapped_for_provider')?.params?.providerMode).toBe('auto');
+        expect(reasonCodes(yolo)).not.toContain('native_mode_overrides_permissions');
+
+        metadata.sessionModeOverrideV1 = { v: 1, updatedAt: 2, modeId: 'accept-edits' };
+        expect(reasonCodes(describeEffectivePermissionMode({ agentType: 'agy', selectedMode: 'yolo', applyTiming: 'immediate', metadata })))
+            .not.toContain('native_mode_overrides_permissions');
+
+        metadata.sessionModeOverrideV1 = { v: 1, updatedAt: 3, modeId: 'plan' };
+        const plan = describeEffectivePermissionMode({ agentType: 'agy', selectedMode: 'yolo', applyTiming: 'immediate', metadata });
+        expect(plan.reasons[0]).toEqual({ code: 'native_mode_overrides_permissions', params: { mode: 'Plan' } });
+        expect(plan.nativeModeLabel).toBe('Accept edits');
+    });
+
     it('does not borrow automatic-review modes from another agent', () => {
         const result = describeEffectivePermissionMode({
             agentType: 'fx', selectedMode: 'safe-yolo', applyTiming: 'immediate',
@@ -62,7 +82,7 @@ describe('describeEffectivePermissionMode', () => {
         expect(reasonCodes(res)).toContain('applies_on_next_message');
     });
 
-    it.each(['codebuddy', 'devin', 'fx'] as const)('describes %s native policy without treating the permission selection as applied', (agentType) => {
+    it.each(['codebuddy', 'devin', 'fx'] as const)('describes %s native policy and leaves a persisted approval preset to the permission selector', (agentType) => {
         const res = describeEffectivePermissionMode({
             agentType,
             selectedMode: 'read-only',
@@ -76,23 +96,24 @@ describe('describeEffectivePermissionMode', () => {
             }),
         });
         expect(res).toMatchObject({ effectiveMode: 'read-only', nativeModeLabel: 'Unrestricted' });
-        expect(reasonCodes(res)).toContain('native_mode_overrides_permissions');
+        expect(reasonCodes(res)).not.toContain('native_mode_overrides_permissions');
         expect(reasonCodes(res)).not.toContain('read_only_enforced_by_tool_gating');
     });
 
-    it('keeps the reported policy visible while a native override is pending', () => {
+    it('keeps the reported policy visible while a CodeBuddy Plan switch is pending', () => {
         const res = describeEffectivePermissionMode({
             agentType: 'codebuddy', selectedMode: 'read-only', applyTiming: 'immediate',
             metadata: buildMetadata({
                 sessionModesV1: {
                     v: 1, provider: 'codebuddy', updatedAt: 1, currentModeId: 'dontAsk',
-                    availableModes: [{ id: 'dontAsk', name: 'No prompts' }, { id: 'bypassPermissions', name: 'Bypass permissions' }],
+                    availableModes: [{ id: 'dontAsk', name: 'No prompts' }, { id: 'plan', name: 'Plan' }],
                 },
-                sessionModeOverrideV1: { v: 1, updatedAt: 2, modeId: 'bypassPermissions' },
+                sessionModeOverrideV1: { v: 1, updatedAt: 2, modeId: 'plan' },
             }),
         });
         expect(res).toMatchObject({ nativeModeLabel: 'No prompts' });
-        expect(res.reasons).toContainEqual({ code: 'native_mode_pending', params: { from: 'No prompts', to: 'Bypass permissions' } });
+        expect(res.reasons[0]).toEqual({ code: 'native_mode_overrides_permissions', params: { mode: 'Plan' } });
+        expect(reasonCodes(res)).toContain('native_mode_pending');
     });
 
     it('uses a declared ACP plan mapping instead of claiming an unsupported permission fallback', () => {

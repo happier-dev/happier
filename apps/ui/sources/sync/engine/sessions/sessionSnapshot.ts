@@ -358,6 +358,7 @@ function buildRenderableFromRowAndCache(
         active: row.active,
         activeAt: row.activeAt,
         archivedAt: row.archivedAt ?? null,
+        cloudCopyLeftAt: row.cloudCopyLeftAt ?? null,
         pendingCount: row.pendingCount,
         pendingBlockedCount: row.pendingBlockedCount,
         pendingVersion: row.pendingVersion,
@@ -408,6 +409,7 @@ function isCurrentRenderableCompleteForWarmHydration(
     if (currentRenderable.metadataVersion < row.metadataVersion) return false;
     if (currentRenderable.agentStateVersion < row.agentStateVersion) return false;
     if ((currentRenderable.archivedAt ?? null) !== (row.archivedAt ?? null)) return false;
+    if ((currentRenderable.cloudCopyLeftAt ?? null) !== (row.cloudCopyLeftAt ?? null)) return false;
     if ((currentRenderable.runtimeActivityState ?? null) !== (row.runtimeActivityState ?? null)) return false;
     if ((currentRenderable.runtimeActivityActiveCount ?? null) !== (row.runtimeActivityActiveCount ?? null)) return false;
     if ((currentRenderable.runtimeActivityObservedAt ?? null) !== (row.runtimeActivityObservedAt ?? null)) return false;

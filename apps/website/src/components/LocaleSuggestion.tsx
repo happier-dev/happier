@@ -47,7 +47,10 @@ export function LocaleSuggestion() {
         const languages = navigator.languages?.length
             ? [...navigator.languages]
             : [navigator.language].filter(Boolean);
-        setSuggested(suggestLocale(current, languages));
+        const candidate = suggestLocale(current, languages);
+        if (candidate && document.head.querySelector(`link[rel="alternate"][hreflang="${LOCALE_META[candidate].htmlLang}"]`)) {
+            setSuggested(candidate);
+        }
     }, [current]);
 
     if (!suggested) return null;

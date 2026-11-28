@@ -1,5 +1,5 @@
 import { realpath } from 'node:fs/promises';
-import { basename, isAbsolute, join, relative, sep } from 'node:path';
+import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 import type {
   VerifyResumeReachableInput,
@@ -12,6 +12,8 @@ import {
   normalizeCodexVendorResumeId,
   resolveExistingCodexRolloutPath,
 } from '@/backends/codex/utils/codexSessionFiles';
+import { withCodexAppServerClient } from '../appServer/client/withCodexAppServerClient';
+import { resolveCodexSqliteLaunch } from './codexStateFileNames';
 import { reconcileCodexResumeRolloutPath } from './reconcileCodexResumeRolloutPath';
 import { resolveConfiguredCodexHome } from '@/backends/codex/utils/resolveConfiguredCodexHome';
 
@@ -53,7 +55,7 @@ export async function verifyResumeReachableCodex(
   }
 
   const codexHome = input.targetMaterializedEnv.CODEX_HOME?.trim()
-    ? resolveConfiguredCodexHome(input.targetMaterializedEnv)
+    ? resolve(input.cwd, resolveConfiguredCodexHome(input.targetMaterializedEnv))
     : join(input.targetMaterializedRoot, 'codex-home');
   const sessionsRoot = join(codexHome, 'sessions');
   const canonicalSessionsRoot = await realpath(sessionsRoot).catch(() => null);
@@ -69,10 +71,19 @@ export async function verifyResumeReachableCodex(
   };
 
   const acceptReachablePath = async (resolvedPath: string): Promise<VerifyResumeReachableResult> => {
+    const env = { ...input.processEnv, ...input.targetMaterializedEnv, CODEX_HOME: codexHome };
+    const store = await resolveCodexSqliteLaunch({ env, cwd: input.cwd, materialized: true });
+    const sqliteHome = store.sqliteHome ?? await withCodexAppServerClient({
+      processEnv: env,
+      cwd: input.cwd,
+      runtimeStore: store,
+      run: async client => await client.readRuntimeSqliteHome?.() ?? null,
+    }).catch(() => null);
     const reconciled = await reconcileCodexResumeRolloutPath({
-      targetMaterializedEnv: input.targetMaterializedEnv,
+      env,
       vendorResumeId,
       resolvedRolloutPath: resolvedPath,
+      sqliteHome,
       cwd: input.cwd,
     });
     return reconciled

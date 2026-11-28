@@ -1,6 +1,7 @@
+import { resolveLimitTable } from '@/app/plans/accountLimits';
 import { maybeCaptureSentryMonitorCheckIn } from '@/app/monitoring/sentryMonitors';
 import { readRetentionPolicyFromEnv } from '@/app/retention/config/readRetentionPolicyFromEnv';
-import { resolveEffectiveRetentionEnabled } from '@/app/retention/config/retentionPolicyState';
+import { hasPaidRetentionLimit, resolveEffectiveRetentionEnabled } from '@/app/retention/config/retentionPolicyState';
 
 import { runRetentionSweep } from './runRetentionSweep';
 import { logRetentionSweepCompleted, logRetentionSweepFailed } from './retentionRunLogging';
@@ -11,7 +12,9 @@ const RETENTION_SWEEP_LOCK_TTL_FLOOR_MS = 30 * 60 * 1000;
 export function startRetentionWorker(): { stop: () => void } | null {
     const policy = readRetentionPolicyFromEnv(process.env);
     if (!resolveEffectiveRetentionEnabled(policy)) {
-        return null;
+        if (!policy.enabled) return null;
+        const table = resolveLimitTable(process.env);
+        if (!hasPaidRetentionLimit(table, 'sessionRetentionDays') && !hasPaidRetentionLimit(table, 'subagentRetentionDays')) return null;
     }
 
     let stopped = false;
@@ -32,11 +35,13 @@ export function startRetentionWorker(): { stop: () => void } | null {
                 monitorSlug: 'server.retentionWorker',
                 intervalMs: policy.intervalMs,
                 run: async () => {
-                    const result = await runRetentionSweep({ policy });
+                    const now = new Date();
+                    const result = await runRetentionSweep({ policy, now });
                     logRetentionSweepCompleted({
                         reason,
                         deleted: result.deleted,
                         byRule: result.byRule,
+                        byTier: result.byTier,
                         details: result.details,
                         dryRun: policy.dryRun,
                     });

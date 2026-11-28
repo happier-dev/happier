@@ -112,5 +112,16 @@
  "download": [
   "navigation",
   "pageProse"
+ ],
+ "open": [
+  "navigation",
+  "open",
+  "pageProse",
+  "plans"
+ ],
+ "plans": [
+  "navigation",
+  "pageProse",
+  "plans"
  ]
 }

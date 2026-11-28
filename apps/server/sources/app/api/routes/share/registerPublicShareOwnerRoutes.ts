@@ -1,6 +1,7 @@
 import { type Fastify } from "../../types";
 import { db } from "@/storage/db";
 import { z } from "zod";
+import { lockShareableSessionInTx } from "@/app/share/lockShareableSessionInTx";
 import { isSessionOwner } from "@/app/share/accessControl";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import {
@@ -50,13 +51,8 @@ export function registerPublicShareOwnerRoutes(app: Fastify): void {
         }
 
         const result = await inTx(async (tx) => {
-            const session = await tx.session.findUnique({
-                where: { id: sessionId },
-                select: { encryptionMode: true },
-            });
-            if (!session) {
-                return { type: 'error' as const, error: 'session not found' as const };
-            }
+            const session = await lockShareableSessionInTx(tx, sessionId);
+            if (!session) return { type: 'unavailable' as const };
             const sessionEncryptionMode: "e2ee" | "plain" = session.encryptionMode === "plain" ? "plain" : "e2ee";
 
             const existing = await tx.publicSessionShare.findUnique({
@@ -148,6 +144,7 @@ export function registerPublicShareOwnerRoutes(app: Fastify): void {
             return { type: 'ok' as const, publicShare };
         });
 
+        if (result.type === 'unavailable') return reply.code(409).send({ error: 'Session cloud copy unavailable' });
         if (result.type === 'error') {
             return reply.code(400).send({ error: result.error });
         }

@@ -338,3 +338,13 @@ test('release.yml defaults its replaceable status artifact to the canonical name
   assert.ok(upload, 'release.yml must upload the selected release status artifact');
   assert.equal(upload.with.overwrite, true);
 });
+
+test('a resumed release still deploys the server when an earlier attempt already promoted its runtime', () => {
+  // Release rel_6f62b94c (2026-11-26): attempt 2 promoted the server runtime, then deploy_server failed on a transient
+  // GitHub 404. Later attempts skipped promote_server_runtime as complete, and deploy_server required it to succeed in
+  // the same attempt, so it never ran again and production's verification, promotion and Latest stayed skipped.
+  const deployServer = workflow('release-channel.yml').jobs.deploy_server;
+  assert.match(deployServer.if, /\(needs\.promote_server_runtime\.result == 'success' \|\| needs\.resolve_resume\.outputs\.server_rolling_complete == 'true'\)/);
+  assert.doesNotMatch(deployServer.if, /&& needs\.promote_server_runtime\.result == 'success' &&/);
+  assert.equal(deployServer.with.server_version, "${{ needs.promote_server_runtime.outputs.version || needs.resolve_resume.outputs.server_version }}");
+});

@@ -12,9 +12,8 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { useConnectTerminal } from '@/hooks/session/useConnectTerminal';
 import { useAuth } from '@/auth/context/AuthContext';
-import { useEntitlement, useLocalSettingMutable, useSetting, useProfile } from '@/sync/domains/state/storage';
+import { useLocalSettingMutable, useSetting, useProfile } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
-import { trackPaywallButtonClicked } from '@/track';
 import { Modal } from '@/modal';
 import { useMultiClick } from '@/hooks/ui/useMultiClick';
 import { useUnistyles } from 'react-native-unistyles';
@@ -26,11 +25,12 @@ import { t } from '@/text';
 import { canRequestReview, requestReview } from '@/utils/system/requestReview';
 import { DEFAULT_AGENT_ID, getAgentCore, resolveAgentIdFromConnectedServiceId } from '@/agents/catalog/catalog';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
-import { resolveSupportUsAction } from '@/components/settings/supportUsBehavior';
 import { recordBugReportUserAction } from '@/utils/system/bugReportActionTrail';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { planSurfaceTitle, usePlanSurfaceVisibility } from '@/components/settings/plans/usePlanSurfaceVisibility';
+import { HAPPIER_GITHUB_URL } from '@/utils/url/happierGithubUrl';
 import { useScannedAuthUrlProcessor } from '@/hooks/auth/useScannedAuthUrlProcessor';
 import type { FeatureId } from '@happier-dev/protocol';
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
@@ -57,9 +57,8 @@ export const SettingsView = React.memo(function SettingsView() {
     const auth = useAuth();
     const isPhoneSizedWeb = Platform.OS === 'web' && isWebMobileLikeQrScannerHost({ width, height });
     const [devModeEnabled, setDevModeEnabled] = useLocalSettingMutable('devModeEnabled');
-    const voiceEntitlement = useEntitlement('voice');
-    const isPro = __DEV__ || voiceEntitlement;
     const usageReportingEnabled = useFeatureEnabled('usage.reporting');
+    const planSurface = usePlanSurfaceVisibility();
     const executionRunsEnabled = useFeatureEnabled('execution.runs');
     const connectedServicesEnabled = useFeatureEnabled('connectedServices');
     const memorySearchEnabled = useFeatureEnabled('memory.search');
@@ -158,7 +157,7 @@ export const SettingsView = React.memo(function SettingsView() {
         };
     }, []);
 
-    const [, handleGitHub] = useOpenExternalUrl('https://github.com/happier-dev/happier');
+    const [, handleGitHub] = useOpenExternalUrl(HAPPIER_GITHUB_URL);
 
     const [, handleReportIssue] = useHappyAction(async () => {
         recordBugReportUserAction('settings.report_issue_open');
@@ -172,23 +171,6 @@ export const SettingsView = React.memo(function SettingsView() {
         }
         pushRoute('/settings/report-issue');
     });
-
-    const handleSubscribe = async () => {
-        trackPaywallButtonClicked();
-        const result = await sync.presentPaywall();
-        if (!result.success) {
-            Modal.alert(t('common.error'), result.error || t('errors.unknownError'));
-        }
-    };
-
-    const handleSupportUs = async () => {
-        const action = resolveSupportUsAction({ isPro });
-        if (action === 'github') {
-            await handleGitHub();
-            return;
-        }
-        await handleSubscribe();
-    };
 
     // Use the multi-click hook for version clicks
     const handleVersionClick = useMultiClick(() => {
@@ -223,6 +205,15 @@ export const SettingsView = React.memo(function SettingsView() {
                 icon={<Icon name="user-circle" size={29} color={theme.colors.accent.blue} />}
                 onPress={() => router.push('/settings/account')}
             />
+            {planSurface.visible ? (
+                <Item
+                    testID="settings-plan-supporter"
+                    title={planSurfaceTitle(planSurface)}
+                    subtitle={planSurface.plans ? t('planSurface.rowSubtitlePlans') : t('planSurface.rowSubtitleSupport')}
+                    icon={<Icon name="heart" size={29} color={theme.colors.supporter.accent} />}
+                    onPress={() => pushRoute('/settings/plan')}
+                />
+            ) : null}
             {useProfiles && (
                 <Item
                     title={t('settings.secrets')}
@@ -246,11 +237,14 @@ export const SettingsView = React.memo(function SettingsView() {
             />
         </ItemGroup>
     ), [
+        planSurface.plans,
+        planSurface.visible,
         pushRoute,
         router,
         theme.colors.accent.blue,
         theme.colors.accent.orange,
         theme.colors.accent.purple,
+        theme.colors.supporter.accent,
         usageReportingEnabled,
         useProfiles,
     ]);
@@ -394,17 +388,6 @@ export const SettingsView = React.memo(function SettingsView() {
             {/* Hidden / unfinished buttons (toggle via Developer Mode) */}
             {showHiddenSettingsButtons && (
                 <>
-                    {/* Support Us */}
-                    <ItemGroup>
-                        <Item
-                            title={t('settings.supportUs')}
-                            subtitle={isPro ? t('settings.supportUsSubtitlePro') : t('settings.supportUsSubtitle')}
-                            icon={<Icon name="heart" size={29} color={theme.colors.state.danger.foreground} />}
-                            showChevron={false}
-                            onPress={handleSupportUs}
-                        />
-                    </ItemGroup>
-
                     <ItemGroup title={t('settings.connectedAccounts')}>
                         <Item
                             title={anthropicAgentCore.uiConnectedService.label}

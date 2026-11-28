@@ -13,7 +13,7 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { PopoverScope } from '@/components/ui/popover';
 import { Modal } from '@/modal';
 import { useAllMachines } from '@/sync/domains/state/storage';
-import { machineDirectSessionCandidateDelete, machineDirectSessionLinkEnsure } from '@/sync/ops/machineDirectSessions';
+import { machineDirectSessionCandidateDelete, machineDirectSessionLinkEnsure, machineLocalHistory } from '@/sync/ops/machineDirectSessions';
 import { useProfile, useSettings } from '@/sync/store/hooks';
 import type { Theme } from '@/theme';
 import { t } from '@/text';
@@ -233,6 +233,29 @@ export const DirectSessionsBrowseScreen = React.memo((props: Readonly<{
         ? t(getAgentCore(selectedProviderId).displayNameKey)
         : '';
 
+    const canKeepCandidate = interaction === 'openSession' && selectedProviderId && selectedSource
+        && getAgentCore(selectedProviderId).localHistory?.source.kind === selectedSource.kind
+        && machines.some((machine) => machine.id === effectiveSelectedMachineId && machine.daemonState?.keptDueAtMs !== undefined);
+    const handleKeepCandidate = React.useCallback(async (candidate: DirectBrowseCandidate) => {
+        if (!effectiveSelectedMachineId || !selectedProviderId || !selectedSource) return;
+        const projectId = typeof candidate.details?.projectId === 'string' ? candidate.details.projectId : undefined;
+        try {
+            const response = await machineLocalHistory(effectiveSelectedMachineId, {
+                providerId: selectedProviderId,
+                source: selectedSource,
+                operation: 'keep',
+                items: [{ remoteSessionId: candidate.remoteSessionId, projectId }],
+            }, { serverId: lockScope?.serverId });
+            if (response.ok) {
+                Modal.alert(t('keepOrLetGo.allSetTitle'), t('keepOrLetGo.localDecisionsSaved'));
+                return;
+            }
+        } catch {
+            // The user can retry after reconnecting to the machine.
+        }
+        Modal.alert(t('common.error'), t('errors.unknownError'));
+    }, [effectiveSelectedMachineId, lockScope?.serverId, selectedProviderId, selectedSource]);
+
     const handleDeleteCandidate = React.useCallback(async (candidate: DirectBrowseCandidate) => {
         if (!effectiveSelectedMachineId || !selectedProviderId || !selectedSource || deletingSessionId) return;
         setDeletingSessionId(candidate.remoteSessionId);
@@ -417,6 +440,7 @@ export const DirectSessionsBrowseScreen = React.memo((props: Readonly<{
                     onSearchQueryChange={setSearchQuery}
                     onSelectCandidate={(candidate) => { void handleOpenCandidate(candidate); }}
                     onDeleteCandidate={(candidate) => { void handleDeleteCandidate(candidate); }}
+                    onKeepCandidate={canKeepCandidate ? handleKeepCandidate : undefined}
                     onLoadMore={() => { void loadMore(); }}
                 />
             </ItemList>

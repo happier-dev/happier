@@ -7,12 +7,14 @@ import type { UseDirectSessionRuntimeResult } from '@/components/sessions/model/
 import { machineDirectSessionTakeover, machineDirectSessionTakeoverPersistStart } from '@/sync/ops/machineDirectSessions';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { getActionOperation, cancelActionOperation } from '@/sync/ops/actionOperations';
-import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
+import { storage, useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import { isActionOperationCancellationRequested, selectActionOperationObservationForOperation, selectActionOperationObservation } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import { useActionOperations } from '@/sync/domains/actionOperations/useActionOperations';
 import { reconcileActionOperationsOnce } from '@/sync/domains/actionOperations/actionOperationRuntime';
 import { randomUUID } from '@/platform/randomUUID';
+import { hasDerivedRetainedSessionLink } from '@/sync/domains/session/directSessions/retainedSessionLink';
+import { storeRetainedSessionLink } from '@/sync/ops/storeRetainedSessionLink';
 import { sync } from '@/sync/sync';
 import { t } from '@/text';
 
@@ -209,8 +211,19 @@ export function useDirectSessionTakeover(params: UseDirectSessionTakeoverParams)
         requestInFlightRef.current = true;
         setRequestInFlight(mode);
         try {
-            const latestStatus = await readLatestStatus();
+            let latestStatus = await readLatestStatus();
             if (!latestStatus || mountedOwnerRef.current !== owner || terminalRefreshingRef.current) return false;
+            const serverId = resolvePreferredServerIdForSessionId(params.sessionId);
+            if (latestStatus.machineOnline && hasDerivedRetainedSessionLink(storage.getState().sessions[params.sessionId]?.metadata)) {
+                await storeRetainedSessionLink(params.sessionId, serverId);
+                if (mountedOwnerRef.current !== owner || terminalRefreshingRef.current) return false;
+                latestStatus = await readLatestStatus();
+                const available = mode === 'persisted' ? latestStatus?.canTakeOverPersist : latestStatus?.canTakeOverDirect;
+                if (!latestStatus || !available || mountedOwnerRef.current !== owner || terminalRefreshingRef.current) {
+                    Modal.alert(t('common.error'), t('errors.failedToSwitchControl'));
+                    return false;
+                }
+            }
             if (!latestStatus.machineOnline) {
                 Modal.alert(t('common.error'), t('chatFooter.directSessionMachineOffline'));
                 return false;
@@ -228,7 +241,6 @@ export function useDirectSessionTakeover(params: UseDirectSessionTakeoverParams)
             if (mountedOwnerRef.current !== owner || terminalRefreshingRef.current) return false;
             setImportStatusError(null);
             const request = { machineId, sessionId: params.sessionId, ...(forceStop ? { forceStop: true } : {}) };
-            const serverId = resolvePreferredServerIdForSessionId(params.sessionId);
             if (mode === 'persisted') {
                 terminalHandledRef.current = null;
                 const requestId = randomUUID();

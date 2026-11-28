@@ -47,7 +47,7 @@
   "agents.AGENTS.opencode.whatItDoes.0": "OpenCode es el agente de programación en terminal de SST, y trae su propia capa de proveedores: lo apuntas a un modelo al que ya tienes acceso y él dirige ese modelo contra tu repositorio. `happier opencode` ejecuta el mismo binario con las mismas credenciales de `opencode auth`, en el mismo directorio.",
   "agents.AGENTS.opencode.whatItDoes.1": "Happier pone los dispositivos. Una sesión que arrancaste en una terminal en una habitación se puede leer y contestar desde un teléfono en otra, y la transcripción se cifra en tu ordenador antes de ir a ninguna parte.",
   "agents.AGENTS.opencode.faq.0.q": "¿Necesito tener ya OpenCode instalado?",
-  "agents.AGENTS.opencode.faq.0.a": "No necesariamente. Happier prefiere el `opencode` de tu PATH y puede instalar el paquete `opencode-ai` en su propio directorio si no hay ninguno. Tu instalación nunca se sustituye ni se actualiza a tus espaldas.",
+  "agents.AGENTS.opencode.faq.0.a": "No necesariamente. Happier prefiere el `opencode` de tu PATH y puede instalar el paquete `@opencode/cli` en su propio directorio si no hay ninguno. Tu instalación nunca se sustituye ni se actualiza a tus espaldas.",
   "agents.AGENTS.opencode.faq.1.q": "¿Cambia Happier con qué proveedor habla OpenCode?",
   "agents.AGENTS.opencode.faq.1.a": "No. OpenCode conserva su propia configuración de proveedores y sus propias credenciales; Happier lo arranca y lee la conversación. Si tienes varios proveedores configurados en `opencode auth`, eso sigue siendo lo que decide adónde va la petición.",
   "agents.AGENTS.opencode.faq.2.q": "¿Puedo autoalojar la parte que transporta mis sesiones?",
@@ -91,7 +91,7 @@
   "agents.AGENTS.gemini.faq.3.q": "¿Puedo usarlo junto a un agente de otro proveedor?",
   "agents.AGENTS.gemini.faq.3.a": "Sí — de eso va tener una app y no una app por proveedor. Una sesión de Gemini y una sesión de cualquiera de los otros 12 aparecen en la misma lista y en el mismo teléfono.",
   "agents.AGENTS.gemini.faq.4.q": "¿Cuánto cuesta la parte de Happier?",
-  "agents.AGENTS.gemini.faq.4.a": "Nada, y no hay recuento de asientos. Todo — CLI, apps, relay — tiene licencia MIT. Google te factura Gemini exactamente igual que lo haría sin nosotros.",
+  "agents.AGENTS.gemini.faq.4.a": "Todas las funciones son gratuitas. Google te factura Gemini directamente.",
 
   "agents.AGENTS.copilot.h1": "GitHub Copilot CLI, manejado desde tu teléfono",
   "agents.AGENTS.copilot.standfirst": "El agente de línea de comandos de Copilot, ejecutándose en tu propio ordenador o en tu propia máquina de compilación, con la sesión en el bolsillo.",
@@ -145,7 +145,7 @@
   "agents.AGENTS.kimi.faq.3.q": "¿Puedo añadir mis propios servidores MCP?",
   "agents.AGENTS.kimi.faq.3.a": "Sí. Los servidores MCP se definen una vez en Happier y se reutilizan entre agentes, máquinas y sesiones, con una vista previa de la superficie de herramientas efectiva antes de que arranque una sesión.",
   "agents.AGENTS.kimi.faq.4.q": "¿Hay algo de esto detrás de un muro de pago?",
-  "agents.AGENTS.kimi.faq.4.a": "No. Todos los clientes de Happier y el relay tienen licencia MIT y son gratuitos, sin recuento de asientos y sin funciones bloqueadas. La única factura es la que Moonshot ya te manda.",
+  "agents.AGENTS.kimi.faq.4.a": "Todas las funciones son gratuitas. Moonshot te factura Kimi directamente.",
 
   "agents.AGENTS.kilo.h1": "Kilo CLI en tu teléfono, tu portátil y tu navegador",
   "agents.AGENTS.kilo.standfirst": "Una app de código abierto para Kilo y los otros 12 agentes de programación de línea de comandos que puedas tener instalados.",
@@ -267,7 +267,7 @@
   "agents.AGENT_META.grok.description": "La CLI de programación de xAI en tu ordenador, manejada desde cualquier dispositivo. La integración es experimental y esta página dice qué no soporta aún.",
 
   "agents.UNLISTED_AGENTS.customAcp": "El ACP personalizado no es una integración de proveedor, es la puerta para las que no hemos construido: cualquier CLI que hable el Agent Client Protocol se puede añadir como un backend propio. No hay página porque lo que puede hacer es lo que implemente tu CLI, y una página sobre eso sería una página sobre tu código. La documentación de Happier cubre la configuración.",
-  "agents.UPCOMING_AGENTS.antigravity.note": "La CLI Antigravity de Google llegará en la próxima versión — un backend alojado en terminal que funcionará con una credencial de Gemini. No está en la compilación que puedes instalar hoy.",
+  "agents.UPCOMING_AGENTS.antigravity.note": "Happier 0.2 ya ofrece compatibilidad experimental con Antigravity mediante el comando agy. La integración independiente de Antigravity para v0.3 sigue en desarrollo y no está en la versión actual. Consulta la documentación de Happier para configurar agy.",
   "agents.UPCOMING_AGENTS.ohMyPi.note": "oh-my-pi es una CLI distinta de Pi, con su propio binario y su propio repositorio de releases. Llega en la próxima versión como agente por derecho propio. Hasta que eso se publique, la página de Pi trata del binario pi, y nada en este sitio ejecuta omp.",
   "agents.UPCOMING_AGENTS.coderabbit.note": "CodeRabbit es una herramienta de revisión y no un agente de programación conversacional, así que incluso cuando llegue no habrá sesión que abrir en el teléfono — sería una ejecución de herramienta dentro de una.",
   "agents.UPCOMING_AGENTS.deepsec.note": "DeepSec es una ejecución de herramienta de escaneo de seguridad, en el mismo plano que CodeRabbit: sin conversación y sin sesión que llevar entre tus dispositivos. Se nombra aquí por completitud, no como algo que puedas usar."

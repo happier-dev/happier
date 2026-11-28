@@ -379,6 +379,9 @@ export function useSessionFileEditorState(input: Readonly<{
                 setEditorOriginalText(latestText);
                 setEditorOriginalHash(response.hash);
                 setFileChangedExternally(false);
+                // Keep the editor mounted until the file reader has the saved snapshot.
+                // Otherwise exiting edit mode can reseed from the pre-save fileText.
+                await latestInput.refreshAll();
                 const liveTextAfterWrite = editorHandleRef.current?.getValue?.() ?? editorTextRef.current;
                 if (liveTextAfterWrite !== latestText) {
                     // The user kept typing while the write was in flight. Seeding the editor
@@ -397,7 +400,6 @@ export function useSessionFileEditorState(input: Readonly<{
                     draft: null,
                 });
                 latestInput.persistDraft?.(null);
-                await latestInput.refreshAll();
             } catch (err) {
                 const shown = tryShowDaemonUnavailableAlertForRpcError({
                     error: err,

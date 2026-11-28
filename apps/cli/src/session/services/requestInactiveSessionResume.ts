@@ -85,6 +85,7 @@ export type EnsureSessionRuntimeForPendingInputParams = Readonly<{
   metadata: Record<string, unknown>;
   timeoutMs?: number;
   waitForReady?: boolean;
+  transitionLaunchNonce?: string;
 }>;
 
 /** Canonical full-runtime ensure for an existing Session and its persisted provider thread. */
@@ -158,7 +159,7 @@ export async function ensureSessionRuntimeForPendingInput(
       credentials: params.credentials,
       machineId,
       method: RPC_METHODS.SPAWN_HAPPY_SESSION,
-      request: buildMachineResumeRequest(options, readinessSpawnNonce),
+      request: buildMachineResumeRequest(options, readinessSpawnNonce ?? params.transitionLaunchNonce),
       timeoutMs,
     });
     const responseSessionId = response && typeof response === 'object'

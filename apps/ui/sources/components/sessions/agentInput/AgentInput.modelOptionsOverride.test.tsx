@@ -696,7 +696,7 @@ describe('AgentInput (modelOptionsOverride)', () => {
         expect(screen.findByTestId('agent-input-selection-list-popover')).toBeNull();
     });
 
-    it.each([null, 'default'] as const)('distinguishes unset permissions from native Default in preflight (%s)', async (selectedModeId) => {
+    it.each([null, 'auto'] as const)('offers CodeBuddy Build and Plan in preflight, leaving approval presets to permissions (%s)', async (selectedModeId) => {
         const onAcpSessionModeChange = vi.fn();
         const screen = await renderScreen(React.createElement(AgentInput, {
             value: '',
@@ -716,20 +716,19 @@ describe('AgentInput (modelOptionsOverride)', () => {
             acpSessionModeSelectedIdOverride: selectedModeId,
         }));
 
+        // With only Build and Plan, pressing the chip toggles instead of opening a list.
         await screen.pressByTestIdAsync('agent-input-session-mode-chip');
-        const clearChoice = screen.findByTestId('selection-list:session-mode-root:option-wrapper');
-        const nativeDefaultChoice = screen.findByTestId('selection-list:session-mode-root:option-wrapper:default');
-        expect(clearChoice?.props['aria-selected']).toBe(selectedModeId === null);
-        expect(nativeDefaultChoice?.props['aria-selected']).toBe(selectedModeId === 'default');
-        await screen.pressByTestIdAsync('selection-list:session-mode-root:option');
-        expect(onAcpSessionModeChange).toHaveBeenCalledWith('');
+        expect(screen.findByTestId('selection-list:session-mode-root:option-wrapper:default')).toBeNull();
+        expect(screen.findByTestId('selection-list:session-mode-root:option-wrapper:auto')).toBeNull();
+        expect(onAcpSessionModeChange).toHaveBeenCalledWith('plan');
     });
 
-    it.each([null, 'default'] as const)('checks the active-session override choice independently of its reported mode (%s)', async (modeId) => {
+    it.each([null, 'default'] as const)('shows an active CodeBuddy session in Build whatever approval mode it reports (%s)', async (modeId) => {
+        const onAcpSessionModeChange = vi.fn();
         const screen = await renderScreen(React.createElement(AgentInput, {
             value: '', placeholder: 'placeholder', onChangeText: () => {}, onSend: () => {},
             autocompleteKinds: [], autocompleteSuggestions: async () => [],
-            agentType: 'codebuddy', onAcpSessionModeChange: vi.fn(),
+            agentType: 'codebuddy', onAcpSessionModeChange,
             metadata: {
                 path: '/tmp', host: 'test-host', flavor: 'codebuddy',
                 sessionModesV1: {
@@ -742,13 +741,36 @@ describe('AgentInput (modelOptionsOverride)', () => {
                 sessionModeOverrideV1: { v: 1, updatedAt: 2, modeId },
             },
         }));
-        expect(screen.findByTestId('agent-input-session-mode-chip')?.props.accessibilityLabel)
-            .toContain(modeId === null ? 'Auto' : 'Native Default');
+        const label = screen.findByTestId('agent-input-session-mode-chip')?.props.accessibilityLabel;
+        expect(label).toContain('agentInput.mode.build');
+        expect(label).not.toContain('Native Default');
         await screen.pressByTestIdAsync('agent-input-session-mode-chip');
-        expect(screen.findByTestId('selection-list:session-mode-root:option-wrapper')?.props['aria-selected'])
-            .toBe(modeId === null);
-        expect(screen.findByTestId('selection-list:session-mode-root:option-wrapper:default')?.props['aria-selected'])
-            .toBe(modeId === 'default');
+        expect(onAcpSessionModeChange).toHaveBeenCalledWith('plan');
+    });
+
+    it.each([
+        ['devin', [{ id: 'normal', name: 'Normal' }, { id: 'accept-edits', name: 'Accept edits' }, { id: 'dangerous', name: 'Dangerous' }]],
+        ['fx', [{ id: 'auto', name: 'Auto' }, { id: 'ask', name: 'Ask' }, { id: 'full-access', name: 'Full access' }]],
+    ] as const)('renders no Mode chip for %s, whose modes are all approval levels', async (agentType, availableModes) => {
+        const preflight = await renderScreen(React.createElement(AgentInput, {
+            value: '', placeholder: 'placeholder', onChangeText: () => {}, onSend: () => {},
+            autocompleteKinds: [], autocompleteSuggestions: async () => [],
+            agentType, onAcpSessionModeChange: vi.fn(),
+            acpSessionModeOptionsOverride: [...availableModes],
+        }));
+        expect(preflight.findByTestId('agent-input-session-mode-chip')).toBeNull();
+
+        const active = await renderScreen(React.createElement(AgentInput, {
+            value: '', placeholder: 'placeholder', onChangeText: () => {}, onSend: () => {},
+            autocompleteKinds: [], autocompleteSuggestions: async () => [],
+            agentType, onAcpSessionModeChange: vi.fn(),
+            metadata: {
+                path: '/tmp', host: 'test-host', flavor: agentType,
+                sessionModesV1: { v: 1, provider: agentType, updatedAt: 1, currentModeId: availableModes[0].id, availableModes: [...availableModes] },
+                sessionModeOverrideV1: { v: 1, updatedAt: 2, modeId: availableModes[2].id },
+            },
+        }));
+        expect(active.findByTestId('agent-input-session-mode-chip')).toBeNull();
     });
 
     it('cycles a small mapped native-mode list back to the permission setting', async () => {

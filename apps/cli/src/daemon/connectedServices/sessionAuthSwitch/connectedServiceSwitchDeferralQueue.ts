@@ -4,6 +4,12 @@ type ConnectedServiceSwitchDeferralPolicy =
 
 type ConnectedServiceSwitchSource = 'manual' | 'automatic';
 
+/**
+ * `forced` (default): if the turn boundary does not arrive within `timeoutMs`, the switch closes the
+ * turn and runs anyway. `none`: the switch waits for the real boundary, however long the turn runs.
+ */
+export type ConnectedServiceSwitchBoundaryDeadline = 'forced' | 'none';
+
 type ConnectedServiceSwitchDeferralCompletionReason =
   | 'completed_at_boundary'
   | 'aborted_after_timeout'
@@ -28,6 +34,7 @@ type ConnectedServiceSwitchRequest = Readonly<{
   sessionId: string;
   policy: ConnectedServiceSwitchDeferralPolicy;
   source: ConnectedServiceSwitchSource;
+  boundaryDeadline?: ConnectedServiceSwitchBoundaryDeadline;
   target: ConnectedServiceSwitchTarget;
   runSwitch: () => Promise<unknown>;
 }>;
@@ -48,6 +55,7 @@ type PendingSwitch = {
   sessionId: string;
   policy: ConnectedServiceSwitchDeferralPolicy;
   source: ConnectedServiceSwitchSource;
+  boundaryDeadline: ConnectedServiceSwitchBoundaryDeadline;
   target: ConnectedServiceSwitchTarget;
   runSwitch: () => Promise<unknown>;
   requestedAtMs: number;
@@ -281,6 +289,7 @@ export function createConnectedServiceSwitchDeferralQueue(
 
   const schedulePendingTimeout = (pending: PendingSwitch): void => {
     clearPendingTimer(pending);
+    if (pending.boundaryDeadline === 'none') return;
     pending.timer = setTimeout(() => {
       // Lane F deferral-timeout escape hatch: the turn boundary never arrived within the timeout, so
       // the deferred switch is forced. Close the turn cleanly at a forced boundary FIRST so the
@@ -299,6 +308,15 @@ export function createConnectedServiceSwitchDeferralQueue(
       }
       void executePendingSwitch(pending, 'aborted_after_timeout');
     }, timeoutMs);
+  };
+
+  // A caller that relies on the forced boundary (a manual switch, failure recovery) keeps it even
+  // when it coalesces into a pending switch that was waiting without a deadline.
+  const adoptForcedDeadline = (pending: PendingSwitch, input: ConnectedServiceSwitchRequest): void => {
+    if ((input.boundaryDeadline ?? 'forced') !== 'forced' || pending.boundaryDeadline === 'forced') return;
+    if (pending.executing || pending.settled) return;
+    pending.boundaryDeadline = 'forced';
+    schedulePendingTimeout(pending);
   };
 
   const shouldRunImmediately = (input: ConnectedServiceSwitchRequest): boolean => {
@@ -325,6 +343,7 @@ export function createConnectedServiceSwitchDeferralQueue(
         sessionId,
         policy: input.policy,
         source: input.source,
+        boundaryDeadline: input.boundaryDeadline ?? 'forced',
         target,
         runSwitch: input.runSwitch,
         requestedAtMs: nowMs(),
@@ -339,12 +358,14 @@ export function createConnectedServiceSwitchDeferralQueue(
         type: 'connected_service_account_switch_deferred',
         policy: input.policy,
         awaitingBoundary: input.policy === 'defer_until_turn_boundary',
-        timeoutMs,
+        // 0 = no forced deadline: the switch waits for the real boundary.
+        timeoutMs: created.boundaryDeadline === 'none' ? 0 : timeoutMs,
       });
       return await deferred.promise;
     }
 
     if (isSameConnectedServiceSwitchTarget(pending.target, target)) {
+      adoptForcedDeadline(pending, input);
       pending.requests.push(deferred.request);
       return await deferred.promise;
     }
@@ -357,6 +378,7 @@ export function createConnectedServiceSwitchDeferralQueue(
     }
 
     if (!shouldReplacePending({ pendingSource: pending.source, nextSource: input.source })) {
+      adoptForcedDeadline(pending, input);
       pending.requests.push(deferred.request);
       return await deferred.promise;
     }
@@ -372,6 +394,7 @@ export function createConnectedServiceSwitchDeferralQueue(
       sessionId,
       policy: input.policy,
       source: input.source,
+      boundaryDeadline: input.boundaryDeadline ?? 'forced',
       target,
       runSwitch: input.runSwitch,
       requestedAtMs: nowMs(),

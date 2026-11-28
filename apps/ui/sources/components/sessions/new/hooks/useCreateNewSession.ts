@@ -1637,9 +1637,6 @@ export function useCreateNewSession(params: Readonly<{
                         },
                         extra: {
                             phase: 'rollback_artifacts',
-                            machineId: current.selectedMachineId,
-                            selectedPath: effectiveSelectedPath,
-                            actualPath: rollbackActualPath,
                         },
                     });
                 }
@@ -1651,8 +1648,6 @@ export function useCreateNewSession(params: Readonly<{
                 },
                 extra: {
                     phase: 'create_session',
-                    machineId: current.selectedMachineId,
-                    selectedPath: effectiveSelectedPath,
                     hadRollbackPath: rollbackActualPath !== null,
                 },
             });

@@ -4,6 +4,7 @@ export function logRetentionSweepCompleted(params: {
     reason: 'startup' | 'interval';
     deleted: number;
     byRule: Readonly<Record<string, number>>;
+    byTier?: Readonly<Record<string, Readonly<Record<string, number>>>>;
     details?: Readonly<Record<string, unknown>>;
     dryRun: boolean;
 }) {
@@ -13,6 +14,7 @@ export function logRetentionSweepCompleted(params: {
             reason: params.reason,
             deleted: params.deleted,
             byRule: params.byRule,
+            byTier: params.byTier,
             details: params.details,
             dryRun: params.dryRun,
         },

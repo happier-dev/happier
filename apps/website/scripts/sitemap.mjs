@@ -68,7 +68,7 @@ function buildXml(routes, lastmod) {
 }
 
 /**
- * @param {{ dist: string, routes: Array<{ path: string, file: string }> }} params
+ * @param {{ dist: string, routes: Array<{ path: string, file: string, noindex?: boolean }> }} params
  * @returns {{ count: number }}
  */
 export function writeSitemap({ dist, routes }) {
@@ -107,6 +107,7 @@ export function writeSitemap({ dist, routes }) {
     }
 
     const lastmod = new Date().toISOString().slice(0, 10);
-    fs.writeFileSync(path.join(dist, 'sitemap.xml'), buildXml(routes, lastmod), 'utf8');
-    return { count: routes.length };
+    const indexable = routes.filter((route) => !route.noindex);
+    fs.writeFileSync(path.join(dist, 'sitemap.xml'), buildXml(indexable, lastmod), 'utf8');
+    return { count: indexable.length };
 }

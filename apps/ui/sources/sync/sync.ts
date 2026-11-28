@@ -12,6 +12,7 @@ import {
     isRecoveredHistoryTranscriptObservationProvenance,
     projectSessionMetadataForWire,
     readPendingLocalId,
+    readServerEnabledBit,
     type DirectTranscriptRawMessageV1,
     type DirectTranscriptTruncationReason,
     resolveDirectTranscriptContinuation,
@@ -147,6 +148,7 @@ import {
     type ServerAccountScope,
 } from './domains/scope/serverAccountScope';
 import { getPendingQueueWakeResumeOptions } from './domains/pending/pendingQueueWake';
+import { hasUncommittedLocalOutboundProjection } from './store/domains/pending';
 import {
     areAccountSettingsScopesEqual,
     createAccountSettingsScope,
@@ -221,14 +223,11 @@ import {
     isTerminalTaskLifecycleEventType,
     type TaskLifecycleEvent,
 } from '@/sync/engine/sessions/taskLifecycle';
-import { initializeTracking, tracking, trackLogout } from '@/track';
-import { applyCrashReportsOptOut } from '@/utils/system/sentry';
+import { initializeTracking, trackLogout } from '@/track';
 import { parseToken } from '@/utils/auth/parseToken';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { isTauriDesktop } from '@/utils/platform/tauri';
 import { RevenueCat } from './domains/purchases';
-import { purchasesDefaults } from './domains/purchases/purchases';
-import { trackPaywallPresented, trackPaywallPurchased, trackPaywallCancelled, trackPaywallRestored, trackPaywallError } from '@/track';
 import { getActiveServerSnapshot } from './domains/server/serverRuntime';
 import {
     areServerProfileIdentifiersEquivalent,
@@ -310,6 +309,7 @@ import { getPermissionModeOverrideForSpawn } from './domains/permissions/permiss
 import { scheduleDebouncedPendingSettingsFlush } from './engine/pending/pendingSettings';
 import {
     applySettingsLocalDelta,
+    applyStartupConsentSettings,
     syncSettings as syncSettingsEngine,
     type SyncSettingsParams,
 } from './engine/settings/syncSettings';
@@ -319,7 +319,7 @@ import {
     type PreparedAccountSettingsForDaemonSpawn,
 } from './engine/settings/prepareAccountSettingsForDaemonSpawn';
 import { registerAccountSettingsDaemonSpawnPreparation } from './ops/accountSettingsDaemonSpawnPreparation';
-import { getOfferings as getOfferingsEngine, presentPaywall as presentPaywallEngine, purchaseProduct as purchaseProductEngine, syncPurchases as syncPurchasesEngine } from './engine/purchases/syncPurchases';
+import { ensurePurchasesConfiguredAtLaunch, hasNativeStoreOffers, supportsNativeStorePurchases } from './engine/purchases/syncPurchases';
 import { fetchChanges, fetchCurrentChangesCursor } from './api/session/apiChanges';
 import {
     resolveWebSyncClientIdentity,
@@ -350,6 +350,7 @@ import {
 import { decideMessageCatchUpPolicy } from '@/sync/runtime/orchestration/messageCatchUpPolicy';
 import { installSessionRealtimeTranscriptSuppressionGlobal } from '@/sync/runtime/sessionRealtimeTranscriptSuppression';
 import { resolveSessionLiveConsumption } from '@/sync/runtime/sessionLiveConsumption';
+import { publishSessionSupporterAskSignal } from '@/sync/domains/session/realtime/sessionSupporterAskSignal';
 import {
     readMountedSessionTranscriptConsumerSessionIdsForRetention,
     subscribeSessionTranscriptConsumerReleases,
@@ -363,6 +364,8 @@ import {
     MINIMUM_CLI_SESSION_USER_MESSAGE_RPC_VERSION,
 } from '@/utils/system/versionUtils';
 import { applyMessageCatchUpDecision } from '@/sync/runtime/orchestration/applyMessageCatchUpDecision';
+import { resolveRuntimeFeatureDecisionFromSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
+import { getSessionStorageKind } from '@/sync/domains/session/sessionStorageKind';
 import { readDirectSessionLink, type DirectSessionLink } from '@/sync/domains/session/directSessions/readDirectSessionLink';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import { normalizeDirectTranscriptMessages } from '@/sync/runtime/directSessions/normalizeDirectTranscriptMessages';
@@ -518,6 +521,8 @@ import {
 } from './engine/socket/socket';
 import { actionOperationStore } from './domains/actionOperations/actionOperationStore';
 import { openActionOperationRevisionEphemeral } from './domains/actionOperations/actionOperationEphemeral';
+import { getAccountPlanEntry, invalidateAccountPlan, refreshAccountPlan, retireAccountPlan } from './domains/plans/accountPlanResource';
+import { retireLeavingSessions } from './domains/session/retention/leavingSessionsResource';
 
 const SESSION_LIST_BACKGROUND_HYDRATION_SCROLL_SETTLE_MS = 180;
 const WEB_INITIAL_SESSION_MESSAGES_PAGE_SIZE = 12;
@@ -1073,7 +1078,6 @@ class Sync {
     private readStateV1RepairInFlight = new Set<string>();
     private settingsSync: InvalidateSync;
     private profileSync: InvalidateSync;
-    private purchasesSync: InvalidateSync;
     private machinesSync: InvalidateSync;
     private pushTokenSync: InvalidateSync;
     private nativeUpdateSync: InvalidateSync;
@@ -1114,7 +1118,6 @@ class Sync {
               private socketOfflineCatchUpConsumedSessionIds = new Set<string>();
               private socketStatus: 'disconnected' | 'connecting' | 'connected' | 'error' = 'disconnected';
               private postSubscriptionChangesCatchUpPending = false;
-	      revenueCatInitialized = false;
 	    private settingsSecretsKey: Uint8Array | null = null;
 	    private settingsSecretsReadKeys: readonly Uint8Array[] = [];
 	    private messageTransport: SyncMessageTransport = createDefaultMessageTransport();
@@ -1348,7 +1351,6 @@ class Sync {
                 backoff,
             });
             this.profileSync = new InvalidateSync(limitSnapshotSyncAttempt(this.fetchProfile), { onError, onSuccess, onRetry, pause, backoff });
-            this.purchasesSync = new InvalidateSync(limitSnapshotSyncAttempt(this.syncPurchases), { onError, onSuccess, onRetry, pause, backoff });
             this.machinesSync = new InvalidateSync(limitSnapshotSyncAttempt(this.fetchMachines), { onError, onSuccess, onRetry, pause, backoff });
             this.nativeUpdateSync = new InvalidateSync(limitSnapshotSyncAttempt(this.fetchNativeUpdate), { pause, backoff });
             this.artifactsSync = new InvalidateSync(limitSnapshotSyncAttempt(this.fetchArtifactsList), { pause, backoff });
@@ -2022,7 +2024,6 @@ class Sync {
         await Promise.all([
             this.settingsSync.awaitQueue({ timeoutMs: initialAwaitTimeoutMs }),
             this.profileSync.awaitQueue({ timeoutMs: initialAwaitTimeoutMs }),
-            this.purchasesSync.awaitQueue({ timeoutMs: initialAwaitTimeoutMs }),
         ]);
     }
 
@@ -2030,7 +2031,6 @@ class Sync {
         const accountId = this.parseAccountIdForSettingsScope(credentials, 'restore');
         if (!accountId) throw new Error('Invalid auth token');
         // NOTE: No awaiting anything here, we're restoring from a disk (ie app restarted)
-        // Purchases sync is invalidated in #init() and will complete asynchronously
         this.configureEncryptionRuntime(encryption, accountId);
         this.credentials = credentials;
         this.encryption = encryption;
@@ -2072,6 +2072,9 @@ class Sync {
         this.retainedAccountIdByHomeId.set(homeId, accountId);
         if (retainedAccountId === accountId) return;
 
+        retireAccountPlan(homeId);
+        retireLeavingSessions(homeId);
+        invalidateAccountPlan();
         const state = storage.getState();
         state.clearSessionOrganizationForServer(homeId);
         for (const knownHomeId of Object.keys(state.sessionOrganizationSnapshotVersionByServerId)) {
@@ -2093,6 +2096,8 @@ class Sync {
     /** Logout removes every Home's credentials, so nothing retained for any Home has an owner left. */
     public retireAccountDataForEveryHome(): void {
         this.retainedAccountIdByHomeId.clear();
+        retireAccountPlan();
+        retireLeavingSessions();
         storage.getState().clearSessionOrganizationForAllServers();
         storage.setState((current) => ({
             ...current,
@@ -2274,9 +2279,7 @@ class Sync {
             syncError: null,
             accountSettingsSyncStatus: createAccountSettingsIdleStatus(),
             lastSyncAt: null,
-            purchases: { ...purchasesDefaults },
         }));
-        this.revenueCatInitialized = false;
     };
 
     public async switchServer(credentials: AuthCredentials): Promise<void> {
@@ -2323,19 +2326,13 @@ class Sync {
             this.updatesSubscribed = true;
         }
 
-        // Sync initial PostHog opt-out state with stored settings
-        if (tracking) {
-            const currentSettings = storage.getState().settings;
-            if (currentSettings.analyticsOptOut) {
-                tracking.optOut();
-            } else {
-                tracking.optIn();
-            }
-        }
-        applyCrashReportsOptOut(storage.getState().settings.crashReportsOptOut);
+        applyStartupConsentSettings();
 
         // Initial bootstrap sync is orchestrated to avoid request storms.
         fireAndForget(this.bootstrapSync(), { tag: 'Sync.bootstrapSync' });
+        if (supportsNativeStorePurchases()) {
+            fireAndForget(this.configureStoreObserver(), { tag: 'Sync.configureStoreObserver' });
+        }
     }
 
 
@@ -3440,7 +3437,7 @@ class Sync {
     private async updateSessionMetadataWithRetry(
         sessionId: string,
         updater: (metadata: Metadata) => Metadata,
-        options?: Readonly<{ serverId?: string | null; shouldContinue?: () => boolean }>,
+        options?: Readonly<{ serverId?: string | null; shouldContinue?: () => boolean; skipUnchanged?: boolean }>,
     ): Promise<void> {
         const resolvedServerIdOverride =
             typeof options?.serverId === 'string' && options.serverId.trim().length > 0
@@ -3541,6 +3538,7 @@ class Sync {
             },
             updater,
             maxAttempts: 8,
+            skipUnchanged: options?.skipUnchanged,
             shouldContinue: options?.shouldContinue,
         });
     }
@@ -3790,6 +3788,18 @@ class Sync {
             outboxScope,
             isOutboxScopeCurrent: ownerContext.isCurrent,
         });
+        this.requestTranscriptReconciliationForUncommittedLocalOutbound(sessionId, 'pending_snapshot');
+    }
+
+    private requestTranscriptReconciliationForUncommittedLocalOutbound(
+        sessionId: string,
+        source: 'pending_snapshot' | 'socket_pending_changed',
+    ): void {
+        if (!hasUncommittedLocalOutboundProjection(storage.getState(), sessionId)) return;
+        syncReliabilityTelemetry.record('sync.pending.localOutboundTranscriptReconciliationRequested', {
+            source,
+        });
+        this.getOrCreateMessagesSync(sessionId).invalidateCoalesced();
     }
 
     private rearmPendingOutboxForActiveScope = (): Promise<void> => {
@@ -4067,10 +4077,6 @@ class Sync {
         });
     }
 
-    refreshPurchases = () => {
-        this.purchasesSync.invalidate();
-    }
-
     /**
      * Registration only consumes an already-granted OS permission, so a newly granted permission
      * must re-run it immediately instead of waiting for the next bootstrap or resume.
@@ -4081,42 +4087,6 @@ class Sync {
 
     refreshProfile = async () => {
         await this.profileSync.invalidateAndAwait();
-    }
-
-    purchaseProduct = async (productId: string): Promise<{ success: boolean; error?: string }> => {
-        const generation = this.serverScopeGeneration;
-        const { shouldContinue } = createSyncGenerationGuard({
-            capturedGeneration: generation,
-            getCurrentGeneration: () => this.serverScopeGeneration,
-        });
-        return await purchaseProductEngine({
-            revenueCatInitialized: this.revenueCatInitialized,
-            productId,
-            shouldContinue,
-            applyPurchases: (customerInfo) => storage.getState().applyPurchases(customerInfo),
-        });
-    }
-
-    getOfferings = async (): Promise<{ success: boolean; offerings?: any; error?: string }> => {
-        return await getOfferingsEngine({ revenueCatInitialized: this.revenueCatInitialized });
-    }
-
-    presentPaywall = async (): Promise<{ success: boolean; purchased?: boolean; error?: string }> => {
-        const generation = this.serverScopeGeneration;
-        const { shouldContinue } = createSyncGenerationGuard({
-            capturedGeneration: generation,
-            getCurrentGeneration: () => this.serverScopeGeneration,
-        });
-        return await presentPaywallEngine({
-            revenueCatInitialized: this.revenueCatInitialized,
-            shouldContinue,
-            trackPaywallPresented,
-            trackPaywallPurchased,
-            trackPaywallCancelled,
-            trackPaywallRestored,
-            trackPaywallError,
-            syncPurchases: () => shouldContinue() ? this.syncPurchases() : Promise.resolve(),
-        });
     }
 
     async assumeUsers(userIds: string[]): Promise<void> {
@@ -4754,11 +4724,99 @@ class Sync {
             );
     }
 
-    private createSessionMessagesRequest = (sessionId: string): ((path: string) => Promise<Response>) => {
+    public async listLeavingSessions(assertScope: () => void, signal?: AbortSignal) {
+        const encryption = this.encryption;
+        const { serverId } = getActiveServerSnapshot();
+        const [{ listLeavingSessions }, { readListedSessionMetadata }, { getSessionName }] = await Promise.all([
+            import('./api/session/apiSessionLeaving'),
+            import('./api/session/readListedSessionMetadata'),
+            import('@/utils/sessions/sessionUtils'),
+        ]);
+        return listLeavingSessions({
+            assertScope,
+            signal,
+            readTitle: async (row) => {
+                const { metadata } = await readListedSessionMetadata(row, encryption, serverId);
+                return metadata ? getSessionName({ id: row.id, metadata }) : null;
+            },
+        });
+    }
+
+    public async exportAccountTranscripts(params: Readonly<{
+        format: import('./api/session/serializeTranscript').TranscriptExportFormat;
+        includeSubagents: boolean;
+        write: (bytes: Uint8Array) => Promise<void>;
+        retrySessionIds?: readonly string[];
+        onProgress?: (progress: Readonly<{ done: number; failed: number }>) => void;
+        signal?: AbortSignal;
+    }>) {
+        const credentials = this.credentials;
+        if (!credentials) throw new Error('Sync credentials not available');
+        const serverId = getActiveServerSnapshot().serverId;
+        const guard = this.createServerScopeGuard();
+        const shouldContinue = () => guard() && this.credentials === credentials && params.signal?.aborted !== true;
+        const { exportAccountTranscripts } = await import('./api/session/exportAccountTranscripts');
+        return exportAccountTranscripts({
+            format: params.format,
+            includeSubagents: params.includeSubagents,
+            token: credentials.token,
+            encryption: this.encryption,
+            serverId: serverId ?? '',
+            retrySessionIds: params.retrySessionIds,
+            shouldContinue,
+            write: params.write,
+            onProgress: params.onProgress,
+            request: (path, init) => {
+                if (!shouldContinue()) throw new Error('Transcript export canceled');
+                return apiSocket.request(path, { ...init, signal: params.signal });
+            },
+        });
+    }
+
+    public async exportSessionTranscript(
+        sessionId: string,
+        format: import('./api/session/serializeTranscript').TranscriptExportFormat,
+        options: Readonly<{
+            includeSubagents?: boolean;
+            signal?: AbortSignal;
+            seqs?: readonly number[];
+            onReadProgress?: (loaded: number, total: number | null) => void;
+            onFormatting?: () => void | Promise<void>;
+        }> = {},
+    ): Promise<string> {
+        const state = storage.getState();
+        const session = state.sessions[sessionId];
+        const storageKind = getSessionStorageKind(session);
+        if (!session || (!options.seqs && storageKind !== 'persisted')) throw new Error('Hosted transcript unavailable');
+        const guard = this.createSessionTranscriptSourceGuard(sessionId);
+        const [{ exportTranscript }, { readStoredSessionMessages }] = await Promise.all([
+            import('./api/session/sessionMessagesApi'),
+            import('./domains/messages/readStoredSessionMessages'),
+        ]);
+        return exportTranscript({
+            sessionId,
+            format,
+            includeSubagents: options.includeSubagents,
+            seqs: options.seqs,
+            onReadProgress: options.onReadProgress,
+            onFormatting: options.onFormatting,
+            loadedMessages: options.seqs ? readStoredSessionMessages(state, sessionId) : undefined,
+            encryptionMode: session.encryptionMode === 'plain' ? 'plain' : 'e2ee',
+            request: storageKind === 'persisted'
+                ? this.createSessionMessagesRequest(sessionId, options.signal)
+                : async () => { throw new Error('Selected transcript messages are unavailable'); },
+            getSessionEncryption: (id) => this.encryption.getSessionEncryption(id),
+            shouldContinue: () => guard()
+                && options.signal?.aborted !== true
+                && getSessionStorageKind(storage.getState().sessions[sessionId]) === storageKind,
+        });
+    }
+
+    private createSessionMessagesRequest = (sessionId: string, signal?: AbortSignal): ((path: string) => Promise<Response>) => {
         const request = this.createSessionRequest(sessionId);
         // The messages route enforces limit <= 500 (default 150). Unlike unpaged session
         // metadata, these pages may use a native pre-resolution inactivity window.
-        return (path: string) => request(path, { method: 'GET', responseSizeBounded: true });
+        return (path: string) => request(path, { method: 'GET', responseSizeBounded: true, signal });
     }
 
     /**
@@ -4963,7 +5021,6 @@ class Sync {
 
                         await runTasksWithLimit(
                             [
-                                () => invalidateBounded(this.purchasesSync, this.syncTuning.resumeQuickInvalidateTimeoutMs),
                                 () => invalidateBounded(this.pushTokenSync, this.syncTuning.resumeQuickInvalidateTimeoutMs),
                                 () => invalidateBounded(this.nativeUpdateSync, this.syncTuning.resumeQuickInvalidateTimeoutMs),
                             ],
@@ -5009,7 +5066,6 @@ class Sync {
                       () => invalidateBounded(this.sessionsSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
                       () => invalidateBounded(this.machinesSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
                       () => invalidateBounded(this.artifactsSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
-                      () => invalidateBounded(this.purchasesSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
                   ],
                   bootstrapConcurrencyLimit
               );
@@ -5178,7 +5234,7 @@ class Sync {
     public patchSessionMetadataWithRetry = async (
         sessionId: string,
         updater: (metadata: Metadata) => Metadata,
-        options?: Readonly<{ serverId?: string | null }>,
+        options?: Readonly<{ serverId?: string | null; skipUnchanged?: boolean }>,
     ): Promise<void> => {
         await this.updateSessionMetadataWithRetry(sessionId, updater, options);
     }
@@ -5671,21 +5727,24 @@ class Sync {
         }
     }
 
-    private syncPurchases = async () => {
+    private configureStoreObserver = async () => {
         const generation = this.serverScopeGeneration;
         const { shouldContinue } = createSyncGenerationGuard({
             capturedGeneration: generation,
             getCurrentGeneration: () => this.serverScopeGeneration,
         });
-        await syncPurchasesEngine({
-            serverID: this.serverID,
-            revenueCatInitialized: this.revenueCatInitialized,
+        const accountId = this.serverID;
+        const snapshot = await getServerFeaturesSnapshot();
+        if (!shouldContinue() || snapshot.status !== 'ready') return;
+        if (readServerEnabledBit(snapshot.features, 'plans') !== true && readServerEnabledBit(snapshot.features, 'supporter') !== true) return;
+        await refreshAccountPlan();
+        if (!shouldContinue()) return;
+        const { status, data } = getAccountPlanEntry();
+        const storePlansOffered = status === 'ready' && hasNativeStoreOffers(data);
+        await ensurePurchasesConfiguredAtLaunch({
+            accountId,
+            storePlansOffered,
             shouldContinue,
-            setRevenueCatInitialized: (next) => {
-                if (!shouldContinue()) return;
-                this.revenueCatInitialized = next;
-            },
-            applyPurchases: (customerInfo) => storage.getState().applyPurchases(customerInfo),
         });
     }
 
@@ -5790,6 +5849,17 @@ class Sync {
 
           const session = storage.getState().sessions[sessionId] ?? null;
           const directSessionLink = readDirectSessionLink(session?.metadata);
+          if (session?.cloudCopyLeftAt != null) {
+              const decision = resolveRuntimeFeatureDecisionFromSnapshot({
+                  featureId: 'sessions.direct',
+                  snapshot: { status: 'loading' },
+                  settings: storage.getState().settings,
+              });
+              if (!directSessionLink || decision?.state !== 'enabled') {
+                  storage.getState().applyMessagesLoaded(sessionId);
+                  return;
+              }
+          }
           const replacesDirectTranscript = !directSessionLink && (
               this.directSessionTailStateBySessionId.has(sessionId)
               || this.sessionMessagesTailDiscontinuityBySessionId.get(sessionId)?.kind === 'opaque'
@@ -8035,6 +8105,7 @@ class Sync {
                             friendRequests: () => invalidateForResume(this.friendRequestsSync),
                             feed: () => invalidateForResume(this.feedSync),
                             automations: () => invalidateForResume(this.automationsSync),
+                            accountPlan: async () => invalidateAccountPlan(),
                             pets: () => fetchAndApplyAccountPets({
                                 credentials: this.credentials,
                                 readScope: () => storage.getState().petsScope,
@@ -8273,6 +8344,10 @@ class Sync {
               },
               applyMessages: (sessionId, messages) => this.applyMessages(sessionId, messages),
                 onSessionVisible: (sessionId) => this.onSessionVisible(sessionId),
+              onPendingQueueSettled: (sessionId) => this.requestTranscriptReconciliationForUncommittedLocalOutbound(
+                  sessionId,
+                  'socket_pending_changed',
+              ),
                 isSessionMessagesLoaded: (sessionId) => storage.getState().sessionMessages[sessionId]?.isLoaded === true,
                 getSessionMaterializedMaxSeq: (sessionId) => this.sessionMaterializedMaxSeqById[sessionId] ?? 0,
               markSessionMaterializedMaxSeq: (sessionId, seq) => this.markSessionMaterializedMaxSeq(sessionId, seq),
@@ -8293,7 +8368,10 @@ class Sync {
             invalidateAutomations: () => this.automationsSync.invalidate(),
             invalidateAutomationsCoalesced: () => this.automationsSync.invalidateCoalesced(),
             invalidateTodos: () => this.todosSync.invalidate(),
-            onTaskLifecycleEvent: (sessionId, event) => this.applySessionThinkingFromTaskLifecycle(sessionId, event),
+            onTaskLifecycleEvent: (sessionId, event) => {
+                this.applySessionThinkingFromTaskLifecycle(sessionId, event);
+                publishSessionSupporterAskSignal(sessionId, event.type);
+            },
             log,
         });
     }

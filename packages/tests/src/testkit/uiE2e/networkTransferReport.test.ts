@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { NETWORK_PHASES, NETWORK_WORKLOAD_REVISION } from '../../../suites/ui-e2e/session.networkTransfer.contract';
+import { NETWORK_CEILINGS, NETWORK_PHASES, NETWORK_WORKLOAD_REVISION } from '../../../suites/ui-e2e/session.networkTransfer.contract';
 import { compareNetworkTransfer, MAX_NETWORK_REPORT_BYTES, parseNetworkTransferReport, type NetworkTransferReport } from './networkTransferReport';
+
+const LIST_BYTES_CEILING = NETWORK_CEILINGS.find((c) => c.phase === 'cold-home' && c.metric === 'GET session-list* decodedBodyBytes')!.maximum;
 
 function fixture(): NetworkTransferReport {
   return {
@@ -12,7 +14,7 @@ function fixture(): NetworkTransferReport {
     measurement: { status: 'incomplete', wsEncodedBytes: 'unavailable', lostEvents: 0, phases: NETWORK_PHASES.map((name) => ({
       name, durationMs: 1, inFlightAtEnd: 0, socketDisconnects: 0, http: name.endsWith('-home') ? [{
         method: 'GET', route: 'session-list-targeted', requests: 1, failed: 0, inFlight: 0, lateResponses: 0,
-        decodedBodyBytes: 111106, encodedBodyBytes: 'unavailable', encodedResponseBytes: 2400, requestBodyBytes: 0,
+        decodedBodyBytes: LIST_BYTES_CEILING, encodedBodyBytes: 'unavailable', encodedResponseBytes: 2400, requestBodyBytes: 0,
         unavailableBodies: 1, statuses: { '200': 1 }, encodings: { br: 1 }, cached: 0, serviceWorker: 0,
       }] : [], webSocket: [],
     })) },
@@ -32,10 +34,10 @@ describe('network transfer comparison', () => {
   it('compares available metrics on passing workloads even when unrelated byte evidence is incomplete', () => {
     const base = parseNetworkTransferReport(JSON.stringify(fixture()));
     const current = structuredClone(base);
-    current.measurement.phases[0].http[0].decodedBodyBytes = 111107;
+    current.measurement.phases[0].http[0].decodedBodyBytes = LIST_BYTES_CEILING + 1;
     const result = compareNetworkTransfer(current, base);
     expect(result.comparable).toBe(true);
-    expect(result.markdown).toContain('111106 | 111107 | +1 | 111106');
+    expect(result.markdown).toContain(`${LIST_BYTES_CEILING} | ${LIST_BYTES_CEILING + 1} | +1 | ${LIST_BYTES_CEILING}`);
     expect(result.violations).toContain('cold-home: GET session-list* decodedBodyBytes');
     expect(result.markdown).toContain('unavailable | not comparable');
   });

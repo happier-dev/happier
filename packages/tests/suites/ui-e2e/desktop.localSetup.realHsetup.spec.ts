@@ -489,7 +489,7 @@ test.describe('ui e2e: desktop local setup through the real hsetup (hermetic com
             const app = await openDesktopApp({ context, computer, uiBaseUrl });
             try {
                 await ensureAccountReadyForConnect({ page: app.page, timeoutMs: 180_000 });
-                await expect(app.page.getByText(/^Switch this computer to .+\?$/)).toBeVisible({ timeout: 240_000 });
+                await expect(app.page.getByRole('heading', { name: /^Switch this computer to .+\?$/ })).toBeVisible({ timeout: 240_000 });
                 const body = app.page.getByText(/^This computer is signed in to /);
                 await expect(body).toContainText(relayHost(otherRelayUrl));
                 await expect(body).toContainText(relayHost(server.baseUrl));
@@ -514,7 +514,7 @@ test.describe('ui e2e: desktop local setup through the real hsetup (hermetic com
         const app = await openDesktopApp({ context, computer, uiBaseUrl });
         try {
             await ensureAccountReadyForConnect({ page: app.page, timeoutMs: 180_000 });
-            await expect(app.page.getByText('Move the background service to this Relay?')).toBeVisible({ timeout: 240_000 });
+            await expect(app.page.getByRole('heading', { name: 'Move the background service to this Relay?', exact: true })).toBeVisible({ timeout: 240_000 });
             const body = app.page.getByText(/^This computer’s background service is connected to /);
             await expect(body).toContainText(relayHost(otherRelayUrl));
             await expect(body).toContainText(relayHost(server.baseUrl));
@@ -737,7 +737,7 @@ test.describe('ui e2e: desktop local setup through the real hsetup (hermetic com
             });
             try {
                 await ensureAccountReadyForConnect({ page: app.page, timeoutMs: 180_000 });
-                await expect(app.page.getByText(/^Switch this computer to .+\?$/)).toBeVisible({ timeout: 240_000 });
+                await expect(app.page.getByRole('heading', { name: /^Switch this computer to .+\?$/ })).toBeVisible({ timeout: 240_000 });
                 await confirmRelayMove(app.page);
                 // Placement first (the executor's contract), then the readiness proof.
                 const converged = await expectConvergedOnAppRelay(app, computer, server.baseUrl, { proveReady: false });

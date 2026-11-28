@@ -38,7 +38,7 @@ describe('Kimi wire source parent identity', () => {
       const fail = vi.fn();
       const source = await createKimiWireSource()({
         sessionId, cwd: directory, env: { KIMI_CODE_HOME: directory }, signal: new AbortController().signal,
-        registerContinuation, beginContinuation, releaseToolCalls: vi.fn(), fail,
+        registerContinuation, beginContinuation, releaseToolCalls: vi.fn(), releaseClaimedUpdates: vi.fn(), fail,
       });
       try {
         const records = [
@@ -112,7 +112,8 @@ describe('Kimi journal integrity', () => {
     const fail = vi.fn();
     const host = {
       sessionId, cwd: directory, env: { KIMI_CODE_HOME: directory }, signal: new AbortController().signal,
-      registerContinuation: vi.fn(() => true), beginContinuation: vi.fn(() => null), releaseToolCalls: vi.fn(), fail,
+      registerContinuation: vi.fn(() => true), beginContinuation: vi.fn(() => null), releaseToolCalls: vi.fn(),
+      releaseClaimedUpdates: vi.fn(), fail,
     };
     return { index, entry, journal, host, fail };
   }

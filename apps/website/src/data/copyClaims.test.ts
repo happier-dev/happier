@@ -10,11 +10,12 @@ import { PRIMARY_FEATURES } from './features';
 import { PROVIDERS } from './providers';
 import { USAGE_LIMITS_SCOPE, USAGE_LIMITS_SWITCHING } from './usageLimits';
 import { en } from '../i18n/messages/en';
-import { LOCALES } from '../i18n/locales';
+import { LOCALES, localePath } from '../i18n/locales';
 import { messagesFor } from '../i18n/messages/registry';
+import { registerAllOverlays } from '../i18n/overlays.server';
 import { siteDataFor } from '../i18n/siteData';
 import { HERO } from './pageProse';
-import { ROUTES } from '../routes';
+import { findRoute, ROUTES, routeManifest } from '../routes';
 
 /**
  * Copy guards.
@@ -52,6 +53,8 @@ import { ROUTES } from '../routes';
  * back. And a string that is only wrong once JSX has joined it to its
  * neighbours is invisible to any check that reads the string.
  */
+registerAllOverlays();
+
 const RENDERED_PAGES: ReadonlyArray<{ path: string; text: string }> = ROUTES.map((route) => ({
     path: route.path,
     text: renderToStaticMarkup(route.render())
@@ -244,14 +247,68 @@ describe('account pooling is framed as visibility, never evasion', () => {
  * were badly phrased. Each of these guards a specific sentence that shipped and
  * should not come back.
  */
+const SERVICE_LEVEL_CLAIM =
+    /\b(?:SLAs?|service[- ]level agreements?|uptime|availability targets?|response[- ]time(?:s| targets?)?)\b/i;
+const PAYWALL_COPY = /\b(?:unlock\w*|upgrade\w*|premium|free tier|paid tier|pro features)\b/i;
+
+describe('plans and supporter launch', () => {
+    it('prerenders the public destinations and keeps pass links out of search', () => {
+        expect(ROUTES.map(({ path }) => path)).toEqual(expect.arrayContaining(['/open', '/plans', '/supporters', '/thanks']));
+        expect(ROUTES.some(({ path }) => path.startsWith('/s/'))).toBe(false);
+        expect(findRoute('/fr/supporters')).toBeUndefined();
+        const destinations = new Set(routeManifest().map(({ path }) => path));
+        for (const route of ['/open', '/plans']) {
+            for (const locale of LOCALES) {
+                const path = localePath(locale, route);
+                expect(destinations.has(path), path).toBe(true);
+            }
+        }
+        expect(routeManifest().find(({ path }) => path === '/thanks')?.head).toContain(
+            '<meta name="robots" content="noindex" />',
+        );
+        expect(readFileSync(new URL('../../public/_redirects', import.meta.url), 'utf8')).toMatch(
+            /^\/s\/\*\s+\/supporters\/\s+200$/m,
+        );
+        expect(readFileSync(new URL('../../public/_redirects', import.meta.url), 'utf8')).toMatch(
+            /^\/pricing\s+\/plans\s+301$/m,
+        );
+        expect(readFileSync(new URL('../../public/_headers', import.meta.url), 'utf8')).toMatch(
+            /^\/s\/\*\n[ \t]+X-Robots-Tag: noindex$/m,
+        );
+    });
+
+    it('keeps plans copy free of paywall and service-level claims', () => {
+        const freeAnswer = FAQ_ITEMS.find(({ id }) => id === 'free')!.a.join(' ');
+        expect(freeAnswer).toMatch(/every feature is free/i);
+        expect(freeAnswer).not.toMatch(PAYWALL_COPY);
+        for (const { path, text } of RENDERED_PAGES) {
+            if (['/open', '/plans', '/supporters', '/thanks'].includes(path)) {
+                expect(text, path).not.toMatch(PAYWALL_COPY);
+                expect(text, path).not.toMatch(SERVICE_LEVEL_CLAIM);
+            }
+        }
+        const docsRoot = new URL('../../../docs/content/docs/', import.meta.url);
+        const legalRoot = new URL('legal/', docsRoot);
+        const pages = [
+            ...readdirSync(legalRoot).filter((name) => name.endsWith('.mdx')).map((name) => new URL(name, legalRoot)),
+            ...['self-hosting/plans-and-limits.mdx', 'self-hosting/retention.mdx', 'self-hosting/env.mdx', 'voice/index.mdx']
+                .map((name) => new URL(name, docsRoot)),
+        ];
+        for (const page of pages) {
+            expect(readFileSync(page, 'utf8'), page.pathname).not.toMatch(SERVICE_LEVEL_CLAIM);
+        }
+        for (const locale of LOCALES) {
+            for (const { q, a } of siteDataFor(locale).faq.FAQ_ITEMS) {
+                expect([q, ...a].join(' '), locale).not.toMatch(SERVICE_LEVEL_CLAIM);
+            }
+        }
+    });
+});
+
 describe('the FAQ does not regrow the claims it was corrected for', () => {
     const answer = (id: string) => (FAQ_ITEMS.find((f) => f.id === id)?.a ?? []).join(' ');
 
-    // "Happier's hosted realtime voice is paid" was false: RevenueCat is only
-    // configured when EXPO_PUBLIC_REVENUE_CAT_* is set, `syncPurchases` returns
-    // before `configure()` without a key, and the only supporter entry point in
-    // the app is inside a `devModeEnabled` block. Nothing is paid — so the answer
-    // must not hedge toward a future in which something is.
+    // Plan limits change retained capacity. Every feature stays free.
     it('answers "is Happier free" without a hedge', () => {
         expect(answer('free')).not.toMatch(
             /\b(for now|currently|at the moment|for the time being|free tier|paid tier|premium)\b/i,

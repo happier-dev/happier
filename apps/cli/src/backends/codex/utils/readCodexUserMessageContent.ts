@@ -1,3 +1,4 @@
+import { readCodexMessageContentText } from './readCodexMessageContentText';
 import { codexNativeProjectionError } from './codexNativeProjectionError';
 
 /** Preserve native content alongside the text projection used by existing clients. */
@@ -37,4 +38,29 @@ export function readCodexUserMessageContent(content: unknown): {
     }
     if (text.length === 0) return null;
     return { text: text.join('\n'), ...(preserveContent ? { nativeContent: parts } : {}) };
+}
+
+
+/** Rollouts persist Responses API ContentItem parts. Project supported parts through the UserInput reader. */
+export function readCodexRolloutUserMessageContent(content: unknown): ReturnType<typeof readCodexUserMessageContent> {
+    if (!Array.isArray(content)) {
+        const text = readCodexMessageContentText(content);
+        return text ? { text } : null;
+    }
+
+    const parts: Record<string, unknown>[] = [];
+    for (const value of content) {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+        const part: Record<string, unknown> = value;
+        if (part.type === 'input_image') {
+            const image = typeof part.image_url === 'string' ? { url: part.image_url }
+                : typeof part.file_id === 'string' ? { fileId: part.file_id } : null;
+            if (image) parts.push({ type: 'image', ...image, ...(typeof part.detail === 'string' ? { detail: part.detail } : {}) });
+        } else if (part.type === 'input_audio' && typeof part.audio_url === 'string') {
+            parts.push({ type: 'audio', url: part.audio_url });
+        } else if (typeof part.text === 'string' && part.text.trim()) {
+            parts.push({ type: 'text', text: part.text });
+        }
+    }
+    return readCodexUserMessageContent(parts);
 }

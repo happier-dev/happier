@@ -104,6 +104,33 @@ describe('sessionRegistry', () => {
     expect(markers2[0].happySessionId).toBe('sess-2');
   });
 
+  it('keeps lifecycle-owned turn state when a delayed metadata refresh carries a stale snapshot', async () => {
+    const { listSessionMarkers, writeSessionMarker, updateSessionMarkerActiveTurn } = await import('./sessionRegistry');
+    const { resolveSessionRunnerActivityDisabledReason } = await import('./sessionRunnerRuntime/resolveActivityDisabledReason');
+    const marker = { pid: 12345, happySessionId: 'sess-1', startedBy: 'daemon' as const };
+    await writeSessionMarker(marker);
+    await updateSessionMarkerActiveTurn({ pid: marker.pid, sessionId: marker.happySessionId, activeTurnId: 'turn-1' });
+    const [activeSnapshot] = await listSessionMarkers();
+
+    // A webhook captured this snapshot before completion, but writes after it.
+    await updateSessionMarkerActiveTurn({ pid: marker.pid, sessionId: marker.happySessionId, activeTurnId: null });
+    await writeSessionMarker({ ...activeSnapshot!, metadata: { refreshed: true } });
+    const [settled] = await listSessionMarkers();
+    expect(settled?.metadata).toEqual({ refreshed: true });
+    expect(resolveSessionRunnerActivityDisabledReason('sess-1', {}, { ...marker, activeTurnId: settled?.activeTurnId })).toBeNull();
+
+    // The inverse ordering must not erase a real active turn either.
+    await updateSessionMarkerActiveTurn({ pid: marker.pid, sessionId: marker.happySessionId, activeTurnId: 'turn-2' });
+    await writeSessionMarker(marker);
+    const [active] = await listSessionMarkers();
+    expect(active?.activeTurnId).toBe('turn-2');
+    expect(resolveSessionRunnerActivityDisabledReason('sess-1', {}, { ...marker, activeTurnId: active?.activeTurnId })).toBe('turn_in_progress');
+
+    // A reused pid belongs to its new session, never to the old turn.
+    await writeSessionMarker({ ...marker, happySessionId: 'sess-2' });
+    expect((await listSessionMarkers())[0]?.activeTurnId).toBeUndefined();
+  });
+
   it('reports an incomplete marker listing when cleanup requires complete custody evidence', async () => {
     const { listSessionMarkers, writeSessionMarker } = await import('./sessionRegistry');
     await writeSessionMarker({ pid: 12345, happySessionId: 'valid-session', flavor: 'opencode' });

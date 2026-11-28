@@ -48,10 +48,6 @@ vi.mock('@/constants/Typography', () => ({
     },
 }));
 
-vi.mock('@/components/ui/scroll/useWebScrollLockBypass', () => ({
-    useWebScrollLockBypass: () => {},
-}));
-
 vi.mock('@/utils/platform/deferOnWeb', () => ({
     deferOnWeb: (cb: any) => cb(),
 }));

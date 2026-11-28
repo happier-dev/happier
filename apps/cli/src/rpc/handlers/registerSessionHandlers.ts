@@ -22,6 +22,7 @@ export type { SpawnSessionErrorCode, SpawnSessionErrorDetail } from '@happier-de
 export { resolveCanonicalCodexBackendMode } from './codexBackendMode';
 import { registerCapabilitiesHandlers } from './capabilities';
 import { registerPreviewEnvHandler } from './previewEnv';
+import { registerGithubStarHandlers } from './githubStar';
 import { registerBashHandler } from './bash';
 import { TransferSessionStore } from '@/transfers/core/transferSessionStore';
 import { resolveSessionRpcTransferMaxBytes } from '@/transfers/policy/sessionRpcTransferPolicy';
@@ -304,6 +305,7 @@ export function registerSessionHandlers(
         hasSessionAgentTransition: opts?.hasSessionAgentTransition,
     });
     registerPreviewEnvHandler(rpcHandlerManager);
+    registerGithubStarHandlers(rpcHandlerManager);
     registerSessionTransferRpcHandlers(rpcHandlerManager, {
         workingDirectory: effectiveWorkingDirectory,
         accessPolicy,

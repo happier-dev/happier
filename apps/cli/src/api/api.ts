@@ -788,8 +788,10 @@ export class ApiClient {
       serviceManaged?: boolean;
       serviceLabel?: string;
     }>,
+    initialKeptDueAtMs?: number | null,
   ): ApiMachineClient {
     return new ApiMachineClient(this.credential.token, machine, ownershipMetadata, {
+      initialKeptDueAtMs,
       connectedAccounts: this.createConnectedAccountCredentialResolver(),
       connectedServiceImportAccount: { api: this, credentials: this.credential },
     });

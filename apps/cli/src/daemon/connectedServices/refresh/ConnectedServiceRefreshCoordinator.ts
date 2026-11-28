@@ -1,3 +1,4 @@
+import type { ConnectedServiceProfileHealth } from '@/cloud/connectedServices/resolveConnectedServiceCredentials';
 import { connectedServiceUsageRequiresOrganizationId } from '@happier-dev/protocol';
 import {
   ConnectedServiceCredentialRevisionV1Schema,
@@ -210,6 +211,15 @@ export class ConnectedServiceCredentialRefreshError extends Error {
   }
 }
 
+/**
+ * `onAuthUpdated` applies credentials to Happier sessions. An execution run carries its host
+ * session's id and pid, so addressing it there would apply the run's credential to the host session
+ * (possibly another agent). Runs keep their rematerialized roots and their own registry revisions.
+ */
+function listSessionAuthUpdatedTargets(targets: ReadonlyArray<SpawnTarget>): ReadonlyArray<SpawnTarget> {
+  return targets.filter((target) => target.runtimeTargetKind === 'session');
+}
+
 export class ConnectedServiceRefreshCoordinator {
   private readonly runtimeRegistry: ConnectedServiceRuntimeRegistry;
   private readonly inFlightRefreshes = new Map<string, Readonly<{
@@ -244,6 +254,7 @@ export class ConnectedServiceRefreshCoordinator {
     leaseContentionWaitMaxMs?: number;
     sleepMs?: (ms: number) => Promise<void>;
     now: () => number;
+    resolveProjectedCredentialHealth?: (serviceId: ConnectedServiceId, profileId: string) => ConnectedServiceProfileHealth;
     accountSettingsProvider?: () => AccountSettings | Readonly<Record<string, unknown>> | null | undefined;
     processEnv?: NodeJS.ProcessEnv;
     onAuthUpdated?: (event: Readonly<{
@@ -729,17 +740,18 @@ export class ConnectedServiceRefreshCoordinator {
           && candidate.profileId === binding.profileId
         )),
       );
-      if (affectedTargets.length === 0) return;
+      const sessionTargets = listSessionAuthUpdatedTargets(affectedTargets);
+      if (sessionTargets.length === 0) return;
       await this.params.onAuthUpdated?.({
         binding,
-        affectedTargets,
+        affectedTargets: sessionTargets,
         credentialRevision: null,
         mutation: 'deleted',
         trigger: 'reconnect_propagation',
       });
       return;
     }
-    const affectedTargets = await this.rematerializeTargetsForBinding(binding);
+    const affectedTargets = listSessionAuthUpdatedTargets(await this.rematerializeTargetsForBinding(binding));
     if (affectedTargets.length === 0) return;
     await this.params.onAuthUpdated?.({
       binding,
@@ -881,25 +893,16 @@ export class ConnectedServiceRefreshCoordinator {
     return group;
   }
 
-  private shouldDeferCredentialHealthReprobe(
-    binding: BoundProfile,
-    now: number,
-    options: Readonly<{ force: boolean; reason: ConnectedServiceRefreshReason }>,
-  ): boolean {
-    if (!canReprobeCredentialHealth(options.reason, options)) return true;
-    const state = this.credentialHealthReprobeState.get(bindingKey(binding));
-    return Boolean(state && now < state.nextProbeAt);
-  }
-
   private resetCredentialHealthReprobe(binding: BoundProfile): void {
     this.credentialHealthReprobeState.delete(bindingKey(binding));
   }
 
-  private armCredentialHealthReprobeBackoff(binding: BoundProfile, now: number): void {
+  private armCredentialHealthReprobeBackoff(binding: BoundProfile, credentialRevision: string, now: number): void {
     const key = bindingKey(binding);
     const previous = this.credentialHealthReprobeState.get(key);
-    const failureCount = (previous?.failureCount ?? 0) + 1;
+    const failureCount = previous?.credentialRevision === credentialRevision ? previous.failureCount + 1 : 1;
     this.credentialHealthReprobeState.set(key, {
+      credentialRevision,
       failureCount,
       nextProbeAt: now + credentialHealthReprobeDelayMs(failureCount - 1),
     });
@@ -1002,16 +1005,13 @@ export class ConnectedServiceRefreshCoordinator {
           this.distributingRefreshedBindings.delete(distributionKey);
         }
       }
-    } else if (
+    } else if (result.credentialRevision && (
       (result.status === 'refresh_failed'
         && isReauthRequiredFailure(result.diagnostic.category ?? 'unknown'))
       || (result.status === 'blocked_by_credential_health'
         && result.diagnostic.category !== undefined)
-    ) {
-      this.armCredentialHealthReprobeBackoff({
-        serviceId: result.diagnostic.serviceId,
-        profileId: result.diagnostic.profileId,
-      }, this.params.now());
+    )) {
+      this.armCredentialHealthReprobeBackoff(binding, result.credentialRevision, this.params.now());
     }
     this.logRefreshDiagnostic(finalizedResult.diagnostic);
     if (result.mutationKind === 'provider_context') return finalizedResult;
@@ -1101,6 +1101,23 @@ export class ConnectedServiceRefreshCoordinator {
       }));
   }
 
+  private async credentialHealthRequiresReconnect(
+    binding: BoundProfile,
+    options: Readonly<{ force: boolean; reason: ConnectedServiceRefreshReason }>,
+    refreshDue: boolean,
+  ): Promise<boolean> {
+    if (options.reason === 'scheduled' || (options.reason === 'quota_bridge' && !options.force)) {
+      const health = this.params.resolveProjectedCredentialHealth?.(binding.serviceId, binding.profileId);
+      if (health && health.kind !== 'unknown') {
+        return health.kind === 'present_but_unusable' && isReconnectRequiredProfileStatus(health.status);
+      }
+      // A due refresh can write health. Check the existing latch when the push projection
+      // cannot answer, while settled credentials wait for their normal account update.
+      if (!refreshDue) return false;
+    }
+    return isReconnectRequiredProfileStatus(await readCredentialHealthStatusForRefresh({ api: this.params.api, binding }));
+  }
+
   private async refreshOauthBindingUnserialized(
     binding: BoundProfile,
     now: number,
@@ -1142,15 +1159,17 @@ export class ConnectedServiceRefreshCoordinator {
     }
 
     const expiresAt = source.mode === 'plain' ? record.expiresAt : source.metadata.expiresAt ?? record.expiresAt;
+    const refreshDue = options.force || (
+      typeof expiresAt === 'number' && Number.isFinite(expiresAt) && expiresAt - now <= this.params.refreshWindowMs
+    );
+    const previousReprobe = this.credentialHealthReprobeState.get(bindingKey(binding));
+    // A pushed healthy status can predate our failure. The exact credential read
+    // establishes whether this attempt still uses the revision whose reprobe is armed.
+    const currentReprobe = previousReprobe?.credentialRevision === source.credentialRevision ? previousReprobe : undefined;
     let isCredentialHealthReprobe = false;
-    if (
-      shouldBlockRefreshForCredentialHealth(options.reason)
-      && isReconnectRequiredProfileStatus(await readCredentialHealthStatusForRefresh({
-        api: this.params.api,
-        binding,
-      }))
-    ) {
-      if (this.shouldDeferCredentialHealthReprobe(binding, now, options)) {
+    if (shouldBlockRefreshForCredentialHealth(options.reason)
+      && (currentReprobe || await this.credentialHealthRequiresReconnect(binding, options, refreshDue))) {
+      if (!canReprobeCredentialHealth(options.reason, options) || (currentReprobe && now < currentReprobe.nextProbeAt)) {
         return {
           status: 'blocked_by_credential_health',
           credential: null,
@@ -1167,43 +1186,24 @@ export class ConnectedServiceRefreshCoordinator {
       isCredentialHealthReprobe = true;
     }
     const descriptor = getConnectedAccountDescriptor(binding.serviceId);
-    const providerContextOnly = options.ensureProviderContext === true
-      && !options.force && !isCredentialHealthReprobe
-      && (typeof expiresAt !== 'number' || !Number.isFinite(expiresAt) || expiresAt - now > this.params.refreshWindowMs);
+    const providerContextOnly = options.ensureProviderContext === true && !refreshDue && !isCredentialHealthReprobe;
     const needsProviderContext = providerContextOnly
       && connectedServiceUsageRequiresOrganizationId(binding.serviceId) && descriptor?.oauth?.resolveRefreshCredentialEvidence
       && !readConnectedServiceCredentialOrganizationId(record);
-    if (!options.force && !isCredentialHealthReprobe && !needsProviderContext) {
-      if (typeof expiresAt !== 'number' || !Number.isFinite(expiresAt)) {
-        return {
+    if (!refreshDue && !isCredentialHealthReprobe && !needsProviderContext) {
+      return {
+        status: 'not_needed',
+        credential: record,
+        ...(source.revisionSemantics === 'revisioned' ? { credentialRevision: source.credentialRevision } : {}),
+        diagnostic: buildRefreshDiagnostic({
+          binding,
+          reason: options.reason,
           status: 'not_needed',
-          credential: record,
-          ...(source.revisionSemantics === 'revisioned' ? { credentialRevision: source.credentialRevision } : {}),
-          diagnostic: buildRefreshDiagnostic({
-            binding,
-            reason: options.reason,
-            status: 'not_needed',
-            expiresAt,
-            now,
-            refreshWindowMs: this.params.refreshWindowMs,
-          }),
-        };
-      }
-      if (expiresAt - now > this.params.refreshWindowMs) {
-        return {
-          status: 'not_needed',
-          credential: record,
-          ...(source.revisionSemantics === 'revisioned' ? { credentialRevision: source.credentialRevision } : {}),
-          diagnostic: buildRefreshDiagnostic({
-            binding,
-            reason: options.reason,
-            status: 'not_needed',
-            expiresAt,
-            now,
-            refreshWindowMs: this.params.refreshWindowMs,
-          }),
-        };
-      }
+          expiresAt,
+          now,
+          refreshWindowMs: this.params.refreshWindowMs,
+        }),
+      };
     }
 
     if (source.revisionSemantics !== 'revisioned') {
@@ -1665,8 +1665,9 @@ export class ConnectedServiceRefreshCoordinator {
   private async notifyAuthUpdatedForRefreshedBinding(
     binding: BoundProfile,
     credentialRevision: ConnectedServiceCredentialRevisionV1 | null,
-    affectedTargets: ReadonlyArray<SpawnTarget>,
+    rematerializedTargets: ReadonlyArray<SpawnTarget>,
   ): Promise<ConnectedServiceAuthUpdatedApplicationResult> {
+    const affectedTargets = listSessionAuthUpdatedTargets(rematerializedTargets);
     if (affectedTargets.length === 0 || !this.params.onAuthUpdated) {
       return EMPTY_AUTH_UPDATED_APPLICATION_RESULT;
     }

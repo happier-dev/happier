@@ -47,7 +47,7 @@ export interface SessionProviderInputConsumerSession {
   }>) => Promise<boolean>) | undefined;
   waitForPendingEligibilityUpdate: (abortSignal?: AbortSignal) => Promise<boolean>;
   waitForMetadataUpdate?: ((abortSignal?: AbortSignal) => Promise<boolean>) | undefined;
-  readRuntimeActivitySnapshotTail?: (() => RuntimeActivitySnapshotTail) | undefined;
+  readRuntimeActivitySnapshotTail?: (() => RuntimeActivitySnapshotTail | undefined) | undefined;
   waitForRuntimeActivitySnapshotTailChange?: ((sequence: number, signal?: AbortSignal) => Promise<boolean>) | undefined;
 }
 
@@ -116,11 +116,7 @@ async function materializeWithRuntimeActivityTail(
       onDiagnosticPhase,
     }),
   );
-  if (
-    options.pendingQueueDeliveryTiming !== 'after_runtime_idle'
-    || first.type !== 'deferred'
-    || first.reason !== 'runtime_activity_unknown'
-  ) return first;
+  if (first.type !== 'deferred' || first.reason !== 'runtime_activity_unknown') return first;
 
   while (!abortSignal.aborted) {
     const tail = session.readRuntimeActivitySnapshotTail?.();

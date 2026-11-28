@@ -434,7 +434,7 @@ graph TB
 ## Integrations
 - **GitHub**: OAuth connect + webhook verification, optional if env vars are set.
 - **AI vendors**: encrypted token storage for `openai`, `anthropic`, `gemini`.
-- **Voice**: RevenueCat subscription check + ElevenLabs token minting.
+- **Voice**: ElevenLabs token minting with operator per-Account caps (no subscription check).
 - **Push tokens**: stored for later notification delivery.
 
 ## Observability

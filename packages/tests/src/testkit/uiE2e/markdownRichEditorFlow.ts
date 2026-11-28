@@ -30,6 +30,9 @@ export async function saveOpenFileDetails(page: Page): Promise<void> {
   await expect(saveButton).toBeVisible({ timeout: 60_000 });
   await expect(saveButton).not.toHaveAttribute('aria-disabled', 'true', { timeout: 60_000 });
   await saveButton.click();
+  // The write can reach disk before refresh finishes and the editor exits.
+  // Reopening while the old editor is still visible races its pending unmount.
+  await expect(saveButton).toBeHidden({ timeout: 60_000 });
 }
 
 export async function visibleBoundingBox(locator: Locator, label: string): Promise<Readonly<{

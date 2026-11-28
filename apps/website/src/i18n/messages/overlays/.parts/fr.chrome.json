@@ -87,5 +87,13 @@
  "usageLimits.SERVICE_SUPPORT.claude-subscription.meter": "Oui",
  "usageLimits.SERVICE_SUPPORT.openai-codex.meter": "Oui",
  "usageLimits.SERVICE_SUPPORT.gemini.autoSwitch": "Aucun",
- "usageLimits.SERVICE_SUPPORT.gemini.meter": "Oui"
+ "usageLimits.SERVICE_SUPPORT.gemini.meter": "Oui",
+ "navigation.FOOTER_COLUMNS.product.links.plans.label": "Offres",
+ "navigation.FOOTER_COLUMNS.open-source.links.how-happier-stays-free.label": "Comment Happier reste gratuit",
+ "navigation.FOOTER_COLUMNS.open-source.links.supporters.label": "Soutiens",
+ "navigation.FOOTER_LEGAL_LINKS.privacy.label": "Confidentialité",
+ "navigation.FOOTER_LEGAL_LINKS.terms.label": "Conditions",
+ "navigation.FOOTER_LEGAL_LINKS.terms-of-sale.label": "Conditions de vente",
+ "navigation.FOOTER_LEGAL_LINKS.refunds.label": "Remboursements",
+ "navigation.FOOTER_LEGAL_LINKS.imprint.label": "Mentions légales"
 }

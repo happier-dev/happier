@@ -38,7 +38,6 @@ describe("voiceRoutes (integration, sqlite)", () => {
             initEncrypt: true,
             env: {
                 HAPPIER_FEATURE_VOICE__ENABLED: "true",
-                HAPPIER_FEATURE_VOICE__REQUIRE_SUBSCRIPTION: "false",
                 VOICE_MAX_CONCURRENT_SESSIONS: "1",
                 VOICE_MAX_SESSION_SECONDS: "60",
                 ELEVENLABS_API_KEY: "elevenlabs-key",

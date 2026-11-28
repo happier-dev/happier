@@ -1,6 +1,10 @@
 import type {
   DirectSessionCandidateV1,
+  DirectSessionRetentionRequest,
+  DirectSessionRetentionState,
   DirectSessionsSource,
+  LocalHistoryRpcRequest,
+  LocalHistoryRpcResponse,
   DirectTranscriptRawMessageV1,
   DirectTranscriptTruncationReason,
 } from '@happier-dev/protocol';
@@ -59,6 +63,8 @@ export class DirectSessionsProviderUnavailableError extends Error {
  * can enumerate candidates without owning the provider's transcript store or process lifecycle.
  */
 export type DirectSessionProviderOps = Readonly<{
+  retention?: (request: DirectSessionRetentionRequest) => Promise<DirectSessionRetentionState>;
+  localHistory?: (request: LocalHistoryRpcRequest) => Promise<LocalHistoryRpcResponse>;
   listCandidates: (params: Readonly<{
     source: DirectSessionsSource;
     cursor?: string;
