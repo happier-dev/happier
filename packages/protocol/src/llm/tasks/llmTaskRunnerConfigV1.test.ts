@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LlmTaskRunnerConfigV1Schema, LlmTaskRunnerConfigV1WriteSchema } from './llmTaskRunnerConfigV1.js';
+import { isLlmTaskRunnerAutoV1, LlmTaskRunnerChoiceV1Schema, LlmTaskRunnerConfigV1Schema, LlmTaskRunnerConfigV1WriteSchema } from './llmTaskRunnerConfigV1.js';
 import { ProviderBoundModelRefSchema } from '../../providers/selection/v1.js';
 
 describe('task runner model selection', () => {
@@ -36,9 +36,17 @@ describe('task runner model selection', () => {
     });
     it('refuses an invalid current selection without recovering routing or permission authority from predecessor fields', () => {
         const predecessor = { v: 1, backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, modelId: 'default' };
-        for (const modelSelection of [null, { agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: 'connection', modelId: 'custom/model' }]) {
-            expect(LlmTaskRunnerConfigV1Schema.safeParse({ ...predecessor, modelSelection, permissionMode: 'no_tools' }).success).toBe(false);
-        }
+        expect(LlmTaskRunnerConfigV1Schema.safeParse({ ...predecessor, modelSelection: null, permissionMode: 'no_tools' }).success).toBe(false);
         expect(LlmTaskRunnerConfigV1Schema.safeParse({ ...predecessor, permissionMode: 'unknown_mode' }).success).toBe(false);
+    });
+    it('writes a Provider-connection model with its connected-service route and effort', () => {
+        const runner = { v: 1, modelSelection: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: 'connection', modelId: 'gpt-6-luna' },
+            connectedServices: null, sessionConfigOptionOverrides: { v: 1, updatedAt: 1, overrides: { reasoning_effort: { value: 'low', updatedAt: 1 } } },
+            permissionMode: 'read_only' };
+        expect(LlmTaskRunnerConfigV1WriteSchema.parse(runner)).toEqual(runner);
+    });
+    it('reads Auto as its own state, distinct from an explicit runner', () => {
+        expect(LlmTaskRunnerChoiceV1Schema.parse({ v: 1, mode: 'auto', future: true })).toEqual({ v: 1, mode: 'auto' });
+        expect(isLlmTaskRunnerAutoV1(LlmTaskRunnerChoiceV1Schema.parse({ v: 1, backendTarget: { kind: 'builtInAgent', agentId: 'codex' } }))).toBe(false);
     });
 });

@@ -1577,20 +1577,20 @@ describe('Memory process placement composition', () => {
       commitHint: async () => {},
     }, { enabled: true, indexMode: 'hints', backfillPolicy: 'all_history', coveragePolicy: { type: 'full' },
       hints: { ...DEFAULT_MEMORY_SETTINGS.hints, enabled: true, updateMode: 'continuous',
-        summarizerBackendId: 'fixture-agent', summarizerModelId: 'fixture-model', summarizerPermissionMode: 'read_only' },
+        summarizerRunner: { v: 1, mode: 'auto', permissionMode: 'read_only' } },
     });
     await Promise.all([connection.refresh(session.id), connection.refresh(session.id), connection.refresh(session.id)]);
     expect(hintRuns).toBe(1);
   });
 
-  it.each(['continuous', 'deadline admitted during settlement'] as const)('prepares hints in the child and delegates execution plus record commit to daemon-bound authorities (%s)', async mode => {
-    if (mode !== 'continuous') {
+  it.each(['continuous', 'deadline admitted during settlement', 'unroutable legacy runner'] as const)('respects runner settings before delegating hint work to daemon-bound authorities (%s)', async mode => {
+    if (mode === 'deadline admitted during settlement') {
       vi.useFakeTimers({ toFake: ['Date'] });
       vi.setSystemTime(2000);
     }
     const { createSessionRecordFixture, createAccountEncryptionCurrentnessFixture } = await import('@/testkit/backends/sessionFixtures');
     const { createTestMetadata } = await import('@/testkit/backends/sessionMetadata');
-    const { DEFAULT_MEMORY_SETTINGS } = await import('@/settings/memorySettings');
+    const { normalizeMemorySettings } = await import('@/settings/memorySettings');
     const session = createSessionRecordFixture({ id: 'hint-session', seq: 1, createdAt: 1, updatedAt: 2,
       encryptionMode: 'plain', metadata: JSON.stringify(createTestMetadata({ machineId: 'machine_1' })) });
     const axios = (await import('axios')).default;
@@ -1605,13 +1605,20 @@ describe('Memory process placement composition', () => {
       } };
       throw new Error(`Unexpected hint HTTP fixture path: ${path}`);
     });
+    const settings = normalizeMemorySettings({ v: 1, enabled: true, indexMode: 'hints', backfillPolicy: 'all_history',
+      coveragePolicy: { type: 'full' }, hints: {
+        enabled: true, updateMode: mode === 'deadline admitted during settlement' ? 'onIdle' : 'continuous', idleDelayMs: 5000,
+        ...(mode === 'unroutable legacy runner' ? { summarizerBackendId: 'unknown-legacy-agent' }
+          : { summarizerRunner: { v: 1, mode: 'auto', permissionMode: 'read_only' } }),
+      },
+    });
     const executions: MemoryHintRun[] = [];
     const commits: MemoryHintCommit[] = [];
     const { connection } = await setup({
       publish: snapshot => {
         // Cross the real hint idle deadline while this same child is still
         // serving its admitted run, before its scheduler settles.
-        if (mode !== 'continuous' && snapshot.nextWorkAtMs != null && snapshot.nextWorkAtMs > Date.now()) {
+        if (mode === 'deadline admitted during settlement' && snapshot.nextWorkAtMs != null && snapshot.nextWorkAtMs > Date.now()) {
           vi.setSystemTime(snapshot.nextWorkAtMs);
         }
       },
@@ -1622,12 +1629,17 @@ describe('Memory process placement composition', () => {
         }, synopsis: { v: 1, seqTo: 0, updatedAtMs: 0, synopsis: 'Bridge generated synopsis' } });
       },
       commitHint: async request => { commits.push(request); },
-    }, { enabled: true, indexMode: 'hints', backfillPolicy: 'all_history', coveragePolicy: { type: 'full' },
-      hints: { ...DEFAULT_MEMORY_SETTINGS.hints, enabled: true, updateMode: mode === 'continuous' ? 'continuous' : 'onIdle', idleDelayMs: 5000,
-        summarizerBackendId: 'fixture-agent', summarizerModelId: 'fixture-model', summarizerPermissionMode: 'read_only' },
-    });
+    }, settings);
     await connection.refresh(session.id);
-    expect(executions).toMatchObject([{ sessionId: session.id, backendId: 'fixture-agent', modelId: 'fixture-model', permissionMode: 'read_only' }]);
+    if (mode === 'unroutable legacy runner') {
+      expect(executions).toHaveLength(0);
+      expect(commits).toHaveLength(0);
+      expect(settings.hints.summarizerRunner).toBeNull();
+      return;
+    }
+    // The Session's own Agent (metadata flavor codex) travels with its transcript text.
+    expect(executions).toMatchObject([{ sessionId: session.id, choice: { v: 1, mode: 'auto', permissionMode: 'read_only' },
+      sessionAgentTargetKey: 'agent:happier.agent.codex/codex' }]);
     expect(executions[0]?.prompt).toContain('bridge hint transcript marker');
     expect(commits).toMatchObject([{ sessionId: session.id,
       shardPayload: { summary: 'Bridge generated summary', seqFrom: 1, seqTo: 1 },

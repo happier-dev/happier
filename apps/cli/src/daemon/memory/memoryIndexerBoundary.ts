@@ -1,3 +1,4 @@
+import type { LlmTaskRunnerChoiceV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerConfigV1';
 import type { AgentExternalSessionsTranscriptPage } from '@happier-dev/plugin-sdk/sessions/external';
 import type { MemoryExternalTranscriptSourceV1 } from '@happier-dev/protocol/memory/memorySearch';
 import type { MemoryIndexSourceStatusV1, MemoryWorkerStatusV1 } from '@happier-dev/protocol/memory/memoryStatus';
@@ -81,9 +82,10 @@ export type MemoryDocumentIndexUpdate = Readonly<{
 export type MemoryHintRun = Readonly<{
   sessionId: string;
   prompt: string;
-  backendId: string;
-  modelId?: string;
-  permissionMode: 'no_tools' | 'read_only';
+  /** The person's summarizer choice; the daemon's task-runner owner resolves Auto. */
+  choice: LlmTaskRunnerChoiceV1;
+  /** The hinted Session's own Agent, read with its transcript; null when unknown. */
+  sessionAgentTargetKey: string | null;
 }>;
 
 export type MemoryHintCommit = Readonly<{

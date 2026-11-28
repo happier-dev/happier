@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { openSummaryShardIndexDb } from './summaryShardIndexDb';
 import { syncMemoryHintsForSessionsOnce } from './syncMemoryHintsForSessionsOnce';
@@ -84,6 +84,31 @@ describe('syncMemoryHintsForSessionsOnce', () => {
       expect(attempts).toBe(1);
       expect(deferred).toEqual([14_000]);
       expect(tier1.getSessionCursors({ sessionId: 'session', nowMs: 10_000 }).lastHintedSeq).toBe(0);
+    } finally { tier1.close(); await rm(dir, { recursive: true, force: true }); }
+  });
+
+  it('backs off the Session and starts no Run when no Agent on the machine is ready for Auto', async () => {
+    const { runMemoryHintsExecutionRun } = await import('./hints/runMemoryHintsExecutionRun');
+    const { runLlmTaskTextPrompt } = await import('@/agent/executionRuns/tasks/textPromptWithRunnerConfig');
+    const dir = await mkdtemp(join(os.tmpdir(), 'happier-hint-run-unready-'));
+    const tier1 = openSummaryShardIndexDb({ dbPath: join(dir, 'memory.sqlite') });
+    try {
+      const executeStart = vi.fn(async () => ({ ok: true as const, result: {} }));
+      const deferred: number[] = [];
+      await syncMemoryHintsForSessionsOnce({
+        sessionIds: ['session'], tier1, now: () => 10_000, onDeferred: atMs => deferred.push(atMs),
+        settings: { enabled: true, indexMode: 'hints' as const, backfillPolicy: 'all_history' as const,
+          hints: { enabled: true, updateMode: 'continuous' as const, idleDelayMs: 0, windowSizeMessages: 1, maxShardChars: 12_000,
+            maxSummaryChars: 500, maxKeywords: 5, maxEntities: 5, maxDecisions: 5, maxRunsPerHour: 999,
+            maxShardsPerSession: 250, failureBackoffBaseMs: 4_000, failureBackoffMaxMs: 16_000 } },
+        fetchRecentDecryptedRows: async () => [{ seq: 1, createdAtMs: 9_000, role: 'user' as const, content: { type: 'text' as const, text: 'window' } }],
+        runSummarizer: (prompt, sessionId, signal) => runMemoryHintsExecutionRun({ sessionId, prompt, choice: { v: 1, mode: 'auto' }, sessionAgentTargetKey: null, signal,
+          runTextPrompt: (request => runLlmTaskTextPrompt({ ...request, executeStart,
+            readCandidates: async () => ({ candidates: [], unavailableAgents: [{ agentTargetKey: 'agent:happier.agent.claude/claude', reason: 'sign_in_required' }] }) })) as typeof runLlmTaskTextPrompt }),
+        commitArtifacts: async () => { throw new Error('No Run produced an artifact'); },
+      });
+      expect(executeStart).not.toHaveBeenCalled();
+      expect(deferred).toEqual([14_000]);
     } finally { tier1.close(); await rm(dir, { recursive: true, force: true }); }
   });
 

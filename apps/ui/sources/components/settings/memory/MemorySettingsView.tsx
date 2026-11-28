@@ -2,14 +2,12 @@ import * as React from 'react';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { Icon } from '@/components/ui/icons/Icon';
 
-import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
 import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
 import { Switch } from '@/components/ui/forms/Switch';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { t } from '@/text';
 
@@ -30,6 +28,7 @@ import { MemorySettingsPrivacySection } from './MemorySettingsPrivacySection';
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
 import { SettingAnchor, SettingRow, SettingSection } from '@/components/settings/shell/SettingRow';
 import { MEMORY_SETTINGS } from '@/components/settings/memory/memorySettings';
+import { LlmTaskRunnerPicker } from '@/components/settings/llmTasks/LlmTaskRunnerPicker';
 import { useMachineMemorySettings } from '@/components/settings/memory/useMachineMemorySettings';
 
 /**
@@ -44,7 +43,6 @@ const MEMORY_EMBEDDINGS_SECTIONS = [MEMORY_SETTINGS.sectionRefs.embeddings];
 
 type IndexMode = MemorySettingsV1['indexMode'];
 type BackfillPolicy = MemorySettingsV1['backfillPolicy'];
-type SummarizerPermissionMode = MemorySettingsV1['hints']['summarizerPermissionMode'];
 
 /** A blank value line: pending rows keep the height they will have, so the sheet does not grow when the values arrive. */
 const PENDING_VALUE_LINE = '\u00A0';
@@ -72,10 +70,8 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
         { id: 'last_30_days' as const, label: t('memorySearchSettings.backfill.options.last30DaysTitle'), description: t('memorySearchSettings.backfill.options.last30DaysSubtitle') },
         { id: 'all_history' as const, label: t('memorySearchSettings.backfill.options.allHistoryTitle'), description: t('memorySearchSettings.backfill.options.allHistorySubtitle') },
     ], []);
-    const summarizerPermissionOptions = React.useMemo(() => [
-        { id: 'no_tools' as const, label: t('memorySearchSettings.hints.permissions.options.noToolsTitle'), description: t('memorySearchSettings.hints.permissions.options.noToolsSubtitle') },
-        { id: 'read_only' as const, label: t('memorySearchSettings.hints.permissions.options.readOnlyTitle'), description: t('memorySearchSettings.hints.permissions.options.readOnlySubtitle') },
-    ], []);
+    // Hints run on the machine this page manages; its Agents and Auto's pick come from there.
+    const summarizerMachine = administrationTargetSelection.resolveExecutionTarget();
 
     const statusPresentation = React.useMemo(() => presentDaemonMemoryStatus(memoryStatus), [memoryStatus]);
     const embeddingsStatusPresentation = React.useMemo(
@@ -284,56 +280,23 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
 
                     <ItemGroup
                         title={t('memorySearchSettings.hints.title')}
-                        description={t('memorySearchSettings.hints.footer')}
+                        description={t(settings.hints.summarizerRunner === null
+                            ? 'newSession.selectAiBackendTitle'
+                            : 'memorySearchSettings.hints.footer')}
                     >
-                        <SettingAnchor setting={MEMORY_SETTINGS.settings.summarizerBackend}>
-                            <FieldValueItem
-                                testID="memory-settings-summarizer-backend"
-                                fieldTestID="memory-settings-summarizer-backend-field"
-                                title={t(MEMORY_SETTINGS.settings.summarizerBackend.titleKey)}
-                                subtitle={t('memorySearchSettings.hints.backend.promptBody')}
-                                placeholder={DEFAULT_AGENT_ID}
-                                monospace
-                                value={settings.hints.summarizerBackendId}
-                                onCommit={(draft) => {
-                                    if (!draft) return settings.hints.summarizerBackendId;
-                                    void writeSettings({
-                                        ...settings,
-                                        hints: { ...settings.hints, summarizerBackendId: draft },
-                                    });
+                        <SettingAnchor settings={[MEMORY_SETTINGS.settings.summarizerBackend, MEMORY_SETTINGS.settings.summarizerModel, MEMORY_SETTINGS.settings.permissions]}>
+                            <LlmTaskRunnerPicker
+                                task="memory_hints"
+                                value={settings.hints.summarizerRunner}
+                                unsetMeansAuto={false}
+                                onChange={(summarizerRunner) => {
+                                    void writeSettings({ ...settings, hints: { ...settings.hints, summarizerRunner } });
                                 }}
-                            />
-                        </SettingAnchor>
-                        <SettingAnchor setting={MEMORY_SETTINGS.settings.summarizerModel}>
-                            <FieldValueItem
-                                testID="memory-settings-summarizer-model"
-                                fieldTestID="memory-settings-summarizer-model-field"
-                                title={t(MEMORY_SETTINGS.settings.summarizerModel.titleKey)}
-                                subtitle={t('memorySearchSettings.hints.model.promptBody')}
-                                placeholder="default"
-                                monospace
-                                value={settings.hints.summarizerModelId}
-                                onCommit={(draft) => {
-                                    if (!draft) return settings.hints.summarizerModelId;
-                                    void writeSettings({
-                                        ...settings,
-                                        hints: { ...settings.hints, summarizerModelId: draft },
-                                    });
-                                }}
-                            />
-                        </SettingAnchor>
-                        <SettingAnchor setting={MEMORY_SETTINGS.settings.permissions}>
-                            <SegmentedChoiceItem<SummarizerPermissionMode>
-                                title={t(MEMORY_SETTINGS.settings.permissions.titleKey)}
-                                options={summarizerPermissionOptions}
-                                value={settings.hints.summarizerPermissionMode}
-                                onChange={(mode) => {
-                                    void writeSettings({
-                                        ...settings,
-                                        hints: { ...settings.hints, summarizerPermissionMode: mode },
-                                    });
-                                }}
-                                testIDPrefix="memory-settings-summarizer-permissions"
+                                machineId={summarizerMachine?.machine.id ?? null}
+                                serverId={summarizerMachine?.serverId ?? null}
+                                engineFieldTitle={t(MEMORY_SETTINGS.settings.summarizerBackend.titleKey)}
+                                permissionTitle={t(MEMORY_SETTINGS.settings.permissions.titleKey)}
+                                testIDPrefix="memory-settings-summarizer"
                             />
                         </SettingAnchor>
                     </ItemGroup>

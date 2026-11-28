@@ -28,12 +28,47 @@ describe('memorySettings', () => {
     expect(normalizeMemorySettings(JSON.parse(JSON.stringify(settings))).conversationSearch).toEqual(conversationSearch);
   });
 
-  it('owns the global memory default in the Protocol host', () => {
+  it('names no summarizer Agent in Protocol: unset means Auto', () => {
     const source = readFileSync(join(process.cwd(), 'src/memory/memorySettings.ts'), 'utf8');
 
-    expect(source).toContain("DEFAULT_MEMORY_SUMMARIZER_BACKEND_ID = 'claude'");
     expect(source).not.toContain('../agents/generated/memory/defaults.js');
     expect(source).not.toContain('@happier-dev/plugins-');
+    expect(normalizeMemorySettings({ v: 1 }).hints.summarizerRunner).toEqual({ v: 1, mode: 'auto' });
+  });
+
+  // Real 0.2 shape (../0.2 packages/protocol/src/memory/memorySettings.ts): the daemon persisted
+  // the full normalized object, so summarizerBackendId 'claude' + summarizerModelId 'default' is
+  // the old default, not evidence that a person chose Claude.
+  it('migrates 0.2 summarizer fields: old defaults become Auto, a chosen Agent or model stays explicit', () => {
+    const v02Defaults = { v: 1, enabled: true, indexMode: 'hints',
+      hints: { enabled: true, summarizerBackendId: 'claude', summarizerModelId: 'default', summarizerPermissionMode: 'read_only', windowSizeMessages: 40 } };
+    const auto = normalizeMemorySettings(v02Defaults).hints;
+    expect(auto.summarizerRunner).toEqual({ v: 1, mode: 'auto', permissionMode: 'read_only' });
+    expect(auto).not.toHaveProperty('summarizerBackendId');
+
+    const unroutable = normalizeMemorySettings({ ...v02Defaults, hints: { ...v02Defaults.hints, summarizerBackendId: 'unknown-legacy-agent' } });
+    expect(unroutable.hints.summarizerRunner).toBeNull();
+    expect(normalizeMemorySettings(JSON.parse(JSON.stringify(unroutable))).hints.summarizerRunner).toBeNull();
+    expect(auto).not.toHaveProperty('summarizerModelId');
+    expect(auto).not.toHaveProperty('summarizerPermissionMode');
+
+    const codex = normalizeMemorySettings({ ...v02Defaults, hints: { ...v02Defaults.hints, summarizerBackendId: 'codex', summarizerPermissionMode: 'no_tools' } }).hints;
+    expect(codex.summarizerRunner).toEqual({ v: 1, permissionMode: 'no_tools',
+      modelSelection: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'default' } });
+    const claudeModel = normalizeMemorySettings({ ...v02Defaults, hints: { ...v02Defaults.hints, summarizerModelId: 'claude-haiku-4-5' } }).hints;
+    expect(claudeModel.summarizerRunner).toMatchObject({ modelSelection: { agentTargetKey: 'agent:happier.agent.claude/claude', modelId: 'claude-haiku-4-5' } });
+
+    const legacyAlias = normalizeMemorySettings({ ...v02Defaults, hints: { ...v02Defaults.hints, summarizerBackendId: 'agy' } });
+    expect(legacyAlias.hints.summarizerRunner).toMatchObject({
+      modelSelection: { agentTargetKey: 'agent:happier.agent.antigravity/antigravity', modelId: 'default' },
+    });
+  });
+
+  it('keeps a stored runner choice over leftover legacy fields and writes only the runner', () => {
+    const runner = { v: 1, modelSelection: { agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: null, modelId: 'claude-haiku-5-5' } };
+    const parsed = normalizeMemorySettings({ v: 1, hints: { summarizerRunner: runner, summarizerBackendId: 'codex' } });
+    expect(parsed.hints.summarizerRunner).toEqual(runner);
+    expect(JSON.parse(JSON.stringify(parsed)).hints).not.toHaveProperty('summarizerBackendId');
   });
 
   it('normalizes invalid payloads to defaults', () => {
@@ -47,7 +82,7 @@ describe('memorySettings', () => {
     expect(parsed.indexMode).toBe('deep');
     expect(parsed.hints.enabled).toBe(false);
     expect(parsed.embeddings.mode).toBe('disabled');
-    expect(parsed.hints.summarizerBackendId).toBe('claude');
+    expect(parsed.hints.summarizerRunner).toEqual({ v: 1, mode: 'auto' });
   });
 
   it('enables keyword indexing by default without enabling model-backed hints or embeddings', () => {
@@ -64,7 +99,7 @@ describe('memorySettings', () => {
     const hints = normalizeMemorySettings({ v: 1, enabled: true, indexMode: 'hints', hints: { summarizerModelId: 'chosen' } });
     expect(hints.indexMode).toBe('hints');
     expect(hints.hints.enabled).toBe(true);
-    expect(hints.hints.summarizerModelId).toBe('chosen');
+    expect(hints.hints.summarizerRunner).toMatchObject({ modelSelection: { agentTargetKey: 'agent:happier.agent.claude/claude', modelId: 'chosen' } });
 
     const deep = normalizeMemorySettings({ v: 1, enabled: true, indexMode: 'deep' });
     expect(deep.indexMode).toBe('deep');

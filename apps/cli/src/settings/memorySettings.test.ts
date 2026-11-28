@@ -45,7 +45,7 @@ describe('memorySettings', () => {
     expect(settings.hints.updateMode).toBe('onIdle');
     expect(settings.hints.idleDelayMs).toBe(15_000);
     expect(settings.hints.maxRunsPerHour).toBe(12);
-    expect(settings.hints.summarizerPermissionMode).toBe('no_tools');
+    expect(settings.hints.summarizerRunner).toEqual({ v: 1, mode: 'auto' });
     await expect(readFile(configuration.deviceLocalSecretKeyFile, 'utf8')).rejects.toMatchObject({
       code: 'ENOENT',
     });
@@ -69,8 +69,17 @@ describe('memorySettings', () => {
 
     const next = await readMemorySettingsFromDisk();
     expect(next.enabled).toBe(true);
-    expect(next.hints.summarizerBackendId).toBe('claude');
-    expect(next.hints.summarizerModelId).toBe('default');
+    // The predecessor default pair is Auto; the file keeps only the runner choice.
+    expect(next.hints.summarizerRunner).toEqual({ v: 1, mode: 'auto', permissionMode: 'no_tools' });
+    const { readSettings } = await import('@/persistence');
+    expect((await readSettings() as { memory?: { hints?: object } }).memory?.hints).not.toHaveProperty('summarizerBackendId');
+
+    await writeMemorySettingsToDisk({
+      ...next,
+      hints: { summarizerBackendId: 'unknown-legacy-agent' },
+    });
+    expect((await readMemorySettingsFromDisk()).hints.summarizerRunner).toBeNull();
+    expect((await readSettings()).memory).toMatchObject({ hints: { summarizerRunner: null } });
     await expect(readFile(configuration.deviceLocalSecretKeyFile, 'utf8')).rejects.toMatchObject({
       code: 'ENOENT',
     });

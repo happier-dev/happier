@@ -1,19 +1,22 @@
+import type { LlmTaskRunnerChoiceV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerConfigV1';
+
 import type { StoredCredentials } from '@/persistence';
-import type { runEphemeralExecutionRunTextPromptWithRunnerConfig } from '@/agent/executionRuns/tasks/textPromptWithRunnerConfig';
+import type { runLlmTaskTextPrompt } from '@/agent/executionRuns/tasks/textPromptWithRunnerConfig';
 
 /**
  * The memory worker owns prompt construction and result consumption. Execution
- * lifecycle stays with the canonical execution.run Action supplied here.
+ * lifecycle stays with the canonical execution.run Action supplied here, and the
+ * background-task runner owner decides which Agent, model and route run it.
+ * Nothing ready throws `LlmTaskRunnerUnavailableError`, which the hint pass
+ * treats as a failed Run and backs off.
  */
-export type MemoryHintsExecutionRunTextPromptRunner =
-  typeof runEphemeralExecutionRunTextPromptWithRunnerConfig;
+export type MemoryHintsExecutionRunTextPromptRunner = typeof runLlmTaskTextPrompt;
 
 export async function runMemoryHintsExecutionRun(params: Readonly<{
-  cwd: string;
   sessionId: string;
-  backendId: string;
-  modelId?: string;
-  permissionMode: 'no_tools' | 'read_only';
+  choice: LlmTaskRunnerChoiceV1;
+  /** The hinted Session's own Agent, which wins Auto's cost ties; null when unknown. */
+  sessionAgentTargetKey: string | null;
   prompt: string;
   credentials?: StoredCredentials | null;
   timeoutMs?: number | null;
@@ -22,16 +25,14 @@ export async function runMemoryHintsExecutionRun(params: Readonly<{
 }>): Promise<string> {
   const runTextPrompt = params.runTextPrompt ?? (await import(
     '@/agent/executionRuns/tasks/textPromptWithRunnerConfig'
-  )).runEphemeralExecutionRunTextPromptWithRunnerConfig;
+  )).runLlmTaskTextPrompt;
 
   return await runTextPrompt({
-    cwd: params.cwd,
+    task: 'memory_hints',
+    choice: params.choice,
+    // Auto prefers the Session's own Agent on a cost tie.
+    sessionAgentTargetKey: params.sessionAgentTargetKey,
     sessionId: params.sessionId,
-    runner: {
-      backendTarget: { kind: 'builtInAgent', agentId: params.backendId },
-      ...(params.modelId ? { modelId: params.modelId } : {}),
-      permissionMode: params.permissionMode,
-    },
     intent: 'memory_hints',
     prompt: params.prompt,
     ...(params.credentials !== undefined ? { credentials: params.credentials } : {}),

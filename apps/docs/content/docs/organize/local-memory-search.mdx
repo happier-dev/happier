@@ -266,13 +266,25 @@ Light mode relies on **memory hints** (summary shards). The independent
 `hints.enabled` switch defaults to false and is enforced by the worker.
 Selecting hints enables it without requiring a change from deep indexing.
 
-You can configure:
+You can choose which agent writes the hints:
 
-- the summarizer backend
-- the summarizer model
-- whether summarization runs with `no tools` or `read only` permissions
+- **Auto** (the default) uses the cheapest model that can return structured output,
+  for example Haiku or Luna, among the agents that are ready on that machine: enabled,
+  and signed in or connected through a service. It uses that model's lowest effort.
+  On a tie it prefers the session's own agent. If nothing is ready, hints wait and retry.
+- Or pick an agent, model, connected account and effort yourself. Your choice is
+  always used; Happier never swaps it for another agent.
+- Either way, hints run with `no tools` or `read only` permissions.
 
-This is useful if you want memory hints to run through a specific backend or model already available on that machine.
+Machines that ran an earlier version with the old default (Claude, `default`
+model) move to Auto. Happier keeps a recognized agent or model choice. If the
+previous agent cannot be identified, choose a runner in Memory settings to
+resume hint generation.
+
+The agent that writes hints needs its own sign-in or connected account on that
+machine, whatever agent the session used. When no agent is ready, or a hint run
+fails, Happier waits before trying that session again, and the wait grows after
+each failure, up to the configured limit.
 
 ## Embeddings in deep mode
 

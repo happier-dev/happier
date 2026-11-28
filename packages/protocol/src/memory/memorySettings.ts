@@ -2,10 +2,42 @@ import { lazyZodSchema, lazyDefinition } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 
 import { SecretStringV1Schema } from '../crypto/settingsSecretStringSchemasV1.js';
+import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES_V1 } from '../generated/agents/bundledAgentIdentitiesV1.js';
+import { LlmTaskRunnerChoiceV1Schema, LlmTaskRunnerConfigV1Schema } from '../llm/tasks/llmTaskRunnerConfigV1.js';
 
-// Global product fallback. This is Protocol host policy rather than an Agent
-// contribution, so activation order cannot redefine the Memory default.
-const DEFAULT_MEMORY_SUMMARIZER_BACKEND_ID = 'claude';
+// Predecessor (0.2) defaults. They persisted with every settings write, so this
+// pair is not evidence that a person chose Claude; it migrates to Auto.
+const PREDECESSOR_SUMMARIZER_DEFAULTS = { backendId: 'claude', modelId: 'default' } as const;
+const PREDECESSOR_SUMMARIZER_FIELDS = ['summarizerBackendId', 'summarizerModelId', 'summarizerPermissionMode'] as const;
+
+function readTrimmed(value: unknown, fallback: string): string {
+  return typeof value === 'string' && value.trim() ? value.trim() : fallback;
+}
+
+/**
+ * The summarizer runner is a background-task runner choice; the task-runner
+ * owner decides what Auto runs. Predecessor fields are read once, then dropped.
+ */
+function migrateSummarizerRunner(hints: Record<string, unknown>): Record<string, unknown> {
+  const { summarizerBackendId, summarizerModelId, summarizerPermissionMode, ...rest } = hints;
+  if (Object.prototype.hasOwnProperty.call(hints, 'summarizerRunner')) return rest;
+  if (!PREDECESSOR_SUMMARIZER_FIELDS.some(field => Object.prototype.hasOwnProperty.call(hints, field))) return rest;
+  const backendId = readTrimmed(summarizerBackendId, PREDECESSOR_SUMMARIZER_DEFAULTS.backendId);
+  const modelId = readTrimmed(summarizerModelId, PREDECESSOR_SUMMARIZER_DEFAULTS.modelId);
+  const permissionMode = summarizerPermissionMode === 'read_only' || summarizerPermissionMode === 'no_tools' ? summarizerPermissionMode : undefined;
+  const auto = { v: 1, mode: 'auto', ...(permissionMode ? { permissionMode } : {}) };
+  if (backendId === PREDECESSOR_SUMMARIZER_DEFAULTS.backendId && modelId === PREDECESSOR_SUMMARIZER_DEFAULTS.modelId) {
+    return { ...rest, summarizerRunner: auto };
+  }
+  // The released execution-run registry also accepted these two spellings.
+  const agentId = backendId === 'claude-code' ? 'claude' : backendId === 'agy' ? 'antigravity' : backendId;
+  if (!Object.hasOwn(BUNDLED_AGENT_CONTRIBUTION_IDENTITIES_V1, agentId)) {
+    return { ...rest, summarizerRunner: null };
+  }
+  const explicit = LlmTaskRunnerConfigV1Schema.safeParse({ v: 1, backendTarget: { kind: 'builtInAgent', agentId }, modelId,
+    ...(permissionMode ? { permissionMode } : {}) });
+  return { ...rest, summarizerRunner: explicit.success ? explicit.data : null };
+}
 
 const MemoryDefaultScopeV1Schema = lazyZodSchema(() => z.discriminatedUnion('type', [
   z.looseObject({ type: z.literal('global') }),
@@ -49,7 +81,7 @@ export type MemoryIndexPolicyV1 = z.infer<typeof MemoryIndexPolicyV1Schema>;
 
 export const MemoryHintsSettingsV1Schema = lazyZodSchema(() => (<I extends z.core.$ZodType, O extends z.core.$ZodType>(input: I, output: O) => new z.ZodMiniPipe({ type: 'pipe', in: input, out: output }) as z.ZodMiniPipe<I, O>)(z.transform((value) => {
   if (value && typeof value === 'object' && !Array.isArray(value)) {
-    const candidate = value as Record<string, unknown>;
+    const candidate = migrateSummarizerRunner(value as Record<string, unknown>);
     if (
       !Object.prototype.hasOwnProperty.call(candidate, 'targetShardMessages') &&
       Object.prototype.hasOwnProperty.call(candidate, 'windowSizeMessages')
@@ -59,13 +91,13 @@ export const MemoryHintsSettingsV1Schema = lazyZodSchema(() => (<I extends z.cor
         targetShardMessages: candidate.windowSizeMessages,
       };
     }
+    return candidate;
   }
   return value;
 }), z.looseObject({
     enabled: z._default(z.boolean(), false),
-    summarizerBackendId: z._default(z.string().check(z.trim(), z.minLength(1)), DEFAULT_MEMORY_SUMMARIZER_BACKEND_ID),
-    summarizerModelId: z._default(z.string().check(z.trim(), z.minLength(1)), 'default'),
-    summarizerPermissionMode: z._default(z.enum(['no_tools', 'read_only']), 'no_tools'),
+    /** Null means the stored explicit runner could not be migrated and needs a new choice. */
+    summarizerRunner: z._default(z.nullable(LlmTaskRunnerChoiceV1Schema), { v: 1, mode: 'auto' }),
     windowSizeMessages: z._default(z.number().check(z.int(), z.minimum(5), z.maximum(500)), 40),
     targetShardMessages: z._default(z.number().check(z.int(), z.minimum(1), z.maximum(500)), 16),
     minShardMessages: z._default(z.number().check(z.int(), z.minimum(1), z.maximum(500)), 1),

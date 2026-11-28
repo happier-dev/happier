@@ -387,20 +387,20 @@ describe('MemorySettingsView', () => {
         expect(call?.[0]?.payload?.backfillPolicy).toBe('all_history');
     });
 
-    it('writes hints.summarizerBackendId changes via daemon.memory.settings.set', async () => {
+    it('asks for a summarizer choice when the stored legacy Agent cannot be routed', async () => {
         installMemoryRpc({
-            settingsGet: () => ({ v: 1, enabled: true, indexMode: 'hints' }),
-            settingsSet: (params: any) => params.payload,
+            settingsGet: () => ({ v: 1, enabled: true, indexMode: 'hints',
+                hints: { summarizerBackendId: 'unknown-legacy-agent' } }),
         });
 
         const screen = await renderSettledMemorySettingsView();
-        await typeIntoFieldRow(screen, 'memory-settings-summarizer-backend', 'codex');
 
-        const call = machineRpcSpy.mock.calls.find((c) => c?.[0]?.method === 'daemon.memory.settings.set');
-        expect(call?.[0]?.payload?.hints?.summarizerBackendId).toBe('codex');
+        expect(screen.getTextContent()).toContain('newSession.selectAiBackendTitle');
+        expect(screen.getTextContent()).not.toContain('memorySearchSettings.hints.permissions.triggerTitle');
+        expect(machineRpcSpy).not.toHaveBeenCalledWith(expect.objectContaining({ method: 'daemon.memory.settings.set' }));
     });
 
-    it('writes hints.summarizerPermissionMode changes via daemon.memory.settings.set', async () => {
+    it('writes the summarizer permission level into its runner choice via daemon.memory.settings.set', async () => {
         installMemoryRpc({
             settingsGet: () => ({ v: 1, enabled: true, indexMode: 'hints' }),
             settingsSet: (params: any) => params.payload,
@@ -410,7 +410,8 @@ describe('MemorySettingsView', () => {
         await chooseSegment(screen, 'read_only');
 
         const call = machineRpcSpy.mock.calls.find((c) => c?.[0]?.method === 'daemon.memory.settings.set');
-        expect(call?.[0]?.payload?.hints?.summarizerPermissionMode).toBe('read_only');
+        expect(call?.[0]?.payload?.hints?.summarizerRunner).toEqual({ v: 1, mode: 'auto', permissionMode: 'read_only' });
+        expect(call?.[0]?.payload?.hints).not.toHaveProperty('summarizerBackendId');
     });
 
     it('writes deleteOnDisable changes via daemon.memory.settings.set', async () => {

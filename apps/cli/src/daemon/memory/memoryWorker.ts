@@ -205,8 +205,7 @@ export async function prepareMemoryWorker(params: Readonly<{
       }
       return observation.takeSnapshot();
     },
-    runHint: (request, signal) => runMemoryHintsExecutionRun({ ...request,
-      cwd: configuration.activeServerDir, credentials: params.credentials, signal }),
+    runHint: (request, signal) => runMemoryHintsExecutionRun({ ...request, credentials: params.credentials, signal }),
     commitHint: async (request, signal) => {
       signal?.throwIfAborted();
       const raw = await fetchSessionById({ reason: 'memory-change', projection: SESSION_DETAIL_RUNTIME_SNAPSHOT_PROJECTION, token: params.credentials.token, sessionId: request.sessionId, signal });

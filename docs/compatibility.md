@@ -15205,6 +15205,21 @@ written from them are not — they are ordinary native facts owned by
 [teams-membership-and-groups.md](teams-membership-and-groups.md) and follow that owner's
 rules.
 
+### Local Memory hint runner settings (0.3 development)
+
+The daemon's device-local V1 Memory settings accept the released 0.2
+`summarizerBackendId`, `summarizerModelId` and `summarizerPermissionMode` fields.
+The Claude/default pair becomes Auto. A recognized explicit Agent or model remains
+explicit, and an unrecognized legacy Agent becomes a persisted needs-choice state
+(`summarizerRunner: null`). In that state the worker starts no hint Runs until
+the person chooses a runner. Current saves use only `summarizerRunner`.
+
+The normal reader migrates the settings on load, and the next settings save
+writes the current shape. This is a device-local settings conversion during the
+coordinated, one-way 0.3 upgrade. Released 0.2 readers tolerate the additional key
+but use the legacy defaults when the old fields are absent. A pre-upgrade device
+backup preserves the original settings for restoration with its matching 0.2 installation.
+
 ### Native email/password authentication (0.3 development)
 
 The following describes the current development source, not a released feature.

@@ -18,8 +18,11 @@ import { SESSION_DETAIL_RUNTIME_SNAPSHOT_PROJECTION } from '@happier-dev/protoco
 import {
   resolveSessionEncryptionContextFromCredentials,
   resolveSessionStoredContentEncryptionMode,
+  tryDecryptSessionMetadata,
   type SessionStoredContentCryptoContext,
 } from '@/session/transport/encryption/sessionEncryptionContext';
+import { resolveAgentExecutionTargetFromSessionMetadata } from '@happier-dev/agents';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { decryptTranscriptRows } from '@/session/replay/decryptTranscriptRows';
 import { fetchEncryptedTranscriptMessagesPage } from '@/session/replay/fetchEncryptedTranscriptMessages';
 import { logger } from '@/ui/logger';
@@ -160,7 +163,7 @@ export async function createMemoryIndexer(params: Readonly<{
     onChange: refreshSources => { externalSourcesNeedRefresh ||= refreshSources; } });
   let externalSourcesNeedRefresh = true;
   let externalSyncPromise: Promise<void> | null = null;
-  const sessionCryptoContextCache = new Map<string, SessionStoredContentCryptoContext>();
+  const sessionCryptoContextCache = new Map<string, SessionStoredContentCryptoContext & { agentTargetKey: string | null }>();
   const sessionLocality = createMemorySessionLocalityReader(params);
   const settingsSecretsReadKeys = deriveSettingsSecretsReadKeysForCredentials(params.credentials);
   const embeddingsProviderCache = createEmbeddingsProviderCache();
@@ -197,10 +200,13 @@ export async function createMemoryIndexer(params: Readonly<{
     const raw = cryptoInputs ?? await fetchSessionById({ reason: 'memory-change', projection: SESSION_DETAIL_RUNTIME_SNAPSHOT_PROJECTION, token: params.credentials.token, sessionId, signal });
     signal?.throwIfAborted();
     if (!raw) return null;
+    const metadata = tryDecryptSessionMetadata({ credentials: params.credentials, rawSession: raw });
+    const agentTarget = metadata ? resolveAgentExecutionTargetFromSessionMetadata(metadata) : null;
+    const agentTargetKey = agentTarget ? buildBackendTargetKeyV2(agentTarget) : null;
 
     const mode = resolveSessionStoredContentEncryptionMode(raw);
     if (mode === 'plain') {
-      const resolved = { mode, ctx: null } as const;
+      const resolved = { mode, ctx: null, agentTargetKey } as const;
       sessionCryptoContextCache.set(sessionId, resolved);
       return resolved;
     }
@@ -212,7 +218,7 @@ export async function createMemoryIndexer(params: Readonly<{
       if (cryptoInputs) return null;
       throw new AccountEncryptionMaterialUnavailableError();
     }
-    const resolved = { mode, ctx } as const;
+    const resolved = { mode, ctx, agentTargetKey } as const;
     sessionCryptoContextCache.set(sessionId, resolved);
     return resolved;
   };
@@ -715,6 +721,8 @@ export async function createMemoryIndexer(params: Readonly<{
     if (sessionIds.length === 0) return;
 
     for (const sessionId of sessionIds) hintWorkAtBySessionId.delete(sessionId);
+    const choice = settings.hints.summarizerRunner;
+    if (choice === null) return;
 
     await syncMemoryHintsForSessionsOnce({
       sessionIds,
@@ -755,8 +763,9 @@ export async function createMemoryIndexer(params: Readonly<{
           Math.min(hintWorkAtBySessionId.get(sessionId) ?? atMs, atMs));
       },
       runSummarizer: (prompt, sessionId, signal) => params.host.runHint({
-        prompt, sessionId, backendId: settings.hints.summarizerBackendId,
-        modelId: settings.hints.summarizerModelId, permissionMode: settings.hints.summarizerPermissionMode,
+        prompt, sessionId, choice,
+        // Reuse the source Agent read with the transcript to break Auto's cost ties.
+        sessionAgentTargetKey: sessionCryptoContextCache.get(sessionId)?.agentTargetKey ?? null,
       }, signal),
       commitArtifacts: (request, signal) => params.host.commitHint(request, signal),
       ...(options?.signal ? { signal: options.signal } : {}),
