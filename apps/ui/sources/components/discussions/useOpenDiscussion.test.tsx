@@ -1,13 +1,16 @@
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderHook, standardCleanup } from '@/dev/testkit';
+import { renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
+import { SessionBotFaceMark } from '@/components/sessions/bots/SessionBotFaceMark';
 import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
 import { createSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
 import { createSessionDiscussionDetailsTab } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
 import { useOpenDiscussion } from './useOpenDiscussion';
-import { seedDiscussionDraft } from './useDiscussionDraft';
+import { seedDiscussionDraft, useDiscussionDraft } from './useDiscussionDraft';
 import { getSessionComposerDraftSnapshot } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 
 const route = vi.hoisted(() => ({ push: vi.fn(), pathname: '/discussions', params: {} as Record<string, string | string[]> }));
 const viewport = vi.hoisted(() => ({ width: 390, height: 844, scale: 1, fontScale: 1 }));
@@ -15,11 +18,16 @@ vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNati
     useWindowDimensions: () => viewport,
 }));
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
+vi.mock('@shopify/react-native-skia', async () => (await import('@/dev/testkit/mocks/reactNativeSkia')).createReactNativeSkiaMock());
+vi.mock('@/components/ui/popover', async (importOriginal) => (await import('@/dev/testkit/mocks/popover')).createInlinePopoverModuleMock(importOriginal));
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
     return createExpoRouterMock({ router: { push: route.push }, pathname: () => route.pathname, params: () => route.params }).module;
 });
-const runtime = installSessionPaneRuntimeTestHarness({ scopeId: ({ sessionId, serverId }) => createSessionPaneScopeId(sessionId, serverId) });
+const runtime = installSessionPaneRuntimeTestHarness({ scopeId: ({ sessionId, serverId }) => createSessionPaneScopeId(sessionId, serverId),
+    features: () => createRootLayoutFeaturesResponse({ features: { sharing: { session: { enabled: true } },
+        sessions: { enabled: true, conversations: { enabled: true } } } }),
+});
 
 describe('open Discussion', () => {
     beforeEach(() => {
@@ -88,6 +96,25 @@ describe('open Discussion', () => {
         const draftId = new URL(route.push.mock.lastCall![0], 'https://happier.test').searchParams.get('draftId')!;
         expect(getSessionComposerDraftSnapshot(scope, { kind: 'newDiscussion', draftId })?.composer.text.value).toBe('Please help with this Bot');
         expect(getSessionComposerDraftSnapshot(scope, { kind: 'newDiscussion' })).toBeNull();
+    });
+
+    it('preselects the Bot in the ordinary fresh Discussion draft without addressing the first message', async () => {
+        const accountLifetime = captureActiveServerAccountScopeLifetime()!;
+        const scope = accountLifetime.scope;
+        const participant = { kind: 'session' as const, sessionId: 'release-captain' };
+        const screen = await renderScreen(<runtime.Wrapper><SessionBotFaceMark sessionId={participant.sessionId}
+            serverId={scope.serverId} accountLifetime={accountLifetime} size={32} facts={{ seed: participant.sessionId, face: null }} />
+        </runtime.Wrapper>);
+        await vi.waitFor(() => expect(screen.findByTestId('bot-face-mark')?.props['aria-haspopup']).toBe('menu'));
+        await screen.pressByTestIdAsync('bot-face-mark');
+        await screen.pressByTestIdAsync('dropdown-option-new-discussion');
+        await vi.waitFor(() => expect(route.push).toHaveBeenCalledTimes(1));
+        const draftId = new URL(route.push.mock.lastCall![0], 'https://happier.test').searchParams.get('draftId')!;
+        const draft = await renderHook(() => useDiscussionDraft({ scope, address: { kind: 'newDiscussion', draftId } }),
+            { wrapper: runtime.Wrapper });
+        expect(draft.getCurrent().participants).toEqual([participant]);
+        expect(draft.getCurrent().recipients).toEqual([]);
+        expect(draft.getCurrent().text).toBe('');
     });
 
     it('makes People an anchor adapter to the same canonical destination', async () => {

@@ -189,12 +189,14 @@ function sameScope(left: ServerAccountScope, right: ServerAccountScope): boolean
  * An explicit "Ask <someone>" from elsewhere in the app: fills an empty draft with an addressed request
  * the person still reads and sends — a new Discussion (with its title), or a reply in an existing one.
  * Words already in that draft are never replaced. An explicit message reply replaces the old
- * passage/reply context in the same patch, even when those words are retained.
+ * passage/reply context in the same patch, even when those words are retained. A fresh draft can
+ * preselect participants independently of who the first message addresses.
  */
 export function seedDiscussionDraft(input: DiscussionComposerValue & Readonly<{
     scope: ServerAccountScope;
     address?: DiscussionDraftAddress;
     title?: string;
+    participants?: readonly DiscussionParticipantRefV1[];
     replyTarget?: Extract<DiscussionReplyTargetV1, { kind: 'message' }>;
 }>): boolean {
     const address: DiscussionDraftAddress = input.address ?? { kind: 'newDiscussion' };
@@ -207,6 +209,8 @@ export function seedDiscussionDraft(input: DiscussionComposerValue & Readonly<{
         patch: {
             ...(seedComposer ? {
                 ...(address.kind === 'newDiscussion' && input.title !== undefined ? { title: input.title } : {}),
+                ...(address.kind === 'newDiscussion' && current.participants.length === 0 && input.participants?.length
+                    ? { participants: input.participants } : {}),
                 ...discussionComposerDraftPatch(input),
             } : {}),
             ...(input.replyTarget ? { replyTarget: input.replyTarget, passage: null } : {}),

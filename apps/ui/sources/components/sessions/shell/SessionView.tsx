@@ -1785,7 +1785,7 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
                 rename={isTablet && stableSessionForHeader?.access?.capabilities.renameSession === true
                     ? { sessionId, serverId: currentSessionRouteServerId || null } : undefined}
                 editBotFace={stableSessionForHeader?.access?.capabilities.renameSession === true
-                    ? { sessionId, serverId: currentSessionRouteServerId || null } : undefined}
+                    ? { sessionId, serverId: currentSessionRouteServerId || null, accountLifetime: sessionAccountBinding } : undefined}
                 agentIdentity={headerProps.agentId ? (
                     // An accepted Make this a bot / regular session acknowledges itself on the mark (lab `b-promote`).
                     <BotMarkerFeedback kind="mark" session={{ serverId: currentSessionRouteServerId, sessionId }}>
@@ -1823,6 +1823,7 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
         headerRightElement,
         headerSafeAreaTopMode,
         isTablet,
+        sessionAccountBinding,
         stableSessionForHeader?.access?.capabilities.renameSession,
         pane.overlayFocusReturnCaptureProps,
         showTopHeader,

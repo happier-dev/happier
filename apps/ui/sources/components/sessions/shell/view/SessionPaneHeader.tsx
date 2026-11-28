@@ -26,6 +26,7 @@ import { Text, TextInput } from '@/components/ui/text/Text';
 import { StatusPill } from '@/components/ui/status/StatusPill';
 import { Typography } from '@/constants/Typography';
 import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useSetting } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 
@@ -72,7 +73,7 @@ export type SessionPaneHeaderProps = Readonly<{
      */
     rename?: Readonly<{ sessionId: string; serverId: string | null }>;
     /** A Bot whose face this person may change: its face opens the face chooser (`session.bot.face.set`). */
-    editBotFace?: Readonly<{ sessionId: string; serverId: string | null }>;
+    editBotFace?: Readonly<{ sessionId: string; serverId: string | null; accountLifetime?: ServerAccountScopeLifetime | null }>;
 }>;
 
 /**
@@ -115,7 +116,7 @@ const SessionPaneHeaderBand = React.memo(function SessionPaneHeaderBand(props: S
                 // A Bot this header may edit offers its face chooser from the face itself (lab R6 header).
                 // The same lively face the sidebar rows draw (owner 0936 #15): still until hovered or touched, its mood
                 // change played once, never an idle loop (the Bots roster alone lives on its own).
-                ? <SessionBotFaceMark sessionId={props.editBotFace.sessionId} serverId={props.editBotFace.serverId} facts={props.botFace} size={32} mood={props.botActivity} motion="interaction" />
+                ? <SessionBotFaceMark {...props.editBotFace} facts={props.botFace} size={32} mood={props.botActivity} motion="interaction" />
                 : <SessionBotFace facts={props.botFace} size={32} mood={props.botActivity} motion="interaction" />)
                 : props.avatarId ? <Avatar id={props.avatarId} size={32} monochrome={!isConnected} flavor={props.flavor} /> : null;
     // The header's fold is judged on its own measured row: the title column's width (the title row spans it)

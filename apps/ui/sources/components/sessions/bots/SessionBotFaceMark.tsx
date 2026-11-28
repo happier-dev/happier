@@ -4,7 +4,12 @@ import { useUnistyles } from 'react-native-unistyles';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { areSessionBotFacesEqual, type SessionBotFaceV1 } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
 
+import { seedDiscussionDraft } from '@/components/discussions/useDiscussionDraft';
+import { useOpenDiscussion } from '@/components/discussions/useOpenDiscussion';
+import { useSessionConversationsAvailability } from '@/components/sessions/conversations/useSessionConversationsAvailability';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { sessionDisplayActions } from '@/sync/ops/sessions/sessionDisplayActions';
 import { t } from '@/text';
 
@@ -66,11 +71,43 @@ export function useSessionBotFaceEditor(
   return { shown, status, change };
 }
 
-/** A Bot's face at an identity surface that may change it (the Session header): press it to choose another face. */
+function BotFaceMenu(props: Readonly<{
+  anchorRef: React.RefObject<View | null>;
+  accountLifetime: ServerAccountScopeLifetime;
+  sessionId: string;
+  onOpenChange: (next: boolean) => void;
+  onChangeFace: () => void;
+}>) {
+  const { accountLifetime, sessionId } = props;
+  const scope = accountLifetime.scope;
+  const prepareNewDraft = React.useCallback((draftId: string) => {
+    seedDiscussionDraft({ scope, address: { kind: 'newDiscussion', draftId },
+      text: '', mentions: [], participants: [{ kind: 'session', sessionId }] });
+  }, [scope, sessionId]);
+  const { openNewDiscussion } = useOpenDiscussion({ address: scope,
+    anchor: { kind: 'session', sessionId }, sourceSurface: 'collaboration', prepareNewDraft });
+  return <DropdownMenu
+    open
+    popoverAnchorRef={props.anchorRef}
+    onOpenChange={props.onOpenChange}
+    items={[
+      { id: 'change-face', title: t('bots.face.change') },
+      { id: 'new-discussion', title: t('session.collaboration.discussion.newDiscussion') },
+    ]}
+    matchTriggerWidth={false}
+    onSelect={(id) => {
+      if (id === 'change-face') props.onChangeFace();
+      if (id === 'new-discussion' && accountLifetime.isCurrent()) openNewDiscussion();
+    }}
+  />;
+}
+
+/** The editable face in the Session header anchors the Bot's face chooser and group entry. */
 export const SessionBotFaceMark = React.memo(function SessionBotFaceMark(
   props: Readonly<{
     sessionId: string;
     serverId: string | null;
+    accountLifetime?: ServerAccountScopeLifetime | null;
     facts: SessionBotFaceFacts;
     size: number;
     mood?: BotFaceMood;
@@ -82,7 +119,11 @@ export const SessionBotFaceMark = React.memo(function SessionBotFaceMark(
   const { theme } = useUnistyles();
   const anchorRef = React.useRef<View | null>(null);
   const [open, setOpen] = React.useState(false);
+  const [menuOpen, setMenuOpen] = React.useState(false);
   const editor = useSessionBotFaceEditor(props);
+  const { accountLifetime, serverId, sessionId } = props;
+  const conversationsAvailable = useSessionConversationsAvailability(serverId ?? '');
+  const canStartDiscussion = conversationsAvailable && accountLifetime?.isCurrent() === true;
   // A pet handed over by "Use as a Bot's face…" (R12 §10): the chooser opens wearing it, and that is the one change.
   const shown = React.useRef(editor.shown);
   shown.current = editor.shown;
@@ -95,10 +136,10 @@ export const SessionBotFaceMark = React.memo(function SessionBotFaceMark(
       <HappierPressable
         testID={props.testID ?? 'bot-face-mark'}
         accessibilityRole="button"
-        accessibilityLabel={t('bots.face.change')}
-        hasPopup="dialog"
-        expanded={open}
-        onPress={() => setOpen(true)}
+        accessibilityLabel={t(canStartDiscussion ? 'common.moreActions' : 'bots.face.change')}
+        hasPopup={canStartDiscussion ? 'menu' : 'dialog'}
+        expanded={menuOpen || open}
+        onPress={() => canStartDiscussion ? setMenuOpen(true) : setOpen(true)}
         style={(state) => [
           { borderRadius: props.size / 2 },
           focusRingStyle({
@@ -114,6 +155,13 @@ export const SessionBotFaceMark = React.memo(function SessionBotFaceMark(
           motion={props.motion}
         />
       </HappierPressable>
+      {canStartDiscussion && menuOpen ? <BotFaceMenu
+        anchorRef={anchorRef}
+        accountLifetime={accountLifetime}
+        sessionId={sessionId}
+        onOpenChange={setMenuOpen}
+        onChangeFace={() => setOpen(true)}
+      /> : null}
       <BotFacePicker
         open={open}
         anchorRef={anchorRef}
