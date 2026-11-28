@@ -1059,7 +1059,7 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
             && request.actionId === 'session.spawn_new' && targetSocketId && signal && !signal.aborted) {
             const previousSocketId = targetSocketId;
             const disconnectedAfterSubmit = forwarded.kind === 'ready' && !forwarded.value.ok
-                && forwarded.value.errorCode === RPC_ERROR_CODES.OUTCOME_UNKNOWN;
+                && 'errorCode' in forwarded.value && forwarded.value.errorCode === RPC_ERROR_CODES.OUTCOME_UNKNOWN;
             const recovered = await runDispatchPhase('daemon_forward', machineId, async () => {
                 // A resource-bound sandbox keeps Action custody on its paired controller.
                 // Unclassified ACK failures retain the enrolled-guest recovery path.
