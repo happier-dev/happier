@@ -1,11 +1,13 @@
 import { createRequire } from 'node:module';
-import { postgresqlReadOnlyRoleGuardSql } from '../../../deployment-protocol/src/secrets/postgresqlReadOnlyRole';
+import { POSTGRESQL_WORKBENCH_APPLICATION_NAME } from '../../../databases/src/postgresql/workbenchIdentity';
+import { compilePostgresqlReadOnlyRoleGuardSql } from '../../../deployment-protocol/src/secrets/postgresqlReadOnlyRole';
 import { routeDeploymentProviderHttp } from './deploymentProvidersHttpPreload.mjs';
 import { startConnectedAccountTlsRecordingProxy } from './providers/connectedAccountTlsRecordingProxy';
 
 export type DeploymentJourneyProvider = 'vercel' | 'cloudflare' | 'neon';
 
 const undici: typeof import('undici') = createRequire(new URL('../../../../apps/cli/package.json', import.meta.url))('undici/index.js');
+const postgresqlReadOnlyRoleGuardSql = compilePostgresqlReadOnlyRoleGuardSql(POSTGRESQL_WORKBENCH_APPLICATION_NAME);
 const providerHosts = new Set(['api.vercel.com', 'api.cloudflare.com', 'console.neon.tech', 'ep-journey.neon.tech', 'api.eu-central-1.aws.neon.tech',
   'api.supabase.com', 'api.preview.aws.neon.tech', 'api.production.aws.neon.tech', 'api.neighbor.aws.neon.tech']);
 
