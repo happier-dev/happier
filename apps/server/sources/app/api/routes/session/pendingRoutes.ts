@@ -457,6 +457,8 @@ function registerSessionPendingResource(app: Fastify, executionRunTarget: boolea
                 pendingBlockedCount: res.pendingBlockedCount,
                 pendingVersion: res.pendingVersion,
                 ...(request.params.runId ? { recipient: { kind: "execution_run" as const, runId: request.params.runId } } : {}),
+                ...(!request.params.runId && res.terminal !== true && res.didWrite && res.pending.deliveryState === null
+                    ? { committedEnqueueLocalId: res.pending.localId } : {}),
                 meaningfulActivityAt: res.terminal === true ? undefined : res.meaningfulActivityAt,
                 recipientCursors: res.recipientCursors,
                 ...("activationTarget" in res && res.activationTarget

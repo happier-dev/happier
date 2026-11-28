@@ -10,6 +10,7 @@ export type CredentialQualifiedSessionDeliveryV1 = Readonly<{
     eventName: SocketRoomEventName;
     payload: unknown;
     skipSocketId?: string;
+    committedEnqueueLocalId?: string;
 }>;
 
 export type SocketRoomBroadcastOperator = Readonly<{
@@ -43,7 +44,7 @@ export function parseCredentialQualifiedSessionDelivery(
 ): CredentialQualifiedSessionDeliveryV1 | null {
     if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
     const record = value as Readonly<Record<string, unknown>>;
-    const allowedKeys = new Set(["v", "accountId", "sessionId", "eventName", "payload", "skipSocketId"]);
+    const allowedKeys = new Set(["v", "accountId", "sessionId", "eventName", "payload", "skipSocketId", "committedEnqueueLocalId"]);
     if (Object.keys(record).some((key) => !allowedKeys.has(key))) return null;
     if (record.v !== 1) return null;
     if (typeof record.accountId !== "string" || record.accountId.length === 0) return null;
@@ -52,6 +53,8 @@ export function parseCredentialQualifiedSessionDelivery(
     if (!Object.prototype.hasOwnProperty.call(record, "payload")) return null;
     if (record.skipSocketId !== undefined
         && (typeof record.skipSocketId !== "string" || record.skipSocketId.length === 0)) return null;
+    if (record.committedEnqueueLocalId !== undefined && (record.eventName !== 'update'
+        || typeof record.committedEnqueueLocalId !== 'string' || record.committedEnqueueLocalId.length === 0)) return null;
     return {
         v: 1,
         accountId: record.accountId,
@@ -59,6 +62,7 @@ export function parseCredentialQualifiedSessionDelivery(
         eventName: record.eventName,
         payload: record.payload,
         ...(record.skipSocketId === undefined ? {} : { skipSocketId: record.skipSocketId }),
+        ...(record.committedEnqueueLocalId === undefined ? {} : { committedEnqueueLocalId: record.committedEnqueueLocalId }),
     };
 }
 

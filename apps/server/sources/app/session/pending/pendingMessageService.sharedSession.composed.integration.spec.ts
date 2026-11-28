@@ -56,6 +56,7 @@ import {
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { createAuthenticatedFakeSocket, createFakeSocket, createSocketRoomDiscoveryHarness, getSocketHandler } from "@/app/api/testkit/socketHarness";
 import { sessionUpdateHandler } from "@/app/api/socket/sessionUpdateHandler";
+import { eventRouter } from "@/app/events/eventRouter";
 import { activityCache } from "@/app/presence/sessionCache";
 import { createSessionPublisherPresence } from "@/app/presence/sessionPublisherPresence";
 import { reconcileSessionPendingQueueStateInTx } from "./reconcileSessionPendingQueueState";
@@ -4106,6 +4107,115 @@ describe("pendingMessageService (shared sessions)", () => {
         })).resolves.toBeNull();
         expect(await resolveAcceptedPendingDelivery(providerSettlement)).toMatchObject({ ok: true, didResolve: false });
         expect(await db.sessionMessage.count({ where: { sessionId: session.id, localId: uncertainLocalId } })).toBe(1);
+    });
+
+    it.each([
+        { mode: 'idle', foregroundState: 'ready', kind: 'enqueue', action: 'send', armed: true },
+        { mode: 'busy steer', foregroundState: 'active_steerable', kind: 'steer_now', action: 'steer', armed: true },
+        { mode: 'busy queue', foregroundState: 'active_steerable', kind: 'enqueue', action: 'queue-only', armed: true },
+        { mode: 'busy interrupt', foregroundState: 'active_steerable', kind: 'send_now', action: 'interrupt_and_send', armed: true },
+        { mode: 'idle', foregroundState: 'ready', kind: 'enqueue', action: 'send', armed: false },
+        { mode: 'busy steer', foregroundState: 'active_steerable', kind: 'steer_now', action: 'steer', armed: false },
+        { mode: 'busy queue', foregroundState: 'active_steerable', kind: 'enqueue', action: 'queue-only', armed: false },
+        { mode: 'busy interrupt', foregroundState: 'active_steerable', kind: 'send_now', action: 'interrupt_and_send', armed: false },
+        { mode: 'version gap', foregroundState: 'ready', kind: 'enqueue', action: 'send', armed: true },
+    ] as const)('routes fresh Pending custody ($mode, armed=$armed)', async ({ mode, foregroundState, kind, action, armed }) => {
+        const owner = await createAccount('pending-push-owner');
+        const session = await createSession(owner.id);
+        const runner = createAuthenticatedFakeSocket({ id: randomUUID(), data: { userId: owner.id, authTokenKind: 'account' } });
+        const viewer = createAuthenticatedFakeSocket({ id: randomUUID(), data: { userId: owner.id, authTokenKind: 'account' } });
+        const publisher = await createCurrentPendingPublisher({ accountId: owner.id, sessionId: session.id, socket: runner });
+        const sessionConnection = { connectionType: 'session-scoped' as const, socket: runner, userId: owner.id,
+            sessionId: session.id, machineId: publisher.machineId } as unknown as Parameters<typeof sessionUpdateHandler>[2];
+        const viewerConnection = { connectionType: 'user-scoped' as const, socket: viewer, userId: owner.id,
+        } as unknown as Parameters<typeof sessionUpdateHandler>[2];
+        sessionUpdateHandler(owner.id, runner as unknown as Parameters<typeof sessionUpdateHandler>[1], sessionConnection,
+            { presence: publisher.presence, binding: publisher });
+        eventRouter.addConnection(owner.id, sessionConnection);
+        eventRouter.addConnection(owner.id, viewerConnection);
+        try {
+            const { pendingVersion } = await db.session.findUniqueOrThrow({ where: { id: session.id }, select: { pendingVersion: true } });
+            if (armed) await getSocketHandler(runner, 'pending-input-ready')({
+                v: 1, id: 1, pendingVersion: mode === 'version gap' ? pendingVersion + 1 : pendingVersion,
+                foregroundState, deliveryTiming: 'after_foreground_ready',
+            });
+            expect(await publisher.presence.checkCurrentPublisher({ socket: runner })).toBe(true);
+            const localId = 'fresh-pending-input';
+            const expectPush = armed && mode !== 'version gap';
+            await withAuthenticatedTestApp(sessionPendingRoutes, async app => {
+                let onRunnerWake: (body: Record<string, unknown>) => void = () => {};
+                let runnerWakeAt: number | undefined;
+                const runnerWake = new Promise<Record<string, unknown>>(resolve => { onRunnerWake = resolve; });
+                runner.emit.mockImplementation((event, value) => {
+                    if (event !== 'update' || value?.body?.t !== 'pending-changed'
+                        || value.body.pendingVersion !== pendingVersion + 1) return;
+                    runnerWakeAt = performance.now();
+                    onRunnerWake(value.body);
+                });
+                const startedAt = performance.now();
+                const response = await app.inject({ method: 'POST', url: `/v2/sessions/${session.id}/pending`,
+                    headers: { 'x-test-user-id': owner.id }, payload: {
+                        localId, content: { t: 'encrypted', c: 'opaque-push-content' }, messageRole: 'user',
+                        requestedAction: { v: 1, kind },
+                    } });
+                const ackAt = performance.now();
+                expect(response.statusCode, response.body).toBe(200);
+                const body = await runnerWake;
+                const expectedResult = action === 'queue-only' ? 'queue-only' : expect.objectContaining({ didMaterialize: true,
+                    message: expect.objectContaining({ localId, providerAction: action }),
+                });
+                let pullAckAt: number | undefined;
+                const pull = vi.fn(() => { pullAckAt = performance.now(); });
+                if (expectPush) {
+                    expect(body.runnerClaim).toEqual({ id: 1, result: expectedResult });
+                } else {
+                    expect(body.runnerClaim).toBeUndefined();
+                    await getSocketHandler(runner, 'pending-materialize-next')({
+                        sid: session.id, deliveryState: 'provider', deliveryTiming: 'after_foreground_ready', foregroundState,
+                    }, pull);
+                    expect(pull).toHaveBeenCalledWith(action === 'queue-only'
+                        ? expect.objectContaining({ didMaterialize: false, deferredReason: 'waiting_for_foreground_turn' })
+                        : expectedResult);
+                }
+                console.info('P03 Pending SQLite', JSON.stringify({
+                    mode, armed, postAckMs: ackAt - startedAt, runnerWakeMs: runnerWakeAt! - startedAt,
+                    dispositionMs: (pullAckAt ?? runnerWakeAt!) - startedAt, claimRpcs: pull.mock.calls.length,
+                }));
+                await vi.waitFor(() => expect(viewer.emit).toHaveBeenCalledWith('update', expect.objectContaining({
+                    body: expect.objectContaining({ t: 'pending-changed', pendingVersion: pendingVersion + 1 }),
+                })));
+                expect(viewer.emit.mock.calls.some(([, value]) => value?.body?.runnerClaim !== undefined)).toBe(false);
+                await expect(db.sessionPendingMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: session.id, localId } } }))
+                    .resolves.toMatchObject({ status: 'queued', deliveryState: action === 'queue-only' ? null : 'delivering' });
+                await expect(db.sessionMessage.count({ where: { sessionId: session.id, localId } })).resolves.toBe(0);
+
+                if (expectPush && mode === 'idle') {
+                    const recovered = vi.fn();
+                    await getSocketHandler(runner, 'pending-materialize-next')({ sid: session.id, deliveryState: 'provider',
+                        deliveryTiming: 'after_foreground_ready', foregroundState }, recovered);
+                    expect(recovered).toHaveBeenCalledWith(expectedResult);
+
+                    // A replacement publisher cannot assume the previous one did not send.
+                    runner.connected = false;
+                    await getSocketHandler(runner, 'disconnect')();
+                    runner.connected = true;
+                    expect(await publisher.presence.registerPublisher({ socket: runner, binding: publisher,
+                        completeActivitySnapshot: { state: 'unknown', activeCount: 0 },
+                    })).toMatchObject({ status: 'registered' });
+                    const afterReconnect = vi.fn();
+                    await getSocketHandler(runner, 'pending-materialize-next')({ sid: session.id, deliveryState: 'provider',
+                        deliveryTiming: 'after_foreground_ready', foregroundState }, afterReconnect);
+                    expect(afterReconnect).toHaveBeenCalledWith(expect.objectContaining({
+                        didMaterialize: false, deferredReason: 'waiting_for_predecessor',
+                    }));
+                    await expect(db.sessionPendingMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: session.id, localId } } }))
+                        .resolves.toMatchObject({ deliveryState: 'blocked', deliveryBlockedReason: 'delivery_outcome_uncertain' });
+                }
+            });
+        } finally {
+            eventRouter.removeConnection(owner.id, sessionConnection);
+            eventRouter.removeConnection(owner.id, viewerConnection);
+        }
     });
 
     it.each([

@@ -151,6 +151,25 @@ describe('createSessionClientUpdateRuntime', () => {
     expect(onPendingChangedDrainTrigger).toHaveBeenCalledWith(canonical);
   });
 
+  it('applies a verified queue-only update while leaving the parked main drain asleep', () => {
+    const applyPendingQueueState = vi.fn(() => true);
+    const onPendingChangedDrainTrigger = vi.fn();
+    const emit = vi.fn();
+    const runtime = createRuntime({ applyPendingQueueState, onPendingChangedDrainTrigger, emit });
+    const update = { id: 'queued', seq: 1, createdAt: 1,
+      body: { t: 'pending-changed', sid: 'session-1', pendingVersion: 4, pendingCount: 2, pendingBlockedCount: 0 },
+    } as Update;
+    const verifiedQueueOnly = { source: 'session-scoped' as const, pendingQueueOnly: true };
+    runtime.handleUpdate(update, verifiedQueueOnly);
+    expect(applyPendingQueueState).toHaveBeenCalledWith({ known: true, pendingVersion: 4, pendingCount: 2, pendingBlockedCount: 0 });
+    expect(emit).not.toHaveBeenCalled();
+    expect(onPendingChangedDrainTrigger).not.toHaveBeenCalled();
+    expect(runtime.getPendingWakeSeq()).toBe(0);
+    runtime.handleUpdate({ ...update, body: { ...update.body, pendingVersion: 6 } } as Update, { source: 'session-scoped' });
+    expect(runtime.getPendingWakeSeq()).toBe(1);
+    expect(emit).toHaveBeenCalledWith('metadata-updated');
+  });
+
   it('forwards an exact execution-run target hint with the canonical Pending state', () => {
     const canonical = { known: true, pendingCount: 1, pendingBlockedCount: 0, pendingVersion: 6 } as const;
     const onPendingChangedDrainTrigger = vi.fn();

@@ -732,6 +732,11 @@ export function createSessionProviderInputConsumer<Mode, Message>(
         waitForMetadataUpdate: opts.session.waitForMetadataUpdate,
         waitForAdmissionChange,
         drainPending,
+        armPendingClaim: signal => {
+          if (readAdmission() || hasLocalInputCustody() || isSessionPendingDrainBlocked(opts.session)) return;
+          const timing = opts.resolvePendingQueueDeliveryTiming?.() ?? opts.pendingQueueDeliveryTiming ?? 'after_foreground_ready';
+          opts.session.armPendingClaim?.(signal, timing, true);
+        },
       });
     },
   };
@@ -742,6 +747,7 @@ async function pumpPendingWhileActive(
     waitForMetadataUpdate: SessionProviderInputConsumerSession['waitForMetadataUpdate'];
     waitForAdmissionChange?: (abortSignal: AbortSignal) => Promise<boolean>;
     drainPending: (drainOpts?: DrainPendingOptions) => Promise<DrainPendingResult>;
+    armPendingClaim?: (signal: AbortSignal) => void;
   }>,
 ): Promise<void> {
   while (!opts.abortSignal.aborted && await (opts.shouldContinue?.() ?? true)) {
@@ -775,6 +781,10 @@ async function pumpPendingWhileActive(
         || result.stoppedReason === 'auth_failure'
       ) return;
       if (passDirty) continue;
+      if (result.retryAfterMs === undefined && (result.stoppedReason === 'no_pending'
+        || result.stoppedReason === 'deferred' || result.stoppedReason === 'materialization_blocked')) {
+        opts.armPendingClaim?.(wakeController.signal);
+      }
       const didWake = result.retryAfterMs === undefined
         ? await armedWake
         : await Promise.race([
@@ -884,7 +894,8 @@ async function waitForNextInput<Mode, Message>(
         return await returnBatch(opts, existingBatch, refreshBeforeQueuedBatch);
       }
 
-      const materializationRetryAfterMs = await materializePendingMessage(opts);
+      let passedClaimAdmission = false;
+      const materializationRetryAfterMs = await materializePendingMessage(opts, undefined, () => { passedClaimAdmission = true; });
 
       const materializedBatch = await collectQueuedBatch(opts);
       if (materializedBatch) {
@@ -941,6 +952,11 @@ async function waitForNextInput<Mode, Message>(
 
       let winner: WakeWinner | Readonly<{ kind: 'retry' }>;
       if (materializationRetryAfterMs === null) {
+        if (passedClaimAdmission && !opts.hasLocalInputCustody()) {
+          const timing = opts.resolvePendingQueueDeliveryTiming?.() ?? opts.pendingQueueDeliveryTiming ?? 'after_foreground_ready';
+          const tail = timing === 'after_runtime_idle' ? opts.session.readRuntimeActivitySnapshotTail?.() : undefined;
+          opts.session.armPendingClaim?.(controller.signal, timing, false, tail ? readExactIdleRuntimeActivityRevision(tail) : undefined);
+        }
         winner = await armedWake;
       } else {
         // The Pending owner retains this claim until settlement. Its retry hint
@@ -1070,6 +1086,7 @@ function logInputConsumerMaterializationDecision(opts: Readonly<{
 async function materializePendingMessage<Mode, Message>(
   opts: WaitForNextInputOptions<Mode, Message>,
   retainedFollowWakeLocalIds?: readonly string[],
+  onClaimAdmission?: () => void,
 ): Promise<number | null> {
   return await opts.runPendingMaterializationExclusive(async () => {
     const hasPredecessor = () => {
@@ -1083,6 +1100,8 @@ async function materializePendingMessage<Mode, Message>(
     if (!opts.isAdmitted() || hasPredecessor()) return null;
     if ((await reconcilePendingProviderInputCustodyBeforeMaterialization(opts.session, retainedFollowWakeLocalIds)) !== true) return null;
     if (opts.abortSignal.aborted || !opts.isAdmitted() || hasPredecessor()) return null;
+
+    onClaimAdmission?.();
 
     let result: MaterializeNextPendingResult;
     const reconcileWhenEmpty = opts.reconcileWhenEmpty ?? 'throttled';

@@ -88,6 +88,7 @@ export async function emitPendingChanged(params: {
     meaningfulActivityAt?: Date;
     recipientCursors: Array<{ accountId: string; cursor: number }>;
     activationTarget?: PendingActivationTarget;
+    committedEnqueueLocalId?: string;
 }): Promise<void> {
     const sessionRead = loadSessionTranscriptPublicationRecipientProjection(params.sessionId);
     const [session, activationState, ownerRunTargets] = await Promise.all([
@@ -123,6 +124,7 @@ export async function emitPendingChanged(params: {
                 randomKeyNaked(12),
             ),
             recipientFilter: { type: 'all-interested-in-session', sessionId: params.sessionId },
+            committedEnqueueLocalId: accountId === session.accountId ? params.committedEnqueueLocalId : undefined,
         });
     }));
     results.forEach((result, index) => {

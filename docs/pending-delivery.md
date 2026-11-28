@@ -999,6 +999,20 @@ without an evidence identity retain their existing unique-text matching behavior
 
 ## Live runner wake-up recovery (development)
 
+The 0.3 runner announces readiness on its bound Session socket while it
+is parked at the Pending input boundary. For a fresh main-conversation enqueue
+at the next observed Pending version, Home can commit the claim through the
+same ordered materializer used by pull. It applies the current publisher fence
+and addresses the committed claim only to that runner. During an active turn,
+the same outcome can apply a queue-only version without waking the consumer
+when foreground admission defers every eligible row. The ready runner uses the
+ordinary protected admission and acceptance path. Gaps, missing readiness and
+lost delivery still recover through pull.
+
+The main enqueue response carries the requesting owner's exact activation
+authorization when the transaction admits it for that row and an explicit null
+otherwise. The daemon still checks the authorization before starting a runner.
+
 Pending counts and versions come from the server's projection. A materialization
 acknowledgement without that projection retains the last server state; it does
 not decrement counts or increment versions. The existing projection owner also

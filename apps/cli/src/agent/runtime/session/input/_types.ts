@@ -6,6 +6,7 @@ import type {
 } from '@/api/session/sessionClientPort';
 import type { PendingQueueState } from '@/api/session/pendingQueueState';
 import type { AgentState } from '@/api/types';
+import type { PendingMaterializationDeliveryTiming } from '@/api/session/pendingQueueV2Transport';
 
 export type SessionInputLiveWork = Readonly<{
   session: 'active' | 'settled' | 'unknown';
@@ -30,6 +31,7 @@ export type PendingMaterializationReconcileWhenEmpty = 'force' | 'throttled' | '
 
 export type SessionProviderInputConsumerSession = Readonly<{
   waitForMetadataUpdate: (abortSignal?: AbortSignal) => Promise<boolean>;
+  armPendingClaim?: (signal: AbortSignal, deliveryTiming: PendingMaterializationDeliveryTiming, active: boolean, expectedRuntimeActivityRevision?: number) => void;
   getMetadataSnapshot?: () => unknown;
   getPendingMessageEditHoldIds?: () => readonly string[] | null;
   getAgentStateSnapshot?: () => AgentState | null;

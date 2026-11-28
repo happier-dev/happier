@@ -13,6 +13,7 @@ import {
   type SessionHumanPresenceVisibleReplaceResultV1,
 } from '@happier-dev/protocol/sessions';
 import type { SocketRpcRequestPayload as ProtocolSocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc'
+import { PENDING_INPUT_READY_EVENT_V1, type PendingInputReadyV1 } from '@happier-dev/protocol/sessions/pending/pendingRunnerClaimV1';
 import { ACCEPTED_PENDING_SETTLEMENT_EVENT_V1 } from '@happier-dev/protocol/sessions/pending/acceptedPendingSettlementV1';
 import { StoredMachinePublishedMetadataV1Schema, MachinePublishedDaemonStateV1Schema, MachinePublishedTransferListenerV1Schema, MachinePublishedTransferRuntimeV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import { CallerInputConstraintsV1Schema } from '@happier-dev/protocol/auth/callerInputConstraintsV1';
@@ -165,6 +166,7 @@ export interface ClientToServerEvents extends Record<typeof SESSION_FOLLOW_OBSER
     data: SessionFollowObservePendingRequestV1,
     cb: (answer: SessionFollowObservePendingResponseV1) => void,
   ) => void> {
+  [PENDING_INPUT_READY_EVENT_V1]: (data: PendingInputReadyV1 | null) => void;
   [SESSION_HUMAN_PRESENCE_VISIBLE_REPLACE_EVENT]: (
     data: SessionHumanPresenceVisibleReplaceV1,
     cb: (answer: SessionHumanPresenceVisibleReplaceResultV1) => void,

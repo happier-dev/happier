@@ -16,6 +16,7 @@ import type {
 } from '../../../types';
 import { UserMessageSchema } from '../../../types';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import { PENDING_INPUT_READY_EVENT_V1, PendingRunnerClaimV1Schema, type PendingInputReadyV1 } from '@happier-dev/protocol/sessions/pending/pendingRunnerClaimV1';
 import { SESSION_HUMAN_PRESENCE_SNAPSHOT_EVENT, SESSION_HUMAN_PRESENCE_VISIBLE_REPLACE_EVENT, SessionHumanPresenceSnapshotV1Schema, SessionHumanPresenceVisibleReplaceResultV1Schema } from '@happier-dev/protocol/sessions/presence/sessionHumanPresenceV1';
 import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
 import { isAuthenticationError } from '@/api/client/httpStatusError';
@@ -26,6 +27,7 @@ import {
     materializeNextPendingQueueV2Message,
     materializeNextPendingExecutionRunMessage,
     readPendingQueueMaterializationTransportDiagnostic,
+    readPushedPendingClaim,
     settlePendingQueueV2Admission,
     type PendingMaterializationDeliveryTiming,
     type PendingClaimForegroundState,
@@ -38,7 +40,7 @@ import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client
 import type { SessionSyncPendingInputServerContractResult } from '@/api/clientCompatibility/sessionSyncPendingInputServerContract';
 import { runSupervisedRequest } from '@/api/connection/requestSupervision/runSupervisedRequest';
 import { addDiscardedCommittedMessageLocalIds } from '../../../queue/discardedCommittedMessageLocalIds';
-import type { KnownPendingQueueState, PendingQueueState } from '../../pendingQueueState';
+import { readKnownPendingQueueState, type KnownPendingQueueState, type PendingQueueState } from '../../pendingQueueState';
 import type {
     MaterializeNextPendingOptions,
     MaterializeNextPendingResult,
@@ -518,6 +520,8 @@ export type SessionClientInteractionApi = Readonly<{
     refreshSessionSnapshotFromServerRequired: (opts?: { reason?: SessionSnapshotRefreshReason }) => Promise<void>;
     close: () => Promise<void>;
     installSessionSocketEventHandlers: (socket: Socket<ServerToClientEvents, ClientToServerEvents>) => void;
+    armPendingClaim: (signal: AbortSignal, deliveryTiming: PendingMaterializationDeliveryTiming, active: boolean, expectedRuntimeActivityRevision?: number) => void;
+    prefersBoundPendingWake: (update: Update) => boolean;
     listPendingMessageQueueV2LocalIds: () => Promise<string[]>;
     peekPendingMessageQueueV2Count: () => Promise<number>;
     reconcilePendingQueueState: (opts?: { force?: boolean }) => Promise<boolean>;
@@ -584,7 +588,7 @@ export function createSessionClientInteractionApi(
         reconcileTurnStatusBeforePendingMaterialization: () => Promise<boolean>;
         logPendingMaterializationSkip?: (stage: string) => void;
         maybeScheduleUserSocketDisconnect: () => void;
-        handleSessionScopedUpdate: (data: Update) => void;
+        handleSessionScopedUpdate: (data: Update, opts?: { pendingQueueOnly: true }) => void;
         onSessionFollowInvalidated?: () => void;
         onSessionFinished?: (turnId: string) => void;
         onSessionFinishedReconnect?: () => void;
@@ -628,6 +632,53 @@ export function createSessionClientInteractionApi(
     const pendingRpcResponses = new Set<Promise<void>>();
     let pendingQueueStateReconcileInFlight: Promise<boolean> | null = null;
     let lastPendingQueueStateReconcileAt = 0;
+    let nextPendingReadinessId = 0;
+    type ClaimSocket = ReturnType<typeof deps.getSocket>;
+    type Readiness = {
+        socket: ClaimSocket;
+        contract: SessionSyncPendingInputServerContractResult;
+        fact: PendingInputReadyV1;
+    };
+    let armed: Readiness | null = null;
+    let pushed: Readonly<{ readiness: Readiness; result: PendingQueueMaterializeNextResult }> | null = null;
+
+    const isCurrentPendingSocket = ({ socket, contract }: Readiness) => socket.connected && socket === deps.getSocket()
+        && !deps.getClosed() && deps.getSessionConnectionEpoch() === contract.sessionConnectionEpoch
+        && deps.getSessionSyncPendingInputServerContractResult() === contract;
+    const readMainPendingUpdate = (data: Update) => data.body?.t === 'pending-changed' && data.body.sid === deps.sessionId
+        && !data.body.recipient ? readKnownPendingQueueState(data.body) : null;
+
+    const handleSessionScopedUpdate = (socket: ClaimSocket, data: Update): void => {
+        const body = data.body;
+        if (!body || !('runnerClaim' in body)) {
+            deps.handleSessionScopedUpdate(data);
+            return;
+        }
+        // Pending content stays on the claim path. Generic update diagnostics see only the row projection.
+        const { runnerClaim, ...projection } = body;
+        const projected = { ...data, body: projection } as Update;
+        const enqueue = readMainPendingUpdate(projected);
+        const ready = armed;
+        const parsed = PendingRunnerClaimV1Schema.safeParse(runnerClaim);
+        const state = deps.getPendingQueueState();
+        if (!enqueue || !ready || ready.socket !== socket || !isCurrentPendingSocket(ready) || !parsed.success
+            || parsed.data.id !== ready.fact.id || !state.known || state.pendingVersion !== ready.fact.pendingVersion
+            || enqueue.pendingVersion !== ready.fact.pendingVersion + 1
+            || ready.fact.foregroundState !== deps.getPendingClaimForegroundState()) {
+            deps.handleSessionScopedUpdate(projected);
+            return;
+        }
+        if (parsed.data.result === 'queue-only' && ready.fact.foregroundState !== 'ready') {
+            ready.fact = { ...ready.fact, pendingVersion: enqueue.pendingVersion };
+            deps.handleSessionScopedUpdate(projected, { pendingQueueOnly: true });
+            return;
+        }
+        if (typeof parsed.data.result !== 'string') {
+            const result = readPushedPendingClaim(parsed.data.result);
+            if (result?.pendingQueueState?.pendingVersion === enqueue.pendingVersion + 1) pushed = { readiness: ready, result };
+        }
+        deps.handleSessionScopedUpdate(projected);
+    };
 
     const runMaterializeNextPendingMessageInner = async (opts: MaterializeNextPendingOptions = {}, target?: ExecutionRunPendingMaterialization): Promise<{
         didMaterialize: boolean;
@@ -717,7 +768,16 @@ export function createSessionClientInteractionApi(
         let claimCustodyLocalIds: readonly string[] = [];
         try {
             reportDiagnosticPhase('materialize.server_claim');
-            materializeResult = await runSupervisedRequest({
+            const offered = target ? null : pushed;
+            if (!target) pushed = null;
+            const currentState = deps.getPendingQueueState();
+            const claimVersion = offered?.result.pendingQueueState?.pendingVersion;
+            const consumeOffer = offered && isCurrentPendingSocket(offered.readiness) && currentState.known && claimVersion !== undefined
+                && (currentState.pendingVersion === claimVersion || currentState.pendingVersion === claimVersion - 1)
+                && offered.readiness.fact.foregroundState === deps.getPendingClaimForegroundState()
+                && retainedContextLocalIds.length === 0 && (deps.readPendingCustodyLocalIdsForClaim?.().length ?? 0) === 0
+                && offered.readiness.fact.deliveryTiming === (deliveryTiming ?? 'after_foreground_ready');
+            materializeResult = consumeOffer ? offered.result : await runSupervisedRequest({
                 supervisor,
                 requireAuth: true,
                 requireOnline: false,
@@ -1187,6 +1247,8 @@ export function createSessionClientInteractionApi(
                 });
             });
             socket.on('disconnect', () => {
+                if (armed?.socket === socket) armed = null;
+                if (pushed?.readiness.socket === socket) pushed = null;
                 if (isCurrentSocket()) replacePendingMessageEditHoldIds(null);
             });
             socket.on(SESSION_HUMAN_PRESENCE_SNAPSHOT_EVENT, (raw) => {
@@ -1227,7 +1289,9 @@ export function createSessionClientInteractionApi(
                     error: serializeAxiosErrorForLog(error),
                 });
             });
-            socket.on('update', (data: Update) => deps.handleSessionScopedUpdate(data));
+            socket.on('update', (data: Update) => {
+                if (isCurrentSocket()) handleSessionScopedUpdate(socket, data);
+            });
             socket.on('session', (raw: unknown) => {
                 if (!isCurrentSocket()) return;
                 const parsed = SessionBroadcastContainerSchema.safeParse(raw);
@@ -1241,6 +1305,37 @@ export function createSessionClientInteractionApi(
                     error: serializeAxiosErrorForLog(error),
                 });
             });
+        },
+
+        armPendingClaim(signal, requestedTiming, active, expectedRuntimeActivityRevision) {
+            const socket = deps.getSocket();
+            const contract = deps.getSessionSyncPendingInputServerContractResult();
+            const state = deps.getPendingQueueState();
+            const foregroundState = deps.getPendingClaimForegroundState();
+            if (signal.aborted || armed || !contract || contract.pendingInput !== 'v1' || !state.known
+                || contract.socket !== socket || (deps.readPendingCustodyLocalIdsForClaim?.().length ?? 0) > 0
+                || (deps.readRetainedContextLocalIds?.().length ?? 0) > 0
+                || active !== (foregroundState !== 'ready')) return;
+            const deliveryTiming = deps.resolvePendingClaimDeliveryTiming?.(requestedTiming) ?? requestedTiming;
+            const next: Readiness = { socket, contract, fact: {
+                v: 1, id: ++nextPendingReadinessId, pendingVersion: state.pendingVersion, foregroundState, deliveryTiming,
+                ...(deliveryTiming === 'after_runtime_idle' && expectedRuntimeActivityRevision !== undefined
+                    ? { expectedRuntimeActivityRevision } : {}),
+            } };
+            if (!isCurrentPendingSocket(next)) return;
+            armed = next;
+            socket.emit(PENDING_INPUT_READY_EVENT_V1, next.fact);
+            signal.addEventListener('abort', () => {
+                if (armed !== next) return;
+                armed = null;
+                if (isCurrentPendingSocket(next)) socket.emit(PENDING_INPUT_READY_EVENT_V1, null);
+            }, { once: true });
+        },
+
+        prefersBoundPendingWake(update) {
+            if (!armed || !isCurrentPendingSocket(armed)) return false;
+            const incoming = readMainPendingUpdate(update)?.pendingVersion;
+            return incoming === armed.fact.pendingVersion || incoming === armed.fact.pendingVersion + 1;
         },
 
         async listPendingMessageQueueV2LocalIds() {
