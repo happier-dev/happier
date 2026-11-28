@@ -2175,7 +2175,7 @@ async function runHostedSessionRuntime(
         onError: (error) => logger.debug(`${config.uiLogPrefix} Workflow origin context unavailable`, {
           error: error instanceof Error ? error.message : 'unknown_error',
         }),
-        followWake: sessionFollowWake,
+        deliveryWake: sessionFollowWake.workflowOrigin,
       }) };
     }
     return currentWorkflowInput.port;

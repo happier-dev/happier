@@ -117,7 +117,10 @@ it('keeps unrelated writes quiet and releases frozen Workflow input after a new 
         client = new ApiSessionClient(credentials.token, initialSession, {
             localMachineId: 'wake-machine',
             metadataAuthority: { kind: 'owner', credentials, readCurrentCredentials: async () => credentials },
-            onSessionFollowInvalidated: () => { invalidations++; publishSessionFollowWakeInvalidation(sessionId); },
+            onSessionFollowInvalidated: (sessionId, workflowOriginMayHaveChanged) => {
+                invalidations++;
+                publishSessionFollowWakeInvalidation(sessionId, workflowOriginMayHaveChanged);
+            },
             transport: { serverId: 'context-wake-home', serverUrl: home,
                 createAccountUpdatesSocket: () => accountSocket,
                 createSessionSocketTransport: () => ({ socket: sessionSocket, transport: createSocketTransportAdapter(sessionSocket) }) },
@@ -127,7 +130,7 @@ it('keeps unrelated writes quiet and releases frozen Workflow input after a new 
         client.onUserMessage(() => { throw new Error('This fixture offers Workflow input only'); });
         await vi.waitFor(() => expect(invalidations).toBeGreaterThan(0));
         const workflow = createWorkflowOriginContextInputPort({
-            accountId, originSessionId: sessionId, machineId, followWake,
+            accountId, originSessionId: sessionId, machineId, deliveryWake: followWake.workflowOrigin,
             storage: { execute: async operation => {
                 if (operation.operation === 'delivery.pull') {
                     workflowReads++;
@@ -175,6 +178,18 @@ it('keeps unrelated writes quiet and releases frozen Workflow input after a new 
             sockets.to('account').emit('update', UpdateSchema.parse({ id: `account-${cursor}`, seq: cursor,
                 createdAt: cursor, body: { t: 'account-change', changeKinds: ['session'], entityIds: [entityId] } }));
             await received;
+            await drain();
+        }
+        expect({ takes, workflowReads }).toEqual({ takes: baseline, workflowReads: 1 });
+
+        for (let turn = 0; turn < 3; turn++) {
+            cursor++;
+            changes = [{ cursor, kind: 'session', entityId: sessionId, changedAt: cursor,
+                hint: { workflowOriginUnchangedSinceCursor: 0 } }];
+            const beforeInvalidation = invalidations;
+            sockets.to('account').emit('update', UpdateSchema.parse({ id: `account-${cursor}`, seq: cursor,
+                createdAt: cursor, body: { t: 'account-change', changeKinds: ['session'], entityIds: [sessionId] } }));
+            await vi.waitFor(() => expect(invalidations).toBeGreaterThan(beforeInvalidation));
             await drain();
         }
         expect({ takes, workflowReads }).toEqual({ takes: baseline, workflowReads: 1 });

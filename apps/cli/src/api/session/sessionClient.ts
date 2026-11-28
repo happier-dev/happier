@@ -580,7 +580,7 @@ export type ApiSessionClientOptions = Readonly<{
     initialRegisteredSessionStateFieldMutations?: readonly RegisteredSessionStateFieldMutationV1[];
     durableMutationDeliveryInitiallyActive?: boolean;
     /** Exact destination Session update/reconnect hint for the shared host Follow reconciler; names this Session. */
-    onSessionFollowInvalidated?: (sessionId: string) => void;
+    onSessionFollowInvalidated?: (sessionId: string, workflowOriginMayHaveChanged?: boolean) => void;
     /** Publishes Runner wake support only for the lifetime of the installed Session receiver. */
     installSessionFollowWakeReceiver?: () => () => void;
 }>;
@@ -1390,7 +1390,7 @@ export class ApiSessionClient extends EventEmitter {
             reconcilePendingExecutionRunTarget: (runId) => this.notifyExecutionRunPendingTarget(runId),
             refreshDemandedAccountCatalogs: () => this.refreshDemandedAccountCatalogs(),
             onSessionFollowInvalidated: options.onSessionFollowInvalidated
-                ? () => options.onSessionFollowInvalidated!(this.sessionId) : undefined,
+                ? (workflowOriginMayHaveChanged) => options.onSessionFollowInvalidated!(this.sessionId, workflowOriginMayHaveChanged) : undefined,
         });
         // The predecessor key names the profile owning this journal, even if the active Home changes later.
         const predecessorSettlementScope = {

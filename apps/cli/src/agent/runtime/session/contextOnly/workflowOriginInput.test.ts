@@ -101,7 +101,7 @@ describe('origin workflow current-state pull', () => {
         storage: { execute: async operation => {
           if (operation.operation === 'delivery.pull') { pulls++; return { runs: [] }; }
           throw new Error('unexpected operation');
-        } }, onError: error => { throw error; }, followWake: wake });
+        } }, onError: error => { throw error; }, deliveryWake: wake.workflowOrigin });
       const signal = new AbortController().signal;
       const pass = async () => {
         expect(await port.take(signal)).toBeNull();
@@ -113,6 +113,12 @@ describe('origin workflow current-state pull', () => {
       // A sibling hosted Session's change cannot produce this origin's delivery.
       publishSessionFollowWakeInvalidation('sibling');
       await pass();
+      expect(pulls).toBe(1);
+      // Three ordinary turns can wake Follow while the origin delivery proof keeps its read quiet.
+      for (let turn = 0; turn < 3; turn++) {
+        publishSessionFollowWakeInvalidation('origin', false);
+        await pass();
+      }
       expect(pulls).toBe(1);
       // The origin's own durable Session change (workflow delivery publishes one) reads again, once.
       publishSessionFollowWakeInvalidation('origin');

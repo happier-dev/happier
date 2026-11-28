@@ -25,7 +25,7 @@ import type { ExecutionRunMachineActivityV1 } from '@happier-dev/protocol/execut
 import { SCM_DIFF_SUMMARY_RESULT_UPDATED_EVENT, type ScmDiffSummaryResultPublisherHint } from '@happier-dev/protocol/scm/diffSummaryResult';
 import type { ExecutionRunResumeMaterializationAuthority } from '@/agent/runtime/bridges/executionRun/resumeBackendController';
 import type { ProviderBrokerRetainedCurrentnessInvalidation } from '@/providers/broker/brokerRetainedCurrentnessInvalidation';
-import { ACCOUNT_CHANGES_PAGE_LIMIT_V1, AUTOMATION_SOURCE_STATUS_CHANGE_ENTITY_ID, changeRowsAlreadyHeld, isAutomationDefinitionChangeV1, isChangesPageFull, readConnectedServicesAccountChangeV1, readPushedAccountChangesPageV1, readProviderAccountUsageRefreshRecordIdV1 } from '@happier-dev/protocol/changes';
+import { ACCOUNT_CHANGES_PAGE_LIMIT_V1, AUTOMATION_SOURCE_STATUS_CHANGE_ENTITY_ID, changeRowsAlreadyHeld, isAutomationDefinitionChangeV1, isChangesPageFull, readConnectedServicesAccountChangeV1, readPushedAccountChangesPageV1, readProviderAccountUsageRefreshRecordIdV1, readSessionWorkflowOriginChangedV1 } from '@happier-dev/protocol/changes';
 import type { QualifiedConnectedAccountServiceRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { PluginDomainChangeEntrySchema } from '@happier-dev/protocol/changes/pluginDomain';
 import { ManagedMachinePolicyChangeHintV1Schema } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
@@ -424,7 +424,7 @@ import {
     CURRENT_SESSION_RUNTIME_OPERATION_PROTOCOL_CAPABILITIES_V1,
     publishMachineOperationProtocolCapabilitiesOnSocket,
 } from '@/api/machine/publishMachineOperationProtocolCapabilities';
-import { publishSessionFollowWakeInvalidation } from '@/agent/runtime/session/follow/sessionFollowWakeSignal';
+import { publishSessionFollowWakeInvalidation, publishSessionWorkflowOriginInvalidation } from '@/agent/runtime/session/follow/sessionFollowWakeSignal';
 import { readSessionFollowReceiverChangeV1 } from '@happier-dev/protocol/sessions/follow/changes';
 import { readMachineOwnerConflictFromSocketError, type MachineOwnerConflictDetails } from '@/api/machine/machineOwnerConflict';
 import { readAccountSettingsVersionFromHint } from '@/settings/accountSettings/accountSettingsVersion';
@@ -7425,8 +7425,20 @@ export class ApiMachineClient {
                     await this.notifySessionFollowRulesChanged({ full: followSourcesFull, workflowRunIds, discussionIds,
                         ...(reason !== 'live' ? { continuityReset: true as const } : {}),
                         ...(receiverSessionIds.length ? { receiverSessionIds } : {}) });
-                if (reason !== 'live' || changes.some((change) => change.kind === 'session')) {
+                if (reason !== 'live' || pageFull) {
                     publishSessionFollowWakeInvalidation();
+                } else {
+                    const sessionChanges = changes.filter(change => change.kind === 'session');
+                    const workflowOriginChanges = sessionChanges.map(change => readSessionWorkflowOriginChangedV1(change, after));
+                    if (sessionChanges.length > 0) {
+                        const hasUnknownWorkflowOriginChange = workflowOriginChanges.includes(null);
+                        publishSessionFollowWakeInvalidation(undefined, hasUnknownWorkflowOriginChange);
+                        if (!hasUnknownWorkflowOriginChange) {
+                            for (const [index, change] of sessionChanges.entries()) {
+                                if (workflowOriginChanges[index]) publishSessionWorkflowOriginInvalidation(change.entityId);
+                            }
+                        }
+                    }
                 }
                 this.applyResourceSessionAccessWitness({
                     accountId,

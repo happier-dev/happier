@@ -12,6 +12,7 @@
 type WakeSource = { generation: number; readonly waiters: Set<() => void> };
 
 const processWide: WakeSource = { generation: 0, waiters: new Set() };
+const processWideWorkflowOrigin: WakeSource = { generation: 0, waiters: new Set() };
 
 function publish(source: WakeSource): void {
   source.generation += 1;
@@ -35,7 +36,11 @@ function waitFor(sources: readonly WakeSource[], readGeneration: () => number, a
   });
 }
 
-type SessionScopedWake = Readonly<{ readSessionId: () => string | null | undefined; source: WakeSource }>;
+type SessionScopedWake = Readonly<{
+  readSessionId: () => string | null | undefined;
+  source: WakeSource;
+  workflowOrigin: WakeSource;
+}>;
 /** Live hosted Session signals; each runtime removes its own on dispose. */
 const sessionScoped = new Set<SessionScopedWake>();
 
@@ -44,12 +49,15 @@ const sessionScoped = new Set<SessionScopedWake>();
  * signals currently hosting that Session (a change to Session A cannot produce
  * context for its hosted siblings).
  */
-export function publishSessionFollowWakeInvalidation(sessionId?: string): void {
-  if (sessionId === undefined) {
-    publish(processWide);
-    return;
-  }
-  for (const entry of sessionScoped) if (entry.readSessionId() === sessionId) publish(entry.source);
+export function publishSessionFollowWakeInvalidation(sessionId?: string, workflowOriginMayHaveChanged = true): void {
+  if (sessionId === undefined) publish(processWide);
+  else for (const entry of sessionScoped) if (entry.readSessionId() === sessionId) publish(entry.source);
+  if (workflowOriginMayHaveChanged) publishSessionWorkflowOriginInvalidation(sessionId);
+}
+
+export function publishSessionWorkflowOriginInvalidation(sessionId?: string): void {
+  if (sessionId === undefined) publish(processWideWorkflowOrigin);
+  else for (const entry of sessionScoped) if (entry.readSessionId() === sessionId) publish(entry.workflowOrigin);
 }
 
 export function readSessionFollowWakeInvalidationGeneration(): number {
@@ -63,12 +71,25 @@ export function waitForSessionFollowWakeInvalidation(
   return waitFor([processWide], readSessionFollowWakeInvalidationGeneration, afterGeneration, signal);
 }
 
-export type SessionFollowWakeSignal = Readonly<{
-  /** Wakes only this Session's waiters. */
-  publish: () => void;
-  /** Monotonic over process-wide and this Session's invalidations. */
+type WakeReader = Readonly<{
   readGeneration: () => number;
   waitForChange: (afterGeneration: number, signal: AbortSignal) => Promise<boolean>;
+}>;
+
+function readWakeSources(sources: readonly WakeSource[]): WakeReader {
+  const readGeneration = () => sources.reduce((generation, source) => generation + source.generation, 0);
+  return {
+    readGeneration,
+    waitForChange: (afterGeneration, signal) => waitFor(sources, readGeneration, afterGeneration, signal),
+  };
+}
+
+export const processWideWorkflowOriginWake = readWakeSources([processWideWorkflowOrigin]);
+
+export type SessionFollowWakeSignal = WakeReader & Readonly<{
+  /** Wakes only this Session's waiters. */
+  publish: () => void;
+  workflowOrigin: WakeReader;
   /** Stops receiving Session-addressed invalidations. */
   dispose: () => void;
 }>;
@@ -80,13 +101,13 @@ export type SessionFollowWakeSignal = Readonly<{
  */
 export function createSessionFollowWakeSignal(readSessionId?: () => string | null | undefined): SessionFollowWakeSignal {
   const own: WakeSource = { generation: 0, waiters: new Set() };
-  const readGeneration = () => processWide.generation + own.generation;
-  const scoped: SessionScopedWake | null = readSessionId ? { readSessionId, source: own } : null;
+  const workflowOrigin: WakeSource = { generation: 0, waiters: new Set() };
+  const scoped: SessionScopedWake | null = readSessionId ? { readSessionId, source: own, workflowOrigin } : null;
   if (scoped) sessionScoped.add(scoped);
   return {
     publish: () => publish(own),
-    readGeneration,
-    waitForChange: (afterGeneration, signal) => waitFor([processWide, own], readGeneration, afterGeneration, signal),
+    ...readWakeSources([processWide, own]),
+    workflowOrigin: readWakeSources([processWideWorkflowOrigin, workflowOrigin]),
     dispose: () => { if (scoped) sessionScoped.delete(scoped); },
   };
 }

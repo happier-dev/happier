@@ -10931,6 +10931,16 @@ or a released C1 contract. The actual prior-development strict-parser and
 query-ignoring-handler checks own the reachable skew claim. This is an additive
 opt-in within V1, not a new wire epoch, persistence format or SDK ABI.
 
+## Workflow origin Session delivery hints (0.3 development)
+
+The Session change publication owner carries optional `workflowOriginUnchangedSinceCursor`
+in the existing open hint for pull and pushed pages. A live CLI skips the origin delivery read
+after an ordinary Session change only when its consumed Account cursor covers that floor.
+A Workflow delivery publication withdraws the proof. The next ordinary publication
+starts a new floor, so a reader behind that delivery still reads it. Older Homes,
+malformed hints, gaps and reconnects retain conservative recovery. The Workflow
+delivery acknowledgement and the authorization for origin reads are unchanged.
+
 ## Follow Session projection hints (0.3 development)
 
 The 0.3 development Session AccountChange hint retains its existing open metadata

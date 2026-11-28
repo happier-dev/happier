@@ -1,4 +1,4 @@
-import { readSessionFollowProjectionOnlySinceCursorV1, readSessionMemoryInputsProjectionOnlySinceCursorV1, readSessionMemoryLocalityProjectionOnlySinceCursorV1, readSessionUsageAccountingProjectionOnlySinceCursorV1, SessionDeletedChangeHintV1Schema } from '@happier-dev/protocol/changes';
+import { readSessionFollowProjectionOnlySinceCursorV1, readSessionMemoryInputsProjectionOnlySinceCursorV1, readSessionMemoryLocalityProjectionOnlySinceCursorV1, readSessionUsageAccountingProjectionOnlySinceCursorV1, readSessionWorkflowOriginUnchangedSinceCursorV1, SessionDeletedChangeHintV1Schema } from '@happier-dev/protocol/changes';
 import type { Tx } from '@/storage/inTx';
 
 function readDeletionHint(hint: unknown) {
@@ -15,6 +15,7 @@ export function sessionChangeHint(hint: unknown): Record<string, unknown> {
     // Cursor-stamped facts are server-owned: only the coalescing merge below writes them.
     delete (result as Record<string, unknown>).followReceiverAvailabilityChangedAtCursor;
     delete (result as Record<string, unknown>).transcriptRevisedAtCursor;
+    delete (result as Record<string, unknown>).workflowOriginUnchangedSinceCursor;
     return result;
 }
 
@@ -30,7 +31,15 @@ export function mergeSessionCoalescedHint(current: unknown, hint: unknown, curso
     const isCursor = (value: unknown) => Number.isSafeInteger(value) && (value as number) > 0;
     const revisedAt = typeof next.updatedMessageSeq === 'number' ? cursor
         : isCursor(previous.transcriptRevisedAtCursor) ? previous.transcriptRevisedAtCursor : undefined;
-    const merged = revisedAt === undefined ? next : { ...next, transcriptRevisedAtCursor: revisedAt };
+    const workflowOriginSince = readSessionWorkflowOriginUnchangedSinceCursorV1(previous);
+    const merged = {
+        ...next,
+        ...(revisedAt === undefined ? {} : { transcriptRevisedAtCursor: revisedAt }),
+        ...(next.kind === 'workflow-run-delivery' ? {} : {
+            workflowOriginUnchangedSinceCursor: workflowOriginSince !== null && workflowOriginSince < cursor
+                ? workflowOriginSince : cursor - 1,
+        }),
+    };
     if (next.followReceiverAvailabilityChanged === true) return { ...merged, followReceiverAvailabilityChangedAtCursor: cursor };
     if (previous.followReceiverAvailabilityChanged === true && isCursor(previous.followReceiverAvailabilityChangedAtCursor)) {
         return { ...merged, followReceiverAvailabilityChanged: true,
@@ -52,7 +61,11 @@ export function sessionCoalescedHintSql(existing: string, next: string, cursor: 
         THEN jsonb_build_object('transcriptRevisedAtCursor', ${cursor})
         WHEN jsonb_typeof(${existing}->'transcriptRevisedAtCursor') = 'number'
         THEN jsonb_build_object('transcriptRevisedAtCursor', ${existing}->'transcriptRevisedAtCursor')
-        ELSE '{}'::jsonb END) END`;
+        ELSE '{}'::jsonb END) || (CASE WHEN ${next}->>'kind' = 'workflow-run-delivery'
+        THEN '{}'::jsonb
+        WHEN jsonb_typeof(${existing}->'workflowOriginUnchangedSinceCursor') = 'number'
+        THEN jsonb_build_object('workflowOriginUnchangedSinceCursor', ${existing}->'workflowOriginUnchangedSinceCursor')
+        ELSE jsonb_build_object('workflowOriginUnchangedSinceCursor', (${cursor}) - 1) END) END`;
 }
 
 /** A generic source invalidation must withdraw a retained projection-only fact. */
@@ -67,6 +80,8 @@ export function retainSessionSourceChangeHint(hint: unknown): unknown {
     delete retained.memoryInputsUnchangedSinceCursor;
     delete retained.memoryLocalityChanged;
     delete retained.memoryLocalityUnchangedSinceCursor;
+    // A generic invalidation may retain display metadata, but it publishes no new Workflow delivery.
+    if (retained.kind === 'workflow-run-delivery') delete retained.kind;
     return retained;
 }
 

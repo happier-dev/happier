@@ -152,6 +152,27 @@ describe("AccountChange coalescing database contract", () => {
         expect((await read()).hint).toEqual(deletion);
     });
 
+    it(`keeps Workflow origin delivery visible under later point and batch changes on ${provider}`, async () => {
+        const account = await db.account.create({ data: { publicKey: `${publicKeyPrefix}${randomUUID()}` } });
+        const session = await db.session.create({ data: { accountId: account.id, tag: randomUUID(), metadata: '{}' } });
+        const read = () => db.accountChange.findUniqueOrThrow({ where: {
+            accountId_kind_entityId: { accountId: account.id, kind: 'session', entityId: session.id },
+        } });
+        const point = (hint: unknown) => inTx(tx => markAccountChanged(tx, {
+            accountId: account.id, kind: 'session', entityId: session.id, hint,
+        }));
+        await point({ lastMessageSeq: 1 });
+        const append = await read();
+        expect(append.hint).toMatchObject({ workflowOriginUnchangedSinceCursor: append.cursor - 1 });
+        await point({ kind: 'workflow-run-delivery', runId: 'origin-run', revision: 2 });
+        const delivery = await read();
+        expect(delivery.hint).not.toHaveProperty('workflowOriginUnchangedSinceCursor');
+        await inTx(tx => markSessionAccountsChanged(tx, new Map([[session.id, [account.id]]])));
+        expect((await read()).hint).toMatchObject({ workflowOriginUnchangedSinceCursor: delivery.cursor });
+        await point({ lastMessageSeq: 2, workflowOriginUnchangedSinceCursor: 0 });
+        expect((await read()).hint).toMatchObject({ workflowOriginUnchangedSinceCursor: delivery.cursor });
+    });
+
     it(`retains a transcript revision under later append and batch coalescing only for unconsumed readers on ${provider}`, async () => {
         const account = await db.account.create({ data: { publicKey: `${publicKeyPrefix}${randomUUID()}` } });
         const session = await db.session.create({ data: { accountId: account.id, tag: randomUUID(), metadata: '{}' } });
@@ -208,7 +229,7 @@ describe("AccountChange coalescing database contract", () => {
         await metadata(1);
         await metadata(2);
         const projection = await read();
-        expect(projection.hint).toEqual({ metadataVersion: 2, followSourceChanged: false,
+        expect(projection.hint).toMatchObject({ metadataVersion: 2, followSourceChanged: false,
             followReceiverAvailabilityChanged: false,
             followSourceUnchangedSinceCursor: original.cursor });
         await inTx(tx => markSessionAccountsChanged(tx, new Map([[session.id, [account.id]]])));
@@ -375,8 +396,8 @@ describe("AccountChange coalescing database contract", () => {
             await tx.machine.deleteMany({ where: { id: { in: [pointMachine.id, batchMachine.id] } } });
             expect(emit).not.toHaveBeenCalled();
             return transactionResult(() => [
-                { kind: "session", entityId: pointSession.id, cursor: pointSessionChange.resolveCursor(), hint: { removed: true, followReceiverAvailabilityChanged: false } },
-                { kind: "session", entityId: batchSession.id, cursor: batchSessionChange.resolveCursor(), hint: { followReceiverAvailabilityChanged: false } },
+                { kind: "session", entityId: pointSession.id, cursor: pointSessionChange.resolveCursor(), hint: expect.objectContaining({ removed: true, followReceiverAvailabilityChanged: false }) },
+                { kind: "session", entityId: batchSession.id, cursor: batchSessionChange.resolveCursor(), hint: expect.objectContaining({ followReceiverAvailabilityChanged: false }) },
                 { kind: "machine", entityId: pointMachine.id, cursor: pointMachineChange.resolveCursor(), hint: { removed: true } },
                 { kind: "machine", entityId: batchMachine.id, cursor: batchMachineChange.resolveCursor(), hint: { removed: true, batch: true } },
             ]);
@@ -759,7 +780,8 @@ describe("AccountChange coalescing database contract", () => {
         const changes = await db.accountChange.findMany({ where: { entityId: session.id, kind: "session" },
             orderBy: { accountId: "asc" }, select: { accountId: true, cursor: true, sessionId: true, hint: true } });
         expect(changes).toEqual(cursors.map(cursor => ({ ...cursor, sessionId: session.id,
-            hint: { ...(provider === "postgres" ? {} : { sharedMetadataVersion: 7 }), followReceiverAvailabilityChanged: false },
+            hint: { ...(provider === "postgres" ? {} : { sharedMetadataVersion: 7 }), followReceiverAvailabilityChanged: false,
+                workflowOriginUnchangedSinceCursor: 0 },
         })));
         const accountTimestamps = await db.account.findMany({ where: { id: { in: accounts.map(account => account.id) } },
             select: { updatedAt: true } });
@@ -769,7 +791,8 @@ describe("AccountChange coalescing database contract", () => {
         expect(await db.accountChange.findMany({ where: { entityId: session.id }, orderBy: { accountId: "asc" },
             select: { accountId: true, cursor: true, sessionId: true, hint: true } })).toEqual(cursors.map(cursor => ({
             ...cursor, sessionId: null,
-            hint: { ...(provider === "postgres" ? {} : { sharedMetadataVersion: 7 }), followReceiverAvailabilityChanged: false },
+            hint: { ...(provider === "postgres" ? {} : { sharedMetadataVersion: 7 }), followReceiverAvailabilityChanged: false,
+                workflowOriginUnchangedSinceCursor: 0 },
         })));
     });
 

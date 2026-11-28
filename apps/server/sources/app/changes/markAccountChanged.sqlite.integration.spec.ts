@@ -85,6 +85,27 @@ describe("terminal AccountChange publication on SQLite", () => {
         expect(readSessionFollowSourceChangedV1(await read(), title.cursor)).toBe(true);
     });
 
+    it('proves Workflow origin delivery is unchanged only after the last unobserved publication', async () => {
+        const account = await db.account.create({ data: { publicKey: 'workflow-origin-coalescing' } });
+        const session = await db.session.create({ data: { accountId: account.id, tag: 'workflow-origin-coalescing', metadata: '{}' } });
+        const read = () => db.accountChange.findUniqueOrThrow({ where: {
+            accountId_kind_entityId: { accountId: account.id, kind: 'session', entityId: session.id },
+        } });
+        const point = (hint: unknown) => inTx(tx => markAccountChanged(tx, {
+            accountId: account.id, kind: 'session', entityId: session.id, hint,
+        }));
+        await point({ lastMessageSeq: 1 });
+        const append = await read();
+        expect(append.hint).toMatchObject({ workflowOriginUnchangedSinceCursor: append.cursor - 1 });
+        await point({ kind: 'workflow-run-delivery', runId: 'origin-run', revision: 2 });
+        const delivery = await read();
+        expect(delivery.hint).not.toHaveProperty('workflowOriginUnchangedSinceCursor');
+        await inTx(tx => markSessionAccountsChanged(tx, new Map([[session.id, [account.id]]])));
+        expect((await read()).hint).toMatchObject({ workflowOriginUnchangedSinceCursor: delivery.cursor });
+        await point({ lastMessageSeq: 2, workflowOriginUnchangedSinceCursor: 0 });
+        expect((await read()).hint).toMatchObject({ workflowOriginUnchangedSinceCursor: delivery.cursor });
+    });
+
     it('retains a transcript revision under later append and batch coalescing only for unconsumed readers', async () => {
         const account = await db.account.create({ data: { publicKey: 'transcript-revision-coalescing' } });
         const session = await db.session.create({ data: { accountId: account.id, tag: 'transcript-revision', metadata: '{}' } });
@@ -340,8 +361,8 @@ describe("terminal AccountChange publication on SQLite", () => {
             await tx.machine.deleteMany({ where: { id: { in: [pointMachine.id, batchMachine.id] } } });
             expect(emit).not.toHaveBeenCalled();
             return transactionResult(() => [
-                { kind: "session", entityId: pointSession.id, cursor: pointSessionChange.resolveCursor(), hint: { removed: true, followReceiverAvailabilityChanged: false } },
-                { kind: "session", entityId: batchSession.id, cursor: batchSessionChange.resolveCursor(), hint: { followReceiverAvailabilityChanged: false } },
+                { kind: "session", entityId: pointSession.id, cursor: pointSessionChange.resolveCursor(), hint: expect.objectContaining({ removed: true, followReceiverAvailabilityChanged: false }) },
+                { kind: "session", entityId: batchSession.id, cursor: batchSessionChange.resolveCursor(), hint: expect.objectContaining({ followReceiverAvailabilityChanged: false }) },
                 { kind: "machine", entityId: pointMachine.id, cursor: pointMachineChange.resolveCursor(), hint: { removed: true } },
                 { kind: "machine", entityId: batchMachine.id, cursor: batchMachineChange.resolveCursor(), hint: { removed: true, batch: true } },
             ]);

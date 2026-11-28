@@ -39,7 +39,7 @@ export function createSessionClientRecoveryRuntime(
         reconcilePendingExecutionRunTarget?: (runId: string) => Promise<void>;
         refreshAccountSettingsForMinimumVersion?: (settingsVersion: number | null) => Promise<void>;
         refreshDemandedAccountCatalogs?: () => Promise<void>;
-        onSessionFollowInvalidated?: () => void;
+        onSessionFollowInvalidated?: (workflowOriginMayHaveChanged?: boolean) => void;
     }> & SessionStoredContentCryptoContext,
 ): SessionClientRecoveryRuntime {
     const env = params.env ?? sessionProcessEnvironment();

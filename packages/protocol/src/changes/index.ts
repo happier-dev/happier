@@ -329,6 +329,24 @@ export function readSessionFollowSourceChangedV1(
   return since === null || !Number.isSafeInteger(afterCursor) || afterCursor < since || since >= change.cursor;
 }
 
+/** Cursor floor of a server-owned proof of unchanged Workflow origin delivery. */
+export function readSessionWorkflowOriginUnchangedSinceCursorV1(hint: unknown): number | null {
+  if (!hint || typeof hint !== 'object' || Array.isArray(hint)) return null;
+  const cursor = (hint as Record<string, unknown>).workflowOriginUnchangedSinceCursor;
+  return typeof cursor === 'number' && Number.isSafeInteger(cursor) && cursor >= 0 ? cursor : null;
+}
+
+/** Null preserves recovery for missing or malformed facts and older Homes. */
+export function readSessionWorkflowOriginChangedV1(
+  change: Readonly<{ kind: string; cursor: number; hint?: unknown }>, afterCursor: number,
+): boolean | null {
+  if (change.kind !== 'session') return null;
+  if (change.hint && typeof change.hint === 'object' && 'kind' in change.hint
+      && change.hint.kind === 'workflow-run-delivery') return true;
+  const since = readSessionWorkflowOriginUnchangedSinceCursorV1(change.hint);
+  return since === null || since >= change.cursor || !Number.isSafeInteger(afterCursor) ? null : afterCursor < since;
+}
+
 /** The Account cursor preceding coalesced writes proven not to change server accounting. */
 export function readSessionUsageAccountingProjectionOnlySinceCursorV1(hint: unknown): number | null {
   if (!hint || typeof hint !== 'object' || Array.isArray(hint)) return null;

@@ -130,6 +130,27 @@ describe('runSessionChangesSyncOnConnect', () => {
   });
 
   it.each([
+    { label: 'caught up to the Workflow proof', after: 3, reason: 'live', hint: { workflowOriginUnchangedSinceCursor: 3 }, workflow: false },
+    { label: 'unobserved Workflow publication', after: 2, reason: 'live', hint: { workflowOriginUnchangedSinceCursor: 3 }, workflow: true },
+    { label: 'older Home', after: 3, reason: 'live', hint: { lastMessageSeq: 1 }, workflow: true },
+    { label: 'reconnect', after: 3, reason: 'reconnect', hint: { workflowOriginUnchangedSinceCursor: 3 }, workflow: true },
+  ] as const)('preserves Follow while routing Workflow delivery wake on $label', async ({ after, hint, reason, workflow }) => {
+    fetchChanges.mockResolvedValueOnce({ status: 'ok', response: { nextCursor: 4, changes: [
+      { cursor: 4, kind: 'session', entityId: 's1', changedAt: 100, hint },
+    ] } });
+    const onSessionFollowInvalidated = vi.fn();
+    await runSessionChangesSyncOnConnect({
+      reason, token: 'token-1', sessionId: 's1', lastObservedMessageSeq: 0,
+      getAccountId: async () => 'account-1', ...createChangesCursorStore(after),
+      catchUpSessionMessages: async () => {}, syncSessionSnapshotFromServer: async () => true,
+      onSessionFollowInvalidated, onDebug: vi.fn(),
+    });
+    expect(onSessionFollowInvalidated).toHaveBeenCalledTimes(1);
+    if (workflow) expect(onSessionFollowInvalidated).toHaveBeenCalledWith();
+    else expect(onSessionFollowInvalidated).toHaveBeenCalledWith(false);
+  });
+
+  it.each([
     { name: 'pruned cursor', result: { status: 'cursor-gone', currentCursor: 5 } },
     { name: 'unavailable changes route', result: { status: 'error', error: { status: 404 } } },
     { name: 'full changes page', result: { status: 'ok', response: { nextCursor: 203,

@@ -3,7 +3,7 @@ import { fetchChanges } from '../changes';
 import { refreshCliActionAutomationsFromChangesV1 } from '../actionAutomations';
 import { resolveServerHttpBaseUrl } from '../client/serverHttpBaseUrl';
 import {
-    isChangesPageFull, projectPushedChangesPageAt, readPushedAccountChangesPageV1, readSessionTranscriptChangeHintV1,
+    isChangesPageFull, projectPushedChangesPageAt, readPushedAccountChangesPageV1, readSessionTranscriptChangeHintV1, readSessionWorkflowOriginChangedV1,
     type ChangeKind, type ChangesResponse, type PushedAccountChangesPageV1,
 } from '@happier-dev/protocol/changes';
 import { serializeAxiosErrorForLog } from '../client/serializeAxiosErrorForLog';
@@ -245,7 +245,7 @@ export async function runSessionChangesSyncOnConnect(params: {
     reconcilePendingExecutionRunTarget?: ((runId: string) => Promise<void>) | null;
     refreshAccountSettingsForMinimumVersion?: (settingsVersion: number | null) => Promise<void>;
     refreshDemandedAccountCatalogs?: () => Promise<void>;
-    onSessionFollowInvalidated?: () => void;
+    onSessionFollowInvalidated?: (workflowOriginMayHaveChanged?: boolean) => void;
     connectionSupervisor?: ManagedConnectionSupervisor | null;
     onDebug: (message: string, data?: unknown) => void;
 }): Promise<void> {
@@ -378,6 +378,7 @@ export async function runSessionChangesSyncOnConnect(params: {
     };
 
     let hasRelevantSessionChange = false;
+    let workflowOriginMayHaveChanged = params.reason !== 'live';
     let shouldCatchUpSessionMessages = false;
     let shouldSyncSnapshotFallback = false;
     const pendingExecutionRunIds = new Set<string>();
@@ -385,6 +386,7 @@ export async function runSessionChangesSyncOnConnect(params: {
         const isRelevant = (change.kind === 'session' || change.kind === 'share') && change.entityId === params.sessionId;
         if (!isRelevant) continue;
         hasRelevantSessionChange = true;
+        workflowOriginMayHaveChanged ||= readSessionWorkflowOriginChangedV1(change, after) !== false;
         if (change.kind === 'session') {
             for (const runId of readPendingExecutionRunIds(change.hint) ?? []) {
                 pendingExecutionRunIds.add(runId);
@@ -449,7 +451,10 @@ export async function runSessionChangesSyncOnConnect(params: {
     // Follow source changes publish a change for each destination; workflow
     // delivery publishes one for its origin. Unrelated Account activity cannot
     // produce context for this Session. Exact socket hints still wake directly.
-    if (hasRelevantSessionChange) params.onSessionFollowInvalidated?.();
+    if (hasRelevantSessionChange) {
+        if (workflowOriginMayHaveChanged) params.onSessionFollowInvalidated?.();
+        else params.onSessionFollowInvalidated?.(false);
+    }
 
     if (!transcriptCatchUpFailed && !snapshotSyncFailed) {
         await params.writeChangesCursor(accountId, nextCursor);
