@@ -2587,6 +2587,15 @@ export const de: TranslationStructure = {
     },
 
     connectedServices: {
+        accountStatusConsent: {
+            sectionTitle: "Kontostatus",
+            toggleTitle: "Kontingent und Kontostatus anzeigen",
+            toggleSubtitle: "Liest Nutzungslimits und Verifizierungsstatus der verbundenen Konten dieses Agents. Pools aktivieren dies für ihre Mitglieder.",
+            noticeTitle: "Über den Kontostatus",
+            noticeBody: "Liest die Nutzung aus dem Kontodienst von Google. Google unterstützt den Zugriff durch Drittanbieter auf diese Dienste offiziell nicht; die Aktivierung liegt in deinem Ermessen.",
+            learnMore: "Mehr erfahren",
+            dismiss: "Verstanden",
+        },
         importAccounts: {
             unknownResult: "Das Ergebnis des Imports ist unbekannt. Aktualisiere die Kontoliste und prüfe dieses Profil vor einem neuen Versuch.",
             title: "Vorhandene Anmeldung importieren",

@@ -2836,6 +2836,15 @@ export const pl: TranslationStructure = {
   },
 
   connectedServices: {
+    accountStatusConsent: {
+      sectionTitle: "Stan konta",
+      toggleTitle: "Pokaż limit i stan konta",
+      toggleSubtitle: "Odczytuje limity użycia i stan weryfikacji połączonych kont tego agenta. Pule włączają to dla swoich członków.",
+      noticeTitle: "O stanie konta",
+      noticeBody: "Odczytuje użycie z usługi kont Google. Google oficjalnie nie wspiera dostępu stron trzecich do tych usług; włączenie tego zależy od Ciebie.",
+      learnMore: "Dowiedz się więcej",
+      dismiss: "Rozumiem",
+    },
     importAccounts: {
         unknownResult: "Wynik importu jest nieznany. Odśwież listę kont i sprawdź ten profil przed ponowną próbą.",
         title: "Importuj istniejące logowanie",

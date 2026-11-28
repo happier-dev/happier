@@ -2925,6 +2925,15 @@ export const pt: TranslationStructure = {
   },
 
   connectedServices: {
+    accountStatusConsent: {
+      sectionTitle: "Estado da conta",
+      toggleTitle: "Mostrar cota e estado da conta",
+      toggleSubtitle: "Lê os limites de uso e o estado de verificação das contas conectadas deste agente. Os pools ativam isto para os seus membros.",
+      noticeTitle: "Sobre o estado da conta",
+      noticeBody: "Lê o uso a partir do serviço de contas do Google. O Google não oferece suporte oficial ao acesso de terceiros a estes serviços; ativar isto fica ao seu critério.",
+      learnMore: "Saiba mais",
+      dismiss: "Entendi",
+    },
     importAccounts: {
         unknownResult: "O resultado da importação é desconhecido. Atualize a lista de contas e confira este perfil antes de tentar novamente.",
         title: "Importar login existente",

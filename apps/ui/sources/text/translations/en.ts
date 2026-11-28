@@ -2587,6 +2587,15 @@ export const en = {
     },
 
     connectedServices: {
+        accountStatusConsent: {
+            sectionTitle: "Account status",
+            toggleTitle: "Show quota and account status",
+            toggleSubtitle: "Reads usage limits and verification status for this agent's connected accounts. Pools turn this on for their members.",
+            noticeTitle: "About account status",
+            noticeBody: "Reads usage from Google's account service. Google doesn't officially support third-party access to these services; enabling this is at your discretion.",
+            learnMore: "Learn more",
+            dismiss: "Got it",
+        },
         importAccounts: {
             unknownResult: "The import result is unknown. Refresh the account list and check this profile before retrying.",
             title: "Import existing login",

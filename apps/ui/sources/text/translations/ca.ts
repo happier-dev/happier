@@ -2673,6 +2673,15 @@ export const ca: TranslationStructure = {
     },
 
     connectedServices: {
+        accountStatusConsent: {
+            sectionTitle: "Estat del compte",
+            toggleTitle: "Mostra la quota i l’estat del compte",
+            toggleSubtitle: "Llegeix els límits d’ús i l’estat de verificació dels comptes connectats d’aquest agent. Els pools ho activen per als seus membres.",
+            noticeTitle: "Sobre l’estat del compte",
+            noticeBody: "Llegeix l’ús des del servei de comptes de Google. Google no admet oficialment l’accés de tercers a aquests serveis; activar-ho queda a criteri teu.",
+            learnMore: "Més informació",
+            dismiss: "Entesos",
+        },
         importAccounts: {
             unknownResult: "El resultat de la importació és desconegut. Actualitza la llista de comptes i revisa aquest perfil abans de tornar-ho a provar.",
             title: "Importa un inici de sessió existent",

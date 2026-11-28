@@ -228,6 +228,7 @@ export const AGENTS_CORE = {
         cloudConnect: { vendorKey: 'gemini', status: 'wired' },
         connectedServices: {
             supportedServiceIds: ['gemini'],
+            poolConsentServices: [{ serviceId: 'gemini' }],
             sessionAuthSwitch: {
                 continuityMode: 'restart_same_home',
                 supportedTransitions: ['native_to_connected', 'connected_to_connected', 'same_connected_group'],
@@ -565,6 +566,7 @@ export const AGENTS_CORE = {
         cloudConnect: { vendorKey: 'antigravity', status: 'wired' },
         connectedServices: {
             supportedServiceIds: ['antigravity'],
+            poolConsentServices: [{ serviceId: 'antigravity', learnMoreUrl: 'https://antigravity.google/docs/faq' }],
             sessionAuthSwitch: {
                 continuityMode: 'restart_shared_state_required',
                 supportedTransitions: ['same_connected_group'],

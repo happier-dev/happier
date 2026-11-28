@@ -1,3 +1,4 @@
+import { isConnectedServiceAccountReadConsented } from '@/daemon/connectedServices/consent/isConnectedServiceAccountReadConsented';
 import {
   ConnectedServiceCredentialRevisionV1Schema,
   type ConnectedServiceCredentialRecordV1,
@@ -164,6 +165,9 @@ export function createGeminiConnectedServiceRuntimeAuthAdapter(
       const record = readCredentialRecord(input);
       if (!record || record.serviceId !== 'gemini' || record.kind !== 'oauth' || !record.oauth?.accessToken) {
         return { status: 'unsupported', reason: 'missing_gemini_oauth_record' };
+      }
+      if (!isConnectedServiceAccountReadConsented({ serviceId: 'gemini', poolMember: Boolean(readString(readRecord(input.selection)?.groupId)) })) {
+        return { status: 'unsupported', reason: 'pool_consent_required' };
       }
 
       let quotaSnapshot: ConnectedServiceQuotaSnapshotV1;

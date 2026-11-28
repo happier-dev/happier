@@ -170,4 +170,17 @@ export function resolveConnectedServicesProviderStateSharingPolicyV1(
   };
 }
 
+/**
+ * Per agent: the person turned on provider account status (usage and verification lookups) for
+ * that agent's connected accounts. Consent for services whose provider declares pool consent;
+ * absent means off.
+ */
+export const ConnectedServicesAccountStatusByAgentIdV1Schema = lazySchema(() => z
+  .record(AgentIdSettingsKeySchema, z.boolean())
+  .catch({}));
+
+export type ConnectedServicesAccountStatusByAgentIdV1 = z.infer<typeof ConnectedServicesAccountStatusByAgentIdV1Schema>;
+
+export const DEFAULT_CONNECTED_SERVICES_ACCOUNT_STATUS_BY_AGENT_ID_V1: ConnectedServicesAccountStatusByAgentIdV1 = {};
+
 export type ConnectedServicesDefaultAuthBindingByAgentIdV1 = Record<string, ConnectedServiceBindingsV1>;

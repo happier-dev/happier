@@ -1494,6 +1494,15 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     },
 
     connectedServices: {
+        accountStatusConsent: {
+            sectionTitle: "帳號狀態",
+            toggleTitle: "顯示配額和帳號狀態",
+            toggleSubtitle: "讀取此代理已連結帳號的用量上限和驗證狀態。池會為其成員開啟此功能。",
+            noticeTitle: "關於帳號狀態",
+            noticeBody: "從 Google 的帳號服務讀取用量。Google 並未正式支援第三方存取這些服務；是否啟用由你自行決定。",
+            learnMore: "了解更多",
+            dismiss: "知道了",
+        },
         importAccounts: {
             unknownResult: "匯入結果未知。請更新帳號清單並檢查此設定檔後再重試。",
             title: "匯入現有登入",

@@ -407,6 +407,12 @@ export const LOCAL_SETTING_DEFINITIONS = defineSettingDefinitions({
         description: 'Device-local session list leaving-notice dismissals per server',
         storageScope: 'local',
     },
+    connectedServiceConsentNoticeDismissedServiceIds: {
+        schema: z.array(z.string().min(1)).catch([]),
+        default: [],
+        description: 'Device-local connected services whose account-status notice was acknowledged',
+        storageScope: 'local',
+    },
     petsDismissedCompanionTrayItemKeys: {
         schema: z.array(z.string().min(1)).catch([]),
         default: [],

@@ -66,6 +66,13 @@ export {
   supportsAgentConnectedServiceSessionAuthSwitchTransition,
 } from './connectedServices/runtimeFallbackCapability.js';
 export {
+  isConnectedServiceProviderAccountAccessAllowed,
+  resolveAgentAccountStatusConsent,
+  resolveConnectedServicePoolConsentPolicy,
+  type AgentAccountStatusConsent,
+  type ConnectedServicePoolConsentPolicy,
+} from './connectedServices/poolConsent.js';
+export {
   buildConnectedServiceAccountGroupOptionsByServiceId,
   buildConnectedServiceProfileOptionsByServiceId,
   buildConnectedServicesBindingsPayload,

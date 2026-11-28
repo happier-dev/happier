@@ -1,3 +1,4 @@
+import { isConnectedServiceAccountReadConsented } from '@/daemon/connectedServices/consent/isConnectedServiceAccountReadConsented';
 import { ConnectedServiceCredentialRecordV1Schema } from '@happier-dev/protocol';
 import type { ConnectedServiceProviderRuntimeAuthAdapter } from '@/daemon/connectedServices/runtimeAuth/types';
 import { logger } from '@/ui/logger';
@@ -17,6 +18,10 @@ export function createAgyConnectedServiceRuntimeAuthAdapter(): ConnectedServiceP
       const selection = input.selection && typeof input.selection === 'object' && !Array.isArray(input.selection) ? input.selection as Record<string, unknown> : null;
       const parsed = ConnectedServiceCredentialRecordV1Schema.safeParse(selection?.record);
       if (!parsed.success || parsed.data.serviceId !== 'antigravity') return { status: 'unsupported', reason: 'missing_antigravity_oauth_record' };
+      const groupId = typeof selection?.groupId === 'string' ? selection.groupId.trim() : '';
+      if (!isConnectedServiceAccountReadConsented({ serviceId: 'antigravity', poolMember: groupId.length > 0 })) {
+        return { status: 'unsupported', reason: 'pool_consent_required' };
+      }
       try {
         return { status: 'available', quotaSnapshot: await fetcher.fetch({ record: parsed.data, now: Date.now(), signal: new AbortController().signal }) };
       } catch {

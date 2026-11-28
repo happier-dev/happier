@@ -44,9 +44,14 @@ function isAtLeast(version: readonly number[], minimum: readonly number[]): bool
   return true;
 }
 
+/** Whether this agy release can run a connected account in isolation (file-only token storage). */
+export function supportsAgyConnectedAccountIsolation(version: string | null): boolean {
+  const parsed = parseVersion(version);
+  return parsed !== null && isAtLeast(parsed, CONNECTED_ACCOUNT_MINIMUM_VERSION);
+}
+
 function admitConnectedAccountAgent(agent: Readonly<{ version: string | null }>): void {
-  const version = parseVersion(agent.version);
-  if (version && isAtLeast(version, CONNECTED_ACCOUNT_MINIMUM_VERSION)) return;
+  if (supportsAgyConnectedAccountIsolation(agent.version)) return;
   throw new ProviderCliVersionUnsupportedError({
     agentId: 'agy',
     requiredFor: 'Connected Antigravity accounts',

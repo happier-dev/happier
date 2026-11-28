@@ -3114,6 +3114,15 @@ localTailscale: {
   },
 
   connectedServices: {
+    accountStatusConsent: {
+      sectionTitle: "アカウントの状態",
+      toggleTitle: "クォータとアカウントの状態を表示",
+      toggleSubtitle: "このエージェントの接続済みアカウントの使用量上限と確認状態を読み取ります。プールはメンバーに対してこれを有効にします。",
+      noticeTitle: "アカウントの状態について",
+      noticeBody: "Google のアカウントサービスから使用量を読み取ります。Google はこれらのサービスへのサードパーティからのアクセスを公式にはサポートしていません。有効にするかどうかはご自身でご判断ください。",
+      learnMore: "詳細",
+      dismiss: "OK",
+    },
     importAccounts: {
         unknownResult: "インポート結果を確認できません。再試行する前にアカウント一覧を更新し、このプロフィールを確認してください。",
         title: "既存のログインをインポート",

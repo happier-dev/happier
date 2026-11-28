@@ -2736,6 +2736,15 @@ export const zhHans: TranslationStructure = {
   },
 
   connectedServices: {
+    accountStatusConsent: {
+      sectionTitle: "账号状态",
+      toggleTitle: "显示配额和账号状态",
+      toggleSubtitle: "读取此代理已连接账号的用量上限和验证状态。池会为其成员开启此功能。",
+      noticeTitle: "关于账号状态",
+      noticeBody: "从 Google 的账号服务读取用量。Google 并未正式支持第三方访问这些服务；是否启用由你自行决定。",
+      learnMore: "了解更多",
+      dismiss: "知道了",
+    },
     importAccounts: {
         unknownResult: "导入结果未知。请刷新账户列表并检查此配置后再重试。",
         title: "导入已有登录",

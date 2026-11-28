@@ -185,6 +185,7 @@ let onCreatePool: ReturnType<typeof vi.fn>;
 let onRetryLoad: ReturnType<typeof vi.fn>;
 
 type RenderOverrides = Readonly<{
+  serviceId?: 'anthropic' | 'antigravity';
   profiles?: ReadonlyArray<(typeof profiles)[number]>;
   groups?: ReadonlyArray<Record<string, unknown>>;
   loadStatus?: ConnectedServiceAuthGroupsLoadStatus;
@@ -196,7 +197,7 @@ type RenderOverrides = Readonly<{
 function renderPools(overrides: RenderOverrides = {}) {
   return renderScreen(
     <PoolsList
-      serviceId="anthropic"
+      serviceId={overrides.serviceId ?? 'anthropic'}
       profiles={overrides.profiles ?? profiles}
       profileLabelsByKey={overrides.profileLabelsByKey ?? {}}
       groups={overrides.groups ?? [buildGroup()]}
@@ -468,5 +469,14 @@ describe('PoolsList', () => {
     expect(tree.findAllByTestId('connected-services-pool:pool-1:warnings:count')).toHaveLength(0);
     expect(tree.findAllByTestId('connected-services-pool:pool-1:avatar:capacity')).toHaveLength(0);
     expect(tree.findAllByTestId('connected-services-pool:pool-1:capacity:meter')).toHaveLength(0);
+  });
+
+  it('shows the account-status notice once an Antigravity pool exists, and only for consent-gated services', async () => {
+    const antigravity = await renderPools({ serviceId: 'antigravity' });
+    expect(antigravity.tree.findByTestId('connected-services-consent-notice:antigravity')).toBeTruthy();
+    const withoutPool = await renderPools({ serviceId: 'antigravity', groups: [] });
+    expect(withoutPool.tree.findByTestId('connected-services-consent-notice:antigravity')).toBeNull();
+    const anthropic = await renderPools();
+    expect(anthropic.tree.findByTestId('connected-services-consent-notice:anthropic')).toBeNull();
   });
 });

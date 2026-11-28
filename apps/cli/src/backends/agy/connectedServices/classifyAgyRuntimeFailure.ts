@@ -1,3 +1,4 @@
+import { isConnectedServiceAccountReadConsented } from '@/daemon/connectedServices/consent/isConnectedServiceAccountReadConsented';
 import { buildUsageLimitIssueFingerprint, ConnectedServiceCredentialRevisionV1Schema, type SessionRuntimeIssueV1 } from '@happier-dev/protocol';
 import type { ConnectedServiceRuntimeFailureClassification, ConnectedServiceRuntimeFailureInput } from '@/daemon/connectedServices/runtimeAuth/types';
 import type { AcpRuntimeSessionClient } from '@/agent/acp/sessionClient';
@@ -122,15 +123,22 @@ export async function reportAgyTurnFailure(params: Readonly<{ error: unknown; is
 
 const verificationReportsShown = new WeakSet<object>();
 
-/** Google's link comes from the failure text when agy printed one, else from the account's Code Assist entitlement. */
+/**
+ * Google's link comes from the failure text when agy printed one. Otherwise only a pool member's
+ * entitlement is looked up (pool consent); any other account is told where to verify instead.
+ */
 async function buildVerificationMessage(classification: ConnectedServiceRuntimeFailureClassification, processEnv: NodeJS.ProcessEnv): Promise<string> {
   let url = readGoogleAccountLink(classification.action?.url);
-  if (!url) {
+  const lookupAllowed = isConnectedServiceAccountReadConsented({ serviceId: 'antigravity', poolMember: Boolean(classification.groupId) });
+  if (!url && lookupAllowed) {
     const { readAgyVerificationLink } = await import('./readAgyVerificationLink');
     const link = await readAgyVerificationLink(processEnv);
     url = link.url;
     if (link.url === null) logger.warn(`[agy] Verification link unavailable: ${link.reason}`);
   }
   const intro = 'Google needs to verify this Antigravity account before it can be used.';
-  return url ? `${intro} Open ${url} to verify, then resend your message.` : `${intro} Verify the account with Google, then resend your message.`;
+  if (url) return `${intro} Open ${url} to verify, then resend your message.`;
+  return lookupAllowed
+    ? `${intro} Verify the account with Google, then resend your message.`
+    : `${intro} Sign in with this account in the Antigravity app or \`agy\` to complete verification, then resend your message.`;
 }
