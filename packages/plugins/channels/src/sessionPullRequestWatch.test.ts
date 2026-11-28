@@ -214,6 +214,11 @@ describe('portable Account PR Watch Action', () => {
             for (const row of f.state.rows.values()) {
                 expect(isValidPluginJsonSchemaValue(schema, row.value)).toBe(true);
                 if (row.value['record-kind'] === 'ingress-obligation') {
+                    const custody = SessionPullRequestConfiguredFixCustodySchema.parse(row.value.payload);
+                    expect(custody.request.sessionId).toBe(f.request.sessionId);
+                    const unresolved = { ...custody, request: { ...custody.request, sessionId: { selector: 'self' } } };
+                    expect(SessionPullRequestConfiguredFixCustodySchema.safeParse(unresolved).success).toBe(false);
+                    expect(isValidPluginJsonSchemaValue(schema, { ...row.value, payload: unresolved })).toBe(false);
                     for (const prepare of [prepareConversationIngressObligationForBindingDeletion, prepareConversationIngressObligationForConnectionDeletion]) {
                         expect(prepare({ ...row, now: 20 })).toMatchObject({ kind: 'terminal', connectionId: 'connection-1', bindingId: 'pr-1' });
                     }

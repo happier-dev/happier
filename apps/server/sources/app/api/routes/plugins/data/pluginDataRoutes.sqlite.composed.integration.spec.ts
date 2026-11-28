@@ -4103,16 +4103,22 @@ describe("plugin collection UI query route", () => {
         });
     });
 
-    it.each([19, 20, 25])("promotes retained Channels v%s state and serves it through its exact HTTP reader", async (sourceVersion) => {
-        const accountId = `channels-v${sourceVersion}-retained-state`;
+    it.each([
+        { fixture: '19' },
+        { fixture: '20' },
+        { fixture: '25', digest: 'EZyGXIly0PceYly_04z5X8YSFZoSnHBm2hTnvA0M1KM' },
+        { fixture: '30-writer', digest: 'C_TEKvzo3SauiNptdx9iIslnLJDSntlOM_OK6GQqpCo' },
+        { fixture: '30-cut58', digest: 'vTJngyYW6g-WIGr_3MX8cVzgrgxA59x7eAfuZpQXhjk' },
+    ])("promotes retained Channels v$fixture state and serves it through its exact HTTP reader", async ({ fixture, digest }) => {
+        const accountId = `channels-v${fixture}-retained-state`;
         const captured = JSON.parse(readFileSync(new URL(
             '../../../../../../../../packages/protocol/src/plugins/data/__fixtures__/channelStateV19Qa86.json', import.meta.url,
         ), 'utf8'));
-        const sourceContract = sourceVersion === 19
+        const sourceContract = fixture === '19'
             ? PluginCollectionContractReadResultV1Schema.parse({ access: 'writable', contract: captured.writer }).contract
             : normalizePluginAccountCollectionContractV1({ pluginId: CHANNELS_MANIFEST.id,
                 contribution: PluginAccountCollectionContributionV1Schema.parse(JSON.parse(readFileSync(new URL(
-                    `../../../../../../../../packages/plugins/channels/src/testkit/fixtures/channelStateV${sourceVersion}.json`, import.meta.url,
+                    `../../../../../../../../packages/plugins/channels/src/testkit/fixtures/channelStateV${fixture}.json`, import.meta.url,
                 ), 'utf8')).collection) });
         const { pluginId, collectionId, contractDigest: _digest, ...sourceDeclaration } = sourceContract;
         const targetDeclaration = CHANNELS_MANIFEST.contributes?.accountCollections?.find(item => item.id === collectionId);
@@ -4151,10 +4157,9 @@ describe("plugin collection UI query route", () => {
             operations: [{ kind: 'put', rowId: historical.id, expectedRevision: 'absent', expectedAbsenceEpoch: 0,
                 content: sourceValue.content, projection: sourceValue.projection }] } });
         const headers = { 'content-type': 'application/json', 'x-test-user-id': accountId, ...V3_HEADERS };
-        if (sourceVersion === 25) {
-            // The cut-39 contract was still selected by Home when the cut-41
-            // reader started requesting a different v25 digest.
-            expect(source.contractDigest).toBe('EZyGXIly0PceYly_04z5X8YSFZoSnHBm2hTnvA0M1KM');
+        if (digest) {
+            expect(source.contractDigest).toBe(digest);
+            expect(target.schemaVersion).toBeGreaterThan(source.schemaVersion);
             await withPluginDataApp(async app => {
                 const get = await app.inject({ method: 'POST', url: '/v1/plugins/data/get', headers,
                     payload: { pluginId, collectionId, readerContext: target, rowId: historical.id } });

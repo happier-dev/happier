@@ -451,6 +451,13 @@ export const CHANNEL_COLLECTION_MIGRATIONS = {
     toSchemaVersion: 30,
     // The terminal reason vocabulary widens without changing existing custody rows.
     migrate: (value) => value,
+  }, {
+    id: 'channel-state-v30-to-v31',
+    fromSchemaVersion: 30,
+    toSchemaVersion: 31,
+    // Both v30 writers persisted the resolved Session ID. Only the
+    // declaration of the unused selector branches differed.
+    migrate: (value) => value,
   }],
   [CHANNEL_DELIVERIES_COLLECTION_ID]: [{
     id: 'channel-deliveries-v1-to-v2',

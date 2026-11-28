@@ -7485,6 +7485,12 @@ reset) permits a fresh claim; the hint grants no writer authority. Network and
 JSON Schema changes use the same compatibility decision. Incompatible changes require a new schema version and the existing
 candidate-preparation/migration path.
 
+In unreleased 0.3, Channels publishes `channel-state` v31 and declares v30
+readable. The two v30 declarations differed in the configured-Fix request's
+embedded Action selector. Configured-Fix custody carries the resolved Session
+ID. V31 validates that stored ID directly, and the existing candidate
+preparation path preserves retained rows from either v30 writer.
+
 In 0.3 development source, both daemon and direct Account Collection clients
 preserve the Home's confirmed transaction rollback as
 `database_transaction_conflict_exhausted`. They consume the shared strict

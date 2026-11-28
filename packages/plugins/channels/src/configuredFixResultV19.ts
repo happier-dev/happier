@@ -3,7 +3,7 @@ import { embedProtocolJsonSchema, ProtocolValidationError, type PluginJsonSchema
     type ProtocolSchemaInput, type ProtocolSchemaOutput,
     type ProtocolSchemaSafeParseResult } from '@happier-dev/plugin-sdk/protocol';
 import { ActionFailureCauseV1ProtocolSchema } from '@happier-dev/plugin-sdk/errors';
-import type { SessionMessageSendResultV1ProtocolSchema } from '@happier-dev/plugin-sdk/sessions';
+import { SessionIdSchema, type SessionMessageSendResultV1ProtocolSchema } from '@happier-dev/plugin-sdk/sessions';
 import { SessionPullRequestConfiguredFixInputV1Schema } from '@happier-dev/channels-protocol/v1';
 import { CONFIGURED_FIX_CAUSE_ACTION_IDS_V19 } from './configuredFixActionIdsV19.js';
 
@@ -1145,7 +1145,14 @@ const RESULT_SCHEMA: PluginJsonSchema = {
 
 // The enclosing composable object previously embedded its child's projection
 // without the document dialect. Retain that exact v19 document structure.
-const { $schema: _requestDialect, ...requestSchema } = SessionPullRequestConfiguredFixInputV1Schema.jsonSchema;
+const { $schema: _requestDialect, ...actionRequestSchema } = SessionPullRequestConfiguredFixInputV1Schema.jsonSchema;
+const { $schema: _sessionIdDialect, ...sessionIdSchema } = SessionIdSchema.jsonSchema;
+// The Action resolves selectors before custody is written. Persist the exact
+// Session ID so edits to selector filters only affect Action admission.
+const requestSchema: PluginJsonSchema = {
+    ...actionRequestSchema,
+    properties: { ...actionRequestSchema.properties, sessionId: sessionIdSchema },
+};
 const jsonSchema: PluginJsonSchema = {
     $schema: 'http://json-schema.org/draft-07/schema#', type: 'object',
     properties: { kind: { const: 'configuredFix' },
@@ -1154,7 +1161,7 @@ const jsonSchema: PluginJsonSchema = {
 };
 type ConfiguredFixCustodyV19 = {
     kind: 'configuredFix';
-    request: ProtocolSchemaOutput<typeof SessionPullRequestConfiguredFixInputV1Schema>;
+    request: ProtocolSchemaOutput<typeof SessionPullRequestConfiguredFixInputV1Schema> & { sessionId: string };
     result?: PersistedConfiguredFixResultV19;
 };
 const validateCustody = compilePluginJsonSchema(jsonSchema);
