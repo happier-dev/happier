@@ -658,6 +658,7 @@ function createLiveRemoteCliTransport(params: Readonly<{
   knownHostsMode: 'app' | 'system';
   channel: 'stable' | 'preview' | 'dev';
   signal?: AbortSignal;
+  emit?: Parameters<typeof systemTasks.createOpenSshRemoteCliTransport>[0]['emit'];
 }>) {
   const knownHostsPath = resolveKnownHostsPath(params.ssh, params.knownHostsMode);
   const connection = { ssh: params.ssh, auth: params.auth, knownHostsPath, knownHostsMode: params.knownHostsMode };
@@ -911,7 +912,7 @@ export function createLiveRemoteSshBootstrapTaskKind(options: Pick<systemTasks.R
     installRemoteCli: async ({ parsed, auth, knownHostsMode, signal, context }) => {
       const channel = parsed.channel ?? 'stable';
       await installRemoteCli({ channel, signal,
-        transport: createLiveRemoteCliTransport({ ssh: parsed.ssh, auth: auth as SshAuth, knownHostsMode, channel, signal }),
+        transport: createLiveRemoteCliTransport({ ssh: parsed.ssh, auth: auth as SshAuth, knownHostsMode, channel, signal, emit: context?.emit }),
         bootstrap: { parsed, context, createPromptId: randomUUID,
           ...(options.prepareDedicatedBootstrap && options.assertManagedEnrollmentCurrent
             ? { prepareManagedBootstrap: options.prepareDedicatedBootstrap } : {}) },

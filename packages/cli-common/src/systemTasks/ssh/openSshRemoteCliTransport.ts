@@ -9,6 +9,14 @@ import type { RemoteCliInstallTransport } from './installRemoteCli.js';
 import { buildBootstrapRootCommand, buildDedicatedDaemonInvocationCommand } from './remoteBootstrapCommandBuilder.js';
 import { normalizeRemoteReleaseArch, normalizeRemoteReleaseOs } from './remoteFirstPartyInstallPath.js';
 import { sshCommandFailure } from './sshCommandFailure.js';
+import type { InteractiveSystemTaskContext } from '../interactiveTaskKinds.js';
+
+const PAYLOAD_PHASE_LABELS = {
+  prepare: 'Preparing the remote Happier payload',
+  archive: 'Archiving the remote Happier payload',
+  transfer: 'Transferring the remote Happier payload',
+  promote: 'Promoting the remote Happier payload',
+} as const;
 
 /** Node-only SSH/file-transfer adapter; the portable owner selects installation placement. */
 export function createOpenSshRemoteCliTransport(input: Readonly<{
@@ -19,6 +27,7 @@ export function createOpenSshRemoteCliTransport(input: Readonly<{
   channel: 'stable' | 'preview' | 'dev';
   signal?: AbortSignal;
   exec?: DedicatedDaemonBootstrapExec;
+  emit?: InteractiveSystemTaskContext['emit'];
 }>): RemoteCliInstallTransport {
   const execute: DedicatedDaemonBootstrapExec = async request => {
     try {
@@ -35,10 +44,16 @@ export function createOpenSshRemoteCliTransport(input: Readonly<{
       throw sshCommandFailure(error instanceof Error ? error : '');
     }
   };
-  const exec: DedicatedDaemonBootstrapExec = request => {
+  let sshReady = false;
+  const exec: DedicatedDaemonBootstrapExec = async request => {
     input.signal?.throwIfAborted();
     request.signal?.throwIfAborted();
-    return (input.exec ?? execute)({ ...request, signal: request.signal ?? input.signal });
+    const result = await (input.exec ?? execute)({ ...request, signal: request.signal ?? input.signal });
+    if (!sshReady && result.status === 0) {
+      sshReady = true;
+      input.emit?.({ type: 'progress', stepId: 'ssh.transport.ready', message: 'Authenticated SSH command succeeded' });
+    }
+    return result;
   };
   return {
     exec,
@@ -49,6 +64,7 @@ export function createOpenSshRemoteCliTransport(input: Readonly<{
       componentId: 'happier-cli', channel: input.channel, ssh: input.ssh, knownHostsMode: input.knownHostsMode,
       ...(placement.remoteHomeDir ? { remoteHomeDir: placement.remoteHomeDir } : {}),
       ...(input.signal ? { signal: input.signal } : {}),
+      onPhase: phase => input.emit?.({ type: 'progress', stepId: `ssh.payload.${phase}`, message: PAYLOAD_PHASE_LABELS[phase] }),
     }, {
       resolveRemoteReleaseTarget: async ({ signal }) => {
         const result = await exec({ command: [
@@ -99,6 +115,9 @@ export function createOpenSshRemoteCliTransport(input: Readonly<{
           if (temporary) await execute({ command: `rm -rf -- ${safeBashSingleQuote(temporary)}` });
         }
       },
+    }).then(installed => {
+      input.emit?.({ type: 'progress', stepId: 'ssh.payload.installed', message: 'Remote Happier payload installed' });
+      return installed;
     }),
   };
 }

@@ -86,6 +86,7 @@ describe('managed guest CLI source supplier', () => {
       if (!matching) archive = new Uint8Array([...archive, 0]);
       let phase: string | undefined;
       let phaseAtPromotion: string | undefined;
+      const sshPhases: string[] = [];
       const runRemoteText = async (command: string) => {
           // A controller-only origin must never become a guest HTTP request.
           expect(command).not.toContain(homeUrl);
@@ -115,6 +116,7 @@ describe('managed guest CLI source supplier', () => {
         return createOpenSshRemoteCliTransport({
           ssh: { target: 'fixture@example.test', auth: 'agent' },
           auth: { mode: 'agent' }, knownHostsMode: 'system', channel: 'stable', signal: operation.signal,
+          emit: event => { if (event.stepId) sshPhases.push(event.stepId); },
           exec: request => {
             if (request.command.includes('tar -xf') && request.timeoutMs !== null) {
               throw new Error('The OpenSSH default cutoff expired while the guest was still installing.');
@@ -145,6 +147,9 @@ describe('managed guest CLI source supplier', () => {
         await expect(access(extraction)).rejects.toThrow();
       }
       if (transport === 'ssh') expect(phaseAtPromotion).toBe('promote');
+      if (transport === 'slow-open-ssh') expect(sshPhases).toEqual([
+        'ssh.payload.prepare', 'ssh.transport.ready', 'ssh.payload.transfer', 'ssh.payload.promote', 'ssh.payload.installed',
+      ]);
       expect(requested).toEqual([
         ...(readHome ? ['/v1/features'] : []),
         '/v1/runtime/guest-cli/payloads/linux/x64',
