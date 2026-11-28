@@ -29,7 +29,7 @@ import { deriveWorkflowDestinationsV1 } from '@happier-dev/protocol/workflows/wo
 import { countWorkflowStepsV1 } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import { workflowTriggerDisplayNameV1 } from '@happier-dev/protocol/workflows/workflowStepLabel';
 import { readTriggerTargetV1 } from '@happier-dev/protocol/workflows/triggers/triggerTargetV1';
-import { openWorkflowAcceptedSnapshotStoredEnvelopeV1, openWorkflowCheckpointStoredEnvelopeV1, openWorkflowProgressStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1, sealWorkflowCheckpointStoredEnvelopeV1, sealWorkflowRunAcceptedEnvelopesV1, sealWorkflowFinalResultStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
+import { openWorkflowAcceptedSnapshotStoredEnvelopeV1, openWorkflowCheckpointStoredEnvelopeV1, openWorkflowProgressStoredEnvelopeV1, openWorkflowProgressSnapshotV1, prepareWorkflowDestinationPublicationV1, parseWorkflowStoredContentEnvelopeV1, sealWorkflowCheckpointStoredEnvelopeV1, sealWorkflowRunAcceptedEnvelopesV1, sealWorkflowFinalResultStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
 import { WorkflowRunRecipientCensusResponseV1Schema, WorkflowRunRecipientKeyEnvelopeCommitResponseV1Schema } from '@happier-dev/protocol/workflows/workflowRunKeyV1';
 import { prepareWorkflowRunDataKeyV1, resolveWorkflowRunDataKeyV1, runWorkflowRecipientKeyPreparationV1 } from '@happier-dev/protocol/workflows/workflowRunDataKeyV1';
 import { renderSessionRoleBlockV1 } from '@happier-dev/protocol/prompts/roles/renderSessionRoleBlockV1';
@@ -272,7 +272,7 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
       projectionExpectedRevision?: number;
       discussionRound?: WorkflowDiscussionRoundBindingV1;
       /** The root row this executor just created: opened as the starting row; it has no members yet. */
-      createdRoot?: Readonly<{ index: unknown; contentEnvelope: unknown; parentRevision: number }>;
+      createdRoot?: Readonly<{ index: unknown; contentEnvelope: unknown; parentRevision: number; destinationEnvelopes?: unknown }>;
     },
   ) {
     this.stepProgress = new WorkflowStepProgress({ definition: params.authoredDefinition,
@@ -291,14 +291,14 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
     const root = await readWorkflowInvocationRootV1({ root: original, readInvocation: store.readInvocationBindingRow,
       readCurrentRoot: async () => {
         const page = asRecord(await params.storage.execute({ operation: 'invocations.list', runId: params.runId,
-          parentRecordId: null, memberOrdinal: '0', progressEnvelopes: true, pageByteLimit: EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES }));
+          parentRecordId: null, memberOrdinal: '0', pageByteLimit: EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES }));
         if (!Array.isArray(page.invocations) || page.invocations.length !== 1 || page.nextCursor !== undefined) {
           throw new Error('workflow_storage_response_invalid');
         }
         const index = WorkflowRunInvocationIndexV1Schema.parse(page.invocations[0]);
         if (index.parentRecordId !== null || index.memberOrdinal !== '0') throw new Error('workflow_storage_response_invalid');
-        await store.loadInvocation(index.id, { index, parentRevision: page.parentRevision,
-          contentEnvelope: asRecord(page.progressEnvelopesByInvocationId)[index.id] });
+        // Exact root detail supplies the sealed body and its ordered destination snapshot.
+        await store.loadInvocation(index.id);
         return store.readInvocationBindingRow(index.id);
       } });
     if (!root) throw new Error('workflow_root_invocation_missing');
@@ -317,7 +317,8 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
     if (index.id !== invocationId || index.runId !== this.params.runId) throw new Error('workflow_storage_response_invalid');
     const contentEnvelope = invocation.contentEnvelope;
     if (typeof contentEnvelope !== 'string') throw new Error('workflow_storage_response_invalid');
-    const opened = openWorkflowProgressStoredEnvelopeV1({
+    const opened = openWorkflowProgressSnapshotV1({
+      destinationEnvelopes: invocation.destinationEnvelopes,
       ...openMode(this.params.encryption),
       binding: {
         v: 1, purpose: 'invocation_progress', accountId: this.params.accountId, runId: this.params.runId,
@@ -871,8 +872,14 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
         throw new WorkflowInputResolutionError('workflow_input_too_large');
       }
     }
-    const fitted = this.fitCommandOutput(binding, progress);
-    progress = fitted.progress;
+    const publication = prepareWorkflowDestinationPublicationV1({
+      accountId: this.params.accountId, runId: this.params.runId,
+      ...sealMode(this.params.encryption), progress, previous: persisted.progress,
+    });
+    const fitted = this.fitCommandOutput(binding, publication.progress);
+    progress = progress.stepProgress?.destinations
+      ? { ...fitted.progress, stepProgress: progress.stepProgress }
+      : fitted.progress;
     // Compare the exact persisted projection, not raw output that cannot fit.
     const effectiveFact = { ...fact,
       ...(fact.result === undefined ? {} : { result: progress.result }),
@@ -893,6 +900,7 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
         accountCurrentness: this.params.encryption.witness,
         invocationId: index.id, invocationAttempt: index.attempt, expectedLifecycle: index.lifecycle, expectedContentRevision: index.contentRevision,
         lifecycle: fact.lifecycle, contentEnvelope: fitted.contentEnvelope,
+        ...(publication.destinationWrites.length ? { destinationWrites: publication.destinationWrites } : {}),
         ...(discussionRound ? { discussionRound } : {}),
         ...(frontierCheckpoint ? { frontier: { expectedParentRevision: this.params.revision,
           checkpointEnvelope: this.serializeCheckpoint(frontierCheckpoint) } } : {}),
@@ -1361,7 +1369,14 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
     const projectedRootId = snapshot.rootProgress === undefined || snapshot.rootProgress === null
       ? undefined : asRecord(asRecord(snapshot.rootProgress).index).id;
     if (projectedRootId === this.params.rootRecordId) {
-      await this.loadInvocation(this.params.rootRecordId, snapshot.rootProgress);
+      const projected = WorkflowRunInvocationIndexV1Schema.parse(asRecord(snapshot.rootProgress).index);
+      if (projected.runId !== this.params.runId) throw new Error('workflow_storage_response_invalid');
+      const cached = this.rootIndex;
+      // The control projection carries current lifecycle and revision, without destination rows.
+      // Reload the exact snapshot only when the authoritative root differs from our opened row.
+      if (projected.contentRevision !== cached?.contentRevision || projected.lifecycle !== cached.lifecycle) {
+        await this.refreshRootIndex();
+      }
     } else {
       const root = this.recordsById.get(this.params.rootRecordId);
       if (projectedRootId !== undefined && projectedRootId !== root?.logicalInvocationRecordId) {
@@ -2109,7 +2124,7 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
     let checkpoint: WorkflowCheckpointEnvelopeV1;
     let rootRecordId: string;
     let revision = initial.run.revision;
-    let createdRoot: Readonly<{ index: unknown; contentEnvelope: unknown; parentRevision: number }> | undefined;
+    let createdRoot: ConstructorParameters<typeof DurableWorkflowCoordinatorStore>[0]['createdRoot'];
     // A fresh start that will run at once prepares recipients first and opens
     // its root running, so no separate running transition follows.
     const startsOnInitialize = initial.checkpointEnvelope === null && !recoveryFailure;
@@ -2128,22 +2143,26 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
       const checkpointEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowCheckpointStoredEnvelopeV1({
         ...sealMode(encryption), binding: { v: 1, purpose: 'checkpoint', accountId: params.accountId, runId: claim.runId }, checkpoint,
       }));
+      const publication = prepareWorkflowDestinationPublicationV1({
+        ...sealMode(encryption), accountId: params.accountId, runId: claim.runId, progress: rootProgress,
+      });
       const rootEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({
         ...sealMode(encryption),
         binding: { v: 1, purpose: 'invocation_progress', accountId: params.accountId, runId: claim.runId,
           recordId: rootRecordId, sequence: '0', parentRecordId: null, memberOrdinal: '0', attempt: '0' },
-        progress: rootProgress,
+        progress: publication.progress,
       }));
       const initialized = asRecord(await storage.execute({ operation: 'initialize', runId: claim.runId,
         parentAttempt: claim.attempt, accountCurrentness: encryption.witness,
         expectedRevision: revision, checkpointEnvelope,
-        rootInvocation: { id: rootRecordId, contentEnvelope: rootEnvelope },
+        rootInvocation: { id: rootRecordId, contentEnvelope: rootEnvelope, destinationWrites: publication.destinationWrites },
         ...(startsOnInitialize ? { rootLifecycle: 'running' } : {}) }));
       const run = WorkflowRunSummaryV1Schema.parse(initialized.run);
       revision = run.revision;
       const root = initialized.initialization === 'created' && initialized.rootInvocation !== undefined
         ? asRecord(initialized.rootInvocation) : undefined;
-      if (root) createdRoot = { index: root.index, contentEnvelope: root.contentEnvelope, parentRevision: revision };
+      if (root) createdRoot = { index: root.index, contentEnvelope: root.contentEnvelope, parentRevision: revision,
+        destinationEnvelopes: publication.destinationWrites.map(write => write.contentEnvelope) };
     } else {
       const envelope = parseWorkflowStoredContentEnvelopeV1(initial.checkpointEnvelope);
       const opened = openWorkflowCheckpointStoredEnvelopeV1({

@@ -8,7 +8,11 @@ export function isWorkflowInlineAccountReadWithoutResult(execution: WorkflowExec
     || execution.awaitedOperations?.length || execution.awaitedRuns?.length || execution.awaitedWorkflows?.length) {
     return false;
   }
-  const actionId = ActionIdSchema.safeParse(execution.actionId);
+  return isWorkflowInlineAccountReadAction(execution.actionId);
+}
+
+export function isWorkflowInlineAccountReadAction(id: string): boolean {
+  const actionId = ActionIdSchema.safeParse(id);
   if (!actionId.success) return false;
   const spec = getActionSpec(actionId.data);
   return spec.sideEffectClass === 'read' && spec.executionPlacement === 'account'

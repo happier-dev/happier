@@ -33,6 +33,9 @@ import {
     sealWorkflowFinalResultStoredEnvelopeV1,
     sealWorkflowProgressStoredEnvelopeV1,
     sealWorkflowRunAcceptedEnvelopesV1,
+    openWorkflowProgressSnapshotV1,
+    parseWorkflowStoredContentEnvelopeV1,
+    prepareWorkflowDestinationPublicationV1,
     serializeWorkflowStoredContentEnvelopeV1,
     type WorkflowReviewV1,
     WORKFLOW_ATTENTION_INVOCATION_LIFECYCLES_V1,
@@ -1494,6 +1497,51 @@ describe("workflowRunService (integration)", () => {
             await expect(db.automationRun.findUniqueOrThrow({ where: { id: seeded.runId },
                 select: { revision: true, updatedAt: true } })).resolves.toEqual(before);
         } finally { stopObserving(); }
+    });
+
+    it("publishes sealed destination rows with the exact root CAS and serves one materialized snapshot", async () => {
+        const seeded = await seedPendingAdmission();
+        const { accountId, runId, rootId, machineId } = seeded;
+        const mode = "plain" as const;
+        const binding = { v: 1 as const, purpose: "invocation_progress" as const, accountId, runId,
+            recordId: rootId, sequence: "0", parentRecordId: null, memberOrdinal: "0", attempt: "0" };
+        const first = { sourceKey: "$root", blockId: "first", sessionIds: [] };
+        const second = { sourceKey: "$root", blockId: "second", sessionIds: [] };
+        const initial = { kind: "happier.workflow-progress.v1" as const, invocationPath: { blockId: "$root" as const, scope: [] },
+            blockKind: "root" as const, logicalInvocationRecordId: rootId, attempt: "0",
+            stepProgress: { completed: 0, total: 2, destinations: [first, second] } };
+        const write = async (request: ReturnType<typeof prepareWorkflowDestinationPublicationV1>, expectedContentRevision: bigint) =>
+            await commitWorkflowInvocationFact({ accountId, runId, machineId, parentAttempt: 1,
+                invocationId: rootId, invocationAttempt: 0n, expectedLifecycle: "pending", lifecycle: "pending",
+                expectedContentRevision, destinationWrites: request.destinationWrites,
+                contentEnvelope: serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({
+                    mode, binding, progress: request.progress,
+                })),
+            });
+        const open = (raw: { contentEnvelope: string; destinationEnvelopes?: string[] } | null | undefined) =>
+            openWorkflowProgressSnapshotV1({ mode, binding, envelope: parseWorkflowStoredContentEnvelopeV1(raw?.contentEnvelope),
+                destinationEnvelopes: raw?.destinationEnvelopes });
+        const prepared = prepareWorkflowDestinationPublicationV1({ mode, accountId, runId, progress: initial });
+        await expect(write(prepared, 0n)).resolves.toMatchObject({ contentRevision: "1" });
+        const prior = open((await getWorkflowRun({ accountId, runId })).rootProgress);
+        if (prior.kind !== "available") throw new Error(prior.kind);
+        const observation = { recordId: seeded.invocationId, sequence: "1", attempt: "0", contentRevision: "1",
+            lifecycle: "admitting" as const, blockKind: "step" as const };
+        const updated = prepareWorkflowDestinationPublicationV1({ mode, accountId, runId, previous: prior.content,
+            progress: { ...initial, stepProgress: { ...initial.stepProgress, destinations: [{ ...first, observation }, second] } } });
+        expect(updated.destinationWrites).toHaveLength(1);
+        await expect(write(updated, 0n)).rejects.toMatchObject({ code: "currentness_conflict" });
+        expect(open((await getWorkflowRun({ accountId, runId })).rootProgress)).toEqual(prior);
+        const duplicate = { ...updated, destinationWrites: [...updated.destinationWrites, ...updated.destinationWrites] };
+        await expect(write(duplicate, 1n)).rejects.toMatchObject({ code: "invalid_input" });
+        await expect(write(updated, 1n)).resolves.toMatchObject({ contentRevision: "2" });
+        const exact = await getWorkflowRunInvocation({ accountId, runId, invocationId: rootId });
+        const expected = open(exact.invocation);
+        expect(expected).toMatchObject({ kind: "available", content: { stepProgress: { destinations: [{ ...first, observation }, second] } } });
+        const list = await listWorkflowRuns({ accountId, runId, pageByteLimit: EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES });
+        expect(open(list.rootProgressByRunId[runId])).toEqual(expected);
+        const control = await workflowRunService.getWorkflowRunControl({ accountId, runId, projection: "control" });
+        expect(control.rootProgress).not.toHaveProperty("destinationEnvelopes");
     });
 
     it("serves UI workflow storage reads through authenticated HTTP and real SQLite", async () => {

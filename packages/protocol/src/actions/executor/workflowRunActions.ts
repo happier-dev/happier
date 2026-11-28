@@ -29,7 +29,7 @@ import { WorkflowActionOutputSchemasV1, WorkflowRunWaitSnapshotV1Schema, Workflo
 import { materializeWorkflowAcceptedSnapshotV1, readWorkflowAcceptedAgentStartLeavesV1, readWorkflowRunLeafStartRequestV1,
   hasUnresolvedWorkflowValueV1, bindWorkflowActionFieldV1 } from '../../workflows/materializeWorkflowAcceptedSnapshotV1.js';
 import type { WorkflowAuthoredResultReference } from '../../workflows/workflowReferenceV1.js';
-import { workflowStoredContentReadErrorCodeV1, openWorkflowAcceptedSnapshotListingStoredEnvelopeV1, openWorkflowAcceptedSnapshotStoredEnvelopeV1, openWorkflowCheckpointStoredEnvelopeV1, openWorkflowFinalResultStoredEnvelopeV1, openWorkflowProgressStoredEnvelopeV1, openWorkflowRunDisplaySummaryStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1, sealWorkflowRunAcceptedEnvelopesV1, sealWorkflowCheckpointStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '../../workflows/workflowStoredContentV1.js';
+import { workflowStoredContentReadErrorCodeV1, openWorkflowAcceptedSnapshotListingStoredEnvelopeV1, openWorkflowAcceptedSnapshotStoredEnvelopeV1, openWorkflowCheckpointStoredEnvelopeV1, openWorkflowFinalResultStoredEnvelopeV1, openWorkflowProgressStoredEnvelopeV1, openWorkflowProgressSnapshotV1, openWorkflowRunDisplaySummaryStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1, sealWorkflowRunAcceptedEnvelopesV1, sealWorkflowCheckpointStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '../../workflows/workflowStoredContentV1.js';
 import { validateWorkflowDefinition, matchesWorkflowAcceptedDefinitionV1 } from '../../workflows/workflowValidationV1.js';
 import { parseWorkflowDocumentJsonIngressV1 } from '../../workflows/workflowDocumentV1.js';
 import { ActionIdSchema, WORKFLOW_RUN_CANCEL_ACTION_ID_V1, type ActionId, type WorkflowActionIdV1 } from '../actionIds.js';
@@ -1065,7 +1065,8 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
         && index.memberOrdinal === '0' && index.attempt === '0') {
         stepProgressCurrentness = { recordId: index.id, attempt: index.attempt, contentRevision: index.contentRevision };
         if (!enc) return { stepProgress, stepProgressCurrentness, resultProvenance, startWaitReason };
-        const opened = openWorkflowProgressStoredEnvelopeV1({ ...openMode(enc),
+        const opened = openWorkflowProgressSnapshotV1({ ...openMode(enc),
+          destinationEnvelopes: root.destinationEnvelopes,
           binding: { v: 1, purpose: 'invocation_progress', accountId, runId, recordId: index.id,
             sequence: index.sequence, parentRecordId: index.parentRecordId, memberOrdinal: index.memberOrdinal, attempt: index.attempt },
           envelope: typeof root.contentEnvelope === 'string' ? parseWorkflowStoredContentEnvelopeV1(root.contentEnvelope) : null });

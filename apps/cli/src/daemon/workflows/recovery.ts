@@ -4,7 +4,7 @@ import { readWorkflowActionOutputSchemaV1 } from '@happier-dev/protocol/actions/
 import { decodeExecutionRunResultObservation, validateExecutionRunProfileResult } from '@happier-dev/protocol/execution/runs/resultContract';
 import { classifyWorkflowReviewEntryV1, applyWorkflowInvocationFactV1, isTerminalWorkflowInvocationLifecycleV1, WorkflowRunInvocationIndexV1Schema, WorkflowRunSummaryV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { resolveWorkflowInvocationStructureV1, type WorkflowInvocationBindingRowV1 } from '@happier-dev/protocol/workflows/workflowInvocationStructureV1';
-import { openWorkflowAcceptedSnapshotStoredEnvelopeV1, openWorkflowCheckpointStoredEnvelopeV1, openWorkflowProgressStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
+import { openWorkflowAcceptedSnapshotStoredEnvelopeV1, openWorkflowCheckpointStoredEnvelopeV1, openWorkflowProgressSnapshotV1, parseWorkflowStoredContentEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
 import { WorkflowRunRecipientCensusResponseV1Schema, WorkflowRunRecipientKeyEnvelopeCommitResponseV1Schema } from '@happier-dev/protocol/workflows/workflowRunKeyV1';
 import { resolveWorkflowRunDataKeyV1, runWorkflowRecipientKeyPreparationV1, type WorkflowRunReadEncryptionV1 } from '@happier-dev/protocol/workflows/workflowRunDataKeyV1';
 import type { WorkflowRunEncryptionV1, JsonValue, WorkflowAcceptedSnapshotV1, WorkflowInvocationLifecycleV1, WorkflowProgressEnvelopeV1, WorkflowRunInvocationIndexV1, WorkflowRunSummaryV1, WorkflowUsageV1, WorkflowMaterializedLeafV1 } from '@happier-dev/protocol';
@@ -119,7 +119,8 @@ export function createWorkflowInvocationRecoveryFactWriter(params: Readonly<{
     const envelope = parseWorkflowStoredContentEnvelopeV1(contentEnvelope);
     if (!index.success || index.data.id !== recordId || index.data.runId !== params.run.id
       || typeof contentEnvelope !== 'string' || !envelope) return undefined;
-    const opened = openWorkflowProgressStoredEnvelopeV1({
+    const opened = openWorkflowProgressSnapshotV1({
+      destinationEnvelopes: invocation?.destinationEnvelopes,
       ...openMode(params.encryption),
       binding: { v: 1, purpose: 'invocation_progress', accountId: params.accountId, runId: params.run.id,
         recordId, sequence: index.data.sequence, parentRecordId: index.data.parentRecordId,

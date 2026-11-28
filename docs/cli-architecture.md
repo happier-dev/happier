@@ -6182,8 +6182,11 @@ Run's canonical lifecycle word once; individual step outcomes remain in Run deta
 The existing root `stepProgress.destinations` projection carries each accepted leaf's last observed
 invocation lifecycle, physical record identity and revision. Unopened observations
 survive reload; missing observations remain unknown. An observed completed loop
-iteration does not claim that the whole loop is complete. This uses the existing
-lean root envelope, not a per-row history/detail read. Active rows reuse R22 and
+iteration does not claim that the whole loop is complete. The Home stores each
+destination as its own Run-key-sealed row. A root fact commits the changed rows
+and the root's aggregate counts and snapshot digest together. Run list and
+detail return the authorized root and ordered destinations from one read
+snapshot so clients can open and verify the projection without reading invocation history. Active rows reuse R22 and
 the existing viewport-demanded live map. Neither scheduled
 occurrences nor transcript event order manufacture a Run or step identity.
 In 0.3 development, the executing store also projects `stepProgress.skipped`:

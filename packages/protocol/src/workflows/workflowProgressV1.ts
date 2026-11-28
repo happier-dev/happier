@@ -184,22 +184,31 @@ export const WorkflowInvocationRecoveryAvailabilityV1Schema = lazyZodSchema(() =
 }));
 export type WorkflowInvocationRecoveryAvailabilityV1 = z.infer<typeof WorkflowInvocationRecoveryAvailabilityV1Schema>;
 
+export const WorkflowRunDestinationProgressV1Schema = lazyZodSchema(() => (<T extends zMini.ZodMiniObject>(schema: T) => zMini.core.clone(schema, { ...schema._zod.def, catchall: zMini.never() }) as zMini.ZodMiniObject<T['shape'], zMini.core.$strict>)(zMini.extend(WorkflowDestinationsV1Schema.shape.leaves._zod.def.element, {
+  observation: z.optional(z.strictObject({
+    recordId: WorkflowInvocationRecordIdSchema,
+    sequence: WorkflowDecimalV1Schema,
+    attempt: WorkflowDecimalV1Schema,
+    contentRevision: WorkflowDecimalV1Schema,
+    lifecycle: WorkflowInvocationLifecycleV1Schema,
+    blockKind: z.optional(WorkflowInvocationBlockKindV1Schema),
+  })),
+})));
+export type WorkflowRunDestinationProgressV1 = z.infer<typeof WorkflowRunDestinationProgressV1Schema>;
+
+export const WorkflowRunDestinationWriteV1Schema = lazyZodSchema(() => z.strictObject({
+  ordinal: z.number().check(z.int(), z.nonnegative()),
+  contentEnvelope: z.string().check(z.minLength(1)),
+}));
+export type WorkflowRunDestinationWriteV1 = z.infer<typeof WorkflowRunDestinationWriteV1Schema>;
+
 export const WorkflowRunStepProgressV1Schema = lazyZodSchema(() => z.strictObject({
   completed: z.number().check(z.int(), z.nonnegative(), z.int()),
   /** Authored leaves proven skipped by settled execution; omitted history is unknown. */
   skipped: z.optional(z.number().check(z.int(), z.nonnegative())),
   total: z.number().check(z.int(), z.nonnegative(), z.int()),
   /** Accepted writers and their exact last observed facts; absence never means pending or completed. */
-  destinations: z.optional(z.array((<T extends zMini.ZodMiniObject>(schema: T) => zMini.core.clone(schema, { ...schema._zod.def, catchall: zMini.never() }) as zMini.ZodMiniObject<T['shape'], zMini.core.$strict>)(zMini.extend(WorkflowDestinationsV1Schema.shape.leaves._zod.def.element, {
-    observation: z.optional(z.strictObject({
-      recordId: WorkflowInvocationRecordIdSchema,
-      sequence: WorkflowDecimalV1Schema,
-      attempt: WorkflowDecimalV1Schema,
-      contentRevision: WorkflowDecimalV1Schema,
-      lifecycle: WorkflowInvocationLifecycleV1Schema,
-      blockKind: z.optional(WorkflowInvocationBlockKindV1Schema),
-    })),
-  })))),
+  destinations: z.optional(z.array(WorkflowRunDestinationProgressV1Schema)),
   currentLoop: z.optional(z.strictObject({
     completed: z.number().check(z.int(), z.nonnegative(), z.int()),
     total: z.number().check(z.int(), z.nonnegative(), z.int()),
@@ -643,6 +652,8 @@ export const WorkflowProgressEnvelopeV1Schema = lazyZodSchema(() => z.strictObje
   blockKind: WorkflowInvocationBlockKindV1Schema,
   /** Executing worker's private authored-step projection, retained on the root row only. */
   stepProgress: z.optional(WorkflowRunStepProgressV1Schema),
+  /** Authenticated ordered destination rows stored separately from this root envelope. */
+  destinationSnapshotDigest: z.optional(z.string().check(z.regex(/^[0-9a-f]{64}$/))),
   /** Evaluated Notify me conditions keyed by the exact physical result, retained only on the mutable root. */
   resultProvenance: z.optional(WorkflowResultProvenanceV1Schema),
   container: z.optional(WorkflowContainerProgressV1Schema),

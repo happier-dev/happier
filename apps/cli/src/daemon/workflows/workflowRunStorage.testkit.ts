@@ -1,7 +1,7 @@
 import { isTerminalAutomationRunStateV3 } from '@happier-dev/protocol/automations/automationRunStateV3';
 import { isTerminalWorkflowInvocationLifecycleV1, WORKFLOW_ATTENTION_INVOCATION_LIFECYCLES_V1, WORKFLOW_UNSETTLED_INVOCATION_LIFECYCLES_V1, WorkflowRunInvocationIndexV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { canObserveLostWorkflowActionOperationV1 } from '@happier-dev/protocol/workflows';
-import type { WorkflowInvocationLifecycleV1, WorkflowRunInvocationIndexV1, WorkflowRunOriginV1, WorkflowRunStateV1, WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import type { WorkflowInvocationLifecycleV1, WorkflowRunInvocationIndexV1, WorkflowRunOriginV1, WorkflowRunStateV1, WorkflowRunSummaryV1, WorkflowRunDestinationWriteV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 
 import type { WorkflowAccountRunActionDeps } from '@happier-dev/protocol';
 import type { WorkflowRunRecipientCensusResponseV1 } from '@happier-dev/protocol/workflows';
@@ -35,6 +35,7 @@ const CANCELLABLE_LIFECYCLES = [
 type StoredRow = {
   index: WorkflowRunInvocationIndexV1;
   contentEnvelope: string;
+  destinationEnvelopes?: string[];
 };
 
 /** Mirrors the canonical Account Action owner's storage boundary; unknown operations still fail below. */
@@ -231,7 +232,8 @@ export function createWorkflowRunStorageTestkit(params: Readonly<{
         if (operation.projection === 'revision') return { run: { state: run.state, revision: run.revision } };
         const rootProgress = ordered().find(row => row.index.parentRecordId === null
           && row.index.sequence === '0' && row.index.memberOrdinal === '0' && row.index.attempt === '0') ?? null;
-        if (operation.projection === 'control') return { run: { state: run.state, revision: run.revision }, rootProgress };
+        if (operation.projection === 'control') return { run: { state: run.state, revision: run.revision },
+          rootProgress: rootProgress && { index: rootProgress.index, contentEnvelope: rootProgress.contentEnvelope } };
         return { run, acceptedEnvelope, checkpointEnvelope, resultEnvelope, keyCensus, rootProgress, managedCreationId };
       }
       case 'list': {
@@ -250,11 +252,15 @@ export function createWorkflowRunStorageTestkit(params: Readonly<{
         revision += 1;
         state = 'running';
         checkpointEnvelope = String(operation.checkpointEnvelope);
-        const root = operation.rootInvocation as Readonly<{ id: string; contentEnvelope: string }>;
+        const root = operation.rootInvocation as Readonly<{ id: string; contentEnvelope: string; destinationWrites?: WorkflowRunDestinationWriteV1[] }>;
         admitRow({
           id: root.id, sequence: '0', parentRecordId: null, memberOrdinal: '0',
           lifecycle: operation.rootLifecycle === 'running' ? 'running' : 'pending', contentEnvelope: root.contentEnvelope,
         });
+        if (root.destinationWrites?.length) {
+          const stored = rows.get(root.id)!;
+          rows.set(root.id, { ...stored, destinationEnvelopes: root.destinationWrites.map(write => write.contentEnvelope) });
+        }
         return { initialization: 'created', run: summary(), rootInvocation: initializedRoot() };
       }
       case 'invocations.admit': {
@@ -336,16 +342,21 @@ export function createWorkflowRunStorageTestkit(params: Readonly<{
         const invocations = prepared.map((item, index) => {
           rows.set(item.previous.index.id, { ...item.previous, index: { ...item.previous.index, lifecycle: 'superseded',
             contentRevision: (BigInt(item.previous.index.contentRevision) + 1n).toString() } });
-          return admitRow({ id: item.newInvocationId, sequence: (firstSequence + BigInt(index)).toString(),
+          const admitted = admitRow({ id: item.newInvocationId, sequence: (firstSequence + BigInt(index)).toString(),
             parentRecordId: item.parentRecordId, memberOrdinal: item.previous.index.memberOrdinal,
             attempt: (BigInt(item.previous.index.attempt) + 1n).toString(), lifecycle: 'pending', contentEnvelope: item.contentEnvelope });
+          if (item.previous.destinationEnvelopes) {
+            const stored = rows.get(item.newInvocationId)!;
+            rows.set(item.newInvocationId, { ...stored, destinationEnvelopes: item.previous.destinationEnvelopes });
+          }
+          return admitted;
         });
         return { disposition: 'accepted', run: summary(), invocations };
       }
       case 'invocations.get': {
         const row = rows.get(String(operation.invocationId));
         if (!row) throw notFound();
-        return { invocation: { index: row.index, contentEnvelope: row.contentEnvelope, parentRevision: revision } };
+        return { invocation: { ...row, parentRevision: revision } };
       }
       case 'invocations.current': {
         if (operation.runId !== params.runId) throw notFound();
@@ -427,7 +438,10 @@ export function createWorkflowRunStorageTestkit(params: Readonly<{
           lifecycle: operation.lifecycle as WorkflowInvocationLifecycleV1,
           contentRevision: (BigInt(row.index.contentRevision) + 1n).toString(),
         });
-        rows.set(index.id, { index, contentEnvelope });
+        const writes = operation.destinationWrites as WorkflowRunDestinationWriteV1[] | undefined;
+        const destinationEnvelopes = writes?.length ? [...row.destinationEnvelopes ?? []] : row.destinationEnvelopes;
+        if (destinationEnvelopes) for (const write of writes ?? []) destinationEnvelopes[write.ordinal] = write.contentEnvelope;
+        rows.set(index.id, { index, contentEnvelope, ...(destinationEnvelopes ? { destinationEnvelopes } : {}) });
         const frontier = operation.frontier as { expectedParentRevision: number; checkpointEnvelope: string } | undefined;
         const parent = index.parentRecordId && rows.get(index.parentRecordId);
         const frontierCommitted = frontier !== undefined && frontier.expectedParentRevision === revision

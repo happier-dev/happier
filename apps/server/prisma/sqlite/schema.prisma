@@ -3317,6 +3317,8 @@ model WorkflowRunInvocation {
     createdAt       DateTime @default(now())
     updatedAt       DateTime @updatedAt
 
+    destinations WorkflowRunDestination[]
+
     @@unique([runId, sequence], map: "WorkflowRunInvocation_run_sequence_key")
     @@unique([runId, parentRecordId, memberOrdinal, attempt], map: "WorkflowRunInvocation_slot_attempt_key")
     @@index([runId, lifecycle, sequence], map: "WorkflowRunInvocation_lifecycle_idx")
@@ -3337,6 +3339,16 @@ model AutomationWorkerClaimReceipt {
 
     @@index([accountId, machineId])
     @@index([expiresAt])
+}
+
+// Private root projection rows. Ordinals carry ordering only.
+model WorkflowRunDestination {
+    rootRecordId String
+    root WorkflowRunInvocation @relation(fields: [rootRecordId], references: [id], onDelete: Cascade)
+    ordinal Int
+    contentEnvelope String
+
+    @@id([rootRecordId, ordinal])
 }
 
 model AutomationRunAssignment {

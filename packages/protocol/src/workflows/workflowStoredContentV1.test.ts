@@ -22,6 +22,8 @@ import {
   openWorkflowCheckpointStoredEnvelopeV1,
   openWorkflowFinalResultStoredEnvelopeV1,
   openWorkflowProgressStoredEnvelopeV1,
+  openWorkflowProgressSnapshotV1,
+  prepareWorkflowDestinationPublicationV1,
   sealWorkflowAcceptedSnapshotStoredEnvelopeV1,
   sealWorkflowCheckpointStoredEnvelopeV1,
   sealWorkflowFinalResultStoredEnvelopeV1,
@@ -69,6 +71,46 @@ const finalResultBinding = {
 };
 
 describe('Workflow stored Account content', () => {
+  it('opens exact encrypted destination deltas across restart and rejects missing, swapped or rolled-back rows', () => {
+    let nonce = 0;
+    const sealMode = { mode: 'e2ee' as const, runDataKey,
+      randomBytes: (length: number) => new Uint8Array(length).fill(++nonce) };
+    const binding = { ...progressBinding, recordId: 'root' };
+    const initial = WorkflowProgressEnvelopeV1Schema.parse({
+      kind: 'happier.workflow-progress.v1', invocationPath: { blockId: '$root', scope: [] },
+      blockKind: 'root', logicalInvocationRecordId: 'root', attempt: '0',
+      stepProgress: { completed: 0, total: 2, destinations: [
+        { sourceKey: '$root', blockId: 'first', sessionIds: ['private-session'] },
+        { sourceKey: '$root', blockId: 'second', sessionIds: [] },
+      ] },
+    });
+    const publish = (progress: typeof initial, previous?: typeof initial) => {
+      const publication = prepareWorkflowDestinationPublicationV1({
+        ...sealMode, accountId: binding.accountId, runId: binding.runId, progress, previous,
+      });
+      return { ...publication, envelope: sealWorkflowProgressStoredEnvelopeV1({ ...sealMode, binding, progress: publication.progress }) };
+    };
+    const open = (envelope: unknown, destinationEnvelopes: unknown) =>
+      openWorkflowProgressSnapshotV1({ ...sealMode, binding, envelope, destinationEnvelopes });
+    const seed = publish(initial);
+    const original = seed.destinationWrites.map(write => write.contentEnvelope);
+    const prior = open(seed.envelope, original);
+    if (prior.kind !== 'available') throw new Error(prior.kind);
+    const [first, second] = prior.content.stepProgress!.destinations!;
+    const next = { ...first, observation: { recordId: 'leaf', sequence: '1', attempt: '0', contentRevision: '2',
+      lifecycle: 'completed' as const } };
+    const updated = publish({ ...prior.content, stepProgress: { completed: 1, total: 2, destinations: [next, second] } }, prior.content);
+    expect(updated.destinationWrites.map(write => write.ordinal)).toEqual([0]);
+    const merged = [updated.destinationWrites[0]!.contentEnvelope, original[1]!];
+    expect(JSON.stringify([seed.envelope, updated.envelope, merged])).not.toContain('private-session');
+    expect(open(updated.envelope, merged)).toMatchObject({ kind: 'available', content: {
+      stepProgress: { completed: 1, destinations: [next, second] },
+    } });
+    expect(open(updated.envelope, original)).toEqual({ kind: 'contentInvalid' });
+    expect(open(updated.envelope, merged.slice(0, 1))).toEqual({ kind: 'contentInvalid' });
+    expect(open(updated.envelope, [...merged].reverse())).toEqual({ kind: 'bindingMismatch' });
+  });
+
   it.each(['plain', 'e2ee'] as const)('round-trips accepted Runs above the Automation envelope ceiling (%s)', (mode) => {
     const definition = { ...createDeepWorkflowDefinition(0),
       inputs: [{ name: 'payload', valueType: 'string' as const, required: true }] };

@@ -55,6 +55,7 @@ import {
   DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1,
   WORKFLOW_UNSETTLED_INVOCATION_LIFECYCLES_V1,
   openWorkflowProgressStoredEnvelopeV1,
+  openWorkflowProgressSnapshotV1,
   openWorkflowAcceptedSnapshotStoredEnvelopeV1,
   parseWorkflowStoredContentEnvelopeV1,
   sealWorkflowAcceptedSnapshotStoredEnvelopeV1,
@@ -96,6 +97,7 @@ import type { WorkflowPromptContext } from './workflowPromptContext';
 import { observeWorkflowSessionInputResult } from './stepExecution';
 import { MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES } from '@happier-dev/protocol/automations/automationStoredContentEnvelopeV1';
 import { WorkflowMachineCommandOutputV1Schema } from '@happier-dev/protocol/workflows/stepActionsV1';
+import type { WorkflowRunDestinationWriteV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { bindAutomationWorkflowInputs, isWorkflowJsonObject, WorkflowInputResolutionError } from './input';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { createWorkflowDefinitionActions } from '@happier-dev/protocol/actions/executor/workflowDefinitions';
@@ -1896,7 +1898,7 @@ describe('production workflow coordinator', () => {
     const boundary = createWorkflowRunStorageTestkit({ runId, machineId, origin: { kind: 'direct' }, acceptedEnvelope });
     const rootProgress = () => {
       const row = boundary.rows().find(row => row.index.parentRecordId === null)!;
-      const opened = openWorkflowProgressStoredEnvelopeV1({ mode: 'plain', envelope: parseWorkflowStoredContentEnvelopeV1(row.contentEnvelope),
+      const opened = openWorkflowProgressSnapshotV1({ mode: 'plain', destinationEnvelopes: row.destinationEnvelopes, envelope: parseWorkflowStoredContentEnvelopeV1(row.contentEnvelope),
         binding: { v: 1, purpose: 'invocation_progress', accountId, runId, recordId: row.index.id,
           sequence: row.index.sequence, parentRecordId: null, memberOrdinal: row.index.memberOrdinal, attempt: row.index.attempt } });
       if (opened.kind !== 'available') throw new Error('root_unavailable');
@@ -2016,10 +2018,28 @@ describe('production workflow coordinator', () => {
     const rootFacts = boundary.calls.filter(call => call.operation === 'invocations.fact' && call.invocationId === root.index.id);
     const rootBytes = rootFacts.reduce((total, call) => total + Buffer.byteLength(JSON.stringify(call)), 0);
     const slotReads = boundary.calls.filter(call => call.operation === 'invocations.current').length;
+    const rootDestinationWrites = rootFacts.flatMap(call => Array.isArray(call.destinationWrites) ? call.destinationWrites : []);
+    const initialize = boundary.calls.find(call => call.operation === 'initialize');
+    const rootInitializeBytes = Buffer.byteLength(JSON.stringify(initialize?.rootInvocation ?? null));
+    const callKinds = boundary.calls.reduce<Record<string, number>>((kinds, call) => {
+      const kind = call.operation === 'invocations.fact'
+        ? call.invocationId === root.index.id ? 'root.fact'
+          : `leaf.fact.${call.lifecycle}${call.frontier === undefined ? '' : '+frontier'}`
+        : String(call.operation);
+      kinds[kind] = (kinds[kind] ?? 0) + 1;
+      return kinds;
+    }, {});
     console.info('WORKFLOW_STEP_COST', JSON.stringify({ branch, calls: boundary.calls.length, rootFacts: rootFacts.length,
-      rootBytes, requestBytes: boundary.calls.reduce((total, call) => total + Buffer.byteLength(JSON.stringify(call)), 0),
-      slotReads, workspaceChecks, elapsedMs: Math.round(performance.now() - start) }));
+      rootBytes, rootInitializeBytes, rootDestinationWrites: rootDestinationWrites.length, requestBytes: boundary.calls.reduce((total, call) => total + Buffer.byteLength(JSON.stringify(call)), 0),
+      slotReads, workspaceChecks, callKinds, elapsedMs: Math.round(performance.now() - start) }));
     if (size !== null && branch !== 'fanout_5') {
+      // Two signed root facts and two sealed row envelopes per step, including binding overhead.
+      expect.soft(rootBytes / size).toBeLessThan(3500);
+      expect(rootFacts.filter(call => Array.isArray(call.destinationWrites))).toHaveLength(size * 2);
+      expect(rootDestinationWrites).toHaveLength(size * 2);
+      expect(workspaceChecks).toBe(size);
+      expect.soft(callKinds['leaf.fact.pending'] ?? 0).toBe(0);
+      expect(boundary.calls).toHaveLength(5 + 5 * size);
       expect(rootFacts.length).toBeLessThanOrEqual(2 * size);
       expect(boundary.calls.filter(call => call.operation === 'transition' && call.state === 'running')).toEqual([]);
       expect(boundary.calls.filter(call => call.operation === 'invocations.fact' && call.frontier !== undefined)).toHaveLength(size);
@@ -2052,6 +2072,10 @@ describe('production workflow coordinator', () => {
     const expected = size !== null ? { completed: size, skipped: 0, total: size }
       : branch === 'all_taken' ? { completed: 2, skipped: 0, total: 2 } : { completed: 1, skipped: 1, total: 2 };
     expect(run.stepProgress).toMatchObject(expected);
+    if (size !== null) {
+      expect(run.stepProgress?.destinations).toHaveLength(size);
+      expect(run.stepProgress?.destinations?.map(row => row.observation?.lifecycle)).toEqual(Array(size).fill('completed'));
+    }
     const coverage = { observedLeafCounts: { completed: expected.completed, failed: 0, attention: 0 },
       coverage: 'complete' as const, knownFailure: false };
     if (size === null) expect(formatWorkflowRunOutcomeSentence({ run, coverage, historyComplete: true })).toBe(branch === 'all_taken'
@@ -4766,7 +4790,7 @@ describe('production workflow coordinator', () => {
     let durableState = 'queued';
     let durableCustody: 'pending' | 'settled' = 'pending';
     let lostFinalTransitionResponse = false;
-    const rows = new Map<string, { index: Record<string, unknown>; contentEnvelope: string }>();
+    const rows = new Map<string, { index: Record<string, unknown>; contentEnvelope: string; destinationEnvelopes?: string[] }>();
     const summary = (state: string) => ({ sourceArtifactId: null, ownerAccountId: 'account-1', visibleTeamId: null, id: runId, origin: { kind: 'automation', automationId: 'automation-1' }, state,
       attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
       revision, machineId, workflowCustodyState: durableCustody, originDeliveryAckRevision: null,
@@ -4809,8 +4833,9 @@ describe('production workflow coordinator', () => {
           revision = 1;
           durableState = 'running';
           checkpointEnvelope = operation.checkpointEnvelope as string;
-          const root = operation.rootInvocation as { id: string; contentEnvelope: string };
-          rows.set(root.id, { index: { id: root.id, runId, sequence: '0', parentRecordId: null, memberOrdinal: '0', attempt: '0', contentRevision: '0', lifecycle: operation.rootLifecycle === 'running' ? 'running' : 'pending', createdAt: now, updatedAt: now }, contentEnvelope: root.contentEnvelope });
+          const root = operation.rootInvocation as { id: string; contentEnvelope: string; destinationWrites?: readonly WorkflowRunDestinationWriteV1[] };
+          rows.set(root.id, { index: { id: root.id, runId, sequence: '0', parentRecordId: null, memberOrdinal: '0', attempt: '0', contentRevision: '0', lifecycle: operation.rootLifecycle === 'running' ? 'running' : 'pending', createdAt: now, updatedAt: now },
+            contentEnvelope: root.contentEnvelope, destinationEnvelopes: root.destinationWrites?.map(write => write.contentEnvelope) });
           return { initialization: 'created', run: summary('running') };
         }
         case 'invocations.list': {
@@ -4831,8 +4856,7 @@ describe('production workflow coordinator', () => {
             .sort((left, right) => Number(right.index.attempt) - Number(left.index.attempt))[0];
           return { invocation: current ?? null, parentRevision: revision };
         }
-        case 'invocations.get': return { invocation: { index: rows.get(operation.invocationId as string)!.index,
-          contentEnvelope: rows.get(operation.invocationId as string)!.contentEnvelope, parentRevision: revision } };
+        case 'invocations.get': return { invocation: { ...rows.get(operation.invocationId as string)!, parentRevision: revision } };
         case 'invocations.admit': {
           const item = (operation.invocations as Array<Record<string, unknown>>)[0]!;
           expect(item.sequence).toBe('1');
@@ -4849,6 +4873,11 @@ describe('production workflow coordinator', () => {
           row.index = { ...row.index, lifecycle: operation.lifecycle,
             contentRevision: (BigInt(String(row.index.contentRevision)) + 1n).toString() };
           row.contentEnvelope = operation.contentEnvelope as string;
+          const destinationWrites = operation.destinationWrites as readonly WorkflowRunDestinationWriteV1[] | undefined;
+          if (destinationWrites?.length) {
+            const envelopes = row.destinationEnvelopes ??= [];
+            for (const write of destinationWrites) envelopes[write.ordinal] = write.contentEnvelope;
+          }
           return { ...row.index, parentRevision: revision };
         }
         case 'transition': {

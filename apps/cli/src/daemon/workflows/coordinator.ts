@@ -27,7 +27,7 @@ import { getWorkflowActionOutputKindV1, WorkflowMachineCommandOutputV1Schema } f
 import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 import { readWorkflowActionApprovalSettlement, type WorkflowActionApprovalContext } from './actionApproval';
-import { isWorkflowInlineAccountReadWithoutResult } from './actionReadRecovery';
+import { isWorkflowInlineAccountReadAction, isWorkflowInlineAccountReadWithoutResult } from './actionReadRecovery';
 import { WorkflowInvocationSettlementFailure } from './invocationSettlementFailure';
 import { createWorkflowActionRequestIdV1 } from '@happier-dev/protocol/workflows/workflowSessionScopeV1';
 import { readRetainedWorkflowSessionStartupFailure, readWorkflowSessionStartupError } from './workflowSessionStartupFailure';
@@ -301,7 +301,8 @@ export type WorkflowWorkspaceResolver = (params: Readonly<{
   useConversationWorkspace?: boolean;
   conversationWorkspace?: WorkflowConversationWorkspace;
   projectWorkspace?: WorkflowWorkspaceSource;
-}>) => Promise<WorkflowWorkspaceResolutionV1>;
+  publishProjectWorkspaceWithAdmission?: true;
+}>) => Promise<WorkflowWorkspaceResolutionV1 & { publishWithAdmission?: true }>;
 
 export type WorkflowActionExecutor = Readonly<{
   executor: Pick<ReturnType<typeof createActionExecutor>, 'prepare'>;
@@ -1831,13 +1832,15 @@ async function resolveLeafWorkspace(
   scope: WorkflowInvocationPath['scope'],
   frame: Frame,
   context: ExecutionContext,
-): Promise<WorkflowWorkspaceDescriptorV1> {
+  publishProjectWorkspaceWithAdmission?: true,
+): Promise<{ workspace: WorkflowWorkspaceDescriptorV1; publishWithAdmission?: true }> {
   const frozen = context.materializedLeaves.find((candidate) => candidate.sourceKey === context.sourceKey && candidate.blockId === leaf.id);
   if (!frozen) throw new WorkflowLeafFailure('interrupted', 'target_unavailable');
   const selected = { ...leaf, execution: { ...leaf.execution, workspace: frozen.authoredWorkspace } };
   const resolution = await context.deps.resolveWorkspace({ runId: context.runId, definition: context.definition,
     step: selected, invocation: row, scope,
     producerBinding: createWorkflowProducerBinding({ runId: context.runId, store: context.deps.store, frame }),
+    ...(publishProjectWorkspaceWithAdmission ? { publishProjectWorkspaceWithAdmission } : {}),
     defaultWorkspaceOwner: await context.deps.store.readByLogicalInvocation(context.rootOwnerKey),
     ...(context.projectWorkspace ? { projectWorkspace: context.projectWorkspace } : {}) });
   const workspace = await requireWorkflowWorkspace(resolution, row, context);
@@ -1848,10 +1851,10 @@ async function resolveLeafWorkspace(
       container: { ...current.container, frameProjectWorkspace: {
         ...current.container.frameProjectWorkspace, descriptor: workspace,
       } } });
-  } else {
+  } else if (!resolution.publishWithAdmission) {
     await context.deps.store.commitFact({ key: row.key, lifecycle: row.lifecycle, workspace: { descriptor: workspace } });
   }
-  return workspace;
+  return { workspace, ...(resolution.publishWithAdmission ? { publishWithAdmission: true } : {}) };
 }
 
 async function executePublishedLeaf(
@@ -1919,9 +1922,12 @@ async function executeActionBlock(
       throw error;
     }
   }
+  let workspace = row.workspace?.descriptor;
+  let workspaceForAdmission: { descriptor: WorkflowWorkspaceDescriptorV1 } | undefined;
   const fail = async (code: string, state: 'failed' | 'outcome_uncertain' = 'failed', collectable = false,
     result?: WorkflowJsonValue, failureCause?: NonNullable<WorkflowProgressEnvelopeV1['reason']>['failureCause'], message?: string) => {
     row = await context.deps.store.commitFact({ key: row!.key, lifecycle: state, reason: code,
+      ...(workspaceForAdmission ? { workspace: workspaceForAdmission } : {}),
       ...(result === undefined ? {} : { result }), ...(failureCause === undefined ? {} : { failureCause }),
       ...(message === undefined ? {} : { reasonMessage: message }) });
     // An admitted Action keeps its failed/uncertain leaf for exact invocation recovery,
@@ -1944,7 +1950,6 @@ async function executeActionBlock(
     }
     return await fail('outcome_uncertain', 'outcome_uncertain');
   }
-  let workspace = row.workspace?.descriptor;
   let completed: Awaited<ReturnType<typeof resumeActionCompletionV1>> | undefined;
   let captureResult: ((output: WorkflowJsonValue) => WorkflowJsonValue | undefined) | undefined;
   const readTarget = (input: Record<string, WorkflowJsonValue>) => {
@@ -1997,7 +2002,7 @@ async function executeActionBlock(
     const selected = projectsAgentSelection
       ? resolveWorkflowAcceptedStepSelectionV1(frozen, frame.item?.value, context.inputs) : frozen;
     if (projectsAgentSelection) {
-      const baseline = workspace ?? await resolveLeafWorkspace(leaf, row, scope, frame, context);
+      const baseline = workspace ?? (await resolveLeafWorkspace(leaf, row, scope, frame, context)).workspace;
       workspace = baseline;
       let authored: WorkflowActionLeafV1 | undefined;
       for (const block of walkWorkflowBlocks(context.authoredDefinition.blocks)) {
@@ -2022,8 +2027,12 @@ async function executeActionBlock(
           ? { validationIssues: validation.issues.map(({ pointer, message }) => ({ pointer, message })) } : {}) });
       throw new WorkflowLeafFailure('failed', 'invalid_input', true);
     }
-    const actionWorkspace = workspace ?? await resolveLeafWorkspace(leaf, row, scope, frame, context);
+    const resolvedWorkspace = workspace ? { workspace, publishWithAdmission: undefined }
+      : await resolveLeafWorkspace(leaf, row, scope, frame, context,
+        !setupConsentHold && isWorkflowInlineAccountReadAction(actionId) ? true : undefined);
+    const actionWorkspace = resolvedWorkspace.workspace;
     workspace = actionWorkspace;
+    if (resolvedWorkspace.publishWithAdmission) workspaceForAdmission = { descriptor: actionWorkspace };
     input = projectWorkflowFiniteActionInputV1({ machineId: actionWorkspace.machineId, actionId, input });
     const target = readTarget(input);
     const localInputId = `workflow:${createHash('sha256').update(row.recordId).digest('hex')}:action`;
@@ -2101,7 +2110,8 @@ async function executeActionBlock(
     const execution = { kind: 'action' as const, actionId, actionRequestId, localInputId, input: presentedInput };
     // This CAS is the last asynchronous boundary before the one-shot effect.
     // Failure/lost acknowledgement never authorizes dispatch or replay.
-    try { row = await context.deps.store.commitFact({ key: row.key, lifecycle: 'admitting', execution }); }
+    try { row = await context.deps.store.commitFact({ key: row.key, lifecycle: 'admitting', execution,
+      ...(workspaceForAdmission ? { workspace: workspaceForAdmission } : {}) }); }
     catch (error) {
       if (error instanceof WorkflowInputResolutionError && error.code === 'workflow_input_too_large') {
         // The durable owner rejects this exact typed capacity error before the
@@ -2353,7 +2363,7 @@ async function executeWorkflowBlock(
     if (row.container?.kind === 'body' && row.container.frameInputs === undefined) {
       await context.deps.store.commitFact({ key, lifecycle: 'running', container: { ...row.container, frameInputs: childInputs } });
     }
-    const workspace = await resolveLeafWorkspace(leaf, row, scope, frame, context);
+    const { workspace } = await resolveLeafWorkspace(leaf, row, scope, frame, context);
     const resolvedRow = await context.deps.store.read(key);
     const frameProjectWorkspace = resolvedRow?.container?.kind === 'body'
       ? resolvedRow.container.frameProjectWorkspace : undefined;

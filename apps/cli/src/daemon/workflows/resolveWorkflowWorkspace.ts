@@ -502,6 +502,7 @@ type CoordinatorWorkspaceResolveInput = Readonly<{
   conversationWorkspace?: WorkflowConversationWorkspace;
   useConversationWorkspace?: boolean;
   projectWorkspace?: WorkflowWorkspaceSource;
+  publishProjectWorkspaceWithAdmission?: true;
 }>;
 
 /** Binds the pure workspace policy adapter to the coordinator's one row-local persistence owner. */
@@ -511,8 +512,8 @@ export function createCoordinatorWorkspaceResolver(input: Readonly<{
   workspaceSource?: WorkspaceSource;
   originalCommittedRevision?: string;
   scm?: Pick<Dependencies, 'inspectLocation' | 'inspectCommittedRevision' | 'realizeWorktree' | 'verifyRecordedWorkspace'>;
-}>): (params: CoordinatorWorkspaceResolveInput) => Promise<WorkflowWorkspaceResolution> {
-  const resolve = async (params: CoordinatorWorkspaceResolveInput): Promise<WorkflowWorkspaceResolution> => {
+}>): (params: CoordinatorWorkspaceResolveInput) => Promise<WorkflowWorkspaceResolution & { publishWithAdmission?: true }> {
+  const resolve = async (params: CoordinatorWorkspaceResolveInput): Promise<WorkflowWorkspaceResolution & { publishWithAdmission?: true }> => {
     const selection: WorkflowWorkspaceSelection = params.step.execution?.workspace ?? { kind: 'inherit' };
     const defaultSelection: WorkflowWorkspaceSelection = params.definition.defaults.workspace ?? { kind: 'project_checkout' };
     const frameProject = params.invocation.blockKind === 'workflow';
@@ -572,6 +573,7 @@ export function createCoordinatorWorkspaceResolver(input: Readonly<{
       sources: Readonly<{ workflowWorkspace?: WorkflowWorkspaceSource; inheritedWorkspace?: WorkflowWorkspaceSource }> = {},
       conversationWorkspace?: WorkflowConversationWorkspace,
       selectedProject = false,
+      publishWithAdmission = false,
     ) => resolveWorkflowWorkspace({
       selection: selected,
       defaultSelection: defaults,
@@ -585,7 +587,8 @@ export function createCoordinatorWorkspaceResolver(input: Readonly<{
       ...(selectedProject ? { creationSlot: 'frame_project' as const } : {}),
       ...(input.originalCommittedRevision ? { originalCommittedRevision: input.originalCommittedRevision } : {}),
       recorded: recordedWorkspace(owner, selectedProject),
-      deps: dependencies(owner, selectedProject),
+      deps: { ...dependencies(owner, selectedProject),
+        ...(publishWithAdmission ? { persistWorkspace: undefined } : {}) },
     });
 
     // A leaf's recorded correspondence is exact, even if its lazy default or
@@ -645,12 +648,20 @@ export function createCoordinatorWorkspaceResolver(input: Readonly<{
         ...(recorded?.workspace?.creationIntent ? { creationIntent: recorded.workspace.creationIntent } : {}),
       };
     }
-    return await resolveForOwner(params.invocation, selection,
+    // The accepted project itself has no mutable producer or creation slot.
+    // The caller still verifies it here, then records it with input admission.
+    const project = params.projectWorkspace?.descriptor ?? input.projectWorkspace;
+    const publishWithAdmission = params.publishProjectWorkspaceWithAdmission === true && params.invocation.blockKind === 'action'
+      && !frameProject && !params.projectWorkspace?.creationIntent && !project.sourceInvocation
+      && project.checkout?.kind !== 'git_worktree'
+      && (selection.kind === 'project_checkout' || selection.kind === 'inherit' && defaultSelection.kind === 'project_checkout');
+    const resolution = await resolveForOwner(params.invocation, selection,
       workflowWorkspace && selection.kind === 'inherit' ? { kind: 'project_checkout' } : defaultSelection,
       {
         ...(workflowWorkspace ? { workflowWorkspace } : {}),
         ...(workflowWorkspace && selection.kind === 'inherit' ? { inheritedWorkspace: workflowWorkspace } : {}),
-      }, conversationWorkspace, frameProject);
+      }, conversationWorkspace, frameProject, publishWithAdmission);
+    return resolution.ok && publishWithAdmission ? { ...resolution, publishWithAdmission: true } : resolution;
   };
   const source = input.workspaceSource;
   return source ? params => runWithWorkspaceSourceDemand(source, () => resolve(params)) : resolve;

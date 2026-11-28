@@ -1,5 +1,8 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
+import { sha256 } from '@noble/hashes/sha2';
+import { bytesToHex } from '@noble/hashes/utils';
+import { sameStrictJsonValue } from '../json/strictJsonValue.js';
 import tweetnacl from 'tweetnacl';
 import { decodeBase64, encodeBase64, readCanonicalPaddedBase64DecodedLength } from '../crypto/base64.js';
 import { parseSerializedJsonValue } from '../crypto/serializedJsonValue.js';
@@ -17,6 +20,10 @@ import {
   WorkflowInvocationRecordIdSchema,
   WorkflowProgressEnvelopeV1Schema,
   WorkflowRunIdV1Schema,
+  WorkflowRunDestinationProgressV1Schema,
+  type WorkflowRunDestinationProgressV1,
+  type WorkflowRunDestinationWriteV1,
+  type WorkflowProgressEnvelopeV1,
 } from './workflowProgressV1.js';
 
 const WorkflowAccountIdV1Schema = preservedBoundedNfcString(191, 'Account ids');
@@ -48,11 +55,18 @@ export const WorkflowDisplaySummaryStoredBindingV1Schema = lazyZodSchema(() => (
   purpose: z.literal('display_summary'),
 })));
 
+const WorkflowDestinationStoredBindingV1Schema = lazyZodSchema(() => z.strictObject({
+  ...WorkflowStoredBindingBaseV1Schema.shape,
+  purpose: z.literal('run_destination'),
+  ordinal: z.number().check(z.int(), z.nonnegative()),
+}));
+
 export const WorkflowStoredContentBindingV1Schema = lazyZodSchema(() => z.discriminatedUnion('purpose', [
   WorkflowAcceptedSnapshotStoredBindingV1Schema,
   WorkflowDisplaySummaryStoredBindingV1Schema,
   WorkflowInvocationProgressStoredBindingV1Schema,
   WorkflowCheckpointStoredBindingV1Schema,
+  WorkflowDestinationStoredBindingV1Schema,
   WorkflowFinalResultStoredBindingV1Schema,
 ]));
 export type WorkflowStoredContentBindingV1 = z.infer<typeof WorkflowStoredContentBindingV1Schema>;
@@ -78,6 +92,10 @@ const WorkflowDisplaySummaryStoredPayloadV1Schema = lazyZodSchema(() => z.strict
 const WorkflowInvocationProgressStoredPayloadV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(2), binding: WorkflowInvocationProgressStoredBindingV1Schema,
   content: WorkflowProgressEnvelopeV1Schema,
+}));
+const WorkflowDestinationStoredPayloadV1Schema = lazyZodSchema(() => z.strictObject({
+  v: z.literal(2), binding: WorkflowDestinationStoredBindingV1Schema,
+  content: WorkflowRunDestinationProgressV1Schema,
 }));
 const WorkflowCheckpointStoredPayloadV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(2), binding: WorkflowCheckpointStoredBindingV1Schema,
@@ -138,6 +156,7 @@ type ParsedWorkflowStoredPayloadV1 =
   | Readonly<{ purpose: 'accepted_snapshot_listing'; payload: z.infer<typeof WorkflowAcceptedSnapshotListingStoredPayloadV1Schema> }>
   | Readonly<{ purpose: 'display_summary'; payload: z.infer<typeof WorkflowDisplaySummaryStoredPayloadV1Schema> }>
   | Readonly<{ purpose: 'invocation_progress'; payload: z.infer<typeof WorkflowInvocationProgressStoredPayloadV1Schema> }>
+  | Readonly<{ purpose: 'run_destination'; payload: z.infer<typeof WorkflowDestinationStoredPayloadV1Schema> }>
   | Readonly<{ purpose: 'checkpoint'; payload: z.infer<typeof WorkflowCheckpointStoredPayloadV1Schema> }>
   | Readonly<{ purpose: 'final_result'; payload: z.infer<typeof WorkflowFinalResultStoredPayloadV1Schema> }>;
 
@@ -166,6 +185,10 @@ function parsePayloadForBinding(
       if (parsed.data.binding.attempt === '0'
         && parsed.data.content.logicalInvocationRecordId !== parsed.data.binding.recordId) return null;
       return { purpose: binding.purpose, payload: parsed.data };
+    }
+    case 'run_destination': {
+      const parsed = (storedRead ? createStoredReadSchema(WorkflowDestinationStoredPayloadV1Schema) : WorkflowDestinationStoredPayloadV1Schema).safeParse(value);
+      return parsed.success ? { purpose: binding.purpose, payload: parsed.data } : null;
     }
     case 'checkpoint': {
       const parsed = (storedRead ? createStoredReadSchema(WorkflowCheckpointStoredPayloadV1Schema) : WorkflowCheckpointStoredPayloadV1Schema).safeParse(value);
@@ -393,6 +416,61 @@ export function openWorkflowProgressStoredEnvelopeV1(params: Readonly<{
   return opened.payload.purpose === 'invocation_progress'
     ? { kind: 'available' as const, content: opened.payload.payload.content }
     : { kind: 'contentInvalid' as const };
+}
+
+function digestWorkflowDestinations(destinations: readonly WorkflowRunDestinationProgressV1[]): string {
+  return bytesToHex(sha256(new TextEncoder().encode(createCanonicalJsonSigningInput(destinations))));
+}
+
+export function prepareWorkflowDestinationPublicationV1(params: Readonly<{
+  accountId: string;
+  runId: string;
+  progress: WorkflowProgressEnvelopeV1;
+  previous?: WorkflowProgressEnvelopeV1;
+}> & WorkflowStoredEnvelopeSealModeV1): Readonly<{
+  progress: WorkflowProgressEnvelopeV1;
+  destinationWrites: readonly WorkflowRunDestinationWriteV1[];
+}> {
+  const { accountId, runId, progress, previous } = params;
+  const stepProgress = progress.stepProgress;
+  if (!stepProgress?.destinations) return { progress, destinationWrites: [] };
+  const { destinations, ...counts } = stepProgress;
+  const old = previous?.destinationSnapshotDigest ? previous.stepProgress?.destinations : undefined;
+  if (old && old.length !== destinations.length) throw new Error('workflow_destination_catalog_changed');
+  const destinationWrites = destinations.flatMap((content, ordinal) => {
+    if (sameStrictJsonValue(old?.[ordinal], content)) return [];
+    const binding = { v: 1 as const, purpose: 'run_destination' as const, accountId, runId, ordinal };
+    return [{ ordinal, contentEnvelope: serializeWorkflowStoredContentEnvelopeV1(sealWorkflowStoredEnvelopeV1({
+      ...params, binding, payload: { v: 2, binding, content },
+    })) }];
+  });
+  return {
+    progress: { ...progress, stepProgress: counts, destinationSnapshotDigest: old && destinationWrites.length === 0
+      ? previous?.destinationSnapshotDigest : digestWorkflowDestinations(destinations) },
+    destinationWrites,
+  };
+}
+
+/** Open a root and its same-snapshot rows together. The sealed digest detects mixed revisions and omissions. */
+export function openWorkflowProgressSnapshotV1(params: Parameters<typeof openWorkflowProgressStoredEnvelopeV1>[0]
+  & Readonly<{ destinationEnvelopes?: unknown }>): ReturnType<typeof openWorkflowProgressStoredEnvelopeV1> {
+  const opened = openWorkflowProgressStoredEnvelopeV1(params);
+  if (opened.kind !== 'available' || opened.content.destinationSnapshotDigest === undefined) return opened;
+  const { destinationSnapshotDigest, stepProgress, ...root } = opened.content;
+  if (root.blockKind !== 'root' || !stepProgress || stepProgress.destinations !== undefined) return { kind: 'payloadInvalid' };
+  const { accountId, runId } = params.binding;
+  const envelopes = params.destinationEnvelopes;
+  if (envelopes !== undefined && !Array.isArray(envelopes)) return { kind: 'contentInvalid' };
+  const destinations: WorkflowRunDestinationProgressV1[] = [];
+  for (const [ordinal, raw] of (envelopes ?? []).entries()) {
+    const row = openWorkflowStoredEnvelopeV1({ ...params, envelope: parseWorkflowStoredContentEnvelopeV1(raw),
+      binding: { v: 1, purpose: 'run_destination', accountId, runId, ordinal } });
+    if (row.kind !== 'available') return row;
+    if (row.payload.purpose !== 'run_destination') return { kind: 'contentInvalid' };
+    destinations.push(row.payload.payload.content);
+  }
+  if (digestWorkflowDestinations(destinations) !== destinationSnapshotDigest) return { kind: 'contentInvalid' };
+  return { kind: 'available', content: { ...root, destinationSnapshotDigest, stepProgress: { ...stepProgress, destinations } } };
 }
 
 export function sealWorkflowCheckpointStoredEnvelopeV1(params: Readonly<{
