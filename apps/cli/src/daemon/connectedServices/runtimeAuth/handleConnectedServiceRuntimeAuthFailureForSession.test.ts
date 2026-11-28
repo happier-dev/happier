@@ -5656,6 +5656,140 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
     });
   });
 
+  describe('a fresh in-band failure that joins a sibling-committed generation', () => {
+    // Several sessions on one pool exhaust the same member together: the first commits the
+    // replacement and the others observe it (`observed_generation`). The observed result's apply
+    // mode is this session's own application of that generation, decided from its runtime's
+    // switch continuity. `spawn_next_turn` means only the binding moved: the live runner still
+    // holds the exhausted account until a restart retires it.
+    const runJoinedGenerationRecovery = (input: Readonly<{
+      sessionId: string;
+      mode: 'spawn_next_turn' | 'hot_apply';
+      restartSession?: (tracked: TrackedSession) => Promise<void>;
+      continueAfterRuntimeAuthSwitch: (input: unknown) => Promise<void>;
+    }>) => handleConnectedServiceRuntimeAuthFailureForSession({
+      getChildren: () => [{
+        startedBy: 'daemon',
+        happySessionId: input.sessionId,
+        pid: 123,
+        spawnOptions: {
+          directory: '/tmp/project',
+          connectedServices: {
+            v: 1,
+            bindingsByServiceId: {
+              'openai-codex': {
+                source: 'connected',
+                selection: 'group',
+                profileId: 'primary',
+                groupId: 'main',
+              },
+            },
+          },
+        },
+      }],
+      switchCoordinator: {
+        switchAfterClassifiedFailure: async () => ({
+          status: 'observed_generation' as const,
+          activeProfileId: 'backup',
+          generation: 10,
+          mode: input.mode,
+        }),
+      },
+      ...(input.restartSession ? { restartSession: input.restartSession } : {}),
+      continueAfterRuntimeAuthSwitch: input.continueAfterRuntimeAuthSwitch,
+      sessionId: input.sessionId,
+      switchesThisTurn: 0,
+      classification: {
+        kind: 'usage_limit',
+        limitCategory: 'usage_limit',
+        serviceId: 'openai-codex',
+        profileId: 'primary',
+        groupId: 'main',
+        resetsAtMs: null,
+        retryAfterMs: 30_000,
+        quotaScope: 'account',
+        providerLimitId: 'weekly',
+        action: null,
+        planType: null,
+        rateLimits: null,
+        source: 'structured_provider_error',
+      },
+    });
+
+    it('holds the continuation until the restart retires the predecessor when the runtime cannot hot-apply', async () => {
+      let resolveRestart!: () => void;
+      const restartSession = vi.fn(() => new Promise<void>((resolve) => {
+        resolveRestart = resolve;
+      }));
+      const continueAfterRuntimeAuthSwitch = vi.fn(async () => {});
+
+      const recovery = runJoinedGenerationRecovery({
+        sessionId: 'sess_joined_restart_only',
+        mode: 'spawn_next_turn',
+        restartSession,
+        continueAfterRuntimeAuthSwitch,
+      });
+
+      await vi.waitFor(() => {
+        expect(restartSession).toHaveBeenCalledOnce();
+      });
+      expect(continueAfterRuntimeAuthSwitch).not.toHaveBeenCalled();
+
+      resolveRestart();
+      await expect(recovery).resolves.toMatchObject({
+        status: 'switch_attempted',
+        result: { status: 'observed_generation', activeProfileId: 'backup', generation: 10 },
+      });
+      expect(continueAfterRuntimeAuthSwitch).toHaveBeenCalledOnce();
+      expect(continueAfterRuntimeAuthSwitch).toHaveBeenCalledWith(expect.objectContaining({
+        sessionId: 'sess_joined_restart_only',
+        attemptId: 'connected-service-auth-switch|hot_applied|openai-codex:group:main:backup:10',
+        action: 'restart_requested',
+        target: { serviceId: 'openai-codex', groupId: 'main', profileId: 'backup', generation: 10 },
+      }));
+    });
+
+    it('never arms the continuation when the predecessor retirement is unproven', async () => {
+      const retirementError = Object.assign(
+        new Error('connected_service_previous_runner_retirement_unproven:timeout'),
+        { code: 'connected_service_previous_runner_retirement_unproven', retryable: true },
+      );
+      const continueAfterRuntimeAuthSwitch = vi.fn(async () => {});
+
+      await expect(runJoinedGenerationRecovery({
+        sessionId: 'sess_joined_retirement_unproven',
+        mode: 'spawn_next_turn',
+        restartSession: async () => {
+          throw retirementError;
+        },
+        continueAfterRuntimeAuthSwitch,
+      })).rejects.toBe(retirementError);
+      expect(continueAfterRuntimeAuthSwitch).not.toHaveBeenCalled();
+    });
+
+    it('continues immediately without a restart when the runtime hot-applied the joined generation', async () => {
+      const restartSession = vi.fn(async () => {});
+      const continueAfterRuntimeAuthSwitch = vi.fn(async () => {});
+
+      await expect(runJoinedGenerationRecovery({
+        sessionId: 'sess_joined_hot_apply',
+        mode: 'hot_apply',
+        restartSession,
+        continueAfterRuntimeAuthSwitch,
+      })).resolves.toMatchObject({
+        status: 'switch_attempted',
+        result: { status: 'observed_generation', activeProfileId: 'backup', generation: 10 },
+      });
+      expect(restartSession).not.toHaveBeenCalled();
+      expect(continueAfterRuntimeAuthSwitch).toHaveBeenCalledOnce();
+      expect(continueAfterRuntimeAuthSwitch).toHaveBeenCalledWith(expect.objectContaining({
+        sessionId: 'sess_joined_hot_apply',
+        attemptId: 'connected-service-auth-switch|hot_applied|openai-codex:group:main:backup:10',
+        action: 'hot_applied',
+      }));
+    });
+  });
+
   it('surfaces an unproven restart retirement as retryable recovery failure without arming continuation', async () => {
     const retirementError = Object.assign(
       new Error('connected_service_previous_runner_retirement_unproven:timeout'),
