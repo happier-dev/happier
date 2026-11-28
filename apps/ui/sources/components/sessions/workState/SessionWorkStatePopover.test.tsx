@@ -102,8 +102,12 @@ describe('SessionWorkStatePopover', () => {
                 {...{ bot: { name: 'Patch reviewer', purpose: 'Reviews changes', paused: true,
                     onTogglePause: togglePause, onOpenWork: openWork } }} />);
         });
+        // One identity row leads the popover: name and purpose on it, never a second card or a repeated title band.
         expect(tree?.root.findByProps({ testID: 'session-work-state-popover-surface' }).props.header)
-            .toMatchObject({ title: 'Patch reviewer', description: 'Reviews changes' });
+            .toMatchObject({ title: 'Patch reviewer', placement: 'label' });
+        const header = tree!.root.findByProps({ testID: 'session-work-state-bot-header' });
+        expect(header.findAll((node) => node.props.children === 'Patch reviewer')).not.toHaveLength(0);
+        expect(header.findAll((node) => node.props.children === 'Reviews changes')).not.toHaveLength(0);
         await act(async () => {
             tree?.root.findAllByProps({ testID: 'session-work-state-bot-toggle-pause' })[0]?.props.onPress();
             tree?.root.findAllByProps({ testID: 'session-work-state-bot-open-work' })[0]?.props.onPress();

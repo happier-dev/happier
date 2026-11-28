@@ -3,7 +3,11 @@ import * as React from 'react';
 import { AgentInputContentPopover } from '@/components/sessions/agentInput/components/AgentInputContentPopover';
 import { SessionBotFace } from '@/components/sessions/bots/face/SessionBotFace';
 import type { SessionBotFaceFacts } from '@/components/sessions/bots/face/sessionBotFaceFacts';
-import { Item } from '@/components/ui/lists/Item';
+import { View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
+import { Text } from '@/components/ui/text/Text';
 import type { SessionWorkStateSnapshot } from '@/sync/domains/session/workState/sessionWorkStateTypes';
 import { t } from '@/text';
 
@@ -96,18 +100,84 @@ export function SessionWorkStatePopover(props: Readonly<{
             maxWidthCap={420}
             maxHeightCap={520}
             testID="session-work-state-popover-surface"
-            header={bot ? { title: bot.name, description: bot.purpose } : undefined}
+            // The Bot's own row leads the popover (lab session-orchestration S2); the popover title only names it.
+            header={bot ? { title: bot.name, placement: 'label' } : undefined}
             content={() => <>
-                {bot?.face ? <SessionBotFace facts={bot.face} size={32} motion={false} /> : null}
-                {bot?.onTogglePause ? <Item
-                    testID="session-work-state-bot-toggle-pause"
-                    title={t(bot.paused ? 'sessionWork.botControls.resume' : 'sessionWork.botControls.pause')}
-                    onPress={bot.onTogglePause}
-                /> : null}
-                {bot ? <Item testID="session-work-state-bot-open-work"
-                    title={t('sessionWork.botControls.openWork')} onPress={bot.onOpenWork} /> : null}
+                {bot ? <SessionWorkStateBotHeader bot={bot} /> : null}
                 {content}
             </>}
         />
     );
 }
+
+type SessionWorkStateBot = NonNullable<React.ComponentProps<typeof SessionWorkStatePopover>['bot']>;
+
+/**
+ * Who this work belongs to, as one row (lab S2, owner R6: no separate Bot card): the face, the name with Pause or
+ * Resume and Open Work › on its line, and the purpose beneath. Needs you, Running, Workflows and Next follow.
+ */
+function SessionWorkStateBotHeader(props: Readonly<{ bot: SessionWorkStateBot }>) {
+    const { bot } = props;
+    return (
+        <View testID="session-work-state-bot-header" style={styles.botHeader}>
+            {bot.face ? <SessionBotFace facts={bot.face} size={BOT_HEADER_FACE_PX} motion={false} /> : null}
+            <View style={styles.botHeaderText}>
+                <View style={styles.botHeaderTitleRow}>
+                    <Text variant="label" emphasis="semiBold" numberOfLines={1} style={styles.botHeaderName}>{bot.name}</Text>
+                    {bot.onTogglePause ? (
+                        <RoundButton
+                            testID="session-work-state-bot-toggle-pause"
+                            size="small"
+                            display="secondary"
+                            title={t(bot.paused ? 'sessionWork.botControls.resume' : 'sessionWork.botControls.pause')}
+                            onPress={bot.onTogglePause}
+                        />
+                    ) : null}
+                    <TextLinkButton
+                        testID="session-work-state-bot-open-work"
+                        size="meta"
+                        label={t('sessionWork.botControls.openWork')}
+                        onPress={bot.onOpenWork}
+                    />
+                </View>
+                {bot.purpose ? (
+                    <Text variant="meta" numberOfLines={2} style={styles.botHeaderPurpose}>{bot.purpose}</Text>
+                ) : null}
+            </View>
+        </View>
+    );
+}
+
+/** The identity size every Bot header uses (lab S2 and the hover card). */
+const BOT_HEADER_FACE_PX = 32;
+
+const styles = StyleSheet.create((theme) => ({
+    botHeader: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        gap: theme.space.s12,
+        paddingHorizontal: theme.space.s12,
+        paddingTop: theme.space.s12,
+        paddingBottom: theme.space.s12,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        borderBottomColor: theme.colors.border.default,
+    },
+    botHeaderText: {
+        flex: 1,
+        minWidth: 0,
+        gap: theme.space.s4,
+    },
+    botHeaderTitleRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: theme.space.s8,
+    },
+    botHeaderName: {
+        flex: 1,
+        minWidth: 0,
+        color: theme.colors.text.primary,
+    },
+    botHeaderPurpose: {
+        color: theme.colors.text.secondary,
+    },
+}));

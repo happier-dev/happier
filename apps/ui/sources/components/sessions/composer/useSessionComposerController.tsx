@@ -208,6 +208,7 @@ import { resolveSessionModelSelectionDisposition } from "@/sync/domains/models/r
 import { useDestinationRouter } from "@/components/appShell/workspace/DestinationInstanceHost";
 import { admitInternalRouteHref } from "@/utils/path/routeUtils";
 import * as React from "react";
+import { SessionBotFace } from "@/components/sessions/bots/face/SessionBotFace";
 import { useSessionFilePaneNavigation } from "@/components/sessions/panes/useSessionFileDetailsOpener";
 import { Platform, View } from "react-native";
 import { SessionComposerCardStack, SessionComposerColumn } from "@/components/sessions/composer/SessionComposerColumn";
@@ -1865,7 +1866,10 @@ export function useSessionComposerController({
             accessibilityLabel: t('session.workState.accessibilityLabel'),
             tone: presentation?.tone,
             emphasis: presentation?.emphasis,
-            icon: (tint) => <Icon name={iconName} size={14} color={tint} />,
+            // A Bot's work line leads with its face (lab session-orchestration S2); other Sessions keep the glyph.
+            icon: botWorkHeader
+                ? () => <SessionBotFace facts={botWorkHeader.face} size={16} motion={false} />
+                : (tint) => <Icon name={iconName} size={14} color={tint} />,
             renderPopover: ({ open, anchorRef, onRequestClose }) => (
                 <SessionWorkStatePopover
                     open={open}
