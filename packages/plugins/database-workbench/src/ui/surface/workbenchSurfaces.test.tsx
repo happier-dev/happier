@@ -868,6 +868,15 @@ describe('Database workbench surfaces', () => {
           renderActionControl: ({ control: bound, presentation }) =>
             <Button title={presentation.title} disabled={!bound || presentation.disabled}
               onPress={() => control.press(presentation.title)} />,
+          databaseWorkbench: {
+            activityResource: () => { throw new Error('Unexpected Activity demand'); },
+            lastLook: () => { throw new Error('Unexpected Last Look demand'); },
+            // The host's Environment wake, delivered when a manager turns editing on.
+            renderEnvironmentAccessObserver: ({ target: observed, onChanged }) => {
+              expect(observed).toEqual(target);
+              return <Button title="Environment changed" onPress={onChanged} />;
+            },
+          },
         }}>
         {renderPage(context)}
       </PluginUiHostPresentationScope>,
@@ -896,7 +905,11 @@ describe('Database workbench surfaces', () => {
         expect(await fixture.queryByRole('button', { name: 'Details' })).toBeUndefined();
         expect(document.body.textContent).not.toContain('Something went wrong');
         expect((await fixture.getByRole('button', { name: 'Use existing read-only login' })).state?.disabled).not.toBe(true);
+        // Editing off forbids creating a login, so Create is not offered while the refusal stands.
+        expect(await fixture.queryByRole('button', { name: 'Create read-only login' })).toBeUndefined();
         editingOff = false;
+        await fixture.press(await fixture.getByRole('button', { name: 'Environment changed' }));
+        await settle(5);
         await fixture.press(await fixture.getByRole('button', { name: 'Create read-only login' }));
         await settle(20);
         expect(execute.mock.calls).toHaveLength(2);
@@ -909,6 +922,79 @@ describe('Database workbench surfaces', () => {
       }
       expect(document.body.textContent).not.toContain('Review the read-only login');
       expect(await fixture.getByRole('button', { name: 'Use existing read-only login' })).toBeTruthy();
+    } finally { await fixture.dispose(); }
+  });
+
+  it.each(['write_connection_setup_required', 'write_role_setup_required', 'database_unmapped_refusal'] as const)(
+    'leads read setup refused with %s through the host write setup, then Create again', async (code) => {
+    const target = { kind: 'managed_deployment', environment: { serverId: 'home', environmentId: 'env', projectSourceId: 'source' },
+        targetLinkId: 'link', contribution: { pluginId: 'happier.deploy.railway-data', contributionId: 'postgresql' },
+        platformProjectId: 'project', branchId: 'branch', database: 'billing_dev' } as const;
+    const create = databaseActionLocalIdV1(DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1);
+    const writeSetup = code !== 'database_unmapped_refusal';
+    let configured = false;
+    const execute = vi.fn<Parameters<typeof createPluginUiActionControlTestHost>[0]>(async () => configured
+      ? { ok: true as const, result: { ok: true, status: 'review', role: 'happier_read', statements: ['CREATE ROLE happier_read'] } }
+      : { ok: false as const, errorCode: code, error: code });
+    const control = createPluginUiActionControlTestHost(execute);
+    const renderWriteSetup = vi.fn((input: { onConfigured(): void }) =>
+      <Button title="Set up database writes" onPress={() => { configured = true; input.onConfigured(); }} />);
+    const presentActionFailure = vi.fn<NonNullable<PluginUiTestkitHostHandlers['presentActionFailure']>>(async () =>
+      ({ reason: 'Something went wrong', nextStep: null, technicalDetails: [] }));
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: `read-setup-${code}`, mountNonce: `read-setup-${code}` },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' }, surface: context => <PluginUiHostPresentationScope
+        environment={projectHappierUiEnvironment(context.surface)}
+        presentationHost={{
+          renderCodeBlock: () => null, renderIcon: () => null, renderMarkdown: () => null, renderPopover: () => null,
+          databaseWorkbench: {
+            activityResource: () => { throw new Error('Unexpected Activity demand'); },
+            lastLook: () => { throw new Error('Unexpected Last Look demand'); },
+            renderWriteSetup,
+          },
+        }}>
+        {renderPage(context)}
+      </PluginUiHostPresentationScope>,
+      subPath: encodeWorkbenchRootSubPath(target, { engine: 'postgresql', label: 'Billing Postgres', origin: 'Billing staging' }),
+      surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: {
+        pluginId: 'happier.database', localId: WORKBENCH_PAGE_VIEW_ID }, container: 'appPage' }, target: { kind: 'app' } }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: {
+        ...connectionResourceHandlers(),
+        async watchResource() { throw new PluginError({ code: 'read_role_setup_required' }); },
+        executeAction: daemonAnswers([{ ...descriptor, target }]),
+        actionControl: control.handler,
+        presentActionFailure,
+      },
+    });
+    try {
+      await settle(20);
+      // The identity line leads with the label the open carried, not the database's address name.
+      expect(document.body.textContent).toContain('Billing Postgres · ');
+      expect(document.body.textContent).not.toContain('billing_dev');
+      await act(async () => control.press('Create read-only login'));
+      await settle(20);
+      expect(execute.mock.calls.map(([{ action, input }]) => ({ action, input })))
+        .toEqual([{ action: create, input: { target, mode: 'preview' } }]);
+      if (!writeSetup) {
+        // A code no owner names keeps the generic failure presentation.
+        expect(renderWriteSetup).not.toHaveBeenCalled();
+        expect(presentActionFailure).toHaveBeenCalled();
+        expect(document.body.textContent).toContain('Something went wrong');
+        return;
+      }
+      expect(renderWriteSetup).toHaveBeenLastCalledWith({ target, code, onConfigured: expect.any(Function) });
+      expect(document.body.textContent).not.toContain('Something went wrong');
+      // While the setup stands it is the way forward; Create would refuse again, so it is not the filled control.
+      expect(control.presentation('Create read-only login')?.variant).toBe('secondary');
+      await fixture.press(await fixture.getByRole('button', { name: 'Set up database writes' }));
+      await settle(5);
+      expect(control.presentation('Create read-only login')?.variant).toBe('primary');
+      await act(async () => control.press('Create read-only login'));
+      await settle(20);
+      expect(execute).toHaveBeenCalledTimes(2);
+      expect(execute.mock.calls[1]?.[0]).toMatchObject({ action: create, input: { target, mode: 'preview' } });
+      expect(await fixture.getByText('Review the read-only login')).toBeTruthy();
     } finally { await fixture.dispose(); }
   });
 

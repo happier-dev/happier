@@ -96,10 +96,12 @@ export type DatabaseWorkbenchSpecimenState = Readonly<{
 
 /**
  * `?review=`: a writable database's staged review (`unverified`; `mysql` for MySQL's write guarantee), or a Railway database that needs a read-only login:
- * its PostgreSQL or MySQL review, editing off, a login created but not yet in use, or a refusal with details.
+ * its PostgreSQL or MySQL review, editing off, a login created but not yet in use, a refusal with details, or (`read-setup-writer`)
+ * Create refused because the Environment has no write connection, which leads to the host's write setup.
  */
 export const DATABASE_WORKBENCH_REVIEW_STATES = [
   'unverified', 'mysql', 'read-setup', 'read-setup-mysql', 'read-setup-refused', 'read-setup-binding', 'read-setup-failed',
+  'read-setup-writer',
 ] as const;
 type DatabaseWorkbenchReadSetupState = typeof DATABASE_WORKBENCH_REVIEW_STATES[number];
 
@@ -154,6 +156,8 @@ const READ_SETUP_STATEMENTS = {
 function readSetupRefusal(review: DatabaseWorkbenchReadSetupState | undefined, input: Record<string, unknown>) {
   if (review === 'read-setup-refused')
     return { ok: false, errorCode: 'database_editing_off', error: 'database_editing_off' } as const;
+  if (review === 'read-setup-writer')
+    return { ok: false, errorCode: 'write_connection_setup_required', error: 'write_connection_setup_required' } as const;
   if (review === 'read-setup-binding' && input.mode === 'apply')
     return { ok: false, errorCode: 'database_read_role_binding_failed', effectAttempted: true,
       error: 'The database login and its Saved Secret were created, but binding it did not complete. Use the existing read-only login to finish.',
@@ -452,7 +456,12 @@ export function DatabaseWorkbenchSpecimen(
     [consoleState, descriptor, rowsState, statsState, review],
   );
   const actionControls = React.useMemo(() => createSpecimenActionControls(execute, review), [execute, review]);
-  const presentation = React.useMemo(() => ({ actionControls: actionControls.controls }), [actionControls]);
+  // `read-setup-writer` mounts the host's Workbench recoveries as an app page does; with no signed-in Account bound here,
+  // its write setup draws its own waiting state rather than a fixture copy of it.
+  const presentation = React.useMemo(() => ({ actionControls: actionControls.controls,
+    ...(review === 'read-setup-writer'
+      ? { automations: { accountLifetime: null, target: { kind: 'app' as const }, isCurrent: () => true } } : {}) }),
+  [actionControls, review]);
   const hostApi = React.useMemo<PluginUiHostApi>(() => {
     const base = createBundledPluginFixtureHostApi(
       context,

@@ -23,6 +23,7 @@ import type { WorkbenchApplyOutcome, WorkbenchReview } from '../models.js';
 import { presentCell } from './cells.js';
 import { translateUnverifiedServerNotice } from './connectionCopy.js';
 import { formatMoment } from './insights/format.js';
+import { renderWorkbenchWriteSetup } from './writeSetup.js';
 
 function countLine(
   counts: Readonly<{ edits: number; inserts: number; removals: number }>,
@@ -280,8 +281,7 @@ export function StagedReview(
   const refusalRef = React.useRef(refusal);
   refusalRef.current = refusal;
   const onConfigured = React.useCallback(() => setRecoveredFor(refusalRef.current), []);
-  const writeSetup = target && (refusalCode === 'write_role_setup_required' || refusalCode === 'write_connection_setup_required')
-    ? host?.renderWriteSetup?.({ target, code: refusalCode, onConfigured }) : null;
+  const writeSetup = renderWorkbenchWriteSetup(host, target, refusalCode, onConfigured);
   const policyRefusal = refusalCode !== undefined && POLICY_REFUSALS.has(refusalCode);
   const policyLifted = policyRefusal && recoveredFor === refusal;
   const refusalStands = writeSetup != null ? recoveredFor !== refusal : policyRefusal && !policyLifted;

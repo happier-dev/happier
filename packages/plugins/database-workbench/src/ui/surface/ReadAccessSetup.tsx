@@ -12,10 +12,11 @@ import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/prot
 import type { PluginUiActionControlExecution } from '@happier-dev/plugin-sdk/ui';
 import { Action, Button, CodeBlock, ErrorState, PageHeader, Row, ScrollArea, Stack, SurfaceState, Text, usePluginTranslation } from '@happier-dev/plugin-ui';
 import { SavedSecretChoiceList, type SavedSecretChoiceSelection } from '@happier-dev/plugin-ui/components';
-import { isPluginActionConfirmationDeclined, projectPluginActionControlExecutionV1, type PluginActionExecution } from '@happier-dev/plugin-ui/hostApi';
+import { isPluginActionConfirmationDeclined, projectPluginActionControlExecutionV1, useHostDatabaseWorkbench, type PluginActionExecution } from '@happier-dev/plugin-ui/hostApi';
 import { translateUnverifiedServerNotice } from './connectionCopy.js';
 import type { WorkbenchTargetDisplay } from './subPath.js';
 import { databaseFacts } from './engines.js';
+import { renderWorkbenchWriteSetup } from './writeSetup.js';
 
 const attachAction = databaseActionLocalIdV1(DATABASE_READ_ACCESS_ATTACH_ACTION_ID_V1);
 const createAction = databaseActionLocalIdV1(DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1);
@@ -26,6 +27,7 @@ export function ReadAccessSetup({ target, display, onConfigured }: Readonly<{
   onConfigured(): void;
 }>) {
   const t = usePluginTranslation();
+  const host = useHostDatabaseWorkbench();
   const [review, setReview] = React.useState<Extract<DatabaseReadAccessSetupResultV1, { status: 'review' }> | null>(null);
   const [attaching, setAttaching] = React.useState(false);
   const [secret, setSecret] = React.useState<SavedSecretChoiceSelection | null>(null);
@@ -34,8 +36,14 @@ export function ReadAccessSetup({ target, display, onConfigured }: Readonly<{
     | Readonly<{ kind: 'failure'; execution: PluginActionExecution; recovery: SavedSecretChoiceSelection | null }>
     | null
   >(null);
-  // The identity line names the database, then the rail's facts; the description stays generic.
-  const identity = [target.database, display ? databaseFacts({ engine: display.engine, origin: { label: display.origin } }) : '']
+  // The host reports when the write setup a refusal led to has settled; that refusal then no longer stands.
+  const [configuredFor, setConfiguredFor] = React.useState<typeof notice>(null);
+  const noticeRef = React.useRef(notice);
+  noticeRef.current = notice;
+  const onWriteConfigured = React.useCallback(() => setConfiguredFor(noticeRef.current), []);
+  // The identity line names the database by the label the rail shows (its address name only when the open carried none),
+  // then the rail's facts; the description stays generic.
+  const identity = [display?.label || target.database, display ? databaseFacts({ engine: display.engine, origin: { label: display.origin } }) : '']
     .filter(Boolean).join(' · ');
   const title = t('plugins.database.readSetup.title', 'Set up read-only access');
   const attachTitle = t('plugins.database.readSetup.attach', 'Use existing read-only login');
@@ -81,10 +89,20 @@ export function ReadAccessSetup({ target, display, onConfigured }: Readonly<{
   const editingOff = notice?.kind === 'failure'
     && (notice.execution.status === 'error' || notice.execution.status === 'outcomeUnknown')
     && notice.execution.code === 'database_editing_off';
+  // Creating the login needs the Environment's write connection: its setup is the way forward, the same one a
+  // refused Apply leads to. Create stays offered, but is not the filled control until that setup settles.
+  const writeSetup = notice?.kind === 'failure' && (notice.execution.status === 'error' || notice.execution.status === 'outcomeUnknown')
+    ? renderWorkbenchWriteSetup(host, target, notice.execution.code, onWriteConfigured) : null;
+  const writeSetupStands = writeSetup != null && configuredFor !== notice;
+  // Editing off forbids creating a login (Create writes to the database; Use existing only reads), so Create is not
+  // offered while it stands. The host's Environment wake clears the refusal, so Create returns once editing is on.
+  const clearNotice = React.useCallback(() => setNotice(null), []);
+  const editingOffWatch = editingOff ? host?.renderEnvironmentAccessObserver?.({ target, onChanged: clearNotice }) : null;
   const failure = recovery
     ? <ErrorState layout="line" title={t('plugins.database.readSetup.recovery',
         'The read-only login {role} was created and saved, but Workbench couldn’t start using it. Use that login to finish setting up.',
         { role: review?.role ?? '' })} />
+    : writeSetup ? writeSetup
     // Editing off is the Environment's policy, not a failure: the same line, drawn as a refusal by policy.
     : notice?.kind === 'failure' ? <Action.Failure execution={notice.execution} {...(editingOff ? { kind: 'denied' as const } : {})} />
     : notice?.kind === 'unexpected' ? <ErrorState layout="line" title={notice.text} /> : undefined;
@@ -95,18 +113,20 @@ export function ReadAccessSetup({ target, display, onConfigured }: Readonly<{
         ? t('plugins.database.readSetup.editingOff', 'Use a read-only login you already have, or ask an Environment manager to turn on database editing.')
         : t('plugins.database.readSetup.description', 'Choose a read-only login so you can browse this database’s tables.')}
       note={identity}
-      body={failure}
+      // The host's write setup is a column of its own; the empty state's centred axis holds it, as it holds a line.
+      body={writeSetup && !recovery ? <Stack align="center">{writeSetup}</Stack> : failure}
       live={notice?.kind === 'pending' ? { text: notice.text } : undefined}
       alternative={<Row gap="small" wrap justify="center">
+        {editingOffWatch}
         <Button title={attachTitle} variant={editingOff ? 'primary' : 'secondary'} size="small" disabled={notice?.kind === 'pending'}
           onPress={() => openAttach()} />
-        <Action.Control action={createAction} title={createTitle} variant={editingOff ? 'plain' : 'primary'}
+        {editingOff ? null : <Action.Control action={createAction} title={createTitle} variant={writeSetupStands ? 'secondary' : 'primary'}
           disabled={notice?.kind === 'pending'}
           controller={{
             prepare: () => { setNotice(null); return { input: projectNativeJsonValueForTransport({ target, mode: 'preview' }) }; },
             onSettled: execution => settled(execution, 'review'),
           }}
-          fallback={<Text tone="secondary" value={unavailable} />} />
+          fallback={<Text tone="secondary" value={unavailable} />} />}
       </Row>} />;
   }
 
@@ -134,7 +154,7 @@ export function ReadAccessSetup({ target, display, onConfigured }: Readonly<{
         : input === null ? null : <Action.Control
         action={attaching ? attachAction : createAction}
         title={attaching ? t('plugins.database.readSetup.confirmAttach', 'Use this login') : createTitle}
-        variant="primary"
+        variant={writeSetupStands ? 'secondary' : 'primary'}
         disabled={notice?.kind === 'pending'}
         reviewedInput={input}
         controller={{ prepare: () => { setNotice(null); return { input }; }, onSettled: execution => settled(execution, 'configured') }}
