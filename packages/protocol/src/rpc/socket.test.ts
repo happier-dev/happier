@@ -161,6 +161,7 @@ describe('SOCKET_RPC_EVENTS wire ABI', () => {
     expect(SOCKET_RPC_EVENTS).toEqual({
       REGISTER: 'rpc-register',
       REGISTERED: 'rpc-registered',
+      REGISTERED_BATCH: 'rpc-registered-batch',
       UNREGISTER: 'rpc-unregister',
       UNREGISTERED: 'rpc-unregistered',
       ERROR: 'rpc-error',
