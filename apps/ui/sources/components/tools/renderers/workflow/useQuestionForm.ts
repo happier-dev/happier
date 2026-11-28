@@ -77,6 +77,8 @@ subscribeHomeCredentialMutations(event => {
 
 type QuestionFormRequest = Readonly<{ id: string; turnId?: string; createdAt: number | null }>;
 
+export const PresentedQuestionRequest = React.createContext<QuestionFormRequest | null>(null);
+
 export function matchesQuestionFormRequest(current: QuestionFormRequest, expected: QuestionFormRequest): boolean {
     return current.id === expected.id && current.turnId === expected.turnId && current.createdAt === expected.createdAt;
 }

@@ -26,7 +26,7 @@ import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaem
 import { AGENT_SCOPED_PLUGIN_SETTINGS_SECTIONS } from '@/agents/registry/agentScopedPluginSettingsDeclarations';
 import type { PluginProjectionEditableSettingField } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
 import { useServerCredentialAccountScopeResolution } from '@/sync/domains/scope/useServerCredentialAccountScopes';
-import { matchesQuestionFormRequest, useQuestionForm } from './useQuestionForm';
+import { matchesQuestionFormRequest, PresentedQuestionRequest, useQuestionForm } from './useQuestionForm';
 import { ReadyQuestionEntry, useGroupedQuestion, type GroupedQuestionResult } from './QuestionSendGroup';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { resolveSessionMachineId } from '@/sync/domains/session/external/resolveSessionMachineId';
@@ -780,8 +780,12 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, messageId,
             && sourceInteraction.permissionDisabledReason !== 'inactive'
             && interaction?.permissionDisabledReason !== 'inactive';
     const toolCallId = resolvePermissionRequestId(tool);
+    const presentedQuestion = React.useContext(PresentedQuestionRequest);
+    const transcriptTurnId = tool.permission?.turnId;
     const request = executionRun === undefined
-        ? pendingRequests.userActionRequests.find(request => request.id === toolCallId) : undefined;
+        ? pendingRequests.userActionRequests.find(request => request.id === toolCallId
+            && (presentedQuestion ? matchesQuestionFormRequest(request, presentedQuestion)
+                : transcriptTurnId === undefined || request.turnId === transcriptTurnId)) : undefined;
     // An answer whose result was lost may already be applied: the form is withheld until a re-read says otherwise.
     const answerRequestKey = permissionAnswerRequestKey({
         originId: executionRun === undefined ? `session:${sessionId ?? ''}` : `executionRun:${executionRun.executionRunId}`,

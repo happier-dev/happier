@@ -15,6 +15,7 @@ import { Text } from '@/components/ui/text/Text';
 import { ToolInlineBody } from '@/components/tools/shell/views/ToolInlineBody';
 import { buildPermissionPromptModel } from '@/components/tools/shell/permissions/presentation/buildPermissionPromptModel';
 import { t } from '@/text';
+import { PresentedQuestionRequest } from '@/components/tools/renderers/workflow/useQuestionForm';
 import { Icon } from '@/components/ui/icons/Icon';
 import type { PromptResponseOrigin } from '@/components/tools/shell/permissions/executionRunPromptResponseTarget';
 import {
@@ -87,24 +88,26 @@ const GenericUserActionPromptCard = React.memo(function GenericUserActionPromptC
             </View>
 
             <View style={styles.preview}>
-                <ToolInlineBody
-                    mode="timeline"
-                    tool={model.tool}
-                    normalizedToolName={headerText.normalizedToolName}
-                    metadata={props.metadata}
-                    messages={[]}
-                    sessionId={props.sessionId}
-                    serverId={props.serverId}
-                    session={props.session}
-                    executionRun={props.executionRun}
-                    interaction={{
-                        canSendMessages: sourceInteraction.canSendMessages,
-                        canApprovePermissions: props.canApprovePermissions,
-                        permissionDisabledReason: props.disabledReason,
-                    }}
-                    detailLevel="full"
-                    setHeaderActions={setHeaderActions}
-                />
+                <PresentedQuestionRequest.Provider value={props.request}>
+                    <ToolInlineBody
+                        mode="timeline"
+                        tool={model.tool}
+                        normalizedToolName={headerText.normalizedToolName}
+                        metadata={props.metadata}
+                        messages={[]}
+                        sessionId={props.sessionId}
+                        serverId={props.serverId}
+                        session={props.session}
+                        executionRun={props.executionRun}
+                        interaction={{
+                            canSendMessages: sourceInteraction.canSendMessages,
+                            canApprovePermissions: props.canApprovePermissions,
+                            permissionDisabledReason: props.disabledReason,
+                        }}
+                        detailLevel="full"
+                        setHeaderActions={setHeaderActions}
+                    />
+                </PresentedQuestionRequest.Provider>
             </View>
         </View>
     );

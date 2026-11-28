@@ -1841,6 +1841,34 @@ describe('AskUserQuestionView', () => {
         expect(screen.getTextContent()).toContain('unsent original');
     });
 
+    it('withdraws a mounted prompt card if the question is replaced in the same turn before the card refreshes', async () => {
+        const { UserActionPromptCard } = await import('@/components/tools/shell/userActions/UserActionPromptCard');
+        const request = { id: 'toolu_1', tool: 'AskUserQuestion', kind: 'user_action' as const,
+            turnId: 'same-turn', createdAt: 1, arguments: makeFreeformTool().input };
+        askUserQuestionSessionState.current = { agentState: { requests: { toolu_1: request } } };
+        let refresh: React.Dispatch<React.SetStateAction<number>> = () => {};
+        function PromptCard() {
+            const [createdAt, setCreatedAt] = React.useState(1);
+            refresh = setCreatedAt;
+            return React.createElement(UserActionPromptCard, {
+                request: { ...request, createdAt: createdAt || 1 }, location: null, metadata: null,
+                sessionId: 's1', serverId: account.serverId, canApprovePermissions: true,
+            });
+        }
+        const screen = await renderScreen(React.createElement(PromptCard));
+        const editable = () => screen.findAll(node => node.props.testID === 'ask-user-question.freeform:0'
+            && node.props.editable === true && typeof node.type === 'string');
+        expect(editable()).toHaveLength(1);
+        await act(async () => changeTextTestInstance(editable()[0], 'old answer', 'original prompt card'));
+        askUserQuestionSessionState.current = { agentState: { requests: { toolu_1: { ...request, createdAt: 2 } } } };
+        await act(async () => refresh(0));
+        expect(editable()).toHaveLength(0);
+        await act(async () => refresh(2));
+        expect(editable()).toHaveLength(1);
+        expect(editable()[0]?.props.value).toBe('');
+        expect(screen.getTextContent()).toContain('old answer');
+    });
+
     it('sends two held answers through their individual turn-qualified actions and reports each result', async () => {
         const pending = (turnId: string) => ({ tool: 'AskUserQuestion', kind: 'user_action', turnId, createdAt: 1, arguments: {} });
         askUserQuestionSessionState.current = { agentState: { requests: { toolu_1: pending('turn-1'), toolu_2: pending('turn-2') } } };
