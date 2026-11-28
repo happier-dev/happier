@@ -9,6 +9,10 @@ export function isDeepSecReviewMode(value: unknown): value is DeepSecReviewMode 
 
 export type DeepSecCommandMode = DeepSecReviewMode | 'repository_security_audit_process' | 'repository_security_audit_export';
 
+// Native 2.3.12 requires a project even with --root. Repository audits already
+// have a private per-Run data root, so all three phases share this local name.
+const REPOSITORY_PROJECT_ARGS = ['--project-id', 'happier-review'] as const;
+
 export const DEEPSEC_THINKING_LEVELS = ['minimal', 'low', 'medium', 'high', 'xhigh'] as const;
 export type DeepSecThinkingLevel = typeof DEEPSEC_THINKING_LEVELS[number];
 
@@ -38,8 +42,8 @@ function requirePath(value: string | undefined, label: string): string {
 }
 
 export function buildDeepSecCommand(input: DeepSecCommandInput): readonly string[] {
-  if (input.mode === 'repository_security_audit_export') return ['export', '--format', 'json', '--out', requirePath(input.exportPath, 'exportPath')];
-  if (input.mode === 'repository_security_audit') return ['scan', ...(input.rootPath ? ['--root', input.rootPath] : [])];
+  if (input.mode === 'repository_security_audit_export') return ['export', ...REPOSITORY_PROJECT_ARGS, '--format', 'json', '--out', requirePath(input.exportPath, 'exportPath')];
+  if (input.mode === 'repository_security_audit') return ['scan', ...REPOSITORY_PROJECT_ARGS, ...(input.rootPath ? ['--root', input.rootPath] : [])];
   const model = input.provider?.model ?? input.model;
   const args = [...buildProcessCommand(input), ...(model ? ['--model', model] : []),
     ...(input.thinkingLevel ? ['--thinking-level', input.thinkingLevel] : [])];
@@ -69,7 +73,7 @@ export function buildDeepSecCommand(input: DeepSecCommandInput): readonly string
 }
 
 function buildProcessCommand(input: DeepSecCommandInput): readonly string[] {
-  if (input.mode === 'repository_security_audit_process') return ['process', ...(input.rootPath ? ['--root', input.rootPath] : [])];
+  if (input.mode === 'repository_security_audit_process') return ['process', ...REPOSITORY_PROJECT_ARGS, ...(input.rootPath ? ['--root', input.rootPath] : [])];
   const commentOutPath = requirePath(input.commentOutPath, 'commentOutPath');
   if (input.mode === 'staged') return ['process', '--diff-staged', '--comment-out', commentOutPath];
   if (input.mode === 'working_tree') return ['process', '--diff-working', '--comment-out', commentOutPath];

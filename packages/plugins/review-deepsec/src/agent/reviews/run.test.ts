@@ -1,4 +1,5 @@
 import type {
+  ExecService,
   PluginProcessResult,
   ResolvedSystemTool as PluginResolvedSystemTool,
 } from '@happier-dev/plugin-sdk/exec';
@@ -219,7 +220,14 @@ describe('runDeepSecReview', () => {
   });
 
   it('exports repository findings after processing instead of assuming a comment report exists', async () => {
-    const run = vi.fn(async () => processResult());
+    // DeepSec 2.3.12 scan/process require an explicit project without a config.
+    const run = vi.fn(async (request: Parameters<ExecService['run']>[0]) => {
+      if (!request.args?.includes('--project-id')) return {
+        ...processResult(1),
+        stderr: new TextEncoder().encode('No --project-id specified and no projects found in deepsec.config.ts.'),
+      };
+      return processResult();
+    });
     const cleanup = vi.fn(async () => {});
 
     const result = await runDeepSecReview({
@@ -244,18 +252,18 @@ describe('runDeepSecReview', () => {
     }] });
     expect(run).toHaveBeenNthCalledWith(1, {
       executable: resolvedTool.executable,
-      args: ['scan', '--root', '/repo'],
+      args: ['scan', '--project-id', 'happier-review', '--root', '/repo'],
       cwd: { root: 'workspace', relativePath: '' },
       env: { DEEPSEC_DATA_ROOT: '/tmp/deepsec-comments.md.data' },
     }, { signal: undefined });
     expect(run).toHaveBeenNthCalledWith(2, {
       executable: resolvedTool.executable,
-      args: ['process', '--root', '/repo'],
+      args: ['process', '--project-id', 'happier-review', '--root', '/repo'],
       cwd: { root: 'workspace', relativePath: '' },
       env: { DEEPSEC_DATA_ROOT: '/tmp/deepsec-comments.md.data' },
     }, { signal: undefined });
     expect(run).toHaveBeenNthCalledWith(3, expect.objectContaining({
-      args: ['export', '--format', 'json', '--out', '/tmp/deepsec-comments.md.json'],
+      args: ['export', '--project-id', 'happier-review', '--format', 'json', '--out', '/tmp/deepsec-comments.md.json'],
     }), { signal: undefined });
     expect(cleanup).toHaveBeenCalledOnce();
   });

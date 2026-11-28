@@ -636,10 +636,10 @@ describe('activate', () => {
 
     expect(events.at(-1)?.kind).toBe('run-complete');
     expect(fixture.run.mock.calls.map(([request]) => request.args)).toEqual([
-      ['scan', '--root', '/repo'],
-      expect.arrayContaining(['process', '--root', '/repo', '--agent', 'claude',
+      ['scan', '--project-id', 'happier-review', '--root', '/repo'],
+      expect.arrayContaining(['process', '--project-id', 'happier-review', '--root', '/repo', '--agent', 'claude',
         '--ai-provider', 'anthropic', '--ai-base-url', 'https://ai-gateway.vercel.sh']),
-      ['export', '--format', 'json', '--out', expect.any(String)],
+      ['export', '--project-id', 'happier-review', '--format', 'json', '--out', expect.any(String)],
     ]);
     expect(readStructuredOutput(events)).toMatchObject({ reviewOutcome: 'complete', findings: [] });
   });

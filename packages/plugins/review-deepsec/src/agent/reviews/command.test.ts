@@ -11,7 +11,7 @@ describe('buildDeepSecCommand', () => {
   it('passes selected reasoning effort to investigation but not the regex scan', () => {
     expect(buildDeepSecCommand({ mode: 'staged', commentOutPath: '/tmp/comments.md', thinkingLevel: 'high' }))
       .toEqual(['process', '--diff-staged', '--comment-out', '/tmp/comments.md', '--thinking-level', 'high']);
-    expect(buildDeepSecCommand({ mode: 'repository_security_audit', thinkingLevel: 'high' })).toEqual(['scan']);
+    expect(buildDeepSecCommand({ mode: 'repository_security_audit', thinkingLevel: 'high' })).toEqual(['scan', '--project-id', 'happier-review']);
   });
 
   it('maps supported review actions to exact DeepSec args', () => {
@@ -40,10 +40,10 @@ describe('buildDeepSecCommand', () => {
       filesFromPath: '/tmp/files.txt',
       commentOutPath: '/tmp/comments.md',
     })).toEqual(['process', '--files-from', '/tmp/files.txt', '--no-ignore', '--comment-out', '/tmp/comments.md']);
-    expect(buildDeepSecCommand({ mode: 'repository_security_audit' })).toEqual(['scan']);
+    expect(buildDeepSecCommand({ mode: 'repository_security_audit' })).toEqual(['scan', '--project-id', 'happier-review']);
     expect(buildDeepSecCommand({
       mode: 'repository_security_audit_process',
       rootPath: '/repo',
-    })).toEqual(['process', '--root', '/repo']);
+    })).toEqual(['process', '--project-id', 'happier-review', '--root', '/repo']);
   });
 });
