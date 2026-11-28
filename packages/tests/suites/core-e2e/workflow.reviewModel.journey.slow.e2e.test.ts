@@ -1,7 +1,8 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { watch } from 'node:fs';
+import { cp, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { basename, delimiter, dirname, join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { ensureManagedJavaScriptRuntimeCommand, managedJavaScriptRuntimeBinPath, resolveAgentCliManagedCommandPathForRuntime } from '@happier-dev/cli-common/agents';
 import { connectUiPersonActionClient } from '@happier-tests/ui-action-client';
 import { REVIEW_NEW_ROUND_ACTION_ID_V1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
@@ -13,7 +14,7 @@ import { WorkflowTriggerWriteResultV1Schema } from '@happier-dev/protocol/workfl
 import { AutomationV3RunMutationResponseSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import { readReviewWorkflowStartActionResultV1, ReviewStartTerminalValueV1Schema } from '@happier-dev/protocol/actions/specs/executionRunCompletion';
 import { ReviewEngineInventorySchema } from '@happier-dev/protocol/reviews/reviewEngines';
-import { ReviewGetResponseV1Schema } from '@happier-dev/protocol/reviews/reviewListV1';
+import { ReviewGetResponseV1Schema, ReviewListResponseV1Schema } from '@happier-dev/protocol/reviews/reviewListV1';
 import { ReviewNativeNewRoundResultV1Schema } from '@happier-dev/protocol/reviews/reviewRoundActionsV1';
 import { BUILT_IN_ROLES_V1 } from '@happier-dev/protocol/prompts/roles/builtInRolesV1';
 import { ExecutionRunGetResponseSchema, ExecutionRunStartResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
@@ -66,6 +67,18 @@ describe('FIN selected Muse Review and convergence through public Actions', () =
   let deepSecExecutablePath: string;
   let sliceAuditPath: string;
   let nativeHoldPath: string;
+  let managedRuntimeDirectory: string;
+  beforeAll(async () => {
+    // Provision once, then copy the complete native runtime layout into each
+    // installation. Authoring resolves the wrapper in that installation's root.
+    const runtimeRoot = join(run.runDir, 'managed-runtime');
+    const command = await ensureManagedJavaScriptRuntimeCommand({ ...process.env,
+      HAPPIER_HOME_DIR: runtimeRoot, HAPPIER_MANAGED_TOOLS_ROOT: join(runtimeRoot, 'tools'),
+      HAPPIER_JS_RUNTIME_PATH: undefined, HAPPIER_MANAGED_NODE_BIN: undefined, HAPPIER_NODE_PATH: undefined,
+    });
+    if (!command) throw new Error('Review fixture managed JavaScript runtime unavailable');
+    managedRuntimeDirectory = dirname(dirname(command));
+  }, 0);
   async function createSourceSession(account = owner) {
     // Paired-device credentials open a Session DEK, never content encrypted
     // directly with the Account recovery secret.
@@ -206,13 +219,10 @@ else {
       serverEnv: { ...features, DATABASE_URL: databaseUrl } });
     owner = await fixture.createAccount('review-owner');
     machine = await fixture.enrollDaemon(owner, { prepareHome: async homeDir => {
-      // Plugin authoring requires the canonical managed wrapper, including its
-      // genuine runtime version, integrity and layout. Install only in this
-      // fixture's external root through the existing public runtime owner.
-      const runtimeEnv = { ...process.env, HAPPIER_HOME_DIR: homeDir,
-        HAPPIER_MANAGED_TOOLS_ROOT: managedToolsRoot,
-        HAPPIER_JS_RUNTIME_PATH: undefined, HAPPIER_MANAGED_NODE_BIN: undefined, HAPPIER_NODE_PATH: undefined };
-      await ensureManagedJavaScriptRuntimeCommand(runtimeEnv);
+      // Authoring uses this installation's managed runtime path. Reuse the
+      // genuine provisioned runtime within each case's private tool root.
+      const runtimeEnv = { ...process.env, HAPPIER_HOME_DIR: homeDir, HAPPIER_MANAGED_TOOLS_ROOT: managedToolsRoot };
+      await cp(managedRuntimeDirectory, dirname(dirname(managedJavaScriptRuntimeBinPath(runtimeEnv))), { recursive: true });
       // Pinned npm dependencies execute their package bin, never a PATH shim.
       // Seed that native boundary in this fixture's private managed install.
       const command = resolveAgentCliManagedCommandPathForRuntime({
@@ -228,7 +238,7 @@ else {
       HAPPIER_MUSE_PATH: executablePath, PATH: [bin, process.env.PATH].filter(Boolean).join(delimiter), MUSE_INSTALL_DIR: bin,
       // Keep the seeded package ready through the native runtime boundary;
       // setup would otherwise install a runtime and replace it with stock npm.
-      HAPPIER_JS_RUNTIME_PATH: managedJavaScriptRuntimeBinPath({ HAPPIER_MANAGED_TOOLS_ROOT: managedToolsRoot }),
+      HAPPIER_JS_RUNTIME_PATH: undefined,
       HAPPIER_MANAGED_NODE_BIN: undefined, HAPPIER_NODE_PATH: undefined,
       HAPPIER_MANAGED_TOOLS_ROOT: managedToolsRoot,
       HOME: nativeHome, XDG_CONFIG_HOME: join(nativeHome, 'config'), XDG_DATA_HOME: join(nativeHome, 'data'),
@@ -673,6 +683,70 @@ else {
     expect(await startNativeReview('coderabbit', { comparisonId: captured.comparison.id }))
       .toMatchObject({ run: { status: 'failed', error: { code: 'coderabbit_scope_unsupported' } } });
     expect((await readFile(codeRabbitAuditPath, 'utf8')).trim().split('\n')).toHaveLength(5);
+  });
+  it('F1 retains zero-finding, failed and cancelled Workflow Reviews through the ordinary Review reader', async () => {
+    const outcomes = ['completed', 'failed', 'cancelled'] as const;
+    const reviewIds = new Set<string>();
+    for (const outcome of outcomes) {
+      await writeFile(codeRabbitReplyPath, JSON.stringify({
+        events: outcome === 'failed' ? [{ type: 'error', errorType: 'rate_limit' }]
+          : [{ type: 'complete', status: 'review_completed', findings: 0 }],
+        exitCode: outcome === 'failed' ? 1 : 0,
+      }));
+      if (outcome === 'cancelled') await writeFile(nativeHoldPath, 'hold native process until Workflow Cancel');
+      const previousStarts = (await readFile(codeRabbitAuditPath, 'utf8')).trim().split('\n').filter(Boolean).length;
+      const nativeStarted = Promise.withResolvers<void>();
+      const nativeWatcher = watch(codeRabbitAuditPath, () => nativeStarted.resolve());
+      nativeWatcher.once('error', nativeStarted.reject);
+      const started = WorkflowRunStartResultV1Schema.parse(await act('workflow.run.start', {
+        runId: randomUUID(), executionTarget: { kind: 'detached_run' },
+        source: { kind: 'inline', definition: { version: 1, defaults: {}, blocks: [{
+          kind: 'action', id: 'review', actionId: 'review.start', input: {
+            target: { kind: 'literal', value: { kind: 'detached' } },
+            cwd: { kind: 'literal', value: machine.workspaceDir },
+            changeType: { kind: 'literal', value: 'all' },
+            reviewers: { kind: 'literal', value: [{ kind: 'engine', engineId: 'coderabbit' }] },
+            instructions: { kind: 'literal', value: 'Review this fixture change.' },
+            reviewCommentAuthorIntent: { kind: 'literal', value: 'open' },
+          },
+        }], finalOutput: { kind: 'result', producer: { blockId: 'review', scope: { kind: 'current' } }, path: [] } } },
+      }).catch(error => { nativeWatcher.close(); throw error; }));
+      const terminal = act('workflow.run.wait', { runId: started.run.id, conditions: ['terminal'] });
+      // Startup belongs to the Workflow lifetime. Observe the external process
+      // for Cancel, while an early terminal failure reports its actual outcome.
+      const startupOutcome = await Promise.race([nativeStarted.promise, terminal]).finally(() => nativeWatcher.close());
+      expect((await readFile(codeRabbitAuditPath, 'utf8')).trim().split('\n').filter(Boolean).length,
+        JSON.stringify(startupOutcome)).toBeGreaterThan(previousStarts);
+      const admitted = ReviewListResponseV1Schema.parse(await act('reviews.list', {
+        sourceKind: 'workflow', limit: outcomes.length,
+      })).items.filter(review => review.workflowRunId === started.run.id);
+      expect(admitted).toHaveLength(1);
+      const review = admitted[0];
+      if (!review) throw new Error('Workflow native Review has no addressable record');
+      reviewIds.add(review.reviewId);
+      if (outcome === 'cancelled') {
+        expect(review).toMatchObject({ state: 'running', counts: { total: 0, needsDecision: 0 } });
+        const running = WorkflowRunGetResultV1Schema.parse(await act('workflow.run.get', { runId: started.run.id }));
+        await act('workflow.run.cancel', { runId: started.run.id, expectedRevision: running.run.revision });
+      }
+      expect(await terminal)
+        .toMatchObject({ observation: 'terminal' });
+      // Workflow Cancel and native cancellation settle separately; inspect the
+      // durable Review through its ordinary reader, as the retained UI does.
+      await waitFor(async () => ReviewGetResponseV1Schema.parse(await act('review.get', {
+        reviewId: review.reviewId,
+      })).review.state === outcome, { failFast: true, context: 'The retained Workflow Review settles its native outcome' });
+      const retained = ReviewGetResponseV1Schema.parse(await act('review.get', { reviewId: review.reviewId }));
+      expect(retained.review).toMatchObject({ reviewId: review.reviewId, sourceKind: 'workflow',
+        workflowRunId: started.run.id, state: outcome, currentRoundOrdinal: 1,
+        finishedAt: expect.any(Number), counts: { total: 0, needsDecision: 0 } });
+      expect(ReviewCommentListResponseV1Schema.parse(await act('reviews.comments.list', { reviewId: review.reviewId })).items)
+        .toEqual([]);
+      expect(ReviewGetResponseV1Schema.parse(await act('review.get', { reviewId: review.reviewId })).review)
+        .toEqual(retained.review);
+      expect((await readFile(codeRabbitAuditPath, 'utf8')).trim().split('\n').filter(Boolean)).toHaveLength(previousStarts + 1);
+    }
+    expect(reviewIds.size).toBe(outcomes.length);
   });
   it('F4 native clawpatch preserves distinct evidence and findings through public Actions, New round and Stop', async () => {
     let result = await startNativeReview('clawpatch', { scope: 'repository' });
