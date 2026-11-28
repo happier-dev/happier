@@ -146,7 +146,7 @@ export async function writeFakeCodexAppServerProxyScript(root: string, socketPat
 }
 
 export async function withFakeCodexAppServerWebSocket<T>(
-    params: Readonly<{ dir: string; loadedThreadIds: readonly string[] }>,
+    params: Readonly<{ dir: string; loadedThreadIds: readonly string[]; sqliteHome?: string }>,
     run: (fixture: Readonly<{ socketPath: string; proxyPath: string }>) => Promise<T>,
 ): Promise<T> {
     return await withSocketTempDir(async (socketDir) => {
@@ -165,6 +165,10 @@ export async function withFakeCodexAppServerWebSocket<T>(
                 const message = JSON.parse(payload.toString('utf8')) as { id?: number; method?: string };
                 if (message.method === 'initialize') {
                     socket.send(JSON.stringify({ id: message.id, result: {} }));
+                } else if (message.method === 'configRequirements/read') {
+                    socket.send(JSON.stringify({ id: message.id, result: { requirements: null } }));
+                } else if (message.method === 'config/read') {
+                    socket.send(JSON.stringify({ id: message.id, result: { config: { sqlite_home: params.sqliteHome } } }));
                 } else if (message.method === 'thread/loaded/list') {
                     socket.send(JSON.stringify({ id: message.id, result: { data: params.loadedThreadIds } }));
                 }

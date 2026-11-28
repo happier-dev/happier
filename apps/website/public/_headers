@@ -82,3 +82,14 @@
 /robots.txt
   Content-Type: text/plain; charset=utf-8
   Cache-Control: public, max-age=3600
+
+/s/*
+  X-Robots-Tag: noindex
+
+/thanks
+  ! Referrer-Policy
+  Referrer-Policy: no-referrer
+
+/thanks/
+  ! Referrer-Policy
+  Referrer-Policy: no-referrer

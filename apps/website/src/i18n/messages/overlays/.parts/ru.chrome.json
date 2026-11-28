@@ -87,5 +87,13 @@
  "usageLimits.SERVICE_SUPPORT.claude-subscription.meter": "Да",
  "usageLimits.SERVICE_SUPPORT.openai-codex.meter": "Да",
  "usageLimits.SERVICE_SUPPORT.gemini.autoSwitch": "Нет",
- "usageLimits.SERVICE_SUPPORT.gemini.meter": "Да"
+ "usageLimits.SERVICE_SUPPORT.gemini.meter": "Да",
+ "navigation.FOOTER_COLUMNS.product.links.plans.label": "Тарифы",
+ "navigation.FOOTER_COLUMNS.open-source.links.how-happier-stays-free.label": "Как Happier остаётся бесплатным",
+ "navigation.FOOTER_COLUMNS.open-source.links.supporters.label": "Поддержавшие проект",
+ "navigation.FOOTER_LEGAL_LINKS.privacy.label": "Конфиденциальность",
+ "navigation.FOOTER_LEGAL_LINKS.terms.label": "Условия",
+ "navigation.FOOTER_LEGAL_LINKS.terms-of-sale.label": "Условия продажи",
+ "navigation.FOOTER_LEGAL_LINKS.refunds.label": "Возвраты",
+ "navigation.FOOTER_LEGAL_LINKS.imprint.label": "Правовая информация"
 }

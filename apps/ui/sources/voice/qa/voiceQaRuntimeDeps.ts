@@ -32,7 +32,7 @@ export function createDefaultVoiceQaControllerDeps(): VoiceQaControllerDeps {
             voiceAgentSessions.sendTurn(sessionId, prompt, options),
         stopLocal: (sessionId) => voiceAgentSessions.stop(sessionId),
         appendLocalContextUpdate: (sessionId, update) => voiceAgentSessions.appendContextUpdate(sessionId, update),
-        startRealtime: (sessionId, initialContext, options) => startRealtimeSession(sessionId, initialContext, false, options),
+        startRealtime: (sessionId, initialContext, options) => startRealtimeSession(sessionId, initialContext, options),
         isRealtimeStarted: () => isVoiceSessionStarted(),
         stopRealtime: () => stopRealtimeSession(),
         getRealtimeSession: () => getVoiceSession(),

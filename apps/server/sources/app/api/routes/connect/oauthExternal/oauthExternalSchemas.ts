@@ -5,6 +5,11 @@ export const oauthStateAttemptSchema = z.object({
     pkceCodeVerifier: z.string(),
     nonce: z.string(),
     webAppOAuthReturnUrl: z.string().optional(),
+    supporter: z.object({
+        accountId: z.string().nullable(),
+        code: z.string().regex(/^[0-9a-f]{32}$/).nullable(),
+        publishGitHubLogin: z.boolean(),
+    }).optional(),
 });
 
 export const connectPendingSchema = z.object({

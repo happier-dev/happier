@@ -2,7 +2,7 @@ import { readJsonlFileForward } from '@/api/directSessions/filePaging/jsonlForwa
 
 import { mapCodexRolloutEventToActions } from '../localControl/rolloutMapper';
 import { createCodexRolloutSemanticTracker } from '../rollout/createCodexRolloutSemanticTracker';
-import { collectCodexSessionRolloutFiles, type CodexRolloutFile } from './collectCodexSessionRolloutFiles';
+import type { CodexRolloutFile } from './collectCodexSessionRolloutFiles';
 import type { CodexDirectTranscriptRolloutStream } from './codexDirectTranscriptProjection';
 
 const CHILD_DISCOVERY_MAX_BYTES = 1024 * 1024;
@@ -41,7 +41,7 @@ async function discoverSpawnedThreadIdsFromFilesBounded(files: readonly CodexRol
 }
 
 export async function collectCodexDirectTranscriptRolloutStreams(params: Readonly<{
-  codexHome: string;
+  collectFiles: (threadId: string) => Promise<CodexRolloutFile[]>;
   remoteSessionId: string;
   initialRolloutFiles?: readonly CodexRolloutFile[];
 }>): Promise<readonly CodexDirectTranscriptRolloutStream[]> {
@@ -56,10 +56,7 @@ export async function collectCodexDirectTranscriptRolloutStreams(params: Readonl
 
     const files = current.threadId === params.remoteSessionId && current.sidechainId === null && params.initialRolloutFiles
       ? [...params.initialRolloutFiles]
-      : await collectCodexSessionRolloutFiles({
-        codexHome: params.codexHome,
-        remoteSessionId: current.threadId,
-      });
+      : await params.collectFiles(current.threadId);
     if (files.length === 0) continue;
 
     streams.push(...files.map((file) => ({

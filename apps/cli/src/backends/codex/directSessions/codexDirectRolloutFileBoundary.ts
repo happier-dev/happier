@@ -41,6 +41,7 @@ async function readRange(file: FileHandle, startOffsetBytes: number, lengthBytes
 async function captureFromOpenFile(
   file: FileHandle,
   fingerprintOffsetBytes: number,
+  sourceFileIdentity?: string,
 ): Promise<Readonly<{ sizeBytes: number; boundary: CodexRolloutFileBoundary }> | null> {
   const stats = await file.stat({ bigint: true });
   const sizeBytes = Number(stats.size);
@@ -58,7 +59,7 @@ async function captureFromOpenFile(
   // Node exposes device/file identifiers on every supported host. They are only one half
   // of the check: the content anchor below catches in-place rewrites and identifier reuse.
   // Do not include birthtime because Node may synthesize it from mutable ctime on some filesystems.
-  const fileIdentity = createCodexRolloutFileIdentity(stats);
+  const fileIdentity = sourceFileIdentity ?? createCodexRolloutFileIdentity(stats);
   const contentFingerprint = hashParts([
     'codex-rollout-content-boundary-v1',
     String(fingerprintOffsetBytes),
@@ -74,12 +75,13 @@ async function captureFromOpenFile(
 export async function captureCodexRolloutFileBoundary(
   filePath: string,
   fingerprintOffsetBytes: number,
+  sourceFileIdentity?: string,
 ): Promise<Readonly<{ sizeBytes: number; boundary: CodexRolloutFileBoundary }> | null> {
   if (!Number.isSafeInteger(fingerprintOffsetBytes) || fingerprintOffsetBytes < 0) return null;
   let file: FileHandle | null = null;
   try {
     file = await open(filePath, 'r');
-    return await captureFromOpenFile(file, fingerprintOffsetBytes);
+    return await captureFromOpenFile(file, fingerprintOffsetBytes, sourceFileIdentity);
   } catch {
     return null;
   } finally {
@@ -90,14 +92,15 @@ export async function captureCodexRolloutFileBoundary(
 export async function codexRolloutFileBoundaryMatches(
   filePath: string,
   expected: Pick<CodexDurableStreamForwardProgress, 'fingerprintOffsetBytes' | 'fileIdentity' | 'contentFingerprint'>,
+  sourceFileIdentity?: string,
 ): Promise<boolean> {
-  const captured = await captureCodexRolloutFileBoundary(filePath, expected.fingerprintOffsetBytes);
+  const captured = await captureCodexRolloutFileBoundary(filePath, expected.fingerprintOffsetBytes, sourceFileIdentity);
   return captured !== null
     && captured.boundary.fileIdentity === expected.fileIdentity
     && captured.boundary.contentFingerprint === expected.contentFingerprint;
 }
 
-export async function captureCodexRolloutTailProgress(filePath: string): Promise<Readonly<{
+export async function captureCodexRolloutTailProgress(filePath: string, sourceFileIdentity?: string): Promise<Readonly<{
   progress: BoundaryProgress;
   boundary: CodexRolloutFileBoundary;
 }> | null> {
@@ -109,7 +112,7 @@ export async function captureCodexRolloutTailProgress(filePath: string): Promise
     if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 0) return null;
 
     const nextOffsetBytes = sizeBytes;
-    const captured = await captureFromOpenFile(file, nextOffsetBytes);
+    const captured = await captureFromOpenFile(file, nextOffsetBytes, sourceFileIdentity);
     if (!captured) return null;
     return {
       progress: { nextOffsetBytes, subIndex: 0, fingerprintOffsetBytes: nextOffsetBytes },

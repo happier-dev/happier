@@ -8,6 +8,7 @@ import axios from 'axios';
 import type { Credentials } from '@/persistence';
 import type { initializeRuntimeOverridesSynchronizer as initializeRuntimeOverridesSynchronizerFn } from '@/agent/runtime/runtimeOverridesSynchronizer';
 import { reportSessionToDaemonIfRunning } from '@/agent/runtime/startupSideEffects';
+import { partitionClaudeSessionArgs } from './cli/partitionClaudeSessionArgs';
 
 const agentStateUpdateSnapshots = vi.hoisted(() => [] as Array<{
     reason: string;
@@ -324,7 +325,7 @@ describe('runClaude startup metadata ordering', () => {
         exitSpy.mockClear();
     });
 
-    it('retries legacy offline startup against the same durable Session creation tag', async () => {
+    it('keeps the startup model and retries legacy offline startup against the same durable Session creation tag', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-claude-offline-owner-'));
         vi.stubEnv('HAPPIER_HOME_DIR', happyHomeDir);
         vi.stubEnv('HAPPIER_CLAUDE_UNIFIED_TERMINAL_PIN', '0');
@@ -344,12 +345,18 @@ describe('runClaude startup metadata ordering', () => {
         });
         exitSpy.mockImplementation(() => { throw new Error('runner-exited'); });
         vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        const parsed = partitionClaudeSessionArgs(['--model', 'claude-haiku-4-5']);
         const runner = runClaudeForOfflineContract(testCredentials, {
+            modelId: parsed.modelId,
+            claudeArgs: parsed.providerArgs,
             startedBy: 'daemon', startingMode: 'remote',
             claudeRemoteMetaDefaults: { claudeUnifiedTerminalEnabled: false },
         }).then(() => null, (error: unknown) => error);
         try {
             await vi.waitFor(() => expect(claudeLocalMock).toHaveBeenCalled());
+            expect(claudeLocalMock).toHaveBeenCalledWith(expect.objectContaining({
+                claudeArgs: ['--model', 'claude-haiku-4-5'],
+            }));
             await vi.advanceTimersByTimeAsync(20_000);
             await vi.waitFor(() => expect(creationTags.length).toBeGreaterThanOrEqual(3), { timeout: 20_000 });
             expect(new Set(creationTags).size).toBe(1);

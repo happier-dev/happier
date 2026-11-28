@@ -3,6 +3,7 @@ import { delayUnrefAbortable } from '@/utils/time';
 import { claudeLocal, ExitCodeError } from "./claudeLocal";
 import { Session, type SessionFoundInfo } from "./session";
 import type { EnhancedMode } from './loop';
+import { withClaudeSessionModelArgs } from './cli/terminalOptions';
 import { Future } from "@/utils/future";
 import { createSessionScanner } from "./utils/sessionScanner";
 import { formatErrorForUi } from '@/ui/formatErrorForUi';
@@ -12,7 +13,11 @@ import { inferPermissionIntentFromClaudeArgs } from './utils/inferPermissionInte
 import { discardQueuedAndPendingForLocalSwitch } from '@/agent/localControl/discardQueuedAndPendingForLocalSwitch';
 import { discardPendingBeforeSwitchToLocal } from '@/agent/localControl/discardPendingBeforeSwitchToLocal';
 import { resolveSwitchRequestTarget } from '@/agent/localControl/switchRequestTarget';
-import { resolvePermissionIntentFromMetadataSnapshot, resolveSessionModeOverrideFromMetadataSnapshot } from '@/agent/runtime/permission/permissionModeFromMetadata';
+import {
+    resolveModelOverrideFromMetadataSnapshot,
+    resolvePermissionIntentFromMetadataSnapshot,
+    resolveSessionModeOverrideFromMetadataSnapshot,
+} from '@/agent/runtime/permission/permissionModeFromMetadata';
 import { ensureSessionInfoBeforeSwitch } from '@/backends/claude/utils/ensureSessionInfoBeforeSwitch';
 import { configuration } from '@/configuration';
 import { resolveClaudeConfigDirOverride } from './utils/resolveClaudeConfigDirOverride';
@@ -95,6 +100,8 @@ export async function claudeLocalLauncher(
          * - `switch`: switching from remote → local (must enforce discard/pending safety before switching)
          */
         entry?: 'initial' | 'switch';
+        /** Session model selected at startup, available before the session metadata snapshot. */
+        startupModelId?: string;
         /**
          * Enables the legacy local→remote takeover path. Claude unified terminal owns
          * UI input through terminal-host injection and must not enter legacy remote mode.
@@ -224,6 +231,11 @@ export async function claudeLocalLauncher(
         // them out of the visible transcript.
         onRawJsonlValue: (value, observation) => {
             transcriptProjector.observeRaw(value, observation);
+        },
+        onMainTranscriptMaterialized: ({ sessionId, transcriptPath }) => {
+            if (sessionId === session.sessionId) {
+                session.onSessionFound(sessionId, { transcript_path: transcriptPath });
+            }
         },
         onLiveJsonlValue: ({ sessionId, value }) => {
             lifecycleTracker.observeLiveProviderActivityRow(value, sessionId);
@@ -489,6 +501,15 @@ export async function claudeLocalLauncher(
                     permissionMode: session.lastPermissionMode,
                     agentModeId: resolvedAgentMode ? resolvedAgentMode.modeId : null,
                 });
+                // The session model (seeded at startup, then changed from the app) lives in metadata.
+                // Add it to this spawn only: session.claudeArgs is reused by remote launches, where a
+                // `--model` would pin the model and ignore later changes from the app.
+                const localClaudeArgs = withClaudeSessionModelArgs(
+                    session.claudeArgs,
+                    metadataSnapshot
+                        ? resolveModelOverrideFromMetadataSnapshot({ metadata: metadataSnapshot })?.modelId
+                        : opts?.startupModelId,
+                );
 
                 const { mcpConfigJson: baseMcpConfigJson } = await session.getOrCreateHappierMcpBridge();
                 try {
@@ -505,7 +526,7 @@ export async function claudeLocalLauncher(
                         onThinkingChange: applyFd3ThinkingFallback,
                         onLifecycleGapDetected: (event) => emitClaudeUnifiedLifecycleGapDetected(unifiedTelemetry, event),
                         abort: processAbortController.signal,
-                        claudeArgs: session.claudeArgs,
+                        claudeArgs: localClaudeArgs,
                         happierSessionId: session.client.sessionId,
                         systemPromptText: session.defaultSystemPromptText,
                         envOverlay: {

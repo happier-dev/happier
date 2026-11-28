@@ -5,6 +5,7 @@ import { reconcileAcpCatalogRows } from '@/agent/acp/reconcileAcpCatalogRows';
 import { logger } from '@/ui/logger';
 import type { AgentBackend, AgentMessage, McpServerConfig } from '@/agent';
 import type { AgentPromptPayload } from '@/agent/core/AgentPromptPayload';
+import type { AgentCancelOptions } from '@/agent/core/AgentBackend';
 import type { InFlightSteerPromptOptions } from '@/agent/runtime/permission/bindPermissionModeQueue';
 import type { CatalogAgentId } from '@/backends/types';
 import {
@@ -27,6 +28,7 @@ import {
   type ModelOutputReconciliationState,
 } from '@/agent/core/reconcileModelOutput';
 import { createAcpAgentMessageForwarder } from '@/agent/acp/bridge/createAcpAgentMessageForwarder';
+import type { AcpSendFn } from '@/agent/acp/bridge/acpSessionForwarding';
 import { isThinkingToolName } from '@/agent/acp/bridge/thinkingToolCall';
 import { recordToolTraceEvent } from '@/agent/tools/trace/toolTrace';
 import { normalizeAvailableCommands, publishSlashCommandsToMetadata } from '@/agent/acp/commands/publishSlashCommands';
@@ -103,6 +105,16 @@ import { applyProviderSessionInfoUpdate } from '@/agent/acp/runtime/providerSess
 import { createSessionMediaTurnState, type SessionMediaTurnState } from '@/agent/acp/runtime/sessionMediaTurnState';
 
 const ACP_FAILURE_TRACE_ENV = 'HAPPIER_ACP_FAILURE_TRACE';
+
+/** Returns the sidechain id for subagent tool activity, or null for the main thread. */
+export type AcpToolCallSidechainResolver = (call: Readonly<{
+  callId: string;
+  /** Null for permission requests and tool-start statuses, which carry only the call id. */
+  toolName: string | null;
+  input: unknown;
+  /** The main vendor session id. */
+  sessionId: string | null;
+}>) => string | null;
 
 type RuntimeSessionMediaMessage = Extract<AgentMessage, { type: 'session-media' }>;
 type RuntimeSessionMediaSource = RuntimeSessionMediaMessage['media'][number];
@@ -272,7 +284,7 @@ export type AcpRuntime = Readonly<{
    */
   isTurnInFlight: () => boolean;
   beginTurn: () => void;
-  cancel: () => Promise<void>;
+  cancel: (options?: AgentCancelOptions) => Promise<void>;
   reset: () => Promise<void>;
   startOrLoad: (opts: { resumeId?: string | null; importHistory?: boolean; deferPendingDrain?: boolean }) => Promise<string>;
   /**
@@ -530,6 +542,14 @@ export function createAcpRuntime(params: {
     onBeginTurn?: () => void;
     onToolResult?: (params: { toolName: string; callId: string; result: unknown }) => void;
     onPermissionRequest?: (params: { permissionId: string; toolName: string; payload: unknown; reason: string }) => void;
+    /**
+     * Provider-owned attribution of tool activity that a provider subagent streams into the main
+     * session. Created per attached backend; the resolver sees every tool call, result and permission
+     * request and returns the sidechain id (the launching tool call's id when it can be correlated)
+     * for subagent activity, or null for the main thread. Sidechain activity never splits the main
+     * assistant reply, and its provider call ids must already be unique across threads.
+     */
+    createToolCallSidechainResolver?: (context: Readonly<{ processEnv: NodeJS.ProcessEnv }>) => AcpToolCallSidechainResolver;
     onBeforeFlushTurn?: (params: {
       /**
        * Send an additional tool-call into the session transcript.
@@ -1558,12 +1578,55 @@ export function createAcpRuntime(params: {
       if (handlerGeneration !== runtimeMetadataPublicationGeneration) return;
       params.session.sessionTurnLifecycle?.observeProviderTurnEvent();
     }) ?? null;
+    const sendAcp: AcpSendFn = (provider, body, opts) => params.session.sendAgentMessage(provider, body, opts);
     const forwarder = createAcpAgentMessageForwarder({
-      sendAcp: (provider, body, opts) => params.session.sendAgentMessage(provider, body, opts),
+      sendAcp,
       provider: params.provider,
       makeId: () => randomUUID(),
     });
-    messageForwarder = forwarder;
+    const resolveToolCallSidechainId = params.hooks?.createToolCallSidechainResolver?.({ processEnv: params.processEnv ?? process.env }) ?? null;
+    const sidechainForwarders = new Map<string, ReturnType<typeof createAcpAgentMessageForwarder>>();
+    const forwarderFor = (sidechainId: string | null): ReturnType<typeof createAcpAgentMessageForwarder> => {
+      if (!sidechainId) return forwarder;
+      let sidechainForwarder = sidechainForwarders.get(sidechainId);
+      if (!sidechainForwarder) {
+        sidechainForwarder = createAcpAgentMessageForwarder({
+          sendAcp,
+          provider: params.provider,
+          sidechainId,
+          preserveProviderCallIds: true,
+          makeId: () => randomUUID(),
+        });
+        sidechainForwarders.set(sidechainId, sidechainForwarder);
+      }
+      return sidechainForwarder;
+    };
+    const readMessageSidechainId = (msg: AgentMessage): string | null => {
+      if (!resolveToolCallSidechainId) return null;
+      try {
+        if (msg.type === 'tool-call') {
+          return resolveToolCallSidechainId({ callId: msg.callId, toolName: msg.toolName, input: msg.args, sessionId });
+        }
+        if (msg.type === 'tool-result') {
+          return resolveToolCallSidechainId({ callId: msg.callId, toolName: msg.toolName, input: undefined, sessionId });
+        }
+        const callId = msg.type === 'permission-request' ? readNonBlankOpaqueIdentifier(msg.id)
+          : msg.type === 'status' ? readNonBlankOpaqueIdentifier(msg.toolCallId)
+            : null;
+        if (callId) return resolveToolCallSidechainId({ callId, toolName: null, input: undefined, sessionId });
+      } catch (error) {
+        logger.warn(`[${params.provider}] Subagent tool attribution failed; keeping the call in the main thread`, error);
+      }
+      return null;
+    };
+    messageForwarder = {
+      forward: forwarder.forward,
+      dispose: () => {
+        forwarder.dispose();
+        for (const sidechainForwarder of sidechainForwarders.values()) sidechainForwarder.dispose();
+        sidechainForwarders.clear();
+      },
+    };
 
     const handleProviderSessionInfoMessage = (msg: AgentMessage): boolean => {
       if (msg.type !== 'event' || msg.name !== 'session_info_update') return false;
@@ -1599,7 +1662,7 @@ export function createAcpRuntime(params: {
           params.onThinkingChange(true);
           params.session.keepAlive(true, 'remote');
         }
-        if (isModelOutputSegmentBoundary(msg)) {
+        if (isModelOutputSegmentBoundary(msg) && !readMessageSidechainId(msg)) {
           const turn = turnState;
           void enqueueTurnSettlement(() => closeModelOutputSegment(turn));
         }
@@ -1658,6 +1721,8 @@ export function createAcpRuntime(params: {
         return;
       }
       const turn = turnState;
+      const sidechainId = readMessageSidechainId(msg);
+      const threadForwarder = forwarderFor(sidechainId);
       const applyMessage = (): void | Promise<void> => {
         switch (msg.type) {
           case 'model-output': {
@@ -1726,7 +1791,7 @@ export function createAcpRuntime(params: {
 
             params.messageBuffer.addMessage(`Executing: ${msg.toolName}`, 'tool');
             recordToolCall(msg.callId, msg.toolName);
-            forwarder.forward(msg);
+            threadForwarder.forward(msg);
             break;
           }
 
@@ -1749,7 +1814,7 @@ export function createAcpRuntime(params: {
                 : JSON.stringify(msg.result ?? '').slice(0, 200);
               params.messageBuffer.addMessage(`Result: ${outputText}`, 'result');
             }
-            forwardToolResultWithMedia(msg, (next) => forwarder.forward(next), turn);
+            forwardToolResultWithMedia(msg, (next) => threadForwarder.forward(next), turn);
 
             if (typeof originToolName === 'string' && originToolName.length > 0) {
               try {
@@ -1885,6 +1950,10 @@ export function createAcpRuntime(params: {
               params.hooks?.onPermissionRequest?.({ permissionId, toolName, payload: (msg as any).payload, reason });
             } catch (e) {
               logger.debug(`[${params.provider}] Failed to run permission-request hook (non-fatal)`, e);
+            }
+            if (sidechainId) {
+              threadForwarder.forward(msg);
+              break;
             }
             resetModelOutputSegment(turn.modelOutputState);
             turn.lastModelOutputText = '';
@@ -2168,7 +2237,7 @@ export function createAcpRuntime(params: {
           && isThinkingToolName(msg.type === 'tool-result'
             ? toolNameByCallId.get(msg.callId)?.toolName ?? msg.toolName
             : msg.toolName);
-        if (isModelOutputSegmentBoundary(msg) && !thinkingToolBoundary) {
+        if (isModelOutputSegmentBoundary(msg) && !thinkingToolBoundary && !sidechainId) {
           const segmentFlush = closeModelOutputSegment(turn);
           if (segmentFlush) return segmentFlush.then(applyMessage);
         }
@@ -2330,7 +2399,11 @@ export function createAcpRuntime(params: {
         await b.setSessionConfigOption(activeSessionId, configId, value);
       }
     };
-    if (modelSetMethod === 'config_option') {
+    // A provider applying models through its model config option still uses session/set_model on a
+    // session that does not advertise that option (e.g. an older CLI that only lists legacy models).
+    const sessionAdvertisesModelOption = modelConfigOptionId !== null && (typeof b.getSessionConfigOptionsState !== 'function'
+      || (b.getSessionConfigOptionsState() ?? []).some((option) => option.id === modelConfigOptionId));
+    if (modelSetMethod === 'config_option' && sessionAdvertisesModelOption) {
       if (b.setSessionConfigOption && modelConfigOptionId) {
         await b.setSessionConfigOption(activeSessionId, modelConfigOptionId, resolvedModelId);
         await applyCompanionConfigUpdates();
@@ -2502,7 +2575,7 @@ export function createAcpRuntime(params: {
       }
     },
 
-    async cancel(): Promise<void> {
+    async cancel(options?: AgentCancelOptions): Promise<void> {
       if (!sessionId) return;
       const providerSessionId = sessionId;
       const turn = turnState;
@@ -2514,7 +2587,7 @@ export function createAcpRuntime(params: {
       params.session.keepAlive(false, 'remote');
       try {
         const b = await ensureBackend();
-        await b.cancel(providerSessionId);
+        await b.cancel(providerSessionId, options);
       } finally {
         if (turnState === turn) await flushCapturedTurn(turn);
         else await pendingTurnSettlement;

@@ -26,16 +26,19 @@ describe('Session settings (Permissions entry)', () => {
 
         expect(screen.findRowByTitle('settingsSession.composer.title')).toBeTruthy();
         expect(screen.findRowByTitle('settingsSession.providerLimits.title')).toBeTruthy();
+        expect(screen.findRowByTitle('settingsSession.localHistory.title')).toBeTruthy();
         expect(screen.findRowByTitle('settingsSession.resume.title')).toBeTruthy();
         expect(screen.findRowByTitle('settingsSession.runtime.title')).toBeTruthy();
 
         screen.pressRowByTitle('settingsSession.composer.title');
         screen.pressRowByTitle('settingsSession.providerLimits.title');
+        screen.pressRowByTitle('settingsSession.localHistory.title');
         screen.pressRowByTitle('settingsSession.resume.title');
         screen.pressRowByTitle('settingsSession.runtime.title');
 
         expect(sessionSettingsEntryState.routerPushSpy).toHaveBeenCalledWith('/settings/session/composer');
         expect(sessionSettingsEntryState.routerPushSpy).toHaveBeenCalledWith('/settings/session/provider-limits');
+        expect(sessionSettingsEntryState.routerPushSpy).toHaveBeenCalledWith('/settings/session/local-history');
         expect(sessionSettingsEntryState.routerPushSpy).toHaveBeenCalledWith('/settings/session/resume');
         expect(sessionSettingsEntryState.routerPushSpy).toHaveBeenCalledWith('/settings/session/runtime');
     });

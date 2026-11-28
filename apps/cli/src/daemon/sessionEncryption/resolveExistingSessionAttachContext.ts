@@ -23,6 +23,9 @@ export type ExistingSessionAttachContext = Readonly<{
   vendorResumeId: string | null;
   sessionPath: string | null;
   metadata: Record<string, unknown> | null;
+  active?: boolean;
+  metadataVersion?: number;
+  pendingVersion?: number;
 }>;
 
 export type ExistingSessionAttachContextFailureReason =
@@ -78,6 +81,9 @@ function buildExistingSessionAttachContext(params: Readonly<{
     dataEncryptionKey?: unknown;
     encryptionMode?: unknown;
     seq?: unknown;
+    active?: boolean;
+    metadataVersion?: number;
+    pendingVersion?: number;
   }>;
   backendTarget: BackendTargetRefV1;
   credentials: Credentials | null;
@@ -107,6 +113,9 @@ function buildExistingSessionAttachContext(params: Readonly<{
       }),
       sessionPath,
       metadata,
+      active: params.rawSession.active,
+      metadataVersion: params.rawSession.metadataVersion,
+      pendingVersion: params.rawSession.pendingVersion,
     };
   }
 
@@ -132,6 +141,9 @@ function buildExistingSessionAttachContext(params: Readonly<{
     }),
     sessionPath,
     metadata,
+    active: params.rawSession.active,
+    metadataVersion: params.rawSession.metadataVersion,
+    pendingVersion: params.rawSession.pendingVersion,
   };
 }
 

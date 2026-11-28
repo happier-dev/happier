@@ -1,4 +1,4 @@
-import { appendFile, mkdir, mkdtemp, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, readFile, realpath, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -6,18 +6,23 @@ import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { accountSettingsParse } from '@happier-dev/protocol';
 import { writeFakeCodexAppServerThreadListScript } from '@/backends/codex/appServer/testkit/fakeCodexAppServer';
+import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { withTempDir } from '@/testkit/fs/tempDir';
 import type { SpawnSessionOptions, SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
-import type { RpcHandlerRegistrar } from '@/api/rpc/types';
+import type { RpcHandlerMap, RpcHandlerRegistrar } from '@/api/rpc/types';
 
 const readCredentialsMock = vi.fn();
 const fetchSessionByIdMock = vi.fn();
 const commitSessionStoredMessageMock = vi.fn();
 const updateSessionMetadataWithRetryMock = vi.fn();
 
+const historyState = vi.hoisted(() => ({ serverDir: '/tmp/happier-test-active-server' }));
+
 vi.mock('@/configuration', () => ({
   configuration: {
-    activeServerDir: '/tmp/happier-test-active-server',
+    get activeServerDir() { return historyState.serverDir; },
     happyHomeDir: '/tmp/happier-test-home',
     daemonStateFile: '/tmp/happier-test-home/daemon.state.json',
     logsDir: '/tmp',
@@ -62,6 +67,112 @@ describe('registerMachineDirectSessionsRpcHandlers', () => {
     vi.clearAllMocks();
     vi.unstubAllEnvs();
   });
+
+  it('previews shortening, rejects a stale approval and snoozes local logs without deleting them', () =>
+    withTempDir('happier-direct-claude-history-', async configDir => {
+      vi.stubEnv('HAPPIER_CLAUDE_CONFIG_DIR', configDir);
+      historyState.serverDir = configDir;
+      const now = Date.now();
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
+      const dayMs = 86_400_000;
+      const project = join(configDir, 'projects', 'project');
+      const log = join(project, 'session.jsonl');
+      const settingsPath = join(configDir, 'settings.json');
+      try {
+        await mkdir(project, { recursive: true });
+        await writeFile(log, '{"type":"user"}\n');
+        await utimes(log, new Date(now), new Date(now - 20 * dayMs));
+        const activityMs = (await stat(log)).mtimeMs;
+        await writeFile(settingsPath, '{"cleanupPeriodDays":30}');
+        setActiveAccountSettingsSnapshot({
+          source: 'network', settings: accountSettingsParse({ claudeSessionRetentionV1: null }),
+          settingsVersion: 1, loadedAtMs: 0, settingsSecretsReadKeys: [],
+        });
+        const handlers: RpcHandlerMap = new Map();
+        const publishKeptDueAtMs = vi.fn(async (_dueAtMs: number | null) => {});
+        registerMachineDirectSessionsRpcHandlers({ rpcHandlerManager: {
+          registerHandler: (name, handler) => { handlers.set(name, handler); },
+        }, publishKeptDueAtMs });
+        const run = handlers.get(RPC_METHODS.DAEMON_LOCAL_HISTORY)!;
+        const target = { providerId: 'claude', source: { kind: 'claudeConfig' } };
+        const items = [{ remoteSessionId: 'session', projectId: 'project' }];
+        expect(await run({ ...target, operation: 'retention.preview', days: 14 })).toMatchObject({
+          ok: true, preview: { currentDays: 30, affectedCount: 1, shortening: true },
+        });
+        await writeFile(settingsPath, '{"cleanupPeriodDays":40}');
+        expect(await run({ ...target, operation: 'retention.set', days: 14, expectedCurrentDays: 30 }))
+          .toEqual({ ok: false, errorCode: 'retention_changed' });
+        expect(await run({ ...target, operation: 'retention.set', days: 14, expectedCurrentDays: 40 }))
+          .toMatchObject({ ok: true, retention: { currentDays: 14 } });
+        expect(await run({ ...target, operation: 'keep', items })).toMatchObject({ ok: true, changed: 1, due: [] });
+        const { mtimeMs } = await stat(log);
+        expect(mtimeMs).toBeGreaterThan(now - 1000);
+        const keptPath = join(configDir, 'daemon', 'agent-sessions-kept.json');
+        if (process.platform !== 'win32') expect((await stat(keptPath)).mode & 0o777).toBe(0o600);
+        expect(JSON.parse(await readFile(keptPath, 'utf8'))).toEqual([expect.objectContaining({
+          agentId: 'claude', sourceKey: expect.any(String), remoteSessionId: 'session',
+          activityMs, keptMs: now, touchedMtimeMs: mtimeMs,
+        })]);
+        expect(publishKeptDueAtMs).toHaveBeenLastCalledWith(mtimeMs + 7 * dayMs);
+        const legacyRetention = handlers.get(RPC_METHODS.DAEMON_DIRECT_SESSION_RETENTION)!;
+        expect(await legacyRetention({ ...target, operation: 'write', days: 15 })).toMatchObject({
+          ok: true, retention: { currentDays: 15 },
+        });
+        expect(publishKeptDueAtMs).toHaveBeenLastCalledWith(mtimeMs + 8 * dayMs);
+        clock.mockReturnValue(now + 8 * dayMs);
+        expect(await run({ ...target, operation: 'due.list' })).toMatchObject({
+          ok: true, due: [{ ...items[0], activityMs, leavesAt: mtimeMs + 15 * dayMs }],
+        });
+        expect(await run({ ...target, operation: 'letGo', items })).toMatchObject({ ok: true, changed: 1, due: [], keptDueAtMs: null });
+        expect((await stat(log)).mtimeMs).toBe(mtimeMs);
+        expect(publishKeptDueAtMs).toHaveBeenLastCalledWith(null);
+        expect(await readFile(log, 'utf8')).toBe('{"type":"user"}\n');
+        expect(await run({ ...target, operation: 'keep', items })).toMatchObject({ ok: true, changed: 1 });
+        await appendFile(log, '{"type":"assistant"}\n');
+        expect(await run({ ...target, operation: 'due.list' })).toMatchObject({ ok: true, due: [], keptDueAtMs: null });
+        expect(JSON.parse(await readFile(keptPath, 'utf8'))).toEqual([]);
+        expect(await run({ ...target, operation: 'keep', items: [{ remoteSessionId: '../outside' }] }))
+          .toEqual({ ok: false, errorCode: 'invalid_request' });
+      } finally {
+        clock.mockRestore();
+        resetActiveAccountSettingsSnapshotForTests();
+        vi.unstubAllEnvs();
+        historyState.serverDir = '/tmp/happier-test-active-server';
+      }
+    }));
+
+  it('writes Never only to the selected machine Claude config when its legacy policy is unmanaged', () =>
+    withTempDir('happier-direct-claude-retention-', async configDir => {
+      vi.stubEnv('HAPPIER_CLAUDE_CONFIG_DIR', configDir);
+      const path = join(configDir, 'settings.json');
+      await writeFile(path, '{"theme":"dark","cleanupPeriodDays":30}\n');
+      const handlers: RpcHandlerMap = new Map();
+      registerMachineDirectSessionsRpcHandlers({
+        rpcHandlerManager: {
+          registerHandler: (name, handler) => { handlers.set(name, handler); },
+        },
+      });
+      const retain = handlers.get(RPC_METHODS.DAEMON_DIRECT_SESSION_RETENTION)!;
+      const req = { providerId: 'claude', source: { kind: 'claudeConfig' } };
+      const publish = (settings: Parameters<typeof accountSettingsParse>[0]) => setActiveAccountSettingsSnapshot({
+        source: 'network', settings: accountSettingsParse(settings), settingsVersion: 1, loadedAtMs: 0, settingsSecretsReadKeys: [],
+      });
+      try {
+        publish({ claudeSessionRetentionV1: { mode: 'days', days: 30 } });
+        expect(await retain({ ...req, operation: 'write', days: 'never' }))
+          .toMatchObject({ ok: true, retention: { currentDays: 30, writable: false, blockedReason: 'accountPolicy' } });
+        expect(await retain({ ...req, operation: 'write', days: 0 })).toEqual({ ok: false, errorCode: 'invalid_request' });
+        expect(await readFile(path, 'utf8')).toBe('{"theme":"dark","cleanupPeriodDays":30}\n');
+        publish({ claudeSessionRetentionV1: null });
+        expect(await retain({ ...req, operation: 'read' })).toMatchObject({ ok: true, retention: { currentDays: 30, writable: true } });
+        expect(await retain({ ...req, operation: 'write', days: 'never' }))
+          .toMatchObject({ ok: true, retention: { currentDays: 36500, never: true } });
+        expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({ theme: 'dark', cleanupPeriodDays: 36500 });
+      } finally {
+        resetActiveAccountSettingsSnapshotForTests();
+        vi.unstubAllEnvs();
+      }
+    }));
 
   it('takes over a direct claude session using provider cwd and config dir', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-directSessions-rpc-takeover-'));

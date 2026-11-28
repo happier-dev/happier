@@ -10,7 +10,7 @@ describe('parseConnectedServiceProjectionSnapshot', () => {
     const snapshot = parseConnectedServiceProjectionSnapshot({
       connectedServicesV2: [{
         serviceId: 'anthropic',
-        profiles: [{ profileId: 'legacy', status: 'connected' }],
+        profiles: [{ profileId: 'legacy', status: 'needs_reauth' }],
         groups: [
           { groupId: 'group-a', activeProfileId: 'profile-a', generation: 9, memberProfileIds: ['profile-a'] },
           { groupId: 'group-b', activeProfileId: 'profile-b', generation: 9, memberProfileIds: ['profile-b'] },
@@ -23,6 +23,9 @@ describe('parseConnectedServiceProjectionSnapshot', () => {
       }],
     });
 
+    expect(snapshot.resolveCredentialHealth('anthropic', 'legacy')).toEqual({ kind: 'present_but_unusable', status: 'needs_reauth' });
+    expect(snapshot.resolveCredentialHealth('anthropic', 'profile-a')).toEqual({ kind: 'unknown' });
+    expect(snapshot.resolveCredentialHealth('anthropic', 'profile-b')).toEqual({ kind: 'confirmed_missing' });
     expect(snapshot.groups).toEqual([
       { serviceId: 'anthropic', groupId: 'group-a', activeProfileId: 'profile-a', generation: 9 },
       { serviceId: 'anthropic', groupId: 'group-b', activeProfileId: 'profile-b', generation: 9 },

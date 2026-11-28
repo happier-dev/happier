@@ -223,20 +223,22 @@ On Windows, `happier daemon service paths` prints the Scheduled Task name and wr
 
 ## Forward machine environment variables
 
-In development builds, set `HAPPIER_SESSION_FORWARD_ENV` in the daemon's
-environment to a comma-separated list of variable names. Set the variables
-themselves in that same environment. New sessions can then use the values
-without repeating them in each Profile. Explicit Profile and session values
-take precedence.
+Starting with CLI 0.2.22, new sessions use `PLAYWRIGHT_BROWSERS_PATH` from the
+daemon's environment when it is set. To share a custom cache, configure the
+same path when installing the browsers and starting the daemon. Use an
+absolute path writable by the account running Playwright.
+
+For additional variables, set `HAPPIER_SESSION_FORWARD_ENV` to a
+comma-separated list of names and set their values in the daemon's environment.
+Explicit Profile and session values take precedence.
 
 ```dotenv
-HAPPIER_SESSION_FORWARD_ENV=PLAYWRIGHT_BROWSERS_PATH
-PLAYWRIGHT_BROWSERS_PATH=/home/your-user/.cache/ms-playwright
+HAPPIER_SESSION_FORWARD_ENV=MY_TOOL_CACHE_DIR
+MY_TOOL_CACHE_DIR=/home/your-user/.cache/my-tool
 ```
 
-Use an absolute cache path writable by the account running Playwright. Configure
-the same path when installing the browsers and restart the daemon after changing
-its environment. Sessions and their tools can read the values you forward.
+Restart the daemon after changing its environment. New sessions and their tools
+can read the values you forward.
 
 ## Headless authentication (no TTY)
 

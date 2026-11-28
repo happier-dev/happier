@@ -355,7 +355,6 @@ export function createOnHappySessionWebhook(params: Readonly<{
         processCommand,
         metadata: normalizedMetadata,
         ...(respawn ? { respawn } : {}),
-        ...(trackedForPid?.activeTurnId ? { activeTurnId: trackedForPid.activeTurnId } : {}),
       });
     }
   };

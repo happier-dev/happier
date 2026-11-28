@@ -31,6 +31,7 @@ describe('Claude Agent SDK replay handoff recovery', () => {
             replaySeedV1: { v: 1, seedText, sourceSessionId: 'synthetic-source', sourceCutoffSeqInclusive: 3, createdAtMs: 1 },
         };
         const resolution = await resolveClaudeQueuedPromptForDispatch({
+            sessionDirectory: projectDir,
             sessionClient: {
                 getMetadataSnapshot: () => metadata,
                 updateMetadata: updater => { metadata = updater(metadata); },
@@ -98,7 +99,7 @@ describe('Claude Agent SDK replay handoff recovery', () => {
         };
         const mode = makeMode({ localId: 'handoff-local', claudeRemoteAgentSdkEnabled: true });
         const dispatch = () => resolveClaudeQueuedPromptForDispatch({
-            sessionClient, batch: { message: 'continue', mode }, didBootstrap: false,
+            sessionClient, sessionDirectory: '/tmp', batch: { message: 'continue', mode }, didBootstrap: false,
         });
         const first = await dispatch();
         const retirement = createProviderPromptAcceptanceSettlement();

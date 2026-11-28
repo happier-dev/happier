@@ -3,6 +3,8 @@ import { View } from 'react-native';
 import type { ReactTestInstance } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { DeferredAnchoredTooltip } from '@/components/ui/overlays/DeferredAnchoredTooltip';
+import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { installNavigationShellCommonModuleMocks } from '../navigationShellTestHelpers';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -95,6 +97,40 @@ describe('DesktopSidebarChrome', () => {
             return true;
         });
         itemRowActionsState.lastActionIds = [];
+    });
+
+    it('shows each rail and overflow tooltip from its accessible name on hover', async () => {
+        const { DesktopSidebarChrome } = await import('./DesktopSidebarChrome');
+        await withPopoverWebGlobals(async () => {
+            const screen = await renderScreen(
+                <DesktopSidebarChrome
+                    headerHeightPx={56}
+                    onPressHome={vi.fn()}
+                    onPressBack={vi.fn()}
+                    onPressForward={vi.fn()}
+                    onPressCollapse={vi.fn()}
+                    canNavigateBack
+                    canNavigateForward
+                    environmentBadge={null}
+                    headerActions={[]}
+                    topUtilityActions={[{ id: 'settings', title: 'Filter sessions', inlineTestID: 'nav-settings', icon: 'sliders-horizontal', onPress: vi.fn() }]}
+                    renderHeaderOverflowVisual={() => <View />}
+                    popoverBoundaryRef={{ current: null }}
+                    desktopWindowControls={<View />}
+                />,
+            );
+
+            for (const id of ['sidebar-back-button', 'sidebar-forward-button', 'sidebar-collapse-button', 'nav-settings', 'sidebar-header-actions-overflow']) {
+                const button = screen.findHostByTestId(id)!;
+                await React.act(async () => { button.props.onHoverIn?.(); });
+                const tooltips = screen.findAllByType(DeferredAnchoredTooltip);
+                expect(tooltips, id).toHaveLength(1);
+                expect(tooltips[0]!.props.label).toBe(button.props.accessibilityLabel);
+                await React.act(async () => { button.props.onHoverOut?.(); });
+                expect(screen.findAllByType(DeferredAnchoredTooltip)).toHaveLength(0);
+            }
+            await screen.unmount();
+        });
     });
 
     it('places utility controls above the branded sidebar row', async () => {

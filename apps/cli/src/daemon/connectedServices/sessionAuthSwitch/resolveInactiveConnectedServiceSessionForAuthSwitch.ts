@@ -1,3 +1,4 @@
+import { resolveFailedFirstLaunchAccountSwitch } from '@/session/agentTransition/failedFirstLaunch';
 import {
   inferAgentIdFromSessionMetadata,
   resolveVendorResumeIdFromSessionMetadata,
@@ -58,6 +59,7 @@ export async function resolveInactiveConnectedServiceSessionForAuthSwitch(params
    * provider knowledge.
    */
   metadata?: Record<string, unknown> | null;
+  failedFirstLaunch?: 'retry_original_transition';
 }> | null> {
   const token = typeof params.credentials.token === 'string' ? params.credentials.token.trim() : '';
   if (!token) return null;
@@ -84,6 +86,12 @@ export async function resolveInactiveConnectedServiceSessionForAuthSwitch(params
     ?? resolveVendorResumeIdFromSessionMetadata(agentId, metadata);
   return {
     agentId,
+    failedFirstLaunch: await resolveFailedFirstLaunchAccountSwitch({
+      token, sessionId: params.sessionId, agentId,
+      active: attachContext.active,
+      metadataVersion: attachContext.metadataVersion,
+      pendingVersion: attachContext.pendingVersion,
+    }),
     connectedServices: readConnectedServiceBindingsOrEmpty(metadata.connectedServices),
     metadata,
     ...(materializationIdentity ? { connectedServiceMaterializationIdentityV1: materializationIdentity } : {}),

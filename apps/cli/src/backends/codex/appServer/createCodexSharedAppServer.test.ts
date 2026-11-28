@@ -34,8 +34,8 @@ vi.mock('ps-list', async (importOriginal) => {
 describe('createCodexSharedAppServer', () => {
   it.skipIf(process.platform === 'win32').each([
     ['serializes native startup through the first real initialize handshake for a shared home', false, false, false, false, false],
-    ['pins a known SQLite root and records the actual shared-server binary version', false, false, false, true, false],
-    ['pins projected SQLite through shared-server auth/config global fallback', false, false, false, true, true],
+    ['leaves an ordinary SQLite environment override in place and records the shared-server version', false, false, false, true, false],
+    ['preserves ordinary user configuration while using global startup exclusion', false, false, false, true, true],
     ['initializes the default socket server despite an overlong caller TMPDIR', true, false, false, false, false],
     ['keeps failed native startup exclusive through process shutdown', false, true, false, false, false],
     ['preserves live native initialization failure alongside failed process cleanup', false, true, true, false, false],
@@ -139,7 +139,13 @@ describe('createCodexSharedAppServer', () => {
       if (knownRoot) {
         if (authConfigFallback) expect(await readdir(sqliteHome)).not.toContain('.happier-codex-native-startup.version');
         else expect(readFileSync(join(sqliteHome, '.happier-codex-native-startup.version'), 'utf8')).toBe('0.162.1\n');
-        for (const call of spawnProcess.mock.calls) expect(call[1]?.slice(-2)).toEqual(['-c', `sqlite_home=${JSON.stringify(sqliteHome)}`]);
+        for (const call of spawnProcess.mock.calls) expect(call[1]?.some(arg => arg.startsWith('sqlite_home='))).toBe(false);
+        if (!authConfigFallback) {
+          await writeFile(join(directory, 'shared-home', 'config.toml'), 'sqlite_home = "different-after-launch"\n');
+          const lateClient = await servers[0]!.createClient();
+          clients.push(lateClient);
+          expect(await lateClient.readRuntimeSqliteHome?.()).toBe(sqliteHome);
+        }
       }
     } finally {
       if (longCallerTemp) vi.unstubAllEnvs();

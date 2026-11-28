@@ -1,5 +1,5 @@
 import { DISCORD_INVITE_URL } from './community';
-import { CHANGELOG_URL, DOCS_URL, GUIDES_URL, GITHUB_REPO_URL, LICENSE_URL, WEB_APP_URL } from './downloads';
+import { CHANGELOG_URL, DOCS_URL, GUIDES_URL, GITHUB_REPO_URL, LEGAL_URLS, LICENSE_URL, SELF_HOST_DOCS_URL, WEB_APP_URL } from './downloads';
 
 /**
  * The footer link set.
@@ -50,6 +50,7 @@ export const FOOTER_COLUMNS = [
         id: 'product',
         title: 'Product',
         links: [
+            { id: 'plans', label: 'Plans', href: '/plans' },
             { id: 'agents', label: 'Agents we run', href: '/agents' },
             { id: 'vs-remote-control', label: 'vs Remote Control', href: '/vs/claude-code-remote-control' },
             // The Codex comparison is the same class of page and needs the same
@@ -74,6 +75,8 @@ export const FOOTER_COLUMNS = [
         id: 'open-source',
         title: 'Open source',
         links: [
+            { id: 'how-happier-stays-free', label: 'How Happier stays free', href: '/open' },
+            { id: 'supporters', label: 'Supporters', href: '/supporters', hrefLang: 'en' },
             { id: 'github', label: 'GitHub', href: GITHUB_REPO_URL, external: true },
             // /enterprise sits under Open source, not Product, because the thing
             // it is really selling to a security reviewer is the licence.
@@ -81,7 +84,7 @@ export const FOOTER_COLUMNS = [
             {
                 id: 'self-host-docs',
                 label: 'Self-host',
-                href: 'https://docs.happier.dev/deployment/self-host-runtime',
+                href: SELF_HOST_DOCS_URL,
                 external: true,
             },
             { id: 'licence', label: 'MIT license', href: LICENSE_URL, external: true },
@@ -104,4 +107,12 @@ export const FOOTER_COLUMNS = [
             { id: 'discord', label: 'Discord', href: DISCORD_INVITE_URL, external: true },
         ],
     },
+] as const;
+
+export const FOOTER_LEGAL_LINKS = [
+    { id: 'privacy', label: 'Privacy', href: LEGAL_URLS.privacy },
+    { id: 'terms', label: 'Terms', href: LEGAL_URLS.terms },
+    { id: 'terms-of-sale', label: 'Terms of sale', href: LEGAL_URLS.termsOfSale },
+    { id: 'refunds', label: 'Refunds', href: LEGAL_URLS.refunds },
+    { id: 'imprint', label: 'Imprint', href: LEGAL_URLS.imprint },
 ] as const;

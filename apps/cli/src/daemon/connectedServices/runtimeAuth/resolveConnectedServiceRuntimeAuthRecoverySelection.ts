@@ -63,6 +63,29 @@ function shouldUseDurableSelection<TSelection extends RuntimeRecoverySelection>(
     || matchesReportedGroupId(selection, reportedGroupId);
 }
 
+/**
+ * A runner can still be on the direct account it was launched with after its session was bound to
+ * a pool (the pool restart is pending or was missed). Its failure is a pool member's failure: route
+ * recovery through the session's current pool instead of waiting for that account to reset.
+ */
+export function resolveRuntimeRecoverySelectionThroughBoundPool(input: Readonly<{
+  selection: RuntimeRecoverySelection;
+  trackedConnectedServices: unknown;
+}>): RuntimeRecoverySelection {
+  if (input.selection.kind !== 'profile') return input.selection;
+  const serviceId = input.selection.serviceId;
+  const boundPool = parseConnectedServiceBindingSelections(input.trackedConnectedServices)
+    .find((candidate) => candidate.serviceId === serviceId && candidate.kind === 'group');
+  if (!boundPool || boundPool.kind !== 'group') return input.selection;
+  return {
+    kind: 'group',
+    serviceId,
+    groupId: boundPool.groupId,
+    activeProfileId: input.selection.profileId,
+    fallbackProfileId: input.selection.profileId,
+  };
+}
+
 export function isGroupRuntimeRecoverySelection(
   selection: RuntimeRecoverySelection,
 ): selection is Extract<RuntimeRecoverySelection, Readonly<{ kind: 'group' }>> {

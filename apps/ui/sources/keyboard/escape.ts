@@ -1,5 +1,7 @@
 import * as React from 'react';
 
+import { readKeyboardContextFromEventTarget } from './runtime';
+
 import { restoreFocusToBestTarget, useFocusReturnFallbackRef, type FocusReturnRef, type FocusReturnTarget } from './focusReturn';
 
 const ESCAPE_EVENT_HANDLED_KEY = '__happierEscapeEventHandled';
@@ -64,21 +66,6 @@ function isEscapeKeyEvent(event: unknown): boolean {
     return Boolean(event && typeof event === 'object' && (event as { key?: unknown }).key === 'Escape');
 }
 
-function isEditableEscapeTarget(target: unknown): boolean {
-    if (!target || typeof target !== 'object') return false;
-    const element = target as {
-        tagName?: unknown;
-        isContentEditable?: boolean;
-        closest?: (selector: string) => unknown;
-    };
-    const tagName = String(element.tagName ?? '').toLowerCase();
-    return tagName === 'input'
-        || tagName === 'textarea'
-        || tagName === 'select'
-        || element.isContentEditable === true
-        || element.closest?.('[contenteditable="true"], [data-keyboard-shortcuts-owned="true"]') != null;
-}
-
 function stopEscapeEvent(event: unknown): void {
     const stoppable = event as {
         preventDefault?: () => void;
@@ -138,7 +125,7 @@ export function dispatchEscapeToLayerStack(event: unknown): boolean {
     if (isEscapeEventHandled(event)) return false;
 
     const target = (event as { target?: unknown } | null | undefined)?.target;
-    const editableTarget = isEditableEscapeTarget(target);
+    const editableTarget = readKeyboardContextFromEventTarget(target).isEditableTarget;
     const layers = [...escapeLayers].sort((a, b) => {
         if (a.priority !== b.priority) return b.priority - a.priority;
         return b.id - a.id;

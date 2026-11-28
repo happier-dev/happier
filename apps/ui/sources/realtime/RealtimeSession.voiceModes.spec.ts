@@ -60,10 +60,8 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
   }),
 }));
 
-const presentPaywall = vi.fn(async () => ({ success: true, purchased: true }));
 vi.mock('@/sync/sync', () => ({
   sync: {
-    presentPaywall,
     decryptSecretValue: (value: unknown) => {
       if (!value || typeof value !== 'object') return null;
       const maybeValue = (value as { value?: unknown }).value;
@@ -369,7 +367,7 @@ describe('Realtime voice modes', () => {
       const { session, startSession } = makeVoiceSession('conv_1');
       registerVoiceSession(session);
 
-      await startRealtimeSession('s1', 'hi', false, { textOnly: true });
+      await startRealtimeSession('s1', 'hi', { textOnly: true });
 
       expect(startSession).toHaveBeenCalledWith(expect.objectContaining({ textOnly: true }));
       expect(requestMicrophonePermission).not.toHaveBeenCalled();
@@ -386,7 +384,7 @@ describe('Realtime voice modes', () => {
       const { session, startSession } = makeVoiceSession('conv_1');
       registerVoiceSession(session);
 
-      await startRealtimeSession('s1', 'hi', false, { textOnly: true });
+      await startRealtimeSession('s1', 'hi', { textOnly: true });
 
       expect(fetchElevenLabsConversationSignedUrlByo).toHaveBeenCalledWith({
         agentId: 'agent_1',
@@ -411,7 +409,7 @@ describe('Realtime voice modes', () => {
       const { session, startSession } = makeVoiceSession('conv_1');
       registerVoiceSession(session);
 
-      await startRealtimeSession('__voice_agent__', 'hi', false, { textOnly: true });
+      await startRealtimeSession('__voice_agent__', 'hi', { textOnly: true });
 
       expect(ensureVoiceBinding).toHaveBeenCalledWith({
         adapterId: 'realtime_elevenlabs',
@@ -493,31 +491,22 @@ describe('Realtime voice modes', () => {
       expect(state.clearRealtimeModeDebounce).toHaveBeenCalledTimes(1);
     });
 
-    it('retries after paywall purchase without deadlocking', async () => {
-      fetchHappierVoiceToken
-        .mockResolvedValueOnce({ allowed: false, reason: 'subscription_required' })
-        .mockResolvedValueOnce({
-          allowed: true,
-          token: 'conv_token',
-          leaseId: 'lease_1',
-          expiresAtMs: Date.now() + 60_000,
-        });
+    it.each(['subscription_required', 'quota_exceeded'])(
+      'shows the generic voice error for a %s denial without retrying',
+      async (reason) => {
+        fetchHappierVoiceToken.mockResolvedValueOnce({ allowed: false, reason });
 
-      const { registerVoiceSession, startRealtimeSession } = await import('./RealtimeSession');
-      const { session, startSession } = makeVoiceSession('conv_1');
-      registerVoiceSession(session);
+        const { registerVoiceSession, startRealtimeSession } = await import('./RealtimeSession');
+        const { session, startSession } = makeVoiceSession('conv_1');
+        registerVoiceSession(session);
 
-      const startPromise = startRealtimeSession('s1', 'hi');
-      const race = Promise.race([
-        startPromise.then(() => 'resolved' as const),
-        sleep(50).then(() => 'timeout' as const),
-      ]);
+        await startRealtimeSession('s1', 'hi');
 
-      expect(await race).toBe('resolved');
-      await startPromise;
-      expect(presentPaywall).toHaveBeenCalledTimes(1);
-      expect(startSession).toHaveBeenCalledTimes(1);
-    });
+        expect(fetchHappierVoiceToken).toHaveBeenCalledTimes(1);
+        expect(startSession).not.toHaveBeenCalled();
+        expect(modalAlert).toHaveBeenCalledWith('common.error', 'errors.voiceServiceUnavailable');
+      },
+    );
   });
 
   describe('concurrency and stop behavior', () => {

@@ -49,6 +49,21 @@ model Account {
     /// [ImageRef]
     avatar    Json?
 
+    // Plan state. Written only by app/plans/accountPlanState.ts (provider facts arrive through
+    // app/billing/reconcileBilling.ts). Never in the client-encrypted settings blob: the server
+    // must read these while an Account is E2EE.
+    /// Plan id from HAPPIER_PLANS__CONFIG; null = no paid plan.
+    plan          String?
+    /// polar | app_store | play | manual | team. Tells the UI where Manage goes.
+    planSource    String?
+    /// End of the paid period; null with a plan = no end (manual grant). Grace is derived, not stored.
+    planEndsAt    DateTime?
+    /// false once cancelled: "Ends on" vs "Renews on".
+    planRenews    Boolean     @default(false)
+    /// Supporter ring shown to others. Only the person's own flow writes true; a purchase never does.
+    supporterRing Boolean     @default(false)
+
+    SupporterRecord        SupporterRecord?
     Session                Session[]
     SessionSystemRecord    SessionSystemRecord[]
     AccountPushToken       AccountPushToken[]
@@ -92,6 +107,31 @@ model Account {
     AccountIdentity        AccountIdentity[]
     automations            Automation[]
     automationRuns         AutomationRun[]
+}
+
+/// The one supporter fact (plans-and-support PROGRAM, State). Written on Happier Cloud by
+/// app/billing/reconcileBilling.ts and on self-hosted servers by PUT /v1/account/supporter.
+model SupporterRecord {
+    id              String    @id @default(cuid())
+    /// Random 128-bit code (32 hex). The only non-session credential; never in a URL.
+    code            String    @unique
+    /// Permanent supporter number; null = pending. Assigned MAX+1 on Happier Cloud, copied elsewhere.
+    number          Int?      @unique
+    accountId       String?   @unique
+    account         Account?  @relation(fields: [accountId], references: [id], onDelete: SetNull)
+    /// supporter_once | supporter_monthly | plan | github_sponsor; null while pending.
+    kind            String?
+    grantedAt       DateTime?
+    recurringActive Boolean   @default(false)
+    recurringSince  DateTime?
+    /// Derived at each re-read: a refund leaving nothing paid. Never set by hand.
+    revokedAt       DateTime?
+    publicName      String?
+    publicLink      String?
+    githubLogin     String?
+    discordUserId   String?   @unique
+    createdAt       DateTime  @default(now())
+    updatedAt       DateTime  @updatedAt
 }
 
 model AccountSettingsSnapshot {
@@ -372,6 +412,7 @@ model Session {
     publisherGenerationLastActiveAt DateTime?
     createdAt         DateTime            @default(now())
     updatedAt         DateTime            @updatedAt
+    cloudCopyLeftAt   DateTime?
     messages          SessionMessage[]
     turns             SessionTurn[]
     turnMutationReceipts SessionTurnMutationReceipt[]

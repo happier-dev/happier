@@ -13,6 +13,8 @@ const VoiceGateSchema = lazySchema(() => z.object({
 
 export const FeatureGatesSchema = lazySchema(() => z.object({
   bugReports: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+  plans: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+  supporter: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
   e2ee: z
     .object({
       keylessAccounts: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),

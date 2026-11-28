@@ -262,6 +262,20 @@ When unset, existing build-time defaults and server selection remain available.
 Restart the container after changing the value. The same image can therefore
 serve hosted and self-hosted deployments with different runtime URLs.
 
+The webapp image sends no analytics or error reports by default. Set these
+optional startup values only if you want the web app to report to your own
+PostHog project or Sentry project:
+
+```dotenv
+HAPPIER_WEBAPP_POSTHOG_KEY=phc_your_project_key
+HAPPIER_WEBAPP_POSTHOG_HOST=https://eu.i.posthog.com
+HAPPIER_WEBAPP_SENTRY_DSN=https://public-key@o0.ingest.sentry.io/0
+HAPPIER_WEBAPP_SENTRY_ENVIRONMENT=production
+```
+
+Leave a value unset to keep that service off. In-app analytics and crash-report
+opt-outs still apply.
+
 Use this if you want a production setup: an external database, and optional Redis for multi-replica Socket.IO. By default, full flavor uses S3/Minio for public files, but you can opt into local disk storage with `HAPPIER_FILES_BACKEND=local`.
 
 **You will need:**

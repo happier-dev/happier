@@ -1,4 +1,6 @@
 import type { ConnectedServiceCredentialRevisionV1, ConnectedServiceId } from '@happier-dev/protocol';
+import { resolveConnectedServiceCredentialLifecycleDescriptor } from '@/backends/catalog';
+import type { CatalogAgentId } from '@/backends/types';
 import { parseConnectedServiceBindingSelections } from '../../parseConnectedServicesBindings';
 import {
   buildConnectedServiceAuthGroupCommittedGenerationFact,
@@ -57,6 +59,9 @@ type ConnectedServiceAuthGroupRuntimeScope = Readonly<{
   serviceId: ConnectedServiceId;
   groupId: string;
   fromProfileId: string | null;
+  /** The account and generation this runner was materialized with, when the runtime reported it. */
+  runtimeProfileId: string | null;
+  runtimeGeneration: number | null;
   applicationSettledProfileId: string | null;
   applicationSettledGeneration: number | null;
   applicationSettledCredentialRevision: string | null;
@@ -109,6 +114,8 @@ function listRuntimeSessionScopes(
         serviceId: binding.serviceId,
         groupId,
         fromProfileId: binding.profileId,
+        runtimeProfileId: binding.profileId,
+        runtimeGeneration: binding.generation,
       }] : [];
     });
     const discoveredBindings = parseConnectedServiceBindingSelections(target.connectedServicesBindingsRaw)
@@ -117,6 +124,8 @@ function listRuntimeSessionScopes(
         serviceId: selection.serviceId,
         groupId: selection.groupId,
         fromProfileId: selection.fallbackProfileId ?? null,
+        runtimeProfileId: null,
+        runtimeGeneration: null,
       }));
     for (const binding of [...discoveredBindings, ...runtimeBindings]) {
       const key = sessionScopeKey({ sessionId, serviceId: binding.serviceId, groupId: binding.groupId });
@@ -127,6 +136,8 @@ function listRuntimeSessionScopes(
         // `live` means the runner is reachable in the runtime registry. It is deliberately
         // independent of turn activity: an online-but-idle Codex runner hot-applies immediately.
         fromProfileId: binding.fromProfileId,
+        runtimeProfileId: binding.runtimeProfileId,
+        runtimeGeneration: binding.runtimeGeneration,
         // Runtime selections are desired materialization, not provider-adoption proof. Registration
         // replay supplies fresh proof separately when it has one.
         applicationSettledProfileId: null,
@@ -296,6 +307,30 @@ export async function reconcileConnectedServiceDirectCredentialRevisionForRuntim
   return { appliedBindingCount };
 }
 
+/**
+ * A credential rotation of the account a runner already uses is not an account switch. Whether the
+ * running process needs anything to pick it up is the provider lifecycle's refreshed-credential
+ * contract — the same declaration the refresh restart owner reads — so a provider that consumes the
+ * rotated credential itself is never re-applied (and therefore never restarted) by projection catch-up.
+ */
+async function consumesRotatedCredentialWithoutApplication(
+  agentId: string | null,
+  cache: Map<string, Promise<boolean>>,
+): Promise<boolean> {
+  if (!agentId) return false;
+  let decision = cache.get(agentId);
+  if (!decision) {
+    decision = resolveConnectedServiceCredentialLifecycleDescriptor(agentId as CatalogAgentId)
+      .then((descriptor) => (
+        descriptor.generationApplicationScope === 'per_session_runtime'
+        && descriptor.refreshedCredentialApplication.mode === 'no_restart_required'
+      ))
+      .catch(() => false);
+    cache.set(agentId, decision);
+  }
+  return await decision;
+}
+
 async function reconcileKnownConnectedServiceAuthGroupScopes(params: Readonly<{
   scopes: readonly ConnectedServiceAuthGroupRuntimeScope[];
   consumer: ConnectedServiceAuthGroupGenerationConsumer;
@@ -329,6 +364,7 @@ async function reconcileKnownConnectedServiceAuthGroupScopes(params: Readonly<{
 
   let reconciledGroupCount = 0;
   let sessionDispositionCount = 0;
+  const rotationDecisionByAgentId = new Map<string, Promise<boolean>>();
   const scopesByGroup = new Map<string, ConnectedServiceAuthGroupRuntimeScope[]>();
   for (const scope of scopes) {
     if (!scope.isCurrent()) continue;
@@ -387,19 +423,26 @@ async function reconcileKnownConnectedServiceAuthGroupScopes(params: Readonly<{
       requestedTarget: { profileId: activeProfileId },
       decisionCommittedTarget,
     });
-    const sessionsNeedingApply = currentSessions.filter((session) => {
+    const revisionedBoundary = credentialBoundary.status === 'present'
+      && credentialBoundary.revisionSemantics === 'revisioned';
+    const sessionsNeedingApply: ConnectedServiceAuthGroupRuntimeScope[] = [];
+    for (const session of currentSessions) {
       if (
-        session.applicationSettledProfileId !== activeProfileId
-        || session.applicationSettledGeneration !== group.generation
-      ) return true;
-      // A revisionless projection is not runner availability. Re-read/apply the selected
-      // account through the owner, which obtains the server's current (also legacy-row) revision.
-      return !(
-        credentialBoundary.status === 'present'
-        && credentialBoundary.revisionSemantics === 'revisioned'
+        session.applicationSettledProfileId === activeProfileId
+        && session.applicationSettledGeneration === group.generation
+        // A revisionless projection is not runner availability. Re-read/apply the selected
+        // account through the owner, which obtains the server's current (also legacy-row) revision.
+        && revisionedBoundary
         && session.applicationSettledCredentialRevision === credentialBoundary.credentialRevision
-      );
-    });
+      ) continue;
+      if (
+        revisionedBoundary
+        && session.runtimeProfileId === activeProfileId
+        && session.runtimeGeneration === group.generation
+        && await consumesRotatedCredentialWithoutApplication(session.applicationOwnerId, rotationDecisionByAgentId)
+      ) continue;
+      sessionsNeedingApply.push(session);
+    }
     const sessionsAlreadyApplied = currentSessions.filter((session) => !sessionsNeedingApply.includes(session));
     const sessionsRequiringCurrentTruthNotification = sessionsAlreadyApplied.filter(
       (session) => !session.applicationSettledBySpawnMaterialization,

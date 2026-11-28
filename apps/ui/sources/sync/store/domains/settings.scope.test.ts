@@ -1,15 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
-import type { CustomerInfo } from '@/sync/domains/purchases/types';
 import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 import {
     loadAccountSettings,
     loadPendingAccountSettings,
     saveAccountSettings,
 } from '@/sync/domains/state/accountSettingsPersistence';
-import { loadAccountPurchases, saveAccountPurchases } from '@/sync/domains/state/accountProfilePersistence';
-import { getPersistenceStorage, savePurchases } from '@/sync/domains/state/persistence';
+import { getPersistenceStorage } from '@/sync/domains/state/persistence';
 
 const store = vi.hoisted(() => new Map<string, string>());
 
@@ -255,88 +253,6 @@ describe('createSettingsDomain scoped account settings', () => {
         expect(loadAccountSettings(scopeB)).toMatchObject({
             settings: expect.objectContaining({ analyticsOptOut: false }),
             version: 2,
-        });
-    });
-
-    it('hydrates purchases from the selected settings scope', () => {
-        saveAccountPurchases(scopeA, {
-            activeSubscriptions: ['sub-a'],
-            entitlements: { pro: true },
-        });
-        saveAccountPurchases(scopeB, {
-            activeSubscriptions: ['sub-b'],
-            entitlements: { voice: true },
-        });
-
-        const { getState } = createTestStore();
-        requireScopedMethods(getState());
-
-        getState().activateSettingsScope(scopeA);
-        expect(getState().purchases).toEqual({
-            activeSubscriptions: ['sub-a'],
-            entitlements: { pro: true },
-        });
-
-        getState().activateSettingsScope(scopeB);
-        expect(getState().purchases).toEqual({
-            activeSubscriptions: ['sub-b'],
-            entitlements: { voice: true },
-        });
-
-        getState().applyPurchases({
-            activeSubscriptions: { sub_b2: 'sub_b2' },
-            entitlements: { all: { pro: { isActive: true, identifier: 'pro' } } },
-            originalAppUserId: 'account-b',
-            requestDate: new Date(0),
-        } satisfies CustomerInfo);
-
-        expect(loadAccountPurchases(scopeB).entitlements.pro).toBe(true);
-        expect(loadAccountPurchases(scopeA).entitlements).toEqual({ pro: true });
-    });
-
-    it('migrates legacy unscoped purchases into the first activated settings scope before replacing the active projection', () => {
-        savePurchases({
-            activeSubscriptions: ['legacy-sub'],
-            entitlements: { pro: true },
-        });
-
-        const { getState } = createTestStore();
-        requireScopedMethods(getState());
-
-        getState().activateSettingsScope(scopeA);
-
-        expect(getState().settingsScope).toEqual(scopeA);
-        expect(getState().purchases).toEqual({
-            activeSubscriptions: ['legacy-sub'],
-            entitlements: { pro: true },
-        });
-        expect(loadAccountPurchases(scopeA)).toEqual({
-            activeSubscriptions: ['legacy-sub'],
-            entitlements: { pro: true },
-        });
-    });
-
-    it('hydrates migrated legacy scoped purchases immediately when activating an identity scope', () => {
-        const identityScope = { serverId: 'srv-identity', accountId: 'account-a' };
-        const legacyScope = { serverId: 'localhost-18829', accountId: 'account-a' };
-        saveAccountPurchases(legacyScope, {
-            activeSubscriptions: ['legacy-sub'],
-            entitlements: { pro: true },
-        });
-
-        const { getState } = createTestStore();
-        requireScopedMethods(getState());
-
-        getState().activateSettingsScope(identityScope, [legacyScope]);
-
-        expect(getState().settingsScope).toEqual(identityScope);
-        expect(getState().purchases).toEqual({
-            activeSubscriptions: ['legacy-sub'],
-            entitlements: { pro: true },
-        });
-        expect(loadAccountPurchases(identityScope)).toEqual({
-            activeSubscriptions: ['legacy-sub'],
-            entitlements: { pro: true },
         });
     });
 });

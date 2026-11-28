@@ -1,10 +1,8 @@
-import type { CustomerInfo } from '../../domains/purchases/types';
 import type { Machine, Session } from '../../domains/state/storageTypes';
 import type { SessionListViewItem } from '../../domains/session/listing/sessionListViewData';
 import type { SessionListRenderableSession } from '../../domains/session/listing/sessionListRenderable';
 import type { MachineDisplayRenderable } from '../../domains/machines/machineDisplayRenderable';
 import { applyLocalSettings, type LocalSettings } from '../../domains/settings/localSettings';
-import { customerInfoToPurchases, purchasesDefaults, type Purchases } from '../../domains/purchases/purchases';
 import { applySettings, settingsDefaults, settingsParse, type Settings } from '../../domains/settings/settings';
 import { reconcileSettingsReferences } from '../../domains/settings/reconcileSettingsReferences';
 import {
@@ -18,12 +16,8 @@ import {
     areAccountSettingsScopesEqual,
     type AccountSettingsScope,
 } from '../../domains/settings/scope/accountSettingsScope';
-import {
-    loadAccountPurchases,
-    prepareAccountProfileScopeForActivation,
-    saveAccountPurchases,
-} from '../../domains/state/accountProfilePersistence';
-import { loadLocalSettings, loadPurchases, loadSettings, saveLocalSettings, savePurchases, saveSettings } from '../../domains/state/persistence';
+import { prepareAccountProfileScopeForActivation } from '../../domains/state/accountProfilePersistence';
+import { loadLocalSettings, loadSettings, saveLocalSettings, saveSettings } from '../../domains/state/persistence';
 import { buildSessionListViewDataForCachedServer, buildSessionListViewDataForRenderableState } from './sessionListRenderableCommit';
 import {
     getActiveServerIdForSessionListCache,
@@ -51,7 +45,6 @@ export type SettingsDomain = {
     settingsVersion: number | null;
     settingsScope: AccountSettingsScope | null;
     localSettings: LocalSettings;
-    purchases: Purchases;
     applySettingsLocal: (delta: Partial<Settings>) => void;
     applySettings: (settings: Settings, version: number) => void;
     replaceSettings: (settings: Settings, version: number) => void;
@@ -60,7 +53,6 @@ export type SettingsDomain = {
     applySettingsForScope: (scope: AccountSettingsScope, settings: Settings, version: number) => void;
     replaceSettingsForScope: (scope: AccountSettingsScope, settings: Settings, version: number) => void;
     applyLocalSettings: (delta: Partial<LocalSettings>, options?: { source?: SettingsAnalyticsSource }) => void;
-    applyPurchases: (customerInfo: CustomerInfo) => void;
 };
 
 type SettingsDomainDependencies = Readonly<{
@@ -153,14 +145,12 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
     const settings = settingsParse(rawSettings);
     safeSetPreferredLanguageFromSettings(settings.preferredLanguage);
     const localSettings = loadLocalSettings();
-    const purchases = loadPurchases();
 
     return {
         settings,
         settingsVersion: version,
         settingsScope,
         localSettings,
-        purchases,
         applySettingsLocal: (delta) =>
             set((state) => {
                 const newSettings = applySettings(state.settings, delta);
@@ -209,15 +199,11 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
                 return {
                     ...buildSettingsProjectionState(state, loaded.settings, loaded.version, scope),
                     localSettings,
-                    purchases: loadAccountPurchases(scope),
                 };
             }),
         clearSettingsScope: () => {
             saveActiveAccountSettingsScope(null);
-            set((state) => ({
-                ...buildSettingsProjectionState(state, { ...settingsDefaults }, null, null),
-                purchases: { ...purchasesDefaults },
-            }));
+            set((state) => buildSettingsProjectionState(state, { ...settingsDefaults }, null, null));
         },
         applySettingsForScope: (scope, nextSettings, nextVersion) =>
             set((state) => {
@@ -251,19 +237,6 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
                 return {
                     ...state,
                     localSettings: updatedLocalSettings,
-                };
-            }),
-        applyPurchases: (customerInfo) =>
-            set((state) => {
-                const nextPurchases = customerInfoToPurchases(customerInfo);
-                if (state.settingsScope) {
-                    saveAccountPurchases(state.settingsScope, nextPurchases);
-                } else {
-                    savePurchases(nextPurchases);
-                }
-                return {
-                    ...state,
-                    purchases: nextPurchases,
                 };
             }),
     };

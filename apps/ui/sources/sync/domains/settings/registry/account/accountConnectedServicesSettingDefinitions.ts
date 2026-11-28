@@ -101,14 +101,6 @@ export const ACCOUNT_CONNECTED_SERVICES_SETTING_DEFINITIONS = defineSettingDefin
         description:
             'Connected-service account/pool-member collapse state, keyed by serviceId:account:profileId / serviceId:pool:groupId:profileId. Sparse: only stores deviations from the per-variant default.',
         storageScope: 'account',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'count',
-            privacy: 'count_only',
-            identityScope: 'person',
-            serializeCurrent: objectKeyCount,
-        },
     },
     connectedServicesQuotaSummaryStrategyByKey: {
         schema: z.record(z.string(), z.enum(['primary', 'min_remaining'])).default({}),
@@ -153,14 +145,6 @@ export const ACCOUNT_CONNECTED_SERVICES_SETTING_DEFINITIONS = defineSettingDefin
         description:
             'Dismissed one-time "adopt this autoSwitch pool" default-auth suggestions, keyed by "agentId:serviceId:groupId". Suppresses the nudge so it does not re-appear once the user keeps the literal profile default.',
         storageScope: 'account',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'count',
-            privacy: 'count_only',
-            identityScope: 'person',
-            serializeCurrent: objectKeyCount,
-        },
     },
     connectedServicesProviderStateSharingSettingsV1: {
         schema: ConnectedServicesProviderStateSharingSettingsV1Schema,

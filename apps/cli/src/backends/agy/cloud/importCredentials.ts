@@ -6,11 +6,11 @@ import { readAgyNativeCredential } from './nativeCredentials';
 
 export async function importAgyCredentials(options: Readonly<{ source: string; signal?: AbortSignal }>): Promise<AgyAuthTokens> {
   options.signal?.throwIfAborted();
-  if (options.source !== 'acp' && options.source !== 'cli' && options.source !== 'cli-file') throw new ConnectedServiceImportError('unsupported_source', 'Unsupported Antigravity import source');
+  if (options.source !== 'cli' && options.source !== 'cli-file') throw new ConnectedServiceImportError('unsupported_source', 'Unsupported Antigravity import source');
   const native = await readAgyNativeCredential(options.source, options.signal);
   let accessToken = native.accessToken;
   let refreshToken = native.refreshToken;
-  // Explicit user import intent authorizes the refresh required by ACP's refresh-only store.
+  // Explicit user import intent authorizes the refresh an expired native token needs.
   if (!accessToken || (native.expiresAt !== null && native.expiresAt <= Date.now())) {
     try {
       const refreshed = await refreshConnectedAccountOauthTokens({ serviceId: 'antigravity', refreshToken, now: Date.now(), signal: options.signal });
@@ -43,7 +43,6 @@ export async function importAgyCredentials(options: Readonly<{ source: string; s
   }
   return {
     access_token: accessToken, refresh_token: refreshToken, token_type: 'Bearer', expires_in: Math.trunc(expiresIn), scope,
-    ...(native.projectId ? { project_id: native.projectId } : {}),
     providerAccountId: typeof data.sub === 'string' && data.sub.trim() ? data.sub.trim() : null,
     providerEmail: typeof data.email === 'string' && data.email.trim() ? data.email.trim() : null,
   };

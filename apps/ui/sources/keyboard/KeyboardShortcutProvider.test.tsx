@@ -154,6 +154,8 @@ describe('KeyboardShortcutProvider', () => {
             { key: 'a', target: { tagName: 'INPUT' } },
             { key: 'a', target: { tagName: 'TEXTAREA' } },
             { key: 'a', target: { isContentEditable: true } },
+            // Monaco's native EditContext host is a non-contenteditable DIV textbox.
+            { key: 'a', target: { tagName: 'DIV', getAttribute: (name: string) => name === 'role' ? 'textbox' : null } },
             { key: 'a', target: { tagName: 'DIV', closest: (selector: string) => selector.includes('dialog') ? {} : null } },
             { key: 'a', defaultPrevented: true },
         ]) {

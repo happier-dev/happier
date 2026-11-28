@@ -3,7 +3,7 @@ import { RawJSONLines } from "../types";
 import { createClaudeTaskNotificationToolResultProjector, isClaudeTaskLifecycleResultEnvelope, readClaudeTaskLifecycleEnvelope } from '../taskNotifications/claudeTaskLifecycleEnvelope';
 import { dirname, join } from "node:path";
 import { watch, type FSWatcher } from "node:fs";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { open, readdir, stat } from "node:fs/promises";
 import { logger } from "@/ui/logger";
 import { readNonBlankOpaqueIdentifier } from '@/utils/opaqueIdentifiers';
 import { getProjectPath } from "./path";
@@ -143,7 +143,12 @@ export async function createSessionScanner(opts: {
 
             const filePath = getSessionFilePath(sessionId);
             try {
-                await readFile(filePath, 'utf-8');
+                const file = await open(filePath, 'r');
+                try {
+                    await file.read(Buffer.alloc(1), 0, 1, 0);
+                } finally {
+                    await file.close();
+                }
                 return;
             } catch {
                 // still missing (or unreadable)

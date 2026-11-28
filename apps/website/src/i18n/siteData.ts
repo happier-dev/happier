@@ -29,7 +29,9 @@ import * as enterprise from '../data/enterprise';
 import * as faq from '../data/faq';
 import * as features from '../data/features';
 import * as navigation from '../data/navigation';
+import * as open from '../data/open';
 import * as pageProse from '../data/pageProse';
+import * as plans from '../data/plans';
 import * as providers from '../data/providers';
 import * as security from '../data/security';
 import * as terminalFeature from '../data/terminalFeature';
@@ -55,7 +57,9 @@ const MODULES = {
     faq,
     features,
     navigation,
+    open,
     pageProse,
+    plans,
     providers,
     security,
     terminalFeature,

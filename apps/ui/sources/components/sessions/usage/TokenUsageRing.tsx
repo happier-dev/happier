@@ -19,6 +19,8 @@ export type TokenUsageRingProps = TokenUsageRingMeter & Readonly<{
     value: string;
     /** Per-window fills and tones, outermost first; the center value is independent. */
     rings?: readonly TokenUsageRingMeter[];
+    /** `remaining` draws a countdown ring that ends at 12 o'clock (see {@link CapacityRing}). */
+    measures?: 'progress' | 'remaining';
     size?: number;
     strokeWidth?: number;
     testID?: string;
@@ -56,6 +58,7 @@ export function TokenUsageRing(props: TokenUsageRingProps) {
 
     return (
         <CapacityRing
+            measures={props.measures}
             ratio={progressRatio}
             rings={props.rings?.map(meter => ({
                 ratio: resolveTokenUsageProgressRatio(meter),

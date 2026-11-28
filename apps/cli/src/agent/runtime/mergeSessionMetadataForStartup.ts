@@ -408,6 +408,24 @@ export function mergeSessionMetadataForStartup(opts: {
     } else if (mode === 'attach') {
         delete (merged as any).mcpSelectionV1;
     }
+    // A runner carries the connected-service binding it was launched with. A binding persisted
+    // after that launch (for example an auth switch that raced a resume) is newer intent: keep it
+    // and its timestamp so the runner does not silently revert the session to a stale account.
+    const currentBindingsAt = typeof opts.current.connectedServicesUpdatedAt === 'number'
+        ? opts.current.connectedServicesUpdatedAt
+        : null;
+    const nextBindingsAt = typeof opts.next.connectedServicesUpdatedAt === 'number'
+        ? opts.next.connectedServicesUpdatedAt
+        : null;
+    if (
+        opts.current.connectedServices !== undefined
+        && currentBindingsAt !== null
+        && (nextBindingsAt === null || nextBindingsAt < currentBindingsAt)
+    ) {
+        merged.connectedServices = opts.current.connectedServices;
+        merged.connectedServicesUpdatedAt = currentBindingsAt;
+    }
+
     // The startup merge is the single point at which the desired MCP selection
     // becomes the running configuration. Any prior applied-selection baseline
     // is therefore obsolete, including stale markers left by older clients.

@@ -10,7 +10,6 @@ function mockSessionsDomainBoundaries() {
     vi.doMock('../../domains/state/persistence', async (importOriginal) => {
         const { installPersistenceModuleMock } = await import('@/dev/testkit');
         const { localSettingsDefaults } = await import('@/sync/domains/settings/localSettings');
-        const { purchasesDefaults } = await import('@/sync/domains/purchases/purchases');
         const { profileDefaults } = await import('@/sync/domains/profiles/profile');
         return installPersistenceModuleMock({
             loadSettings: () => ({
@@ -19,7 +18,6 @@ function mockSessionsDomainBoundaries() {
             }),
             loadLocalSettings: () => ({ ...localSettingsDefaults }),
             loadPendingSettings: () => ({}),
-            loadPurchases: () => ({ ...purchasesDefaults }),
             loadProfile: () => ({ ...profileDefaults, id: 'account_a' }),
             loadSessionDrafts: () => ({}),
             loadSessionLastViewed: () => ({}),
@@ -40,7 +38,6 @@ function mockSessionsDomainBoundaries() {
             saveSettings: vi.fn(),
             saveLocalSettings: vi.fn(),
             savePendingSettings: vi.fn(),
-            savePurchases: vi.fn(),
             saveProfile: vi.fn(),
         })(importOriginal);
     });

@@ -49,7 +49,7 @@ type SessionFileEditorState = {
     saveFileEdits: () => void;
 };
 
-async function createHarness() {
+async function createHarness(refreshAll: () => Promise<void> = async () => {}) {
     const { useSessionFileEditorState } = await import('./useSessionFileEditorState');
     const mountedRef = { current: true };
     let latest: unknown = null;
@@ -72,7 +72,7 @@ async function createHarness() {
             filesEditorMaxFileBytes: 1_000_000,
             filesEditorBridgeMaxChunkBytes: 1_000_000,
             mountedRef,
-            refreshAll: async () => {},
+            refreshAll,
         });
         return null;
     };
@@ -131,6 +131,26 @@ describe('useSessionFileEditorState (save/typing divergence)', () => {
         expect(getState().editorSeedText).not.toBe('hello changed');
         // The server-side baseline still advances to what was actually written.
         expect(getState().editorOriginalText).toBe('hello changed');
+    });
+
+    it('keeps editing the saved text until the file refresh finishes', async () => {
+        sessionWriteFileSpy.mockResolvedValueOnce({ success: true, hash: 'h2' });
+        let finishRefresh!: () => void;
+        const refresh = new Promise<void>((resolve) => { finishRefresh = resolve; });
+        const { Harness, getState } = await createHarness(() => refresh);
+        await renderScreen(<Harness />);
+        await act(async () => { getState().startEditingFile(); });
+        await act(async () => { getState().onEditorChange('hello changed'); });
+        await act(async () => { getState().saveFileEdits(); });
+        await act(async () => { await flushHookEffects(); });
+
+        // The old read snapshot still says "hello". Exposing Edit here lets
+        // another edit session seed from it before the saved file is loaded.
+        expect(getState().isEditingFile).toBe(true);
+        expect(getState().editorOriginalText).toBe('hello changed');
+        await act(async () => { finishRefresh(); });
+        expect(getState().isEditingFile).toBe(false);
+        expect(getState().editorDirty).toBe(false);
     });
 
     it('completes the save normally when the editor did not diverge during the write', async () => {

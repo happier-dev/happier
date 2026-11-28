@@ -13,7 +13,6 @@ import type { ScmCommitSelectionPatch } from '../domains/state/storageTypes';
 import type { NormalizedMessage } from '../typesRaw';
 import type { PermissionMode } from '../domains/permissions/permissionTypes';
 import type { Profile } from '../domains/profiles/profile';
-import type { Purchases } from '../domains/purchases/purchases';
 import type { Settings } from '../domains/settings/settings';
 import type { AccountSettingsSyncStatus } from '../domains/settings/accountSettingsSyncStatus';
 import type { AccountSettingsScope } from '../domains/settings/scope/accountSettingsScope';
@@ -21,7 +20,6 @@ import type { ServerAccountScope } from '../domains/scope/serverAccountScope';
 import type { SessionListViewItem } from '../domains/session/listing/sessionListViewData';
 import type { SessionListRenderableSession } from '../domains/session/listing/sessionListRenderable';
 import type { MachineDisplayRenderable } from '../domains/machines/machineDisplayRenderable';
-import type { CustomerInfo } from '../domains/purchases/types';
 import type { ApplyMachinesOptions } from './domains/machines';
 import type { SessionListRenderableReplacementOptions } from './domains/sessionListRenderableStoreUpdate';
 import type { SessionMessages } from './domains/messages';
@@ -41,7 +39,6 @@ import type { SessionActionDraftStatus } from '../domains/sessionActions/session
 import type { SettingsAnalyticsSource } from '@/track/settingsAnalytics/types';
 import type { SessionOrganizationDomain } from './domains/sessionOrganization';
 
-export type KnownEntitlements = 'voice' | 'pro';
 export type SessionListItem = string | Session;
 export type SessionModelMode = NonNullable<Session['modelMode']>;
 
@@ -63,8 +60,6 @@ export interface SettingsDomainSlice {
 export interface ProfileDomainSlice {
     profile: Profile;
     profileScope: ServerAccountScope | null;
-    purchases: Purchases;
-    applyPurchases: (customerInfo: CustomerInfo) => void;
     activateProfileScope: (scope: ServerAccountScope, legacyScopes?: readonly ServerAccountScope[]) => void;
     clearProfileScope: () => void;
     applyProfile: (profile: Profile) => void;

@@ -137,6 +137,15 @@ export const lightTheme = {
                 controlBackgroundPressed: '#F2F2F7',
             },
         },
+        // The one supporter colour (plans program, Decided 10): Supporter pins, the avatar ring and
+        // the plan chip glyph. Glyphs and marks only; text beside it uses `text.*` for contrast.
+        supporter: {
+            accent: '#B07C1C',
+            // The gold chip (plan chip, "Kept a year"): a 14% wash of the lab's gold with ink that
+            // clears AA on it.
+            tint: 'rgba(212, 162, 58, 0.14)',
+            onTint: '#855A0B',
+        },
         /** Legacy tint helper (`Color(theme.colors.shadow.color)...`); prefer `shadowLevels` for cast shadows. */
         shadow: {
             color: '#000000',
@@ -421,6 +430,13 @@ export const darkTheme = {
                 controlBackground: 'rgba(34, 28, 28, 0.96)',
                 controlBackgroundPressed: '#2A2222',
             },
+        },
+        // The one supporter colour (plans program, Decided 10): Supporter pins, the avatar ring and
+        // the plan chip glyph. Glyphs and marks only; text beside it uses `text.*` for contrast.
+        supporter: {
+            accent: '#E3B95E',
+            tint: 'rgba(212, 162, 58, 0.14)',
+            onTint: '#E6BE6A',
         },
         shadow: {
             color: '#000000',

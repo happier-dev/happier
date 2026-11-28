@@ -7,13 +7,22 @@ import type { AcpBackend } from '../AcpBackend';
 import { createAcpBackend } from '../createAcpBackend';
 import type { AcpProviderTurnSource, AcpProviderTurnSourceHost } from '../backend/turn/providerTurns';
 import { createAcpTestTransportHandler, writeAcpTestAgentScript } from '../testkit/subprocessHarness';
+import type { SessionUpdate } from '../updates/types';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { createDeferred } from '@/testkit/async/deferred';
-import { isPidAlive } from '@/testkit/process/spawn';
+import { isPidAlive, waitForProcessExit } from '@/testkit/process/spawn';
 import { FakePermissionSession } from '@/testkit/backends/permissionHandler';
 import { ProviderEnforcedPermissionHandler } from '@/agent/permissions/ProviderEnforcedPermissionHandler';
 import type { AgentMessage } from '@/agent/core';
 import type { PermissionMode } from '@/api/types';
+
+type LiveUpdateClaim = NonNullable<AcpProviderTurnSource['claimLiveUpdate']>;
+
+function messageText(update: SessionUpdate): unknown {
+    return update.sessionUpdate === 'agent_message_chunk'
+        ? (update.content as { text?: unknown } | undefined)?.text
+        : undefined;
+}
 
 function agent(directory: string): string {
     return writeAcpTestAgentScript({
@@ -25,6 +34,7 @@ function agent(directory: string): string {
             let loads = 0;
             let holdClose = false;
             let holdLoad = false;
+            let replayOnLoad = false;
             let loadingRequest = null;
             let closingRequest = null;
             const awaiting = new Map();
@@ -46,7 +56,12 @@ function agent(directory: string): string {
                         agentCapabilities: { loadSession: true, sessionCapabilities: { close: {}, fork: {} } },
                     });
                     else if (message.method === 'session/new' || message.method === 'session/fork') ok(message.id, { sessionId: 'owned' });
-                    else if (message.method === 'session/load') { loads++; if (holdLoad) loadingRequest = message.id; else ok(message.id, {}); }
+                    else if (message.method === 'session/load') {
+                        loads++;
+                        if (replayOnLoad) notify({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'REPLAYED' } });
+                        if (holdLoad) loadingRequest = message.id; else ok(message.id, {});
+                    }
+                    else if (message.method === 'test/replay-on-load') { replayOnLoad = true; ok(message.id, {}); }
                     else if (message.method === 'session/close') {
                         closes++;
                         if (holdClose) closingRequest = message.id;
@@ -105,6 +120,7 @@ async function fixture(run: (input: {
     permissionHandler: ProviderEnforcedPermissionHandler;
     setPermissionMode(mode: PermissionMode): void;
     setCatchUp(handler: AcpProviderTurnSource['catchUp']): void;
+    setClaimLiveUpdate(handler: LiveUpdateClaim): void;
     setDispose(handler: AcpProviderTurnSource['dispose']): void;
     directory: string;
 }) => Promise<void>, initTimeoutMs?: number): Promise<void> {
@@ -115,6 +131,7 @@ async function fixture(run: (input: {
         let mode: PermissionMode = 'default';
         let currentHost: AcpProviderTurnSourceHost | undefined;
         let catchUp: AcpProviderTurnSource['catchUp'] = async () => {};
+        let claimLiveUpdate: LiveUpdateClaim = () => false;
         let dispose: AcpProviderTurnSource['dispose'] = () => {};
         const events: AgentMessage[] = [];
         const backend = createAcpBackend({
@@ -123,7 +140,11 @@ async function fixture(run: (input: {
             ...(initTimeoutMs === undefined ? {} : { transportHandler: createAcpTestTransportHandler({ initTimeoutMs }) }),
             providerTurnSource: async host => {
                 currentHost = host;
-                return { catchUp: input => catchUp(input), dispose: () => dispose() };
+                return {
+                    catchUp: input => catchUp(input),
+                    claimLiveUpdate: (update, context) => claimLiveUpdate(update, context),
+                    dispose: () => dispose(),
+                };
             },
         });
         backend.onMessage(event => { events.push(event); });
@@ -136,6 +157,7 @@ async function fixture(run: (input: {
                 host() { if (!currentHost) throw new Error('Provider turn source was not opened'); return currentHost; },
                 setPermissionMode(value) { mode = value; permissionHandler.setPermissionMode(value); },
                 setCatchUp(value) { catchUp = value; },
+                setClaimLiveUpdate(value) { claimLiveUpdate = value; },
                 setDispose(value) { dispose = value; },
             });
         } finally {
@@ -152,6 +174,44 @@ async function approve(session: FakePermissionSession): Promise<void> {
 }
 
 describe('ACP provider continuation ownership', () => {
+    it('leaves an open provider continuation to its source when a steer prompt answers with a stop reason', async () => {
+        await fixture(async ({ backend, host, events }) => {
+            await backend.sendPrompt('owned', 'start background');
+            await backend.waitForResponseComplete();
+            expect(host().registerContinuation({ id: 'task', parentToolCallId: '0:background' })).toBe(true);
+            const sink = host().beginContinuation({ id: 'task', turnId: 'native-steer' });
+            expect(sink).not.toBeNull();
+            events.length = 0;
+            let settled = false;
+            const completion = backend.waitForResponseComplete().finally(() => { settled = true; });
+            // The fixture answers every session/prompt with end_turn at once, as agy acp does for a steer.
+            await backend.sendSteerPrompt('owned', 'steer');
+            await new Promise(resolve => setTimeout(resolve, 100));
+            expect(settled).toBe(false);
+            await sink!.update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'CONTINUATION' } });
+            expect(events.some(event => event.type === 'model-output' && event.textDelta === 'CONTINUATION')).toBe(true);
+            await sink!.finish({ kind: 'completed', stopReason: 'end_turn' });
+            await completion;
+        });
+    });
+
+    it('announces a provider continuation as idle and preserves its timeout outcome', async () => {
+        await fixture(async ({ backend, host, events }) => {
+            await backend.sendPrompt('owned', 'start background');
+            await backend.waitForResponseComplete();
+            expect(host().registerContinuation({ id: 'task', parentToolCallId: '0:background' })).toBe(true);
+            events.length = 0;
+            const sink = host().beginContinuation({ id: 'task', turnId: 'native-timeout' });
+            expect(sink).not.toBeNull();
+
+            await sink!.finish({ kind: 'timed_out', capMs: 100 });
+
+            expect(events).toContainEqual({ type: 'status', status: 'running' });
+            expect(events.at(-1)).toEqual({ type: 'status', status: 'idle', turnFinished: true });
+            await expect(backend.waitForResponseComplete()).resolves.toEqual({ kind: 'timed_out', capMs: 100 });
+        });
+    });
+
     it('preserves independent usage report identities across continuations and repeated step updates', async () => {
         await fixture(async ({ backend, host, events }) => {
             for (let turn = 0; turn < 2; turn += 1) {
@@ -271,6 +331,115 @@ describe('ACP provider continuation ownership', () => {
         });
     });
 
+    it('offers live native updates to the source before turn filtering, but not replayed history', async () => {
+        await fixture(async ({ backend, events, setClaimLiveUpdate }) => {
+            const offered: Array<Readonly<{ update: unknown; foregroundActive: boolean }>> = [];
+            setClaimLiveUpdate((update, { foregroundActive }) => {
+                const text = messageText(update);
+                offered.push({ update: text ?? update.sessionUpdate, foregroundActive });
+                return text === 'FOREGROUND' || text === 'LATE_FOREGROUND';
+            });
+            await backend.sendPrompt('owned', 'first');
+            await backend.waitForResponseComplete();
+            await backend.requestExtension('test/late', {});
+
+            await expect.poll(() => offered).toContainEqual({ update: 'LATE_FOREGROUND', foregroundActive: false });
+            expect(offered.slice(0, 3)).toEqual([
+                { update: 'tool_call', foregroundActive: true },
+                { update: 'tool_call_update', foregroundActive: true },
+                { update: 'FOREGROUND', foregroundActive: true },
+            ]);
+            expect(events).toContainEqual(expect.objectContaining({ type: 'tool-call', callId: '0:background' }));
+            expect(events.some(event => event.type === 'model-output')).toBe(false);
+
+            offered.length = 0;
+            await backend.requestExtension('test/replay-on-load', {});
+            await backend.cancel('owned');
+            expect(await backend.requestExtension('test/status', {})).toMatchObject({ closes: 1, loads: 1 });
+            expect(offered).toEqual([]);
+        });
+    });
+
+    it('handles updates the source hands back as generic updates without offering them again', async () => {
+        await fixture(async ({ backend, host, events, setClaimLiveUpdate }) => {
+            const offered: unknown[] = [];
+            let withheld: SessionUpdate | undefined;
+            setClaimLiveUpdate((update, { foregroundActive }) => {
+                offered.push(messageText(update) ?? update.sessionUpdate);
+                if (!foregroundActive && messageText(update) === 'LATE_FOREGROUND') {
+                    withheld = update;
+                    return true;
+                }
+                if (foregroundActive && withheld) {
+                    const released = withheld;
+                    withheld = undefined;
+                    host().releaseClaimedUpdates([released]);
+                }
+                return false;
+            });
+            await backend.sendPrompt('owned', 'first');
+            await backend.waitForResponseComplete();
+            await backend.requestExtension('test/late', {});
+            await expect.poll(() => withheld).toBeDefined();
+            events.length = 0;
+            offered.length = 0;
+
+            await backend.sendPrompt('owned', 'second');
+            await backend.waitForResponseComplete();
+
+            expect(events).toContainEqual(expect.objectContaining({ type: 'model-output', textDelta: 'LATE_FOREGROUND' }));
+            expect(offered).not.toContain('LATE_FOREGROUND');
+        });
+    });
+
+    it('retries provider admission once the prompt RPC releases the session', async () => {
+        await fixture(async ({ backend, host, events, setCatchUp }) => {
+            const admissions: Array<'refused' | 'admitted'> = [];
+            let resumable = false;
+            setCatchUp(async () => {
+                if (!resumable) return;
+                host().registerContinuation({ id: 'task', parentToolCallId: '0:background' });
+                const sink = host().beginContinuation({ id: 'task', turnId: 'native-1' });
+                admissions.push(sink ? 'admitted' : 'refused');
+                if (!sink) return;
+                resumable = false;
+                await sink.update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'RESUMED' } });
+                await sink.finish({ kind: 'completed', stopReason: 'end_turn' });
+            });
+            resumable = true;
+            await backend.sendPrompt('owned', 'start background');
+            await backend.waitForResponseComplete();
+
+            await expect.poll(() => admissions.at(-1)).toBe('admitted');
+            expect(admissions[0]).toBe('refused');
+            expect(events).toContainEqual(expect.objectContaining({ type: 'model-output', textDelta: 'RESUMED' }));
+        });
+    });
+
+    it('does not report a catch-up failure when cancelling retires its source', async () => {
+        await fixture(async ({ backend, host, events, setCatchUp }) => {
+            await backend.sendPrompt('owned', 'start background');
+            await backend.waitForResponseComplete();
+            expect(host().registerContinuation({ id: 'task', parentToolCallId: '0:background' })).toBe(true);
+            const sink = host().beginContinuation({ id: 'task', turnId: 'native-1' });
+            if (!sink) throw new Error('Missing provider continuation');
+            const retryStarted = createDeferred();
+            const retired = createDeferred();
+            host().signal.addEventListener('abort', () => retired.resolve(), { once: true });
+            setCatchUp(async () => {
+                retryStarted.resolve();
+                await retired.promise;
+            });
+            await sink.finish({ kind: 'completed', stopReason: 'end_turn' });
+            await retryStarted.promise;
+
+            await backend.cancel('owned');
+
+            expect(await backend.requestExtension('test/status', {})).toMatchObject({ closes: 1, loads: 1 });
+            expect(events).not.toContainEqual(expect.objectContaining({ type: 'status', status: 'error' }));
+        });
+    });
+
     it('withdraws permissions when the native source cannot prove their owner', async () => {
         await fixture(async ({ backend, host, permissionHandler, setCatchUp, setPermissionMode }) => {
             const observations: Array<Parameters<AcpProviderTurnSource['catchUp']>[0]> = [];
@@ -370,6 +539,22 @@ describe('ACP provider continuation ownership', () => {
             await backend.waitForResponseComplete();
             expect(events.some(event => event.type === 'model-output' && event.textDelta === 'stale')).toBe(false);
             expect(events).toContainEqual(expect.objectContaining({ type: 'model-output', textDelta: 'FOREGROUND' }));
+        });
+    });
+
+    it('settles provider work without closing or reloading the native session when the session is ending', async () => {
+        await fixture(async ({ backend, host, events }) => {
+            await backend.sendPrompt('owned', 'first');
+            await backend.waitForResponseComplete();
+            const original = host();
+            original.registerContinuation({ id: 'task', parentToolCallId: '0:background' });
+            expect(original.beginContinuation({ id: 'task', turnId: 'native-1' })).not.toBeNull();
+            events.length = 0;
+            await backend.cancel('owned', { sessionEnding: true });
+            // Dispose owns native close and process teardown; a session/load replay here only delays Stop.
+            expect(await backend.requestExtension('test/status', {})).toMatchObject({ closes: 0, loads: 0 });
+            expect(original.beginContinuation({ id: 'task', turnId: 'native-stale' })).toBeNull();
+            expect(events).toContainEqual(expect.objectContaining({ type: 'status', status: 'stopped' }));
         });
     });
 });
@@ -531,7 +716,7 @@ it.each(['cancel', 'dispose', 'source failure'] as const)('tears down native wor
             expect(isPidAlive(before.pid)).toBe(false);
         } else {
             host().fail(new Error('Journal unavailable'));
-            await expect.poll(() => isPidAlive(before.pid)).toBe(false);
+            expect(await waitForProcessExit(before.pid)).toBe(true);
             await backend.loadSession('owned');
             await backend.sendPrompt('owned', 'successor');
             await backend.waitForResponseComplete();

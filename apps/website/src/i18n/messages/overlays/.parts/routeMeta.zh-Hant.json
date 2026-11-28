@@ -71,7 +71,7 @@
   },
   "/agents/kilo": {
     "title": "Kilo CLI 上手機、筆電與瀏覽器",
-    "description": "Kilo CLI 和另外 12 個命令列代理程式共用一個開源應用程式，跑在你自己的電腦上、用你自己的帳號。沒有席次，沒有功能鎖。",
+    "description": "Kilo CLI 和另外 12 個命令列代理程式共用一個開源應用程式，跑在你自己的電腦上、用你自己的帳號。所有功能皆免費。",
     "ogTitle": "在手機、筆電和瀏覽器上使用 Kilo CLI",
     "ogDescription": "一個開源應用程式，管 Kilo 和你可能裝了的另外 12 個命令列程式設計代理程式。",
     "ogImageAlt": "Happier 字標，下方寫著：一個用戶端，管每一個 AI 程式設計代理程式。"
@@ -152,5 +152,19 @@
     "ogTitle": "為你的所有裝置下載 Happier",
     "ogDescription": "桌面應用程式、行動應用程式、直接 APK，以及在你自己的電腦上執行代理程式的 CLI。所有版本都在一個頁面。",
     "ogImageAlt": "Happier 字標，下方寫著：一個用戶端，管每一個 AI 程式設計代理程式。"
+  },
+  "/open": {
+    "title": "Happier 如何維持免費",
+    "description": "查看 Happier 對開放原始碼的承諾、哪些項目收費，以及開發經費的來源。不論使用自行架設的伺服器或 Happier Cloud，所有功能都能免費使用。每月營運與開發成本及收入也會在這裡公布。",
+    "ogTitle": "Happier 如何維持免費",
+    "ogDescription": "認識 Happier 的開放原始碼承諾，了解費用項目和開發經費來源，並查看每月收支。",
+    "ogImageAlt": "Happier 的開放原始碼承諾與每月收支"
+  },
+  "/plans": {
+    "title": "方案與支持者",
+    "description": "比較免費自行架設和 Happier Cloud 的歷史紀錄上限，看看 Lite 與 Plus 月繳方案能多保留哪些紀錄，並了解可搭配任何伺服器使用的支持者禮包。",
+    "ogTitle": "Happier 方案與支持者禮包",
+    "ogDescription": "比較自行架設與 Happier Cloud 的歷史紀錄上限，認識 Lite、Plus 和支持者禮包。",
+    "ogImageAlt": "Happier Cloud 方案、自行架設與支持者禮包比較"
   }
 }

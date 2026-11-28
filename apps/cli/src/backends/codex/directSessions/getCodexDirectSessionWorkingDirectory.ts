@@ -19,6 +19,7 @@ export async function getCodexDirectSessionWorkingDirectory(params: Readonly<{
 
   for (const home of homes) {
     const rollouts = await collectCodexSessionRolloutFiles({
+      includeCompressed: true,
       codexHome: home,
       remoteSessionId: params.remoteSessionId,
     });

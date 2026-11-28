@@ -11,21 +11,22 @@ export const agyConnectedServiceStateSharingDescriptor = {
       { path: 'antigravity-cli/skills', mode: 'linked_or_copied' },
       { path: 'config/hooks.json', mode: 'linked_or_copied' },
       { path: 'config/mcp_config.json', mode: 'linked_or_copied' },
-      { path: 'antigravity-acp/trusted_workspaces.json', mode: 'copied' },
     ],
   },
   state: {
     supported: true,
     modes: ['isolated', 'shared'],
     entries: [
-      { path: 'antigravity-acp/conversations', mode: 'linked' },
-      { path: 'antigravity-acp/brain', mode: 'linked' },
+      { path: 'antigravity-cli/conversations', mode: 'linked' },
+      { path: 'antigravity-cli/brain', mode: 'linked' },
+      // Conversation titles live here; without it a shared conversation lists under another title.
+      { path: 'antigravity-cli/annotations', mode: 'linked' },
     ],
     sharedStatePrivacyRiskAcknowledgementRequired: true,
     symlinkUnavailableDegradePolicy: 'block_continuity',
   },
   authIsolation: {
     mode: 'materialized_home',
-    secretEntries: ['antigravity-acp/acp_token.json', 'antigravity-acp/acp_business_token.json', 'antigravity-acp/settings.json'],
+    secretEntries: ['antigravity-cli/antigravity-oauth-token'],
   },
 } satisfies ConnectedServiceStateSharingDescriptor;

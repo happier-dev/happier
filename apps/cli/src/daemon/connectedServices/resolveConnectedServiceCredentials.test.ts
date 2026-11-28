@@ -208,8 +208,17 @@ describe('resolveConnectedServiceCredentials', () => {
     expect(api.getConnectedServiceCredentialSealed).not.toHaveBeenCalled();
   });
 
-  it('throws a structured missing-credential error with service/profile identity', async () => {
+  it.each([
+    ['confirmed_missing', []],
+    ['present_but_unusable', [{ profileId: 'batiplus', status: 'connected' }]],
+    ['unknown', null],
+  ] as const)('classifies an unavailable exact credential as %s from current authority', async (kind, profiles) => {
     const api = {
+      listConnectedServiceProfiles: vi.fn(async ({ forceRefresh }: { forceRefresh?: boolean }) => {
+        if (!forceRefresh) return { serviceId: 'claude-subscription', profiles: [{ profileId: 'batiplus', status: 'connected' }] };
+        if (profiles === null) throw new Error('offline');
+        return { serviceId: 'claude-subscription', profiles };
+      }),
       getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
       getConnectedServiceCredentialPlain: vi.fn(async () => null),
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
@@ -226,7 +235,7 @@ describe('resolveConnectedServiceCredentials', () => {
       bindings: [{ serviceId: 'claude-subscription', profileId: 'batiplus' }],
     })).rejects.toMatchObject({
       name: 'ConnectedServiceCredentialResolutionError',
-      kind: 'missing_credential',
+      kind,
       serviceId: 'claude-subscription',
       profileId: 'batiplus',
     });
@@ -236,6 +245,32 @@ describe('resolveConnectedServiceCredentials', () => {
       api: api as ConnectedServiceCredentialApi,
       bindings: [{ serviceId: 'claude-subscription', profileId: 'batiplus' }],
     })).rejects.toBeInstanceOf(ConnectedServiceCredentialResolutionError);
+  });
+
+  it.each(['plain', 'e2ee'] as const)('keeps a failed %s credential read unknown', async (mode) => {
+    const listConnectedServiceProfiles = vi.fn(async () => ({
+      serviceId: 'claude-subscription' as const,
+      profiles: [],
+    }));
+    const failRead = async () => { throw new Error('offline'); };
+    const api = {
+      getAccountEncryptionMode: async () => mode,
+      getConnectedServiceCredentialPlain: failRead,
+      getConnectedServiceCredentialSealed: failRead,
+      listConnectedServiceProfiles,
+    };
+
+    await expect(resolveConnectedServiceCredentials({
+      credentials: { token: 't', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) } },
+      api,
+      bindings: [{ serviceId: 'claude-subscription', profileId: 'work' }],
+    })).rejects.toMatchObject({
+      name: 'ConnectedServiceCredentialResolutionError',
+      kind: 'unknown',
+      serviceId: 'claude-subscription',
+      profileId: 'work',
+    });
+    expect(listConnectedServiceProfiles).not.toHaveBeenCalled();
   });
 
   it('falls back to plaintext credentials when the account-mode probe errors', async () => {

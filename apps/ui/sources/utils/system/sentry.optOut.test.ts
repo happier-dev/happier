@@ -49,6 +49,20 @@ describe('utils/system/sentry (crash reports opt-out)', () => {
         expect(sentryInitSpy).toHaveBeenCalledTimes(0);
     });
 
+    it('honours the persisted account crash-report opt-out at startup', async () => {
+        // Settings live in the account-scoped store; the legacy `settings` key is deleted on migration.
+        const { saveAccountSettings, saveActiveAccountSettingsScope } = await import('@/sync/domains/state/accountSettingsPersistence');
+        const { settingsDefaults } = await import('@/sync/domains/settings/settings');
+        const scope = { serverId: 'server-a', accountId: 'account-a' };
+        saveActiveAccountSettingsScope(scope);
+        saveAccountSettings(scope, { ...settingsDefaults, crashReportsOptOut: true }, 3);
+
+        const { initializeSentryOnce } = await import('./sentry');
+        initializeSentryOnce();
+
+        expect(sentryInitSpy).toHaveBeenCalledTimes(0);
+    });
+
     it('closes Sentry when crash reports are opted out', async () => {
         const { initializeSentryOnce, applyCrashReportsOptOut } = await import('./sentry');
         initializeSentryOnce();

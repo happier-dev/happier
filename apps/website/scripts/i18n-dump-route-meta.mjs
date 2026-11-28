@@ -44,9 +44,10 @@ try {
         logLevel: 'silent',
     });
 
-    const { ROUTES } = await import(pathToFileURL(bundled).href);
+    const { ROUTES, localesFor } = await import(pathToFileURL(bundled).href);
     const meta = {};
     for (const route of ROUTES) {
+        if (localesFor(route).length === 1) continue;
         meta[route.path] = {
             title: route.title,
             description: route.description,

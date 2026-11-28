@@ -243,7 +243,6 @@ const config = {
           delete nextApp.postHogKey;
           delete nextApp.revenueCatAppleKey;
           delete nextApp.revenueCatGoogleKey;
-          delete nextApp.revenueCatStripeKey;
           const next = {
             ...parsed,
             extra: { ...extra, app: nextApp },

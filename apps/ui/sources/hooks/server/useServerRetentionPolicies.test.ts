@@ -82,17 +82,19 @@ describe('useServerRetentionPolicies', () => {
         ]);
 
         vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
-            const url = String(input);
-            if (url.endsWith('/health')) {
+            const url = new URL(String(input));
+            if (url.pathname === '/health') {
                 return {
                     ok: true,
                     status: 200,
                     json: async () => ({ ok: true }),
                 };
             }
-            const base = url.replace(/\/v1\/features$/, '');
-            const payload = payloadByUrl.get(base);
-            if (!payload) throw new Error(`Unexpected fetch: ${url}`);
+            if (url.pathname === '/v2/retention-policy') {
+                return new Response(null, { status: 404 });
+            }
+            const payload = payloadByUrl.get(url.origin);
+            if (url.pathname !== '/v1/features' || !payload) throw new Error(`Unexpected fetch: ${url}`);
             return {
                 ok: true,
                 status: 200,

@@ -183,7 +183,9 @@ test.describe('ui e2e: settings analytics', () => {
         EXPO_PUBLIC_DEBUG: '1',
         EXPO_PUBLIC_HAPPY_SERVER_URL: server.baseUrl,
         EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-settings-analytics-${run.runId}`,
-        EXPO_PUBLIC_POSTHOG_KEY: 'phc_test_key',
+        // The export has no APP_ENV, so it is the internaldev identity: only a key set for that
+        // identity enables analytics (app.config.js resolvePostHogKey).
+        EXPO_PUBLIC_POSTHOG_KEY_INTERNALDEV: 'phc_test_key',
         EXPO_PUBLIC_POSTHOG_HOST: POSTHOG_HOST,
       },
     });

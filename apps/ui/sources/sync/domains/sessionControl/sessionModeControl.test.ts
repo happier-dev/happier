@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { serializeSessionModeActionOptions } from '@/sync/ops/actions/sessionModeActionSupport';
+import { isSessionModeActionAvailable, serializeSessionModeActionOptions } from '@/sync/ops/actions/sessionModeActionSupport';
 
 import type { Metadata } from '../state/storageTypes';
 import { computeSessionModePickerControl, resolveRequestedSessionModeIdForMetadata, supportsSessionModeOverrides } from './sessionModeControl';
@@ -22,7 +22,7 @@ function createMetadata(overrides: Partial<Metadata> = {}): Metadata {
 }
 
 describe('sessionModeControl', () => {
-  it.each(['agy', 'customAcp', 'opencode'] as const)('infers legacy Plan only when %s advertises it, preserving explicit pending IDs', async (agentId) => {
+  it.each(['customAcp', 'opencode'] as const)('infers legacy Plan only when %s advertises it, preserving explicit pending IDs', async (agentId) => {
     const { computeSessionModePickerControl } = await import('./sessionModeControl');
     const metadata = createMetadata({
       permissionMode: 'plan',
@@ -45,16 +45,62 @@ describe('sessionModeControl', () => {
     });
   });
 
-  it('offers clear separately from a provider native Default mode', () => {
-    const control = computeSessionModePickerControl({ agentId: 'codebuddy', metadata: createMetadata({
-      sessionModesV1: { v: 1, provider: 'codebuddy', updatedAt: 1, currentModeId: 'plan', availableModes: [
-        { id: 'default', name: 'Native Default' }, { id: 'plan', name: 'Plan' },
+  it('offers agy Build and Plan only, leaving its approval modes to the permission selector', () => {
+    const metadata = createMetadata({
+      sessionModesV1: { v: 1, provider: 'agy', updatedAt: 1, currentModeId: 'accept-edits', availableModes: [
+        { id: 'default', name: 'Default' }, { id: 'accept-edits', name: 'Accept edits' },
+        { id: 'plan', name: 'Plan' }, { id: 'auto', name: 'Auto' },
       ] },
-      sessionModeOverrideV1: { v: 1, updatedAt: 2, modeId: 'plan' },
-    }) });
-    expect(serializeSessionModeActionOptions(control).map((option) => option.value)).toEqual(['', 'default', 'plan']);
-    expect(resolveRequestedSessionModeIdForMetadata(control, '')).toBe('');
-    expect(resolveRequestedSessionModeIdForMetadata(control, 'default')).toBe('default');
+    });
+    const build = computeSessionModePickerControl({ agentId: 'agy', metadata });
+    expect(serializeSessionModeActionOptions(build)).toEqual([
+      { value: '', label: 'agentInput.mode.build', description: 'agentInput.mode.buildDescription' },
+      { value: 'plan', label: 'Plan' },
+    ]);
+    expect(build).toMatchObject({ requestedModeId: null, isExplicitOverride: false, effectiveModeId: '', effectiveModeName: 'agentInput.mode.build', isPending: false });
+    expect(resolveRequestedSessionModeIdForMetadata(build, 'default')).toBe('');
+
+    // A persisted raw approval override from older builds reads as Build.
+    metadata.sessionModeOverrideV1 = { v: 1, updatedAt: 2, modeId: 'auto' };
+    expect(computeSessionModePickerControl({ agentId: 'agy', metadata })).toMatchObject({
+      requestedModeId: null, isExplicitOverride: false, effectiveModeId: '', isPending: false,
+    });
+
+    metadata.sessionModeOverrideV1 = { v: 1, updatedAt: 3, modeId: 'plan' };
+    expect(computeSessionModePickerControl({ agentId: 'agy', metadata })).toMatchObject({
+      requestedModeId: 'plan', isExplicitOverride: true, effectiveModeId: 'plan', effectiveModeName: 'Plan', isPending: true,
+    });
+    metadata.sessionModesV1!.currentModeId = 'plan';
+    expect(computeSessionModePickerControl({ agentId: 'agy', metadata })).toMatchObject({
+      currentModeId: 'plan', effectiveModeId: 'plan', isPending: false,
+    });
+  });
+
+  it('offers CodeBuddy Build and Plan only, reading a persisted approval preset as Build', () => {
+    const metadata = createMetadata({
+      sessionModesV1: { v: 1, provider: 'codebuddy', updatedAt: 1, currentModeId: 'dontAsk', availableModes: [
+        { id: 'default', name: 'Native Default' }, { id: 'acceptEdits', name: 'Accept edits' }, { id: 'plan', name: 'Plan' },
+        { id: 'auto', name: 'Auto' }, { id: 'dontAsk', name: 'No prompts' }, { id: 'bypassPermissions', name: 'Bypass' },
+      ] },
+      sessionModeOverrideV1: { v: 1, updatedAt: 2, modeId: 'acceptEdits' },
+    });
+    const control = computeSessionModePickerControl({ agentId: 'codebuddy', metadata });
+    expect(serializeSessionModeActionOptions(control).map((option) => option.value)).toEqual(['', 'plan']);
+    expect(control).toMatchObject({ requestedModeId: null, isExplicitOverride: false, effectiveModeId: '', isPending: false });
+  });
+
+  it.each([
+    ['devin', [{ id: 'normal', name: 'Normal' }, { id: 'accept-edits', name: 'Accept edits' }, { id: 'dangerous', name: 'Dangerous' }]],
+    ['fx', [{ id: 'auto', name: 'Auto' }, { id: 'ask', name: 'Ask' }, { id: 'full-access', name: 'Full access' }]],
+  ] as const)('hides Mode for %s, whose advertised modes are all approval levels', (agentId, availableModes) => {
+    const session = { metadata: createMetadata({
+      flavor: agentId,
+      permissionMode: 'plan',
+      sessionModesV1: { v: 1, provider: agentId, updatedAt: 1, currentModeId: availableModes[0].id, availableModes: [...availableModes] },
+      sessionModeOverrideV1: { v: 1, updatedAt: 2, modeId: availableModes[2].id },
+    }) };
+    expect(computeSessionModePickerControl({ agentId, metadata: session.metadata })).toBeNull();
+    expect(isSessionModeActionAvailable(session)).toBe(false);
   });
 
   it('does not offer mapped-policy reset for an unmapped native-mode provider', () => {
@@ -64,22 +110,6 @@ describe('sessionModeControl', () => {
       ] },
     }) });
     expect(serializeSessionModeActionOptions(control).map((option) => option.value)).toEqual(['default', 'plan']);
-  });
-
-  it('does not infer unadvertised Plan from a permission setting', async () => {
-    const metadata = createMetadata({
-      permissionMode: 'plan',
-      sessionModesV1: { v: 1, provider: 'fx', updatedAt: 1, currentModeId: 'code', availableModes: [
-        { id: 'code', name: 'Code' }, { id: 'ask', name: 'Ask' },
-      ] },
-    });
-    expect(computeSessionModePickerControl({ agentId: 'fx', metadata })).toMatchObject({
-      requestedModeId: null, effectiveModeId: 'code', isPending: false,
-    });
-    metadata.sessionModeOverrideV1 = { v: 1, updatedAt: 2, modeId: 'plan' };
-    expect(computeSessionModePickerControl({ agentId: 'fx', metadata })).toMatchObject({
-      requestedModeId: 'plan', effectiveModeId: 'plan', isPending: true,
-    });
   });
 
   it('reads configured ACP modes only for the session backend', async () => {

@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { RevealText } from '../components/RevealText';
 import { InstallCommand } from '../components/InstallCommand';
+import { NumberedSteps } from '../components/NumberedSteps';
 import { rich } from '../i18n/rich';
 import { useSiteData } from '../i18n/siteData';
 import { Island } from '../islands';
@@ -41,63 +42,17 @@ export function GetStarted() {
                     />
                 </div>
 
-                {/* Vertical stepper: a timeline the eye follows top-to-bottom.
-                    Each step's CTA sits to its right on desktop (using the width)
-                    and stacks beneath the text on mobile. The connector line runs
-                    down through the numbers so the sequence is unmistakable. */}
-                <div className="mx-auto max-w-[920px]">
-                    {GET_STARTED_STEPS.map((step, idx) => {
-                        const isLast = idx === GET_STARTED_STEPS.length - 1;
-                        return (
-                            <div key={step.id} className="grid grid-cols-[40px_1fr] gap-x-5 sm:gap-x-8">
-                                {/* Left rail: number + vertical connector line */}
-                                <div className="flex flex-col items-center">
-                                    <div
-                                        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[15px] font-bold"
-                                        style={{ background: 'var(--fg)', color: 'var(--bg)' }}
-                                    >
-                                        {idx + 1}
-                                    </div>
-                                    {!isLast && (
-                                        <div
-                                            aria-hidden
-                                            className="mt-2 w-px flex-1"
-                                            style={{
-                                                background:
-                                                    'linear-gradient(to bottom, var(--card-border) 0%, var(--card-border) 72%, transparent 100%)',
-                                            }}
-                                        />
-                                    )}
-                                </div>
-
-                                {/* Content: text on the left, this step's CTA on the right.
-                                    min-w-0 on both this track and the CTA cell: a grid item
-                                    defaults to min-width:auto, which would let the install
-                                    command's min-content width push the whole page wider than
-                                    the viewport on a phone instead of letting the chip truncate. */}
-                                <div
-                                    className={`grid min-w-0 gap-y-5 md:grid-cols-[minmax(0,1fr)_auto] md:items-start md:gap-x-10 ${isLast ? 'pb-0' : 'pb-14'}`}
-                                >
-                                    <div className="pt-[7px]">
-                                        <h3
-                                            className="text-[18px] font-semibold leading-[1.3] md:text-[20px]"
-                                            style={{ color: 'var(--fg)' }}
-                                        >
-                                            {step.title}
-                                        </h3>
-                                        <p
-                                            className="mt-2 max-w-[440px] text-[14px] leading-[1.55] md:text-[15px]"
-                                            style={{ color: 'var(--muted)' }}
-                                        >
-                                            {step.description}
-                                        </p>
-                                    </div>
-                                    <div className="min-w-0 md:justify-self-end">{STEP_CTAS[step.id]}</div>
-                                </div>
-                            </div>
-                        );
-                    })}
-                </div>
+                {/* Vertical stepper: each step's CTA sits to its right on desktop
+                    (using the width) and stacks beneath the text on mobile. */}
+                <NumberedSteps
+                    className="mx-auto max-w-[920px]"
+                    steps={GET_STARTED_STEPS.map((step) => ({
+                        id: step.id,
+                        title: step.title,
+                        body: step.description,
+                        aside: STEP_CTAS[step.id],
+                    }))}
+                />
             </div>
         </section>
     );

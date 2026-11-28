@@ -71,7 +71,6 @@ jobs:
           npm_config_production: 'false'
           HAPPIER_INSTALL_SCOPE: protocol,agents,release-runtime,cli-common
           HAPPIER_UI_VENDOR_WEB_ASSETS: '0'
-          ONNXRUNTIME_NODE_INSTALL_CUDA: skip
         run: bash scripts/ci/yarn-install-with-retry.sh --frozen-lockfile --ignore-engines --network-timeout 600000 --prefer-offline --non-interactive
       - name: Install minisign from trusted control bytes
         uses: ./.release-control/.github/actions/bootstrap-minisign

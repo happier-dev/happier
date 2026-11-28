@@ -76,6 +76,7 @@ import {
 export type LocalAgentNativeResumeRecordStore = Readonly<{
   readAgentNativeResumeRecord: (
     key: LocalAgentNativeResumeRecordKey,
+    options?: Readonly<{ requireConclusiveAbsence?: boolean }>,
   ) => Promise<LocalAgentNativeResumeRecordV1 | null>;
   writeAgentNativeResumeRecord: (
     input: LocalAgentNativeResumeRecordKey & Readonly<{
@@ -372,23 +373,28 @@ export async function prepareAgentNativeReturnStrictResume(params: Readonly<{
  * from the store a second time. A target with no usable record hands the brief
  * no bound at all, which is the full replay a fresh target must get.
  */
-export async function resolveAgentNativeReturnIdentity(params: Readonly<{
+export async function resolveAgentNativeReturnPlan(params: Readonly<{
   store: LocalAgentNativeResumeRecordStore;
   sessionId: string;
   targetAgentId: AgentId;
   sourceMetadata: Record<string, unknown>;
   accountSettings: Record<string, unknown> | null;
-}>): Promise<LocalAgentNativeResumeRecordV1 | null> {
+}>): Promise<Readonly<{ record: LocalAgentNativeResumeRecordV1 | null; noNativeReturnRecord: boolean }>> {
   const record = await params.store.readAgentNativeResumeRecord({
     happierSessionId: params.sessionId,
     agentId: params.targetAgentId,
-  }).catch(() => null);
-  return isAgentNativeReturnUsable({
+  }, { requireConclusiveAbsence: true }).catch(() => undefined);
+  const usable = isAgentNativeReturnUsable({
     sourceMetadata: params.sourceMetadata,
     targetAgentId: params.targetAgentId,
     identity: record?.identity ?? null,
     accountSettings: params.accountSettings,
-  })
-    ? record
-    : null;
+  });
+  return { noNativeReturnRecord: record === null, record: usable ? record ?? null : null };
+}
+
+export async function resolveAgentNativeReturnIdentity(
+  params: Parameters<typeof resolveAgentNativeReturnPlan>[0],
+): Promise<LocalAgentNativeResumeRecordV1 | null> {
+  return (await resolveAgentNativeReturnPlan(params)).record;
 }

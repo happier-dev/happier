@@ -511,6 +511,7 @@ describe('runClaudeUnifiedTerminalSession resumed hook activation', () => {
 
     const { resolveClaudeQueuedPromptForDispatch } = await import('../runtime/resolveClaudeQueuedPromptForDispatch');
     const { message: prompt } = await resolveClaudeQueuedPromptForDispatch({
+      sessionDirectory: workspaceDir,
       sessionClient: { getMetadataSnapshot: () => ({}), updateMetadata: () => {} },
       batch: {
         message: kind === 'text' ? 'Prompt accepted after a resumed terminal write times out before Enter is verified.' : '/compact',
@@ -1103,6 +1104,9 @@ describe('runClaudeUnifiedTerminalSession resumed hook activation', () => {
         { state: 'idle', activeCount: 0 },
       );
       await waitUntil(() => onPromptAcceptedByProvider.mock.calls.length === 1 || sessionOutcome !== 'pending');
+      expect(onMessage).not.toHaveBeenCalledWith(expect.objectContaining({
+        type: 'user', uuid: 'resumed-hook-accepted-user-row',
+      }));
       if (!hooksActive) {
         expect(transcriptObservedDuringInjection).toBe(true);
         await sessionPromise;
