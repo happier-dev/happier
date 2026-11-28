@@ -366,7 +366,8 @@ export async function getTelemetryException(
     if (
       isPluginError(error) &&
       (error.code === 'collection_access_forbidden' ||
-        error.code === 'collection_subject_not_found')
+        error.code === 'collection_subject_not_found' ||
+        (owner !== undefined && error.code === 'collection_unavailable'))
     ) {
       return { kind: 'absent', localRef: input.localRef };
     }

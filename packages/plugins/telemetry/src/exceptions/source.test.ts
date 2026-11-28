@@ -199,4 +199,18 @@ describe('built-in Happier exceptions Triage source', () => {
     );
     expect(revoked).toMatchObject({ kind: 'absent' });
   });
+
+  it.each([
+    ['collection_unavailable', { kind: 'absent' }],
+    ['collection_content_unavailable', { kind: 'unresolved', failure: { code: 'collection_content_unavailable' } }],
+    ['plugin_account_storage_unavailable', { kind: 'unresolved', failure: { code: 'plugin_account_storage_unavailable' } }],
+  ] as const)('projects the shared Collection read refusal %s', async (code, expected) => {
+    const localRef = exceptionLocalRefV1('s', 'owner-1');
+    const result = await getTelemetryException({ v: 1, instance, localRef }, context({
+      async get() {
+        throw new PluginError({ code });
+      },
+    }));
+    expect(TriageGetResultV1Schema.parse(result)).toMatchObject({ localRef, ...expected });
+  });
 });
