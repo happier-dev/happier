@@ -26,6 +26,8 @@ import { ParticipantRecipientRoutingIdentityV1Schema } from '../../messages/stru
 import { PluginContributionLocalIdSchema } from '../../plugins/contributionIdentity.js';
 import { PluginIdSchema } from '../../plugins/pluginId.js';
 import { AgentPermissionIntentV1Schema } from '../../runtime/permissionIntentV1.js';
+import { SessionInputCausalPermissionAuthorityV1Schema, type SessionInputCausalPermissionAuthorityV1, type SessionPermissionSourceAuthorityV1, SourceRefSchema, SourceRevisionOrEpochSchema } from './sessionInputCausalPermissionAuthorityV1.js';
+export { SessionInputCausalPermissionAuthorityV1Schema, SessionPermissionSourceAuthorityV1Schema, type SessionInputCausalPermissionAuthorityV1, type SessionPermissionSourceAuthorityV1 } from './sessionInputCausalPermissionAuthorityV1.js';
 import { SessionIdSchema, TurnIdSchema } from '../idsV1.js';
 import { SessionMessageRefV1Schema } from './sessionMessageRefV1.js';
 import { SessionMessageReplyResolvedOutcomeV1Schema } from './sessionMessageReplyV1.js';
@@ -140,8 +142,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 const DisplayNameSnapshotSchema = lazyZodSchema(() => z.string().check(z.refine((value) => value === value.normalize('NFC'), 'Display-name snapshots must be NFC-normalized'), z.refine((value) => Array.from(value).length <= 128, 'Display-name snapshots must contain at most 128 Unicode code points')));
 
-const SourceRefSchema = preservedBoundedNfcString(256, 'Source references');
-const SourceRevisionOrEpochSchema = preservedBoundedNfcString(128, 'Source revisions');
 const BoundedAutomationIdSchema = preservedBoundedNfcString(191, 'Automation ids');
 export const BoundedAutomationRunIdSchema = preservedBoundedNfcString(191, 'Automation run ids');
 
@@ -1221,42 +1221,6 @@ export const SessionMessageSendActionResultV1Schema = lazyZodSchema(() =>
   withSessionTargetFanoutResultV1(SessionMessageSendResultV1Schema));
 export type SessionMessageSendActionResultV1 = z.infer<typeof SessionMessageSendActionResultV1Schema>;
 export const SessionMessageSendResultV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(SessionMessageSendActionResultV1Schema));
-
-export const SessionPermissionSourceAuthorityV1Schema = lazyZodSchema(() => z.strictObject({
-  kind: z.literal('mediatedExternal'),
-  mediatorPluginId: asProtocolZod(PluginIdSchema),
-  sourceRef: SourceRefSchema,
-  sourceRevisionOrEpoch: SourceRevisionOrEpochSchema,
-  admittedPermissionCeiling: asProtocolZod(AgentPermissionIntentV1Schema),
-  remoteApprovalMaxScope: z.enum(['off', 'request', 'session']),
-}));
-export type SessionPermissionSourceAuthorityV1 = z.infer<
-  typeof SessionPermissionSourceAuthorityV1Schema
->;
-
-/**
- * Immutable input authority carried with one host-dispatched turn. Its explicit
- * arm separates admitted V1 input from pre-admission legacy/host execution.
- */
-export const SessionInputCausalPermissionAuthorityV1Schema = lazyZodSchema(() => z.strictObject({
-  kind: z.literal('admittedSessionInputV1'),
-  admittedPermissionCeiling: asProtocolZod(AgentPermissionIntentV1Schema),
-  sourceAuthority: z.optional(SessionPermissionSourceAuthorityV1Schema),
-}).check(z.superRefine((value, context) => {
-  if (
-    value.sourceAuthority
-    && value.sourceAuthority.admittedPermissionCeiling !== value.admittedPermissionCeiling
-  ) {
-    context.addIssue({
-      code: 'custom',
-      path: ['sourceAuthority', 'admittedPermissionCeiling'],
-      message: 'Mediated source authority must carry the causal admitted permission ceiling',
-    });
-  }
-})));
-export type SessionInputCausalPermissionAuthorityV1 = z.infer<
-  typeof SessionInputCausalPermissionAuthorityV1Schema
->;
 
 /**
  * Materializes the narrow, host-owned causal stamp into an independent frozen

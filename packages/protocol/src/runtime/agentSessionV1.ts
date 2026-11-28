@@ -6,7 +6,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 
 import { AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1 as LIMITS } from './agentSessionLimitsV1.js';
-import { SessionInputCausalPermissionAuthorityV1Schema } from '../sessions/messages/sessionInputAdmission.js';
+import { SessionInputCausalPermissionAuthorityV1Schema } from '../sessions/messages/sessionInputCausalPermissionAuthorityV1.js';
 import type { AgentPermissionIntentV1 as CanonicalAgentPermissionIntentV1 } from './permissionIntentV1.js';
 import { SESSION_RUNTIME_ACTIVITY_ACTIVE_COUNT_MAX, SessionRuntimeScheduledWakeSchema } from '../sessions/runtime/activity/sessionRuntimeActivity.js';
 import { StrictJsonValueSchema, type JsonValue as StrictJsonValue } from '../json/strictJsonValue.js';

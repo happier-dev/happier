@@ -1,12 +1,10 @@
-import { z } from '../zodRuntimePolicy.js';
-import { lazyZodSchema } from '../lazyZodSchema.js';
-import { CoordinationMessageRefV1Schema } from '../discussions/messageRefs.js';
-import { SessionMessageRefV1Schema } from '../sessions/messages/sessionMessageRefV1.js';
 import { deriveSessionMessageAuthorAccountIdV1 } from '../sessions/messages/sessionMessageAccountActorV1.js';
 import { SessionInputAdmissionReceiptV1Schema, SessionInputAuthoritySchema } from '../sessions/messages/sessionInputAdmission.js';
 import type { ExternalActionExecutionAuthorizationBindingV1 } from './externalActionApi.js';
 import type { ActionExecutorContext } from './executor/types.js';
-import { ActionRequestRequesterV1Schema, type ActionActorV1 } from './actionActorV1.js';
+import type { ActionActorV1 } from './actionActorV1.js';
+import { ActionRequestAttributionV1Schema, type ActionRequestAttributionV1 } from './actionRequestAttributionSchemaV1.js';
+export { ActionRequestAttributionV1Schema, type ActionRequestAttributionV1 } from './actionRequestAttributionSchemaV1.js';
 export { ActionActorV1Schema, ActionRequestRequesterV1Schema, type ActionActorV1 } from './actionActorV1.js';
 import type { ActionId } from './actionIds.js';
 import { isHomeAdmittedPresentUserHostInvocation, isPresentUserHostInvocation, readInitiatingActionCallerV1 } from './invocationAuthority.js';
@@ -74,15 +72,6 @@ export function deriveActionRequestActorV1(context: ActionExecutorContext, actio
     actionCaller: caller,
   }, actionId);
 }
-
-/** Content-free host projection of one admitted cause. Never execution or approval authority. */
-export const ActionRequestAttributionV1Schema = lazyZodSchema(() => z.strictObject({
-  requestRef: z.string().check(z.minLength(1)),
-  requester: z.nullable(ActionRequestRequesterV1Schema),
-  persona: SessionMessageRefV1Schema.shape.session,
-  origin: z.nullable(CoordinationMessageRefV1Schema),
-}));
-export type ActionRequestAttributionV1 = Readonly<z.infer<typeof ActionRequestAttributionV1Schema>>;
 
 /** Host attribution identifies the cause, not authority. Unknown people never become the Bot owner. */
 export function isSharedRequesterActionV1(context: Readonly<{

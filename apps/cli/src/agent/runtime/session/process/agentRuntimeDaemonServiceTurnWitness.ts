@@ -1,9 +1,9 @@
 import { z } from 'zod/mini';
 import { SESSION_PERMISSION_MODES } from '@happier-dev/protocol/sessions/metadata/permission-modes';
-import { SessionInputCausalPermissionAuthorityV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { SessionInputCausalPermissionAuthorityV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputCausalPermissionAuthorityV1';
 import { AgentStartSessionCallerV1Schema, readAgentStartCallerWorkDepthV1 } from '@happier-dev/protocol/account/settings/admitAgentStartV1';
 import { asHostProtocolZod } from '@/plugins/runtime/protocolComposableZodAdapter';
-import { ActionRequestAttributionV1Schema } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
+import { ActionRequestAttributionV1Schema } from '@happier-dev/protocol/actions/actionRequestAttributionSchemaV1';
 import { DiscussionAddressingV1Schema, type DiscussionAddressingV1 } from '@happier-dev/protocol/discussions/references';
 
 const OpaqueIdSchema = z.string().check(z.trim(), z.minLength(1), z.maxLength(512));
@@ -65,7 +65,7 @@ export type AgentRuntimeDaemonServiceTurnWitnessInputV1 =
     discussionAddressing?: DiscussionAddressingV1;
     userMessageSeq: number | null;
     userMessageSeqs: readonly number[];
-    actionRequestAttributionV1?: import('@happier-dev/protocol/actions/actionRequestAttributionV1').ActionRequestAttributionV1;
+    actionRequestAttributionV1?: import('@happier-dev/protocol/actions/actionRequestAttributionSchemaV1').ActionRequestAttributionV1;
     causalPermissionAuthority?: import('@happier-dev/protocol')
       .SessionInputCausalPermissionAuthorityV1;
     callerPermissionMode?: import('@happier-dev/protocol')
