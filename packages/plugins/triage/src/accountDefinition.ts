@@ -172,7 +172,11 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
           confirmLabel: configuredConfirmationText('confirm', 'Run action'),
           inputFields: configuredConfirmationFields,
           variant: {
-            when: { op: 'and', all: [TRIAGE_EXISTING_SESSION_INPUT, { op: 'truthy', path: 'sendPresentation.actionLabel' }] },
+            when: { op: 'and', all: [
+              TRIAGE_EXISTING_SESSION_INPUT,
+              { op: 'eq', path: 'handoff.delivery', value: 'send' },
+              { op: 'truthy', path: 'sendPresentation.actionLabel' },
+            ] },
             title: configuredConfirmationText('sendTitle', 'Send to this Session?'),
             body: configuredConfirmationText('sendBody',
               'Sends this entry and the action’s instructions to the Session below. Its agent picks them up there; no new Session starts.'),
