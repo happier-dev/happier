@@ -818,11 +818,13 @@ async function handleSessionHostRequest(current: Ingress, request: IncomingMessa
     reply(response, 404, { error: 'No session host on this endpoint', errorCode: 'local_session_unavailable' });
     return;
   }
+  let releasePendingAdd: (() => void) | undefined;
   if (request.url === HOST_ADD_PATH) {
     // Count the Add before reading its body or checking the daemon's birth: the last intent
-    // hold can close while either is pending. Response close covers completion and disconnect.
+    // hold can close while either is pending. A disconnect before admission releases this hold.
     try {
-      response.once('close', host.hold(false));
+      releasePendingAdd = host.hold(false);
+      response.once('close', releasePendingAdd);
     } catch (error) {
       if (!(error instanceof SessionHostClosingError)) throw error;
       reply(response, 503, { error: error.message, errorCode: SESSION_HOST_CLOSING });
@@ -901,6 +903,11 @@ async function handleSessionHostRequest(current: Ingress, request: IncomingMessa
     }
     try {
       ended = host.addSession(add);
+      // The host now owns the admitted Session. The Add response stays open for its exit code.
+      if (releasePendingAdd) {
+        response.removeListener('close', releasePendingAdd);
+        releasePendingAdd();
+      }
     } catch (error) {
       if (!(error instanceof SessionHostClosingError)) throw error;
       reply(response, 503, { error: error.message, errorCode: SESSION_HOST_CLOSING });

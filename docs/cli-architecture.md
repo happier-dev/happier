@@ -8707,7 +8707,13 @@ stays warm so a subsequent Start can reuse its loaded runner. A process signal
 or runtime handover can end the host. On daemon shutdown, the daemon asks the
 idle host to exit. Sessions that continue across daemon shutdown keep their host
 for reattachment. The warm Session host has an idle budget of about 320 MiB
-PSS, approved in the 2026-11-28 P03 owner decision.
+PSS. When its last Session ends, it requests one in-process Node Inspector
+low-memory collection if there is no New Session hold, pending prestart, or Add
+admission. If Inspector is unavailable, the host logs that once and skips reclaim.
+The 2026-11-28 P03 owner decision accepts the roughly 300 ms delay for an Add
+that lands during collection. In six paired Linux SEA measurements, median Add
+admission was 89 ms without reclaim and 389 ms during reclaim. The Linux spike
+used 305.7 MiB PSS after one Open and 322.7 MiB after ten.
 
 When Memory Guard is enabled, its existing sustained-scarcity planner can reclaim
 a measured idle host before acting on user resources. The daemon observes

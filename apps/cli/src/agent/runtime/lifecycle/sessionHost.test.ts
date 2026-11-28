@@ -21,6 +21,7 @@ import { HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY } from '@/agent/run
 import { readRunnerAgentSessionBootstrap } from '@/agent/runtime/session/process/runnerAgentSessionBootstrap';
 import { PLUGIN_MANIFEST as codexManifest } from '../../../../../../packages/plugins/codex/src/manifest';
 import { reportSessionRunnerFailure } from '@/cli/resolveSessionRunnerFailureExitCode';
+import { logger } from '@/ui/logger';
 import { endSessionCommand } from './runnerTerminationHandlers';
 
 import { onHostedSessionHandover } from './hostedSessionScope';
@@ -58,12 +59,17 @@ describe('session host', () => {
   let hostExit: ReturnType<typeof vi.fn<(code: number) => void>>;
   let host: SessionHost | null = null;
 
-  async function startHost(runSessionCommand: Parameters<typeof startSessionHost>[0]['runSessionCommand'], trustedCallerPid = process.pid): Promise<SessionHost> {
+  async function startHost(
+    runSessionCommand: Parameters<typeof startSessionHost>[0]['runSessionCommand'],
+    trustedCallerPid = process.pid,
+    preloadSessionRunner?: () => Promise<unknown>,
+  ): Promise<SessionHost> {
     const own = await captureProcessBirthWitness(process.pid);
     hostProcess = new EventEmitter();
     hostExit = vi.fn<(code: number) => void>();
     host = await startSessionHost({
       runSessionCommand,
+      preloadSessionRunner,
       readTrustedCaller: async () => own && { ...own, pid: trustedCallerPid },
       process: hostProcess,
       exit: hostExit,
@@ -85,6 +91,98 @@ describe('session host', () => {
   beforeAll(async () => { await import('@/cli/resolveSessionRunnerFailureExitCode'); }, 120_000);
 
   const add = (trackingKey: string) => host!.addSession({ trackingKey, argv: [trackingKey], env: {}, cwd: testHome });
+
+  function observeInspector(available = true) {
+    const disconnect = vi.fn();
+    const post = vi.fn<(method: string, callback: (error: Error | null) => void) => void>();
+    const getBuiltinModule = process.getBuiltinModule;
+    const load = vi.spyOn(process, 'getBuiltinModule').mockImplementation(id => {
+      if (id !== 'node:inspector' && id !== 'inspector') return getBuiltinModule(id);
+      if (!available) return undefined;
+      return { Session: class { connect() {} post = post; disconnect = disconnect; } };
+    });
+    return { load, post, disconnect };
+  }
+
+  it('reclaims once when the last admitted Session ends, and admits a warm Add while reclaim is pending', async () => {
+    const inspector = observeInspector();
+    const turns = { first: deferred(), sibling: deferred(), warm: deferred() };
+    const started = deferred();
+    await startHost(async argv => {
+      if (argv[0] === 'warm') started.resolve();
+      await turns[argv[0] as keyof typeof turns].promise;
+    });
+    const first = addLocalSessionHostSession({ hostPid: process.pid, request: {
+      trackingKey: 'first', argv: ['first'], env: {}, cwd: testHome,
+    } });
+    const sibling = add('sibling');
+    try {
+      await expect(first.admitted).resolves.toBe(true);
+      turns.sibling.resolve();
+      await sibling;
+      expect(inspector.post).not.toHaveBeenCalled();
+
+      turns.first.resolve();
+      await expect(first.ended).resolves.toMatchObject({ exitCode: 0 });
+      expect(inspector.post).toHaveBeenCalledExactlyOnceWith('HeapProfiler.collectGarbage', expect.any(Function));
+
+      const warm = addLocalSessionHostSession({ hostPid: process.pid, request: {
+        trackingKey: 'warm', argv: ['warm'], env: {}, cwd: testHome,
+      } });
+      await expect(warm.admitted).resolves.toBe(true);
+      await started.promise;
+      expect(inspector.disconnect).toHaveBeenCalledOnce();
+      expect(inspector.post).toHaveBeenCalledOnce();
+      turns.warm.resolve();
+      await expect(warm.ended).resolves.toMatchObject({ exitCode: 0 });
+      expect(inspector.post).toHaveBeenCalledTimes(2);
+      inspector.post.mock.calls[1][1](null);
+      expect(inspector.disconnect).toHaveBeenCalledOnce();
+      await Promise.resolve();
+      expect(inspector.disconnect).toHaveBeenCalledTimes(2);
+    } finally {
+      for (const turn of Object.values(turns)) turn.resolve();
+      inspector.load.mockRestore();
+    }
+  });
+
+  it('skips reclaim under a hold or pending prestart without retrying when either clears', async () => {
+    const inspector = observeInspector();
+    inspector.post.mockImplementation((_method, callback) => callback(null));
+    const preload = deferred();
+    try {
+      const running = await startHost(async () => {}, process.pid, () => preload.promise);
+      const release = running.hold();
+      await add('held');
+      expect(inspector.post).not.toHaveBeenCalled();
+      release();
+      await add('prestarting');
+      expect(inspector.post).not.toHaveBeenCalled();
+
+      preload.resolve();
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(inspector.post).not.toHaveBeenCalled();
+      await add('available');
+      expect(inspector.post).toHaveBeenCalledExactlyOnceWith('HeapProfiler.collectGarbage', expect.any(Function));
+    } finally {
+      preload.resolve();
+      inspector.load.mockRestore();
+    }
+  });
+
+  it('logs unavailable Inspector only once and keeps admitting Sessions', async () => {
+    const inspector = observeInspector(false);
+    const warn = vi.spyOn(logger, 'warnLocalFile');
+    try {
+      await startHost(async () => {});
+      await expect(add('first')).resolves.toEqual({ exitCode: 0 });
+      await expect(add('next')).resolves.toEqual({ exitCode: 0 });
+      expect(warn.mock.calls.filter(([message]) => message === '[session-host] Idle memory reclaim unavailable')).toHaveLength(1);
+    } finally {
+      warn.mockRestore();
+      inspector.load.mockRestore();
+    }
+  });
 
   it('ends a Session whose admitted policy is invalid without stranding the host or its healthy sibling', async () => {
     const turn = deferred();

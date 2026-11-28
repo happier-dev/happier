@@ -60,18 +60,54 @@ export async function startSessionHost(params: Readonly<{
   shareAccountUpdatesInThisProcess();
   let closing = false;
   let holds = 0;
-  let runnerPreload: Promise<unknown> | null = null;
+  let runnerPreload: 'pending' | 'settled' | undefined;
+  let idleReclaim: import('node:inspector').Session | null = null;
+  let reclaimUnavailable = false;
   let retireEndpoint: (() => Promise<void>) | null = null;
   const exit = params.exit ?? ((code: number) => process.exit(code));
+  const disconnectIdleReclaim = (): void => {
+    const session = idleReclaim;
+    idleReclaim = null;
+    session?.disconnect();
+  };
   const termination = registerRunnerTerminationHandlers({
     process: params.process ?? process,
     exit,
     onTerminate: async () => {
       closing = true;
+      disconnectIdleReclaim();
       await retireEndpoint?.();
     },
   });
   const isIdle = (): boolean => sessions.size === 0 && holds === 0 && !closing;
+  const reportReclaimUnavailable = (error: unknown): void => {
+    reclaimUnavailable = true;
+    logger.warnLocalFile('[session-host] Idle memory reclaim unavailable', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  };
+  const reclaimIdleMemory = (): void => {
+    if (!isIdle() || runnerPreload === 'pending' || idleReclaim || reclaimUnavailable) return;
+    try {
+      const inspector: typeof import('node:inspector') | undefined = process.getBuiltinModule('node:inspector');
+      if (!inspector) {
+        reportReclaimUnavailable('Node Inspector is not available');
+        return;
+      }
+      const session = new inspector.Session();
+      session.connect();
+      idleReclaim = session;
+      // V8 calls back while its heap-profiler lock is held. Disconnect after it unwinds.
+      session.post('HeapProfiler.collectGarbage', error => queueMicrotask(() => {
+        if (idleReclaim !== session) return;
+        disconnectIdleReclaim();
+        if (error) reportReclaimUnavailable(error);
+      }));
+    } catch (error) {
+      disconnectIdleReclaim();
+      reportReclaimUnavailable(error);
+    }
+  };
   const stopIfIdle = (): boolean => {
     if (!isIdle()) return false;
     closing = true;
@@ -82,6 +118,7 @@ export async function startSessionHost(params: Readonly<{
   const addSession = (request: SessionHostAddRequest): Promise<SessionHostCommandEnd> => {
     if (closing) throw new SessionHostClosingError('The session host is ending');
     if (sessions.has(request.trackingKey)) throw new Error('This Session is already hosted');
+    disconnectIdleReclaim();
     let resolveEnded!: (end: SessionHostCommandEnd) => void;
     const session = {
       scope: null as HostedSessionScope | null,
@@ -99,6 +136,7 @@ export async function startSessionHost(params: Readonly<{
       // Process-wide async resources can outlive the Session that first used them.
       if (session.scope) session.scope.termination = null;
       resolveEnded({ exitCode, ...(failureCause ? { failureCause } : {}) });
+      reclaimIdleMemory();
     };
     const launch = request.launch ?? {};
     // Admission can throw while parsing policy, before the async command starts.
@@ -128,10 +166,14 @@ export async function startSessionHost(params: Readonly<{
   const hold = (preloadRunner = true): (() => void) => {
     if (closing) throw new SessionHostClosingError('The session host is ending');
     holds += 1;
-    if (preloadRunner) {
-      runnerPreload ??= (params.preloadSessionRunner?.() ?? Promise.resolve()).catch((error: unknown) => {
+    disconnectIdleReclaim();
+    if (preloadRunner && !runnerPreload && params.preloadSessionRunner) {
+      runnerPreload = 'pending';
+      void params.preloadSessionRunner().catch((error: unknown) => {
         // The Session command loads the same code itself; a failed preload only loses the head start.
         logger.warn('[session-host] Runner preload failed', { error: error instanceof Error ? error.message : String(error) });
+      }).finally(() => {
+        runnerPreload = 'settled';
       });
     }
     let released = false;
@@ -147,6 +189,7 @@ export async function startSessionHost(params: Readonly<{
   const handOver = (): boolean => {
     if (closing) return false;
     closing = true;
+    disconnectIdleReclaim();
     void (async () => {
       await retireEndpoint?.();
       const { handOverSessionHolderClients, pauseSessionHolderDelivery } = await import('@/subprocess/supervision/sessionHolder');
