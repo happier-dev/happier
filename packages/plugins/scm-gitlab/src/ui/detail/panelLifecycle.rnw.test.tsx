@@ -4,7 +4,7 @@ import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit, PluginUiTestkitHostHandlers } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
-import { TriagePostMutationCompletionProvider } from '@happier-dev/triage-sources/ui';
+import { TriageEvidenceDisclosureProvider, TriagePostMutationCompletionProvider } from '@happier-dev/triage-sources/ui';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
@@ -125,20 +125,29 @@ afterEach(async () => {
   for (const fixture of mounted.splice(0)) await fixture.dispose();
 });
 
+const HEADER_FACTS = [
+  { id: 'gitlab/merge-status', importance: 'primary', value: { kind: 'status', value: 'Mergeable', tone: 'success' } },
+  { id: 'gitlab/checks', importance: 'primary', value: { kind: 'status', value: 'No pipelines', tone: 'neutral' } },
+] as const;
+
 async function mountDetail(
   executeAction: NonNullable<PluginUiTestkitHostHandlers['executeAction']>,
   panel?: string,
+  withHeader = false,
 ): Promise<PluginUiTestkit> {
   let detail!: PluginUiTestkit;
   await act(async () => {
     detail = await createPluginUiTestkit({
       identity: { instanceId: 'fixture-instance-194', mountNonce: 'fixture-mount-194' },
       authorPlugin: { id: GITLAB_PLUGIN_ID, version: '0.0.0' },
-      surface: (context) => (
-        <TriagePostMutationCompletionProvider onComplete={async () => {}}>
+      surface: (context) => {
+        const body = <TriagePostMutationCompletionProvider onComplete={async () => {}}>
           {renderSurface(context) as React.ReactNode}
-        </TriagePostMutationCompletionProvider>
-      ),
+        </TriagePostMutationCompletionProvider>;
+        return withHeader ? <TriageEvidenceDisclosureProvider disclosure={{
+          available: false, async disclose() { return { kind: 'inert' }; }, primaryWrite: { offer() {}, offerStatus() {} },
+        }}>{body}</TriageEvidenceDisclosureProvider> : body;
+      },
       surfaceContext: createSurfaceContextFixture(),
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       launchInput: panel === undefined ? LAUNCH_INPUT : { ...LAUNCH_INPUT as object, panel } as JsonValue,
@@ -156,6 +165,22 @@ async function openTab(detail: PluginUiTestkit, name: string): Promise<void> {
 }
 
 describe('the mounted GitLab detail-panel lifecycle', () => {
+  it('leaves merge readiness and no pipelines to the hosting header', async () => {
+    const result = overviewResult('The requested repair.');
+    if (result === null || typeof result !== 'object' || Array.isArray(result)) throw new Error('Invalid fixture');
+    const detail = await mountDetail(async ({ action }) => {
+      const id = typeof action === 'string' ? action : action.localId;
+      return id === GITLAB_TRIAGE_DETAIL_ACTION_IDS.readOverview ? {
+        ...result,
+        observation: { kind: 'present', localRef: LOCAL_REF, locator: LOCATOR,
+          snapshot: { ...SNAPSHOT, facts: HEADER_FACTS }, viewer: VIEWER },
+      } : unavailableChanges();
+    }, 'overview', true);
+    await expect(detail.getByText('The requested repair.')).resolves.toBeDefined();
+    expect(document.body.textContent).not.toContain('Merge status: Mergeable');
+    expect(document.body.textContent).not.toContain('No pipelines');
+  });
+
   it.each([true, false])('does not claim empty Activity when a substream failed (all failed: %s)', async allFailed => {
     const detail = await mountDetail(async ({ action }) => {
       const localId = typeof action === 'string' ? action : action.localId;

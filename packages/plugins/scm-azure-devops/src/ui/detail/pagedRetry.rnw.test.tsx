@@ -7,7 +7,7 @@ import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { Button, defineUiSurface, Tabs } from '@happier-dev/plugin-ui';
 import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
-import { TriageActivityAgentProvider, TriagePostMutationCompletionProvider } from '@happier-dev/triage-sources/ui';
+import { TriageActivityAgentProvider, TriageEvidenceDisclosureProvider, TriagePostMutationCompletionProvider } from '@happier-dev/triage-sources/ui';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { AZURE_DEVOPS_PLUGIN_ID } from '../../azureDevopsContracts.js';
@@ -76,7 +76,7 @@ async function mountDetail(panel?: string, policies?: JsonValue, commits?: JsonV
   visible: () => boolean;
   readIterations: (signal: AbortSignal) => Promise<JsonValue>;
   readActivity?: (localId: string) => JsonValue | undefined;
-}> | null = null): Promise<PluginUiTestkit> {
+}> | null = null, withHeader = false): Promise<PluginUiTestkit> {
   let fixture!: PluginUiTestkit;
   await act(async () => {
     fixture = await createPluginUiTestkit({
@@ -84,7 +84,9 @@ async function mountDetail(panel?: string, policies?: JsonValue, commits?: JsonV
       authorPlugin: { id: AZURE_DEVOPS_PLUGIN_ID, version: '0.0.0' },
       surface: defineUiSurface((context) => (
         <RefreshPage><TriagePostMutationCompletionProvider onComplete={async () => {}}>
-          {rootOptions === null ? renderSurface(context) : <Tabs value={rootOptions.visible() ? 'source' : 'session'}
+          {withHeader ? <TriageEvidenceDisclosureProvider disclosure={{
+            available: false, async disclose() { return { kind: 'inert' }; }, primaryWrite: { offer() {}, offerStatus() {} },
+          }}>{renderSurface(context)}</TriageEvidenceDisclosureProvider> : rootOptions === null ? renderSurface(context) : <Tabs value={rootOptions.visible() ? 'source' : 'session'}
             onValueChange={() => {}} ariaLabel="Detail planes" tabList="host">
             <Tabs.Item value="source" title="Source" retention="retain">{renderSurface(context)}</Tabs.Item>
             <Tabs.Item value="session" title="Session" />
@@ -93,7 +95,14 @@ async function mountDetail(panel?: string, policies?: JsonValue, commits?: JsonV
       )),
       surfaceContext: createSurfaceContextFixture(),
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
-      launchInput: { ...FIXTURE.detailInput, ...(panel === undefined ? {} : { panel }) } as unknown as JsonValue,
+      launchInput: { ...FIXTURE.detailInput, ...(panel === undefined ? {} : { panel }),
+        ...(withHeader ? { observation: { ...FIXTURE.detailInput.observation, snapshot: {
+          ...FIXTURE.detailInput.observation.snapshot, facts: [
+            { id: 'azure-devops/merge-status', importance: 'primary', value: { kind: 'status', value: 'Succeeded', tone: 'success' } },
+            { id: 'azure-devops/tags', importance: 'secondary', value: { kind: 'text', value: 'infrastructure' } },
+          ],
+        } } } : {}),
+      } as unknown as JsonValue,
       handlers: {
         executeAction: async ({ action, input, signal }) => {
           const localId = (action as Readonly<{ localId?: string }>).localId ?? '';
@@ -289,6 +298,13 @@ describe('the mounted Azure DevOps Files walk after a refused page', () => {
     await expect(detail.getByText('· 1 passed')).resolves.toBeDefined();
     await expect(detail.getByText('Build validation')).resolves.toBeDefined();
   });
+  it('keeps tags in the story and leaves merge readiness to the hosting header', async () => {
+    const detail = await mountDetail('overview', undefined, undefined, null, true);
+    await expect(detail.getByText('infrastructure')).resolves.toBeDefined();
+    expect(document.body.textContent).toContain('Tags');
+    expect(document.body.textContent).not.toContain('Merge: Succeeded');
+  });
+
   it('renders the host Overview story from the current iteration, with no invented policy state', async () => {
     const detail = await mountDetail('overview');
     await expect(detail.getByRole('heading', { name: 'The ask' })).resolves.toBeDefined();

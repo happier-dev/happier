@@ -112,6 +112,7 @@ describe('projectGitlabDetailBody', () => {
           importance: 'secondary',
           value: { kind: 'status', value: 'Conflicts', tone: 'danger' },
         },
+        { id: 'gitlab/checks', importance: 'primary', value: { kind: 'status', value: 'No pipelines', tone: 'neutral' } },
         { id: 'gitlab/iid', importance: 'primary', value: { kind: 'text', value: '!412' } },
         { id: 'gitlab/author', importance: 'secondary', value: { kind: 'actor', value: 'ada' } },
         {
@@ -130,6 +131,14 @@ describe('projectGitlabDetailBody', () => {
         importance: 'secondary',
         value: 'Conflicts',
         tone: 'danger',
+      },
+      {
+        kind: 'status',
+        id: 'gitlab/checks',
+        label: 'Checks',
+        importance: 'primary',
+        value: 'No pipelines',
+        tone: 'neutral',
       },
       {
         kind: 'text',

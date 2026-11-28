@@ -375,6 +375,7 @@ function OverviewPanel({
   controller,
   body,
   pipelines,
+  headerOwnsStatus,
 }: Readonly<{
   /**
    * The mounted input, carried alongside the projected body for one reason: the
@@ -388,16 +389,19 @@ function OverviewPanel({
   controller: GitlabOverviewControllerV1;
   body: ReturnType<typeof projectGitlabDetailBody>;
   pipelines?: GitlabPipelinesControllerV1;
+  headerOwnsStatus?: boolean;
 }>): React.ReactElement {
   const text = usePluginTranslation();
   // The story draws the facts without standalone write controls or empty-state chrome.
   const story = pipelines !== undefined;
   const description = controller.value?.description ?? input.observation.snapshot.summary;
-  const statusFields = body.fields.filter(
+  const fields = headerOwnsStatus ? body.fields.filter(field =>
+    field.id !== GITLAB_MERGE_STATUS_FACT_ID && field.id !== 'gitlab/checks') : body.fields;
+  const statusFields = fields.filter(
     (field): field is Extract<GitlabDetailFieldV1, { kind: 'status' }> => field.kind === 'status',
   );
-  const pendingFields = body.fields.filter((field) => field.kind === 'pending');
-  const entries: readonly MetadataEntry[] = body.fields.flatMap((field) => {
+  const pendingFields = fields.filter((field) => field.kind === 'pending');
+  const entries: readonly MetadataEntry[] = fields.flatMap((field) => {
     if (field.kind === 'pending' || field.kind === 'status') return [];
     const value = fieldValueText(field, locale, nowMs);
     return value === null ? [] : [{
@@ -1443,7 +1447,7 @@ function GitlabDetailBody({
             .filter((declaration) => ['overview', 'activity', 'changes', 'pipelines'].includes(declaration.id))
             .map((declaration) => [declaration.id === 'changes' ? 'files' : declaration.id === 'pipelines' ? 'checks' : declaration.id, declaration.retention]))}
           panels={{
-            overview: <OverviewPanel input={effectiveInput} locale={locale} nowMs={nowMs} controller={overview} body={body} pipelines={pipelines} />,
+            overview: <OverviewPanel input={effectiveInput} locale={locale} nowMs={nowMs} controller={overview} body={body} pipelines={pipelines} headerOwnsStatus={publishesStatus} />,
             activity: publishesStatus
               ? <MergeRequestActivityPanel input={input} locale={locale} nowMs={nowMs} approvals={approvals} /> : panels.activity,
             ...(kindId === 'merge-request' ? { files: panels.changes, checks: <PipelinesPanel locale={locale} nowMs={nowMs} controller={pipelines} /> } : {}),

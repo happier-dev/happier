@@ -341,6 +341,7 @@ function OverviewPanel({
   onRefreshIterations,
   policyRollup,
   withWrites = true,
+  headerOwnsStatus = false,
 }: Readonly<{
   input: TriageDetailSurfaceInputV1;
   overview: AzureDetailOverviewV1;
@@ -351,16 +352,18 @@ function OverviewPanel({
   policyRollup?: ReturnType<typeof projectAzurePolicyRollup>;
   /** False when the Triage detail places the write controls in its header (r0.42). */
   withWrites?: boolean;
+  headerOwnsStatus?: boolean;
 }>): React.ReactElement {
   const text = usePluginTranslation();
   // The story rail (r0.42) draws the facts only: no observation block or empty-state stand-ins.
   // The current iteration lives in Files, its source commit and iterations in Activity.
   const story = !withWrites;
-  const statusFields = overview.fields.filter(
+  const fields = headerOwnsStatus ? overview.fields.filter(field => field.id !== AZURE_MERGE_STATUS_FACT_ID) : overview.fields;
+  const statusFields = fields.filter(
     (field): field is Extract<AzureDetailFieldV1, { kind: 'status' }> => field.kind === 'status',
   );
-  const pendingFields = overview.fields.filter((field) => field.kind === 'pending');
-  const entries: readonly MetadataEntry[] = overview.fields.flatMap((field) => {
+  const pendingFields = fields.filter((field) => field.kind === 'pending');
+  const entries: readonly MetadataEntry[] = fields.flatMap((field) => {
     if (field.kind === 'pending' || field.kind === 'status') return [];
     const value = fieldValueText(field, locale, nowMs);
     return value === null ? [] : [{ label: azureFactLabel(field, text), value }];
@@ -1135,6 +1138,7 @@ function AzureDetailBody({
                 onRefreshIterations={iterations.refresh}
                 policyRollup={policyRollup}
                 withWrites={false}
+                headerOwnsStatus={publishesStatus}
               />
             ),
             activity: panels.activity,

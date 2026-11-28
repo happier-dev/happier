@@ -20,6 +20,10 @@ export type AzureDetailFieldV1 =
   | Readonly<{ kind: 'timestamp'; id: string; label: string; atMs: number; format: 'relative' | 'absolute' }>
   | Readonly<{ kind: 'pending'; id: string; label: string }>;
 
+const FIELD_LABELS: Readonly<Record<string, string | undefined>> = Object.freeze({
+  'azure-devops/tags': 'Tags',
+});
+
 export type AzureDetailOverviewV1 = Readonly<{
   title: string;
   scopeLabel: string;
@@ -47,7 +51,7 @@ export function projectAzureDetailOverview(
 ): AzureDetailOverviewV1 {
   const { observation } = input;
   const fields: AzureDetailFieldV1[] = observation.snapshot.facts.map((fact) => {
-    const label = fact.label ?? fact.id;
+    const label = fact.label ?? FIELD_LABELS[fact.id] ?? fact.id;
     switch (fact.value.kind) {
       case 'status':
         return {

@@ -59,6 +59,7 @@ const FIELD_LABELS: Readonly<Record<string, string | undefined>> = Object.freeze
   'gitlab/comments': 'Comments',
   'gitlab/labels': 'Labels',
   'gitlab/merge-status': 'Merge status',
+  'gitlab/checks': 'Checks',
   'gitlab/approved': 'Approvals',
 });
 
