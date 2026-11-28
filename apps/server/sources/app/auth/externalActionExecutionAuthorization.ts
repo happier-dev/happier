@@ -6004,11 +6004,12 @@ export async function readCurrentWorkspaceSyncHandoffWriterTarget(
         : !sourceExecution && await verifyWorkspaceSyncHandoffSourceAuthorization(authorization, routing.source, machines);
     if (!verified || !relationshipWrite && (project ? verified.binding.machineId : verified.binding.handoffAdmission?.targetMachineId) !== routing.target.targetMachineId) return null;
     if (signedHandoffRelease) {
+        const binding = verified.binding;
         const [credentialCurrent, sourceAccess, targetAccess] = await Promise.all([
-            'authentication' in verified.binding
-                ? auth.isSignedCredentialCurrent(db, verified.binding.accountId, verified.binding.authentication.tokenEpoch)
-                : auth.verifyCurrentApiTokenPrincipal(verified.binding, undefined, db)
-                    .then(principal => Boolean(principal && isApiTokenGrantWithinV1(verified.binding.grant, principal.grant))),
+            'authentication' in binding
+                ? auth.isSignedCredentialCurrent(db, binding.accountId, binding.authentication.tokenEpoch)
+                : auth.verifyCurrentApiTokenPrincipal(binding, undefined, db)
+                    .then(principal => Boolean(principal && isApiTokenGrantWithinV1(binding.grant, principal.grant))),
             resolveMachineAdmissionWithPrefetch({ actorAccountId: verified.binding.accountId,
                 machineId: routing.source.sourceMachineId, requiredRole: 'use' }, machines),
             resolveMachineAdmissionWithPrefetch({ actorAccountId: verified.binding.accountId,
