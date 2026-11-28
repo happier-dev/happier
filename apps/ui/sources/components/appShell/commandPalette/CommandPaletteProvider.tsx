@@ -3,6 +3,7 @@ import { buildSessionCommands, setSessionCommandPalettePresented, type SessionCo
 export { useCommandPalettePluginActionPresentation, type CommandPalettePluginActionPresentation } from './useCommandPalettePluginActionPresentation';
 import { useOpenExecutionRunLauncherDraft } from '@/components/sessions/runs/launcher/useOpenExecutionRunLauncherDraft';
 import React, { useCallback, useMemo } from 'react';
+import { loadSettingsPagePresentation, readSettingsPagePresentation } from '@/components/settings/catalog/loadSettingsPagePresentation';
 import { useToggleThemeMode } from '@/components/settings/appearance/useApplyThemeSelection';
 import { Platform } from 'react-native';
 import { useCurrentRouteParamsSelector, useCurrentRouteSegments } from '@/components/appShell/workspace/currentRouteLocation';
@@ -377,7 +378,11 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
         reader: isExactSessionContext(requestedSessionId, requestedScope) ? currentUiContextReader : null, presented: true, modalId,
         execute: (actionId, input) => actionExecutor.execute(actionId, input, { surface: 'ui' }),
     }));
-    React.useEffect(() => registerCommandPaletteActionCatalog(() => actionCommandBuilder.current(), prepareSessionCommands), [prepareSessionCommands]);
+    const prepareSettingsCommands = useCallback(() => voiceEnabled && !readSettingsPagePresentation()
+        ? loadSettingsPagePresentation() : undefined, [voiceEnabled]);
+    React.useEffect(() => registerCommandPaletteActionCatalog(
+        () => actionCommandBuilder.current(), prepareSessionCommands, prepareSettingsCommands,
+    ), [prepareSessionCommands, prepareSettingsCommands]);
     const sessionCommandDemandRelease = React.useRef<SessionCommandDemand | null>(null);
     React.useEffect(() => () => sessionCommandDemandRelease.current?.(), []);
 
@@ -495,8 +500,18 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
                 } as never);
             };
             const demand = prepareSessionCommands(null, invocationScope.sessionId, invocationScope);
-            if (typeof demand === 'function') { pushSearchRoute(demand); return; }
-            const opening = demand.then(pushSearchRoute);
+            const settingsCommands = prepareSettingsCommands();
+            if (typeof demand === 'function' && !settingsCommands) { pushSearchRoute(demand); return; }
+            const opening = Promise.resolve(demand).then(async release => {
+                try {
+                    await settingsCommands;
+                    pushSearchRoute(release);
+                } catch (error) {
+                    release();
+                    universalSearchRouteOpenRequestedRef.current = false;
+                    throw error;
+                }
+            });
             fireAndForget(opening, { tag: 'CommandPaletteProvider.openNative' });
             return opening;
         }
@@ -508,7 +523,9 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
         const focusReturnRef = { current: typeof document === 'undefined' ? null : readDocumentFocusReturnTarget(document) };
         pendingPaletteFocus.current = focusReturnRef.current;
         const opening = (async () => {
-            const { UniversalSearchModal } = await import('@/components/appShell/search/UniversalSearchModal');
+            const [{ UniversalSearchModal }] = await Promise.all([
+                import('@/components/appShell/search/UniversalSearchModal'), prepareSettingsCommands(),
+            ]);
             const releaseSessionCommands = await prepareSessionCommands(undefined, invocationScope.sessionId, invocationScope);
             sessionCommandDemandRelease.current = releaseSessionCommands;
             if (pendingPaletteOpen.current !== pending || (lifetime && !lifetime.isCurrent())) { releaseSessionCommands(); return; }

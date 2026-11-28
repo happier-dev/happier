@@ -41,7 +41,7 @@ import type { PluginContributedActionController } from '@/components/plugins/act
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import { buildSessionDetailsHref } from '@/components/sessions/panes/url/sessionPaneUrlState';
 import { resolveSessionScmReviewComparisonLabel } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
-import { getSettingsPageDeclarations } from '@/components/settings/catalog/settingsPageDeclarations';
+import { readSettingsPagePresentation } from '@/components/settings/catalog/loadSettingsPagePresentation';
 import { buildSettingHref, settingRendersOnHost } from '@/components/settings/catalog/settingDeclarations';
 import { flattenSettingsPageCatalog, SETTINGS_PAGE_CATALOG } from '@/components/settings/catalog/pageCatalog';
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
@@ -660,7 +660,8 @@ export function buildCommandPaletteCommands(
     // Parameterized model/artifact operations keep the same anchored selection UI.
     // Discovery is declaration-owned; opening that picker never reports operation completion.
     const pages = new Map(flattenSettingsPageCatalog(SETTINGS_PAGE_CATALOG).map(page => [page.id, page]));
-    for (const page of getSettingsPageDeclarations(undefined, { voice: voiceSettingsParse(state.settings?.voice) })) {
+    const presentation = readSettingsPagePresentation();
+    for (const page of presentation?.getSettingsPageDeclarations(undefined, { voice: voiceSettingsParse(state.settings?.voice) }) ?? []) {
       if (!page.pageId.startsWith('voice')) continue;
       for (const ref of Object.values(page.settings)) {
         if (ref.operation?.kind !== 'invoke' || !settingRendersOnHost(ref)) continue;

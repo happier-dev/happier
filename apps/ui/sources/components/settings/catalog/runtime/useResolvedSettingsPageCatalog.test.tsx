@@ -215,6 +215,7 @@ describe('useResolvedSettingsPageCatalog', () => {
         const { SESSION_SETTINGS } = await import('@/components/settings/session/sessionSettings');
         const hook = await renderHook(() => useResolvedSettingsPageCatalog());
         try {
+            await vi.waitFor(() => expect(hook.getCurrent().presentationStatus).toBe('ready'));
             const navigation = [SESSION_SETTINGS.settings.collapsedGroups,
                 ...(['sessionWork', 'workflow', 'discussion'] as const).map(kind => collectionSpaceSettingRefs(kind).selectedSpace)];
             for (const ref of navigation) {
@@ -229,6 +230,7 @@ describe('useResolvedSettingsPageCatalog', () => {
         const { useResolvedSettingsPageCatalog } = await import('./useResolvedSettingsPageCatalog');
         const hook = await renderHook(() => useResolvedSettingsPageCatalog());
         try {
+            await vi.waitFor(() => expect(hook.getCurrent().presentationStatus).toBe('ready'));
             const results = hook.getCurrent().search('delegation');
             expect(results).toContainEqual(expect.objectContaining({ id: 'subAgent', route: '/settings/sub-agent' }));
             for (const anchor of ['delegation.workDepthLimit', 'delegation.approvalReviewerEnabled']) {
@@ -383,6 +385,7 @@ describe('useResolvedSettingsPageCatalog', () => {
             catalog: useResolvedSettingsPageCatalog(),
         }));
         try {
+            await vi.waitFor(() => expect(hook.getCurrent().catalog.presentationStatus).toBe('ready'));
             await vi.waitFor(() => expect(hook.getCurrent().admission.capableServerIds).toEqual([homeB.id]));
             expect(flattenIds(hook.getCurrent().catalog.tree)).toContain('teams');
             expect(hook.getCurrent().catalog.search('teams')).toContainEqual({ id: 'teams', route: '/settings/teams' });

@@ -976,6 +976,8 @@ describe('buildCommandPaletteCommands', () => {
   });
 
   it('discovers Voice executable settings at their declared anchored controls', async () => {
+    const { loadSettingsPagePresentation } = await import('@/components/settings/catalog/loadSettingsPagePresentation');
+    await loadSettingsPagePresentation();
     const pushes: string[] = [];
     mockedState = { settings: {} };
     const commands = buildCommandPaletteCommands({

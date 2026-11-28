@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { ActivityIndicator, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
@@ -211,6 +211,7 @@ export const SettingsQueryResults = React.memo(function SettingsQueryResults(pro
     const catalog = useResolvedSettingsPageCatalog();
     const { search } = catalog;
     const results = React.useMemo(() => search(props.query), [props.query, search]);
+    if (catalog.presentationStatus === 'loading') return <ActivityIndicator accessibilityLabel={t('common.loading')} />;
     return <SettingsSearchResults presentation={props.presentation} results={results} tree={catalog.tree}
         testIDPrefix={props.testIDPrefix} emptyTestID={props.emptyTestID} onOpen={props.onOpen} />;
 });

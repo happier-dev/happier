@@ -18,7 +18,8 @@ import type { FeatureId } from '@happier-dev/protocol/features/catalog';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { ActionApprovalRequestCreatedResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 
-import { getSettingsPageDeclarations } from '@/components/settings/catalog/settingsPageDeclarations';
+import { loadSettingsPagePresentation } from '@/components/settings/catalog/loadSettingsPagePresentation';
+import { readVoiceSettingsDeclaration } from '@/voice/settings/voiceContributedSettingsDeclarations';
 import { buildSettingHref, findSettingDeclaration, readBuiltInSettingUiRef, settingRendersOnHost, settingTargetKinds, SETTING_VALUE_UNAVAILABLE, type SettingRef, type SettingsHost, type SettingsMutationServices } from '@/components/settings/catalog/settingDeclarations';
 import { flattenSettingsPageCatalog, SETTINGS_PAGE_CATALOG } from '@/components/settings/catalog/pageCatalog';
 import { createSettingsCatalogSearch, readSettingRowSearchText } from '@/components/settings/catalog/runtime/settingsCatalogSearch';
@@ -108,8 +109,8 @@ type SettingsDeclarationActionResult = z.output<(typeof SettingsDeclarationActio
 class ConditionalSettingConflict extends Error {}
 
 /** The declared operation for an anchor across built-in and installed Settings pages. */
-export function readSettingsDeclarationOperation(anchor: string, settings: Settings) {
-    return findSettingDeclaration(getSettingsPageDeclarations(undefined, settings), anchor)?.ref?.operation;
+export function readSettingsDeclarationOperation(anchor: string, _settings: Settings) {
+    return readVoiceSettingsDeclaration(anchor)?.operation;
 }
 
 /** The declaration is the operation's safety owner; unknown operations fail closed. */
@@ -260,7 +261,10 @@ export function createSettingsDeclarationAction(owner: SettingsDeclarationOwner)
         // Static device-local declarations do not acquire Account data or sign-in requirements.
         const localDeclaration = input && typeof input === 'object' && 'anchor' in input
             && readBuiltInSettingDeclarationV1(input.anchor)?.storage?.scope === 'local';
-        const declarations = getSettingsPageDeclarations(undefined, localDeclaration ? undefined : await owner.readAccountSettings());
+        const [{ getSettingsPageDeclarations }, settings] = await Promise.all([
+            loadSettingsPagePresentation(), localDeclaration ? undefined : owner.readAccountSettings(),
+        ]);
+        const declarations = getSettingsPageDeclarations(undefined, settings);
         if (actionId === 'settings.list') {
             const { query, ...parsed } = SettingsDeclarationActionInputSchemasV1[actionId].parse(input);
             const pageAnchors = new Set(declarations.flatMap(page => Object.values(page.settings).map(ref => ref.anchor)));

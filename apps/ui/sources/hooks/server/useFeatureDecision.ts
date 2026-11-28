@@ -17,64 +17,41 @@ import { useFeatureLocalPolicySettings } from './useFeatureLocalPolicySettings';
 export type FeatureDecisionScopeParams = FeatureScopeParams;
 
 export function useFeatureDecision(featureId: FeatureId, scope?: FeatureDecisionScopeParams): FeatureDecision | null {
+    const ids = React.useMemo(() => [featureId], [featureId]);
+    return useFeatureDecisions(ids, scope)[featureId] ?? null;
+}
+
+export function useFeatureDecisions(
+    featureIds: readonly FeatureId[],
+    scope?: FeatureDecisionScopeParams,
+): Readonly<Partial<Record<FeatureId, FeatureDecision | null>>> {
     const settings = useFeatureLocalPolicySettings();
     const scopeKind = scope?.scopeKind ?? 'main_selection';
     const selection = useEffectiveServerSelection();
     const hasMainSelectionServerIds = selection.serverIds.length > 0;
-    const snapshotStrategy = resolveFeatureDecisionSnapshotStrategy({
-        featureId,
-        settings,
-        scopeKind,
-        hasMainSelectionServerIds,
-    });
-    const runtimeSnapshot = useServerFeaturesRuntimeSnapshot({ enabled: snapshotStrategy.runtimeEnabled });
+    const strategies = featureIds.map(featureId => resolveFeatureDecisionSnapshotStrategy({
+        featureId, settings, scopeKind, hasMainSelectionServerIds,
+    }));
+    const runtimeSnapshot = useServerFeaturesRuntimeSnapshot({ enabled: strategies.some(strategy => strategy.runtimeEnabled) });
     const spawnServerId =
         scope && scope.scopeKind === 'spawn' && typeof scope.serverId === 'string'
             ? scope.serverId.trim()
             : '';
     const spawnSnapshot = useServerFeaturesSnapshotForServerId(spawnServerId, {
-        enabled: snapshotStrategy.spawnEnabled,
+        enabled: strategies.some(strategy => strategy.spawnEnabled),
     });
     const mainSelectionSnapshot = useServerFeaturesMainSelectionSnapshot(selection.serverIds, {
-        enabled: snapshotStrategy.mainSelectionEnabled,
+        enabled: strategies.some(strategy => strategy.mainSelectionEnabled),
     });
 
-    return React.useMemo(
-        () => {
-            if (scopeKind === 'runtime') {
-                return resolveRuntimeFeatureDecisionFromSnapshot({
-                    featureId,
-                    settings,
-                    snapshot: runtimeSnapshot,
-                    scope: { scopeKind: 'runtime' },
-                });
-            }
-
-            if (scopeKind === 'spawn') {
-                return resolveRuntimeFeatureDecisionFromSnapshot({
-                    featureId,
-                    settings,
-                    snapshot: spawnSnapshot,
-                    scope: { scopeKind: 'spawn', ...(spawnServerId ? { serverId: spawnServerId } : {}) },
-                });
-            }
-
-            if (!hasMainSelectionServerIds) {
-                // Web same-origin / empty server-profile bootstraps still need to resolve feature state.
-                return resolveRuntimeFeatureDecisionFromSnapshot({
-                    featureId,
-                    settings,
-                    snapshot: runtimeSnapshot,
-                    scope: { scopeKind: 'main_selection' },
-                });
-            }
-
-            return resolveMainSelectionFeatureDecision({
-                featureId,
-                settings,
-                snapshot: mainSelectionSnapshot,
-            });
-        },
-        [featureId, hasMainSelectionServerIds, mainSelectionSnapshot, runtimeSnapshot, scopeKind, settings, spawnServerId, spawnSnapshot],
-    );
+    return React.useMemo(() => Object.fromEntries(featureIds.map((featureId): readonly [FeatureId, FeatureDecision | null] => {
+        if (scopeKind === 'main_selection' && hasMainSelectionServerIds) {
+            return [featureId, resolveMainSelectionFeatureDecision({ featureId, settings, snapshot: mainSelectionSnapshot })];
+        }
+        const snapshot = scopeKind === 'spawn' ? spawnSnapshot : runtimeSnapshot;
+        const decisionScope = scopeKind === 'spawn'
+            ? { scopeKind, ...(spawnServerId ? { serverId: spawnServerId } : {}) }
+            : { scopeKind };
+        return [featureId, resolveRuntimeFeatureDecisionFromSnapshot({ featureId, settings, snapshot, scope: decisionScope })];
+    })), [featureIds, hasMainSelectionServerIds, mainSelectionSnapshot, runtimeSnapshot, scopeKind, settings, spawnServerId, spawnSnapshot]);
 }

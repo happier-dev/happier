@@ -4,6 +4,7 @@ import type { FeatureId } from '@happier-dev/protocol/features/catalog';
 import { useGlobalSearchParams, usePathname } from '@/components/appShell/workspace/destinationRoute';
 import { storage } from '@/sync/domains/state/storage';
 import { t } from '@/text';
+import { useFeatureDecisions } from '@/hooks/server/useFeatureDecision';
 import { useProjectedPluginLocalizedTextResolver } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { voiceSettingsDeclarationRegistry } from '@/voice/settings/voiceContributedSettingsDeclarations';
 import { projectConversationLanguagePreference } from '@/voice/settings/language/conversationLanguage';
@@ -11,7 +12,7 @@ import { usePluginKeyboardCommands } from '@/keyboard/usePluginKeyboardCommands'
 
 import { flattenSettingsPageCatalog } from '../pageCatalog';
 import { settingsRoutePathname } from '../routes';
-import { SETTINGS_PAGE_DECLARATIONS, getSettingsPageDeclarations } from '../settingsPageDeclarations';
+import { loadSettingsPagePresentation, readSettingsPagePresentation } from '../loadSettingsPagePresentation';
 import {
     buildSettingHref,
     collectDeclaredFeatureIds,
@@ -23,7 +24,7 @@ import {
 } from '../settingDeclarations';
 import type { ResolvedSettingsPageNode, SettingsPageId, SettingsPageSearchResult } from '../types';
 import { createSettingsCatalogSearch, readSettingRowSearchText } from './settingsCatalogSearch';
-import { SETTINGS_PAGE_FEATURE_IDS, useResolvedSettingsPageTree, useSettingsPageFeatureSnapshot } from './useResolvedSettingsPageIdentity';
+import { SETTINGS_PAGE_FEATURE_IDS, useResolvedSettingsPageTree } from './useResolvedSettingsPageIdentity';
 
 export type ResolvedSettingsPageCatalog = Readonly<{
     tree: readonly ResolvedSettingsPageNode[];
@@ -134,10 +135,23 @@ function buildSearchDocs(
     return out;
 }
 
-const SETTINGS_SEARCH_FEATURE_IDS: readonly FeatureId[] = collectDeclaredFeatureIds(SETTINGS_PAGE_DECLARATIONS)
-    .filter(featureId => !SETTINGS_PAGE_FEATURE_IDS.includes(featureId));
+const EMPTY_SEARCH_FEATURE_IDS: readonly FeatureId[] = [];
+const EMPTY_DECLARATIONS: readonly SettingsPageDeclaration[] = [];
 
-export function useResolvedSettingsPageCatalog(): ResolvedSettingsPageCatalog & Readonly<{ searchRevision: number }> {
+export function useResolvedSettingsPageCatalog(): ResolvedSettingsPageCatalog & Readonly<{ searchRevision: number; presentationStatus: 'loading' | 'ready' | 'error' }> {
+    const [presentation, setPresentation] = React.useState(readSettingsPagePresentation);
+    const [presentationFailed, setPresentationFailed] = React.useState(false);
+    React.useEffect(() => {
+        if (presentation) return;
+        let active = true;
+        void loadSettingsPagePresentation().then(value => {
+            if (active) setPresentation(value);
+        }, error => {
+            console.warn('[settings] Search presentation could not be loaded.', error);
+            if (active) setPresentationFailed(true);
+        });
+        return () => { active = false; };
+    }, [presentation]);
     const { tree, activePageId, featureSnapshot: pageFeatures, host, teamAdmittedServerIds, homeAdmittedServerIds } = useResolvedSettingsPageTree(true);
     // Only the search index reads route params (route-function hrefs), so only its consumers follow them.
     const pathname = usePathname();
@@ -146,8 +160,14 @@ export function useResolvedSettingsPageCatalog(): ResolvedSettingsPageCatalog & 
     const routeServerId = routeParams.serverId;
     const teamRouteAdmitted = typeof routeServerId === 'string' && teamAdmittedServerIds.includes(routeServerId);
     const homeRouteAdmitted = typeof routeServerId === 'string' && homeAdmittedServerIds.includes(routeServerId);
-    const searchFeatures = useSettingsPageFeatureSnapshot(SETTINGS_SEARCH_FEATURE_IDS);
-    const featureSnapshot = React.useMemo(() => ({ ...pageFeatures, ...searchFeatures }), [pageFeatures, searchFeatures]);
+    const searchFeatureIds = React.useMemo(() => presentation
+        ? collectDeclaredFeatureIds(presentation.SETTINGS_PAGE_DECLARATIONS).filter(featureId => !SETTINGS_PAGE_FEATURE_IDS.includes(featureId))
+        : EMPTY_SEARCH_FEATURE_IDS, [presentation]);
+    const searchDecisions = useFeatureDecisions(searchFeatureIds);
+    const featureSnapshot = React.useMemo(() => ({
+        ...pageFeatures,
+        ...Object.fromEntries(searchFeatureIds.map(id => [id, searchDecisions[id]?.state === 'enabled'])),
+    }), [pageFeatures, searchFeatureIds, searchDecisions]);
     const localizePluginText = useProjectedPluginLocalizedTextResolver();
     const pluginKeyboardCommands = usePluginKeyboardCommands();
     const voiceDeclarationRevision = React.useSyncExternalStore(
@@ -161,7 +181,9 @@ export function useResolvedSettingsPageCatalog(): ResolvedSettingsPageCatalog & 
     const voiceSettings = storage((state) => state.settings.voice, { settings: ['voice'] });
     const voiceLanguageKind = React.useMemo(() => projectConversationLanguagePreference(voiceSettings, voiceSettingsDeclarationRegistry).kind,
         [voiceDeclarationRevision, voiceSettings]);
-    const declarations = React.useMemo(() => getSettingsPageDeclarations(localizePluginText, storage.getState().settings, pluginKeyboardCommands), [localizePluginText, voiceDeclarationRevision, voiceProviderId, voiceLanguageKind, pluginKeyboardCommands]);
+    const declarations = React.useMemo(() => presentation?.getSettingsPageDeclarations(
+        localizePluginText, storage.getState().settings, pluginKeyboardCommands,
+    ) ?? EMPTY_DECLARATIONS, [presentation, localizePluginText, voiceDeclarationRevision, voiceProviderId, voiceLanguageKind, pluginKeyboardCommands]);
 
     const searchDocs = React.useMemo(() => buildSearchDocs(tree, featureSnapshot, host, routeContext, {
         teams: teamRouteAdmitted,
@@ -190,5 +212,6 @@ export function useResolvedSettingsPageCatalog(): ResolvedSettingsPageCatalog & 
         activePageId,
         search,
         searchRevision: searchIdentity.current.revision,
+        presentationStatus: presentation ? 'ready' : presentationFailed ? 'error' : 'loading',
     };
 }

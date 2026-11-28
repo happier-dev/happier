@@ -431,3 +431,20 @@ test('native receipt opener does not import unopened detail UI or Action executo
     console.log(JSON.stringify({ feature: 'native receipt opener', staticUiModules: required.size, eagerBodies: eagerBodies.length }));
     assert.deepEqual(eagerBodies, [], 'mounting native controls must not acquire unopened receipt detail UI');
 });
+
+test('Settings presentation declarations are reachable only on demand', () => {
+    const entries = [
+        'apps/ui/sources/components/appShell/commandPalette/CommandPaletteProvider.tsx',
+        'apps/ui/sources/components/appShell/search/UniversalSearchController.tsx',
+        'apps/ui/sources/components/settings/catalog/runtime/useResolvedSettingsPageCatalog.ts',
+        'apps/ui/sources/sync/ops/actions/defaultActionExecutor.ts',
+    ];
+    const { graph, required } = collectUiWebGraph(entries);
+    const presentation = join(repoRoot, 'apps/ui/sources/components/settings/catalog/settingsPageDeclarations.ts');
+    const eagerEdges = [...required].flatMap(file => graph.get(file)
+        .filter(edge => edge.file === presentation && !edge.dynamic)
+        .map(() => relative(repoRoot, file)));
+    console.log(JSON.stringify({ feature: 'Settings presentation', staticUiModules: required.size, eagerPresentationEdges: eagerEdges }));
+    assert.ok(graph.has(presentation), 'Settings presentation stays reachable on demand');
+    assert.deepEqual(eagerEdges, []);
+});

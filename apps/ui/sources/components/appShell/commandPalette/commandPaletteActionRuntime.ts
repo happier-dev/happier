@@ -13,11 +13,16 @@ type CommandPaletteActionRequest = Parameters<CommandPaletteAction>[0];
 let mountedCatalog: Readonly<{
     read: () => readonly Command[];
     prepareSessionCommands?: () => (() => void) | Promise<() => void>;
+    prepareSettingsCommands?: () => Promise<unknown> | undefined;
 }> | null = null;
 
 /** Binds the existing command builder for this shell's mounted lifetime. */
-export function registerCommandPaletteActionCatalog(buildCommands: () => readonly Command[], prepareSessionCommands?: () => (() => void) | Promise<() => void>): () => void {
-    const catalog = { read: buildCommands, prepareSessionCommands };
+export function registerCommandPaletteActionCatalog(
+    buildCommands: () => readonly Command[],
+    prepareSessionCommands?: () => (() => void) | Promise<() => void>,
+    prepareSettingsCommands?: () => Promise<unknown> | undefined,
+): () => void {
+    const catalog = { read: buildCommands, prepareSessionCommands, prepareSettingsCommands };
     mountedCatalog = catalog;
     return () => {
         if (mountedCatalog === catalog) mountedCatalog = null;
@@ -69,6 +74,11 @@ export async function executeCommandPaletteAction(request: CommandPaletteActionR
         return { ok: false, errorCode: 'unsupported_action', error: 'command_palette_not_mounted' };
     }
     const catalog = mountedCatalog;
+    try { await catalog.prepareSettingsCommands?.(); }
+    catch { return { ok: false, errorCode: 'unsupported_action', error: 'settings_presentation_unavailable' }; }
+    if (catalog !== mountedCatalog || request.context.signal?.aborted) {
+        return { ok: false, errorCode: 'unsupported_action', error: 'command_palette_not_mounted' };
+    }
     const commands = catalog.read().filter((command) => command.actionSpecId === undefined
         || (command.invokeAction !== undefined && request.context.executeOrdinaryChildAction !== undefined));
     if (request.actionId === 'ui.command_palette.list') {
