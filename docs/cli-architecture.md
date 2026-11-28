@@ -325,18 +325,17 @@ strip it during writeback; this addition does not provide lossless old-editor
 round trips. The successor line translates the preference into its native
 preferred-Agent model rather than adding another default field.
 
-### Profile restoration on resume (development)
+### Profile environment on daemon launch (development)
 
 The daemon runtime snapshot restores the session's persisted `profileId` when a
 resume or respawn caller omits it. An explicit empty identity selects no profile.
-Before launching an existing session, the child-environment owner uses the same
-profile lookup, target compatibility, template expansion and saved-secret
-resolver as `--profile`. Explicit session environment values win; a selected
-saved-secret binding wins over ambient daemon credentials. Missing profiles,
-unavailable account settings, and unavailable bound secrets fail spawn validation
-instead of silently launching with native authentication. Sessions without a
-profile retain their existing behavior. This correction requires the updated
-CLI daemon; it does not change the resume RPC or session metadata format.
+For fresh and resumed sessions with a profile ID, the child-environment owner
+uses the same profile lookup, target compatibility, template expansion and
+saved-secret resolver as `--profile`. Explicit session environment values take
+precedence over the profile. A selected saved-secret binding takes precedence
+over ambient daemon credentials. Missing profiles, unavailable account settings,
+and unavailable bound secrets fail spawn validation. This behavior requires an
+updated CLI daemon and uses the existing spawn RPC and session metadata format.
 
 ## Automated session targets and permissions (development)
 

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { AIBackendProfileSchema, deriveAccountMachineKeyFromRecoverySecret, deriveSettingsSecretsKeyV1, encryptSecretStringV1 } from '@happier-dev/protocol';
 import type { Credentials } from '@/persistence';
 import { createProviderCliFixture } from '@/testkit/process/providerCliFixture';
-import { SPAWN_SESSION_ERROR_CODES } from '@/rpc/handlers/registerSessionHandlers';
+import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
 import { resolveSessionRuntimeSnapshot } from '../sessions/runtimeSnapshot/resolveSessionRuntimeSnapshot';
 import { resolveSpawnChildEnvironment } from './resolveSpawnChildEnvironment';
 
@@ -26,11 +26,9 @@ const settings = {
     createdAt: 0, updatedAt: 0 }],
 };
 
-async function resume(accountSettings: Record<string, unknown> | null = settings, environmentVariables?: Record<string, string>) {
-  const { spawnOptions } = resolveSessionRuntimeSnapshot({
-    incomingOptions: { directory: '.', existingSessionId: 'session-1', backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, environmentVariables },
-    persistedMetadata: { profileId: profile.id, claudeSessionId: 'vendor-1' },
-  });
+const launchOptions = { directory: '.', backendTarget: { kind: 'builtInAgent', agentId: 'claude' } } satisfies SpawnSessionOptions;
+
+async function resolveEnvironment(spawnOptions: SpawnSessionOptions, accountSettings: Record<string, unknown> | null = settings) {
   return resolveSpawnChildEnvironment({
     options: spawnOptions, profileEnvironmentVariables: spawnOptions.environmentVariables ?? {},
     daemonSpawnHooks: null,
@@ -40,9 +38,19 @@ async function resume(accountSettings: Record<string, unknown> | null = settings
   });
 }
 
-describe('profile-backed resume', () => {
-  it('restores the stored profile and decrypts its bound secret instead of using ambient auth', async () => {
-    const result = await resume();
+function resume(accountSettings: Record<string, unknown> | null = settings, environmentVariables?: Record<string, string>) {
+  const { spawnOptions } = resolveSessionRuntimeSnapshot({
+    incomingOptions: { ...launchOptions, existingSessionId: 'session-1', environmentVariables },
+    persistedMetadata: { profileId: profile.id, claudeSessionId: 'vendor-1' },
+  });
+  return resolveEnvironment(spawnOptions, accountSettings);
+}
+
+describe('profile-backed spawn', () => {
+  it.each(['new', 'resumed'] as const)('resolves the stored environment and bound secret for a %s session', async (kind) => {
+    const result = await (kind === 'new'
+      ? resolveEnvironment({ ...launchOptions, profileId: profile.id })
+      : resume());
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.extraEnvForChild).toMatchObject({
