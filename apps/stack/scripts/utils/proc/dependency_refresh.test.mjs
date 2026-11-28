@@ -9,10 +9,12 @@ import { dirname, join } from 'node:path';
 import test from 'node:test';
 
 import { adoptDependencyInstallation, assertDependenciesReady, inspectDependencyRefresh, markDependencyMutation, readDependencyPublicationState,
-  resolveDependencyRefreshLockPath, resolveDependencyRefreshMarkerPath, resolveLockedInstallEnv, withDependencyRefresh, withDependencyRefreshLock } from './dependency_refresh.mjs';
+  resolveDependencyRefreshLockPath, resolveDependencyRefreshMarkerPath, resolveLockedInstallEnv, withDependencyConsumption, withDependencyRefresh, withDependencyRefreshLock } from './dependency_refresh.mjs';
 import { ensureDepsInstalled } from './pm.mjs';
 import { withPnpmInstallGuard } from '../worktrees/pnpm_install_guard.mjs';
 import { bootstrapRemoteDependencies } from '../dev_targets/remote_dependency_bootstrap.mjs';
+import { mountCapturedWorkspaceDependencies } from '../../../../../scripts/workspaces/buildInputConvergence.mjs';
+import { moveInPlaceInstallationIntoGeneration } from './dependency_generations.mjs';
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 import { startRunningStackOwner } from '../../testkit/core/running_stack_owner.mjs';
 import { inspectUiPostinstallOutputs } from './ui_postinstall.mjs';
@@ -302,6 +304,47 @@ test('borrowed dependency admission is read-only and requires a completed matchi
   const interrupted = await snapshot();
   await assert.rejects(assertDependenciesReady({ installDir: borrower, env }), { code: 'HAPPIER_DEPENDENCIES_BORROWED' });
   assert.deepEqual(await snapshot(), interrupted);
+});
+
+test('a workspace capture consumes its lender publication despite moving manifest inputs', { skip: process.platform === 'win32' }, async t => {
+  const { owner, borrower, env, snapshot } = await borrowedTree(t, { matching: true });
+  await rm(join(borrower, 'node_modules'));
+  await writeFile(join(owner, 'pnpm-workspace.yaml'), 'packages: []\n');
+  await withDependencyRefresh({ installDir: owner, env }, async () => {});
+  await mkdir(join(owner, 'node_modules', '@fixture'));
+  await writeFile(join(owner, 'node_modules', '@fixture', 'tool.cjs'), 'module.exports = 42;');
+  await moveInPlaceInstallationIntoGeneration(owner);
+  await mountCapturedWorkspaceDependencies({ sourceDir: owner, captureDir: borrower, workspaceDirs: [] });
+  await writeFile(join(borrower, 'package.json'), JSON.stringify({ private: true, packageManager: 'pnpm@10.15.1',
+    scripts: { build: 'changed capture script' } }));
+  const captureEnv = { ...env, HAPPIER_DEV_TARGET_EXECUTION: '1', HAPPIER_STACK_REPO_DIR: borrower,
+    HAPPIER_WORKSPACE_CAPTURE_SOURCE_REPO_DIR: owner };
+  const before = await snapshot();
+  for (const inputs of ['script-only', 'different dependencies']) {
+    if (inputs !== 'script-only') await writeFile(join(borrower, 'pnpm-lock.yaml'), '# moving inputs\n');
+    const readiness = await assertDependenciesReady({ installDir: borrower, env: captureEnv });
+    assert.equal(readiness.required, false);
+    assert.equal(readiness.installedIdentity, (await inspectDependencyRefresh({ installDir: owner, env })).installedIdentity);
+    assert.deepEqual(await withDependencyRefresh({ installDir: borrower, env: captureEnv }, async () => {
+      assert.fail('a capture must never refresh the borrowed generation');
+    }), { refreshed: false, reason: 'up-to-date' });
+    assert.equal(await withDependencyConsumption({ installDir: borrower, env: captureEnv },
+      () => readFile(join(borrower, 'node_modules', '@fixture', 'tool.cjs'), 'utf8')), 'module.exports = 42;');
+  }
+  for (const options of [{ force: true }, { onDependenciesReady: () => assert.fail('capture repair must refuse') }]) {
+    await assert.rejects(withDependencyRefresh({ installDir: borrower, env: captureEnv, ...options }, async () => {
+      assert.fail('explicit capture installation must refuse');
+    }), { code: 'HAPPIER_DEPENDENCIES_BORROWED' });
+  }
+  assert.deepEqual(await snapshot(), before);
+  await writeFile(`${resolveDependencyRefreshLockPath(owner, env)}.generation`,
+    JSON.stringify({ generation: 'unfinished-lender', completedGeneration: null }));
+  await assert.rejects(assertDependenciesReady({ installDir: borrower, env: captureEnv }),
+    { code: 'HAPPIER_DEPENDENCIES_BORROWED' });
+  await rm(`${resolveDependencyRefreshLockPath(owner, env)}.generation`);
+  await rm(resolveDependencyRefreshMarkerPath(owner));
+  await assert.rejects(assertDependenciesReady({ installDir: borrower, env: captureEnv }),
+    { code: 'HAPPIER_DEPENDENCIES_BORROWED' });
 });
 
 test('every borrowed dependency writer refuses before lock, generation, adoption or postinstall writes', async t => {

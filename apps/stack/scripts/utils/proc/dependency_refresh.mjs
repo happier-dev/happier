@@ -430,15 +430,20 @@ async function inspectSelfReferentialNodeModulesLink(installDir) {
 
 export async function inspectDependencyRefresh({ installDir, componentDir = installDir, runtimeIdentity, env = process.env }) {
   const borrowedNodeModulesTarget = await inspectBorrowedNodeModulesLink(installDir);
+  // Workspace builds mount an already admitted installation and carry its
+  // source owner. Their moving manifests describe compilation, not a request
+  // to install into that generation. Only the lender owns its readiness.
+  const captureSource = borrowedNodeModulesTarget !== null
+    ? String(env.HAPPIER_WORKSPACE_CAPTURE_SOURCE_REPO_DIR ?? '').trim() : '';
   const inputPaths = await collectDependencyInputPaths({ installDir, componentDir });
   const inputSnapshot = await readInputSnapshot({ inputPaths, installDir, componentDir });
   const dependencyIdentity = await resolveDependencyIdentity({ installDir, runtimeIdentity });
   const installIdentity = dependencyInputsIdentity(dependencyIdentity, inputSnapshot);
-  const markerPath = resolveDependencyRefreshMarkerPath(installDir);
+  const markerPath = resolveDependencyRefreshMarkerPath(captureSource || installDir);
   const marker = await readJsonIfExists(markerPath);
   // A borrower must observe the publisher's unfinished mutation, rather than
   // treating the absence of its own generation as proof of completion.
-  const lockPath = resolveDependencyRefreshLockPath(borrowedNodeModulesTarget ? dirname(borrowedNodeModulesTarget) : installDir, env);
+  const lockPath = resolveDependencyRefreshLockPath(captureSource || (borrowedNodeModulesTarget ? dirname(borrowedNodeModulesTarget) : installDir), env);
   const generation = await readJsonIfExists(`${lockPath}.generation`);
   const writer = dependencyWriters.getStore()?.get(lockPath);
   // Previous failed or interrupted attempts remain unproven even when the
@@ -452,7 +457,7 @@ export async function inspectDependencyRefresh({ installDir, componentDir = inst
   const admitted = await pathExists(join(installDir, 'node_modules'))
     && installedIdentity !== null
     && selfReferentialNodeModulesLinkPath === null && !unfinishedMutation;
-  const required = !admitted || marker.identity !== installIdentity;
+  const required = !admitted || (!captureSource && marker.identity !== installIdentity);
   if (borrowedNodeModulesTarget !== null && required) throw dependenciesBorrowed(installDir, borrowedNodeModulesTarget);
   // A failed generation install never switched generations: the live tree is
   // complete, yet the same inputs must not be retried by every consumer.
