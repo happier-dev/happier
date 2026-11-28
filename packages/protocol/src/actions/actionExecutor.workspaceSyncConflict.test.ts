@@ -2,6 +2,7 @@ import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createActionExecutor } from './actionExecutor.js';
+import { getActionSpec } from './actionSpecs.js';
 import type { ActionExecutorDeps } from './executor/types.js';
 
 const input = {
@@ -114,5 +115,16 @@ describe('workspace.sync.conflict.resolve Action authority', () => {
     }, { surface: 'ui', authority: 'present_user', serverId: 'server-1' }))
       .resolves.toMatchObject({ ok: false, errorCode: 'approval_stale' });
     expect(workspaceSyncConflictResolve).not.toHaveBeenCalled();
+  });
+
+  it('routes on machine placement via controllerMachineId without stripping requesterCredentials on foreign controllers', () => {
+    const spec = getActionSpec('workspace.sync.conflict.resolve');
+    expect(spec.executionPlacement).toBe('machine');
+    expect(spec.originalExecution).toEqual({ accountRoot: 'allowed' });
+    expect(spec.originalExecution?.requesterCredentials).toBeUndefined();
+    expect(spec.machineRuntimeDemandForInput?.(input, { serverId: 'server-1' })).toEqual({
+      target: { kind: 'machine', machineId: 'machine-a' },
+      serverId: 'server-1',
+    });
   });
 });

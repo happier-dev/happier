@@ -1902,6 +1902,14 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     retirementContext?: RpcHandlerContext) => {
     const retained = executionRegistry()?.findByRelationshipId(relationship.relationshipId);
     if (!retained?.execution.callTargetPhase) return null;
+    if (phase === 'remove'
+      && retirementContext
+      && !retirementContext.callerInputAuthorization
+      && canUseInstalledRelationshipOwner(retirementContext)
+      && installedAccountId !== null
+      && retained.execution.accountRowsCustody.accountId === installedAccountId) {
+      return null;
+    }
     const target = resolveRelationshipBootstrapTarget(retained.execution.getSnapshot?.() ?? null, relationship, semanticServerId);
     const workspace = resolveWorkspaceRefById(retained.execution.getSnapshot?.()?.workspaceRefs ?? [], target.workspaceRefId, semanticServerId);
     if (!workspace) throw compositionError('workspace_unavailable', 'The retained copy target is unavailable');
@@ -2137,6 +2145,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
         : admitted && !retained ? { admittedTarget: { machineId: target.machineId, rootPath: target.rootPath, ...(target.targetManaged ? { targetManaged: target.targetManaged } : {}) } } : {}),
       endpointRole: target.endpointRole, policyDigest: relationship.contentPolicy.policyDigest, createIfMissing: true,
       ...(preparation ? { targetBootstrap: preparation.targetBootstrap } : {}),
+      ...(preparation?.replaceRelationshipId ? { replaceRelationshipId: preparation.replaceRelationshipId } : {}),
       ...(preparation?.targetReplacementApproval ? {
         targetReplacementApproval: preparation.targetReplacementApproval,
         targetReplacementApprovalReceiptId: preparation.targetReplacementApprovalReceiptId,

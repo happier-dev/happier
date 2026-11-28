@@ -601,6 +601,101 @@ export async function removeCommittedWorkspaceTargetMaterialization(input: Reado
 }
 
 /**
+ * Prepares custody to rebind an existing committed worker-copy receipt to a
+ * replacement relationship on the same physical target directory.
+ *
+ * Security invariant: rebind succeeds only when the predecessor receipt currently
+ * proves committed physical ownership of the exact unchanged target directory.
+ * Unowned, foreign, or tampered directories return `null` and never become owned.
+ * `abort()` leaves the target directory and predecessor receipt untouched.
+ */
+export async function prepareCommittedWorkspaceTargetMaterializationRebind(input: Readonly<{
+    targetPath: string;
+    previousReceiptPath: string;
+    nextReceiptPath: string;
+    previousWorkerCopyCreation: WorkspaceTargetMaterializationWorkerCopyCreation;
+    nextWorkerCopyCreation: WorkspaceTargetMaterializationWorkerCopyCreation;
+}>): Promise<WorkspaceExportMaterializationCustody | null> {
+    if (!isWorkerCopyCreation(input.previousWorkerCopyCreation)
+        || !isWorkerCopyCreation(input.nextWorkerCopyCreation)
+        || input.previousWorkerCopyCreation.serverId !== input.nextWorkerCopyCreation.serverId
+        || input.previousWorkerCopyCreation.sourceWorkspaceRefId !== input.nextWorkerCopyCreation.sourceWorkspaceRefId
+        || input.previousWorkerCopyCreation.targetWorkspaceRefId !== input.nextWorkerCopyCreation.targetWorkspaceRefId
+        || input.previousWorkerCopyCreation.relationshipId === input.nextWorkerCopyCreation.relationshipId) {
+        return null;
+    }
+    const inspectSafe = async (
+        receiptPath: string,
+        workerCopyCreation: WorkspaceTargetMaterializationWorkerCopyCreation,
+    ) => {
+        try {
+            return await inspectCommittedWorkspaceTargetMaterialization({
+                targetPath: input.targetPath,
+                receiptPath,
+                workerCopyCreation,
+            });
+        } catch (error) {
+            const code = (error as { code?: unknown })?.code;
+            if (code === 'workspace_copy_not_owned'
+                || code === 'workspace_copy_not_worker'
+                || code === 'root_changed') {
+                return null;
+            }
+            throw error;
+        }
+    };
+    const alreadyRebound = await inspectSafe(input.nextReceiptPath, input.nextWorkerCopyCreation);
+    const sourceReceipt = alreadyRebound ?? await inspectSafe(input.previousReceiptPath, input.previousWorkerCopyCreation);
+    if (!sourceReceipt) return null;
+
+    let settled = Boolean(alreadyRebound);
+    let receipt: WorkspaceTargetMaterializationReceiptV1 = alreadyRebound ?? Object.freeze({
+        v: 1,
+        previousTargetName: null,
+        originalTargetIdentity: sourceReceipt.originalTargetIdentity,
+        promotedTargetIdentity: sourceReceipt.promotedTargetIdentity,
+        workerCopyCreation: Object.freeze({ ...input.nextWorkerCopyCreation }),
+    });
+
+    return Object.freeze({
+        get receipt() { return receipt; },
+        bindPromotedTarget: async () => {},
+        commit: async () => {
+            if (settled) {
+                return;
+            }
+            const existingNext = await inspectSafe(input.nextReceiptPath, input.nextWorkerCopyCreation);
+            if (existingNext) {
+                receipt = existingNext;
+                settled = true;
+                return;
+            }
+            const verified = await inspectCommittedWorkspaceTargetMaterialization({
+                targetPath: input.targetPath,
+                receiptPath: input.previousReceiptPath,
+                workerCopyCreation: input.previousWorkerCopyCreation,
+            });
+            const nextCommitted: WorkspaceTargetMaterializationReceiptV1 = Object.freeze({
+                v: 1,
+                previousTargetName: null,
+                originalTargetIdentity: verified.originalTargetIdentity,
+                promotedTargetIdentity: verified.promotedTargetIdentity,
+                workerCopyCreation: Object.freeze({ ...input.nextWorkerCopyCreation }),
+                committed: verified.committed,
+            });
+            // Retain previousReceiptPath so a post-commit Home publish refusal
+            // that restores the predecessor relationship preserves its custody.
+            await writeJsonAtomic(input.nextReceiptPath, nextCommitted);
+            receipt = nextCommitted;
+            settled = true;
+        },
+        abort: async () => {
+            settled = true;
+        },
+    });
+}
+
+/**
  * Aborts an interrupted pre-READY materialization using only the receipt
  * written before mutation. A missing named backup means the rename never
  * happened; the original target is therefore left untouched.

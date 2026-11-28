@@ -1845,8 +1845,9 @@ function ownedRootedAgent(stream = new PassThrough()) {
 
 function createAuthorityHarness(options: Readonly<{
   localMachineId?: string;
+  localAccountId?: string;
   getProjectSnapshot: () => ActiveProjectAccountRowsSnapshot | null;
-  refreshProjectSnapshot?: (signal?: AbortSignal) => Promise<ActiveProjectAccountRowsSnapshot>;
+  refreshProjectSnapshot?: (signal?: AbortSignal, context?: RpcHandlerContext) => Promise<ActiveProjectAccountRowsSnapshot>;
   callMachineRpc?: (input: Readonly<{ machineId: string; method: string; request: unknown; signal?: AbortSignal }>) => Promise<unknown>;
   callWorkspaceTargetPhase?: NonNullable<Parameters<typeof createWorkspaceSyncTargetAuthority>[0]['callWorkspaceTargetPhase']>;
   openRootedAgent?: (input: Readonly<{ operationId: string; role: 'alpha' | 'beta'; workspaceRefId: string; canonicalRoot: string; signal?: AbortSignal }>) => Promise<ReturnType<typeof ownedRootedAgent>>;
@@ -1875,6 +1876,7 @@ function createAuthorityHarness(options: Readonly<{
   const authority = createWorkspaceSyncTargetAuthority({
     localServerId: 'server-1',
     localMachineId: options.localMachineId ?? 'machine-b',
+    ...(options.localAccountId ? { localAccountId: options.localAccountId } : {}),
     getProjectSnapshot: options.getProjectSnapshot,
     refreshProjectSnapshot: options.refreshProjectSnapshot ?? (async () => {
       const current = options.getProjectSnapshot();
@@ -5396,4 +5398,478 @@ describe('Add a machine reviewed target diagnosis', () => {
         await rm(fixture, { recursive: true, force: true });
       }
     });
+});
+
+describe('replaceRelationshipId custody security, target snapshot refresh, and removeCommittedCopyHere refresh', () => {
+  it('refuses cross-Account replaceRelationshipId custody hijack and active-predecessor rebind while permitting matching requester custody', async () => {
+    const fixture = await realpath(await mkdtemp(join(tmpdir(), 'workspace-sync-replace-custody-security-')));
+    const alphaRoot = join(fixture, 'alpha');
+    const ownerBetaRoot = join(fixture, 'owner-beta');
+    const guestBetaRoot = join(fixture, 'guest-beta');
+    await mkdir(alphaRoot);
+    await writeFile(join(alphaRoot, 'payload.txt'), 'owned source bytes');
+    const installation = {
+      version: 1 as const,
+      createdAt: 1,
+      installationId: 'target-installation-1',
+      publicKey: Buffer.from(tweetnacl.sign.keyPair().publicKey).toString('base64url'),
+      privateKey: Buffer.from(tweetnacl.sign.keyPair().secretKey).toString('base64url'),
+    };
+    const osIdentity = vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue(installation);
+    onTestFinished(() => osIdentity.mockRestore());
+
+    const ownerRelId = deriveWorkspaceSyncRelationshipId('owner-orig-op');
+    const guestHijackOpId = 'guest-hijack-op';
+    const guestHijackRelId = deriveWorkspaceSyncRelationshipId(guestHijackOpId);
+    const guestOrigOpId = 'guest-orig-op';
+    const guestOrigRelId = deriveWorkspaceSyncRelationshipId(guestOrigOpId);
+    const guestReplaceOpId = 'guest-replace-op';
+    const guestReplaceRelId = deriveWorkspaceSyncRelationshipId(guestReplaceOpId);
+    const ownerHijackGuestRelId = deriveWorkspaceSyncRelationshipId('owner-hijack-guest-op');
+
+    const makeWorkerRel = (id: string, targetRefId: string, enabled = true) => ({
+      v: 1 as const,
+      relationshipId: id,
+      controllerMachineId: 'machine-a',
+      alphaWorkspaceRefId: 'workspace-alpha',
+      betaWorkspaceRefId: targetRefId,
+      mode: 'keep_both_in_sync' as const,
+      contentPolicy,
+      enabled,
+      createdAtMs: 1,
+      updatedAtMs: 1,
+      committedAtMs: enabled ? 1 : null,
+      provenance: { kind: 'worker_clean_copy' as const, sourceWorkspaceRefId: 'workspace-alpha', targetWorkspaceRefId: targetRefId },
+    });
+    const ownerRel = makeWorkerRel(ownerRelId, 'workspace-beta-owner', false);
+    const ownerHijackRel = makeWorkerRel(ownerHijackGuestRelId, 'workspace-beta-guest', false);
+    let currentSnapshot: ActiveProjectAccountRowsSnapshot = {
+      source: 'network',
+      accountMode: 'plain',
+      workspaceRefs: [
+        { id: 'workspace-alpha', serverId: 'server-1', machineId: 'machine-a', rootPath: alphaRoot, createdAtMs: 1 },
+        { id: 'workspace-beta-owner', serverId: 'server-1', machineId: 'machine-b', rootPath: ownerBetaRoot, createdAtMs: 1 },
+        { id: 'workspace-beta-guest', serverId: 'server-1', machineId: 'machine-b', rootPath: guestBetaRoot, createdAtMs: 1 },
+      ],
+      relationships: [ownerRel],
+      graphRevision: 1,
+      organizations: [],
+      rows: [],
+      loadedAtMs: 1,
+      scopeKey: 'owner',
+    };
+    const harness = createAuthorityHarness({
+      localMachineId: 'machine-b',
+      localAccountId: 'owner',
+      getProjectSnapshot: () => currentSnapshot,
+      materializeRemoteSeed: async ({ operationId, canonicalRoot, materializationReceiptPath, targetFence }) => {
+        const result = await materializeLocalWorkspaceSyncSeed({
+          operationId, activeServerDir: fixture,
+          sourcePath: alphaRoot, targetPath: canonicalRoot,
+          materializationReceiptPath, targetFence,
+          workspaceTransfer: { includeIgnoredMode: 'include_selected', ignoredIncludeGlobs: [] },
+          registry: createScmBackendRegistry([]),
+        });
+        return result;
+      },
+    });
+    const makeGuestSourceWriterContext = (
+      opId: string,
+      targetRootPath: string,
+      phase: 'prepare' | 'release',
+      actionId: 'workspace.sync.relationship.create' | 'workspace.sync.relationship.replace',
+      replaceId?: string,
+    ): RpcHandlerContext => {
+      const actionInput = {
+        v: 1 as const,
+        sourceWorkspaceRefId: 'workspace-alpha',
+        targetMachineId: 'machine-b',
+        targetPath: targetRootPath,
+        mode: 'keep_both_in_sync' as const,
+        destinationIntent: replaceId ? 'use_existing' as const : 'materialize_from_source_workspace' as const,
+        contentPolicy,
+        purpose: 'worker_clean_copy' as const,
+        ...(replaceId ? { replaceRelationshipId: replaceId } : {}),
+      };
+      const envelope = ExternalActionRequestEnvelopeSchema.parse({
+        v: 1, requestId: opId, target: { kind: 'machine', machineId: 'machine-a' }, input: actionInput,
+      });
+      const auth = ExternalActionExecutionAuthorizationV1Schema.parse({
+        v: 1,
+        token: `guest-auth-${opId}`,
+        binding: {
+          accountId: 'guest',
+          custodianAccountId: 'owner',
+          authentication: { kind: 'account', tokenEpoch: 0 },
+          accountEncryptionMode: 'plain',
+          serverIdentityId: 'server-1',
+          machineId: 'machine-a',
+          installationId: 'source-installation-1',
+          actionId,
+          requestId: opId,
+          requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+          admittedMachineRole: 'manage',
+          target: { kind: 'machine', machineId: 'machine-a' },
+        },
+      });
+      const routing = WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse({
+        v: 1,
+        sourceWriter: { machineId: 'machine-a', installationId: 'source-installation-1' },
+        source: {
+          v: 1, phase: 'prepare', operationId: opId, accountServerId: 'server-1',
+          sourceMachineId: 'machine-a', sourceRootPath: alphaRoot,
+          sourceContext: {
+            callerAuthority: 'present_user',
+            machineAdmission: {
+              actorAccountId: 'guest', custodianAccountId: 'owner',
+              machineId: 'machine-a', installationId: 'source-installation-1',
+              role: 'manage', encryptionMode: 'plain',
+            },
+          },
+        },
+        target: {
+          v: 1, phase, operationId: deriveWorkspaceSyncRelationshipId(opId), accountServerId: 'server-1',
+          targetMachineId: 'machine-b', targetRootPath,
+        },
+      });
+      if (phase === 'release') {
+        return {
+          signal: new AbortController().signal,
+          callerAuthority: 'present_user',
+          workspaceSyncSourceWriterTargetRouting: routing,
+          machineAdmission: {
+            actorAccountId: 'owner', custodianAccountId: 'owner',
+            machineId: 'machine-a', installationId: 'source-installation-1',
+            role: 'manage', encryptionMode: 'plain',
+          },
+          verifyMachineAdmissionCurrent: async () => true,
+        };
+      }
+      return {
+        signal: new AbortController().signal,
+        callerAuthority: 'present_user',
+        callerInputAuthorization: auth,
+        workspaceSyncSourceWriterTargetRouting: routing,
+        machineAdmission: {
+          actorAccountId: 'guest', custodianAccountId: 'owner',
+          machineId: 'machine-b', installationId: installation.installationId,
+          role: 'manage', encryptionMode: 'plain',
+        },
+        verifyMachineAdmissionCurrent: async () => true,
+      };
+    };
+
+    try {
+      // 1. Account A (installed custodian) materializes and commits ownerRel on TARGET.
+      await harness.authority.prepareBootstrapHere(prepareRequest({
+        bootstrapOperationId: ownerRelId,
+        owner: { kind: 'relationship', relationshipId: ownerRelId },
+        transientRelationship: { ...ownerRel, enabled: true },
+        targetWorkspaceRefId: 'workspace-beta-owner',
+        targetBootstrap: 'materialize_from_source_workspace',
+      }));
+      await harness.authority.releaseBootstrapHere({
+        v: 1, bootstrapOperationId: ownerRelId, targetWorkspaceRefId: 'workspace-beta-owner', reason: 'relationship_committed',
+      });
+      currentSnapshot = { ...currentSnapshot, relationships: [{ ...ownerRel, enabled: true, committedAtMs: 1 }] };
+
+      // 2. While ownerRel is STILL active in physicalRetained, cross-Account replaceRelationshipId MUST fail with bootstrap_definition_conflict.
+      const guestHijackRel = makeWorkerRel(guestHijackRelId, 'workspace-beta-owner', true);
+      await expect(harness.authority.prepareBootstrapHere(prepareRequest({
+        bootstrapOperationId: guestHijackRelId,
+        owner: { kind: 'relationship', relationshipId: guestHijackRelId },
+        transientRelationship: guestHijackRel,
+        targetWorkspaceRefId: 'workspace-beta-owner',
+        targetBootstrap: 'use_existing',
+        replaceRelationshipId: ownerRelId,
+      }), undefined, makeGuestSourceWriterContext(guestHijackOpId, ownerBetaRoot, 'prepare', 'workspace.sync.relationship.replace', ownerRelId)))
+        .rejects.toMatchObject({ code: 'bootstrap_definition_conflict' });
+
+      // 3. Account A pauses/terminates ownerRel (keep files — removed from physicalRetained, receipt & v1 READY remain).
+      currentSnapshot = { ...currentSnapshot, relationships: [] };
+      await harness.authority.reconcileRetainedBootstraps();
+
+      // Account B (guest) attempting replace with replaceRelationshipId: ownerRelId MUST fail closed with forbidden!
+      await expect(harness.authority.prepareBootstrapHere(prepareRequest({
+        bootstrapOperationId: guestHijackRelId,
+        owner: { kind: 'relationship', relationshipId: guestHijackRelId },
+        transientRelationship: guestHijackRel,
+        targetWorkspaceRefId: 'workspace-beta-owner',
+        targetBootstrap: 'use_existing',
+        replaceRelationshipId: ownerRelId,
+      }), undefined, makeGuestSourceWriterContext(guestHijackOpId, ownerBetaRoot, 'prepare', 'workspace.sync.relationship.replace', ownerRelId)))
+        .rejects.toMatchObject({ code: 'forbidden' });
+
+      // Guest never received a committed receipt for owner's directory, and owner's receipt & files stay intact.
+      await expect(stat(workspaceSyncMaterializationReceiptPath(harness.materializationDirectory, guestHijackRelId, 'beta')))
+        .rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(inspectCommittedWorkspaceTargetMaterialization({
+        targetPath: ownerBetaRoot,
+        receiptPath: workspaceSyncMaterializationReceiptPath(harness.materializationDirectory, ownerRelId, 'beta'),
+      })).resolves.toMatchObject({ workerCopyCreation: { relationshipId: ownerRelId } });
+
+      // 4. Account B (guest) creates and commits guest's OWN worker copy (v2 READY fact with guest requesterCopyCustody), then releases it.
+      const guestOrigRel = makeWorkerRel(guestOrigRelId, 'workspace-beta-guest', true);
+      await harness.authority.prepareBootstrapHere(prepareRequest({
+        bootstrapOperationId: guestOrigRelId,
+        owner: { kind: 'relationship', relationshipId: guestOrigRelId },
+        transientRelationship: guestOrigRel,
+        targetWorkspaceRefId: 'workspace-beta-guest',
+        targetBootstrap: 'materialize_from_source_workspace',
+      }), undefined, makeGuestSourceWriterContext(guestOrigOpId, guestBetaRoot, 'prepare', 'workspace.sync.relationship.create'));
+      await harness.authority.releaseBootstrapHere({
+        v: 1, bootstrapOperationId: guestOrigRelId, targetWorkspaceRefId: 'workspace-beta-guest', reason: 'relationship_committed',
+      }, undefined, makeGuestSourceWriterContext(guestOrigOpId, guestBetaRoot, 'release', 'workspace.sync.relationship.create'));
+      await harness.authority.releaseBootstrapHere({
+        v: 1, bootstrapOperationId: guestOrigRelId, targetWorkspaceRefId: 'workspace-beta-guest', reason: 'abort',
+      }, undefined, makeGuestSourceWriterContext(guestOrigOpId, guestBetaRoot, 'release', 'workspace.sync.relationship.create'));
+
+      // 5. Installed custodian ('owner') MUST NOT rebind guest's v2 worker copy into installed custody!
+      currentSnapshot = { ...currentSnapshot, relationships: [ownerHijackRel] };
+      await expect(harness.authority.prepareBootstrapHere(prepareRequest({
+        bootstrapOperationId: ownerHijackGuestRelId,
+        owner: { kind: 'relationship', relationshipId: ownerHijackGuestRelId },
+        transientRelationship: { ...ownerHijackRel, enabled: true },
+        targetWorkspaceRefId: 'workspace-beta-guest',
+        targetBootstrap: 'use_existing',
+        replaceRelationshipId: guestOrigRelId,
+      }))).rejects.toMatchObject({ code: 'forbidden' });
+
+      // 6. Account B (guest) replacing guest's OWN v2 worker copy from the same sourceWriter SUCCEEDS and rebinds custody!
+      const guestReplaceRel = makeWorkerRel(guestReplaceRelId, 'workspace-beta-guest', true);
+      await expect(harness.authority.prepareBootstrapHere(prepareRequest({
+        bootstrapOperationId: guestReplaceRelId,
+        owner: { kind: 'relationship', relationshipId: guestReplaceRelId },
+        transientRelationship: guestReplaceRel,
+        targetWorkspaceRefId: 'workspace-beta-guest',
+        targetBootstrap: 'use_existing',
+        replaceRelationshipId: guestOrigRelId,
+      }), undefined, makeGuestSourceWriterContext(guestReplaceOpId, guestBetaRoot, 'prepare', 'workspace.sync.relationship.replace', guestOrigRelId)))
+        .resolves.toMatchObject({ state: 'ready', targetWorkspaceRefId: 'workspace-beta-guest' });
+      await harness.authority.releaseBootstrapHere({
+        v: 1, bootstrapOperationId: guestReplaceRelId, targetWorkspaceRefId: 'workspace-beta-guest', reason: 'relationship_committed',
+      }, undefined, makeGuestSourceWriterContext(guestReplaceOpId, guestBetaRoot, 'release', 'workspace.sync.relationship.replace', guestOrigRelId));
+      await expect(inspectCommittedWorkspaceTargetMaterialization({
+        targetPath: guestBetaRoot,
+        receiptPath: workspaceSyncMaterializationReceiptPath(harness.materializationDirectory, guestReplaceRelId, 'beta'),
+      })).resolves.toMatchObject({ workerCopyCreation: { relationshipId: guestReplaceRelId } });
+    } finally {
+      await harness.authority.releaseAllRetainedBootstraps();
+      await harness.cleanup();
+      await rm(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it('refreshes lagged installed target snapshot on cross-machine same-Account replaceRelationshipId before rebinding custody', async () => {
+    const fixture = await realpath(await mkdtemp(join(tmpdir(), 'workspace-sync-replace-lag-refresh-')));
+    const alphaRoot = join(fixture, 'alpha');
+    const betaRoot = join(fixture, 'beta');
+    await mkdir(alphaRoot);
+    await writeFile(join(alphaRoot, 'payload.txt'), 'cross-machine source');
+
+    const oldRelId = deriveWorkspaceSyncRelationshipId('lag-orig-op');
+    const newRelId = deriveWorkspaceSyncRelationshipId('lag-next-op');
+    const makeRel = (id: string, enabled: boolean) => ({
+      v: 1 as const,
+      relationshipId: id,
+      controllerMachineId: 'machine-a',
+      alphaWorkspaceRefId: 'workspace-alpha',
+      betaWorkspaceRefId: 'workspace-beta',
+      mode: 'keep_both_in_sync' as const,
+      contentPolicy,
+      enabled,
+      createdAtMs: 1,
+      updatedAtMs: 1,
+      committedAtMs: enabled ? 1 : null,
+      provenance: { kind: 'worker_clean_copy' as const, sourceWorkspaceRefId: 'workspace-alpha', targetWorkspaceRefId: 'workspace-beta' },
+    });
+    const oldRel = makeRel(oldRelId, true);
+    const stagedNewRel = makeRel(newRelId, false);
+    const baseRefs = [
+      { id: 'workspace-alpha', serverId: 'server-1', machineId: 'machine-a', rootPath: alphaRoot, createdAtMs: 1 },
+      { id: 'workspace-beta', serverId: 'server-1', machineId: 'machine-b', rootPath: betaRoot, createdAtMs: 1 },
+    ];
+    let cachedSnapshot: ActiveProjectAccountRowsSnapshot = {
+      source: 'network',
+      accountMode: 'plain',
+      workspaceRefs: baseRefs,
+      relationships: [oldRel],
+      graphRevision: 1,
+      organizations: [],
+      rows: [],
+      loadedAtMs: 1,
+      scopeKey: 'owner',
+    };
+    const refreshedSnapshot: ActiveProjectAccountRowsSnapshot = {
+      ...cachedSnapshot,
+      relationships: [stagedNewRel],
+      graphRevision: 2,
+    };
+    const refreshProjectSnapshot = vi.fn(async () => {
+      cachedSnapshot = refreshedSnapshot;
+      return cachedSnapshot;
+    });
+    const harness = createAuthorityHarness({
+      localMachineId: 'machine-b',
+      localAccountId: 'owner',
+      getProjectSnapshot: () => cachedSnapshot,
+      refreshProjectSnapshot,
+      materializeRemoteSeed: async ({ operationId, canonicalRoot, materializationReceiptPath, targetFence }) =>
+        await materializeLocalWorkspaceSyncSeed({
+          operationId, activeServerDir: fixture,
+          sourcePath: alphaRoot, targetPath: canonicalRoot,
+          materializationReceiptPath, targetFence,
+          workspaceTransfer: { includeIgnoredMode: 'include_selected', ignoredIncludeGlobs: [] },
+          registry: createScmBackendRegistry([]),
+        }),
+    });
+    try {
+      await harness.authority.prepareBootstrapHere(prepareRequest({
+        bootstrapOperationId: oldRelId,
+        owner: { kind: 'relationship', relationshipId: oldRelId },
+        transientRelationship: oldRel,
+        targetBootstrap: 'materialize_from_source_workspace',
+      }));
+      await harness.authority.releaseBootstrapHere({
+        v: 1, bootstrapOperationId: oldRelId, targetWorkspaceRefId: 'workspace-beta', reason: 'relationship_committed',
+      });
+      // Target's cached snapshot is STILL lagged (contains oldRel, lacks stagedNewRel) when replace arrives!
+      expect(cachedSnapshot.relationships.map(r => r.relationshipId)).toEqual([oldRelId]);
+
+      const prepared = await harness.authority.prepareBootstrapHere(prepareRequest({
+        bootstrapOperationId: newRelId,
+        owner: { kind: 'relationship', relationshipId: newRelId },
+        transientRelationship: { ...stagedNewRel, enabled: true },
+        targetBootstrap: 'use_existing',
+        replaceRelationshipId: oldRelId,
+      }));
+      expect(prepared.state).toBe('ready');
+      expect(refreshProjectSnapshot).toHaveBeenCalledTimes(1);
+
+      await harness.authority.releaseBootstrapHere({
+        v: 1, bootstrapOperationId: newRelId, targetWorkspaceRefId: 'workspace-beta', reason: 'relationship_committed',
+      });
+      await expect(inspectCommittedWorkspaceTargetMaterialization({
+        targetPath: betaRoot,
+        receiptPath: workspaceSyncMaterializationReceiptPath(harness.materializationDirectory, newRelId, 'beta'),
+      })).resolves.toMatchObject({ workerCopyCreation: { relationshipId: newRelId } });
+    } finally {
+      await harness.authority.releaseAllRetainedBootstraps();
+      await harness.cleanup();
+      await rm(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it('refreshes installed snapshot in removeCommittedCopyHere without forwarding caller context', async () => {
+    const fixture = await realpath(await mkdtemp(join(tmpdir(), 'workspace-sync-remove-refresh-no-ctx-')));
+    const alphaRoot = join(fixture, 'alpha');
+    const betaRoot = join(fixture, 'beta');
+    await mkdir(alphaRoot);
+    await writeFile(join(alphaRoot, 'payload.txt'), 'remove test');
+
+    const relId = deriveWorkspaceSyncRelationshipId('remove-refresh-op');
+    const rel = {
+      v: 1 as const,
+      relationshipId: relId,
+      controllerMachineId: 'machine-a',
+      alphaWorkspaceRefId: 'workspace-alpha',
+      betaWorkspaceRefId: 'workspace-beta',
+      mode: 'keep_both_in_sync' as const,
+      contentPolicy,
+      enabled: true,
+      createdAtMs: 1,
+      updatedAtMs: 1,
+      committedAtMs: 1,
+      provenance: { kind: 'worker_clean_copy' as const, sourceWorkspaceRefId: 'workspace-alpha', targetWorkspaceRefId: 'workspace-beta' },
+    };
+    let currentSnapshot: ActiveProjectAccountRowsSnapshot = {
+      source: 'network',
+      accountMode: 'plain',
+      workspaceRefs: [
+        { id: 'workspace-alpha', serverId: 'server-1', machineId: 'machine-a', rootPath: alphaRoot, createdAtMs: 1 },
+        { id: 'workspace-beta', serverId: 'server-1', machineId: 'machine-b', rootPath: betaRoot, createdAtMs: 1 },
+      ],
+      relationships: [rel],
+      graphRevision: 1,
+      organizations: [],
+      rows: [],
+      loadedAtMs: 1,
+      scopeKey: 'owner',
+    };
+    const callOrder: string[] = [];
+    const refreshProjectSnapshot = vi.fn(async (...args: [AbortSignal?, RpcHandlerContext?]) => {
+      callOrder.push(`refresh:${args.length}`);
+      expect(args[1]).toBeUndefined();
+      return currentSnapshot;
+    });
+    const harness = createAuthorityHarness({
+      localMachineId: 'machine-b',
+      localAccountId: 'owner',
+      getProjectSnapshot: () => currentSnapshot,
+      refreshProjectSnapshot,
+      assertCommittedCopyRemovalAuthorized: async () => undefined,
+      materializeRemoteSeed: async ({ operationId, canonicalRoot, materializationReceiptPath, targetFence }) =>
+        await materializeLocalWorkspaceSyncSeed({
+          operationId, activeServerDir: fixture,
+          sourcePath: alphaRoot, targetPath: canonicalRoot,
+          materializationReceiptPath, targetFence,
+          workspaceTransfer: { includeIgnoredMode: 'include_selected', ignoredIncludeGlobs: [] },
+          registry: createScmBackendRegistry([]),
+        }),
+    });
+    try {
+      await harness.authority.prepareBootstrapHere(prepareRequest({
+        bootstrapOperationId: relId,
+        owner: { kind: 'relationship', relationshipId: relId },
+        transientRelationship: rel,
+        targetBootstrap: 'materialize_from_source_workspace',
+      }));
+      await harness.authority.releaseBootstrapHere({
+        v: 1, bootstrapOperationId: relId, targetWorkspaceRefId: 'workspace-beta', reason: 'relationship_committed',
+      });
+      const rootFingerprint = await computeWorkspaceSyncRootFingerprint(betaRoot);
+      const signal = new AbortController().signal;
+      const context: RpcHandlerContext = {
+        signal,
+        callerAuthority: 'present_user',
+        callerInputAuthorization: ExternalActionExecutionAuthorizationV1Schema.parse({
+          v: 1, token: 'retire-token',
+          binding: {
+            accountId: 'owner', custodianAccountId: 'owner',
+            authentication: { kind: 'account', tokenEpoch: 0 },
+            accountEncryptionMode: 'plain', serverIdentityId: 'server-1',
+            machineId: 'machine-b', installationId: 'inst-b',
+            actionId: 'projects.worker.copy.retire', requestId: 'req-retire',
+            requestEnvelopeDigest: 'A'.repeat(43), admittedMachineRole: 'manage',
+            target: { kind: 'machine', machineId: 'machine-b' },
+          },
+        }),
+        localActionContext: {
+          actionRequestId: 'req-retire',
+          retirePreparedWorkspaceCopy: async () => {
+            callOrder.push('retire');
+            currentSnapshot = { ...currentSnapshot, relationships: [] };
+          },
+        },
+      };
+      await harness.authority.removeCommittedCopyHere({
+        actionReceiptId: 'receipt-1',
+        actionInput: {
+          workspace: { serverId: 'server-1', refId: 'workspace-alpha' },
+          machineId: 'machine-a',
+          expectedRelationship: rel,
+          removeTargetCopy: { workspaceRefId: 'workspace-beta', rootFingerprint },
+        },
+        signal,
+      }, context);
+      expect(refreshProjectSnapshot).toHaveBeenCalledTimes(1);
+      expect(refreshProjectSnapshot).toHaveBeenCalledWith(signal);
+      expect(callOrder).toEqual(['retire', 'refresh:1']);
+      await expect(stat(betaRoot)).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await harness.authority.releaseAllRetainedBootstraps();
+      await harness.cleanup();
+      await rm(fixture, { recursive: true, force: true });
+    }
+  });
 });

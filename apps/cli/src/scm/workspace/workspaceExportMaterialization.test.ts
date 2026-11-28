@@ -17,6 +17,7 @@ import {
     beginWorkspaceTargetMaterialization,
     inspectCommittedWorkspaceTargetMaterialization,
     materializeWorkspaceExportArtifactsWithScmWorkspace,
+    prepareCommittedWorkspaceTargetMaterializationRebind,
     recoverInterruptedWorkspaceTargetMaterialization,
     rehydrateWorkspaceTargetMaterialization,
     rehydrateWorkspaceTargetMaterializationFromReceiptPath,
@@ -821,6 +822,99 @@ describe('workspace export materialization custody', () => {
             expect(await readdir(target)).toEqual(['user.txt']);
             await expect(access(receiptPath)).resolves.toBeUndefined();
             await materialization.custody.commit();
+        } finally {
+            await rm(fixture, { recursive: true, force: true });
+        }
+    });
+
+    it('retains the predecessor receipt on rebind commit and propagates manual-recovery errors instead of returning null', async () => {
+        const fixture = await realpath(await mkdtemp(join(tmpdir(), 'workspace-export-rebind-')));
+        try {
+            const target = join(fixture, 'copy');
+            const previousReceiptPath = join(fixture, 'prev.json');
+            const nextReceiptPath = join(fixture, 'next.json');
+            const previousWorkerCopyCreation = {
+                serverId: 'server-1',
+                relationshipId: 'rel-prev',
+                sourceWorkspaceRefId: 'ws-alpha',
+                targetWorkspaceRefId: 'ws-beta',
+            };
+            const nextWorkerCopyCreation = {
+                ...previousWorkerCopyCreation,
+                relationshipId: 'rel-next',
+            };
+
+            // Unowned directory (missing predecessor receipt) returns null cleanly.
+            await mkdir(target);
+            await writeFile(join(target, 'user.txt'), 'unowned');
+            await expect(prepareCommittedWorkspaceTargetMaterializationRebind({
+                targetPath: target,
+                previousReceiptPath,
+                nextReceiptPath,
+                previousWorkerCopyCreation,
+                nextWorkerCopyCreation,
+            })).resolves.toBeNull();
+            await rm(target, { recursive: true, force: true });
+
+            // Materialized and committed copy rebinds atomically while retaining previousReceiptPath.
+            const materialization = await beginWorkspaceTargetMaterialization({
+                targetPath: target,
+                backupDirectoryPrefix: '.backup',
+                receiptPath: previousReceiptPath,
+                targetFence: { state: 'missing', identity: null, workerCopyCreation: previousWorkerCopyCreation },
+            });
+            await mkdir(target);
+            await writeFile(join(target, 'copy.txt'), 'owned');
+            await materialization.custody.bindPromotedTarget();
+            await materialization.custody.commit();
+
+            const rebound = await prepareCommittedWorkspaceTargetMaterializationRebind({
+                targetPath: target,
+                previousReceiptPath,
+                nextReceiptPath,
+                previousWorkerCopyCreation,
+                nextWorkerCopyCreation,
+            });
+            expect(rebound).not.toBeNull();
+            await rebound!.commit();
+
+            await expect(inspectCommittedWorkspaceTargetMaterialization({
+                targetPath: target,
+                receiptPath: nextReceiptPath,
+                workerCopyCreation: nextWorkerCopyCreation,
+            })).resolves.toMatchObject({ workerCopyCreation: nextWorkerCopyCreation });
+            // Predecessor receipt MUST remain intact so a failed post-commit graph publish can restore OLD_REL.
+            await expect(inspectCommittedWorkspaceTargetMaterialization({
+                targetPath: target,
+                receiptPath: previousReceiptPath,
+                workerCopyCreation: previousWorkerCopyCreation,
+            })).resolves.toMatchObject({ workerCopyCreation: previousWorkerCopyCreation });
+
+            // Corrupted predecessor receipt MUST throw workspace_target_materialization_manual_recovery, not null.
+            const corruptReceiptPath = join(fixture, 'corrupt.json');
+            await writeFile(corruptReceiptPath, '{not valid json');
+            await expect(prepareCommittedWorkspaceTargetMaterializationRebind({
+                targetPath: target,
+                previousReceiptPath: corruptReceiptPath,
+                nextReceiptPath: join(fixture, 'next-corrupt.json'),
+                previousWorkerCopyCreation,
+                nextWorkerCopyCreation,
+            })).rejects.toMatchObject({ code: 'workspace_target_materialization_manual_recovery' });
+
+            // Half-removed predecessor receipt (removalTargetName present) MUST throw workspace_copy_removal_unknown.
+            const halfRemovedReceiptPath = join(fixture, 'half-removed.json');
+            const committedJson = JSON.parse(await readFile(previousReceiptPath, 'utf8')) as WorkspaceTargetMaterializationReceiptV1;
+            await writeFile(halfRemovedReceiptPath, JSON.stringify({
+                ...committedJson,
+                removalTargetName: '.happier-sync-backup.11111111-1111-4111-8111-111111111111',
+            }));
+            await expect(prepareCommittedWorkspaceTargetMaterializationRebind({
+                targetPath: target,
+                previousReceiptPath: halfRemovedReceiptPath,
+                nextReceiptPath: join(fixture, 'next-half-removed.json'),
+                previousWorkerCopyCreation,
+                nextWorkerCopyCreation,
+            })).rejects.toMatchObject({ code: 'workspace_copy_removal_unknown' });
         } finally {
             await rm(fixture, { recursive: true, force: true });
         }

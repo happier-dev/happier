@@ -32,6 +32,7 @@ export function computeWorkspaceSyncPolicyDigest(policy: Omit<WorkspaceContentPo
 export type WorkspaceSyncRelationshipPreparation = Readonly<{
   transient: true;
   targetBootstrap: 'use_existing' | 'materialize_from_source_workspace';
+  replaceRelationshipId?: string;
   targetReplacementApproval?: HandoffTargetReplacementApprovalV1;
   targetReplacementApprovalReceiptId?: string;
   targetReplacementApprovalActionInput?: unknown;

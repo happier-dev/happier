@@ -5001,4 +5001,783 @@ describe('recovered requester cleanup target phase routing', () => {
     const requesterService = await production.workspaceSync.forRequester!(createContext);
     await requesterService.relationshipOwner.create({ v: 1, operationId: liveOpId, actionInput }, createContext.signal);
   });
+
+  it.each(['materialized', 'unowned', 'tampered'] as const)(
+    'rebinds committed worker-copy physical custody on replace only when predecessor custody is valid (%s)',
+    async scenario => {
+      const rows: ProjectAccountRowV1[] = [];
+      const http = createProjectAccountRowsHttpBoundary(rows);
+      const fixture = await composeBindChildSourcePhaseTestRuntime({
+        socketIo,
+        withScmRuntime: true,
+        projectRowsFromHttp: true,
+        readAdditionalHttpPostResponse: async (url, body) =>
+          url.includes('/v1/account/project-rows/') ? await http(url, body) : undefined,
+      });
+      const cipher = createProjectAccountRowCipherV1({ mode: 'plain', material: null, randomBytes: n => new Uint8Array(n) });
+      const key = { kind: 'workspace-ref' as const, serverId: fixture.serverId, id: fixture.sourceRef.id };
+      rows.push(ProjectAccountRowV1Schema.parse({ key, revision: 0, content: cipher.seal({ key, value: fixture.sourceRef }) }));
+      await runWithServerHttpBaseUrl('https://bind-child-home.invalid', () =>
+        readProjectAccountRows({ credentials: fixture.credentials, serverId: fixture.serverId, publication: 'installed' }));
+      await fixture.settleProjects();
+
+      const create = fixture.parentRpcHandlers.get(RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE);
+      if (!create) throw new Error('The production relationship-create RPC is not registered');
+
+      if (scenario === 'unowned') {
+        await mkdir(fixture.targetPath, { recursive: true });
+        await writeFile(join(fixture.targetPath, 'payload.txt'), 'unowned user files');
+      }
+
+      const initialRequest = {
+        v: 1,
+        operationId: `replace-custody-orig-${scenario}`,
+        actionInput: {
+          v: 1,
+          sourceWorkspaceRefId: fixture.sourceRef.id,
+          targetMachineId: fixture.targetRef.machineId,
+          targetPath: fixture.targetPath,
+          mode: 'keep_both_in_sync',
+          destinationIntent: scenario === 'unowned' ? 'use_existing' : 'materialize_from_source_workspace',
+          contentPolicy,
+          purpose: 'worker_clean_copy',
+        },
+      };
+      const original = WorkspaceSyncRelationshipCreateResultV1Schema.parse(await create(initialRequest));
+      expect(original.status.state).toBe('watching');
+      await fixture.settleProjects();
+      const origRelationship = getActiveProjectAccountRowsSnapshot()!.relationships.find(
+        value => value.relationshipId === original.relationshipId,
+      )!;
+      expect(origRelationship.provenance).toMatchObject({ kind: 'worker_clean_copy' });
+
+      const admission = createProjectWorkerAdmission({
+        machineId: fixture.sourceRef.machineId,
+        admissionDrain: createDaemonAdmissionDrain(),
+        readPolicy: async () => ({ status: 'unavailable' }),
+      });
+      let storedApproval: ReturnType<typeof ApprovalRequestV2Schema.parse> | null = null;
+      approvalsGet.mockReset().mockImplementation(async () => storedApproval);
+      const executor = createActionExecutor({
+        ...createUnavailableActionTransportDeps(),
+        approvalsCreate: async ({ request }) => {
+          storedApproval = ApprovalRequestV2Schema.parse(request);
+          return { artifactId: `retire-after-replace-${scenario}` };
+        },
+        approvalsGet: async () => storedApproval,
+        approvalsUpdate: async ({ request }) => {
+          storedApproval = ApprovalRequestV2Schema.parse(request);
+          return { ok: true };
+        },
+        isApprovalExecutionOriginCurrent: async () => true,
+        projectWorkerAction: createProjectWorkerAction({
+          machineId: fixture.sourceRef.machineId,
+          serverId: fixture.serverId,
+          serverHttpBaseUrl: 'https://bind-child-home.invalid',
+          credentials: fixture.credentials,
+          accountId: 'owner',
+          admission,
+          isFiniteExecutionLive: () => true,
+          workspaceSync: fixture.parent.workspaceSync,
+        }),
+      });
+      const actionContext = {
+        surface: 'ui' as const,
+        authority: 'present_user' as const,
+        serverId: fixture.serverId,
+        runtimeAccountId: 'owner',
+        actionRequestId: `inspect-replace-${scenario}`,
+        machineAdmission: {
+          actorAccountId: 'owner',
+          custodianAccountId: 'owner',
+          machineId: fixture.sourceRef.machineId,
+          installationId: fixture.controller.installationId,
+          role: 'manage' as const,
+          encryptionMode: 'plain' as const,
+        },
+        verifyMachineAdmissionCurrent: async () => true,
+        actionsSettings: normalizeActionsSettingsV1({
+          v: 1,
+          actions: { 'projects.worker.copy.retire': { approvalRequiredSurfaces: [] } },
+          approvalWaivedSurfaces: { 'projects.worker.copy.retire': ['ui'] },
+        }),
+        presentUserConfirmation: { actionId: 'projects.worker.copy.retire' as const },
+      };
+
+      const inspectRpc = new RpcHandlerManager({
+        scopePrefix: fixture.sourceRef.machineId,
+        encryptionMode: 'plain',
+        logger: () => {},
+        authorizeRequest: incoming => authorizeMachineRpcRequest(incoming, {
+          machineId: fixture.sourceRef.machineId,
+          resolveCustodianAccountId: async () => 'owner',
+          resolveInstallationId: () => fixture.controller.installationId,
+          verifyMachineAdmission: async () => true,
+        }),
+      });
+      registerMachineWorkspaceSyncRpcHandlers({ rpcHandlerManager: inspectRpc, service: fixture.parent.workspaceSync });
+      const inspectCopy = (expectedRelationship: WorkspaceSyncRelationshipV1) => inspectRpc.handleRequest({
+        method: `${fixture.sourceRef.machineId}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT}`,
+        params: {
+          kind: 'preview',
+          workspace: { serverId: fixture.serverId, refId: fixture.sourceRef.id },
+          machineId: fixture.sourceRef.machineId,
+          targetMachineId: fixture.targetRef.machineId,
+          targetWorkspaceRefId: expectedRelationship.betaWorkspaceRefId,
+          expectedRelationship,
+        },
+        machineAdmission: {
+          actorAccountId: 'owner',
+          custodianAccountId: 'owner',
+          machineId: fixture.sourceRef.machineId,
+          installationId: fixture.controller.installationId,
+          role: 'manage',
+          encryptionMode: 'plain',
+        },
+      });
+
+      const originalFingerprint = await computeWorkspaceSyncRootFingerprint(fixture.targetPath);
+      if (scenario === 'materialized' || scenario === 'tampered') {
+        const beforeReplaceInspect = await inspectCopy(origRelationship);
+        expect(beforeReplaceInspect, JSON.stringify(beforeReplaceInspect)).toMatchObject({
+          ok: true,
+          preview: { targetMachineId: fixture.targetRef.machineId, rootFingerprint: originalFingerprint },
+        });
+      }
+
+      if (scenario === 'tampered') {
+        await fixture.parent.workspaceSync.relationshipOwner.setEnabled(original.relationshipId, false);
+        await fixture.settleProjects();
+        await rename(fixture.targetPath, `${fixture.targetPath}-swapped-orig`);
+        await mkdir(fixture.targetPath, { recursive: true });
+        await writeFile(join(fixture.targetPath, 'payload.txt'), 'foreign tampered directory');
+      }
+
+      const replacedPolicyInput = {
+        v: 1 as const,
+        selection: 'all_files' as const,
+        extraIgnorePatterns: ['*.log'],
+        extraIncludePatterns: [],
+      };
+      const replacedPolicy = {
+        ...replacedPolicyInput,
+        policyDigest: computeWorkspaceSyncPolicyDigest(replacedPolicyInput),
+      };
+      const replaceRequest = {
+        v: 1,
+        operationId: `replace-custody-next-${scenario}`,
+        actionInput: {
+          ...initialRequest.actionInput,
+          destinationIntent: 'use_existing',
+          contentPolicy: replacedPolicy,
+          replaceRelationshipId: original.relationshipId,
+        },
+      };
+      if (scenario === 'tampered') {
+        await expect(create(replaceRequest)).rejects.toMatchObject({
+          code: 'workspace_target_materialization_manual_recovery',
+        });
+        await fixture.settleProjects();
+        expect(getActiveProjectAccountRowsSnapshot()!.relationships.map(value => value.relationshipId)).toEqual([
+          original.relationshipId,
+        ]);
+        expect(await readFile(join(fixture.targetPath, 'payload.txt'), 'utf8')).toBe('foreign tampered directory');
+        return;
+      }
+
+      const replacement = WorkspaceSyncRelationshipCreateResultV1Schema.parse(await create(replaceRequest));
+      expect(replacement.status.state).toBe('watching');
+      await fixture.settleProjects();
+      const newRelationship = getActiveProjectAccountRowsSnapshot()!.relationships.find(
+        value => value.relationshipId === replacement.relationshipId,
+      )!;
+      expect(newRelationship).toBeDefined();
+
+      const afterReplaceInspect = await inspectCopy(newRelationship);
+
+      if (scenario === 'materialized') {
+        expect(afterReplaceInspect, JSON.stringify(afterReplaceInspect)).toMatchObject({
+          ok: true,
+          preview: { targetMachineId: fixture.targetRef.machineId, rootFingerprint: originalFingerprint },
+        });
+        const retired = await executor.execute('projects.worker.copy.retire', {
+          workspace: { serverId: fixture.serverId, refId: fixture.sourceRef.id },
+          machineId: fixture.sourceRef.machineId,
+          expectedRelationship: newRelationship,
+          removeTargetCopy: { workspaceRefId: newRelationship.betaWorkspaceRefId, rootFingerprint: originalFingerprint },
+        }, actionContext);
+        expect(retired, JSON.stringify(retired)).toMatchObject({ ok: true, result: { status: 'retired' } });
+        expect(getActiveProjectAccountRowsSnapshot()?.relationships).toEqual([]);
+        await expect(stat(fixture.targetPath)).rejects.toMatchObject({ code: 'ENOENT' });
+        expect(await readFile(join(fixture.sourcePath, 'payload.txt'), 'utf8')).toBe('before quiesce');
+      } else {
+        expect(afterReplaceInspect, JSON.stringify(afterReplaceInspect)).toMatchObject({
+          ok: false,
+          errorCode: 'workspace_copy_not_owned',
+        });
+        expect(await stat(fixture.targetPath)).toBeDefined();
+      }
+    },
+  );
+
+  it('preserves predecessor worker-copy custody when replace fails Home publish after commitRelationshipTarget and rolls back', async () => {
+    const rows: ProjectAccountRowV1[] = [];
+    const http = createProjectAccountRowsHttpBoundary(rows);
+    const nextOpId = 'replace-rollback-custody-next';
+    const nextRelId = deriveWorkspaceSyncRelationshipId(nextOpId);
+    let failPublishForNext = false;
+    let publishRefusalCount = 0;
+    const fixture = await composeBindChildSourcePhaseTestRuntime({
+      socketIo,
+      withScmRuntime: true,
+      projectRowsFromHttp: true,
+      readAdditionalHttpPostResponse: async (url, body) => {
+        if (!url.includes('/v1/account/project-rows/')) return undefined;
+        if (failPublishForNext && !url.endsWith('/list') && !url.endsWith('/read')) {
+          const serialized = JSON.stringify(body);
+          if (serialized.includes(nextRelId) && serialized.includes('"enabled":true')) {
+            publishRefusalCount += 1;
+            return { status: 200, data: { status: 'invalid-request' } };
+          }
+        }
+        return await http(url, body);
+      },
+    });
+    const cipher = createProjectAccountRowCipherV1({ mode: 'plain', material: null, randomBytes: n => new Uint8Array(n) });
+    const key = { kind: 'workspace-ref' as const, serverId: fixture.serverId, id: fixture.sourceRef.id };
+    rows.push(ProjectAccountRowV1Schema.parse({ key, revision: 0, content: cipher.seal({ key, value: fixture.sourceRef }) }));
+    await runWithServerHttpBaseUrl('https://bind-child-home.invalid', () =>
+      readProjectAccountRows({ credentials: fixture.credentials, serverId: fixture.serverId, publication: 'installed' }));
+    await fixture.settleProjects();
+
+    const create = fixture.parentRpcHandlers.get(RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE);
+    if (!create) throw new Error('The production relationship-create RPC is not registered');
+
+    const initialRequest = {
+      v: 1,
+      operationId: 'replace-rollback-custody-orig',
+      actionInput: {
+        v: 1,
+        sourceWorkspaceRefId: fixture.sourceRef.id,
+        targetMachineId: fixture.targetRef.machineId,
+        targetPath: fixture.targetPath,
+        mode: 'keep_both_in_sync',
+        destinationIntent: 'materialize_from_source_workspace',
+        contentPolicy,
+        purpose: 'worker_clean_copy',
+      },
+    };
+    const original = WorkspaceSyncRelationshipCreateResultV1Schema.parse(await create(initialRequest));
+    await fixture.settleProjects();
+    const origRelationship = getActiveProjectAccountRowsSnapshot()!.relationships.find(
+      value => value.relationshipId === original.relationshipId,
+    )!;
+    const originalFingerprint = await computeWorkspaceSyncRootFingerprint(fixture.targetPath);
+
+    // Trigger a determinate Home conflict refusal on the post-commitRelationshipTarget publish write enabling nextRelId.
+    failPublishForNext = true;
+    const replacedPolicyInput = {
+      v: 1 as const,
+      selection: 'all_files' as const,
+      extraIgnorePatterns: ['*.tmp'],
+      extraIncludePatterns: [],
+    };
+    await expect(create({
+      v: 1,
+      operationId: nextOpId,
+      actionInput: {
+        ...initialRequest.actionInput,
+        destinationIntent: 'use_existing',
+        contentPolicy: { ...replacedPolicyInput, policyDigest: computeWorkspaceSyncPolicyDigest(replacedPolicyInput) },
+        replaceRelationshipId: original.relationshipId,
+      },
+    })).rejects.toThrow();
+    expect(publishRefusalCount).toBeGreaterThan(0);
+    failPublishForNext = false;
+    await fixture.settleProjects();
+
+    const restoredRelationship = getActiveProjectAccountRowsSnapshot()!.relationships.find(
+      value => value.relationshipId === original.relationshipId,
+    )!;
+    expect(restoredRelationship).toBeDefined();
+    expect(getActiveProjectAccountRowsSnapshot()!.relationships.map(value => value.relationshipId)).toEqual([
+      original.relationshipId,
+    ]);
+
+    const inspectRpc = new RpcHandlerManager({
+      scopePrefix: fixture.sourceRef.machineId,
+      encryptionMode: 'plain',
+      logger: () => {},
+      authorizeRequest: incoming => authorizeMachineRpcRequest(incoming, {
+        machineId: fixture.sourceRef.machineId,
+        resolveCustodianAccountId: async () => 'owner',
+        resolveInstallationId: () => fixture.controller.installationId,
+        verifyMachineAdmission: async () => true,
+      }),
+    });
+    registerMachineWorkspaceSyncRpcHandlers({ rpcHandlerManager: inspectRpc, service: fixture.parent.workspaceSync });
+    const inspected = await inspectRpc.handleRequest({
+      method: `${fixture.sourceRef.machineId}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT}`,
+      params: {
+        kind: 'preview',
+        workspace: { serverId: fixture.serverId, refId: fixture.sourceRef.id },
+        machineId: fixture.sourceRef.machineId,
+        targetMachineId: fixture.targetRef.machineId,
+        targetWorkspaceRefId: restoredRelationship.betaWorkspaceRefId,
+        expectedRelationship: restoredRelationship,
+      },
+      machineAdmission: {
+        actorAccountId: 'owner',
+        custodianAccountId: 'owner',
+        machineId: fixture.sourceRef.machineId,
+        installationId: fixture.controller.installationId,
+        role: 'manage',
+        encryptionMode: 'plain',
+      },
+    });
+    expect(inspected, JSON.stringify(inspected)).toMatchObject({
+      ok: true,
+      preview: { targetMachineId: fixture.targetRef.machineId, rootFingerprint: originalFingerprint },
+    });
+
+    const admission = createProjectWorkerAdmission({
+      machineId: fixture.sourceRef.machineId,
+      admissionDrain: createDaemonAdmissionDrain(),
+      readPolicy: async () => ({ status: 'unavailable' }),
+    });
+    let storedApproval: ReturnType<typeof ApprovalRequestV2Schema.parse> | null = null;
+    approvalsGet.mockReset().mockImplementation(async () => storedApproval);
+    const executor = createActionExecutor({
+      ...createUnavailableActionTransportDeps(),
+      approvalsCreate: async ({ request }) => {
+        storedApproval = ApprovalRequestV2Schema.parse(request);
+        return { artifactId: 'retire-after-rollback' };
+      },
+      approvalsGet: async () => storedApproval,
+      approvalsUpdate: async ({ request }) => {
+        storedApproval = ApprovalRequestV2Schema.parse(request);
+        return { ok: true };
+      },
+      isApprovalExecutionOriginCurrent: async () => true,
+      projectWorkerAction: createProjectWorkerAction({
+        machineId: fixture.sourceRef.machineId,
+        serverId: fixture.serverId,
+        serverHttpBaseUrl: 'https://bind-child-home.invalid',
+        credentials: fixture.credentials,
+        accountId: 'owner',
+        admission,
+        isFiniteExecutionLive: () => true,
+        workspaceSync: fixture.parent.workspaceSync,
+      }),
+    });
+    const retired = await executor.execute('projects.worker.copy.retire', {
+      workspace: { serverId: fixture.serverId, refId: fixture.sourceRef.id },
+      machineId: fixture.sourceRef.machineId,
+      expectedRelationship: restoredRelationship,
+      removeTargetCopy: { workspaceRefId: restoredRelationship.betaWorkspaceRefId, rootFingerprint: originalFingerprint },
+    }, {
+      surface: 'ui',
+      authority: 'present_user',
+      serverId: fixture.serverId,
+      runtimeAccountId: 'owner',
+      actionRequestId: 'retire-after-rollback',
+      machineAdmission: {
+        actorAccountId: 'owner',
+        custodianAccountId: 'owner',
+        machineId: fixture.sourceRef.machineId,
+        installationId: fixture.controller.installationId,
+        role: 'manage',
+        encryptionMode: 'plain',
+      },
+      verifyMachineAdmissionCurrent: async () => true,
+      actionsSettings: normalizeActionsSettingsV1({
+        v: 1,
+        actions: { 'projects.worker.copy.retire': { approvalRequiredSurfaces: [] } },
+        approvalWaivedSurfaces: { 'projects.worker.copy.retire': ['ui'] },
+      }),
+      presentUserConfirmation: { actionId: 'projects.worker.copy.retire' },
+    });
+    expect(retired, JSON.stringify(retired)).toMatchObject({ ok: true, result: { status: 'retired' } });
+    await expect(stat(fixture.targetPath)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(origRelationship.relationshipId).toBe(restoredRelationship.relationshipId);
+  });
+
+  it('allows custodian direct RPC worker copy retirement without externalActionExecutionAuthorization while failing closed for guest and owner agent Session', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-direct-retire-custodian-'));
+    const serverId = 'srv_direct-retire';
+    const custodianToken = `e30.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.sig`;
+    const custodianCredentials = { token: custodianToken, encryption: null };
+    const guestToken = `e30.${Buffer.from(JSON.stringify({ sub: 'guest' })).toString('base64url')}.sig`;
+    const guestCredentials = { token: guestToken, encryption: null };
+    const custodianOpId = 'op-custodian-direct-retire';
+    const custodianRelId = deriveWorkspaceSyncRelationshipId(custodianOpId);
+    const guestOpId = 'op-guest-direct-retire';
+    const guestRelId = deriveWorkspaceSyncRelationshipId(guestOpId);
+
+    const makeRel = (relationshipId: string): WorkspaceSyncRelationshipV1 => ({
+      v: 1,
+      relationshipId,
+      controllerMachineId: 'machine-a',
+      alphaWorkspaceRefId: 'workspace-alpha',
+      betaWorkspaceRefId: 'workspace-beta',
+      mode: 'keep_both_in_sync',
+      contentPolicy,
+      enabled: true,
+      createdAtMs: 1,
+      updatedAtMs: 1,
+      committedAtMs: 1,
+      provenance: { kind: 'worker_clean_copy', sourceWorkspaceRefId: 'workspace-alpha', targetWorkspaceRefId: 'workspace-beta' },
+    });
+    const custodianRel = makeRel(custodianRelId);
+    const guestRel = makeRel(guestRelId);
+
+    const baseRefs: readonly WorkspaceRefV1[] = [
+      { id: 'workspace-alpha', serverId, machineId: 'machine-a', rootPath: '/work/alpha', createdAtMs: 1 },
+      { id: 'workspace-beta', serverId, machineId: 'machine-b', rootPath: '/work/beta', createdAtMs: 1 },
+    ];
+    const makeSnapshot = (
+      scopeKey: string,
+      snapshotData: ReturnType<typeof parseProjectAccountSnapshotV1>,
+      graphRevision = 1,
+    ): ActiveProjectAccountRowsSnapshot => ({
+      source: 'network',
+      accountMode: 'plain',
+      organizations: [],
+      rows: [],
+      graphRevision,
+      loadedAtMs: 1,
+      scopeKey,
+      ...snapshotData,
+    });
+    let custodianSnapshot = makeSnapshot('owner', parseProjectAccountSnapshotV1({ workspaceRefs: baseRefs, relationships: [] }));
+    let guestSnapshot = makeSnapshot('guest', parseProjectAccountSnapshotV1({ workspaceRefs: baseRefs, relationships: [] }));
+
+    const boundary: RequesterSessionMachineAdmissionBoundary = {
+      machineId: 'machine-a',
+      daemonToken: custodianToken,
+      isHomeCurrent: () => true,
+      getObservedServerIdentityId: async () => serverId,
+      readInstallation: () => ({ installationId: 'source-installation', privateKey: nacl.sign.keyPair().secretKey }),
+    };
+    const targetPhaseCalls: Array<{ method: string; phase: string }> = [];
+    const callWorkspaceTargetPhase = vi.fn<
+      NonNullable<Parameters<typeof createProductionDaemonWorkspaceSyncRuntime>[0]['callWorkspaceTargetPhase']>
+    >(async descriptor => {
+      targetPhaseCalls.push({ method: descriptor.method, phase: descriptor.routing.phase });
+      if (descriptor.routing.phase === 'dependencies') return [];
+      return { ok: true };
+    });
+    const removeCommittedCopyAtTarget = vi.fn(async (_request, context?: RpcHandlerContext) => {
+      await context?.localActionContext?.retirePreparedWorkspaceCopy?.();
+    });
+    const readProjectWorkerDependencies = vi.fn(() => []);
+    const callMachineRpc = vi.fn(async ({ method }: { method: string }) => {
+      if (method === RPC_METHODS.DAEMON_PROJECT_WORKER_DEPENDENCIES) return [];
+      return { ok: true };
+    });
+
+    const { createWorkspaceSyncHandoffAdapter } = await import('@/workspaces/sync/workspaceSyncHandoffAdapter');
+    const { createWorkspaceSyncRelationshipOwner } = await import('@/workspaces/sync/workspaceSyncRelationshipOwner');
+    type RuntimeFactories = NonNullable<Parameters<typeof createProductionDaemonWorkspaceSyncRuntime>[1]>;
+    let handoffAdapter: ReturnType<typeof createWorkspaceSyncHandoffAdapter> | undefined;
+    const factories = {
+      createDaemonRuntime: vi.fn<NonNullable<RuntimeFactories['createDaemonRuntime']>>(input => {
+        handoffAdapter = createWorkspaceSyncHandoffAdapter({
+          sync: {} as Parameters<typeof createWorkspaceSyncHandoffAdapter>[0]['sync'],
+          bootstrap: input.bootstrap,
+          prepareBetween: input.handoffPrepareBetween,
+          resolveExecutionInput: input.resolveHandoffExecutionInput,
+        });
+        return {
+          start: vi.fn(async () => undefined),
+          stop: vi.fn(async () => undefined),
+          whenProjectsSettled: vi.fn(async () => undefined),
+          reconcilePrivateRelationships: vi.fn(async () => undefined),
+          managedWorkspaceSync: {
+            ensure: vi.fn(async (rel: WorkspaceSyncRelationshipV1) => ({
+              relationshipId: rel.relationshipId,
+              controllerMachineId: 'machine-a',
+              state: 'watching' as const,
+              alphaPath: '/work/alpha',
+              betaPath: '/work/beta',
+              mode: 'keep_both_in_sync' as const,
+              endpointStates: { alpha: null, beta: null },
+              conflictCount: 0,
+              lastCycleObservedAtMs: null,
+            })),
+            terminate: vi.fn(async () => undefined),
+          },
+          handoffAdapter,
+        } as unknown as ReturnType<NonNullable<RuntimeFactories['createDaemonRuntime']>>;
+      }),
+      createTargetAuthority: vi.fn<NonNullable<RuntimeFactories['createTargetAuthority']>>(() => ({
+        reconcileRetainedBootstraps: vi.fn(async () => undefined),
+        releaseAllRetainedBootstraps: vi.fn(async () => undefined),
+        removeCommittedCopyAtTarget,
+        readDependenciesAsInstalledWriter: vi.fn(() => null),
+      } as unknown as ReturnType<NonNullable<RuntimeFactories['createTargetAuthority']>>)),
+      createRootOwnershipManager: vi.fn(() => ({ tryAcquire: vi.fn() })),
+      resolveRootOwnershipDirectory: vi.fn(() => join(happyHomeDir, 'locks')),
+      createPeerIdentityValidator: vi.fn(() => ({ setExpectedSidecarPid: vi.fn(), validate: vi.fn(async () => true) })),
+      createBroker: vi.fn(async () => ({ marker: 'broker' })),
+      spawnSidecar: vi.fn(),
+      launchLocalAgent: vi.fn(),
+      prepareGitTarget: vi.fn(async () => undefined),
+      createRelationshipOwner: vi.fn<NonNullable<RuntimeFactories['createRelationshipOwner']>>(options => {
+        const realOwner = createWorkspaceSyncRelationshipOwner({
+          ...options,
+          mutateProjectSnapshot: async mutate => {
+            const current = parseProjectAccountSnapshotV1(await options.readProjectSnapshot());
+            const next = await mutate(current);
+            if (current.relationships.some(r => r.relationshipId === custodianRelId)) {
+              custodianSnapshot = makeSnapshot('owner', next, 2);
+            } else {
+              guestSnapshot = makeSnapshot('guest', next, 2);
+            }
+            return { status: 'applied' as const, version: 2, snapshot: next };
+          },
+        });
+        return {
+          ...realOwner,
+          prepareCreate: vi.fn(async input => {
+            const rel = input.operationId === custodianOpId ? custodianRel : guestRel;
+            if (input.operationId === custodianOpId) {
+              custodianSnapshot = makeSnapshot('owner', parseProjectAccountSnapshotV1({ workspaceRefs: baseRefs, relationships: [custodianRel] }));
+            } else {
+              guestSnapshot = makeSnapshot('guest', parseProjectAccountSnapshotV1({ workspaceRefs: baseRefs, relationships: [guestRel] }));
+            }
+            await options.ensureRelationship(rel);
+            return {
+              relationship: rel,
+              reused: false,
+              status: {
+                relationshipId: rel.relationshipId,
+                controllerMachineId: 'machine-a',
+                state: 'watching' as const,
+                alphaPath: '/work/alpha',
+                betaPath: '/work/beta',
+                mode: 'keep_both_in_sync' as const,
+                endpointStates: { alpha: null, beta: null },
+                conflictCount: 0,
+                lastCycleObservedAtMs: null,
+              },
+              commit: async () => rel,
+              abort: async () => undefined,
+            };
+          }),
+        };
+      }),
+      refreshProjectRows: vi.fn(async ({ credentials: creds }) => ({
+        ...(creds.token === custodianToken ? custodianSnapshot : guestSnapshot),
+        whenRefreshed: null,
+      })),
+      getProjectSnapshot: () => custodianSnapshot,
+      subscribeProjectSnapshot: vi.fn(() => vi.fn()),
+      callMachineRpc,
+      materializeSeedExport: vi.fn(),
+      materializeLocalSeed: vi.fn(),
+      prepareSourceSeedExport: vi.fn(),
+      warn: vi.fn(),
+    } as unknown as RuntimeFactories;
+
+    const resolveProjectRuntime = vi.fn(async (context: RpcHandlerContext) => ({
+      machineId: 'machine-a',
+      accountId: context.machineAdmission?.actorAccountId ?? 'owner',
+      serverId,
+      serverHttpBaseUrl: 'https://sync-home.invalid',
+      // Direct machine RPCs have no callerInputAuthorization, so accountAuthorization is undefined.
+      ...(context.callerInputAuthorization ? { accountAuthorization: context.callerInputAuthorization } : {}),
+    }) as unknown as Awaited<ReturnType<NonNullable<Parameters<typeof createProductionDaemonWorkspaceSyncRuntime>[0]['resolveProjectRuntime']>>>);
+
+    const production = await createProductionDaemonWorkspaceSyncRuntime({
+      happyHomeDir,
+      activeServerDir: join(happyHomeDir, 'servers', serverId),
+      activeServerId: serverId,
+      localMachineId: 'machine-a',
+      releaseChannel: 'publicdev',
+      credentials: custodianCredentials,
+      requesterMachineAdmissionBoundary: boundary,
+      callWorkspaceTargetPhase,
+      resolveProjectRuntime,
+      readProjectWorkerDependencies,
+    }, factories);
+    onTestFinished(async () => {
+      await production.stop();
+      await rm(happyHomeDir, { recursive: true, force: true });
+    });
+
+    const registerRetainedCopy = async (accountId: 'owner' | 'guest', opId: string, creds: typeof custodianCredentials) => {
+      const actionInput = {
+        v: 1 as const,
+        sourceWorkspaceRefId: 'workspace-alpha',
+        targetMachineId: 'machine-b',
+        targetPath: '/work/beta',
+        mode: 'keep_both_in_sync' as const,
+        contentPolicy,
+        destinationIntent: 'use_existing' as const,
+        purpose: 'worker_clean_copy' as const,
+      };
+      const envelope = { v: 1 as const, requestId: opId, target: { kind: 'machine' as const, machineId: 'machine-a' }, input: actionInput };
+      const auth = ExternalActionExecutionAuthorizationV1Schema.parse({
+        v: 1,
+        token: `create-${accountId}`,
+        binding: {
+          accountId,
+          custodianAccountId: 'owner',
+          authentication: { kind: 'account', tokenEpoch: 0 },
+          accountEncryptionMode: 'plain',
+          serverIdentityId: serverId,
+          machineId: 'machine-a',
+          installationId: 'source-installation',
+          actionId: 'workspace.sync.relationship.create',
+          requestId: opId,
+          requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+          admittedMachineRole: 'manage',
+          target: { kind: 'machine', machineId: 'machine-a' },
+        },
+      });
+      Object.defineProperty(auth, 'requesterAccountProjection', {
+        value: {
+          accountId,
+          serverId,
+          accountEncryptionMode: 'plain',
+          isCurrent: async () => true,
+          [requesterActionContext]: {
+            credentials: creds,
+            serverHttpBaseUrl: 'https://sync-home.invalid',
+            savedSecretOperationContext: {},
+            retainCustody: () => ({ isCurrent: async () => true, release: async () => undefined }),
+            resolveEncryption: async () => null,
+          },
+        },
+      });
+      const createCtx: RpcHandlerContext = {
+        signal: new AbortController().signal,
+        callerAuthority: 'present_user',
+        callerInputAuthorization: auth,
+        originalActionEnvelope: envelope,
+        machineAdmission: {
+          actorAccountId: accountId,
+          custodianAccountId: 'owner',
+          machineId: 'machine-a',
+          installationId: 'source-installation',
+          role: 'manage',
+          encryptionMode: 'plain',
+        },
+        directWorkspaceRequester: {
+          kind: 'isolated',
+          requester: { serverId, accountId, machineId: 'machine-a', installationId: 'source-installation' },
+          separationRequired: false,
+          presentPerson: true,
+        },
+        verifyMachineAdmissionCurrent: async () => true,
+      };
+      const svc = await production.workspaceSync.forRequester!(createCtx);
+      await svc.relationshipOwner.create({ v: 1, operationId: opId, actionInput }, createCtx.signal);
+    };
+
+    // Register both custodian-owned and guest-owned retained executions via workspace.sync.relationship.create.
+    await registerRetainedCopy('owner', custodianOpId, custodianCredentials);
+    await registerRetainedCopy('guest', guestOpId, guestCredentials);
+    const custodianRetained = handoffAdapter?.executionRegistry?.findByRelationshipId(custodianRelId);
+    const guestRetained = handoffAdapter?.executionRegistry?.findByRelationshipId(guestRelId);
+    expect(custodianRetained?.execution.callTargetPhase).toBeDefined();
+    expect(guestRetained?.execution.callTargetPhase).toBeDefined();
+    await custodianRetained?.execution.replaceSnapshot?.(custodianSnapshot);
+    await guestRetained?.execution.replaceSnapshot?.(guestSnapshot);
+    targetPhaseCalls.length = 0;
+
+    const makeDirectRetirement = (relationship: WorkspaceSyncRelationshipV1) => {
+      const removeTargetCopy = { workspaceRefId: 'workspace-beta', rootFingerprint: 'a'.repeat(64) };
+      return {
+        expectedRelationship: relationship,
+        removeTargetCopy,
+        approval: {
+          actionReceiptId: `direct-receipt-${relationship.relationshipId}`,
+          actionInput: {
+            workspace: { serverId, refId: 'workspace-alpha' },
+            machineId: 'machine-a',
+            expectedRelationship: relationship,
+            removeTargetCopy,
+          },
+        },
+      };
+    };
+
+    // 1. Installed owner's agent Session WITHOUT signed callerInputAuthorization MUST STILL fail closed.
+    const ownerAgentSessionContext: RpcHandlerContext = {
+      signal: new AbortController().signal,
+      callerAuthority: 'account_automation',
+      sessionActionOrigin: {
+        v: 1,
+        caller: { kind: 'session', sessionId: 'sess-owner-agent', starterDepth: 0, turnDepth: 1 },
+        sourceTurnId: 'turn-1',
+        callerPermissionMode: 'default',
+        causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' },
+        workspaceWrites: 'allow',
+        requestId: 'owner-agent-retire',
+      },
+      machineAdmission: {
+        actorAccountId: 'owner',
+        custodianAccountId: 'owner',
+        machineId: 'machine-a',
+        installationId: 'source-installation',
+        role: 'manage',
+        encryptionMode: 'plain',
+      },
+      localActionContext: { actionRequestId: 'owner-agent-retire' },
+      verifyMachineAdmissionCurrent: async () => true,
+    };
+    const ownerAgentService = await production.workspaceSync.forRequester!(ownerAgentSessionContext);
+    await expect(
+      ownerAgentService.relationshipOwner.stop(custodianRelId, ownerAgentSessionContext.signal, makeDirectRetirement(custodianRel)),
+    ).rejects.toMatchObject({ code: 'project_requester_authority_unavailable' });
+    expect(removeCommittedCopyAtTarget).toHaveBeenCalledTimes(0);
+    expect(custodianSnapshot.relationships).toHaveLength(1);
+
+    // 2. Custodian direct machine RPC (present_user, no callerInputAuthorization) MUST succeed via targetAuthority.removeCommittedCopyAtTarget.
+    const custodianDirectContext: RpcHandlerContext = {
+      signal: new AbortController().signal,
+      callerAuthority: 'present_user',
+      machineAdmission: {
+        actorAccountId: 'owner',
+        custodianAccountId: 'owner',
+        machineId: 'machine-a',
+        installationId: 'source-installation',
+        role: 'manage',
+        encryptionMode: 'plain',
+      },
+      localActionContext: { actionRequestId: 'custodian-direct-retire' },
+      verifyMachineAdmissionCurrent: async () => true,
+    };
+    const custodianService = await production.workspaceSync.forRequester!(custodianDirectContext);
+    await expect(
+      custodianService.relationshipOwner.stop(custodianRelId, custodianDirectContext.signal, makeDirectRetirement(custodianRel)),
+    ).resolves.toBeUndefined();
+    expect(removeCommittedCopyAtTarget).toHaveBeenCalledTimes(1);
+    expect(targetPhaseCalls.filter(call => call.phase === 'remove')).toHaveLength(0);
+    expect(custodianSnapshot.relationships).toEqual([]);
+
+    // 3. Cross-Account guest direct RPC WITHOUT signed callerInputAuthorization MUST STILL fail closed.
+    const guestDirectContext: RpcHandlerContext = {
+      signal: new AbortController().signal,
+      callerAuthority: 'present_user',
+      machineAdmission: {
+        actorAccountId: 'guest',
+        custodianAccountId: 'owner',
+        machineId: 'machine-a',
+        installationId: 'source-installation',
+        role: 'manage',
+        encryptionMode: 'plain',
+      },
+      localActionContext: { actionRequestId: 'guest-direct-retire' },
+      verifyMachineAdmissionCurrent: async () => true,
+    };
+    const guestService = await production.workspaceSync.forRequester!(guestDirectContext);
+    await expect(
+      guestService.relationshipOwner.stop(guestRelId, guestDirectContext.signal, makeDirectRetirement(guestRel)),
+    ).rejects.toMatchObject({ code: 'project_requester_authority_unavailable' });
+    expect(removeCommittedCopyAtTarget).toHaveBeenCalledTimes(1);
+    expect(guestSnapshot.relationships).toHaveLength(1);
+  });
 });

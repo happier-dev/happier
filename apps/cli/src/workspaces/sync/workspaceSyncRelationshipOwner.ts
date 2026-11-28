@@ -723,6 +723,7 @@ export function createWorkspaceSyncRelationshipOwner(
             : {
                 transient: true,
                 targetBootstrap: input.targetBootstrap,
+                ...(input.replaceRelationshipId ? { replaceRelationshipId: input.replaceRelationshipId } : {}),
                 ...(input.targetReplacementApproval
                   ? { targetReplacementApproval: input.targetReplacementApproval,
                       targetReplacementApprovalActionInput: input.targetReplacementApprovalActionInput }

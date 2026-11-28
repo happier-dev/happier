@@ -675,6 +675,8 @@ export const WorkspaceSyncTargetBootstrapPrepareV1Schema = lazyZodSchema(() => z
   createIfMissing: z.boolean(),
   /** Explicit only for a new copy/relationship target; existing relationships rehydrate READY custody. */
   targetBootstrap: z.optional(z.enum(['use_existing', 'materialize_from_source_workspace'])),
+  /** Predecessor relationship being replaced on the same physical target directory. */
+  replaceRelationshipId: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(MAX_RELATIONSHIP_ID_LENGTH))),
   /**
    * Host-private proof for the destructive consequences of this destination.
    * The target daemon derives the operation it must be stamped for from the
@@ -724,6 +726,15 @@ export const WorkspaceSyncTargetBootstrapPrepareV1Schema = lazyZodSchema(() => z
       code: "custom",
       path: ['targetReplacementApprovalReceiptId'],
       message: 'target replacement approval requires its exact admitted input',
+    });
+  }
+  if (value.replaceRelationshipId !== undefined
+    && (value.owner.kind !== 'relationship' || value.targetBootstrap !== 'use_existing'
+      || value.replaceRelationshipId === value.owner.relationshipId)) {
+    context.addIssue({
+      code: "custom",
+      path: ['replaceRelationshipId'],
+      message: 'replacement custody rebind requires a new relationship using the existing target',
     });
   }
   if (!transient) return;

@@ -15,6 +15,7 @@ import type { WorkspaceRootOwnershipHandle, WorkspaceRootOwnershipManager } from
 import {
   abortWorkspaceTargetMaterializationAfterFailure,
   beginWorkspaceTargetMaterialization,
+  prepareCommittedWorkspaceTargetMaterializationRebind,
   recoverInterruptedWorkspaceTargetMaterialization,
   rehydrateWorkspaceTargetMaterializationFromReceiptPath,
   inspectCommittedWorkspaceTargetMaterialization,
@@ -72,6 +73,8 @@ export type WorkspaceSyncTargetBootstrapInput = Readonly<{
   createIfMissing?: boolean;
   /** Explicit user intent for this target; never inferred from target contents. */
   targetBootstrap: 'use_existing' | 'materialize_from_source_workspace';
+  /** Predecessor relationship being replaced on the same physical target directory. */
+  replaceRelationshipId?: string;
   /** SCM-owned Git verification/materialization. Credentials stay inside this callback. */
   prepareGitTarget?: (input: Readonly<{
     canonicalRoot: string;
@@ -801,6 +804,26 @@ export async function workspaceSyncTargetBootstrap(
     const fingerprint = await computeWorkspaceSyncRootFingerprint(canonicalRoot);
     const verifiedFingerprint = await computeWorkspaceSyncRootFingerprint(await realpath(requested));
     if (verifiedFingerprint !== fingerprint) throw bootstrapError('root_changed', 'workspace sync target root changed during bootstrap');
+    if (!materializationCustody && input.replaceRelationshipId && input.workerCopyCreation
+      && input.targetBootstrap === 'use_existing') {
+      const rebound = await prepareCommittedWorkspaceTargetMaterializationRebind({
+        targetPath: canonicalRoot,
+        previousReceiptPath: workspaceSyncMaterializationReceiptPath(
+          input.materializationDirectory,
+          input.replaceRelationshipId,
+          input.endpointRole,
+        ),
+        nextReceiptPath: receiptPath,
+        previousWorkerCopyCreation: {
+          ...input.workerCopyCreation,
+          relationshipId: input.replaceRelationshipId,
+        },
+        nextWorkerCopyCreation: input.workerCopyCreation,
+      });
+      if (rebound) {
+        materializationCustody = rebound;
+      }
+    }
     const publishReady = async (): Promise<void> => await persistReadyFact(readyPath, {
       ...(input.nativeCopyOwner && copyOnceBaseline ? { v: 3 as const, kind: 'native_finite' as const,
         nativeCopyOwner: input.nativeCopyOwner, copyOnceBaseline: encodeWorkspaceSyncSeedBaseline(copyOnceBaseline) }

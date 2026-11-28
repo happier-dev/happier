@@ -8,12 +8,13 @@ import type { PreNormalizedActionSpec } from './definition.js';
 
 
 function createWorkspaceSyncActionSpecs() {
+  const controllerMachineRuntimeDemandForInput: NonNullable<PreNormalizedActionSpec['machineRuntimeDemandForInput']> = (input, context) => {
+    const machineId = readNonEmptyString(readRecord(input).controllerMachineId);
+    return machineId ? { target: { kind: 'machine', machineId }, ...(context.serverId ? { serverId: context.serverId } : {}) } : null;
+  };
   const relationshipControlExecution = { executionPlacement: 'machine', originalExecution: { accountRoot: 'allowed',
     requesterCredentials: 'none' },
-    machineRuntimeDemandForInput: (input, context) => {
-      const machineId = readNonEmptyString(readRecord(input).controllerMachineId);
-      return machineId ? { target: { kind: 'machine', machineId }, ...(context.serverId ? { serverId: context.serverId } : {}) } : null;
-    },
+    machineRuntimeDemandForInput: controllerMachineRuntimeDemandForInput,
   } satisfies Pick<PreNormalizedActionSpec, 'executionPlacement' | 'originalExecution' | 'machineRuntimeDemandForInput'>;
   const relationshipCreate = {
     id: 'workspace.sync.relationship.create', executionPlacement: 'machine', sideEffectClass: 'danger', approval: {result: 'required',flow: 'deferred'},
@@ -90,7 +91,9 @@ function createWorkspaceSyncActionSpecs() {
 
   return Object.freeze([
   {
-    id: 'workspace.sync.conflict.resolve', executionPlacement: 'session', sideEffectClass: 'danger', approval: {result: 'required',flow: 'deferred'},
+    id: 'workspace.sync.conflict.resolve', executionPlacement: 'machine', originalExecution: { accountRoot: 'allowed' },
+    machineRuntimeDemandForInput: controllerMachineRuntimeDemandForInput,
+    sideEffectClass: 'danger', approval: {result: 'required',flow: 'deferred'},
     workspaceWrite: true,
     operation: {
       version: 1,

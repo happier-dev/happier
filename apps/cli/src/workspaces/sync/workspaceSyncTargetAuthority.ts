@@ -834,6 +834,7 @@ function canonicalBootstrapDefinition(request: WorkspaceSyncTargetBootstrapPrepa
     policyDigest: request.policyDigest,
     createIfMissing: request.createIfMissing,
     ...(request.targetBootstrap ? { targetBootstrap: request.targetBootstrap } : {}),
+    ...(request.replaceRelationshipId ? { replaceRelationshipId: request.replaceRelationshipId } : {}),
     ...(request.targetReplacementApproval
       ? { targetReplacementApproval: request.targetReplacementApproval }
       : {}),
@@ -2862,7 +2863,12 @@ export function createWorkspaceSyncTargetAuthority(
           skipCleanup: request.actionInput.removeTargetCopy?.skipCleanup === true });
       })() : undefined;
       await retirePreparedCopy?.();
-      if (!native) await authority.reconcileRetainedBootstraps();
+      if (!native) {
+        if (retirePreparedCopy && dependencies.refreshProjectSnapshot) {
+          await dependencies.refreshProjectSnapshot(request.signal);
+        }
+        await authority.reconcileRetainedBootstraps();
+      }
       await removeWorkspaceSyncCommittedCopy({ ...resolved.copy, rootOwnershipManager: resolved.bootstrap.rootOwnershipManager,
         ...(native ? { retainedOwnership: native.entry.handle } : {}) });
       if (native) await discardRetained(native.authorityKey, 'commit');
@@ -3427,17 +3433,36 @@ export function createWorkspaceSyncTargetAuthority(
         await admitInstalledWriterLoan({ relationshipId: request.owner.kind === 'relationship' ? request.owner.relationshipId : null,
           ...(sourceWriterTargetRouting ? { sourceWriterTargetRouting } : {}), ...(targetRouting ? { targetRouting } : {}) }, signal);
       }
-      const invocationSnapshot = sourceInvocation ?? (installedWriterTarget ? getSnapshot() : await readInvocationSnapshot(signal, context, request.bootstrapOperationId));
-      const owner = resolveBootstrapOwner(invocationSnapshot, request, localServerId, admittedCopy);
+      let invocationSnapshot = sourceInvocation ?? (installedWriterTarget ? getSnapshot() : await readInvocationSnapshot(signal, context, request.bootstrapOperationId));
+      let owner = resolveBootstrapOwner(invocationSnapshot, request, localServerId, admittedCopy);
+      // resolveBootstrapOwner may use a caller's transient runtime definition. Only
+      // the receiving target's already-staged Home row can prove original creation.
+      let workerCopyCreation = resolvePersistedWorkerCopyCreation(invocationSnapshot, owner.relationship,
+        owner.sourceWorkspaceRefId, owner.targetWorkspaceRefId, localServerId);
+      if (request.replaceRelationshipId && !sourceInvocation && !installedWriterTarget) {
+        const predecessorInSnapshot = invocationSnapshot.relationships.some(
+          candidate => candidate.relationshipId === request.replaceRelationshipId,
+        );
+        const stagedWorkerCopyMissing = owner.relationship !== null
+          && getWorkspaceSyncWorkerCopyV1(owner.relationship) !== null
+          && workerCopyCreation === undefined;
+        if ((predecessorInSnapshot || stagedWorkerCopyMissing) && dependencies.refreshProjectSnapshot) {
+          const refreshed = await dependencies.refreshProjectSnapshot(signal);
+          invocationSnapshot = refreshed ?? getSnapshot(request.bootstrapOperationId);
+          owner = resolveBootstrapOwner(invocationSnapshot, request, localServerId, admittedCopy);
+          workerCopyCreation = resolvePersistedWorkerCopyCreation(invocationSnapshot, owner.relationship,
+            owner.sourceWorkspaceRefId, owner.targetWorkspaceRefId, localServerId);
+        }
+        if (!invocationSnapshot.relationships.some(candidate => candidate.relationshipId === request.replaceRelationshipId)
+          && [...retained.values()].some(entry => entry.relationshipId === request.replaceRelationshipId)) {
+          await authority.reconcileRetainedBootstraps();
+        }
+      }
       const nativeExecution = await nativeExecutionFor(owner.targetWorkspace, context);
       if (!nativeExecution) assertLocalWorkspacePlacement(owner.targetWorkspace, localServerId, localMachineId, dependencies.localManagedTarget);
       if (nativeExecution && !admittedTarget) {
         admittedTarget = localAdmittedTarget(owner.targetWorkspace, owner.targetRootPath, signal);
       }
-      // resolveBootstrapOwner may use a caller's transient runtime definition. Only
-      // the receiving target's already-staged Home row can prove original creation.
-      const workerCopyCreation = resolvePersistedWorkerCopyCreation(invocationSnapshot, owner.relationship,
-        owner.sourceWorkspaceRefId, owner.targetWorkspaceRefId, localServerId);
       let requesterCopyCustody: WorkspaceSyncRequesterCopyCustody | undefined;
       if (sourceWriterTargetRouting && owner.relationship && getWorkspaceSyncWorkerCopyV1(owner.relationship)) {
         const installation = readInstallationIdentityIfExistsSync();
@@ -3452,6 +3477,72 @@ export function createWorkspaceSyncTargetAuthority(
           target: { machineId: localMachineId, installationId: installation.installationId },
           relationship: owner.relationship,
         };
+      }
+      let allowReplaceRebind = false;
+      if (request.replaceRelationshipId) {
+        if ([...retained.values()].some(entry => entry.relationshipId === request.replaceRelationshipId)
+          || invocationSnapshot.relationships.some(candidate => candidate.relationshipId === request.replaceRelationshipId)) {
+          throw authorityError('bootstrap_definition_conflict', 'The link selected for replacement is still active');
+        }
+        const predecessorReadyFact = await readWorkspaceSyncFinalReadyFact(
+          bootstrap.materializationDirectory,
+          request.replaceRelationshipId,
+          request.endpointRole,
+        );
+        if (sourceWriterTargetRouting || sourceInvocation || requesterCopyCustody) {
+          const callerAccountId = requesterCopyCustody?.actorAccountId
+            ?? sourceWriterTargetRouting?.source.sourceContext.machineAdmission.actorAccountId
+            ?? context?.callerInputAuthorization?.binding.accountId;
+          if (workerCopyCreation) {
+            const pred = predecessorReadyFact?.v === 2 ? predecessorReadyFact.requesterCopyCustody : null;
+            const predWorkerCopy = pred ? getWorkspaceSyncWorkerCopyV1(pred.relationship) : null;
+            const matchesRequesterPredecessor = predecessorReadyFact !== null
+              && predecessorReadyFact.v === 2
+              && requesterCopyCustody !== undefined
+              && pred !== null
+              && predecessorReadyFact.relationshipId === request.replaceRelationshipId
+              && predecessorReadyFact.endpointRole === request.endpointRole
+              && predecessorReadyFact.targetWorkspaceRefId === owner.targetWorkspaceRefId
+              && pred.accountServerId === requesterCopyCustody.accountServerId
+              && pred.actorAccountId === requesterCopyCustody.actorAccountId
+              && isDeepStrictEqual(pred.sourceWriter, requesterCopyCustody.sourceWriter)
+              && isDeepStrictEqual(pred.sourceWorkspace, requesterCopyCustody.sourceWorkspace)
+              && isDeepStrictEqual(pred.target, requesterCopyCustody.target)
+              && pred.relationship.relationshipId === request.replaceRelationshipId
+              && predWorkerCopy?.sourceWorkspaceRefId === workerCopyCreation.sourceWorkspaceRefId
+              && predWorkerCopy?.targetWorkspaceRefId === workerCopyCreation.targetWorkspaceRefId;
+            if (!matchesRequesterPredecessor) {
+              throw authorityError('forbidden', 'The link selected for replacement does not match caller custody');
+            }
+            allowReplaceRebind = true;
+          } else if (predecessorReadyFact?.v === 2 && predecessorReadyFact.requesterCopyCustody.actorAccountId !== callerAccountId) {
+            throw authorityError('forbidden', 'The link selected for replacement does not match caller custody');
+          }
+        } else if (predecessorReadyFact?.v === 2) {
+          const localInstallationId = readInstallationIdentityIfExistsSync()?.installationId;
+          const pred = predecessorReadyFact.requesterCopyCustody;
+          const matchesInstalledOwner = dependencies.localAccountId !== undefined
+            && pred.accountServerId === localServerId
+            && pred.actorAccountId === dependencies.localAccountId
+            && pred.target.machineId === localMachineId
+            && pred.target.installationId === localInstallationId
+            && predecessorReadyFact.relationshipId === request.replaceRelationshipId
+            && predecessorReadyFact.endpointRole === request.endpointRole
+            && predecessorReadyFact.targetWorkspaceRefId === owner.targetWorkspaceRefId;
+          if (!matchesInstalledOwner) {
+            throw authorityError('forbidden', 'The link selected for replacement belongs to another account');
+          }
+          allowReplaceRebind = Boolean(workerCopyCreation);
+        } else if (predecessorReadyFact?.v === 3) {
+          throw authorityError('forbidden', 'The link selected for replacement does not match caller custody');
+        } else if (predecessorReadyFact?.v === 1) {
+          if (predecessorReadyFact.relationshipId !== request.replaceRelationshipId
+            || predecessorReadyFact.endpointRole !== request.endpointRole
+            || predecessorReadyFact.targetWorkspaceRefId !== owner.targetWorkspaceRefId) {
+            throw authorityError('forbidden', 'The link selected for replacement does not match target endpoint');
+          }
+          allowReplaceRebind = Boolean(workerCopyCreation);
+        }
       }
       const sourceIsLocal = owner.sourceWorkspace !== null && isLocalWorkspace(owner.sourceWorkspace);
       const localSourceRootPath = sourceIsLocal ? owner.sourceRootPath : undefined;
@@ -3693,6 +3784,7 @@ export function createWorkspaceSyncTargetAuthority(
           contentSelection: owner.contentPolicy.selection,
           ...(owner.contentPolicy.contentOnly ? { contentOnly: true as const } : {}),
           ...(workerCopyCreation ? { workerCopyCreation } : {}),
+          ...(allowReplaceRebind && request.replaceRelationshipId ? { replaceRelationshipId: request.replaceRelationshipId } : {}),
           ...(requesterCopyCustody ? { requesterCopyCustody } : {}),
           ...(request.owner.kind === 'copy_once' && dependencies.localManagedTarget && dependencies.localAccountId
             && isManagedWorkspaceRefV2(owner.targetWorkspace)
@@ -3856,6 +3948,7 @@ export function createWorkspaceSyncTargetAuthority(
         policyDigest: request.policyDigest,
         createIfMissing: request.createIfMissing,
         ...(request.targetBootstrap ? { targetBootstrap: request.targetBootstrap } : {}),
+        ...(request.replaceRelationshipId ? { replaceRelationshipId: request.replaceRelationshipId } : {}),
         ...(request.targetReplacementApproval
           ? {
               targetReplacementApproval: request.targetReplacementApproval,
