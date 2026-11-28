@@ -17,6 +17,7 @@ import { classifyInboxSessionCandidate } from '@/activity/presentation/buildInbo
 import { readCredentialAuthorityKind } from '@/auth/context/credentialAuthority';
 import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { readSessionListRowsForServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
 import { buildSessionListRowFilterFacts } from '@/sync/domains/session/listing/sessionListWorkFilter';
 import { listPendingSessionRequests } from '@/sync/domains/session/pending/listPendingSessionRequests';
 import { readPendingNavigationDetailsForAuthority } from '@/sync/ops/sessionPendingNavigationDetails';
@@ -84,9 +85,18 @@ export async function visitSessionFollowPersonalReceiverOriginals(input: Receive
 }>): Promise<void> {
     if (!input.sourceSessionIds.length || !input.snapshot.rules.some(rule => rule.receiver.kind === 'account' && rule.definition.enabled)) return;
     await withReceiverAuthority(input, async (authority, check, signal) => {
+        const { serverId, accountId } = input.lifetime.scope;
+        const current = getStorage().getState();
+        const rows = current.profileScope?.accountId === accountId
+            && areServerProfileIdentifiersEquivalent(current.profileScope.serverId, serverId)
+            ? readSessionListRowsForServerId(current.sessionListRowsByServerId, serverId)
+            : null;
+        // The source daemon evaluates this Account's own Sessions. Missing
+        // ownership facts still need the authoritative snapshot below.
+        const sessionIds = [...new Set(input.sourceSessionIds)].filter(id => rows?.[id]?.ownerAccountId !== accountId);
+        if (sessionIds.length === 0) return;
         const rules = input.snapshot.rules.filter(rule => rule.receiver.kind === 'account' && rule.definition.enabled);
         const earliestInception = rules.reduce((earliest, rule) => Math.min(earliest, rule.inception?.createdAt ?? Infinity), Infinity);
-        const sessionIds = [...new Set(input.sourceSessionIds)];
         const snapshots = await readSessionSnapshotsForAuthority({ authority, sessionIds, includeTurns: false,
             signal, isCurrent: () => { check(); return true; } });
         check();

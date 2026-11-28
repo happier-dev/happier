@@ -6,6 +6,7 @@ import type { FollowDeliveryMuteScopeV1 } from '@happier-dev/protocol/sessions/f
 import { normalizeSessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import { decodeV2SessionListCursorV1, encodeV2SessionListCursorV1 } from '@happier-dev/protocol/sessions/listing/cursor';
 import { SESSION_LIST_PAGE_DEFAULT_LIMIT, SESSION_LIST_PAGE_MAX_LIMIT, SessionListQueryV1Schema } from '@happier-dev/protocol/sessions/listing/query';
+import { SessionReadBatchRequestV1Schema } from '@happier-dev/protocol/sessions/read/sessionReadBatchV1';
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createPlainSessionByIdResponseFixture, createSessionAccessFixture, createSessionFixture, createSessionViewerFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { ABSENT_SESSION_FOLLOW_FACTS_V1 } from '@happier-dev/protocol/sessions/follow/accountFollow';
@@ -545,6 +546,7 @@ it('batches the cold Follow candidate census on a 665-Machine Home and stays qui
     const rows = sessions.map(session => ({
         ...createPlainSessionByIdResponseFixture(session).session, ownerAccountId: 'alice', viewer: session.viewer,
     }));
+    for (const row of rows) homes.answer(serverId, `/v2/sessions/${row.id}`, { body: { session: row } });
     homes.answer(serverId, '/v1/machines', { body: machines });
     const emptySessionPage = { sessions: [], hasNext: false, nextCursor: null };
     homes.answer(serverId, '/v2/sessions', { body: emptySessionPage });
@@ -569,10 +571,18 @@ it('batches the cold Follow candidate census on a 665-Machine Home and stays qui
     }] } });
     homes.answer(serverId, '/v2/account/session-follow-preferences', { body: { assigned: false, direct: false, team: false, group: false } });
     homes.answer(serverId, mutePath, { body: { scopes: [] } });
+    const batchSizes: number[] = [];
+    const request = createSessionReadBatchFetchBoundary(homes.request);
     restored = await restoreServerAccountForTest({ serverUrl, accountId: 'alice',
         credentials: { token: createAccountTokenForTests('alice', { currentAccount: true }) },
         configureSocket: configureConnectedServerSocketBoundary,
-        request: createSessionReadBatchFetchBoundary(homes.request) });
+        request: async (url, init) => {
+            if (new URL(String(url)).pathname === '/v2/sessions/read-batch' && init?.method === 'POST') {
+                const batch = SessionReadBatchRequestV1Schema.parse(JSON.parse(String(init.body)));
+                batchSizes.push(batch.sessionIds.filter(id => id.startsWith('owned-')).length);
+            }
+            return request(url, init);
+        } });
     await vi.waitFor(() => expect(getStorage().getState().isDataReady).toBe(true));
     await vi.waitFor(() => expect(getStorage().getState().machineListByServerId[serverId]).toHaveLength(machines.length));
     const hook = await renderHook(() => useActivityPersonalSessionMembership(), {
@@ -591,6 +601,20 @@ it('batches the cold Follow candidate census on a 665-Machine Home and stays qui
     await flushHookEffects({ cycles: 1, advanceTimersMs: 60_000 });
     expect(candidateReads()).toBe(coldReads);
     vi.useRealTimers();
+    const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+    const { readSessionListRowsForServerId } = await import('@/sync/domains/session/listing/sessionListRowStateLookup');
+    const { readSessionFollowRuleInputs } = await import('@/sync/api/session/sessionFollowRulesApi');
+    const { visitSessionFollowPersonalReceiverOriginals } = await import('@/sync/api/session/sessionFollowPersonalReceiverApi');
+    const lifetime = captureActiveServerAccountScopeLifetime();
+    const snapshot = await readSessionFollowRuleInputs(serverId);
+    if (!lifetime || snapshot.status !== 'ready') throw new Error('Missing fixture Follow authority');
+    const publishedRows = readSessionListRowsForServerId(getStorage().getState().sessionListRowsByServerId, serverId);
+    expect(sessions.filter(session => publishedRows?.[session.id]?.ownerAccountId === 'alice')).toHaveLength(sessions.length);
+    batchSizes.length = 0;
+    await visitSessionFollowPersonalReceiverOriginals({ lifetime, snapshot, sourceSessionIds: sessions.map(session => session.id),
+        onOccurrence: async () => { throw new Error('The receiver cannot evaluate local originals'); } });
+    console.info('Fleet Follow owned snapshot batch sizes', batchSizes);
+    expect.soft(batchSizes.filter(size => size > 0)).toEqual([]);
 
     const removed = rows.pop()!;
     await act(async () => publishHomeAccountChange(serverId, [removed.id], { changeKinds: ['share'], sessionListQueryAffects: true }));
