@@ -8706,7 +8706,8 @@ ends with its last registration. After the last Session and hold end, the host
 stays warm so a subsequent Start can reuse its loaded runner. A process signal
 or runtime handover can end the host. On daemon shutdown, the daemon asks the
 idle host to exit. Sessions that continue across daemon shutdown keep their host
-for reattachment.
+for reattachment. The warm Session host has an idle budget of about 320 MiB
+PSS, approved in the 2026-11-28 P03 owner decision.
 
 When Memory Guard is enabled, its existing sustained-scarcity planner can reclaim
 a measured idle host before acting on user resources. The daemon observes
