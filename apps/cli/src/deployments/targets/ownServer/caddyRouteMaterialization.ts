@@ -33,7 +33,7 @@ type CaddyProxy = {
 };
 
 type CaddyHandler = CaddyProxy
-    | { handler: 'static_response'; status_code: number; headers?: Readonly<Record<string, readonly string[]>> }
+    | { handler: 'static_response'; status_code: number; body?: string; headers?: Readonly<Record<string, readonly string[]>> }
     | { handler: 'subroute'; routes: readonly CaddyRoute[] }
     | { handler: 'vars'; happierLocalProxy: string }
     | { handler: 'vars'; happierTelemetryCollectorNetwork: string }
@@ -83,7 +83,7 @@ export function readCaddyTelemetryCollectorBridges(configuration: unknown): read
 type CaddyReplicaUpstreams = { kind: 'replicas'; containerNames: readonly string[]; containerPort?: number };
 export type CaddyDomainRouteInput = {
     domainId: string;
-    domain: Pick<DeploymentDomainContentV1, 'healthCheck' | 'target'> & { hostname: string };
+    domain: Pick<DeploymentDomainContentV1, 'healthCheck' | 'maintenancePage' | 'target'> & { hostname: string };
     listener: 'privateOrigin' | 'public';
     upstreams:
         | (CaddyReplicaUpstreams & { containerNames: readonly [string, ...string[]] })
@@ -342,6 +342,10 @@ function renderCaddyDomainRoute(input: CaddyDomainRenderInput, privatePeerAllowe
                 } },
             }],
         });
+    }
+    if (domain.maintenancePage === true) {
+        routes.push({ terminal: true, handle: [{ handler: 'static_response', status_code: 503,
+            headers: { 'Content-Type': ['text/plain; charset=utf-8'] }, body: 'We’ll be back soon.\n' }] });
     }
     const appProxy = redirectTo ? undefined : proxy(proxyId, upstreams, local ? 'local' : 'privateOrigin');
     routes.push(redirectTo ? { handle: [{ handler: 'static_response', status_code: 308,

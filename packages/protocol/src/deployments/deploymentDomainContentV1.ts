@@ -43,7 +43,10 @@ const domainAuthoredContent = () => ({
         z.strictObject({ kind: z.literal('custom') }),
     ])),
     basicAuth: z.optional(z.strictObject({ username: text })),
+    maintenancePage: z.optional(z.boolean()),
 });
+const supportsMaintenancePage = (content: { target: { kind?: string }; maintenancePage?: boolean }) =>
+    content.maintenancePage === undefined || content.target.kind === undefined || content.target.kind === 'native';
 const hasValidDomainHostname = (content: {
     hostname: string | null;
     target: z.output<ReturnType<typeof domainAuthoredContent>['target']>;
@@ -59,7 +62,8 @@ const hasValidDomainHostname = (content: {
 );
 
 export const DeploymentDomainAuthoredContentV1Schema = lazyZodSchema(() =>
-    z.strictObject(domainAuthoredContent()).check(z.refine(content => hasValidDomainHostname(content), { message: 'Only a provider-assigned Domain can await its hostname.' })));
+    z.strictObject(domainAuthoredContent()).check(z.refine(content => hasValidDomainHostname(content), { message: 'Only a provider-assigned Domain can await its hostname.' }),
+        z.refine(supportsMaintenancePage, { message: 'Maintenance pages require a native service Domain.' })));
 
 /** Settlement is kept only in the protected Artifact body. */
 const DeploymentDomainPrivatePlacementBindingV1Schema = lazyZodSchema(() => z.strictObject({
@@ -71,6 +75,7 @@ export const DeploymentDomainContentV1Schema = lazyZodSchema(() => z.strictObjec
     ...domainAuthoredContent(),
     privatePlacementBindings: z.optional(z.array(DeploymentDomainPrivatePlacementBindingV1Schema)),
 }).check(z.refine(content => hasValidDomainHostname(content), { message: 'Only a provider-assigned Domain can await its hostname.' }),
+    z.refine(supportsMaintenancePage, { message: 'Maintenance pages require a native service Domain.' }),
     z.refine(content => content.privatePlacementBindings === undefined
         || content.target.kind !== 'provider' && content.hostname !== null,
     { message: 'Provider Domains have no native private placements.' }),

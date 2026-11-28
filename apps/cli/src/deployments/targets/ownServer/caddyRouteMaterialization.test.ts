@@ -5,6 +5,38 @@ import { materializeCaddyDomainRouteV1, materializeCaddyInitialConfigV1,
 import { logger } from '@/ui/logger';
 
 describe('Caddy public TLS materialization', () => {
+    it.each(['public', 'privateOrigin'] as const)('serves maintenance on %s and restores the normal route when disabled', listener => {
+        const input: Parameters<typeof materializeCaddyDomainRouteV1>[0] = { domainId: 'app', listener,
+            domain: { hostname: 'app.example.test', target: { service: 'web', containerPort: 3000, path: '/app' } },
+            upstreams: { kind: 'replicas', containerNames: ['web-1'] }, privateSourceRanges: [] };
+        const enabled = { ...input, domain: { ...input.domain, maintenancePage: true as const } };
+        const material = materializeCaddyDomainRouteV1(enabled);
+        expect(material.route.match).toEqual([{ host: ['app.example.test'], path: ['/app*'] }]);
+        expect(material.route).toHaveProperty('handle.0.routes.0', { terminal: true, handle: [{
+            handler: 'static_response', status_code: 503, headers: { 'Content-Type': ['text/plain; charset=utf-8'] },
+            body: expect.stringMatching(/back soon/i),
+        }] });
+        const observed = materializeCaddyDomainRemovalV1(enabled, { route: material.route });
+        expect(observed?.observedReplicaNames).toEqual(['web-1']);
+        if (!observed) throw new Error('Expected the Domain to remain observable during maintenance');
+        expect(materializeCaddyDomainReplicaSetV1(observed, ['web-2']).route).toEqual(
+            materializeCaddyDomainRouteV1({ ...enabled, upstreams: { kind: 'replicas', containerNames: ['web-2'] } }).route);
+        expect(materializeCaddyDomainRouteV1(input).route).toHaveProperty('handle.0.routes.0.handle.1.handler', 'reverse_proxy');
+    });
+
+    it('preserves Domain authentication before the maintenance response', () => {
+        const input: Parameters<typeof materializeCaddyDomainRouteV1>[0] = {
+            domainId: 'private', listener: 'public', privateSourceRanges: [],
+            domain: { hostname: 'private.example.test', target: { service: 'web', containerPort: 3000 }, maintenancePage: true },
+            basicAuth: [{ username: 'operator', bcryptHash: 'existing-hash' }],
+            upstreams: { kind: 'replicas', containerNames: ['web-1'] },
+        };
+        const material = materializeCaddyDomainRouteV1(input);
+        expect(material.route).toHaveProperty('handle.0.routes.0.handle.0.handler', 'authentication');
+        expect(material.route).toHaveProperty('handle.0.routes.1.handle.0.status_code', 503);
+        expect(materializeCaddyDomainRemovalV1(input, { route: material.route })?.observedReplicaNames).toEqual(['web-1']);
+    });
+
     it('routes a deployed telemetry App through its private declared replica port as a local origin', () => {
         const material = materializeCaddyDomainRouteV1({ domainId: 'collector-app', listener: 'privateOrigin',
             domain: { hostname: 'collector.example.test', target: { kind: 'telemetry' } },
