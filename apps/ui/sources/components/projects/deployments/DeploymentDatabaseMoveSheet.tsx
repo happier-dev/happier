@@ -54,7 +54,10 @@ export function deploymentDatabaseMoveReview(input: Omit<Input, 'backupTarget'>,
   if (!source.environment.capabilities.manage || data.engine !== 'postgres') return null;
   const backup = source.content.backup;
   const backupTarget = backup && 'configRevision' in backup ? deploymentBackupTargetOperands(source, backup) : null;
-  if (!backupTarget && !(fromStatefulRefusal && (source.runtimeTargetLink?.members.length ?? 0) > 1)) return null;
+  const runtime = source.runtimeTargetLink;
+  const needsBackups = !backup && runtime?.members.length === 1 && Boolean(runtime.activeDeploymentId);
+  const needsOneServer = fromStatefulRefusal && (runtime?.members.length ?? 0) > 1;
+  if (!backupTarget && !needsBackups && !needsOneServer) return null;
   return () => showDeploymentSheet({ component: DeploymentDatabaseMoveSheet, props: { ...input, backupTarget },
     title: t('projects.deployments.databaseMoveTitle'), testID: 'project-deployments.move.modal', closeOnBackdrop: false });
 }
@@ -159,6 +162,7 @@ function DeploymentDatabaseMoveSheet(props: Input & CustomModalInjectedProps) {
     } finally { setBusy(false); }
   };
   // Only a destination refused after its read speaks, directly under its row: what is wrong, and what to do, per reason.
+  const sourceNeedsBackups = !props.backupTarget && props.source.runtimeTargetLink?.members.length === 1;
   const selectedNotice = selectedId && !selection && !selectedReading ? <SurfaceStateCard testID={`project-deployments.move.destination.${
     selected.snapshot.status === 'ready' ? 'unavailable' : 'failed'}`} size="line"
     kind={selected.snapshot.status === 'ready' ? 'unavailable' : 'error'}
@@ -192,7 +196,15 @@ function DeploymentDatabaseMoveSheet(props: Input & CustomModalInjectedProps) {
   return <ListPresentationProvider value="page" pageInsets="contained">
     <View testID="project-deployments.move" style={deploymentSheetStyles.body}>
       <Text style={deploymentSheetStyles.lead}>{t('projects.deployments.databaseMoveLead')}</Text>
-      {!props.backupTarget ? <SurfaceStateCard testID="project-deployments.move.source.servers" size="line" kind="unavailable"
+      {sourceNeedsBackups ? <SurfaceStateCard testID="project-deployments.move.source.backups" size="line" kind="unavailable"
+        title={t('projects.deployments.databaseMoveBackupsRequired')}
+        action={{ label: t('projects.deployments.settingsSections.setupTitle'),
+          testID: 'project-deployments.move.source.setUpBackups', onPress: () => {
+            const { serverId, projectSourceId, id: environmentId } = props.source.environment;
+            props.onClose();
+            router.push(deploymentEnvironmentRoute({ serverId, projectSourceId, environmentId,
+              tab: 'settings', section: 'backups' }) as never);
+          } }} /> : !props.backupTarget ? <SurfaceStateCard testID="project-deployments.move.source.servers" size="line" kind="unavailable"
         title={t('projects.deployments.databaseAvailabilityOneServer')}
         reason={t('projects.deployments.databaseAvailabilityDetail')}
         action={{ label: t('projects.deployments.sectionServersBuild'), onPress: () => {
@@ -201,7 +213,7 @@ function DeploymentDatabaseMoveSheet(props: Input & CustomModalInjectedProps) {
           router.push(deploymentEnvironmentRoute({ serverId: environment.serverId, projectSourceId: environment.projectSourceId,
             environmentId: environment.id, tab: 'settings', section: 'servers-build' }) as never);
         } }} /> : null}
-      <DeploymentEnvironmentChooser controller={controller} testID="project-deployments.move.destination" includeDatabaseMoveCandidates
+      {sourceNeedsBackups ? null : <DeploymentEnvironmentChooser controller={controller} testID="project-deployments.move.destination" includeDatabaseMoveCandidates
         title={t('projects.deployments.databaseMoveDestination')} selectedId={selectedId} onSelect={select} disabled={busy}
         lifetime={props.lifetime} rowStatus={rowStatus} selectedNotice={selectedNotice}
         eligible={row => row.environment.id !== props.source.environment.id && row.environment.capabilities.manage
@@ -212,7 +224,7 @@ function DeploymentDatabaseMoveSheet(props: Input & CustomModalInjectedProps) {
         emptyAction={{ label: t('projects.deployments.addOpenStore'), onPress: () => {
           props.onClose();
           router.push(buildPluginsHomeRoute('app', { view: 'kind', kind: 'app', filters: DEPLOYMENT_DATABASE_CATALOG_FILTER }) as never);
-        } }} />
+        } }} />}
       {refusal ? <SurfaceStateCard testID="project-deployments.move.refused" size="line" kind="error"
         title={t('projects.deployments.databaseMoveUnavailable')} diagnosticCode={refusal.code} reason={refusal.variable ?? (refusal.code === 'writer_review_required' ? t('projects.deployments.move.writerReviewRequired')
           : refusal.code === 'noRunningWriter' ? t('projects.deployments.move.noRunningWriter')

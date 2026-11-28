@@ -1192,6 +1192,18 @@ describe('Environment → Database → Move', () => {
     } finally { await view.dispose(); }
   });
 
+  it('offers Move on a deployed PostgreSQL before backups are set up', async () => {
+    const view = await renderDatabase({ noBackup: true, storedDefinition: true });
+    try {
+      expect(await view.settle(`${page}.menu.trigger`)).not.toBeNull();
+      await chooseMoveFromHeaderMenu(view);
+      await view.screen.pressByTestIdAsync('project-deployments.move.source.setUpBackups');
+      expect(routerMock.spies.push).toHaveBeenCalledWith(expect.objectContaining({ params: expect.objectContaining({
+        deploymentEnvironment: view.environmentId, deploymentTab: 'settings', deploymentSection: 'backups' }) }));
+      expect(view.effects.some(effect => effect.actionId === 'workflow.run.start')).toBe(false);
+    } finally { await view.dispose(); }
+  });
+
   it('uses the data owner’s single-Machine prerequisite instead of leaving other source writers running', async () => {
     const view = await renderDatabase({ moveDestination: true, storedDefinition: true, sourceMultiMachine: true });
     try {
