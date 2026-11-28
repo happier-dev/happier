@@ -33,9 +33,9 @@ export function readCaddyGeneratedAddressOffer() {
 }
 
 export function readCaddyExpectedIngressIpv4(hostname: string): string | null {
-    const candidates = readCaddyIngressIpv4Candidates();
-    return candidates.find(address => hostname.endsWith(generatedSuffix(address)))
-        ?? (candidates.length === 1 ? candidates[0]! : null);
+    const encoded = /\.([0-9]{1,3}(?:-[0-9]{1,3}){3})\.sslip\.io$/u.exec(hostname)?.[1];
+    const address = encoded?.replaceAll('-', '.');
+    return address && isIPv4(address) ? address : null;
 }
 
 /** Native availability only; P41 owns Domain routes and P20 owns binding effects. */

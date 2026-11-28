@@ -29,8 +29,10 @@ export async function readNativeCaddyDnsReadiness<T extends object>(hostname: st
         if (ipv4.health.status !== 'up') resolution = ipv6.health;
     }
     const result = resolution.status === 'up' ? await probe() : resolution;
-    return expectedIpv4 === undefined ? result : { ...result,
-        dnsComparison: { expectedIpv4, answered: { A: ipv4.answers, AAAA: ipv6.answers } } };
+    if (expectedIpv4 === undefined || (expectedIpv4 === null && 'status' in result && result.status === 'up')) {
+        return result;
+    }
+    return { ...result, dnsComparison: { expectedIpv4, answered: { A: ipv4.answers, AAAA: ipv6.answers } } };
 }
 
 /** This token proves routing, not TLS or application health. Never follow redirects

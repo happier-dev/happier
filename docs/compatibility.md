@@ -15823,8 +15823,10 @@ interface observation supplies public IPv4 choices, including typed unavailabili
 Selecting a choice uses ordinary Domain Add. The authored hostname and optional
 `addressKind: 'generatedCaddy'` are retained in Domain content.
 
-Draft Check and attached Verify can return the expected ingress IPv4 and the A
-and AAAA answers in their protected Action result. Domain headers, Home
+Draft Check and attached Verify compare DNS answers against the encoded IPv4
+for generated Caddy names. For authored names, the Caddy challenge proves
+routing even when DNS returns a proxy address or only AAAA records. DNS
+comparisons for authored names appear only on failure. Domain headers, Home
 transitions and signed Machine observations carry only semantic readiness.
 The admitted child uses exact Machine and installation routing. Private Domain
 content stays in the mode-correct child body, outside the routing projection.

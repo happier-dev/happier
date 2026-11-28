@@ -395,7 +395,7 @@ export function createOwnServerDomainNative(host: Readonly<{
             const { identity, caddy, domain, signal } = acquired;
             if (domain.hostname === null) return { ok: true as const, environmentId: job.input.environmentId,
                 addressOffer: readCaddyGeneratedAddressOffer() };
-            const expectedIpv4 = readCaddyExpectedIngressIpv4(domain.hostname);
+            const expectedIpv4 = domain.addressKind === 'generatedCaddy' ? readCaddyExpectedIngressIpv4(domain.hostname) : null;
             const selection = selectDomainPublicCaddyServer({ machineId: host.machineId, caddy });
             if (selection.status !== 'ready' || caddy.status !== 'ready') {
                 const basis = { observer: { machineId: host.machineId, installationId: identity.installationId },
@@ -446,7 +446,7 @@ export function createOwnServerDomainNative(host: Readonly<{
                 const verifying = job.actionId === 'deployments.domains.verify';
                 const health = await native.checkDnsReadiness({ hostname: domain.hostname,
                     nativeServer: job.capture.placement.nativeServer, listener: job.capture.listener, signal,
-                    expectedIpv4: readCaddyExpectedIngressIpv4(domain.hostname) });
+                    expectedIpv4: domain.addressKind === 'generatedCaddy' ? readCaddyExpectedIngressIpv4(domain.hostname) : null });
                 if (!('status' in health)) return refuse('reason' in health ? health.reason : 'native_route_unavailable',
                     'details' in health ? health.details : undefined, 'failureCause' in health ? health.failureCause : undefined);
                 const signed = signObservation({ ...observation,

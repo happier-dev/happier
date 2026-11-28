@@ -133,7 +133,7 @@ it.each([
     const desktop = 'desktop' in scenario && scenario.desktop;
     const dns = 'dns' in scenario ? scenario.dns : 'ready';
     const offer = 'offer' in scenario && scenario.offer;
-    vi.spyOn(os, 'networkInterfaces').mockReturnValue(dns === 'mismatch' || offer ? { eth0: [
+    vi.spyOn(os, 'networkInterfaces').mockReturnValue(dns === 'ipv6' || offer ? { eth0: [
         { address: '93.184.216.34', family: 'IPv4', internal: false, netmask: '255.255.255.0', mac: '00:00:00:00:00:00', cidr: '93.184.216.34/24' },
     ] } : {});
     const publicListener = 'publicListener' in scenario && scenario.publicListener;
@@ -175,7 +175,9 @@ it.each([
     const diagnostic = 'diagnostic' in scenario ? scenario.diagnostic : undefined;
     const socketPath = join(directory, 'admin.sock');
     const configPath = join(directory, 'initial.json');
-    const domain = { hostname: 'app.example.test', target: collectorTopology
+    const domain = { ...(dns === 'mismatch'
+        ? { hostname: 'sample.93-184-216-34.sslip.io', addressKind: 'generatedCaddy' as const }
+        : { hostname: 'app.example.test' }), target: collectorTopology
         ? { kind: 'telemetry' as const } : { service: 'web', containerPort: 8080 },
         healthCheck: { path: '/health', expectStatus: 200 } };
     const connectorSubject = { v: 1 as const, kind: 'connectorToken' as const, machineId: 'receiver',
@@ -693,9 +695,10 @@ it.each([
             const { dnsComparison, ...semantic } = rawResult as Record<string, unknown>;
             const observation = DeploymentDomainObservationV1Schema.parse(semantic);
             if (publicListener) {
-                expect(dnsComparison).toMatchObject({ expectedIpv4: null });
                 const status = dns === 'missing' ? 'down' : dns === 'unavailable' ? 'unknown' : 'up';
                 expect(observation).toMatchObject({ state: status === 'up' ? 'active' : 'warning', dnsHealth: { status } });
+                if (status === 'up') expect(dnsComparison).toBeUndefined();
+                else expect(dnsComparison).toMatchObject({ expectedIpv4: null });
                 expect(resolveDns).toHaveBeenCalledTimes(2);
                 expect(observation).toMatchObject({ dnsHealth: { cause: {
                     kind: 'dns', vantage: 'sameMachine', observerMachineId: placement.machineId,
