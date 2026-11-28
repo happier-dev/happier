@@ -2,6 +2,8 @@ import { isPersistentMachine, type MachineKind } from '@happier-dev/protocol/mac
 import { readServerConfig } from '@happier-dev/protocol/serverConfig/serverConfigCodec';
 import { SERVER_CONFIG } from '@happier-dev/protocol/serverConfig/registry';
 
+import { settleDeploymentsOnControllerOffline } from '@/app/deployments/deploymentService';
+import { readTransactionDatabaseTime } from '@/storage/transactionDatabaseTime';
 import { db } from "@/storage/db";
 import { shutdownSignal } from "@/utils/process/shutdown";
 import {
@@ -63,7 +65,7 @@ type TimedOutPresenceCandidate = {
     kind?: MachineKind;
 };
 type MachinePresenceObservation = Readonly<{ accountId: string; machineId: string; lastActiveAt: Date }>;
-export type MachineOfflinePublication = TimedOutPresenceCandidate & { recipientAccountIds: string[] };
+export type MachineOfflinePublication = TimedOutPresenceCandidate & { recipientAccountIds: string[]; wentOfflineAt: Date };
 
 export async function publishInactiveMachines(machines: readonly MachineOfflinePublication[]): Promise<void> {
     for (const machine of machines) {
@@ -75,16 +77,20 @@ export async function publishInactiveMachines(machines: readonly MachineOfflineP
             recipientFilter: { type: 'user-scoped-only' },
         });
     }
-    await submitMachineRemoteAlerts({ machines: machines.map(machine => ({ machineId: machine.id, accountId: machine.accountId })), phase: 'offline' });
+    await Promise.all([
+        submitMachineRemoteAlerts({ machines: machines.map(machine => ({ machineId: machine.id, accountId: machine.accountId })), phase: 'offline' }),
+        ...machines.map(machine => settleDeploymentsOnControllerOffline(machine.id, machine.wentOfflineAt)),
+    ]);
 }
 
 async function persistMachineOfflineInTx(tx: Tx, machine: MachinePresenceRow) {
     if (await markMachinePresenceInactive(tx, { accountId: machine.accountId, machineId: machine.id,
         lastActiveAt: machine.lastActiveAt }) !== 1) return null;
     const recipientAccountIds = await resolveCurrentMachineRecipientAccountIdsInTx(tx, machine.id);
+    const wentOfflineAt = await readTransactionDatabaseTime(tx);
     await retainMachinePresenceTransitionInTx(tx, { machineId: machine.id, active: false,
-        occurredAt: Date.now(), recipientAccountIds });
-    return { ...machine, recipientAccountIds };
+        occurredAt: wentOfflineAt.getTime(), recipientAccountIds });
+    return { ...machine, recipientAccountIds, wentOfflineAt };
 }
 
 /** A confirmed managed Stop withdraws server presence through the same owner as socket expiry. */

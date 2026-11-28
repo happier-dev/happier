@@ -8,7 +8,9 @@ import { verifyMachineInstallationProof } from '@happier-dev/protocol/machines/i
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { canTransitionDeploymentV1, isDeploymentSettledV1, isDeploymentRollbackSourceEligibleV1, DeploymentStateV1Schema, getDeploymentTargetLinkLineageV1 } from '@happier-dev/deployments/contracts/v1';
 import { DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
-import type { Tx } from '@/storage/inTx';
+import { inTx, type Tx } from '@/storage/inTx';
+import { db } from '@/storage/db';
+import { readProjectSourceCustodyInTx } from '@/app/projects/sources/projectSourceService';
 import { disableDeploymentEnvironmentAutomationsInTx } from '@/app/automations/automationDeploymentEnvironment';
 import { getActivePrismaRuntime } from '@/storage/prisma';
 import { readTransactionDatabaseTime } from '@/storage/transactionDatabaseTime';
@@ -119,6 +121,39 @@ export async function requestCancelDeploymentInTx(tx: Tx, actorAccountId: string
             current.revision, now.getTime()));
     onAccepted?.();
     return receiptResult(current, loaded.row.revision);
+}
+
+/** Machine presence has withdrawn the controller that owns these in-flight Receipts. */
+export async function settleDeploymentsOnControllerOffline(machineId: string, wentOfflineAt: Date): Promise<void> {
+    const where = { acceptedControllerMachineId: machineId, state: { in: deploymentInProgressStates() },
+        requestedAt: { lte: wentOfflineAt } };
+    const receipts = await db.deployment.findMany({ where, select: { id: true, environmentId: true } });
+    for (const receipt of receipts) {
+        await inTx(async tx => {
+            // Use normal Receipt lock order, after the presence transaction has released the Machine.
+            await lockDeploymentEnvironmentInTx(tx, receipt.environmentId);
+            const current = await tx.deployment.findFirst({ where: { ...where, id: receipt.id },
+                select: { state: true, revision: true, environment: {
+                    select: { projectSourceId: true, revision: true, pendingDeployContent: true },
+                } } });
+            if (!current) return;
+            const custody = await readProjectSourceCustodyInTx(tx, current.environment.projectSourceId);
+            const changed = await tx.deployment.updateMany({ where: { id: receipt.id, revision: current.revision },
+                data: { state: 'outcome_unknown', revision: { increment: 1 }, settledAt: wentOfflineAt } });
+            if (changed.count !== 1) throw new Error('Locked deployment receipt changed during controller loss');
+            if (!custody) return;
+            const accountIds = await resolveProjectSourceAudienceInTx(tx, [custody.source]);
+            if (current.environment.pendingDeployContent !== null) {
+                await publishDeploymentChangesInTx(tx, custody, receipt.environmentId, current.environment.revision, undefined, false, accountIds);
+            }
+            const previous = DeploymentStateV1Schema.parse(current.state);
+            const revision = current.revision + 1;
+            const completion = projectDeploymentReceiptCompletionV1(previous, {
+                state: 'outcome_unknown', settledAt: wentOfflineAt, cancelRequestedAt: null,
+            }, revision, wentOfflineAt.getTime());
+            await publishDeploymentChangesInTx(tx, custody, receipt.environmentId, revision, receipt.id, true, accountIds, completion);
+        });
+    }
 }
 
 export function readDeploymentReceiptByRequestKeyInTx(tx: Tx, environmentId: string, requestKey: string) {

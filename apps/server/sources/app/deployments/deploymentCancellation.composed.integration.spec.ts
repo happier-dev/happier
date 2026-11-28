@@ -12,6 +12,7 @@ import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '
 import { DEPLOYMENT_CANCEL_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { db } from '@/storage/db';
+import { recordMachineDisconnect } from '@/app/presence/timeout';
 import { inTx } from '@/storage/inTx';
 import { createAccountTokenForTests, createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { createSignedExternalActionPostHeadersForTests } from '@/testkit/externalActionExecution';
@@ -34,7 +35,7 @@ describe('storage-only cancellation through the sole receipt transition route', 
     }, 180_000);
     afterAll(async () => { if (harness) await harness.close(); });
 
-    it.each(['platform', 'platform-retained-builder', 'own-server', 'own-server-alias', 'late platform Stop', 'superseded platform Stop', 'provider Cancel', 'provider already live'] as const)(
+    it.each(['platform', 'platform-retained-builder', 'own-server-disconnect', 'own-server', 'own-server-alias', 'late platform Stop', 'superseded platform Stop', 'provider Cancel', 'provider already live'] as const)(
         'captures and settles %s from persisted target custody through signed HTTP', async target => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const keys = nacl.sign.keyPair();
@@ -71,7 +72,7 @@ describe('storage-only cancellation through the sole receipt transition route', 
         const linkContent = await artifact('deployment-target-link.v1');
         const linked = await inTx(tx => linkDeploymentTargetInTx(tx, owner.id, { serverId,
             environmentId: environment.id, expectedRevision: environment.revision, requestKey: crypto.randomUUID(), role: 'runtime',
-            ...(native ? { targetId: target } : { targetId: 'platform-test', source: { kind: 'plugin' as const,
+            ...(native ? { targetId: target === 'own-server-disconnect' ? 'own-server' : target } : { targetId: 'platform-test', source: { kind: 'plugin' as const,
                 contribution: { pluginId: 'example.deploy', localId: 'runtime' } }, targetKind: 'platform' }),
             machines: native ? [{ machineId, installationId }] : [], ...linkContent }));
         if (staleBuilder) {
@@ -121,6 +122,15 @@ describe('storage-only cancellation through the sole receipt transition route', 
             // The URL uses the existing sole receipt transition route.
             const running = await transition(stage);
             expect(running.statusCode, running.body).toBe(200);
+            if (target === 'own-server-disconnect') {
+                await recordMachineDisconnect({ accountId: owner.id, machineId }, async () => false, async () => {});
+                expect((await db.deployment.findUniqueOrThrow({ where: { id: receipt.id } })).state).toBe('running');
+                await recordMachineDisconnect({ accountId: owner.id, machineId }, async () => true, async () => {});
+                const settled = await db.deployment.findUniqueOrThrow({ where: { id: receipt.id } });
+                expect(settled).toMatchObject({ state: 'outcome_unknown', settledAt: expect.any(Date),
+                    revision: running.json().deploymentRevision + 1, cancelRequestedAt: null });
+                return;
+            }
             if (target === 'provider Cancel' || target === 'provider already live') {
                 const expectedReceiptRevision = running.json().deploymentRevision;
                 const cancelPath = `/v1/deployments/environments/${environment.id}/deployments/${receipt.id}/transitions`;
