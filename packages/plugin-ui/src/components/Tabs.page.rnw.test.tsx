@@ -327,7 +327,7 @@ describe('Tabs lead (what leads the page above its tabs)', () => {
     );
     try {
       await act(async () => {});
-      // Layout is a native boundary: deliver the scroller's viewport and the pinned row's measured heights.
+      // Layout is a native boundary: deliver the scroller's viewport and its lead's measured heights.
       const layout = (testID: string, height: number) => {
         const node = mount.container.querySelector(`[data-testid="${testID}"]`) as unknown as {
           __reactLayoutHandler?: (event: { nativeEvent: { layout: { x: number; y: number; width: number; height: number } } }) => void;
@@ -335,10 +335,10 @@ describe('Tabs lead (what leads the page above its tabs)', () => {
         act(() => { node.__reactLayoutHandler?.({ nativeEvent: { layout: { x: 0, y: 0, width: 390, height } } }); });
       };
       layout('story-scroll', 600);
-      layout('story-scroll:pinned-row', 44);
-      const content = mount.container.querySelector<HTMLElement>('[data-testid="story-scroll:pinned-content"]');
+      layout('story-scroll:lead', 180);
+      const content = mount.container.querySelector<HTMLElement>('[data-testid="story-scroll"] > :first-child');
       expect(content).not.toBeNull();
-      expect(getComputedStyle(content!).minHeight).toBe('556px');
+      expect(getComputedStyle(content!).minHeight).toBe('780px');
       expect(content!.textContent).toContain('Overview body');
     } finally { mount.unmount(); }
   });

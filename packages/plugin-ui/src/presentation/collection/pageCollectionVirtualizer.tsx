@@ -201,11 +201,13 @@ function PageCollectionWindow<Item>({ request, geometry, tracker, tabStopKey, re
     const layout = { top, cells };
     lastLayout.current = layout;
     // A returning panel restores the anchor it saved on leave, independent of the outgoing tab's scroll.
-    if (!continuous || previous === null || (previous.cells === cells && previous.top === top)) return;
+    if (!continuous || previous === null || previous.cells === cells) return;
     const offset = scroll?.readOffset() ?? tracker.getVisibleWindow?.()?.top;
     if (offset === undefined) return;
     const anchor = readRowAnchor(previous, offset);
-    const target = anchor === undefined ? undefined : resolveRowAnchor(layout, anchor);
+    // The page owns movement of the entire list, for example when its compact title and tab row arrive.
+    // Correct only a row's movement within the list during continuous presentation.
+    const target = anchor === undefined ? undefined : resolveRowAnchor({ top: previous.top, cells }, anchor);
     if (target !== undefined && target !== offset) scrollToOffset?.(target);
   }, [cells, presented, scroll, scrollToOffset, top, tracker]);
   const position = useCallback((offset: number) => {

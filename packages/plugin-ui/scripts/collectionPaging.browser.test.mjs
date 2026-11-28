@@ -123,7 +123,7 @@ test('the page List retains a keyed Files anchor at 390 px', async t => {
       sourcefile: 'collectionPageAnchoring.browser.fixture.tsx',
       loader: 'tsx',
       contents: `
-        import { useState } from 'react';
+        import { useLayoutEffect, useState } from 'react';
         import { createRoot } from 'react-dom/client';
         import { Button, ScrollArea } from './src/index.ts';
         import { PluginUiProviderInternal } from './src/components/PluginUiProvider.tsx';
@@ -132,6 +132,10 @@ test('the page List retains a keyed Files anchor at 390 px', async t => {
         import { TriageChangedFilesList } from '../triage-sources/src/ui/changedFilesList.tsx';
         import { TriageDetailPageScrollProvider, TriageDetailPanel } from '../triage-sources/src/ui/detailPanel.tsx';
         import { createScrollViewNearViewportTracker } from '@/components/widgets/nearViewport';
+        import { TriageDetailPageLeadProvider, TriageDetailTabbedBody } from '../plugins/triage/src/ui/detail/body.tsx';
+        import { planTriageDetailTabsV1 } from '../plugins/triage/src/ui/detail/tabs.ts';
+        import { GITHUB_TRIAGE_SOURCE_DESCRIPTOR_V1 } from '../plugins/scm-github/src/triage/contribution.ts';
+        import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
 
         const files = Array.from({ length: 200 }, (_, index) => ({
           path: 'fixture/alpha/row-' + String(index + 1).padStart(3, '0') + '.txt', diffAvailable: true,
@@ -141,6 +145,7 @@ test('the page List retains a keyed Files anchor at 390 px', async t => {
           ...fixture.theme.typography, reading: { ...fixture.theme.typography.reading, lineHeight: 41 },
         } } };
         const hostApi = {
+          version: () => ({ methods: [] }),
           watchContext: async () => ({ dispose() {} }),
           readResource: async () => { throw new Error('This fixture needs no Resources'); },
         };
@@ -149,6 +154,36 @@ test('the page List retains a keyed Files anchor at 390 px', async t => {
           createScrollActivityTracker: (ref, horizontal) =>
             createScrollViewNearViewportTracker(ref, horizontal, { initialViewportHeight: 715 }),
         };
+
+        const plan = planTriageDetailTabsV1({ workflowSubject: 'pullRequest',
+          entryTabs: GITHUB_TRIAGE_SOURCE_DESCRIPTOR_V1.kinds.find(kind => kind.workflowSubject === 'pullRequest').detailTabs,
+          fixPullRequest: null });
+        const entry = { surface: {}, input: createTriageSourceV1Fixture().detailInput, instanceKey: 'pull-request' };
+        const handoffHost = { ...host, renderTargetedSurface: ({ input }) =>
+          <TriageDetailPanel panel={input.panel} scrollOwner={input.panelScrollOwner} ariaLabel="Pull request source"
+            retention={{ files: 'retain' }} panels={{
+              overview: <div>Overview content</div>,
+              files: <TriageChangedFilesList accessibilityLabel="Files" accessibilityLabelKey="fixture.files"
+                active={input.panel === 'files'} sections={[{ key: 'source', title: '', data: files }]}
+                focusPath={null} onFocusPath={() => {}} viewed={null} renderBody={() => null} />,
+            }} /> };
+
+        function ResizableDetail() {
+          const [pushed, setPushed] = useState(false);
+          useLayoutEffect(() => {
+            const media = matchMedia('(max-width: 480px)');
+            const publish = () => setPushed(media.matches);
+            publish();
+            media.addEventListener('change', publish);
+            return () => media.removeEventListener('change', publish);
+          }, []);
+          return <PluginUiPresentationHostProviderInternal host={handoffHost}>
+            <TriageDetailPageLeadProvider lead={pushed ? <div style={{ height: 180 }}>Entry title and facts</div> : null}>
+              <TriageDetailTabbedBody pushed={pushed} tabs={plan.tabs} entry={entry} fixPullRequest={null}
+                overviewTail={null} fallback={<div>Panel unavailable</div>} />
+            </TriageDetailPageLeadProvider>
+          </PluginUiPresentationHostProviderInternal>;
+        }
 
         function Fixture() {
           const [panel, setPanel] = useState('files');
@@ -181,7 +216,9 @@ test('the page List retains a keyed Files anchor at 390 px', async t => {
 
         createRoot(document.getElementById('root')).render(
           <PluginUiProviderInternal hostApi={hostApi} context={context}>
-            <PluginUiPresentationHostProviderInternal host={host}><Fixture /></PluginUiPresentationHostProviderInternal>
+            <PluginUiPresentationHostProviderInternal host={host}>
+              {document.getElementById('root').dataset.handoff ? <ResizableDetail /> : <Fixture />}
+            </PluginUiPresentationHostProviderInternal>
           </PluginUiProviderInternal>,
         );
       `,
@@ -287,5 +324,43 @@ test('the page List retains a keyed Files anchor at 390 px', async t => {
     await page.getByText('No checks').waitFor();
     await page.getByRole('button', { name: 'Files tab' }).click();
     assert.deepEqual(await readSettledAnchor(page), leaving);
+  });
+
+  await t.test('the mounted Triage PR Files viewport keeps its offset through pane and compact page handoff', async t => {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 970 } });
+    t.after(() => page.close());
+    const pageErrors = [];
+    page.on('pageerror', error => pageErrors.push(error.message));
+    await page.setContent('<div id="root" data-handoff="true" style="height:900px;display:flex;flex-direction:column"></div>');
+    await page.addScriptTag({ content: outputFiles[0].text });
+    await page.getByRole('tab', { name: 'Files', exact: true }).click().catch(error => {
+      throw new Error(pageErrors.join('\n') || error.message, { cause: error });
+    });
+    const row = page.getByRole('button', { name: /row-001\.txt/ });
+    await row.waitFor();
+    const measure = setOffset => row.evaluate((button, set) => {
+      let scroller = button.parentElement;
+      while (scroller && !(scroller.clientHeight > 0 && scroller.scrollHeight - scroller.clientHeight > 140
+        && /auto|scroll/.test(getComputedStyle(scroller).overflowY))) scroller = scroller.parentElement;
+      if (!scroller) throw new Error('Expected the Files scroller');
+      if (set) {
+        window.filesScroller = scroller;
+        window.filesList = button.closest('[role="list"]');
+        scroller.scrollTop = 140;
+      }
+      return {
+        sameScroller: scroller === window.filesScroller,
+        sameList: button.closest('[role="list"]') === window.filesList,
+        offset: scroller.scrollTop,
+      };
+    }, setOffset);
+    const positions = [await measure(true)];
+    for (const width of [390, 1440]) {
+      await page.setViewportSize({ width, height: 970 });
+      await page.getByText('Entry title and facts').waitFor({ state: width === 390 ? 'attached' : 'detached' });
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      positions.push(await measure(false));
+    }
+    assert.deepEqual(positions, Array.from({ length: 3 }, () => ({ sameScroller: true, sameList: true, offset: 140 })));
   });
 });

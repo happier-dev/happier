@@ -203,6 +203,9 @@ const HappierScrollAreaNestedContext = createContext(false);
 const useNoPaneHeaderReporter = (): ((distancePx: number) => void) | null => null;
 // React Native's ViewStyle omits this CSS value. RNW passes it through to the browser.
 const webScrollContentClip = { overflow: 'clip' } as unknown as ViewStyle;
+const webPinnedScrollStyle: ViewStyle & { overflowAnchor: 'none' } = { overflowAnchor: 'none' };
+const NO_STICKY_HEADERS: number[] = [];
+const PINNED_TAB_ROW: number[] = [1];
 
 export function HappierScrollArea({
   children,
@@ -233,15 +236,17 @@ export function HappierScrollArea({
   const head = !nested && scrollProps.horizontal !== true ? offeredHead : null;
   const claimHead = head?.claim;
   useLayoutEffect(() => claimHead?.(), [claimHead]);
+  // RNW maps children when given sticky indices. Keep that path stable when the tab row arrives or leaves.
+  const stickyHeaderIndices = scrollProps.horizontal === true ? undefined : head === null ? NO_STICKY_HEADERS : PINNED_TAB_ROW;
+  // Adding the pinned head is a page layout change. Keep the browser from shifting the viewport with the body.
+  const pinnedScrollStyle = Platform.OS === 'web' && head !== null ? webPinnedScrollStyle : undefined;
   const theme = useOptionalHappierUiTheme();
   const palette = useOptionalHappierUiPalette(theme) ?? (theme === null ? null : resolveHappierUiPalette(theme));
   const offsetRef = useRef(0);
   const retainedRestore = useRef<{ offset: number; waitingForContent: boolean; waitForLayout: boolean } | null>(null);
-  const leadHeightRef = useRef(0);
-  // Under the pinned row the content is at least the rest of the viewport, so the row can stay just under the lead
-  // whatever the selected tab holds: a short panel would otherwise clamp the scroll and drop the row back down.
+  // A short tab still leaves enough scroll extent for the lead to scroll away and the row to stay pinned.
   const [viewportHeightPx, setViewportHeightPx] = useState(0);
-  const [rowHeightPx, setRowHeightPx] = useState(0);
+  const [leadHeightPx, setLeadHeightPx] = useState(0);
   const selection = head?.selection;
   const lastSelection = useRef(selection);
   // A switch while the row is pinned brings the new tab in at its top, the row still pinned; above that, it stays put.
@@ -251,10 +256,10 @@ export function HappierScrollArea({
     lastSelection.current = selection;
     // Showing or hiding the pinned row during a layout handoff keeps the current tab's offset.
     if (previousSelection !== undefined && selection !== undefined
-      && retainedRestore.current === null && offsetRef.current > leadHeightRef.current) {
-      scrollSourceRef.current?.scrollTo({ y: leadHeightRef.current, animated: false });
+      && retainedRestore.current === null && offsetRef.current > leadHeightPx) {
+      scrollSourceRef.current?.scrollTo({ y: leadHeightPx, animated: false });
     }
-  }, [selection]);
+  }, [selection, leadHeightPx]);
   // A keyboard reaches a scroll area only through a focusable child; one whose content runs past it with none
   // (an empty state a few pixels taller than its card) takes focus itself while, and only while, it overflows.
   // On the web, content that already holds a control adds no tab stop (the browser's keyboard-focusable scrollers).
@@ -355,7 +360,7 @@ export function HappierScrollArea({
             request.waitForLayout = false;
           }
         }}
-        {...(head === null ? {} : { stickyHeaderIndices: [1] })}
+        stickyHeaderIndices={stickyHeaderIndices}
         onLayout={event => {
           if (head !== null) setViewportHeightPx(event.nativeEvent.layout.height);
           viewportRef.current = { width: event.nativeEvent.layout.width, height: event.nativeEvent.layout.height };
@@ -376,27 +381,27 @@ export function HappierScrollArea({
         scrollEventThrottle={scrollProps.scrollEventThrottle ?? (reportTop ? 16 : undefined)}
         testID={testID}
         accessibilityLabel={accessibilityLabel}
-        style={style}
+        style={[style, pinnedScrollStyle]}
         contentContainerStyle={[
           insetStyle,
           contentContainerStyle,
+          head === null ? undefined : { minHeight: viewportHeightPx + leadHeightPx },
           Platform.OS === 'web' && clipContentOverflow ? webScrollContentClip : undefined,
         ]}
         keyboardShouldPersistTaps={keyboardShouldPersistTaps}
         {...(dismissMode === undefined ? {} : { keyboardDismissMode: dismissMode })}
       >
-        {head === null ? null : column(<View onLayout={(event) => { leadHeightRef.current = event.nativeEvent.layout.height; }}>{head.lead}</View>)}
+        {head === null ? null : column(<View
+          onLayout={(event) => { setLeadHeightPx(event.nativeEvent.layout.height); }}
+          testID={testID === undefined ? undefined : `${testID}:lead`}
+        >{head.lead}</View>)}
         {head === null ? null : (
           <View style={palette === null ? undefined : { backgroundColor: palette.page }}
-            onLayout={(event) => { setRowHeightPx(event.nativeEvent.layout.height); }}
             {...(testID === undefined ? {} : { testID: `${testID}:pinned-row` })}>{column(head.strip)}</View>
         )}
         {/* A page's scroll owns its column: every block (a banner, a card, a state), not only the
             sections that centre themselves, sits on the column the page header uses (R-APP-4). */}
-        {head === null ? column(children) : (
-          <View style={{ minHeight: Math.max(0, viewportHeightPx - rowHeightPx) }}
-            {...(testID === undefined ? {} : { testID: `${testID}:pinned-content` })}>{column(children)}</View>
-        )}
+        <Fragment key="body">{column(children)}</Fragment>
       </ScrollView>
       </HappierRetainedScrollContextInternal.Provider>
       </HappierScrollAreaNestedContext.Provider>
