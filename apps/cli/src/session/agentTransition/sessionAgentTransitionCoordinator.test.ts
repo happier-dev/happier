@@ -920,6 +920,7 @@ describe('runSessionAgentTransition', () => {
 
           await runSessionAgentTransition({
             credentials,
+            deps: { connectedServiceAdmission: { api: await ApiClient.create(credentials) } },
             request: request({
               selection: {
                 v: 1,
@@ -945,6 +946,26 @@ describe('runSessionAgentTransition', () => {
           expect(read).toHaveBeenCalledWith({ serviceId: 'openai-codex', profileId: 'codex2' });
         });
 
+        it('keeps the source running when the daemon has no connected-account admission port', async () => {
+          const read = provideConnectedCredential('openai-codex', 'codex2');
+          primeHappyPath(sourceMetadata({ ...SOURCE_BOUND }));
+
+          const result = await runSessionAgentTransition({
+            credentials,
+            request: request({
+              selection: { v: 1, agentId: 'codex', connectedServices: { v: 1, bindingsByServiceId: {
+                'openai-codex': { source: 'connected', selection: 'profile', profileId: 'codex2' },
+              } } },
+            }),
+          });
+
+          expect(result).toMatchObject({
+            type: 'rejected', sourceEffect: 'none', code: 'connected_account_unavailable',
+          });
+          expect(read).not.toHaveBeenCalled();
+          expect(mocks.requestSessionStop).not.toHaveBeenCalled();
+        });
+
         it('keeps the source running when the selected account is confirmed missing', async () => {
           primeHappyPath(sourceMetadata({ ...SOURCE_BOUND }));
           const selectedService = 'openai-codex';
@@ -955,6 +976,7 @@ describe('runSessionAgentTransition', () => {
           try {
             const result = await runSessionAgentTransition({
               credentials,
+              deps: { connectedServiceAdmission: { api: await ApiClient.create(credentials) } },
               request: request({
                 selection: {
                   v: 1,
@@ -2013,6 +2035,7 @@ describe('runSessionAgentTransition', () => {
 
       const result = await runSessionAgentTransition({
         credentials,
+        deps: { connectedServiceAdmission: { api: await ApiClient.create(credentials) } },
         request: request({
           expectedCurrentAgentId: 'codex',
           selection: {
@@ -2048,6 +2071,7 @@ describe('runSessionAgentTransition', () => {
 
       const result = await runSessionAgentTransition({
         credentials,
+        deps: { connectedServiceAdmission: { api: await ApiClient.create(credentials) } },
         request: request({
           expectedCurrentAgentId: 'codex',
           selection: {

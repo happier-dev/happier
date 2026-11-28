@@ -30,7 +30,6 @@ import {
   type AgentId,
 } from '@happier-dev/agents';
 
-import { ApiClient } from '@/api/api';
 import { buildConnectedServiceCredentialSpawnErrorResult } from '@/daemon/connectedServices/diagnostics/buildConnectedServiceDiagnosticSpawnErrorResult';
 import {
   admitConnectedServiceAuthForSpawn,
@@ -675,10 +674,12 @@ export async function runSessionAgentTransition(params: Readonly<{
   });
   let admittedAuth: ConnectedServiceSpawnAdmission | null = null;
   if (targetBinding && request.selection.connectedServices) {
+    const admission = params.deps?.connectedServiceAdmission;
+    if (!admission) return effects.rejected('connected_account_unavailable');
     try {
       admittedAuth = await admitConnectedServiceAuthForSpawn({
-        ...(params.deps?.connectedServiceAdmission ?? { api: await ApiClient.create(params.credentials) }),
-        authGroupSwitchCoordinator: params.deps?.connectedServiceAdmission?.createAuthGroupSwitchCoordinator?.(request.sessionId),
+        ...admission,
+        authGroupSwitchCoordinator: admission.createAuthGroupSwitchCoordinator?.(request.sessionId),
         sessionId: request.sessionId,
         agentId: targetAgentId,
         credentials: params.credentials,
