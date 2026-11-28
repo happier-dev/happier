@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import { canSessionListFilterIncludeRunsV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
-import { SESSION_LIST_PAGE_MAX_LIMIT } from '@happier-dev/protocol/sessions/listing/query';
 import { useShallow } from 'zustand/react/shallow';
 import {
     buildWorkBoardItemKeyV1,
@@ -323,9 +322,6 @@ function useFilteredWorkRefs(board: WorkBoardV1, homes: BoardHomes, enabled: boo
             // The ordinary exhaustive corpus already contains attention rows. The extra
             // priority lane belongs to visible lists, not to an exhaustive Board census.
             includeAttention: false,
-            // This consumer exhausts the corpus; use the Home protocol's page budget
-            // instead of paying visible-list round trips for the same relation.
-            limit: SESSION_LIST_PAGE_MAX_LIMIT,
             mountedHomeServerIds: homes.mountedServerIds,
         }).map(home => ({ ...home, readMode: 'complete' as const }));
     }, [filter, homes.mountedServerIds, includesSessions, projectRefs]);

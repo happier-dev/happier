@@ -4,6 +4,9 @@ import { ACCOUNT_SESSION_FOLLOW_CHANGE_ENTITY_ID, buildSessionFollowReceiverChan
 import type { ChangeEntry } from '@happier-dev/protocol/changes';
 import type { FollowDeliveryMuteScopeV1 } from '@happier-dev/protocol/sessions/follow/sessionDeliveryMuteV1';
 import { normalizeSessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
+import { decodeV2SessionListCursorV1, encodeV2SessionListCursorV1 } from '@happier-dev/protocol/sessions/listing/cursor';
+import { SESSION_LIST_PAGE_DEFAULT_LIMIT, SESSION_LIST_PAGE_MAX_LIMIT, SessionListQueryV1Schema } from '@happier-dev/protocol/sessions/listing/query';
+import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createPlainSessionByIdResponseFixture, createSessionAccessFixture, createSessionFixture, createSessionViewerFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { ABSENT_SESSION_FOLLOW_FACTS_V1 } from '@happier-dev/protocol/sessions/follow/accountFollow';
 import { SESSION_FOLLOW_ZERO_FRONTIER_V1 } from '@happier-dev/protocol/sessions/follow/sessionFollowFrontierV1';
@@ -520,4 +523,78 @@ it('keeps personal membership identity when an equal refetch moves only the quer
     expect(hook.getCurrent().statesByServerId).not.toBe(before.statesByServerId);
     expect(hook.getCurrent().membershipByServerId).toBe(before.membershipByServerId);
     expect([...membershipIdentities]).toEqual([before.membershipByServerId]);
+});
+
+it('batches the cold Follow candidate census on a 665-Machine Home and stays quiet once settled', async () => {
+    const serverId = await homes.addHome({ name: 'Fleet', serverUrl, accountId: 'alice', currentAccount: true });
+    const features = createRootLayoutFeaturesResponse();
+    expect(tryWriteServerEnabledBitInPlace(features, 'sessions.filteredListing', true)).toBe(true);
+    homes.answer(serverId, '/v1/features', { body: features });
+    homes.answer(serverId, '/v1/features/authenticated', { body: features });
+    const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+    primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features } });
+
+    const machines = Array.from({ length: 665 }, (_, index) => createPlainMachineRowFixture({
+        id: `machine-${index}`, accountId: 'alice',
+    }));
+    const sessions = machines.map(({ id }, index) => createSessionFixture({
+        id: `owned-${index}`, serverId, ownerAccountId: 'alice',
+        metadata: { machineId: id }, encryptionMode: 'plain',
+        access: createSessionAccessFixture('owner'), viewer: createSessionViewerFixture(),
+    }));
+    const rows = sessions.map(session => ({
+        ...createPlainSessionByIdResponseFixture(session).session, ownerAccountId: 'alice', viewer: session.viewer,
+    }));
+    homes.answer(serverId, '/v1/machines', { body: machines });
+    const emptySessionPage = { sessions: [], hasNext: false, nextCursor: null };
+    homes.answer(serverId, '/v2/sessions', { body: emptySessionPage });
+    homes.answer(serverId, '/v2/sessions/active', { body: emptySessionPage });
+    homes.answer(serverId, '/v2/sessions/query', { select: input => {
+        const query = SessionListQueryV1Schema.parse(input);
+        const corpus = query.scope === 'all_accessible' ? rows : [];
+        const previousId = query.cursor ? decodeV2SessionListCursorV1(query.cursor) : null;
+        const offset = previousId ? corpus.findIndex(row => row.id === previousId) + 1 : 0;
+        const page = corpus.slice(offset, offset + (query.limit ?? SESSION_LIST_PAGE_DEFAULT_LIMIT));
+        const hasNext = offset + page.length < corpus.length;
+        return { body: createSessionListSourceFixture({
+            sessions: page, hasNext, nextCursor: hasNext ? encodeV2SessionListCursorV1(page.at(-1)!.id) : null,
+            attentionHasNext: false, attentionNextCursor: null,
+        }) };
+    } });
+    homes.answer(serverId, '/v2/account/session-follow-rules', { body: { rules: [{
+        ruleId: 'fleet-rule', receiver: { kind: 'account' }, version: 0, inception: { createdAt: 1 }, sources: [],
+        content: { t: 'plain', v: { v: 1, enabled: true, policy: { preset: 'everything' },
+            filter: normalizeSessionListFilterV1({ show: 'sessions', homeServerIds: [serverId],
+                scope: 'all_accessible', startedBy: ['you', 'agents', 'triggers'] }) } },
+    }] } });
+    homes.answer(serverId, '/v2/account/session-follow-preferences', { body: { assigned: false, direct: false, team: false, group: false } });
+    homes.answer(serverId, mutePath, { body: { scopes: [] } });
+    restored = await restoreServerAccountForTest({ serverUrl, accountId: 'alice',
+        credentials: { token: createAccountTokenForTests('alice', { currentAccount: true }) },
+        configureSocket: configureConnectedServerSocketBoundary,
+        request: createSessionReadBatchFetchBoundary(homes.request) });
+    await vi.waitFor(() => expect(getStorage().getState().isDataReady).toBe(true));
+    await vi.waitFor(() => expect(getStorage().getState().machineListByServerId[serverId]).toHaveLength(machines.length));
+    const hook = await renderHook(() => useActivityPersonalSessionMembership(), {
+        wrapper: ({ children }) => <ActivityPersonalSessionMembershipProvider enabled>{children}</ActivityPersonalSessionMembershipProvider>,
+    });
+    const candidateReads = () => homes.requests.filter(request => request.path === '/v2/sessions/query'
+        && (request.input as { scope?: string } | undefined)?.scope === 'all_accessible').length;
+    const candidateIds = () => hook.getCurrent().ruleSessionMembershipByServerId?.[serverId];
+    await vi.waitFor(() => expect(candidateIds()).toHaveLength(sessions.length), { timeout: 10_000 });
+    expect(candidateIds()).toEqual(sessions.map(session => session.id));
+    const coldReads = candidateReads();
+    console.info('Fleet Follow candidate reads', coldReads);
+    expect.soft(coldReads).toBe(Math.ceil(sessions.length / SESSION_LIST_PAGE_MAX_LIMIT));
+
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+    await flushHookEffects({ cycles: 1, advanceTimersMs: 60_000 });
+    expect(candidateReads()).toBe(coldReads);
+    vi.useRealTimers();
+
+    const removed = rows.pop()!;
+    await act(async () => publishHomeAccountChange(serverId, [removed.id], { changeKinds: ['share'], sessionListQueryAffects: true }));
+    await vi.waitFor(() => expect(candidateIds()).toHaveLength(rows.length));
+    expect(candidateIds()).toEqual(rows.map(row => row.id));
+    expect(candidateReads() - coldReads).toBe(coldReads);
 });

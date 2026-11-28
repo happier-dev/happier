@@ -1,4 +1,4 @@
-import { SESSION_LIST_PAGE_DEFAULT_LIMIT, type SessionListQueryV1 } from '@happier-dev/protocol/sessions/listing/query';
+import { SESSION_LIST_PAGE_DEFAULT_LIMIT, SESSION_LIST_PAGE_MAX_LIMIT, type SessionListQueryV1 } from '@happier-dev/protocol/sessions/listing/query';
 
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { normalizeSessionAddress, sessionAddressKey } from '@/sync/domains/session/sessionAddress';
@@ -412,6 +412,9 @@ export function createSessionListQueryHomeController(params: Readonly<{
         let requestedCursor = family === 'ordinary' ? state.nextCursor : null;
         let requestedAttentionCursor = family === 'attention' ? state.attentionNextCursor : null;
         const complete = requestInput.readMode === 'complete' && family === 'replace';
+        // An exhaustive compact read must cross every cursor before it can publish.
+        const requestedLimit = requestInput.query.limit
+            ?? (complete && plan.source.kind === 'query' && !requestInput.selectSession ? SESSION_LIST_PAGE_MAX_LIMIT : undefined);
 
         publish({
             ...state,
@@ -438,7 +441,7 @@ export function createSessionListQueryHomeController(params: Readonly<{
                 let attentionHasNext = false;
                 let readOrdinary = false;
                 let readAttention = false;
-                const pageLimit = requestInput.query.limit ?? SESSION_LIST_PAGE_DEFAULT_LIMIT;
+                const pageLimit = requestedLimit ?? SESSION_LIST_PAGE_DEFAULT_LIMIT;
                 while (true) {
                     if (!isRequestCurrent(requestRevision, abortController.signal)) return;
                     const result = await params.fetchPage({
@@ -447,8 +450,8 @@ export function createSessionListQueryHomeController(params: Readonly<{
                         ...(requestInput.selectSession ? { selectSession: requestInput.selectSession, hydration: 'required' as const } : {}),
                         ...(!complete && plan.source.kind === 'query'
                             ? { limit: pageLimit - pageIds.size }
-                            : typeof requestInput.query.limit === 'number'
-                            ? { limit: requestInput.query.limit }
+                            : requestedLimit !== undefined
+                            ? { limit: requestedLimit }
                             : {}),
                         ...(operation === 'ordinary' ? { cursor: requestedCursor } : {}),
                         ...(operation === 'attention' ? { attentionCursor: requestedAttentionCursor } : {}),
