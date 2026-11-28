@@ -43,7 +43,9 @@ import {
 import { db } from "@/storage/db";
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encryption/accountEncryptionMode';
 import { resolveMachineAdmission } from "@/app/machines/machineAccess";
-import { readAdmittedExternalActionHandoffMachineInTx, readAdmittedExternalActionMachineInTx } from '@/app/auth/externalActionHandoffAdmission';
+import { ADMITTED_EXTERNAL_ACTION_MACHINE_SELECT, projectAdmittedExternalActionHandoffMachineFromRow,
+    projectAdmittedExternalActionMachineFromRow } from '@/app/auth/externalActionHandoffAdmission';
+import { decodeMachineStoredContent } from '@/storage/sessionMachineStoredContent';
 import type { MachineOperationRequesterContext } from '@/app/machines/machineOperationSupport';
 import { getAccountSessionSocketRoom } from "@/app/api/socketRooms";
 import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
@@ -380,18 +382,30 @@ function parseDaemonResponse(
 
 async function resolveMachineFromServer(params: Parameters<ResolveMachine>[0]): Promise<MachineResolution> {
     let machineAdmission: SocketRpcMachineAdmissionContextV1 | undefined;
-    const machine = await db.machine.findUnique({
-        where: { id: params.machineId },
-        select: {
-            accountId: true,
-            kind: true,
-            installationId: true,
-            revokedAt: true,
-            replacedByMachineId: true,
-            operationProtocolCapabilities: true,
-            operationProtocolCapabilitiesRevision: true,
-        },
-    });
+    const retainedHandoff = params.executionBinding?.handoffAdmission ? params.executionBinding : undefined;
+    // A root already admitted by Home keeps its role. Delivery rechecks the exact current
+    // installation and protocol capability from one row without re-admitting its grants.
+    const finiteRoot = params.executionBinding && params.actionId === params.executionBinding.actionId
+        && params.accountId === params.executionBinding.accountId && params.machineId === params.executionBinding.machineId
+        && (params.admittedDelivery || readAdmittedFiniteOperationPrincipal(params.executionBinding)) ? params.executionBinding : undefined;
+    const where = { id: params.machineId };
+    const dispatchSelect = {
+        accountId: true,
+        kind: true,
+        installationId: true,
+        revokedAt: true,
+        replacedByMachineId: true,
+        operationProtocolCapabilities: true,
+        operationProtocolCapabilitiesRevision: true,
+    } as const;
+    const admittedRow = retainedHandoff || finiteRoot
+        ? await db.machine.findUnique({
+            where, select: { ...dispatchSelect, ...ADMITTED_EXTERNAL_ACTION_MACHINE_SELECT },
+        }).then(decodeMachineStoredContent)
+        : undefined;
+    const machine = admittedRow === undefined
+        ? await db.machine.findUnique({ where, select: dispatchSelect })
+        : admittedRow;
     if (!machine) return "not_owned";
     if (machine.kind === 'ephemeral_session_runner') {
         // Restricted Runners retain their incumbent credential/session owner;
@@ -400,7 +414,6 @@ async function resolveMachineFromServer(params: Parameters<ResolveMachine>[0]): 
     } else {
         // A handoff's Session/key owner qualifies both exact installations. The
         // unsigned private RPC policy remains custodian-only.
-        const retainedHandoff = params.executionBinding?.handoffAdmission ? params.executionBinding : undefined;
         const handoff = retainedHandoff?.handoffAdmission ?? (params.handoffAdmission && params.actionId
             && (isOriginalAccountHandoffAction(params.actionId) || params.actionId === 'session.spawn_new')
             ? await readCurrentExternalActionHandoffBindingInTx(db, { accountId: params.accountId,
@@ -410,21 +423,13 @@ async function resolveMachineFromServer(params: Parameters<ResolveMachine>[0]): 
             || ![handoff.sourceMachineId, handoff.targetMachineId].includes(params.machineId)
             || machine.installationId !== (params.machineId === handoff.sourceMachineId
                 ? handoff.sourceInstallationId : handoff.targetInstallationId))) return 'not_owned';
-        // External Action issuance and dispatch must resolve the same carrier
-        // admission. In particular, an approval decision executes the private
-        // replay effect (`use`), not the public decision RPC (`custodian_only`).
-        // The relay route already decided an admitted finite native root's carrier;
-        // dispatch only proves that exact installation is still the custodian's.
-        // Delivery of a root admitted and minted by this dispatch is part of that admitted work
-        // (O-DEPLOY 2026-11-12, audit A1): it proves the exact installation, never re-runs admission.
-        const finiteRoot = params.executionBinding && params.actionId === params.executionBinding.actionId
-            && params.accountId === params.executionBinding.accountId && params.machineId === params.executionBinding.machineId
-            && (params.admittedDelivery || readAdmittedFiniteOperationPrincipal(params.executionBinding)) ? params.executionBinding : undefined;
+        // An approval decision keeps the carrier role for its private replay effect.
         const admittedRoot = finiteRoot && !retainedHandoff
-            ? await readAdmittedExternalActionMachineInTx(db, finiteRoot, finiteRoot.machineId, finiteRoot.installationId,
-                params.capturedMachineAdmission) : null;
+            ? projectAdmittedExternalActionMachineFromRow(admittedRow ?? null, finiteRoot, finiteRoot.machineId,
+                finiteRoot.installationId, params.capturedMachineAdmission) : null;
         const admission = retainedHandoff
-            ? await readAdmittedExternalActionHandoffMachineInTx(db, retainedHandoff, params.machineId, params.capturedMachineAdmission)
+            ? projectAdmittedExternalActionHandoffMachineFromRow(admittedRow ?? null, retainedHandoff, params.machineId,
+                params.capturedMachineAdmission)
             : finiteRoot
             ? admittedRoot && { ...admittedRoot, role: params.capturedMachineAdmission?.role ?? finiteRoot.admittedMachineRole ?? admittedRoot.role }
             : handoff

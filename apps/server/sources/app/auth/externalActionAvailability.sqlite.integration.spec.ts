@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Server } from 'socket.io';
 import { createServer } from 'node:http';
 import tweetnacl from 'tweetnacl';
@@ -8,6 +8,7 @@ import { SessionActionRpcOriginV1Schema } from '@happier-dev/protocol/socketRpc'
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { readActionOutputDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import { auth, type ExternalActionExecutionAuthorizationMintInput } from './auth';
+import { resolveExternalActionExecutionMachineAdmissionInTx } from './externalActionExecutionAuthorization';
 import { createExternalActionDaemonDispatcher } from '@/app/api/socket/externalActionDispatcher';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { db } from '@/storage/db';
@@ -51,6 +52,51 @@ describe('external Action mint availability classification', () => {
         await expect(auth.mintExternalActionExecutionAuthorization(input)).rejects.toMatchObject({ code: 'target_unavailable' });
         await db.machine.delete({ where: { id: machine.id } });
         await expect(auth.mintExternalActionExecutionAuthorization(input)).rejects.toMatchObject({ code: 'target_unavailable' });
+    });
+
+    it('uses one current Machine row for installation admission and dispatch capability', async () => {
+        const { account, machine, envelope, input } = await fixture();
+        const admission = await resolveExternalActionExecutionMachineAdmissionInTx(db, {
+            actorAccountId: account.id, machineId: machine.id, actionId: 'settings.list',
+            carrier: 'home_relay', envelope,
+        });
+        if (admission.kind !== 'admitted') throw new Error(admission.code);
+        const { kind: _kind, ...admittedMachine } = admission;
+        const executionAuthorization = await auth.mintExternalActionExecutionAuthorization(
+            { ...input, admittedMachineRole: admittedMachine.role }, { managedMachineAdmission: admittedMachine },
+        );
+        const io = new Server(createServer());
+        const forward = vi.fn(async () => ({ ok: true as const, result: createExternalActionDaemonDispatchResponseV1(
+            prepareExternalActionResponseEnvelopeV1({ v: 1, actionId: 'settings.list',
+                requestId: envelope.requestId, execution: { ok: true, result: {} } }),
+        ) }));
+        const dispatch = createExternalActionDaemonDispatcher({ io, forwardRpc: forward });
+        const delegate = db.machine;
+        const originalFindUnique = delegate.findUnique;
+        const findMachine = vi.spyOn(delegate, 'findUnique').mockImplementation(originalFindUnique.bind(delegate));
+        const request = { actionId: 'settings.list' as const, envelope, executionAuthorization,
+            principal: { accountId: account.id, authority: 'present_user' as const,
+                authentication: { kind: 'account' as const, tokenEpoch: account.tokenEpoch } },
+            admittedMachine,
+        };
+        try {
+            const result = await dispatch(request);
+            expect(result).toMatchObject({ kind: 'response' });
+            expect(forward).toHaveBeenCalledOnce();
+            // The second read used to repeat the first row lookup for a separate field projection.
+            expect(findMachine.mock.calls.filter(([query]) => query.where.id === machine.id)).toHaveLength(1);
+            await db.machine.update({ where: { id: machine.id }, data: { operationProtocolCapabilitiesRevision: 0 } });
+            expect(await dispatch(request)).toMatchObject({ kind: 'placement_error', code: 'encrypted_action_unsupported' });
+            await db.machine.update({ where: { id: machine.id }, data: {
+                installationId: crypto.randomUUID(), operationProtocolCapabilitiesRevision: 1,
+            } });
+            expect(await dispatch(request)).toMatchObject({ kind: 'placement_error', code: 'target_not_local' });
+            expect(forward).toHaveBeenCalledOnce();
+        } finally {
+            findMachine.mockRestore();
+            delegate.findUnique = originalFindUnique;
+            await new Promise<void>(resolve => { io.close(() => resolve()); });
+        }
     });
 
     it('classifies a lost original Session target as target unavailable', async () => {

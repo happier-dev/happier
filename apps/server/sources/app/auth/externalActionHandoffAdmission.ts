@@ -24,6 +24,12 @@ export function hasAdmittedExternalActionHandoffScope(binding: ExternalActionExe
     return true;
 }
 
+export const ADMITTED_EXTERNAL_ACTION_MACHINE_SELECT = withMachineContentSelect({
+    accountId: true, installationId: true, revokedAt: true, replacedByMachineId: true,
+    metadata: true, daemonState: true, dataEncryptionKey: true,
+    account: { select: { encryptionMode: true } },
+});
+
 export type AdmittedExternalActionMachineRow = Readonly<{
     accountId: string;
     installationId: string | null;
@@ -93,10 +99,8 @@ export async function readAdmittedExternalActionMachineInTx(
     installationId: string | undefined,
     retained?: SocketRpcMachineAdmissionContextV1,
 ): Promise<Extract<MachineAdmission, { kind: 'admitted' }> | null> {
-    const machine = await reader.machine.findUnique({ where: { id: machineId }, select: withMachineContentSelect({
-        accountId: true, installationId: true, revokedAt: true, replacedByMachineId: true,
-        metadata: true, daemonState: true, dataEncryptionKey: true,
-        account: { select: { encryptionMode: true } },
-    }) }).then(decodeMachineStoredContent);
+    const machine = await reader.machine.findUnique({
+        where: { id: machineId }, select: ADMITTED_EXTERNAL_ACTION_MACHINE_SELECT,
+    }).then(decodeMachineStoredContent);
     return projectAdmittedExternalActionMachineFromRow(machine, binding, machineId, installationId, retained);
 }
