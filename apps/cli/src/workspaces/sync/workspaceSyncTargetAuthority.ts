@@ -17,7 +17,7 @@ import { resolveWorkspaceWriteActionAdmissionV1 } from '@happier-dev/protocol/ac
 import type { ResolvedHomeTarget } from '@happier-dev/cli-common/homeTarget';
 import type { ScmBackendRegistry } from '@/scm/registry';
 import { resolveWorkspaceReplicationSourceInputsWithScmWorkspace } from '@/scm/workspace/workspaceTransferResolution';
-import { resolveWorkspaceSyncSeedTransfer } from './workspaceSyncSeedTransfer';
+import { projectWorkspaceSyncWriterTargetContext, resolveWorkspaceSyncSeedTransfer } from './workspaceSyncSeedTransfer';
 import { realpathWithAbsentSuffix } from '@/utils/path/physicalAncestorPath';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
@@ -1110,16 +1110,6 @@ export function createWorkspaceSyncTargetAuthority(
       throw authorityError('workspace_sync_child_unavailable', 'The admitted native target does not resolve to this endpoint');
     }
     return resolution.ref;
-  };
-
-  const projectSourceWriterTargetContext = (context: RpcHandlerContext | undefined): RpcHandlerContext | undefined => {
-    const writerTarget = context?.workspaceSyncSourceWriterTargetRouting
-      ? WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse(context.workspaceSyncSourceWriterTargetRouting) : undefined;
-    return writerTarget && !context?.workspaceSyncTargetRouting
-      && writerTarget.target.targetMachineId === localMachineId && context?.machineAdmission
-      ? { ...context, workspaceSyncTargetRouting: WorkspaceSyncTargetRoutingV1Schema.parse({ ...writerTarget.target,
-          targetContext: { ...writerTarget.source.sourceContext, machineAdmission: context.machineAdmission } }) }
-      : context;
   };
 
   const readTargetRouting = async (
@@ -2933,7 +2923,7 @@ export function createWorkspaceSyncTargetAuthority(
       if (request.serverId !== localServerId) {
         throw authorityError('target_unavailable', 'Handoff target placement does not match this daemon');
       }
-      const admittedContext = projectSourceWriterTargetContext(context);
+      const admittedContext = projectWorkspaceSyncWriterTargetContext(context, localMachineId);
       const nativeRouting = admittedContext?.workspaceSyncTargetRouting?.targetManaged
         ? await readTargetRouting(admittedContext, 'preflight') : undefined;
       if (nativeRouting?.targetManaged) {
@@ -3355,7 +3345,7 @@ export function createWorkspaceSyncTargetAuthority(
         ], relationships: [normalRelationship], organizations: [], rows: [], graphRevision: 'absent',
           loadedAtMs: 0, scopeKey: context!.callerInputAuthorization!.binding.accountId };
       }
-      const admittedContext = projectSourceWriterTargetContext(context);
+      const admittedContext = projectWorkspaceSyncWriterTargetContext(context, localMachineId);
       const targetRouting = admitted?.targetRouting ?? await readTargetRouting(admittedContext, 'prepare');
       const sourceWriterTargetRouting = admitted?.sourceWriterTargetRouting ?? await readSourceWriterTargetRouting(context, 'prepare', targetRouting);
       let admittedTarget: Awaited<ReturnType<typeof bindReplacementTarget>> | undefined;

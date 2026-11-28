@@ -6,7 +6,8 @@ import {
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { ActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
 import type { PrepareWorkspaceSyncPrivateExecutionInput, WorkspaceSyncPrivateExecution } from '@/workspaces/sync/workspaceSyncHandoffAdapter';
-import type { PrivateProjectSyncNetwork } from '@/workspaces/activation/privateProjectSyncEffect';
+import { logger } from '@/ui/logger';
+import { privateSyncEffectError, type PrivateProjectSyncNetwork } from '@/workspaces/activation/privateProjectSyncEffect';
 import type { WorkspaceSyncMachineTunnelOpen } from '@/workspaces/sync/workspaceSyncMachineCarrierStream';
 import { resolveAgentIsolationMemberNativeAgent } from '@/daemon/agentIsolation/memberCliRuntime';
 import type { ProductionDaemonWorkspaceSyncFactories, createProductionDaemonWorkspaceSyncRuntime } from './createProductionDaemonWorkspaceSyncRuntime';
@@ -33,7 +34,7 @@ export function createPrivateWorkspaceSyncSourceSeedPreparation(request: Readonl
   credentials: PrepareWorkspaceSyncPrivateExecutionInput['credentials'];
   getTargetPhaseContext(): RpcHandlerContext | undefined;
 }>, dependencies: Pick<PrivateExecutionDependencies, 'openMachineCarrierTunnel' | 'callWorkspaceSeedExport' | 'callMachineRpc'>): PrivateProjectSyncNetwork['prepareSourceSeed'] {
-  return async seed => {
+  const prepare: PrivateProjectSyncNetwork['prepareSourceSeed'] = async seed => {
     const openCarrier = dependencies.openMachineCarrierTunnel;
     const context = request.getTargetPhaseContext();
     if ((seed.sourceMachineId !== request.targetMachineId && !openCarrier) || !context || !dependencies.callWorkspaceSeedExport) {
@@ -78,10 +79,14 @@ export function createPrivateWorkspaceSyncSourceSeedPreparation(request: Readonl
         },
       };
     } catch (error) {
-      await issuedTunnel?.close();
+      await issuedTunnel?.close().catch(() => {
+        logger.warnLocalFile('[Workspace Sync] Failed to close the source seed carrier');
+      });
       throw error;
     }
   };
+  // The host callback crosses IPC before the member can project an ordinary Error.
+  return seed => prepare(seed).catch(error => { throw privateSyncEffectError(error); });
 }
 
 /** Requester network custody stays in the host; target bytes stay in the member. */

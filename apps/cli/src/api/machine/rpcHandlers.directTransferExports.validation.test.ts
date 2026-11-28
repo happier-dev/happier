@@ -1,4 +1,5 @@
 import { projectWorkspaceSyncRpcError } from './workspaceSyncRpcErrors';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { createPrivateWorkspaceSyncSourceSeedPreparation } from '@/daemon/startup/workspaceSyncPrivateExecution';
 import { privateSyncEffectError } from '@/workspaces/activation/privateProjectSyncEffect';
@@ -51,10 +52,10 @@ describe('direct transfer export request validation', () => {
         });
         const prepared = prepare({ operationId: 'seed', sourceMachineId: 'target', sourceWorkspaceRefId: 'source',
             contentPolicy: { v: 1, selection: 'all_files', extraIncludePatterns: [], extraIgnorePatterns: [], policyDigest: computeWorkspaceSyncPolicyDigest({ v: 1, selection: 'all_files', extraIncludePatterns: [], extraIgnorePatterns: [] }) } });
-        await expect(prepared).rejects.toMatchObject({ failureCause });
+        await expect(prepared).rejects.toMatchObject({ code, data: { failureCause } });
         const projected = await prepared.catch(error => projectWorkspaceSyncRpcError(error, RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE));
         expect(readRpcErrorCode(projected)).toBe(code);
-        expect(projected).toMatchObject({ failureCause });
+        expect(projectActionFailureCauseV1(projected)).toEqual(failureCause);
     });
 
     it('admits publication confinement to the real file source and preserves ordinary exports', async () => {

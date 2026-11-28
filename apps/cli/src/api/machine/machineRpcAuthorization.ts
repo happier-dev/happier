@@ -513,8 +513,12 @@ export function doesWorkspaceSyncSeedRootMatchRouting(
     )) return false;
   const seedProof = readWorkspaceSyncSeedProofKindV1(authorization.binding.actionId);
   if (!seedProof) return false;
-  if (operationId !== undefined && operationId !== seed.sourceWriterTarget.source.operationId
-      && !(seedProof === 'writer_target' && operationId === deriveWorkspaceSyncRelationshipId(seed.sourceWriterTarget.source.operationId))) return false;
+  const sourceOperationId = seed.sourceWriterTarget.source.operationId;
+  if (operationId !== undefined && operationId !== sourceOperationId) {
+    // Project Open derives the relationship transfer id and signs it on the target prepare.
+    if (operationId !== deriveWorkspaceSyncRelationshipId(sourceOperationId)
+      || (seedProof !== 'writer_target' && operationId !== seed.target.operationId)) return false;
+  }
   if (authorization.binding.actionId === SESSION_HANDOFF_ACTION_ID_V1
       && authorization.binding.custodianAccountId !== authorization.binding.accountId
       && authorization.binding.admittedMachineRole !== 'manage'

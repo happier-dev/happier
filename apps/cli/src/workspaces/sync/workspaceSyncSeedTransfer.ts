@@ -1,5 +1,5 @@
 import type { RpcHandlerContext } from '@/api/rpc/types';
-import type { WorkspaceSyncSeedCarrierV1 } from '@happier-dev/protocol/socketRpc';
+import { WorkspaceSyncTargetRoutingV1Schema, type WorkspaceSyncSeedCarrierV1 } from '@happier-dev/protocol/socketRpc';
 import type { WorkspaceSyncSeedExportPrepareV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import type { FiniteTransferMachineTunnel, WorkspaceSyncMachineTunnelOpen } from './workspaceSyncMachineCarrierStream';
 
@@ -103,6 +103,20 @@ export type CallWorkspaceSyncSeedExport = (descriptor: Readonly<{
   carrier?: Readonly<{ publicKey: string; onGranted: (carrier: WorkspaceSyncSeedCarrierV1) => void }>;
 }>, context: RpcHandlerContext) => Promise<unknown>;
 
+/** Project the admitted writer-target phase for target custody and its reverse seed. */
+export function projectWorkspaceSyncWriterTargetContext<C extends RpcHandlerContext | undefined>(
+  context: C,
+  localMachineId: string,
+): C {
+  if (!context || context.workspaceSyncTargetRouting || !context.machineAdmission) return context;
+  const writerTarget = context.workspaceSyncSourceWriterTargetRouting;
+  if (writerTarget?.target.targetMachineId !== localMachineId) return context;
+  return { ...context, workspaceSyncTargetRouting: WorkspaceSyncTargetRoutingV1Schema.parse({
+    ...writerTarget.target,
+    targetContext: { ...writerTarget.source.sourceContext, machineAdmission: context.machineAdmission },
+  }) };
+}
+
 /** The installed TARGET uses its admitted SOURCE export to open the reverse carrier. */
 export async function prepareSignedWorkspaceSyncSeed(input: Readonly<{
   sourceMachineId: string;
@@ -114,12 +128,13 @@ export async function prepareSignedWorkspaceSyncSeed(input: Readonly<{
 }>): Promise<Readonly<{ result: unknown; tunnel?: FiniteTransferMachineTunnel }>> {
   const descriptor = { machineId: input.sourceMachineId, request: input.request,
     ...(input.signal ? { signal: input.signal } : {}) };
-  const source = input.context.workspaceSyncSourceWriterTargetRouting;
-  const target = input.context.workspaceSyncTargetRouting;
+  const context = projectWorkspaceSyncWriterTargetContext(input.context, input.request.targetMachineId);
+  const source = context.workspaceSyncSourceWriterTargetRouting;
+  const target = context.workspaceSyncTargetRouting;
   if (input.sourceMachineId === input.request.targetMachineId || !source || !target
     || (source.sourceWriter.machineId === source.source.sourceMachineId
       && source.source.sourceContext.machineAdmission.custodianAccountId === target.targetContext.machineAdmission.custodianAccountId)) {
-    return { result: await input.callExport(descriptor, input.context) };
+    return { result: await input.callExport(descriptor, context) };
   }
   if (!input.openTunnel) throw Object.assign(new Error('Workspace seed carrier is unavailable'), { code: 'peer_unavailable' });
   let result: unknown;
@@ -130,7 +145,7 @@ export async function prepareSignedWorkspaceSyncSeed(input: Readonly<{
     ...(input.signal ? { signal: input.signal } : {}),
     admittedSeed: { prepare: async publicKey => {
       let grant: WorkspaceSyncSeedCarrierV1 | undefined;
-      result = await input.callExport({ ...descriptor, carrier: { publicKey, onGranted: value => { grant = value; } } }, input.context);
+      result = await input.callExport({ ...descriptor, carrier: { publicKey, onGranted: value => { grant = value; } } }, context);
       assertWorkspaceSyncSeedExportSucceeded(result);
       if (!result || typeof result !== 'object' || !('transferId' in result) || result.transferId !== input.request.operationId) {
         throw Object.assign(new Error('Workspace seed export does not match the admitted operation'), { code: 'peer_unavailable' });

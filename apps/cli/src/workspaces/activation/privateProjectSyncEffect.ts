@@ -1,5 +1,7 @@
 import { dirname, join } from 'node:path';
 import { realpath } from 'node:fs/promises';
+import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import { PluginError, isPluginError } from '@happier-dev/plugin-sdk/errors';
 import { projectActionFailureCauseV1, readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { TransferEndpointCandidate, WorkspaceContentPolicyV1 } from '@happier-dev/protocol';
@@ -138,8 +140,9 @@ export type WorkspaceNativeCopyBaselineEffect = Readonly<{
 /** Private same-binary boundary preserves the canonical owner's typed refusal. */
 export function privateSyncEffectError(error: unknown): Error {
   if (isPluginError(error)) return error;
-  const code = readActionErrorCodeV1(error) ?? 'action_failed';
-  return new PluginError({ code, message: error instanceof Error ? error.message : 'Private workspace Sync is unavailable',
+  const code = readRpcErrorCode(error) ?? readActionErrorCodeV1(error) ?? 'action_failed';
+  const message = error instanceof Error ? redactBugReportSensitiveText(error.message) : 'Private workspace Sync is unavailable';
+  return new PluginError({ code, message,
     failureCause: projectActionFailureCauseV1(error, 'native_execution_effect', { allowUnknownErrorCode: true }),
     details: { reason: code, phase: 'native_execution_effect' } });
 }

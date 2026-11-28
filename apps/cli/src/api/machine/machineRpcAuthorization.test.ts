@@ -8,7 +8,7 @@ import { computeExternalActionRequestEnvelopeDigestV1, signExternalActionMachine
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 
-import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
+import { RpcError, RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { SESSION_WORKSPACE_RETURN_WRITE_SCOPED_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/sessionWorkspaceReturnActionIdsV1';
 import { MACHINE_ACCESS_LOSS_SERVER_ORIGIN, SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS,
@@ -25,6 +25,9 @@ import { ExternalActionExecutionAuthorizationV1Schema, projectDeploymentPreparat
 import { WorkspaceSyncSeedRoutingV1Schema, WorkspaceSyncSourceWriterTargetRoutingV1Schema, WorkspaceSyncSourceExecutionV1Schema } from '@happier-dev/protocol/socketRpc';
 import { deriveWorkspaceSyncRelationshipId } from '@happier-dev/protocol/actions/externalActionApi';
 import { ApiMachineClient } from '@/api/apiMachine';
+import { createPrivateWorkspaceSyncSourceSeedPreparation } from '@/daemon/startup/workspaceSyncPrivateExecution';
+import { buildActionExecutorContextForRpc } from '@/rpc/handlers/_actionDispatchAdapter';
+import type { FiniteTransferMachineTunnel, WorkspaceSyncMachineTunnel, WorkspaceSyncMachineTunnelOpenInput } from '@/workspaces/sync/workspaceSyncMachineCarrierStream';
 import { writeFile, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { withTempDir } from '@/testkit/fs/tempDir';
@@ -1251,7 +1254,7 @@ describe('authorizeMachineRpcRequest', () => {
     })).resolves.toEqual({ ok: true });
   });
 
-  it('admits derived relationshipId for session.handoff Git seed export while rejecting mismatched ids, foreign targets, and project_source derivations', async () => {
+  it('binds derived Git seed ids to the admitted handoff or Project Open target prepare', async () => {
     const buildHandoffSeed = (options?: Readonly<{
       targetCustodian?: string;
       sourceRole?: 'use' | 'manage';
@@ -1418,10 +1421,10 @@ describe('authorizeMachineRpcRequest', () => {
     };
     const openTargetAdmission = {
       actorAccountId: 'owner',
-      custodianAccountId: 'owner',
+      custodianAccountId: 'target-host-owner',
       machineId: 'target-machine',
       installationId: 'target-installation',
-      role: 'manage' as const,
+      role: 'use' as const,
       encryptionMode: 'plain' as const,
     };
     const openEnvelope = {
@@ -1434,9 +1437,9 @@ describe('authorizeMachineRpcRequest', () => {
       v: 1,
       token: 'open-root',
       binding: {
-        accountId: 'owner',
-        custodianAccountId: 'owner',
-        admittedMachineRole: 'manage',
+        accountId: openTargetAdmission.actorAccountId,
+        custodianAccountId: openTargetAdmission.custodianAccountId,
+        admittedMachineRole: openTargetAdmission.role,
         authentication: { kind: 'account', tokenEpoch: 1 },
         accountEncryptionMode: 'plain',
         serverIdentityId: 'home',
@@ -1505,6 +1508,59 @@ describe('authorizeMachineRpcRequest', () => {
     });
     expect(doesWorkspaceSyncSeedRootMatchRouting(openAuthorization, openSeed, openSourceExec, 'open-op')).toBe(true);
     expect(doesWorkspaceSyncSeedRootMatchRouting(openAuthorization, openSeed, openSourceExec, deriveWorkspaceSyncRelationshipId('open-op'))).toBe(false);
+
+    // A Project Open relationship prepare names the derived id on the signed
+    // target phase. Its reverse export must use that same transfer id.
+    const relationshipId = deriveWorkspaceSyncRelationshipId('open-op');
+    const relationshipTarget = { ...openSeed.target, operationId: relationshipId };
+    const relationshipSeed = WorkspaceSyncSeedRoutingV1Schema.parse({ ...openSeed, target: relationshipTarget,
+      sourceWriterTarget: { ...openSeed.sourceWriterTarget, target: { ...openTargetPhase, operationId: relationshipId } } });
+    expect(doesWorkspaceSyncSeedRootMatchRouting(openAuthorization, relationshipSeed, openSourceExec, 'other-relationship')).toBe(false);
+    expect(doesWorkspaceSyncSeedRootMatchRouting(openAuthorization, relationshipSeed, undefined, relationshipId)).toBe(false);
+    expect(doesWorkspaceSyncSeedRootMatchRouting(openAuthorization, relationshipSeed, openSourceExec, relationshipId)).toBe(true);
+
+    const sendSeedRpc = vi.fn(async (_request: unknown) => ({ success: true, transferId: relationshipId,
+      sizeBytes: 12, manifestHash: 'manifest', endpointCandidates: [{ kind: 'http', url: 'http://127.0.0.1:3000/seed',
+        authorizationToken: 'seed-fixture', expiresAt: Date.now() + 60_000 }] }));
+    const openMachine = Object.assign(Object.create(ApiMachineClient.prototype), {
+      machine: { id: 'target-machine' },
+      callWorkspaceSyncPhysicalMachineRpc: sendSeedRpc,
+    }) as ApiMachineClient;
+    const publicKey = Buffer.from(tweetnacl.sign.keyPair().publicKey).toString('base64url');
+    async function dialSeedCarrier(input: Extract<WorkspaceSyncMachineTunnelOpenInput, { flow: 'file_transfer' }>): Promise<FiniteTransferMachineTunnel>;
+    async function dialSeedCarrier(input: Extract<WorkspaceSyncMachineTunnelOpenInput, { flow: 'workspace_sync' }>): Promise<WorkspaceSyncMachineTunnel>;
+    async function dialSeedCarrier(input: WorkspaceSyncMachineTunnelOpenInput): Promise<FiniteTransferMachineTunnel | WorkspaceSyncMachineTunnel> {
+      if (input.flow !== 'file_transfer' || !input.admittedSeed) throw new Error('Expected the admitted seed carrier');
+      await input.admittedSeed.prepare(publicKey);
+      return { localPort: 43210, observedPath: 'direct', close: async () => {} };
+    }
+    const credentials = { token: 'target-fixture', encryption: null };
+    const prepareSeed = createPrivateWorkspaceSyncSourceSeedPreparation({ targetMachineId: 'target-machine', credentials,
+      getTargetPhaseContext: () => ({ signal: new AbortController().signal, machineAdmission: openTargetAdmission,
+        callerAuthority: 'present_user', callerInputAuthorization: openAuthorization, workspaceSyncSourceExecution: openSourceExec,
+        workspaceSyncSourceWriterTargetRouting: relationshipSeed.sourceWriterTarget }) }, {
+      openMachineCarrierTunnel: dialSeedCarrier,
+      callMachineRpc: async () => ({ success: true }),
+      callWorkspaceSeedExport: (descriptor, context) => openMachine.callWorkspaceSyncSeedExport({ ...descriptor, credentials,
+        context: buildActionExecutorContextForRpc({ ...context, serverId: 'home' }) }),
+    });
+    const seedRequest = { operationId: relationshipId, sourceMachineId: 'source-machine', sourceWorkspaceRefId: 'source-ref', contentPolicy };
+    const prepared = await prepareSeed(seedRequest);
+    expect(prepared.transferId).toBe(relationshipId);
+    expect(sendSeedRpc).toHaveBeenCalledWith(expect.objectContaining({
+      machineId: 'source-machine', seedCarrier: expect.objectContaining({ publicKey }),
+      routing: { workspaceSyncSeedRouting: relationshipSeed },
+    }));
+    await prepared.dispose();
+
+    const failureCause = { phase: 'workspace.seed.export', errorClass: 'Error', errorCode: 'relationship_not_ready', httpStatus: null } as const;
+    const failedSeed = createPrivateWorkspaceSyncSourceSeedPreparation({ targetMachineId: 'target-machine', credentials,
+      getTargetPhaseContext: () => ({ signal: new AbortController().signal }) }, {
+      openMachineCarrierTunnel: async () => { throw new Error('No carrier expected'); },
+      callMachineRpc: async () => ({ success: true }),
+      callWorkspaceSeedExport: async () => { throw new RpcError('Source operation ended', 'relationship_not_ready', failureCause); },
+    });
+    await expect(failedSeed(seedRequest)).rejects.toMatchObject({ code: 'relationship_not_ready', data: { failureCause } });
   });
 
 

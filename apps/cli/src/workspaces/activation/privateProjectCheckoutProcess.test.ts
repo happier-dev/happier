@@ -5,6 +5,7 @@ import { once } from 'node:events';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
+import { Readable } from 'node:stream';
 import { afterEach, expect, it, vi } from 'vitest';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { readAgentLaunchFrame } from '@/daemon/agentIsolation/agentLaunchFrame';
@@ -20,8 +21,10 @@ import { createWorkspaceEffectScmRegistry, prepareWorkspaceCheckoutEffect } from
 import { preparePrivateProjectCheckout, admitPrivateProjectCheckoutDestination } from './privateProjectCheckout';
 import { createWorkspaceSyncSeedExport, resolveWorkspaceSyncSeedTransfer } from '@/workspaces/sync/workspaceSyncSeedTransfer';
 import { createDirectTransferServerLifecycle } from '@/machines/transfer/directTransferServerLifecycle';
-import { buildDirectPeerTransferEndpointPath } from '@/machines/transfer/directPeerTransport';
-import type { PrivateProjectSyncNetwork } from './privateProjectSyncEffect';
+import { createPrivateWorkspaceSyncSourceSeedPreparation } from '@/daemon/startup/workspaceSyncPrivateExecution';
+import { RpcError, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { FiniteTransferMachineTunnel, WorkspaceSyncMachineTunnel, WorkspaceSyncMachineTunnelOpenInput } from '@/workspaces/sync/workspaceSyncMachineCarrierStream';
 import { runNativeConfinedWorkspaceSyncApply } from '@/workspaces/sync/workspaceSyncNativeConfinedFileSystem';
 
 // Genuine filesystem/process boundaries only. The parent authorizer, framed
@@ -75,6 +78,14 @@ it.skipIf(process.platform !== 'linux').each(['empty', 'same_machine', 'local_gi
       relationships: mode === 'linked_loan' ? [relationship] : [], organizations: [], rows: [], graphRevision: 'absent', loadedAtMs: 1, scopeKey: 'requester' };
     let sourceRegistry: Awaited<ReturnType<typeof createWorkspaceEffectScmRegistry>> | undefined;
     const transfers = mode === 'remote_git' ? createDirectTransferServerLifecycle({ bindPort: 0, listenerClasses: ['loopback_http'] }) : null;
+    const sourceRefusal = { phase: 'workspace.seed.export', errorClass: 'RpcError', errorCode: 'relationship_not_ready', httpStatus: null } as const;
+    let refuseSeed = mode === 'remote_git';
+    async function dialSeedCarrier(input: Extract<WorkspaceSyncMachineTunnelOpenInput, { flow: 'file_transfer' }>): Promise<FiniteTransferMachineTunnel>;
+    async function dialSeedCarrier(input: Extract<WorkspaceSyncMachineTunnelOpenInput, { flow: 'workspace_sync' }>): Promise<WorkspaceSyncMachineTunnel>;
+    async function dialSeedCarrier(input: WorkspaceSyncMachineTunnelOpenInput): Promise<FiniteTransferMachineTunnel | WorkspaceSyncMachineTunnel> {
+      if (!transfers || input.flow !== 'file_transfer') throw new Error('Only the remote Git target needs a tunnel');
+      return { localPort: await transfers.ensureListening(), observedPath: 'direct', close: async () => {} };
+    }
     boundary.launch = async (input, output) => {
       const frame = await readAgentLaunchFrame(input);
       expect(frame.nativeIdentity?.agentUid).toBe(2401);
@@ -91,19 +102,21 @@ it.skipIf(process.platform !== 'linux').each(['empty', 'same_machine', 'local_gi
         agent: { executablePath: '/verified/mutagen-agent' } },
       network: { callMachineRpc: async () => { throw new Error('No remote operation expected'); },
         refreshProjectSnapshot: async () => rows,
-        prepareSourceSeed: async (request: Parameters<PrivateProjectSyncNetwork['prepareSourceSeed']>[0]): ReturnType<PrivateProjectSyncNetwork['prepareSourceSeed']> => {
-          if (!transfers || !sourceRegistry) throw new Error('Only the remote Git target needs a seed');
-          const exported = await createWorkspaceSyncSeedExport({ operationId: request.operationId, sourcePath: sourceRoot,
-            activeServerDir: join(workspaceRoot, 'source-export'), workspaceTransfer: resolveWorkspaceSyncSeedTransfer(contentPolicy), registry: sourceRegistry.registry });
-          if (exported.payloadSource.sizeBytes === undefined || exported.payloadSource.manifestHash === undefined) {
-            throw new Error('Native Sync seed fixture requires a measured payload size and manifest hash');
-          }
-          const published = await transfers.publishTransferWhenReady({ transferId: request.operationId, ...exported });
-          return { transferId: request.operationId, sizeBytes: exported.payloadSource.sizeBytes, manifestHash: exported.payloadSource.manifestHash,
-            openPayload: async ({ transferId }) => ({ endpointCandidates: published.endpointCandidates.map(candidate => candidate.kind === 'http'
-              ? { ...candidate, url: new URL(buildDirectPeerTransferEndpointPath(transferId), candidate.url).toString() } : candidate), dispose: async () => {} }),
-            dispose: async () => { transfers.clearPublishedTransfer(request.operationId); } };
-        } },
+        prepareSourceSeed: createPrivateWorkspaceSyncSourceSeedPreparation({
+          targetMachineId: 'machine', credentials: { token: 'fixture', encryption: null }, getTargetPhaseContext: () => ({}),
+        }, {
+          openMachineCarrierTunnel: dialSeedCarrier,
+          callMachineRpc: async () => { transfers?.clearPublishedTransfer('sync-op'); return { success: true }; },
+          callWorkspaceSeedExport: async ({ request }) => {
+            if (!transfers || !sourceRegistry) throw new Error('Only the remote Git target needs a seed');
+            if (refuseSeed) throw new RpcError('Source operation ended', sourceRefusal.errorCode, sourceRefusal);
+            const exported = await createWorkspaceSyncSeedExport({ operationId: request.operationId, sourcePath: sourceRoot,
+              activeServerDir: join(workspaceRoot, 'source-export'), workspaceTransfer: resolveWorkspaceSyncSeedTransfer(contentPolicy), registry: sourceRegistry.registry });
+            const published = await transfers.publishTransferWhenReady({ transferId: request.operationId, ...exported });
+            return { success: true, transferId: request.operationId, sizeBytes: exported.payloadSource.sizeBytes,
+              manifestHash: exported.payloadSource.manifestHash, endpointCandidates: published.endpointCandidates };
+          },
+        }) },
       launch: { requesterIdentity, agentIsolation: { read: () => snapshot }, signal: new AbortController().signal, assertCurrent() {} },
       managedHappierBinaryPath: '/opt/happier/cli/current/happier', verifyCurrent: async () => {}, onEffectsIssued() { effectsIssued += 1; },
     } satisfies Parameters<typeof startPrivateProjectSyncProcess>[0];
@@ -135,6 +148,12 @@ it.skipIf(process.platform !== 'linux').each(['empty', 'same_machine', 'local_gi
         policyDigest: contentPolicy.policyDigest, createIfMissing: true,
         ...(mode === 'linked_loan' ? { transientRelationship: relationship } : {}),
         targetBootstrap: seed ? 'materialize_from_source_workspace' as const : 'use_existing' as const };
+      if (mode === 'remote_git') {
+        const refused = await process.prepareBootstrapAtTarget({ ...request, targetMachineId: 'machine' }).catch(error => error);
+        expect(readRpcErrorCode(refused)).toBe(sourceRefusal.errorCode);
+        expect(projectActionFailureCauseV1(refused)).toEqual(sourceRefusal);
+        refuseSeed = false;
+      }
       const bootstrap = await process.prepareBootstrapAtTarget({ ...request, targetMachineId: 'machine' });
       expect(bootstrap).toMatchObject({ state: 'ready', ...(seed ? {} : { created: true }) });
       expect(bootstrap.ownershipHandles?.[0]?.owner.canonicalRoot).toBe(rootPath);
@@ -277,6 +296,19 @@ vi.mock('node:child_process', async importOriginal => {
     expect(args.slice(0, 2)).toEqual(['-n', '-u']);
     expect(args.slice(-2)).toEqual(['/opt/happier/cli/current/happier', 'agent-launch']);
     return spawnWorkspaceCheckoutNativeBoundary(actual.spawn, options);
+  } };
+});
+
+vi.mock('@happier-dev/cli-common/process', async importOriginal => {
+  const actual = await importOriginal<typeof import('@happier-dev/cli-common/process')>();
+  return { ...actual, execFileWithDeadline: async (...input: Parameters<typeof actual.execFileWithDeadline>) => {
+    if (!input[2]?.inputBytes || input[1]?.at(-1) !== 'agent-launch') return actual.execFileWithDeadline(...input);
+    const { runWorkspaceCheckoutCwdBoundary } = await import('./workspaceCheckoutNative.testkit');
+    const cwd = await runWorkspaceCheckoutCwdBoundary(input[2].inputBytes, input[2].signal);
+    if (cwd) return cwd;
+    const frame = await readAgentLaunchFrame(Readable.from([input[2].inputBytes], { objectMode: false }), input[2].signal, true);
+    expect(frame).toMatchObject({ action: 'retire_operation' });
+    return { stdout: '', stderr: '' };
   } };
 });
 
