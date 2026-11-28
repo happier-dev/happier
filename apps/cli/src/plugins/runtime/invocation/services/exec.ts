@@ -509,7 +509,8 @@ export function spawnAuthorizedHostExecLaunchForHost(
         sessionHolder?: SessionHolderRole;
     }> = {},
 ): SupervisedPluginProcess {
-    const environment = withHostProcessOwnerEnvironment(launch.env, launch.processOwnerTag ?? readHostProcessOwnerTag());
+    const processOwnerTag = launch.processOwnerTag ?? readHostProcessOwnerTag(sessionProcessEnvironment());
+    const environment = withHostProcessOwnerEnvironment(launch.env, processOwnerTag);
     if (options.descendantDisposition === 'preserve-on-success') {
         // Stack lifecycle markers describe the daemon, not the native supervisor
         // that takes ownership after this launch succeeds.
@@ -542,7 +543,7 @@ export function spawnAuthorizedHostExecLaunchForHost(
             throw new PluginError({ code: 'plugin_exec_spawn_failed', retryable: false,
                 message: 'Windows Session process custody helper is unavailable' });
         }
-        const unit = createHappierLinuxScopeName(launch.processOwnerTag ?? readHostProcessOwnerTag());
+        const unit = createHappierLinuxScopeName(processOwnerTag);
         const scopedLaunch = !placed && options.linuxProcessLaunchScope && unit
             ? buildCgroupProcessLaunchSpec({ scope: options.linuxProcessLaunchScope, unit,
                 launchSpec: { filePath: launch.command, args: [...launch.args], env: { ...environment } } })
@@ -819,7 +820,7 @@ export function createStableRunnerPluginExecService(
             assertNativeLaunchQualifier(qualifiers, nativeLaunch);
             if (!params.authorizeResolvedAgentNativeLaunch) fail('plugin_exec_native_launch_unavailable', 'Daemon native Agent launch authority is unavailable');
             const processOwnerTag = params.processOwner
-                ? formatProcessOwnerTag({ happierHomeDir: configuration.happyHomeDir, owner: params.processOwner }) : readHostProcessOwnerTag();
+                ? formatProcessOwnerTag({ happierHomeDir: configuration.happyHomeDir, owner: params.processOwner }) : readHostProcessOwnerTag(sessionProcessEnvironment());
             authorized = await params.authorizeResolvedAgentNativeLaunch({ ...launch,
                 ...(processOwnerTag ? { processOwnerTag } : {}) }, { signal, agentLaunchKind,
                   ...(nativeLaunch ? { sessionMcpContext: INTERNAL_NATIVE_SESSION_CONTEXTS.get(nativeLaunch)?.(),
@@ -1155,7 +1156,7 @@ async function finalizeHostExecLaunch(input: Readonly<{
             assertCurrent();
             const launch = createUnixAgentIdentityLaunch({ ...material, ...selectedFiles, executable: command, cwd: isolated.cwd,
                 environment: withHostProcessOwnerEnvironment(withGitIdentity(selectedFiles.environment),
-                    input.launch.processOwnerTag ?? readHostProcessOwnerTag()),
+                    input.launch.processOwnerTag ?? readHostProcessOwnerTag(sessionProcessEnvironment())),
                 // The admitted Project result is a complete environment. The
                 // identity adapter still excludes source/control credentials.
                 selectedEnvironmentKeys: [...material.selectedEnvironmentKeys, ...(launchEnvironmentKeys ?? []),
@@ -1587,7 +1588,7 @@ export function createStablePluginExecService(params: Readonly<{
     const inheritedEnvironment = params.inheritedEnvironment ?? sessionProcessEnvironment();
     const processOwnerTag = params.processOwner
         ? formatProcessOwnerTag({ happierHomeDir: configuration.happyHomeDir, owner: params.processOwner })
-        : readHostProcessOwnerTag();
+        : readHostProcessOwnerTag(sessionProcessEnvironment());
     const { custody, retain, assertOpen } = createNativeProcessCustodyForHost();
     const nativeLaunchQualifiers = new WeakSet<object>();
     const preResolvedSystemTools = new WeakMap<object, Readonly<{
