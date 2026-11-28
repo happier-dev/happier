@@ -1,5 +1,111 @@
 # Changelog
 
+## Release 2026-11-28.1 - 2026-11-28
+
+<!-- happier-release-note-projections:v1
+{
+  "expo": { "message": "Export a session, your selection or all your sessions as Markdown or JSON, and keep Claude transcripts on a machine with Local history. Antigravity now runs on its own CLI with one sign-in, steering, question forms, Build and Plan, and clear quota and verification messages. Account pools wait for the turn to end before switching agents that cannot switch mid-turn. Analytics wait for your account setting, and crash reports leave out server addresses, file paths and IDs. Cmd/Ctrl+K opens the command palette while you type. Install the new native app from the store to get this release, and update the CLI and daemon on your machines." },
+  "appStore": { "whatsNew": "Export your conversations: save the open session, the messages you selected, or all your sessions as Markdown or JSON. Everything is decrypted and written on your device, and a full export is zipped with one file per session. Choose the Night app icon under Settings > Appearance > App icon. Keep Claude transcripts on a machine for as long as you like from Settings > Sessions > Local history. Antigravity sessions now use the Antigravity CLI's own sign-in, accept steering while they run, show question forms as cards, offer Build and Plan, and explain quota limits and account verification with a link. Choose which account to use when you continue a session with another Agent. Account pools wait for the turn to end before switching Antigravity, OpenCode and Pi, and sessions stay on their pool when you move them. Notification actions clear the right notification and keep unanswered questions open. Cmd/Ctrl+K opens the command palette while you type, and icon-only sidebar buttons show tooltips on desktop. Analytics now wait for your account setting, and crash reports leave out server addresses, file paths and IDs. This is a native update. Update the CLI and daemon on your machines for the Agent and recovery fixes." },
+  "playStore": { "whatsNew": "Export a session, your selection or all your sessions as Markdown or JSON. Choose the Night app icon in Appearance. Antigravity uses its own CLI sign-in and supports steering and question forms. Pools switch Antigravity, OpenCode and Pi at turn end. Notification actions keep unanswered questions open. Analytics wait for your setting, and crash reports leave out addresses, paths and IDs. Install this native update; update the CLI on your machines too." },
+  "storyDeck": { "summary": "Export conversations as Markdown or JSON, a Night app icon, Claude local history control, Antigravity on its own CLI with steering and question forms, gentler pool switching, and quieter analytics." }
+}
+-->
+
+Export your conversations, keep Claude transcripts on a machine for as long as you choose, and pick a Night app icon. Antigravity now runs on its own CLI with a single sign-in, steering, question forms and clear quota and verification messages. Account pools switch more gently, recovery after a daemon restart is more dependable, and the apps send less analytics and strip identifying details from crash reports before they leave your device.
+
+### Sessions and transcripts
+
+- **Export transcripts:** export the open session from its menu, the messages you selected in the transcript, or all your sessions from **Settings → Account → Export everything**. Choose Markdown, one heading per message, or JSON with every message, tool call and timestamp, and optionally include subagent transcripts. A full export is saved as a zip with one file per session. Transcripts are decrypted and written on your device.
+- **Open the command palette while typing:** Cmd/Ctrl+K now works everywhere, including in the composer and on the web. Alt+K still works on the web outside text fields, and custom palette shortcuts also work while you type.
+- **Scroll subagent transcripts on the web:** scrolling up in the details panel no longer snaps back to the bottom.
+- **Hidden transcripts stay stable:** a transcript that updates while it is hidden keeps its row sizes instead of re-laying out the list in a loop.
+- **Pending messages go out when the Agent is idle:** a pending message deferred because the runner could not yet tell whether the Agent was busy is retried as soon as the runner confirms it is idle.
+- **Turn state survives a daemon restart:** a late session update can no longer mark a finished turn as running, or clear a running one, before the daemon reattaches.
+
+### Claude
+
+- **Happier sessions appear in Claude Code:** **Show sessions in Claude Code** is now on unless you turned it off. New Claude launches use Happier attribution, so their sessions can appear in Claude Code's history, including its VS Code extension. Turn the switch off in Claude settings before starting a session to keep Claude's default attribution.
+- **Keep Claude transcripts on a machine:** **Settings → Sessions → Local history** shows each machine's Claude cleanup period. Choose **Never** to set it to 36,500 days, which can use more disk space. In the Direct sessions browser, **Keep this local session** extends a transcript's life by the current cleanup period, and Local history lists kept transcripts that are due for cleanup so you can keep them again. A managed retention policy makes the control read-only. Needs the updated daemon.
+- **Longer retention wins for shared transcript folders:** when a connected-account profile has its own Claude settings but shares the machine's transcript folder, the launch keeps the longer of the configured cleanup periods.
+- **Model discovery works with a Claude Code gateway sign-in:** when Claude Code is signed in to a Cloud gateway with `/login`, the model picker lists the models that gateway offers, and that sign-in takes precedence over an older saved Claude.ai login. Requests go directly to the gateway over HTTPS and require the certificate Claude Code pinned at sign-in. If the sign-in has expired, the built-in model list is shown until Claude Code refreshes it.
+- **Resume Claude sessions with very large transcripts:** transcripts are checked one record at a time, so resuming works even when the file is too large to read at once.
+- **Terminal drafts send reliably:** in Claude's terminal composer, prompts that begin with a number and a dot (such as “1.1.5 is released”), drafts with a blank first line, quoted prompts and drafts containing a titled rule are recognized as your draft and submitted, instead of being mistaken for a terminal choice or left unsent.
+- **Pasted attachments reach Claude:** pasted files and images resolve from the session's workspace and their upload record, including attachments whose names span several lines.
+
+### Codex
+
+- **Conversations copied from another machine load and resume:** when a Codex thread's saved history points at a file on another machine, such as a conversation imported from Codex Desktop on Windows, its transcript loads from the local copy and Resume first points Codex's record at the local file.
+- **Compressed Codex history appears in Direct sessions:** Codex conversations stored in Codex's compressed format are listed with their titles and can be read, on machines whose CLI runtime can decompress that format.
+
+### Antigravity
+
+- **One sign-in:** every Antigravity session now runs on the ACP server built into the `agy` CLI, using your Antigravity CLI login. Happier no longer installs a separate ACP server, so there is no second sign-in, and the login flow works over SSH by pasting the code. Sessions need Antigravity CLI 1.5.0 or newer; connected accounts need 1.5.16 or newer, and Happier asks you to run `agy update` before starting one on an older CLI. Conversations started with earlier Happier releases still resume.
+- **Steer and answer questions:** messages sent while Antigravity works steer the running turn, which stays open until the steer is answered, and the steer is marked delivered as soon as Antigravity takes it. Question forms appear as question cards, including a free-text Other answer, and image input is supported.
+- **Build and Plan:** the mode picker offers **Build** and **Plan**, and the permission picker chooses Antigravity's approval level. Happier's Auto and YOLO permissions use Antigravity's Auto mode when the session offers it, otherwise Accept edits. Devin and FX no longer show a mode picker because all their modes are approval levels; CodeBuddy keeps Plan.
+- **Sub-agent work stays under its card:** sub-agent tool calls appear under the sub-agent card instead of splitting the main reply, and their permission requests still reach you.
+- **Clear limits and account problems:** an “Individual quota reached” reply ends the turn as a usage limit with its reset time, so a pool can move to another account. An account Google must verify fails the turn and posts Google's verification link. Invalid API keys, an empty prepaid balance and Terms of Service blocks are reported as such.
+- **New accounts work in pools:** refreshing quota completes the same setup Antigravity performs on first use for a never-used account, then reads its quota; an account that still needs verification says so. Accounts whose quota cannot be read yet show it as unknown instead of failing the pool.
+- **Update Antigravity from Happier:** `agy` appears in the Updates list with `agy update`, like Claude and Codex.
+- **Switch from your own login to a pool:** moving an Antigravity session from the machine's login to a pooled account prepares that account first, so the switch no longer fails as isolated.
+
+### Accounts and pools
+
+- **Switches wait for the turn to end where needed:** an automatic soft-threshold switch for Antigravity, OpenCode and Pi now waits until the current turn ends instead of interrupting a long turn after 60 seconds. Claude and Codex still switch mid-turn. The pool's soft-threshold setting explains which Agents switch at turn end.
+- **Refreshed tokens no longer restart sessions:** a token refresh for the account a session already uses no longer restarts that session.
+- **No credential retry loops:** a refreshed credential that needs a session restart no longer makes the machine retry its sync every few seconds, and an execution run's credentials are no longer pushed to the session hosting it.
+- **Sessions stay on their pool:** moving a session onto a pool while it resumes keeps the pool binding, and usage-limit recovery switches within the pool.
+- **Choose the account when continuing with another Agent:** the account chip in the continuation composer is now a picker, so you can pick a working account before pressing Continue instead of always using that Agent's default. The choice is checked before the current session stops; an account the Agent cannot use, or one that no longer exists, is refused with nothing changed. Needs the updated CLI.
+- **Joined pool switches finish on the new account:** when an Antigravity session joins a pool switch another session already made, it restarts on the new account and then continues, instead of stopping with nothing delivered.
+- **Move a session that has no conversation yet:** after a switch to another Agent fails to start, the session can move to another account and start fresh there.
+- **Missing account profiles are named:** a session or default that points at a deleted connected-account profile reports the profile as missing, with a shortcut to connected accounts, instead of asking you to reconnect it. Switching to Claude no longer binds a session to such a profile.
+
+### Sessions on your machines
+
+- **One out-of-memory kill no longer ends a Linux session:** when the kernel kills one heavy process, such as a tool command, only that process fails and the Agent keeps running. An Agent process that exits on its own is reported as “Provider process exited.”
+- **Stop and Resume after a daemon restart:** terminal attachments from before the restart can be stopped and retired using the runner records the daemon kept. On Windows the recorded runner must match. Resume stays blocked while the runner's exit cannot be verified.
+- **Stopping Antigravity and Kimi is quicker:** Stop cancels the running prompt without reopening and replaying the provider session.
+- **`npm install -g @happier-dev/cli` works on Linux x64 again:** the local embeddings package is now optional, so its failing download no longer aborts the install. Memory search falls back to Happier's signed memory runtime.
+
+### Phone, desktop and web
+
+- **Notification actions settle correctly:** approving from a notification clears that notification right away, even when the app was not running, and leaves newer notifications in place. An approval without answers no longer settles a question; it stays open for an answer or a denial.
+- **Choose an app icon:** **Settings → Appearance → App icon** switches between the Default and Night icons on iOS and Android with the new native app, and in the desktop app.
+- **Tooltips for icon-only buttons:** sidebar buttons that show only an icon have tooltips on web and desktop, and keyboard focus skips controls that are not meant to be focused.
+- **Reset a session color:** appearance menus show a labelled **Reset color** action.
+- **Readable loading label:** the memory search loading label follows the theme's text color.
+
+### Privacy
+
+- **Analytics wait for your setting:** the app starts every launch with analytics off and sends nothing until it has read your account's analytics setting. If you turned analytics off, nothing is sent; another account signing in stays off until its own setting applies. The app no longer sends app-open events, which included the link the app was opened with, no longer loads feature flags at startup, and no longer reports navigation or layout state as settings. Screen events carry only the screen name and create no person profile, settings are re-sent at most once a day, and repeated source-control status failures are reported at most once a day.
+- **Development and preview builds send no analytics** to the production project.
+- **Crash reports leave out identifying details:** query strings and fragments are removed from every address, the address and path of any server other than happier.dev is removed (including self-hosted, local and LAN servers), absolute file paths are removed, and Machine, Session, Account and Server IDs are blanked. New-session error reports no longer attach the machine, folder or worktree.
+- **Accurate privacy footer:** Settings now says that analytics and crash reports are anonymous and that either can be turned off there.
+- **Updated privacy policy and terms:** the privacy policy now describes what Happier Cloud and the apps collect, including encrypted content, metadata, analytics, crash reports and push notifications.
+
+### Self-hosting
+
+- **Anonymous daily heartbeat:** a self-hosted server now sends one `instance_heartbeat` event to PostHog EU shortly after startup and then every 24 hours, from the process that runs background jobs. It contains a random instance ID, the server version and flavor, the database provider, and the operating system and architecture: no accounts, hostnames, URLs, IP addresses or content. It is on by default; set `HAPPIER_INSTANCE_PING=0` or `DO_NOT_TRACK=1` to turn it off. The server logs one startup line saying so. Local Stack development servers do not send it.
+- **Web app analytics are yours to configure:** the web app image sends no analytics or error reports by default. Set `HAPPIER_WEBAPP_POSTHOG_KEY`, `HAPPIER_WEBAPP_POSTHOG_HOST`, `HAPPIER_WEBAPP_SENTRY_DSN` and `HAPPIER_WEBAPP_SENTRY_ENVIRONMENT` at container start to report to your own projects.
+- **Retention now previews by default. Action required if you rely on retention deleting data:** `HAPPIER_SERVER_RETENTION__DRY_RUN` now defaults to `1`, so an enabled retention policy only reports what it would remove. To keep removing data, set `HAPPIER_SERVER_RETENTION__DRY_RUN=0`; session, message and subagent transcript rules also wait for `HAPPIER_SERVER_RETENTION__STARTS_AT`. Session retention now removes the server transcript of an idle session and keeps its entry instead of deleting the whole session, and pinned sessions are kept.
+- **Voice access no longer depends on a separate entitlement:** a server with ElevenLabs configured issues voice sessions to every signed-in account, limited only by `VOICE_FREE_MINUTES_PER_MONTH` and `VOICE_FREE_SESSIONS_PER_MONTH` (unset means no limit). Set them to bound your ElevenLabs costs.
+- **OAuth callback details stay out of logs:** server logs and error reports no longer record OAuth callback query strings.
+
+### Updating and compatibility
+
+- **Versions:** app 0.2.24; CLI, server and Stack 0.2.23.
+- **Install the new native app on iOS and Android.** The runtime changes from `0.2.13-native` to `0.2.14-native`; an OTA update for the new runtime does not update older native builds.
+- **Update the CLI and daemon on your machines** for the Antigravity, Claude, Codex, pool and recovery fixes and for Local history. Antigravity connected accounts need Antigravity CLI 1.5.16 or newer.
+- **Self-hosters must apply the server migrations before running the new server.** Six additive migrations add new columns to accounts and sessions and one new table; existing rows are unchanged. Keep them if you roll the server back. Review the retention, voice and heartbeat notes above before upgrading.
+- **Mixed versions:** an updated app works with an older server, including export. Local history asks you to update the daemon until the machine runs the new CLI, and choosing an account when continuing with another Agent needs the new CLI on that machine. Older apps keep working with the new server.
+
+### App contributors
+
+Thanks to Dax Liniere for choosing the account when continuing with another Agent, notification action settlement, sidebar tooltips, the Reset color action and the themed memory search loading label; and Eric Poulin for keeping transcript row sizes while hidden.
+
+### CLI contributors
+
+Thanks to Interfish for running Antigravity sessions on the `agy` CLI's ACP server; Aron Gates for discovering Claude models through a Claude Code gateway sign-in; Atul Tameshwari for submitting Claude terminal drafts that start with a number, with Takashi Saito and clemenssautter-ai; Dax Liniere for continuing with a chosen account, loading and resuming Codex conversations copied from another machine, resolving pasted Claude attachments, the missing-profile diagnostic, moving sessions without a conversation to another account and ending the credential refresh retry loop; and monikermissing for resuming large Claude transcripts and recovering terminal attachments after a daemon restart.
+
 ## Release 2026-11-25.1 - 2026-11-25
 
 <!-- happier-release-note-projections:v1
