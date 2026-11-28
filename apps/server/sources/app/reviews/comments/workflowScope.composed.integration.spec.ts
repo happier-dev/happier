@@ -36,6 +36,7 @@ import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { resolveSessionAccessForOperation } from '@/app/session/access/sessionAccess';
 import { createPresentUserSessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication.testkit';
 import { db } from '@/storage/db';
+import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { createTrustedMachineInstallation } from '@/testkit/pluginInstallationPublisherTestkit';
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
@@ -76,9 +77,9 @@ describe('credentialed Workflow ReviewComment authority at Home', () => {
     }, 120_000);
     afterAll(async () => { await harness?.close(); });
 
-    it.each(['detached', 'session', 'workflow_session', 'shared_workflow_session'] as const)('persists native findings through the signed host and durable Home owner: %s', async origin => {
+    it.each(['detached', 'session', 'shared_session', 'workflow_session', 'shared_workflow_session'] as const)('persists native findings through the signed host and durable Home owner: %s', async origin => {
         const workflowSession = origin === 'workflow_session' || origin === 'shared_workflow_session';
-        const sharedMachine = origin === 'shared_workflow_session';
+        const sharedMachine = origin === 'shared_session' || origin === 'shared_workflow_session';
         const account = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
         const outsider = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
         const token = await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
@@ -97,8 +98,14 @@ describe('credentialed Workflow ReviewComment authority at Home', () => {
                 subjectKind: 'repository', sourceKind: 'direct', state: 'running', currentRoundOrdinal: 1, startedAt: new Date(1),
             } } } });
         const sessionId = origin === 'detached' ? null : randomUUID();
-        if (sessionId) await db.session.create({ data: { id: sessionId, accountId: account.id,
-            tag: sessionId, metadata: '{}', encryptionMode: 'plain' } });
+        if (sessionId) {
+            const placement = origin === 'shared_session'
+                ? { homeId: await getOrCreateServerIdentityId(), accountId: account.id, sessionId, machineId, installationId }
+                : undefined;
+            await db.session.create({ data: { id: sessionId, accountId: account.id,
+                tag: sessionId, metadata: '{}', encryptionMode: 'plain', runtimeMachineTarget: placement } });
+            if (placement) await db.accessKey.create({ data: { accountId: account.id, machineId, sessionId, data: '{}' } });
+        }
         const run: ExecutionRunState = { runId: randomUUID(), callId: randomUUID(), sidechainId: randomUUID(), sessionId,
             depth: 0, intent: 'review', backendId: 'coderabbit', backendTarget: { kind: 'builtInAgent', agentId: 'coderabbit' },
             instructions: 'Review.', permissionMode: 'read_only', retentionPolicy: 'ephemeral', runClass: 'bounded',
@@ -324,7 +331,7 @@ describe('credentialed Workflow ReviewComment authority at Home', () => {
                     expect(await db.reviewVerdict.count({ where: { reviewId } })).toBe(2);
                     return;
                 }
-                const materialize = (id: string) => service.materialize({ run, review: { reviewId, roundOrdinal: 1 },
+                const materialize = (id: string, sourceRun = run) => service.materialize({ run: sourceRun, review: { reviewId, roundOrdinal: 1 },
                     reviewedFingerprint: null, findings: [{ id, title: 'Rollback omitted', severity: 'high', category: 'correctness', summary: 'Restore the previous state when publication fails.' }] });
                 const result = await materialize('native-finding');
                 expect(result, JSON.stringify(requests)).toMatchObject({ status: 'materialized', failures: [] });
@@ -341,6 +348,19 @@ describe('credentialed Workflow ReviewComment authority at Home', () => {
                     snapshot: { kind: 'none', capturedAt: 1 }, body: 'Person control', clientMutationId: randomUUID(),
                 }));
                 expect(read.comment.author).toEqual({ kind: 'user', userId: account.id });
+                if (origin === 'shared_session') {
+                    const unplacedSessionId = randomUUID();
+                    await db.session.create({ data: { id: unplacedSessionId, accountId: account.id,
+                        tag: unplacedSessionId, metadata: '{}', encryptionMode: 'plain' } });
+                    expect(await materialize('unplaced-session', { ...run, sessionId: unplacedSessionId })).toMatchObject({
+                        status: 'failed', commentIds: [], failures: [{ errorCode: 'review_comment_permission_denied' }],
+                    });
+                    attack = 'account';
+                    expect(await materialize('foreign-bearer')).toMatchObject({
+                        status: 'failed', commentIds: [], failures: [{ errorCode: 'review_comment_not_found' }],
+                    });
+                    expect(await db.reviewComment.count({ where: { reviewId } })).toBe(2);
+                }
                 if (origin === 'detached') {
                     for (const kind of ['machine', 'account', 'run', 'engine'] as const) {
                         attack = kind;

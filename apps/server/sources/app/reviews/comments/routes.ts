@@ -197,7 +197,16 @@ async function verifyReviewCommentPrincipalHeader(params: Readonly<{
         && workflow?.state === "running" && workflow.workflowCustodyState === "pending"
         && workflow.claimedByMachineId === proof.machineId
         && workflow.assignments[0]?.admittedMachineInstallationId === proof.installationId;
-    const machine = await params.reads.machine(params.accountId, proof.machineId, usesAssignedInstallation);
+    let machine = await params.reads.machine(params.accountId, proof.machineId, usesAssignedInstallation);
+    if (!machine && actor.kind === "agent" && currentIntent?.kind === "review_findings_materialization") {
+        // An attached Run uses the Session owner's bearer and its admitted
+        // Machine installation to sign findings. Both must match placement.
+        const placement = await params.reads.sessionPlacement(actor.sessionId);
+        if (placement?.accountId === params.accountId && placement.machineId === proof.machineId
+            && placement.installationId === proof.installationId) {
+            machine = await params.reads.machine(params.accountId, proof.machineId, true);
+        }
+    }
     if (
         !machine
         || machine.revokedAt

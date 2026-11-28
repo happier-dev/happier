@@ -92,7 +92,14 @@ export async function canUseLocalRuntimeAccount(
   localAccountId: string | null,
   serverId?: string,
 ): Promise<boolean> {
-  if (!localAccountId) return false;
+  return localAccountId !== null && hasOriginalRuntimeAccountAuthorities(context, localAccountId)
+    && await canUseAttributedRuntimeAccount(context, localAccountId, serverId);
+}
+
+function hasOriginalRuntimeAccountAuthorities(
+  context: Parameters<typeof canUseLocalRuntimeAccount>[0],
+  localAccountId: string,
+): boolean {
   const { externalActionExecutionAuthorization, callerInputAuthorization, ...independentAuthority } = context ?? {};
   if (carriesNonLocalRequesterAuthority(independentAuthority)) return false;
   // Inspect both verified carriers without changing the context passed to work.
@@ -101,7 +108,7 @@ export async function canUseLocalRuntimeAccount(
     if (authorization && (!isOriginalAccountActionCustody(authorization.binding)
       || authorization.binding.accountId !== localAccountId)) return false;
   }
-  return await canUseAttributedRuntimeAccount(context, localAccountId, serverId);
+  return true;
 }
 
 /** Review ports can consume the Session issuer's admitted own-Account custody.
@@ -111,10 +118,14 @@ export async function canUseLocalRuntimeReviewAccount(
   localAccountId: string | null,
   serverId?: string,
 ): Promise<boolean> {
-  // Home admitted an owner-classified Session operation only for the Session
-  // owner, whose own runner holds this Account: the owner acting for itself.
   if (context?.rpcSessionAuthorization?.authority === 'sessionOwner' && !context.sessionActionOrigin) {
     const { rpcSessionAuthorization: _owner, ...ownerContext } = context;
+    // A signed Account action admitted by Home for this Session uses the
+    // Session runner's credentials. Its Machine custodian can be another Account.
+    if (ownerContext.callerInputAuthorization || ownerContext.externalActionExecutionAuthorization) {
+      return localAccountId !== null && hasOriginalRuntimeAccountAuthorities(ownerContext, localAccountId)
+        && await canUseAttributedRuntimeAccount(ownerContext, localAccountId, serverId, 'sessionOwner');
+    }
     return await canUseLocalRuntimeAccount(ownerContext, localAccountId, serverId);
   }
   if (!context?.sessionActionOrigin) return await canUseLocalRuntimeAccount(context, localAccountId, serverId);
@@ -137,12 +148,13 @@ export async function canUseLocalRuntimeReviewAccount(
 
 async function canUseAttributedRuntimeAccount(
   context: Parameters<typeof canUseLocalRuntimeAccount>[0], localAccountId: string, serverId?: string,
+  custody: 'machine' | 'sessionOwner' = 'machine',
 ): Promise<boolean> {
   const attributedAccountId = projectRpcRequesterWorkAttribution(context, context?.serverId ?? serverId)?.accountId
     ?? context?.runtimeAccountId;
   return (attributedAccountId === undefined || attributedAccountId === localAccountId)
-    && hasInstalledRuntimeAccountCustody(context?.machineAdmission,
-      context?.externalActionExecutionAuthorization, context?.callerInputAuthorization)
+    && (custody === 'sessionOwner' || hasInstalledRuntimeAccountCustody(context?.machineAdmission,
+      context?.externalActionExecutionAuthorization, context?.callerInputAuthorization))
     && await isMachineCredentialCurrent(context);
 }
 

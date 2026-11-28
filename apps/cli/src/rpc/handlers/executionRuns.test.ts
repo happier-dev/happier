@@ -4321,4 +4321,89 @@ describe('installed Account Review custody for another Account Run on this Machi
       expect.stringContaining('/v1/artifacts/alice-review'),
     ]));
   });
+
+  it.each([
+    { actor: 'bob', stop: false, outcome: 'completed' },
+    { actor: 'bob', stop: true, outcome: 'cancelled' },
+    { actor: 'charlie', stop: false, outcome: 'running' },
+  ])('settles the attached Review from its Session owner ($actor, stop=$stop)', async ({ actor, stop, outcome }) => {
+    const sessionId = 'sess_bob';
+    const reviewId = 'bob-review';
+    const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'bob' })).toString('base64url')}.signature`, encryption: null };
+    let review: ReviewArtifactBodyV1 = { v: 1, rounds: [
+      { ordinal: 1, state: 'running', startedAt: 1, finishedAt: null, reviewerIds: ['r1'], runs: [] },
+    ] };
+    const path = `/v1/artifacts/${reviewId}`;
+    const get = vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
+      const requestPath = new URL(String(url)).pathname;
+      expect(config?.headers?.Authorization).toBe(`Bearer ${credentials.token}`);
+      if (requestPath === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
+      if (requestPath === '/v1/account/encryption/currentness') return { status: 200, data: {
+        mode: 'plain', version: 0, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 0,
+      } };
+      if (requestPath !== path) return { status: 404, data: {} };
+      return { status: 200, data: {
+        id: reviewId, ownerAccountId: 'bob', access: 'owner', encryptionMode: 'plain', publicAudience: 'none',
+        header: encodePlainArtifactStoredContent({ v: 1, kind: REVIEW_ARTIFACT_KIND_V1, reviewId, title: 'Guest Review' }),
+        body: encodePlainArtifactStoredContent({ body: JSON.stringify(review) }),
+        dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+        headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1,
+      } };
+    });
+    const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body, config) => {
+      expect(String(url)).toMatch(new RegExp(`${path}$`));
+      expect(config?.headers?.Authorization).toBe(`Bearer ${credentials.token}`);
+      const content = decodePlainArtifactStoredContent(body.body);
+      if (typeof content !== 'object' || content === null
+        || !('body' in content) || typeof content.body !== 'string') throw new Error('Missing Review body');
+      review = ReviewArtifactBodyV1Schema.parse(JSON.parse(content.body));
+      return { status: 200, data: { success: true, headerVersion: 2, bodyVersion: 2 } };
+    });
+    onTestFinished(() => { get.mockRestore(); post.mockRestore(); });
+    let startHandler: ((request: unknown, context: unknown) => Promise<unknown>) | undefined;
+    createEncryptedRpcTestClientBase({
+      scopePrefix: sessionId,
+      registerHandlers: rpc => {
+        const register = rpc.registerHandler.bind(rpc);
+        rpc.registerHandler = ((method: string, handler: never, ...rest: never[]) => {
+          if (method === SESSION_RPC_METHODS.EXECUTION_RUN_START) startHandler = handler;
+          return register(method, handler, ...rest);
+        }) as typeof rpc.registerHandler;
+        registerExecutionRunHandlers(rpc, {
+          sessionId, cwd: process.cwd(), parentProvider: 'claude', runtimeAccountId: 'bob',
+          readPromptCredentials: async () => credentials,
+          createBackend: () => stop
+            ? createTestExecutionRunHostRuntime({ onWaitForTurnCompletion: () => new Promise(() => {}) })
+            : createStaticBackend(JSON.stringify({ reviewOutcome: 'complete', summary: 'Clean',
+              overviewMarkdown: 'Clean', findings: [], questions: [], assumptions: [] })),
+          sendAcp: async () => {},
+          actionApprovalDeps: createExecutionRunRpcApprovalDeps({ readCredentials: async () => credentials }),
+        });
+      },
+    });
+    if (!startHandler) throw new Error('The attached Run start handler must be registered');
+    const request = await startHandler({
+      sessionId, intent: 'review', modelSelection: null,
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, instructions: 'Review.',
+      permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'bounded', ioMode: 'streaming',
+      intentInput: { reviewRound: { reviewId, roundOrdinal: 1 }, reviewReviewerId: 'r1', reviewRoundSettlement: 'execution' },
+    }, {
+      authorization: { kind: 'session.write', sessionId, authority: 'sessionOwner' },
+      callerInputAuthorization: ExternalActionExecutionAuthorizationV1Schema.parse({
+        v: 1, token: 'fixture-signed-review-start', binding: { ...binding, accountId: actor, actionId: 'review.start' },
+      }),
+    });
+    expect(request).toMatchObject({ runId: expect.any(String) });
+    const manager = executionRunTestManagers.at(-1)!;
+    const [run] = manager.listPublic();
+    if (stop) await manager.dispose();
+    else await manager.waitForTerminal(run!.runId);
+    expect(manager.get(run!.runId), JSON.stringify(manager.get(run!.runId)?.error)).toMatchObject({
+      status: outcome === 'completed' ? 'succeeded' : outcome === 'cancelled' ? 'cancelled' : 'failed',
+      ...(outcome === 'running' ? { error: { code: 'review_comment_permission_denied' } } : {}),
+    });
+    expect(review.rounds).toMatchObject([{ state: outcome, runs: outcome === 'running' ? [] : [
+      { kind: 'execution', runId: run!.runId, sessionId },
+    ] }]);
+  });
 });

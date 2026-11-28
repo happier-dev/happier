@@ -1,5 +1,6 @@
 import { db } from "@/storage/db";
 import { workflowRunIdentityWhere } from "@/app/workflows/workflowRunService";
+import { readCurrentCommittedSessionInputMachineTargetInTx } from "@/app/session/messages/sessionInputAdmission";
 import { resolveReviewAccessInTx } from "../reviewAccess";
 
 /** Reuse read facts within one HTTP request; proof and item admission stay with the route. */
@@ -30,8 +31,9 @@ export function createReviewCommentPrincipalReads() {
                     select: { machineId: true, admittedMachineInstallationId: true } },
             },
         })),
-        machine: reuseRequestRead(async (accountId: string, machineId: string, usesAssignedInstallation: boolean) => db.machine.findFirst({
-            where: { ...(usesAssignedInstallation ? {} : { accountId }), id: machineId },
+        sessionPlacement: reuseRequestRead(async (sessionId: string) => readCurrentCommittedSessionInputMachineTargetInTx(db, sessionId, { admittedWork: true })),
+        machine: reuseRequestRead(async (accountId: string, machineId: string, usesSharedInstallation: boolean) => db.machine.findFirst({
+            where: { ...(usesSharedInstallation ? {} : { accountId }), id: machineId },
             select: { installationId: true, installationPublicKey: true, replacedByMachineId: true, revokedAt: true },
         })),
         logicalInvocation: reuseRequestRead(async (runId: string, invocationId: string) => db.workflowRunInvocation.findFirst({
