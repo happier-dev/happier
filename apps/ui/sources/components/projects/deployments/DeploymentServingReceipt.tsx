@@ -26,7 +26,7 @@ import {
   deploymentStepWorkStatus,
 } from './deploymentPresentation';
 import type { useDeploymentReceipt } from './useDeploymentReads';
-import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
+import { GROUPED_SURFACE_RADIUS_PX, PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 
 export type DeploymentServingReceiptValue = NonNullable<
   ReturnType<typeof useDeploymentReceipt>['snapshot']['value']
@@ -379,6 +379,9 @@ const styles = StyleSheet.create((theme) => ({
     marginBottom: -PAGE_LIST_METRICS.cardPaddingPx,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: theme.colors.border.subtle,
+    // Its bottom corners follow the sheet's, so the band never paints square corners over the rounded card.
+    borderBottomLeftRadius: GROUPED_SURFACE_RADIUS_PX,
+    borderBottomRightRadius: GROUPED_SURFACE_RADIUS_PX,
     overflow: 'hidden',
   },
   receiptLine: {
