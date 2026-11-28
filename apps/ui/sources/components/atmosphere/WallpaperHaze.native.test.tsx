@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import type { BackdropRenderRequest } from './backdropCanvas.types';
 import type { PictureRecord } from './pictureStore.types';
-import { WALLPAPER_HAZE_LAYERS } from './wallpaperHaze';
+import { WALLPAPER_HAZE_LAYERS } from './wallpaperHazeModel';
 import { WallpaperHaze } from './WallpaperHaze.native';
 
 const boundary = vi.hoisted(() => ({ backdrops: [] as BackdropRenderRequest[], hazes: [] as { width: number; height: number }[] }));

@@ -14,7 +14,7 @@ import {
   composeWelcomeHeadlineOrder,
   readWelcomeHeadlineVisitOrder,
   translateWelcomeHeadline,
-} from './welcomeHeadline';
+} from './welcomeHeadlineModel';
 
 /** A seeded generator, so a case reads the same every run. */
 function seeded(seed: number): () => number {

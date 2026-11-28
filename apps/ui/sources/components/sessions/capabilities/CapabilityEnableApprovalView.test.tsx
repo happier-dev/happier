@@ -47,7 +47,7 @@ async function mount(
   options: Readonly<{ approvalStatus?: 'open' | 'approved' | 'rejected' | 'canceled' }> = {},
 ) {
   const { createCapabilityEnableApprovalController } =
-    await import('./capabilityEnableApproval');
+    await import('./capabilityEnableApprovalModel');
   const { CapabilityEnableApprovalView, describeCapabilityEnableSettled } =
     await import('./CapabilityEnableApprovalView');
   const calls: string[] = [];
@@ -215,7 +215,7 @@ describe('CapabilityEnableApproval', () => {
   }, 180_000);
 
   it('binds Details to the same controller: Always is the alternative decision, then the settled line with Undo', async () => {
-    const { createCapabilityEnableApprovalController, } = await import('./capabilityEnableApproval');
+    const { createCapabilityEnableApprovalController, } = await import('./capabilityEnableApprovalModel');
     const { CapabilityEnableDecisionBar, describeCapabilityEnableSettled } = await import('./CapabilityEnableApprovalView');
     const calls: string[] = [];
     const write = deferred<ReachRulesWriteResult>();

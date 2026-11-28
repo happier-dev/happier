@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AccountPetLibraryEntryV1 } from '@happier-dev/protocol/pets/accountLibrary';
 
-import { petAddOutcomeOfImport, petAddOutcomeWithUndo } from './petAddOutcome';
+import { petAddOutcomeOfImport, petAddOutcomeWithUndo } from './petAddOutcomeModel';
 
 const pet = {
   accountPetId: 'pet-1',

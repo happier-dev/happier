@@ -902,7 +902,7 @@
     "sources/components/atmosphere/planetCanvasPaint.web.ts",
     "sources/components/atmosphere/preparePublicProfileAtmosphere.ts",
     "sources/components/atmosphere/useAtmosphereRouteSurface.ts",
-    "sources/components/atmosphere/wallpaperHaze.ts",
+    "sources/components/atmosphere/wallpaperHazeModel.ts",
     "sources/components/auth/pairing/PairingQrMoment.web.tsx",
     "sources/components/autocomplete/autocompleteTestFixtures.ts",
     "sources/components/automations/automationComponentTestHelpers.ts",

@@ -4,7 +4,7 @@ import { renderScreen } from '@/dev/testkit';
 import { BackdropCanvas } from './BackdropCanvas.web';
 import type { BackdropRenderRequest, BackdropWorkerRequest, BackdropWorkerResponse } from './backdropCanvas.types';
 import { WallpaperHaze } from './WallpaperHaze.web';
-import { WALLPAPER_HAZE_LAYERS } from './wallpaperHaze';
+import { WALLPAPER_HAZE_LAYERS } from './wallpaperHazeModel';
 import { act } from 'react-test-renderer';
 
 // Node does not perform Metro's .web resolution; exercise the real web paint adapter.

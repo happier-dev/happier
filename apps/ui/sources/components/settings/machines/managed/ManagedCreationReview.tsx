@@ -19,7 +19,7 @@ import { describeMachineSetup, machineSetupItemReadRow } from './MachineSetupSec
 import { MachineSetupChangeGroupRow } from './MachineSetupChangeGroupRow';
 import { machineSetupScriptCommandLines } from './machineSetupReviewChanges';
 import { MachineSetupReviewFooter } from './MachineSetupPlanReview';
-import { readMachineSetupRecipeInputState } from './machineSetupRecipeInputs';
+import { readMachineSetupRecipeInputState } from './machineSetupRecipeInputsModel';
 
 export type ManagedCreationReviewProps = Readonly<{
     name: string;

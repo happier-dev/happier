@@ -18,7 +18,7 @@ import { t } from '@/text';
 import { FirstOpenWelcomeModelContext } from '@/components/onboarding/firstOpen/FirstOpenWelcomeModelContext';
 import { ShellHeaderClearanceContext, ShellWelcomeOverflowContext } from '@/components/onboarding/unauthShell/shellCorner';
 
-import { joinWelcomeHeadlinePhrase, readWelcomeHeadlineVisitOrder, translateWelcomeHeadline } from './welcomeHeadline';
+import { joinWelcomeHeadlinePhrase, readWelcomeHeadlineVisitOrder, translateWelcomeHeadline } from './welcomeHeadlineModel';
 import { WelcomeDecisionPanel } from './WelcomeDecisionPanel';
 import { WelcomeEntryView, type WelcomeEntryViewModel } from './WelcomeEntryView';
 

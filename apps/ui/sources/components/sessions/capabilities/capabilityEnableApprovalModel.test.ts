@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { createCapabilityEnableApprovalController, resolveCapabilityAlwaysWrite } from './capabilityEnableApproval';
+import { createCapabilityEnableApprovalController, resolveCapabilityAlwaysWrite } from './capabilityEnableApprovalModel';
 
 it('keeps the deciding workspace/project scope, falls back locally for Everywhere/null, and refuses an unknown deciding rule', () => {
     const exception = { id: 'exception', target: { t: 'workspace' as const, machineId: 'machine', workspaceRoot: '/repo' },

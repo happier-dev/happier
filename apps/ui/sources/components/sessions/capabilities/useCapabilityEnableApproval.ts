@@ -14,7 +14,7 @@ import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { t } from '@/text';
 import type { ReachRuleWriteV1 } from '@happier-dev/protocol/reach/reachRulesChangeV1';
 import { createReachRulesController, type ReachRulesSource } from '@/sync/domains/capabilities/reach/useReachRulesState';
-import { createCapabilityEnableApprovalController, readCapabilityEnableApproval, resolveCapabilityAlwaysWrite, type CapabilityEnableApprovalSnapshot } from './capabilityEnableApproval';
+import { createCapabilityEnableApprovalController, readCapabilityEnableApproval, resolveCapabilityAlwaysWrite, type CapabilityEnableApprovalSnapshot } from './capabilityEnableApprovalModel';
 
 type CapabilityEnableApprovalController = ReturnType<typeof createCapabilityEnableApprovalController>;
 type SharedLatest = Readonly<{ alwaysWrite: ReachRuleWriteV1 | null; key: string;

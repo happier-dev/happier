@@ -5,7 +5,7 @@ import type { BackdropCanvasProps } from './backdropCanvas.types';
 import { backdropRenderRequest, backdropRequestKey } from './backdropRenderRequest';
 import { acquireNativeBackdrop, NATIVE_TONE_SIDE, readNativePicturePixels, renderNativeWallpaperHaze, type NativeBackdropRender } from './renderBackdrop.native';
 import { useCanvasRenderState } from './useCanvasRenderState';
-import type { WallpaperHaze as WallpaperHazeComposition } from './wallpaperHaze';
+import type { WallpaperHaze as WallpaperHazeComposition } from './wallpaperHazeModel';
 
 /** Two blurred picture copies masked at the content column, prepared once off the UI thread. */
 export function WallpaperHaze(props: Readonly<{ source: BackdropCanvasProps['source']; size: BackdropCanvasProps['size']; job: Omit<BackdropCanvasProps, 'source' | 'size'>; focus: { x: number; y: number }; haze: WallpaperHazeComposition; onRendered?: BackdropCanvasProps['onRendered'] }>) {

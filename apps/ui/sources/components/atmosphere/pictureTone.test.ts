@@ -5,7 +5,7 @@ import { glassContrastRatio, renderGlassOver } from '@/dev/testkit/glassBackdrop
 import { glassPresetMaterials, resolveGlassBackdropMap, resolveGlassReadingCoatOpacity, resolveGlassSurfaceMaterial, type GlassAtmosphereTone } from '@/components/ui/glass/glassMaterial';
 import { darkTheme, lightTheme } from '@/theme';
 import { glassAtmosphereTone, measurePictureColor, measurePictureTone, samePictureTone } from './pictureTone';
-import { resolveWallpaperHaze } from './wallpaperHaze';
+import { resolveWallpaperHaze } from './wallpaperHazeModel';
 
 /** A 100 × 10 picture: a night sky on the left half, a pale sky on the right, the bottom rows dissolved. */
 function picture() {

@@ -22,7 +22,7 @@ import {
   sameWalkthroughStopExchanges,
   type WalkthroughStopExchange,
   type WalkthroughStopExchanges as WalkthroughStopExchangesMap,
-} from './walkthroughStopExchanges';
+} from './walkthroughStopExchangesModel';
 
 type ExchangesContextValue = Readonly<{
   exchanges: WalkthroughStopExchangesMap;

@@ -6,7 +6,7 @@ import { PetPoseGrid } from '@/components/pets/render/PetPoseGrid';
 import { usePetSheetSpriteVersion } from '@/components/pets/render/usePetSheetSpriteVersion';
 import type { PetAccountReferenceV1 } from '@happier-dev/protocol/pets/selection';
 import { PetAddOutcome } from '@/components/pets/add/PetAddOutcome';
-import type { PetAddOutcomeState } from '@/components/pets/add/petAddOutcome';
+import type { PetAddOutcomeState } from '@/components/pets/add/petAddOutcomeModel';
 import { BotFacePet } from '@/components/sessions/bots/face/BotFacePet';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';

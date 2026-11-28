@@ -15,7 +15,7 @@ import { Text } from '@/components/ui/text/Text';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { useHostActivelyViewedEffect } from '@/utils/runtime/useHostActivelyViewed';
 
-import { joinWelcomeHeadlinePhrase } from './welcomeHeadline';
+import { joinWelcomeHeadlinePhrase } from './welcomeHeadlineModel';
 import {
   WELCOME_HEADLINE_MOVE_CSS,
   WELCOME_HEADLINE_SWAP_INTERVAL_MS,

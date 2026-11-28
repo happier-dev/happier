@@ -9,7 +9,7 @@ import type { OrganizationPolicyManagedDisplay } from '@/components/organization
 import { t } from '@/text';
 
 import type { WelcomeAuthenticationMethod, WelcomeEntryModel } from './composeWelcomeEntryModel';
-import { joinWelcomeHeadlinePhrase, readWelcomeHeadlineVisitOrder, translateWelcomeHeadline, type WelcomeHeadline } from './welcomeHeadline';
+import { joinWelcomeHeadlinePhrase, readWelcomeHeadlineVisitOrder, translateWelcomeHeadline, type WelcomeHeadline } from './welcomeHeadlineModel';
 
 type Action = Readonly<{
     testID: string;

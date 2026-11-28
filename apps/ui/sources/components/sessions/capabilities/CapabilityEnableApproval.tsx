@@ -18,7 +18,7 @@ import { resolveReachV1 } from '@happier-dev/protocol/reach/resolveReachV1';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { t } from '@/text';
 
-import { readCapabilityEnableApproval } from './capabilityEnableApproval';
+import { readCapabilityEnableApproval } from './capabilityEnableApprovalModel';
 import {
   CapabilityEnableApprovalView,
   CapabilityEnableDecisionBar,

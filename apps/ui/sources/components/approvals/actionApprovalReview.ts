@@ -13,7 +13,7 @@ import { isComputerApprovalAction } from './computerApprovalModel';
 import { isConfidentialSecretApprovalAction, readConfidentialActionInputsApproval, readConfidentialSecretApproval } from './confidentialSecretApprovalModel';
 import { readResourceProposalApproval } from './resourceProposal/readResourceProposalApproval';
 import { readPromptDocUpdateApproval } from './promptDocApprovalModel';
-import { readCapabilityEnableApproval } from '@/components/sessions/capabilities/capabilityEnableApproval';
+import { readCapabilityEnableApproval } from '@/components/sessions/capabilities/capabilityEnableApprovalModel';
 import { readApprovalFileSource } from './approvalFileSource';
 import { readApprovalAutomaticChecksDecision } from './approvalAutomaticChecksDecision';
 import { readDeploymentReviewApproval } from './DeploymentReviewApprovalFacts';

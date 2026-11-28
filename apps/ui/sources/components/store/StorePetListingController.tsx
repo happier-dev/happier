@@ -5,7 +5,7 @@ import {
   resolveBuiltInPetPackage,
   type BuiltInPetId,
 } from '@/components/pets/builtIns/builtInPetRegistry';
-import { petAddOutcomeOfImport, petAddOutcomeWithUndo, type PetAddOutcomeState } from '@/components/pets/add/petAddOutcome';
+import { petAddOutcomeOfImport, petAddOutcomeWithUndo, type PetAddOutcomeState } from '@/components/pets/add/petAddOutcomeModel';
 import { usePetAddUndo, usePetImport, type PetImportUndo } from '@/components/pets/source/usePetImport';
 import { usePetSettingsOpeners } from '@/components/pets/add/usePetSettingsOpeners';
 import { usePetSelectionAction } from '@/components/pets/source/usePetSelectionAction';

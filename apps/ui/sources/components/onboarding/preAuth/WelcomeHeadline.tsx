@@ -3,7 +3,7 @@ import { View } from 'react-native';
 
 import { Text } from '@/components/ui/text/Text';
 
-import { joinWelcomeHeadlinePhrase } from './welcomeHeadline';
+import { joinWelcomeHeadlinePhrase } from './welcomeHeadlineModel';
 import type { WelcomeHeadlineProps } from './welcomeHeadlineMotion';
 
 /**

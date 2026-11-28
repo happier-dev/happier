@@ -5,7 +5,7 @@ import {
   NO_WALKTHROUGH_STOP_EXCHANGES,
   projectWalkthroughStopExchanges,
   sameWalkthroughStopExchanges,
-} from './walkthroughStopExchanges';
+} from './walkthroughStopExchangesModel';
 
 const RUN = 'run-1';
 const RESULT = 'result-1';

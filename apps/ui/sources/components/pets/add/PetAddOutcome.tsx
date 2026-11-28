@@ -12,7 +12,7 @@ import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
 
-import type { PetAddOutcomeState } from './petAddOutcome';
+import type { PetAddOutcomeState } from './petAddOutcomeModel';
 
 type PetAddOutcomeProps = Readonly<{
   state: PetAddOutcomeState;

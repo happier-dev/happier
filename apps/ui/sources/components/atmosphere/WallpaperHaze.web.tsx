@@ -3,7 +3,7 @@ import { StyleSheet, View } from 'react-native';
 import { BackdropCanvas } from './BackdropCanvas';
 import type { BackdropCanvasProps } from './backdropCanvas.types';
 import { pictureBackdropProps } from './pictureBackdrop';
-import type { WallpaperHaze as WallpaperHazeComposition } from './wallpaperHaze';
+import type { WallpaperHaze as WallpaperHazeComposition } from './wallpaperHazeModel';
 
 /**
  * A layered haze under the content (lab `paintHaze`): two soft copies of the scene, centred on the

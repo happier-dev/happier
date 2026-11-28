@@ -12,7 +12,7 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 
-import type { CapabilityEnableApprovalSnapshot } from './capabilityEnableApproval';
+import type { CapabilityEnableApprovalSnapshot } from './capabilityEnableApprovalModel';
 
 /** What the body says, decided from the request, the shared decision and the durable approval status. */
 export type CapabilityEnableApprovalViewModel = Readonly<{

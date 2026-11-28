@@ -2,7 +2,7 @@ import * as React from 'react';
 import { StyleSheet, View, useWindowDimensions } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { WallpaperHaze } from './WallpaperHaze';
-import { resolveWallpaperHaze, WALLPAPER_HAZE_LAYERS, type WallpaperHaze as WallpaperHazeComposition } from './wallpaperHaze';
+import { resolveWallpaperHaze, WALLPAPER_HAZE_LAYERS, type WallpaperHaze as WallpaperHazeComposition } from './wallpaperHazeModel';
 import { useSetGlassAtmosphereBehind, useSetGlassAtmosphereTone } from '@/components/ui/glass/glassRuntimeEnvironment';
 import type { AtmospherePixels } from '@happier-dev/brand/atmosphere';
 import { glassAtmosphereTone, measurePictureColor, measurePictureTone, samePictureTone, type PictureToneRegion } from './pictureTone';

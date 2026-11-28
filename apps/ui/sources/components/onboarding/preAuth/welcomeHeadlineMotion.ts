@@ -1,6 +1,6 @@
 import type { StyleProp, TextStyle } from 'react-native';
 
-import type { WelcomeHeadline } from './welcomeHeadline';
+import type { WelcomeHeadline } from './welcomeHeadlineModel';
 
 export type WelcomeHeadlineProps = Readonly<{
   headline: WelcomeHeadline;

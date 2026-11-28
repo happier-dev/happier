@@ -1,6 +1,6 @@
 import Color from 'color';
 import { describe, expect, it } from 'vitest';
-import { resolveWallpaperHaze, WALLPAPER_HAZE_LAYERS } from './wallpaperHaze';
+import { resolveWallpaperHaze, WALLPAPER_HAZE_LAYERS } from './wallpaperHazeModel';
 
 const PAGE = '#ffffff';
 const INK = '#1c1c1e';

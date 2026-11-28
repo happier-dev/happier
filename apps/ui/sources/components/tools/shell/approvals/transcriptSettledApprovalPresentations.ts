@@ -1,7 +1,7 @@
 import type { ApprovalSettledPresentation } from '@/sync/domains/artifacts/approvalArtifacts';
 import { presentsSettledResourceProposal } from '@/components/approvals/resourceProposal/readResourceProposalApproval';
 import { readBrowserOpenAcceptance } from '@/sync/domains/browser/firstUse/browserFirstUse';
-import { readCapabilityEnableApproval } from '@/components/sessions/capabilities/capabilityEnableApproval';
+import { readCapabilityEnableApproval } from '@/components/sessions/capabilities/capabilityEnableApprovalModel';
 import { readPetImportConfirmationV1 } from '@happier-dev/protocol/pets/importActionV1';
 import { readApprovalExecutionFailure } from '@happier-dev/protocol/approvals/approvalExecutionFailure';
 import { presentsApprovalVisualTranscriptOccurrence } from '@/components/approvals/approvalVisualTranscriptOccurrence';

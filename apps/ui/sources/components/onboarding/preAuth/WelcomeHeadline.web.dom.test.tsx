@@ -23,7 +23,7 @@ import { setReducedMotionPreferenceOverride } from '@/hooks/ui/useReducedMotionP
 
 import { WelcomeHeadline } from './WelcomeHeadline.web';
 import { WELCOME_HEADLINE_SWAP_INTERVAL_MS } from './welcomeHeadlineMotion';
-import type { WelcomeHeadline as WelcomeHeadlineModel } from './welcomeHeadline';
+import type { WelcomeHeadline as WelcomeHeadlineModel } from './welcomeHeadlineModel';
 
 const HEADLINE: WelcomeHeadlineModel = {
   phrases: [

@@ -10,7 +10,7 @@ import type { PetImportConfirmationV1 } from '@happier-dev/protocol/pets/importA
 import { createAccountPetReferenceV1 } from '@happier-dev/protocol/pets/selection';
 
 import { PetAddOutcomeActions, PetAddOutcomeLine } from '@/components/pets/add/PetAddOutcome';
-import { petAddOutcomeOfImport, petAddOutcomeWithUndo } from '@/components/pets/add/petAddOutcome';
+import { petAddOutcomeOfImport, petAddOutcomeWithUndo } from '@/components/pets/add/petAddOutcomeModel';
 import { usePetSettingsOpeners } from '@/components/pets/add/usePetSettingsOpeners';
 import { PetPoseGrid } from '@/components/pets/render/PetPoseGrid';
 import { usePetAddUndo } from '@/components/pets/source/usePetImport';

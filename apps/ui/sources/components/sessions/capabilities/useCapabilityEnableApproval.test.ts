@@ -29,7 +29,7 @@ import { readPendingCapabilityApplyV1 } from '@happier-dev/protocol/reach/sessio
 import { PROMPT_LIBRARY_ROWS_ROUTE_V1, PromptLibraryCatalogKeyV1Schema, PromptLibraryRowMutationV1Schema,
     PromptLibraryRecordV1Schema, type PromptLibraryRecordV1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import { createReachRulesController } from '@/sync/domains/capabilities/reach/useReachRulesState';
-import { createCapabilityEnableApprovalController } from './capabilityEnableApproval';
+import { createCapabilityEnableApprovalController } from './capabilityEnableApprovalModel';
 import { reachRulesToDraftsV1 } from '@happier-dev/protocol/reach/reachRulesChangeV1';
 import { SkillsRulesSetOutputV1Schema } from '@happier-dev/protocol/actions/specs/capabilityRules';
 
