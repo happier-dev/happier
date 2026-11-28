@@ -3647,7 +3647,7 @@ async function readDeploymentNativeReadHttpPurpose(verified: VerifiedSignedChild
     const current = openLogs ? await readDeploymentReadAuthorizationInTx(db, verified.binding, admission, {
         authenticationAuthority: verified.effectiveAuthority, authenticationEvidence: verified.principal.authenticationEvidence,
     }) : null;
-    if (openLogs && !current?.ok) return false;
+    if ((current && !current.ok) || (openLogs && !current)) return false;
     if (exactTransportPurpose && (admission.actionId !== 'deployments.health.current'
         || verified.effectActionId === verified.binding.actionId)) return {};
     const access = openLogs ? readDeploymentEnvironmentAccessPurpose(verified, proof) : null;
