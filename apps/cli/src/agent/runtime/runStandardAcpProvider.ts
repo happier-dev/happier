@@ -77,6 +77,7 @@ type RuntimeForLoop = {
     message: string,
     identity?: InFlightSteerPromptOptions & Readonly<{
       onProviderPromptAccepted?: () => void;
+      onProviderPromptRejected?: () => void;
     }>,
   ) => Promise<void>;
   flushTurn: () => void | ProviderTurnCompletionResult | Promise<void | ProviderTurnCompletionResult>;
@@ -394,9 +395,21 @@ export async function runStandardAcpProvider(
               providerInputOutcomeObserver?.({ kind: 'accepted', localId: localIds[0] });
             }
           };
+          // A refused steer returns to the pending queue, which redelivers it once steering is safe
+          // again or as the next turn.
+          const onProviderPromptRejected = (): void => {
+            if (localIds.length === 1) {
+              providerInputOutcomeObserver?.({
+                kind: 'rejected_before_effect',
+                localId: localIds[0],
+                reason: 'steering_unavailable',
+              });
+            }
+          };
           await runtime.steerPrompt!(text, {
             ...(identity ?? {}),
             onProviderPromptAccepted,
+            onProviderPromptRejected,
           });
         },
       });

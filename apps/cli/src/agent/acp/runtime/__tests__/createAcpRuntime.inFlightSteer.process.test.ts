@@ -200,6 +200,67 @@ function writeSupersedingSteerWithOpenToolAcpAgentScript(params: { dir: string }
   return scriptPath;
 }
 
+/**
+ * Session cmwrc65fsxshtm23v0gbpvkgx (agy acp 1.5.18, 2026-11-28): a steer arrives while the running
+ * prompt is about to wait for a permission answer. agy rejects only the steer prompt with a JSON-RPC
+ * error and keeps the original turn running: it asks for later permissions and answers the primary
+ * prompt when its work ends.
+ */
+function writeSteerRejectedDuringPermissionAcpAgentScript(params: { dir: string }): string {
+  const scriptPath = join(params.dir, 'fake-acp-agent-steer-rejected-during-permission.mjs');
+  const src = `
+    let buf = '';
+    let primaryId = null;
+    const send = (obj) => process.stdout.write(JSON.stringify(obj) + '\\n');
+    const update = (u) => send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'test-session', update: u } });
+    const emitMessage = (text) => update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } });
+    const requestPermission = (id, toolCallId) => send({ jsonrpc: '2.0', id, method: 'session/request_permission', params: {
+      sessionId: 'test-session',
+      toolCall: { toolCallId, kind: 'execute', rawInput: { command: 'pwd' } },
+      options: [{ optionId: 'allow', kind: 'allow_once', name: 'Allow' }, { optionId: 'reject', kind: 'reject_once', name: 'Reject' }],
+    } });
+    process.stdin.on('data', (chunk) => {
+      buf += chunk.toString();
+      const lines = buf.split('\\n');
+      buf = lines.pop() || '';
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        const req = JSON.parse(line);
+        if (!req.method && req.id === 'perm-1') {
+          update({ sessionUpdate: 'tool_call_update', toolCallId: 'tool-b', status: 'completed' });
+          update({ sessionUpdate: 'tool_call_update', toolCallId: 'tool-a', status: 'completed' });
+          setTimeout(() => requestPermission('perm-2', 'tool-c'), 50);
+          continue;
+        }
+        if (!req.method && req.id === 'perm-2') {
+          update({ sessionUpdate: 'tool_call_update', toolCallId: 'tool-c', status: 'completed' });
+          emitMessage('later permission=' + (req.result?.outcome?.outcome ?? 'none'));
+          setTimeout(() => send({ jsonrpc: '2.0', id: primaryId, result: { stopReason: 'end_turn' } }), 50);
+          continue;
+        }
+        if (req.id === undefined || typeof req.method !== 'string') continue;
+        if (req.method === 'initialize') { send({ jsonrpc: '2.0', id: req.id, result: { protocolVersion: 1, authMethods: [] } }); continue; }
+        if (req.method === 'session/new') { send({ jsonrpc: '2.0', id: req.id, result: { sessionId: 'test-session' } }); continue; }
+        if (req.method === 'session/prompt') {
+          if (primaryId === null) {
+            primaryId = req.id;
+            update({ sessionUpdate: 'tool_call', toolCallId: 'tool-a', title: 'Run command', kind: 'execute', status: 'in_progress', rawInput: { command: 'sleep' } });
+            emitMessage('primary-work');
+            continue;
+          }
+          update({ sessionUpdate: 'tool_call', toolCallId: 'tool-b', title: 'Run command', kind: 'execute', status: 'pending', rawInput: { command: 'pwd' } });
+          requestPermission('perm-1', 'tool-b');
+          send({ jsonrpc: '2.0', id: req.id, error: { code: -32603, message: 'running prompt is waiting for a permission or question answer' } });
+          continue;
+        }
+        send({ jsonrpc: '2.0', id: req.id, result: {} });
+      }
+    });
+  `;
+  writeFileSync(scriptPath, src, 'utf8');
+  return scriptPath;
+}
+
 describe('createAcpRuntime (in-flight steer, real process)', () => {
   it('routes an exact steer ACK through the typed singleton outcome bridge without broad settlement', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'happier-acp-steer-proc-'));
@@ -440,6 +501,79 @@ describe('createAcpRuntime (in-flight steer, real process)', () => {
         .map((m) => (m as any).message as string)
         .join('\n');
       await expect.poll(messages, { timeout: 3_000 }).toContain('steer-work permission=selected');
+    } finally {
+      await backend.dispose().catch(() => {});
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 15_000);
+  it('fails only a rejected steer: the steered turn keeps running, keeps its permissions and holds steering', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-steer-rejected-permission-'));
+    let runtime: any = null;
+    const steerableWhilePermissionPending: boolean[] = [];
+    const backend = new AcpBackend({
+      agentName: 'test',
+      cwd: dir,
+      command: process.execPath,
+      args: [writeSteerRejectedDuringPermissionAcpAgentScript({ dir })],
+      permissionHandler: {
+        handleToolCall: async () => {
+          steerableWhilePermissionPending.push(runtime.supportsInFlightSteer());
+          return { decision: 'approved' };
+        },
+      } as any,
+      transportHandler: {
+        agentName: 'test',
+        getInitTimeout: () => 1_000,
+        getToolPatterns: () => [] as ToolPattern[],
+        getIdleTimeout: () => 250,
+      } satisfies TransportHandler,
+    });
+    const sent: Array<{ type: string; [k: string]: unknown }> = [];
+    const session = {
+      keepAlive: () => {},
+      sendAgentMessage: () => {},
+      sendAgentMessageCommitted: async (_provider: string, msg: any) => { sent.push(msg); },
+      sendUserTextMessageCommitted: async () => {},
+      fetchRecentTranscriptTextItemsForAcpImport: async () => [],
+      updateMetadata: () => {},
+    } as any;
+    try {
+      runtime = createAcpRuntime({
+        provider: 'codex',
+        directory: dir,
+        session,
+        messageBuffer: new MessageBuffer(),
+        mcpServers: {},
+        permissionHandler: createApprovedPermissionHandler(),
+        onThinkingChange: () => {},
+        ensureBackend: async () => backend as any,
+        inFlightSteer: { enabled: true },
+      } as any);
+      runtime.beginTurn();
+      await runtime.startOrLoad({});
+      expect(runtime.supportsInFlightSteer()).toBe(true);
+      const primaryOutcome = runtime.sendPrompt('hello').then(() => 'completed', (error: unknown) => error);
+      await new Promise((r) => setTimeout(r, 50));
+      const onProviderPromptAccepted = vi.fn();
+      const onProviderPromptRejected = vi.fn();
+      await runtime.steerPrompt('steer-now', {
+        localId: 'local-steer-5',
+        userMessageSeq: 45,
+        onProviderPromptAccepted,
+        onProviderPromptRejected,
+      });
+
+      expect(await primaryOutcome).toBe('completed');
+      await runtime.flushTurn();
+      const messages = () => sent
+        .filter((m) => m.type === 'message' && typeof (m as any).message === 'string')
+        .map((m) => (m as any).message as string)
+        .join('\n');
+      await expect.poll(messages, { timeout: 3_000 }).toContain('later permission=selected');
+      expect(sent.some((m) => m.type === 'turn_failed')).toBe(false);
+      expect(onProviderPromptAccepted).not.toHaveBeenCalled();
+      expect(onProviderPromptRejected).toHaveBeenCalledTimes(1);
+      expect(steerableWhilePermissionPending).toEqual([false, false]);
     } finally {
       await backend.dispose().catch(() => {});
       rmSync(dir, { recursive: true, force: true });

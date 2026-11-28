@@ -1859,7 +1859,7 @@ export class AcpBackend implements AgentBackend {
     });
 
     // Create client handlers. The generic connection owner registers these on the public SDK app API.
-    const clientHandlers: AcpClientConnectionHandlers = {
+    const providerClientHandlers: AcpClientConnectionHandlers = {
       sessionUpdate: async (params: SessionNotification) => {
         await this.handleSessionUpdate(params);
       },
@@ -2105,6 +2105,21 @@ export class AcpBackend implements AgentBackend {
         }
         if (tracksForeground) markToolCallRunningAfterPermission(toolCallId, this.createHandlerContext());
         return { outcome };
+      },
+    };
+
+    const clientHandlers: AcpClientConnectionHandlers = {
+      ...providerClientHandlers,
+      // A running prompt waiting on this answer cannot take a steer; hold steering until it moves on.
+      requestPermission: async (params: RequestPermissionRequest): Promise<RequestPermissionResponse> => {
+        const turnGeneration = this.turnGeneration;
+        this.unansweredProviderInputRequestCount += 1;
+        try {
+          return await providerClientHandlers.requestPermission(params);
+        } finally {
+          this.unansweredProviderInputRequestCount -= 1;
+          this.inFlightSteerHeldTurnGeneration = turnGeneration;
+        }
       },
     };
 
@@ -2782,6 +2797,8 @@ export class AcpBackend implements AgentBackend {
       logger.debug('[AcpBackend] Dropping prompt-turn session/update outside an active dispatched generation');
       return;
     }
+    // The provider moved on after the answer or rejection that held steering.
+    this.inFlightSteerHeldTurnGeneration = null;
 
     if (this.waitingForResponse) {
       this.sawSessionUpdateSincePrompt = true;
@@ -3347,6 +3364,14 @@ export class AcpBackend implements AgentBackend {
    * unacknowledged steer, so its input is accepted before its own response ends the combined turn.
    */
   private outstandingSteerPrompts: Readonly<{ generation: number; steers: OutstandingAcpSteerPrompt[] }> | null = null;
+  /** Provider permission/question requests Happier has not answered yet. */
+  private unansweredProviderInputRequestCount = 0;
+  /**
+   * Turn generation whose steering waits for the provider's next session update: after Happier answers
+   * a provider permission/question, or after the provider rejected a steer, the running prompt may
+   * still be blocked on that answer and agents such as agy refuse a steer prompt meanwhile.
+   */
+  private inFlightSteerHeldTurnGeneration: number | null = null;
   private idleStatusDeferredUntilPromptResponse = false;
 
   private observeAcpTransportMessageWritten(message: unknown): void {
@@ -3505,6 +3530,12 @@ export class AcpBackend implements AgentBackend {
 
     this.finalizeTurnOutcome(mapStopReasonToAcpTurnOutcome(stopReason));
     return true;
+  }
+
+  /** Whether a steer prompt can reach the running turn now, rather than waiting on a provider input request. */
+  isInFlightSteerWindowOpen(): boolean {
+    return this.unansweredProviderInputRequestCount === 0
+      && this.inFlightSteerHeldTurnGeneration !== this.turnGeneration;
   }
 
   private countOutstandingSteerPrompts(turnGeneration: number): number {
@@ -4126,6 +4157,13 @@ export class AcpBackend implements AgentBackend {
         return { kind: 'exact_final_response', response };
       })
       .catch((error: unknown) => {
+        // A JSON-RPC error answering a steer the provider never acknowledged refuses only that steer:
+        // the running prompt keeps its turn, tool calls and permissions, and the input is redelivered.
+        if (isAcpJsonRpcRejection(error) && !outstandingSteer.acknowledged) {
+          logger.debug('[AcpBackend] Provider rejected an in-flight steer; the running turn continues');
+          if (turnGeneration === this.turnGeneration) this.inFlightSteerHeldTurnGeneration = turnGeneration;
+          throw toAcpPromptSubmissionPhaseError('rejected_before_effect', error);
+        }
         if (!this.disposed && this.waitingForResponse) {
           const normalizedError = error instanceof Error ? error : new Error(String(error));
           this.failPendingResponseWait(normalizedError);
