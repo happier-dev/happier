@@ -15,6 +15,9 @@ import {
 } from '@happier-dev/plugin-sdk/database';
 import { DATABASE_PLUGIN_ID_V1, DATABASE_STATEMENT_RUN_ACTION_ID_V1,
     databaseActionLocalIdV1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
+import { DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1, DATABASE_CAPTURE_RESOURCE_REF_V1, DATABASE_CAPTURE_STATUS_ACTION_ID_V1,
+    DatabaseCaptureConfigureResultV1Schema, DatabaseCaptureStatusResultV1Schema } from '@happier-dev/database-protocol';
+import { AutomationEventActionHttpPathsV1 } from '@happier-dev/protocol/automations/event';
 import { DeploymentEnvironmentCreateIntentInputV1Schema, DeploymentEnvironmentCreateResultV1Schema,
     DeploymentEnvironmentGetResultV1Schema, DeploymentEnvironmentUpdateResultV1Schema,
     DeploymentReceiptGetResultV1Schema, DeploymentDataSizeResultV1Schema,
@@ -41,7 +44,7 @@ import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { createCredentialedAccountArtifactStore } from '../../../../apps/cli/src/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '../../../../apps/cli/src/api/client/serverHttpBaseUrl';
 import { readAccountIdFromToken } from '../../../../apps/cli/src/cloud/decodeJwtPayload';
-import { startDatabaseWorkbenchFixture } from '../../src/testkit/databaseWorkbench';
+import { installDatabaseCapturePluginFixture, installDatabaseWorkbenchPluginFixture, startDatabaseWorkbenchFixture } from '../../src/testkit/databaseWorkbench';
 import { trackDatabaseWorkbenchDeployments } from '../../src/testkit/databaseWorkbenchDeployments';
 import { repoRootDir } from '../../src/testkit/paths';
 import { readEncryptedAccountSettingsV2OrEmpty, upsertEncryptedAccountSettingsV2 } from '../../src/testkit/accountSettings';
@@ -72,7 +75,8 @@ it('loads Channels terminal attention from the R6 entry order', async () => {
 // unavailable producer before those succeed is a setup blocker.
 it('R6 preserves native backup verification and isolated restore-drill outcomes with typed semantic SQL', async () => {
     const testDir = await mkdtemp(join(tmpdir(), 'happier-dbw-recovery-'));
-    const fixture = await startDatabaseWorkbenchFixture({ testDir });
+    const fixture = await startDatabaseWorkbenchFixture({ testDir, advertiseRequestObservationEndpoint: true,
+        serverEnv: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' } });
     const deployments = trackDatabaseWorkbenchDeployments(fixture, testDir);
     await deployments.run(async () => {
         const owner = await fixture.createAccount('recovery-owner');
@@ -82,16 +86,41 @@ it('R6 preserves native backup verification and isolated restore-drill outcomes 
         expect(await fixture.postgres.sql('happier', 'SELECT count(*) FROM "ProjectSource"')).toBe('0');
         expect(await fixture.postgres.sql('happier', 'SELECT count(*) FROM "Machine"')).toBe('0');
         await fixture.claimHomeOwner(owner);
-        const machine = await fixture.enrollDaemon(owner, { cliLaunchSpec: { command: process.execPath,
+        const machine = await fixture.enrollDaemon(owner, {
+            cliLaunchSpec: { command: process.execPath,
                 args: ['--import', resolve(repoRootDir(), 'packages/cli-common/registerSourceRuntime.mjs'),
-                    resolve(repoRootDir(), 'apps/cli/src/index.ts')], cwd: repoRootDir() } });
+                    resolve(repoRootDir(), 'apps/cli/src/index.ts')], cwd: repoRootDir() },
+            env: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' },
+        });
+        const activationJournal = join(testDir, 'workbench-module-imports.txt');
+        const pluginInstallation = { testDir, daemonPort: machine.daemon.state.httpPort,
+            controlToken: machine.daemon.state.controlToken };
+        await installDatabaseWorkbenchPluginFixture({ ...pluginInstallation, moduleImportJournal: activationJournal });
+        await installDatabaseCapturePluginFixture(pluginInstallation);
         const opened = await owner.executeReviewed('projects.open', { ...machine.target,
             source: { kind: 'folder', path: machine.workspaceDir }, materialization: { kind: 'attach' } },
         { presentUserConfirmation: { actionId: 'projects.open' } });
         if (!opened.ok) throw new Error(`R6 setup Project Open refused (${opened.errorCode})`);
         const acceptedProject = OpenProjectResultV1Schema.parse(opened.result);
         if (acceptedProject.kind === 'refused') throw new Error(`R6 setup Project Open refused (${acceptedProject.code})`);
-        expect(acceptedProject).toMatchObject({ kind: 'opened', directory: await realpath(machine.workspaceDir) });
+        if (acceptedProject.kind !== 'opened') {
+            throw new Error(`R6 setup Project Open did not settle as opened (${acceptedProject.kind})`);
+        }
+        expect(acceptedProject.directory).toBe(await realpath(machine.workspaceDir));
+        if (!acceptedProject.facts?.projectKey) throw new Error('R6 setup Project Open omitted its Project identity');
+        const captureProject = { serverId: fixture.serverId, machineId: machine.target.machineId,
+            projectId: acceptedProject.facts.projectKey };
+        const captureSource = { kind: 'worktree', ...captureProject, workspaceId: acceptedProject.workspace.workspaceId };
+        function invokeCapture(actionId: typeof DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1 | typeof DATABASE_CAPTURE_STATUS_ACTION_ID_V1,
+            input: unknown) {
+            return owner.executeReviewed('action.invoke', {
+                action: { pluginId: DATABASE_CAPTURE_RESOURCE_REF_V1.pluginId, localId: databaseActionLocalIdV1(actionId) }, input,
+            }, { externalActionTarget: { kind: 'machine', machineId: machine.target.machineId },
+                presentUserConfirmation: { actionId: 'action.invoke' } });
+        }
+        const captureConfigured = await invokeCapture(DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1, { project: captureProject, enabled: true });
+        if (!captureConfigured.ok) throw new Error(`R6 Capture configuration refused (${captureConfigured.errorCode})`);
+        expect(DatabaseCaptureConfigureResultV1Schema.parse(captureConfigured.result)).toMatchObject({ ok: true, enabled: true });
         const installation = MachineInstallationIdentityV1Schema.parse(JSON.parse(
             await readFile(join(machine.homeDir, 'installation-identity.json'), 'utf8')));
 
@@ -501,11 +530,27 @@ it('R6 preserves native backup verification and isolated restore-drill outcomes 
         expect(await account.executeReviewed('plugins.disable', lifecycleInput,
             { presentUserConfirmation: { actionId: 'plugins.disable' } }))
             .toMatchObject({ ok: true, result: { ok: true, change: { kind: 'committed' } } });
+        const enabledPid = machine.daemon.state.pid;
+        const enabledImports = await readFile(activationJournal, 'utf8');
+        expect(enabledImports).toMatch(/^\d+\n/m);
+        fixture.takeRequestObservations();
+        await machine.restart();
+        const disabledPid = machine.daemon.state.pid;
+        expect(disabledPid).not.toBe(enabledPid);
         expect(await account.execute('action.invoke', {
             action: { pluginId: DATABASE_PLUGIN_ID_V1, localId: databaseActionLocalIdV1(DATABASE_STATEMENT_RUN_ACTION_ID_V1) },
             input: semanticInput,
         }, { externalActionTarget: { kind: 'machine', machineId: machine.target.machineId } }))
             .toMatchObject({ ok: false, errorCode: 'contributed_action_unavailable' });
+        const captureStatus = await invokeCapture(DATABASE_CAPTURE_STATUS_ACTION_ID_V1, { source: captureSource });
+        if (!captureStatus.ok) throw new Error(`R6 Capture status refused (${captureStatus.errorCode})`);
+        expect(DatabaseCaptureStatusResultV1Schema.parse(captureStatus.result)).toMatchObject({ ok: true, enabled: true });
+        expect(fixture.readActionOccurrences()).toHaveLength(0);
+        expect(fixture.takeRequestObservations().filter(request =>
+            request.path === AutomationEventActionHttpPathsV1['automation.event.admit'])).toHaveLength(0);
+        const connections = await execute('docker', ['exec', container, 'psql', '-XqAt', '-v', 'ON_ERROR_STOP=1',
+            '-U', 'happier', '-d', 'postgres', '-c', "SELECT count(*) FROM pg_stat_activity WHERE datname = 'app'"]);
+        expect(connections.stdout.trim()).toBe('0');
         const disabledSize = await account.execute('deployments.data.size', { serverId: backupTarget.serverId,
             environmentId: backupTarget.environmentId, expectedRevision: backupTarget.expectedRevision,
             targetLinkId: backupTarget.targetLinkId, deploymentId: backupTarget.deploymentId,
@@ -541,6 +586,10 @@ it('R6 preserves native backup verification and isolated restore-drill outcomes 
         expect(disabledDrill.details.find(row => row.progress.invocationPath.blockId === 'confirmRestore')?.progress.result)
             .toMatchObject({ ...restoredWithoutAmcheck, evidence: { dataCheck: restoredData } });
         await assertDrillStopped();
+        expect(await readFile(activationJournal, 'utf8')).toBe(enabledImports);
+        console.info('R6 disabled deployment operations and Capture passed', {
+            homeId: fixture.serverId, enabledPid, disabledPid, moduleImports: 0, connections: 0, actionOccurrences: 0, eventAdmissions: 0,
+        });
         expect(await account.executeReviewed('plugins.enable', lifecycleInput,
             { presentUserConfirmation: { actionId: 'plugins.enable' } }))
             .toMatchObject({ ok: true, result: { ok: true, change: { kind: 'committed' } } });

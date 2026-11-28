@@ -29,6 +29,7 @@ import { DeploymentTargetLinkContentV1Schema } from '@happier-dev/protocol/deplo
 import { AutomationV3RunListResponseSchema, buildAccountStoredContentCompatibilityHttpHeadersV1,
   CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol';
 import { WorkflowTriggerWriteResultV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import { WorkflowRunWaitResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { AUTOMATION_EVENT_STORED_DEFINITIONS_READ_HTTP_PATH_V1, AutomationEventActionHttpPathsV1,
   AutomationEventAdmitHttpRequestV1Schema, AutomationEventStoredDefinitionsReadHttpRequestV1Schema } from '@happier-dev/protocol/automations/event';
 import { PluginEventAutomationSetupResultV1Schema } from '@happier-dev/protocol/automations/event-setup-result';
@@ -639,8 +640,28 @@ async function exerciseManagedDatabase(provider: (typeof providers)[number], mod
             { type: 'text', value: 'committed' }, { type: 'integer', value: '9007199254740993' }] }] }] });
         expect(await fixture.postgres.sql(database, `SELECT value FROM ${table} WHERE id=1`)).toBe('committed');
         expect(await fixture.postgres.sql(database, `SELECT mutations FROM ${table} WHERE id=1`)).toBe('1');
-        await waitFor(async () => (await runs(after.set.automationId)).some(run => run.state === 'succeeded'),
-          { failFast: true, context: 'Selected managed Database write starts its after Action Run' });
+        let runId: string | undefined;
+        try {
+          await waitFor(async () => {
+            const admitted = await runs(after.set.automationId);
+            if (admitted.length === 0) return false;
+            expect(admitted).toHaveLength(1);
+            runId = admitted[0]?.id;
+            return runId !== undefined;
+          }, { failFast: true, context: 'Selected managed Database write admits its after Action Run' });
+        } catch (error) {
+          if (provider !== 'neon') throw error;
+          const matchingOccurrences = fixture.readActionOccurrences().filter(({ evidence, triggers }) =>
+            evidence.phase === 'after' && evidence.actionId === DATABASE_STATEMENT_RUN_ACTION_ID_V1
+            && triggers.some(trigger => trigger.triggerId === after.triggerId));
+          throw new Error(`F4 after Action Run admission failed (${matchingOccurrences.length} matching requests reached the recorder)`,
+            { cause: error });
+        }
+        const waited = WorkflowRunWaitResultV1Schema.parse(await invoke('workflow.run.wait', {
+          runId, conditions: ['terminal', 'attention'],
+        }));
+        expect({ observation: waited.observation, state: waited.run.state, errorCode: waited.run.errorCode },
+          'Selected managed Database after Action Run settles').toMatchObject({ observation: 'terminal', state: 'succeeded' });
         expect(await runs(after.set.automationId)).toMatchObject([{ state: 'succeeded' }]);
         expect(await runs(neighborAfter.set.automationId)).toEqual([]);
         await invoke('workflow.trigger.remove', { automationId: after.set.automationId, triggerId: after.triggerId });
