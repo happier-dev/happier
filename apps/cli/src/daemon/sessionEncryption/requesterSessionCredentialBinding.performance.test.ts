@@ -19,12 +19,36 @@ import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { logger } from '@/utils/logger';
 import { refreshActiveProfileCatalog } from '@/settings/profiles/hydrateProfileCatalog';
-import { bindRequesterSessionRuntimeMachineAdmissionCurrentness, prepareRequesterSessionBootstrap,
+import { bindRequesterSessionMachineControl, bindRequesterSessionRuntimeMachineAdmissionCurrentness, prepareRequesterSessionBootstrap,
   verifyRequesterSessionCredentialBinding, verifyRequesterSessionMachineAdmissionCurrent } from './requesterSessionCredentials';
 import { artifactListResponse } from '@/testkit/http/artifactHome';
 
 // The socket transport is unavailable in this HTTP custody composition.
 vi.mock('socket.io-client', () => ({ io: () => { throw new Error('Socket unavailable'); } }));
+
+it('uses the existing binding POST directly after a proven fresh requester birth', async () => {
+  const app = fastify();
+  const origin = 'http://fresh-requester-access-key.test';
+  const endpoint = '/v1/access-keys/fresh-session/machine';
+  const calls: string[] = [];
+  app.get(endpoint, async request => { calls.push(request.method); return { accessKey: null }; });
+  app.post(endpoint, async request => { calls.push(request.method); return { success: true }; });
+  await app.ready();
+  const restore = installAxiosFastifyAdapter({ app, origin });
+  try {
+    await bindRequesterSessionMachineControl({
+      credentials: { token: 'requester', encryption: null },
+      sessionId: 'fresh-session',
+      attribution: { serverId: 'home', accountId: 'bob', machineId: 'machine', installationId: 'installation' },
+      serverHttpBaseUrl: origin,
+      sessionCreatedByCaller: true,
+    });
+    expect(calls).toEqual(['POST']);
+  } finally {
+    restore();
+    await app.close();
+  }
+});
 
 it('opens owner metadata only for creation correspondence while retaining fresh requester authorization', async () => {
   const app = fastify();

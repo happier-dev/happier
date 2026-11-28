@@ -361,6 +361,10 @@ export type SessionCreationOutcome = Readonly<{
 
 export type SessionCreateOrLoadResult = Session & Readonly<{
   sessionCreationOutcome?: SessionCreationOutcome;
+  launchWitness?: Readonly<{
+    accountEncryptionMode: 'plain' | 'e2ee';
+    rawSession: import('@happier-dev/protocol/sessions/control/contract').V2SessionByIdResponse['session'];
+  }>;
   machineAccessBindingCommittedFor?: string;
 }>;
 
@@ -490,6 +494,7 @@ export type MessageMeta = z.infer<typeof MessageMetaSchema>
  */
 export const CreateSessionResponseSchema = lazyZodSchema(() => z.object({
   created: z.optional(z.boolean()),
+  launchWitness: z.optional(z.unknown()),
   machineAccessBindingCommittedFor: z.optional(z.string()),
   organizationPlacement: mini.optional(SessionOrganizationPlacementV1Schema),
   session: z.looseObject({

@@ -238,6 +238,43 @@ describe("session create-or-load metadata envelope (SQLite integration)", () => 
         });
     });
 
+    it("returns the launch witness only for a requested fresh birth", async () => {
+        const owner = await createAccount("pk-fresh-launch-witness");
+        await withApp(async (app) => {
+            const create = (tag: string, requestWitness: boolean) => app.inject({
+                method: "POST",
+                url: "/v1/sessions",
+                headers: {
+                    "x-test-user-id": owner.id,
+                    "x-happier-account-stored-content-protocol": "2",
+                    ...(requestWitness ? { "x-happier-session-launch-witness": "1" } : {}),
+                },
+                payload: { ...layoutOneBody, tag },
+            });
+            const fresh = await create("witness", true);
+            expect(fresh.statusCode, fresh.body).toBe(200);
+            const birth = fresh.json();
+            expect(birth).toMatchObject({
+                created: true,
+                launchWitness: {
+                    v: 1,
+                    accountEncryptionMode: "plain",
+                    pendingExecutionRunIds: [],
+                    acceptedTeamCredentialBinding: null,
+                },
+            });
+
+            const replay = await create("witness", true);
+            expect(replay.statusCode, replay.body).toBe(200);
+            expect(replay.json()).toMatchObject({ created: false, session: { id: birth.session.id } });
+            expect(replay.json()).not.toHaveProperty("launchWitness");
+
+            const legacy = await create("without-witness", false);
+            expect(legacy.statusCode, legacy.body).toBe(200);
+            expect(legacy.json()).not.toHaveProperty("launchWitness");
+        });
+    });
+
     it("returns the stored origin and current manager relation for a role-less fresh child and rejoin", async () => {
         const owner = await createAccount("pk-create-worker-organization");
         const createLead = (tag: string) => db.session.create({ data: {

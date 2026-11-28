@@ -40,6 +40,12 @@ import { isServerFeatureEnabledForRequest } from "@/app/features/catalog/serverF
 import { isSessionCollaborationEnabled } from "@/app/session/access/sessionAccess";
 import { readSessionAccessAuthenticationFromRequest } from "@/app/session/access/sessionAccessAuthentication";
 import { projectSessionManagerForRowsInTx } from "@/app/session/awareness/sessionManagerProjection";
+import {
+    SESSION_BIRTH_LAUNCH_WITNESS_HEADER_V1,
+    SessionBirthLaunchWitnessV1Schema,
+} from '@happier-dev/protocol/sessions/creation/sessionBirthLaunchWitnessV1';
+import { readAcceptedSessionTeamCredentialProviderModelBindingInTx } from '@/app/teams/credentials/sessionBinding';
+import { listQueuedExecutionRunPendingTargetsForSessions } from '@/app/session/pending/pendingMessageService';
 import { projectStoredSessionOrigin } from "@/app/session/listing/rows";
 
 import { type Fastify } from "../../types";
@@ -494,18 +500,43 @@ export function registerSessionCreateOrLoadRoute(app: Fastify) {
         });
         // The relation can change independently of creation metadata. Reuse
         // the authorized current-row projector, including on tag rejoins.
-        const [organization] = await inReadSnapshot((tx) => projectSessionManagerForRowsInTx(tx, {
-            accountId: userId,
-            authentication: readSessionAccessAuthenticationFromRequest(request),
-            sessions: [session],
-            accessMode: "effective_access_v1",
-            nowMs: Date.now(),
-        }), {
+        const includeLaunchWitness = createdFresh && isLayoutOneRequest
+            && request.authTokenKind === 'account' && request.externalActionExecutionAuthorized !== true
+            && request.headers[SESSION_BIRTH_LAUNCH_WITNESS_HEADER_V1] === '1';
+        const projectKey = resolvedSession.projectKey;
+        const { organization, launchWitness } = await inReadSnapshot(async (tx) => {
+            const [organization] = await projectSessionManagerForRowsInTx(tx, {
+                accountId: userId,
+                authentication: readSessionAccessAuthenticationFromRequest(request),
+                sessions: [session],
+                accessMode: "effective_access_v1",
+                nowMs: Date.now(),
+            });
+            if (!includeLaunchWitness) return { organization };
+
+            // These are the stored launch facts of this newly committed owner
+            // Session, projected by the same owners as the detail route.
+            const acceptedTeamCredentialBinding = await readAcceptedSessionTeamCredentialProviderModelBindingInTx(
+                tx, session.id,
+            );
+            const targets = await listQueuedExecutionRunPendingTargetsForSessions({
+                accountId: userId, sessionIds: [session.id], reader: tx,
+            });
+            const launchWitness = SessionBirthLaunchWitnessV1Schema.parse({
+                v: 1,
+                accountEncryptionMode: resolvedOwnerAccountMode,
+                acceptedTeamCredentialBinding,
+                projectKey,
+                pendingExecutionRunIds: targets.map(target => target.runId),
+            });
+            return { organization, launchWitness };
+        }, {
             transactionClass: "session.creation-projection",
         });
         log({ module: "session-create", sessionId: resolvedSession.id, userId }, `Session resolved: ${resolvedSession.id}`);
         return reply.serializer(JSON.stringify).send(parseProjectedSessionByIdResponse({
             created: createdFresh,
+            ...(launchWitness ? { launchWitness } : {}),
             ...(machineAccessBindingCommittedFor ? { machineAccessBindingCommittedFor } : {}),
             ...(resolvedOrganizationPlacement
                 ? { organizationPlacement: resolvedOrganizationPlacement }

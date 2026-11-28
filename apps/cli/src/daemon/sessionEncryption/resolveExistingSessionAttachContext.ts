@@ -228,7 +228,7 @@ function resolveExistingSessionBackendTarget(metadataRecord: Record<string, unkn
   };
 }
 
-async function buildExistingSessionAttachContext(params: Readonly<{
+export async function buildExistingSessionAttachContext(params: Readonly<{
   rawSession: Readonly<{
     metadata?: unknown;
     metadataVersion?: unknown;
@@ -242,7 +242,7 @@ async function buildExistingSessionAttachContext(params: Readonly<{
     pendingExecutionRunIds?: unknown;
   }>;
   credentials: StoredCredentials | null;
-  accountEncryptionCurrentness: AccountEncryptionCurrentnessResponse;
+  accountEncryptionMode: AccountEncryptionCurrentnessResponse['mode'];
 }>): Promise<ExistingSessionAttachContext | ExistingSessionAttachContextFailure> {
   const mode = resolveSessionStoredContentEncryptionMode(params.rawSession);
   if (!isSessionEncryptionModeAllowedByEffectiveClientRequirement(mode)) {
@@ -269,7 +269,7 @@ async function buildExistingSessionAttachContext(params: Readonly<{
     ? tryDecryptSessionOwnerMetadata({
       credentials: params.credentials,
       rawSession: params.rawSession,
-      accountEncryptionMode: params.accountEncryptionCurrentness.mode,
+      accountEncryptionMode: params.accountEncryptionMode,
     })
     : null;
   if (
@@ -405,7 +405,7 @@ export async function resolveExistingSessionAttachContext(_params: Readonly<{
     return await buildExistingSessionAttachContext({
       rawSession: raw,
       credentials: _params.credentials,
-      accountEncryptionCurrentness,
+      accountEncryptionMode: accountEncryptionCurrentness.mode,
     });
   } catch (error) {
     const diagnostic = {

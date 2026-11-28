@@ -2,6 +2,7 @@ import type { ExternalSessionSourceDatesV1 } from '@happier-dev/protocol/session
 import axios from '@/api/client/credentialAxios';
 import { type AxiosResponse } from 'axios';
 import { V2SessionByIdResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
+import { SESSION_BIRTH_LAUNCH_WITNESS_HEADER_V1 } from '@happier-dev/protocol/sessions/creation/sessionBirthLaunchWitnessV1';
 import { SESSION_CREATION_AUTHORIZATION_HEADER_V1 } from '@happier-dev/protocol/auth/accountApiTokens';
 import { classifyHomeDomainHttpMutationFailureV1, readHomeDomainConfirmedRollbackV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { SESSION_MANAGED_TARGET_BUSY_CODE } from '@happier-dev/protocol/spawnSession';
@@ -56,6 +57,7 @@ export async function postSessionCreationRequest<T>(params: Readonly<{
   localBirthMachineId?: string;
   launchMachineId?: string;
   launchProfileId?: string;
+  requestLaunchWitness?: boolean;
   creationAuthorizationToken?: string;
   /** Binds the admitted Action's child-creation proof to the exact birth body posted here. */
   prepareCreationAuthorizationProof?: SessionCreationAuthorizationV1['prepareRequestProof'];
@@ -88,6 +90,7 @@ export async function postSessionCreationRequest<T>(params: Readonly<{
   const response = await axios.post<T>(`${params.serverUrl}/v1/sessions`, body, {
     headers: {
       ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
+      ...(params.requestLaunchWitness ? { [SESSION_BIRTH_LAUNCH_WITNESS_HEADER_V1]: '1' } : {}),
       ...(managedBirthHeader ? { [MANAGED_SESSION_BIRTH_HEADER_V1]: managedBirthHeader } : {}),
       ...(launch.machineId || launch.profileDigest ? { [SESSION_LAUNCH_HEADER_V1]: JSON.stringify(launch) } : {}),
       ...(params.creationAuthorizationToken ? { [SESSION_CREATION_AUTHORIZATION_HEADER_V1]: params.creationAuthorizationToken } : {}),

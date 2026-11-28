@@ -507,6 +507,7 @@ resolveServerFeaturesSnapshot?: () =>
                 ) => {
                   const prepared = await readRequesterHomeWithinActionLifetime(() => prepareRequesterSessionBootstrap({
                     credentials,
+                    ...(!requesterRuntime && requesterAccountContext ? { admittedAccount: requesterAccountContext } : {}),
                     machineAdmission: requesterSpawnCustody.machineAdmission,
                     attribution: requesterSpawnCustody.attribution,
                     homeServerIdentityId: requesterSpawnCustody.homeServerIdentityId,

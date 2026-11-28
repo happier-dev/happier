@@ -43,6 +43,7 @@ import { createRequesterAccountSettingsPublication } from '@/settings/accountSet
 import type { ConnectedServiceQualifiedAuthGroupApi } from '../connectedServices/resolveConnectedServiceAuthForSpawn';
 import type { QualifiedConnectedAccountEstablishedRuntimeOwner } from '../connectedServices/qualifiedConnectedAccountEstablishedRuntimeOwner';
 import type { RequesterAccountActionAuthorizationInput } from './requesterAccountActionProjection';
+import type { RequesterAccountActionContext } from './requesterAccountActionContext';
 import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readPublishedMachineRow } from '@/api/machine/readPublishedMachineRow';
@@ -344,6 +345,11 @@ export async function assertRequesterSessionAccountContextCurrent(input: Readonl
 }
 
 /** Created by the receiving host after admission; never accepted from decrypted caller input. */
+type RequesterSessionBirth = Readonly<{
+  sessionCreatedByCaller: true;
+  machineAccessBindingCommittedFor?: string;
+}>;
+
 export type AdmittedRequesterSessionBootstrap = Readonly<{
   credentials: StoredCredentials;
   /** Host-verified Machine custodian identity; caller origin never grants native credentials. */
@@ -381,7 +387,7 @@ export type AdmittedRequesterSessionBootstrap = Readonly<{
     observedServerIdentityId: string, signal?: AbortSignal): Promise<import('./requesterAccountActionContext').RequesterAccountActionContext | null>;
   /** `materializationKey` names the Session's Agent home, removed when the Session is deleted. */
   bindSession(sessionId: string, sessionCreationTag: string, materializationKey?: string,
-    machineAccessBindingCommittedFor?: string): Promise<Readonly<{ path: string; cleanup(): Promise<void> }> | null>;
+    birth?: RequesterSessionBirth): Promise<Readonly<{ path: string; cleanup(): Promise<void> }> | null>;
   /** Existing-Session adoption retains the original immutable creation recipe. */
   bindExistingSession(sessionId: string, materializationKey?: string): Promise<Readonly<{ path: string; cleanup(): Promise<void> }> | null>;
 }>;
@@ -416,6 +422,7 @@ export async function prepareRequesterSessionBootstrap(input: Readonly<{
   machineAdmission?: SavedSecretOperationContextV1['machineAdmission'] | null;
   credentials: StoredCredentials;
   attribution: RequesterWorkAttributionV1;
+  admittedAccount?: RequesterAccountActionContext;
   homeServerIdentityId?: string;
   boundary: Readonly<{ serverId: string; serverHttpBaseUrl: string; happyHomeDir: string;
     getObservedServerIdentityId?(): string | null | Promise<string | null> }>;
@@ -465,7 +472,33 @@ export async function prepareRequesterSessionBootstrap(input: Readonly<{
         && live && !signal.aborted
         && observation.isCurrent(currentness) ? currentness : null;
     });
-    const currentness = await readAccountCurrentness(launchSignal);
+    // An immediate birth on the same receiver can start from the invocation's
+    // authenticated snapshot. The Session still owns its observation lifetime.
+    const account = input.admittedAccount;
+    const binding = account?.authorization.binding;
+    let admittedSettings: AccountSettingsContext | undefined;
+    if (account && binding && !input.boundSessionId && account.credentials === input.credentials
+      && binding.accountId === attribution.accountId && binding.machineId === attribution.machineId
+      && binding.installationId === attribution.installationId && binding.serverIdentityId === homeServerIdentityId
+      && input.boundary.serverId === attribution.serverId
+      && account.authorization.requesterAccountProjection?.serverId === attribution.serverId
+      && normalizeServerHttpBaseUrl(account.serverHttpBaseUrl) === normalizeServerHttpBaseUrl(input.boundary.serverHttpBaseUrl)
+      && await verify(launchSignal) && await account.refreshAccountSettings(launchSignal)) {
+      observation = acquireRequesterAccountEncryptionCurrentness(observationScope);
+      const snapshot = account.savedSecretOperationContext.readSnapshot();
+      if (snapshot?.source === 'network' && snapshot.settingsVersion >= (account.accountEncryptionCurrentness.settingsVersion ?? 0)
+        && !launchSignal.aborted && observation.isCurrent(account.accountEncryptionCurrentness)) {
+        // Borrow only the network Settings projection. Each holder owns its
+        // derived catalogs and retires their private material independently.
+        admittedSettings = {
+          source: snapshot.source, settings: snapshot.settings, rawSettings: snapshot.rawSettings,
+          settingsVersion: snapshot.settingsVersion, loadedAtMs: snapshot.loadedAtMs,
+          scopeKey: snapshot.scopeKey, settingsSecretsReadKeys: snapshot.settingsSecretsReadKeys,
+          whenRefreshed: null,
+        };
+      }
+    }
+    const currentness = admittedSettings && account ? account.accountEncryptionCurrentness : await readAccountCurrentness(launchSignal);
     if (!currentness || !observation) return null;
     const accountObservation = observation;
     bindRequesterSessionCredentialScope(credentials, { serverId: attribution.serverId,
@@ -473,8 +506,9 @@ export async function prepareRequesterSessionBootstrap(input: Readonly<{
     let cleanup: () => Promise<void> = async () => undefined;
     // Admission already reads a fresh authority witness. Retain its Settings
     // minimum only until bootstrap; an idle encryption identity has no cursor.
-    const initializationSettingsWitness = await fetchAccountEncryptionCurrentness({ credentials: credentials, token: credentials.token,
-      serverBaseUrl: input.boundary.serverHttpBaseUrl, signal: currentnessSignal() });
+    const initializationSettingsWitness = admittedSettings ? currentness : await fetchAccountEncryptionCurrentness({
+      credentials, token: credentials.token, serverBaseUrl: input.boundary.serverHttpBaseUrl, signal: currentnessSignal(),
+    });
     if (!sameRequesterAccountEncryptionCurrentness(initializationSettingsWitness, currentness)) return null;
     const isObservationCurrent = async () => {
       if (!live || currentnessSignal().aborted) return false;
@@ -494,7 +528,7 @@ export async function prepareRequesterSessionBootstrap(input: Readonly<{
     };
     const readPreparationCurrentness = () => isCurrent(input.signal);
     if (!await readPreparationCurrentness()) return null;
-    const accountSettingsContext = await runWithServerHttpBaseUrl(input.boundary.serverHttpBaseUrl,
+    const accountSettingsContext = admittedSettings ?? await runWithServerHttpBaseUrl(input.boundary.serverHttpBaseUrl,
       () => bootstrapAccountSettingsContext({ credentials, mode: 'blocking', refresh: 'force', publication: 'invocation',
         caller: 'requester_session_admission',
         signal: launchSignal, allowCacheFallback: false,
@@ -518,9 +552,9 @@ export async function prepareRequesterSessionBootstrap(input: Readonly<{
       await observation?.dispose();
     };
     const persistVerifiedCustody = async (binding: Parameters<typeof verifyRequesterSessionCredentialBinding>[0],
-      materializationKey: string | undefined, machineAccessBindingCommittedFor?: string) => {
-      if (machineAccessBindingCommittedFor !== binding.attribution.machineId) {
-        await bindRequesterSessionMachineControl(binding);
+      materializationKey: string | undefined, birth?: RequesterSessionBirth) => {
+      if (birth?.machineAccessBindingCommittedFor !== binding.attribution.machineId) {
+        await bindRequesterSessionMachineControl({ ...binding, sessionCreatedByCaller: birth?.sessionCreatedByCaller });
       }
       if (!await verifyRequesterSessionCredentialBinding(binding, 'custody_after_machine_binding')) return null;
       return await createRequesterSessionCredentialCustody({ ...binding, happyHomeDir: input.boundary.happyHomeDir,
@@ -529,14 +563,14 @@ export async function prepareRequesterSessionBootstrap(input: Readonly<{
         ...(homeServerIdentityId ? { homeServerIdentityId } : {}) });
     };
     const bindSession: AdmittedRequesterSessionBootstrap['bindSession'] = async (
-      sessionId, sessionCreationTag, materializationKey, machineAccessBindingCommittedFor,
+      sessionId, sessionCreationTag, materializationKey, birth,
     ) => {
       if (!verifyRuntime || preparedSessionId && preparedSessionId !== sessionId || bound && (bound.sessionId !== sessionId
         || bound.sessionCreationTag !== undefined && bound.sessionCreationTag !== sessionCreationTag) || !await isCurrent()) return null;
       const binding = { credentials, sessionId, attribution, serverHttpBaseUrl: input.boundary.serverHttpBaseUrl,
         verifyMachineAdmissionCurrent: bound ? verifyRuntime : verify,
         signal: currentnessSignal(), expectedSessionCreationTag: sessionCreationTag };
-      const custody = await persistVerifiedCustody(binding, materializationKey, machineAccessBindingCommittedFor);
+      const custody = await persistVerifiedCustody(binding, materializationKey, !bound ? birth : undefined);
       if (!custody) return null;
       bound = { sessionId, sessionCreationTag };
       cleanup = custody.cleanup;
@@ -1432,9 +1466,11 @@ export async function bindRequesterSessionMachineControl(input: Readonly<{
   sessionId: string;
   attribution: RequesterWorkAttributionV1;
   serverHttpBaseUrl: string;
+  sessionCreatedByCaller?: true;
 }>): Promise<void> {
   await ensureSessionMachineAccessKeyBinding({ serverUrl: input.serverHttpBaseUrl,
-    token: input.credentials.token, sessionId: input.sessionId, machineId: input.attribution.machineId });
+    token: input.credentials.token, sessionId: input.sessionId, machineId: input.attribution.machineId,
+    sessionCreatedByCaller: input.sessionCreatedByCaller });
 }
 
 export { rethrowRequesterHomeReadFailure } from '@/daemon/sessionEncryption/requesterCurrentness';

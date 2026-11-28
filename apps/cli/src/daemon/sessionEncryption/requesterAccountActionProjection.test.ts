@@ -18,7 +18,7 @@ import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { bindRequesterSessionCredentialScope, sameStoredCredentials, type StoredCredentials } from '@/persistence';
 import * as persistence from '@/persistence';
-import { projectRequesterAccountActionAuthorization } from './requesterSessionCredentials';
+import { prepareRequesterSessionBootstrap, projectRequesterAccountActionAuthorization } from './requesterSessionCredentials';
 import { createExternalActionMachineRpcExecution, createExternalActionAuthorizedRequestHeaders, dispatchOriginalAccountAction, projectExternalActionRequesterHttpAuthorization, isReviewedSessionActionCreationChild, createReviewedSecondOpinionSessionCreationAuthorization, isReviewedDeploymentChild } from '@/api/externalActionExecutionAuthorization';
 import { verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { buildDiscussionModelSessionCreationProofPayloadV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationAuthorizationV1';
@@ -139,6 +139,52 @@ function bootstrap(credentials: StoredCredentials, isCurrent = async () => true)
 }
 
 describe('admitted requester Action projection', () => {
+  it('uses the admitted requester Settings for the same fresh Session instead of reading Home again', async () => {
+    const reads: string[] = [];
+    const serverHttpBaseUrl = 'https://requester-home.test';
+    vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
+      const path = new URL(url).pathname;
+      switch (path) {
+        case '/v1/account/profile':
+          reads.push(path);
+          return { status: 200, data: { id: 'bob' } };
+        case '/v2/account/settings':
+          reads.push(path);
+          return { status: 200, data: { content: { t: 'plain', v: {} }, version: 7 } };
+        case '/v1/account/encryption/currentness':
+          reads.push(path);
+          return { status: 200, data: { mode: 'plain', version: 1, settingsVersion: 7,
+            signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+        case '/v2/changes':
+          return { status: 200, data: { changes: [], nextCursor: 0 } };
+        default:
+          throw new Error('Unexpected requester Home read');
+      }
+    });
+    const credentials = { token: 'bob-session-launch', encryption: null };
+    const attribution = bootstrap(credentials).attribution;
+    const admittedAccount = await requesterAccountOwner.admitRequesterAccountActionContext({
+      authorization: { ...authorization, binding: { ...authorization.binding, accountEncryptionMode: 'plain' } },
+      credentials, serverId: attribution.serverId, serverIdentityId: 'stable-home', serverHttpBaseUrl,
+      isCurrent: async () => true,
+    });
+    expect(admittedAccount).not.toBeNull();
+    if (!admittedAccount) throw new Error('Missing requester admission');
+    const input = { credentials, attribution, homeServerIdentityId: 'stable-home', admittedAccount,
+      boundary: { serverId: attribution.serverId, serverHttpBaseUrl, happyHomeDir: configuration.happyHomeDir },
+      verifyMachineAdmissionCurrent: admittedAccount.isCurrent };
+    reads.length = 0;
+    let prepared: Awaited<ReturnType<typeof prepareRequesterSessionBootstrap>> | undefined;
+    try {
+      prepared = await prepareRequesterSessionBootstrap(input);
+      expect(prepared?.admitted.accountSettingsContext.settingsVersion).toBe(7);
+      expect(reads).toEqual([]);
+    } finally {
+      await prepared?.cleanupOnFailure();
+      await admittedAccount.dispose();
+    }
+  });
+
   it('prepares SOURCE projection with one source observation and no bracketing custody reads', async () => {
     vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
       if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: 'bob' } };

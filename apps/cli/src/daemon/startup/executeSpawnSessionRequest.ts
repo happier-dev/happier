@@ -1158,8 +1158,11 @@ export async function executeSpawnSessionRequest(
                     ? await requesterRuntime.bootstrap.bindExistingSession(normalizedExistingSessionId, materializationKey)
                     : launchExistingSessionId && tag
                       ? await requesterRuntime.bootstrap.bindSession(launchExistingSessionId, tag, materializationKey,
-                            ...(committedLaunchSession?.machineAccessBindingCommittedFor
-                                ? [committedLaunchSession.machineAccessBindingCommittedFor] as const : [])) : null;
+                            committedLaunchSession?.created ? {
+                                sessionCreatedByCaller: true,
+                                ...(committedLaunchSession.machineAccessBindingCommittedFor
+                                    ? { machineAccessBindingCommittedFor: committedLaunchSession.machineAccessBindingCommittedFor } : {}),
+                            } : undefined) : null;
                 if (!custody) return await refuseSpawn(projectDaemonSpawnUnavailable('requester_session_custody_unavailable', 'Requester Session custody unavailable'));
                 launchOptions = { ...launchOptions, requesterSessionCredentialFile: custody.path };
                 launchResourceScope.register({ onFailure: custody.cleanup, onExit: () => undefined });

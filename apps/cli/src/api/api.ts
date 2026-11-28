@@ -16,6 +16,8 @@ import { MachineEnrollmentCorrelationV1Schema, isDeploymentAppEnrollmentCorrelat
 import { deriveManagedDevcontainerChildProjectionV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
 import { readSessionCreationInitialTriggerError } from './session/sessionCreationInitialTriggerError';
 import { pickSessionCreateOriginFields } from '@/session/shared/sessionCreateOrigin';
+import { SessionBirthLaunchWitnessV1Schema } from '@happier-dev/protocol/sessions/creation/sessionBirthLaunchWitnessV1';
+import { V2SessionRecordSchema } from '@happier-dev/protocol/sessions/control/contract';
 import { postSessionCreationRequest } from '@/session/transport/http/sessionsHttp';
 import { PROVIDER_BROKER_MODEL_CATALOG_AUTHORIZE_HTTP_PATH_V1, PROVIDER_BROKER_READINESS_AUTHORIZE_HTTP_PATH_V1, PROVIDER_BROKER_REQUEST_ADMISSION_HTTP_PATH_V1, ProviderBrokerModelCatalogAuthorizationV1Schema, ProviderBrokerModelCatalogAuthorizationResponseV1Schema, ProviderBrokerRequestAdmissionV1Schema, ProviderBrokerRequestAdmissionResponseV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import type { ProviderBrokerOpenRequestV1, ProviderBrokerOpenResponseV1, ProviderBrokerModelCatalogAuthorizationV1, ProviderBrokerModelCatalogAuthorizationResponseV1, ProviderBrokerRequestAdmissionV1, ProviderBrokerRequestAdmissionResponseV1 } from '@happier-dev/protocol';
@@ -533,6 +535,8 @@ export class ApiClient {
     manager?: import('@happier-dev/protocol').SessionManagerV1,
     primaryTeamId?: string | null,
     teamCredentialBindings?: import('@happier-dev/protocol/teams').SessionTeamCredentialBindingIntentListV1,
+    /** A daemon launch can consume the authenticated fresh-only attach projection. */
+    requestLaunchWitness?: boolean,
     /** The admitted Action's creation token and, for Action-child births, its body-proof signer. */
     creationAuthorization?: import('@happier-dev/protocol/sessions/creation/sessionCreationAuthorizationV1').SessionCreationAuthorizationV1,
     /** Machine chosen by admitted requester custody for the daemon's installation proof. */
@@ -733,6 +737,7 @@ export class ApiClient {
             ...(opts.organizationPlacement ? { organizationPlacement: opts.organizationPlacement } : {}),
             ...(opts.teamCredentialBindings !== undefined ? { teamCredentialBindings: opts.teamCredentialBindings } : {}),
           },
+          ...(opts.requestLaunchWitness ? { requestLaunchWitness: true } : {}),
           ...(opts.creationAuthorization ? { creationAuthorizationToken: opts.creationAuthorization.token } : {}),
           ...(opts.creationAuthorization?.prepareRequestProof
             ? { prepareCreationAuthorizationProof: opts.creationAuthorization.prepareRequestProof } : {}),
@@ -753,6 +758,16 @@ export class ApiClient {
               organizationPlacement: parsedOrganizationPlacement.data,
             }
           : undefined;
+        let launchWitness: SessionCreateOrLoadResult['launchWitness'];
+        if (opts.requestLaunchWitness && sessionCreationOutcome?.disposition === 'created'
+          && response.data.launchWitness !== undefined) {
+          const { accountEncryptionMode, acceptedTeamCredentialBinding, pendingExecutionRunIds, projectKey } =
+            SessionBirthLaunchWitnessV1Schema.parse(response.data.launchWitness);
+          launchWitness = {
+            accountEncryptionMode,
+            rawSession: V2SessionRecordSchema.parse({ ...raw, acceptedTeamCredentialBinding, pendingExecutionRunIds, projectKey }),
+          };
+        }
         const machineAccessBindingCommittedFor = response.data.created === true
           && typeof response.data.machineAccessBindingCommittedFor === 'string'
           ? response.data.machineAccessBindingCommittedFor : undefined;
@@ -852,6 +867,7 @@ export class ApiClient {
               : null,
             agentStateVersion: raw.agentStateVersion,
             ...(sessionCreationOutcome ? { sessionCreationOutcome } : {}),
+            ...(launchWitness ? { launchWitness } : {}),
             ...(machineAccessBindingCommittedFor ? { machineAccessBindingCommittedFor } : {}),
           };
         }
@@ -924,6 +940,7 @@ export class ApiClient {
           agentState,
           agentStateVersion: raw.agentStateVersion,
           ...(sessionCreationOutcome ? { sessionCreationOutcome } : {}),
+          ...(launchWitness ? { launchWitness } : {}),
           ...(machineAccessBindingCommittedFor ? { machineAccessBindingCommittedFor } : {}),
         };
       } catch (error) {

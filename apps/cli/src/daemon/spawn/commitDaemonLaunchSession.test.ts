@@ -128,6 +128,34 @@ describe('commitDaemonLaunchSession', () => {
       expect(admissions).toBe(1);
     } finally { releaseAttach(); releaseNative(); await observed; }
   });
+  it('attaches a fresh Session using the accepted Home birth witness without readbacks', async () => {
+    const binding = { v: 1 as const, slot: { kind: 'provider_model' as const }, resourceId: 'accepted-resource',
+      expectedResourceRevision: 3, deliveryMode: 'brokered' as const, teamId: 'team-1' };
+    const rawSession = plainSessionRow('session-fresh', { path: '/repo', host: 'h' });
+    const getOrCreateSession = vi.fn(async () => ({
+      id: rawSession.id,
+      sessionCreationOutcome: { disposition: 'created' as const, organizationPlacement: { folderId: null, tagIds: [] } },
+      launchWitness: {
+        accountEncryptionMode: 'plain' as const,
+        rawSession: { ...rawSession, acceptedTeamCredentialBinding: binding, pendingExecutionRunIds: [] },
+      },
+    }));
+    network.fetchSessionByIdCompat.mockRejectedValue(new Error('Birth should supply the Session'));
+    network.fetchAccountEncryptionCurrentness.mockRejectedValue(new Error('Birth should supply the Account mode'));
+    const result = await commitDaemonLaunchSession({
+      api: { getOrCreateSession } as never,
+      credentials, directory: '/repo', accountSettings: {},
+      options: { directory: '/repo', teamCredentialBindings: [{ ...binding, expectedResourceRevision: 2 }] },
+    });
+    expect(result).toMatchObject({
+      ok: true, session: { sessionId: rawSession.id, created: true, attachPayload: {
+        v: 2, encryptionMode: 'plain', snapshot: { acceptedTeamCredentialBinding: binding },
+      } },
+    });
+    expect(network.fetchSessionByIdCompat).not.toHaveBeenCalled();
+    expect(network.fetchAccountEncryptionCurrentness).not.toHaveBeenCalled();
+  });
+
   it('commits a brokered Provider-model slot and carries only the Home witness through attach', async () => {
     const binding = { v: 1 as const, slot: { kind: 'provider_model' as const }, resourceId: 'accepted-resource',
       expectedResourceRevision: 3, deliveryMode: 'brokered' as const, teamId: 'team-1' };

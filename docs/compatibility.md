@@ -14380,6 +14380,15 @@ native readiness or initial-input acceptance. Strict older pending readers never
 receive this new field: each observer opts in separately, while an unopted caller
 continues waiting for the same invocation's terminal result.
 
+A current daemon can request a fresh launch witness from `POST /v1/sessions`
+with `x-happier-session-launch-witness: 1`. Home issues it only on an
+Account-authenticated layout-1 birth. The response carries the stored Session
+projection, birth Account encryption mode, accepted Team model binding and
+queued execution-run ids. The daemon uses that response to prepare the same
+attach payload before offering Action acceptance. A same-tag rejoin or a Home
+that does not support the opt-in uses the current Session and Account reads.
+Scoped credentials and callers that omit the header keep the released response.
+
 An opted-in observer waits once on the receipt's existing operation address with
 `action.operations.get` and `waitForTerminal: true`. This held observation never
 re-executes the spawn, including after a retryable result has already settled.

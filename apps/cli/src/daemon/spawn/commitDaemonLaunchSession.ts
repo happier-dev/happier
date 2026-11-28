@@ -25,7 +25,7 @@ import {
   resolveConnectedServiceMaterializationIdentityForSpawn,
 } from '../connectedServices/materialization/identity';
 import { ConnectedServicesBindingsIngressSchema } from '../connectedServices/parseConnectedServicesBindings';
-import { resolveExistingSessionAttachContext } from '../sessionEncryption/resolveExistingSessionAttachContext';
+import { buildExistingSessionAttachContext, resolveExistingSessionAttachContext } from '../sessionEncryption/resolveExistingSessionAttachContext';
 import { buildSessionCreationTerminalSpawnErrorResult } from '../sessions/onHappySessionWebhook';
 import { mapExistingSessionAttachFailureToSpawnError } from './resolveSpawnBackendIdentity';
 
@@ -121,6 +121,7 @@ export async function commitDaemonLaunchSession(input: Readonly<{
       ...pickSessionCreateOriginFields(options),
       ...(options.projectSetupOperation ? { signal: options.projectSetupOperation.signal } : {}),
       tag,
+      requestLaunchWitness: true,
       ...(input.localBirthMachineId ? { localBirthMachineId: input.localBirthMachineId } : {}),
       ...(options.creationAuthorization ? { creationAuthorization: options.creationAuthorization } : {}),
       metadata: buildCommittedLaunchMetadata({
@@ -165,11 +166,13 @@ export async function commitDaemonLaunchSession(input: Readonly<{
   }
   const createdHere = created.sessionCreationOutcome?.disposition === 'created';
   await input.onCommitted?.({ sessionId: created.id, created: createdHere });
-  const attach = await resolveExistingSessionAttachContext({
-    token: input.credentials.token,
-    sessionId: created.id,
-    credentials: input.credentials,
-  });
+  const attach = createdHere && created.launchWitness
+    ? await buildExistingSessionAttachContext({
+        ...created.launchWitness, credentials: input.credentials,
+      })
+    : await resolveExistingSessionAttachContext({
+        token: input.credentials.token, sessionId: created.id, credentials: input.credentials,
+      });
   const requestedTeamModel = options.teamCredentialBindings?.some(binding => binding.slot.kind === 'provider_model' && binding.resourceId !== null);
   const acceptedTeamModel = attach.ok ? attach.attachPayload.snapshot?.acceptedTeamCredentialBinding : null;
   const missingTeamModelWitness = requestedTeamModel && (!acceptedTeamModel
