@@ -95,6 +95,7 @@ export function createPiAcpRuntime(params: {
     },
     resolveExpectedVendorSessionIdForResume: resolveExpectedPiSessionIdForResume,
     onThinkingChange: params.onThinkingChange,
+    keepAliveOwner: 'host',
     getSessionOpenAbortSignal: params.getSessionOpenAbortSignal,
     memoryRecallGuidance: {
       enabled: params.memoryRecallGuidanceEnabled === true,

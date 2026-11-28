@@ -33,6 +33,7 @@ type CatalogAcpProviderRuntimeParams<TBackendOptions extends object> = {
   mcpServers: Record<string, McpServerConfig>;
   permissionHandler: AcpPermissionHandler;
   onThinkingChange: (thinking: boolean) => void;
+  keepAliveOwner?: Parameters<typeof createAcpRuntime>[0]['keepAliveOwner'];
   processEnv?: NodeJS.ProcessEnv;
   getSessionOpenAbortSignal?: () => AbortSignal | undefined;
   backendOptions?: Omit<TBackendOptions, 'cwd' | 'mcpServers' | 'permissionHandler' | 'permissionMode' | 'getPermissionMode' | 'happierSessionId'>;
@@ -109,6 +110,7 @@ export function createCatalogProviderAcpRuntime<TBackendOptions extends object =
     mcpServers: params.mcpServers,
     permissionHandler: params.permissionHandler,
     onThinkingChange: params.onThinkingChange,
+    keepAliveOwner: params.keepAliveOwner,
     getSessionOpenAbortSignal: params.getSessionOpenAbortSignal,
     sessionIdentity,
     resolveExpectedVendorSessionIdForResume: params.resolveExpectedVendorSessionIdForResume,

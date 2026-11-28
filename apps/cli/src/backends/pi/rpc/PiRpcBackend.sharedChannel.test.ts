@@ -710,14 +710,16 @@ const userInputMarker = (text: string): BridgeRecord => ({
  * and the terminal-input marker follows `agent_start`.
  */
 describe('ACP runtime over the attached channel with shared-mode event order', () => {
-  async function startRuntime() {
+  async function startRuntime(hostOwnsKeepAlive = false) {
     const fake = createFakeAttachedPi('pi-terminal-session');
     const { backend } = createAttachedBackend(fake);
     const sent: ACPMessageData[] = [];
     const committedUserRows: string[] = [];
+    const keepAlive = vi.fn();
     const session = createBasicSessionClientWithOverrides({
       sendAgentMessage: (_provider, body) => { sent.push(body); },
       sendUserTextMessageCommitted: async (text) => { committedUserRows.push(text); },
+      keepAlive,
     });
     const runtime = createTestAcpRuntime({
       provider: 'pi',
@@ -726,13 +728,24 @@ describe('ACP runtime over the attached channel with shared-mode event order', (
       messageBuffer: new MessageBuffer(),
       mcpServers: {},
       permissionHandler: createApprovedPermissionHandler(),
-      onThinkingChange: () => {},
+      onThinkingChange: (thinking) => { if (hostOwnsKeepAlive) keepAlive(thinking, 'local'); },
+      keepAliveOwner: hostOwnsKeepAlive ? 'host' : 'runtime',
       ensureBackend: async () => backend,
     });
     await runtime.startOrLoad({ resumeId: null });
     const count = (type: string) => sent.filter((message) => message?.type === type).length;
-    return { fake, runtime, sent, committedUserRows, count };
+    return { fake, runtime, sent, committedUserRows, count, keepAlive };
   }
+
+  it('lets the host publish the only presence update for a native Pi turn', async () => {
+    const { fake, keepAlive, count } = await startRuntime(true);
+
+    fake.emitOut({ type: 'agent_start' });
+    fake.emitOut({ type: 'agent_end', willRetry: false });
+
+    await vi.waitFor(() => expect(count('task_complete')).toBe(1));
+    expect(keepAlive.mock.calls).toEqual([[true, 'local'], [false, 'local']]);
+  });
 
   it('keeps a web prompt one Happier turn when agent_start precedes its acceptance', async () => {
     const { fake, runtime, committedUserRows, count } = await startRuntime();

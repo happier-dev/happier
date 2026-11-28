@@ -478,6 +478,8 @@ export function createAcpRuntime(params: {
   mcpServers: Record<string, McpServerConfig>;
   permissionHandler: AcpPermissionHandler;
   onThinkingChange: (thinking: boolean) => void;
+  /** Hosts that publish presence from onThinkingChange own both its mode and delivery. */
+  keepAliveOwner?: 'host' | 'runtime';
   ensureBackend: () => Promise<AcpRuntimeBackend>;
   /** Provider opt-in for binding backend session open to the enclosing runner cancellation. */
   getSessionOpenAbortSignal?: () => AbortSignal | undefined;
@@ -588,6 +590,10 @@ export function createAcpRuntime(params: {
   };
   turnAssistantPreviewTracker?: TurnAssistantPreviewTracker;
 }): AcpRuntime {
+  const setThinking = (thinking: boolean): void => {
+    params.onThinkingChange(thinking);
+    if (params.keepAliveOwner !== 'host') params.session.keepAlive(thinking, 'remote');
+  };
   let backend: AcpRuntimeBackend | null = null;
   let backendPromise: Promise<AcpRuntimeBackend> | null = null;
   let messageForwarder: ReturnType<typeof createAcpAgentMessageForwarder> | null = null;
@@ -892,8 +898,7 @@ export function createAcpRuntime(params: {
     stopPendingPump();
     publishInFlightSteerCapabilities(false);
     resetTurnState();
-    params.onThinkingChange(false);
-    params.session.keepAlive(false, 'remote');
+    setThinking(false);
     return turn;
   };
 
@@ -1371,8 +1376,7 @@ export function createAcpRuntime(params: {
     if (turn.turnAborted) return true;
     turn.turnAborted = true;
     if (turn === turnState) {
-      params.onThinkingChange(false);
-      params.session.keepAlive(false, 'remote');
+      setThinking(false);
     }
     return enqueueTurnSettlement(() => settlePromptFailure(detailRaw, turn));
   };
@@ -1600,8 +1604,7 @@ export function createAcpRuntime(params: {
       if (msg.type === 'status') {
         if (msg.status === 'running' && !turnState.turnInFlight && !turnState.currentTurnId) {
           ensureCurrentTurnId();
-          params.onThinkingChange(true);
-          params.session.keepAlive(true, 'remote');
+          setThinking(true);
         }
         if (isModelOutputSegmentBoundary(msg)) {
           const turn = turnState;
@@ -1649,8 +1652,7 @@ export function createAcpRuntime(params: {
           void abortPendingAcpPermissionRequests(params.permissionHandler, 'ACP runtime status:error', (error) => {
             logger.debug(`[${params.provider}] Failed to abort pending permission requests after status:error`, error);
           });
-          params.onThinkingChange(false);
-          params.session.keepAlive(false, 'remote');
+          setThinking(false);
         }
         if (msg.status === 'idle' && (!turnState.turnInFlight || msg.turnFinished)) {
           const turn = turnState;
@@ -2497,8 +2499,7 @@ export function createAcpRuntime(params: {
       publishInFlightSteerCapabilities(true);
       ensureCurrentTurnId();
       startPendingPumpIfNeeded();
-      params.onThinkingChange(true);
-      params.session.keepAlive(true, 'remote');
+      setThinking(true);
       try {
         params.hooks?.onBeginTurn?.();
       } catch (e) {
@@ -2514,8 +2515,7 @@ export function createAcpRuntime(params: {
       turn.pendingTurnOutcome = { kind: 'aborted', stopReason: 'cancelled' };
       stopPendingPump();
       publishInFlightSteerCapabilities(false);
-      params.onThinkingChange(false);
-      params.session.keepAlive(false, 'remote');
+      setThinking(false);
       try {
         const b = await ensureBackend();
         await b.cancel(providerSessionId);
@@ -2547,8 +2547,7 @@ export function createAcpRuntime(params: {
         resetTurnState();
         clearToolCallCache();
         stopPendingPump();
-        params.onThinkingChange(false);
-        params.session.keepAlive(false, 'remote');
+        setThinking(false);
         messageForwarder?.dispose();
         messageForwarder = null;
         stopObservingProviderTurnEvents?.();
