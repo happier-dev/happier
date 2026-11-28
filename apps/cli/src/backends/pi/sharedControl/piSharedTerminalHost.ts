@@ -13,6 +13,7 @@ import {
   type PiRpcChannelClosure,
   type PiRpcChannelHost,
   type PiRpcChannelListener,
+  type PiRpcChannelOpenOptions,
   type PiRpcChannelOpenSpec,
 } from '@/backends/pi/rpc/piRpcChannel';
 import { launchOwnedTerminalProcess, type OwnedTerminalProcess } from '@/terminal/runtime/ownedTerminalProcess';
@@ -21,6 +22,7 @@ import { logger } from '@/ui/logger';
 import { materializeProtectedTempTextArtifact } from '@/utils/fs/protectedTempTextArtifact';
 
 import {
+  PI_SHARED_CONTROL_ADMISSION_FRAME,
   PI_SHARED_CONTROL_BRIDGE_UNAVAILABLE_ERROR,
   PI_SHARED_CONTROL_HELLO_MAX_BYTES,
   PiSharedControlBridgeFrameSchema,
@@ -33,7 +35,8 @@ import {
 /** The interactive Pi process: launched once into this terminal and owned by the runner. */
 export type PiSharedTerminalProcess = Pick<OwnedTerminalProcess, 'whenExited' | 'terminate'>;
 
-export type PiSharedTerminalSession = Pick<ApiSessionClient, 'sendAgentMessage' | 'updateAgentState'>;
+export type PiSharedTerminalSession = Pick<ApiSessionClient,
+  'sendAgentMessage' | 'subscribeToSessionConnectionState' | 'updateAgentState'>;
 
 export type PiSharedTerminalHost = Readonly<{
   /** Attached transport for `PiRpcBackend`: launches Pi on the first open, re-attaches afterwards. */
@@ -177,22 +180,33 @@ export function createPiSharedTerminalHost(params: Readonly<{
   // Backends to wake when the terminal is back on the bound session with nothing attached.
   const availabilityListeners = new Set<() => void>();
 
-  let boundSession: Pick<PiSharedControlHello, 'sessionId' | 'sessionFile'> | null = null;
+  let boundSession: NonNullable<PiRpcChannelOpenOptions['expectedSession']> | null = null;
   let fenced = false;
   let session: PiSharedTerminalSession | null = null;
-  let publication: Readonly<{ session: PiSharedTerminalSession; remoteWritable: boolean }> | null = null;
+  let unsubscribeConnectionState: (() => void) | null = null;
+  let publication: {
+    session: PiSharedTerminalSession;
+    remoteWritable: boolean;
+    inFlight: boolean;
+    retryAfterFailure: boolean;
+  } | null = null;
 
   let disposed = false;
   let disposePromise: Promise<void> | null = null;
 
   const isBoundSession = ({ sessionId, sessionFile }: PiSharedControlHello): boolean => (
-    boundSession?.sessionId === sessionId && boundSession.sessionFile === sessionFile
+    boundSession?.sessionId === sessionId
+    && (boundSession.sessionFile === undefined || boundSession.sessionFile === sessionFile)
   );
 
-  const publish = async (target: PiSharedTerminalSession): Promise<void> => {
+  const publish = async (target: PiSharedTerminalSession, reconnecting = false): Promise<void> => {
+    if (disposed || session !== target) return;
     const remoteWritable = !fenced;
-    if (publication?.session === target && publication.remoteWritable === remoteWritable) return;
-    const attempt = { session: target, remoteWritable };
+    if (publication?.session === target && publication.remoteWritable === remoteWritable) {
+      if (reconnecting && publication.inFlight) publication.retryAfterFailure = true;
+      return;
+    }
+    const attempt = { session: target, remoteWritable, inFlight: true, retryAfterFailure: false };
     publication = attempt;
     try {
       await target.updateAgentState((state) => ({
@@ -206,8 +220,13 @@ export function createPiSharedTerminalHost(params: Readonly<{
         }),
       }));
     } catch (error) {
-      if (publication === attempt) publication = null;
-      logger.debug('[pi] Failed to publish shared terminal local control (non-fatal)', serializeAxiosErrorForLog(error));
+      logger.infoFile('[pi] Shared terminal local-control publication failed', serializeAxiosErrorForLog(error));
+      if (publication === attempt) {
+        publication = null;
+        if (attempt.retryAfterFailure) void publish(target);
+      }
+    } finally {
+      attempt.inFlight = false;
     }
   };
 
@@ -302,10 +321,16 @@ export function createPiSharedTerminalHost(params: Readonly<{
     // A reconnecting bridge can say hello before its predecessor's close is observed.
     if (previous && !previous.closed) previous.socket.destroy();
     // Pi preserves the header ID when importing a session into a separate file.
-    boundSession ??= { sessionId: next.hello.sessionId, sessionFile: next.hello.sessionFile };
+    if (!boundSession || isBoundSession(next.hello)) {
+      boundSession = { sessionId: next.hello.sessionId, sessionFile: next.hello.sessionFile };
+    }
     const onBoundSession = isBoundSession(next.hello);
     // Leaving fences at once; returning lifts the fence only when a backend binds again (bindChannel).
-    if (!onBoundSession) updateFence(true);
+    if (onBoundSession) {
+      next.socket.write(`${JSON.stringify({ type: PI_SHARED_CONTROL_ADMISSION_FRAME })}\n`);
+    } else {
+      updateFence(true);
+    }
     logger.infoFile('[pi] Shared terminal bridge connected');
     const backendWaiting = helloWaiters.size > 0 || opening || attached !== null;
     for (const waiter of [...helloWaiters]) waiter.admit(next);
@@ -342,6 +367,10 @@ export function createPiSharedTerminalHost(params: Readonly<{
       const hello = readAuthenticatedHello(line);
       if (!hello) {
         refuse('invalid hello');
+        return;
+      }
+      if (!launched) {
+        refuse('terminal was not launched');
         return;
       }
       authenticated = { socket, hello, bye: null, closed: false };
@@ -478,6 +507,7 @@ export function createPiSharedTerminalHost(params: Readonly<{
           // Pi re-reads its launch files on /reload, so retain only files it actually launches with.
           if (unusedCleanup) retainedArtifacts.push(unusedCleanup);
           unusedCleanup = undefined;
+          boundSession = options?.expectedSession ?? null;
           launched = true;
           awaitingHello = true;
           const ready = connection && !connection.closed
@@ -530,12 +560,21 @@ export function createPiSharedTerminalHost(params: Readonly<{
     ensureListening,
     ensureBridgeExtension,
     publishLocalControl: (target) => {
-      session = target;
+      if (disposed) return;
+      if (session !== target) {
+        unsubscribeConnectionState?.();
+        session = target;
+        unsubscribeConnectionState = target.subscribeToSessionConnectionState((state) => {
+          if (state.phase === 'online') void publish(target, true);
+        });
+      }
       void publish(target);
     },
     dispose: () => {
       disposePromise ??= (async () => {
         disposed = true;
+        unsubscribeConnectionState?.();
+        unsubscribeConnectionState = null;
         awaitingHello = false;
         rejectHelloWaiters(bridgeUnavailable());
         for (const socket of sockets) socket.destroy();

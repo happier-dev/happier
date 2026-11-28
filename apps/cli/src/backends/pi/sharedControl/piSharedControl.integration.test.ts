@@ -62,6 +62,7 @@ let abortSettleGate = null;
 let openAbortSettleGate = null;
 let currentRun = null;
 let handlers = new Map();
+let tools = new Map();
 let loads = 0;
 
 const ctx = {
@@ -175,10 +176,11 @@ async function loadExtensions(reason) {
   loads += 1;
   const load = loads;
   handlers = new Map();
+  tools = new Map();
   const bus = new EventEmitter();
   const pi = {
     registerFlag() {},
-    registerTool() {},
+    registerTool(tool) { tools.set(tool.name, tool); },
     registerCommand() {},
     getFlag: (name) => flags.get(name),
     on: (name, handler) => { handlers.set(name, [...(handlers.get(name) ?? []), handler]); },
@@ -213,6 +215,23 @@ async function loadExtensions(reason) {
 
 process.on("message", async (command) => {
   switch (command.kind) {
+    case "probe-happier-capability": {
+      let guidance = null;
+      for (const handler of handlers.get("before_agent_start") ?? []) {
+        const result = await runHandler("before_agent_start", handler, { systemPrompt: "Pi base" });
+        guidance = result?.systemPrompt ?? guidance;
+      }
+      let output = null;
+      let error = null;
+      try {
+        const result = await tools.get("probe_happier_session").execute("probe-1", {}, undefined, undefined, ctx);
+        output = result.content[0].text;
+      } catch (failure) {
+        error = String(failure?.message ?? failure);
+      }
+      report({ kind: command.kind, sessionId, guidance, output, error });
+      break;
+    }
     case "type":
       submit("interactive", command.text, command.hold === true);
       break;
@@ -267,7 +286,7 @@ type FakePiReport = Readonly<{ kind: string; [field: string]: unknown }>;
 type FakePiArming = Readonly<{ kind: 'hold-next-run' | 'gate-preflight' | 'gate-abort-settle' }>;
 type FakePiCommand =
   | Readonly<{ kind: 'type'; text: string; hold?: boolean }>
-  | Readonly<{ kind: 'release' | 'finish-preflight' | 'settle' | 'reload' }>
+  | Readonly<{ kind: 'release' | 'finish-preflight' | 'settle' | 'reload' | 'probe-happier-capability' }>
   | Readonly<{ kind: 'new'; sessionId: string; text?: string }>
   | Readonly<{ kind: 'quit'; code: number }>;
 
@@ -296,6 +315,7 @@ function createSessionPort() {
     updateAgentState: vi.fn(async (updater: (current: AgentState) => AgentState) => {
       state = updater(state);
     }) as PiSharedTerminalSession['updateAgentState'],
+    subscribeToSessionConnectionState: () => () => undefined,
   };
   return { session, notices, localControl: () => state.localControl };
 }
@@ -307,6 +327,8 @@ async function startSharedTerminal() {
   writeFileSync(bridgePath, buildPiBridgeExtensionSource());
   const fakePiPath = join(dir, 'fake-pi.mjs');
   writeFileSync(fakePiPath, FAKE_PI_SOURCE);
+  const fakeToolPath = join(dir, 'fake-happier-tool.mjs');
+  writeFileSync(fakeToolPath, 'console.log(JSON.stringify({ ok: true, data: { output: "bound session tool ran" } }));');
 
   const reports: FakePiReport[] = [];
   const terminations: RunnerTerminationEvent[] = [];
@@ -354,9 +376,13 @@ async function startSharedTerminal() {
   const sessionConfig: PiBridgeSessionConfig = {
     v: 1,
     sessionId: 'happier-session-1',
-    directTools: [],
-    promptAddition: '',
-    launch: { filePath: process.execPath, argPrefix: [], env: {} },
+    directTools: [{
+      name: 'probe_happier_session', title: 'Probe session access', description: 'Test session access',
+      inputSchema: { type: 'object' },
+      call: { toolName: 'action_execute', actionId: 'session.status.get' },
+    }],
+    promptAddition: 'Happier session guidance',
+    launch: { filePath: process.execPath, argPrefix: [fakeToolPath], env: {} },
     sharedControl: await host.ensureListening(),
   };
   const backend = new PiRpcBackend({
@@ -413,6 +439,19 @@ async function startSharedTerminal() {
 }
 
 describe('Pi shared local control (bridge in a Pi TUI child, shared-terminal host, attached PiRpcBackend)', () => {
+  it('only gives the native session admitted by the host access to Happier tools and guidance', async () => {
+    const pi = await startSharedTerminal();
+    pi.tell({ kind: 'probe-happier-capability' });
+    await expect(pi.waitForReport('probe-happier-capability', (row) => row.sessionId === BOUND_SESSION_ID))
+      .resolves.toMatchObject({ guidance: 'Pi base\n\nHappier session guidance', output: '"bound session tool ran"', error: null });
+
+    pi.tell({ kind: 'new', sessionId: 'pi-session-2' });
+    await vi.waitFor(() => expect(pi.localControl()?.remoteWritable).toBe(false), WAIT);
+    pi.tell({ kind: 'probe-happier-capability' });
+    const foreign = await pi.waitForReport('probe-happier-capability', (row) => row.sessionId === 'pi-session-2');
+    expect(foreign).toMatchObject({ guidance: null, output: null, error: expect.stringContaining('pi_shared_bridge_unavailable') });
+  });
+
   it('accepts a web prompt at its own start, streams the reply, and never mirrors the web row back', async () => {
     const pi = await startSharedTerminal();
     const mark = pi.mark();

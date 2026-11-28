@@ -16,13 +16,13 @@ import type { PiRpcCommandWithoutId } from '../rpc/types';
  * 3. `{ch:'err', line}`: a side-channel marker the RPC backend would read from Pi's stderr;
  * 4. `{type:'bye', reason}`: sent immediately before a deliberate close.
  *
- * Runner → bridge: raw Pi RPC command lines `{id, type, ...}`, exactly as `PiRpcBackend.sendCommand`
- * writes them to a spawned Pi's stdin. Only {@link PI_SHARED_CONTROL_SUPPORTED_COMMANDS} have an
- * effect; every other command fails with {@link PI_SHARED_CONTROL_UNSUPPORTED_COMMAND_ERROR}.
+ * Runner → bridge: one admission frame after the hello matches the bound native session. Raw Pi
+ * RPC command lines follow, with the same shapes as the spawned RPC process.
  *
  * The token travels only in the protected bridge config file, never in env or argv.
  */
 export const PI_SHARED_CONTROL_PROTOCOL_VERSION = 1;
+export const PI_SHARED_CONTROL_ADMISSION_FRAME = 'happier_session_admitted';
 
 /** Response budget shared by prompt admission and the bridge's Stop barrier. */
 export const PI_SHARED_CONTROL_RESPONSE_TIMEOUT_MS = 30_000;

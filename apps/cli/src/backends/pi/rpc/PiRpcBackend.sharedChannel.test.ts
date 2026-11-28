@@ -204,6 +204,18 @@ function readFlagValue(args: readonly string[], flag: string): string {
 }
 
 describe('PiRpcBackend over an attached shared-terminal channel', () => {
+  it('requires the native terminal to open the exact resume file before attachment', async () => {
+    const sessionId = '3afc3fcc-1580-4739-a0f2-ace78f4ca34e';
+    const fake = createFakeAttachedPi(sessionId);
+    const { backend, cwd } = createAttachedBackend(fake);
+    const sessionFile = join(cwd, 'renamed.jsonl');
+    writeFileSync(sessionFile, `${JSON.stringify({ type: 'session', id: sessionId, cwd })}\n`);
+
+    await expect(backend.loadSession(sessionFile)).resolves.toEqual({ sessionId });
+
+    expect(fake.opens[0]?.options?.expectedSession).toEqual({ sessionId, sessionFile });
+  });
+
   it('adopts the terminal session id and never asks Pi to create a session', async () => {
     const fake = createFakeAttachedPi('pi-terminal-session');
     const { backend } = createAttachedBackend(fake);

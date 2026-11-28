@@ -62,6 +62,8 @@ export type PiRpcChannelOpenSpec = Readonly<{
 export type PiRpcChannelOpenOptions = Readonly<{
   /** Aborts a wait for the Pi process (the backend's session-open lifecycle). */
   signal?: AbortSignal;
+  /** Exact-resume identity for an attached terminal to admit before it forwards frames. */
+  expectedSession?: Readonly<{ sessionId: string; sessionFile?: string | null }>;
   /**
    * Releases the protected launch artifacts named in `spec.args`. Passing it hands their lifetime
    * to the host, which keeps them while the Pi process that may re-read them (`/reload`) lives.

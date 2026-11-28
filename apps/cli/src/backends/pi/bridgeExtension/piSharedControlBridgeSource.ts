@@ -1,4 +1,6 @@
 import {
+  PI_SHARED_CONTROL_ADMISSION_FRAME,
+  PI_SHARED_CONTROL_BRIDGE_UNAVAILABLE_ERROR,
   PI_SHARED_CONTROL_BUSY_ERROR,
   PI_SHARED_CONTROL_INDETERMINATE_OUTCOME,
   PI_SHARED_CONTROL_PROTOCOL_VERSION,
@@ -36,6 +38,8 @@ export const PI_SHARED_CONTROL_BRIDGE_IMPORTS = 'import { connect } from "node:n
 export function buildPiSharedControlBridgeSource(): string {
   return `
 const SHARED_CONTROL_PROTOCOL_VERSION = ${jsValue(PI_SHARED_CONTROL_PROTOCOL_VERSION)};
+const SHARED_CONTROL_ADMISSION_FRAME = ${jsValue(PI_SHARED_CONTROL_ADMISSION_FRAME)};
+const SHARED_CONTROL_BRIDGE_UNAVAILABLE_ERROR = ${jsValue(PI_SHARED_CONTROL_BRIDGE_UNAVAILABLE_ERROR)};
 const SHARED_CONTROL_RESPONSE_TIMEOUT_MS = ${jsValue(PI_SHARED_CONTROL_RESPONSE_TIMEOUT_MS)};
 const SHARED_CONTROL_SIDE_CHANNEL_EVENT = ${jsValue(PI_SHARED_CONTROL_SIDE_CHANNEL_EVENT)};
 const SHARED_CONTROL_SUPPORTED_COMMANDS = ${jsValue(PI_SHARED_CONTROL_SUPPORTED_COMMANDS)};
@@ -102,6 +106,7 @@ function readSharedControlUserText(message) {
 
 function startSharedControl(pi, ctx, endpoint, sideChannel) {
   let live = true;
+  let admitted = false;
   let socket = null;
   let markerCount = 0;
   // Carry the web dispatch through Pi's async input/auth hooks without matching prompt text.
@@ -233,6 +238,14 @@ function startSharedControl(pi, ctx, endpoint, sideChannel) {
 
   const handleCommand = async (command) => {
     const type = typeof command.type === "string" ? command.type : "unknown";
+    if (type === SHARED_CONTROL_ADMISSION_FRAME) {
+      admitted = true;
+      return;
+    }
+    if (!admitted) {
+      respond(command.id, type, false, { error: SHARED_CONTROL_BRIDGE_UNAVAILABLE_ERROR });
+      return;
+    }
     const handler = SHARED_CONTROL_SUPPORTED_COMMANDS.includes(type) ? commandHandlers[type] : undefined;
     if (!handler) {
       respond(command.id, type, false, { error: SHARED_CONTROL_UNSUPPORTED_COMMAND_ERROR });
@@ -413,7 +426,7 @@ function startSharedControl(pi, ctx, endpoint, sideChannel) {
     socket.end();
   });
 
-  return { sendErr };
+  return { sendErr, isAdmitted: () => live && admitted };
 }
 `;
 }

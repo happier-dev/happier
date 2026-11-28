@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { readdir, stat } from 'node:fs/promises';
 
 import { readPiSessionHeader } from '@/backends/pi/directSessions/readPiSessionHeader';
-import { dirname, isAbsolute, join } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 
 import type {
   AgentBackend,
@@ -1774,6 +1774,7 @@ export class PiRpcBackend implements AgentBackend {
   private async spawnRpcProcessWithProtectedArtifacts(params: Readonly<{
     argsBeforeProtected: ReadonlyArray<string>;
     argsAfterProtected?: ReadonlyArray<string>;
+    expectedSession?: PiRpcChannelOpenOptions['expectedSession'];
   }>, lifecycle?: PiRpcSessionOpenLifecycle): Promise<void> {
     try {
       if (lifecycle) this.assertSessionOpenLifecycleActive(lifecycle, 'process startup');
@@ -1781,6 +1782,7 @@ export class PiRpcBackend implements AgentBackend {
       if (this.disposed) throw new Error('Pi backend is disposed');
       if (lifecycle) this.assertSessionOpenLifecycleActive(lifecycle, 'process startup');
       await this.spawnRpcProcess({
+        expectedSession: params.expectedSession,
         args: [
           ...params.argsBeforeProtected,
           ...protectedArgs,
@@ -1794,7 +1796,7 @@ export class PiRpcBackend implements AgentBackend {
   }
 
   private async spawnRpcProcess(
-    params: Readonly<{ args: string[] }>,
+    params: Readonly<{ args: string[]; expectedSession?: PiRpcChannelOpenOptions['expectedSession'] }>,
     lifecycle: PiRpcSessionOpenLifecycle = this.createSessionOpenLifecycle(),
   ): Promise<void> {
     this.refreshPiBrokerLoadNonceForNextSpawn();
@@ -1806,7 +1808,7 @@ export class PiRpcBackend implements AgentBackend {
         ...process.env,
         ...this.options.env,
       },
-    }, lifecycle);
+    }, lifecycle, params.expectedSession);
     if (this.disposed) {
       await channel.close();
       throw new Error('Pi backend is disposed');
@@ -1899,6 +1901,7 @@ export class PiRpcBackend implements AgentBackend {
   private async openRpcChannelWithinLifecycle(
     spec: Parameters<PiRpcChannelHost['open']>[0],
     lifecycle: PiRpcSessionOpenLifecycle,
+    expectedSession: PiRpcChannelOpenOptions['expectedSession'],
   ): Promise<PiRpcChannel> {
     const controller = new AbortController();
     const abort = () => controller.abort(this.createSessionOpenLifecycleError(lifecycle, 'process startup'));
@@ -1909,7 +1912,10 @@ export class PiRpcBackend implements AgentBackend {
     if (lifecycle.signal?.aborted === true || this.lifetime.signal.aborted) abort();
     const options: PiRpcChannelOpenOptions = {
       signal: controller.signal,
-      ...(this.channelHost.kind === 'attached' ? { retainArtifacts: this.releaseProtectedSpawnArtifacts() } : {}),
+      ...(this.channelHost.kind === 'attached' ? {
+        retainArtifacts: this.releaseProtectedSpawnArtifacts(),
+        expectedSession,
+      } : {}),
     };
     try {
       return await this.channelHost.open(spec, options);
@@ -2099,6 +2105,10 @@ export class PiRpcBackend implements AgentBackend {
     await this.spawnRpcProcessWithProtectedArtifacts({
       argsBeforeProtected: this.options.args,
       argsAfterProtected: ['--session', params.sessionArg],
+      expectedSession: {
+        sessionId: params.expectedSessionId,
+        ...(isAbsolute(params.sessionArg) ? { sessionFile: resolve(params.sessionArg) } : {}),
+      },
     }, lifecycle);
 
     try {

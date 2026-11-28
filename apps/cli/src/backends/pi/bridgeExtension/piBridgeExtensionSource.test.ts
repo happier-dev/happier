@@ -367,7 +367,7 @@ if (args.input.value === 'fail') {
     }
   });
 
-  it('keeps RPC-mode observation even when the config carries a shared-control endpoint, and observes nothing in other modes', async () => {
+  it('requires native TUI mode for a session config carrying a shared-control endpoint', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'happier-pi-bridge-modes-'));
     const runner = createServer();
     const connections: unknown[] = [];
@@ -406,17 +406,11 @@ if (args.input.value === 'fail') {
         };
       };
 
-      for (const mode of ['rpc', undefined]) {
+      for (const mode of ['rpc', undefined, 'json', 'print']) {
         const observed = await observe(mode);
-        expect(observed.notified, String(mode)).toEqual([{ type: 'happy-pi-user-input', text: 'observed' }]);
-        expect(observed.stderrMarkers, String(mode)).toHaveLength(1);
-        expect(observed.prompt).toEqual({ systemPrompt: 'BASE\n\nGUIDANCE' });
-      }
-      for (const mode of ['json', 'print']) {
-        const observed = await observe(mode);
-        expect(observed.notified, mode).toEqual([]);
-        expect(observed.stderrMarkers, mode).toEqual([]);
-        expect(observed.prompt).toEqual({ systemPrompt: 'BASE\n\nGUIDANCE' });
+        expect(observed.notified, String(mode)).toEqual([]);
+        expect(observed.stderrMarkers, String(mode)).toEqual([]);
+        expect(observed.prompt, String(mode)).toBeUndefined();
       }
       await new Promise((resolve) => setTimeout(resolve, 20));
       expect(connections).toEqual([]);

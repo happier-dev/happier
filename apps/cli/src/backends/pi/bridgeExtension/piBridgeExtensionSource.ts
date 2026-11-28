@@ -265,10 +265,12 @@ export default function HappierPiToolsBridgeExtension(pi) {
     if (!config) return;
     registered = true;
 
-    // No mode reported: keep the RPC behaviour, the only mode Happier launched this bridge in before
-    // shared control. Shared control needs an explicit TUI mode and the protected endpoint.
     const mode = ctx && typeof ctx === "object" ? ctx.mode : undefined;
-    if (mode === undefined || mode === "rpc") {
+    const shared = config.sharedControl && mode === "tui"
+      ? startSharedControl(pi, ctx, config.sharedControl, sideChannel)
+      : null;
+    const hasSessionAccess = () => !config.sharedControl || shared?.isAdmitted() === true;
+    if (!config.sharedControl && (mode === undefined || mode === "rpc")) {
       // Observe submitted extension input at Pi's public input boundary, as the host does
       // for its own submissions. Later input handlers may transform or handle it; a handler
       // that already handled the input prevents this observer from running.
@@ -283,10 +285,9 @@ export default function HappierPiToolsBridgeExtension(pi) {
         const message = event && typeof event === "object" ? event.message : null;
         if (message && typeof message === "object" && message.role === "assistant") emitContextTelemetryMarker(ctx, writeStderrLine);
       });
-    } else if (mode === "tui" && config.sharedControl) {
+    } else if (shared) {
       // Native TUI: the terminal belongs to Pi, so every runner-bound record travels over the
       // shared-control connection and nothing is written to stdout, stderr or the notifier.
-      const shared = startSharedControl(pi, ctx, config.sharedControl, sideChannel);
       pi.on("message_end", (event, ctx) => {
         const message = event && typeof event === "object" ? event.message : null;
         if (message && typeof message === "object" && message.role === "assistant") emitContextTelemetryMarker(ctx, shared.sendErr);
@@ -294,6 +295,7 @@ export default function HappierPiToolsBridgeExtension(pi) {
     }
 
     pi.on("before_agent_start", async (event) => {
+      if (!hasSessionAccess()) return undefined;
       const addition = config.promptAddition.trim();
       if (!addition) return undefined;
       const base = event && typeof event.systemPrompt === "string" ? event.systemPrompt.trim() : "";
@@ -307,6 +309,15 @@ export default function HappierPiToolsBridgeExtension(pi) {
         description: tool.description,
         parameters: tool.inputSchema,
         async execute(toolCallId, args, signal, _onUpdate, ctx) {
+          if (!hasSessionAccess()) {
+            return envelopeToToolResult({
+              ok: false,
+              error: {
+                code: SHARED_CONTROL_BRIDGE_UNAVAILABLE_ERROR,
+                message: "The Pi terminal is not attached to this Happier session",
+              },
+            });
+          }
           const cwd = typeof ctx?.cwd === "string" && ctx.cwd.trim() ? ctx.cwd : process.cwd();
           const callArgs = tool.call.actionId === null
             ? args

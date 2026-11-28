@@ -14,6 +14,7 @@ import { mapPiRpcEventToAgentMessages } from '../rpc/eventMapping';
 import { attachPiRpcJsonlLineReader } from '../rpc/attachPiRpcJsonlLineReader';
 import { parsePiExtensionUserInput } from '../rpc/piExtensionUiRequest';
 import {
+  PI_SHARED_CONTROL_ADMISSION_FRAME,
   PI_SHARED_CONTROL_BUSY_ERROR,
   PI_SHARED_CONTROL_INDETERMINATE_OUTCOME,
   PI_SHARED_CONTROL_RESPONSE_TIMEOUT_MS,
@@ -180,6 +181,7 @@ describe('Pi shared-control bridge (TUI mode)', () => {
     options.beforeSessionStart?.(fake);
     await fake.emit('session_start', { reason: 'startup' });
     await expect.poll(() => runner.frames().length).toBeGreaterThan(0);
+    runner.send({ type: PI_SHARED_CONTROL_ADMISSION_FRAME });
     return { runner, ...fake };
   }
 
