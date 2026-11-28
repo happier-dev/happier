@@ -2427,8 +2427,6 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.github.ui.loadMoreComments": "Carregant més comentaris",
   "plugins.github.ui.loadMoreEvents": "Carrega més esdeveniments",
   "plugins.github.ui.loadMoreReviewRequests": "Carrega més sol·licituds de revisió",
-  "plugins.github.ui.markUnviewed": "Marca com a no vist",
-  "plugins.github.ui.markViewed": "Marca com a vist",
   "plugins.github.ui.mergeReadiness.blocked": "Requisits de fusió no complerts",
   "plugins.github.ui.mergeReadiness.ready": "Preparada per fusionar-se",
   "plugins.github.ui.mergeReadiness.unknown": "Requisits de fusió desconeguts",

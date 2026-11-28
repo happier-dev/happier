@@ -356,8 +356,6 @@
   "plugins.github.ui.fileStatus.removed": "Suprimit",
   "plugins.github.ui.fileStatus.renamed": "Canviat de nom",
   "plugins.github.ui.fileRenamedFrom": "Canviat el nom des de {previous}",
-  "plugins.github.ui.markViewed": "Marca com a vist",
-  "plugins.github.ui.markUnviewed": "Marca com a no vist",
   "plugins.github.ui.fileViewed": "Vist",
   "plugins.github.ui.fileViewedNotSaved": "No desat a GitHub",
   "plugins.github.ui.filesViewedOf": "{viewed} de {total} vistos",

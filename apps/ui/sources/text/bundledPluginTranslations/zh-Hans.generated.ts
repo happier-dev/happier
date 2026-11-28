@@ -2427,8 +2427,6 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.github.ui.loadMoreComments": "加载更多评论",
   "plugins.github.ui.loadMoreEvents": "加载更多事件",
   "plugins.github.ui.loadMoreReviewRequests": "加载更多评审请求",
-  "plugins.github.ui.markUnviewed": "标记为未查看",
-  "plugins.github.ui.markViewed": "标记为已查看",
   "plugins.github.ui.mergeReadiness.blocked": "合并要求尚未满足",
   "plugins.github.ui.mergeReadiness.ready": "可以合并",
   "plugins.github.ui.mergeReadiness.unknown": "合并要求未知",

@@ -356,8 +356,6 @@
   "plugins.github.ui.fileStatus.removed": "Usunięty",
   "plugins.github.ui.fileStatus.renamed": "Zmieniono nazwę",
   "plugins.github.ui.fileRenamedFrom": "Zmieniono nazwę z {previous}",
-  "plugins.github.ui.markViewed": "Oznacz jako przejrzane",
-  "plugins.github.ui.markUnviewed": "Oznacz jako nieprzejrzane",
   "plugins.github.ui.fileViewed": "Przejrzane",
   "plugins.github.ui.fileViewedNotSaved": "Nie zapisano w GitHub",
   "plugins.github.ui.filesViewedOf": "Przejrzane: {viewed} z {total}",

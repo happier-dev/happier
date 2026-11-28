@@ -92,8 +92,6 @@ export function GithubFilesList(props: Readonly<{
     labels: {
       viewed: text('plugins.github.ui.fileViewed', 'Viewed'),
       notSaved: text('plugins.github.ui.fileViewedNotSaved', 'Not saved to GitHub'),
-      markViewed: text('plugins.github.ui.markViewed', 'Mark viewed'),
-      markUnviewed: text('plugins.github.ui.markUnviewed', 'Mark unviewed'),
     },
   }, [props.viewed, text]);
   const { input } = props;

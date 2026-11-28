@@ -4,6 +4,7 @@ import type {
   ScmFileViewedSource,
 } from '@happier-dev/plugin-sdk/scm';
 import {
+  Checkbox,
   DiffViewer,
   List,
   LoadingState,
@@ -21,16 +22,14 @@ import type { TriageChangedFileV1 } from './changeSummary.js';
 import { useTriageDetailPageScroll } from './detailPanel.js';
 
 /**
- * A source's Viewed marks for its files (GitHub's per-head marks), with the words that say where a mark is saved.
- * A source without a Viewed concept passes none, and its rows offer no mark.
+ * A source's Viewed marks for its files (GitHub's per-head marks): `viewed` names each file's checkbox, `notSaved`
+ * says a mark the source refused. A source without a Viewed concept passes none, and its rows offer no mark.
  */
 export type TriageChangedFilesViewedV1 = Readonly<{
   source: ScmFileViewedSource;
   labels: Readonly<{
     viewed: string;
     notSaved: string;
-    markViewed: string;
-    markUnviewed: string;
   }>;
 }>;
 
@@ -167,8 +166,9 @@ type FileRowProps<TRow extends TriageChangedFileV1> = Readonly<{
 }>;
 
 /**
- * One changed file: its path, what changed, and its Viewed mark, with Mark viewed, Copy and Open in the row's menu.
- * A file the source has a diff for opens in place; one with no diff has nothing to open, so it is a plain row.
+ * One changed file: its path, what changed, its Viewed checkbox at the row's end (one press, beside the row's own
+ * press, so marking a file never opens it), and Copy and Open in the row's menu. A file the source has a diff for
+ * opens in place; one with no diff has nothing to open, so it is a plain row.
  */
 function FileRow<TRow extends TriageChangedFileV1>({
   row,
@@ -189,29 +189,21 @@ function FileRow<TRow extends TriageChangedFileV1>({
           locale,
         });
   const isViewed = file?.state === 'viewed';
-  // One word for the mark, whatever the source's refusal code was: the code is for logs, not for the reader.
-  const mark =
-    viewed === null
-      ? undefined
-      : file?.errorCode != null
-        ? viewed.labels.notSaved
-        : isViewed
-          ? viewed.labels.viewed
-          : undefined;
-  const note = [row.note, mark].filter(Boolean).join(' · ') || undefined;
-  // The mark is offered once the source has answered for this file; a pending write keeps it until it settles.
-  const markAction =
-    viewed === null || file === null || file.state === null
-      ? []
-      : [
-          {
-            id: 'viewed',
-            label: isViewed
-              ? viewed.labels.markUnviewed
-              : viewed.labels.markViewed,
-            disabled: file.pending,
-          },
-        ];
+  // The checkbox says Viewed; the note says only a refused mark, in one word whatever the source's code was.
+  const refused = viewed !== null && file?.errorCode != null ? viewed.labels.notSaved : undefined;
+  const note = [row.note, refused].filter(Boolean).join(' · ') || undefined;
+  // Offered once the source has answered for this file; until then its box keeps its place, so no row shifts when
+  // the answer lands. A pending write holds the box until it settles.
+  const viewedBox = viewed === null ? undefined : (
+    <Checkbox
+      checked={file === null || file.state === null ? null : isViewed}
+      onChange={(next) => { void viewed.source.setViewed(row.path, next); }}
+      accessibilityLabel={`${viewed.labels.viewed}: ${row.path}`}
+      pending={file?.pending === true}
+      size="compact"
+      testID={`triage-file-viewed:${row.path}`}
+    />
+  );
   const webUrl = row.webUrl;
   return (
     <List.Item
@@ -227,8 +219,8 @@ function FileRow<TRow extends TriageChangedFileV1>({
               .filter((value) => value !== null)
               .join(' '),
           })}
+      {...(viewedBox === undefined ? {} : { accessory: viewedBox, accessoryOutsidePressable: true })}
       secondaryActions={[
-        ...markAction,
         { id: 'copy', label: text('happier.plugin-ui.action.copy', 'Copy') },
         ...(webUrl === undefined
           ? []
@@ -240,9 +232,7 @@ function FileRow<TRow extends TriageChangedFileV1>({
             ]),
       ]}
       onSecondaryAction={(id) => {
-        if (id === 'viewed' && viewed !== null)
-          void viewed.source.setViewed(row.path, !isViewed);
-        else if (id === 'copy') void host.writeClipboard(row.path);
+        if (id === 'copy') void host.writeClipboard(row.path);
         else if (id === 'open' && webUrl !== undefined)
           void host.openExternalLink(webUrl);
       }}
@@ -265,7 +255,8 @@ function FileRow<TRow extends TriageChangedFileV1>({
 
 /**
  * A change request's changed files, the one Files frame every forge source draws: flush compact rows with the path,
- * the source's note, +/− in the right column and a ⋯ menu; a file with a diff opens it in place, one at a time.
+ * the source's note, +/− in the right column, the Viewed checkbox when the source has marks, and a ⋯ menu; a file
+ * with a diff opens it in place, one at a time.
  * The source supplies its facts (bands, notes, counts, Viewed marks) and the body that reads one file's diff.
  */
 export function TriageChangedFilesList<TRow extends TriageChangedFileV1>(

@@ -2427,8 +2427,6 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.github.ui.loadMoreComments": "もっと多くのコメントを読み込む",
   "plugins.github.ui.loadMoreEvents": "イベントをさらに読み込む",
   "plugins.github.ui.loadMoreReviewRequests": "レビュー依頼をさらに読み込む",
-  "plugins.github.ui.markUnviewed": "未表示に戻す",
-  "plugins.github.ui.markViewed": "表示済みにする",
   "plugins.github.ui.mergeReadiness.blocked": "マージ要件が未充足",
   "plugins.github.ui.mergeReadiness.ready": "マージ準備完了",
   "plugins.github.ui.mergeReadiness.unknown": "マージ要件が不明",

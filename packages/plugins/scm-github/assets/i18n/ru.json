@@ -356,8 +356,6 @@
   "plugins.github.ui.fileStatus.removed": "Удалён",
   "plugins.github.ui.fileStatus.renamed": "Переименован",
   "plugins.github.ui.fileRenamedFrom": "Переименован из {previous}",
-  "plugins.github.ui.markViewed": "Отметить как просмотренное",
-  "plugins.github.ui.markUnviewed": "Снять отметку о просмотре",
   "plugins.github.ui.fileViewed": "Просмотрено",
   "plugins.github.ui.fileViewedNotSaved": "Не сохранено в GitHub",
   "plugins.github.ui.filesViewedOf": "Просмотрено: {viewed} из {total}",

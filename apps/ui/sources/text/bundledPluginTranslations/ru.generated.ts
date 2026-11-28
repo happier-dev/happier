@@ -2427,8 +2427,6 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.github.ui.loadMoreComments": "Загрузить больше комментариев",
   "plugins.github.ui.loadMoreEvents": "Загрузить ещё события",
   "plugins.github.ui.loadMoreReviewRequests": "Загрузить ещё запросы рецензии",
-  "plugins.github.ui.markUnviewed": "Снять отметку о просмотре",
-  "plugins.github.ui.markViewed": "Отметить как просмотренное",
   "plugins.github.ui.mergeReadiness.blocked": "Требования для слияния не выполнены",
   "plugins.github.ui.mergeReadiness.ready": "Готов к слиянию",
   "plugins.github.ui.mergeReadiness.unknown": "Требования для слияния неизвестны",

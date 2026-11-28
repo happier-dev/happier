@@ -2427,8 +2427,6 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.github.ui.loadMoreComments": "Charger plus de commentaires",
   "plugins.github.ui.loadMoreEvents": "Charger plus d’évènements",
   "plugins.github.ui.loadMoreReviewRequests": "Charger d’autres demandes de revue",
-  "plugins.github.ui.markUnviewed": "Marquer comme non vu",
-  "plugins.github.ui.markViewed": "Marquer comme vu",
   "plugins.github.ui.mergeReadiness.blocked": "Exigences de fusion non remplies",
   "plugins.github.ui.mergeReadiness.ready": "Prête à être fusionnée",
   "plugins.github.ui.mergeReadiness.unknown": "Exigences de fusion inconnues",

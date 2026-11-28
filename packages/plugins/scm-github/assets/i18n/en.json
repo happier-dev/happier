@@ -357,8 +357,6 @@
   "plugins.github.ui.fileStatus.removed": "Deleted",
   "plugins.github.ui.fileStatus.renamed": "Renamed",
   "plugins.github.ui.fileRenamedFrom": "Renamed from {previous}",
-  "plugins.github.ui.markViewed": "Mark viewed",
-  "plugins.github.ui.markUnviewed": "Mark unviewed",
   "plugins.github.ui.fileViewed": "Viewed",
   "plugins.github.ui.fileViewedNotSaved": "Not saved to GitHub",
   "plugins.github.ui.filesViewedOf": "{viewed} of {total} viewed",

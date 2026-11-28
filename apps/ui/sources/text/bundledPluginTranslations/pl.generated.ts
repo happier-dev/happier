@@ -2427,8 +2427,6 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.github.ui.loadMoreComments": "Wczytaj więcej komentarzy",
   "plugins.github.ui.loadMoreEvents": "Wczytaj więcej zdarzeń",
   "plugins.github.ui.loadMoreReviewRequests": "Wczytaj więcej próśb o recenzję",
-  "plugins.github.ui.markUnviewed": "Oznacz jako nieprzejrzane",
-  "plugins.github.ui.markViewed": "Oznacz jako przejrzane",
   "plugins.github.ui.mergeReadiness.blocked": "Wymagania scalania niespełnione",
   "plugins.github.ui.mergeReadiness.ready": "Gotowe do scalenia",
   "plugins.github.ui.mergeReadiness.unknown": "Wymagania scalania nieznane",

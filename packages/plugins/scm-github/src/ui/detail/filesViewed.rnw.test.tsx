@@ -285,42 +285,43 @@ describe('GitHub Files panel Viewed marks', () => {
     expect(writes).toEqual([]);
     expect(dispatched).not.toContain(GITHUB_FILE_VIEWED_ACTION_IDS_V1.read);
     expect(dispatched).not.toContain(GITHUB_FILE_VIEWED_ACTION_IDS_V1.set);
-    await act(async () => { await files.press(await rowMenu(files, 'src/alpha.ts')); });
-    await act(async () => { await files.press(await files.getByRole('menuitem', { name: 'Mark unviewed' })); });
+    await act(async () => { await files.press(await files.getByRole('checkbox', { name: 'Viewed: src/alpha.ts' })); });
     expect(writes).toEqual([{ path: 'src/alpha.ts', viewed: false }]);
     // The host owns pending writes and refusals. Its real owner coverage lives in
     // apps/ui/sources/sync/ops/scmDiffSummary/fileViewed.test.ts and review/hunkReview/
     // useHunkReviewController.fileViewed.test.tsx; the List consumes that owner unchanged.
   });
 
-  it('shows each mark on its collapsed row and offers it in the row menu, never inside the open diff', async () => {
+  it('gives each collapsed row its own Viewed checkbox, never a menu entry or a mark inside the open diff (N32)', async () => {
     const { source, writes } = createHostViewedSource(
       { 'src/alpha.ts': 'viewed', 'src/beta.ts': 'unviewed', 'src/gamma.ts': 'unviewed' },
       { 'src/gamma.ts': 'github_graphql_response_invalid' },
     );
     const files = await mountFiles(source);
-    const row = (path: string) => [...document.querySelectorAll('[aria-expanded]')]
-      .find(node => node.textContent?.startsWith(path))!;
+    const box = (path: string) => files.getByRole('checkbox', { name: `Viewed: ${path}` });
     // Above the rows, the reader's progress rather than the tab's count again.
     expect(document.body.textContent).toContain('1 of 4 viewed');
-    // Collapsed, the viewed file says so; an unviewed one stays one line.
-    expect(row('src/alpha.ts').textContent).toContain('Viewed');
-    expect(row('src/beta.ts').textContent).not.toContain('Viewed');
+    // Each file's mark is its checkbox, in one press from the row.
+    expect((await box('src/alpha.ts')).state?.checked).toBe(true);
+    expect((await box('src/beta.ts')).state?.checked).toBe(false);
     // A refused write reads as copy, never as GitHub's code.
-    expect(row('src/gamma.ts').textContent).toContain('Not saved to GitHub');
+    expect(document.body.textContent).toContain('Not saved to GitHub');
     expect(document.body.textContent).not.toContain('github_graphql_response_invalid');
 
     await act(async () => { await files.press((await files.queryAllByRole('button')).find(button => button.name?.startsWith('src/beta.ts'))!); });
     await vi.waitFor(() => expect(document.body.textContent).toContain('+new'));
-    expect(await files.queryAllByRole('button', { name: 'Mark viewed' })).toHaveLength(0);
-    // The open diff is named by its row: the path is not drawn a second time above it.
+    // The open diff is named by its row: the path is not drawn a second time above it, nor its mark.
     const body = document.querySelector('[role="group"][aria-label="src/beta.ts"]');
     expect(body).not.toBeNull();
     expect([...body!.querySelectorAll('*')].filter(node => node.textContent === 'src/beta.ts')).toEqual([]);
+    expect(body!.querySelector('[role="checkbox"]')).toBeNull();
 
-    await act(async () => { await files.press(await rowMenu(files, 'src/beta.ts')); });
-    await act(async () => { await files.press(await files.getByRole('menuitem', { name: 'Mark viewed' })); });
+    await act(async () => { await files.press(await box('src/beta.ts')); });
     expect(writes).toEqual([{ path: 'src/beta.ts', viewed: true }]);
+    // The checkbox is the mark's one control: the row's menu keeps Copy and Open only.
+    await act(async () => { await files.press(await rowMenu(files, 'src/alpha.ts')); });
+    await expect(files.queryByRole('menuitem', { name: 'Mark unviewed' })).resolves.toBeUndefined();
+    await expect(files.getByRole('menuitem', { name: 'Copy' })).resolves.toBeDefined();
   });
 
   it('refreshes the files and the same host Viewed source through the parent page refresh', async () => {

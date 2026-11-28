@@ -356,8 +356,6 @@
   "plugins.github.ui.fileStatus.removed": "已刪除",
   "plugins.github.ui.fileStatus.renamed": "已重新命名",
   "plugins.github.ui.fileRenamedFrom": "從 {previous} 重新命名",
-  "plugins.github.ui.markViewed": "標記為已檢視",
-  "plugins.github.ui.markUnviewed": "標記為未檢視",
   "plugins.github.ui.fileViewed": "已檢視",
   "plugins.github.ui.fileViewedNotSaved": "未儲存到 GitHub",
   "plugins.github.ui.filesViewedOf": "已檢視 {viewed}/{total}",

@@ -2427,8 +2427,6 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.github.ui.loadMoreComments": "Carregar mais comentários",
   "plugins.github.ui.loadMoreEvents": "Carregar mais eventos",
   "plugins.github.ui.loadMoreReviewRequests": "Carregar mais pedidos de revisão",
-  "plugins.github.ui.markUnviewed": "Marcar como não visto",
-  "plugins.github.ui.markViewed": "Marcar como visto",
   "plugins.github.ui.mergeReadiness.blocked": "Requisitos de mesclagem não cumpridos",
   "plugins.github.ui.mergeReadiness.ready": "Pronto para mesclar",
   "plugins.github.ui.mergeReadiness.unknown": "Requisitos de mesclagem desconhecidos",
