@@ -6,7 +6,8 @@ import { buildBackendTargetKeyV2, parseBackendTargetKeyV2, readBackendTargetRefV
 import type { AgentExecutionTargetV1 } from '../../agents/executionTargetV1.js';
 import type { ProviderBoundModelRef } from '../../providers/selection/v1.js';
 import type { WorkflowStepExecutionSelection } from '../../workflows/workflowV1.js';
-import { projectSessionModelSelectionV2ToV1, readSessionModelSelectionProviderConnectionId, type SessionModelRefV2, type SessionModelSelection } from '../../providers/selection/v2.js';
+import { projectSessionModelSelectionV2ToV1, readSessionModelSelectionProviderConnectionId } from '../../providers/selection/projection.js';
+import type { SessionModelRefV2, SessionModelSelection } from '../../providers/selection/schemas.js';
 import type { AcpConfigOptionOverridesV1 } from '../../sessions/metadata/metadataOverridesV1.js';
 import { PROVIDER_REASONING_EFFORT_OPTION_ID } from '../../providers/catalog/reasoningEffort.js';
 

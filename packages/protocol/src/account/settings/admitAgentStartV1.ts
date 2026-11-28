@@ -7,7 +7,8 @@ import { assertNonEscalatingPermissionMode } from '../../actions/permissionPrivi
 import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
 import type { ExecutionRunIntent } from '../../execution/runs/runPrimitives.js';
 import type { ProviderBoundModelRef } from '../../providers/selection/v1.js';
-import { projectSessionModelSelectionV2ToV1, type SessionModelSelection } from '../../providers/selection/v2.js';
+import { projectSessionModelSelectionV2ToV1 } from '../../providers/selection/projection.js';
+import type { SessionModelSelection } from '../../providers/selection/schemas.js';
 import type { TeamResourceSessionModelSelectionV2Schema } from '../../providers/selection/schemas.js';
 import { readRoleEngineModelRefV1, readRoleEngineSessionModelSelectionV1, type RoleEngineV1, type RoleRunsAsV1 } from '../../prompts/roles/roleArtifactV1.js';
 import type { ResolvedRolesSnapshotV1 } from '../../prompts/roles/rolesV1.js';

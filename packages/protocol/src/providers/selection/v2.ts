@@ -1,11 +1,12 @@
 import { ConnectedAccountSessionModelRefV2Schema, TeamResourceSessionModelSelectionV2Schema, SessionModelSelectionV2Schema, type ConnectedAccountSessionModelRefV2, type ConnectedAccountSessionModelSelectionV2, type PersonalSessionModelRef, type SessionModelRef, type SessionModelSelectionV2, type SessionModelSelection } from './schemas.js';
 export { NativeSessionModelRefV2Schema, AccountProviderConnectionSessionModelRefV2Schema, ConnectedAccountSessionModelRefV2Schema, TeamResourceSessionModelRefV2Schema, PersonalSessionModelRefSchema, SessionModelRefV2Schema, SessionModelRefSchema, SessionModelSelectionV2Schema, SessionModelSelectionSchema, type ConnectedAccountSessionModelRefV2, type PersonalSessionModelRef, type SessionModelRefV2, type SessionModelRef, type SessionModelSelectionV2, type SessionModelSelection } from './schemas.js';
+export { readSessionModelSelectionProviderConnectionId, readSessionModelRefProviderConnectionId, projectSessionModelSelectionV2ToV1 } from './projection.js';
 import { decodeBase64, encodeBase64 } from '../../crypto/base64.js';
 import { qualifiedPurposeKey } from '../../connect/connectedAccountPurposeBindings.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 
-import { SessionActiveModelSelectionV1Schema, SessionModelSelectionV1Schema, serializeSessionModelSelectionV1, deserializeSessionModelSelectionV1, type SessionActiveModelSelectionV1, type SessionModelSelectionV1 } from './v1.js';
+import { SessionActiveModelSelectionV1Schema, serializeSessionModelSelectionV1, deserializeSessionModelSelectionV1, type SessionActiveModelSelectionV1, type SessionModelSelectionV1 } from './v1.js';
 import { TeamCredentialProviderModelSelectionV1Schema, type TeamCredentialProviderModelSelectionV1 } from '../../teams/credentials/resourceV1.js';
 import { type SessionTeamCredentialBindingIntentV1, type SessionTeamCredentialProviderModelSelectionV1 } from '../../teams/credentials/sessionBindingIntentV1.js';
 
@@ -116,37 +117,9 @@ export function deserializeSessionModelSelection(value: string): SessionModelSel
   }
 }
 
-/** Account Provider binding is a distinct source from native and Team-resource binding. */
-export function readSessionModelSelectionProviderConnectionId(selection: SessionModelSelection): SessionModelSelectionV1['ref']['providerConnectionId'] {
-  return readSessionModelRefProviderConnectionId(selection.ref);
-}
-
-export function readSessionModelRefProviderConnectionId(ref: SessionModelRef): SessionModelSelectionV1['ref']['providerConnectionId'] {
-  return 'providerConnectionId' in ref ? ref.providerConnectionId : null;
-}
-
 /** Connected Accounts and Team resources are source-bound without a Provider Connection id. */
 export function isSessionModelRefSourceBound(ref: SessionModelRef): boolean {
   return 'source' in ref ? ref.source !== 'native' : ref.providerConnectionId !== null;
-}
-
-/** Older readers may consume only the two sources they can represent. */
-export function projectSessionModelSelectionV2ToV1(
-  value: SessionModelSelectionV2,
-): SessionModelSelectionV1 | null {
-  const selection = SessionModelSelectionV2Schema.parse(value);
-  if (selection.ref.source === 'team_resource' || selection.ref.source === 'connected_account') return null;
-  return SessionModelSelectionV1Schema.parse({
-    v: 1,
-    ref: {
-      agentTargetKey: selection.ref.agentTargetKey,
-      providerConnectionId: selection.ref.source === 'native'
-        ? null
-        : selection.ref.providerConnectionId,
-      modelId: selection.ref.modelId,
-    },
-    updatedAt: selection.updatedAt,
-  });
 }
 
 /** Sidecar consumed by the canonical Session create/configuration transaction. */
