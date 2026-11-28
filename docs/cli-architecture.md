@@ -8664,7 +8664,7 @@ Machines selected, the app holds one `daemon.sessionCreation.intent.v1` Machine
 RPC to that Machine (`useNewSessionIntent.ts`; server-routed, custodian only).
 The daemon's handler (session RPC family) calls `DaemonSessionHost.prestart`,
 which ensures the host through the same single-flight launch as an add and opens
-`/v1/session-host/hold` on it. The intent hold loads the runner code the first
+`/v1/session-host/hold` on it. A held host loads the runner code its first
 Session command runs and builds the process-wide built-in contribution registry
 that Session's first Agent catalog readers use before its Agent starts
 (`preloadSessionRunner` in `agent/runtime/lifecycle/sessionRunnerPreload.ts`), so
@@ -8678,8 +8678,8 @@ released just before an add makes that add meet a closing host, which the add
 already handles by starting a new one.
 
 A fresh Start or CLI create that commits its Session before launch also prestarts
-the same host once headless placement is resolved. This hold skips runner
-preload and lasts through durable birth while any sharing caller remains. On birth, the launch takes
+the same host once headless placement is resolved. Its hold lasts through
+durable birth while any sharing caller remains. On birth, the launch takes
 ownership of the hold through host admission. Runner admission and credential
 preparation still run at their existing boundaries.
 

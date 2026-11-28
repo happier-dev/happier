@@ -62,12 +62,13 @@ export type DaemonSessionHost = Readonly<{
     | Readonly<{ status: 'failed'; result: SpawnSessionResult }>
   >;
   /**
-   * Ensure and hold the host using the same single launch as an add. New Session intent also
-   * warms the runner. A fresh placement can hold just the host during durable birth.
-   * Resolves when `signal` is aborted or the host is gone. The host ends once no Session
-   * and no hold remains.
+   * A Session is about to be created on this Machine (New Session intent): ensure the host (the same
+   * single launch as an add; nothing starts when one runs) and hold it, so it loads the runner code
+   * now and the next add finds it ready. Resolves when the hold ends: `signal` aborted (the intent
+   * ended) or the host is gone. Once no Session and no hold remains, the host ends as it does after
+   * its last Session.
    */
-  prestart(signal: AbortSignal, options?: Readonly<{ preloadRunner?: false }>): Promise<void>;
+  prestart(signal: AbortSignal): Promise<void>;
   /**
    * Daemon restart: the reattached Sessions whose process is a live session host (marker pid,
    * birth and command identity) are hosted Sessions again — Stop goes through the host and each
@@ -232,13 +233,13 @@ export function createDaemonSessionHost(params: Readonly<{
   };
 
   return {
-    prestart: async (signal, options) => {
+    prestart: async (signal) => {
       if (signal.aborted) return;
       const host = await ensureHost();
       // A host launched here is held (and released at once when the intent already ended), so a
       // prestarted host is never left without its idle end.
       if ('type' in host) return;
-      const hold = holdLocalSessionHost({ hostPid: host.pid, ...options });
+      const hold = holdLocalSessionHost({ hostPid: host.pid });
       const release = () => hold.release();
       if (signal.aborted) release();
       else signal.addEventListener('abort', release, { once: true });
@@ -391,7 +392,8 @@ export function createSessionHostPlacement(params: Readonly<{
   platform?: NodeJS.Platform;
 }>): Readonly<{
   place: () => DaemonSessionHost | undefined;
-  prestart: DaemonSessionHost['prestart'];
+  /** New Session intent: prestart the host where Sessions are hosted (see `DaemonSessionHost.prestart`). */
+  prestart: (signal: AbortSignal) => Promise<void>;
   adoptReattachedSessions: DaemonSessionHost['adoptReattachedSessions'];
 }> {
   let host: DaemonSessionHost | null = null;
@@ -400,7 +402,7 @@ export function createSessionHostPlacement(params: Readonly<{
   const place = (): DaemonSessionHost | undefined => (params.platform ?? process.platform) === 'win32' ? undefined : daemonHost();
   return {
     place,
-    prestart: async (signal, options) => { await place()?.prestart(signal, options); },
+    prestart: async (signal) => { await place()?.prestart(signal); },
     adoptReattachedSessions: (input) => place()?.adoptReattachedSessions(input) ?? 0,
   };
 }

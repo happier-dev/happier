@@ -1041,7 +1041,7 @@ export async function executeSpawnSessionRequest(
                     freshCallerDemand.addEventListener('abort', release, { once: true });
                     stopObservingHostDemand = () => freshCallerDemand.removeEventListener('abort', release);
                     const signal = params.signal ? AbortSignal.any([hold.signal, params.signal]) : hold.signal;
-                    void sessionHost.prestart(signal, { preloadRunner: false }).catch(() => {
+                    void sessionHost.prestart(signal).catch(() => {
                         logger.warn('[DAEMON RUN] Fresh Session host prestart failed');
                     });
                 }
