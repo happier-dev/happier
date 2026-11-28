@@ -13,7 +13,8 @@ import { ACTIVITY_REMOTE_ALERT_POLICY_EVENT_V1 } from '@happier-dev/protocol/pus
 import { isSessionAwarenessContentReadableV1 } from '@happier-dev/protocol/sessions/awareness/availability';
 import { resolveActivityRequestEventIdentityV1, resolveActivitySequenceEventIdentityV1, resolveActivityTranscriptLocalIdEventIdentityV1, resolveActivityTurnEventIdentityV1 } from '@happier-dev/protocol/activity/eventIdentity';
 import { resolveSessionPersonalEventEligibilityV1, resolveSessionPersonalFollowEventV1 } from '@happier-dev/protocol/sessions/personal/eventEligibility';
-import { resolveEffectiveAccountFollowPolicyV1 } from '@happier-dev/protocol/sessions/follow/accountFollow';
+import { projectSessionFinishedPersonFollowV1, resolveEffectiveAccountFollowPolicyV1 } from '@happier-dev/protocol/sessions/follow/accountFollow';
+import { readSessionManagerSessionIdV1 } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
 import { resolveActivityAttentionDeliveryPlan } from '@/activity/delivery/resolveActivityAttentionDeliveryPlan';
 import { useExactHomeAccountSettings } from '@/activity/delivery/useExactHomeAccountSettings';
 import { readSessionRecordingVisibility } from '@/sync/store/sessionRecordingVisibility';
@@ -324,6 +325,17 @@ function SupportedActivityLocalNotificationRuntime(): React.ReactElement | null 
             const followPolicy = followEvent ? resolveEffectiveAccountFollowPolicyV1({
                 facts: viewer?.follow ?? { follows: false, notificationLevel: null }, isSessionOwner,
             }) : null;
+            const nowMs = Date.now();
+            const readyAwareness = event.kind === 'ready' ? projectUiSessionAwareness(session, nowMs) : null;
+            const readyReasons = readyAwareness?.operational.reasons;
+            if (readyReasons?.includes('background_activity') || readyReasons?.includes('working') || readyReasons?.includes('failed')) return;
+            const managerId = event.kind === 'ready' ? readSessionManagerSessionIdV1(session) : null;
+            const manager = managerId ? findSessionListLookupSession(state, { ...event.address, sessionId: managerId })?.session : null;
+            const settledSessionPerson = event.kind === 'ready' ? projectSessionFinishedPersonFollowV1({
+                originKind: session.origin?.kind,
+                isSessionOwner,
+                manager: managerId ? manager?.active === false || manager?.archivedAt != null ? 'offline' : 'assigned' : undefined,
+            }) : undefined;
             const deliveryPlan = resolveActivityAttentionDeliveryPlan({
                 accountSettings,
                 localSettings,
@@ -331,8 +343,8 @@ function SupportedActivityLocalNotificationRuntime(): React.ReactElement | null 
                 channel: 'local_notification',
                 sameSessionVisible: isSessionActivelyViewedForLocalNotification(event, scope.accountId),
                 foregroundState: resolveDocumentHostForegroundState(),
-                now: new Date(),
-                ...(followEvent ? { follow: { event: followEvent, policies: followPolicy ? [followPolicy] : [] } } : {}),
+                now: new Date(nowMs),
+                ...(followEvent ? { follow: { event: followEvent, policies: followPolicy ? [followPolicy] : [], settledSessionPerson } } : {}),
             });
             if (deliveryPlan.delivery === 'suppress') {
                 return;
@@ -362,8 +374,7 @@ function SupportedActivityLocalNotificationRuntime(): React.ReactElement | null 
                     ? activeServer.serverUrl
                     : null);
             if (!serverUrl) return;
-            const nowMs = Date.now();
-            const awareness = projectUiSessionAwareness(session, nowMs);
+            const awareness = readyAwareness ?? projectUiSessionAwareness(session, nowMs);
             const mayShowPrivateContent = viewer?.attention.presentation !== 'status_only'
                 && isSessionAwarenessContentReadableV1(awareness.encryption);
             // An alert may enrich itself only from the exact committed row

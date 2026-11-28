@@ -83,6 +83,42 @@ async function deliverMessage(seq: number, human: boolean, recovered = false, so
 }
 
 describe('live Follow socket notifications', () => {
+    it('delivers Finished once after managed work settles under the owner’s Important policy', async () => {
+        screen = await renderScreen(<ActivityLocalNotificationRuntime />);
+        const address = { serverId: 'srv_home_a', sessionId: 'session-1' };
+        const completed = { ...getSession(), latestTurnStatus: 'completed' as const,
+            latestReadyEventSeq: 21, latestReadyEventAt: Date.now() };
+        const managed = { total: 1, working: 1, needsYou: 0, stalled: 0, finished: 0, attentionPrimary: null };
+        await act(async () => {
+            applySessions([{ ...completed, managedSessions: managed }]);
+            notifyActivityReady(address, [], { sequenceDomain: 'session_transcript', sequence: 21 });
+        });
+        expect(boundary.expo).toHaveBeenCalledTimes(0);
+        await act(async () => {
+            applySessions([{ ...completed, latestReadyEventSeq: 22, managedSessions: { ...managed, working: 0, finished: 1 } }]);
+            notifyActivityReady(address, [], { sequenceDomain: 'session_transcript', sequence: 22 });
+        });
+        await vi.waitFor(() => expect(boundary.expo).toHaveBeenCalledTimes(1));
+    });
+
+    it('passes Finished up to the owner only when the observed manager is offline', async () => {
+        screen = await renderScreen(<ActivityLocalNotificationRuntime />);
+        const address = { serverId: 'srv_home_a', sessionId: 'session-1' };
+        const manager = createSessionFixture({ id: 'lead', serverId: address.serverId, active: true });
+        const worker = { ...getSession(), manager: { sessionId: manager.id }, latestTurnStatus: 'completed' as const,
+            latestReadyEventSeq: 21, latestReadyEventAt: Date.now() };
+        await act(async () => {
+            applySessions([manager, worker]);
+            notifyActivityReady(address, [], { sequenceDomain: 'session_transcript', sequence: 21 });
+        });
+        expect(boundary.expo).toHaveBeenCalledTimes(0);
+        await act(async () => {
+            applySessions([{ ...manager, active: false }, { ...worker, latestReadyEventSeq: 22 }]);
+            notifyActivityReady(address, [], { sequenceDomain: 'session_transcript', sequence: 22 });
+        });
+        await vi.waitFor(() => expect(boundary.expo).toHaveBeenCalledTimes(1));
+    });
+
     it('selects a stalled presence original once while current, and withdraws recovered or replaced turns', async () => {
         screen = await renderScreen(<ActivityLocalNotificationRuntime />);
         const stalledOccurrence = { turnId: 'stalled-turn', publisherFence: 123 };

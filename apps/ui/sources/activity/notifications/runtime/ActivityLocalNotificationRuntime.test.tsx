@@ -16,6 +16,7 @@ import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLo
 import { setRuntimeFetch, type RuntimeFetch } from '@/utils/system/runtimeFetch';
 import { setScreenSharingPrivacyActive } from '@/desktop/capture/useNativeRecordingActive';
 import { ManagedMachineV1Schema, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { PUSH_NOTIFICATION_SOUND_IDS } from '@happier-dev/protocol/push/pushNotificationActions';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { createDesktopSecureStorageBoundary } from '@/dev/testkit/mocks/desktopSecureStorage';
 import { installBrowserNotificationApiStub } from '@/dev/testkit/mocks/browserNotification';
@@ -1660,7 +1661,8 @@ describe('ActivityLocalNotificationRuntime', () => {
         const browser = installBrowserNotificationApiStub('granted');
         const hostDocument = { visibilityState: 'visible', hasFocus: () => true };
         vi.stubGlobal('document', hostDocument);
-        await setActiveAccountSettings({ attentionDeliveryPolicyV1: { v: 1, foregroundBehavior: 'off' } });
+        await setActiveAccountSettings({ attentionDeliveryPolicyV1: { v: 1, foregroundBehavior: 'off',
+            sounds: { defaultSoundId: PUSH_NOTIFICATION_SOUND_IDS.systemDefault } } });
         const { ActivityLocalNotificationRuntime } = await import('./ActivityLocalNotificationRuntime');
         const { notifyActivityReady } = await import('./activityLocalNotificationBus');
         const screen = await renderScreen(<ActivityLocalNotificationRuntime />);
