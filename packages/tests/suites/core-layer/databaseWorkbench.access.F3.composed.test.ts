@@ -13,7 +13,10 @@ import { databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
 import { ArtifactAccessRecipientCensusResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { MachineAccessGrantsListResultV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { TeamSummaryV1Schema } from '@happier-dev/protocol/teams/projections';
-import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { ACTION_INVOKE_ACTION_ID_V1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { bindExternalActionExecutionAuthorizationHttpPathV1,
+  ExternalActionExecutionAuthorizationRequestV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { projectAutomationDatabaseFindingSubjectV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 import {
   DeploymentEnvironmentCreateIntentInputV1Schema,
   DeploymentEnvironmentCreateResultV1Schema,
@@ -56,8 +59,26 @@ it('TS.P3.F3: an editor applies through the bounded write role; editing off, mis
     const step = (label: string) => console.info(`TS.P3.F3 +${Math.round((Date.now() - started) / 1000)}s ${label}`);
   const testDir = await mkdtemp(join(tmpdir(), 'happier-dbw-f3own-'));
   const automation = { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' };
+  const admissionPath = bindExternalActionExecutionAuthorizationHttpPathV1(ACTION_INVOKE_ACTION_ID_V1);
+  let applyEnvironmentId: string | undefined;
+  let writeAdmissions = 0;
+  let writeRoleAcquisitions = 0;
   const fixture = await startDatabaseWorkbenchFixture({
     testDir, serverEnv: automation, guestReachableHome: { host: '127.0.0.1' },
+    captureRequestBody: request => applyEnvironmentId !== undefined && request.path === admissionPath,
+    beforeForwardResponse(request) {
+      if (!applyEnvironmentId || request.method !== 'POST' || request.statusCode !== 200) return;
+      if (request.path === `/v1/deployments/environments/${encodeURIComponent(applyEnvironmentId)}/secret-launch-admission`) {
+        writeRoleAcquisitions++;
+      }
+      if (request.path !== admissionPath || !request.body?.complete || request.body.truncated) return;
+      const { envelope } = ExternalActionExecutionAuthorizationRequestV1Schema.parse(JSON.parse(request.body.text));
+      const admission = 'deploymentReadAdmission' in envelope ? envelope.deploymentReadAdmission : undefined;
+      if (admission && 'databaseTarget' in admission && admission.access === 'write'
+        && admission.environmentId === applyEnvironmentId
+        && admission.action.pluginId === DATABASE_PLUGIN_ID_V1
+        && admission.action.localId === databaseActionLocalIdV1(DATABASE_EDITS_APPLY_ACTION_ID_V1)) writeAdmissions++;
+    },
   });
   const deployments = trackDatabaseWorkbenchDeployments(fixture, testDir);
   await deployments.run(async () => {
@@ -261,7 +282,7 @@ it('TS.P3.F3: an editor applies through the bounded write role; editing off, mis
         sql,
       ]);
     await admin(
-      "CREATE TABLE dbw_f3 (id integer PRIMARY KEY, note text); INSERT INTO dbw_f3 VALUES (1, 'before')",
+      "CREATE TABLE dbw_f3 (id integer PRIMARY KEY, note text); INSERT INTO dbw_f3 VALUES (1, 'before'), (2, 'before')",
     );
 
     step('table seeded');
@@ -484,7 +505,7 @@ it('TS.P3.F3: an editor applies through the bounded write role; editing off, mis
     if (!materialization) throw new Error('F9 Environment source omitted its live Workbench materialization');
     const event = await reviewed('action.invoke', {
       action: { pluginId: DATABASE_PLUGIN_ID_V1, localId: DATABASE_FINDING_SETUP_LOCAL_ID },
-      input: { v: 1, subject: automationSubject.subject, sourceScope: machine.target },
+      input: { v: 1, subject: projectAutomationDatabaseFindingSubjectV1(address.serverId, target), sourceScope: machine.target },
     }, true);
     const eventSource = PluginEventAutomationSetupResultV1Schema.parse(event);
     const armed = WorkflowActionOutputSchemasV1['workflow.trigger.add'].parse(await reviewed('workflow.trigger.add', {
@@ -534,7 +555,7 @@ it('TS.P3.F3: an editor applies through the bounded write role; editing off, mis
     await reviewed('workflow.trigger.remove', { automationId: armed.set.automationId, triggerId: armed.triggerId });
     step('F9 selected Environment Agent and Worker passed');
 
-    const apply = (note: string, before = 'committed') =>
+    const apply = (note: string, before = 'committed', ids = ['1']) =>
       invokeAsPerson(
         owner,
         DATABASE_EDITS_APPLY_ACTION_ID_V1,
@@ -542,10 +563,9 @@ it('TS.P3.F3: an editor applies through the bounded write role; editing off, mis
           operation: 'edits.apply',
           target,
           relation: { schema: 'public', name: 'dbw_f3' },
-          changes: [
-            {
+          changes: ids.map(id => ({
               kind: 'update',
-              key: [{ column: 'id', value: { type: 'integer', value: '1' } }],
+              key: [{ column: 'id', value: { type: 'integer', value: id } }],
               original: [{ column: 'note', value: { type: 'text', value: before } }],
               values: [
                 {
@@ -553,8 +573,7 @@ it('TS.P3.F3: an editor applies through the bounded write role; editing off, mis
                   value: { kind: 'value', cell: { type: 'text', value: note } },
                 },
               ],
-            },
-          ],
+          })),
         }),
       );
 
@@ -568,12 +587,14 @@ it('TS.P3.F3: an editor applies through the bounded write role; editing off, mis
       ok: true, operation: 'statement.run',
       results: [{ rows: [{ cells: [{ type: 'text', value: 'before' }] }] }],
     });
-    const committed = await apply('committed', 'before');
+    applyEnvironmentId = address.environmentId;
+    const committed = await apply('committed', 'before', ['1', '2']).finally(() => { applyEnvironmentId = undefined; });
     if (!committed.ok) throw new Error(`F3 editor Apply refused (${committed.errorCode})`);
-    expect(DatabaseOperationResultV1Schema.parse(committed.result)).toMatchObject({ ok: true, status: 'committed' });
-    expect(
-      (await admin('SELECT note FROM dbw_f3 WHERE id = 1')).stdout.trim(),
-    ).toBe('committed');
+    expect(DatabaseOperationResultV1Schema.parse(committed.result)).toMatchObject({ ok: true, status: 'committed', updated: '2' });
+    // PostgreSQL stamps both updated tuples with the transaction that wrote them.
+    expect((await admin("SELECT count(*) || '/' || count(DISTINCT xmin::text) FROM dbw_f3 WHERE note = 'committed'"))
+      .stdout.trim()).toBe('2/1');
+    expect({ writeAdmissions, writeRoleAcquisitions }).toEqual({ writeAdmissions: 1, writeRoleAcquisitions: 1 });
     console.info('P3-F3-known-good-editor-write passed');
 
     // The write login has no server-file reach.

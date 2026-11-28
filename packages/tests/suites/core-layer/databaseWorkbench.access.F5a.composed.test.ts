@@ -6,6 +6,7 @@ import { expect, it } from 'vitest';
 
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import {
+  buildDeploymentAccountChangeV1,
   DeploymentEnvironmentCreateIntentInputV1Schema,
   DeploymentEnvironmentCreateResultV1Schema,
   DeploymentEnvironmentGetResultV1Schema,
@@ -62,6 +63,7 @@ it('TS.P3.F5a: a Team chosen through CLI Environment update admits its member to
     );
     const ownerAccountId = readAccountIdFromToken(owner.credentials.token);
     const memberAccountId = readAccountIdFromToken(member.credentials.token);
+    if (!ownerAccountId || !memberAccountId) throw new Error('F5a fixture tokens omitted their Account ids');
     const onMachine = (actionId: ActionId) => ({
       externalActionTarget: {
         kind: 'machine' as const,
@@ -250,19 +252,51 @@ it('TS.P3.F5a: a Team chosen through CLI Environment update admits its member to
           },
         }),
       );
+    const publication = buildDeploymentAccountChangeV1({
+      projectSourceId: sourceAddress.sourceId, environmentId: address.environmentId, revision: initial.environment.revision + 1,
+    });
+    const homeSql = (query: string) => fixture.postgres.sql('happier', query);
+    const sqlText = (value: string) => `'${value.replaceAll("'", "''")}'`;
+    // Observe the selected Environment's durable publication. The global Account
+    // cursor also advances for Review and other changes during Save.
+    await homeSql(`CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+      CREATE TABLE dbw_f5a_publications (account_id text NOT NULL, hint jsonb);
+      CREATE FUNCTION dbw_f5a_record_publication() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        INSERT INTO dbw_f5a_publications VALUES (NEW."accountId", NEW.hint);
+        RETURN NULL;
+      END;
+      $$;
+      CREATE TRIGGER dbw_f5a_publication AFTER INSERT OR UPDATE ON "AccountChange" FOR EACH ROW
+        WHEN (NEW.kind = ${sqlText(publication.kind)} AND NEW."entityId" = ${sqlText(publication.entityId)})
+        EXECUTE FUNCTION dbw_f5a_record_publication();`);
+    const readSaveShape = async () => JSON.parse(await homeSql(`SELECT json_build_object(
+      'cas', (SELECT coalesce(sum(calls), 0) FROM pg_stat_statements
+        WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database())
+        AND query LIKE 'UPDATE "public"."DeploymentEnvironment" SET %"revision"%'),
+      'published', (SELECT coalesce(json_agg(json_build_object('accountId', account_id, 'hint', hint) ORDER BY account_id), '[]')
+        FROM dbw_f5a_publications)
+      )`)) as { cas: number; published: { accountId: string; hint: unknown }[] };
     step('update next');
+    const before = await readSaveShape();
     const saved = await save(initial.environment.revision);
     expect(saved).toMatchObject({
       ok: true,
       revision: initial.environment.revision + 1,
     });
-    // An unchanged Save writes nothing.
+    const changed = await readSaveShape();
+    expect(changed.cas - before.cas).toBe(1);
+    expect(before.published).toEqual([]);
+    expect(changed.published).toEqual([ownerAccountId, memberAccountId].sort().map(accountId => ({
+      accountId, hint: publication.hint,
+    })));
     expect(await save(initial.environment.revision + 1)).toMatchObject({
       ok: true,
       revision: initial.environment.revision + 1,
     });
+    expect(await readSaveShape()).toEqual(changed);
 
-    step('update saved');
+    step('changed Save: 1 CAS and 1 publication per recipient; unchanged Save: 0 CAS and 0 publications');
     const memberView = await read(member);
     expect(memberView, JSON.stringify(memberView)).toMatchObject({
       ok: true,
