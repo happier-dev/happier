@@ -85,7 +85,7 @@ describe('continuation target account discovery', () => {
         } finally { await hook.unmount(); }
     });
 
-    it.each(['work', 'missing-profile', 'unavailable', 'retained-default'])('probes the destination-only qualified target purpose account (%s)', async (profileId) => {
+    it.each(['work', 'missing-profile', 'unavailable', 'retained-default', 'explicit'])('probes the destination-only qualified target account (%s)', async (profileId) => {
         invoke.mockClear();
         resetDynamicModelProbeCacheForTests();
         const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
@@ -100,7 +100,8 @@ describe('continuation target account discovery', () => {
                 v: 1 as const, bindings: [{
                     purpose: { consumer: { pluginId: 'happier.agent.codex', localId: 'codex' }, purpose: 'primary' },
                     target: { kind: 'account' as const, account: {
-                        service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: profileId,
+                        service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+                        accountId: profileId === 'explicit' ? 'work' : profileId,
                     } },
                 }],
         };
@@ -170,8 +171,17 @@ describe('continuation target account discovery', () => {
             return;
         }
         await vi.waitFor(() => expect(readOption()).toMatchObject({ disabled: false }));
-        const option = readOption();
-        const detail = option?.renderDetailContent?.({ onRequestClose: vi.fn() });
+        const expectedProfileId = profileId === 'explicit' ? 'personal' : profileId;
+        if (profileId === 'explicit') {
+            await act(async () => { await readOption()?.onSelectImmediate?.(); });
+            expect(hook.getCurrent().armedContinuation?.selection.agentId).toBe('codex');
+            await act(async () => {
+                hook.getCurrent().setArmedBinding('happier.agent.codex/openai-codex', {
+                    source: 'connected', selection: 'profile', profileId: expectedProfileId,
+                });
+            });
+        }
+        const detail = readOption()?.renderDetailContent?.({ onRequestClose: vi.fn() });
         if (!React.isValidElement(detail)) throw new Error('Expected target Agent detail content');
         screen = await renderScreen(detail);
         await act(async () => { await Promise.resolve(); });
@@ -179,7 +189,7 @@ describe('continuation target account discovery', () => {
             .find((candidate) => candidate.id === 'cli.codex' && candidate.method === 'probeModels');
         expect(request).toBeDefined();
         expect(request?.params).toMatchObject({ connectedServices: { v: 2, bindingsByServiceId: {
-            'happier.agent.codex/openai-codex': { source: 'connected', selection: 'profile', profileId },
+            'happier.agent.codex/openai-codex': { source: 'connected', selection: 'profile', profileId: expectedProfileId },
         } } });
         } finally {
             await screen?.unmount(); await hook.unmount(); storage.setState(previous, true);
