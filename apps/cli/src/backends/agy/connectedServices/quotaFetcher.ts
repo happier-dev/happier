@@ -102,7 +102,9 @@ export function createAgyQuotaFetcher(deps: Readonly<{
   const resolveLaunch = deps.resolveLaunch ?? (() => resolveProviderCliLaunchSpec('agy', { processEnv: process.env }));
   let isolatedCommand: string | null = null;
   return { serviceId: 'antigravity', async fetch({ record, now, signal }) {
-    if (record.serviceId !== 'antigravity' || record.kind !== 'oauth' || !record.oauth.refreshToken) {
+    // The quota boundary hands fetchers an access-token-only view (refresh tokens are stripped);
+    // agy reads usage with the daemon-refreshed access token and an empty refresh token.
+    if (record.serviceId !== 'antigravity' || record.kind !== 'oauth' || !record.oauth.accessToken) {
       throw new ConnectedServiceQuotaFetchError('missing_antigravity_oauth_record', { quotaFetchErrorCode: 'missing_auth' });
     }
     const launch = resolveLaunch();
@@ -122,7 +124,7 @@ export function createAgyQuotaFetcher(deps: Readonly<{
         isolatedCommand = launch.command;
       }
       await writeJsonAtomic(join(home, '.gemini', ...AGY_NATIVE_TOKEN_FILE_SEGMENTS), serializeAgyNativeCliCredential({
-        accessToken: record.oauth.accessToken, refreshToken: record.oauth.refreshToken,
+        accessToken: record.oauth.accessToken, refreshToken: record.oauth.refreshToken ?? '',
         expiresAt: record.expiresAt ?? null, email: record.oauth.providerEmail,
       }));
       const meters = parseUsage(await runCommand({ command: launch.command,

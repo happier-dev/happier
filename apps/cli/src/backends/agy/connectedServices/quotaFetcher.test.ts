@@ -8,6 +8,7 @@ import { createProviderAccountUsageStore } from '@/daemon/connectedServices/acco
 import { buildConnectedServiceAuthGroupSwitchStateFromAccountUsage } from '@/daemon/connectedServices/accountGroups/switching/buildConnectedServiceAuthGroupSwitchStateFromAccountUsage';
 import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, selectConnectedServiceAuthGroupCandidate } from '@/daemon/connectedServices/accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
 import { ConnectedServiceQuotaFetchError } from '@/daemon/connectedServices/quotas/types';
+import { buildCredentialRecordForQuotaFetcher } from '@/daemon/connectedServices/quotas/coordinator/support';
 import { createAgyQuotaFetcher, type AgyUsageCommandRunner } from './quotaFetcher';
 
 function record(profileId = 'agy-selected') {
@@ -81,6 +82,19 @@ describe('Antigravity quota from agy /usage', () => {
       expect.objectContaining({ meterId: 'gemini-5h', scope: 'five_hour', isExhausted: false, status: 'unavailable' }),
       expect.objectContaining({ meterId: '3p-weekly', remainingPct: 100, resetsAt: null }),
     ]);
+  });
+
+  it('reads usage from the access-token-only record the quota boundary hands to fetchers', async () => {
+    const agy = fakeAgy(() => exited(usageOutput(0.5)));
+    // The quota coordinator strips refresh tokens at its boundary (buildCredentialRecordForQuotaFetcher).
+    const quotaView = buildCredentialRecordForQuotaFetcher(record());
+
+    const snapshot = await fetcherFor(agy).fetch({ record: quotaView, now: 2000, signal: new AbortController().signal });
+
+    expect(snapshot!.meters[0]).toMatchObject({ meterId: 'gemini-weekly', remainingPct: 50 });
+    const usageRun = agy.invocations.find(call => call.args.includes('/usage'))!;
+    // agy 1.5.18 reads usage with a fresh access token and an empty refresh token (observed live).
+    expect(JSON.parse(usageRun.tokenFile!)).toMatchObject({ token: { access_token: 'agy-selected-token', refresh_token: '' } });
   });
 
   it('refuses an agy without file token storage, which would read the machine login instead', async () => {
