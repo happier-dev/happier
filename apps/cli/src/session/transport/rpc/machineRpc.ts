@@ -408,6 +408,20 @@ export async function verifyDeploymentArchiveOriginForHost(input: Readonly<{
   return { installationId: expectedInstallationId, endpoint: target.endpoint };
 }
 
+/** Home consumes the same signed child job whether its executor is local or reached by RPC. */
+export async function buildDeploymentChildMachineReadProof(input: Readonly<{
+  child: import('@happier-dev/protocol').DeploymentChildRpcV1;
+  originalActionEnvelope: unknown;
+  requestId?: string;
+  sign: NonNullable<Parameters<typeof callSocketRpc>[0]['createExternalActionExecution']>;
+}>): Promise<WorkspaceSyncSourceExecutionV1> {
+  const method = `${input.child.machineId}:${RPC_METHODS.DAEMON_DEPLOYMENT_CHILD}`;
+  const requestId = input.requestId ?? randomUUID();
+  return WorkspaceSyncSourceExecutionV1Schema.parse({ method, requestId, params: input.child,
+    originalActionEnvelope: input.originalActionEnvelope,
+    externalActionExecution: await input.sign({ method, requestId, params: input.child }) });
+}
+
 /** One exact account-scoped machine RPC; retry and target selection stay caller-owned. */
 export async function callExactMachineRpc(params: Readonly<{
   credentials: StoredCredentials;
@@ -522,16 +536,13 @@ export async function callExactMachineRpc(params: Readonly<{
     let deploymentChildRequestId: string | undefined;
     let deploymentSetupExecution: WorkspaceSyncSourceExecutionV1 | undefined;
     if (deploymentChild) {
-      deploymentChildRequestId = params.requestId ?? randomUUID();
-      const method = `${machineId}:${params.method}`;
-      // The exact known job is source-signed before its destination codec can
-      // be opened. Its final encrypted RPC is separately signed below.
-      deploymentSetupExecution = WorkspaceSyncSourceExecutionV1Schema.parse({ method,
-        requestId: deploymentChildRequestId, params: deploymentChild,
+      // The final encrypted RPC is separately signed with the same request id.
+      const sign = createExecution();
+      if (!sign) throw new Error('External Action Machine RPC authorization is unavailable');
+      deploymentSetupExecution = await buildDeploymentChildMachineReadProof({ child: deploymentChild,
         originalActionEnvelope: externalAction?.context.originalActionEnvelope,
-        externalActionExecution: await createExecution()?.({ method,
-          requestId: deploymentChildRequestId, params: deploymentChild }),
-      });
+        ...(params.requestId === undefined ? {} : { requestId: params.requestId }), sign });
+      deploymentChildRequestId = deploymentSetupExecution.requestId;
     }
     const operation = withUserScopedRpcSocket({
       token: params.credentials.token,

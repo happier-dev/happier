@@ -165,6 +165,7 @@ import { DEPLOYMENT_PENDING_OPERATION_CANCEL_HTTP_PATH_V1 } from '@happier-dev/p
 import { BOT_TEMPLATE_ACTION_IDS_V1, BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '@happier-dev/protocol/bots/templates/botTemplateActionIdsV1';
 import { BotTemplateInstantiateInputV1Schema } from '@happier-dev/protocol/bots/templates/botTemplateActionsV1';
 import { logger } from '@/ui/logger';
+import { readRetainedVerifiedExternalActionRequester } from '@/daemon/agentIsolation/verifiedExternalActionRequester';
 
 export type ExternalActionMachineRequestSigningKey = string | Uint8Array;
 export type DeploymentArchiveOriginForHost = NonNullable<NonNullable<ExternalActionMachineRpcExecutionV1['deploymentChildExecution']>['archiveOrigin']>;
@@ -184,10 +185,15 @@ export async function readReviewedExternalActionInput(input: Readonly<{
   const envelope = ExternalActionRequestEnvelopeSchema.safeParse(input.envelope);
   const requester = readRequesterAccountActionTransportContext(input.authorization);
   if (!envelope.success) return refuse('root_envelope_invalid');
-  if (!requester) return refuse('root_custody_unavailable');
   if (input.signal?.aborted) return refuse('root_cancelled');
   if (!isExternalActionAuthorizationBoundToEnvelope(binding,
     { actionId: binding.actionId, machineId: binding.machineId, envelope: envelope.data })) return refuse('root_binding_mismatch');
+  if (!requester) {
+    const root = readRetainedVerifiedExternalActionRequester(input.authorization);
+    if (root?.openedCiDeploymentRoot === undefined || !await root.isCurrent()
+      || !await input.authorization.requesterAccountProjection?.isCurrent()) return refuse('root_custody_unavailable');
+    return input.signal?.aborted ? refuse('root_cancelled') : root.openedCiDeploymentRoot;
+  }
   let value: unknown = envelope.data.v === 1 ? envelope.data.input : undefined;
   if (envelope.data.v === 2) {
     const encryption = await requester.resolveEncryption(input.signal);

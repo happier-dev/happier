@@ -4,11 +4,27 @@ import type { ActionExecutorContext, DeploymentChildRpcV1 } from '@happier-dev/p
 import type { WorkspaceSyncSourceExecutionV1 } from '@happier-dev/protocol/socketRpc';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import { readRequesterDeploymentArtifactStore } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { isReviewedDeploymentChild, readReviewedDeploymentDeployInput } from './externalActionExecutionAuthorization';
 import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { assertReviewedDeploymentSource } from '@/deployments/reviewedSource';
 
 type NativeDeploymentChild = Extract<DeploymentChildRpcV1, { kind: 'build' | 'member' }>;
+const localDeploymentChild = Symbol('localDeploymentChild');
+type LocalDeploymentChildContext = ActionExecutorContext & {
+    [localDeploymentChild]?: Readonly<{ authorization: ExternalActionExecutionAuthorizationV1;
+        job: DeploymentChildRpcV1; execution: WorkspaceSyncSourceExecutionV1 }>;
+};
+
+/** Carries the already admitted child to the native executor and its archive driver. */
+export function retainLocalDeploymentChildContext(context: ActionExecutorContext & {
+    externalActionExecutionAuthorization: ExternalActionExecutionAuthorizationV1;
+}, job: DeploymentChildRpcV1, execution: WorkspaceSyncSourceExecutionV1): ActionExecutorContext {
+    const child: LocalDeploymentChildContext = { ...context, [localDeploymentChild]: Object.freeze({
+        authorization: context.externalActionExecutionAuthorization, job, execution,
+    }) };
+    return child;
+}
 
 /** The signed current receipt pins this Artifact id; its current head retains
  * the primary source even when archive restoration selects a different release. */
@@ -23,19 +39,18 @@ export async function assertReviewedDeploymentArchiveSourceForHost(input: Readon
     // Explicit roots already pin the exact prepared Artifact. Legacy semantic
     // roots do not promise an event SHA and retain their existing admission.
     if ('contentArtifactId' in root || root.sha === undefined && root.sourceIntent === undefined) return;
-    const requester = readRequesterAccountActionContext(input.authorization);
+    const store = readRequesterDeploymentArtifactStore(input.authorization);
     const projection = input.authorization.requesterHttpProjection;
-    if (!requester || !projection) return refuse();
+    if (!store || !projection) return refuse();
     input.signal?.throwIfAborted();
     // Only this finite byte-admission path needs content. Ordinary operation
     // identity/observation stays structural and never opens a private Artifact.
-    const [{ createCredentialedAccountArtifactStore }, { runWithServerHttpBaseUrl },
-        { readDeploymentReceiptArtifactV1 }, { buildCurrentAccountStoredContentCompatibilityHttpHeaders }] = await Promise.all([
-        import('@/api/artifacts/accountArtifactStore'), import('@/api/client/serverHttpBaseUrl'),
-        import('@happier-dev/deployment-protocol'), import('@/api/clientCompatibility/cliClientCompatibility'),
+    const [{ runWithServerHttpBaseUrl }, { readDeploymentReceiptArtifactV1 },
+        { buildCurrentAccountStoredContentCompatibilityHttpHeaders }] = await Promise.all([
+        import('@/api/client/serverHttpBaseUrl'), import('@happier-dev/deployment-protocol'),
+        import('@/api/clientCompatibility/cliClientCompatibility'),
     ]);
-    const store = createCredentialedAccountArtifactStore(requester.credentials);
-    const artifact = await runWithServerHttpBaseUrl(requester.serverHttpBaseUrl, () => store.read(input.contentArtifactId, {
+    const artifact = await runWithServerHttpBaseUrl(projection.serverHttpBaseUrl, () => store.read(input.contentArtifactId, {
         signal: input.signal, prepareRecipients: false, includeSharedAudience: false,
         authorizationHeaders: async request => {
             input.signal?.throwIfAborted();
@@ -56,21 +71,23 @@ export async function assertReviewedDeploymentArchiveSourceForHost(input: Readon
 /** Private installed custody for the existing finite archive driver, never a path or byte grant. */
 export async function assertDeploymentArchiveChildCurrentForHost(input: Readonly<{
     context: ActionExecutorContext; machineId: string; installationId: string;
-}>): Promise<Readonly<{ job: NativeDeploymentChild; execution: WorkspaceSyncSourceExecutionV1 }>> {
+}>): Promise<Readonly<{ job: NativeDeploymentChild; execution: WorkspaceSyncSourceExecutionV1; placement: 'local' | 'rpc' }>> {
     const refuse = (): never => { throw Object.assign(new Error('action_forbidden'), { code: 'action_forbidden' }); };
     input.context.signal?.throwIfAborted();
     const authorization = input.context.externalActionExecutionAuthorization;
-    const requester = readRequesterAccountActionContext(authorization);
-    const execution = requester?.deploymentChildExecution;
-    const job = requester?.deploymentChild;
-    if (!authorization || !requester || !execution || !job || (job.kind !== 'build' && job.kind !== 'member')
+    const local = (input.context as LocalDeploymentChildContext)[localDeploymentChild];
+    if (local && local.authorization !== authorization) return refuse();
+    const requester = local ? undefined : readRequesterAccountActionContext(authorization);
+    const execution = local?.execution ?? requester?.deploymentChildExecution;
+    const job = local?.job ?? requester?.deploymentChild;
+    if (!authorization || !execution || !job || (job.kind !== 'build' && job.kind !== 'member')
         || job.kind === 'member' && job.phase === 'cleanup'
-        || job.machineId !== input.machineId || job.installationId !== input.installationId
-        || execution.externalActionExecution.authorization.token !== authorization.token
+        || job.machineId !== input.machineId || job.installationId !== input.installationId) return refuse();
+    if (!local && (execution.externalActionExecution.authorization.token !== authorization.token
         || !sameStrictJsonValue(execution.externalActionExecution.authorization.binding, authorization.binding)
         || !sameStrictJsonValue(execution.externalActionExecution.deploymentChildRouting, projectDeploymentChildRoutingV1(job))
         || !await isReviewedDeploymentChild({ authorization, envelope: execution.originalActionEnvelope,
-            actionId: job.actionId, machineId: job.machineId, params: job, signal: input.context.signal })) return refuse();
+            actionId: job.actionId, machineId: job.machineId, params: job, signal: input.context.signal }))) return refuse();
     input.context.signal?.throwIfAborted();
-    return { job, execution };
+    return { job, execution, placement: local ? 'local' : 'rpc' };
 }

@@ -59,6 +59,7 @@ export function createDeploymentImageArchiveCopyForHost(host: Readonly<{
             await assertCurrent();
             return { path: retained.path, sizeBytes: retained.sizeBytes, sha256: retained.sha256 };
         }
+        if (admitted.placement === 'local') return refuse('filesystem_transfer_custody_required');
         const target = await resolveActionCliCredentialTarget({ requestedServerId: host.credentialProfileId, requireServerIdentityId: true,
             deps: { readCredentialsFn: async () => null, readCredentialsForServerIdFn: async () => host.credentials,
                 getServerProfileFn: getServerProfile } });

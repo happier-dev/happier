@@ -87,9 +87,13 @@ import { normalizeStrictJsonValue, sameStrictJsonValue } from '@happier-dev/prot
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import type { HostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
-import { callExactMachineRpc } from '@/session/transport/rpc/machineRpc';
-import { ExternalActionInstalledMachineUnavailableSchema, readExternalActionInstalledMachineResult,
+import { buildDeploymentChildMachineReadProof, callExactMachineRpc } from '@/session/transport/rpc/machineRpc';
+import { createExternalActionAuthorizedRequestHeaders, createExternalActionMachineRpcExecution,
+    ExternalActionInstalledMachineUnavailableSchema, isReviewedDeploymentChild, readExternalActionInstalledMachineResult,
     readReviewedActionOperationCancelAddress } from '@/api/externalActionExecutionAuthorization';
+import { retainLocalDeploymentChildContext } from '@/api/deploymentChildExecutionAuthorization';
+import { readRetainedVerifiedExternalActionRequester } from '@/daemon/agentIsolation/verifiedExternalActionRequester';
+import { projectDeploymentChildRoutingV1 } from '@happier-dev/protocol/deployments/deploymentChildRoutingV1';
 import { buildActionExecutorContextForRpc } from '@/rpc/handlers/_actionDispatchAdapter';
 import { readRequesterAccountActionContext, readRequesterAccountActionTransportContext, rebindRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { captureRequesterCurrentnessRefusal } from '@/daemon/sessionEncryption/requesterCurrentness';
@@ -452,7 +456,35 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
         const authorization = context.externalActionExecutionAuthorization;
         const requester = readRequesterAccountActionTransportContext(authorization);
         const identity = readInstallationIdentityIfExistsSync();
-        if (!authorization || !requester || !identity || !context.originalActionEnvelope) {
+        const originalActionEnvelope = context.originalActionEnvelope;
+        const target = context.externalActionTarget;
+        if (!requester && authorization && identity && originalActionEnvelope && target
+            && readRetainedVerifiedExternalActionRequester(authorization)?.openedCiDeploymentRoot !== undefined
+            && (job.kind === 'build' || job.kind === 'member' || job.kind === 'retention')
+            && job.actionOperationId === context.operationAcceptance?.operationId
+            && job.machineId === host.machineId && job.machineId === authorization.binding.machineId
+            && job.installationId === identity.installationId && job.installationId === authorization.binding.installationId) {
+            if (!await isReviewedDeploymentChild({ authorization, envelope: originalActionEnvelope, actionId: job.actionId,
+                machineId: job.machineId, params: job, signal: context.signal })) {
+                context.signal?.throwIfAborted();
+                return refuseDeploymentAuthorization('child_root_derivation_refused');
+            }
+            const proof = await buildDeploymentChildMachineReadProof({ child: job, originalActionEnvelope,
+                sign: request => createExternalActionMachineRpcExecution({ ...request, context, effectActionId: job.actionId,
+                    installationId: identity.installationId, privateKey: identity.privateKey,
+                    deploymentChildRouting: projectDeploymentChildRoutingV1(job) }) });
+            // Spend the same Home admission as an RPC child without acquiring socket custody.
+            const path = `/v1/machines/${encodeURIComponent(job.machineId)}`;
+            const signed = createExternalActionAuthorizedRequestHeaders({ authorization, effectActionId: job.actionId, target,
+                installationId: identity.installationId, privateKey: identity.privateKey, method: 'GET', path, deploymentChildExecution: proof });
+            const installed = await readExternalActionInstalledMachineResult({ serverHttpBaseUrl: host.serverHttpBaseUrl,
+                machineId: job.machineId, headers: signed, signal: context.signal });
+            if (!installed.ok) return refuse(machineUnavailable(installed.details));
+            if (installed.machine.installationId !== job.installationId) return refuseDeploymentAuthorization('installed_target_not_current');
+            context.signal?.throwIfAborted();
+            return deploymentChild(job, retainLocalDeploymentChildContext({ ...context, externalActionExecutionAuthorization: authorization }, job, proof));
+        }
+        if (!authorization || !requester || !identity || !originalActionEnvelope) {
             logger.warn('[Deployment] child dispatch refused', {
                 rpc: RPC_METHODS.DAEMON_DEPLOYMENT_CHILD,
                 branch: deploymentAuthorizationFailure('child_dispatch_context_missing').error,

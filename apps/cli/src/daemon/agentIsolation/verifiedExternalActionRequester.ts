@@ -7,6 +7,8 @@ import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protoc
 export type VerifiedExternalActionRequester = Readonly<{
     authorization: ExternalActionExecutionAuthorizationV1;
     isCurrent: () => Promise<boolean>;
+    /** Original Deploy input opened by the scoped token ingress on this installation. */
+    openedCiDeploymentRoot?: unknown;
 }>;
 
 const verifiedOriginalRequester = Symbol('verifiedOriginalActionRequester');
@@ -26,7 +28,7 @@ export function retainVerifiedExternalActionRequester(
         if (descriptor) Object.defineProperty(authorization, key, descriptor);
     }
     Object.defineProperty(authorization, verifiedOriginalRequester, {
-        value: { authorization, isCurrent: proof.isCurrent } satisfies VerifiedExternalActionRequester,
+        value: { ...proof, authorization } satisfies VerifiedExternalActionRequester,
         enumerable: false,
     });
     return Object.freeze(authorization);

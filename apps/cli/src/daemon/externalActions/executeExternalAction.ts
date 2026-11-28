@@ -3,6 +3,7 @@ import { projectContributedActionFailure } from '@/plugins/runtime/invocation/ac
 import { doesExternalActionConsumeRequesterAccountContentV1, projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { projectExternalActionWorkflowSessionLeafContextV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { randomBytes, randomUUID } from 'node:crypto';
+import { DEPLOYMENT_DEPLOY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { apiTokenEncryptionAccessRequired, retainApiTokenDeploymentContentAccess } from '@/auth/apiTokenDeploymentCustody';
 import { prepareApiTokenDeploymentAccountProjection } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { isProjectWorkspaceSyncPreparationActionV1 } from '@happier-dev/protocol/actions/projectActionFamily';
@@ -1009,6 +1010,11 @@ async function executeExternalActionRequest(input: Readonly<{
   }
   if (admittedAuthorization && originalRootCurrentness) admittedAuthorization = retainVerifiedExternalActionRequester({
     authorization: admittedAuthorization, isCurrent: originalRootCurrentness,
+    ...('credentialId' in admittedAuthorization.binding
+      && admittedAuthorization.binding.actionId === DEPLOYMENT_DEPLOY_ACTION_ID_V1
+      && admittedAuthorization.binding.deploymentChildRoot
+      && !admittedAuthorization.binding.workflowActionOrigin
+      && !admittedAuthorization.binding.sessionActionOrigin ? { openedCiDeploymentRoot: structuredClone(decodedInput) } : {}),
   });
   // Home has already admitted this exact reduced lifetime effect, or the
   // signed child of the approved spawn. The marker is never read from Action
