@@ -18,7 +18,7 @@ import { useShowGalleryItemInChat } from '@/hooks/workspaces/files/gallery/useSh
 import type { GalleryMediaItem, GalleryMediaOrigin } from '@/hooks/workspaces/files/gallery/galleryModel';
 import { Modal } from '@/modal';
 import { useSessionCockpitSurfaceNavigation } from '@/components/workspaceCockpit/session/SessionCockpitSurfaceNavigation';
-import { requestRegisteredComposerAttachmentPicker } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
+import { requestRegisteredComposerAttachmentPicker, subscribeComposerPresentationTarget } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
 import { useActiveServerAccountScopeLifetime, useSessionDisplayNameSource } from '@/sync/store/hooks';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { DetailsTabHeader } from '@/components/appShell/panes/details/header/DetailsTabHeader';
@@ -132,11 +132,16 @@ export function SessionMediaGalleryView(props: SessionMediaGalleryViewProps) {
   const attachPicture = React.useCallback(() => {
     if (!lifetime?.isCurrent()) return;
     const scope = lifetime.scope;
-    const pick = () => requestRegisteredComposerAttachmentPicker({ ref: { kind: 'session', sessionId: props.sessionId }, scope });
-    // A phone shows the composer only on the chat surface: bring it forward, then open its picker once it is in front.
+    const ref = { kind: 'session' as const, sessionId: props.sessionId };
+    const pick = () => requestRegisteredComposerAttachmentPicker({ ref, scope }).status;
+    // A phone shows the composer only on the chat surface: bring it forward, then open its picker when that
+    // composer registers (its own event, once), since it mounts only after the chat is in front.
     if (!cockpit) { pick(); return; }
     cockpit.switchSurface('chat');
-    requestAnimationFrame(pick);
+    if (pick() !== 'unavailable') return;
+    const stop = subscribeComposerPresentationTarget(ref, () => {
+      if (pick() !== 'unavailable') stop();
+    });
   }, [cockpit, lifetime, props.sessionId]);
   const loadRest = React.useCallback(async () => {
     if (loadMore) await loadMore();
@@ -191,10 +196,11 @@ export function SessionMediaGalleryView(props: SessionMediaGalleryViewProps) {
         testID="media-tab-header"
         title={t('files.pane.gallery.media')}
         leading={<Icon name="image" size={20} color={theme.colors.text.secondary} />}
+        // The Session's name can be long: it stands last and gives way, so the count and order stay readable.
         meta={[
-          ...(sessionName ? [{ key: 'session', text: sessionName, tone: 'strong' as const, shrink: true }] : []),
           ...(countsKnown ? [{ key: 'count', text: t('files.pane.gallery.pictureCount', { count: model.shownCount }) }] : []),
           { key: 'order', text: t('files.pane.gallery.newestFirst'), tone: 'muted' as const },
+          ...(sessionName ? [{ key: 'session', text: sessionName, tone: 'strong' as const, shrink: true }] : []),
         ]}
       />
     ) : null;
