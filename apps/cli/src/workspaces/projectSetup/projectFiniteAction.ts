@@ -16,7 +16,8 @@ import { projectWorkspaceRefV1, workspaceAddressFromRefV1 } from '@happier-dev/p
 import type { WorkspaceSyncWorkerTargetBasis } from '@/workspaces/sync/workspaceSyncPreparation';
 import { FiniteAdmissionV1Schema } from '@happier-dev/protocol/workspaces/projectWorkerExecutionV1';
 import { createHash } from 'node:crypto';
-import { isAbsolute, relative } from 'node:path';
+import { accessSync, constants as fsConstants, statSync } from 'node:fs';
+import { delimiter, isAbsolute, join, relative } from 'node:path';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { PROJECT_ACTION_INPUT_SCHEMAS_V1, ProjectWorkerNoAcceptanceFailureDetailsV1Schema,
@@ -33,6 +34,7 @@ import { resolveProjectMemoryDemandV1 as maximumDemand } from '@happier-dev/prot
 import { isProjectNativeProcessUncertain, preserveUnconfirmedNativeProcess, type ProjectNativeAdapterProductionV1 } from '@/plugins/runtime/lifecycle/contributions/targetProjectNativeAdapters';
 import { authorizeResolvedProjectExecLaunchForHost, type ProjectNativeEffectCaptureForHost } from '@/plugins/runtime/invocation/services/exec';
 import { validatePath } from '@/rpc/handlers/pathSecurity';
+import { isValidEnvVarKey } from '@/terminal/runtime/envVarSanitization';
 import { getPathRemainderWithinBase, resolveSessionHandoffWorkspaceSessionPath } from '@/session/handoff/paths/sessionHandoffPathNormalization';
 import { resolveProjectSetupAcceptedWorkspace, type ProjectSetupAcceptedAssociation } from './projectSetupAcceptedWorkspace';
 import { RequesterWorkAttributionV1Schema } from '@/daemon/lifecycle/requesterWorkAttribution';
@@ -116,6 +118,107 @@ const failureFromError = async (error: unknown, details?: unknown): Promise<Acti
 };
 const digest = (value: unknown) => createHash('sha256').update(createCanonicalJsonSigningInput(projectNativeJsonValueForTransport(value))).digest('hex');
 
+const BLOCKED_COMPUTE_ENV_KEYS = new Set([
+    'NODE_OPTIONS', 'BASH_ENV', 'ENV', 'PYTHONSTARTUP', 'PYTHONPATH',
+    'RUBYOPT', 'PERL5OPT', 'IFS', 'ZDOTDIR', 'PROMPT_COMMAND',
+    'PATH', 'PATHEXT', 'COMSPEC', 'SYSTEMROOT', 'WINDIR',
+    'HOME', 'USERPROFILE', 'SHELL', 'CDPATH', 'FPATH',
+    'NODE_PATH', 'NODE_EXTRA_CA_CERTS', 'PYTHONHOME', 'PERL5LIB', 'RUBYLIB',
+    'HOSTALIASES', 'LOCPATH', 'NLSPATH', 'GIT_SSH_COMMAND', 'GIT_EXEC_PATH',
+]);
+
+const BLOCKED_COMPUTE_ENV_PREFIXES = ['LD_', 'DYLD_', 'HAPPIER_', 'BASH_FUNC_'] as const;
+const ASCII_CONTROL_CHAR_RE = /[\x00-\x1f\x7f]/;
+const SAFE_BARE_COMPUTE_EXECUTABLE_RE = /^[A-Za-z0-9._+-]+$/;
+
+function isBlockedComputeEnvKey(key: string): boolean {
+    const upper = key.trim().toUpperCase();
+    return BLOCKED_COMPUTE_ENV_KEYS.has(upper)
+        || BLOCKED_COMPUTE_ENV_PREFIXES.some(prefix => upper.startsWith(prefix));
+}
+
+function isValidProjectComputeExecutable(executable: string): boolean {
+    if (executable.length === 0 || ASCII_CONTROL_CHAR_RE.test(executable)) return false;
+    if (isAbsolute(executable)) return true;
+    // Bare executable name resolved strictly via trusted host PATH (shell: false, argv as data).
+    if (executable === '.' || executable === '..') return false;
+    return SAFE_BARE_COMPUTE_EXECUTABLE_RE.test(executable);
+}
+
+function readTrustedPathValue(
+    env: Readonly<Record<string, string | undefined>>,
+    platform: NodeJS.Platform,
+): string | undefined {
+    if (platform === 'win32') {
+        for (const [key, value] of Object.entries(env)) {
+            if (key.toUpperCase() === 'PATH' && typeof value === 'string') return value;
+        }
+        return undefined;
+    }
+    return typeof env.PATH === 'string' ? env.PATH : undefined;
+}
+
+/**
+ * Resolves a validated bare executable name to an absolute regular executable
+ * file strictly across non-empty, absolute directories in the trusted host/toolchain
+ * PATH. Explicitly skips empty segments ("", "::", leading/trailing ":"), ".", and
+ * any relative directory segment to prevent cwd hijacking and to guarantee absolute
+ * executable paths for isolated agent launch frames.
+ */
+export function resolveBareProjectComputeExecutable(
+    executable: string,
+    env: Readonly<Record<string, string | undefined>>,
+    platform: NodeJS.Platform = process.platform,
+): string | null {
+    if (!isValidProjectComputeExecutable(executable) || isAbsolute(executable)) return null;
+    const rawPath = readTrustedPathValue(env, platform);
+    if (!rawPath) return null;
+    const isWindows = platform === 'win32';
+    const pathDelimiter = platform === process.platform ? delimiter : (isWindows ? ';' : ':');
+    const extensions = isWindows
+        ? (env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD')
+            .split(';')
+            .map(ext => ext.trim())
+            .filter(ext => ext.length > 0)
+        : [''];
+    const hasExtension = isWindows && /\.[A-Za-z0-9]+$/.test(executable);
+    const candidateNames = isWindows && !hasExtension
+        ? [executable, ...extensions.map(ext => `${executable}${ext}`)]
+        : [executable];
+    for (const rawDir of rawPath.split(pathDelimiter)) {
+        if (rawDir.length === 0 || rawDir === '.' || !isAbsolute(rawDir)) continue;
+        for (const name of candidateNames) {
+            const candidate = join(rawDir, name);
+            try {
+                const stat = statSync(candidate);
+                if (!stat.isFile()) continue;
+                if (!isWindows) {
+                    if ((stat.mode & 0o111) === 0) continue;
+                    accessSync(candidate, fsConstants.X_OK);
+                }
+                return candidate;
+            } catch {
+                continue;
+            }
+        }
+    }
+    return null;
+}
+
+export function readValidatedComputeEnv(input: unknown): Readonly<Record<string, string>> | null | undefined {
+    if (!input || typeof input !== 'object' || !('env' in input)) return undefined;
+    const raw = (input as { env?: unknown }).env;
+    if (raw === undefined) return undefined;
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    const out: Record<string, string> = Object.create(null);
+    for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+        if (!isValidEnvVarKey(key) || isBlockedComputeEnvKey(key) || key.includes('\0')) return null;
+        if (typeof value !== 'string' || value.includes('\0')) return null;
+        out[key] = value;
+    }
+    return Object.freeze(out);
+}
+
 /**
  * Selects whose custody a Project runtime may use, once, before any Account read. Wire-only or
  * constrained callers without admitted private Account ports stay fail-closed. A caller Home admitted
@@ -196,6 +299,7 @@ type Invocation = Readonly<{
     reviewedEffectDigest: string;
     executionEffectDigest: string;
     choice: ProjectExecutionChoiceV1;
+    acceptedSetup?: ProjectSetupReadV1;
     memoryDemand?: ProjectMemoryDemandV1;
 }>;
 type Review = Readonly<{ kind: 'reviewed'; invocation: Invocation }> | Readonly<{ kind: 'failed'; result: ActionExecuteResult }>;
@@ -294,16 +398,22 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
         const resolveAccepted = () => stage('project.workspace.resolve', async () => {
             await assertNotCancelled();
             if (removal?.association) return removal.association;
-            const association = await resolveProjectSetupAcceptedWorkspace({ address: request.input.workspace,
-                ...projectRuntimeAccountRowsInput(runtime), serverId: runtime.serverId, serverHttpBaseUrl: runtime.serverHttpBaseUrl, signal });
+            if (!workerBasis) {
+                const association = await resolveProjectSetupAcceptedWorkspace({ address: request.input.workspace,
+                    ...projectRuntimeAccountRowsInput(runtime), serverId: runtime.serverId, serverHttpBaseUrl: runtime.serverHttpBaseUrl, signal });
+                await assertNotCancelled();
+                return association;
+            }
+            const [association, target] = await Promise.all([
+                resolveProjectSetupAcceptedWorkspace({ address: request.input.workspace,
+                    ...projectRuntimeAccountRowsInput(runtime), serverId: runtime.serverId, serverHttpBaseUrl: runtime.serverHttpBaseUrl, signal }),
+                resolveProjectSetupAcceptedWorkspace({ address: { serverId: workerBasis.target.serverId, workspaceId: workerBasis.target.id,
+                    machineId: workerBasis.target.machineId, rootPath: workerBasis.target.rootPath }, ...projectRuntimeAccountRowsInput(runtime),
+                    serverId: runtime.serverId, serverHttpBaseUrl: runtime.serverHttpBaseUrl, signal }),
+            ]);
             await assertNotCancelled();
-            if (!workerBasis) return association;
             if (association.workspace.id !== workerBasis.source.id || association.workspace.machineId !== workerBasis.source.machineId
                 || association.workspace.rootPath !== workerBasis.source.rootPath || association.workspace.projectKey !== workerBasis.source.projectKey) throw coded('project_workspace_changed');
-            const target = await resolveProjectSetupAcceptedWorkspace({ address: { serverId: workerBasis.target.serverId, workspaceId: workerBasis.target.id,
-                machineId: workerBasis.target.machineId, rootPath: workerBasis.target.rootPath }, ...projectRuntimeAccountRowsInput(runtime),
-                serverId: runtime.serverId, serverHttpBaseUrl: runtime.serverHttpBaseUrl, signal });
-            await assertNotCancelled();
             if (target.workspace.machineId !== runtime.machineId || target.project.projectId !== association.project.projectId) throw coded('project_workspace_changed');
             return target;
         });
@@ -376,8 +486,10 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
             const source = request.actionId === 'projects.script.run'
                 ? request.input.selection.kind === 'named' ? named?.source : request.input.selection.source : undefined;
             if (request.actionId === 'projects.script.run' && !source) throw coded('project_script_not_found');
+            const computeEnv = request.actionId === 'projects.compute.exec' ? readValidatedComputeEnv(request.input) : undefined;
             return projectNativeJsonValueForTransport({ purpose: request.actionId === 'projects.script.run' ? 'script' : 'exec',
-                command: source ?? (request.actionId === 'projects.compute.exec' ? { executable: request.input.executable, argv: request.input.argv } : undefined),
+                command: source ?? (request.actionId === 'projects.compute.exec' ? { executable: request.input.executable, argv: request.input.argv,
+                    ...(computeEnv ? { env: computeEnv } : {}) } : undefined),
                 execution: named?.execution ?? 'primary', toolchain: manifest?.toolchain ?? { kind: 'host' },
                 environmentVariables: manifest?.environmentVariables ?? [], configEnvironment: config.environment });
         };
@@ -443,12 +555,15 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
             return { choice: placement.choice, script, sourceDefinition, localAcceptedSetup, policy, unavailable: policy.status === 'ready' ? policy.preference.unavailable : undefined,
                 memoryDemand: maximumDemand(request.input.memoryDemand, named?.memoryDemand, sourceManifest?.workspace?.memoryDemand) };
         });
+        const computeEnv = request.actionId === 'projects.compute.exec' ? readValidatedComputeEnv(request.input) : undefined;
         let workerUnavailable: 'ask' | 'primary' | 'fail' | undefined;
         let acceptedDeclaration: ReturnType<typeof selectedExecutionDeclaration> | undefined;
+        let initialSourcePlacement: Awaited<ReturnType<typeof reviewSourcePlacement>>;
         let initialSourceDefinition: Awaited<ReturnType<typeof reviewSourcePlacement>>['sourceDefinition'];
         let initialSourceSetup: ProjectSetupReadV1 | undefined;
         try {
             const placement = await reviewSourcePlacement();
+            initialSourcePlacement = placement;
             acceptedChoice = placement.choice;
             acceptedMemory = placement.memoryDemand;
             acceptedScript = placement.script;
@@ -457,6 +572,13 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
             if (request.actionId !== 'projects.prepare') acceptedDeclaration = selectedExecutionDeclaration(placement.sourceDefinition);
             workerUnavailable = 'unavailable' in placement ? placement.unavailable : undefined;
         } catch (error) { return failure(codeOf(error)); }
+        if (request.actionId === 'projects.compute.exec') {
+            if (!isValidProjectComputeExecutable(request.input.executable)
+                || request.input.argv.some(arg => arg.includes('\0'))
+                || computeEnv === null) {
+                return failure('project_command_invalid');
+            }
+        }
         if (request.actionId !== 'projects.prepare' && (acceptedChoice.kind === 'workers'
             || sourceAssociation.workspace.machineId !== runtime.machineId && request.input.choice?.kind !== 'primary')) {
             if (request.actionId === 'projects.compute.exec') {
@@ -469,7 +591,20 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
             try {
                 if (!runtime.resolveWorkerTarget || !runtime.prepareDequeue) return failure('workspace_sync_source_unavailable');
                 workerBasis = await runtime.resolveWorkerTarget({ source: sourceAssociation.workspace, signal });
-                association = await resolveAccepted();
+                await assertNotCancelled();
+                if (sourceAssociation.workspace.id !== workerBasis.source.id
+                    || sourceAssociation.workspace.machineId !== workerBasis.source.machineId
+                    || sourceAssociation.workspace.rootPath !== workerBasis.source.rootPath
+                    || sourceAssociation.workspace.projectKey !== workerBasis.source.projectKey) {
+                    throw coded('project_workspace_changed');
+                }
+                const targetProject = projectWorkspaceRefV1(workerBasis.target);
+                if (!await isServerProfileHomeIdentity(runtime.serverId, workerBasis.target.serverId)
+                    || workerBasis.target.machineId !== runtime.machineId
+                    || targetProject.projectKey !== sourceAssociation.project.projectId) {
+                    throw coded('project_workspace_changed');
+                }
+                association = { workspace: workerBasis.target, project: { serverId: targetProject.serverId, projectId: targetProject.projectKey } };
             } catch (error) {
                 const code = codeOf(error);
                 if (code === 'worker_copy_missing' && workerUnavailable) return failure(code,
@@ -526,8 +661,8 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
             }
             if (digest(basis) !== digest(acceptedWorkerBasis)) throw coded('project_script_effect_changed', scriptChangedDetails(basis));
         };
-        const assertCopiedExecutionCurrent = async () => {
-            if (!acceptedWorkerBasis) return;
+        const assertCopiedExecutionCurrent = async (): Promise<Awaited<ReturnType<typeof readEffective>> | undefined> => {
+            if (!acceptedWorkerBasis) return undefined;
             const definition = await readEffective(association);
             await assertNotCancelled();
             const declaredEffect = selectedExecutionDeclaration(definition);
@@ -535,6 +670,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
             await assertNotCancelled();
             const current = { declaredEffect, ...(executionInputs ? { executionInputs } : { executionInputsUnavailable: true }) };
             if (!executionInputs || digest(current) !== digest(acceptedWorkerBasis)) throw coded('project_script_effect_changed', scriptChangedDetails(current));
+            return definition;
         };
         const invocationCwd = () => request.actionId === 'projects.compute.exec'
             ? workerRelativeCwd === undefined ? request.input.cwd : resolveSessionHandoffWorkspaceSessionPath({
@@ -575,6 +711,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
             setupRequestedAtMs,
             ...(secretEnvironment ? { secretEnvironment } : {}),
             ...(runtime.configEnvironment ? { configEnvironment: runtime.configEnvironment } : {}),
+            ...(computeEnv ? { invocationEnvironment: computeEnv } : {}),
             ...(runtime.plugins ? { plugins: runtime.plugins } : {}),
             ...(environmentBindings ? { environmentBindings } : {}),
             ...(request.actionId === 'projects.prepare' ? { expectedEffectDigest: request.input.expectedEffectDigest, skipForInvocation: request.input.skipForInvocation } : {}),
@@ -596,8 +733,13 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
         };
         // Primary admission can retain reviewed bytes without giving a selected
         // plugin an invocation/Exec context before the finite reservation.
-        const readPrimaryAdmissionBasis = (acceptedSetup: ProjectSetupReadV1 | undefined) => stage('project.primary.review', async (): Promise<string> => {
-            const snapshot = await readEffective(association, setupForTarget(acceptedSetup));
+        const readPrimaryAdmissionBasis = (
+            acceptedSetup: ProjectSetupReadV1 | undefined,
+            preloadedSnapshot?: typeof initialSourceDefinition,
+        ) => stage('project.primary.review', async (): Promise<string> => {
+            const snapshot = preloadedSnapshot && preloadedSnapshot.effectiveDefinition
+                ? { ...preloadedSnapshot, effectiveDefinition: preloadedSnapshot.effectiveDefinition }
+                : await readEffective(association, setupForTarget(acceptedSetup));
             await assertNotCancelled();
             if (snapshot.document?.status === 'invalid') throw coded('invalid_manifest');
             const manifest = snapshot.effectiveDefinition.effectiveManifest;
@@ -671,8 +813,12 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                 if (!source) throw coded('project_script_not_found');
                 command = await nativeDeclaration(source);
             } else if (request.actionId === 'projects.compute.exec') {
-                const executable = reviewPath(request.input.executable);
-                if (executable !== request.input.executable) await addFile(relative(association.workspace.rootPath, request.input.executable));
+                const resolvedExecutable = isAbsolute(request.input.executable)
+                    ? request.input.executable
+                    : resolveBareProjectComputeExecutable(request.input.executable, originalEnvironment, runtime.platform ?? process.platform);
+                if (!resolvedExecutable) throw coded('project_command_invalid');
+                const executable = reviewPath(resolvedExecutable);
+                if (executable !== resolvedExecutable) await addFile(relative(association.workspace.rootPath, resolvedExecutable));
             }
             return digest({ toolchain: environment.selection, toolchainProvenance, configEnvironment: config.environment,
                 ...(environment.executedFiles ? { toolchainFiles: environment.executedFiles } : {}),
@@ -681,11 +827,14 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
         });
         let acceptedPrimaryBasis: string | undefined;
         if (!workerBasis) {
-            try { acceptedPrimaryBasis = await readPrimaryAdmissionBasis(initialSourceSetup); }
+            try { acceptedPrimaryBasis = await readPrimaryAdmissionBasis(initialSourceSetup, initialSourceDefinition); }
             catch (error) { preserveUnconfirmedNativeProcess(error); return failure(codeOf(error)); }
         }
         let admittedSecretInputs: ReturnType<typeof resolveProjectRequesterSecretInputs> | undefined;
-        const review = (sourceReview?: Awaited<ReturnType<typeof reviewSourcePlacement>>) => stage('project.command.review', async (): Promise<Review> => {
+        const review = (
+            sourceReview?: Awaited<ReturnType<typeof reviewSourcePlacement>>,
+            preloadedTargetDefinition?: Readonly<{ effectiveDefinition: NonNullable<typeof initialSourceDefinition['effectiveDefinition']>; acceptedSetup?: ProjectSetupReadV1 }>,
+        ) => stage('project.command.review', async (): Promise<Review> => {
             const definition = sourceReview?.sourceDefinition ?? initialSourceDefinition;
             if (!admittedTeardown) ({ secretEnvironment, environmentBindings } = await (admittedSecretInputs ??= stage('project.secret_environment.resolve', () => resolveProjectRequesterSecretInputs(runtime, {
                 project: sourceAssociation.project,
@@ -694,7 +843,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                 ...(request.actionId === 'projects.compute.exec' && request.input.environmentBindings
                     ? { environmentBindings: request.input.environmentBindings } : {}),
             }, nativeExecutionSignal()))));
-            const targetDefinition = await readProjectEffectiveDefinition({ root: association.workspace.rootPath,
+            const targetDefinition = preloadedTargetDefinition ?? await readProjectEffectiveDefinition({ root: association.workspace.rootPath,
                 account: projectRuntimeAccountRowsInput(runtime), serverHttpBaseUrl: runtime.serverHttpBaseUrl,
                 project: association.project, signal: nativeExecutionSignal(),
                 // A primary dequeue uses the same Project snapshot as its SOURCE placement.
@@ -717,7 +866,9 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
             const plan = prepared.plan;
             if (request.actionId === 'projects.prepare') return { kind: 'reviewed', invocation: { plan, reviewedEffect: plan.reviewedEffect,
                 reviewedEffectDigest: plan.reviewedEffectDigest, executionEffectDigest: plan.reviewedEffectDigest,
-                choice: { kind: 'primary' }, memoryDemand: plan.manifest?.workspace?.memoryDemand,
+                choice: { kind: 'primary' },
+                ...(targetDefinition.acceptedSetup ? { acceptedSetup: targetDefinition.acceptedSetup } : {}),
+                memoryDemand: plan.manifest?.workspace?.memoryDemand,
             } };
             // SOURCE placement and command preparation are one dequeue decision.
             // Final native admission and a consent wake still read fresh policy.
@@ -764,7 +915,11 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                 }
             } else {
                 execution = request.input.execution ?? 'portable';
-                if (!isAbsolute(request.input.executable) || request.input.executable.includes('\0') || request.input.argv.some(arg => arg.includes('\0'))) return { kind: 'failed', result: failure('project_command_invalid') };
+                if (!isValidProjectComputeExecutable(request.input.executable) || request.input.argv.some(arg => arg.includes('\0')) || computeEnv === null) return { kind: 'failed', result: failure('project_command_invalid') };
+                if (!isAbsolute(request.input.executable)
+                    && !resolveBareProjectComputeExecutable(request.input.executable, plan.preparedLaunchInput.environment, runtime.platform ?? process.platform)) {
+                    return { kind: 'failed', result: failure('project_command_invalid') };
+                }
                 const cwd = validatePath(invocationCwd().replaceAll('\\', '/'), plan.workspace.rootPath);
                 if (!cwd.valid || !cwd.resolvedPath) return { kind: 'failed', result: failure('outside_root') };
             }
@@ -776,7 +931,9 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                 preference: policy.status === 'ready' ? { status: 'ready', value: policy.preference } : { status: policy.status },
             });
             if (placement.status === 'refused') return { kind: 'failed', result: failure(placement.reason) };
-            await assertReceivingPlacement(placement.choice);
+            if (!sourceReview || !projectExecutionChoicesEqualV1(placement.choice, sourceReview.choice)) {
+                await assertReceivingPlacement(placement.choice);
+            }
             const native = command?.kind === 'native' ? command.resolution : command?.kind === 'pluginNative' ? command.resolution : undefined;
             const pluginCommand = command?.kind === 'pluginNative' ? command : undefined;
             const adapterVersion = pluginCommand?.lease.pluginVersion;
@@ -805,7 +962,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                         nativeCommandToolchain: command.resolution.nativeCommandToolchain } : {}),
                     ...(command?.kind === 'pluginNative' ? { adapterVersion,
                         nativeCommandToolchain: command.resolution.toolchainApplied } : {}),
-                } : request.actionId === 'projects.compute.exec' ? { executable: request.input.executable, argv: request.input.argv, cwd: reviewPath(invocationCwd()) } : {};
+                } : request.actionId === 'projects.compute.exec' ? { executable: request.input.executable, argv: request.input.argv, cwd: reviewPath(invocationCwd()), ...(computeEnv ? { env: computeEnv } : {}) } : {};
             // Only references and config/review inputs enter the digest; preparation has already excluded materialized secrets.
             const reviewedEffect = projectNativeJsonValueForTransport({ v: 1, purpose: request.actionId === 'projects.script.run' ? 'script' : 'exec', setupEffect: plan.reviewedEffectDigest, command: reviewedCommand });
             const reviewedEffectDigest = digest(reviewedEffect);
@@ -816,7 +973,9 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                 return { kind: 'failed', result: failure('project_script_effect_changed', { kind: 'pendingApproval', code: 'project_script_effect_changed', reviewedEffectDigest, reviewedEffect }) };
             }
             return { kind: 'reviewed', invocation: { plan, command, reviewedEffect, reviewedEffectDigest, executionEffectDigest,
-                choice: placement.choice, ...(memoryDemand ? { memoryDemand } : {}) } };
+                choice: placement.choice,
+                ...(targetDefinition.acceptedSetup ? { acceptedSetup: targetDefinition.acceptedSetup } : {}),
+                ...(memoryDemand ? { memoryDemand } : {}) } };
         });
         let baseline: Invocation | undefined;
         // Selected SOURCE stays independent of the copied execution target and
@@ -849,16 +1008,17 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
             const operationSignal = AbortSignal.any([signal, operation.signal]);
             const material = Object.freeze({ materializationKey: operationId, environment: Object.freeze({}), selectedMaterials: Object.freeze([]) });
             let lastCleanSyncAtMs: ProjectSetupExecutionInput['lastCleanSyncAtMs'];
+            let lastCopiedTargetDefinition: Awaited<ReturnType<typeof readEffective>> | undefined;
             let wasQueued = false;
             const prepareDequeue = (recheckCurrent = false) => stage('project.sync.prepare', async () => {
                 try {
                     if (workerBasis) await assertNotCancelled();
                     const prepared = await runtime.prepareDequeue?.({ workspace: workerBasis?.source ?? association.workspace, choice: acceptedChoice!,
                         ...(workerBasis ? { basis: workerBasis } : {}), ...(recheckCurrent ? { recheckCurrent: true } : {}), signal: operationSignal });
-                    // Primary preparation performs no copy. Keep its accepted root
-                    // until an actual setup/native effect needs fresh association.
-                    if (workerBasis) association = await resolveAccepted();
-                    await assertCopiedExecutionCurrent();
+                    // Unqueued admissions reuse the source+target rows already admitted
+                    // seconds ago; queued or consent-resumed work refreshes from Home.
+                    if (workerBasis && recheckCurrent) association = await resolveAccepted();
+                    lastCopiedTargetDefinition = await assertCopiedExecutionCurrent();
                     lastCleanSyncAtMs = prepared ? prepared.traversed.at(-1)?.status.lastCleanSyncAtMs : undefined;
                     if (lastCleanSyncAtMs !== undefined) publishProjectFiniteAdmission({ workspace: association.workspace, purpose,
                         requesterAccountId: runtime.accountId, operation, ...commandIdentity, lastCleanSyncAtMs,
@@ -914,7 +1074,6 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                     ...commandIdentity, ...(originRun ? { originRun } : {}) });
                     if (!removal) operation.operationAcceptance?.accept(handle); },
                 onQueue: ahead => {
-                    wasQueued = true;
                     traceExternalActionStage(args.actionId, rootRequestId, 'project.reservation.queued');
                     operation.operationProgress.update({ phase: 'queued', queueAhead: ahead, label: `Queued — ${ahead} ahead` });
                 },
@@ -926,7 +1085,9 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                     kind: codeOf(error) === 'stop_unconfirmed' ? 'stop_unconfirmed' : 'outcome_uncertain', code: codeOf(error),
                 } }); },
                 run: async reservation => {
+                    wasQueued = reservation.waitedInQueue === true;
                     let kind: ProjectSetupExecutionOutcome['kind'] = 'no_launch';
+                    let resumedFromConsent = false;
                     const preparationPhase = (phase: 'copying' | 'setup') => {
                         reservation.phase(phase);
                         if (phase === 'copying' && !workerBasis) return;
@@ -980,12 +1141,17 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                         if (acceptedPrimaryBasis !== undefined && await readPrimaryAdmissionBasis(source.localAcceptedSetup) !== acceptedPrimaryBasis) throw coded('project_script_effect_changed');
                         preparationPhase('copying');
                         await prepareDequeue(true);
+                        resumedFromConsent = true;
                         return true;
                     };
-                    const reviewBeforeEffects = async (sourceReview?: Awaited<ReturnType<typeof reviewSourcePlacement>>): Promise<Review> => {
+                    const reviewBeforeEffects = async (
+                        sourceReview?: Awaited<ReturnType<typeof reviewSourcePlacement>>,
+                        preloadedTargetDefinition?: Parameters<typeof review>[1],
+                    ): Promise<Review> => {
                         while (true) {
-                            const current = await review(sourceReview);
+                            const current = await review(sourceReview, preloadedTargetDefinition);
                             sourceReview = undefined;
+                            preloadedTargetDefinition = undefined;
                             if (current.kind === 'failed' && await resumeSetupReview(current.result)) continue;
                             return current;
                         }
@@ -1008,15 +1174,26 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                         // The operation can outlive the admitting request's reader: it reads its checkout
                         // through the native operation it already holds, retired with that operation.
                         const continueRun = async () => {
-                        const source = await reviewSourcePlacement();
-                        if (!projectExecutionChoicesEqualV1(source.choice, acceptedChoice!)
-                            || source.memoryDemand?.bytes !== acceptedMemory?.bytes) return finish(failure('project_script_effect_changed'));
-                        await assertSourceExecutionCurrent(source);
-                        if (acceptedPrimaryBasis !== undefined && await readPrimaryAdmissionBasis(source.localAcceptedSetup) !== acceptedPrimaryBasis) return finish(failure('project_script_effect_changed'));
+                        let source = initialSourcePlacement;
+                        if (wasQueued) {
+                            association = await resolveAccepted();
+                            source = await reviewSourcePlacement();
+                            if (!projectExecutionChoicesEqualV1(source.choice, acceptedChoice!)
+                                || source.memoryDemand?.bytes !== acceptedMemory?.bytes) return finish(failure('project_script_effect_changed'));
+                            await assertSourceExecutionCurrent(source);
+                            if (acceptedPrimaryBasis !== undefined && await readPrimaryAdmissionBasis(source.localAcceptedSetup) !== acceptedPrimaryBasis) return finish(failure('project_script_effect_changed'));
+                        }
                         preparationPhase('copying');
                         await prepareDequeue(wasQueued);
-                        // A real Sync copy may await remote work and change policy.
-                        const current = await reviewBeforeEffects(workerBasis ? undefined : source);
+                        // Reuse the already-admitted placement & target effective definition
+                        // (just verified on disk by assertCopiedExecutionCurrent for workers,
+                        // or read during initial admission for unqueued primary runs).
+                        const preloadedTarget = workerBasis
+                            ? lastCopiedTargetDefinition
+                            : !wasQueued && initialSourceDefinition.effectiveDefinition
+                                ? { effectiveDefinition: initialSourceDefinition.effectiveDefinition, acceptedSetup: setupForTarget(source.localAcceptedSetup) }
+                                : undefined;
+                        const current = await reviewBeforeEffects(source, preloadedTarget);
                         if (current.kind === 'failed') return finish(current.result);
                         if (!baseline) {
                             if (!projectExecutionChoicesEqualV1(current.invocation.choice, acceptedChoice!)
@@ -1037,6 +1214,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                         };
                         let setupReview = current;
                         let setup = await stage('project.setup.execute', () => executeProjectSetup({ ...executionInput(), preparation: { ...executionInput().preparation,
+                            ...(current.invocation.acceptedSetup ? { acceptedSetup: current.invocation.acceptedSetup } : {}),
                             expectedEffectDigest: current.invocation.plan.reviewedEffectDigest }, beforeNativeEffect: beforeSetupEffect }));
                         while (setup.kind === 'no_launch' && await resumeSetupReview(setup.result)) {
                             const rechecked = await reviewBeforeEffects();
@@ -1047,6 +1225,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                             preparationPhase('setup');
                             setupReview = rechecked;
                             setup = await stage('project.setup.execute', () => executeProjectSetup({ ...executionInput(), preparation: { ...executionInput().preparation,
+                                ...(rechecked.invocation.acceptedSetup ? { acceptedSetup: rechecked.invocation.acceptedSetup } : {}),
                                 expectedEffectDigest: rechecked.invocation.plan.reviewedEffectDigest }, beforeNativeEffect: beforeSetupEffect }));
                         }
                         if (setup.setupSettlement) runtime.publishSetupSettlement?.(setup.setupSettlement);
@@ -1073,8 +1252,12 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                             await assertNotCancelled();
                             const launchPlan = invocation.plan;
                             const env = projectBaseEnvironment(input, launchPlan);
+                            const resolvedExecutable = isAbsolute(request.input.executable)
+                                ? request.input.executable
+                                : resolveBareProjectComputeExecutable(request.input.executable, env, runtime.platform ?? process.platform);
+                            if (!resolvedExecutable) return finish(failure('project_command_invalid'));
                             const projectLaunch = createProjectNativeLaunchAdmission(input, launchPlan);
-                            launch = await authorizeResolvedProjectExecLaunchForHost({ launch: { command: request.input.executable, args: request.input.argv,
+                            launch = await authorizeResolvedProjectExecLaunchForHost({ launch: { command: resolvedExecutable, args: request.input.argv,
                                 cwd: validatePath(invocationCwd().replaceAll('\\', '/'), association.workspace.rootPath).resolvedPath!, env },
                                 projectLaunch, signal: operationSignal, assertCurrent: assertSynchronousCurrent,
                                 agentIsolation: runtime.agentIsolation,
@@ -1083,13 +1266,19 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                         } else return finish(failure('project_script_unavailable'));
                         try {
                             await assertNotCancelled();
-                            association = await resolveAccepted();
-                            const final = await review();
-                            if (final.kind === 'failed') return finish(final.result);
-                            if (!unchanged(final.invocation)) return finish(failure('project_script_effect_changed', {
-                                kind: 'pendingApproval', code: 'project_script_effect_changed', reviewedEffectDigest: final.invocation.reviewedEffectDigest, reviewedEffect: final.invocation.reviewedEffect,
-                            }));
-                            await assertNotCancelled();
+                            const needsFinalRecheck = setup.kind !== 'no_launch'
+                                || resumedFromConsent
+                                || invocation.plan.toolchain.kind !== 'host'
+                                || command?.kind === 'pluginNative';
+                            if (needsFinalRecheck) {
+                                association = await resolveAccepted();
+                                const final = await review();
+                                if (final.kind === 'failed') return finish(final.result);
+                                if (!unchanged(final.invocation)) return finish(failure('project_script_effect_changed', {
+                                    kind: 'pendingApproval', code: 'project_script_effect_changed', reviewedEffectDigest: final.invocation.reviewedEffectDigest, reviewedEffect: final.invocation.reviewedEffect,
+                                }));
+                                await assertNotCancelled();
+                            }
                             if (invocation.plan.toolchainAdapterLease && !invocation.plan.toolchainAdapterLease.isCurrent()
                                 || invocation.command?.kind === 'pluginNative' && !invocation.command.lease.isCurrent()) throw coded('native_adapter_retired');
                             reservation.phase('running');

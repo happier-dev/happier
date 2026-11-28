@@ -109,7 +109,7 @@ export function createCliMachineActionDeps(
           isCurrent: params.isCredentialCurrent, ...(signal ? { signal } : {}) });
         if (result) return result.ok ? result.result : result;
       }
-      return executeActionOperationActionV1({
+      const runOperationAction = () => executeActionOperationActionV1({
         actionId, input, ...(signal ? { signal } : {}),
         context: { surface: context.surface,
           expectedAccountId: params.credentials ? readAccountIdFromToken(params.credentials.token) ?? undefined : context.expectedAccountId },
@@ -124,6 +124,11 @@ export function createCliMachineActionDeps(
           });
         },
       });
+      if (actionId === 'projects.execution.output.read' || actionId === 'projects.execution.output.copy') {
+        const { withSharedMachineRpcTransport } = await import('@/session/transport/rpc/machineRpc');
+        return await withSharedMachineRpcTransport(runOperationAction);
+      }
+      return await runOperationAction();
     },
     machinePageAction: async ({ actionId, input, context }) => {
       if (actionId === MACHINE_DOCTOR_SNAPSHOT_ACTION_ID) {

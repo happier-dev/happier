@@ -5,7 +5,7 @@ import { ProjectDefinitionInspectOutputSchema } from '../projectDefinitionAction
 import { readProjectManifestDocument } from '../../workspaces/projectSetup/projectManifestDocument.js';
 import type { ProjectManifestV1 } from '../../workspaces/projectSetup/projectManifestV1.js';
 import type { ProjectExecutionChoiceV1 } from '../../workspaces/projectWorkerPreferencesV1.js';
-import { resolveProjectActionMachineV1, type ProjectPlacementActionExecutorV1 } from './projectActionPlacement.js';
+import { readAdmittedProjectActionMachineV1, resolveProjectActionMachineV1, type ProjectPlacementActionExecutorV1 } from './projectActionPlacement.js';
 import type { ManagedMachineV1 } from '../../machines/managed/managedMachineV1.js';
 import type { ManagedMachineReadV1 } from '../../machines/managed/actionsV1.js';
 
@@ -179,5 +179,96 @@ describe('Project Action declaration placement ceiling', () => {
     const h = sourceReads({ version: 1, scripts: { check: { execution: 'portable', source: native } } });
     expect(await h.place({ kind: 'named', name: 'check' }, undefined, { executionRunTargetMachineId: 'worker' }))
       .toEqual({ ok: true, machineId: 'worker' });
+  });
+
+  it('reuses only an explicit admittedProjectActionPlacement matching actionId and machineId while refusing ambient executionRunTargetMachineId bypasses and strict choice violations', async () => {
+    const askPool = { kind: 'workers', destination: { kind: 'pool', poolId: pool.destination.poolId, selection: 'ask' } } as const satisfies ProjectExecutionChoiceV1;
+    expect(readAdmittedProjectActionMachineV1({
+      actionId: 'projects.compute.exec',
+      input: { workspace, executable: 'echo', argv: ['ok'], cwd: '/repo' },
+      context: {},
+    })).toBeNull();
+    // Ambient executionRunTargetMachineId (from credentials/replay/frontdoor) MUST NOT short-circuit placement.
+    expect(readAdmittedProjectActionMachineV1({
+      actionId: 'projects.compute.exec',
+      input: { workspace, executable: 'echo', argv: ['ok'], cwd: '/repo', choice: pool },
+      context: { executionRunTargetMachineId: 'worker' },
+    })).toBeNull();
+    // Mismatched actionId or mismatched executionRunTargetMachineId MUST NOT short-circuit.
+    expect(readAdmittedProjectActionMachineV1({
+      actionId: 'projects.compute.exec',
+      input: { workspace, executable: 'echo', argv: ['ok'], cwd: '/repo' },
+      context: {
+        admittedProjectActionPlacement: { actionId: 'projects.script.run', machineId: 'worker' },
+        executionRunTargetMachineId: 'worker',
+      },
+    })).toBeNull();
+    expect(readAdmittedProjectActionMachineV1({
+      actionId: 'projects.compute.exec',
+      input: { workspace, executable: 'echo', argv: ['ok'], cwd: '/repo' },
+      context: {
+        admittedProjectActionPlacement: { actionId: 'projects.compute.exec', machineId: 'worker' },
+        executionRunTargetMachineId: 'other-worker',
+      },
+    })).toBeNull();
+
+    // Explicit host-internal admittedProjectActionPlacement matching (actionId, machineId) reuses placement.
+    const admittedCompute = {
+      admittedProjectActionPlacement: { actionId: 'projects.compute.exec' as const, machineId: 'worker' },
+      executionRunTargetMachineId: 'worker',
+    };
+    expect(readAdmittedProjectActionMachineV1({
+      actionId: 'projects.compute.exec',
+      input: { workspace, executable: 'echo', argv: ['ok'], cwd: '/repo', choice: pool },
+      context: admittedCompute,
+    })).toEqual({ ok: true, machineId: 'worker' });
+    // Even when pre-admitted, choice: pool with selection: 'ask' refuses with choice_required.
+    expect(readAdmittedProjectActionMachineV1({
+      actionId: 'projects.compute.exec',
+      input: { workspace, executable: 'echo', argv: ['ok'], cwd: '/repo', choice: askPool },
+      context: admittedCompute,
+    })).toMatchObject({ ok: false, errorCode: 'choice_required' });
+    expect(readAdmittedProjectActionMachineV1({
+      actionId: 'projects.compute.exec',
+      input: { workspace, executable: 'echo', argv: ['ok'], cwd: '/repo', execution: 'primary' },
+      context: admittedCompute,
+    })).toMatchObject({ ok: false, errorCode: 'primary_only' });
+    expect(readAdmittedProjectActionMachineV1({
+      actionId: 'projects.script.run',
+      input: { workspace, selection: { kind: 'native', source: native } },
+      context: {
+        admittedProjectActionPlacement: { actionId: 'projects.script.run', machineId: 'worker' },
+        executionRunTargetMachineId: 'worker',
+      },
+    })).toMatchObject({ ok: false, errorCode: 'primary_only' });
+    expect(readAdmittedProjectActionMachineV1({
+      actionId: 'projects.compute.exec',
+      input: { workspace, executable: 'echo', argv: ['ok'], cwd: '/repo', choice: exact },
+      context: {
+        admittedProjectActionPlacement: { actionId: 'projects.compute.exec', machineId: 'other-worker' },
+        executionRunTargetMachineId: 'other-worker',
+      },
+    })).toMatchObject({ ok: false, errorCode: 'override_requires_review' });
+    expect(readAdmittedProjectActionMachineV1({
+      actionId: 'projects.prepare',
+      input: { workspace, phase: 'setup' },
+      context: {
+        admittedProjectActionPlacement: { actionId: 'projects.prepare', machineId: 'worker' },
+        executionRunTargetMachineId: 'worker',
+      },
+    })).toEqual({ ok: true, machineId: workspace.machineId });
+
+    // Negative end-to-end check: ambient executionRunTargetMachineId without admittedProjectActionPlacement
+    // falls through to resolveProjectActionMachineV1 and still refuses choice: pool with override_requires_review.
+    const h = sourceReads({ version: 1, scripts: { check: { execution: 'portable', source: native } } });
+    const ambientContext = { executionRunTargetMachineId: 'worker' };
+    expect(readAdmittedProjectActionMachineV1({
+      actionId: 'projects.script.run',
+      input: { workspace, selection: { kind: 'named', name: 'check' }, choice: pool },
+      context: ambientContext,
+    })).toBeNull();
+    expect(await h.place({ kind: 'named', name: 'check' }, pool, ambientContext))
+      .toMatchObject({ ok: false, errorCode: 'override_requires_review' });
+    expect(h.reads).toContain('projects.inspect');
   });
 });

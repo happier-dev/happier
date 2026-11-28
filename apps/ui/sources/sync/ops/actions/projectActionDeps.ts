@@ -4,7 +4,7 @@ import { ActionApprovalRequestCreatedResultSchema, ActionExecuteFailureSchema } 
 import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { resolveProjectActionMachineV1 } from '@happier-dev/protocol/actions/executor/projectActionPlacement';
+import { readAdmittedProjectActionMachineV1, resolveProjectActionMachineV1 } from '@happier-dev/protocol/actions/executor/projectActionPlacement';
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { readHostReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { projectExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
@@ -80,9 +80,10 @@ export function createUiProjectAction(account?: LazyActionAccountContext): NonNu
             const canonicalInput = parsed.data;
             const originalAccount = !context.externalActionCredential && !context.externalActionExecutionAuthorization
                 && !context.rpcSessionAuthorization && (!context.actionCaller || context.actionCaller.kind === 'host');
-            const placement = await resolveProjectActionMachineV1({ actionId, input: canonicalInput, context,
-                executeCanonicalAction, createRequestKey: randomUUID,
-                ...(originalAccount && account.serverIdentityId ? { homeId: account.serverIdentityId } : {}) });
+            const placement = readAdmittedProjectActionMachineV1({ actionId, input: canonicalInput, context })
+                ?? await resolveProjectActionMachineV1({ actionId, input: canonicalInput, context,
+                    executeCanonicalAction, createRequestKey: randomUUID,
+                    ...(originalAccount && account.serverIdentityId ? { homeId: account.serverIdentityId } : {}) });
             if (!placement.ok) return placement;
             const { machineId } = placement;
             if (context.externalActionTarget && (context.externalActionTarget.kind !== 'machine'

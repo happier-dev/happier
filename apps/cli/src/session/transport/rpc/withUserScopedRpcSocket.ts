@@ -50,6 +50,44 @@ export async function readRpcObservation(params: Readonly<{
   }
 }
 
+/** Canonical abort-racing connect and Home RpcError translation for user-scoped RPC sockets. */
+export async function awaitUserScopedRpcConnect(
+  connectPromise: Promise<void>,
+  signal?: AbortSignal,
+): Promise<void> {
+  signal?.throwIfAborted();
+  let onAbort = () => {};
+  const stopped = new Promise<never>((_resolve, reject) => {
+    onAbort = () => reject(signal?.reason ?? Object.assign(new Error('The operation was aborted'), { name: 'AbortError' }));
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+  try {
+    // The adapter settles a connection that closes during the attempt.
+    // The RPC emission owner checks a socket that closes after it connected.
+    await Promise.race([stopped, connectPromise]);
+    signal?.throwIfAborted();
+  } catch (error) {
+    if (!(error instanceof Error && 'data' in error && isRecord(error.data))) throw error;
+    const code = readActionErrorCodeV1({ code: error.data.error });
+    if (!code) throw error;
+    const httpStatus = readHttpStatus(error);
+    throw Object.assign(new RpcError(`Home refused the RPC connection: ${code}`, code, {
+      phase: 'rpc.connect', errorClass: 'RpcError', errorCode: code, httpStatus,
+    }), { data: { statusCode: httpStatus } });
+  } finally {
+    signal?.removeEventListener('abort', onAbort);
+  }
+}
+
+/** Marks pre-emission failures with `'notSent'` while preserving already-recorded dispositions. */
+export async function runWithNotSentRpcDisposition<R>(run: () => Promise<R>): Promise<R> {
+  try {
+    return await run();
+  } catch (error) {
+    throw readRpcRequestDisposition(error) === null ? markRpcRequestDisposition(error, 'notSent') : error;
+  }
+}
+
 /** CLI-owned RPC lifetime; read-only observations use the shared reconnect owner. */
 export async function withUserScopedRpcSocket<R>(
   params: Readonly<{
@@ -112,34 +150,9 @@ export async function withUserScopedRpcSocket<R>(
     }
   }
   const connection = createUserScopedSocketConnection(connectionOptions);
-  const connect = async () => {
-    params.signal?.throwIfAborted();
-    let onAbort = () => {};
-    const stopped = new Promise<never>((_resolve, reject) => {
-      onAbort = () => reject(params.signal?.reason ?? Object.assign(new Error('The operation was aborted'), { name: 'AbortError' }));
-      params.signal?.addEventListener('abort', onAbort, { once: true });
-    });
-    try {
-      // The adapter settles a connection that closes during the attempt.
-      // The RPC emission owner checks a socket that closes after it connected.
-      await Promise.race([stopped, connection.transport.connect()]);
-      params.signal?.throwIfAborted();
-    } catch (error) {
-      if (!(error instanceof Error && 'data' in error && isRecord(error.data))) throw error;
-      const code = readActionErrorCodeV1({ code: error.data.error });
-      if (!code) throw error;
-      const httpStatus = readHttpStatus(error);
-      throw Object.assign(new RpcError(`Home refused the RPC connection: ${code}`, code, {
-        phase: 'rpc.connect', errorClass: 'RpcError', errorCode: code, httpStatus,
-      }), { data: { statusCode: httpStatus } });
-    } finally {
-      params.signal?.removeEventListener('abort', onAbort);
-    }
-  };
+  const connect = () => awaitUserScopedRpcConnect(connection.transport.connect(), params.signal);
   try {
-    return await run(connection.socket, connect, params.signal);
-  } catch (error) {
-    throw readRpcRequestDisposition(error) === null ? markRpcRequestDisposition(error, 'notSent') : error;
+    return await runWithNotSentRpcDisposition(() => run(connection.socket, connect, params.signal));
   } finally {
     try { await connection.transport.destroy(); } catch { /* Preserve the RPC result. */ }
     try { connection.socket.close(); } catch { /* Preserve the RPC result. */ }

@@ -235,7 +235,7 @@ export function createInstalledProjectFiniteRuntime(params: Readonly<{
         serverHttpBaseUrl: accountAccess.serverHttpBaseUrl, targetMachineId: registeredMachineId,
         credentials: workerCredentials,
         ...(requester ? { authorization: requester.accountAuthorization } : {}),
-        prepareBetween: (request, signal) => params.prepareBetween(request, signal, requester ? ingress : undefined) }),
+        prepareBetween: (request, signal, admittedRoute) => params.prepareBetween(request, signal, requester ? ingress : undefined, admittedRoute) }),
       resolveWorkspaceExecutionConfig: workspaceExecutionConfig({
         credentials: requesterContext?.credentials ?? currentCredentials,
         serverHttpBaseUrl: accountAccess.serverHttpBaseUrl,

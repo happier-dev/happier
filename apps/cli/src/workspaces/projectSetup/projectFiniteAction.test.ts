@@ -1,8 +1,8 @@
 import axios from 'axios';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
-import { mkdtemp, mkdir, rm, writeFile, readFile, access, cp } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile, readFile, access, cp, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, isAbsolute, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createWorkspaceExecutionConfigClientV1 } from '@happier-dev/protocol/workspaces/workspaceExecutionConfigClientV1';
 import { createAccountServerWorkspaceWorkerPreferenceClient } from '@/api/workspaces/workspaceWorkerPreferences';
@@ -977,9 +977,9 @@ describe('authenticated finite Project Action owner', () => {
         expect(h.spawned).toEqual([]);
     });
 
-    it.each([false, true])('readmits the primary association at actual native effects (setup: %s)', async setup => {
+    it.each([false, true])('readmits the primary association across setup effects and queue boundaries (setup: %s)', async setup => {
         const h = await harness(setup ? { version: 1, workspace: { setup: [{ kind: 'command', command: 'echo setup' }] } } : undefined,
-            null, 'machine', setup ? 'withdrawal-setup' : 'withdrawal-command');
+            setup ? null : 1, 'machine', setup ? 'withdrawal-setup' : 'withdrawal-command');
         h.waiveSetupApproval();
         const resolveTool = h.runtime.nativeIo.resolveTool;
         let withdrawn = false;
@@ -999,19 +999,41 @@ describe('authenticated finite Project Action owner', () => {
             return { ...response, data: { ...listed, rows: listed.rows.map(row => row.key.kind === 'workspace-ref'
                 ? { ...row, revision: row.revision + 1, content: null } : row) } };
         });
-        vi.spyOn(h.runtime.nativeIo, 'resolveTool').mockImplementation(async (tool, request) => {
-            if (h.operationRuntime.store.get({ accountId: 'owner', machineId: 'machine' }, 'operation')) {
-                withdrawn = true;
-            }
-            return resolveTool(tool, request);
-        });
+        const scope = { accountId: 'owner', machineId: 'machine' };
+        if (setup) {
+            vi.spyOn(h.runtime.nativeIo, 'resolveTool').mockImplementation(async (tool, request) => {
+                if (h.operationRuntime.store.get(scope, 'operation')) {
+                    withdrawn = true;
+                }
+                return resolveTool(tool, request);
+            });
+            expect(await h.rpcInvoke('projects.script.run', { workspace: h.address,
+                selection: { kind: 'native', source: { kind: 'native', tool: 'make', file: 'Makefile', target: 'check' } } }))
+                .toMatchObject({ operation: { operationId: 'operation' } });
+            await expect.poll(() => h.operationRuntime.store.get(scope, 'operation')?.state).toBe('failed');
+            expect(withdrawn).toBe(true);
+            expect(h.spawned).toEqual([]);
+            expect(h.operationRuntime.store.get(scope, 'operation'))
+                .toMatchObject({ error: { errorCode: 'project_workspace_unavailable' } });
+            return;
+        }
+        // Without setup, an unqueued operation is validated once at admission;
+        // a queued operation re-reads the primary association on dequeue.
         expect(await h.rpcInvoke('projects.script.run', { workspace: h.address,
-            selection: { kind: 'native', source: { kind: 'native', tool: 'make', file: 'Makefile', target: 'check' } } }))
+            selection: { kind: 'native', source: { kind: 'native', tool: 'make', file: 'Makefile', target: 'check' } } },
+            { ...h.context, transportRequestId: 'primary-blocker' }))
             .toMatchObject({ operation: { operationId: 'operation' } });
-        await expect.poll(() => h.operationRuntime.store.get({ accountId: 'owner', machineId: 'machine' }, 'operation')?.state).toBe('failed');
-        expect(withdrawn).toBe(true);
-        expect(h.spawned).toEqual([]);
-        expect(h.operationRuntime.store.get({ accountId: 'owner', machineId: 'machine' }, 'operation'))
+        await h.firstSpawn;
+        expect(await h.rpcInvoke('projects.script.run', { workspace: h.address,
+            selection: { kind: 'native', source: { kind: 'native', tool: 'make', file: 'Makefile', target: 'check' } } },
+            { ...h.context, transportRequestId: 'primary-queued' }))
+            .toMatchObject({ operation: { operationId: 'operation-2', state: 'accepted' } });
+        await expect.poll(() => h.runtime.workerAdmission.dependencies().find(entry => entry.operationId === 'operation-2')?.state).toBe('queued');
+        withdrawn = true;
+        h.spawned[0]!.pty.exit(0);
+        await expect.poll(() => h.operationRuntime.store.get(scope, 'operation-2')?.state).toBe('failed');
+        expect(h.spawned).toHaveLength(1);
+        expect(h.operationRuntime.store.get(scope, 'operation-2'))
             .toMatchObject({ error: { errorCode: 'project_workspace_unavailable' } });
     });
 
@@ -1072,23 +1094,19 @@ describe('authenticated finite Project Action owner', () => {
             expect(result).not.toMatchObject({ ok: false });
             expect(ProjectCommandActionOutputV1Schema.parse(result)).toMatchObject({ operation: { actionId: 'projects.script.run' } });
             await h.firstSpawn;
-            // Acceptance and dequeue share each selected setup read across
-            // SOURCE placement and primary review for the same Project.
-            // Setup execution and final native admission keep their own reads.
-            // Currentness is descriptive; each decision still reads fresh mode authority.
-            // Dequeue can start its next fresh read before the accepted RPC
-            // returns. Count each decision below, not that scheduling race.
-            expect.soft(requests.filter(path => path.endsWith('/read'))).toHaveLength(3);
+            // Unqueued primary admission validates once and reuses the admitted
+            // placement, project rows, and setup review across no-op setup and launch.
+            expect.soft(requests.filter(path => path.endsWith('/read'))).toHaveLength(1);
             const projectReads = h.post.mock.calls.filter(([url]) => String(url).endsWith('/v1/account/project-rows/read'));
-            expect.soft(projectReads).toHaveLength(6);
-            expect.soft(h.post.mock.calls).toHaveLength(6);
+            expect.soft(projectReads).toHaveLength(2);
+            expect.soft(h.post.mock.calls).toHaveLength(2);
             // Project row snapshot reads borrow the held Account observation (085cab5b331).
             expect.soft(h.get.mock.calls.slice(getCallsAtStart)).toEqual([]);
-            expect.soft(phaseReads['project.placement.review']).toEqual([{ config: 1, project: 1 }, { config: 1, project: 1 }]);
-            expect.soft(phaseReads['project.primary.review']).toEqual([{ config: 0, project: 0 }, { config: 0, project: 0 }]);
-            expect.soft(phaseReads['project.command.review']).toEqual([{ config: 0, project: 0 }, { config: 1, project: 1 }]);
+            expect.soft(phaseReads['project.placement.review']).toEqual([{ config: 1, project: 1 }]);
+            expect.soft(phaseReads['project.primary.review']).toEqual([{ config: 0, project: 0 }]);
+            expect.soft(phaseReads['project.command.review']).toEqual([{ config: 0, project: 0 }]);
             expect.soft(phaseReads['project.sync.prepare']).toEqual([{ config: 0, project: 0 }]);
-            expect(requests.filter(path => path === '/v1/account/encryption')).toHaveLength(3);
+            expect(requests.filter(path => path === '/v1/account/encryption')).toHaveLength(1);
             const stages = diagnostics.mock.calls.filter(([event]) => event === '[external-action-stage]')
                 .map(([, fields]) => fields);
             expect(stages).toEqual(expect.arrayContaining([
@@ -2869,14 +2887,15 @@ describe('authenticated finite Project Action owner', () => {
         expect(h.spawned).toHaveLength(1);
     });
 
-    it.each(['explicit', 'workspace', 'withdrawn_after_copy'] as const)
+    it.each(['explicit', 'workspace', 'withdrawn_while_queued'] as const)
     ('admits only the current authorized pool member at the addressed receiving Machine (%s)', async scenario => {
         // The Home authentication boundary supplies the current issued-token
         // provenance and epoch consumed by original Account Action delivery.
         const token = scenario === 'workspace' ? `header.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 1,
             provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature` : 'requester';
         const h = await harness({ version: 1, scripts: { checked: { execution: 'portable',
-            source: { kind: 'native', tool: 'make', file: 'Makefile', target: 'check' } } } }, null, 'source-machine', token);
+            source: { kind: 'native', tool: 'make', file: 'Makefile', target: 'check' } } } },
+            scenario === 'withdrawn_while_queued' ? 1 : null, 'source-machine', token);
         const target = await h.addWorkerTarget();
         const poolId = '99d55938-f860-4af8-8023-01fecec86f35';
         h.setWorkerPool(poolId);
@@ -3040,14 +3059,23 @@ describe('authenticated finite Project Action owner', () => {
         expect(result).toMatchObject({ operation: { operationId: 'operation', domainRef: { workspaceRefId: target.id } } });
         await expect.poll(() => h.runtime.workerAdmission.dependencies()[0]?.state).toBe('copying');
         expect(h.spawned).toEqual([]);
-        if (scenario === 'withdrawn_after_copy') members = members.filter(member => member.machineId !== 'machine');
-        h.continueCopy();
         const scope = { accountId: 'owner', machineId: 'machine' };
-        if (scenario === 'withdrawn_after_copy') {
-            await expect.poll(() => h.operationRuntime.store.get(scope, 'operation')?.state).toBe('failed');
-            expect(h.operationRuntime.store.get(scope, 'operation')).toMatchObject({ error: { errorCode: 'target_not_local' } });
-            expect(h.spawned).toEqual([]);
+        if (scenario === 'withdrawn_while_queued') {
+            // Queue a second job while the first holds the single slot, then
+            // withdraw the worker from the pool before dequeue so post-dequeue
+            // revalidation fails closed without running the queued job.
+            expect(await h.rpcInvoke('projects.script.run', input, { ...h.context, transportRequestId: 'pool-queued-2' }))
+                .toMatchObject({ operation: { operationId: 'operation-2', state: 'accepted' } });
+            await expect.poll(() => h.runtime.workerAdmission.dependencies().find(entry => entry.operationId === 'operation-2')?.state).toBe('queued');
+            h.continueCopy();
+            await expect.poll(() => h.spawned.length).toBe(1);
+            members = members.filter(member => member.machineId !== 'machine');
+            h.spawned[0]!.pty.exit(0);
+            await expect.poll(() => h.operationRuntime.store.get(scope, 'operation-2')?.state).toBe('failed');
+            expect(h.operationRuntime.store.get(scope, 'operation-2')).toMatchObject({ error: { errorCode: 'target_not_local' } });
+            expect(h.spawned).toHaveLength(1);
         } else {
+            h.continueCopy();
             await expect.poll(() => h.spawned.length).toBe(1);
             expect(h.spawned[0]!.params.options.cwd).toBe(target.rootPath);
             h.spawned[0]!.pty.exit(0);
@@ -3695,4 +3723,179 @@ describe('authenticated finite Project Action owner', () => {
     });
 
 
+
+    it('resolves safe bare PATH executables to absolute paths for projects.compute.exec while refusing traversal, drive-relative, spaces, control chars, and empty/dot PATH cwd hijacking', async () => {
+        const h = await harness();
+        h.allowAdHoc();
+        const trustedBin = await mkdtemp(join(tmpdir(), 'happier-trusted-bin-'));
+        roots.push(trustedBin);
+        const toolPath = join(trustedBin, 'custom-tool');
+        await writeFile(toolPath, '#!/bin/sh\necho ok\n');
+        await chmod(toolPath, 0o755);
+
+        // Place an identically named executable inside workspace cwd to prove empty/dot PATH never hijacks it.
+        const cwdHijackPath = join(h.root, 'cwd-only-tool');
+        await writeFile(cwdHijackPath, '#!/bin/sh\necho evil\n');
+        await chmod(cwdHijackPath, 0o755);
+
+        Object.assign(h.runtime, {
+            hostEnvironment: { PATH: [trustedBin, '/usr/bin', '/bin'].join(delimiter) },
+        });
+
+        for (const bad of ['../evil', './local', 'sub/bin', 'dir\\bin', '.', '..', 'bad\0name', 'C:foo', 'foo bar', 'foo\tbar', 'bell\x07tool', '/usr/bin/echo\x07']) {
+            expect(await h.invoke('projects.compute.exec', {
+                workspace: h.address, executable: bad, argv: ['ok'], cwd: h.root,
+            })).toMatchObject({ ok: false, errorCode: 'project_command_invalid' });
+        }
+        expect(h.spawned).toHaveLength(0);
+
+        // Bare executables resolve to absolute paths on trusted host PATH and satisfy isolated agentLaunchFrame.
+        const { encodeAgentLaunchFrame } = await import('@/daemon/agentIsolation/agentLaunchFrame');
+        for (const [bareName, expectedPath] of [['custom-tool', toolPath], ['echo', null]] as const) {
+            const idx = h.spawned.length;
+            expect(await h.invoke('projects.compute.exec', {
+                workspace: h.address, executable: bareName, argv: ['hello'], cwd: h.root,
+            }, { ...h.context, transportRequestId: `bare-${bareName}` }))
+                .toMatchObject({ operation: { domainRef: { purpose: 'exec' } } });
+            await expect.poll(() => h.spawned.length).toBe(idx + 1);
+            const spawnedFile = h.spawned[idx]!.params.file;
+            expect(isAbsolute(spawnedFile)).toBe(true);
+            if (expectedPath) expect(spawnedFile).toBe(expectedPath);
+            // Proves resolved absolute executable is compatible with isolated launch frames (agentLaunchFrame.ts:48).
+            expect(() => encodeAgentLaunchFrame({
+                v: 1,
+                executable: spawnedFile,
+                args: ['hello'],
+                cwd: h.root,
+                runtimeHome: h.root,
+                environment: {},
+                selectedMaterials: [],
+            })).not.toThrow();
+            expect(h.spawned[idx]!.params).toMatchObject({ args: ['hello'], options: { cwd: h.root } });
+            h.spawned[idx]!.pty.exit(0);
+            await turn(); await turn();
+        }
+
+        // Empty PATH segments (leading ":", "::", trailing ":") and "." MUST NEVER resolve executables in workspace cwd.
+        const spawnedBeforeHijack = h.spawned.length;
+        for (const poisonedPath of [`:${trustedBin}`, `${trustedBin}::/usr/bin`, `${trustedBin}:`, `.${delimiter}${trustedBin}`, `relative/bin${delimiter}${trustedBin}`]) {
+            Object.assign(h.runtime, { hostEnvironment: { PATH: poisonedPath } });
+            expect(await h.invoke('projects.compute.exec', {
+                workspace: h.address, executable: 'cwd-only-tool', argv: ['pwn'], cwd: h.root,
+            }, { ...h.context, transportRequestId: `hijack-${poisonedPath}` }))
+                .toMatchObject({ ok: false, errorCode: 'project_command_invalid' });
+        }
+        expect(h.spawned).toHaveLength(spawnedBeforeHijack);
+    });
+
+    it('collapses unqueued worker projects.compute.exec admission reads to at most once while still revalidating queued executions', async () => {
+        const h = await harness({ version: 1 }, 1, 'source-machine');
+        const target = await h.addWorkerTarget();
+        h.allowAdHoc();
+        Object.assign(h.runtime, { hostEnvironment: { PATH: ['/usr/bin', '/bin'].join(delimiter) } });
+        let sourceInspectCount = 0;
+        let policyReadCount = 0;
+        const baseInspect = h.runtime.inspectSourceProjectManifest!;
+        h.runtime.inspectSourceProjectManifest = async input => {
+            sourceInspectCount++;
+            return await baseInspect(input);
+        };
+        const baseResolveConfig = h.runtime.resolveWorkspaceExecutionConfig;
+        h.runtime.resolveWorkspaceExecutionConfig = async (context, ingress, actionId) => {
+            const client = await baseResolveConfig(context, ingress, actionId);
+            if (!client) return null;
+            return {
+                ...client,
+                get: async input => {
+                    policyReadCount++;
+                    return await client.get(input);
+                },
+            };
+        };
+        const projectRowReadCount = () => h.post.mock.calls.filter(([url]) => String(url).endsWith('/v1/account/project-rows/read')).length;
+        const startRowReads = projectRowReadCount();
+        const input = {
+            workspace: h.address,
+            executable: 'echo',
+            argv: ['ok'],
+            cwd: h.root,
+            choice: { kind: 'workers', destination: { kind: 'machine', machineId: 'machine' } },
+        };
+        const first = await h.rpcInvoke('projects.compute.exec', input, { ...h.context, transportRequestId: 'warm-worker-1' });
+        expect(first).toMatchObject({ operation: { operationId: 'operation', domainRef: { workspaceRefId: target.id } } });
+        h.continueCopy();
+        await expect.poll(() => h.spawned.length).toBe(1);
+        expect(isAbsolute(h.spawned[0]!.params.file)).toBe(true);
+        // Warm unqueued worker cost contract:
+        // - inspectSourceProjectManifest: 1 (admission only, not re-run post-enqueue)
+        // - readExecutionPolicy: 1 (admission only, not 4x)
+        // - project-rows/read: at most 2 (1 source workspace-ref + 1 target project-organization, NOT 7-8x!)
+        expect(sourceInspectCount).toBe(1);
+        expect(policyReadCount).toBe(1);
+        expect(projectRowReadCount() - startRowReads).toBeLessThanOrEqual(2);
+
+        // Now enqueue a second job while the first holds the single slot (runAtMost=1).
+        // Change SOURCE manifest while queued so post-dequeue revalidation must run and fail closed.
+        const second = await h.rpcInvoke('projects.compute.exec', input, { ...h.context, transportRequestId: 'queued-worker-2' });
+        expect(second).toMatchObject({ operation: { operationId: 'operation-2', state: 'accepted' } });
+        await expect.poll(() => h.runtime.workerAdmission.dependencies().find(entry => entry.operationId === 'operation-2')?.state).toBe('queued');
+        const inspectsBeforeDequeue = sourceInspectCount;
+        const policiesBeforeDequeue = policyReadCount;
+        await writeFile(join(h.root, '.happier/project.json'), JSON.stringify({ version: 1, environmentVariables: [{ name: 'CHANGED_WHILE_QUEUED' }] }));
+        h.spawned[0]!.pty.exit(0);
+        const scope = { accountId: 'owner', machineId: 'machine' };
+        await expect.poll(() => h.operationRuntime.store.get(scope, 'operation-2')?.state).toBe('failed');
+        expect(h.operationRuntime.store.get(scope, 'operation-2')).toMatchObject({ error: { errorCode: 'project_script_effect_changed' } });
+        expect(sourceInspectCount).toBeGreaterThan(inspectsBeforeDequeue);
+        expect(policyReadCount).toBeGreaterThan(policiesBeforeDequeue);
+        expect(h.spawned).toHaveLength(1);
+    });
+
+    it('validates optional literal env overrides for projects.compute.exec while blocking loader, path, shell, and Happier env keys', async () => {
+        const { readValidatedComputeEnv } = await import('./projectFiniteAction');
+        expect(readValidatedComputeEnv({ executable: 'echo' })).toBeUndefined();
+        expect(readValidatedComputeEnv({ env: undefined })).toBeUndefined();
+        for (const badEnv of [
+            { LD_PRELOAD: '/tmp/evil.so' },
+            { ld_library_path: '/tmp/evil' },
+            { DYLD_INSERT_LIBRARIES: '/tmp/evil.dylib' },
+            { NODE_OPTIONS: '--require=/tmp/evil.js' },
+            { NODE_PATH: '/tmp/evil' },
+            { NODE_EXTRA_CA_CERTS: '/tmp/evil.pem' },
+            { BASH_ENV: '/tmp/evil.sh' },
+            { BASH_FUNC_foo: '() { :; }' },
+            { bash_func_bar: '1' },
+            { PATH: '/tmp/evil:/usr/bin' },
+            { path: '/tmp/evil' },
+            { PATHEXT: '.EXE' },
+            { COMSPEC: 'cmd.exe' },
+            { SYSTEMROOT: '/tmp' },
+            { WINDIR: '/tmp' },
+            { HOME: '/tmp/evil' },
+            { USERPROFILE: '/tmp/evil' },
+            { SHELL: '/tmp/evil' },
+            { CDPATH: '/tmp/evil' },
+            { FPATH: '/tmp/evil' },
+            { PYTHONHOME: '/tmp/evil' },
+            { PERL5LIB: '/tmp/evil' },
+            { RUBYLIB: '/tmp/evil' },
+            { HOSTALIASES: '/tmp/evil' },
+            { LOCPATH: '/tmp/evil' },
+            { NLSPATH: '/tmp/evil' },
+            { GIT_SSH_COMMAND: 'evil' },
+            { GIT_EXEC_PATH: '/tmp/evil' },
+            { HAPPIER_HOME_DIR: '/tmp/evil' },
+            { happier_token: 'stolen' },
+            { SAFE_KEY: 'bad\0value' },
+            { 'INVALID=KEY': '1' },
+        ]) {
+            expect(readValidatedComputeEnv({ env: badEnv })).toBeNull();
+        }
+        expect(readValidatedComputeEnv({
+            env: { APP_COMPUTE_TEST_VAR: 'from-literal-env', CUSTOM_MODE: 'fast' },
+        })).toEqual({
+            APP_COMPUTE_TEST_VAR: 'from-literal-env',
+            CUSTOM_MODE: 'fast',
+        });
+    });
 });

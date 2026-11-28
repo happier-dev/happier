@@ -27,6 +27,53 @@ export function readProjectScriptCallerPlacementFailureV1(input: unknown): Actio
   }
 }
 
+/**
+ * Reuses a target Machine explicitly admitted by the outer actionExecutor
+ * (stamped via host-internal `admittedProjectActionPlacement` for this exact
+ * `(actionId, machineId)`) without repeating SOURCE/Home/pool placement RPCs.
+ * Never short-circuits from ambient `executionRunTargetMachineId`. Static
+ * primary-only and explicit-choice guards still run locally, and the receiving
+ * host retains authoritative placement review.
+ * Returns null when no explicit pre-admitted placement matches.
+ */
+export function readAdmittedProjectActionMachineV1(args: Readonly<{
+  actionId: keyof typeof PROJECT_FINITE_ACTION_RPC_METHODS_V1;
+  input: unknown;
+  context: Pick<ActionExecutorContext, 'admittedProjectActionPlacement' | 'executionRunTargetMachineId'>;
+}>): { ok: true; machineId: string } | ActionExecuteFailure | null {
+  const preAdmitted = args.context.admittedProjectActionPlacement;
+  if (!preAdmitted || preAdmitted.actionId !== args.actionId) return null;
+  const admittedMachineId = typeof preAdmitted.machineId === 'string'
+    ? preAdmitted.machineId.trim() : '';
+  if (!admittedMachineId) return null;
+  const contextTargetMachineId = typeof args.context.executionRunTargetMachineId === 'string'
+    ? args.context.executionRunTargetMachineId.trim() : '';
+  if (contextTargetMachineId && contextTargetMachineId !== admittedMachineId) return null;
+  const parsed = PROJECT_ACTION_INPUT_SCHEMAS_V1[args.actionId].safeParse(args.input);
+  if (!parsed.success) return failure('invalid_parameters');
+  const workspace = parsed.data.workspace;
+  if (args.actionId === 'projects.prepare') return { ok: true, machineId: workspace.machineId };
+  const choice = 'choice' in parsed.data ? parsed.data.choice : undefined;
+  const primaryOnly = args.actionId === 'projects.compute.exec'
+    ? 'execution' in parsed.data && parsed.data.execution === 'primary'
+    : parsed.data.selection.kind === 'native';
+  if (primaryOnly && (choice?.kind === 'workers' || admittedMachineId !== workspace.machineId)) {
+    return failure('primary_only');
+  }
+  if (choice?.kind === 'primary' && admittedMachineId !== workspace.machineId) {
+    return failure('override_requires_review');
+  }
+  if (choice?.kind === 'workers' && choice.destination.kind === 'machine'
+    && choice.destination.machineId !== admittedMachineId) {
+    return failure('override_requires_review');
+  }
+  if (choice?.kind === 'workers' && choice.destination.kind === 'pool'
+    && choice.destination.selection === 'ask') {
+    return failure('choice_required');
+  }
+  return { ok: true, machineId: admittedMachineId };
+}
+
 /** Addresses the incumbent finite Action using the same frontdoor's SOURCE reads
  * and B6 precedence/pool owners. This neither admits nor launches the target. */
 export async function resolveProjectActionMachineV1(args: Readonly<{

@@ -38,12 +38,13 @@ export type ProjectWorkerAdmissionRequest = Readonly<{
   onQueue?(ahead: number): void;
   onReserved?(): void;
   onUnknown?(error: unknown): void;
-  run(context: Readonly<{ signal: AbortSignal; phase(phase: 'copying' | 'setup' | 'running'): void }>): Promise<ProjectWorkerReservationOutcome>;
+  run(context: Readonly<{ signal: AbortSignal; phase(phase: 'copying' | 'setup' | 'running'): void; waitedInQueue?: boolean }>): Promise<ProjectWorkerReservationOutcome>;
 }>;
 
 type Entry = {
   request: ProjectWorkerAdmissionRequest;
   state: ProjectWorkerDependency['state'];
+  waitedInQueue: boolean;
   bytes: number;
   relatedWorkspaces: NonNullable<ProjectWorkerAdmissionRequest['relatedWorkspaces']>;
   resolve(result: ActionExecuteResult): void;
@@ -142,28 +143,31 @@ export function createProjectWorkerAdmission(options: Readonly<{
     if (queuedIndex >= 0) publishQueuePositions(queuedIndex);
     void notifyChanged();
   }
+  function markQueueWaiting() {
+    for (const waiting of queue) waiting.waitedInQueue = true;
+  }
   async function pump() {
     do {
       changedWhilePumping = false;
       while (queue.length) {
         const policy = await readPolicy();
-        if (policy.status !== 'ready') break;
+        if (policy.status !== 'ready') { markQueueWaiting(); break; }
         const entry = queue[0];
         if (!entry) break;
         if (entry.request.signal.aborted) { finish(entry, cancelled()); continue; }
         const active = reservations();
-        if (policy.policy.runAtMost !== null && active.length >= policy.policy.runAtMost) break;
+        if (policy.policy.runAtMost !== null && active.length >= policy.policy.runAtMost) { markQueueWaiting(); break; }
         if (entry.bytes > 0) {
           const observation = memory(memoryHold ? memoryHold.readFresh : readMemory);
           // Execution-owner notifications/operation inspection can recover telemetry. Accepted custody stays put.
-          if (!observation) break;
+          if (!observation) { markQueueWaiting(); break; }
           if (entry.bytes > observation.totalBytes) {
             finish(entry, { ok: false, errorCode: 'memory_insufficient', error: 'memory_insufficient' });
             continue;
           }
           // Free already includes RSS. Held demand is compared to total separately, never subtracted from free.
           const heldBytes = active.reduce((sum, held) => sum + held.bytes, 0);
-          if (entry.bytes > observation.availableBytes || entry.bytes > observation.totalBytes - heldBytes) break;
+          if (entry.bytes > observation.availableBytes || entry.bytes > observation.totalBytes - heldBytes) { markQueueWaiting(); break; }
         }
         queue.shift();
         syncMemoryHold();
@@ -174,7 +178,7 @@ export function createProjectWorkerAdmission(options: Readonly<{
         if (entry.request.signal.aborted) { finish(entry, cancelled()); continue; }
         void (async () => {
           try {
-            const outcome = await entry.request.run({ signal: entry.request.signal, phase: phase => {
+            const outcome = await entry.request.run({ signal: entry.request.signal, waitedInQueue: entry.waitedInQueue, phase: phase => {
               if (entries.get(entry.request.operationId) !== entry) return;
               entry.state = phase;
             } });
@@ -223,7 +227,10 @@ export function createProjectWorkerAdmission(options: Readonly<{
           ...(request.relationshipId ? { relationshipId: request.relationshipId } : {}) }, ...(request.relatedWorkspaces ?? [])]
           .map(related => ({ workspaceRefId: related.workspaceRefId,
             ...(related.relationshipId ? { relationshipId: related.relationshipId } : {}) }));
-        const entry: Entry = { request, state: 'queued', bytes, relatedWorkspaces, resolve, removeAbortListener: () => undefined };
+        const waitedInQueue = queue.length > 0
+          || (assessment.policy.status === 'ready' && assessment.policy.policy.runAtMost !== null
+            && reservations().length >= assessment.policy.policy.runAtMost);
+        const entry: Entry = { request, state: 'queued', waitedInQueue, bytes, relatedWorkspaces, resolve, removeAbortListener: () => undefined };
         const abort = () => { if (entry.state === 'queued') finish(entry, cancelled()); };
         request.signal.addEventListener('abort', abort, { once: true });
         entry.removeAbortListener = () => request.signal.removeEventListener('abort', abort);

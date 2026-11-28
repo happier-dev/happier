@@ -1481,10 +1481,23 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     request: WorkspaceSyncPrepareBetweenRequestV1,
     signal?: AbortSignal,
     context?: RpcHandlerContext,
+    admittedRoute?: Awaited<ReturnType<typeof currentRouteSnapshot>>,
   ): Promise<WorkspaceSyncPrepareBetweenResultV1> => withWebLatencyTrace(
     readWebLatencyTracePoint()?.requestId ?? context?.callerInputAuthorization?.binding.requestId ?? context?.transportRequestId,
     () => timeWebLatencyPhase('workspaceSync.handoffPrepareBetween', async () => {
-    const snapshot = await currentRouteSnapshot(request, signal, context);
+    let snapshot: Awaited<ReturnType<typeof currentRouteSnapshot>>;
+    if (admittedRoute && admittedRoute.serverId === semanticServerId) {
+      await privateRecovery;
+      if (isProjectPreparation(context)) {
+        await timeWebLatencyPhase('workspaceSync.route.originalInput', () => assertProjectPreparationInput(request, {
+          rows: [], workspaceRefs: admittedRoute.workspaceRefs, relationships: admittedRoute.relationships, organizations: [],
+          sessionDefaults: [], servicesOrganizations: [],
+        }, context!));
+      }
+      snapshot = admittedRoute;
+    } else {
+      snapshot = await currentRouteSnapshot(request, signal, context);
+    }
     const route = resolveWorkspaceSyncTransferRoute({ ...snapshot, ...request });
     if (!route.ok) return routeFailure(route);
     if (route.kind === 'same_workspace' || route.controllerMachineId === input.localMachineId) {

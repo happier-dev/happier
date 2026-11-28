@@ -180,4 +180,71 @@ describe('operation attachment output adapter', () => {
     expect(await executeActionOperationActionV1({ actionId: 'projects.execution.output.read',
       input: { ...address, byteOffset: 7 }, transport })).toEqual({ ok: false, errorCode: 'permission_denied', error: 'Operation grant revoked' });
   });
+
+  it('skips redundant actionOperation.get.v2 when a matching authorized knownOperation with terminalId is supplied, and falls back when mismatched or pending', async () => {
+    const transport = vi.fn(async ({ method }: Parameters<ActionOperationMachineTransportV1>[0]) =>
+      method === 'actionOperation.get.v2' ? { kind: 'found', operation: command } : output);
+    expect(await executeActionOperationActionV1({
+      actionId: 'projects.execution.output.read',
+      input: { ...address, byteOffset: 4 },
+      knownOperation: command,
+      transport,
+    })).toEqual(output);
+    expect(transport.mock.calls.map(([req]) => req.method)).toEqual(['daemon.terminal.stream.readBytes']);
+    expect(transport.mock.calls[0]![0]).toMatchObject({
+      serverId: 'execution-home',
+      machineId: 'worker',
+      method: 'daemon.terminal.stream.readBytes',
+      payload: { terminalId: 'terminal', byteOffset: 4 },
+    });
+
+    // Mismatched operationId or missing terminalId must still query actionOperation.get.v2.
+    transport.mockClear();
+    expect(await executeActionOperationActionV1({
+      actionId: 'projects.execution.output.read',
+      input: { ...address, byteOffset: 4 },
+      knownOperation: { ...command, operationId: 'other-operation' },
+      transport,
+    })).toEqual(output);
+    expect(transport.mock.calls.map(([req]) => req.method)).toEqual(['actionOperation.get.v2', 'daemon.terminal.stream.readBytes']);
+
+    transport.mockClear();
+    expect(await executeActionOperationActionV1({
+      actionId: 'projects.execution.output.read',
+      input: { ...address, byteOffset: 4 },
+      knownOperation: { ...command, domainRef: { ...command.domainRef!, terminalId: undefined } },
+      transport,
+    })).toEqual(output);
+    expect(transport.mock.calls.map(([req]) => req.method)).toEqual(['actionOperation.get.v2', 'daemon.terminal.stream.readBytes']);
+
+    // Mismatched expectedAccountId must fall back to actionOperation.get.v2.
+    transport.mockClear();
+    expect(await executeActionOperationActionV1({
+      actionId: 'projects.execution.output.read',
+      input: { ...address, byteOffset: 4 },
+      context: { expectedAccountId: 'different-account' },
+      knownOperation: command,
+      transport,
+    })).toEqual(output);
+    expect(transport.mock.calls.map(([req]) => req.method)).toEqual(['actionOperation.get.v2', 'daemon.terminal.stream.readBytes']);
+
+    // Empty domainRef serverId or machineId must fall back to actionOperation.get.v2.
+    transport.mockClear();
+    expect(await executeActionOperationActionV1({
+      actionId: 'projects.execution.output.read',
+      input: { ...address, byteOffset: 4 },
+      knownOperation: { ...command, domainRef: { ...command.domainRef!, serverId: '   ' } },
+      transport,
+    })).toEqual(output);
+    expect(transport.mock.calls.map(([req]) => req.method)).toEqual(['actionOperation.get.v2', 'daemon.terminal.stream.readBytes']);
+
+    transport.mockClear();
+    expect(await executeActionOperationActionV1({
+      actionId: 'projects.execution.output.read',
+      input: { ...address, byteOffset: 4 },
+      knownOperation: { ...command, domainRef: { ...command.domainRef!, machineId: '' } },
+      transport,
+    })).toEqual(output);
+    expect(transport.mock.calls.map(([req]) => req.method)).toEqual(['actionOperation.get.v2', 'daemon.terminal.stream.readBytes']);
+  });
 });

@@ -19,7 +19,7 @@ import { setProjectSetupV1 } from '@happier-dev/protocol/projects/projectSetupSe
 import type { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import type { createCliProjectTrustAction } from '../projectTrustAction';
 import { PROJECT_ACTION_INPUT_SCHEMAS_V1, PROJECT_ACTION_OUTPUT_SCHEMAS_V1, PROJECT_FINITE_ACTION_RPC_METHODS_V1, isProjectSetupTrustRequestV1 } from '@happier-dev/protocol/actions/projectActionFamily';
-import { resolveProjectActionMachineV1 } from '@happier-dev/protocol/actions/executor/projectActionPlacement';
+import { readAdmittedProjectActionMachineV1, resolveProjectActionMachineV1 } from '@happier-dev/protocol/actions/executor/projectActionPlacement';
 import type { withCliPromptLibraryArtifactReader } from '@/agent/prompts/library/resolveCliPromptStackSystemAppendBlocks';
 import { randomUUID } from 'node:crypto';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
@@ -328,9 +328,10 @@ export function createCliProjectActionDeps(
       const originalAccount = params.credentials && !params.machineActionDirectTargetTransport
         && !context.externalActionCredential && !context.externalActionExecutionAuthorization
         && !context.rpcSessionAuthorization && (!context.actionCaller || context.actionCaller.kind === 'host');
-      const placement = await resolveProjectActionMachineV1({ actionId, input: parsed.data, context,
-        executeCanonicalAction: args.executeCanonicalAction, createRequestKey: randomUUID,
-        ...(originalAccount && params.serverIdentityId ? { homeId: params.serverIdentityId } : {}) });
+      const placement = readAdmittedProjectActionMachineV1({ actionId, input: parsed.data, context })
+        ?? await resolveProjectActionMachineV1({ actionId, input: parsed.data, context,
+          executeCanonicalAction: args.executeCanonicalAction, createRequestKey: randomUUID,
+          ...(originalAccount && params.serverIdentityId ? { homeId: params.serverIdentityId } : {}) });
       if (!placement.ok) return placement;
       const { machineId } = placement;
       if (context.externalActionTarget && (context.externalActionTarget.kind !== 'machine'

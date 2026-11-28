@@ -1040,6 +1040,16 @@ export type ActionExecutorContext = Readonly<{
   /** Invocation-private original placement from admitted host preparation; never requester or wire authority. */
   admittedMachineTarget?: ActionPreparedMachineTargetV1;
 
+  /**
+   * Host-internal finite Project placement explicitly admitted by the outer
+   * actionExecutor for this exact (actionId, machineId) invocation. Never
+   * accepted from wire input or inferred from ambient executionRunTargetMachineId.
+   */
+  admittedProjectActionPlacement?: Readonly<{
+    actionId: keyof typeof import('../projectActionIdsV1.js').PROJECT_FINITE_ACTION_RPC_METHODS_V1;
+    machineId: string;
+  }>;
+
   /** This invocation's Machine from its spec placement and admitted operand (`readActionOperandExecutionMachineV1`); Automation evidence only, never routing or wire authority. */
   admittedOperandMachineId?: string;
 

@@ -11,7 +11,7 @@ import {
   type PreparedWorkspaceSyncRelationship,
   type WorkspaceSyncRelationshipOwner,
 } from './workspaceSyncRelationshipOwner';
-import { assertWorkspaceSyncStatusClean, prepareWorkspaceSyncRelationship } from './workspaceSyncPreparation';
+import { assertWorkspaceSyncStatusClean, prepareWorkspaceSyncRelationship, type WorkspaceSyncWorkerAdmittedRouteSnapshot } from './workspaceSyncPreparation';
 import {
   WorkspaceSyncHandoffSourceInputV1Schema, WorkspaceSyncHandoffSourcePhaseResultV1Schema,
   type WorkspaceSyncHandoffSourceInputV1, type WorkspaceSyncHandoffSourcePhaseRequestV1,
@@ -148,6 +148,7 @@ export type WorkspaceSyncHandoffAdapterDeps = Readonly<{
   prepareBetween?: (
     request: Readonly<{ sourceWorkspaceRefId: string; targetWorkspaceRefId: string }>,
     signal?: AbortSignal, context?: RpcHandlerContext,
+    admittedRoute?: WorkspaceSyncWorkerAdmittedRouteSnapshot,
   ) => Promise<WorkspaceSyncPrepareBetweenResultV1>;
   relationshipOwner?: Pick<WorkspaceSyncRelationshipOwner, 'materializeEndpoints' | 'prepareCreate'>;
   bootstrap: (input: PrepareWorkspaceSyncHandoffInput, admittedInput?: PrepareWorkspaceSyncHandoffInput,
@@ -178,7 +179,8 @@ export interface WorkspaceSyncHandoffAdapter {
   applySourcePhase?(request: WorkspaceSyncHandoffSourcePhaseRequestV1, signal?: AbortSignal,
     authority?: WorkspaceSyncHandoffSourcePhaseAuthority, context?: RpcHandlerContext): Promise<WorkspaceSyncHandoffSourcePhaseResultV1>;
   prepareBetween(request: Readonly<{ sourceWorkspaceRefId: string; targetWorkspaceRefId: string }>,
-    signal?: AbortSignal, context?: RpcHandlerContext): Promise<WorkspaceSyncPrepareBetweenResultV1>;
+    signal?: AbortSignal, context?: RpcHandlerContext,
+    admittedRoute?: WorkspaceSyncWorkerAdmittedRouteSnapshot): Promise<WorkspaceSyncPrepareBetweenResultV1>;
   prepare(input: PrepareWorkspaceSyncHandoffInput, authority?: WorkspaceSyncHandoffSourcePhaseAuthority,
     context?: RpcHandlerContext): Promise<WorkspaceSyncHandoffPrepared>;
   finalize(input: FinalizeWorkspaceSyncHandoffInput): Promise<WorkspaceSyncHandoffFinalized>;

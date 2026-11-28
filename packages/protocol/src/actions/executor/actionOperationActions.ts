@@ -33,6 +33,8 @@ export async function executeActionOperationActionV1(args: Readonly<{
   context?: Pick<ActionExecutorContext, 'expectedAccountId' | 'surface'>;
   signal?: AbortSignal;
   transport: ActionOperationMachineTransportV1;
+  /** Host-trusted operation snapshot already retrieved for this caller; skips redundant actionOperation.get.v2 when matching and attached to a terminal. */
+  knownOperation?: ActionOperationSnapshotV1;
   openOutput?: (target: QualifiedActionOperationV1 & Readonly<{ operation: ActionOperationSnapshotV1 }>) => Promise<void>;
   copyOutput?: (output: TerminalStreamReadOkResponse) => Promise<void | ActionExecuteFailure>;
 }>): Promise<unknown> {
@@ -112,25 +114,45 @@ export async function executeActionOperationActionV1(args: Readonly<{
     return readActionFailureEnvelope(raw, { treatReturnedErrorEnvelopeAsFailure: true }) ?? ActionOperationGetV1ResponseSchema.parse(raw);
   }
   if (args.actionId === 'projects.execution.output.open' && !args.openOutput) return failure('client_context_required');
-  // Fetch under current authorization on every use. The caller never supplies
-  // the terminal id or an attachment that could retarget another command.
+  // Fetch under current authorization on every use unless the host caller
+  // already holds a matching operation snapshot with its terminal attachment.
+  // Untrusted Action inputs never supply the terminal id or attachment.
   const address = ActionOperationActionInputSchemasV1['projects.execution.output.open'].parse({
     serverId, machineId, operationId: 'operationId' in input ? input.operationId : undefined,
   });
-  const rawOperation = await call(ACTION_OPERATION_RPC_METHODS_V2.get, {
-    operationId: address.operationId,
-  });
-  const operationFailure = readActionFailureEnvelope(rawOperation, { treatReturnedErrorEnvelopeAsFailure: true });
-  if (operationFailure) return operationFailure;
-  const found = ActionOperationGetV1ResponseSchema.parse(rawOperation);
-  if (found.kind === 'not_found') return failure('operation_not_found');
-  if (found.operation.operationId !== address.operationId || found.operation.scope.machineId !== machineId) {
-    return failure('operation_scope_mismatch');
+  const known = args.knownOperation;
+  const knownMatches = args.actionId !== 'projects.execution.output.open'
+    && known !== undefined
+    && known.operationId === address.operationId
+    && known.scope.machineId === machineId
+    && (!args.context?.expectedAccountId || known.scope.accountId === args.context.expectedAccountId)
+    && known.domainRef?.kind === 'projectCommand'
+    && typeof known.domainRef.serverId === 'string'
+    && known.domainRef.serverId.trim().length > 0
+    && typeof known.domainRef.machineId === 'string'
+    && known.domainRef.machineId.trim().length > 0
+    && typeof known.domainRef.terminalId === 'string'
+    && known.domainRef.terminalId.trim().length > 0;
+  let operation: ActionOperationSnapshotV1;
+  if (knownMatches) {
+    operation = known;
+  } else {
+    const rawOperation = await call(ACTION_OPERATION_RPC_METHODS_V2.get, {
+      operationId: address.operationId,
+    });
+    const operationFailure = readActionFailureEnvelope(rawOperation, { treatReturnedErrorEnvelopeAsFailure: true });
+    if (operationFailure) return operationFailure;
+    const found = ActionOperationGetV1ResponseSchema.parse(rawOperation);
+    if (found.kind === 'not_found') return failure('operation_not_found');
+    if (found.operation.operationId !== address.operationId || found.operation.scope.machineId !== machineId) {
+      return failure('operation_scope_mismatch');
+    }
+    operation = found.operation;
   }
-  const attachment = found.operation.domainRef;
+  const attachment = operation.domainRef;
   if (attachment?.kind !== 'projectCommand') return failure('operation_output_unavailable');
   if (args.actionId === 'projects.execution.output.open') {
-    await args.openOutput!({ ...address, operation: found.operation });
+    await args.openOutput!({ ...address, operation });
     return { kind: 'opened' };
   }
   if (!attachment.terminalId) return failure('operation_output_pending');

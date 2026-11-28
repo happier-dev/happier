@@ -27,6 +27,13 @@ export type WorkspaceSyncWorkerTargetBasis = Readonly<{
   childMachines?: readonly WorkspaceSyncChildMachineFacts[];
 }>;
 
+export type WorkspaceSyncWorkerAdmittedRouteSnapshot = Readonly<{
+  serverId: string;
+  workspaceRefs: readonly WorkspaceRefV1[];
+  relationships: readonly WorkspaceSyncRelationshipV1[];
+  childMachines: readonly WorkspaceSyncChildMachineFacts[];
+}>;
+
 /** Graph observations also serve exact routes already selected before approval. */
 export async function readWorkspaceSyncWorkerRouteSnapshot(input: Readonly<{
   serverId: string;
@@ -89,7 +96,11 @@ export function createWorkspaceSyncWorkerPreparation(input: Readonly<{
   targetMachineId: string;
   credentials: StoredCredentials;
   authorization?: ExternalActionExecutionAuthorizationV1;
-  prepareBetween(request: Readonly<{ sourceWorkspaceRefId: string; targetWorkspaceRefId: string }>, signal: AbortSignal): Promise<WorkspaceSyncPrepareBetweenResultV1>;
+  prepareBetween(
+    request: Readonly<{ sourceWorkspaceRefId: string; targetWorkspaceRefId: string }>,
+    signal: AbortSignal,
+    admittedRoute?: WorkspaceSyncWorkerAdmittedRouteSnapshot,
+  ): Promise<WorkspaceSyncPrepareBetweenResultV1>;
 }>) {
   const fail = (code: string): never => { throw Object.assign(new Error(code), { code }); };
   const resolvedSnapshots = new WeakMap<WorkspaceSyncWorkerTargetBasis, Awaited<ReturnType<typeof readWorkspaceSyncWorkerRouteSnapshot>>>();
@@ -133,15 +144,26 @@ export function createWorkspaceSyncWorkerPreparation(input: Readonly<{
         const cached = resolvedSnapshots.get(basis);
         resolvedSnapshots.delete(basis);
         let current: Awaited<ReturnType<typeof readWorkspaceSyncWorkerRouteSnapshot>>;
+        let reusedAdmittedRoute: WorkspaceSyncWorkerAdmittedRouteSnapshot | undefined;
         if (!recheckCurrent && cached) {
           await assertHomeIdentity(basis.source);
           current = cached;
+          reusedAdmittedRoute = {
+            serverId: basis.source.serverId,
+            workspaceRefs: cached.workspaceRefs.filter(ref => ref.serverId === basis.source.serverId),
+            relationships: cached.relationships,
+            childMachines: cached.childMachines,
+          };
         } else {
           current = await readRouteSnapshot(signal, basis.source);
         }
         assertWorkspaceSyncWorkerTargetCurrent(basis, { ...current, serverId: basis.source.serverId });
         await readWorkspaceSyncRootObjectIdentity(basis.target.rootPath);
-        const prepared = await input.prepareBetween({ sourceWorkspaceRefId: basis.source.id, targetWorkspaceRefId: basis.target.id }, signal);
+        const prepared = await input.prepareBetween(
+          { sourceWorkspaceRefId: basis.source.id, targetWorkspaceRefId: basis.target.id },
+          signal,
+          reusedAdmittedRoute,
+        );
         if (!prepared.ok) return fail(prepared.errorCode);
         signal.throwIfAborted();
         return prepared;

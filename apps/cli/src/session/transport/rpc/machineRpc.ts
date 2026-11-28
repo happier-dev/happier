@@ -16,7 +16,9 @@ import type { SocketRpcAuthorizationContext } from '@happier-dev/protocol/socket
 import { isRpcMethodNotAvailableError, RpcError } from '@happier-dev/protocol/rpcErrors';
 import { resolveCanonicalMachineId } from '@happier-dev/protocol/machines/identity/canonicalMachineId';
 import axios from '@/api/client/credentialAxios';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { createUserScopedSocketConnection } from '@/api/session/sockets';
 import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { ACTION_OPERATION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/operations/v1';
@@ -63,7 +65,13 @@ import {
   type RpcRequestDisposition,
   type SocketRpcContent,
 } from '@happier-dev/sync-client';
-import { readRpcObservation, withUserScopedRpcSocket, type RpcObservationOptions } from './withUserScopedRpcSocket';
+import {
+  awaitUserScopedRpcConnect,
+  readRpcObservation,
+  runWithNotSentRpcDisposition,
+  withUserScopedRpcSocket,
+  type RpcObservationOptions,
+} from './withUserScopedRpcSocket';
 import { readRequesterAccountActionContext, readRequesterAccountActionTransportContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
 import { reportRequesterMachineUse } from '@/api/machine/requesterMachineNotice';
 import type { RpcHandlerContext } from '@/api/rpc/types';
@@ -85,6 +93,51 @@ export function executionRunAuthorityCeiling(opts?: Pick<ActionExecutorContext, 
 export type MachineRpcRequestDisposition = RpcRequestDisposition;
 export const readMachineRpcRequestDisposition = readRpcRequestDisposition;
 const DEFAULT_MACHINE_RPC_TIMEOUT_MS = 20_000;
+
+type SharedMachineRpcConnection = {
+  readonly connection: ReturnType<typeof createUserScopedSocketConnection>;
+  readonly connected: Promise<void>;
+  readonly target: Promise<Awaited<ReturnType<typeof resolveMachineRpcContentCodec>>>;
+  hasConnected: boolean;
+};
+const sharedMachineRpcTransportStorage = new AsyncLocalStorage<Map<string, SharedMachineRpcConnection>>();
+
+async function destroySharedMachineRpcConnection(entry: SharedMachineRpcConnection): Promise<void> {
+  try { await entry.connection.transport.destroy(); } catch { /* Preserve result. */ }
+  try { entry.connection.socket.close(); } catch { /* Preserve result. */ }
+}
+
+function sharedCredentialsEncryptionDiscriminator(credentials: StoredCredentials): string {
+  const encryption = credentials.encryption;
+  const custody = 'accountE2eeCustody' in credentials ? credentials.accountE2eeCustody ?? null : null;
+  if (!encryption) return JSON.stringify(['plain', custody]);
+  if (encryption.type === 'legacy') {
+    const secretDigest = createHash('sha256').update(encryption.secret).digest('hex');
+    return JSON.stringify(['legacy', secretDigest, custody]);
+  }
+  const keyDigest = createHash('sha256')
+    .update(encryption.publicKey)
+    .update(encryption.machineKey)
+    .digest('hex');
+  return JSON.stringify(['dataKey', keyDigest, custody]);
+}
+
+/**
+ * Reuses one user-scoped socket and resolved machine codec across sequential
+ * RPCs within a single composite Action invocation (such as operation lookup +
+ * terminal byte read in projects.execution.output.read), then closes it on exit.
+ */
+export async function withSharedMachineRpcTransport<R>(run: () => Promise<R>): Promise<R> {
+  const existing = sharedMachineRpcTransportStorage.getStore();
+  if (existing) return await run();
+  const pool = new Map<string, SharedMachineRpcConnection>();
+  try {
+    return await sharedMachineRpcTransportStorage.run(pool, run);
+  } finally {
+    await Promise.all([...pool.values()].map(destroySharedMachineRpcConnection));
+    pool.clear();
+  }
+}
 
 type MachineRpcExternalAction = Readonly<{
   context: ActionExecutorContext;
@@ -544,15 +597,101 @@ export async function callExactMachineRpc(params: Readonly<{
         ...(params.requestId === undefined ? {} : { requestId: params.requestId }), sign });
       deploymentChildRequestId = deploymentSetupExecution.requestId;
     }
-    const operation = withUserScopedRpcSocket({
-      token: params.credentials.token,
-      ...(params.authorityCeiling ? { authorityCeiling: params.authorityCeiling } : {}),
-      ...(params.serverUrl ? { serverUrl: params.serverUrl } : {}),
-      connectTimeoutMs,
-      signal,
-      ...(params.reattachOnReconnect ? { reattachOnReconnect: true } : {}),
-    }, async (socket, connect, attemptSignal) => {
-      const machineTarget = await resolveMachineRpcContentCodec({
+    const sharedPool = sharedMachineRpcTransportStorage.getStore();
+    const canReuseShared = Boolean(
+      sharedPool
+      && !params.externalAction
+      && !params.reattachOnReconnect
+      && !params.authorization
+      && !params.prepareRequest
+      && !params.requireCurrentMachine
+      && !params.requiredMachineKind
+      && !params.expectedRunnerMachineContentKeyBinding
+      && !params.operationContext,
+    );
+    const effectiveServerUrl = canReuseShared ? (params.serverUrl ?? resolveServerHttpBaseUrl()) : params.serverUrl;
+    const sharedKey = canReuseShared
+      ? JSON.stringify([
+          params.credentials.token,
+          sharedCredentialsEncryptionDiscriminator(params.credentials),
+          params.authorityCeiling ?? null,
+          effectiveServerUrl,
+          machineId,
+        ])
+      : null;
+    const runWithSocket = <R>(
+      runner: (
+        socket: ReturnType<typeof createUserScopedSocketConnection>['socket'],
+        connect: () => Promise<void>,
+        attemptSignal?: AbortSignal,
+        reusedTarget?: Promise<Awaited<ReturnType<typeof resolveMachineRpcContentCodec>>>,
+      ) => Promise<R>,
+    ): Promise<R> => {
+      if (sharedPool && sharedKey) {
+        let entry = sharedPool.get(sharedKey);
+        if (entry && entry.hasConnected && !entry.connection.socket.connected) {
+          sharedPool.delete(sharedKey);
+          void destroySharedMachineRpcConnection(entry);
+          entry = undefined;
+        }
+        if (!entry) {
+          const connection = createUserScopedSocketConnection({
+            token: params.credentials.token,
+            ...(params.authorityCeiling ? { authorityCeiling: params.authorityCeiling } : {}),
+            ...(effectiveServerUrl ? { serverUrl: effectiveServerUrl } : {}),
+            connectTimeoutMs,
+            clientPurpose: 'scoped-rpc',
+          });
+          let created!: SharedMachineRpcConnection;
+          const evictIfCurrent = () => {
+            if (sharedPool.get(sharedKey) === created) {
+              sharedPool.delete(sharedKey);
+              void destroySharedMachineRpcConnection(created);
+            }
+          };
+          const connected = connection.transport.connect().then(
+            () => { created.hasConnected = true; },
+            (error) => {
+              evictIfCurrent();
+              throw error;
+            },
+          );
+          void connected.catch(() => {});
+          const target = resolveMachineRpcContentCodec({
+            credentials: params.credentials,
+            method: params.method,
+            machineId,
+            serverUrl: effectiveServerUrl,
+            timeoutMs: remainingTimeoutMs() ?? setupTimeoutMs,
+            ...(signal ? { signal } : {}),
+          }).catch((error) => {
+            evictIfCurrent();
+            throw error;
+          });
+          void target.catch(() => {});
+          created = { connection, connected, target, hasConnected: false };
+          entry = created;
+          sharedPool.set(sharedKey, entry);
+        }
+        const active = entry;
+        return runWithNotSentRpcDisposition(() => runner(
+          active.connection.socket,
+          () => awaitUserScopedRpcConnect(active.connected, signal),
+          signal,
+          active.target,
+        ));
+      }
+      return withUserScopedRpcSocket({
+        token: params.credentials.token,
+        ...(params.authorityCeiling ? { authorityCeiling: params.authorityCeiling } : {}),
+        ...(params.serverUrl ? { serverUrl: params.serverUrl } : {}),
+        connectTimeoutMs,
+        signal,
+        ...(params.reattachOnReconnect ? { reattachOnReconnect: true } : {}),
+      }, (socket, connect, attemptSignal) => runner(socket, connect, attemptSignal));
+    };
+    const operation = runWithSocket(async (socket, connect, attemptSignal, reusedTarget) => {
+      const machineTarget = reusedTarget ? await reusedTarget : await resolveMachineRpcContentCodec({
         credentials: params.credentials,
         method: params.method,
         machineId,

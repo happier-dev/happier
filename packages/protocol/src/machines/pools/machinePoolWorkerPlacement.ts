@@ -33,8 +33,13 @@ export async function resolveMachinePoolWorkerCandidateV1(input: Readonly<{
     if (!value.eligible && !ProjectWorkerNoAcceptanceReasonV1Schema.safeParse(value.explanation).success) {
       eligibilityUnknown = true;
     }
-    observations.set(member.machineId, { eligible: value.eligible,
-      load: value.load.kind === 'known' ? { state: 'known', running: value.load.running } : { state: 'unknown' } });
+    observations.set(member.machineId, {
+      eligible: value.eligible,
+      load: value.load.kind === 'known'
+        ? { state: 'known', running: value.load.running, queued: value.load.queued, runAtMost: value.load.runAtMost }
+        : { state: 'unknown' },
+      ...(value.observedMemory ? { observedMemory: value.observedMemory } : {}),
+    });
   }));
   input.signal?.throwIfAborted();
   const candidate = selectMachinePoolCandidate({

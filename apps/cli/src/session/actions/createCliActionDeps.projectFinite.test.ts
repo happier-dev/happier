@@ -406,8 +406,13 @@ describe('Project finite Actions through exact Machine transport', () => {
     expect(await repeated).toEqual({ ok: true, result: pending });
     expect(finiteInvocation).toMatchObject({ caller: { kind: 'host' }, surface: 'cli' });
     expect(effectPosts()).toHaveLength(1);
-    expect(posts.mock.calls.some(([url]) => url === 'https://home.test/v1/actions/projects.inspect')).toBe(true);
-    if (kind === 'pool') expect(home.mock.calls.some(([request]) => request.url?.endsWith('/v1/machines/pools/get'))).toBe(true);
+    // Placement was resolved once during prepare and reused via executionRunTargetMachineId
+    // on run() without repeating SOURCE inspect, pool reads, or worker status probes.
+    expect(posts.mock.calls.filter(([url]) => url === 'https://home.test/v1/actions/projects.inspect')).toHaveLength(1);
+    expect(posts.mock.calls.filter(([url]) => url === 'https://home.test/v1/actions/projects.worker.status')).toHaveLength(1);
+    if (kind === 'pool') {
+      expect(home.mock.calls.filter(([request]) => request.url?.endsWith('/v1/machines/pools/get'))).toHaveLength(1);
+    }
     available = false;
     transport.mockClear();
     expect(await owner.execute('projects.script.run', input, context)).toMatchObject({ ok: false,

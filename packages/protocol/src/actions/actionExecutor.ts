@@ -3084,7 +3084,8 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
         // inherited Machine/Run target must not divert that exact Session's SCM.
         ctx = { ...ctx, serverId, defaultSessionId: explicitSessionId,
           defaultSessionMachineId: sameSession ? ctx.defaultSessionMachineId : undefined,
-          externalActionTarget: undefined, executionRunTargetMachineId: undefined };
+          externalActionTarget: undefined, executionRunTargetMachineId: undefined,
+          admittedProjectActionPlacement: undefined };
       }
     }
     const spokenModelName = actionId === 'session.spawn_new' && !existingAdmission
@@ -4523,7 +4524,11 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
             createRequestKey: () => bytesToHex(randomBytes(16)),
             ...(ctx.serverIdentityId ? { homeId: ctx.serverIdentityId } : {}) });
           if (!target.ok) return target;
-          ctx = { ...ctx, executionRunTargetMachineId: target.machineId };
+          ctx = {
+            ...ctx,
+            executionRunTargetMachineId: target.machineId,
+            admittedProjectActionPlacement: { actionId, machineId: target.machineId },
+          };
         }
         const preparedApproval = await prepareCurrentApproval();
         if (!preparedApproval) {
