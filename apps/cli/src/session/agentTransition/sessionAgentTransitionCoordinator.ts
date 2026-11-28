@@ -1,3 +1,6 @@
+import { isDeepStrictEqual } from 'node:util';
+
+import { runFirstTransitionLaunch } from './failedFirstLaunch';
 import {
   projectSessionMetadataForWire,
   buildBackendTargetKey,
@@ -13,6 +16,7 @@ import {
   readSessionAgentTransitionDividerFromStoredRecordV1,
   rejectUndispatchedSessionAgentTransition,
   sanitizeSessionUserMessageSendMeta,
+  type ConnectedServiceBindingsV1,
   type SessionAgentTransitionCurrentViewCommitted,
   type SessionAgentTransitionRequestV1,
   type SessionAgentTransitionResultV1,
@@ -20,11 +24,18 @@ import {
   type SessionStoredMessageContent,
 } from '@happier-dev/protocol';
 import {
+  AGENTS_CORE,
   projectCurrentAgentSessionView,
   resolveAgentIdFromSessionMetadata,
   type AgentId,
 } from '@happier-dev/agents';
 
+import { buildConnectedServiceCredentialSpawnErrorResult } from '@/daemon/connectedServices/diagnostics/buildConnectedServiceDiagnosticSpawnErrorResult';
+import {
+  admitConnectedServiceAuthForSpawn,
+  type ConnectedServiceSpawnAdmission,
+} from '@/daemon/connectedServices/resolveConnectedServiceAuthForSpawn';
+import { isConnectedServiceUxDiagnosticSpawnErrorDetail } from '@happier-dev/protocol';
 import { isAuthenticationError } from '@/api/client/httpStatusError';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { findTranscriptEncryptedMessageByLocalIdV2 } from '@/api/session/transcriptMessageLookup';
@@ -63,7 +74,7 @@ import {
   captureDepartingAgentNativeResumeRecord,
   createLocalAgentNativeResumeRecordStore,
   readAgentNativeReturnAccountSettings,
-  resolveAgentNativeReturnIdentity,
+  resolveAgentNativeReturnPlan,
   type LocalAgentNativeResumeRecordStore,
 } from './agentNativeReturn';
 import { buildSessionAgentTransitionActivationBrief } from './buildSessionAgentTransitionActivationBrief';
@@ -125,6 +136,12 @@ export type SessionAgentTransitionCoordinatorDeps = Readonly<{
   localAgentNativeResumeRecordStore?: LocalAgentNativeResumeRecordStore;
   /** This Account's settings, for the shared vendor-resume eligibility gates. */
   readAccountSettings?: () => Record<string, unknown> | null;
+  connectedServiceAdmission?: Pick<Parameters<typeof admitConnectedServiceAuthForSpawn>[0],
+    'api' | 'credentialRefreshService' | 'accountUsageStore' | 'runtimeQuotaSnapshots' | 'quotaFreshnessMs'> & Readonly<{
+      createAuthGroupSwitchCoordinator?: (sessionId: string) => NonNullable<
+        Parameters<typeof admitConnectedServiceAuthForSpawn>[0]['authGroupSwitchCoordinator']
+      >;
+    }>;
 }>;
 
 // Result arms are built ONLY through the effect-stage handle threaded down the
@@ -226,50 +243,37 @@ function buildDividerContent(params: Readonly<{
   };
 }
 
-/**
- * Moves the Session's connected-service auth binding onto the target Agent.
- *
- * The projector cleared the source's binding, its `updatedAt` and the
- * materialized credential home that carried it, because all three name a
- * `serviceId` the SOURCE Agent's catalog declares. What replaces them is
- * resolved by the SAME owner a new Session uses — the account's stored
- * per-Agent connected-services default — so the transition never becomes a
- * second place where a Session's binding is decided.
- *
- * A target with no configured default resolves to `null`, which is the honest
- * result: the Session continues on the target's native CLI auth, exactly as a
- * Session created for that Agent would.
- *
- * A fresh identity is minted whenever a binding is written, for the same reason
- * fork mints one: the materialized home is per-binding, and an existing-Session
- * spawn that carries connected bindings without an identity is refused outright
- * by the daemon (`missing_identity_and_resume_state`).
- *
- * This runs after the confirmed stop, so a failure here must never fail the
- * transition: settings that cannot be read or are malformed degrade to native
- * rather than stranding a Session whose source is already gone.
- */
-async function applyTargetConnectedServiceBinding(params: Readonly<{
+async function resolveTargetConnectedServiceBinding(params: Readonly<{
   credentials: Credentials;
-  targetAgentId: AgentId;
   backendTarget: BackendTargetRefV1;
-  targetMetadata: Record<string, unknown>;
-}>): Promise<void> {
-  const resolved = await resolveSessionAgentSpawnConnectedServicesDefaults({
-    credentials: params.credentials,
-    backendTarget: params.backendTarget,
-  }).catch((error: unknown) => {
-    logger.debug('[AGENT TRANSITION] Target connected-service default unavailable', {
-      agentId: params.targetAgentId,
-      message: error instanceof Error ? error.message : String(error),
-    });
-    return null;
-  });
-  if (!resolved) return;
-  params.targetMetadata.connectedServices = resolved.connectedServices;
-  params.targetMetadata.connectedServicesUpdatedAt = resolved.connectedServicesUpdatedAt;
-  params.targetMetadata.connectedServiceMaterializationIdentityV1 =
-    createConnectedServiceMaterializationIdentity();
+  explicitConnectedServices?: ConnectedServiceBindingsV1;
+}>) {
+  const resolved = params.explicitConnectedServices
+    ? {
+        connectedServices: params.explicitConnectedServices,
+        connectedServicesUpdatedAt: Date.now(),
+      }
+    : await resolveSessionAgentSpawnConnectedServicesDefaults(params);
+
+  if (!resolved || !Object.values(resolved.connectedServices.bindingsByServiceId)
+    .some(binding => binding.source === 'connected')) return null;
+  return {
+    ...resolved,
+    connectedServiceMaterializationIdentityV1: createConnectedServiceMaterializationIdentity(),
+  };
+}
+
+/**
+ * Bindings are Agent-scoped: a binding naming a service the target Agent's catalog does not
+ * declare is exactly the failure the rebinding above exists to prevent. An explicit choice that
+ * does that is refused before any effect instead of being dropped or reinterpreted.
+ */
+function isExplicitConnectedServicesChoiceSupported(
+  targetAgentId: AgentId,
+  connectedServices: ConnectedServiceBindingsV1,
+): boolean {
+  const supported: readonly string[] = AGENTS_CORE[targetAgentId].connectedServices?.supportedServiceIds ?? [];
+  return Object.keys(connectedServices.bindingsByServiceId).every((serviceId) => supported.includes(serviceId));
 }
 
 /**
@@ -290,6 +294,9 @@ async function admitInputAndActivateTarget(params: Readonly<{
   sanitizedMeta: ReturnType<typeof sanitizeSessionUserMessageSendMeta>;
   /** The committed target current view — the permission fallback and resume basis. */
   targetMetadata: Record<string, unknown>;
+  firstLaunchAgentId?: AgentId;
+  allowFirstLaunchCredentialRecovery?: boolean;
+  admittedAuth?: Parameters<typeof runFirstTransitionLaunch>[2];
   /** Proof that the target current view is committed; the source of every arm here. */
   committed: SessionAgentTransitionCurrentViewCommitted;
 }>): Promise<SessionAgentTransitionResultV1> {
@@ -353,13 +360,35 @@ async function admitInputAndActivateTarget(params: Readonly<{
   // a lifecycle action against a live runtime and, if the daemon refuses, would
   // report a completed transition as `target_start_failed`.
   if (committedSession.active !== true) {
-    const resumed = await requestInactiveSessionResume({
+    const launch = (transitionLaunchNonce?: string) => requestInactiveSessionResume({
+      ...(transitionLaunchNonce ? { transitionLaunchNonce } : {}),
       credentials: params.credentials,
       sessionId: request.sessionId,
       localId,
       rawSession: committedSession,
       metadata: params.targetMetadata,
     });
+    const committedMetadata = params.firstLaunchAgentId
+      ? asRecord(tryDecryptSessionMetadata({ credentials: params.credentials, rawSession: committedSession }))
+      : null;
+    const committedTarget = committedMetadata
+      ? resolveSessionPersistedRuntimeIdentity(committedMetadata)?.backendTarget
+      : null;
+    // The original cutover's exact target and seed still own this metadata version.
+    const resumed = params.firstLaunchAgentId && committedSession.active === false && committedMetadata
+      && typeof committedSession.pendingVersion === 'number'
+      && isDeepStrictEqual(committedMetadata.replaySeedV1, params.targetMetadata.replaySeedV1)
+      && committedTarget?.kind === 'builtInAgent'
+      && buildBackendTargetKey(committedTarget) === buildBackendTargetKey({ kind: 'builtInAgent', agentId: params.firstLaunchAgentId })
+      ? await runFirstTransitionLaunch({
+          sessionId: request.sessionId,
+          agentId: params.firstLaunchAgentId,
+          localId,
+          metadataVersion: committedSession.metadataVersion,
+          pendingVersion: committedSession.pendingVersion,
+          allowCredentialRecovery: params.allowFirstLaunchCredentialRecovery,
+        }, launch, params.admittedAuth)
+      : await launch();
     if (!resumed.ok) {
       logger.debug('[AGENT TRANSITION] Target activation failed', { code: resumed.code, message: resumed.message });
       return committed.committed('target_start_failed');
@@ -628,6 +657,55 @@ export async function runSessionAgentTransition(params: Readonly<{
   const sourceAgentId = currentAgentId;
   const targetAgentId: AgentId = resolvedTarget.targetAgentId;
   const targetBackendTarget = resolvedTarget.backendTarget;
+  if (
+    request.selection.connectedServices
+    && !isExplicitConnectedServicesChoiceSupported(targetAgentId, request.selection.connectedServices)
+  ) return effects.rejected('connected_account_unsupported');
+  const targetBinding = await resolveTargetConnectedServiceBinding({
+    credentials: params.credentials,
+    backendTarget: targetBackendTarget,
+    explicitConnectedServices: request.selection.connectedServices,
+  }).catch((error: unknown) => {
+    logger.debug('[AGENT TRANSITION] Target connected-service default unavailable', {
+      agentId: targetAgentId,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  });
+  let admittedAuth: ConnectedServiceSpawnAdmission | null = null;
+  if (targetBinding && request.selection.connectedServices) {
+    const admission = params.deps?.connectedServiceAdmission;
+    if (!admission) return effects.rejected('connected_account_unavailable');
+    try {
+      admittedAuth = await admitConnectedServiceAuthForSpawn({
+        ...admission,
+        authGroupSwitchCoordinator: admission.createAuthGroupSwitchCoordinator?.(request.sessionId),
+        sessionId: request.sessionId,
+        agentId: targetAgentId,
+        credentials: params.credentials,
+        connectedServicesBindingsRaw: targetBinding.connectedServices,
+      });
+    } catch (error) {
+      const detail = buildConnectedServiceCredentialSpawnErrorResult({ agentId: targetAgentId, error })?.errorDetail;
+      return effects.rejected('connected_account_unavailable',
+        isConnectedServiceUxDiagnosticSpawnErrorDetail(detail) ? detail.uxDiagnostic : undefined);
+    }
+  }
+  const returnPlan = targetBackendTarget.kind === 'configuredAcpBackend' ? null : await resolveAgentNativeReturnPlan({
+    store: localAgentNativeResumeRecordStore,
+    sessionId: request.sessionId,
+    targetAgentId,
+    sourceMetadata: metadata,
+    accountSettings,
+    ...(request.selection.connectedServices ? {
+      selectedProfilesByServiceId: Object.fromEntries(
+        Array.from(admittedAuth?.recordsByServiceId ?? [], ([serviceId, record]) => [serviceId, record.profileId]),
+      ),
+    } : {}),
+  });
+  const nativeReturn = returnPlan?.record;
+  const materializationIdentity = (request.selection.connectedServices ? nativeReturn?.auth?.materializationIdentity : null)
+    ?? targetBinding?.connectedServiceMaterializationIdentityV1;
   const configuredBackend = targetBackendTarget.kind === 'configuredAcpBackend' && accountSettings
     ? resolveConfiguredAcpBackendFromAccountSettings(accountSettings, targetBackendTarget.backendId) : null;
   if (configuredBackend && accountSettings) {
@@ -779,14 +857,6 @@ export async function runSessionAgentTransition(params: Readonly<{
   // inversion is a stated risk spot — choosing a narrower context bound and only
   // then discovering that native return is unavailable omits history the fresh
   // target needs, and nothing in the result would say so.
-  const nativeReturn = targetBackendTarget.kind === 'configuredAcpBackend' ? null : await resolveAgentNativeReturnIdentity({
-    store: localAgentNativeResumeRecordStore,
-    sessionId: request.sessionId,
-    targetAgentId,
-    sourceMetadata: stoppedMetadata,
-    accountSettings: readAccountSettings(),
-  });
-
   // Bounded context through the existing Replay owner. The transcript head is
   // read AFTER the confirmed stop, so a late source row remains canonical
   // history even when it missed this brief.
@@ -897,12 +967,9 @@ export async function runSessionAgentTransition(params: Readonly<{
     } else {
       delete targetMetadata.replaySeedV1;
     }
-    await applyTargetConnectedServiceBinding({
-      credentials: params.credentials,
-      targetAgentId,
-      backendTarget: targetBackendTarget,
-      targetMetadata,
-    });
+    if (targetBinding) {
+      Object.assign(targetMetadata, targetBinding, { connectedServiceMaterializationIdentityV1: materializationIdentity });
+    }
     const outcome = await commitSessionAgentTransitionCutover({
       token: params.credentials.token,
       sessionId: request.sessionId,
@@ -982,5 +1049,11 @@ export async function runSessionAgentTransition(params: Readonly<{
     sanitizedMeta,
     targetMetadata,
     committed: stopped.cutoverCommitted(),
+    ...(returnPlan?.noNativeReturnRecord || admittedAuth ? { firstLaunchAgentId: targetAgentId } : {}),
+    allowFirstLaunchCredentialRecovery: returnPlan?.noNativeReturnRecord === true,
+    ...(admittedAuth && materializationIdentity ? { admittedAuth: {
+      materializationId: materializationIdentity.id,
+      credentials: admittedAuth,
+    } } : {}),
   });
 }

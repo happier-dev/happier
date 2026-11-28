@@ -74,7 +74,7 @@ describe('reportSessionScmOperation', () => {
         );
     });
 
-    it('includes raw SCM error in telemetry when explicitly provided', () => {
+    it('reports only the length of a raw SCM error, never its text', () => {
         const capture = vi.fn();
 
         reportSessionScmOperation({
@@ -95,10 +95,14 @@ describe('reportSessionScmOperation', () => {
         expect(capture).toHaveBeenCalledWith(
             'scm_operation_result',
             expect.objectContaining({
-                raw_error: 'fatal: unable to write new index file',
+                error_code: 'COMMAND_FAILED',
+                error_category: 'command',
                 raw_error_length: 37,
             })
         );
+        // Git stderr can hold paths, branch names and remote URLs.
+        expect(capture.mock.calls[0]?.[1]).not.toHaveProperty('raw_error');
+        expect(JSON.stringify(capture.mock.calls)).not.toContain('index file');
     });
 });
 

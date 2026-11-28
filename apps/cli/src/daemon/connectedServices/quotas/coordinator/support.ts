@@ -212,6 +212,7 @@ export type QuotaApi = Readonly<{
     groupId: string;
     signal?: AbortSignal;
   }>) => Promise<ConnectedServiceAuthGroupV1 | null>;
+  listConnectedServiceAuthGroups?: (args: Readonly<{ serviceId: ConnectedServiceId }>) => Promise<readonly ConnectedServiceAuthGroupV1[]>;
   updateConnectedServiceAuthGroupRuntimeState?: (args: Readonly<{
     serviceId: ConnectedServiceId;
     groupId: string;
@@ -587,6 +588,8 @@ export function deriveQuotaSnapshotStatus(snapshot: ConnectedServiceQuotaSnapsho
 export type FailureState = Readonly<{
   consecutiveFailures: number;
   nextAllowedAt: number;
+  /** Background polling stopped at the backoff cap; resumes on the account's next use or a forced refresh. */
+  suspended?: true;
   inconclusiveRefreshProbeCount?: number;
 }>;
 

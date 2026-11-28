@@ -2,6 +2,8 @@ import {
     ConnectedServicesDefaultAuthByAgentIdV1Schema,
     ConnectedServicesAdditionalDefaultAuthByAgentIdV1Schema,
     ConnectedServicesProviderStateSharingSettingsV1Schema,
+    ConnectedServicesAccountStatusByAgentIdV1Schema,
+    DEFAULT_CONNECTED_SERVICES_ACCOUNT_STATUS_BY_AGENT_ID_V1,
     DEFAULT_CONNECTED_SERVICES_DEFAULT_AUTH_BY_AGENT_ID_V1,
     DEFAULT_CONNECTED_SERVICES_PROVIDER_STATE_SHARING_SETTINGS_V1,
     buildSettingArtifacts,
@@ -101,14 +103,6 @@ export const ACCOUNT_CONNECTED_SERVICES_SETTING_DEFINITIONS = defineSettingDefin
         description:
             'Connected-service account/pool-member collapse state, keyed by serviceId:account:profileId / serviceId:pool:groupId:profileId. Sparse: only stores deviations from the per-variant default.',
         storageScope: 'account',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'count',
-            privacy: 'count_only',
-            identityScope: 'person',
-            serializeCurrent: objectKeyCount,
-        },
     },
     connectedServicesQuotaSummaryStrategyByKey: {
         schema: z.record(z.string(), z.enum(['primary', 'min_remaining'])).default({}),
@@ -153,14 +147,12 @@ export const ACCOUNT_CONNECTED_SERVICES_SETTING_DEFINITIONS = defineSettingDefin
         description:
             'Dismissed one-time "adopt this autoSwitch pool" default-auth suggestions, keyed by "agentId:serviceId:groupId". Suppresses the nudge so it does not re-appear once the user keeps the literal profile default.',
         storageScope: 'account',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'count',
-            privacy: 'count_only',
-            identityScope: 'person',
-            serializeCurrent: objectKeyCount,
-        },
+    },
+    connectedServicesAccountStatusByAgentIdV1: {
+        schema: ConnectedServicesAccountStatusByAgentIdV1Schema,
+        default: DEFAULT_CONNECTED_SERVICES_ACCOUNT_STATUS_BY_AGENT_ID_V1,
+        description: 'Per agent: show quota and account status for its connected accounts (consent for provider account reads)',
+        storageScope: 'account',
     },
     connectedServicesProviderStateSharingSettingsV1: {
         schema: ConnectedServicesProviderStateSharingSettingsV1Schema,

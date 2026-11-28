@@ -29,37 +29,56 @@ async function open(socket: Socket): Promise<void> {
     });
 }
 
-it('only delivers matching session updates to runners that declare session interest', async () => {
+async function startSocketHarness() {
     const harness = await createLightSqliteHarness({
         tempDirPrefix: 'happier-socket-session-interest-', initAuth: true, initEncrypt: false, initFiles: false,
         env: { HAPPIER_SOCKET_ADAPTER: 'memory', HAPPY_SOCKET_ROOMS_ONLY: '0' },
     });
     const app = fastify();
     const sockets: Socket[] = [];
+    const { id: userId } = await db.account.create({ data: { publicKey: `pk-${randomUUID()}` } });
+    const token = await auth.createToken(userId);
+    startSocket(app as AppFastify);
+    const address = await app.listen({ host: '127.0.0.1', port: 0 });
+    const makeSocket = (handshake: {
+        clientType: string; sessionId?: string; machineId?: string; clientPurpose?: string; sessionUpdateInterest?: unknown; liveTranscriptDisabled?: unknown;
+    }) => {
+        const socket = io(address, {
+            path: '/v1/updates', transports: ['websocket'], forceNew: true, autoConnect: false, reconnection: false,
+            auth: { token, ...handshake },
+        });
+        sockets.push(socket);
+        const events: string[] = [];
+        socket.on('update', (value) => {
+            if (value.body?.t === 'new-message') events.push(`message:${value.body.sid}`);
+            if (value.body?.t === 'pending-changed') events.push(`pending:${value.body.sid}`);
+            if (value.body?.t === 'update-account' && value.body?.settingsV2) events.push('settings');
+        });
+        socket.on('ephemeral', (value) => {
+            if (value.type === 'activity') events.push(`activity:${value.id}`);
+            if (value.type === 'transcript-stream-segment') events.push(`segment:${value.sessionId}`);
+            if (value.type === 'transcript-stream-segment-delta') events.push(`delta:${value.sessionId}`);
+            if (value.type === 'direct-session-transcript-delta') events.push(`direct:${value.sessionId}`);
+        });
+        return { socket, events };
+    };
+    return {
+        userId, sockets, makeSocket,
+        close: async () => {
+            for (const socket of sockets) socket.close();
+            await shutdown.close?.();
+            await app.close();
+            eventRouter.clearIo();
+            await harness.close();
+        },
+    };
+}
+
+it('only delivers matching session updates to runners that declare session interest', async () => {
+    const { userId, sockets, makeSocket, close } = await startSocketHarness();
     try {
-        const { id: userId } = await db.account.create({ data: { publicKey: `pk-${randomUUID()}` } });
-        const token = await auth.createToken(userId);
         const machineId = randomUUID();
         await db.machine.create({ data: { id: machineId, accountId: userId, metadata: '{}' } });
-        startSocket(app as AppFastify);
-        const address = await app.listen({ host: '127.0.0.1', port: 0 });
-        const makeSocket = (handshake: { clientType: string; sessionId?: string; machineId?: string; clientPurpose?: string; sessionUpdateInterest?: unknown }) => {
-            const socket = io(address, {
-                path: '/v1/updates', transports: ['websocket'], forceNew: true, autoConnect: false, reconnection: false,
-                auth: { token, ...handshake },
-            });
-            sockets.push(socket);
-            const events: string[] = [];
-            socket.on('update', (value) => {
-                if (value.body?.t === 'new-message') events.push(`message:${value.body.sid}`);
-                if (value.body?.t === 'pending-changed') events.push(`pending:${value.body.sid}`);
-                if (value.body?.t === 'update-account' && value.body?.settingsV2) events.push('settings');
-            });
-            socket.on('ephemeral', (value) => {
-                if (value.type === 'transcript-stream-segment-delta') events.push(`delta:${value.sessionId}`);
-            });
-            return { socket, events };
-        };
         const makeRunner = async () => {
             const { id: sessionId } = await db.session.create({ data: { accountId: userId, tag: randomUUID(), metadata: '{}' } });
             await db.accessKey.create({ data: { accountId: userId, machineId, sessionId, data: 'synthetic-key' } });
@@ -141,10 +160,84 @@ it('only delivers matching session updates to runners that declare session inter
         expect(reconnected.account.events).toEqual(['settings', ...ownSessionEvents]);
         expect(ui.events.slice(-8)).toEqual(transcript(active.sessionId));
     } finally {
-        for (const socket of sockets) socket.close();
-        await shutdown.close?.();
-        await app.close();
+        await close();
+    }
+});
+
+it('excludes opted-out sockets from live transcripts while delivering durable session updates and activity', async () => {
+    const { userId, makeSocket, close } = await startSocketHarness();
+    try {
+        const sessionId = randomUUID();
+        const cache = makeSocket({ clientType: 'user-scoped', clientPurpose: 'concurrent-server-cache', liveTranscriptDisabled: true });
+        const rpc = makeSocket({ clientType: 'user-scoped', clientPurpose: 'scoped-rpc', liveTranscriptDisabled: true });
+        const narrowed = makeSocket({ clientType: 'user-scoped', sessionUpdateInterest: sessionId, liveTranscriptDisabled: true });
+        const optsOut = [cache, rpc, narrowed];
+        const legacy = makeSocket({ clientType: 'user-scoped' });
+        const main = makeSocket({ clientType: 'user-scoped', clientPurpose: 'sync' });
+        const malformed = makeSocket({ clientType: 'user-scoped', liveTranscriptDisabled: 'true' });
+        const receivesTranscript = [legacy, main, malformed];
+        const accountSockets = [...optsOut, ...receivesTranscript];
+        const machineId = randomUUID();
+        await db.machine.create({ data: { id: machineId, accountId: userId, metadata: '{}' } });
+        const machine = makeSocket({ clientType: 'machine-scoped', machineId });
+        await Promise.all([...accountSockets, machine].map(({ socket }) => open(socket)));
+        const sessionUpdates = [`message:${sessionId}`, `activity:${sessionId}`];
+        const transcript = [`direct:${sessionId}`, `message:${sessionId}`, `segment:${sessionId}`, `delta:${sessionId}`, `activity:${sessionId}`];
+        let phase = 0;
+        const burst = async () => {
+            // A machine daemon's direct transcript delta is relayed on its own round trip, so wait for the
+            // legacy socket (always a recipient) before sending the rest.
+            const directReceived = new Promise<void>(resolve => {
+                const receive = (value: { type: string }) => {
+                    if (value.type !== 'direct-session-transcript-delta') return;
+                    legacy.socket.off('ephemeral', receive);
+                    resolve();
+                };
+                legacy.socket.on('ephemeral', receive);
+            });
+            machine.socket.emit('direct-session-transcript-delta', {
+                type: 'direct-session-transcript-delta', sessionId, items: [], truncated: false,
+            });
+            await directReceived;
+            const nextPhase = ++phase;
+            // Machine sockets do not join the account room, so only user-facing sockets can observe the barrier.
+            const barriers = accountSockets.map(({ socket }) => new Promise<void>(resolve => {
+                const receive = (value: { id: string }) => {
+                    if (value.id !== `barrier-${nextPhase}`) return;
+                    socket.off('update', receive);
+                    resolve();
+                };
+                socket.on('update', receive);
+            }));
+            const recipientFilter = { type: 'all-interested-in-session', sessionId } as const;
+            const content = { t: 'encrypted', c: 'message' } as const;
+            eventRouter.emitUpdate({ userId, recipientFilter, payload: buildNewMessageUpdate({
+                id: `msg${nextPhase}`, seq: nextPhase, localId: null, createdAt: new Date(0), updatedAt: new Date(0), content,
+            }, sessionId, nextPhase, `update${nextPhase}`) });
+            const message = { localId: 'stream', content, tick: nextPhase, createdAt: 0, updatedAt: 0 };
+            eventRouter.emitEphemeral({ userId, recipientFilter, payload: { type: 'transcript-stream-segment', sessionId, message } });
+            eventRouter.emitEphemeral({ userId, recipientFilter, payload: {
+                type: 'transcript-stream-segment-delta', sessionId, message: { ...message, baseLength: 0 },
+            } });
+            eventRouter.emitEphemeral({ userId, recipientFilter, payload: { type: 'activity', id: sessionId, active: true, activeAt: 1 } });
+            eventRouter.emitUpdate({ userId, payload: buildAccountSettingsChangedUpdate(nextPhase, 99, `barrier-${nextPhase}`), recipientFilter: { type: 'all-user-authenticated-connections' } });
+            await Promise.all(barriers);
+        };
+        await burst();
+        for (const { events } of optsOut) expect(events.splice(0)).toEqual(sessionUpdates);
+        for (const { events } of receivesTranscript) expect(events.splice(0)).toEqual(transcript);
+
+        cache.socket.disconnect();
+        await open(cache.socket);
+        await burst();
+        for (const { events } of optsOut) expect(events.splice(0)).toEqual(sessionUpdates);
+        for (const { events } of receivesTranscript) expect(events.splice(0)).toEqual(transcript);
+
         eventRouter.clearIo();
-        await harness.close();
+        await burst();
+        for (const { events } of optsOut) expect(events).toEqual(sessionUpdates);
+        for (const { events } of receivesTranscript) expect(events).toEqual(transcript);
+    } finally {
+        await close();
     }
 });

@@ -292,6 +292,13 @@ export const UI_FEATURE_REGISTRY = {
     bugReports: {
         settingsToggle: undefined,
     },
+    // Server-decided display gates for Plans & Supporter surfaces (no user toggle).
+    plans: {
+        settingsToggle: undefined,
+    },
+    supporter: {
+        settingsToggle: undefined,
+    },
     'attachments.uploads': {
         settingsToggle: {
             showInSettings: true,

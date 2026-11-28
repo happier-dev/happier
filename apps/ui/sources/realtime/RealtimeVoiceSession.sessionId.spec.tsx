@@ -141,7 +141,6 @@ vi.mock('@/sync/sync', () => ({
       const maybeValue = (value as { value?: unknown }).value;
       return typeof maybeValue === 'string' ? maybeValue : null;
     },
-    presentPaywall: vi.fn(async () => ({ success: true, purchased: false })),
     encryption: {
       getSessionEncryption: vi.fn(() => ({})),
     },

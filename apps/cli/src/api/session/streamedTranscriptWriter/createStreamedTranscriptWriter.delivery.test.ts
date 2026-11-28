@@ -21,7 +21,7 @@ async function settleLivePublication(): Promise<void> {
   }
 }
 
-function createWriter(session: StreamedTranscriptWriterSession) {
+function createWriter(session: StreamedTranscriptWriterSession, liveSnapshotIntervalMs: number | null = 0) {
   return createStreamedTranscriptWriter({
     provider: 'codex',
     session,
@@ -29,7 +29,7 @@ function createWriter(session: StreamedTranscriptWriterSession) {
     initialCheckpointDelayMs: 10_000,
     checkpointIntervalMs: 10_000,
     checkpointMinChars: 999,
-    liveSnapshotIntervalMs: 0,
+    liveSnapshotIntervalMs,
     liveSnapshotMinChars: 1,
     liveCheckpointIntervalMs: 1_000,
   });
@@ -38,7 +38,59 @@ function createWriter(session: StreamedTranscriptWriterSession) {
 describe('createStreamedTranscriptWriter locally accepted live delivery', () => {
   afterEach(() => {
     vi.useRealTimers();
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
+  });
+
+  it('publishes a batched delta at the default interval and flushes a pending batch at turn end', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(100));
+    vi.stubEnv('HAPPIER_STREAM_LIVE_INTERVAL_MS', undefined);
+
+    const fullSnapshots: string[] = [];
+    const deltas: Array<{ text: string; baseLength: number }> = [];
+    const session: StreamedTranscriptWriterSession = {
+      getEphemeralStreamConnectionEpoch: () => 1,
+      sendAgentMessageEphemeral: (_provider, body) => {
+        fullSnapshots.push(body.type === 'message' ? body.message : '');
+        return { accepted: true, epoch: 1 };
+      },
+      sendAgentMessageEphemeralDelta: (_provider, body, opts) => {
+        deltas.push({
+          text: body.type === 'message' ? body.message : '',
+          baseLength: opts.baseLength,
+        });
+        return { accepted: true, epoch: 1 };
+      },
+      sendAgentMessageCommitted: async () => {},
+    };
+    const writer = createWriter(session, null);
+
+    writer.appendAssistantDelta('Hel');
+    await settleLivePublication();
+    expect(fullSnapshots).toEqual(['Hel']);
+
+    await vi.advanceTimersByTimeAsync(30);
+    writer.appendAssistantDelta('lo ');
+    await vi.advanceTimersByTimeAsync(30);
+    writer.appendAssistantDelta('world');
+
+    await vi.advanceTimersByTimeAsync(39);
+    expect(fullSnapshots).toEqual(['Hel']);
+    expect(deltas).toEqual([]);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(deltas).toEqual([{ text: 'lo world', baseLength: 3 }]);
+
+    writer.appendAssistantDelta('!');
+    const flushed = writer.flushAll({ reason: 'turn-end' });
+    await settleLivePublication();
+    expect(fullSnapshots).toEqual(['Hel', 'Hello world!']);
+    await flushed;
+
+    await vi.advanceTimersByTimeAsync(100);
+    expect(fullSnapshots).toEqual(['Hel', 'Hello world!']);
+    expect(deltas).toEqual([{ text: 'lo world', baseLength: 3 }]);
   });
 
   it('does not chain a delta from a synchronously failed snapshot', async () => {

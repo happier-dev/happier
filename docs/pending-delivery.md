@@ -279,6 +279,11 @@ settlement before claiming input.
 Authentication failures and unsupported contracts still fail closed; this
 recovery adds no polling or reconnect side effects.
 
+If a claim is deferred with `runtime_activity_unknown`, the runner retries with
+the exact committed idle revision when its runtime activity publisher can prove
+one. This also covers claims whose effective delivery timing is tightened by
+the session client while account settings are converging.
+
 In current development source, an admitted prompt does not wait for the daemon's
 `prompt_or_steer` lifecycle response. That notification informs recovery and
 switching; it is not input authorization. A delayed or failed notification does
@@ -339,7 +344,8 @@ because the attached provider may already be working.
 
 Local fast-start retains a deferred session client across the switch to remote.
 That wrapper must forward provider input outcomes and delivery-state reads to the
-attached `SessionClient`, which owns acceptance and settlement. Buffering or
+attached `SessionClient`, which owns acceptance and settlement. It also forwards
+the activity revision read and wait used by the idle claim retry. Buffering or
 submitting a provider prompt alone does not settle its Pending row.
 The same forwarding preserves the all-blocked queue signal used by Claude's
 ready notification, so blocked messages do not suppress completion indefinitely.

@@ -12,6 +12,7 @@ import {
   isExactAcceptedConnectedServiceAccountVerification,
   type AcceptedConnectedServiceAccountVerificationByServiceId,
 } from '../../accountTransitions/acceptedConnectedServiceAccountVerification';
+import { CONNECTED_SERVICE_SWITCH_HELD_UNTIL_TURN_END } from '../../sessionAuthSwitch/connectedServiceSwitchBeforeTurnDeferral';
 
 type RawApplyResult = Readonly<{
   status: string;
@@ -132,6 +133,14 @@ export function mapCommittedGenerationApplyResult(input: Readonly<{
     return {
       reconciliationDisposition: 'deferred_restart',
       errorCode: 'restart_disallowed_by_execution_policy',
+      restartRequested: false,
+    };
+  }
+  if (input.result.errorCode === CONNECTED_SERVICE_SWITCH_HELD_UNTIL_TURN_END) {
+    // Queued for the recipient's turn end; not a failure. Not acknowledged until the runner adopts it.
+    return {
+      reconciliationDisposition: 'deferred_restart',
+      errorCode: CONNECTED_SERVICE_SWITCH_HELD_UNTIL_TURN_END,
       restartRequested: false,
     };
   }

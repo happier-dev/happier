@@ -1,11 +1,17 @@
+import type { AgentRequestNotificationIdentity } from './agentRequestNotificationSettlement';
 import type { ParsedNotificationTap } from '../notificationRouting';
 import type { NotificationPermissionOutcome } from './notificationPermissionCoordinator';
 import { markNotificationPermissionRecoveryNeeded } from './notificationPermissionRecovery';
 import { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
 import { withTimeout } from '@/utils/timing/time';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { PUSH_NOTIFICATION_NATIVE_CALL_TIMEOUT_MS } from '../permission/pushNotificationAccess';
 
 type NotificationPermissionExecution = typeof import('./notificationPermissionActionExecution');
+
+export type NotificationPermissionExecutionOutcome = NotificationPermissionOutcome & Readonly<{
+    settlement?: AgentRequestNotificationIdentity;
+}>;
 
 export type NotificationPermissionActionOptions = Readonly<{
     allowExecution?: boolean;
@@ -36,7 +42,7 @@ function reportOutcome(outcome: NotificationPermissionOutcome, scope?: ServerAcc
 /** One lifetime covers cold bundle loading, preparation and permission dispatch. */
 async function runPermissionAction(
     options: NotificationPermissionActionOptions,
-    execute: (implementation: NotificationPermissionExecution, context: NotificationPermissionActionContext) => Promise<NotificationPermissionOutcome>,
+    execute: (implementation: NotificationPermissionExecution, context: NotificationPermissionActionContext) => Promise<NotificationPermissionExecutionOutcome>,
 ): Promise<NotificationPermissionOutcome> {
     const lifetime = new AbortController();
     const onAbort = () => lifetime.abort();
@@ -59,17 +65,31 @@ async function runPermissionAction(
                 issued = true;
             },
         };
-        return reportOutcome(await withTimeout(() => Promise.race([(async () => {
+        const outcome = await withTimeout(() => Promise.race([(async () => {
             const implementation = await (options.importExecution ?? (() => import('./notificationPermissionActionExecution')))();
             if (lifetime.signal.aborted) return { status: 'not_sent' } as const;
             return execute(implementation, context);
-        })(), aborted]), DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS, 'notification permission action'), scope);
+        })(), aborted]), DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS, 'notification permission action');
+        if ('settlement' in outcome && outcome.settlement) await settleConfirmedPresentation(outcome.settlement);
+        return reportOutcome({ status: outcome.status }, scope);
     } catch {
         return reportOutcome({ status: issued ? 'unconfirmed' : 'not_sent' }, scope);
     } finally {
         options.signal?.removeEventListener('abort', onAbort);
         if (rejectAborted) lifetime.signal.removeEventListener('abort', rejectAborted);
         lifetime.abort();
+    }
+}
+
+async function settleConfirmedPresentation(settlement: AgentRequestNotificationIdentity): Promise<void> {
+    try {
+        // Presentation uses its native-call budget after the action has acknowledged.
+        await withTimeout(async () => {
+            const { dismissConfirmedAgentRequestNotification } = await import('./agentRequestNotificationSettlement');
+            await dismissConfirmedAgentRequestNotification(settlement);
+        }, PUSH_NOTIFICATION_NATIVE_CALL_TIMEOUT_MS, 'confirmed notification cleanup');
+    } catch {
+        console.warn('[notifications] Confirmed request notification cleanup unavailable');
     }
 }
 

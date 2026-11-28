@@ -27,7 +27,7 @@ export type GithubCliAuthDetectionResult =
 
 const DEFAULT_GITHUB_CLI_TIMEOUT_MS = 10_000;
 
-function resolveGithubCliTimeoutMs(): number {
+export function resolveGithubCliTimeoutMs(): number {
     const parsed = Number(String(process.env.HAPPIER_GITHUB_CLI_TIMEOUT_MS ?? '').replaceAll('_', '').trim());
     return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : DEFAULT_GITHUB_CLI_TIMEOUT_MS;
 }

@@ -280,6 +280,18 @@ export async function readClaudeCodeMacOsKeychainCredentialWithMetadata(params: 
   username?: string | null | undefined;
   signal?: AbortSignal;
 }>): Promise<ClaudeCodeMacOsKeychainCredentialReadResult | null> {
+  const read = await readClaudeCodeMacOsKeychainDocument(params);
+  const payload = read ? readClaudeCodeNativeCredentialPayload(read.document) : null;
+  return read && payload ? { payload, updatedAtMs: read.updatedAtMs } : null;
+}
+
+/** The parsed JSON document Claude Code keeps in its global keychain item, before any projection. */
+export async function readClaudeCodeMacOsKeychainDocument(params: Readonly<{
+  claudeConfigDir: string;
+  homeDir?: string | null | undefined;
+  username?: string | null | undefined;
+  signal?: AbortSignal;
+}>): Promise<Readonly<{ document: unknown; updatedAtMs: number | null }> | null> {
   params.signal?.throwIfAborted();
   const serviceName = resolveClaudeCodeMacOsKeychainServiceName({
     claudeConfigDir: params.claudeConfigDir,
@@ -301,14 +313,10 @@ export async function readClaudeCodeMacOsKeychainCredentialWithMetadata(params: 
     ]);
     params.signal?.throwIfAborted();
     if (raw.status !== 0 || metadata.status !== 0) return null;
-    const parsed = JSON.parse(raw.stdout.trim()) as unknown;
-    const payload = readClaudeCodeNativeCredentialPayload(parsed);
-    return payload
-      ? {
-          payload,
-          updatedAtMs: parseKeychainTimestamp(metadata.stdout),
-        }
-      : null;
+    return {
+      document: JSON.parse(raw.stdout.trim()) as unknown,
+      updatedAtMs: parseKeychainTimestamp(metadata.stdout),
+    };
   } catch {
     params.signal?.throwIfAborted();
     return null;

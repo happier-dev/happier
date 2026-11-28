@@ -10,7 +10,7 @@ import { createTestAuth } from '../../src/testkit/auth';
 import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
 import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
-import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
+import { fakeClaudeFixturePath, readFakeClaudeLogEvents } from '../../src/testkit/fakeClaude';
 import { decryptLegacyBase64 } from '../../src/testkit/messageCrypto';
 import { listPendingQueueV2 } from '../../src/testkit/pendingQueueV2';
 import { repoRootDir } from '../../src/testkit/paths';
@@ -659,6 +659,49 @@ describe('wake/resume: first message processed', () => {
     await server?.stop().catch(() => {});
     server = null;
   });
+
+  it('applies a saved profile before the first prompt when spawn supplies only its ID', async () => {
+    const testDir = run.testDir('fresh-first-message-with-saved-profile');
+    const profileId = 'claude-config-profile';
+    const claudeConfigDir = resolve(testDir, 'profile-claude-config');
+    await mkdir(claudeConfigDir, { recursive: true });
+    const harness = await startWakeHarness({
+      testDir,
+      accountSettings: {
+        profiles: [{
+          id: profileId,
+          name: 'Claude test configuration',
+          compatibilityByTargetKey: { 'agent:claude': true },
+          environmentVariables: [{ name: 'CLAUDE_CONFIG_DIR', value: claudeConfigDir }],
+          createdAt: 0,
+          updatedAt: 0,
+        }],
+      },
+    });
+    server = harness.server;
+    daemon = harness.daemon;
+
+    const spawn = await daemonControlPostJson<{ success: boolean; sessionId?: string }>({
+      port: daemon.state.httpPort,
+      path: '/spawn-session',
+      controlToken: daemon.state.controlToken,
+      body: {
+        directory: harness.workspaceDir,
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        terminal: { mode: 'plain' },
+        profileId,
+      },
+    });
+    expect(spawn.status).toBe(200);
+    expect(spawn.data.success).toBe(true);
+    const sessionId = spawn.data.sessionId;
+    if (!sessionId) throw new Error('Missing sessionId from daemon spawn-session');
+
+    const prompt = `E2E_PROFILE_FIRST_PROMPT_${randomBytes(8).toString('hex')}`;
+    await seedBaselineTurn({ harness, providerCase: WAKE_PROVIDER_CASES[0], sessionId, prompt });
+    const events = await readFakeClaudeLogEvents(harness.fakeClaudeLogPath);
+    expect(events).toContainEqual(expect.objectContaining({ type: 'invocation', claudeConfigDir }));
+  }, 240_000);
 
   it.each(WAKE_PROVIDER_CASES)(
     'processes the first wake prompt exactly once through $backend ($submitPath, supportsServerPending=$supportsServerPending)',

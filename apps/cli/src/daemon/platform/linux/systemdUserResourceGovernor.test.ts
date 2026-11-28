@@ -18,7 +18,7 @@ describe('systemd user resource governor', () => {
     vi.mocked(getPriority).mockReturnValue(0);
   });
 
-  it('wraps an admitted runner in the disposable jobs slice without imposing a CPU or memory cap', () => {
+  it('wraps an admitted runner in the disposable jobs slice, keeping it alive when one of its tools is OOM-killed, without imposing a CPU or memory cap', () => {
     const spec = buildSystemdUserScopedLaunchSpec({
       launchSpec: {
         filePath: '/opt/happier/runtime/bin/happier-js-runtime',
@@ -41,6 +41,7 @@ describe('systemd user resource governor', () => {
         '--quiet',
         '--slice=happier-jobs.slice',
         '--nice=10',
+        '--property=OOMPolicy=continue',
         '--',
         '/opt/happier/runtime/bin/happier-js-runtime',
         '--no-warnings',

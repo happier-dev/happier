@@ -1,6 +1,6 @@
 import { Server } from "socket.io";
 import { RELEASED_CONNECTED_SERVICE_IDS, readConnectedServiceReaderSupport } from "@happier-dev/protocol";
-import { CURRENT_CONNECTED_SERVICE_READER_ROOM, getSessionUpdateTargets, getSocketRooms, RELEASED_CONNECTED_SERVICE_READER_ROOM } from "../api/socketRooms";
+import { CURRENT_CONNECTED_SERVICE_READER_ROOM, getSessionUpdateTargets, getSocketRooms, RELEASED_CONNECTED_SERVICE_READER_ROOM, type SocketFanoutTarget } from "../api/socketRooms";
 import { projectConnectedServiceUpdateForReader } from "./projectConnectedServiceUpdateForReader";
 import { type HappierSocketData } from "../api/socket/socketData";
 import {
@@ -44,6 +44,24 @@ function estimateSocketPayloadBytes(payload: any): number {
 function shouldObserveSocketPayloadBytes(): boolean {
     return Math.random() < (1 / SOCKET_PAYLOAD_BYTES_SAMPLE_RATE);
 }
+
+function reachesFanoutTarget(rooms: string[], target: SocketFanoutTarget): boolean {
+    const excluded: readonly string[] = typeof target.except === "string" ? [target.except] : (target.except ?? []);
+    return excluded.every(room => !rooms.includes(room)) && target.rooms.some(room => rooms.includes(room));
+}
+
+function toTargetEmitters(io: Server, targets: ReadonlyArray<SocketFanoutTarget>): ReadonlyArray<ReturnType<Server["to"]>> {
+    return targets.map(target => {
+        if (target.except === undefined) {
+            return io.to(target.rooms);
+        }
+        return io.to(target.rooms).except(target.except);
+    });
+}
+
+type ResolvedRecipientFilter =
+    | Exclude<RecipientFilter, { type: 'all-interested-in-session' }>
+    | { type: 'session-rooms'; targets: ReadonlyArray<SocketFanoutTarget> };
 
 class EventRouter {
     private userConnections = new Map<string, Set<ClientConnection>>();
@@ -129,9 +147,13 @@ class EventRouter {
         recipientFilter?: RecipientFilter;
         skipSenderConnection?: ClientConnection;
     }): void {
+        const { type } = params.payload;
         this.emit({
             userId: params.userId,
             eventName: 'ephemeral',
+            excludeLiveTranscriptDisabled: type === 'transcript-stream-segment'
+                || type === 'transcript-stream-segment-delta'
+                || type === 'direct-session-transcript-delta',
             payload: params.payload,
             recipientFilter: params.recipientFilter || { type: 'all-user-authenticated-connections' },
             skipSenderConnection: params.skipSenderConnection
@@ -142,16 +164,15 @@ class EventRouter {
 
     private shouldSendToConnection(
         connection: ClientConnection,
-        filter: RecipientFilter
+        filter: ResolvedRecipientFilter
     ): boolean {
         switch (filter.type) {
-            case 'all-interested-in-session': {
+            case 'session-rooms': {
                 const rooms = getSocketRooms({
                     ...connection,
                     clientType: connection.connectionType,
                 });
-                return getSessionUpdateTargets(connection.userId, filter.sessionId).some(target =>
-                    (!target.except || !rooms.includes(target.except)) && target.rooms.some(room => rooms.includes(room)));
+                return filter.targets.some(target => reachesFanoutTarget(rooms, target));
             }
 
             case 'user-scoped-only':
@@ -187,6 +208,7 @@ class EventRouter {
         eventName: 'update' | 'ephemeral';
         payload: any;
         recipientFilter: RecipientFilter;
+        excludeLiveTranscriptDisabled?: boolean;
         skipSenderConnection?: ClientConnection;
     }): void {
         const emissionLabels = {
@@ -199,9 +221,17 @@ class EventRouter {
             socketEmissionPayloadBytesHistogram.observe(emissionLabels, estimateSocketPayloadBytes(params.payload));
         }
 
+        const { recipientFilter } = params;
+        const filter: ResolvedRecipientFilter = recipientFilter.type === 'all-interested-in-session'
+            ? {
+                type: 'session-rooms',
+                targets: getSessionUpdateTargets(params.userId, recipientFilter.sessionId, params.excludeLiveTranscriptDisabled ?? false),
+            }
+            : recipientFilter;
+
         if (this.io) {
             const skipSocketId = params.skipSenderConnection?.socket?.id;
-            const emitters = this.getEmittersForFilter(params.userId, params.recipientFilter);
+            const emitters = this.getEmittersForFilter(params.userId, filter);
             if (params.eventName === "update") {
                 const legacyPayload = projectConnectedServiceUpdateForReader(params.payload, RELEASED_CONNECTED_SERVICE_IDS);
                 if (legacyPayload !== params.payload) {
@@ -245,7 +275,7 @@ class EventRouter {
             }
 
             // Apply recipient filter
-            if (!this.shouldSendToConnection(connection, params.recipientFilter)) {
+            if (!this.shouldSendToConnection(connection, filter)) {
                 continue;
             }
 
@@ -256,16 +286,15 @@ class EventRouter {
         }
     }
 
-    private getEmittersForFilter(userId: string, filter: RecipientFilter): ReadonlyArray<ReturnType<Server["to"]>> {
+    private getEmittersForFilter(userId: string, filter: ResolvedRecipientFilter): ReadonlyArray<ReturnType<Server["to"]>> {
         const io = this.io;
         if (!io) {
             throw new Error("EventRouter.getEmittersForFilter called without io");
         }
 
         switch (filter.type) {
-            case "all-interested-in-session":
-                return getSessionUpdateTargets(userId, filter.sessionId).map(target =>
-                    target.except ? io.to(target.rooms).except(target.except) : io.to(target.rooms));
+            case "session-rooms":
+                return toTargetEmitters(io, filter.targets);
             case "user-scoped-only":
                 return [io.to(`user-scoped:${userId}`)];
             case "machine-scoped-only": {

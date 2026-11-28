@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import { runTerminalPromptSubmission } from '@/integrations/terminalHost/promptSubmitVerification';
@@ -52,6 +54,50 @@ describe('createClaudePromptSubmitVerificationPolicy', () => {
         '',
         '│ > │',
       ].join('\n'),
+    })).toBe(false);
+  });
+
+  it.each(['1.1.5 は配布済み', '21.2 installed', '1. check the build'])(
+    'stages a prompt that starts with digits and a dot in the rule-boxed composer: %s',
+    (prompt) => {
+      const policy = createClaudePromptSubmitVerificationPolicy();
+      const rule = '────────────────────';
+
+      expect(policy.isPromptStagedBeforeSubmit({
+        promptText: prompt,
+        screenText: ['❯ earlier prompt', '', '⏺ Done.', '', rule, `❯ ${prompt}`, rule, '  ? for shortcuts'].join('\n'),
+      })).toBe(true);
+    },
+  );
+
+  it.each([
+    ['plain', '────────── Build check ──────────', '────────────────────────────────'],
+    ['labelled', '────────── Build check ─', '────────── ↓ 4 more ────────────'],
+  ])('submits a numbered draft in a named composer with a %s closing rule', async (_label, top, bottom) => {
+    const policy = createClaudePromptSubmitVerificationPolicy();
+    const promptText = '1. check the build\n2. review the output';
+    let screenText = [top, '❯ 1. check the build', '  2. review the output', bottom].join('\n');
+    const result = await runTerminalPromptSubmission({
+      promptText,
+      verifyStagedBeforeSubmit: async () => policy.isPromptStagedBeforeSubmit({ promptText, screenText }),
+      submitEnter: async () => {
+        screenText = ['❯ 1. check the build', '  2. review the output', '', top, '❯', bottom].join('\n');
+        return 'success';
+      },
+      verifyAfterSubmit: async () => policy.isPromptStillPendingAfterSubmit({ promptText, screenText }),
+      postSubmitSettleMs: 0,
+      remainingTimeoutMs: () => 0,
+    });
+
+    expect(result).toMatchObject({ success: true });
+  });
+
+  it('does not stage input on a numbered chooser immediately below a divider', () => {
+    const policy = createClaudePromptSubmitVerificationPolicy();
+
+    expect(policy.isPromptStagedBeforeSubmit({
+      promptText: '1. Yes, reset it\n2. No, go back',
+      screenText: ['Reset cache?', '────────────────────', '❯ 1. Yes, reset it', '  2. No, go back'].join('\n'),
     })).toBe(false);
   });
 
@@ -211,6 +257,68 @@ describe('createClaudePromptSubmitVerificationPolicy', () => {
       submitMayHaveReachedPane: false,
     });
     expect(submitEnter).toHaveBeenCalledOnce();
+  });
+
+  it('submits a scrolled composer whose top rule also carries the session name (2026-11-24 incident)', async () => {
+    const screenText = readFileSync(
+      new URL('./tuiControls/__fixtures__/claude-2.1.331-scrolled-named-composer.ansi', import.meta.url),
+      'utf8',
+    );
+    const promptText = [
+      '/compact Ich räume jetzt den Kontext auf.',
+      'Danach geht es mit der Schweizer Fassung weiter.',
+      'fr-Kopf gelandet 483d2ec6 und live geprüft. #699 wartet auf Johanna..',
+      'Behalte in der Zusammenfassung: Auftrag, naechster Schritt, Entscheidungen samt Grund, verworfene Wege samt Grund, Artefakt-Kennungen (Pfade, Zweig, PR, CI-IDs, Task- und Subagent-IDs) und offene Nutzerfragen. Verwirf Tool-Ausgaben und abgeschlossene Teilaufgaben ausser deren Ergebnis. Die Fleet-Uebergabe wird nach dem Compact automatisch wieder eingespielt; verweise darauf, statt sie zu wiederholen.',
+    ].join('\n');
+    const policy = createClaudePromptSubmitVerificationPolicy();
+    const submitEnter = vi.fn(async () => 'success' as const);
+    const submit = (screenText: string) => runTerminalPromptSubmission({
+      promptText,
+      verifyStagedBeforeSubmit: async ({ promptText }) => policy.isPromptStagedBeforeSubmit({ promptText, screenText }),
+      submitEnter,
+      verifyAfterSubmit: async () => false,
+      remainingTimeoutMs: () => 0,
+      wait: async () => {},
+      postSubmitSettleMs: 0,
+    });
+
+    expect(await submit(screenText)).toEqual({ success: true });
+    expect(await submit(screenText.replace('wieder eingespielt', 'wieder eingespielX'))).toMatchObject({
+      success: false,
+      phase: 'after_write_before_enter',
+      submitMayHaveReachedPane: false,
+    });
+    expect(submitEnter).toHaveBeenCalledOnce();
+  });
+
+  it.each(['Build status ↑ 2 jobs', 'Build status ↑ 2 more jobs'])(
+    'does not stage transcript text under a rule labelled %s',
+    (label) => {
+      const promptText = 'Check the staged draft before sending.';
+      const screenText = [
+        `─── ${label} ───`,
+        `  ${promptText}`,
+        '─────────────────────────────',
+      ].join('\n');
+
+      const policy = createClaudePromptSubmitVerificationPolicy();
+      expect(policy.isPromptStagedBeforeSubmit({ promptText, screenText })).toBe(false);
+    },
+  );
+
+  it('stages an unscrolled composer whose top rule carries the session name', () => {
+    const screenText = readFileSync(
+      new URL('./tuiControls/__fixtures__/claude-2.1.331-named-composer.ansi', import.meta.url),
+      'utf8',
+    );
+    const sentence = 'Dies ist ein harmloser Absatz fuer den Eingabefeld-Mitschnitt und enthaelt keinen Auftrag.';
+    const promptText = [`${sentence} ${sentence} ${sentence}`, `${sentence} ${sentence} ${sentence}`].join('\n');
+    const policy = createClaudePromptSubmitVerificationPolicy();
+    expect(policy.isPromptStagedBeforeSubmit({ promptText, screenText })).toBe(true);
+    expect(() => policy.isPromptStagedBeforeSubmit({
+      promptText,
+      screenText: screenText.replace('Eingabefeld-Mitschnitt und enthaelt keinen Auftrag. Dies ist ein harmloser', 'Eingabefeld-Mitschnitt und enthaelt keinen Auftrag. Dies ist ein harmlosXr'),
+    })).toThrow();
   });
 
   it('accepts a sufficiently long canonical visible composer window before and after submit', () => {

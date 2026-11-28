@@ -39,7 +39,7 @@ beforeAll(async () => { osBoundary.home = await mkdtemp(join(tmpdir(), 'codex-cl
 afterAll(async () => { await rm(osBoundary.home, { recursive: true, force: true }); });
 
 describe('createCodexAppServerClient', () => {
-    it.each([false, true])('pins projected SQLite through the actual binary with auth/config fallback=%s', async authConfigFallback => {
+    it.each([false, true])('preserves ordinary native launch arguments with auth/config fallback=%s', async authConfigFallback => {
         await withTempDir('happier-codex-startup-root-', async root => {
             const sqliteHome = join(root, 'sqlite');
             const codexHome = join(root, 'auth-home');
@@ -73,7 +73,7 @@ describe('createCodexAppServerClient', () => {
             });
             try {
                 const argv = await client.request('test/argv');
-                expect(argv).toEqual(['app-server', '--listen', 'stdio://', '-c', 'model="kept"', '-c', `sqlite_home=${JSON.stringify(sqliteHome)}`]);
+                expect(argv).toEqual(['app-server', '--listen', 'stdio://', '-c', 'model="kept"']);
                 if (authConfigFallback) {
                     await expect(readFile(join(sqliteHome, '.happier-codex-native-startup.version'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
                 } else {
@@ -185,6 +185,27 @@ describe('createCodexAppServerClient', () => {
                     await expect(client.request('thread/loaded/list')).rejects.toThrow('disposed');
                 } finally {
                     await client?.dispose();
+                }
+            });
+        }, process.platform === 'win32' ? undefined : '/tmp');
+    });
+
+    it.each([true, false])('uses the running daemon’s store proof, with explicit SQLite settings=%s', async configured => {
+        await withTempDir('codex-proxy-store-', async root => {
+            const sqliteHome = join(root, 'daemon-store');
+            await withFakeCodexAppServerWebSocket({ dir: root, loadedThreadIds: [], ...(configured ? { sqliteHome } : {}) }, async ({ proxyPath }) => {
+                const client = await createCodexAppServerClient({
+                    cwd: root,
+                    processEnv: createCodexAppServerProcessEnv(proxyPath, {
+                        CODEX_HOME: join(root, 'codex-home'), CODEX_SQLITE_HOME: join(root, 'decoy-store'),
+                    }),
+                    transport: { kind: 'daemonProxy' },
+                });
+                try {
+                    expect(client.readRuntimeSqliteHome).toBeTypeOf('function');
+                    await expect(client.readRuntimeSqliteHome?.()).resolves.toBe(configured ? sqliteHome : null);
+                } finally {
+                    await client.dispose();
                 }
             });
         }, process.platform === 'win32' ? undefined : '/tmp');

@@ -211,6 +211,12 @@ export async function getDirectSessionProviderOps(providerId: DirectSessionsProv
   );
 }
 
+export async function readLocalHistoryKeptDueAtMsThroughCatalog(): Promise<number | null> {
+  const providers = Object.values(AGENTS).flatMap((entry) => entry?.readLocalHistoryKeptDueAtMs ? [entry.readLocalHistoryKeptDueAtMs] : []);
+  const dueDates = await Promise.all(providers.map((read) => read()));
+  return dueDates.reduce<number | null>((earliest, value) => value === null ? earliest : Math.min(earliest ?? value, value), null);
+}
+
 export async function getProviderAttachOps(agentId?: AgentId | null): Promise<ProviderAttachOps | null> {
   const catalogId = resolveCatalogAgentId(agentId);
   const entry = AGENTS[catalogId];

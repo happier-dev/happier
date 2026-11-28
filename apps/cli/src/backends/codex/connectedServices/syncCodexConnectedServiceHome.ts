@@ -28,7 +28,8 @@ import {
 } from '@/daemon/connectedServices/stateSharing/importConnectedServiceSessionFiles';
 import { logger } from '@/ui/logger';
 
-import { resolveConfiguredCodexSqliteHome } from './codexStateFileNames';
+import { withCodexAppServerClient } from '../appServer/client/withCodexAppServerClient';
+import { resolveCodexSqliteLaunch } from './codexStateFileNames';
 import { isCodexFixedJsonlStateFile, reconcileCodexSharedJsonlState } from './reconcileCodexSharedJsonlState';
 
 const CODEX_IMPORTABLE_SESSION_HOME_ENTRIES = Object.freeze([
@@ -67,7 +68,7 @@ export type SyncCodexConnectedServiceHomeResult = Readonly<{
   requestedStateMode: CodexStateMode;
   effectiveStateMode: CodexStateMode;
   diagnostics: readonly CodexConnectedServiceStateSharingDiagnostic[];
-  targetSqliteHome: string;
+  targetSqliteHome: string | null;
 }>;
 
 function resolveCodexHomeSharingSettings(
@@ -286,7 +287,17 @@ export async function syncCodexConnectedServiceHome(params: Readonly<{
     ? [params.destinationCodexHome, sourceCodexHome]
     : [params.destinationCodexHome];
   return await withConnectedServiceStateSharingLocks(lockRoots, async () => {
-    const sourceSqliteHome = resolve(resolveConfiguredCodexSqliteHome(processEnv));
+    let sourceSqliteHome: string | null = null;
+    if (settings.stateMode === 'shared') {
+      const sourceEnv = configuredSourceCodexHome ? { ...processEnv, CODEX_HOME: configuredSourceCodexHome } : processEnv;
+      const cwd = process.cwd();
+      const store = await resolveCodexSqliteLaunch({ env: sourceEnv, cwd });
+      sourceSqliteHome = store.sqliteHome ?? await withCodexAppServerClient({
+        processEnv: sourceEnv, cwd,
+        run: async client => await client.readRuntimeSqliteHome?.() ?? null,
+      });
+      if (!sourceSqliteHome) throw new Error('Codex shared state requires a resolved source SQLite home');
+    }
     if (!configuredSourceCodexHome && settings.stateMode === 'shared') {
       return {
         providerId: 'codex',

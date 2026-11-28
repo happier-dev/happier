@@ -865,6 +865,69 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
     expect(resolveCurrentRuntimeAuthFailureSource).not.toHaveBeenCalled();
   });
 
+  it('recovers a stale direct-profile runner through the pool its session is now bound to', async () => {
+    // Live incident 2026-11-27 14:48: a runner still on a direct account hit its usage limit after
+    // the session had been switched to a pool; recovery waited for that account's reset.
+    const tracked = {
+      startedBy: 'daemon' as const,
+      happySessionId: 'sess_stale_direct_runner',
+      pid: 123,
+      spawnOptions: {
+        directory: '/tmp/project',
+        connectedServices: {
+          v: 1 as const,
+          bindingsByServiceId: { antigravity: { source: 'connected' as const, selection: 'group' as const, groupId: 'agy' } },
+        },
+        environmentVariables: {
+          [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
+            kind: 'profile', serviceId: 'antigravity', profileId: 'leeroybrun',
+            credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
+          }]),
+        },
+      },
+    } satisfies TrackedSession;
+    const switchAfterClassifiedFailure = vi.fn(async () => ({
+      status: 'no_eligible_member' as const,
+      generation: 4,
+      groupExhausted: true as const,
+      retryAtMs: null,
+      excluded: [],
+    }));
+
+    await handleConnectedServiceRuntimeAuthFailureForSession({
+      getChildren: () => [tracked],
+      sessionId: tracked.happySessionId,
+      switchesThisTurn: 0,
+      classification: {
+        kind: 'usage_limit',
+        serviceId: 'antigravity',
+        profileId: 'leeroybrun',
+        groupId: null,
+        groupGeneration: null,
+        credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
+        resetsAtMs: 1_796_289_658_341,
+        planType: null,
+        rateLimits: null,
+        source: 'structured_provider_error',
+      },
+      resolveRegisteredRuntimeAuthFailureSource: () => ({
+        serviceId: 'antigravity',
+        groupId: null,
+        profileId: 'leeroybrun',
+        generation: null,
+        credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
+      }),
+      runtimeAuthApply: registryOnlyRuntimeAuthCapability,
+      switchCoordinator: { switchAfterClassifiedFailure },
+    });
+
+    expect(switchAfterClassifiedFailure).toHaveBeenCalledWith(expect.objectContaining({
+      serviceId: 'antigravity',
+      groupId: 'agy',
+      observedProfileId: 'leeroybrun',
+    }));
+  });
+
   it('keeps the registered non-group profile authoritative through action selection', async () => {
     const refreshConnectedServiceCredentialForRuntimeAuthFailure = vi.fn(async (input: Readonly<{
       serviceId: 'claude-subscription';
@@ -5590,6 +5653,140 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
         profileId: 'backup',
         generation: 2,
       },
+    });
+  });
+
+  describe('a fresh in-band failure that joins a sibling-committed generation', () => {
+    // Several sessions on one pool exhaust the same member together: the first commits the
+    // replacement and the others observe it (`observed_generation`). The observed result's apply
+    // mode is this session's own application of that generation, decided from its runtime's
+    // switch continuity. `spawn_next_turn` means only the binding moved: the live runner still
+    // holds the exhausted account until a restart retires it.
+    const runJoinedGenerationRecovery = (input: Readonly<{
+      sessionId: string;
+      mode: 'spawn_next_turn' | 'hot_apply';
+      restartSession?: (tracked: TrackedSession) => Promise<void>;
+      continueAfterRuntimeAuthSwitch: (input: unknown) => Promise<void>;
+    }>) => handleConnectedServiceRuntimeAuthFailureForSession({
+      getChildren: () => [{
+        startedBy: 'daemon',
+        happySessionId: input.sessionId,
+        pid: 123,
+        spawnOptions: {
+          directory: '/tmp/project',
+          connectedServices: {
+            v: 1,
+            bindingsByServiceId: {
+              'openai-codex': {
+                source: 'connected',
+                selection: 'group',
+                profileId: 'primary',
+                groupId: 'main',
+              },
+            },
+          },
+        },
+      }],
+      switchCoordinator: {
+        switchAfterClassifiedFailure: async () => ({
+          status: 'observed_generation' as const,
+          activeProfileId: 'backup',
+          generation: 10,
+          mode: input.mode,
+        }),
+      },
+      ...(input.restartSession ? { restartSession: input.restartSession } : {}),
+      continueAfterRuntimeAuthSwitch: input.continueAfterRuntimeAuthSwitch,
+      sessionId: input.sessionId,
+      switchesThisTurn: 0,
+      classification: {
+        kind: 'usage_limit',
+        limitCategory: 'usage_limit',
+        serviceId: 'openai-codex',
+        profileId: 'primary',
+        groupId: 'main',
+        resetsAtMs: null,
+        retryAfterMs: 30_000,
+        quotaScope: 'account',
+        providerLimitId: 'weekly',
+        action: null,
+        planType: null,
+        rateLimits: null,
+        source: 'structured_provider_error',
+      },
+    });
+
+    it('holds the continuation until the restart retires the predecessor when the runtime cannot hot-apply', async () => {
+      let resolveRestart!: () => void;
+      const restartSession = vi.fn(() => new Promise<void>((resolve) => {
+        resolveRestart = resolve;
+      }));
+      const continueAfterRuntimeAuthSwitch = vi.fn(async () => {});
+
+      const recovery = runJoinedGenerationRecovery({
+        sessionId: 'sess_joined_restart_only',
+        mode: 'spawn_next_turn',
+        restartSession,
+        continueAfterRuntimeAuthSwitch,
+      });
+
+      await vi.waitFor(() => {
+        expect(restartSession).toHaveBeenCalledOnce();
+      });
+      expect(continueAfterRuntimeAuthSwitch).not.toHaveBeenCalled();
+
+      resolveRestart();
+      await expect(recovery).resolves.toMatchObject({
+        status: 'switch_attempted',
+        result: { status: 'observed_generation', activeProfileId: 'backup', generation: 10 },
+      });
+      expect(continueAfterRuntimeAuthSwitch).toHaveBeenCalledOnce();
+      expect(continueAfterRuntimeAuthSwitch).toHaveBeenCalledWith(expect.objectContaining({
+        sessionId: 'sess_joined_restart_only',
+        attemptId: 'connected-service-auth-switch|hot_applied|openai-codex:group:main:backup:10',
+        action: 'restart_requested',
+        target: { serviceId: 'openai-codex', groupId: 'main', profileId: 'backup', generation: 10 },
+      }));
+    });
+
+    it('never arms the continuation when the predecessor retirement is unproven', async () => {
+      const retirementError = Object.assign(
+        new Error('connected_service_previous_runner_retirement_unproven:timeout'),
+        { code: 'connected_service_previous_runner_retirement_unproven', retryable: true },
+      );
+      const continueAfterRuntimeAuthSwitch = vi.fn(async () => {});
+
+      await expect(runJoinedGenerationRecovery({
+        sessionId: 'sess_joined_retirement_unproven',
+        mode: 'spawn_next_turn',
+        restartSession: async () => {
+          throw retirementError;
+        },
+        continueAfterRuntimeAuthSwitch,
+      })).rejects.toBe(retirementError);
+      expect(continueAfterRuntimeAuthSwitch).not.toHaveBeenCalled();
+    });
+
+    it('continues immediately without a restart when the runtime hot-applied the joined generation', async () => {
+      const restartSession = vi.fn(async () => {});
+      const continueAfterRuntimeAuthSwitch = vi.fn(async () => {});
+
+      await expect(runJoinedGenerationRecovery({
+        sessionId: 'sess_joined_hot_apply',
+        mode: 'hot_apply',
+        restartSession,
+        continueAfterRuntimeAuthSwitch,
+      })).resolves.toMatchObject({
+        status: 'switch_attempted',
+        result: { status: 'observed_generation', activeProfileId: 'backup', generation: 10 },
+      });
+      expect(restartSession).not.toHaveBeenCalled();
+      expect(continueAfterRuntimeAuthSwitch).toHaveBeenCalledOnce();
+      expect(continueAfterRuntimeAuthSwitch).toHaveBeenCalledWith(expect.objectContaining({
+        sessionId: 'sess_joined_hot_apply',
+        attemptId: 'connected-service-auth-switch|hot_applied|openai-codex:group:main:backup:10',
+        action: 'hot_applied',
+      }));
     });
   });
 

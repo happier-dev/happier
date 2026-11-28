@@ -34,4 +34,10 @@ describe('settingsRouteRegistry', () => {
             headerShown: true,
         });
     });
+
+    it('keeps the plan header to the way back because the page draws its own title', () => {
+        const definition = getSettingsStackScreenDefinitions((key) => key).find((entry) => entry.name === 'plan');
+
+        expect(definition?.options).toMatchObject({ headerTitle: '', headerShown: true, headerBackTitle: 'common.back' });
+    });
 });

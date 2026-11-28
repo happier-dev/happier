@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { startConnectedServiceQuotasLoop } from './startConnectedServiceQuotasLoop';
-import { buildConnectedServiceCredentialRecord, projectProviderAccountUsageSnapshotToConnectedServiceQuotaSnapshotV1, type ProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol';
-import { createAgyQuotaFetcher } from '@/backends/agy/connectedServices/quotaFetcher';
+import { buildConnectedServiceCredentialRecord, projectProviderAccountUsageSnapshotToConnectedServiceQuotaSnapshotV1, type ConnectedServiceAuthGroupV1, type ProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol';
+import type { ConnectedServiceQuotaFetcher } from './types';
 import { invalidateConnectedServiceAccountMode } from '@/cloud/connectedServices/resolveConnectedServiceAccountMode';
 import { ConnectedServiceQuotasCoordinator } from './ConnectedServiceQuotasCoordinator';
 
@@ -17,14 +17,14 @@ describe('startConnectedServiceQuotasLoop', () => {
       profileId: 'connected', kind: 'oauth', expiresAt: now + 60_000,
       oauth: { accessToken, refreshToken: 'refresh', idToken: null, scope: null, tokenType: null,
         providerAccountId: 'selected-account', providerEmail: null } });
-    const fetcher = createAgyQuotaFetcher({ fetchRuntime: async (url, init) => {
-      if (String(url).endsWith(':loadCodeAssist')) {
-        return new Response(JSON.stringify({ currentTier: {}, cloudaicompanionProject: 'project' }));
-      }
-      const selectedA = new Headers(init.headers).get('Authorization') === 'Bearer selected-a';
+    // The provider read is the system boundary; the coordinator, loop and persistence are real.
+    const fetcher: ConnectedServiceQuotaFetcher = { serviceId: 'antigravity', async fetch({ record: current, now: fetchedAt }) {
+      const selectedA = current.kind === 'oauth' && current.oauth.accessToken === 'selected-a';
       if (duringFetch && selectedA) await new Promise<void>(resolve => { firstFetch.release = resolve; });
-      return new Response(JSON.stringify({ buckets: [{ bucketId: 'weekly', remainingFraction: selectedA ? 0.8 : 0.2 }] }));
-    } });
+      return { v: 1, serviceId: 'antigravity', profileId: 'connected', fetchedAt, staleAfterMs: 300_000, planLabel: null, accountLabel: null,
+        meters: [{ meterId: 'weekly', label: 'Weekly', used: null, limit: null, unit: 'unknown', utilizationPct: null,
+          remainingPct: selectedA ? 80 : 20, resetsAt: null, status: 'ok', details: {} }] };
+    } };
     const coordinator = new ConnectedServiceQuotasCoordinator({
       credentials: { token: 'account', encryption: { type: 'legacy', secret: new Uint8Array(32) } },
       quotaFetchers: [fetcher], discoveryEnabled: false, now: () => now,
@@ -32,6 +32,8 @@ describe('startConnectedServiceQuotasLoop', () => {
       api: {
         getAccountEncryptionMode: async () => 'plain',
         listConnectedServiceProfiles: async () => ({ serviceId: 'antigravity', profiles: [{ profileId: 'connected', status: 'connected' }] }),
+        // Antigravity account reads need consent: the account is a pool member.
+        listConnectedServiceAuthGroups: async () => [{ members: [{ profileId: 'connected', enabled: true }] } as unknown as ConnectedServiceAuthGroupV1],
         getConnectedServiceCredentialPlain: async () => ({ content: { t: 'plain', v: record() } }),
         getConnectedServiceQuotaSnapshotPlain: async ({ serviceId, profileId }) => {
           if (!published) return null;

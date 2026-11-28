@@ -16,7 +16,6 @@ import { SessionEmbeddedTerminalPane } from '@/components/sessions/terminal/Sess
 import { PinIcon, PinSlashIcon } from '@/components/sessions/shell/sessionPinIcons';
 import { t } from '@/text';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
-import { useWebScrollLockBypass } from '@/components/ui/scroll/useWebScrollLockBypass';
 import { resolveWebScrollableElementWithin } from '@/components/ui/scroll/resolveWebScrollableElement';
 import { deferOnWeb } from '@/utils/platform/deferOnWeb';
 import { IconAction } from '@/components/ui/buttons/IconAction';
@@ -229,11 +228,12 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
     const sessionScreenTestIdsEnabled = useSessionScreenTestIdsEnabled();
     const rootRef = React.useRef<any>(null);
     const fileEditStartCallbacksRef = React.useRef(new Map<string, FileEditStartCallbackEntry>());
-    useWebScrollLockBypass({ rootRef, enabled: true });
     const stopScrollEventPropagationOnWeb = React.useCallback((event: any) => {
         // Expo Router (Vaul/Radix) overlays on web can install document-level wheel/touchmove listeners
         // that prevent default scrolling. Stopping propagation at the pane root keeps scrolling inside
-        // nested scroll views (FlashList/ScrollView) working reliably.
+        // nested scroll views (FlashList/ScrollView) working reliably. This must stay a React handler:
+        // React runs it after descendant handlers (the transcript releases its held scroll intent from
+        // onWheel/onTouchMove), and its stopPropagation still stops the native event at the root container.
         if (Platform.OS !== 'web') return;
         if (typeof event?.stopPropagation === 'function') event.stopPropagation();
     }, []);

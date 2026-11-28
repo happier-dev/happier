@@ -25,6 +25,7 @@ function createPolicy(): RetentionPolicy {
         intervalMs: 60_000,
         batchSize: 10,
         dryRun: false,
+        startsAt: Date.parse('2025-01-01T00:00:00.000Z'),
         maxDeletesPerRulePerRun: 25,
         domains: {
             sessions: { mode: 'keep_forever' },
@@ -96,6 +97,23 @@ describe('runRetentionSweep', () => {
         expect(findMany.mock.calls[1]?.[0]).toMatchObject({ skip: 10 });
         expect(findMany.mock.calls[2]?.[0]).toMatchObject({ skip: 20 });
     });
+
+    it.each([undefined, Date.parse('2025-02-01T00:00:00.000Z')])(
+        'cleans expired locks independently of the session notice start (%s)',
+        async (startsAt) => {
+            findMany.mockResolvedValueOnce([{ key: 'expired-lock' }]);
+            deleteMany.mockResolvedValueOnce({ count: 1 });
+
+            const { runRetentionSweep } = await import('./runRetentionSweep');
+            const result = await runRetentionSweep({
+                policy: { ...createPolicy(), startsAt },
+                now: new Date('2025-01-08T00:00:00.000Z'),
+            });
+
+            expect(result.byRule.globalLocks).toBe(1);
+            expect(deleteMany).toHaveBeenCalledWith({ where: expect.objectContaining({ key: { in: ['expired-lock'] } }) });
+        },
+    );
 
     it('stops between bounded batches when the sweep time budget expires', async () => {
         findMany.mockResolvedValue(Array.from({ length: 10 }, (_, index) => ({ key: `lock-${index}` })));

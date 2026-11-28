@@ -25,6 +25,7 @@ import { CLAUDE_SUBSCRIPTION_OAUTH_SCOPE } from './descriptors/connectedAccountD
 import {
   ConnectedServiceSpawnCredentialRefreshError,
   ConnectedServiceSpawnMaterializationError,
+  admitConnectedServiceAuthForSpawn,
   persistMaterializationFailureCredentialHealthForSpawn,
   resolveConnectedServiceAuthForSpawn,
 } from './resolveConnectedServiceAuthForSpawn';
@@ -245,6 +246,43 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       },
     });
     expect(credential?.claudeAiOauth).not.toHaveProperty('refreshToken');
+  });
+
+  it('refuses an admitted OAuth credential that expires before materialization', async () => {
+    const now = 1_000_000;
+    let clock = now;
+    const expiresAt = now + 1;
+    const record = buildConnectedServiceCredentialRecord({
+      now, serviceId: 'claude-subscription', profileId: 'work', kind: 'oauth', expiresAt,
+      oauth: { accessToken: 'access', refreshToken: 'refresh', idToken: null,
+        scope: CLAUDE_SUBSCRIPTION_OAUTH_SCOPE, tokenType: 'Bearer', providerAccountId: 'acct', providerEmail: null },
+    });
+    const encryption = { type: 'legacy', secret: new Uint8Array(32).fill(7) } as const;
+    const credentials = { token: 'happy-token', encryption } satisfies Credentials;
+    const ciphertext = sealAccountScopedBlobCiphertext({
+      kind: 'connected_service_credential', material: encryption, payload: record, randomBytes,
+    });
+    const api = {
+      getConnectedServiceCredentialSealed: async () => ({
+        sealed: { format: 'account_scoped_v1', ciphertext },
+        metadata: { kind: 'oauth', providerEmail: null, providerAccountId: 'acct', expiresAt },
+      }),
+    } as unknown as ApiClient;
+    const input = {
+      agentId: 'claude' as const, credentials, api, nowMs: () => clock,
+      connectedServicesBindingsRaw: { v: 1, bindingsByServiceId: {
+        'claude-subscription': { source: 'connected', profileId: 'work' },
+      } },
+    };
+    const admittedAuth = await admitConnectedServiceAuthForSpawn(input);
+    if (!admittedAuth) throw new Error('Expected a resolved credential');
+    clock = expiresAt;
+    await expect(resolveConnectedServiceAuthForSpawn({
+      ...input, admittedAuth, materializationKey: 'session-1',
+      activeServerDir: await mkdtemp(join(tmpdir(), 'happier-connected-services-server-test-')),
+      baseDir: await mkdtemp(join(tmpdir(), 'happier-connected-services-test-')),
+      processEnv: await createIsolatedClaudeSourceEnv(),
+    })).rejects.toMatchObject({ kind: 'reconnect_required' });
   });
 
   it('fails before spawning when materialized Claude native OAuth is expired and cannot be refreshed', async () => {
@@ -758,9 +796,9 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       },
     }));
     const api = {
-      listConnectedServiceProfiles: vi.fn(async () => ({
+      listConnectedServiceProfiles: vi.fn(async ({ forceRefresh }: { forceRefresh?: boolean }) => ({
         serviceId: 'claude-subscription' as const,
-        profiles: [{ profileId: 'work', status: 'needs_reauth' as const }],
+        profiles: [{ profileId: 'work', status: forceRefresh ? 'needs_reauth' as const : 'connected' as const }],
       })),
       getConnectedServiceCredentialSealed: async () => ({
         sealed: { format: 'account_scoped_v1', ciphertext },
@@ -4162,6 +4200,164 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
     });
     const auth = JSON.parse(await readFile(join(connectedServiceAuth!.env.CODEX_HOME, 'auth.json'), 'utf8'));
     expect(auth.access_token).toBe('primary-access');
+  });
+
+  // Logged incident (agy pool, 2026-11-28 13:15): after the user upgraded a member's plan and
+  // switched the pool to it, every resume made a pre-turn `usage_limit` decision from the member's
+  // remembered "Resets in" cooldown, got `quota_proof_unavailable`, and failed to resume.
+  it.each([
+    { name: 'launches on a member the user selected after its remembered cooldown', mode: 'manual_selection', launches: true },
+    { name: 'launches when a fresh snapshot newer than the cooldown shows headroom', mode: 'fresh_headroom', launches: true },
+    { name: 'launches a user-initiated resume when no quota proof is available', mode: 'user_request', launches: true },
+    { name: 'keeps failing an automatic launch closed when no quota proof is available', mode: 'automatic', launches: false },
+  ] as const)('$name', async ({ mode, launches }) => {
+    const baseDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-test-'));
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-server-test-'));
+    const processEnv = await createIsolatedClaudeSourceEnv();
+    const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+    const now = 10_000_000;
+    const failureObservedAtMs = now - 120_000;
+    const rememberedRetryAtMs = now + 300_000;
+    const cooldownState = {
+      quotaExhaustedUntilMs: rememberedRetryAtMs,
+      providerResetsAtMs: rememberedRetryAtMs,
+      lastFailureKind: 'usage_limit',
+      lastObservedAtMs: failureObservedAtMs,
+    };
+
+    const credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(29) },
+    } satisfies Credentials;
+    if (credentials.encryption.type !== 'legacy') throw new Error('test fixture expected legacy encryption');
+    const sealFor = (profileId: string) => sealAccountScopedBlobCiphertext({
+      kind: 'connected_service_credential',
+      material: { type: 'legacy', secret: credentials.encryption.secret },
+      payload: buildConnectedServiceCredentialRecord({
+        now,
+        serviceId: 'claude-subscription',
+        profileId,
+        kind: 'oauth',
+        expiresAt: null,
+        oauth: {
+          accessToken: `${profileId}-access`,
+          refreshToken: `${profileId}-refresh`,
+          idToken: null,
+          scope: CLAUDE_SUBSCRIPTION_OAUTH_SCOPE,
+          tokenType: 'Bearer',
+          providerAccountId: `${profileId}-acct`,
+          providerEmail: null,
+        },
+      }),
+      randomBytes: (length) => randomBytes(length),
+    });
+    const ciphertextByProfileId: Record<string, string> = { primary: sealFor('primary'), backup: sealFor('backup') };
+
+    const group = {
+      v: 1,
+      serviceId: 'claude-subscription',
+      groupId: 'main',
+      displayName: null,
+      activeProfileId: 'primary',
+      generation: 7,
+      policy: {
+        v: 1,
+        strategy: 'least_limited',
+        autoSwitch: true,
+        probeIfSnapshotOlderThanMs: 60_000,
+        preTurnProbeMode: 'when_stale',
+        preTurnProbeOrder: 'current_first_then_candidates',
+      },
+      state: mode === 'manual_selection'
+        ? { v: 1, lastSwitchReason: 'manual', lastSwitchAt: now - 60_000 }
+        : { v: 1, lastSwitchReason: 'usage_limit', lastSwitchAt: now - 600_000 },
+      members: ['primary', 'backup'].map((profileId, index) => ({
+        v: 1,
+        serviceId: 'claude-subscription',
+        groupId: 'main',
+        profileId,
+        enabled: true,
+        priority: index + 1,
+        state: cooldownState,
+        createdAt: index + 1,
+        updatedAt: index + 1,
+      })),
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    const accountUsageStore = {
+      resolveBySource: vi.fn((source: { serviceId: string; profileId: string; groupId?: string | null; groupGeneration?: number | null }) => {
+        if (source.groupId !== 'main' || source.groupGeneration !== 7) return null;
+        const snapshot = createProviderAccountUsageSnapshot(source.profileId, source.profileId === 'primary' ? 99 : 0);
+        // Only the fresh-headroom case has a snapshot newer than the remembered failure.
+        const fetchedAtMs = mode === 'fresh_headroom' && source.profileId === 'primary' ? now - 1_000 : failureObservedAtMs - 600_000;
+        return {
+          ...snapshot,
+          observedAtMs: fetchedAtMs,
+          fetchedAtMs,
+          meters: snapshot.meters.map((meter) => ({ ...meter, resetsAt: now + 3_600_000, resetAtMs: now + 3_600_000 })),
+        };
+      }),
+    };
+    const switchBeforeTurn = vi.fn(async (_input: { reason: string }) => ({
+      status: 'quota_proof_unavailable' as const,
+      activeProfileId: 'primary',
+      generation: 7,
+    }));
+    const api = {
+      getConnectedServiceAuthGroup: vi.fn(async () => group),
+      getConnectedServiceCredentialSealed: vi.fn(async (params: { serviceId: string; profileId: string }) => {
+        const ciphertext = ciphertextByProfileId[params.profileId];
+        if (params.serviceId !== 'claude-subscription' || !ciphertext) return null;
+        return {
+          sealed: { format: 'account_scoped_v1', ciphertext },
+          metadata: { kind: 'oauth', providerEmail: null, providerAccountId: `${params.profileId}-acct`, expiresAt: null },
+        };
+      }),
+    } as unknown as ApiClient;
+
+    try {
+      if (originalPlatformDescriptor) {
+        Object.defineProperty(process, 'platform', { ...originalPlatformDescriptor, value: 'linux' });
+      }
+      const resolution = resolveConnectedServiceAuthForSpawn({
+        agentId: 'claude',
+        connectedServicesBindingsRaw: {
+          v: 1,
+          bindingsByServiceId: {
+            'claude-subscription': { source: 'connected', selection: 'group', groupId: 'main', profileId: 'primary' },
+          },
+        },
+        materializationKey: 'session-1',
+        activeServerDir,
+        baseDir,
+        credentials,
+        api,
+        accountUsageStore,
+        runtimeQuotaSnapshots: new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore(),
+        quotaFreshnessMs: 60_000,
+        nowMs: () => now,
+        processEnv,
+        sessionId: 'session-1',
+        authGroupSwitchCoordinator: { switchBeforeTurn },
+        ...(mode === 'user_request' ? { userInitiated: true } : {}),
+      });
+      if (!launches) {
+        await expect(resolution).rejects.toMatchObject({
+          name: 'ConnectedServiceSpawnAuthGroupAuthorityError',
+          kind: 'quota_proof_unavailable',
+        });
+        expect(switchBeforeTurn).toHaveBeenCalledWith(expect.objectContaining({ reason: 'usage_limit' }));
+        return;
+      }
+      const connectedServiceAuth = await resolution;
+      const credential = await readClaudeCodeNativeCredential(connectedServiceAuth!.env.CLAUDE_CONFIG_DIR!);
+      expect(credential).toMatchObject({ claudeAiOauth: { accessToken: 'primary-access' } });
+    } finally {
+      if (originalPlatformDescriptor) {
+        Object.defineProperty(process, 'platform', originalPlatformDescriptor);
+      }
+    }
   });
 });
 

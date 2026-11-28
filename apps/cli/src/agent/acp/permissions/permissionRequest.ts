@@ -1,4 +1,5 @@
 import { extractCommandFromExecuteTitle, isGenericExecuteTitle } from '@/agent/permissions/permissionCommandTitle';
+import { normalizeBashInput } from '@/agent/tools/normalization/families/execute';
 
 export type PermissionToolCallLike = {
   kind?: unknown;
@@ -259,6 +260,17 @@ export function extractPermissionInput(
   return {};
 }
 
+/** Publish an execute request's command under the canonical `command` key that renderers and session approvals read. */
+function withCanonicalShellCommand(
+  input: Record<string, unknown>,
+  params: PermissionRequestLike,
+  options?: ExtractPermissionInputOptions,
+): Record<string, unknown> {
+  if ('command' in input || !isExecuteLikeToolCall(params.toolCall ?? undefined, options)) return input;
+  const command = normalizeBashInput(input).command;
+  return typeof command === 'string' ? { ...input, command } : input;
+}
+
 export function extractPermissionInputWithFallback(
   params: PermissionRequestLike,
   toolCallId: string,
@@ -266,11 +278,11 @@ export function extractPermissionInputWithFallback(
   options?: ExtractPermissionInputOptions,
 ): Record<string, unknown> {
   const extracted = extractPermissionInput(params, options);
-  if (Object.keys(extracted).length > 0) return extracted;
+  if (Object.keys(extracted).length > 0) return withCanonicalShellCommand(extracted, params, options);
 
   const fallback = toolCallIdToInputMap?.get(toolCallId);
   if (fallback && typeof fallback === 'object' && !Array.isArray(fallback) && Object.keys(fallback).length > 0) {
-    return fallback;
+    return withCanonicalShellCommand(fallback, params, options);
   }
 
   const optionCommandHint = isExecuteLikeToolCall(params.toolCall ?? undefined, options)

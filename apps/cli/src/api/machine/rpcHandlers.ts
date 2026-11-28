@@ -242,6 +242,7 @@ function normalizeMachineStopSessionResult(result: MachineStopSessionHandlerResu
 
 export type MachineRpcHandlers = {
   spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
+  connectedServiceAdmission?: NonNullable<Parameters<typeof runSessionAgentTransition>[0]['deps']>['connectedServiceAdmission'];
   spawnSessionForHandoff?: (
     options: SpawnSessionOptions,
     hooks: import('@/rpc/handlers/registerSessionHandlers').SpawnSessionRunnerAcceptanceHooks,
@@ -276,6 +277,7 @@ export type MachineRpcHandlerDeps = Readonly<{
   machineRpcWorkingDirectory?: string;
   filesystemAccessPolicy?: FilesystemAccessPolicy;
   emitDirectSessionTranscriptUpdate?: (payload: DirectSessionTranscriptDeltaEphemeral) => void;
+  publishKeptDueAtMs?: (dueAtMs: number | null) => Promise<void>;
   emitActionOperationRevision?: (snapshot: ActionOperationSnapshotV1) => void;
   createAccountPet?: (request: AccountPetCreateRequestV1) => Promise<AccountPetCreateResponseV1>;
   resumeInactiveSessionWhenUsageLimitReady?: ResumeInactiveSessionWhenUsageLimitReady;
@@ -1186,6 +1188,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
     spawnSession,
     stopSession: stopSessionConfirmed,
     emitDirectSessionTranscriptUpdate: params.deps?.emitDirectSessionTranscriptUpdate,
+    publishKeptDueAtMs: params.deps?.publishKeptDueAtMs,
     ...(actionOperationRuntime ? { actionOperations: actionOperationRuntime } : {}),
   });
   registerMachineConnectedServiceQuotaRpcHandlers({
@@ -2209,7 +2212,9 @@ export function registerMachineRpcHandlers(params: Readonly<{
     if (!credentials) {
       return rejectUndispatchedSessionAgentTransition('forbidden');
     }
-    return await runSessionAgentTransition({ credentials, request: parsed.data });
+    return await runSessionAgentTransition({ credentials, request: parsed.data,
+      deps: { connectedServiceAdmission: handlers.connectedServiceAdmission },
+    });
   });
 
   rpcHandlerManager.registerHandler(RPC_METHODS.SESSION_CONTINUATION_INSPECT, async (raw: unknown) => {

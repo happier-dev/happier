@@ -76,7 +76,7 @@ describe('oauth/[provider] return (keyless)', () => {
 
         const originalFetch = globalThis.fetch;
         const fetchMock = vi.fn(async (url: any, init?: any) => {
-            if (String(url).endsWith('/v1/features')) {
+            if (new URL(String(url)).pathname === '/v1/features') {
                 return new Response(JSON.stringify(createRootLayoutFeaturesResponse({
                     features: { encryption: { plaintextMachine: { enabled: true } } },
                 })), { status: 200, headers: { 'Content-Type': 'application/json' } });

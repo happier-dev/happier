@@ -1,8 +1,8 @@
 import pino from 'pino';
 import { mkdirSync } from 'fs';
 import { join } from 'path';
-import { redactPublicShareCapabilityUrl } from '@happier-dev/protocol';
 import { isBunRuntime } from '../runtime/isBunRuntime';
+import { redactHttpRequestUrl } from './redactHttpRequestUrl';
 
 // Single log file name created once at startup
 let consolidatedLogFile: string | undefined;
@@ -107,7 +107,7 @@ export function serializeHttpRequestForLog(request: {
             : undefined;
     return {
         method: typeof request.method === 'string' ? request.method : undefined,
-        url: redactPublicShareCapabilityUrl(url),
+        url: redactHttpRequestUrl(url),
         host,
         remoteAddress: typeof request.socket?.remoteAddress === 'string' ? request.socket.remoteAddress : undefined,
         remotePort: typeof request.socket?.remotePort === 'number' ? request.socket.remotePort : undefined,

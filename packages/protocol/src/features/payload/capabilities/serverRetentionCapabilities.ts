@@ -28,6 +28,8 @@ export const SessionRetentionPolicySchema = lazySchema(() => z.discriminatedUnio
 
 export const ServerRetentionCapabilitiesSchema = lazySchema(() => z.strictObject({
   policyVersion: z.literal(1),
+  startsAt: z.number().int().optional(),
+  noticeDays: z.number().int().positive().optional(),
   enabled: z.boolean(),
   sessions: SessionRetentionPolicySchema,
   sessionMessages: AgeBasedRetentionPolicySchema.optional(),

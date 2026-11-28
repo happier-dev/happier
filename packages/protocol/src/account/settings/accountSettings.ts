@@ -10,6 +10,8 @@ import {
   ConnectedServicesDefaultAuthByAgentIdV1Schema,
   ConnectedServicesAdditionalDefaultAuthByAgentIdV1Schema,
   ConnectedServicesProviderStateSharingSettingsV1Schema,
+  ConnectedServicesAccountStatusByAgentIdV1Schema,
+  DEFAULT_CONNECTED_SERVICES_ACCOUNT_STATUS_BY_AGENT_ID_V1,
   DEFAULT_CONNECTED_SERVICES_DEFAULT_AUTH_BY_AGENT_ID_V1,
   DEFAULT_CONNECTED_SERVICES_PROVIDER_STATE_SHARING_SETTINGS_V1,
   type ConnectedServicesDefaultAuthByAgentIdV1,
@@ -151,6 +153,10 @@ export const DEFAULT_ACTIONS_SETTINGS_V1: ActionsSettingsV1 = ActionsSettingsV1S
     'session.target.tracked.set': { disabledSurfaces: ['session_agent'] },
     'session.terminalComposer.clear': { disabledSurfaces: ['session_agent'] },
     'session.pendingInput.interruptAndRun': { disabledSurfaces: ['session_agent'] },
+    // Plans & Supporter: agents ask first only for money, public exposure and third-party writes.
+    'billing.checkout.open': { approvalRequiredSurfaces: ['session_agent', 'mcp'] },
+    'supporter.profile.update': { approvalRequiredSurfaces: ['session_agent', 'mcp'] },
+    'supporter.ring.set': { approvalRequiredSurfaces: ['session_agent', 'mcp'] },
   },
 });
 
@@ -395,6 +401,9 @@ export const AccountSettingsSchema = lazySchema(() => z.preprocess(
         ConnectedServicesProviderStateSharingSettingsV1Schema.default(
           DEFAULT_CONNECTED_SERVICES_PROVIDER_STATE_SHARING_SETTINGS_V1,
         ),
+      connectedServicesAccountStatusByAgentIdV1: ConnectedServicesAccountStatusByAgentIdV1Schema.default(
+        DEFAULT_CONNECTED_SERVICES_ACCOUNT_STATUS_BY_AGENT_ID_V1,
+      ),
       notificationChannelsV1: NotificationChannelsV1Schema.default([
         deriveExpoPushNotificationChannelFromLegacySettings(DEFAULT_NOTIFICATIONS_SETTINGS_V1),
       ]),

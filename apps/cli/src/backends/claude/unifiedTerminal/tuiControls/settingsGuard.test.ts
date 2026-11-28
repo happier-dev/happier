@@ -365,18 +365,16 @@ describe('withClaudeSettingsWriteLock', () => {
     await writeFile(settingsPath, '{}', 'utf8');
     await symlink(settingsPath, join(profileDir, 'settings.json'));
     const lockDir = join(nativeDir, lockDirName);
-    let journal = '';
 
     await expect(withClaudeSettingsWriteLock(nativeDir, async () => {
-      journal = await readFile(join(lockDir, journalFileName), 'utf8');
+      await expect(stat(join(lockDir, journalFileName))).rejects.toMatchObject({ code: 'ENOENT' });
       await writeFile(settingsPath, JSON.stringify({ cleanupPeriodDays: 365 }), 'utf8');
       throw new Error('writer failed after saving');
     })).rejects.toThrow('writer failed after saving');
     await expect(stat(lockDir)).rejects.toMatchObject({ code: 'ENOENT' });
 
-    // Replay the writer's actual journal as if its process stopped before releasing the lock.
+    // Recreate the lock a persistent writer leaves if it stops before releasing.
     await mkdir(lockDir);
-    await writeFile(join(lockDir, journalFileName), journal, 'utf8');
     await utimes(lockDir, new Date(0), new Date(0));
     const recovered = await createClaudeSettingsGuard({
       configDir: profileDir,

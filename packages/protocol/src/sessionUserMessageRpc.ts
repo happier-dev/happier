@@ -35,7 +35,7 @@ function hasUploadedAttachmentProvenance(value: unknown): boolean {
   return asRecord(value)?.kind === SESSION_ATTACHMENT_UPLOAD_STRUCTURED_INPUT_PROVENANCE_KIND;
 }
 
-function normalizeSessionAttachmentUploadPath(value: unknown): string | null {
+export function normalizeSessionAttachmentUploadPath(value: unknown): string | null {
   const path = readString(value);
   if (!path || path.includes('\0')) return null;
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(path)) return null;
@@ -75,25 +75,45 @@ function isImageAttachment(entry: MetadataRecord): boolean {
 }
 
 function readAttachmentEnvelope(value: MetadataRecord): MetadataRecord[] {
-  const happier = asRecord(value.happier);
+  const primary = asRecord(value.happier);
+  const happier = primary?.kind === 'attachments.v1' ? primary : asRecord(value.happierAttachments);
   if (happier?.kind !== 'attachments.v1') return [];
   const payload = asRecord(happier.payload);
   return asRecordArray(payload?.attachments);
 }
 
-export function readAttachmentEnvelopeLocalImagePaths(value: unknown): ReadonlySet<string> {
+export function readAttachmentEnvelopeUploads(value: unknown): readonly Readonly<{
+  path: string;
+  name: string | null;
+  isImage: boolean;
+  sha256: string | null;
+  sizeBytes: number | null;
+}>[] {
   const meta = asRecord(value);
+  if (!meta) return [];
+
+  return readAttachmentEnvelope(meta).flatMap((attachment) => {
+    const path = readString(attachment.path);
+    if (!path) return [];
+    const hash = readString(attachment.sha256);
+    const size = attachment.sizeBytes;
+    return [{
+      path,
+      name: readString(attachment.name),
+      isImage: isImageAttachment(attachment),
+      sha256: hash && /^[a-f0-9]{64}$/i.test(hash) ? hash.toLowerCase() : null,
+      sizeBytes: typeof size === 'number' && Number.isSafeInteger(size) && size >= 0 ? size : null,
+    }];
+  });
+}
+
+export function readAttachmentEnvelopeLocalImagePaths(value: unknown): ReadonlySet<string> {
   const paths = new Set<string>();
-  if (!meta) return paths;
-
-  for (const attachment of readAttachmentEnvelope(meta)) {
-    if (!isImageAttachment(attachment)) continue;
-    const normalizedPath = normalizeSessionAttachmentUploadPath(attachment.path);
-    if (normalizedPath) {
-      paths.add(normalizedPath);
-    }
+  for (const upload of readAttachmentEnvelopeUploads(value)) {
+    if (!upload.isImage) continue;
+    const path = normalizeSessionAttachmentUploadPath(upload.path);
+    if (path) paths.add(path);
   }
-
   return paths;
 }
 

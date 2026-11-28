@@ -23,6 +23,18 @@ const CONNECTED_SERVICE_MEMBER_RUNTIME_BLOCKER_CLEAR_KEYS = [
     'lastObservedAtMs',
 ] as const satisfies ReadonlyArray<keyof ConnectedServiceAuthGroupMemberStateV1>;
 
+/**
+ * Limiter cooldowns that an explicit user selection of a member overrides: the server's manual
+ * active-profile guard reports them, and the daemon's switch state drops them for a member the
+ * user selected after the failure that set them.
+ */
+export const CONNECTED_SERVICE_MANUAL_OVERRIDABLE_RUNTIME_BLOCKER_KEYS = [
+    'cooldownUntilMs',
+    'exhaustedUntilMs',
+    'quotaExhaustedUntilMs',
+    'rateLimitedUntilMs',
+] as const satisfies ReadonlyArray<keyof ConnectedServiceAuthGroupMemberStateV1>;
+
 function futureTimestamp(value: number | null | undefined, nowMs: number): number | null {
     return typeof value === 'number' && Number.isFinite(value) && value > nowMs ? value : null;
 }
@@ -31,13 +43,8 @@ export function readConnectedServiceManualActiveProfileRuntimeBlocker(
     state: ConnectedServiceAuthGroupMemberStateV1,
     nowMs: number,
 ): ConnectedServiceManualActiveProfileRuntimeBlocker | null {
-    const resetAtValues = [
-        state.cooldownUntilMs,
-        state.exhaustedUntilMs,
-        state.quotaExhaustedUntilMs,
-        state.rateLimitedUntilMs,
-    ]
-        .map((value) => futureTimestamp(value, nowMs))
+    const resetAtValues = CONNECTED_SERVICE_MANUAL_OVERRIDABLE_RUNTIME_BLOCKER_KEYS
+        .map((key) => futureTimestamp(state[key], nowMs))
         .filter((value): value is number => value !== null);
     return resetAtValues.length > 0 ? { resetAtMs: Math.max(...resetAtValues) } : null;
 }

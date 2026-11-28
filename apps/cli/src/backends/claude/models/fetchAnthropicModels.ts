@@ -1,5 +1,6 @@
 import { withCatalogProbeLifecycle, type CatalogProbeLifecycle } from '@/capabilities/probes/catalogProbeLifecycle';
 import { resolveClaudeCodeUserAgent } from '@/backends/claude/utils/claudeCodeUserAgent';
+import { createCertificatePinnedFetch } from './certificatePinnedFetch';
 
 export const DEFAULT_ANTHROPIC_BASE_URL = 'https://api.anthropic.com';
 const MODELS_PATH = 'v1/models?limit=1000';
@@ -133,10 +134,16 @@ export type FetchAnthropicModelsParams = CatalogProbeLifecycle & Readonly<{
    * `Authorization: Bearer`, without the subscription OAuth beta header.
    */
   apiKeyHelperValue?: string | null;
+  /**
+   * Claude Code's saved gateway sign-in. Takes the whole request when present: sent as
+   * `Authorization: Bearer` without the subscription OAuth beta header, and only over a TLS
+   * connection presenting the certificate Claude Code pinned at sign-in.
+   */
+  gatewayLogin?: Readonly<{ accessToken: string; tlsCertificateSha256: string }> | null;
   /** Anthropic-compatible endpoint root (`ANTHROPIC_BASE_URL`). Defaults to the Anthropic host. */
   baseUrl?: string | null;
   userAgent?: string;
-  /** Injectable for tests; defaults to global fetch. */
+  /** Injectable for tests; defaults to global fetch, or the certificate-pinned fetch for a gateway sign-in. */
   fetchImpl?: typeof fetch;
 }>;
 
@@ -156,15 +163,23 @@ export async function fetchAnthropicModels(
   const apiKeyHelperValue = typeof params.apiKeyHelperValue === 'string' && params.apiKeyHelperValue.trim().length > 0
     ? params.apiKeyHelperValue.trim()
     : null;
-  if (!apiKey && !accessToken && !apiKeyHelperValue) return null;
+  const gatewayAccessToken = params.gatewayLogin?.accessToken.trim() || null;
+  const gatewayCertificateSha256 = params.gatewayLogin?.tlsCertificateSha256.trim() || null;
+  const gatewayLogin = gatewayAccessToken && gatewayCertificateSha256
+    ? { accessToken: gatewayAccessToken, tlsCertificateSha256: gatewayCertificateSha256 }
+    : null;
+  if (!gatewayLogin && !apiKey && !accessToken && !apiKeyHelperValue) return null;
 
-  const fetchImpl = params.fetchImpl ?? fetch;
+  const fetchImpl = params.fetchImpl
+    ?? (gatewayLogin ? createCertificatePinnedFetch(gatewayLogin.tlsCertificateSha256) : fetch);
   const headers: Record<string, string> = {
     'Accept': 'application/json',
     'anthropic-version': ANTHROPIC_VERSION,
     'User-Agent': resolveClaudeCodeUserAgent(params.userAgent),
   };
-  if (accessToken) {
+  if (gatewayLogin) {
+    headers['Authorization'] = `Bearer ${gatewayLogin.accessToken}`;
+  } else if (accessToken) {
     headers['Authorization'] = `Bearer ${accessToken}`;
     headers['anthropic-beta'] = OAUTH_BETA_HEADER_VALUE;
   } else if (apiKeyHelperValue) {

@@ -329,6 +329,7 @@ export const V2SessionRecordSchema = lazySchema(() => z
     active: z.boolean(),
     activeAt: z.number().int().nonnegative(),
     archivedAt: z.number().int().nonnegative().nullable().optional(),
+    cloudCopyLeftAt: z.number().int().nonnegative().nullable().optional(),
     encryptionMode: AccountEncryptionModeSchema.optional(),
     metadata: z.string(),
     metadataVersion: z.number().int().nonnegative(),

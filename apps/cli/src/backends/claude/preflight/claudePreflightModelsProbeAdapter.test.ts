@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -16,13 +16,11 @@ const {
   fetchAnthropicModelsMock,
   getConnectedServiceCredentialPlainMock,
   probeClaudeInstalledRuntimeCapabilitiesMock,
-  readClaudeCodeNativeCredentialMock,
 } = vi.hoisted(() => ({
   createConnectedServiceCredentialApiMock: vi.fn(),
   fetchAnthropicModelsMock: vi.fn<(...args: unknown[]) => Promise<AnthropicModelEntry[] | null>>(),
   getConnectedServiceCredentialPlainMock: vi.fn(),
   probeClaudeInstalledRuntimeCapabilitiesMock: vi.fn(),
-  readClaudeCodeNativeCredentialMock: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
 }));
 
 vi.mock('@/api/connectedServices/connectedServiceCredentialApi', async (importOriginal) => {
@@ -33,11 +31,6 @@ vi.mock('@/api/connectedServices/connectedServiceCredentialApi', async (importOr
 vi.mock('@/backends/claude/models/fetchAnthropicModels', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/backends/claude/models/fetchAnthropicModels')>();
   return { ...actual, fetchAnthropicModels: fetchAnthropicModelsMock };
-});
-
-vi.mock('@/backends/claude/connectedServices/nativeAuth/claudeCodeCredentialFile', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/backends/claude/connectedServices/nativeAuth/claudeCodeCredentialFile')>();
-  return { ...actual, readClaudeCodeNativeCredential: readClaudeCodeNativeCredentialMock };
 });
 
 vi.mock('@/backends/claude/sessionControls/probeClaudeInstalledRuntimeCapabilities', async (importOriginal) => {
@@ -137,6 +130,12 @@ function fullEffort(): AnthropicModelEntry['capabilities'] {
   };
 }
 
+async function writeNativeToken(): Promise<void> {
+  await writeFile(join(claudeConfigDir, '.credentials.json'), JSON.stringify({
+    claudeAiOauth: { accessToken: 'sk-ant-oat01-disk', scopes: [] },
+  }));
+}
+
 async function runProbe() {
   const raw = await claudePreflightModelsProbeAdapter.probeModelsRaw?.({
     cwd: '/tmp',
@@ -164,12 +163,11 @@ beforeEach(async () => {
     listConnectedServiceAuthGroups: async () => [],
     getConnectedServiceAuthGroup: async () => null,
   });
-  readClaudeCodeNativeCredentialMock.mockReset();
-  readClaudeCodeNativeCredentialMock.mockResolvedValue(null);
   probeClaudeInstalledRuntimeCapabilitiesMock.mockReset();
   probeClaudeInstalledRuntimeCapabilitiesMock.mockResolvedValue({ supportsEffort: true, supportsUltracode: true });
   envScope.restore();
   envScope = createEnvKeyScope(envKeys);
+  for (const key of envKeys) delete process.env[key];
   claudeConfigDir = await mkdtemp(join(tmpdir(), 'happier-claude-preflight-'));
   process.env.CLAUDE_CONFIG_DIR = claudeConfigDir;
 });
@@ -257,11 +255,7 @@ describe('claudePreflightModelsProbeAdapter', () => {
   });
 
   it('resolves the on-disk Claude credentials when no env token is set', async () => {
-    readClaudeCodeNativeCredentialMock.mockResolvedValue({
-      payload: { claudeAiOauth: { accessToken: 'sk-ant-oat01-disk', scopes: [] } },
-      updatedAtMs: 0,
-      source: 'file',
-    });
+    await writeNativeToken();
     fetchAnthropicModelsMock.mockResolvedValue([{ id: 'claude-opus-9', displayName: 'Opus 9' }]);
 
     const raw = await runProbe();
@@ -272,8 +266,6 @@ describe('claudePreflightModelsProbeAdapter', () => {
   });
 
   it('returns observable static fallback when no credential is available', async () => {
-    readClaudeCodeNativeCredentialMock.mockResolvedValue(null);
-
     const raw = await runProbe();
 
     expect(raw).toMatchObject({ source: 'static', refreshError: true });
@@ -318,11 +310,7 @@ describe('claudePreflightModelsProbeAdapter', () => {
 
   it('never sends the on-disk Claude credential to a non-Anthropic base url', async () => {
     process.env.ANTHROPIC_BASE_URL = 'https://api.deepseek.com/anthropic';
-    readClaudeCodeNativeCredentialMock.mockResolvedValue({
-      payload: { claudeAiOauth: { accessToken: 'sk-ant-oat01-disk', scopes: [] } },
-      updatedAtMs: 0,
-      source: 'file',
-    });
+    await writeNativeToken();
 
     const raw = await runProbe();
 
@@ -332,11 +320,7 @@ describe('claudePreflightModelsProbeAdapter', () => {
 
   it('still uses the on-disk Claude credential when the base url is Anthropic', async () => {
     process.env.ANTHROPIC_BASE_URL = 'https://api.anthropic.com';
-    readClaudeCodeNativeCredentialMock.mockResolvedValue({
-      payload: { claudeAiOauth: { accessToken: 'sk-ant-oat01-disk', scopes: [] } },
-      updatedAtMs: 0,
-      source: 'file',
-    });
+    await writeNativeToken();
     fetchAnthropicModelsMock.mockResolvedValue([{ id: 'claude-opus-9', displayName: 'Opus 9' }]);
 
     const raw = await runProbe();
@@ -394,7 +378,6 @@ describe('claudePreflightModelsProbeAdapter', () => {
     expect(fetchAnthropicModelsMock).toHaveBeenCalledWith(expect.objectContaining({
       accessToken: 'sk-ant-oat01-profile',
     }));
-    expect(readClaudeCodeNativeCredentialMock).not.toHaveBeenCalled();
   });
 
   it('ignores ambient env auth when the session is bound to a Claude subscription account', async () => {

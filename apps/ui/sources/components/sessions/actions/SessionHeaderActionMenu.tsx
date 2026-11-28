@@ -1,3 +1,5 @@
+import { showExportSheet } from '@/components/sessions/export/ExportSheet';
+import { getSessionStorageKind } from '@/sync/domains/session/sessionStorageKind';
 import * as React from 'react';
 import { useSessionArchivePending } from '@/hooks/session/useSessionArchivePending';
 import { Pressable, View } from 'react-native';
@@ -365,6 +367,9 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
     }
 
     out.push(...actionItems);
+    if (getSessionStorageKind(session) === 'persisted') {
+      out.push({ id: 'header.exportTranscript', title: t('transcriptExport.session') });
+    }
     out.push({ id: 'header.reportIssue', title: t('bugReports.reportSession') });
     if (open && !existingActionIds.has(SESSION_COPY_MENU_ITEM_ID)) {
       out.push(createSessionCopyMenuItem({
@@ -425,6 +430,10 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
         }
         setOpen(false);
         if (props.onSelectExtraItem?.(actionId) === true) return;
+        if (actionId === 'header.exportTranscript') {
+          showExportSheet({ sessionId: props.sessionId, initialScope: 'session' });
+          return;
+        }
         if (actionId === 'header.reportIssue') {
           fireAndForget((async () => {
             const serverId = sessionServerId ?? '';

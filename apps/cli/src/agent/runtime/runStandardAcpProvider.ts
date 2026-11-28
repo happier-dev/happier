@@ -15,6 +15,7 @@ import { connectionState } from '@/api/offline/serverConnectionErrors';
 import type { MachineMetadata, Metadata, PermissionMode } from '@/api/types';
 import { createProviderEnforcedPermissionHandler } from '@/agent/permissions/createProviderEnforcedPermissionHandler';
 import type { ProviderEnforcedPermissionHandler } from '@/agent/permissions/ProviderEnforcedPermissionHandler';
+import type { AgentCancelOptions } from '@/agent/core/AgentBackend';
 import { cleanupBackendRunResources } from '@/agent/runtime/cleanupBackendRunResources';
 import { createRuntimeOverrideSynchronizers } from '@/agent/runtime/createRuntimeOverrideSynchronizers';
 import { createPermissionModeQueueState } from '@/agent/runtime/createPermissionModeQueueState';
@@ -78,12 +79,13 @@ type RuntimeForLoop = {
     message: string,
     identity?: InFlightSteerPromptOptions & Readonly<{
       onProviderPromptAccepted?: () => void;
+      onProviderPromptRejected?: () => void;
     }>,
   ) => Promise<void>;
   flushTurn: () => void | ProviderTurnCompletionResult | Promise<void | ProviderTurnCompletionResult>;
   reset: () => Promise<void>;
   getSessionId: () => string | null;
-  cancel: () => Promise<void>;
+  cancel: (options?: AgentCancelOptions) => Promise<void>;
   setSessionMode: (modeId: string) => Promise<void>;
   clearSessionModeOverride?: () => Promise<void>;
   setSessionConfigOption: (configId: string, value: string | number | boolean | null) => Promise<void>;
@@ -407,9 +409,21 @@ export async function runStandardAcpProvider(
               providerInputOutcomeObserver?.({ kind: 'accepted', localId: localIds[0] });
             }
           };
+          // A refused steer returns to the pending queue, which redelivers it once steering is safe
+          // again or as the next turn.
+          const onProviderPromptRejected = (): void => {
+            if (localIds.length === 1) {
+              providerInputOutcomeObserver?.({
+                kind: 'rejected_before_effect',
+                localId: localIds[0],
+                reason: 'steering_unavailable',
+              });
+            }
+          };
           await runtime.steerPrompt!(text, {
             ...(identity ?? {}),
             onProviderPromptAccepted,
+            onProviderPromptRejected,
           });
         },
       });
@@ -479,7 +493,7 @@ export async function runStandardAcpProvider(
       logPath: process.env.DEBUG ? logger.getLogPath() : undefined,
       onExit: async () => {
         shouldExit = true;
-        await handleAbort();
+        await handleAbort({ sessionEnding: true });
       },
     }), { exitOnCtrlC: false, patchConsole: false });
   };
@@ -667,7 +681,7 @@ export async function runStandardAcpProvider(
     return cleanupPromise;
   };
 
-  const handleAbort = (): Promise<void> => {
+  const handleAbort = (options?: AgentCancelOptions): Promise<void> => {
     if (explicitAbortPromise) return explicitAbortPromise;
     const operation = (async () => {
       logger.debug(`${config.uiLogPrefix} Abort requested`);
@@ -678,7 +692,7 @@ export async function runStandardAcpProvider(
       }
       abortController.abort();
       try {
-        await runtime.cancel();
+        await (options ? runtime.cancel(options) : runtime.cancel());
       } catch (error) {
         logger.debug(`${config.uiLogPrefix} Failed to cancel current operation (non-fatal)`, error);
         if (providerOwnsPromptTurn) {
@@ -710,7 +724,7 @@ export async function runStandardAcpProvider(
     },
     onTerminate: async () => {
       shouldExit = true;
-      await handleAbort();
+      await handleAbort({ sessionEnding: true });
       // A terminated runtime leaves the Session inactive, never archived: archiving is a
       // user-intent action owned by setSessionArchivedState. cleanupOnce closes the API
       // session so the Session projection becomes inactive and stays resumable.
@@ -725,7 +739,7 @@ export async function runStandardAcpProvider(
     await registeredTerminationHandlers.whenTerminated;
   };
 
-  session.rpcHandlerManager.registerHandler('abort', handleAbort);
+  session.rpcHandlerManager.registerHandler('abort', () => handleAbort());
   registerKillSessionHandlerFn(session.rpcHandlerManager, handleKillSession);
 
   const sendReady = config.createSendReady

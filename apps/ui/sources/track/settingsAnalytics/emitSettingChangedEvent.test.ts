@@ -375,43 +375,27 @@ describe('emitLocalSettingChangedEvents', () => {
         mocks.tracking.flush.mockResolvedValue(undefined);
     });
 
-    it('captures bucketed pane size and acknowledged CLI count changes through canonical local analytics serializers', () => {
+    it('captures bucketed local setting changes through canonical local analytics serializers', () => {
         emitLocalSettingChangedEvents({
             previousSettings: localSettingsDefaults,
             nextSettings: {
                 ...localSettingsDefaults,
-                sidebarWidthPx: 220,
-                sidebarWidthBasisPx: 1_200,
-                acknowledgedCliVersions: {
-                    'machine-a': '1.2.3',
-                    'machine-b': '2.0.0',
-                },
+                petsCompanionSizeScale: 1.5,
             },
             source: 'ui',
         });
 
+        expect(mocks.tracking.capture).toHaveBeenCalledTimes(1);
         expect(mocks.tracking.capture).toHaveBeenCalledWith(
             'setting_changed',
             expect.objectContaining({
-                setting_key: 'sidebarWidthPx',
+                setting_key: 'petsCompanionSizeScale',
                 scope: 'local_setting',
                 identity_scope: 'device_user',
                 source: 'ui',
                 value_kind: 'bucket',
-                prev_value: 'medium',
-                next_value: 'small',
-            }),
-        );
-
-        expect(mocks.tracking.capture).toHaveBeenCalledWith(
-            'setting_changed',
-            expect.objectContaining({
-                setting_key: 'acknowledgedCliVersions',
-                scope: 'local_setting',
-                identity_scope: 'device_user',
-                source: 'ui',
-                prev_value: 0,
-                next_value: 2,
+                prev_value: 'default',
+                next_value: 'xlarge',
             }),
         );
         expect(mocks.tracking.flush).toHaveBeenCalledTimes(1);

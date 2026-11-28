@@ -1,4 +1,6 @@
 import { logger } from '@/ui/logger';
+import { isConnectedServiceAccountReadConsented, readActiveConnectedServicesAccountStatusByAgentId } from '../consent/isConnectedServiceAccountReadConsented';
+import { resolveConnectedServicePoolConsentPolicy } from '@happier-dev/agents';
 import { createHash } from 'node:crypto';
 import {
   connectedServiceUsageRequiresOrganizationId,
@@ -292,6 +294,7 @@ export class ConnectedServiceQuotasCoordinator {
   private readonly failureBackoffJitterPct: number;
   private readonly discoveryEnabled: boolean;
   private readonly discoveryIntervalMs: number;
+  private readonly readAccountStatusByAgentId: () => Readonly<Record<string, boolean>> | null;
   private readonly runtimeQuotaSnapshots: ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore | null;
   private readonly accountUsageStore: AccountUsageStoreForQuotaPolicy | null;
   private readonly accountUsagePersistence: Pick<ProviderAccountUsagePersistenceScheduler, 'recordInBandSnapshot'> | null;
@@ -325,6 +328,9 @@ export class ConnectedServiceQuotasCoordinator {
   private readonly sameAccountFanoutMinIntervalMs: number;
   private readonly runtimeRegistry: ConnectedServiceRuntimeRegistry;
   private readonly failureStateByBindingKey = new Map<string, FailureState>();
+  /** Enabled pool members per pool-consent service, re-read on the discovery cadence. */
+  private readonly poolMemberProfileIdsByServiceId = new Map<ConnectedServiceId, ReadonlySet<string>>();
+  private lastPoolMembershipLoadAt = 0;
   private readonly quotaFetchesByKey = new Map<string, {
     promise: Promise<QuotaSnapshotFetchResult>;
     controller: AbortController;
@@ -361,6 +367,8 @@ export class ConnectedServiceQuotasCoordinator {
     failureBackoffJitterPct?: number;
     discoveryEnabled?: boolean;
     discoveryIntervalMs?: number;
+    /** The account's per-agent account-status setting; defaults to the process's active account settings. */
+    readAccountStatusByAgentId?: () => Readonly<Record<string, boolean>> | null;
     runtimeQuotaSnapshots?: ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore | null;
     accountUsageStore?: AccountUsageStoreForQuotaPolicy | null;
     accountUsagePersistence?: Pick<ProviderAccountUsagePersistenceScheduler, 'recordInBandSnapshot'> | null;
@@ -429,6 +437,8 @@ export class ConnectedServiceQuotasCoordinator {
         ? Math.min(1, Math.max(0, params.failureBackoffJitterPct))
         : 0.2;
     this.discoveryEnabled = typeof params.discoveryEnabled === 'boolean' ? params.discoveryEnabled : true;
+    this.readAccountStatusByAgentId = params.readAccountStatusByAgentId
+      ?? readActiveConnectedServicesAccountStatusByAgentId;
     this.discoveryIntervalMs =
       typeof params.discoveryIntervalMs === 'number' && Number.isFinite(params.discoveryIntervalMs)
         ? Math.max(1, Math.trunc(params.discoveryIntervalMs))
@@ -663,6 +673,8 @@ export class ConnectedServiceQuotasCoordinator {
     key: string;
     retryAfterMs?: number | null;
     retryAfterBackoffMinMs?: number | null;
+    /** Background polling of this binding stops once the backoff reaches its cap. */
+    suspendAtCap?: boolean;
   }>): void {
     const existing = this.failureStateByBindingKey.get(params.key);
     const consecutiveFailures = Math.min((existing?.consecutiveFailures ?? 0) + 1, 30);
@@ -681,9 +693,16 @@ export class ConnectedServiceQuotasCoordinator {
     const expMs = this.failureBackoffMinMs * Math.pow(2, consecutiveFailures - 1);
     const cappedMs = Math.min(expMs, this.failureBackoffMaxMs);
     const jitteredMs = this.computeJitteredBackoffMs(cappedMs);
+    const suspended = params.suspendAtCap === true && expMs >= this.failureBackoffMaxMs;
+    if (suspended && !existing?.suspended) {
+      const [serviceId, profileId] = params.key.split('\u0000');
+      logger.infoFile('[ConnectedServices] Quota polling paused after repeated failures; resumes on next use or manual refresh', {
+        serviceId, profileId, consecutiveFailures });
+    }
     this.failureStateByBindingKey.set(params.key, {
       consecutiveFailures,
       nextAllowedAt: params.now + jitteredMs,
+      ...(suspended ? { suspended: true as const } : {}),
       ...(existing?.inconclusiveRefreshProbeCount !== undefined
         ? { inconclusiveRefreshProbeCount: existing.inconclusiveRefreshProbeCount }
         : {}),
@@ -4259,6 +4278,47 @@ export class ConnectedServiceQuotasCoordinator {
     });
   }
 
+  /**
+   * Consent gate for services whose provider declares consent-gated account reads: an account is
+   * read only when its agent's account-status setting is on or it is a member of one of the
+   * service's pools (a live session bound through a pool, or the pool list re-read on the
+   * discovery cadence). Without either consent nothing is read.
+   */
+  private async retainConsentedProfiles(input: Readonly<{
+    now: number;
+    bindingsByServiceId: Map<ConnectedServiceId, Set<string>>;
+    poolBoundBindingKeys: ReadonlySet<string>;
+  }>): Promise<void> {
+    const gated = [...input.bindingsByServiceId.keys()].filter((serviceId) => resolveConnectedServicePoolConsentPolicy(serviceId).required);
+    if (gated.length === 0) return;
+    const membershipDue = this.lastPoolMembershipLoadAt <= 0 || input.now - this.lastPoolMembershipLoadAt >= this.discoveryIntervalMs;
+    if (membershipDue && typeof this.api.listConnectedServiceAuthGroups === 'function') {
+      let loaded = true;
+      for (const serviceId of gated) {
+        try {
+          const groups = await this.api.listConnectedServiceAuthGroups({ serviceId });
+          this.poolMemberProfileIdsByServiceId.set(serviceId, new Set(groups.flatMap((group) =>
+            group.members.filter((member) => member.enabled).map((member) => member.profileId.trim()))));
+        } catch {
+          loaded = false;
+          logger.infoFile('[ConnectedServices] Pool membership unavailable; keeping the last known members', { serviceId });
+        }
+      }
+      if (loaded) this.lastPoolMembershipLoadAt = input.now;
+    }
+    const accountStatusByAgentId = this.readAccountStatusByAgentId();
+    for (const serviceId of gated) {
+      const profileIds = input.bindingsByServiceId.get(serviceId);
+      if (!profileIds) continue;
+      const members = this.poolMemberProfileIdsByServiceId.get(serviceId);
+      for (const profileId of [...profileIds]) {
+        const poolMember = members?.has(profileId) === true
+          || input.poolBoundBindingKeys.has(this.makeBindingKey({ serviceId, profileId }));
+        if (!isConnectedServiceAccountReadConsented({ serviceId, poolMember, accountStatusByAgentId })) profileIds.delete(profileId);
+      }
+    }
+  }
+
   public async tickOnce(): Promise<void> {
     const now = Math.max(0, Math.trunc(this.now()));
     if (this.checkQuotaWorkGate('tick').status !== 'open') return;
@@ -4378,11 +4438,17 @@ export class ConnectedServiceQuotasCoordinator {
       }
     }
 
+    const inUseBindingKeys = new Set<string>();
+    const poolBoundBindingKeys = new Set<string>();
     for (const target of this.runtimeRegistry.listQuotaTargets()) {
       const activeBindings = extractActiveBindings(target);
       for (const entry of activeBindings) {
         const profileId = String(entry.profileId ?? '').trim();
         if (!profileId) continue;
+        inUseBindingKeys.add(this.makeBindingKey({ serviceId: entry.serviceId, profileId }));
+        if (typeof entry.groupId === 'string' && entry.groupId.trim()) {
+          poolBoundBindingKeys.add(this.makeBindingKey({ serviceId: entry.serviceId, profileId }));
+        }
         const existing = bindingsByServiceId.get(entry.serviceId);
         if (existing) {
           existing.add(profileId);
@@ -4455,6 +4521,8 @@ export class ConnectedServiceQuotasCoordinator {
       }
     }
 
+    await this.retainConsentedProfiles({ now, bindingsByServiceId, poolBoundBindingKeys });
+
     for (const [serviceId, profileIds] of bindingsByServiceId.entries()) {
       const fetcher = this.quotaFetchersByServiceId.get(serviceId);
       const subscriptionFetcher = this.subscriptionFetchersByServiceId.get(serviceId);
@@ -4494,7 +4562,8 @@ export class ConnectedServiceQuotasCoordinator {
 
           const failureState = this.failureStateByBindingKey.get(bindingKey);
           const quotaFresh = fetcher && this.isExistingQuotaSnapshotFresh({ existing: existing.existing, preopenedSnapshot: existing.preopenedSnapshot, now, fetcher, forcedRefresh });
-          const quotaDue = fetcher && !quotaFresh && (forcedRefresh || !(failureState && now < failureState.nextAllowedAt));
+          const quotaDue = fetcher && !quotaFresh && (forcedRefresh || !(failureState && now < failureState.nextAllowedAt))
+            && (forcedRefresh || !failureState?.suspended || inUseBindingKeys.has(bindingKey));
           const storedSubscription = this.accountUsageStore?.resolveBySource({ serviceId, profileId, bindingKind: 'profile' })?.subscription;
           const previousSubscription = storedSubscription ?? this.openExistingQuotaSnapshot({ storageMode: existing.storageMode,
             serviceId, profileId, existing: existing.existing, preopenedSnapshot: existing.preopenedSnapshot })?.subscription;
@@ -4646,13 +4715,16 @@ export class ConnectedServiceQuotasCoordinator {
               key: bindingKey,
               retryAfterMs: readQuotaRetryAfterMs(error),
               retryAfterBackoffMinMs: fetcher?.pollPolicy?.retryAfterBackoffMinMs,
+              suspendAtCap: true,
             });
           }
           // Failure completes the attempt, never the provider observation. The same
           // PAU owner publishes old meters and empty first-read failures alike.
           const code = error instanceof ConnectedServiceQuotaFetchError ? error.quotaFetchErrorCode : 'network';
           const status = error instanceof ConnectedServiceQuotaFetchError ? error.status : null;
-          logger.infoFile('[ConnectedServices] Quota refresh unavailable', { serviceId, profileId, code, status });
+          // The fetch error message is a fixed reason code (e.g. antigravity_quota_malformed:<check>), never response data.
+          const reason = error instanceof ConnectedServiceQuotaFetchError ? error.message : null;
+          logger.infoFile('[ConnectedServices] Quota refresh unavailable', { serviceId, profileId, code, status, reason });
           if (quotaAttemptStarted && recordsRefreshOutcome && failureCredential && failureStorageMode !== null) {
             const identity = readCredentialAccountIdentity(failureCredential);
             const failureAt = Math.max(0, Math.trunc(this.now()));

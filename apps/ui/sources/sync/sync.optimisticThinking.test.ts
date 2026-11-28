@@ -350,7 +350,7 @@ describe('sync.sendMessage optimistic thinking', () => {
         assertServerReachabilityAuthenticatedMock.mockReset();
         runtimeFetchWithServerReachabilityMock.mockReset();
         runtimeFetchWithServerReachabilityMock.mockImplementation(async (request: { url?: string }) =>
-            Response.json(request.url?.endsWith('/v1/features')
+            Response.json(request.url?.split('?')[0]?.endsWith('/v1/features')
                 ? buildServerFeaturesResponse()
                 : { requestedAction: { v: 1, kind: 'enqueue' } }),
         );
@@ -1243,7 +1243,7 @@ describe('sync.sendMessage optimistic thinking', () => {
             (await savePendingOutboxMessage(pendingOutboxFixture({ sessionId, localId, text: 'scope B' }), scopeB));
 
             runtimeFetchWithServerReachabilityMock.mockImplementation(async (request: { url?: string; init?: RequestInit }) => {
-                if (request.url?.endsWith('/v1/features')) {
+                if (request.url?.split('?')[0]?.endsWith('/v1/features')) {
                     return Response.json(buildServerFeaturesResponse());
                 }
                 const body = JSON.parse(String(request.init?.body)) as { localId: string };

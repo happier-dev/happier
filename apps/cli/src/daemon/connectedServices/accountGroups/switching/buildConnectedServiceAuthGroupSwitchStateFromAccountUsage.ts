@@ -9,6 +9,7 @@ import { projectProviderAccountUsageSnapshotToAuthGroupRuntimeState } from '../q
 import type { ConnectedServiceAuthGroupMemberRuntimeState } from '../selection/selectConnectedServiceAuthGroupCandidate';
 import type { ConnectedServiceAuthGroupSwitchState } from './ConnectedServiceAuthGroupSwitchCoordinator';
 import {
+  applyConnectedServiceAuthGroupUserSelectedActiveMember,
   buildConnectedServiceAuthGroupSwitchStateFromPersistedMemberState,
   mergePersistedMemberRuntimeState,
   normalizeConnectedServiceAuthGroupPolicy,
@@ -119,7 +120,7 @@ export function buildConnectedServiceAuthGroupSwitchStateFromAccountUsage(input:
 
   return {
     kind: 'source_backed',
-    state: {
+    state: applyConnectedServiceAuthGroupUserSelectedActiveMember({
       serviceId: input.group.serviceId,
       groupId: input.group.groupId,
       activeProfileId: input.group.activeProfileId,
@@ -135,7 +136,7 @@ export function buildConnectedServiceAuthGroupSwitchStateFromAccountUsage(input:
         createdAtMs: member.createdAt,
       })),
       memberStatesByProfileId,
-    },
+    }),
     sourceRefsByProfileId,
   };
 }

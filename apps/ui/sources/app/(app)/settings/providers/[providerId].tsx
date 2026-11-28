@@ -38,6 +38,7 @@ import {
 import { useCLIDetection } from '@/hooks/auth/useCLIDetection';
 import { useCapabilityInstallability } from '@/hooks/machine/useCapabilityInstallability';
 import { ProviderCliInstallItem } from '@/components/settings/providers/ProviderCliInstallItem';
+import { ConnectedServiceAccountStatusSettings } from '@/components/settings/connectedServices/consent/ConnectedServiceAccountStatusSettings';
 import { buildAgentCliCapabilityId } from '@/capabilities/agentCliCapabilityId';
 import { getPermissionModeLabelForAgentType, getPermissionModeOptionsForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
@@ -594,6 +595,8 @@ const ProviderSettingsScreenInner = React.memo(function ProviderSettingsScreenIn
                 />
 
                 {ExtraSectionsComponent ? <ExtraSectionsComponent providerId={providerId} /> : null}
+
+                <ConnectedServiceAccountStatusSettings agentId={providerId} />
 
                 <ItemGroup title={t('settingsProviders.cliConnection')}>
                     <Item

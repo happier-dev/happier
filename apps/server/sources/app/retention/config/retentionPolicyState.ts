@@ -2,6 +2,11 @@ import type {
     RetentionDomainPolicies,
     RetentionPolicy,
 } from './retentionPolicyTypes';
+import type { LimitTable } from '@/app/plans/accountLimits';
+
+export function hasPaidRetentionLimit(table: LimitTable, key: 'sessionRetentionDays' | 'subagentRetentionDays'): boolean {
+    return table.ok && [...table.plans.values()].some(({ limits }) => limits[key] !== null);
+}
 
 const KEEP_FOREVER_POLICY = Object.freeze({ mode: 'keep_forever' as const });
 

@@ -17,6 +17,7 @@ import { SESSION_REQUESTED_DIRECTORY_ENV } from '@/agent/runtime/resolveRequeste
 import { SESSION_MACHINE_WORKSPACE_PATH_ENV } from '@/agent/runtime/sessionWorkspaceLocation';
 import {
   HAPPIER_SESSION_CONNECTED_SERVICES_BINDINGS_ENV_KEY,
+  HAPPIER_SESSION_CONNECTED_SERVICES_UPDATED_AT_ENV_KEY,
   serializeSessionConnectedServicesBindingsForEnv,
 } from '@/agent/runtime/sessionConnectedServicesBindingsEnv';
 import {
@@ -115,10 +116,10 @@ export async function resolveSpawnChildEnvironment(params: {
   const sanitizedAuthEnv = sanitizeEnvVarRecord(authEnv);
 
   let resolvedProfileEnvironment = params.profileEnvironmentVariables;
-  if (params.options.existingSessionId && params.options.profileId) {
+  if (params.options.profileId) {
     try {
       if (!params.accountSettings || !params.credentials || !params.options.backendTarget) {
-        throw new Error('Account settings and credentials are required to restore the session profile.');
+        throw new Error('Account settings and credentials are required to resolve the session profile.');
       }
       const profile = resolveProfileForBackendTarget({
         backendTarget: params.options.backendTarget,
@@ -138,7 +139,7 @@ export async function resolveSpawnChildEnvironment(params: {
       });
       resolvedProfileEnvironment = overlay.envOverlayExpanded;
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Session profile restoration failed.';
+      const errorMessage = error instanceof Error ? error.message : 'Session profile resolution failed.';
       params.logWarn(`[DAEMON RUN] ${errorMessage}`);
       return {
         ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED, errorMessage,
@@ -283,6 +284,9 @@ export async function resolveSpawnChildEnvironment(params: {
   const connectedServicesBindingsJson = serializeSessionConnectedServicesBindingsForEnv(params.options.connectedServices);
   if (connectedServicesBindingsJson) {
     extraEnvForChild[HAPPIER_SESSION_CONNECTED_SERVICES_BINDINGS_ENV_KEY] = connectedServicesBindingsJson;
+    if (typeof params.options.connectedServicesUpdatedAt === 'number' && Number.isSafeInteger(params.options.connectedServicesUpdatedAt)) {
+      extraEnvForChild[HAPPIER_SESSION_CONNECTED_SERVICES_UPDATED_AT_ENV_KEY] = String(params.options.connectedServicesUpdatedAt);
+    }
   }
   const connectedServiceMaterializationIdentityJson =
     serializeSessionConnectedServiceMaterializationIdentityForEnv(

@@ -71,7 +71,7 @@
   },
   "/agents/kilo": {
     "title": "Kilo CLI al telèfon, al portàtil i al navegador",
-    "description": "Una aplicació de codi obert per a Kilo CLI i dotze agents de línia d’ordres més, als teus ordinadors i amb els teus comptes. Sense places ni restriccions.",
+    "description": "Una aplicació de codi obert per a Kilo CLI i dotze agents de línia d’ordres més. Totes les funcions són gratuïtes.",
     "ogTitle": "Kilo CLI al telèfon, al portàtil i al navegador",
     "ogDescription": "Una sola aplicació de codi obert per a Kilo i els altres dotze agents de programació de línia d’ordres que puguis tenir instal·lats.",
     "ogImageAlt": "El logotip de Happier sobre les paraules: Un sol client per a tots els agents de programació amb IA."
@@ -152,5 +152,19 @@
     "ogTitle": "Descarrega Happier per a tots els teus dispositius",
     "ogDescription": "Aplicacions d’escriptori i mòbils, APK directe i la CLI que executa els agents al teu ordinador. Una pàgina amb totes les versions.",
     "ogImageAlt": "El logotip de Happier sobre les paraules: Un sol client per a tots els agents de programació amb IA."
+  },
+  "/open": {
+    "title": "Com continua sent gratuït Happier",
+    "description": "Coneix els compromisos de Happier, què cobra i com finança el seu desenvolupament. Consulta les despeses i els ingressos de cada mes.",
+    "ogTitle": "Els compromisos de Happier i com es finança",
+    "ogDescription": "Happier publica les despeses i els ingressos cada mes. Descobreix com es finança el projecte i com manté les funcions gratuïtes.",
+    "ogImageAlt": "Els compromisos de Happier amb el codi obert i l’accés gratuït"
+  },
+  "/plans": {
+    "title": "Plans i col·laboració",
+    "description": "Compara l’allotjament propi gratuït, els límits d’historial de Happier Cloud, els plans mensuals Lite i Plus i el Paquet de Col·laborador.",
+    "ogTitle": "Plans de Happier Cloud i Paquet de Col·laborador",
+    "ogDescription": "Allotja Happier de franc o compara quant d’historial conserva Happier Cloud. Coneix els plans mensuals Lite i Plus i el Paquet de Col·laborador.",
+    "ogImageAlt": "Comparativa dels plans de Happier i el Paquet de Col·laborador"
   }
 }

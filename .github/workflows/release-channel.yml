@@ -930,7 +930,7 @@ jobs:
       ui_apk_complete: ${{ needs.resolve_resume.outputs.ui_apk_complete == 'true' && needs.resolve_resume.outputs.deploy_ui_expo_action == inputs.ui_expo_action }}
 
   deploy_server:
-    if: always() && needs.resolve_resume.result == 'success' && needs.resolve_resume.outputs.deploy_server_complete != 'true' && needs.plan.result == 'success' && needs.prepare_release_candidate.result == 'success' && needs.promote_server_runtime.result == 'success' && inputs.dry_run != true && needs.deploy_plan.outputs.deploy_server_requested == 'true'
+    if: always() && needs.resolve_resume.result == 'success' && needs.resolve_resume.outputs.deploy_server_complete != 'true' && needs.plan.result == 'success' && needs.prepare_release_candidate.result == 'success' && (needs.promote_server_runtime.result == 'success' || needs.resolve_resume.outputs.server_rolling_complete == 'true') && inputs.dry_run != true && needs.deploy_plan.outputs.deploy_server_requested == 'true'
     needs: [resolve_resume, plan, deploy_plan, prepare_release_candidate, promote_server_runtime]
     permissions:
       packages: write
@@ -945,7 +945,7 @@ jobs:
       allow_cross_promote: true
       bump: none
       publish_runtime_release: false
-      server_version: ${{ needs.promote_server_runtime.outputs.version }}
+      server_version: ${{ needs.promote_server_runtime.outputs.version || needs.resolve_resume.outputs.server_version }}
       run_tests: false
 
   publish_server_runtime:

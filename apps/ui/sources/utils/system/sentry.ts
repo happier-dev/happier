@@ -1,4 +1,3 @@
-import { MMKV } from 'react-native-mmkv';
 import { Platform } from 'react-native';
 import * as Sentry from '@sentry/react-native';
 import Constants from 'expo-constants';
@@ -7,8 +6,9 @@ import type { ComponentType } from 'react';
 import { parseOptionalBooleanEnv, type FeatureId } from '@happier-dev/protocol';
 import { config } from '@/config';
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
-import { readStorageScopeFromEnv, scopedStorageId } from '@/utils/system/storageScope';
-import { redactSentryPublicShareTelemetry } from '@/utils/system/sentryPublicShareRedaction';
+import { readWebRuntimeConfigString } from '@/sync/runtime/webRuntimeConfig';
+import { loadActiveAccountSettings } from '@/sync/domains/state/accountSettingsPersistence';
+import { redactSentryTelemetry } from '@/utils/system/sentryTelemetryRedaction';
 
 declare global {
     // eslint-disable-next-line no-var
@@ -20,7 +20,6 @@ declare global {
 const CRASH_REPORTS_FEATURE_ID = 'app.crashReports' as const satisfies FeatureId;
 const IOS_REPLAY_DEFAULT_DISABLED_MAJOR_VERSION = 26;
 let cachedReplayIntegration: any | null = null;
-const isWebRuntime = typeof window !== 'undefined' && typeof document !== 'undefined';
 
 function parseBooleanEnv(raw: string | undefined, defaultValue: boolean): boolean {
     const parsed = parseOptionalBooleanEnv(raw);
@@ -77,17 +76,9 @@ function resolveReplayEnabled(): boolean {
 
 function readPersistedCrashReportsOptOut(): boolean {
     try {
-        const storageScope = isWebRuntime ? null : readStorageScopeFromEnv();
-        const storage = storageScope ? new MMKV({ id: scopedStorageId('default', storageScope) }) : new MMKV();
-        const rawSettings = storage.getString('settings');
-        if (!rawSettings) return false;
-
-        const parsed = JSON.parse(rawSettings) as {
-            settings?: {
-                crashReportsOptOut?: unknown;
-            };
-        };
-        return parsed.settings?.crashReportsOptOut === true;
+        const { settings } = loadActiveAccountSettings();
+        return typeof settings === 'object' && settings !== null
+            && (settings as { crashReportsOptOut?: unknown }).crashReportsOptOut === true;
     } catch {
         return false;
     }
@@ -103,7 +94,8 @@ function resolveCrashReportsOptOut(): boolean {
 }
 
 function resolveSentryEnv() {
-    const baseDsn = (STATIC_SENTRY_DSN ?? '').trim();
+    // The generic web image reads its DSN at container start; build-time values remain the fallback.
+    const baseDsn = readWebRuntimeConfigString('sentryDsn') || (STATIC_SENTRY_DSN ?? '').trim();
     const tauriDsn = (STATIC_SENTRY_DSN_TAURI ?? '').trim();
     const dsn = isTauriRuntime() && tauriDsn ? tauriDsn : baseDsn;
     if (!dsn) return null;
@@ -119,7 +111,7 @@ function resolveSentryEnv() {
     const replaysSessionSampleRate = parseRateEnv(STATIC_SENTRY_REPLAYS_SESSION_SAMPLE_RATE, 0.1);
     const replaysOnErrorSampleRate = parseRateEnv(STATIC_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE, 1);
 
-    const environment = (STATIC_SENTRY_ENVIRONMENT ?? '').trim() || inferredEnvironment;
+    const environment = readWebRuntimeConfigString('sentryEnvironment') || (STATIC_SENTRY_ENVIRONMENT ?? '').trim() || inferredEnvironment;
     const release = (STATIC_SENTRY_RELEASE ?? '').trim() || undefined;
 
     return {
@@ -234,10 +226,10 @@ export function initializeSentryOnce(): void {
         ...(resolved.release ? { release: resolved.release } : null),
         sendDefaultPii: resolved.sendDefaultPii,
         enableLogs: resolved.enableLogs,
-        beforeSend: redactSentryPublicShareTelemetry,
-        beforeSendTransaction: redactSentryPublicShareTelemetry,
-        beforeBreadcrumb: redactSentryPublicShareTelemetry,
-        ...(resolved.enableLogs ? { beforeSendLog: redactSentryPublicShareTelemetry } : null),
+        beforeSend: redactSentryTelemetry,
+        beforeSendTransaction: redactSentryTelemetry,
+        beforeBreadcrumb: redactSentryTelemetry,
+        ...(resolved.enableLogs ? { beforeSendLog: redactSentryTelemetry } : null),
         ...(resolved.enableReplay
             ? {
                   replaysSessionSampleRate: resolved.replaysSessionSampleRate,

@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { mkdir, readFile } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import { resolveConnectedServicesProviderStateSharingPolicyV1 } from '@happier-dev/protocol';
 import {
   CONNECTED_SERVICE_MATERIALIZATION_REASONS,
@@ -10,64 +10,34 @@ import { requireConnectedServiceOauthCredentialRecord } from '@/daemon/connected
 import { applyConnectedServiceStateSharingDescriptor } from '@/daemon/connectedServices/stateSharing/applyConnectedServiceStateSharingDescriptor';
 import { readConnectedServiceStateSharingManifest, writeConnectedServiceStateSharingManifest } from '@/daemon/connectedServices/stateSharing/connectedServiceStateSharingManifest';
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
-import { logger } from '@/ui/logger';
-import { expandHomeDirPath, resolveHomeDirFromEnvironment } from '@/utils/path/expandHomeDirPath';
 import { resolveConnectedServiceHomeDir } from '@/daemon/connectedServices/homes/resolveConnectedServiceHomeDir';
 import { withConnectedServiceStateSharingDestinationLock } from '@/daemon/connectedServices/stateSharing/connectedServiceStateSharingLock';
-import { parseAgyNativeCredential } from '../cloud/nativeCredentials';
+import { resolveAgyMachineProfileDir } from '../acp/agyAcpLaunch';
+import { AGY_NATIVE_TOKEN_FILE_SEGMENTS, serializeAgyNativeCliCredential } from '../cloud/nativeCredentials';
 import { agyConnectedServiceStateSharingDescriptor } from './agyConnectedServiceStateSharingDescriptor';
-import { resolveConnectedAccountOauthConfig } from '@/daemon/connectedServices/descriptors/connectedAccountDescriptors';
 
 export function createAgyConnectedServicesMaterializer(): ConnectedServicesProviderMaterializer {
   return async (params) => {
     const selected = params.recordsByServiceId.get('antigravity');
     if (!selected) return null;
     const record = requireConnectedServiceOauthCredentialRecord(selected);
-    if (!record.oauth.refreshToken) throw new Error('antigravity_refresh_token_required');
-    const raw = record.oauth.raw;
-    const selectedProjectId = raw && typeof raw === 'object' && !Array.isArray(raw)
-      && 'project_id' in raw && typeof raw.project_id === 'string' ? raw.project_id.trim() : '';
+    const refreshToken = record.oauth.refreshToken;
+    if (!refreshToken) throw new Error('antigravity_refresh_token_required');
     const probing = params.materializationPurpose === 'probe';
     const home = probing ? join(params.rootDir, 'gemini-home') : resolveConnectedServiceHomeDir({
       activeServerDir: params.activeServerDir, serviceId: 'antigravity', profileId: record.profileId, agentId: 'agy',
     });
-    const env = { GEMINI_HOME: home, AGY_ACP_FORCE_FILE_STORAGE: '1' };
+    // The launch passes this profile as `--gemini-dir` and forces file token storage for that child only.
+    const env = { GEMINI_HOME: home };
     const settings = params.accountSettings;
     const policy = resolveConnectedServicesProviderStateSharingPolicyV1(settings?.connectedServicesProviderStateSharingSettingsV1, 'agy');
     const sourceEnv = params.processEnv ?? process.env;
-    const oauthConfig = resolveConnectedAccountOauthConfig('antigravity', sourceEnv);
-    const nativeHome = sourceEnv.GEMINI_HOME?.trim()
-      ? expandHomeDirPath(sourceEnv.GEMINI_HOME.trim(), sourceEnv)
-      : join(resolveHomeDirFromEnvironment(sourceEnv), '.gemini');
+    const nativeHome = resolveAgyMachineProfileDir(sourceEnv);
     const write = async () => {
       const existingManifest = await readConnectedServiceStateSharingManifest(home);
-      const tokenPath = join(home, 'antigravity-acp', 'acp_token.json');
-      let projectId = selectedProjectId;
-      if (!projectId && !probing) {
-        let contents: string | null = null;
-        try { contents = await readFile(tokenPath, 'utf8'); } catch (error) {
-          if (!(error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT')) throw error;
-        }
-        if (contents !== null) {
-          let value: unknown;
-          try { value = JSON.parse(contents); } catch {
-            logger.warn('[connected-services] Replacing malformed Antigravity credential projection with the selected account credentials');
-          }
-          const previous = parseAgyNativeCredential(value, 'acp');
-          if (previous?.refreshToken === record.oauth.refreshToken) projectId = previous.projectId ?? '';
-        }
-      }
-      await writeJsonAtomic(tokenPath, {
-        client_id: oauthConfig.clientId,
-        ...(oauthConfig.clientSecret ? { client_secret: oauthConfig.clientSecret } : {}),
-        token_uri: oauthConfig.tokenUrl,
-        scopes: record.oauth.scope?.split(/\s+/).filter(Boolean) ?? [],
-        refresh_token: record.oauth.refreshToken,
-        token: record.oauth.accessToken,
-        ...(projectId ? { project_id: projectId } : {}),
-        ...(record.expiresAt != null ? { expiry: new Date(record.expiresAt).toISOString().replace('.000Z', 'Z') } : {}),
-      });
-      await writeJsonAtomic(join(home, 'antigravity-acp', 'settings.json'), { auth: { type: 'oauth-personal' } });
+      await writeJsonAtomic(join(home, ...AGY_NATIVE_TOKEN_FILE_SEGMENTS), serializeAgyNativeCliCredential({
+        accessToken: record.oauth.accessToken, refreshToken, expiresAt: record.expiresAt ?? null, email: record.oauth.providerEmail,
+      }));
       const applied = await applyConnectedServiceStateSharingDescriptor({
         descriptor: agyConnectedServiceStateSharingDescriptor,
         nativeSourceContext: { sourceRoot: nativeHome, sourceEnv: Object.fromEntries(Object.entries(sourceEnv).filter((entry): entry is [string, string] => typeof entry[1] === 'string')) },
@@ -83,7 +53,7 @@ export function createAgyConnectedServicesMaterializer(): ConnectedServicesProvi
         prepareSharedStateSource: async () => {
           await Promise.all(agyConnectedServiceStateSharingDescriptor.state.entries.map(entry => mkdir(join(nativeHome, entry.path), { recursive: true })));
         },
-        providerLabel: 'Antigravity ACP',
+        providerLabel: 'Antigravity',
       });
       await writeConnectedServiceStateSharingManifest(home, applied.manifest);
       return applied;

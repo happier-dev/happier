@@ -17,6 +17,7 @@ export type {
   AgentMessageHandler,
   AgentBackend,
   AgentBackendConfig,
+  AgentCancelOptions,
   AcpAgentConfig,
   McpServerConfig,
   AgentTransport,

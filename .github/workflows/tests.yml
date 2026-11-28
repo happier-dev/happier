@@ -1065,6 +1065,16 @@ jobs:
     name: Server Tests (unit + integration)
     runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2404 }}
     timeout-minutes: 45
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379/tcp
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -1100,6 +1110,8 @@ jobs:
       - name: Run integration tests
         id: integration-tests
         continue-on-error: true
+        env:
+          REDIS_URL: redis://127.0.0.1:${{ job.services.redis.ports[6379] }}
         run: yarn --cwd apps/server test:integration
 
       - name: Require all server test lanes

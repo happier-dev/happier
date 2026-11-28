@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -14,10 +14,14 @@ vi.mock('react-native', async () => {
 import { playAudioBytesWithStopper } from '@/voice/output/playAudioBytesWithStopper';
 
 describe('playAudioBytesWithStopper (web)', () => {
+  // Stub only URL's static blob helpers: replacing the URL class breaks modules that construct URLs.
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('uses WebAudio when available', async () => {
-    const createObjectURL = vi.fn(() => 'blob:mock');
-    const revokeObjectURL = vi.fn();
-    (globalThis as any).URL = { createObjectURL, revokeObjectURL };
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:mock');
+    const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
 
     const audioCtor = vi.fn();
     (globalThis as any).Audio = audioCtor;
@@ -90,9 +94,8 @@ describe('playAudioBytesWithStopper (web)', () => {
 
   it('registers a stopper and resolves when playback finishes', async () => {
     (globalThis as any).AudioContext = undefined;
-    const createObjectURL = vi.fn(() => 'blob:mock');
-    const revokeObjectURL = vi.fn();
-    (globalThis as any).URL = { createObjectURL, revokeObjectURL };
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:mock');
+    const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
 
     let endedHandler: (() => void) | null = null;
     const pause = vi.fn();
@@ -144,9 +147,8 @@ describe('playAudioBytesWithStopper (web)', () => {
 
   it('rejects when Audio.play() returns a rejected promise (autoplay blocked)', async () => {
     (globalThis as any).AudioContext = undefined;
-    const createObjectURL = vi.fn(() => 'blob:mock');
-    const revokeObjectURL = vi.fn();
-    (globalThis as any).URL = { createObjectURL, revokeObjectURL };
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:mock');
+    const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
 
     const pause = vi.fn();
     const play = vi.fn(() => Promise.reject(new Error('NotAllowedError')));

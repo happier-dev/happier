@@ -2,7 +2,12 @@ import { describe, expect, it, vi } from 'vitest';
 import { mkdtemp, writeFile, utimes, mkdir, rm, truncate } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { discoverCodexRolloutFileOnce, scoreCodexRolloutCandidate } from '../rolloutDiscovery';
+import * as zlib from 'node:zlib';
+import {
+    discoverCodexRolloutFileOnce,
+    readCodexSessionMetaFromRollout,
+    scoreCodexRolloutCandidate,
+} from '../rolloutDiscovery';
 
 const rolloutDiscoveryStatPaths = vi.hoisted(() => [] as string[]);
 
@@ -26,6 +31,21 @@ function sessionMetaLine(payload: Record<string, unknown>): string {
 }
 
 describe('codex local-control rollout discovery', () => {
+    it.skipIf(typeof zlib.zstdCompressSync !== 'function')('reads the complete session metadata from a compressed rollout', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'codex-sessions-compressed-'));
+        try {
+            const id = '019c17f4-cb9c-7512-b441-80d453fb5a53';
+            const path = join(root, `rollout-2026-02-04T00-00-00-${id}.jsonl.zst`);
+            const payload = { id, cwd: root, base_instructions: { text: 'instructions 🙂 '.repeat(5_000) } };
+            const body = `${sessionMetaLine(payload)}\n${JSON.stringify({ type: 'turn_context', payload: {} })}\n`;
+            await writeFile(path, zlib.zstdCompressSync(Buffer.from(body)));
+
+            await expect(readCodexSessionMetaFromRollout(path)).resolves.toEqual(payload);
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
     it('scores candidates higher when payload.timestamp is close to startedAt', () => {
         const startedAtMs = Date.parse('2026-02-04T12:00:00.000Z');
         const near = { timestamp: '2026-02-04T12:00:02.000Z', cwd: '/x' };

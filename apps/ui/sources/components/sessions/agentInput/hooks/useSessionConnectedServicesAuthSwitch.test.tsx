@@ -303,6 +303,58 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         await hook.unmount();
     });
 
+    it('lets the owner choose the armed Agent account before continuing, without touching the source session', async () => {
+        const onConnectedServicesChange = vi.fn();
+        const armedCore = { ...AGENTS_CORE.claude, connectedServices: { supportedServiceIds: ['anthropic'] as const } };
+        const render = (connectedServices?: unknown) => renderHook(() => useSessionConnectedServicesAuthSwitch({
+            sessionId: 'session-1',
+            agentId: 'codex',
+            agentCore: AGENTS_CORE.codex,
+            machineId: 'machine-1',
+            sessionMetadata: { connectedServices: { v: 1, bindingsByServiceId: {
+                'openai-codex': { source: 'connected', selection: 'profile', profileId: 'happier' },
+            } } },
+            armedContinuationAgent: {
+                agentId: 'claude',
+                agentCore: armedCore,
+                connectedServices: connectedServices as never,
+                onConnectedServicesChange,
+            },
+            settings: {
+                connectedServicesProfileLabelByKey: { 'anthropic/work': 'Work' },
+                connectedServicesDefaultProfileByServiceId: {},
+                connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {
+                    claude: { v: 1, bindingsByServiceId: { anthropic: { source: 'native' } } },
+                } },
+            },
+            switchingDisabledReason: null,
+        }));
+
+        const hook = await render();
+        const content = renderChipPopover(
+            hook.getCurrent().connectedServicesAuthChip?.collapsedContentPopover?.renderContent,
+        ) as React.ReactElement<{
+            setBindingForService: (serviceId: string, binding: unknown) => void;
+            supportedServiceIds: readonly string[];
+        }>;
+        expect(content.props.supportedServiceIds).toEqual(['anthropic']);
+        content.props.setBindingForService('anthropic', { source: 'connected', selection: 'profile', profileId: 'work' });
+        expect(onConnectedServicesChange).toHaveBeenCalledWith({
+            v: 1,
+            bindingsByServiceId: { anthropic: { source: 'connected', selection: 'profile', profileId: 'work' } },
+        });
+        expect(setSessionConnectedServiceAuthBindingMock).not.toHaveBeenCalled();
+        await hook.unmount();
+
+        // Once chosen, the chip names the chosen account, not the account default.
+        const chosen = await render({
+            v: 1,
+            bindingsByServiceId: { anthropic: { source: 'connected', selection: 'profile', profileId: 'work' } },
+        });
+        expect(chosen.getCurrent().connectedServicesAuthChip?.collapsedContentPopover?.label).toBe('Anthropic: Work');
+        await chosen.unmount();
+    });
+
     it('recovers the active Codex connected profile from the runtime descriptor when session bindings are missing', async () => {
         const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
 

@@ -373,6 +373,44 @@ describe('createDaemonConnectedServiceAuthGroupSwitchCoordinator', () => {
     expect(restartSession).toHaveBeenCalledWith(expect.objectContaining({ activeProfileId: 'backup', generation: 2 }));
   });
 
+  it('selects a reconnected backup after the active member is removed without listing profiles', async () => {
+    const beforeReconnect = group('primary', 1);
+    let current: ConnectedServiceAuthGroupV1 = {
+      ...beforeReconnect,
+      members: beforeReconnect.members.map((member) => member.profileId === 'backup'
+        ? { ...member, state: { ...member.state, credentialHealthStatus: 'needs_reauth' } }
+        : member),
+    };
+    const listConnectedServiceProfiles = vi.fn(async () => ({
+      serviceId: 'openai-codex' as const,
+      profiles: [{ profileId: 'backup', status: 'connected' as const }],
+    }));
+    const api = {
+      listConnectedServiceProfiles,
+      getConnectedServiceAuthGroup: async () => current,
+      updateConnectedServiceAuthGroupActiveProfile: async () => (current = group('backup', 2)),
+      updateConnectedServiceAuthGroupRuntimeState: async () => current,
+    };
+    const coordinator = createTestDaemonConnectedServiceAuthGroupSwitchCoordinator({
+      api,
+      resolveProjectedCredentialHealth: (_serviceId, profileId) => profileId === 'primary'
+        ? { kind: 'confirmed_missing' }
+        : { kind: 'usable', status: 'connected' },
+      runtimeQuotaSnapshots: new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore(),
+      quotaFreshnessMs: 60_000,
+      nowMs: () => 1_000,
+      restartSession: async () => {},
+    });
+    const input = { serviceId: 'openai-codex', groupId: 'main' };
+    await expect(coordinator.observeCurrentGenerationForRecovery({
+      ...input, observedProfileId: null, failure: { reason: 'usage_limit' },
+    })).resolves.toBeNull();
+    await expect(coordinator.switchAfterClassifiedFailure({
+      ...input, reason: 'usage_limit',
+    })).resolves.toMatchObject({ status: 'switched', activeProfileId: 'backup' });
+    expect(listConnectedServiceProfiles).not.toHaveBeenCalled();
+  });
+
   it('records runtime auth_failed as credential-unhealthy before selecting a fresh-quota candidate', async () => {
     let currentGroup = claudeIncidentGroup({ activeProfileId: 'batiplus_ai', generation: 205 });
     const snapshots = new Map<string, ProviderAccountUsageSnapshotV1>([
@@ -382,13 +420,6 @@ describe('createDaemonConnectedServiceAuthGroupSwitchCoordinator', () => {
     ]);
     const api = {
       getConnectedServiceAuthGroup: vi.fn(async () => currentGroup),
-      listConnectedServiceProfiles: vi.fn(async () => ({
-        serviceId: 'claude-subscription' as const,
-        profiles: currentGroup.members.map((member) => ({
-          profileId: member.profileId,
-          status: 'connected' as const,
-        })),
-      })),
       updateConnectedServiceAuthGroupRuntimeState: vi.fn(async (input: {
         memberStates: ReadonlyArray<Readonly<{
           profileId: string;

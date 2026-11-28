@@ -4,6 +4,7 @@ import { ConnectedServiceAuthGroupPolicyV1Schema, type ConnectedServiceAuthGroup
 import { ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore } from '../quotas/ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore';
 import {
   buildConnectedServiceAuthGroupSwitchState,
+  buildConnectedServiceAuthGroupSwitchStateFromPersistedMemberState,
   mergePersistedMemberRuntimeState,
 } from './buildConnectedServiceAuthGroupSwitchState';
 
@@ -123,6 +124,85 @@ describe('buildConnectedServiceAuthGroupSwitchState', () => {
       lastFailureKind: 'usage_limit',
       lastObservedAtMs: 900,
       providerResetsAtMs: 10_000,
+    });
+  });
+
+  describe('explicit user selection of the active member', () => {
+    // Logged incident (agy pool, 2026-11-28): lbservers remembered `quota_exhausted` until 13:19:27
+    // from agy's "Resets in" message; the user upgraded its plan and switched the pool to it at
+    // 13:14:31, and every later pre-turn decision still treated it as exhausted.
+    const failureObservedAtMs = 1_000;
+    const manualSwitchAtMs = 5_000;
+    const rememberedRetryAtMs = 50_000;
+    const limiterState = {
+      quotaExhaustedUntilMs: rememberedRetryAtMs,
+      cooldownUntilMs: rememberedRetryAtMs,
+      providerResetsAtMs: rememberedRetryAtMs,
+      lastFailureKind: 'usage_limit',
+      lastObservedAtMs: failureObservedAtMs,
+    };
+    function pool(input: Readonly<{
+      lastSwitchReason: string;
+      lastSwitchAt: number;
+      activeState: ConnectedServiceAuthGroupV1['members'][number]['state'];
+      otherState?: ConnectedServiceAuthGroupV1['members'][number]['state'];
+    }>): ConnectedServiceAuthGroupV1 {
+      const base = groupWithPersistedState(input.activeState);
+      return {
+        ...base,
+        state: { v: 1, lastSwitchReason: input.lastSwitchReason, lastSwitchAt: input.lastSwitchAt },
+        members: [
+          ...base.members,
+          { ...base.members[0]!, profileId: 'backup', priority: 2, state: input.otherState ?? limiterState },
+        ],
+      };
+    }
+
+    it('overrides limiter cooldowns remembered before the selection and reports the override', () => {
+      const state = buildConnectedServiceAuthGroupSwitchStateFromPersistedMemberState({
+        group: pool({ lastSwitchReason: 'manual', lastSwitchAt: manualSwitchAtMs, activeState: limiterState }),
+      });
+
+      const active = state.memberStatesByProfileId.get('primary');
+      expect(active?.quotaExhaustedUntilMs ?? null).toBeNull();
+      expect(active?.cooldownUntilMs ?? null).toBeNull();
+      expect(active?.lastFailureKind ?? null).toBeNull();
+      expect(state.userSelectedActiveProfile).toEqual({
+        profileId: 'primary',
+        overriddenRetryAtMs: rememberedRetryAtMs,
+      });
+      // Automatic rotation keeps every other member's cooldown.
+      expect(state.memberStatesByProfileId.get('backup')).toMatchObject({
+        quotaExhaustedUntilMs: rememberedRetryAtMs,
+        lastFailureKind: 'usage_limit',
+      });
+    });
+
+    it('applies a limiter failure observed after the selection', () => {
+      const state = buildConnectedServiceAuthGroupSwitchStateFromPersistedMemberState({
+        group: pool({
+          lastSwitchReason: 'manual',
+          lastSwitchAt: manualSwitchAtMs,
+          activeState: { ...limiterState, lastObservedAtMs: manualSwitchAtMs + 1 },
+        }),
+      });
+
+      expect(state.memberStatesByProfileId.get('primary')).toMatchObject({
+        quotaExhaustedUntilMs: rememberedRetryAtMs,
+        lastFailureKind: 'usage_limit',
+      });
+      expect(state.userSelectedActiveProfile).toBeUndefined();
+    });
+
+    it('keeps remembered cooldowns after an automatic switch', () => {
+      const state = buildConnectedServiceAuthGroupSwitchStateFromPersistedMemberState({
+        group: pool({ lastSwitchReason: 'usage_limit', lastSwitchAt: manualSwitchAtMs, activeState: limiterState }),
+      });
+
+      expect(state.memberStatesByProfileId.get('primary')).toMatchObject({
+        quotaExhaustedUntilMs: rememberedRetryAtMs,
+      });
+      expect(state.userSelectedActiveProfile).toBeUndefined();
     });
   });
 });

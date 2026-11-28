@@ -212,6 +212,10 @@ convergence, after the replacement socket settles its Runtime Activity publisher
 registration on relays that support the publisher fence. The writer waits for
 any in-flight attempt, then retries with the original local id and terminal state.
 Pending input materialization becomes eligible once the replay attempt settles.
+
+The writer batches live appends on a 100 ms default interval. Set
+`HAPPIER_STREAM_LIVE_INTERVAL_MS` to tune it. Opening snapshots and terminal
+publications bypass the batching window.
 The subscription ends when the snapshots settle or the writer is discarded.
 Retention lasts for the lifetime of the session client in the current process.
 
@@ -321,18 +325,17 @@ strip it during writeback; this addition does not provide lossless old-editor
 round trips. The successor line translates the preference into its native
 preferred-Agent model rather than adding another default field.
 
-### Profile restoration on resume (development)
+### Profile environment on daemon launch (development)
 
 The daemon runtime snapshot restores the session's persisted `profileId` when a
 resume or respawn caller omits it. An explicit empty identity selects no profile.
-Before launching an existing session, the child-environment owner uses the same
-profile lookup, target compatibility, template expansion and saved-secret
-resolver as `--profile`. Explicit session environment values win; a selected
-saved-secret binding wins over ambient daemon credentials. Missing profiles,
-unavailable account settings, and unavailable bound secrets fail spawn validation
-instead of silently launching with native authentication. Sessions without a
-profile retain their existing behavior. This correction requires the updated
-CLI daemon; it does not change the resume RPC or session metadata format.
+For fresh and resumed sessions with a profile ID, the child-environment owner
+uses the same profile lookup, target compatibility, template expansion and
+saved-secret resolver as `--profile`. Explicit session environment values take
+precedence over the profile. A selected saved-secret binding takes precedence
+over ambient daemon credentials. Missing profiles, unavailable account settings,
+and unavailable bound secrets fail spawn validation. This behavior requires an
+updated CLI daemon and uses the existing spawn RPC and session metadata format.
 
 ## Automated session targets and permissions (development)
 
@@ -588,6 +591,12 @@ from a missing saved Session. CLI and UI both report `already_stopped` with
 that the saved Session is inactive. An active Session or an unavailable read
 leaves termination unconfirmed; cached UI activity and transport errors do not
 prove that a process stopped.
+
+After a daemon restart, explicit Stop and the Resume repair path can retire
+a legacy plain or Windows terminal attachment using persisted runner markers
+from the current daemon scope. A Windows attachment must name the same runner
+PID. Stop requires positive evidence that the runner exited and removes the
+captured attachment only if it still matches the record on disk.
 
 ### Confirmed daemon stop outcomes (development)
 
@@ -1713,7 +1722,9 @@ the panes rather than creating separate Herdr servers.
 Claude unified reuses the existing composer parser and prompt-submission verifier;
 successful terminal writes are not provider acceptance acknowledgements.
 The development parser recognizes Claude's bordered `↑ N more` composer viewport
-when a small terminal hides the prompt marker. Submission verifies the visible
+when a small terminal hides the prompt marker. The parser accepts labels such as the
+session name or `↓ N more` in the horizontal rules. A scrolled viewport requires an
+`↑ N more` label delimited by rule glyphs in its top row. Submission verifies the visible
 prompt text through that same parser, without requiring a terminal attachment or
 resize; an unrelated visible draft remains protected.
 In development source, normal and shell prompts share one active-input selection and
@@ -1839,7 +1850,10 @@ local custody still refuses a changed target; transport failures remain retryabl
 
 On Linux, new daemon-spawned runners use a systemd user scope when the provisioned
 `happier-jobs.slice` policy is available. Otherwise the runner launches directly
-and inherits the launching process's cgroup. The installed daemon service uses
+and inherits the launching process's cgroup. The scope sets `OOMPolicy=continue`:
+when the kernel OOM-kills one process inside it, such as a tool command, only that
+process fails and the runner and its agent keep running. With systemd's default
+`stop`, one such kill stopped the whole Session. The installed daemon service uses
 `KillMode=process` so direct children can survive a daemon restart. Reattachment
 tracks existing sessions in their current cgroups.
 
@@ -2034,6 +2048,13 @@ not authorize marker deletion. Failed terminal-exit staging retains tracking and
 marker evidence. Visible-console startup reports the early exit immediately;
 the tracked exit owner completes retirement separately and logs cleanup failure
 without discarding the remaining custody evidence.
+
+In current development, routine `writeSessionMarker` refreshes preserve the existing
+marker’s `activeTurnId` for the same Session under the marker mutation lock.
+`updateSessionMarkerActiveTurn` owns lifecycle changes to that field. A delayed
+metadata webhook therefore cannot resurrect a completed turn or erase an active
+one before daemon reattachment; the webhook does not copy volatile turn state.
+The marker format and restart-admission rules are unchanged.
 
 Development startup recovery uses `daemonProcessScopeIdentity.ts` to keep runners
 within their owning Happier home and daemon lifecycle. Markerless recovery requires

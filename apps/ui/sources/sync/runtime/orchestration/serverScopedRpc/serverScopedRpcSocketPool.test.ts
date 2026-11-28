@@ -121,7 +121,7 @@ describe('serverScopedRpcSocketPool', () => {
     it.each([undefined, 'background-task'] as const)('uses the canonical authenticated Socket.IO updates path in %s mode', async (networkMode) => {
         vi.resetModules();
         const { socket } = createFakeSocket();
-        const ioSpy = vi.fn(() => socket);
+        const ioSpy = vi.fn((_url: string, _options: { auth?: Record<string, unknown> }) => socket);
         vi.doMock('socket.io-client', () => ({
             io: ioSpy,
         }));
@@ -148,10 +148,15 @@ describe('serverScopedRpcSocketPool', () => {
             'https://server.example.test',
             expect.objectContaining({
                 path: '/v1/updates/',
-                auth: expect.objectContaining({ token: 'token-a', connectedServiceIds: ConnectedServiceIdSchema.options }),
+                auth: expect.objectContaining({
+                    token: 'token-a',
+                    connectedServiceIds: ConnectedServiceIdSchema.options,
+                    liveTranscriptDisabled: true,
+                }),
                 withCredentials: false,
             }),
         );
+        expect(ioSpy.mock.calls[0]?.[1]?.auth).not.toHaveProperty('sessionUpdateInterest');
 
         await pool.stopAll();
         pool.resetForTests();

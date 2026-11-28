@@ -106,6 +106,7 @@ import { normalizeRelationshipUpdatedUpdateBody } from '@/sync/engine/social/rel
 import { parseEphemeralUpdate, parseUpdateContainer } from './socketParse';
 import type { DirectSessionTranscriptUpdatedEphemeralUpdate } from './socketParse';
 import { FeedBodySchema } from '@/sync/domains/social/feedTypes';
+import { invalidateAccountPlan } from '@/sync/domains/plans/accountPlanResource';
 export { parseEphemeralUpdate, parseUpdateContainer } from './socketParse';
 
 type ApplySessions = (sessions: Array<Omit<Session, 'presence'> & { presence?: 'online' | number }>) => void;
@@ -123,6 +124,7 @@ type SocketMessageApplyHandlers = Readonly<{
 
 type DurableMessageProjectionPatchPayload = Readonly<{
     updateData: Pick<ApiUpdateContainer, 'seq' | 'createdAt'>;
+    cloudCopyLeftAt?: null;
     rawMessage: ApiMessage | undefined;
     messageSeq: number | null;
 }>;
@@ -198,6 +200,7 @@ const durableMessageProjectionPatchCoalescer = createSessionListRenderableProjec
     buildPatch: ({ renderable, payload }) => buildCacheOnlyDurableMessageProjectionPatch({
         renderable,
         updateData: payload.updateData,
+        cloudCopyLeftAt: payload.cloudCopyLeftAt,
         rawMessage: payload.rawMessage,
         messageSeq: payload.messageSeq,
     }),
@@ -482,6 +485,9 @@ function buildCacheOnlySessionProjectionPatch(params: Readonly<{
     if (updateBody.lastRuntimeIssue === null || (updateBody.lastRuntimeIssue && typeof updateBody.lastRuntimeIssue === 'object')) {
         patch.lastRuntimeIssue = updateBody.lastRuntimeIssue;
     }
+    if (typeof updateBody.cloudCopyLeftAt === 'number' || updateBody.cloudCopyLeftAt === null) {
+        patch.cloudCopyLeftAt = updateBody.cloudCopyLeftAt;
+    }
     if (typeof updateBody.archivedAt === 'number' || updateBody.archivedAt === null) {
         patch.archivedAt = updateBody.archivedAt;
     }
@@ -529,6 +535,7 @@ function hasSafeCacheOnlySessionProjectionFields(updateBody: any): boolean {
         'latestTurnStatusObservedAt',
         'lastRuntimeIssue',
         'archivedAt',
+        'cloudCopyLeftAt',
         'meaningfulActivityAt',
     ].some((key) => Object.prototype.hasOwnProperty.call(updateBody, key))
         || hasSessionRuntimeActivityProjectionFields(updateBody);
@@ -641,11 +648,8 @@ function requestVisibleCacheOnlySessionHydration(params: Readonly<{
     });
 }
 
-function buildCacheOnlyDurableMessageProjectionPatch(params: Readonly<{
+function buildCacheOnlyDurableMessageProjectionPatch(params: DurableMessageProjectionPatchPayload & Readonly<{
     renderable: SessionListRenderableSession;
-    updateData: Pick<ApiUpdateContainer, 'seq' | 'createdAt'>;
-    rawMessage: ApiMessage | undefined;
-    messageSeq: number | null;
 }>): Readonly<Partial<Omit<SessionListRenderableSession, 'id'>>> {
     const { renderable, updateData, rawMessage, messageSeq } = params;
     const attentionImpact = storedSessionMessageAttentionImpact(rawMessage);
@@ -664,6 +668,8 @@ function buildCacheOnlyDurableMessageProjectionPatch(params: Readonly<{
     const currentMeaningfulActivityAt = finiteNumber(renderable.meaningfulActivityAt);
     const patch: Partial<Omit<SessionListRenderableSession, 'id'>> = {
         seq: nextSessionSeq,
+        ...(params.cloudCopyLeftAt === null && typeof renderable.cloudCopyLeftAt === 'number'
+            && (updateCreatedAt ?? 0) >= renderable.cloudCopyLeftAt ? { cloudCopyLeftAt: null } : {}),
         updatedAt: updateCreatedAt === null
             ? renderable.updatedAt
             : Math.max(currentUpdatedAt ?? updateCreatedAt, updateCreatedAt),
@@ -684,7 +690,8 @@ function shouldDeferLeadingDurableMessageProjectionPatch(params: Readonly<{
     renderable: SessionListRenderableSession;
     patch: Readonly<Partial<Omit<SessionListRenderableSession, 'id'>>>;
 }>): boolean {
-    return (params.renderable.hasUnreadMessages === true) === (params.patch.hasUnreadMessages === true);
+    return params.patch.cloudCopyLeftAt === undefined
+        && (params.renderable.hasUnreadMessages === true) === (params.patch.hasUnreadMessages === true);
 }
 
 function hasPatchField(
@@ -734,6 +741,7 @@ function classifyCacheOnlySessionUpdateProjectionPatch(params: Readonly<{
         active: patchBooleanFieldChanged(renderable, patch, 'active'),
         thinking: patchBooleanFieldChanged(renderable, patch, 'thinking'),
         archived: patchNullableFieldChanged(renderable, patch, 'archivedAt'),
+        cloudCopyLeft: patchNullableFieldChanged(renderable, patch, 'cloudCopyLeftAt'),
         runtimeIssue: hasPatchField(patch, 'lastRuntimeIssue')
             && !areSessionRuntimeIssuesEqual(renderable.lastRuntimeIssue ?? null, patch.lastRuntimeIssue ?? null),
         runtimeActivityCount: patchNumberFieldChanged(renderable, patch, 'runtimeActivityActiveCount'),
@@ -749,6 +757,7 @@ function classifyCacheOnlySessionUpdateProjectionPatch(params: Readonly<{
             || reasons.active
             || reasons.thinking
             || reasons.archived
+            || reasons.cloudCopyLeft
             || reasons.runtimeIssue
             || reasons.runtimeActivityCount
             || reasons.runtimeActivityState
@@ -797,11 +806,8 @@ function applyCacheOnlySessionUpdateProjectionPatch(params: Readonly<{
     );
 }
 
-function applyCacheOnlyDurableMessageProjectionPatch(params: Readonly<{
+function applyCacheOnlyDurableMessageProjectionPatch(params: DurableMessageProjectionPatchPayload & Readonly<{
     sessionId: string;
-    updateData: Pick<ApiUpdateContainer, 'seq' | 'createdAt'>;
-    rawMessage: ApiMessage | undefined;
-    messageSeq: number | null;
     shouldContinue?: () => boolean;
 }>): boolean {
     if (storedSessionMessageAttentionImpactOrNull(params.rawMessage) === null) {
@@ -813,6 +819,7 @@ function applyCacheOnlyDurableMessageProjectionPatch(params: Readonly<{
     const leadingPatch = buildCacheOnlyDurableMessageProjectionPatch({
         renderable,
         updateData: params.updateData,
+        cloudCopyLeftAt: params.cloudCopyLeftAt,
         rawMessage: params.rawMessage,
         messageSeq: params.messageSeq,
     });
@@ -820,6 +827,7 @@ function applyCacheOnlyDurableMessageProjectionPatch(params: Readonly<{
         params.sessionId,
         {
             updateData: params.updateData,
+            cloudCopyLeftAt: params.cloudCopyLeftAt,
             rawMessage: params.rawMessage,
             messageSeq: params.messageSeq,
         },
@@ -1897,7 +1905,8 @@ export async function handleUpdateContainer(params: {
             onReadyProjectionAdvance?.(updateData.body.id, nextSession.latestReadyEventSeq);
         }
         enqueueSocketSessionApplyGuarded(applySessions, [nextSession], shouldContinue);
-        if (readyAdvanced || isTurnEndOrNewRequest(currentSession, nextSession)) {
+        if (readyAdvanced || isTurnEndOrNewRequest(currentSession, nextSession)
+            || currentSession.cloudCopyLeftAt !== nextSession.cloudCopyLeftAt) {
             // The user acts on these at once: publish them, and everything queued before them,
             // without waiting for the streaming frame.
             socketApplyFrame.flushNow();
@@ -1950,6 +1959,11 @@ export async function handleUpdateContainer(params: {
         }
     } else if (updateData.body.t === 'update-account') {
         const accountUpdate = updateData.body;
+        // A plan or supporter change marks its push; it carries no profile fields (plan 01).
+        if ((accountUpdate as { plan?: unknown }).plan === true) {
+            invalidateAccountPlan();
+            return;
+        }
         const currentProfile = storage.getState().profile;
 
         await handleUpdateAccountSocketUpdate({

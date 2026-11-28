@@ -1,6 +1,6 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { localSettingsDefaults, type LocalSettings } from '@/sync/domains/settings/localSettings';
 import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
@@ -69,8 +69,25 @@ import { SettingsAnalyticsRuntime } from './SettingsAnalyticsRuntime';
 import { renderScreen } from '@/dev/testkit';
 
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+let nowMs = Date.UTC(2026, 10, 1, 9, 0, 0);
+
+// Each mount is one app launch: the runtime keeps nothing in memory across mounts, so what is
+// skipped on a later launch is decided by what this device last sent.
+async function launch() {
+    const { tree } = await renderScreen(<SettingsAnalyticsRuntime />);
+    return tree;
+}
+
 describe('SettingsAnalyticsRuntime', () => {
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
     beforeEach(() => {
+        vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
+        trackingMock.identify.mockReset();
+        trackingMock.group.mockReset();
         trackingAnonymousUserId = 'anon-user';
         trackingIdentityListeners.clear();
         analyticsRuntimeState.settings = {
@@ -184,5 +201,53 @@ describe('SettingsAnalyticsRuntime', () => {
             }),
         );
         expect(trackingMock.flush).toHaveBeenCalledTimes(2);
+    });
+
+    it('sends 0 identify and 0 group on a later launch the same day when nothing changed', async () => {
+        (await launch()).unmount();
+        nowMs += 6 * 60 * 60 * 1000;
+        (await launch()).unmount();
+
+        expect(trackingMock.identify).toHaveBeenCalledTimes(1);
+        expect(trackingMock.group).toHaveBeenCalledTimes(1);
+    });
+
+    it('sends only the changed properties on a later launch the same day', async () => {
+        (await launch()).unmount();
+        nowMs += 60 * 60 * 1000;
+        analyticsRuntimeState.settings = { ...analyticsRuntimeState.settings!, sessionListDensity: 'narrow' };
+        analyticsRuntimeState.localSettings = { ...analyticsRuntimeState.localSettings!, themePreference: 'light' };
+        (await launch()).unmount();
+
+        expect(trackingMock.identify).toHaveBeenCalledTimes(2);
+        expect(trackingMock.identify).toHaveBeenLastCalledWith('anon-user', {
+            acct_setting__sessionListDensity: 'narrow',
+            derived__compact_session_view_minimal: true,
+        });
+        expect(trackingMock.group).toHaveBeenCalledTimes(2);
+        expect(trackingMock.group).toHaveBeenLastCalledWith('device_user', 'anon-user:install-123', { local_setting__themePreference: 'light' });
+    });
+
+    it('sends the full snapshot again at most once a day', async () => {
+        (await launch()).unmount();
+        nowMs += DAY_MS - 1;
+        (await launch()).unmount();
+        expect(trackingMock.identify).toHaveBeenCalledTimes(1);
+
+        nowMs += 1;
+        (await launch()).unmount();
+        nowMs += 60 * 1000;
+        (await launch()).unmount();
+
+        expect(trackingMock.identify).toHaveBeenCalledTimes(2);
+        expect(trackingMock.identify).toHaveBeenLastCalledWith(
+            'anon-user',
+            expect.objectContaining({
+                acct_setting__analyticsOptOut: false,
+                acct_setting__sessionListDensity: 'cozy',
+                feature_pref__voice: true,
+            }),
+        );
+        expect(trackingMock.group).toHaveBeenCalledTimes(2);
     });
 });

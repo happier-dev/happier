@@ -1,4 +1,10 @@
+export type GithubStarResult =
+  | Readonly<{ status: 'starred' | 'web' | 'unknown' }>
+  | Readonly<{ status: 'unstarred'; login: string }>;
+
 export const RPC_METHODS = {
+  GITHUB_STAR_STATUS: 'github.star.status',
+  GITHUB_STAR: 'github.star',
   SPAWN_HAPPY_SESSION: 'spawn-happy-session',
   SPAWN_HAPPY_SESSION_PROVIDER_SAFE: 'spawn-happy-session.provider-safe.v1',
   STOP_SESSION: 'stop-session',
@@ -54,6 +60,8 @@ export const RPC_METHODS = {
   DAEMON_PROMPT_REGISTRY_INSTALL: 'daemon.promptRegistry.install',
   DAEMON_DIRECT_SESSIONS_ACP_SESSION_LIST_CAPABILITY_GET: 'daemon.directSessions.acpSessionList.capability.get',
   DAEMON_DIRECT_SESSIONS_CANDIDATES_LIST: 'daemon.directSessions.candidates.list',
+  DAEMON_DIRECT_SESSION_RETENTION: 'daemon.directSessions.retention',
+  DAEMON_LOCAL_HISTORY: 'daemon.directSessions.localHistory',
   DAEMON_DIRECT_SESSION_CANDIDATE_DELETE: 'daemon.directSessions.candidate.delete',
   DAEMON_DIRECT_SESSION_LINK_ENSURE: 'daemon.directSessions.link.ensure',
   DAEMON_DIRECT_SESSION_ATTACH: 'daemon.directSessions.attach',

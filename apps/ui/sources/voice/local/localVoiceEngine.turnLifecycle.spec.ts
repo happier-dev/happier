@@ -146,7 +146,7 @@ describe('local voice engine turn lifecycle (direct session)', () => {
                 transcriptionRequests += 1;
                 return Response.json({ text: 'run the tests' });
             }
-            if (!url.endsWith('/v1/features')) throw new Error(`Unexpected HTTP request: ${url}`);
+            if (new URL(url).pathname !== '/v1/features') throw new Error(`Unexpected HTTP request: ${url}`);
             return Response.json({
                 features: { voice: { enabled: true }, sharing: { pendingQueueV2: { enabled: true }, pendingDeliveryState: { enabled: true } } },
                 capabilities: { compatibility: { pendingInput: { currentPendingInputProtocolVersion: 1 } },

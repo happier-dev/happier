@@ -47,6 +47,25 @@ describe.skipIf(process.platform === 'win32')('classifyProviderCliInstall', () =
     });
   });
 
+  it.each([
+    { platform: 'linux' as const, relativePath: ['.local', 'bin', 'agy'] },
+    { platform: 'win32' as const, relativePath: ['AppData', 'Local', 'agy', 'bin', 'agy.exe'] },
+  ])('attributes the Antigravity installer target on $platform to `agy update`', ({ platform, relativePath }) => {
+    const agy = writeExecutable(join(home, ...relativePath));
+
+    expect(classifyProviderCliInstall({
+      providerId: 'agy', command: agy, source: 'system', platform, env: { HOME: home, USERPROFILE: home },
+    })).toEqual({ installSource: 'native', updateSupported: true, updateCommand: `${agy} update`, nativeUpdateArgs: ['update'] });
+  });
+
+  it('leaves an agy outside the installer target to its owner', () => {
+    const agy = writeExecutable(join(root, 'opt', 'bin', 'agy'));
+
+    expect(classifyProviderCliInstall({
+      providerId: 'agy', command: agy, source: 'system', platform: 'linux', env: { HOME: home },
+    })).toMatchObject({ installSource: 'other', updateSupported: false, updateCommand: null });
+  });
+
   it.each(['@opencode/cli', 'opencode-ai'])('proves an npm global install of %s and offers only its owner command', (packageName) => {
     const packageBin = writeExecutable(join(root, 'prefix', 'lib', 'node_modules', packageName, 'bin', 'opencode.exe'));
     const shim = join(root, 'prefix', 'bin', 'opencode');
@@ -164,6 +183,13 @@ describe('fetchProviderCliLatestVersion', () => {
       providerId: 'opencode' as const, installSource: 'npm' as const, npmPackageName: 'opencode-ai', deps: { fetchJson },
     };
     await expect(fetchProviderCliLatestVersion(params)).resolves.toEqual({ latestVersion: '1.19.5', heldVersion: null });
+  });
+
+  it('reads the Antigravity CLI latest version from its GitHub releases for a native install', async () => {
+    const fetchGitHubLatestRelease = vi.fn(async () => ({ tag_name: '1.5.18' }));
+    await expect(fetchProviderCliLatestVersion({ providerId: 'agy', installSource: 'native', env: {}, deps: { fetchGitHubLatestRelease } }))
+      .resolves.toEqual({ latestVersion: '1.5.18', heldVersion: null });
+    expect(fetchGitHubLatestRelease).toHaveBeenCalledWith(expect.objectContaining({ githubRepo: 'google-antigravity/antigravity-cli' }));
   });
 
   it('reads the GitHub latest release tag for release-binary agents', async () => {

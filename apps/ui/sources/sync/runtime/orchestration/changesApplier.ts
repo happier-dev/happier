@@ -57,6 +57,7 @@ export async function applyPlannedChangeActions(params: {
         feed?: () => Promise<void>;
         automations?: () => Promise<void>;
         pets?: () => Promise<void>;
+        accountPlan?: () => Promise<void>;
         sessions?: (context: SessionListInvalidationContext) => Promise<void>;
         todos?: () => Promise<void>;
     };
@@ -124,6 +125,7 @@ export async function applyPlannedChangeActions(params: {
     if (planned.invalidate.feed) tasks.push(() => params.invalidate.feed?.() ?? Promise.resolve());
     if (planned.invalidate.automations) tasks.push(() => params.invalidate.automations?.() ?? Promise.resolve());
     if (planned.invalidate.pets) tasks.push(() => params.invalidate.pets?.() ?? Promise.resolve());
+    if (planned.invalidate.accountPlan) tasks.push(() => params.invalidate.accountPlan?.() ?? Promise.resolve());
     if (planned.invalidate.sessions) {
         tasks.push(async () => {
             try {

@@ -460,6 +460,7 @@ pub(crate) fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<Webvie
         tracker.track(&window);
     }
     configure_main_window(app, &window);
+    crate::app_icon::apply_to_window(app, &window);
     Ok(window)
 }
 

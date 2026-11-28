@@ -23,10 +23,12 @@ import {
   type ConnectedServiceSessionAuthSwitchReason,
   type ConnectedServiceSessionAuthSwitchCore,
 } from './connectedServiceSessionAuthSwitchCore';
+import { resolveTrackedConnectedServiceBindingsRaw } from '../trackedSessionConnectedServiceBindings';
 import { buildConnectedServiceSwitchContinuationAttemptId } from '../sessionAuthSwitch/buildConnectedServiceSwitchContinuationAttemptId';
 import {
   isGroupRuntimeRecoverySelection,
   resolveConnectedServiceRuntimeAuthRecoverySelection,
+  resolveRuntimeRecoverySelectionThroughBoundPool,
   type RuntimeRecoverySelection,
 } from './resolveConnectedServiceRuntimeAuthRecoverySelection';
 import type { ConnectedServiceRuntimeAuthApplyCapability } from '../credentials/lifecycleTypes';
@@ -936,6 +938,15 @@ function emitRuntimeGroupSwitchApplyFailureEvent(input: Readonly<{
   });
 }
 
+// `spawn_next_turn` is this session's own application of the group generation: its runtime
+// cannot adopt the account live, so only the binding moved and the running predecessor still
+// holds the failed account. This holds whether this session committed the generation (`switched`)
+// or joined one a sibling committed (`observed_generation`).
+function doesRuntimeGroupSwitchRequirePredecessorRestart(result: ConnectedServiceAuthGroupSwitchResult): boolean {
+  return (result.status === 'switched' || result.status === 'observed_generation')
+    && result.mode === 'spawn_next_turn';
+}
+
 function maybeRestartAfterRuntimeGroupSwitch(input: Readonly<{
   sessionId: string;
   tracked: TrackedSession;
@@ -943,8 +954,7 @@ function maybeRestartAfterRuntimeGroupSwitch(input: Readonly<{
   restartSession?: ((tracked: TrackedSession) => Promise<void> | void) | null;
   onRestartFailure?: RuntimeAuthRestartFailureObserver | null;
 }>): Promise<RuntimeAuthRestartCompletion> | null {
-  if (input.result.status !== 'switched') return null;
-  if (input.result.mode !== 'spawn_next_turn') return null;
+  if (!doesRuntimeGroupSwitchRequirePredecessorRestart(input.result)) return null;
   return requestRuntimeAuthRestart({
     sessionId: input.sessionId,
     tracked: input.tracked,
@@ -1000,8 +1010,12 @@ function resolveRuntimeGroupSwitchContinuationContext(
       failedCredentialRevision,
     )
   ) {
+    // A usable pool replacement is not this runtime's adoption: a joined generation that still
+    // needs a restart continues as a restart-delivered continuation, like a committed one.
     return {
-      action: 'hot_applied', activeProfileId: result.activeProfileId, generation: result.generation,
+      action: doesRuntimeGroupSwitchRequirePredecessorRestart(result) ? 'restart_requested' : 'hot_applied',
+      activeProfileId: result.activeProfileId,
+      generation: result.generation,
     };
   }
   if (result.status !== 'switched') return null;
@@ -1574,6 +1588,12 @@ export async function handleConnectedServiceRuntimeAuthFailureForSession(input: 
           profileId: sourceAuthorization.sourceBinding.profileId,
         }
     : resolvedRecoverySelection;
+  if (selection) {
+    selection = resolveRuntimeRecoverySelectionThroughBoundPool({
+      selection,
+      trackedConnectedServices: resolveTrackedConnectedServiceBindingsRaw(tracked),
+    });
+  }
   if (failedCurrentProfileId && selection && isGroupRuntimeRecoverySelection(selection)) {
     selection = { ...selection, activeProfileId: failedCurrentProfileId };
   }
@@ -1731,8 +1751,7 @@ export async function handleConnectedServiceRuntimeAuthFailureForSession(input: 
     });
     const runtimeFailureForInactiveProfile = isRuntimeFailureForInactiveProfile({ selection, classification });
     const restartRequired = !runtimeFailureForInactiveProfile
-      && result.result.status === 'switched'
-      && result.result.mode === 'spawn_next_turn';
+      && doesRuntimeGroupSwitchRequirePredecessorRestart(result.result);
     const restartCompletion = restartRequired
       ? maybeRestartAfterRuntimeGroupSwitch({
         sessionId: input.sessionId,

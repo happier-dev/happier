@@ -765,6 +765,7 @@ describe('runStandardAcpProvider', () => {
 
     expect(runtime.steerPrompt).toHaveBeenCalledWith('hello', {
       onProviderPromptAccepted: expect.any(Function),
+      onProviderPromptRejected: expect.any(Function),
     });
   });
 
@@ -851,7 +852,7 @@ describe('runStandardAcpProvider', () => {
       setSessionMode: vi.fn(async () => undefined),
       setSessionConfigOption: vi.fn(async () => undefined),
       setSessionModel: vi.fn(async () => undefined),
-      steerPrompt: vi.fn(async () => undefined),
+      steerPrompt: vi.fn(async (_text: string, _identity?: { onProviderPromptRejected?: () => void }) => undefined),
     };
 
     harness.config.createRuntime = () => runtime as any;
@@ -888,8 +889,17 @@ describe('runStandardAcpProvider', () => {
       localId: 'local-1',
       localIds: ['local-1'],
       onProviderPromptAccepted: expect.any(Function),
+      onProviderPromptRejected: expect.any(Function),
       userMessageSeq: 1,
       userMessageSeqs: [1],
+    });
+    // A steer the provider refused returns to pending delivery instead of staying in flight.
+    const observeOutcome = harness.session.bindProviderInputOutcomeProducer.mock.results[0]?.value;
+    runtime.steerPrompt.mock.calls[0]?.[1]?.onProviderPromptRejected?.();
+    expect(observeOutcome).toHaveBeenCalledWith({
+      kind: 'rejected_before_effect',
+      localId: 'local-1',
+      reason: 'steering_unavailable',
     });
   });
 
@@ -1262,6 +1272,24 @@ describe('runStandardAcpProvider', () => {
 
     expect(sessionWasArchived(harness.session)).toBe(false);
     expect(harness.metrics.cleanupCalls).toBe(1);
+  });
+
+  it('cancels provider work for an ending session on termination but keeps a turn abort resumable', async () => {
+    const harness = createHarness();
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    harness.deps.runPermissionModePromptLoopFn = async () => {
+      await harness.handlers.get('abort')?.(undefined);
+      expect(harness.runtime.cancel).toHaveBeenLastCalledWith();
+      await harness.metrics.killHandler?.();
+    };
+
+    try {
+      await runStandardAcpProvider(harness.opts, harness.config, harness.deps);
+    } finally {
+      exitSpy.mockRestore();
+    }
+
+    expect(harness.runtime.cancel).toHaveBeenLastCalledWith({ sessionEnding: true });
   });
 
   // Archiving is a user-intent action, never a lifecycle consequence. A terminal-started
