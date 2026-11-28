@@ -1212,14 +1212,21 @@ export async function executeContributedAction(params: Readonly<{
       };
     };
     if (observeOperation && trackedOperation) {
-      params.context.signal?.throwIfAborted();
-      // The held Ask's lifetime is the operation's, not the admitting call's.
-      const heldAskLifetime = liveAsk ? new AbortController() : undefined;
-      const preparing = targetActionInvocations.prepare(heldAskLifetime
-        ? { ...targetInvocation, signal: heldAskLifetime.signal } : targetInvocation);
-      const admitted = liveAsk
-        ? await Promise.race([preparing.then(prepared => ({ prepared })), liveAsk.then(artifactId => ({ artifactId }))])
-        : { prepared: await preparing };
+      const callerSignal = params.context.signal;
+      if (callerSignal?.aborted) {
+        return { matched: true, result: actionHandlerNotStartedFailure('plugin_action_aborted', 'Action invocation was cancelled') };
+      }
+      // The caller owns the preparation wait. Once admitted, the operation
+      // owns both its handler and any Ask it is still holding.
+      const preparation = callerSignal || liveAsk ? new AbortController() : undefined;
+      const abortPreparation = () => preparation?.abort(callerSignal?.reason);
+      callerSignal?.addEventListener('abort', abortPreparation, { once: true });
+      const preparing = targetActionInvocations.prepare(preparation
+        ? { ...targetInvocation, signal: preparation.signal } : targetInvocation);
+      const admitted = await (liveAsk
+        ? Promise.race([preparing.then(prepared => ({ prepared })), liveAsk.then(artifactId => ({ artifactId }))])
+        : preparing.then(prepared => ({ prepared })))
+        .finally(() => callerSignal?.removeEventListener('abort', abortPreparation));
       if ('prepared' in admitted && admitted.prepared.kind === 'settled') {
         return { matched: true, result: await projectTargetResult(admitted.prepared.result) };
       }
@@ -1251,7 +1258,7 @@ export async function executeContributedAction(params: Readonly<{
             if (admittedReady) prepared = admittedReady;
             else {
               // The person decides in the Inbox; cancelling the operation withdraws the Ask.
-              const withdraw = () => heldAskLifetime?.abort();
+              const withdraw = () => preparation?.abort(signal.reason);
               signal.addEventListener('abort', withdraw, { once: true });
               if (signal.aborted) withdraw();
               if (heldArtifactId) operationOwnerUpdate?.update({ progress: { phase: 'waiting_for_approval', label: 'Waiting for approval',
@@ -1271,8 +1278,8 @@ export async function executeContributedAction(params: Readonly<{
         },
       });
       // An operation that was never admitted cannot hold the Ask; withdraw it.
-      const observed = await observing.catch((error: unknown) => { heldAskLifetime?.abort(); throw error; });
-      if (!observed.ok) heldAskLifetime?.abort();
+      const observed = await observing.catch((error: unknown) => { preparation?.abort(); throw error; });
+      if (!observed.ok) preparation?.abort();
       return { matched: true, result: observed.ok ? { ok: true, result: AgentRuntimeJsonValueV1Schema.parse(observed.result) } : observed };
     }
     const targetResult = await runTracedExternalActionStage('action.invoke', params.approvalContext?.actionRequestId,
