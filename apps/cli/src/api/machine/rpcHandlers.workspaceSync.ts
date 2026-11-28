@@ -207,6 +207,7 @@ function projectNativeTargetContext(context: RpcHandlerContext | undefined): Rpc
     callerInputConstraints: context.callerInputConstraints,
     workspaceSyncTargetRouting: context.workspaceSyncTargetRouting,
     workspaceSyncSourceWriterTargetRouting: context.workspaceSyncSourceWriterTargetRouting,
+    workspaceSyncSourceExecution: context.workspaceSyncSourceExecution,
     verifyMachineAdmissionCurrent: context.verifyMachineAdmissionCurrent,
   };
 }
