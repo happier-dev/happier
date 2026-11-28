@@ -62,9 +62,12 @@ function createStubBin(root) {
   writeExecutable(path.join(binDir, 'npx'), [
     '#!/usr/bin/env bash',
     'set -euo pipefail',
-    `printf 'npx token=%q args=' "\${EXPO_TOKEN:-}" >> ${JSON.stringify(logPath)}`,
+    `printf 'npx token=%q runtime=%q args=' "\${EXPO_TOKEN:-}" "\${HAPPIER_EXPO_RUNTIME_VERSION:-}" >> ${JSON.stringify(logPath)}`,
     `printf '%q ' "$@" >> ${JSON.stringify(logPath)}`,
     `printf '\n' >> ${JSON.stringify(logPath)}`,
+    'if [[ " $* " == *" fingerprint:generate "* ]]; then',
+    '  printf \'{"hash":"%s","sources":[{"type":"contents","id":"runtime","hash":"%s"}]}\\n\' "${STUB_FINGERPRINT_SOURCE_HASH:-prepared}" "${STUB_FINGERPRINT_SOURCE_HASH:-prepared}"',
+    'fi',
     '',
   ].join('\n'));
   return { binDir, logPath, sourceSha };
@@ -139,7 +142,7 @@ test('prepared OTA publication never executes candidate commands with EXPO_TOKEN
     assert.ok(preparedBeforeExport >= 0 && preparedBeforeExport < exportStarted,
       'OTA must generate the ignored browser bundles on the exporting host before Expo');
     assert.match(log, /pnpm token='' args=.*expo export/);
-    assert.match(log, /npx token=must-not-reach-candidate args=.*eas-cli@18\.0\.1 update/);
+    assert.match(log, /npx token=must-not-reach-candidate runtime=\S* args=.*eas-cli@18\.0\.1 update/);
     assert.match(log, /--skip-bundler/);
     assert.match(log, /--input-dir/);
     assert.match(log, /happier-ota-message-injection/);
@@ -157,6 +160,37 @@ test('prepared OTA publication never executes candidate commands with EXPO_TOKEN
     ], publishEnv));
     const afterTamper = fs.readFileSync(stub.logPath, 'utf8');
     assert.equal((afterTamper.match(/^npx /gm) ?? []).length, 1, 'tampered bytes must be rejected before EAS executes');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('prepared public dev OTA publishes with the runtime bound at preparation, without recomputing it', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-ota-prepared-runtime-'));
+  try {
+    const stub = createStubBin(root);
+    const preparedDir = path.join(root, 'prepared');
+    const env = { ...process.env, PATH: `${stub.binDir}:${process.env.PATH ?? ''}`, npm_execpath: path.join(stub.binDir, 'pnpm'),
+      CI: 'true', EXPO_TOKEN: '', SENTRY_AUTH_TOKEN: '', STUB_FINGERPRINT_SOURCE_HASH: 'prepared-runtime' };
+    run(['--phase', 'prepare', '--environment', 'publicdev', '--platform', 'ios', '--source-sha', stub.sourceSha,
+      '--input-dir', preparedDir], env);
+    const prepared = JSON.parse(fs.readFileSync(path.join(preparedDir, 'happier-ota-prepared.json'), 'utf8'));
+    assert.match(prepared.runtimeVersion, /^[0-9a-f]{40}$/);
+
+    // The trusted publisher's reduced install would fingerprint differently; it must not recompute.
+    run(['--phase', 'publish', '--environment', 'publicdev', '--platform', 'ios', '--message', 'm',
+      '--expected-source-sha', stub.sourceSha, '--input-dir', preparedDir, '--interactive', 'false'],
+    { ...env, EXPO_TOKEN: 'publisher', STUB_FINGERPRINT_SOURCE_HASH: 'publisher-runtime' });
+    const lines = fs.readFileSync(stub.logPath, 'utf8').split('\n');
+    assert.equal(lines.filter((line) => line.includes('fingerprint:generate')).length, 1, 'only preparation fingerprints');
+    const update = lines.find((line) => line.includes(' update '));
+    assert.ok(update?.includes(`runtime=${prepared.runtimeVersion}`), update);
+
+    const metadataPath = path.join(preparedDir, 'happier-ota-prepared.json');
+    fs.writeFileSync(metadataPath, JSON.stringify({ ...prepared, runtimeVersion: 'not-a-fingerprint' }));
+    assert.throws(() => run(['--phase', 'publish', '--environment', 'publicdev', '--platform', 'ios', '--message', 'm',
+      '--expected-source-sha', stub.sourceSha, '--input-dir', preparedDir, '--interactive', 'false'],
+    { ...env, EXPO_TOKEN: 'publisher' }), /canonical fingerprint hash/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
