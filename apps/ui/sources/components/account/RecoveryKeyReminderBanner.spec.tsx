@@ -9,9 +9,9 @@ import { installAccountCommonModuleMocks } from './accountTestHelpers';
 
 // Platform/UI boundaries only; the hook, Item rows, auth host, device storage, feature client and
 // HTTP client stay real below the network port.
-const modal = vi.hoisted(() => ({ show: vi.fn() }));
+const router = vi.hoisted(() => ({ push: vi.fn() }));
 installAccountCommonModuleMocks({
-    modal: async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ spies: { show: modal.show } }).module,
+    router: async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ router }).module,
 });
 
 const legacyCredentials = { token: 'test-token', secret: Buffer.alloc(32, 7).toString('base64') };
@@ -28,7 +28,6 @@ async function loadLaunchModules() {
         ...await import('@/sync/api/capabilities/serverFeaturesClient'),
         ...await import('@/auth/storage/tokenStorage'),
         ...await import('@/auth/context/AuthContext'),
-        ...await import('./SecretKeyBackupModal'),
         ...await import('./RecoveryKeyReminderBanner'),
     };
 }
@@ -39,24 +38,24 @@ const firstLaunchModules = await loadLaunchModules();
 async function startLaunch(modules: typeof firstLaunchModules, serverUrl: string) {
     const {
         setRuntimeFetch, upsertServerProfileOnly, setActiveServer, getServerFeaturesSnapshot, TokenStorage,
-        InjectedAuthProvider, SecretKeyBackupModal, RecoveryKeyReminderBanner,
+        InjectedAuthProvider, RecoveryKeyReminderBanner,
     } = modules;
     const home = await upsertServerProfileOnly({ serverUrl, name: 'Reminder Home' });
     await setActiveServer({ serverId: home.id });
     await TokenStorage.setRecoveryKeyReminderDismissed(false);
     const banner = <InjectedAuthProvider credentials={legacyCredentials}><RecoveryKeyReminderBanner /></InjectedAuthProvider>;
-    return { setRuntimeFetch, getServerFeaturesSnapshot, TokenStorage, SecretKeyBackupModal, banner };
+    return { setRuntimeFetch, getServerFeaturesSnapshot, TokenStorage, banner };
 }
 
 afterEach(async () => {
-    modal.show.mockReset();
+    router.push.mockClear();
     await standardCleanup();
     const { resetRuntimeFetch } = await import('@/utils/system/runtimeFetch');
     resetRuntimeFetch();
 });
 
 describe('RecoveryKeyReminderBanner', () => {
-    it('renders from cached visibility at first paint, opens the backup, and dismisses outside the row', async () => {
+    it('renders from cached visibility at first paint, opens Account Security, and dismisses outside the row', async () => {
         const launch = await startLaunch(firstLaunchModules, 'https://reminder-cached.test');
         launch.setRuntimeFetch(async (url) => new URL(String(url)).pathname === '/v1/features'
             ? Response.json(createRootLayoutFeaturesResponse())
@@ -73,15 +72,10 @@ describe('RecoveryKeyReminderBanner', () => {
 
         const screen = await renderScreen(launch.banner);
         await screen.pressByTestIdAsync('recovery-key-reminder');
-        expect(modal.show).toHaveBeenCalledWith(expect.objectContaining({
-            component: launch.SecretKeyBackupModal,
-            props: expect.objectContaining({ secret: legacyCredentials.secret }),
-        }));
+        expect(router.push).toHaveBeenCalledWith('/settings/account/security');
 
         const row = screen.findHostByTestId('recovery-key-reminder');
         const dismiss = screen.findHostByTestId('recovery-key-reminder-dismiss');
-        // One line above the list: the backup it opens does the explaining.
-        expect(screen.findByTestId('recovery-key-reminder')?.props.subtitle).toBeUndefined();
         let ancestor = dismiss?.parent ?? null;
         while (ancestor && ancestor !== row) ancestor = ancestor.parent;
         expect(ancestor).toBeNull();
@@ -110,6 +104,6 @@ describe('RecoveryKeyReminderBanner', () => {
         expect(featureRequests).toBeGreaterThan(0);
         expect(screen.findHostByTestId('recovery-key-reminder')).toBeNull();
         expect(await launch.TokenStorage.getRecoveryKeyReminderDismissed()).toBe(false);
-        expect(modal.show).not.toHaveBeenCalled();
+        expect(router.push).not.toHaveBeenCalled();
     });
 });

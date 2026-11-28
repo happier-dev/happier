@@ -130,6 +130,8 @@ export const AccountEmailPasswordSection = React.memo(function AccountEmailPassw
     accountId?: string;
     verificationToken?: string | null;
     connectIntent?: boolean;
+    /** A request from another row in the same Security page. */
+    connectRequest?: number;
     /**
      * Publishes the one Account Security projection this section already reads
      * so the route owner can compose its own rows from it. A second reader would
@@ -259,7 +261,7 @@ export const AccountEmailPasswordSection = React.memo(function AccountEmailPassw
     }, [props.connectIntent, props.verificationToken, scopeKey]);
 
     React.useEffect(() => {
-        if (!props.verificationToken && !props.connectIntent) return;
+        if (!props.verificationToken && !props.connectIntent && !props.connectRequest) return;
         setPendingPlainPasswordOAuth(null);
         clearAccountPasswordEnrollmentExternalAuthCustody({
             accountId,
@@ -276,6 +278,7 @@ export const AccountEmailPasswordSection = React.memo(function AccountEmailPassw
         activeServer.serverUrl,
         accountId,
         props.connectIntent,
+        props.connectRequest,
         props.verificationToken,
     ]);
 

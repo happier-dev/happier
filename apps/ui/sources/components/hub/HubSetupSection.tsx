@@ -5,7 +5,6 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { useAuth } from '@/auth/context/AuthContext';
-import { SecretKeyBackupModal } from '@/components/account/SecretKeyBackupModal';
 import { useRecoveryKeyReminder } from '@/components/account/useRecoveryKeyReminder';
 import { HomePairingPanel } from '@/components/auth/pairing/HomePairingPanel';
 import { useHomesJourneySetupItems } from '@/components/homes/journeys/useHomesJourneySetupItems';
@@ -209,11 +208,7 @@ function useSetupEntries(presentation: SetupPresentation, openPanelId: string | 
 
     const runAction = React.useCallback(async (id: SetupActionId) => {
         if (id === 'recoveryKey') {
-            if (!recoveryKey.secret) return;
-            Modal.show({
-                component: SecretKeyBackupModal,
-                props: { secret: recoveryKey.secret, onSaved: recoveryKey.markSaved },
-            });
+            router.push(SETTINGS_ROUTES.accountSecurity);
             return;
         }
         if (id === 'addMachine') {
@@ -243,7 +238,7 @@ function useSetupEntries(presentation: SetupPresentation, openPanelId: string | 
         if (url?.trim()) {
             await processAuthUrl(url.trim());
         }
-    }, [connectTerminal, processAuthUrl, recoveryKey.markSaved, recoveryKey.secret, router]);
+    }, [connectTerminal, processAuthUrl, router]);
 
     return { entries, steps, open, runAction, tileLayout, hidden, dismiss };
 }

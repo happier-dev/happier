@@ -12125,6 +12125,8 @@ const nativePasswordTranslations = { 'zh-Hans': {
         resent: '请在一分钟后再次检查邮箱。',
         useDifferentEmail: '换一个邮箱',
         connectTitle: '添加邮箱和密码',
+        addPassword: "添加密码",
+        recoveryKeyOffDevice: "此设备上没有你的恢复密钥副本。",
         connectFromSecurity: '先用你已有的方式登录，然后在“账户安全”中添加邮箱和密码。',
         signInFirst: '先登录',
         forgotTitle: '忘记密码？',

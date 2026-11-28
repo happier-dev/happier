@@ -51,6 +51,8 @@ export const nativePasswordTranslationsEnglish = { en: {
         resent: 'Check your email again in a minute.',
         useDifferentEmail: 'Use a different email',
         connectTitle: 'Add email and password',
+        addPassword: 'Add a password',
+        recoveryKeyOffDevice: 'This device does not have a copy of your recovery key.',
         connectFromSecurity: 'Sign in with a method you already use, then add email and password from Account Security.',
         signInFirst: 'Sign in first',
         forgotTitle: 'Forgot your password?',

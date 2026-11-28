@@ -28,6 +28,7 @@ import { retireIrohHomeTransportDiagnostics } from '@/sync/runtime/irohHomeTrans
 import { withHomeMutationAuthority, type HomeMutationAuthority } from '@/sync/domains/server/homeMutationLock';
 import { digest } from '@/platform/digest';
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
+import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { Encryption } from '@/sync/encryption/encryption';
 import { admitReportedAccountMode, type AccountE2eeCustody } from '@happier-dev/sync-client';
 import { throwIfAborted } from '@/utils/runtime/abortSignals';
@@ -1044,6 +1045,21 @@ export function withAccountE2eeCustody(
 ): LegacyAuthCredentials | DataKeyAuthCredentials {
     const { custody: _previous, ...material } = credentials;
     return custody === 'historical' ? { ...material, custody } : material;
+}
+
+export function deriveRecoveryContentKey(secret: string | Uint8Array): DataKeyAuthCredentials['encryption'] {
+    const recoverySecret = typeof secret === 'string' ? decodeBase64(secret, 'base64url') : secret;
+    let machineKey: Uint8Array | undefined;
+    try {
+        machineKey = deriveAccountMachineKeyFromRecoverySecret(recoverySecret);
+        return {
+            publicKey: encodeBase64(tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey),
+            machineKey: encodeBase64(machineKey),
+        };
+    } finally {
+        if (typeof secret === 'string') recoverySecret.fill(0);
+        machineKey?.fill(0);
+    }
 }
 
 export interface PendingExternalAuth {

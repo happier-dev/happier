@@ -20,6 +20,7 @@ import { t } from '@/text';
 
 import { ACCOUNT_SETTINGS } from './accountSettings';
 import type { AccountSecurityProjectionState } from './useAccountSecurityProjection';
+import { ACCOUNT_SECURITY_EMAIL_PASSWORD_CONNECT_INTENT } from './openAccountSecurityForHome';
 import { AccountRecoveryKeyItem } from './AccountRecoveryKeyItem';
 
 function describeEmailPassword(security: AccountSecurityProjectionState): string | null {
@@ -56,6 +57,11 @@ export const AccountSignInSecuritySection = React.memo(function AccountSignInSec
     const rowMetrics = usePageRowMetrics();
     const emailPasswordFacts = describeEmailPassword(props.security);
     const openSecurity = React.useCallback(() => router.push(SETTINGS_ROUTES.accountSecurity), [router]);
+
+    const addPassword = React.useCallback(() => router.push({
+        pathname: SETTINGS_ROUTES.accountSecurity,
+        params: { intent: ACCOUNT_SECURITY_EMAIL_PASSWORD_CONNECT_INTENT },
+    }), [router]);
 
     return (
         <ItemGroup
@@ -94,7 +100,10 @@ export const AccountSignInSecuritySection = React.memo(function AccountSignInSec
                 returnTo="/settings/account"
             />
             {projection?.encryptionMode === 'e2ee' ? (
-                <AccountRecoveryKeyItem recoveryEmail={projection.nativeEmail} />
+                <AccountRecoveryKeyItem
+                    recoveryEmail={projection.password.status === 'enrolled' ? projection.nativeEmail : null}
+                    onAddPassword={addPassword}
+                />
             ) : props.security.kind === 'loading' ? (
                 // Holds the row's place until the Account's encryption mode is known, so it never
                 // inserts itself above the rows below.

@@ -12126,6 +12126,8 @@ const nativePasswordTranslations = { es: {
         resent: 'Vuelve a revisar tu correo dentro de un minuto.',
         useDifferentEmail: 'Usar otro correo',
         connectTitle: 'Añadir correo y contraseña',
+        addPassword: "Añadir una contraseña",
+        recoveryKeyOffDevice: "Este dispositivo no tiene una copia de tu clave de recuperación.",
         connectFromSecurity: 'Inicia sesión con un método que ya uses y luego añade correo y contraseña en Seguridad de la cuenta.',
         signInFirst: 'Iniciar sesión primero',
         forgotTitle: '¿Olvidaste tu contraseña?',

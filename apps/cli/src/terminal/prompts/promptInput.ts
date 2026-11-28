@@ -347,15 +347,16 @@ export async function promptInput(
   return promptViaProcessStdio(prompt, options);
 }
 
-export async function promptSecretInput(prompt: string): Promise<string> {
+export async function promptSecretInput(prompt: string, options: Pick<PromptOptions, 'signal'> = {}): Promise<string> {
+  const secretOptions = { ...options, secret: true };
   if (!isInteractiveTerminal()) {
-    return promptViaProcessStdio(prompt, { secret: true });
+    return promptViaProcessStdio(prompt, secretOptions);
   }
 
-  const ttyAnswer = await promptViaDevTty(prompt, { secret: true });
+  const ttyAnswer = await promptViaDevTty(prompt, secretOptions);
   if (ttyAnswer !== null) {
     return ttyAnswer;
   }
 
-  return promptViaProcessStdio(prompt, { secret: true });
+  return promptViaProcessStdio(prompt, secretOptions);
 }

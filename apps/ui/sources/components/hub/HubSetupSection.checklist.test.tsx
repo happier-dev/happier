@@ -20,6 +20,7 @@ import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '
 import type { FetchedMachineRow } from '@/sync/engine/machines/syncMachines';
 import '@/sync/syncEngine';
 import { createSecretSettingsTestHarness } from '@/components/settings/secrets/secretSettingsTestHarness';
+import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -201,7 +202,7 @@ describe('HubSetupSection as a checklist (Settings Overview)', () => {
         expect(screen.getTextContent()).toContain(progress(1, 2));
     });
 
-    it('completes the recovery key only after its saved acknowledgement, not modal close', async () => {
+    it('opens Account Security to back up the recovery key on computer and phone', async () => {
         legacyAccount = await createSecretSettingsTestHarness({ mode: 'e2ee' });
         const { sync } = await import('@/sync/sync');
         await sync.resumeSync('manual');
@@ -209,15 +210,16 @@ describe('HubSetupSection as a checklist (Settings Overview)', () => {
         const machine = createMachineFixture({ id: 'm1', metadata: null });
         storage.setState({ isDataReady: true, machines: { [machine.id]: machine },
             machineListByServerId: { [serverId]: [machine] }, machineListStatusByServerId: { [serverId]: 'idle' } });
-        let onSaved: (() => Promise<void>) | undefined;
-        state.show = (options) => { onSaved = Reflect.get(Reflect.get(options as object, 'props'), 'onSaved'); };
+        const push = vi.fn();
+        const show = vi.fn();
+        state.push = push;
+        state.show = show;
         const computer = await renderCurrentSection(legacyAccount.credentials, serverId);
         expect(computer.findByTestId('hub-setup.recoveryKey')).toBeTruthy();
         expect(computer.getTextContent()).toContain(progress(1, 3));
         await act(async () => { computer.pressByTestId('hub-setup.recoveryKey.action'); });
-        expect(onSaved).toBeTypeOf('function');
-        const { Modal } = await import('@/modal');
-        await act(async () => { Modal.hide('modal-id'); });
+        expect(push).toHaveBeenLastCalledWith(SETTINGS_ROUTES.accountSecurity);
+        expect(show).not.toHaveBeenCalled();
         expect(computer.findByTestId('hub-setup.recoveryKey')).toBeTruthy();
         await computer.unmount();
         state.window = { width: 360, height: 800 };
@@ -226,8 +228,9 @@ describe('HubSetupSection as a checklist (Settings Overview)', () => {
         expect(phone.findByTestId('hub-setup.connectComputer')).toBeTruthy();
         expect(phone.getTextContent()).toContain(progress(1, 3));
         await act(async () => { phone.pressByTestId('hub-setup.recoveryKey.action'); });
-        await act(async () => { await onSaved!(); });
-        expect(phone.findByTestId('hub-setup.recoveryKey')).toBeNull();
-        expect(phone.getTextContent()).toContain(progress(2, 3));
+        expect(push).toHaveBeenCalledTimes(2);
+        expect(push).toHaveBeenLastCalledWith(SETTINGS_ROUTES.accountSecurity);
+        expect(show).not.toHaveBeenCalled();
+        expect(phone.findByTestId('hub-setup.recoveryKey')).toBeTruthy();
     });
 });

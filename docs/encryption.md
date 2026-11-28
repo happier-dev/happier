@@ -3247,6 +3247,12 @@ recovered through its Account recovery path. In `cliAccountServiceSetupEntry.ts`
 `commitHomeCredential` uses its own same-Account comparison to distinguish
 conflicting key material from missing material during setup.
 
+In the 0.3 development app, Settings checks before recovery-key disclosure.
+An enrolled password unlocks the key. A passwordless Account can confirm
+disclosure on a device that holds the key. Encryption conversion reuses the
+existing password envelope and key-entry flows without storing an entered
+secret in a content-key credential.
+
 Terminal and Home QR provisioning read the authenticated target Home's persisted
 Account mode: a plain Account provisions typed token-only material even when this
 device retains historical keys. E2EE provisioning requires genuine material whose

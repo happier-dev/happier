@@ -12,7 +12,7 @@ import { encodeBase64 } from '@/encryption/base64';
 import sodium from '@/encryption/libsodium.lib';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 
-const modal = vi.hoisted(() => ({ alert: vi.fn(), show: vi.fn(() => 'modal-id') }));
+const modal = vi.hoisted(() => ({ alert: vi.fn(), confirm: vi.fn<() => Promise<boolean>>(), show: vi.fn((_config: unknown) => 'modal-id') }));
 installSettingsViewCommonModuleMocks({ storage: 'real', modal: async () =>
     (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ spies: modal }).module });
 const homes = createHomeGovernanceHarness();
@@ -32,6 +32,7 @@ beforeEach(async () => {
     installHomeGovernanceBoundaries(homes);
     restoreExecutor = await installRealActionExecutorModuleLoader();
     resetAccountSecurityProjectionStoreForTests(); modal.alert.mockClear(); modal.show.mockClear();
+    modal.confirm.mockReset();
 });
 afterEach(async () => {
     standardCleanup(); await connection?.dispose(); connection = undefined;
@@ -69,20 +70,35 @@ it('reads the security projection once through the real mounted reader', async (
     expect(homes.requestsFor('/v1/account/security')).toHaveLength(1);
 });
 
-it('explains a missing recovery key rather than leaving the action inert', async () => {
+it('opens existing password enrollment from the passwordless Recovery key row', async () => {
     await prepare({ email: null });
     const screen = await renderSecurity();
     await vi.waitFor(() => expect(screen.findByTestId('settings-account-recovery-key')).not.toBeNull());
     await screen.pressByTestIdAsync('settings-account-recovery-key');
-    expect(modal.show).not.toHaveBeenCalled(); expect(modal.alert).toHaveBeenCalledTimes(1);
+    expect(screen.findByTestId('settings-account-password-enroll-email')).not.toBeNull();
+    expect(modal.show).not.toHaveBeenCalled();
 });
 
-it('opens password unlock for an E2EE Account whose device has only its data key', async () => {
-    await prepare();
+it.each([false, true])('opens password unlock for an E2EE Account with local recovery key = %s', async (localSecret) => {
+    await prepare({ localSecret });
     const screen = await renderSecurity();
     await vi.waitFor(() => expect(screen.findByTestId('settings-account-recovery-key')).not.toBeNull());
     await screen.pressByTestIdAsync('settings-account-recovery-key');
     expect(modal.alert).not.toHaveBeenCalled(); expect(modal.show).toHaveBeenCalledTimes(1);
+    expect(modal.show.mock.calls[0]?.[0]).toMatchObject({ props: { email: 'person@example.test' } });
+});
+
+it.each([false, true])('opens a passwordless local key only after confirmation = %s', async (confirmed) => {
+    await prepare({ email: null, localSecret: true });
+    const confirmation = createDeferred<boolean>();
+    modal.confirm.mockReturnValueOnce(confirmation.promise);
+    const screen = await renderSecurity();
+    await vi.waitFor(() => expect(screen.findByTestId('settings-account-recovery-key')).not.toBeNull());
+    await screen.pressByTestIdAsync('settings-account-recovery-key');
+    expect(modal.show).not.toHaveBeenCalled();
+    expect(modal.confirm).toHaveBeenCalledOnce();
+    await act(async () => { confirmation.resolve(confirmed); });
+    expect(modal.show).toHaveBeenCalledTimes(confirmed ? 1 : 0);
 });
 
 it('marks a plain Account recovery key as not applicable', async () => {

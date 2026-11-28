@@ -7,6 +7,7 @@ import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { setActiveServer, upsertServerProfileOnly } from '@/sync/domains/server/serverRuntime';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { useRecoveryKeyDisclosure } from '@/components/settings/account/useRecoveryKeyDisclosure';
 import { useRecoveryKeyReminder } from './useRecoveryKeyReminder';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -20,9 +21,13 @@ vi.mock('react-native-unistyles', async () => {
     return createUnistylesMock();
 });
 
+const modal = vi.hoisted(() => ({
+    confirm: vi.fn(async () => true),
+    show: vi.fn((_config: unknown) => 'backup'),
+}));
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock().module;
+    return createModalModuleMock({ spies: modal }).module;
 });
 
 afterEach(() => {
@@ -46,11 +51,11 @@ describe('useRecoveryKeyReminder', () => {
         }
         const banner = await renderHook(() => useRecoveryKeyReminder({ surface: 'banner' }), { wrapper: AccountShell });
         await flushHookEffects({ cycles: 3 });
-        expect(banner.getCurrent()).toMatchObject({ needed: false, step: null, secret: null });
+        expect(banner.getCurrent()).toMatchObject({ needed: false, step: null });
 
         credentials = legacyCredentials;
         await banner.rerender();
-        expect(banner.getCurrent()).toMatchObject({ needed: true, step: 'pending', secret: legacyCredentials.secret });
+        expect(banner.getCurrent()).toMatchObject({ needed: true, step: 'pending' });
 
         const tile = await renderHook(() => useRecoveryKeyReminder({ surface: 'hubTile' }), { wrapper: AccountShell });
         expect(tile.getCurrent().needed).toBe(true);
@@ -60,9 +65,12 @@ describe('useRecoveryKeyReminder', () => {
         expect(banner.getCurrent().needed).toBe(true);
 
         const status = await renderHook(() => useRecoveryKeyReminder(), { wrapper: AccountShell });
-        await act(async () => { await status.getCurrent().markSaved(); });
-        expect(banner.getCurrent()).toMatchObject({ needed: false, step: 'done', secret: null });
-        expect(status.getCurrent()).toMatchObject({ needed: false, step: 'done', secret: null });
+        const disclosure = await renderHook(() => useRecoveryKeyDisclosure(null, { current: null }), { wrapper: AccountShell });
+        await act(async () => { disclosure.getCurrent().open(); });
+        const backup = modal.show.mock.lastCall?.[0] as { props: { onSaved: () => Promise<void> } };
+        await act(async () => { await backup.props.onSaved(); });
+        expect(banner.getCurrent()).toMatchObject({ needed: false, step: 'done' });
+        expect(status.getCurrent()).toMatchObject({ needed: false, step: 'done' });
         expect(await TokenStorage.getRecoveryKeyReminderDismissed()).toBe(true);
 
         // Dismissing an already handled key preserves the same shared completion and persistence.

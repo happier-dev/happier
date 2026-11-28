@@ -12185,6 +12185,8 @@ const nativePasswordTranslations = { ja: {
         resent: '1分ほど待ってから、もう一度メールを確認してください。',
         useDifferentEmail: '別のメールアドレスを使う',
         connectTitle: 'メールとパスワードを追加',
+        addPassword: "パスワードを追加",
+        recoveryKeyOffDevice: "このデバイスに復旧キーのコピーはありません。",
         connectFromSecurity: 'すでに使っている方法でサインインし、アカウントのセキュリティからメールとパスワードを追加してください。',
         signInFirst: '先にサインイン',
         forgotTitle: 'パスワードをお忘れですか？',

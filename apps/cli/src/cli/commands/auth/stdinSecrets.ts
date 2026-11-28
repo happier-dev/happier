@@ -12,9 +12,17 @@ export async function expandAuthSecretsFromStdin(
   args: readonly string[],
   input: Readable = process.stdin,
 ): Promise<string[]> {
-  const occurrences = args.filter((arg) => arg === '--secrets-json-stdin').length;
-  if (occurrences === 0) return [...args];
-  if (occurrences !== 1) throw new AuthSecretsStdinError('Use --secrets-json-stdin only once.');
+  const jsonFlag = '--secrets-json-stdin';
+  const recoveryKeyFlag = '--recovery-key-stdin';
+  const jsonCount = args.filter((arg) => arg === jsonFlag).length;
+  const recoveryKeyCount = args.filter((arg) => arg === recoveryKeyFlag).length;
+  if (!jsonCount && !recoveryKeyCount) return [...args];
+  if (jsonCount + recoveryKeyCount !== 1) throw new AuthSecretsStdinError('Use one auth secrets stdin option.');
+  if (recoveryKeyCount) {
+    if (args.some((arg) => arg === '--recovery-key' || arg.startsWith('--recovery-key='))) {
+      throw new AuthSecretsStdinError('Do not combine --recovery-key with --recovery-key-stdin.');
+    }
+  }
 
   const chunks: Buffer[] = [];
   for await (const chunk of input) {
@@ -22,9 +30,14 @@ export async function expandAuthSecretsFromStdin(
     chunks.push(bytes);
   }
 
+  const entered = Buffer.concat(chunks).toString('utf8');
+  if (recoveryKeyCount) {
+    return [...args.filter((arg) => arg !== recoveryKeyFlag), '--recovery-key', entered];
+  }
+
   let value: unknown;
   try {
-    value = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    value = JSON.parse(entered);
   } catch {
     throw new AuthSecretsStdinError('Auth secrets stdin must be valid JSON.');
   }

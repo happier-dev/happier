@@ -12231,6 +12231,8 @@ const nativePasswordTranslations = { ca: {
         resent: 'Torna a comprovar el teu correu d’aquí a un minut.',
         useDifferentEmail: 'Fes servir un altre correu',
         connectTitle: 'Afegeix correu i contrasenya',
+        addPassword: "Afegeix una contrasenya",
+        recoveryKeyOffDevice: "Aquest dispositiu no té cap còpia de la teva clau de recuperació.",
         connectFromSecurity: 'Inicia la sessió amb un mètode que ja facis servir i després afegeix correu i contrasenya des de Seguretat del compte.',
         signInFirst: 'Inicia la sessió primer',
         forgotTitle: 'Has oblidat la contrasenya?',

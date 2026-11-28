@@ -60,9 +60,10 @@ function ensureLoaded() {
     })(), { tag: 'useRecoveryKeyReminder.load' });
 }
 
-async function markHandled(): Promise<void> {
-    await TokenStorage.setRecoveryKeyReminderDismissed(true);
-    publish({ dismissed: true });
+export async function recordRecoveryKeyHandled(target?: RecoveryKeyReminderTarget): Promise<void> {
+    if (!await TokenStorage.setRecoveryKeyReminderDismissed(true, target)) return;
+    const active = TokenStorage.getCachedRecoveryKeyReminderDismissed();
+    if (active !== null && active !== readState().dismissed) publish({ dismissed: active });
 }
 
 /**
@@ -72,9 +73,7 @@ async function markHandled(): Promise<void> {
  */
 export async function recordRecoveryKeyEntered(target: RecoveryKeyReminderTarget): Promise<void> {
     // The sign-in already committed; a device that cannot store this keeps offering the reminder.
-    if (!await TokenStorage.setRecoveryKeyReminderDismissed(true, target).catch(() => false)) return;
-    const active = TokenStorage.getCachedRecoveryKeyReminderDismissed();
-    if (active !== null && active !== readState().dismissed) publish({ dismissed: active });
+    await recordRecoveryKeyHandled(target).catch(() => {});
 }
 
 /**
@@ -91,10 +90,6 @@ export type RecoveryKeyReminder = Readonly<{
      * `null` while it does not apply or this device has not read its answer yet.
      */
     step: 'pending' | 'done' | null;
-    /** The secret to back up while `needed`. */
-    secret: string | null;
-    /** Saved: the key was backed up. */
-    markSaved: () => Promise<void>;
     /** Dismissed: the person chose to handle it themselves ("I've handled it"). */
     dismiss: () => Promise<void>;
 }>;
@@ -126,8 +121,6 @@ export function useRecoveryKeyReminder(options?: Readonly<{ surface?: RecoveryKe
     return React.useMemo(() => ({
         needed,
         step,
-        secret: needed && credentials && isLegacyAuthCredentials(credentials) ? credentials.secret : null,
-        markSaved: markHandled,
-        dismiss: markHandled,
-    }), [credentials, needed, step]);
+        dismiss: recordRecoveryKeyHandled,
+    }), [needed, step]);
 }

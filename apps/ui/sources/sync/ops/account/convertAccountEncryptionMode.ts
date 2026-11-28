@@ -31,7 +31,7 @@ import { fetchAccountEncryptionMigrationPrivateLabelInventory } from '@/sync/ops
 import { fetchAccountEncryptionMigrationManagedMachinePresetsInventory } from '@/sync/ops/account/fetchAccountEncryptionMigrationManagedMachinePresetsInventory';
 import { fetchReviewCommentAccountEncryptionMigrationInventory } from '@/sync/domains/reviews/comments/accountEncryptionMigrationApi';
 import { fetchSessionOrganizationAccountEncryptionMigrationInventory } from '@/sync/ops/account/fetchSessionOrganizationAccountEncryptionMigrationInventory';
-import { prepareAccountEncryptionMigrateToE2eeKey } from '@/sync/ops/account/prepareAccountEncryptionMigrateToE2eeKey';
+import { accountEncryptionRestoreRequired, prepareAccountEncryptionMigrateToE2eeKey } from '@/sync/ops/account/prepareAccountEncryptionMigrateToE2eeKey';
 import { openAccountEncryptionFirstKeyExternalAuthUrl, requestAccountEncryptionFirstKeyPasswordProof, retryPendingAccountEncryptionFirstKeyExternalAuth, resumeAccountEncryptionFirstKeyExternalAuth, startAccountEncryptionFirstKeyExternalAuth, shouldRetainAccountEncryptionMigrationArtifactUploads } from '@/sync/ops/account/accountEncryptionFirstKeyExternalAuth';
 import { acknowledgeNewSessionDraftEncryptionMigration, listNewSessionDraftEncryptionMigrationCandidates } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { fetchAccountEncryptionWorkspaceExecutionConfigMigrationCandidates } from '@/sync/ops/account/fetchAccountEncryptionWorkspaceExecutionConfigMigrationCandidates';
@@ -50,6 +50,7 @@ import { fetchAccountEncryptionConnectedAccountCatalogMigrationCandidates } from
 import { fetchAccountEncryptionEntityCatalogMigrationCandidates } from '@/sync/ops/account/fetchAccountEncryptionEntityCatalogMigrationCandidates';
 import { prepareAccountEncryptionModePasswordCredential } from '@/sync/api/auth/accountSecurity';
 import { decodeBase64 } from '@/encryption/base64';
+import { presentAccountRecoveryKeyEntry } from '@/components/settings/account/presentAccountRecoveryKeyEntry';
 import { captureAccountSettingsRequest } from '@/sync/api/account/accountSettingsRequest';
 import { persistAccountE2eeMaterialCustody } from './accountE2eeMaterialCustody';
 import { readAccountSettingsBaseline } from '@/sync/engine/settings/accountSettingsBaseline';
@@ -103,6 +104,7 @@ export async function convertAccountEncryptionMode(params: Readonly<{
 }>): Promise<Readonly<{ mode: 'plain' | 'e2ee' }> | 'interaction_opened' | null> {
     const { credentials, sourceEncryption, profile, settingsScope, accountEncryptionMode, sessionDraftSyncEnabled } = params;
     const nextMode = params.toMode;
+    let temporaryRecoverySecret: Uint8Array | undefined;
     let capturedRequest: Awaited<ReturnType<typeof captureAccountSettingsRequest>> = null;
     const stagedArtifactUploads: string[] = [];
     const stagedDiscussionUploads: string[] = [];
@@ -179,20 +181,30 @@ export async function convertAccountEncryptionMode(params: Readonly<{
                 profileId: p.profileId,
             })),
         );
-        const preparedE2eeKey =
-            nextMode === 'e2ee'
-                ? await prepareAccountEncryptionMigrateToE2eeKey({
-                    credentials,
-                    expectedSigningKeyFingerprint:
-                        currentness
-                            .signingKeyFingerprint,
-                    expectedContentKeyFingerprint:
-                        currentness
-                            .contentKeyFingerprint,
-                })
-                : null;
-        requireCurrentScope();
         const accountSecurity = await fetchAccountSecurity(homeRequest, params.signal);
+        requireCurrentScope();
+        const prepareKey = async () => {
+            const expectedSigningKeyFingerprint = currentness.signingKeyFingerprint;
+            const expectedContentKeyFingerprint = currentness.contentKeyFingerprint;
+            const keyParams = { credentials, expectedSigningKeyFingerprint, expectedContentKeyFingerprint };
+            try {
+                return await prepareAccountEncryptionMigrateToE2eeKey(keyParams);
+            } catch (error) {
+                if (!(error instanceof HappyError) || error.code !== 'restore_required'
+                    || !expectedSigningKeyFingerprint || !expectedContentKeyFingerprint) throw error;
+                requireCurrentScope();
+                const entered = await presentAccountRecoveryKeyEntry();
+                try {
+                    requireCurrentScope();
+                    if (!entered) throw error;
+                    return await prepareAccountEncryptionMigrateToE2eeKey({ ...keyParams, recoverySecret: entered });
+                } finally {
+                    entered?.fill(0);
+                }
+            }
+        };
+        const preparedE2eeKey = nextMode === 'e2ee' ? await prepareKey() : null;
+        temporaryRecoverySecret = preparedE2eeKey?.seed;
         requireCurrentScope();
         const transitionPassword = accountSecurity.password.status === 'enrolled'
             ? await Modal.prompt(
@@ -218,16 +230,23 @@ export async function convertAccountEncryptionMode(params: Readonly<{
         if (accountSecurity.password.status === 'enrolled' && !transitionChallengeAudience) {
             throw new Error('Account password challenge audience is unavailable');
         }
-        const transitionSecret = accountSecurity.password.status === 'enrolled'
-            ? preparedE2eeKey?.seed ?? (() => {
-                if (!isLegacyAuthCredentials(credentials)) {
-                    throw new Error('Account recovery material is unavailable for the password transition');
+        if (accountSecurity.password.status === 'enrolled' && !temporaryRecoverySecret) {
+            if (isLegacyAuthCredentials(credentials)) {
+                try {
+                    temporaryRecoverySecret = decodeBase64(credentials.secret, 'base64url');
+                } catch {
+                    throw accountEncryptionRestoreRequired();
                 }
-                const decoded = decodeBase64(credentials.secret, 'base64url');
-                if (decoded.length !== 32) throw new Error('Account recovery material is invalid');
-                return decoded;
-            })()
-            : null;
+            } else {
+                if (!currentness.signingKeyFingerprint || !currentness.contentKeyFingerprint) {
+                    throw accountEncryptionRestoreRequired();
+                }
+                temporaryRecoverySecret = (await prepareKey()).seed;
+            }
+            if (temporaryRecoverySecret.length !== 32) throw accountEncryptionRestoreRequired();
+            requireCurrentScope();
+        }
+        const transitionSecret = temporaryRecoverySecret ?? null;
         const targetE2eePasswordCredential = transitionPassword !== null && transitionSecret && nextMode === 'e2ee'
             ? await prepareAccountEncryptionModePasswordCredential(homeRequest, {
                 fromMode: 'plain', toMode: 'e2ee', password: transitionPassword,
@@ -689,5 +708,8 @@ export async function convertAccountEncryptionMode(params: Readonly<{
             });
         }
         throw error;
-    } finally { capturedRequest?.dispose(); }
+    } finally {
+        temporaryRecoverySecret?.fill(0);
+        capturedRequest?.dispose();
+    }
 }

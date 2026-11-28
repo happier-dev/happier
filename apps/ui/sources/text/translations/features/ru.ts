@@ -12266,6 +12266,8 @@ const nativePasswordTranslations = { ru: {
         resent: 'Проверьте почту ещё раз через минуту.',
         useDifferentEmail: 'Использовать другой адрес',
         connectTitle: 'Добавить почту и пароль',
+        addPassword: "Добавить пароль",
+        recoveryKeyOffDevice: "На этом устройстве нет копии вашего ключа восстановления.",
         connectFromSecurity: 'Войдите привычным способом, затем добавьте почту и пароль в разделе «Безопасность учётной записи».',
         signInFirst: 'Сначала войти',
         forgotTitle: 'Забыли пароль?',

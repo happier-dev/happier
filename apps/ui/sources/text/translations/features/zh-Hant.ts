@@ -12125,6 +12125,8 @@ const nativePasswordTranslations = { 'zh-Hant': {
         resent: '請在一分鐘後再次檢查信箱。',
         useDifferentEmail: '改用其他電子郵件',
         connectTitle: '新增電子郵件和密碼',
+        addPassword: "新增密碼",
+        recoveryKeyOffDevice: "這部裝置上沒有你的復原金鑰副本。",
         connectFromSecurity: '先使用你既有的方式登入，然後在「帳戶安全」中新增電子郵件和密碼。',
         signInFirst: '先登入',
         forgotTitle: '忘記密碼？',

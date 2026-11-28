@@ -1,4 +1,5 @@
 import {
+    deriveRecoveryContentKey,
     isLegacyAuthCredentials,
     isTokenOnlyAuthCredentials,
     type AuthCredentials,
@@ -17,9 +18,7 @@ import {
 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 
 type PreparedAccountEncryptionMigrateToE2eeKey = Readonly<{
-    credentials: LegacyAuthCredentials;
     seed: Uint8Array;
-    requiresExternalAuthProof: boolean;
     keyProof: Readonly<{
         v: 1;
         publicKey: string;
@@ -27,11 +26,14 @@ type PreparedAccountEncryptionMigrateToE2eeKey = Readonly<{
         contentPublicKeySig: string;
         sign: (input: Uint8Array) => string;
     }>;
-}>;
+}> & (
+    | { requiresExternalAuthProof: true; credentials: LegacyAuthCredentials }
+    | { requiresExternalAuthProof: false; credentials: AuthCredentials }
+);
 
-function restoreRequired(): never {
-    throw new HappyError(
-        'The existing Account key must be restored before enabling end-to-end encryption',
+export function accountEncryptionRestoreRequired(): HappyError {
+    return new HappyError(
+        'The existing Account key must be restored before changing encryption mode',
         false,
         {
             status: 400,
@@ -46,6 +48,7 @@ export async function prepareAccountEncryptionMigrateToE2eeKey(
         credentials: AuthCredentials;
         expectedSigningKeyFingerprint: string | null;
         expectedContentKeyFingerprint: string | null;
+        recoverySecret?: Uint8Array;
     }>,
 ): Promise<PreparedAccountEncryptionMigrateToE2eeKey> {
     const isKeylessAccount =
@@ -55,74 +58,76 @@ export async function prepareAccountEncryptionMigrateToE2eeKey(
         (params.expectedSigningKeyFingerprint === null)
         !== (params.expectedContentKeyFingerprint === null)
     ) {
-        return restoreRequired();
+        throw accountEncryptionRestoreRequired();
     }
     if (
         isKeylessAccount
         && !isTokenOnlyAuthCredentials(params.credentials)
     ) {
-        return restoreRequired();
+        throw accountEncryptionRestoreRequired();
     }
 
     let seed: Uint8Array;
-    let credentials: LegacyAuthCredentials;
-    if (isKeylessAccount) {
-        seed = getRandomBytes(32);
-        credentials = {
-            token: params.credentials.token,
-            secret: encodeBase64(seed, 'base64url'),
-        };
-    } else {
-        if (!isLegacyAuthCredentials(params.credentials)) {
-            return restoreRequired();
-        }
-        credentials = params.credentials;
-        try {
-            seed = decodeBase64(credentials.secret, 'base64url');
-        } catch {
-            return restoreRequired();
-        }
-        if (seed.length !== 32) {
-            return restoreRequired();
-        }
+    try {
+        seed = isKeylessAccount
+            ? getRandomBytes(32)
+            : params.recoverySecret?.slice()
+                ?? (isLegacyAuthCredentials(params.credentials) ? decodeBase64(params.credentials.secret, 'base64url') : new Uint8Array());
+    } catch {
+        throw accountEncryptionRestoreRequired();
     }
 
-    const publicKeyBytes = deriveAccountSigningPublicKey(seed);
-    const proposedSigningKeyFingerprint =
-        computeAccountEncryptionMigrateKeyFingerprintV1(
-            publicKeyBytes,
-        );
-    if (
-        params.expectedSigningKeyFingerprint !== null
-        && params.expectedSigningKeyFingerprint
-            !== proposedSigningKeyFingerprint
-    ) {
-        return restoreRequired();
-    }
+    try {
+        if (seed.length !== 32) throw accountEncryptionRestoreRequired();
+        const publicKeyBytes = deriveAccountSigningPublicKey(seed);
+        const proposedSigningKeyFingerprint =
+            computeAccountEncryptionMigrateKeyFingerprintV1(
+                publicKeyBytes,
+            );
+        if (
+            params.expectedSigningKeyFingerprint !== null
+            && params.expectedSigningKeyFingerprint
+                !== proposedSigningKeyFingerprint
+        ) {
+            throw accountEncryptionRestoreRequired();
+        }
 
-    const contentBinding = await buildContentKeyBinding(seed);
-    const proposedContentKeyFingerprint =
-        computeAccountEncryptionMigrateKeyFingerprintV1(
-            decodeBase64(contentBinding.contentPublicKey),
-        );
-    if (
-        params.expectedContentKeyFingerprint !== null
-        && params.expectedContentKeyFingerprint
-            !== proposedContentKeyFingerprint
-    ) {
-        return restoreRequired();
-    }
+        const contentBinding = await buildContentKeyBinding(seed);
+        const proposedContentKeyFingerprint =
+            computeAccountEncryptionMigrateKeyFingerprintV1(
+                decodeBase64(contentBinding.contentPublicKey),
+            );
+        if (
+            params.expectedContentKeyFingerprint !== null
+            && params.expectedContentKeyFingerprint
+                !== proposedContentKeyFingerprint
+        ) {
+            throw accountEncryptionRestoreRequired();
+        }
 
-    return {
-        credentials,
-        seed,
-        requiresExternalAuthProof: isKeylessAccount,
-        keyProof: {
-            v: 1,
+        const keyProof = {
+            v: 1 as const,
             publicKey: encodeBase64(publicKeyBytes),
             ...contentBinding,
-            sign: (input) =>
-                encodeBase64(signAccountPayload(seed, input)),
-        },
-    };
+            sign: (input: Uint8Array) => encodeBase64(signAccountPayload(seed, input)),
+        };
+        return isKeylessAccount
+            ? {
+                credentials: { token: params.credentials.token, secret: encodeBase64(seed, 'base64url') },
+                seed,
+                requiresExternalAuthProof: true,
+                keyProof,
+            }
+            : {
+                credentials: isTokenOnlyAuthCredentials(params.credentials)
+                    ? { token: params.credentials.token, encryption: deriveRecoveryContentKey(seed) }
+                    : params.credentials,
+                seed,
+                requiresExternalAuthProof: false,
+                keyProof,
+            };
+    } catch (cause) {
+        seed.fill(0);
+        throw cause;
+    }
 }

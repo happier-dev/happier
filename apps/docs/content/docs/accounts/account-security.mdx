@@ -41,6 +41,17 @@ The two account modes recover differently:
   recovery secret your recovery key represents. The Home cannot use an emailed
   reset to reconstruct encrypted data.
 
+## Back up or view your recovery key
+
+In the 0.3 development build, go to **Settings → Account → Sign-in & security →
+Recovery key** and confirm before viewing or copying your key. Keep a saved
+copy somewhere you can find it.
+
+If you set up email and password, enter your password to view the key.
+Without a password or a device that holds the key, Happier cannot show it.
+The Recovery key row offers **Add a password**. Use your saved key to prove
+you can add that sign-in method.
+
 ## Change email or password
 
 Open **Settings → Account → Sign-in & security**. The email and password section
@@ -62,6 +73,10 @@ publish that destination; the security change still succeeds if delivery fails.
 Passwords must contain at least 15 Unicode scalar values and fit within 1,024
 UTF-8 bytes. Happier preserves the exact text without trimming or Unicode
 normalization. Spaces, paste, and password managers are supported.
+
+In the 0.3 development CLI, an interactive E2EE password change asks for
+your recovery key when the CLI has only a content key. In scripts, use
+`--recovery-key-stdin` to pass it through standard input.
 
 ## Automation and plugin boundary
 

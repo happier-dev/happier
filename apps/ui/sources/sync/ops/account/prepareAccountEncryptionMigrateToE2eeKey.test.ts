@@ -47,6 +47,26 @@ describe('prepareAccountEncryptionMigrateToE2eeKey', () => {
         expect(prepared.credentials).toBe(credentials);
     });
 
+    it('uses an entered recovery key to prove retained bindings from a content-key device', async () => {
+        const recoverySecret = new Uint8Array(32).fill(4);
+        const publicKey = (await import('@/auth/flows/challenge')).deriveAccountSigningPublicKey(recoverySecret);
+        const binding = await (await import('@/auth/oauth/contentKeyBinding')).buildContentKeyBinding(recoverySecret);
+        const credentials = {
+            token: 'token',
+            encryption: { publicKey: binding.contentPublicKey, machineKey: 'test-machine-key' },
+            custody: 'historical' as const,
+        };
+        const prepared = await prepareAccountEncryptionMigrateToE2eeKey({
+            credentials,
+            recoverySecret,
+            expectedSigningKeyFingerprint: computeAccountEncryptionMigrateKeyFingerprintV1(publicKey),
+            expectedContentKeyFingerprint: computeAccountEncryptionMigrateKeyFingerprintV1(decodeBase64(binding.contentPublicKey)),
+        });
+        expect(prepared.credentials).toBe(credentials);
+        expect(prepared.keyProof.contentPublicKey).toBe(binding.contentPublicKey);
+        expect(prepared.requiresExternalAuthProof).toBe(false);
+    });
+
     it('requires restore for token-only credentials when a signing key is retained', async () => {
         await expect(prepareAccountEncryptionMigrateToE2eeKey({
             credentials: { token: 'token' },

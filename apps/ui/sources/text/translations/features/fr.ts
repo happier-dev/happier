@@ -12247,6 +12247,8 @@ const nativePasswordTranslations = { fr: {
         resent: 'Consulte à nouveau ta boîte mail dans une minute.',
         useDifferentEmail: 'Utiliser une autre adresse',
         connectTitle: 'Ajouter e-mail et mot de passe',
+        addPassword: "Ajouter un mot de passe",
+        recoveryKeyOffDevice: "Cet appareil ne possède pas de copie de ta clé de récupération.",
         connectFromSecurity: 'Connecte-toi avec une méthode que tu utilises déjà, puis ajoute e-mail et mot de passe depuis Sécurité du compte.',
         signInFirst: 'Se connecter d’abord',
         forgotTitle: 'Mot de passe oublié ?',

@@ -78,9 +78,10 @@ ${chalk.bold('Options:')}
   --all      When used with logout, remove local data for all Homes
   --yes      Confirm a dangerous Account security or API-token change without an interactive prompt
   --revision  Expected password credential revision for change/remove (defaults to 1; use "security get" to read the current revision)
-  --recover   Replace an E2EE password using the recovery secret from this CLI's current recovery-key/password login
+  --recover   Replace an E2EE password using the Account recovery key
   --invitation-token  Preserve a bounded Team invitation reference through native login/provision; membership stays with the invitation owner
   --verification-token  Mailbox-proof bearer from the verification email for provision or password enrollment
+  --recovery-key-stdin Read the Account recovery key from stdin for password change, remove or enrollment
   --secrets-json-stdin  Read one strict {"v":1,"secrets":{...}} document from stdin for noninteractive secret input
   --encryption  With api-tokens create, grant Account-wide encryption access; show the credential once
   --authorize-unattended-team-access  With API-token creation or terminal approval, explicitly copy this signed-in credential's currently verified authentication methods for restricted Team work; ordinary pairing does not copy them

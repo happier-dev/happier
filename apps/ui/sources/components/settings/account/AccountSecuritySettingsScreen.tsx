@@ -75,7 +75,7 @@ export const AccountSecuritySettingsScreen = React.memo(function AccountSecurity
             : null,
     );
     const projection = projectionState.kind === 'ready' ? projectionState.projection : null;
-    const recoveryEmail = projection?.nativeEmail ?? null;
+    const recoveryEmail = projection?.password.status === 'enrolled' ? projection.nativeEmail : null;
     const recoveryApplicable = projection?.encryptionMode === 'e2ee';
     const targetServerId = routeServerId ?? activeServer.serverId;
     const targetKey = `${targetServerId}\u0000${routeIntent ?? ''}\u0000${verificationToken ?? ''}`;
@@ -118,7 +118,12 @@ export const AccountSecuritySettingsScreen = React.memo(function AccountSecurity
     }, [targetKey]);
 
     const recoveryKeyTriggerRef = React.useRef<React.ComponentRef<typeof Pressable> | null>(null);
-    const { open: openRecoveryKey } = useRecoveryKeyDisclosure(recoveryEmail, recoveryKeyTriggerRef);
+    const { canDisclose, open: openRecoveryKey } = useRecoveryKeyDisclosure(recoveryEmail, recoveryKeyTriggerRef);
+    const [connectRequest, setConnectRequest] = React.useState<Readonly<{ accountId: string; serverId: string; count: number }> | null>(null);
+    const openPasswordEnrollment = React.useCallback(() => {
+        if (!securityAccountId) return;
+        setConnectRequest((previous) => ({ accountId: securityAccountId, serverId: targetServerId, count: (previous?.count ?? 0) + 1 }));
+    }, [securityAccountId, targetServerId]);
 
     if (targetAccountScope.kind !== 'bound' && targetAccountScope.kind !== 'resolving') {
         return (
@@ -179,6 +184,8 @@ export const AccountSecuritySettingsScreen = React.memo(function AccountSecurity
                     accountId={securityAccountId}
                     verificationToken={verificationToken}
                     connectIntent={connectIntent}
+                    connectRequest={connectRequest?.accountId === securityAccountId && connectRequest.serverId === targetServerId
+                        ? connectRequest.count : undefined}
                     onProjection={publishProjection}
                 />
             </SettingSection>
@@ -191,7 +198,9 @@ export const AccountSecuritySettingsScreen = React.memo(function AccountSecurity
                         testID="settings-account-recovery-key"
                         icon={<Icon name="key" />}
                         pressableRef={recoveryKeyTriggerRef}
-                        onPress={openRecoveryKey}
+                        subtitle={canDisclose ? undefined : t('settingsAccount.nativePassword.recoveryKeyOffDevice')}
+                        detail={canDisclose ? undefined : t('settingsAccount.nativePassword.addPassword')}
+                        onPress={canDisclose ? openRecoveryKey : openPasswordEnrollment}
                     />
                 </ItemGroup>
             ) : projectionState.kind === 'loading' ? (

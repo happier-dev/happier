@@ -12242,6 +12242,8 @@ const nativePasswordTranslations = { de: {
         resent: 'Sieh in einer Minute noch einmal in deinen E-Mails nach.',
         useDifferentEmail: 'Andere E-Mail verwenden',
         connectTitle: 'E-Mail und Passwort hinzufügen',
+        addPassword: "Passwort hinzufügen",
+        recoveryKeyOffDevice: "Auf diesem Gerät ist keine Kopie deines Wiederherstellungsschlüssels gespeichert.",
         connectFromSecurity: 'Melde dich mit einer bereits genutzten Methode an und füge E-Mail und Passwort dann unter Kontosicherheit hinzu.',
         signInFirst: 'Zuerst anmelden',
         forgotTitle: 'Passwort vergessen?',

@@ -1,12 +1,13 @@
 import React from 'react';
-import { Pressable, type StyleProp, type ViewStyle } from 'react-native';
+import { type StyleProp, type ViewStyle } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { SecretKeyBackupModal } from '@/components/account/SecretKeyBackupModal';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { useRecoveryKeyReminder } from '@/components/account/useRecoveryKeyReminder';
 import { Icon } from '@/components/ui/icons/Icon';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
@@ -23,22 +24,12 @@ export const RecoveryKeyReminderBanner = React.memo((props: Readonly<{
     style?: StyleProp<ViewStyle>;
 }>) => {
     const { theme } = useUnistyles();
-    const triggerRef = React.useRef<React.ComponentRef<typeof Pressable> | null>(null);
+    const router = useRouter();
     const reminder = useRecoveryKeyReminder({ surface: 'banner' });
 
-    if (!reminder.needed || !reminder.secret) return null;
+    if (!reminder.needed) return null;
 
-    const secret = reminder.secret;
-    const open = () => {
-        Modal.show({
-            component: SecretKeyBackupModal,
-            props: {
-                secret,
-                onSaved: reminder.markSaved,
-            },
-            focusReturnRef: triggerRef,
-        });
-    };
+    const open = () => router.push(SETTINGS_ROUTES.accountSecurity);
     // Amber: the key is the one thing on the list that needs the person.
     const icon = <Icon name="key" color={theme.colors.state.warning.foreground} />;
     const dismiss = (
@@ -66,7 +57,6 @@ export const RecoveryKeyReminderBanner = React.memo((props: Readonly<{
         <ItemGroup {...(props.header ? { header: props.header } : {})} style={props.style}>
             <Item
                 testID="recovery-key-reminder"
-                pressableRef={triggerRef}
                 title={t('settingsOverview.saveRecoveryKeyTitle')}
                 subtitle={t('settingsOverview.saveRecoveryKeyReason')}
                 icon={icon}

@@ -7,6 +7,7 @@ import { AccountExternalAuthProofV1Schema } from '@happier-dev/protocol/auth/acc
 import { buildE2eeAccountPasswordChangeRequestV1, buildE2eeAccountPasswordEnrollRequestV1, buildE2eeAccountPasswordRemoveRequestV1 } from '@happier-dev/protocol/auth/accountSecurityCrypto';
 import { canonicalizeKeyChallengeV2AudienceOrigin } from '@happier-dev/protocol/auth/keyChallenge';
 import { createPasswordCredentialMutationDigestV1, createPasswordCredentialTargetDigestV1 } from '@happier-dev/protocol/auth/passwordMutationChallenge';
+import { parseRecoveryKey } from '@happier-dev/protocol/auth/recoveryKey';
 import { normalizeVerifiedEmail } from '@happier-dev/protocol/auth/verifiedEmail';
 import type { ActionExecuteResult, ActionId, AccountSecurityGetResponseV1 } from '@happier-dev/protocol';
 
@@ -33,8 +34,7 @@ class AccountSecurityCommandError extends Error {
       cancelled: 'The Account security operation was cancelled before any change began.',
       confirmation_declined: 'Confirmation declined. No change was made.',
       invalid_arguments: ACCOUNT_SECURITY_USAGE,
-      recovery_secret_required:
-        'This E2EE operation requires the Account recovery secret. Sign in with the password or recovery key on this CLI first.',
+      invalid_recovery_key: 'Enter a valid Account recovery key.',
       home_identity_unavailable: 'The selected Home identity could not be verified. No password change was made.',
       reauthentication_required:
         'A linked OAuth or mTLS sign-in could not authorize this exact password enrollment. No change was made.',
@@ -111,11 +111,30 @@ async function readSelectedAccountSecurity(credentials: StoredCredentials, signa
   return await readAccountSecurityRoute(resolveServerHttpBaseUrl(), credentials, signal);
 }
 
-function requireRecoverySecret(credentials: StoredCredentials): Uint8Array {
-  if (credentials.encryption?.type !== 'legacy') {
-    throw new AccountSecurityCommandError('recovery_secret_required');
+async function withRecoverySecret<T>(
+  credentials: StoredCredentials,
+  args: readonly string[],
+  signal: AbortSignal | undefined,
+  use: (secret: Uint8Array) => Promise<T>,
+): Promise<T> {
+  if (credentials.encryption?.type === 'legacy') return await use(credentials.encryption.secret);
+  let entered = readSecretFlag(args, '--recovery-key');
+  if (!entered) {
+    if (wantsJson(args)) {
+      throw new AccountSecurityCommandError('invalid_arguments', 'Supply the Account recovery key with --recovery-key-stdin.');
+    }
+    const { promptSecretInput } = await import('@/terminal/prompts/promptInput');
+    entered = await promptSecretInput('Account recovery key: ', { signal });
+    if (!entered) throw new AccountSecurityCommandError('cancelled');
   }
-  return credentials.encryption.secret;
+  signal?.throwIfAborted();
+  const key = parseRecoveryKey(entered);
+  if (!key.ok) throw new AccountSecurityCommandError('invalid_recovery_key');
+  try {
+    return await use(key.bytes);
+  } finally {
+    key.bytes.fill(0);
+  }
 }
 
 function normalizeSecurityEmail(email: string | null): string | null {
@@ -494,7 +513,7 @@ async function handleAuthPasswordChange(args: string[], signal?: AbortSignal): P
       usage: 'Usage: happier auth password change [--current-password <password>] --new-password <password> [--revision <n>] [--recover] [--yes] [--json]',
       startIndex: 0,
       booleanFlags: ['--json', '--yes', '--recover'],
-      valueFlags: ['--current-password', '--new-password', '--revision'],
+      valueFlags: ['--current-password', '--new-password', '--revision', '--recovery-key'],
       maxPositionals: 0,
     });
     const credentials = await readStoredCredentials();
@@ -511,42 +530,44 @@ async function handleAuthPasswordChange(args: string[], signal?: AbortSignal): P
     if (security.password.status !== 'enrolled') {
       throw new AccountSecurityCommandError('account_security_operation_failed');
     }
+    const currentRevision = security.password.revision;
     let request: ReturnType<typeof AccountPasswordChangeRequestV1Schema.parse>;
     if (security.encryptionMode === 'e2ee') {
-      const secret = requireRecoverySecret(credentials);
-      const normalizedNativeEmail = normalizeSecurityEmail(security.nativeEmail);
-      const { prepareNativeEmailPasswordCredential } = await import('@/auth/nativeEmailPasswordCrypto');
-      const preparedCredential = await prepareNativeEmailPasswordCredential({
-        password: newPassword,
-        secret,
-        ...(signal ? { signal } : {}),
-      });
-      const preparation = await preparePasswordMutation(runtime, credentials, {
-        v: 1,
-        action: args.includes('--recover') ? 'recover' : 'change',
-        expectedCredentialRevision: expectedCredentialRevision ?? security.password.revision,
-        normalizedNativeEmail,
-        newE2eePassword: {
-          envelope: preparedCredential.envelope,
-          authKey: preparedCredential.authKey,
-        },
-      }, signal);
-      request = buildE2eeAccountPasswordChangeRequestV1({
-        action: args.includes('--recover') ? 'recover' : 'change',
-        accountId: await resolveAccountId(runtime, credentials, signal),
-        normalizedNativeEmail,
-        expectedCredentialRevision: expectedCredentialRevision ?? security.password.revision,
-        recoverySecret: secret,
-        expectedAudience: await resolveMutationAudience(runtime, credentials, signal),
-        expectedEnvelope: preparedCredential.envelope,
-        preparation,
+      request = await withRecoverySecret(credentials, args, signal, async (secret) => {
+        const normalizedNativeEmail = normalizeSecurityEmail(security.nativeEmail);
+        const { prepareNativeEmailPasswordCredential } = await import('@/auth/nativeEmailPasswordCrypto');
+        const preparedCredential = await prepareNativeEmailPasswordCredential({
+          password: newPassword,
+          secret,
+          ...(signal ? { signal } : {}),
+        });
+        const preparation = await preparePasswordMutation(runtime, credentials, {
+          v: 1,
+          action: args.includes('--recover') ? 'recover' : 'change',
+          expectedCredentialRevision: expectedCredentialRevision ?? currentRevision,
+          normalizedNativeEmail,
+          newE2eePassword: {
+            envelope: preparedCredential.envelope,
+            authKey: preparedCredential.authKey,
+          },
+        }, signal);
+        return buildE2eeAccountPasswordChangeRequestV1({
+          action: args.includes('--recover') ? 'recover' : 'change',
+          accountId: await resolveAccountId(runtime, credentials, signal),
+          normalizedNativeEmail,
+          expectedCredentialRevision: expectedCredentialRevision ?? currentRevision,
+          recoverySecret: secret,
+          expectedAudience: await resolveMutationAudience(runtime, credentials, signal),
+          expectedEnvelope: preparedCredential.envelope,
+          preparation,
+        });
       });
     } else {
       const currentPassword = await readSecretFlagOrPrompt(args, '--current-password', 'Current password: ');
       request = AccountPasswordChangeRequestV1Schema.parse({
         v: 1,
         kind: 'plain',
-        expectedCredentialRevision: expectedCredentialRevision ?? security.password.revision,
+        expectedCredentialRevision: expectedCredentialRevision ?? currentRevision,
         currentPassword,
         newPassword,
       });
@@ -581,7 +602,7 @@ async function handleAuthPasswordRemove(args: string[], signal?: AbortSignal): P
       usage: 'Usage: happier auth password remove [--current-password <password>] [--revision <n>] [--yes] [--json]',
       startIndex: 0,
       booleanFlags: ['--json', '--yes'],
-      valueFlags: ['--current-password', '--revision'],
+      valueFlags: ['--current-password', '--revision', '--recovery-key'],
       maxPositionals: 0,
     });
     const credentials = await readStoredCredentials();
@@ -599,25 +620,27 @@ async function handleAuthPasswordRemove(args: string[], signal?: AbortSignal): P
     if (security.password.status !== 'enrolled') {
       throw new AccountSecurityCommandError('account_security_operation_failed');
     }
+    const currentRevision = security.password.revision;
     let request: ReturnType<typeof AccountPasswordRemoveRequestV1Schema.parse>;
     if (security.encryptionMode === 'e2ee') {
-      const secret = requireRecoverySecret(credentials);
-      const expectedCredentialRevision = revisionRaw
-        ? Number.parseInt(revisionRaw, 10)
-        : security.password.revision;
-      const preparation = await preparePasswordMutation(runtime, credentials, {
-        v: 1,
-        action: 'remove',
-        expectedCredentialRevision,
-        normalizedNativeEmail: normalizeSecurityEmail(security.nativeEmail),
-      }, signal);
-      request = buildE2eeAccountPasswordRemoveRequestV1({
-        accountId: await resolveAccountId(runtime, credentials, signal),
-        normalizedNativeEmail: normalizeSecurityEmail(security.nativeEmail),
-        expectedCredentialRevision,
-        recoverySecret: secret,
-        expectedAudience: await resolveMutationAudience(runtime, credentials, signal),
-        preparation,
+      request = await withRecoverySecret(credentials, args, signal, async (secret) => {
+        const expectedCredentialRevision = revisionRaw
+          ? Number.parseInt(revisionRaw, 10)
+          : currentRevision;
+        const preparation = await preparePasswordMutation(runtime, credentials, {
+          v: 1,
+          action: 'remove',
+          expectedCredentialRevision,
+          normalizedNativeEmail: normalizeSecurityEmail(security.nativeEmail),
+        }, signal);
+        return buildE2eeAccountPasswordRemoveRequestV1({
+          accountId: await resolveAccountId(runtime, credentials, signal),
+          normalizedNativeEmail: normalizeSecurityEmail(security.nativeEmail),
+          expectedCredentialRevision,
+          recoverySecret: secret,
+          expectedAudience: await resolveMutationAudience(runtime, credentials, signal),
+          preparation,
+        });
       });
     } else {
       const currentPassword = await readSecretFlagOrPrompt(args, '--current-password', 'Current password: ');
@@ -626,7 +649,7 @@ async function handleAuthPasswordRemove(args: string[], signal?: AbortSignal): P
         kind: 'plain',
         expectedCredentialRevision: revisionRaw
           ? Number.parseInt(revisionRaw, 10)
-          : security.password.revision,
+          : currentRevision,
         currentPassword,
       });
     }
@@ -658,7 +681,7 @@ async function handleAuthPasswordEnroll(args: string[], signal?: AbortSignal): P
         'Usage: happier auth password enroll --email <email> --password <password> [--verification-token <token>] [--yes] [--json]',
       startIndex: 0,
       booleanFlags: ['--json', '--yes'],
-      valueFlags: ['--email', '--password', '--verification-token'],
+      valueFlags: ['--email', '--password', '--verification-token', '--recovery-key'],
       maxPositionals: 0,
     });
     const credentials = await readStoredCredentials();
@@ -679,32 +702,33 @@ async function handleAuthPasswordEnroll(args: string[], signal?: AbortSignal): P
     }
     let request: ReturnType<typeof AccountPasswordEnrollRequestV1Schema.parse>;
     if (security.encryptionMode === 'e2ee') {
-      const secret = requireRecoverySecret(credentials);
-      const { prepareNativeEmailPasswordCredential } = await import('@/auth/nativeEmailPasswordCrypto');
-      const preparedCredential = await prepareNativeEmailPasswordCredential({
-        password,
-        secret,
-        ...(signal ? { signal } : {}),
-      });
-      const preparation = await preparePasswordMutation(runtime, credentials, {
-        v: 1,
-        action: 'connect',
-        expectedCredentialRevision: null,
-        normalizedNativeEmail: normalizedEmail.normalizedEmail,
-        newE2eePassword: {
-          envelope: preparedCredential.envelope,
-          authKey: preparedCredential.authKey,
-        },
-      }, signal);
-      request = buildE2eeAccountPasswordEnrollRequestV1({
-        email: normalizedEmail.normalizedEmail,
-        ...(verificationToken ? { verificationToken } : {}),
-        accountId: await resolveAccountId(runtime, credentials, signal),
-        normalizedNativeEmail: normalizedEmail.normalizedEmail,
-        recoverySecret: secret,
-        expectedAudience: await resolveMutationAudience(runtime, credentials, signal),
-        expectedEnvelope: preparedCredential.envelope,
-        preparation,
+      request = await withRecoverySecret(credentials, args, signal, async (secret) => {
+        const { prepareNativeEmailPasswordCredential } = await import('@/auth/nativeEmailPasswordCrypto');
+        const preparedCredential = await prepareNativeEmailPasswordCredential({
+          password,
+          secret,
+          ...(signal ? { signal } : {}),
+        });
+        const preparation = await preparePasswordMutation(runtime, credentials, {
+          v: 1,
+          action: 'connect',
+          expectedCredentialRevision: null,
+          normalizedNativeEmail: normalizedEmail.normalizedEmail,
+          newE2eePassword: {
+            envelope: preparedCredential.envelope,
+            authKey: preparedCredential.authKey,
+          },
+        }, signal);
+        return buildE2eeAccountPasswordEnrollRequestV1({
+          email: normalizedEmail.normalizedEmail,
+          ...(verificationToken ? { verificationToken } : {}),
+          accountId: await resolveAccountId(runtime, credentials, signal),
+          normalizedNativeEmail: normalizedEmail.normalizedEmail,
+          recoverySecret: secret,
+          expectedAudience: await resolveMutationAudience(runtime, credentials, signal),
+          expectedEnvelope: preparedCredential.envelope,
+          preparation,
+        });
       });
     } else {
       const preparation = PasswordMutationPreparationResponseV1Schema.parse(

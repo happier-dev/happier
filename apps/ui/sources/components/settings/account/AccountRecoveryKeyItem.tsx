@@ -6,6 +6,7 @@ import { formatRecoveryKeyForDisplay, maskRecoveryKeyForDisplay } from '@/auth/r
 import { useHappierCopyFeedback } from '@happier-dev/plugin-ui/presentation';
 import { SecretValueControls, SecretValueText } from '@/components/ui/copy/SecretValueDisclosure';
 import { Icon } from '@/components/ui/icons/Icon';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Item } from '@/components/ui/lists/Item';
 import type { FocusReturnTarget } from '@/keyboard/focusReturn';
 import { Modal } from '@/modal';
@@ -25,9 +26,8 @@ function takeDisplayForm(secret: string | Uint8Array): string {
 
 /**
  * The recovery key, masked in place, with reveal and copy. Both go through the same guard as the
- * backup disclosure (`useRecoveryKeyDisclosure`): the local secret when this device holds it,
- * otherwise an unlock with the sign-in password. The revealed key lives only while it is shown; hiding
- * it, leaving the page or changing Account forgets it.
+ * backup disclosure (`useRecoveryKeyDisclosure`): password unlock or confirmation for a passwordless
+ * Home. Hiding the key, leaving the page or changing Account clears the revealed value.
  */
 export const AccountRecoveryKeyItem = React.memo(function AccountRecoveryKeyItem(props: Readonly<{
     recoveryEmail: string | null;
@@ -38,11 +38,12 @@ export const AccountRecoveryKeyItem = React.memo(function AccountRecoveryKeyItem
     testIDPrefix?: string;
     /** Any change (another Account or service) forgets a revealed key, as an Account change does. */
     scopeKey?: string;
+    onAddPassword?: () => void;
 }>) {
     const { theme } = useUnistyles();
     const auth = useAuth();
     const triggerRef = React.useRef<FocusReturnTarget>(null);
-    const { withRecoveryKey } = useRecoveryKeyDisclosure(props.recoveryEmail, triggerRef, props.source);
+    const { canDisclose, withRecoveryKey } = useRecoveryKeyDisclosure(props.recoveryEmail, triggerRef, props.source);
     const [revealed, setRevealed] = React.useState<string | null>(null);
     const copyFeedback = useHappierCopyFeedback();
     const writeClipboard = useClipboardWrite();
@@ -75,13 +76,13 @@ export const AccountRecoveryKeyItem = React.memo(function AccountRecoveryKeyItem
             icon={<Icon name="key" size={18} color={theme.colors.text.secondary} />}
             title={t('settingsAccount.secretKey')}
             subtitle={(
-                <SecretValueText
+                canDisclose ? <SecretValueText
                     testID={`${prefix}-value`}
                     revealed={revealed}
                     mask={MASKED_RECOVERY_KEY}
                     maskedAccessibilityLabel={t('settingsAccount.backupDescription')}
                     selectable
-                />
+                /> : t('settingsAccount.nativePassword.recoveryKeyOffDevice')
             )}
             accessibilityHint={t('settingsAccount.backupDescription')}
             mode="info"
@@ -89,7 +90,7 @@ export const AccountRecoveryKeyItem = React.memo(function AccountRecoveryKeyItem
             showDivider={props.showDivider}
             rightElementOutsidePressable
             rightElement={(
-                <SecretValueControls
+                canDisclose ? <SecretValueControls
                     testIDPrefix={prefix}
                     revealed={revealed !== null}
                     revealLabel={t('settingsAccount.showRecoveryKey')}
@@ -99,7 +100,13 @@ export const AccountRecoveryKeyItem = React.memo(function AccountRecoveryKeyItem
                     copied={copyFeedback.isCopied()}
                     copyAccessibilityLabel={`${t('common.copy')}: ${t('settingsAccount.secretKey')}`}
                     copyControlRef={(node) => { triggerRef.current = node; }}
-                />
+                /> : props.onAddPassword ? <RoundButton
+                    testID={prefix + '-add-password'}
+                    size="small"
+                    display="secondary"
+                    title={t('settingsAccount.nativePassword.addPassword')}
+                    onPress={props.onAddPassword}
+                /> : null
             )}
         />
     );

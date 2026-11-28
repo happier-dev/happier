@@ -16,7 +16,9 @@ import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { captureConsoleText } from '@/testkit/logger/captureOutput';
 import { AccountSettingsV2GetResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
-import { writeCredentialsTokenOnly, writeCredentialsLegacy } from '@/persistence';
+import { resolveAccountContentSecretKey } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import tweetnacl from 'tweetnacl';
+import { readStoredCredentials, writeCredentialsDataKey, writeCredentialsTokenOnly, writeCredentialsLegacy } from '@/persistence';
 import { handleAuthSecurityGet } from './auth/accountSecurity';
 import { handleAuthCommand } from './auth';
 import { expandAuthSecretsFromStdin } from './auth/stdinSecrets';
@@ -28,6 +30,11 @@ import { resetInMemoryAccountSettingsContextForTests } from '@/settings/accountS
 const externalAuthBoundary = vi.hoisted(() => ({
   capture: vi.fn(),
   openBrowser: vi.fn(),
+}));
+const promptRecoveryKey = vi.hoisted(() => vi.fn<() => Promise<string>>());
+vi.mock('@/terminal/prompts/promptInput', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/terminal/prompts/promptInput')>(),
+  promptSecretInput: promptRecoveryKey,
 }));
 
 vi.mock('@/cloud/loopbackOauthPkce', () => ({
@@ -477,7 +484,7 @@ describe('trusted interactive CLI Account Security vertical', () => {
       ]);
       expect(JSON.parse(output.text())).toMatchObject({
         ok: false,
-        error: { code: 'recovery_secret_required' },
+        error: { code: 'invalid_arguments' },
       });
       expect(preparations).toBe(0);
     } finally {
@@ -520,7 +527,7 @@ describe('trusted interactive CLI Account Security vertical', () => {
         ]);
         expect(JSON.parse(output.text())).toMatchObject({
           ok: false,
-          error: { code: 'recovery_secret_required' },
+          error: { code: 'invalid_arguments' },
         });
         expect(preparations).toBe(0);
         expect(mutations).toBe(0);
@@ -756,7 +763,7 @@ describe('trusted interactive CLI Account Security vertical', () => {
     }
   });
 
-  it('changes an E2EE password through canonical preparation without rotating the recovery secret', async () => {
+  it.each(['stored', 'stdin', 'prompt'] as const)('changes an E2EE password with a %s recovery key without rotating it', async (source) => {
     env.patch({ HAPPIER_PUBLIC_SERVER_URL: 'https://public.account.test', HAPPIER_LOCAL_SERVER_URL: 'http://account.test' });
     reloadConfiguration();
     const app = fastify();
@@ -822,13 +829,28 @@ describe('trusted interactive CLI Account Security vertical', () => {
     const restore = installAxiosFastifyAdapter({ app, origin: 'http://account.test' });
     const output = captureConsoleText();
     try {
-      await writeCredentialsLegacy({ token: 'interactive', secret });
-      await handleAuthCommand([
-        'password', 'change', '--new-password', 'replacement password long', '--yes', '--json',
-      ]);
-      const envelope = JSON.parse(output.text());
-      expect(envelope).toMatchObject({ ok: true, data: { status: 'updated' } });
+      if (source === 'stored') await writeCredentialsLegacy({ token: 'interactive', secret });
+      else {
+        const machineKey = resolveAccountContentSecretKey({ type: 'legacy', secret });
+        await writeCredentialsDataKey({ token: 'interactive', publicKey: tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey, machineKey });
+      }
+      const args = ['password', 'change', '--new-password', 'replacement password long', '--yes'];
+      const key = Buffer.from(secret).toString('base64url');
+      const original = await readStoredCredentials();
+      if (source === 'prompt') {
+        promptRecoveryKey.mockResolvedValueOnce(key);
+        await handleAuthCommand(args);
+        expect(JSON.parse(output.text())).toMatchObject({ status: 'updated' });
+      } else {
+        const expanded = source === 'stored' ? [...args, '--json'] : await expandAuthSecretsFromStdin(
+          [...args, '--json', '--recovery-key-stdin'], Readable.from([key + '\n']),
+        );
+        await handleAuthCommand(expanded);
+        expect(JSON.parse(output.text())).toMatchObject({ ok: true, data: { status: 'updated' } });
+      }
       expect(output.text()).not.toContain('replacement password long');
+      expect(output.text()).not.toContain(key);
+      expect(await readStoredCredentials()).toEqual(original);
     } finally {
       secret.fill(0);
       output.restore();

@@ -26,6 +26,7 @@ const boundary = vi.hoisted(() => ({
 }));
 const modal = vi.hoisted(() => ({
     alert: vi.fn(),
+    confirm: vi.fn<() => Promise<boolean>>(),
     show: vi.fn((_config: unknown) => 'modal-id'),
 }));
 
@@ -34,7 +35,7 @@ vi.mock('expo-clipboard', () => ({
 }));
 vi.mock('@/modal', async (importOriginal) => ({
     ...(await importOriginal<typeof import('@/modal')>()),
-    Modal: { alert: modal.alert, show: modal.show },
+    Modal: { alert: modal.alert, confirm: modal.confirm, show: modal.show },
 }));
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
@@ -47,6 +48,7 @@ beforeEach(async () => {
     installBrowserClipboardBoundary(async text => { boundary.clipboard.push(text); });
     await homes.addHome({ name: 'Recovery Home', serverUrl: 'https://account-recovery.example.test', accountId: 'account-a', credentials });
     modal.alert.mockReset();
+    modal.confirm.mockReset().mockResolvedValue(true);
     modal.show.mockReset().mockReturnValue('modal-id');
 });
 afterEach(async () => { standardCleanup(); await homes.reset(); });
@@ -66,9 +68,12 @@ it('keeps the key masked until revealed, and forgets it again when hidden', asyn
     expect(screen.getTextContent()).not.toContain(formatted);
 });
 
-it('copies the formatted key without revealing it and confirms the copy', async () => {
+it('copies the formatted key only after confirmation and keeps it masked', async () => {
+    modal.confirm.mockResolvedValueOnce(false);
     const screen = await renderRecoveryItem({ recoveryEmail: null });
 
+    await screen.pressByTestIdAsync('settings-account-recovery-key-copy');
+    expect(boundary.clipboard).toEqual([]);
     await screen.pressByTestIdAsync('settings-account-recovery-key-copy');
 
     expect(boundary.clipboard).toEqual([formatRecoveryKeyForDisplay(LOCAL_SECRET)]);
