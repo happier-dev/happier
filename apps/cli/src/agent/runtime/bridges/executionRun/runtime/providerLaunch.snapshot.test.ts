@@ -36,7 +36,7 @@ describe('execution-run pinned Provider preparation', () => {
         await new Promise<void>(resolve => adapterBoundary.listen(0, '127.0.0.1', resolve));
         const address = adapterBoundary.address();
         if (!address || typeof address === 'string') throw new Error('Expected adapter boundary address');
-        const fixture = await createManagedRunLaunchFixture({ physicalGateway: true, controller: pluginReloadController,
+        const fixture = await createManagedRunLaunchFixture({ physicalGateway: true,
             materializationUrl: 'http://127.0.0.1:' + address.port,
             connectedAccountModels: [{ id: 'example', name: 'Example' }],
         });
@@ -180,7 +180,8 @@ describe('execution-run pinned Provider preparation', () => {
                             backendTarget: readBackendTargetRefV2(request.backendTarget) },
                     });
                     return { machineId: fixture.machineId, featureEnabled: true,
-                    happyHomeDir: fixture.happyHomeDir, accountSettingsSnapshot: snapshot, isCurrent: () => true,
+                    happyHomeDir: fixture.happyHomeDir, accountSettingsSnapshot: snapshot,
+                    readCurrentnessRefusal: async () => null,
                     resolveManagedPurposeBindingIntent: fixture.gateway!.purposeBindingOwner.resolveBindingIntent,
                     prepareManagedEndpoint: async () => { endpoints += 1; throw new Error('Endpoint must not be reached'); },
                     };
@@ -302,7 +303,8 @@ describe('execution-run pinned Provider preparation', () => {
             const services = createRunnerExecutionRunProviderLaunchServices({ agent: { descriptor, binding }, backendTarget, runtimeRegistryLease: fixture.lease,
                 retainCleanup: resources.register,
                 resolvePreparation: async () => ({ machineId: fixture.machineId, featureEnabled: true,
-                    happyHomeDir: fixture.happyHomeDir, accountSettingsSnapshot: fixture.snapshot, isCurrent: () => current,
+                    happyHomeDir: fixture.happyHomeDir, accountSettingsSnapshot: fixture.snapshot,
+                    readCurrentnessRefusal: async () => current ? null : 'account_settings_lifetime_changed',
                     resolveManagedPurposeBindingIntent: fixture.gateway!.purposeBindingOwner.resolveBindingIntent,
                     prepareManagedEndpoint: async () => {
                         acquired += 1;
