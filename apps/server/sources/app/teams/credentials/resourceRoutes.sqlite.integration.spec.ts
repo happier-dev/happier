@@ -30,7 +30,8 @@ import {
     PROVIDER_BROKER_APPLICATION_ERROR_CODE_HEADER,
 } from "@happier-dev/protocol";
 import type { ProviderConnectionId } from "@happier-dev/protocol/providers/ids";
-import { TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1, TeamCredentialResourceCatalogEntryV1Schema } from "@happier-dev/protocol/teams/credentials/resourceV1";
+import { TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1, TeamCredentialResourceCatalogEntryV1Schema,
+    TeamCredentialResourceDiscoveryPageV1Schema, TeamCredentialResourceEntitledPageV1Schema } from "@happier-dev/protocol/teams/credentials/resourceV1";
 
 import { createQualifiedConnectedAccountGroupDigest, createQualifiedConnectedAccountIdentityDigest, createQualifiedConnectedAccountServiceDigest } from "@/app/api/routes/connect/qualifiedConnectedAccounts/identity";
 import { createConnectedServiceCredentialRevision } from "@/app/api/routes/connect/credentials/credentialRevision";
@@ -3191,7 +3192,8 @@ describe("Team credential resource routes (SQLite integration)", () => {
             }],
         });
         expect(response.json().resources.find((resource: { id: string }) => resource.id === brokerlessResource.id)).toMatchObject({
-            readiness: { kind: "broker_unavailable" },
+            readiness: { kind: "source_unavailable" },
+            recoveryAction: "source_owner_action",
             mayBroker: true,
             providerModels: [],
         });
@@ -3772,7 +3774,16 @@ describe("Team credential resource routes (SQLite integration)", () => {
             teamIds: [team.id], application,
         });
         expect(discoveredCatalog.statusCode, discoveredCatalog.body).toBe(200);
-        expect(discoveredCatalog.json()).toEqual({ ...mixedCatalog.json(), failures: [] });
+        const scopedPage = TeamCredentialResourceEntitledPageV1Schema.parse(mixedCatalog.json());
+        const crossTeamPage = TeamCredentialResourceDiscoveryPageV1Schema.parse(discoveredCatalog.json());
+        expect(scopedPage.resources.map(entry => entry.sharedWithTeamScope)).toEqual(
+            scopedPage.resources.map(() => "team"),
+        );
+        expect(crossTeamPage).toEqual({
+            ...scopedPage,
+            resources: scopedPage.resources.map(({ sharedWithTeamScope, ...entry }) => entry),
+            failures: [],
+        });
         await db.teamCredentialResource.delete({ where: { id: directResource.id } });
         await db.machinePoolMember.updateMany({ where: { poolId: { in: [pool.id, ...additionalPoolIds, otherPool.id] } }, data: { enabled: false } });
         presenceRequests.length = 0;
