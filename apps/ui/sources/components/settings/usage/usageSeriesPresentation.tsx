@@ -3,8 +3,9 @@ import { StyleSheet as RNStyleSheet } from 'react-native';
 import { describeHappierSeriesBucket, type HappierSeries, type HappierSeriesBucket, type StackedSeriesChartProps } from '@happier-dev/plugin-ui/presentation';
 
 import { resolveUsageBucketBounds } from '@happier-dev/protocol/usage/usageCalendar';
-import { addUsageMeasurements } from '@happier-dev/protocol/usage/usageAggregation';
-import { projectUsageCostBucket, resolveUsageCostForSelection, type UsagePageCostSelection } from '@happier-dev/protocol/usage/usageCostFacts';
+import { addUsageMeasurements, mergeUsageSelectedCosts, type UsageSelectedCostAccumulator } from '@happier-dev/protocol/usage/usageAggregation';
+import { projectUsageCostBucket, projectUsageSelectedCostBucket, resolveUsageCostForSelection,
+    resolveUsagePageCostSelectionMode, selectUsageCostBucket, type UsagePageCostSelection } from '@happier-dev/protocol/usage/usageCostFacts';
 import { type UsageAnalyticsCoverage, type UsageAnalyticsQueryResponse} from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 
 import { ChartTooltip } from '@/components/ui/charts';
@@ -183,8 +184,14 @@ export function usageSourceTimelineSeries(input: Readonly<{
     if (input.metric === 'tokens' && !timeline.some(bucket => bucket.leaders.some(leader => leader.sources?.length))) {
         return { series: [], bucketFacts };
     }
+    const costSelection = input.metric === 'cost' ? input.costSelection : null;
+    const costMode = costSelection ? resolveUsagePageCostSelectionMode(costSelection) : 'auto';
+    type SourceDetail = Pick<UsageSourceDetail, 'id' | 'execution' | 'value'> & {
+        source: string;
+        selected: UsageSelectedCostAccumulator | undefined;
+    };
     type Series = { key: string; label: string; values: Map<number, number | null>; allOutside: boolean;
-        details: Record<string, Map<string, UsageSourceDetail>> };
+        details: Record<string, Map<string, SourceDetail>> };
     const parts = new Map<string, Series>();
     const appendMeasurement = (entry: Series, startMs: number, value: number | null, partial?: boolean) => {
         if (value === null || partial) bucketFacts?.incompleteBucketStarts.add(startMs);
@@ -216,20 +223,17 @@ export function usageSourceTimelineSeries(input: Readonly<{
         }
         for (const part of leader.sources ?? []) {
             if (part.execution !== 'outside') entry.allOutside = false;
-            const execution = part.execution === 'happier' ? t('usage.board.page.executionHappier')
-                : part.execution === 'outside' ? t('usage.board.page.executionOutside') : t('usage.board.page.executionUnknown');
             const tokens = input.metric === 'tokens' ? resolveUsageMeasuredTokens(part.tokens) : null;
-            const cost = input.metric === 'cost' && input.costSelection
-                ? projectUsageCostBucket(part.cost, input.costSelection) : null;
-            const value = tokens ? appendMeasurement(entry, bucket.bucketStartMs, tokens.total, tokens.fromParts) : cost?.amountUsd ?? null;
-            const details = entry.details[String(bucket.bucketStartMs)] ?? new Map<string, UsageSourceDetail>();
-            const basisLabel = cost ? usageCostBucketLabel(cost) : undefined;
+            const value = tokens ? appendMeasurement(entry, bucket.bucketStartMs, tokens.total, tokens.fromParts) : null;
+            const details = entry.details[String(bucket.bucketStartMs)] ?? new Map<string, SourceDetail>();
             // Engine leaders collapse into one dimension: their matching source partitions must
             // collapse too. Raw identity keeps equal translated titles and other Agents distinct.
             const id = JSON.stringify([key, part.source, part.path, part.execution]);
             const previous = details.get(id);
-            details.set(id, { id, label: [execution, usageSourceTitle(part.source), basisLabel].filter(Boolean).join(' · '),
-                execution: part.execution, value: addUsageMeasurements(previous?.value ?? null, value) });
+            const selected = costSelection ? selectUsageCostBucket(part.cost, costSelection) : undefined;
+            details.set(id, { id, source: part.source, execution: part.execution,
+                value: addUsageMeasurements(previous?.value ?? null, value),
+                selected: previous?.selected && selected ? mergeUsageSelectedCosts(previous.selected, selected, costMode) : selected });
             entry.details[String(bucket.bucketStartMs)] = details;
         }
         parts.set(key, entry);
@@ -248,7 +252,7 @@ export function usageSourceTimelineSeries(input: Readonly<{
                 tail.values.set(startMs, addUsageMeasurements(tail.values.get(startMs) ?? null, value));
             }
             for (const [bucket, details] of Object.entries(entry.details)) {
-                const tailDetails = tail.details[bucket] ?? new Map<string, UsageSourceDetail>();
+                const tailDetails = tail.details[bucket] ?? new Map<string, SourceDetail>();
                 for (const [id, detail] of details) tailDetails.set(id, detail);
                 tail.details[bucket] = tailDetails;
             }
@@ -266,8 +270,16 @@ export function usageSourceTimelineSeries(input: Readonly<{
     const emptyValues = starts.map(bucketDefault);
     const valueAt = (entry: Series, startMs: number, index: number) =>
         entry.values.has(startMs) ? entry.values.get(startMs)! : emptyValues[index]!;
+    const presentDetail = ({ id, execution, source, selected, value }: SourceDetail): UsageSourceDetail => {
+        const executionLabel = execution === 'happier' ? t('usage.board.page.executionHappier')
+            : execution === 'outside' ? t('usage.board.page.executionOutside') : t('usage.board.page.executionUnknown');
+        const reading = selected ? projectUsageSelectedCostBucket(selected) : null;
+        const basisLabel = reading ? usageCostBucketLabel(reading) : undefined;
+        return { id, execution, value: reading ? reading.amountUsd : value,
+            label: [executionLabel, usageSourceTitle(source), basisLabel].filter(Boolean).join(' · ') };
+    };
     const series = displayed.map((entry, index) => ({ id: entry.key, dimensionKey: entry.key, label: entry.label,
-        sourceDetails: Object.fromEntries(Object.entries(entry.details).map(([bucket, details]) => [bucket, [...details.values()]])),
+        sourceDetails: Object.fromEntries(Object.entries(entry.details).map(([bucket, details]) => [bucket, [...details.values()].map(presentDetail)])),
         color: input.color(index, entry.key),
         ...(entry.allOutside ? { fillPattern: 'hatch' as const } : {}),
         ...(entry.key === USAGE_MODEL_MIX_OTHER_KEY ? { foldedMembers: other.map(({ entry: member }) => ({

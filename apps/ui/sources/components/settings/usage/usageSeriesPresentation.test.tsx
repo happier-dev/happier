@@ -8,7 +8,11 @@ import { lightTheme } from '@/theme';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { fillUsageMixCalendar, fillUsageTrendCalendar, usageAxisTicks, usageSourceTimelineSeries, usageVolumeSeries, useUsageSeriesLens } from './usageSeriesPresentation';
-import type { UsageAnalyticsCoverage } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { aggregateUsageContributionCosts } from '@happier-dev/protocol/usage/usageAggregation';
+import { UsageAnalyticsQueryRequestSchema, UsageAnalyticsQueryResponseSchema, type UsageAnalyticsCoverage, type UsageAnalyticsQueryResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { projectUsagePageCost } from '@happier-dev/protocol/usage/usageCostFacts';
+import { buildUsageLeaderList } from '@happier-dev/protocol/usage/usageLeaderProjection';
+import { projectUsageAnalyticsSummary } from '@happier-dev/protocol/usage/usageSummary';
 import { ScrubLens, type ScrubLensContent } from './UsageScrubLens';
 
 const coverage = (startMs: number, endMs: number, complete: boolean): UsageAnalyticsCoverage => ({
@@ -119,6 +123,52 @@ describe('usage projection into the shared series renderer', () => {
         expect(nextRows.map(row => ({ id: row.id, label: row.label, value: row.value })))
             .toEqual(expect.arrayContaining(before));
     });
+    it.each([
+        { name: 'unpriced', amount: null, currency: 'USD', label: 'usage.board.page.costRowPartUnpriced' },
+        { name: 'other-currency', amount: 4, currency: 'EUR', label: 'usage.board.page.costBasisUnavailable' },
+    ] as const)('keeps the $name explanation in either engine order after rich or compact delivery', async ({ amount, currency, label }) => {
+        const tokens = { input: 5, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 5 };
+        const contribution = (backendMode: string, reportedUsd: number | null, currency: string) => ({
+            id: backendMode, eventCount: 1, observedAtMs: 1, agentId: 'codex', backendMode,
+            sessionId: null, turnId: null, modelId: null, machineId: null, projectKey: null, workspaceId: null,
+            source: 'runtime', sourceContext: { path: 'runtime' as const, execution: 'happier' as const },
+            tokens, cost: { reportedUsd, estimatedUsd: null, currency },
+        });
+        const contributions = [contribution('local', 3, 'USD'), contribution('remote', amount, currency)];
+        const rich: UsageAnalyticsQueryResponse = { v: 1, contributions,
+            totals: { eventCount: contributions.length, tokens: { ...tokens, input: 10, total: 10 },
+                cost: aggregateUsageContributionCosts(contributions, 'reported') },
+            engineTimeline: [{ bucketStartMs: 0, bucketEndMs: 10,
+                leaders: buildUsageLeaderList(contributions, 'engine', 2, 'reported', new Map(), true)! }],
+        };
+        const { selection, accounting } = projectUsagePageCost(rich, 'reported');
+        expect(selection).toMatchObject({ kind: 'reported', currency: 'USD', mode: 'reported' });
+        const request = UsageAnalyticsQueryRequestSchema.parse({ costMode: 'reported' });
+        const compact = UsageAnalyticsQueryResponseSchema.parse(JSON.parse(JSON.stringify(projectUsageAnalyticsSummary(accounting, request))));
+
+        for (const [delivery, response] of [['rich', accounting], ['compact', compact]] as const) {
+            const bucket = response.engineTimeline![0]!;
+            const project = (leaders: typeof bucket.leaders) => usageSourceTimelineSeries({
+                timeline: [{ ...bucket, leaders }], range: null, metric: 'cost', costSelection: selection,
+                dimensionKey: key => key.split(':')[0]!, label: key => key, color: () => 'ink', bucketLabel: String,
+            }).series;
+            const screen = await renderScreen(<LensChart series={project(bucket.leaders)} />);
+            const readSource = () => {
+                const rows: ScrubLensContent['rows'] = screen.findByType(ScrubLens).props.resolveContent(0)!.rows;
+                expect(rows).toHaveLength(2);
+                return rows[1]!;
+            };
+            const forward = readSource();
+            await screen.update(<LensChart series={project([...bucket.leaders].reverse())} />);
+            const reverse = readSource();
+
+            expect(forward).toMatchObject({ value: '3 tok' });
+            expect(reverse).toEqual(forward);
+            expect.soft(forward.label, delivery).toContain(t(label));
+            await screen.unmount();
+        }
+    });
+
     it('retains known cost from older unpartitioned buckets beside source-partitioned buckets', () => {
         const tokens = { input: 5, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 5 };
         const cost = { reportedUsd: 0, estimatedUsd: 9, currency: 'USD', costSource: 'pricing_estimate' as const };

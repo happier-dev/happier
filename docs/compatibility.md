@@ -1830,10 +1830,12 @@ from the selected-cost fold. It distinguishes a genuinely unpriced contribution
 from a contribution with no applicable price under the selected basis. Both can
 make the known amount partial. Older responses remain readable. When an older
 partial amount does not preserve the reason, the chart leaves the
-unpriced hatch off.
+unpriced hatch off. A null reason preserves a neutral partition through compact
+delivery, so folding it into a priced partition keeps the known amount complete.
 
 Matching Protocol, server and UI readers load together. Older strict 0.3
-development readers reject the extra field. The inspected `../0.2` frontier at
+development readers reject the extra field or its null value. The inspected
+`../0.2` frontier at
 `4df6e9e1a1c` has no matching Usage analytics contract or v2 query path. The
 grouped pricing operands, persisted formats and query wire epoch stay the same.
 

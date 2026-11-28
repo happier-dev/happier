@@ -1,13 +1,28 @@
 import { expect, it } from 'vitest';
 import { resolveUsageMeasuredTokens, addUsageTokens, createEmptyUsageTokens, addUsageCostForMode, aggregateUsageContributionCosts, aggregateUsageCostPartitions, aggregateUsageCosts, resolveUsageContributionCosts, withEffectiveUsageCost } from './usageAggregation.js';
-import { resolveUsageCostBasis } from './usageCost.js';
+import { resolveUsageCostBasis, serializeUsageCostBasis } from './usageCost.js';
 import { projectUsageContributionTotals } from './usageActivityProjectionFacts.js';
 import { buildUsageBreakdownList } from './usageLeaderProjection.js';
-import { UsageAnalyticsQueryResponseSchema, type UsageAnalyticsContribution } from './usageAnalyticsContracts.js';
+import { UsageAnalyticsQueryResponseSchema, UsageObservationCostSchema, type UsageAnalyticsContribution } from './usageAnalyticsContracts.js';
 import { normalizeLegacyUsageTokens } from './legacyUsageTokens.js';
 import { projectUsageCostFactTotals, aggregateUsageCostFactTotals } from './usageCostFactTotals.js';
 import { addUsageMoney, readUsageMoney, restoreUsageMoneyProvenance, serializeUsageMoneyProvenance,
     withUsageMoney } from './usageMoney.js';
+
+it('retains a scoped report’s neutral Estimated evidence when folding compact partitions', () => {
+    const scope = { id: 'report', cost: { reportedUsd: 9, estimatedUsd: 0, currency: 'USD',
+        costSource: 'provider_reported' as const, reportedTotalContributionIds: ['call'] } };
+    const neutral = aggregateUsageContributionCosts([scope], 'estimated');
+    const compact = UsageObservationCostSchema.parse(JSON.parse(JSON.stringify(serializeUsageCostBasis(neutral, 'estimated'))));
+    const priced = { reportedUsd: null, estimatedUsd: 2, currency: 'USD', costSource: 'pricing_estimate' as const };
+
+    for (const operand of [neutral, compact]) {
+        const merged = aggregateUsageCostPartitions([operand, priced], 'estimated');
+        expect(resolveUsageCostBasis(merged, 'estimated')).toEqual({
+            amountUsd: 2, currency: 'USD', kind: 'estimated', source: 'pricing_estimate',
+        });
+    }
+});
 
 it.each(['auto', 'reported', 'estimated', 'api_equivalent'] as const)(
     'publishes empty population totals as zero without measuring nonempty missing facts in %s mode', mode => {
