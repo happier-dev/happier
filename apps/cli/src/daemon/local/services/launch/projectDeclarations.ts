@@ -4,11 +4,11 @@ import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { logger } from '@/ui/logger';
 import { composeProjectLaunchEnvironment, prepareProjectLaunchEnvironment, type PreparedProjectLaunchInput } from '@/workspaces/projectSetup/projectLaunchEnvironment';
 import type { ProjectDotenvPreparation } from '@/workspaces/projectSetup/projectDotenv';
-import { createProjectRuntimeDotenvPreparation } from '@/workspaces/projectSetup/projectSetupReadiness';
+import { createProjectRuntimeDotenvPreparation, isProjectCheckoutReadAsMember, withProjectMemberWorkspaceSource } from '@/workspaces/projectSetup/projectSetupReadiness';
 import { prepareProjectWorktreeRuntime } from '@/workspaces/execution/projectWorktreeRuntime';
 import { getHostWorktreePortsOwner } from '@/workspaces/execution/worktreePorts';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { isAbsolute, relative } from 'node:path';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -27,7 +27,7 @@ import { readProjectExecutionInputs, resolveProjectNativeCommand } from '@/works
 import { readProjectDefinitionFileBytes } from '@/workspaces/projectSetup/nativeDefinitionFiles';
 import { readLiteralCommandExecutedFiles, type LiteralCommandFileFactV1 } from '@/workspaces/projectSetup/literalCommandFiles';
 import { resolveProjectServiceStartChoice } from '@/workspaces/execution/projectServicePlacement';
-import { validatePath } from '@/rpc/handlers/pathSecurity';
+import { validateWorkspacePath } from '@/rpc/handlers/pathSecurity';
 import { buildProjectManagedServiceStartRequest, type ProjectManagedServiceSupervisionInput, type ProjectManagedServiceHandle, type EnvironmentProjectManagedServiceHandle, type createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import type { DeploymentSourceMaterializationV1 } from '@happier-dev/plugin-sdk';
 import type { DeploymentServiceExportV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
@@ -69,7 +69,10 @@ type AdmittedReview = Readonly<{
     /** One Start invocation shares its selected files across remeasurements. */
     dotenvPreparations?: Map<string, ProjectDotenvPreparation>;
     runtimeEnvironments?: Map<string, Readonly<Record<string, string>>>;
+    /** The requester native operation that the containing setup or launch already holds. */
+    memberOperation?: MemberOperation;
 }>;
+type MemberOperation = Awaited<ReturnType<NonNullable<ProjectFiniteActionRuntime['nativeOperationRuntime']>['prepareNativeOperation']>>;
 type SupportedServiceCommand = Exclude<PreparedProjectSetupCommand, { kind: 'pluginNativeReference' }>;
 type SelectedDeclaration = Readonly<{
     targetId: string;
@@ -204,10 +207,11 @@ const refusal = (error: unknown, nativeCompose = false): Extract<LocalServiceLau
         ...(failure.success ? { establishmentFailure: failure.data } : {}),
         ...(prerequisite.success ? { prerequisite: prerequisite.data } : {}) };
 };
-function literalServiceCommand(source: Extract<ProjectCommandSourceV1, { kind: 'command' }>, root: string, os: string): Extract<SupportedServiceCommand, { kind: 'literal' }> {
+async function literalServiceCommand(source: Extract<ProjectCommandSourceV1, { kind: 'command' }>, root: string, os: string): Promise<Extract<SupportedServiceCommand, { kind: 'literal' }>> {
     if (source.platforms && !source.platforms.some(platform => platform === os)) throw new ServiceStartRefusal('project_service_platform_unsupported');
     if (source.command.includes('\0')) throw new ServiceStartRefusal('project_command_invalid');
-    const cwd = validatePath((source.cwd ?? '.').replaceAll('\\', '/'), root);
+    // The current workspace source answers for a member-private checkout.
+    const cwd = await validateWorkspacePath((source.cwd ?? '.').replaceAll('\\', '/'), root);
     if (!cwd.valid || !cwd.resolvedPath) throw new ServiceStartRefusal('outside_root');
     return { kind: 'literal', source, cwd: cwd.resolvedPath };
 }
@@ -215,6 +219,24 @@ function literalServiceCommand(source: Extract<ProjectCommandSourceV1, { kind: '
 /** Effect dependency of the canonical, approved launcher Action; not an alternate dispatcher. */
 export function createProjectServiceDeclarationStarter(input: ProjectServiceDeclarationStarterInput) {
     const platformFor = (runtime: ProjectFiniteActionRuntime) => ({ os: (runtime.platform ?? process.platform) === 'win32' ? 'windows' : runtime.platform ?? process.platform, arch: runtime.arch ?? process.arch });
+    /** A Separate-users requester's setup and Service run as its member user: each holds one
+     * requester native operation, released only after its own process custody settles. */
+    async function prepareMemberOperation(runtime: ProjectFiniteActionRuntime, ingress: RpcHandlerContext, signal: AbortSignal): Promise<MemberOperation | undefined> {
+        if (!isProjectCheckoutReadAsMember(runtime)) return undefined;
+        const requesterIdentity = runtime.requesterIdentity;
+        if (requesterIdentity?.kind !== 'isolated' || !runtime.nativeOperationRuntime) throw new ServiceStartRefusal('agent_isolation_unavailable');
+        const material = Object.freeze({ materializationKey: randomUUID(), environment: Object.freeze({}), selectedMaterials: Object.freeze([]) });
+        return await runtime.nativeOperationRuntime.prepareNativeOperation({ requesterIdentity, ingress, signal, readMaterial: () => material });
+    }
+    /** Runs an admitted setup or launch under its member operation: execution custody plus the checkout reads it makes. */
+    function withMemberExecution<T>(reviewed: Review, inputs: AdmittedReview, signal: AbortSignal, member: MemberOperation,
+        execute: (custody: Pick<ProjectSetupExecutionInput, 'agentIsolation' | 'requesterIdentity' | 'nativeExecutionIdentity'>) => Promise<T>): Promise<T> {
+        const custody = { agentIsolation: member.agentIsolation, requesterIdentity: reviewed.runtime.requesterIdentity,
+            ...(member.memberIdentity ? { nativeExecutionIdentity: member.memberIdentity } : {}) };
+        return withProjectMemberWorkspaceSource({ runtime: reviewed.runtime, ingress: inputs.ingress, context: { ...inputs.context, signal },
+            workspace: workspaceAddressFromRefV1(reviewed.plan.workspace), accepted: reviewed.plan.workspace, native: member,
+            read: () => execute(custody) });
+    }
     async function readPlacement(runtime: ProjectFiniteActionRuntime, request: DaemonLocalServiceLauncherStartRequestV1,
         ingress: RpcHandlerContext, context: ActionContext, workspaceRefId: string,
         assertNotCancelled: () => void,
@@ -256,7 +278,7 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
             request: { ...request, workspace: request.workspace, declaration: request.declaration },
             ingress: { ...ingress, machineAdmission: admission, verifyMachineAdmissionCurrent: ingress.verifyMachineAdmissionCurrent }, context };
     }
-    async function review(nativeInvocations: Set<ProjectNativeEffectCaptureForHost>, { runtime: authorityRuntime, request, ingress, context, dotenvPreparations, runtimeEnvironments, originalEnvironment }: AdmittedReview,
+    async function review(nativeInvocations: Set<ProjectNativeEffectCaptureForHost>, { runtime: authorityRuntime, request, ingress, context, dotenvPreparations, runtimeEnvironments, originalEnvironment, memberOperation }: AdmittedReview,
         afterCopy = false, executeCanonicalAction?: CanonicalPoolRead,
         nativeCustody?: Pick<ReturnType<typeof createProjectNativeInvocationCustody>, 'retain'>,
         approvalPreparation = false, copiedSource?: SourceReview, admittedLaunch = false): Promise<Review | SourceReview> {
@@ -293,6 +315,9 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
                     return result;
                 } } : {}) });
         };
+        // A Separate-users requester's local checkout is private to its member user: every
+        // checkout read of this review goes through the one member workspace source owner.
+        const reviewAccepted = async (): Promise<Review | SourceReview> => {
         let worker: SourceReview | undefined;
         let localDefinition: Awaited<ReturnType<typeof readProjectEffectiveDefinition>> | undefined;
         if (association.workspace.machineId !== runtime.machineId) {
@@ -347,7 +372,7 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
             }
             const executionInputs = [...executionFiles].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([file, hash]) => ({ file, hash }));
             const serviceEffect = literalHost && service.source.kind === 'command'
-                ? { command: literalServiceCommand(service.source, basis.target.rootPath, platformFor(runtime).os),
+                ? { command: await literalServiceCommand(service.source, basis.target.rootPath, platformFor(runtime).os),
                     toolchain: { kind: 'host' }, configEnvironment: runtime.configEnvironment ?? {}, platform: platformFor(runtime) }
                 : undefined;
             const reviewedEffect = projectNativeJsonValueForTransport({ v: 1, purpose: 'service', declaration: request.declaration,
@@ -475,7 +500,7 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
             : { kind: 'managedSpawn', endpointNone: true,
                 endpointDetection: { kind: 'detectAfterLaunch', minimumConfidence: 'high' } };
         if (source.kind === 'command') {
-            command = literalServiceCommand(source, association.workspace.rootPath, preparation.platform.os);
+            command = await literalServiceCommand(source, association.workspace.rootPath, preparation.platform.os);
         } else {
             assertNotCancelled();
             let production: ProjectNativeAdapterProductionV1 | undefined;
@@ -653,6 +678,11 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
             command, processMode, ...(nativeLifecycleLease ? { nativeLifecycleLease } : {}), ...(builtinNative ? { builtinNative } : {}), ...(releaseNativeLifecycle ? { releaseNativeLifecycle } : {}),
             reviewedEffect: worker?.serviceEffectDigest ? worker.reviewedEffect : reviewedEffect,
             reviewedEffectDigest: worker?.serviceEffectDigest ? worker.reviewedEffectDigest : digest(reviewedEffect) };
+        };
+        if (association.workspace.machineId !== runtime.machineId || !isProjectCheckoutReadAsMember(runtime)) return await reviewAccepted();
+        return await withProjectMemberWorkspaceSource({ runtime, ingress, context: { ...context, signal },
+            workspace: workspaceAddressFromRefV1(association.workspace), accepted: association.workspace,
+            ...(memberOperation ? { native: memberOperation } : {}), read: reviewAccepted });
     }
 
     async function reviewTarget(nativeInvocations: Set<ProjectNativeEffectCaptureForHost>, reviewInputs: AdmittedReview, executeCanonicalAction?: CanonicalPoolRead,
@@ -855,18 +885,23 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
                         onQueue: ahead => operation.operationProgress.update({ phase: 'queued', current: ahead, total: ahead + 1 }),
                         onUnknown: error => operation.operationOwnerUpdate.update({ observation: { kind: 'outcome_uncertain', code: codeOf(error) } }),
                         run: async reservation => {
+                            let member: MemberOperation | undefined;
+                            let memberSettled = true;
                             try {
-                                current = await reviewTarget(nativeInvocations, reviewInputs, executeCanonicalAction, undefined, initialSource);
+                            try {
+                                member = await prepareMemberOperation(current.runtime, ingress, operationSignal);
+                                const setupInputs: AdmittedReview = member ? { ...reviewInputs, memberOperation: member } : reviewInputs;
+                                current = await reviewTarget(nativeInvocations, setupInputs, executeCanonicalAction, undefined, initialSource);
                                 unchanged(current);
                                 while (current.setupReview) {
                                     if (!operation.operationReview) throw new ServiceStartRefusal(current.setupReview.code, current.setupReview);
                                     reservation.phase('setup');
                                     await operation.operationReview.waitForResume({ kind: 'pendingApproval', ...current.setupReview });
                                     // Resume the SAME accepted setup, under the original exact Sync basis and current source effect.
-                                    const fresh = await review(nativeInvocations, reviewInputs, false, executeCanonicalAction);
+                                    const fresh = await review(nativeInvocations, setupInputs, false, executeCanonicalAction);
                                     unchanged(fresh);
                                     if (needsCopy) await prepareCopy(operationSignal);
-                                    current = await reviewTarget(nativeInvocations, reviewInputs, executeCanonicalAction, undefined, initialSource);
+                                    current = await reviewTarget(nativeInvocations, setupInputs, executeCanonicalAction, undefined, initialSource);
                                     unchanged(current);
                                 }
                             } catch (error) {
@@ -876,11 +911,24 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
                                 return outcome;
                             }
                             reservation.phase('setup');
-                            setupInput = buildSetupInput();
-                            const outcome = await executeProjectSetup(setupInput);
+                            const admittedSetup = setupInput = buildSetupInput();
+                            let outcome: ProjectSetupExecutionOutcome;
+                            let entered = false;
+                            try {
+                                outcome = member ? await withMemberExecution(current, reviewInputs, operationSignal, member, custody => {
+                                    entered = true;
+                                    return executeProjectSetup({ ...admittedSetup, ...custody });
+                                }) : await executeProjectSetup(admittedSetup);
+                            } catch (error) {
+                                // The member source refuses before any checkout read or setup effect.
+                                if (entered) { memberSettled = false; throw error; }
+                                outcome = { kind: 'no_launch', result: { ok: false, errorCode: codeOf(error), error: codeOf(error) } };
+                            }
+                            memberSettled = outcome.kind !== 'outcome_uncertain';
                             if (outcome.setupSettlement) current.runtime.publishSetupSettlement?.(outcome.setupSettlement);
                             finishSetup(outcome);
                             return outcome;
+                            } finally { if (memberSettled) await member?.dispose(); }
                         },
                     });
                     if (!setupInput) finishSetup({ kind: 'no_launch', result: admitted.ok
@@ -941,11 +989,16 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
                     let launchUncertain = false;
                     let retained = false;
                     let preparedLaunchInput: PreparedProjectLaunchInput | undefined;
+                    let member: MemberOperation | undefined;
                     try {
-                    current = await reviewTarget(launchInvocations, reviewInputs, executeCanonicalAction, nativeCustody, initialSource);
+                    member = await prepareMemberOperation(current.runtime, ingress, signal);
+                    current = await reviewTarget(launchInvocations, member ? { ...reviewInputs, memberOperation: member } : reviewInputs,
+                        executeCanonicalAction, nativeCustody, initialSource);
                     unchanged(current);
                     if (current.setupReview) throw new ServiceStartRefusal(current.setupReview.code, current.setupReview);
                     if (!isCurrent()) throw new ServiceStartRefusal('native_adapter_retired');
+                    const launchMember = member;
+                    const authorizeAdmittedLaunch = async (custody: Partial<Pick<ProjectSetupExecutionInput, 'agentIsolation' | 'requesterIdentity' | 'nativeExecutionIdentity'>> = {}) => {
                     const selection = current.declaration.selection;
                     const runtimeInputs = await prepareProjectWorktreeRuntime({ workspace: current.plan.workspace,
                         manifest: current.plan.manifest, signal,
@@ -975,8 +1028,11 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
                     });
                     if (preparedEnvironment.kind !== 'prepared') throw new ServiceStartRefusal(preparedEnvironment.code);
                     preparedLaunchInput = preparedEnvironment.launchInput;
-                    const launch = await authorizePreparedProjectCommand({ ...setupInput!, preparation: current.preparation },
+                    return await authorizePreparedProjectCommand({ ...setupInput!, preparation: current.preparation, ...custody },
                         { ...current.plan, preparedLaunchInput }, current.command, signal);
+                    };
+                    const launch = launchMember ? await withMemberExecution(current, reviewInputs, signal, launchMember, authorizeAdmittedLaunch)
+                        : await authorizeAdmittedLaunch();
                     try {
                         if (!isCurrent() || signal.aborted) throw new ServiceStartRefusal('cancelled');
                         builtinNative?.bindLaunch(launch);
@@ -993,7 +1049,8 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
                             try { await launch.release(); }
                             finally { try { await preparedLaunchInput?.releaseServiceEnvironment?.(); }
                                 finally { try { await releaseNativeLifecycle?.(); }
-                                finally { await nativeCustody.release({ waitForSettlement: false }); nativeCustody.dispose(); } } }
+                                finally { try { await nativeCustody.release({ waitForSettlement: false }); nativeCustody.dispose(); }
+                                finally { await launchMember?.dispose(); } } } }
                         } };
                     } catch (error) {
                         if (!isProjectNativeProcessUncertain(error) && !(error instanceof ProjectNativeToolchainUncertainError)) await launch.release();
@@ -1004,9 +1061,11 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
                         if (launchUncertain) uncertain = true;
                         throw error;
                     } finally { if (!launchUncertain && !retained) {
-                        await preparedLaunchInput?.releaseServiceEnvironment?.();
-                        await nativeCustody.release();
-                        nativeCustody.dispose();
+                        try {
+                            await preparedLaunchInput?.releaseServiceEnvironment?.();
+                            await nativeCustody.release();
+                            nativeCustody.dispose();
+                        } finally { await member?.dispose(); }
                     } }
                 },
             });

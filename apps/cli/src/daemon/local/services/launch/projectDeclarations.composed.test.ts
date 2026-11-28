@@ -23,6 +23,7 @@ import { chmod, copyFile, cp, mkdtemp, mkdir, readFile, rm, writeFile } from 'no
 import * as filesystem from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { SpawnOptions } from 'node:child_process';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createWorkspaceExecutionConfigClientV1 } from '@happier-dev/protocol/workspaces/workspaceExecutionConfigClientV1';
 import { ProjectManifestV1Schema } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
@@ -126,6 +127,43 @@ import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/ag
 import { withSavedSecretMaterializer } from '@/settings/secrets/savedSecretCatalog.testkit';
 import { projectSharedSetupDigestV1 } from '@happier-dev/protocol/projects/projectSetupV1';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { workspaceCheckoutNativeBoundary } from '@/workspaces/activation/workspaceCheckoutNative.testkit';
+import { runWorkspaceEffectWorker } from '@/workspaces/activation/workspaceEffectWorker';
+import { readAgentLaunchFrame } from '@/daemon/agentIsolation/agentLaunchFrame';
+import { deriveAgentIsolationMemberIdentity } from '@/daemon/agentIsolation/provisioning';
+import { prepareRequesterNativeOperation } from '@/daemon/agentIsolation/prepareNativeOperation';
+
+// Separate-users cases replace only OS permissions and the sudo member launch. Outside
+// those cases every adapter passes through; beneath them the framed member Workspace
+// worker, its read port and the canonical Project review stay real.
+vi.mock('node:fs/promises', async importOriginal => {
+    const actual = await importOriginal<typeof import('node:fs/promises')>();
+    const { workspaceCheckoutFilesystemBoundary } = await import('@/workspaces/activation/workspaceCheckoutNative.testkit');
+    return workspaceCheckoutFilesystemBoundary(actual);
+});
+vi.mock('fs/promises', async importOriginal => {
+    const actual = await importOriginal<typeof import('fs/promises')>();
+    const { workspaceCheckoutFilesystemBoundary } = await import('@/workspaces/activation/workspaceCheckoutNative.testkit');
+    return workspaceCheckoutFilesystemBoundary(actual);
+});
+vi.mock('node:child_process', async importOriginal => {
+    const actual = await importOriginal<typeof import('node:child_process')>();
+    const { spawnWorkspaceCheckoutNativeBoundary } = await import('@/workspaces/activation/workspaceCheckoutNative.testkit');
+    return { ...actual, spawn: ((...input: Parameters<typeof actual.spawn>) => Array.isArray(input[1]) && input[1].at(-1) === 'agent-launch'
+        ? spawnWorkspaceCheckoutNativeBoundary(actual.spawn, (input[2] ?? {}) as SpawnOptions)
+        : Reflect.apply(actual.spawn, actual, input)) as typeof actual.spawn };
+});
+vi.mock('@happier-dev/cli-common/process', async importOriginal => {
+    const actual = await importOriginal<typeof import('@happier-dev/cli-common/process')>();
+    return { ...actual, execFileWithDeadline: async (...input: Parameters<typeof actual.execFileWithDeadline>) => {
+        if (!input[2]?.inputBytes || input[1]?.at(-1) !== 'agent-launch') return actual.execFileWithDeadline(...input);
+        const { runWorkspaceCheckoutCwdBoundary, workspaceCheckoutNativeBoundary: boundary } = await import('@/workspaces/activation/workspaceCheckoutNative.testkit');
+        const cwd = await runWorkspaceCheckoutCwdBoundary(input[2].inputBytes, input[2].signal);
+        if (cwd) return cwd;
+        boundary.phases.push('native_retired');
+        return { stdout: '', stderr: '' };
+    } };
+});
 
 class ObservedSetupPty implements PtyProcess {
     constructor(private readonly observed?: () => void) {}
@@ -609,6 +647,81 @@ describe('accepted Project Service declaration starter', () => {
     const cleanups: Array<() => Promise<void>> = [];
     afterEach(async () => { vi.restoreAllMocks(); withdrawActiveProjectAccountRowsSnapshot(); await Promise.all(cleanups.splice(0).map(cleanup => cleanup())); });
 
+    /** A Project checkout inside a Separate-users requester's own member workspace. Before
+     * `separate()` the daemon may read it; afterwards only its member user can traverse it. */
+    async function separateUsersFixture(setup = false, memberCustody = true) {
+        const boundary = workspaceCheckoutNativeBoundary;
+        cleanups.push(async () => { boundary.reset(); });
+        const requesterIdentity = { kind: 'isolated' as const, separationRequired: true,
+            requester: { serverId: 'home', accountId: 'owner', machineId: 'machine', installationId: 'installation' } };
+        const memberIdentity = { ...deriveAgentIsolationMemberIdentity({ ...requesterIdentity, homeServerIdentityId: 'home' }), agentUid: 2401, agentGid: 2401 };
+        const backing = await mkdtemp(join(tmpdir(), 'happier-project-service-member-'));
+        cleanups.push(() => rm(backing, { recursive: true, force: true }));
+        boundary.mounts = [{ path: memberIdentity.workspaceRoot, backing, uid: 2401, gid: 2400, mode: 0o40710 }];
+        const root = join(memberIdentity.workspaceRoot, 'accepted');
+        const inside = (path: unknown) => String(path) === root || String(path).startsWith(`${root}/`);
+        let separated = false;
+        const realpath = filesystemBoundary.realpathSync;
+        vi.spyOn(filesystemBoundary, 'realpathSync').mockImplementation(((path: Parameters<typeof realpath>[0], options?: Parameters<typeof realpath>[1]) => {
+            if (!inside(path)) return realpath(path, options);
+            if (separated && boundary.identity.getStore() !== 'member') {
+                boundary.phases.push('daemon_private_readback_denied');
+                throw Object.assign(new Error('Daemon cannot traverse the member checkout'), { code: 'EACCES' });
+            }
+            realpath(`${backing}${String(path).slice(memberIdentity.workspaceRoot.length)}`, options);
+            return String(path);
+        }) as typeof realpath);
+        const h = await fixture(setup, undefined, true, undefined, 'home', 'home', undefined, undefined, false, false, false, root);
+        const snapshot = { enabled: true, memberProvisioning: 'linuxUsersV1' as const,
+            status: { kind: 'effective' as const, platform: 'linux' as const }, workspaceRoots: [] };
+        const separate = () => {
+            separated = true;
+            boundary.privateRoots = [root];
+            boundary.launch = async (input, output) => {
+                const frame = await readAgentLaunchFrame(input);
+                expect(frame.nativeIdentity?.agentUid).toBe(2401);
+                await runWorkspaceEffectWorker([], { input, output, signal: new AbortController().signal, currentDirectory: () => memberIdentity.workspaceRoot });
+            };
+            Object.assign(h.runtime, { requesterIdentity, agentIsolation: { read: () => snapshot },
+                ...(memberCustody ? { nativeOperationRuntime: { prepareNativeOperation: (input: Parameters<typeof prepareRequesterNativeOperation>[0]) =>
+                    prepareRequesterNativeOperation(input, { homeServerIdentityId: 'home', machineId: 'machine', installationId: 'installation',
+                        machine: { read: () => snapshot, managedHappierBinaryPath: '/opt/happier/cli/current/happier',
+                            readMember: async () => ({ identity: memberIdentity, daemonObservation: {
+                                daemonIdentity: 'nonRoot', daemonUid: 2400, daemonUsername: 'daemon', daemonPrimaryGroup: 'daemon' } }) } }) } } : {}) });
+            return boundary;
+        };
+        return { h, separate };
+    }
+
+    it.skipIf(process.platform !== 'linux')('reviews a Separate-users private checkout as its member user and keeps cross-Account refusal', async () => {
+        const { h, separate } = await separateUsersFixture();
+        const owner = await h.starter.prepareStartApproval(h.request, h.ingress, h.context);
+        if (!('reviewedEffectDigest' in owner)) throw new Error(`Expected the daemon-readable review: ${JSON.stringify(owner)}`);
+        const boundary = separate();
+        expect(await h.starter.prepareStartApproval(h.request,
+            { ...h.ingress, machineAdmission: { ...h.ingress.machineAdmission!, actorAccountId: 'another-account' } }, h.context))
+            .toMatchObject({ ok: false, errorCode: 'project_requester_credentials_unavailable' });
+        expect(boundary.phases).toEqual([]);
+        expect(await h.starter.prepareStartApproval(h.request, h.ingress, h.context))
+            .toMatchObject({ reviewedEffectDigest: owner.reviewedEffectDigest });
+        expect(boundary.phases).toContain('native_spawn');
+        expect(boundary.phases).not.toContain('daemon_private_readback_denied');
+        expect(boundary.childFailure).toBeUndefined();
+        expect(h.owner.listProjectServices()).toEqual([]);
+    });
+
+    it.skipIf(process.platform !== 'linux')('refuses a Separate-users Start without member execution custody before setup or launch', async () => {
+        const { h, separate } = await separateUsersFixture(true, false);
+        const boundary = separate();
+        expect(await h.starter.prepareStartApproval(h.request, h.ingress, h.context))
+            .toMatchObject({ ok: false, errorCode: 'agent_isolation_unavailable' });
+        expect(await h.starter.resolveStartTarget(h.request, h.ingress, h.context))
+            .toMatchObject({ ok: false, reasonCode: 'agent_isolation_unavailable' });
+        expect(boundary.phases).not.toContain('daemon_private_readback_denied');
+        expect(h.setupProcesses).toEqual([]);
+        expect(h.owner.listProjectServices()).toEqual([]);
+    });
+
     it.each([false, true])('prepares native Service approval custody without copying or launching (setup=%s)', async setup => {
         const h = await fixture(setup);
         const reviewed = await h.starter.prepareStartApproval(h.request, h.ingress, h.context);
@@ -821,9 +934,9 @@ describe('accepted Project Service declaration starter', () => {
     }
 
     async function fixture(setup = false, source?: unknown, finiteAccepting = true, workerExecution?: 'portable' | 'primary', profileId = 'home', homeId = profileId, supervisorPlatform?: NodeJS.Platform,
-        toolchain?: import('@happier-dev/protocol/workspaces/projectSetup/projectManifestV1').ProjectToolchainSelectionV1, acceptedSharedSetup = false, interactive = false, retained = false) {
-        const root = await mkdtemp(join(tmpdir(), 'happier-project-service-'));
-        await mkdir(join(root, '.happier'));
+        toolchain?: import('@happier-dev/protocol/workspaces/projectSetup/projectManifestV1').ProjectToolchainSelectionV1, acceptedSharedSetup = false, interactive = false, retained = false, memberRoot?: string) {
+        const root = memberRoot ?? await mkdtemp(join(tmpdir(), 'happier-project-service-'));
+        await mkdir(join(root, '.happier'), { recursive: true });
         const command = `${JSON.stringify(process.execPath)} -e "setInterval(() => {}, 1000)"`;
         const manifest = ProjectManifestV1Schema.parse({ version: 1, services: { worker: { source: source ?? { kind: 'command', command },
             ...(interactive ? { runtime: { terminal: true } } : {}),
