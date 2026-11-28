@@ -182,9 +182,10 @@ describe('R2-A3 local capture Source/project admission through the real manifest
             spanId: `db-${n}`, spanKind: 3, parentSpanId: 'request', executionIdentity: `exec-${n}` },
         ]),
         { id: 'unassigned', worktree, traceId, kind: 'query', source: 'wire', at: 3, parentSpanId: 'request',
-          shape: 'SELECT unassigned', detail: { sql: 'unassigned' } },
+          shape: 'SELECT name FROM items WHERE id = ?', statementKind: 'select', parameterIdentity: '4', detail: { sql: 'unassigned' } },
         { id: 'neighbor', worktree, traceId, kind: 'query', source: 'wire', at: 3, parentSpanId: 'request',
-          databaseMemberKey: neighborKey, shape: 'SELECT neighbor', detail: { sql: 'neighbor' } },
+          databaseMemberKey: neighborKey, shape: 'SELECT name FROM items WHERE id = ?', statementKind: 'select',
+          parameterIdentity: '5', detail: { sql: 'neighbor' } },
       ]);
       const scoped = { source, databaseTarget };
       const selectedIds = ['selected-3', 'selected-2', 'selected-1'];
@@ -216,8 +217,18 @@ describe('R2-A3 local capture Source/project admission through the real manifest
         expect(await invoke(detail, { ...scoped, id }, person)).toMatchObject({ ok: true, detail: null });
       }
       await workbench.invokeAction(local(database.DATABASE_ACCESS_SET_ACTION_ID_V1), { target: databaseTarget, agentAccess: 'read' }, person);
+      const retainedTrace = database.DatabaseCaptureTraceGetResultV1Schema.parse(
+        await invoke(trace, { source, traceId, page: { limit: 2 } }, person));
+      const finding = retainedTrace.ok && retainedTrace.findings?.find(value => value.kind === 'suspected_n_plus_one');
+      if (!finding) throw new Error('Missing retained Worktree N+1 finding');
+      const brief = buildDatabaseFindingBriefV1(finding);
+      const evidence = JSON.parse(brief.evidence.items[0].text);
+      expect(evidence.verification.readBefore.action).toBe(database.DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1);
+      const verification = database.DatabaseCaptureTraceGetInputV1Schema.parse(evidence.verification.readBefore.input);
+      expect(verification).toEqual({ ...scoped, traceId, page: { limit: 2 } });
+      expect(finding.summary.calls).toBe('3');
       const traceResult = database.DatabaseCaptureTraceGetResultV1Schema.parse(
-        await invoke(trace, { ...scoped, traceId, page: { limit: 2 } }, agent));
+        await invoke(trace, verification, agent));
       expect(traceResult.ok && traceResult.summaries.map(row => row.id)).toEqual(selectedIds);
       expect(traceResult).toMatchObject({ ok: true, repeatedQueries: [
         { kind: 'suspected_n_plus_one', repetitionCount: 3, observationIds: expect.arrayContaining(selectedIds) },
@@ -228,6 +239,7 @@ describe('R2-A3 local capture Source/project admission through the real manifest
         .rejects.toMatchObject({ code: 'capture_source_unavailable' });
       await workbench.invokeAction(local(database.DATABASE_ACCESS_SET_ACTION_ID_V1), { target: databaseTarget, agentAccess: 'none' }, person);
       await expect(invoke(list, { ...scoped, page }, agent)).rejects.toMatchObject({ code: 'database_agent_access_none' });
+      await expect(invoke(trace, verification, agent)).rejects.toMatchObject({ code: 'database_agent_access_none' });
       await expect(invoke(list, { source, page }, agent)).rejects.toMatchObject({ code: 'database_target_required' });
       await expect(invoke(detail, { source, id: 'selected-1' }, agent))
         .rejects.toMatchObject({ code: 'database_target_required' });
@@ -246,6 +258,11 @@ describe('R2-A3 local capture Source/project admission through the real manifest
         expect(personResult).toMatchObject({ ok: true, source });
         await expect(invoke(local(action), input, agent)).resolves.toEqual(personResult);
       }
+      await workbench.invokeAction(local(database.DATABASE_ACCESS_SET_ACTION_ID_V1), { target: databaseTarget, agentAccess: 'read' }, person);
+      await invoke(local(database.DATABASE_CAPTURE_CLEAR_ACTION_ID_V1), { source }, person);
+      await expect(invoke(trace, verification, agent)).resolves.toEqual({
+        ok: false, status: 'unavailable', code: 'capture_read_expired', reason: 'trace_expired',
+      });
     } finally {
       await f.close();
       if (retained.kind === 'unchanged') await retained.release?.();

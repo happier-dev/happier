@@ -1,4 +1,5 @@
 import type { DatabaseCaptureLogCorrelationV1 } from '@happier-dev/database-protocol';
+import { DatabaseWorktreeTargetV1Schema } from '@happier-dev/plugin-sdk/database';
 import type { createCaptureStore, CaptureListInput, CaptureSummary, CaptureEndpointListInput, CaptureEndpointSummary as StoredEndpointSummary } from './store/capture.js';
 import { analyzeRequestQueries, type DatabaseExecutionEvidence, type RequestSpanEvidence } from './analysis/requests.js';
 export type { CaptureEndpointCursor } from './store/capture.js';
@@ -39,11 +40,32 @@ export function createCaptureReader(store: ReturnType<typeof createCaptureStore>
             before = { at: last.at, id: last.id };
         }
     }
+    async function worktreeQueryRepetitions(worktree: string, traceId: string, pageSize: number, queries: readonly DatabaseExecutionEvidence[]) {
+        if (!queries.some(query => query.source === 'wire')) return [];
+        const keys = await store.traceWorktreeMemberKeys(worktree, traceId);
+        const byMember = new Map<string, DatabaseExecutionEvidence[]>();
+        for (const query of queries) {
+            const key = keys.get(query.observationId);
+            if (key === undefined) continue;
+            const member = byMember.get(key);
+            if (member) member.push(query);
+            else byMember.set(key, [query]);
+        }
+        if (byMember.size === 0) return [];
+        // Use the same private ancestry and selected wire observations as the finite database read.
+        const spans = await store.requestSpans(worktree, traceId, pageSize);
+        return [...byMember].flatMap(([key, member]) => {
+            const databaseTarget = DatabaseWorktreeTargetV1Schema.parse(JSON.parse(key));
+            return analyzeRequestQueries(spans, member).map(repetition => ({ ...repetition, databaseTarget }));
+        });
+    }
     return {
         requests(input: Omit<CaptureListInput, 'kind' | 'spanKind'>): Promise<readonly CaptureSummary[]> {
             return store.list({ ...input, kind: 'span', spanKind: 2 });
         },
-        async trace(input: Pick<CaptureListInput, 'worktree' | 'databaseMember'> & { traceId: string; pageSize: number }) {
+        async trace(input: Pick<CaptureListInput, 'worktree' | 'databaseMember'> & {
+            traceId: string; pageSize: number; includeWorktreeRepetitions?: boolean;
+        }) {
             const { worktree, traceId, databaseMember, pageSize } = input;
             const summaries = await pages({ worktree, traceId, ...(databaseMember && { databaseMember, kind: 'query' }) }, pageSize);
             const { spans: visibleSpans, queries } = evidence(summaries);
@@ -63,8 +85,10 @@ export function createCaptureReader(store: ReturnType<typeof createCaptureStore>
                 logId: log.id, traceId: input.traceId, spanId: log.spanId ?? null,
                 spanObservationId: log.spanId ? spanObservations.get(log.spanId) ?? null : null,
             }));
+            const worktreeRepetitions = input.includeWorktreeRepetitions
+                ? await worktreeQueryRepetitions(worktree, traceId, pageSize, queries) : undefined;
             return { worktree: input.worktree, traceId: input.traceId, summaries, repeatedQueries: analyzeRequestQueries(spans, queries),
-                slowChildSpans, logCorrelations };
+                slowChildSpans, logCorrelations, worktreeRepetitions };
         },
         async endpoints(input: CaptureEndpointListInput & { pageSize: number }): Promise<readonly CaptureEndpointSummary[]> {
             return (await store.endpoints(input)).map(endpoint => ({ ...endpoint, errorRate: observedEndpointErrorRate(endpoint) }));

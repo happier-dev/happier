@@ -36,6 +36,9 @@ Workbench access Action admits the target under the initiating Account and
 agent policy. These reads return queries attributed to that exact launch
 member. Unattributed trace ancestry can group repeated executions without
 appearing in the result. This operand is available for finite reads.
+The shared brief for a Worktree repeated-query finding carries the same selected
+target in its verification Action. Capture groups the finding by launch member
+so an authorized Agent can reread the same evidence.
 
 `otlp/receiver.ts` accepts HTTP JSON or protobuf traces and logs, with optional
 gzip, on `/v1/traces` and `/v1/logs`. Generated OpenTelemetry protobuf definitions

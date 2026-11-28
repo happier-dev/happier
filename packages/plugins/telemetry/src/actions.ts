@@ -259,14 +259,15 @@ export function createCaptureSelectedSourceReaders(selected: AdmittedCaptureSour
         async getCapturedTrace(input: database.DatabaseCaptureTraceGetInputV1): Promise<database.DatabaseCaptureTraceGetResultV1> {
             const { source, runtime, partition } = selected;
             const trace = await createCaptureReader(runtime.store).trace({ worktree: partition,
-                databaseMember: selected.databaseMember, traceId: input.traceId, pageSize: input.page.limit });
+                databaseMember: selected.databaseMember, traceId: input.traceId, pageSize: input.page.limit,
+                includeWorktreeRepetitions: source.kind === 'worktree' && selected.databaseMember === undefined && machineId !== undefined });
             if (trace.summaries.length === 0) {
                 return { ok: false, status: 'unavailable', code: 'capture_read_expired', reason: 'trace_expired' };
             }
             const findings = machineId === undefined || selected.databaseMember !== undefined ? undefined : [...projectCaptureFindings({
                 source, sourceScope: { serverId: source.serverId, machineId }, pageSize: input.page.limit,
                 coverage: runtime.ingest.coverage(partition),
-            }, trace.summaries, trace.repeatedQueries)];
+            }, trace.summaries, trace.worktreeRepetitions ?? trace.repeatedQueries)];
             return { ok: true as const, source, traceId: input.traceId, summaries: [...trace.summaries],
                 repeatedQueries: trace.repeatedQueries.map(query => ({ ...query, observationIds: [...query.observationIds], callsites: [...query.callsites] })),
                 slowChildSpans: trace.slowChildSpans, logCorrelations: trace.logCorrelations,

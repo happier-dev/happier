@@ -10,7 +10,7 @@ import {
     type DatabaseCaptureSourceV1,
     type DatabaseCaptureTraceGetResultV1,
 } from '@happier-dev/database-protocol';
-import { captureSummaryFailed, type DatabaseFindingObservationV1 } from '@happier-dev/plugin-sdk/database';
+import { captureSummaryFailed, type DatabaseFindingObservationV1, type DatabaseWorktreeTargetV1 } from '@happier-dev/plugin-sdk/database';
 import type { CaptureSummary } from '../store/capture.js';
 import type { RepeatedQueryEvidence } from './requests.js';
 
@@ -71,7 +71,7 @@ const repeatTitles: Record<RepeatedQueryEvidence['kind'], string> = {
 /** Interpret the selected retained summaries. The capture reader already owns
  * correlation and repetition counts. Free-form exporter strings stay in Capture. */
 export function projectCaptureFindings(selection: CaptureFindingSelection, summaries: readonly CaptureSummary[],
-    repetitions: readonly RepeatedQueryEvidence[],
+    repetitions: readonly (RepeatedQueryEvidence & { databaseTarget?: DatabaseWorktreeTargetV1 })[],
     onRepeatedFinding?: (finding: CaptureFinding, repetition: RepeatedQueryEvidence) => void): readonly CaptureFinding[] {
     const requestKey = (traceId: string, spanId: string) => JSON.stringify([traceId, spanId]);
     const requests = new Map<string, CaptureSummary & { traceId: string }>();
@@ -85,7 +85,7 @@ export function projectCaptureFindings(selection: CaptureFindingSelection, summa
     function finding(request: Pick<CaptureSummary & { traceId: string },
         'traceId' | 'at' | 'durationMs' | 'id' | 'httpStatusCode' | 'serviceName' | 'endpointMethod' | 'endpointRoute'>,
         detail: Pick<CaptureFinding, 'kind' | 'title' | 'summary' | 'normalizedShape'>,
-        members: readonly string[]): CaptureFinding {
+        members: readonly string[], databaseTarget?: DatabaseWorktreeTargetV1): CaptureFinding {
         const { traceId } = request;
         const observedWindow = { fromMs: request.at, toMs: request.at + Math.ceil(request.durationMs ?? 0) };
         return {
@@ -109,7 +109,8 @@ export function projectCaptureFindings(selection: CaptureFindingSelection, summa
             verification: {
                 observationKey: request.id,
                 ...(request.httpStatusCode == null ? {} : { httpStatusCode: request.httpStatusCode }),
-                readBefore: { action: DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1, input: { source, traceId, page } },
+                readBefore: { action: DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1, input: { source, traceId, page,
+                    ...(databaseTarget && { databaseTarget }) } },
                 findAfter: { action: DATABASE_CAPTURE_TRACES_LIST_ACTION_ID_V1, input: { source, since: observedWindow.toMs, page } },
             },
         };
@@ -120,7 +121,7 @@ export function projectCaptureFindings(selection: CaptureFindingSelection, summa
         if (!request) continue;
         const repeatedFinding = finding(request, { kind: repetition.kind, title: repeatTitles[repetition.kind],
             normalizedShape: repetition.shape, summary: { records: 1, calls: String(repetition.repetitionCount),
-                totalTimeMs: repetition.totalDatabaseTimeMs } }, repetition.observationIds);
+                totalTimeMs: repetition.totalDatabaseTimeMs } }, repetition.observationIds, repetition.databaseTarget);
         findings.push(repeatedFinding);
         onRepeatedFinding?.(repeatedFinding, repetition);
     }
