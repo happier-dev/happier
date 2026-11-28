@@ -133,7 +133,7 @@ export function resolveUsagePageCostSelection(costs: readonly UsageObservationCo
   return first ? { kind: facts.every(fact => fact.kind === first.kind) ? first.kind : 'mixed', currency: first.currency, mode } : null;
 }
 
-function isMonetaryUsageFact(fact: { kind: UsageAnalyticsCostFactKind; source: string }): boolean {
+function isMonetaryUsageFact(fact: { kind: UsageAnalyticsCostFactKind | UsageSelectedCostBasis['kind']; source: string }): boolean {
   // A zero-token tariff is an aggregation identity, not evidence of a model price.
   return fact.kind !== 'unpriced' && fact.source !== 'no_tokens';
 }
