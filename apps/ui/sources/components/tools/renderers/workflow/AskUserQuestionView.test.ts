@@ -28,6 +28,7 @@ import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityIntentReadAction
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { HappyError } from '@/utils/errors/errors';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import { QuestionSendGroup } from './QuestionSendGroup';
 
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -1793,6 +1794,78 @@ describe('AskUserQuestionView', () => {
         expect(sessionAllowWithAnswers).toHaveBeenCalledWith({ id: 'toolu_1', answers: { 'Which file should I inspect?': ['README.md'] } });
         expect(sessionDeny).toHaveBeenCalledTimes(0);
         expect(sendMessage).toHaveBeenCalledTimes(0);
+    });
+
+    it('moves the only interactive form and its held text between mounted copies of the same request', async () => {
+        const form = makeToolViewProps(makeFreeformTool(), { sessionId: 's1' });
+        let showCopy: React.Dispatch<React.SetStateAction<boolean>> = () => {};
+        function Copies() {
+            const [open, setOpen] = React.useState(false);
+            showCopy = setOpen;
+            return React.createElement(React.Fragment, null,
+                React.createElement(AskUserQuestionView, { ...form, key: 'initial' }),
+                open ? React.createElement(AskUserQuestionView, { ...form, key: 'added' }) : null);
+        }
+        const screen = await renderScreen(React.createElement(Copies));
+        const editable = () => screen.findAll(node =>
+            node.props.testID === 'ask-user-question.freeform:0' && node.props.editable === true
+            && typeof node.props.onChangeText === 'function' && typeof node.type === 'string');
+        expect(editable()).toHaveLength(1);
+        await act(async () => changeTextTestInstance(editable()[0], 'A held answer', 'initial answer'));
+        await act(async () => showCopy(true));
+        expect(editable()).toHaveLength(1);
+        expect(editable()[0]?.props.value).toBe('A held answer');
+        await act(async () => showCopy(false));
+        expect(editable()).toHaveLength(1);
+        expect(editable()[0]?.props.value).toBe('A held answer');
+    });
+
+    it('keeps a stale answer as recoverable text without filling the replacement question', async () => {
+        const form = makeToolViewProps(makeFreeformTool(), { sessionId: 's1' });
+        activeAskUserQuestionRequest = { tool: 'AskUserQuestion', kind: 'user_action', turnId: 'old-turn' };
+        let replace: React.Dispatch<React.SetStateAction<boolean>> = () => {};
+        function ReplaceableQuestion() {
+            const [replaced, setReplaced] = React.useState(false);
+            replace = setReplaced;
+            return React.createElement(AskUserQuestionView, replaced ? { ...form, tool: { ...form.tool } } : form);
+        }
+        const screen = await renderScreen(React.createElement(ReplaceableQuestion));
+        const input = () => screen.findByProps({ testID: 'ask-user-question.freeform:0' });
+        await act(async () => { changeTextTestInstance(input(), 'unsent original', 'original question'); });
+        const submitOriginal = screen.findByProps({ testID: 'ask-user-question.submit' }).props.onPress;
+        activeAskUserQuestionRequest = { tool: 'AskUserQuestion', kind: 'user_action', turnId: 'new-turn' };
+        await act(async () => { replace(true); });
+        await act(async () => { submitOriginal(); });
+        expect(sessionAllowWithAnswers).not.toHaveBeenCalled();
+        expect(input().props.value).toBe('');
+        expect(screen.getTextContent()).toContain('unsent original');
+    });
+
+    it('sends two held answers through their individual turn-qualified actions and reports each result', async () => {
+        const pending = (turnId: string) => ({ tool: 'AskUserQuestion', kind: 'user_action', turnId, createdAt: 1, arguments: {} });
+        askUserQuestionSessionState.current = { agentState: { requests: { toolu_1: pending('turn-1'), toolu_2: pending('turn-2') } } };
+        sessionAllowWithAnswers.mockImplementation(async ({ id }) => {
+            if (id === 'toolu_2') throw new Error('Second answer refused');
+        });
+        const first = makeFreeformTool();
+        const second = makeFreeformTool({ id: 'toolu_2', permission: { id: 'toolu_2', status: 'pending' } });
+        const screen = await renderScreen(React.createElement(QuestionSendGroup, null,
+            React.createElement(AskUserQuestionView, makeToolViewProps(first, { sessionId: 's1' })),
+            React.createElement(AskUserQuestionView, makeToolViewProps(second, { sessionId: 's1' }))));
+        const fields = screen.findAll(node => node.props.testID === 'ask-user-question.freeform:0' && typeof node.type === 'string');
+        expect(fields).toHaveLength(2);
+        await act(async () => {
+            changeTextTestInstance(fields[0], 'first draft', 'first question');
+            changeTextTestInstance(fields[1], 'second draft', 'second question');
+        });
+        await screen.pressByTestIdAsync('question-group-send');
+        expect(sessionAllowWithAnswers.mock.calls.map(([response]) => response)).toEqual([
+            { id: 'toolu_1', turnId: 'turn-1', answers: { 'Which file should I inspect?': ['first draft'] } },
+            { id: 'toolu_2', turnId: 'turn-2', answers: { 'Which file should I inspect?': ['second draft'] } },
+        ]);
+        expect(screen.getTextContent()).toContain('sessionWork.questions.sent');
+        expect(screen.getTextContent()).toContain('Second answer refused');
+        expect(screen.findByProps({ testID: 'ask-user-question.freeform:0' }).props.value).toBe('second draft');
     });
 
     it('supports suggestion questions that allow a typed freeform answer (options + freeform)', async () => {

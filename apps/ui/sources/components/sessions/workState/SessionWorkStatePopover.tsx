@@ -1,7 +1,11 @@
 import * as React from 'react';
 
 import { AgentInputContentPopover } from '@/components/sessions/agentInput/components/AgentInputContentPopover';
+import { SessionBotFace } from '@/components/sessions/bots/face/SessionBotFace';
+import type { SessionBotFaceFacts } from '@/components/sessions/bots/face/sessionBotFaceFacts';
+import { Item } from '@/components/ui/lists/Item';
 import type { SessionWorkStateSnapshot } from '@/sync/domains/session/workState/sessionWorkStateTypes';
+import { t } from '@/text';
 
 import { SessionManagedWorkflowSection } from './SessionManagedWorkflowSection';
 import { SessionWorkflowActivitySection } from './SessionWorkflowActivitySection';
@@ -25,6 +29,14 @@ export function SessionWorkStatePopover(props: Readonly<{
     open: boolean;
     anchorRef: React.RefObject<any>;
     snapshot: SessionWorkStateSnapshot | null;
+    bot?: Readonly<{
+        name: string;
+        purpose?: string;
+        face?: SessionBotFaceFacts;
+        paused: boolean;
+        onTogglePause?: () => void;
+        onOpenWork: () => void;
+    }>;
     // UIW3: live workflow activity (headline + loaded run detail). The popover renders the Active
     // Workflows section from this; omit for goal-only surfaces (e.g. the AgentInput goal chip).
     workflowActivity?: SessionWorkflowActivityState;
@@ -75,6 +87,7 @@ export function SessionWorkStatePopover(props: Readonly<{
         onClearGoal: props.onClearGoal,
     });
 
+    const bot = props.bot;
     return (
         <AgentInputContentPopover
             open={props.open}
@@ -83,7 +96,18 @@ export function SessionWorkStatePopover(props: Readonly<{
             maxWidthCap={420}
             maxHeightCap={520}
             testID="session-work-state-popover-surface"
-            content={() => content}
+            header={bot ? { title: bot.name, description: bot.purpose } : undefined}
+            content={() => <>
+                {bot?.face ? <SessionBotFace facts={bot.face} size={32} motion={false} /> : null}
+                {bot?.onTogglePause ? <Item
+                    testID="session-work-state-bot-toggle-pause"
+                    title={t(bot.paused ? 'sessionWork.botControls.resume' : 'sessionWork.botControls.pause')}
+                    onPress={bot.onTogglePause}
+                /> : null}
+                {bot ? <Item testID="session-work-state-bot-open-work"
+                    title={t('sessionWork.botControls.openWork')} onPress={bot.onOpenWork} /> : null}
+                {content}
+            </>}
         />
     );
 }

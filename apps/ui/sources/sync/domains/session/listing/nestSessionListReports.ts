@@ -18,7 +18,7 @@ const OLDER_SESSION_AGE_MS = 24 * 60 * 60 * 1_000;
 export function projectOlderSessionRows(input: Readonly<{
     items: readonly SessionListIndexItem[];
     nowMs: number;
-    readFacts: (item: SessionItem) => Readonly<{
+    readFacts: (item: SessionItem, nowMs: number) => Readonly<{
         settledAt: number | null;
         lastFocusedAt: number | null;
         active: boolean;
@@ -50,12 +50,15 @@ export function projectOlderSessionRows(input: Readonly<{
         precedingRows += 1;
         if (precedingRows <= 2 || item.reportsParent) continue;
         if (held && !held.get(key)?.has(buildSessionListIndexNodeId(item))) continue;
-        const { settledAt, lastFocusedAt, active, needsYou, selected } = input.readFacts(item);
+        const { settledAt, lastFocusedAt, active, needsYou, selected } = input.readFacts(item, input.nowMs);
         if (active || needsYou || selected || settledAt === null || !Number.isFinite(settledAt)) continue;
         if (Math.max(settledAt, lastFocusedAt ?? settledAt) + OLDER_SESSION_AGE_MS > input.nowMs) continue;
         const group = groups.get(key);
         if (group) group.rows.push(item);
         else groups.set(key, { rows: [item] });
+    }
+    for (const [key, group] of groups) {
+        if (group.rows.length < 2) groups.delete(key);
     }
     return groups;
 }

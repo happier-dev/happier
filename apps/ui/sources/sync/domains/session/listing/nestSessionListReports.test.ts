@@ -44,7 +44,7 @@ describe('nestSessionListReports', () => {
         const previous = projectOlderSessionRows({ items, nowMs, readFacts });
         expect(folded({ items, nowMs: nowMs + 1, readFacts: item => ({
             ...readFacts(item), active: item.sessionId === 'stale' || readFacts(item).active,
-        }), frozen: previous })).toEqual(['child']);
+        }), frozen: previous })).toEqual([]);
     });
     it('preserves a filed child membership and execution workspace when its lead owns display placement', () => {
         const lead = { ...session('lead', 'lead-project'), type: 'session' as const, sessionId: 'lead',

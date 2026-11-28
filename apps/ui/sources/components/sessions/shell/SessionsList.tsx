@@ -391,6 +391,7 @@ function VisibleSessionsListViewContent(
     const viewState = useSessionListViewStateFromPaneState(props.storageKind, props.paneState, props.filterController, {
         pathname: props.pathname,
         surfaceOwnership,
+        projectOlderRows: props.filterController.corpusStorage === 'active',
     });
     const scheduledApplies = showSessionSections && surfaceOwnership.dataActive
         && props.filterController.viewContext.kind === 'global';

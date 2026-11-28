@@ -58,7 +58,7 @@ describe('Work › Coming up (read-only automations preview)', () => {
       row('c'),
       row('d'),
       row('e'),
-      row('broken', {}, 'failed'),
+      row('broken', { off: true }, 'failed'),
     ]);
     expect(preview.listed.map((entry) => entry.row.automationId)).toEqual([
       'broken',

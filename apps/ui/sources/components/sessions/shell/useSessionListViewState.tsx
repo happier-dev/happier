@@ -7,6 +7,8 @@ import * as React from 'react';
 import { useSessionListSurfaceDataActiveSignal } from './surface/sessionListSurfaceDataActive';
 import { readSessionLastFocusedAt, useSessionMruOrder } from '@/sync/domains/session/navigation/recentSessions';
 import { readSessionWorkStatusFacts } from '@/components/work/status/sessionWorkStatusFacts';
+import { readSessionTurnCompletedAt } from '@/sync/domains/session/sessionLifecycleProjection';
+import { Item } from '@/components/ui/lists/Item';
 import { normalizeSessionListActiveColorMode } from './row/sessionRowTitleColorRole';
 import { buildSessionListCollapseContextKey, buildSessionListCollapseKey, readSessionListCollapsedGroups } from '@/sync/domains/session/listing/sessionListCollapseState';
 import { collapsedGroupsState, useCollapsedGroupKeys } from '@/sync/domains/state/disclosureUiState';
@@ -1570,26 +1572,38 @@ export function useSessionListViewStateFromPaneState(
     const olderRowCandidates = options.projectOlderRows === true && surfaceOwnership.dataActive && searchQuery.trim() === ''
         ? renderedListItems : null;
     const olderRowRenderables = useSessionListRowRenderablesForItems(olderRowCandidates);
-    const olderRowsNow = olderRowCandidates ? Date.now() : 0;
-    const olderRows = useSessionListOlderRows(attentionInteraction, olderRowCandidates ? {
-        items: olderRowCandidates,
-        nowMs: olderRowsNow,
-        readFacts: item => {
-            const row = olderRowRenderables.get(resolveSessionListRowStoreScopeKey(item));
-            const status = row && readSessionWorkStatusFacts(row, olderRowsNow);
-            const selected = (item.sessionId === selectedSessionId && (selectedSessionServerId
-                ? areServerProfileIdentifiersEquivalent(selectedSessionServerId, item.serverId ?? '') : unscopedSelectionIsUnique))
-                || sessionListSelectionSnapshot.selectedKeys.has(buildServerScopedSessionKey(item.sessionId, item.serverId, item.keyParts));
-            return {
-                settledAt: row?.managedSessions?.total ? null : row?.lastTurnCompletedAt ?? null,
-                lastFocusedAt: item.serverId ? readSessionLastFocusedAt(buildServerScopedSessionKey(item.sessionId, item.serverId)) : null,
-                active: row?.active === true || status?.awareness.operational.reasons.includes('working') === true
-                    || status?.awareness.operational.reasons.includes('background_activity') === true,
-                needsYou: item.groupKind === 'attention' || status?.attentionType != null,
-                selected,
-            };
-        },
-    } : null);
+    const olderRowsInput = React.useMemo(() => {
+        if (!olderRowCandidates) return null;
+        return {
+            items: olderRowCandidates,
+            readFacts: (item: Extract<SessionListIndexItem, { type: 'session' }>, nowMs: number) => {
+                const row = olderRowRenderables.get(resolveSessionListRowStoreScopeKey(item));
+                const status = row && readSessionWorkStatusFacts(row, nowMs);
+                const selected = (item.sessionId === selectedSessionId && (selectedSessionServerId
+                    ? areServerProfileIdentifiersEquivalent(selectedSessionServerId, item.serverId ?? '') : unscopedSelectionIsUnique))
+                    || sessionListSelectionSnapshot.selectedKeys.has(buildServerScopedSessionKey(item.sessionId, item.serverId, item.keyParts));
+                return {
+                    settledAt: !row || row.managedSessions?.total ? null : readSessionTurnCompletedAt(row),
+                    lastFocusedAt: item.serverId ? readSessionLastFocusedAt(buildServerScopedSessionKey(item.sessionId, item.serverId)) : null,
+                    active: row?.active === true || status?.awareness.operational.reasons.includes('working') === true
+                        || status?.awareness.operational.reasons.includes('background_activity') === true,
+                    needsYou: item.groupKind === 'attention' || status?.attentionType != null,
+                    selected,
+                };
+            },
+        };
+    }, [olderRowCandidates, olderRowRenderables, selectedSessionId, selectedSessionServerId,
+        sessionListSelectionSnapshot.selectedKeys, unscopedSelectionIsUnique, sessionMruOrder]);
+    const olderRows = useSessionListOlderRows(attentionInteraction, olderRowsInput);
+    const [expandedOlderGroups, setExpandedOlderGroups] = React.useState<ReadonlySet<string>>(() => new Set());
+    const toggleOlderGroup = React.useCallback((key: string) => {
+        setExpandedOlderGroups(current => {
+            const next = new Set(current);
+            if (next.has(key)) next.delete(key);
+            else next.add(key);
+            return next;
+        });
+    }, []);
     const sessionListItemBySelectionKey = React.useMemo(() => {
         const map = new Map<string, Extract<SessionListIndexItem, { type: 'session' }>>();
         for (const item of renderedListItems) {
@@ -2328,6 +2342,14 @@ export function useSessionListViewStateFromPaneState(
         }>>();
         const nodes: SessionListVirtualizedNode[] = [];
         const visibleEntityIds = new Set<string>();
+        const hidden = new Set<string>();
+        const disclosures = new Map<string, NonNullable<SessionListVirtualizedNode['olderSessions']>>();
+        for (const [groupKey, { rows }] of olderRows ?? []) {
+            const expanded = expandedOlderGroups.has(groupKey);
+            const ids = rows.map(buildSessionListIndexNodeId);
+            if (!expanded) for (const id of ids) hidden.add(id);
+            disclosures.set(ids[ids.length - 1]!, { groupKey, count: rows.length, expanded });
+        }
         let supportingSectionsInserted = !showSessionSections;
         renderedListItems.forEach((item, index) => {
             if (item.type !== 'header') visibleEntityIds.add(buildSessionListIndexEntityId(item));
@@ -2339,6 +2361,11 @@ export function useSessionListViewStateFromPaneState(
                 supportingSectionsInserted = true;
             }
             const id = buildSessionListIndexNodeId(item);
+            const olderSessions = disclosures.get(id);
+            if (hidden.has(id)) {
+                if (olderSessions) nodes.push({ id: `older-sessions:${olderSessions.groupKey}`, kind: 'older_sessions', olderSessions });
+                return;
+            }
             const adjacency = item.type === 'workflow_run' ? resolveSessionListRowViewModelAdjacency(renderedListItems, index) : null;
             const isGroupTail = adjacency ? adjacency.isLast || adjacency.isSingle : undefined;
             const nextItem = renderedListItems[index + 1];
@@ -2362,6 +2389,7 @@ export function useSessionListViewStateFromPaneState(
                 next.set(id, entry);
                 nodes.push(entry.node);
             }
+            if (olderSessions) nodes.push({ id: `older-sessions:${olderSessions.groupKey}`, kind: 'older_sessions', olderSessions });
         });
         if (!supportingSectionsInserted) nodes.push(SESSION_LIST_SUPPORTING_SECTIONS_NODE);
         virtualizedNodeCacheRef.current = next;
@@ -2369,7 +2397,7 @@ export function useSessionListViewStateFromPaneState(
         const output = areVirtualizedNodeArraysReferenceEqual(previousNodes, nodes) ? previousNodes : nodes;
         previousVirtualizedNodesRef.current = output;
         return { nodes: output, visibleEntityCount: visibleEntityIds.size };
-    }, [renderedListItems, showSessionSections]);
+    }, [expandedOlderGroups, olderRows, renderedListItems, showSessionSections]);
     const virtualizedNodes = virtualizedProjection.nodes;
     const virtualizedNodesRef = React.useRef(virtualizedNodes);
     virtualizedNodesRef.current = virtualizedNodes;
@@ -2529,6 +2557,11 @@ export function useSessionListViewStateFromPaneState(
 
     const renderVirtualizedItem = React.useCallback((params: { item: SessionListVirtualizedNode; index: number }) => {
         if (params.item.kind === 'supporting_sections') return null;
+        const older = params.item.olderSessions;
+        if (older) return <Item testID="session-list-older-sessions"
+            title={older.expanded ? t('sessionWork.hideOlderSessions') : t('sessionWork.showOlderSessions', { count: older.count })}
+            accessibilityState={{ expanded: older.expanded }}
+            onPress={() => toggleOlderGroup(older.groupKey)} />;
         const item = nodeByIdRef.current.get(params.item.id) ?? null;
         if (!item) return null;
         if (item.type === 'header') return renderHeaderItemRef.current(item, item === listItemsRef.current[0], firstInSectionHeadersRef.current.has(item));
@@ -2545,7 +2578,7 @@ export function useSessionListViewStateFromPaneState(
                 {item.type === 'workflow_run' ? renderWorkflowRunItemRef.current(item) : renderSessionItemRef.current(item)}
             </SessionListRowOrderWithFacts>
         );
-    }, []);
+    }, [toggleOlderGroup]);
     const handleTreeViewportLayout = React.useCallback((event: { nativeEvent?: { layout?: { y?: number; height?: number } } }) => {
         rowInteractions.handleTreeListLayout(event);
         rowInteractions.handleTreeViewportMeasure(treeViewportRef.current);
@@ -2602,7 +2635,6 @@ export function useSessionListViewStateFromPaneState(
         setSessionAppearance,
         sectionDraftController,
         nodes: virtualizedNodes,
-        olderRows,
         nodeIds,
         visibleEntityCount: virtualizedProjection.visibleEntityCount,
         rowHeight: densityViewState.rowHeight,

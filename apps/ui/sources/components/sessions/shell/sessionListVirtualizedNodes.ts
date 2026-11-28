@@ -3,7 +3,8 @@ import type { SessionListRowViewModel } from './sessionListRowViewModels';
 
 export type SessionListVirtualizedNode = Readonly<{
     id: string;
-    kind: SessionListIndexItem['type'] | 'supporting_sections';
+    kind: SessionListIndexItem['type'] | 'supporting_sections' | 'older_sessions';
+    olderSessions?: Readonly<{ groupKey: string; count: number; expanded: boolean }>;
     headerKind?: Extract<SessionListIndexItem, { type: 'header' }>['headerKind'];
     rowViewModel?: SessionListRowViewModel | null;
     isGroupTail?: boolean;

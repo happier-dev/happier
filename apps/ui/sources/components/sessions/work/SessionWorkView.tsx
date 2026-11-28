@@ -63,6 +63,8 @@ import { useSessionLineage } from './sessionLineage';
 import { createSessionWorkMapDetailsTab, isSessionWorkMapDetailsResource } from './SessionWorkMapDetailsView';
 import { WorkItemRow, WorkViewportContext, useWorkScrollViewport } from './WorkItemRow';
 import { normalizeSessionAddress, type SessionAddress } from '@/sync/domains/session/sessionAddress';
+import { QuestionGroupAsker, QuestionSendGroup } from '@/components/tools/renderers/workflow/QuestionSendGroup';
+import { WorkerUpdateAnswers } from './WorkerUpdateCard';
 import { SessionWorkPresentationContext, type SessionWorkPresentationBinding } from './sessionWorkPresentation';
 import { useSessionContentDemand } from '@/sync/domains/session/useSessionContentDemand';
 import { useSessionArchivedReports } from './useSessionArchivedReports';
@@ -165,6 +167,7 @@ export const SessionWorkView = React.memo((props: Readonly<{
     scopeId: string;
     /** The Session pane's exact Home; never infer it from a same-id live cache entry. */
     serverId?: string | null;
+    onOpenAutomations?: () => void;
 }>) => {
     const styles = stylesheet;
     const { theme } = useUnistyles();
@@ -263,8 +266,7 @@ export const SessionWorkView = React.memo((props: Readonly<{
     });
 
     const canExpandMap = deviceType !== 'phone';
-    // The one editable Automations section is Info's (merged Session lab OQ10): "Add a trigger…" (the "+" menu) opens
-    // its sentence builder there, through the Session's triggers deep link with a one-shot token.
+    // The Session's Automations deep link opens the canonical builder with a one-shot token.
     const scrollRef = React.useRef<ScrollView>(null);
     const openTriggers = React.useCallback(() => {
         if (!sessionServerId) return;
@@ -656,7 +658,7 @@ export const SessionWorkView = React.memo((props: Readonly<{
                             {/* Laid flat in Session Info's inspector anatomy, so the two side panes cannot drift apart. */}
                             <SidePaneInspectorSections>
                                 <SessionWorkPluginSections sessionId={props.sessionId} serverId={sessionServerId} />
-                                <SessionWorkComingUp sessionId={props.sessionId} serverId={sessionServerId} />
+                                <SessionWorkComingUp sessionId={props.sessionId} serverId={sessionServerId} onOpenAutomations={props.onOpenAutomations} />
                             </SidePaneInspectorSections>
                         </View>
                     ) : null}
@@ -800,9 +802,8 @@ const WorkStateSection = React.memo(function WorkStateSection(props: Readonly<{
         [roster.rowByEntryId, visibleItems],
     );
     const showAll = React.useCallback(() => setExpanded(true), []);
-    if (items.length === 0 && !props.loading) return null;
-
-    return (
+    const groupedQuestions = section.key === 'needsYou';
+    const body = items.length > 0 || props.loading ? (
         <WorkSection
             testID={`session-work-state-${section.key}`}
             title={section.title()}
@@ -812,16 +813,22 @@ const WorkStateSection = React.memo(function WorkStateSection(props: Readonly<{
         >
             {segments.map((segment) => (
                 segment.kind === 'item' ? (
-                    <WorkItemRow
-                        key={segment.item.key}
-                        item={segment.item}
-                        titleTailStart={props.titleTailStartByKey.get(segment.item.key)}
-                        trailingAccessory={section.key === 'archived' && segment.item.open.kind === 'session' ? (
-                            <WorkRowUnarchive sessionId={segment.item.open.sessionId} serverId={roster.serverId} title={segment.item.title} />
-                        ) : undefined}
-                        onOpen={roster.onOpenItem}
-                        onShowInTranscript={roster.onShowItemInTranscript}
-                    />
+                    <React.Fragment key={segment.item.key}>
+                        <WorkItemRow
+                            item={segment.item}
+                            titleTailStart={props.titleTailStartByKey.get(segment.item.key)}
+                            trailingAccessory={section.key === 'archived' && segment.item.open.kind === 'session' ? (
+                                <WorkRowUnarchive sessionId={segment.item.open.sessionId} serverId={roster.serverId} title={segment.item.title} />
+                            ) : undefined}
+                            onOpen={roster.onOpenItem}
+                            onShowInTranscript={roster.onShowItemInTranscript}
+                        />
+                        {groupedQuestions && roster.serverId && segment.item.open.kind === 'session' ? (
+                            <QuestionGroupAsker.Provider value={segment.item.title}>
+                                <WorkerUpdateAnswers address={{ serverId: roster.serverId, sessionId: segment.item.open.sessionId }} />
+                            </QuestionGroupAsker.Provider>
+                        ) : null}
+                    </React.Fragment>
                 ) : groupSessionSubagents(segment.rows).map((group) => (
                     <SessionSubagentGroup
                         key={`${segment.key}:${group.key}`}
@@ -850,7 +857,8 @@ const WorkStateSection = React.memo(function WorkStateSection(props: Readonly<{
                 />
             ) : null}
         </WorkSection>
-    );
+    ) : null;
+    return groupedQuestions ? <QuestionSendGroup>{body}</QuestionSendGroup> : body;
 });
 
 const EMPTY_SUBAGENTS: readonly SessionSubagent[] = Object.freeze([]);

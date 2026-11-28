@@ -182,6 +182,7 @@ export type SessionInfoBodyProps = Readonly<{
   presentation: SessionInfoPresentation;
   /** Leaving the body after an effect that ends this Session's page (Delete; Stop on the route). */
   onRequestClose: () => void;
+  onOpenAutomations?: () => void;
 }>;
 
 export const SessionInfoBody = React.memo(function SessionInfoBody(
@@ -214,6 +215,7 @@ export const SessionInfoBody = React.memo(function SessionInfoBody(
         serverId={props.address.serverId}
         presentation={props.presentation}
         onRequestClose={props.onRequestClose}
+        onOpenAutomations={props.onOpenAutomations}
       />
     </View>
   );
@@ -232,11 +234,13 @@ function SessionInfoContent({
   serverId: sessionServerId,
   presentation,
   onRequestClose,
+  onOpenAutomations,
 }: Readonly<{
   session: Session;
   serverId: string;
   presentation: SessionInfoPresentation;
   onRequestClose: () => void;
+  onOpenAutomations?: () => void;
 }>) {
   // The shared shell deliberately retains its Session across read-state updates.
   // Info consumes the viewer/cursor itself: never invalidate the whole shell or
@@ -325,8 +329,7 @@ function SessionInfoContent({
     replace: presentation === 'route',
     focusTarget: 'access',
   });
-  const automationsSupport = useAutomationsSupport();
-  const showAutomations = automationsSupport?.enabled !== false;
+  const showAutomations = useAutomationsSupport({ scopeKind: 'spawn', serverId: sessionServerId }).enabled;
   // Check if CLI version is outdated
   const isCliOutdated = isSessionCliVersionBelowMinimum(metadata?.version);
   // A session whose Agent the presentation reader cannot name has no brand to
@@ -1086,9 +1089,12 @@ function SessionInfoContent({
           },
         ]
       : [];
-  const openAllAutomations = React.useCallback(() => router.push(buildScopedSessionRouteHref({
-    sessionId: session.id, serverId: sessionServerId, suffix: '/automations',
-  }) as never), [router, session.id, sessionServerId]);
+  const openAllAutomations = React.useCallback(() => {
+    if (onOpenAutomations) onOpenAutomations();
+    else router.push(buildScopedSessionRouteHref({
+      sessionId: session.id, serverId: sessionServerId, suffix: '/triggers',
+    }) as never);
+  }, [onOpenAutomations, router, session.id, sessionServerId]);
   const openRemotePermissions = React.useCallback(() => router.push(buildScopedSessionRouteHref({
     sessionId: session.id, serverId: sessionServerId, suffix: '/permissions',
   }) as never), [router, session.id, sessionServerId]);
@@ -1123,11 +1129,9 @@ function SessionInfoContent({
   // keeps its slot. Pressing the row unfolds the real section in its place (its own add flow is there).
   const summaryScope = useActiveServerAccountScope(sessionServerId);
   const sectionSummaries = useSessionInfoSectionSummaryHost({ address: collaborationTarget, scope: summaryScope });
-  const [unfolded, setUnfolded] = React.useState<Readonly<{ habits?: true; anotherMachine?: true }>>({});
-  const foldHabits = !contentUnavailable && sectionSummaries.facts.habits === 'empty' && !unfolded.habits;
+  const [unfolded, setUnfolded] = React.useState<Readonly<{ anotherMachine?: true }>>({});
   const foldAnotherMachine = !contentUnavailable && sectionSummaries.facts.anotherMachine === 'empty'
     && !unfolded.anotherMachine;
-  const unfoldHabits = React.useCallback(() => setUnfolded((current) => ({ ...current, habits: true })), []);
   const addAnotherMachine = React.useCallback(() => {
     if (addMachineToWorkspace) addMachineToWorkspace();
     else setUnfolded((current) => ({ ...current, anotherMachine: true }));
@@ -1192,15 +1196,8 @@ function SessionInfoContent({
       {!contentUnavailable ? (
         <SessionSetupSections session={session} serverId={sessionServerId} />
       ) : null}
-      {!contentUnavailable ? (
-        // Folded, the section stays mounted (its read is what proves it empty) but draws nothing.
-        <View style={foldHabits ? stylesheet.folded : undefined}>
-          <SessionHabitsSection
-            sessionId={session.id}
-            serverId={sessionServerId}
-            onOpenAllAutomations={showAutomations ? openAllAutomations : undefined}
-          />
-        </View>
+      {!contentUnavailable && showAutomations ? (
+        <SessionHabitsSection sessionId={session.id} serverId={sessionServerId} onOpenEditor={openAllAutomations} />
       ) : null}
 
       {/* Organize: where this session shows up in your lists, and what reaches you about it. */}
@@ -1306,18 +1303,8 @@ function SessionInfoContent({
         </ItemGroup>
       ) : null}
 
-      {foldHabits || foldAnotherMachine ? (
+      {foldAnotherMachine ? (
         <ItemGroup testID="session-info-add-to" title={t('sessionPages.info.addToSessionTitle')}>
-          {foldHabits ? (
-            <Item
-              testID="session-info-add-to:habit"
-              title={t('sessionPages.info.aHabit')}
-              detail={t('sessionPages.info.aHabitDetail')}
-              icon={<Icon name="timer" />}
-              showChevron={false}
-              onPress={unfoldHabits}
-            />
-          ) : null}
           {foldAnotherMachine ? (
             <Item
               testID="session-info-add-to:another-machine"

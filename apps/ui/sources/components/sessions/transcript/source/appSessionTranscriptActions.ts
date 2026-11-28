@@ -58,6 +58,7 @@ export function createAppSessionTranscriptActions(sessionId: string, serverId: s
         },
         answerUserAction: async (params) => {
             requireActionSuccess(await execute('session.user_action.answer', { sessionId, requestId: params.id,
+                ...(params.turnId ? { turnId: params.turnId } : {}),
                 ...(params.decision === 'reject'
                     ? { decision: 'reject' as const }
                     : { answers: buildSessionUserActionAnswerItems(params.answers, params.answerDetails) }),

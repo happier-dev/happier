@@ -52,7 +52,7 @@ export function sessionCapabilityRowRemovalState(row: SessionCapabilityRowModel)
 export type SessionCapabilitiesContentProps = Readonly<{
   model: SessionCapabilitiesModel;
   /** A dedicated destination uses the same controls for one capability kind. */
-  kind?: 'skills';
+  kind?: 'skills' | 'mcp';
   /**
    * `embedded`: hosted inside another page's row (Session Info's Skills row, owner 11-16 F1). The host owns the
    * scroll, the heading and the edges: no scroller or top rule of its own, no group heading that repeats the host
@@ -325,7 +325,7 @@ export function SessionCapabilitiesContent(
 
   const addControl = adding ? (
     <SessionCapabilityAddField
-      items={props.kind ? model.addItems.filter(item => item.kind === 'skill') : model.addItems}
+      items={props.kind ? model.addItems.filter(item => item.kind === (props.kind === 'mcp' ? 'mcp_server' : 'skill')) : model.addItems}
       onChange={props.onChange}
       onDone={() => setAdding(false)}
       testID={`${props.testID}:add`}
@@ -366,7 +366,12 @@ export function SessionCapabilitiesContent(
           {undoLine}
           {addControl}
         </View>
-        {props.onOpen ? (
+        {props.onOpen && props.kind === 'mcp' ? (
+          <Item testID={`${props.testID}:open:mcp`}
+            title={t('capabilities.session.mcpServers')}
+            density="compact"
+            onPress={() => props.onOpen?.('mcp')} />
+        ) : props.onOpen ? (
           <Item
             testID={`${props.testID}:open:skills`}
             title={t(props.kind ? 'capabilities.skills.pane.allSkills' : 'capabilities.skills.title')}
@@ -394,7 +399,7 @@ export function SessionCapabilitiesContent(
         </Text>
         {props.onOpen ? (
           <View style={styles.destinations}>
-            <TextLinkButton
+            {props.kind !== 'mcp' ? <TextLinkButton
               size="meta"
               tone="strong"
               label={t(props.kind ? 'capabilities.skills.pane.allSkills' : 'capabilities.skills.title')}
@@ -404,9 +409,9 @@ export function SessionCapabilitiesContent(
                 : undefined}
               onPress={() => props.onOpen?.('skills')}
               testID={`${props.testID}:open:skills`}
-            />
-            {props.openUnavailableReason ? <Text variant="meta">{props.openUnavailableReason}</Text> : null}
-            {props.kind ? null : <TextLinkButton
+            /> : null}
+            {props.kind !== 'mcp' && props.openUnavailableReason ? <Text variant="meta">{props.openUnavailableReason}</Text> : null}
+            {props.kind === 'skills' ? null : <TextLinkButton
               size="meta"
               tone="strong"
               label={t('capabilities.session.mcpServers')}

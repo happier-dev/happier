@@ -741,6 +741,31 @@ describe('Bots roster', () => {
     expect(text).not.toContain('Last seen');
   });
 
+  it('publishes the pushed intake pause to the roster and closed rail without dimming an offline Bot', async () => {
+    const { useOrderedBots, useBotsSummary } = await import('./botsSummary');
+    const serverId = resolveServerProfileScopeIdForIdentifier(connection!.home.id);
+    const now = Date.now();
+    const metadata = { path: '/project', bot: { kind: 'bot' as const } };
+    const paused = createSessionListRenderableSessionFixture({ id: 'paused', botPausedAt: now, metadata });
+    const offline = createSessionListRenderableSessionFixture({ id: 'offline', active: false, presence: 0, metadata });
+    storage.getState().applyServerScopedSessionListRows(serverId, [paused, offline], { source: 'ordinary', mode: 'replace' });
+    const hook = await renderHook(() => ({ roster: useOrderedBots(), rail: useBotsSummary() }));
+    onTestFinished(() => hook.unmount());
+    const isMonochrome = (id: string) => {
+      const key = sessionAddressKey({ serverId, sessionId: id });
+      const { roster, rail } = hook.getCurrent();
+      const faces = [roster.find(row => row.key === key)?.face, rail.faces.find(row => row.key === key)?.face];
+      expect(faces.every(face => face !== undefined)).toBe(true);
+      return faces.map(face => face?.monochrome === true);
+    };
+    expect(isMonochrome('paused')).toEqual([true, true]);
+    expect(isMonochrome('offline')).toEqual([false, false]);
+    await act(async () => {
+      storage.getState().applyServerScopedSessionListRowPatches(serverId, [{ sessionId: paused.id, patch: { botPausedAt: null } }]);
+    });
+    expect(isMonochrome('paused')).toEqual([false, false]);
+  });
+
   it('orders the paged Bot query by meaningful activity and retains its second-page row', async () => {
     const serverId = connection!.home.id;
     const now = Date.now();

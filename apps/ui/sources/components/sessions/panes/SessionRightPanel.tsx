@@ -13,6 +13,7 @@ import { parseSessionPaneScopeId } from './sessionPaneScopeId';
 import { useSessionCollaborationDestinationEntryAdmitted } from '@/hooks/session/useSessionCollaborationAvailability';
 import { normalizeSessionAddress, sessionAddressKey } from '@/sync/domains/session/sessionAddress';
 import * as React from 'react';
+import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import { sessionPanelKeyboardCommands } from '@/keyboard/commands';
 import { useKeyboardShortcutHandlers } from '@/keyboard/KeyboardShortcutProvider';
 import type { KeyboardShortcutHandlers } from '@/keyboard/runtime';
@@ -23,6 +24,7 @@ import { PopoverScope } from '@/components/ui/popover';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 import type { PluginUiDestinationReferenceV1 } from '@happier-dev/protocol/plugins/ui';
+import { CONVERSATION_CORE_PLUGIN_ID_V1 } from '@happier-dev/channels-protocol/v1';
 
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { resolvePluginUiRuntimeFormFactor } from '@/components/appShell/panes/layout/resolveMultiPaneDeviceType';
@@ -113,6 +115,8 @@ import { retainShallow } from '@/sync/domains/state/structuralSharing';
 
 const loadSessionCollaborationSurface = async () => (await import('@/components/sessions/collaboration/SessionCollaborationSurface')).SessionCollaborationSurface;
 const loadSessionSkillsPane = async () => (await import('@/components/sessions/capabilities/SessionSkillsPane')).SessionSkillsPane;
+const loadSessionAutomationsPane = async () => (await import('@/components/sessions/work/SessionSetupSections')).SessionHabitsSection;
+const loadSessionConnectionsPane = async () => (await import('./SessionConnectionsPane')).SessionConnectionsPane;
 // The one Companion body (the same screen the phone Cockpit shows), presented as this panel's Companion tab.
 const loadSessionCompanionPane = async () => (await import('@/components/sessions/companion/SessionCompanionScreen')).SessionCompanionScreen;
 
@@ -292,6 +296,7 @@ function useSessionRightSidebarModel(props: SessionRightPanelProps & SessionRigh
     const mountedBoard = useMountedSessionBoardController(collaborationAddress);
     const collaborationAdmitted = useSessionCollaborationDestinationEntryAdmitted(collaborationAddress?.serverId ?? '');
     const sessionSharingAvailable = collaborationAddress !== null && collaborationAdmitted;
+    const automations = useAutomationsSupport({ scopeKind: 'spawn', serverId: collaborationAddress?.serverId });
     const session = useSessionViewShellSession(props.sessionId, pluginRuntime.serverId);
     const runtimeAdmission = React.useMemo(() => Object.freeze({
         platform: pluginRuntime.platform,
@@ -320,6 +325,7 @@ function useSessionRightSidebarModel(props: SessionRightPanelProps & SessionRigh
         ...appTabInputs,
         codeIntelligenceAvailable,
         sessionSharingAvailable,
+        sessionAutomationsAvailable: collaborationAddress !== null && automations.enabled,
         sourceControlTabAvailable,
         sessionProjectCheckoutAvailable: projectCheckout !== null,
         terminalTabAvailable: placementContext.presentation === 'mobile' ? terminalTabAvailable : terminal.available,
@@ -701,6 +707,29 @@ const SessionRightPanelContent = React.memo((props: SessionRightPanelProps & Rea
     const inSessionColumn = props.surfacePlacement === 'main';
     const closeNavigationPane = props.onRequestClose ?? (inSessionColumn ? model.backToTranscript : model.closeRight);
     const selectTab = (tabId: string) => model.selectTab(tabId, inSessionColumn ? 'main' : 'side');
+    const openAutomations = React.useCallback(() => model.selectTab('automations', inSessionColumn ? 'main' : 'side'), [model.selectTab, inSessionColumn]);
+    const conversationsTab = rightPanelTabs.find(tab => tab.owner === 'plugin'
+        && tab.plugin.pluginId === CONVERSATION_CORE_PLUGIN_ID_V1
+        && tab.placement.binding.targetKind === 'session' && !tab.disabledReason);
+    const conversationsTabId = conversationsTab?.id;
+    const openConversations = React.useCallback(() => {
+        if (conversationsTabId) model.selectTab(conversationsTabId, inSessionColumn ? 'main' : 'side');
+    }, [conversationsTabId, model.selectTab, inSessionColumn]);
+    const attentionControl = pluginRuntime.pluginUiProjection?.composerControlsById[`${CONVERSATION_CORE_PLUGIN_ID_V1}/session-conversations-attention-chip`];
+    const attentionResource = attentionControl?.definition.state?.resource;
+    const conversationAttention = activeTab === 'connections' && conversationsTabId && attentionResource && attentionControl
+        && collaborationAddress && pluginRuntime.phase === 'current' && pluginRuntime.interactionEnabled
+        && pluginRuntime.machineId && pluginRuntime.accountLifetime ? {
+            binding: {
+                accountLifetime: pluginRuntime.accountLifetime,
+                pluginId: attentionControl.identity.pluginId,
+                machineId: pluginRuntime.machineId,
+                serverId: collaborationAddress.serverId,
+                expectedCallerOccurrenceId: attentionControl.occurrenceId,
+                context: { kind: 'session' as const, sessionId: collaborationAddress.sessionId },
+            },
+            resource: attentionResource,
+        } : undefined;
     // Info is presented only while its pane is actually on screen: open, and not covered by Details.
     const rightPaneHiddenByDetails = usePaneActionRailRightPaneHiddenByDetails();
     // Presented inside the session column (Editor first, lab AR1 EFv): a sub-page of the session, with
@@ -787,7 +816,15 @@ const SessionRightPanelContent = React.memo((props: SessionRightPanelProps & Rea
                                 mode="absolute-overlay"
                                 testID={resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-rightpanel-surface-info')}
                             >
-                                <SessionInfoBody address={collaborationAddress} presentation="pane" onRequestClose={closeNavigationPane} />
+                                <SessionInfoBody address={collaborationAddress} presentation="pane" onRequestClose={closeNavigationPane}
+                                    onOpenAutomations={availableTabIds.has('automations') ? openAutomations : undefined} />
+                            </SessionRetainedPane>
+                        ) : null}
+                        {availableTabIds.has('automations') && collaborationAddress ? (
+                            <SessionRetainedPane tabId="automations" isActive={activeTab === 'automations'}
+                                hiddenMode="activity" mode="absolute-overlay">
+                                <SessionPaneLazyLoader load={loadSessionAutomationsPane} props={collaborationAddress}
+                                    testID="session-automations-loading" />
                             </SessionRetainedPane>
                         ) : null}
                         {availableTabIds.has('companion') && companionPaneProps ? (
@@ -862,6 +899,7 @@ const SessionRightPanelContent = React.memo((props: SessionRightPanelProps & Rea
                                     sessionId={props.sessionId}
                                     scopeId={props.scopeId}
                                     serverId={props.paneSurfaceScope?.serverId ?? parseSessionPaneScopeId(props.scopeId)?.address?.serverId}
+                                    onOpenAutomations={availableTabIds.has('automations') ? openAutomations : undefined}
                                 />
                             </React.Suspense>
                         </SessionRetainedPane>
@@ -878,6 +916,15 @@ const SessionRightPanelContent = React.memo((props: SessionRightPanelProps & Rea
                                 testIDPrefix="session-transcript-navigation"
                             />
                         </SessionRetainedPane>
+                        {availableTabIds.has('connections') && collaborationAddress ? (
+                            <SessionRetainedPane tabId="connections" isActive={activeTab === 'connections'}
+                                mode="absolute-overlay" hiddenMode="activity">
+                                <SessionPaneLazyLoader key={sessionAddressKey(collaborationAddress)} load={loadSessionConnectionsPane}
+                                    testID="session-connections-loading"
+                                    props={{ address: collaborationAddress, onRevealComposer: model.backToTranscript,
+                                        onOpenConversations: conversationsTabId ? openConversations : undefined, conversationAttention }} />
+                            </SessionRetainedPane>
+                        ) : null}
                         {availableTabIds.has('collaboration') && collaborationAddress ? (
                             <SessionRetainedPane
                                 tabId="collaboration"

@@ -101,8 +101,7 @@ export const SessionListIdentity = React.memo(function SessionListIdentity(props
         ) : mark
     );
 
-    // A Bot is drawn by its face on every identity display (Living Bots lab), never by its Agent's glyph or its
-    // Project: it keeps its colour on every surface (lab R6 shell); its state is the mouth and the status word, not grey.
+    // A Bot keeps its face on every identity display. The shared face facts carry its intake pause.
     const botFace = readSessionBotFaceFacts(display, props.serverId, source);
     if (botFace) {
         const size = props.display === 'avatar' ? props.avatarSize : props.agentLogoSize;

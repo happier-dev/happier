@@ -13,12 +13,10 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SessionTriggerHistoryScope } from '@/components/workflows/triggers/SessionTriggerHistoryScope';
-import { SubjectTriggersSectionContent } from '@/components/workflows/triggers/SubjectTriggersSection';
+import { SubjectTriggersSection } from '@/components/workflows/triggers/SubjectTriggersSection';
 import { SessionWritesHereSection } from '@/components/workflows/triggers/SessionWritesHereSection';
 import { useResourceAutomationsSection } from '@/components/workflows/triggers/useResourceAutomationsSection';
-import { useReportSessionInfoSectionSummary } from '@/components/sessions/info/sessionInfoSectionSummaries';
 import { isSessionContentReadable, readSessionContentAvailability } from '@/sync/domains/session/encryptedContentAvailability';
-import { readSessionStateFieldFromMetadata } from '@happier-dev/agents';
 import { parseExactTurnAutomationPrefillRoute } from '@/components/automations/sessionLifecycle/exactTurnAutomationPrefill';
 import { useLocalSearchParams } from '@/components/appShell/workspace/destinationRoute';
 import { resolvePortableServerIdentityForRoutingId } from '@/sync/domains/server/resolvePortableServerIdentityForRoutingId';
@@ -34,6 +32,7 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 import { useWorkflowRunWindow } from '@/components/workflows/library/workflowLibraryReads';
 import { useSessionViewShellSession } from '@/components/sessions/shell/sessionViewStableSession';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { readSessionStateFieldFromMetadata } from '@happier-dev/agents';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
@@ -163,6 +162,7 @@ type SessionHabitsSectionProps = Readonly<{
     serverId: string;
     onOpenAllAutomations?: () => void;
     offlineStatedAbove?: boolean;
+    onOpenEditor?: () => void;
 }>;
 
 export const SessionHabitsSection = React.memo(function SessionHabitsSection(props: SessionHabitsSectionProps) {
@@ -170,8 +170,21 @@ export const SessionHabitsSection = React.memo(function SessionHabitsSection(pro
   // The section reads one Session of one Home: its canonical subject names that Home's portable identity.
   const homeId = resolvePortableServerIdentityForRoutingId(props.serverId);
   return scope && homeId && areServerProfileIdentifiersEquivalent(scope.serverId, props.serverId)
-    ? <SessionHabitsContent {...props} homeId={homeId} /> : null;
+    ? props.onOpenEditor
+      ? <SessionAutomationsSummary sessionId={props.sessionId} homeId={homeId} onPress={props.onOpenEditor} />
+      : <SessionHabitsContent {...props} homeId={homeId} />
+    : null;
 });
+
+function SessionAutomationsSummary(props: Readonly<{ sessionId: string; homeId: string; onPress: () => void }>) {
+  const subject = React.useMemo(() => ({ kind: 'session' as const, serverId: props.homeId, sessionId: props.sessionId }), [props.homeId, props.sessionId]);
+  const { rows, also, read } = useResourceAutomationsSection({ subject, subjectName: '' });
+  const enabled = rows.filter(row => !row.off).length + also.filter(row => !row.off).length;
+  return <Item testID="session-info-automations-summary" icon={<Icon name="calendar" />}
+    title={t('sessionWork.comingUp.automations')}
+    detail={read.status === 'ready' ? t('sessionWork.comingUp.enabledCount', { count: enabled }) : undefined}
+    onPress={props.onPress} />;
+}
 
 const NO_SETS: readonly never[] = [];
 const NO_RETRY = () => {};
@@ -227,24 +240,15 @@ function SessionHabitsContent(props: SessionHabitsSectionProps & Readonly<{ home
     ? sessionSets.find(set => set.automationId === habitRow.automationId) : null), [habitRow, sessionSets]);
   const habit = useSessionReviewHabit({ sessionId, homeId: props.homeId, serverId: props.serverId, automations, habitRow,
     reviewers: habitReviewers, ready: read.status === 'ready' });
-  // Session Info folds an empty Habits into "Add to this session" from this read, without another.
-  const summaryScope = useActiveServerAccountScope(props.serverId);
-  useReportSessionInfoSectionSummary('habits.startsHere', summaryScope ? {
-    scope: summaryScope, sessionId, coverage: 'complete',
-    status: read.status === 'ready' ? 'ready' : read.status === 'failed' ? 'error' : 'loading',
-    count: automations.rows.length + automations.also.length + (templateWorkflowNeeds?.length ?? 0),
-  } : null);
-  // "When this turn finishes…" and `?trigger=` deep links arrive on the Info route (`/session/[id]/triggers`).
+  // The standalone Automations route preserves exact-turn prefills and trigger reveals.
   const params = useLocalSearchParams();
   const exactTurn = parseExactTurnAutomationPrefillRoute(params);
   const exactTurnPrefill = exactTurn.kind === 'valid' && exactTurn.prefill.sourceSessionId === sessionId ? exactTurn.prefill : undefined;
   return (
-    // The one editable Automations section, on Info (merged Session lab OQ10; Work shows a read-only Coming up).
-    // Its host sets the anatomy: the Info side pane lays it flat; the phone Info page puts it on a sheet.
     <WorkSectionPlacementProvider value="page">
       <SessionTriggerHistoryScope>
         <View nativeID={SESSION_SETUP_TRIGGERS_ANCHOR_ID} collapsable={false}>
-          <SubjectTriggersSectionContent subject={subject} subjectName={title ?? ''} automations={combined}
+          <SubjectTriggersSection testID="session-automations-editor" subject={subject} subjectName={title ?? ''} automations={combined}
             exactTurnPrefill={exactTurnPrefill}
             // Work's "+" › Add a trigger… lands here (`/session/[id]/triggers?addTrigger=<token>`) and opens the builder once.
             {...(typeof params.addTrigger === 'string' ? { openNewToken: params.addTrigger } : {})}
@@ -265,7 +269,7 @@ function SessionHabitsContent(props: SessionHabitsSectionProps & Readonly<{ home
                 onPress={props.onOpenAllAutomations}
               />
             ) : null}
-          </SubjectTriggersSectionContent>
+          </SubjectTriggersSection>
           {/* What writes into this Session, under its own quiet label as "Also runs here" is (F1): a schedule and the
               Run it started read as two things that write here, not one workflow listed twice. */}
           <SessionWritesHereSection sessionId={sessionId} serverId={props.serverId}

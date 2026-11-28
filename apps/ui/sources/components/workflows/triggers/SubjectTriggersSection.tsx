@@ -130,10 +130,17 @@ export type SubjectTriggersSectionProps = Readonly<{
 
 /** A selected resource's Automations, borrowing the physical host's Account and presentation demand. */
 export const SubjectTriggersSection = React.memo(function SubjectTriggersSection(props: SubjectTriggersSectionProps
-  & Readonly<{ subject: TriggerSubject | AutomationSubjectV1 }>) {
+  & Readonly<{ subject: TriggerSubject | AutomationSubjectV1; automations?: ReturnType<typeof useResourceAutomationsSection> }>) {
+  const { automations, ...section } = props;
+  return automations
+    ? <SubjectTriggersSectionContent {...section} automations={automations} />
+    : <SubjectTriggersSectionReader {...section} />;
+});
+
+function SubjectTriggersSectionReader(props: SubjectTriggersSectionProps & Readonly<{ subject: TriggerSubject | AutomationSubjectV1 }>) {
   const automations = useResourceAutomationsSection(props);
   return <SubjectTriggersSectionContent {...props} automations={automations} />;
-});
+}
 
 type SubjectTriggersReadStateProps = Readonly<{
   status: 'loading' | 'failed';

@@ -94,7 +94,7 @@ async function render(
   options: Readonly<{
     preview?: boolean;
     knownRows?: Readonly<{ skills: number; mcp: number }>;
-    kind?: 'skills';
+    kind?: Parameters<typeof SessionCapabilitiesContent>[0]['kind'];
     presentation?: 'popover' | 'embedded';
     onOpen?: (destination: 'skills' | 'mcp') => void;
     skillDetails?: Parameters<typeof SessionCapabilitiesContent>[0]['skillDetails'];
@@ -162,6 +162,18 @@ async function press(
 }
 
 describe('SessionCapabilitiesContent', () => {
+  it('opens MCP settings and offers only MCP additions from the MCP section', async () => {
+    const opened: string[] = [];
+    const { screen } = await render([
+      { kind: 'skill', id: 'editing-skill', ruleOn: true, override: null },
+      { kind: 'mcp_server', id: 'operating-server', ruleOn: true, override: null },
+      { kind: 'skill', id: 'optional-skill', ruleOn: false, override: null },
+      { kind: 'mcp_server', id: 'optional-server', ruleOn: false, override: null },
+    ], 'ready', { kind: 'mcp', presentation: 'embedded', onOpen: value => opened.push(value) });
+    await press(screen, 'caps:open:mcp');
+    expect(opened).toEqual(['mcp']);
+    expect(screen.findAll(node => node.props?.testID === 'caps:open:skills')).toHaveLength(0);
+  });
   it('projects the same remove intent for controls and mounted commands, excluding Turn on and read-only rows', async () => {
     const { model } = await render([
       { kind: 'skill', id: 'inherited', ruleOn: true, override: null },

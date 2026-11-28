@@ -68,10 +68,30 @@ export const en = {
         map: 'Map',
         expandMap: 'Open the map beside the session',
     },
+    questions: {
+        send: ({ count }: { count: number }) => `Send ${count} now`,
+        sent: 'Sent',
+        replaced: 'Question changed. Your draft is held.',
+        previousDraft: 'Previous draft',
+        unconfirmed: 'Delivery unconfirmed',
+    },
     comingUp: {
         title: 'Coming up',
-        openAll: 'All automations',
+        automations: 'Automations',
+        openAll: 'Automations',
+        enabledCount: ({ count }: { count: number }) => `${count} on`,
         more: ({ count }: { count: number }) => count === 1 ? '1 more in Automations' : `${count} more in Automations`,
+    },
+    connections: {
+        title: 'Connections',
+        conversations: 'Conversations',
+        conversationAttention: ({ count }: { count: number }) => `${count} need attention`,
+        accounts: 'Session accounts',
+    },
+    botControls: {
+        pause: 'Pause',
+        resume: 'Resume',
+        openWork: 'Open Work',
     },
     map: {
         folded: ({ names }: { names: string }) => `Finished work stays in List: ${names}`,
@@ -104,6 +124,8 @@ export const en = {
         backgroundRun: 'Background run',
     },
     showMore: ({ count }: { count: number }) => `Show ${count} more`,
+    showOlderSessions: ({ count }: { count: number }) => `Show ${count} older`,
+    hideOlderSessions: 'Hide older',
     role: {
         none: 'None',
         handsOff: 'hands-off',

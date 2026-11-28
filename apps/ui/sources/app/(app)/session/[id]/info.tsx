@@ -5,6 +5,8 @@ import { StyleSheet } from 'react-native-unistyles';
 import { WorkspaceRouteEntry } from '@/components/appShell/workspace/createWorkspaceRouteEntry';
 import { useLocalSearchParams, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { SessionInfoBody } from '@/components/sessions/info/SessionInfoBody';
+import { SessionHabitsSection } from '@/components/sessions/work/SessionSetupSections';
+import { ItemList } from '@/components/ui/lists/ItemList';
 import { useSessionViewShellSession } from '@/components/sessions/shell/sessionViewStableSession';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { createSessionRouteServerScope } from '@/hooks/session/sessionRouteServerScope';
@@ -25,7 +27,7 @@ import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
  */
 export const WorkspaceRouteBody = () => {
     const router = useRouter();
-    const params = useLocalSearchParams<{ id: string; serverId?: string }>();
+    const params = useLocalSearchParams<{ id: string; serverId?: string; section?: string }>();
     const routeScope = React.useMemo(() => createSessionRouteServerScope(params), [params]);
     const sessionId = normalizeSessionId(params.id);
     const routeHydrationState = useHydrateSessionForRoute(
@@ -72,6 +74,9 @@ export const WorkspaceRouteBody = () => {
             </View>
         );
     }
+    if (params.section === 'automations') return <ItemList>
+        <SessionHabitsSection sessionId={address.sessionId} serverId={address.serverId} />
+    </ItemList>;
     return <SessionInfoBody address={address} presentation="route" onRequestClose={close} />;
 };
 

@@ -30,6 +30,7 @@ export function useDetailNavigationItems(input: ResolveRightSidebarTabsInput, en
         input.scope, input.arrangement, input.presentation, input.activePage,
         input.terminalTabAvailable, input.computerAvailable, input.computerDisabledReason,
         input.boardFeatureEnabled, input.browserFeatureEnabled, input.sessionSharingAvailable, input.sourceControlTabAvailable,
+        input.sessionAutomationsAvailable,
         input.sessionProjectCheckoutAvailable, input.codeIntelligenceAvailable,
         input.pluginPlacements, input.policyContext, input.runtimeAdmission, input.localize,
         input.appPluginPlacements, input.appLocalize,

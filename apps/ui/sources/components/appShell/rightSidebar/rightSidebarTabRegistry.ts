@@ -45,6 +45,7 @@ export type ResolveRightSidebarTabsInput = Readonly<{
     /** The exact Home's Browser decision; omitted means disabled. */
     browserFeatureEnabled?: boolean;
     sessionSharingAvailable?: boolean;
+    sessionAutomationsAvailable?: boolean;
     /** Omitted means available; see `RightSidebarAvailabilityInput.sourceControlTabAvailable`. */
     sourceControlTabAvailable?: boolean;
     /** Omitted means unavailable; see `RightSidebarAvailabilityInput.sessionProjectCheckoutAvailable`. */
@@ -68,7 +69,7 @@ export type ResolveRightSidebarTabsInput = Readonly<{
 }>;
 
 export type SessionRightSidebarTabId =
-    | Extract<RightSidebarBuiltInTabId, 'chat' | 'tabs' | 'companion' | 'review' | 'computer' | 'info' | 'git' | 'files' | 'problems' | 'references' | 'scripts' | 'navigation' | 'agents' | 'collaboration' | 'skills' | 'board' | 'terminal' | 'browser' | 'services'>
+    | Extract<RightSidebarBuiltInTabId, 'chat' | 'tabs' | 'companion' | 'review' | 'computer' | 'info' | 'git' | 'files' | 'problems' | 'references' | 'scripts' | 'navigation' | 'agents' | 'automations' | 'connections' | 'collaboration' | 'skills' | 'board' | 'terminal' | 'browser' | 'services'>
     | `plugin:${string}`;
 
 export type ProjectRightSidebarTabId =

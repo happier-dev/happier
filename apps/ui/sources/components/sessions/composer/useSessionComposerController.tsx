@@ -31,6 +31,11 @@ import { isPendingMessageInDelivery } from '@/sync/domains/pending/pendingTransc
 import { sendPendingMessageWithIntent } from '@/components/sessions/pending/pendingMessageSendActions';
 import { useComposerTextStore } from "@/components/sessions/agentInput/composerTextStore";
 import { SessionComposerAgentInput } from "@/components/sessions/composer/SessionComposerAgentInput";
+import { readSessionBotFaceFacts } from '@/components/sessions/bots/face/sessionBotFaceFacts';
+import { useOpenSessionAgents } from '@/components/sessions/agents/navigation/useOpenSessionAgents';
+import { sessionDisplayActions } from '@/sync/ops/sessions/sessionDisplayActions';
+import { isSessionAccessOwner } from '@/sync/engine/sessions/normalizeSessionAccessProjection';
+import { sessionDisplayTitle } from '@/utils/sessions/sessionDisplayTitle';
 import type { SessionInstrumentStripQuota } from "@/components/sessions/agentInput/instrumentStrip";
 import type { AgentInputExtraActionChip, AgentInputStatusBadge } from "@/components/sessions/agentInput/agentInputContracts";
 import { projectAgentInputAttachmentRowItems } from "@/components/sessions/agentInput/agentInputContracts";
@@ -1795,6 +1800,25 @@ export function useSessionComposerController({
     const openManagedWorkflowRun = React.useCallback((runId: string) => {
         router.push(createWorkflowRunRoute(runId, sessionRouteServerId) as never);
     }, [router, sessionRouteServerId]);
+    const botWorkFace = React.useMemo(() => readSessionBotFaceFacts(session, sessionRouteServerId), [session, sessionRouteServerId]);
+    const openBotWork = useOpenSessionAgents({ target: botWorkFace ? { sessionId, serverId: sessionRouteServerId } : null,
+        pane: embedded ? undefined : pane ?? undefined });
+    const canPauseBot = botWorkFace !== null && isSessionAccessOwner(session.access, session.accessLevel);
+    const botPaused = botWorkFace?.monochrome === true;
+    const toggleBotPause = React.useCallback(() => {
+        fireAndForget(sessionDisplayActions.setBotPausedAt(sessionId, botPaused ? null : Date.now(), { serverId: sessionRouteServerId })
+            .then(result => {
+                if (!result.ok) alertActionFailure({ reason: result.error, code: result.errorCode ?? null });
+            }), { tag: 'SessionView.botPause' });
+    }, [botPaused, sessionId, sessionRouteServerId]);
+    const botWorkHeader = React.useMemo(() => {
+        if (!botWorkFace) return undefined;
+        const name = sessionDisplayTitle(session, sessionRouteServerId);
+        const summary = ownerMetadata?.summary?.text?.trim();
+        return { name, face: botWorkFace, paused: botPaused, onOpenWork: openBotWork,
+            ...(summary && summary !== name ? { purpose: summary } : {}),
+            ...(canPauseBot ? { onTogglePause: toggleBotPause } : {}) };
+    }, [botPaused, botWorkFace, canPauseBot, openBotWork, ownerMetadata?.summary?.text, session, sessionRouteServerId, toggleBotPause]);
     // UIW2: the SINGLE compact above-AgentInput badge seam. Goal/task/todo priority is delegated to
     // the protocol resolver inside `resolveSessionActivityStatusBadgePresentation`; workflow headline
     // composition is layered on top. There is no second badge path that recomputes priority.
@@ -1821,23 +1845,23 @@ export function useSessionComposerController({
                 managedNeedsYou: () => t('workflows.run.needsYou'),
             },
         });
-        if (!presentation) return [];
-        const iconName: IconName = presentation.iconKind === 'goal'
+        if (!presentation && !botWorkHeader) return [];
+        const iconName: IconName = presentation?.iconKind === 'goal'
             ? 'crosshair'
-            : presentation.iconKind === 'workflow'
+            : presentation?.iconKind === 'workflow'
                 ? 'graph'
-                : presentation.iconKind === 'permission'
+                : presentation?.iconKind === 'permission'
                     ? 'warning-circle'
                     : 'list';
         return [{
             key: SESSION_WORK_STATE_STATUS_BADGE_KEY,
             // A work item stands beside the status on the left, as in 0.2 (owner 2026-11-11).
             placement: 'withStatus',
-            label: presentation.label,
+            label: presentation?.label ?? t('sessionWork.title'),
             testID: 'session-work-state-status-badge',
             accessibilityLabel: t('session.workState.accessibilityLabel'),
-            tone: presentation.tone,
-            emphasis: presentation.emphasis,
+            tone: presentation?.tone,
+            emphasis: presentation?.emphasis,
             icon: (tint) => <Icon name={iconName} size={14} color={tint} />,
             renderPopover: ({ open, anchorRef, onRequestClose }) => (
                 <SessionWorkStatePopover
@@ -1848,7 +1872,8 @@ export function useSessionComposerController({
                     managedWorkflowRuns={sessionManagedWorkflowRuns}
                     onOpenManagedWorkflowRun={openManagedWorkflowRun}
                     editableGoal={canEditSessionGoals}
-                    anchorNamesGoalStatus={presentation.namesGoalStatus === true}
+                    anchorNamesGoalStatus={presentation?.namesGoalStatus === true}
+                    bot={botWorkHeader}
                     goalActionCapabilityProfile={sessionGoalActionCapabilityProfile}
                     onRequestClose={onRequestClose}
                     onSetGoal={canEditSessionGoals ? setSessionGoalForView : undefined}
@@ -1856,7 +1881,7 @@ export function useSessionComposerController({
                 />
             ),
         }];
-    }, [activeStatusBadgeKey, canEditSessionGoals, clearSessionGoalForView, openManagedWorkflowRun, sessionGoalActionCapabilityProfile, sessionManagedWorkflowRuns, sessionManagedWorkflowSignal, sessionWorkStateSnapshot, sessionWorkflowActivity, setSessionGoalForView]);
+    }, [activeStatusBadgeKey, botWorkHeader, canEditSessionGoals, clearSessionGoalForView, openManagedWorkflowRun, sessionGoalActionCapabilityProfile, sessionManagedWorkflowRuns, sessionManagedWorkflowSignal, sessionWorkStateSnapshot, sessionWorkflowActivity, setSessionGoalForView]);
     const usageLimitRecoverySettings: UsageLimitRecoverySettings = React.useMemo(() => {
         return normalizeUsageLimitRecoverySettings(settings.usageLimitRecoverySettingsV1);
     }, [settings.usageLimitRecoverySettingsV1]);

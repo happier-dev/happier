@@ -51,7 +51,7 @@ vi.mock('@/components/sessions/agentInput/components/AgentInputContentPopover', 
         onRequestClose: () => void | Promise<void>;
     }) => React.createElement(
         'AgentInputContentPopover',
-        { testID: props.testID, onRequestClose: props.onRequestClose },
+        { testID: props.testID, onRequestClose: props.onRequestClose, header: props.header },
         props.content(),
     ),
 }));
@@ -90,6 +90,27 @@ describe('SessionWorkStatePopover', () => {
     beforeEach(() => {
         alert.mockReset();
         confirm.mockReset();
+    });
+
+    it('hosts the Bot identity and actions inside the work state popover', async () => {
+        const togglePause = vi.fn();
+        const openWork = vi.fn();
+        let tree: renderer.ReactTestRenderer | undefined;
+        await act(async () => {
+            tree = renderer.create(<SessionWorkStatePopover open anchorRef={{ current: null }}
+                snapshot={null} onRequestClose={() => {}}
+                {...{ bot: { name: 'Patch reviewer', purpose: 'Reviews changes', paused: true,
+                    onTogglePause: togglePause, onOpenWork: openWork } }} />);
+        });
+        expect(tree?.root.findByProps({ testID: 'session-work-state-popover-surface' }).props.header)
+            .toMatchObject({ title: 'Patch reviewer', description: 'Reviews changes' });
+        await act(async () => {
+            tree?.root.findAllByProps({ testID: 'session-work-state-bot-toggle-pause' })[0]?.props.onPress();
+            tree?.root.findAllByProps({ testID: 'session-work-state-bot-open-work' })[0]?.props.onPress();
+        });
+        expect(togglePause).toHaveBeenCalledOnce();
+        expect(openWork).toHaveBeenCalledOnce();
+        await act(async () => tree?.unmount());
     });
 
     it('marks the primary pending work-state item as selected in the grouped snapshot list', async () => {

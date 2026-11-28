@@ -25,6 +25,8 @@ export type RightSidebarBuiltInTabId =
     | 'scripts'
     | 'navigation'
     | 'agents'
+    | 'automations'
+    | 'connections'
     | 'collaboration'
     | 'skills'
     | 'board'
@@ -126,6 +128,7 @@ export type RightSidebarAvailabilityInput = Readonly<{
     browserFeatureEnabled?: boolean;
     /** Normalized exact-Home Collaboration host admission; missing fails closed. */
     sessionSharingAvailable?: boolean;
+    sessionAutomationsAvailable?: boolean;
     /**
      * False only for a no-folder session whose private folder is not a repository: Git appears
      * once the folder becomes one, and never offers to initialize it.
@@ -315,6 +318,15 @@ export const RIGHT_SIDEBAR_BUILTIN_TABS: readonly RightSidebarBuiltinTabDefiniti
         available: input => input.sessionSharingAvailable === true,
         // Discovery fails closed; a retained deep link owns its own loading and refusal presentation.
         mobileSurfaces: { session: 'collaboration' },
+    },
+    {
+        id: 'automations', owner: 'builtin', railGroup: 'session', labelKey: 'sessionWork.comingUp.automations',
+        icon: 'calendar', order: 5.5, scopes: ['session'], defaultPlacement: 'pinned',
+        available: input => input.sessionAutomationsAvailable === true,
+    },
+    {
+        id: 'connections', owner: 'builtin', railGroup: 'session', labelKey: 'sessionWork.connections.title',
+        icon: 'path', order: 6.5, scopes: ['session'], defaultPlacement: 'pinned',
     },
     {
         id: 'navigation',

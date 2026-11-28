@@ -29,10 +29,11 @@ import { useExistingSessionCapabilitiesPopover } from './useSessionCapabilitiesP
 import { useSessionCapabilityRestart } from './sessionCapabilityRestart';
 
 /** The Session destination borrows the composer's capability owner and its existing Actions. */
-export function SessionSkillsPane(props: Readonly<{ sessionId: string; serverId?: string | null;
+export function SessionSkillsPane(props: Readonly<{ sessionId: string; serverId?: string | null; kind?: 'skills' | 'mcp';
     /** `embedded`: hosted in Session Info's Skills row (the same component as the rail's panel). */
     presentation?: 'pane' | 'embedded' }>) {
     const serverId = props.serverId ?? null;
+    const kind = props.kind ?? 'skills';
     const router = useRouter();
     // Whether the turn has settled is read live; the shell Session does not move with turn status.
     const session = useSessionRuntimeStatusSource(useSessionViewShellSession(props.sessionId, serverId));
@@ -53,7 +54,7 @@ export function SessionSkillsPane(props: Readonly<{ sessionId: string; serverId?
     const target = React.useMemo(() => ({ sessionId: props.sessionId, metadata: owner.metadata }), [props.sessionId, owner.metadata]);
     const skillIds = React.useMemo(() => owner.model.groups.flatMap(group => group.kind === 'skills'
         ? group.rows.map(row => row.id) : []), [owner.model.groups]);
-    const selectedDemand = React.useMemo(() => ({ skillIds, enabled: owner.modelInput.view !== null }), [skillIds, owner.modelInput.view]);
+    const selectedDemand = React.useMemo(() => ({ skillIds, enabled: kind === 'skills' && owner.modelInput.view !== null }), [kind, skillIds, owner.modelInput.view]);
     const { detail, library } = useSessionCapabilitiesDetail(serverId, machineOnline, onRetry, target, owner.modelInput,
         machineName, undefined, selectedDemand);
     const makers = useSkillMakers(library.items, library.scope);
@@ -113,8 +114,9 @@ export function SessionSkillsPane(props: Readonly<{ sessionId: string; serverId?
         ...owner.undoReceipt, onUndo: () => { void owner.undoLast().then(reportFailure); },
     } : null, [owner.undoReceipt, owner.undoLast, reportFailure]);
     const onOpen = React.useCallback(() => {
-        if (destination.available) router.push(SETTINGS_ROUTES.skills as never);
-    }, [router, destination.available]);
+        if (kind === 'mcp') router.push(SETTINGS_ROUTES.mcp as never);
+        else if (destination.available) router.push(SETTINGS_ROUTES.skills as never);
+    }, [router, destination.available, kind]);
     const [adding, setAdding] = React.useState(false);
     const commands = React.useMemo<readonly CurrentUiContextLocalCommand[]>(() => [
         { key: 'session.skills.add', title: t('capabilities.session.sheet.add'), invoke: () => setAdding(true) },
@@ -143,14 +145,15 @@ export function SessionSkillsPane(props: Readonly<{ sessionId: string; serverId?
             ];
         }) : []),
     ], [onOpen, onRetry, undo, owner.undoLast, reportFailure, restart.badge, restart.restart, model.groups, skills, makers, openSkill, openMaker, onChange, destination.available]);
-    useCurrentUiContextLocalCommands(commands);
+    useCurrentUiContextLocalCommands(kind === 'skills' ? commands : []);
     const embedded = props.presentation === 'embedded';
+    const testID = kind === 'mcp' ? 'session-mcp' : 'session-skills';
     return <View style={embedded ? undefined : { flex: 1, minHeight: 0 }}>
-        <SessionCapabilitiesContent kind="skills" presentation={embedded ? 'embedded' : 'popover'} model={model} onChange={onChange} undo={undo}
+        <SessionCapabilitiesContent kind={kind} presentation={embedded ? 'embedded' : 'popover'} model={model} onChange={onChange} undo={undo}
             skillDetails={skillDetails} skillSection={skillSection} adding={adding} onAddingChange={setAdding}
-            onRetry={onRetry} onOpen={onOpen} openUnavailableReason={destination.unavailableLabel}
-            machineName={machineName} testID="session-skills" />
-        {restart.badge ? <View testID="session-skills:apply">
+            onRetry={onRetry} onOpen={onOpen} openUnavailableReason={kind === 'skills' ? destination.unavailableLabel : undefined}
+            machineName={machineName} testID={testID} />
+        {restart.badge ? <View testID={`${testID}:apply`}>
             <Text variant="meta" style={styles.quiet}>{restart.badge.label}</Text>
             {restart.badge.onPress ? <TextLinkButton label={t('capabilities.skills.saved.restartNow')} onPress={restart.badge.onPress} /> : null}
         </View> : null}

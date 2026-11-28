@@ -17,16 +17,16 @@ import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRout
 import { t } from '@/text';
 import { useSessionDisplayTitles } from '@/utils/sessions/sessionDisplayTitle';
 
-/** How many healthy automations the preview lists before pointing at Info; a failed one is always listed. */
+/** How many healthy automations the preview lists; a failed one is always listed. */
 const COMING_UP_HEALTHY_ROWS = 3;
 
-type ComingUpProps = Readonly<{ sessionId: string; serverId: string }>;
+type ComingUpProps = Readonly<{ sessionId: string; serverId: string; onOpenAutomations?: () => void }>;
 
 /**
  * Work › Coming up (merged Session lab, OQ10/C1 Y5): a read-only preview of the automations that will run here, with
- * the one editable place, Info › Automations, a press away. It reads the same Automations owner Info's section reads
+ * the Automations editor one press away. It reads the same Automations owner as the Info summary
  * (`useResourceAutomationsSection`) and edits nothing. A row whose last Run failed stays listed even when the rest is
- * cut, and opens that Run directly; any other row opens its automation in Info. Nothing to show draws nothing.
+ * cut, and opens that Run directly. The other rows open the corresponding automation.
  */
 export const SessionWorkComingUp = React.memo(function SessionWorkComingUp(
   props: ComingUpProps,
@@ -61,7 +61,7 @@ function SessionWorkComingUpContent(
     () => projectComingUp([...rows, ...also]),
     [rows, also],
   );
-  const openInfo = React.useCallback(
+  const openEditor = React.useCallback(
     (automationId?: string) => {
       router.push({
         pathname: '/session/[id]/triggers',
@@ -102,7 +102,7 @@ function SessionWorkComingUpContent(
                   router.push(
                     createWorkflowRunRoute(failedRunId, serverId) as never,
                   )
-              : () => openInfo(row.automationId)
+              : () => openEditor(row.automationId)
           }
         />
       ))}
@@ -116,7 +116,7 @@ function SessionWorkComingUpContent(
             ? t('sessionWork.comingUp.more', { count: preview.hidden })
             : t('sessionWork.comingUp.openAll')
         }
-        onPress={() => openInfo()}
+        onPress={props.onOpenAutomations ?? (() => openEditor())}
       />
     </ItemGroup>
   );
@@ -139,7 +139,6 @@ export function projectComingUp(
   const failed: ComingUpRow[] = [];
   const healthy: ComingUpRow[] = [];
   for (const row of candidates) {
-    if (row.off || row.sourceGone || row.subtitlePending) continue;
     const lastRun = row.attachment?.lastRun ?? null;
     const status = lastRun
       ? resolveWorkStatusTone({
@@ -149,7 +148,7 @@ export function projectComingUp(
       : null;
     if (lastRun && status?.state === 'failed')
       failed.push({ row, failedRunId: lastRun.id, statusWord: status.word });
-    else healthy.push({ row, failedRunId: null, statusWord: null });
+    else if (!row.off && !row.sourceGone && !row.subtitlePending) healthy.push({ row, failedRunId: null, statusWord: null });
   }
   const shown = healthy.slice(0, COMING_UP_HEALTHY_ROWS);
   return {

@@ -44,13 +44,14 @@ export const SessionBotFace = React.memo(function SessionBotFace(
     [seed, face?.body, face?.palette, face?.shape],
   );
   const mood = props.mood && props.mood !== 'quiet' ? props.mood : props.facts.restingMood ?? 'quiet';
+  const monochrome = props.facts.monochrome === true || props.monochrome === true;
   const ownFace = (
     <BotFace
       identity={identity}
       style={style}
       size={props.size}
       mood={mood}
-      monochrome={props.monochrome}
+      monochrome={monochrome}
       visible={props.visible}
       motion={props.motion}
       marker={props.marker}
@@ -73,7 +74,7 @@ export const SessionBotFace = React.memo(function SessionBotFace(
       motion={props.motion}
       motionMode={motionMode}
       visible={props.visible}
-      monochrome={props.monochrome}
+      monochrome={monochrome}
       marker={props.marker}
       testID={props.testID}
       accessibilityLabel={props.accessibilityLabel}

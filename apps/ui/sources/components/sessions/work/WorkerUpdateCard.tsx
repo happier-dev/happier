@@ -197,7 +197,7 @@ function WorkerDeliverable(props: Readonly<{
  * current eligible card, so historical reports do not subscribe to or display later requests;
  * once it is answered anywhere, it leaves the current card.
  */
-const WorkerUpdateAnswers = React.memo(function WorkerUpdateAnswers(props: Readonly<{ address: SessionAddress }>) {
+export const WorkerUpdateAnswers = React.memo(function WorkerUpdateAnswers(props: Readonly<{ address: SessionAddress }>) {
     const { session, prompts } = useSessionPendingPrompts(props.address);
     if (!session || !prompts) return null;
     return (

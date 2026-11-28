@@ -7,10 +7,11 @@ import { readSessionTurnCompletedAt } from '@/sync/domains/session/sessionLifecy
 import type { BotFaceMood } from './botFaceGeometry';
 
 type SessionFaceSource = Parameters<typeof getSessionAvatarId>[0]
-  & Partial<Pick<SessionListRenderableSession, 'lastTurnCompletedAt' | 'latestTurnStatus' | 'latestTurnStatusObservedAt' | 'seq' | 'latestReadyEventSeq' | 'viewer' | 'lastViewedSessionSeq' | 'hasUnreadMessages'>>;
+  & Partial<Pick<SessionListRenderableSession, 'botPausedAt' | 'lastTurnCompletedAt' | 'latestTurnStatus' | 'latestTurnStatusObservedAt' | 'seq' | 'latestReadyEventSeq' | 'viewer' | 'lastViewedSessionSeq' | 'hasUnreadMessages'>>;
 export type SessionBotFaceFacts = Readonly<{
   seed: string;
   face: SessionBotFaceV1 | null;
+  monochrome?: true;
   completedAt?: number | null;
   failedAt?: number | null;
   restingMood?: BotFaceMood;
@@ -32,6 +33,7 @@ export function readSessionBotFaceFacts(
   return {
     seed: getSessionAvatarId(identity, serverId),
     face: readSessionBotFaceV1(shared?.botFace),
+    ...(identity.botPausedAt != null ? { monochrome: true as const } : {}),
     completedAt,
     failedAt: session.latestTurnStatus === 'failed' ? session.latestTurnStatusObservedAt ?? null : null,
     restingMood: session.latestTurnStatus === 'failed' ? 'failed'
@@ -43,6 +45,6 @@ export function readSessionBotFaceFacts(
 export function areSessionBotFaceFactsEqual(left: SessionBotFaceFacts | null, right: SessionBotFaceFacts | null): boolean {
   return left === right || Boolean(left && right && left.seed === right.seed
     && left.completedAt === right.completedAt && left.failedAt === right.failedAt
-    && left.restingMood === right.restingMood
+    && left.restingMood === right.restingMood && left.monochrome === right.monochrome
     && areSessionBotFacesEqual(left.face, right.face));
 }

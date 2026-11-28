@@ -26,6 +26,8 @@ import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaem
 import { AGENT_SCOPED_PLUGIN_SETTINGS_SECTIONS } from '@/agents/registry/agentScopedPluginSettingsDeclarations';
 import type { PluginProjectionEditableSettingField } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
 import { useServerCredentialAccountScopeResolution } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { matchesQuestionFormRequest, useQuestionForm } from './useQuestionForm';
+import { ReadyQuestionEntry, useGroupedQuestion, type GroupedQuestionResult } from './QuestionSendGroup';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { resolveSessionMachineId } from '@/sync/domains/session/external/resolveSessionMachineId';
 import { getMachineContributionRegistryProjectionRevision } from '@/sync/ops/machineContributionRegistryProjection';
@@ -720,12 +722,6 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, messageId,
     const currentFacts = React.useRef({ pendingRequests, ownerMetadata });
     currentFacts.current = { pendingRequests, ownerMetadata };
     const { theme } = useUnistyles();
-    const [selections, setSelections] = React.useState<Map<number, Set<number>>>(new Map());
-    const [freeformAnswers, setFreeformAnswers] = React.useState<Map<number, string>>(new Map());
-    // A question that allows a note keeps it beside its answer, never inside it (`answerDetails[id].note`).
-    const [notes, setNotes] = React.useState<Map<number, string>>(new Map());
-    const [isSubmitting, setIsSubmitting] = React.useState(false);
-    const [submissionOutcome, setSubmissionOutcome] = React.useState<'answered' | 'dismissed' | null>(null);
 
     // Parse input
     const rawInput = tool.input;
@@ -733,7 +729,7 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, messageId,
     const agentId = resolveAgentIdFromSessionMetadata(ownerMetadata);
     const machineId = resolveSessionMachineId(ownerMetadata);
     const serverId = source.serverId ?? '';
-    const accountScopeResolution = useServerCredentialAccountScopeResolution(explicitServerId);
+    const accountScopeResolution = useServerCredentialAccountScopeResolution(explicitServerId ?? source.serverId);
     const accountScope = explicitServerId === undefined ? undefined
         : accountScopeResolution.kind === 'bound' ? accountScopeResolution.scope : null;
     const daemonMergedProjection = useDaemonMergedProjectionInputs({
@@ -784,11 +780,14 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, messageId,
             && sourceInteraction.permissionDisabledReason !== 'inactive'
             && interaction?.permissionDisabledReason !== 'inactive';
     const toolCallId = resolvePermissionRequestId(tool);
+    const request = executionRun === undefined
+        ? pendingRequests.userActionRequests.find(request => request.id === toolCallId) : undefined;
     // An answer whose result was lost may already be applied: the form is withheld until a re-read says otherwise.
     const answerRequestKey = permissionAnswerRequestKey({
         originId: executionRun === undefined ? `session:${sessionId ?? ''}` : `executionRun:${executionRun.executionRunId}`,
         serverId: source.serverId,
         permissionId: toolCallId ?? '',
+        turnId: request?.turnId,
     });
     const answerUnconfirmed = usePermissionAnswerUnconfirmed(answerRequestKey) && isRunning;
     React.useEffect(() => {
@@ -799,16 +798,17 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, messageId,
     // responder; an answer it still holds keeps the form withdrawn.
     const hasActiveAskUserQuestionRequest = executionRun !== undefined
         ? executionRun.respond !== undefined && toolCallId !== null && !executionRun.pendingRequestIds.has(toolCallId)
-        : pendingRequests.userActionRequests.some(request => request.id === toolCallId);
+        : request !== undefined;
     const withdrawn = executionRun === undefined && isRunning && activeMatchingRequest != null
         && !hasActiveAskUserQuestionRequest;
-    const canInteract =
-        isRunning &&
-        !submissionOutcome &&
-        !isSubmitting &&
-        !answerUnconfirmed &&
-        canApprovePermissions &&
-        hasActiveAskUserQuestionRequest;
+    const eligible = isRunning && canApprovePermissions && hasActiveAskUserQuestionRequest;
+    const { state: form, previousDraft, update: updateForm, canEdit, isEditor } = useQuestionForm(
+        accountScopeResolution.kind === 'bound' ? accountScopeResolution.scope : null,
+        sessionId, request, eligible,
+    );
+    const { selections, freeformAnswers, notes, busy: isSubmitting, outcome: submissionOutcome } = form;
+    const grouped = useGroupedQuestion() && executionRun === undefined;
+    const canInteract = eligible && canEdit && !submissionOutcome && !isSubmitting && !answerUnconfirmed;
     const primaryAnswerRef = usePendingPromptPrimaryFocus(toolCallId, executionRun === undefined && canInteract, messageId);
     const completedRequest = toolCallId ? agentState?.completedRequests?.[toolCallId] : null;
     const questionV1 = activeMatchingRequest?.questionV1 ?? completedRequest?.questionV1;
@@ -899,11 +899,12 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, messageId,
     });
 
     const handleOptionToggle = React.useCallback((questionIndex: number, optionIndex: number, multiSelect: boolean) => {
-        if (!canInteract) return;
+        if (!canInteract || !isEditor()) return;
 
-        setSelections(prev => {
-            const newMap = new Map(prev);
-            const currentSet = newMap.get(questionIndex) || new Set();
+        updateForm(current => {
+            const selections = new Map(current.selections);
+            const freeformAnswers = new Map(current.freeformAnswers);
+            const currentSet = selections.get(questionIndex) ?? new Set<number>();
 
             if (multiSelect) {
                 // Toggle for multi-select
@@ -913,27 +914,18 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, messageId,
                 } else {
                     newSet.add(optionIndex);
                 }
-                newMap.set(questionIndex, newSet);
+                selections.set(questionIndex, newSet);
             } else {
                 // Replace for single-select
-                newMap.set(questionIndex, new Set([optionIndex]));
+                selections.set(questionIndex, new Set([optionIndex]));
+                freeformAnswers.delete(questionIndex);
             }
-
-            return newMap;
+            return { ...current, selections, freeformAnswers };
         });
+    }, [canInteract, isEditor, updateForm]);
 
-        if (!multiSelect) {
-            setFreeformAnswers((prev) => {
-                if (!prev.has(questionIndex)) return prev;
-                const next = new Map(prev);
-                next.delete(questionIndex);
-                return next;
-            });
-        }
-    }, [canInteract]);
-
-    const handleSubmit = React.useCallback(async () => {
-        if ((!sessionId && executionRun === undefined) || !canInteract || !allQuestionsAnswered || isSubmitting) return;
+    const handleSubmit = React.useCallback(async (): Promise<GroupedQuestionResult> => {
+        if ((!sessionId && executionRun === undefined) || !canInteract || !allQuestionsAnswered || !isEditor()) return 'replaced';
 
         const answers: Record<string, readonly string[]> = {};
         const answerDetails: Record<string, StructuredQuestionAnswerDetailsV1[string]> = {};
@@ -975,22 +967,22 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, messageId,
         try {
             if (!toolCallId) {
                 Modal.alert(t('common.error'), t('errors.missingPermissionId'));
-                return;
+                return 'replaced';
             }
 
             if (executionRun !== undefined) {
                 const respond = executionRun.respond;
-                if (respond === undefined || executionRun.pendingRequestIds.has(toolCallId)) return;
-                setIsSubmitting(true);
+                if (respond === undefined || executionRun.pendingRequestIds.has(toolCallId)) return 'replaced';
+                updateForm(current => ({ ...current, busy: true }));
                 await respond({ requestId: toolCallId, answers,
                     ...(Object.keys(answerDetails).length > 0 ? { answerDetails } : {}) });
-                setSubmissionOutcome('answered');
-                return;
+                updateForm(current => ({ ...current, outcome: 'answered' }));
+                return 'sent';
             }
-            if (!sessionId || !actions) return;
+            if (!sessionId || !actions) return 'replaced';
 
-            if (!currentFacts.current.pendingRequests.userActionRequests.some(request => request.id === toolCallId)) {
-                return;
+            if (!request || !currentFacts.current.pendingRequests.userActionRequests.some(current => matchesQuestionFormRequest(current, request))) {
+                return 'replaced';
             }
 
             const selectedSettingMutationCandidates = [...selections].flatMap(([questionIndex, selectedIndexes]) => (
@@ -1018,16 +1010,17 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, messageId,
                     candidate: selectedSettingMutationCandidates[0],
                 })
                 : null;
-            setIsSubmitting(true);
+            updateForm(current => ({ ...current, busy: true }));
 
             await actions.answerUserAction({ id: toolCallId, answers,
+                ...(request.turnId ? { turnId: request.turnId } : {}),
                 ...(Object.keys(answerDetails).length > 0 ? { answerDetails } : {}) });
             markTranscriptPromptAnswered(source, toolCallId);
             // The requester has accepted this answer, so the interaction is
             // terminal here. Remembering the choice is a SEPARATE outcome: a
             // failed preference write must be reported as such and must never
             // re-offer submit for a request that has already been answered.
-            setSubmissionOutcome('answered');
+            updateForm(current => ({ ...current, outcome: 'answered' }));
             const currentOwnerMetadata = currentFacts.current.ownerMetadata;
             const currentServerId = source.serverId ?? '';
             const currentAgentId = resolveAgentIdFromSessionMetadata(currentOwnerMetadata);
@@ -1068,11 +1061,17 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, messageId,
                     );
                 }
             }
+            return 'sent';
         } catch (error) {
-            setSubmissionOutcome(null);
-            reportQuestionResponseFailure(error, answerRequestKey);
+            if (readPermissionActionDisposition(error) === 'outcomeUnknown') {
+                markPermissionAnswerUnconfirmed(answerRequestKey, error);
+                return 'unconfirmed';
+            }
+            if (!grouped) reportQuestionResponseFailure(error, answerRequestKey);
+            if (isRecord(error) && error.code === 'permission_request_not_found') return 'replaced';
+            return { failure: error instanceof Error ? error.message : t('errors.failedToSendMessage') };
         } finally {
-            setIsSubmitting(false);
+            updateForm(current => ({ ...current, busy: false }));
         }
     }, [
         sessionId,
@@ -1088,34 +1087,37 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, messageId,
         notes,
         allQuestionsAnswered,
         input.happierDialog,
-        isSubmitting,
         toolCallId,
         answerRequestKey,
+        request,
+        isEditor,
+        updateForm,
+        grouped,
     ]);
 
     const handleDismiss = React.useCallback(async () => {
-        if (!toolCallId || !canInteract) return;
+        if (!toolCallId || !canInteract || !isEditor()) return;
         const respond = (() => {
             if (executionRun !== undefined) {
                 const send = executionRun.respond;
                 if (!send || executionRun.pendingRequestIds.has(toolCallId)) return null;
                 return () => send({ requestId: toolCallId, approved: false });
             }
-            if (!sessionId || !actions || !currentFacts.current.pendingRequests.userActionRequests.some(request => request.id === toolCallId)) return null;
-            return () => actions.answerUserAction({ id: toolCallId, decision: 'reject' });
+            if (!sessionId || !actions || !request || !currentFacts.current.pendingRequests.userActionRequests.some(current => matchesQuestionFormRequest(current, request))) return null;
+            return () => actions.answerUserAction({ id: toolCallId, decision: 'reject', ...(request.turnId ? { turnId: request.turnId } : {}) });
         })();
         if (!respond) return;
-        setIsSubmitting(true);
+        updateForm(current => ({ ...current, busy: true }));
         try {
             await respond();
             if (executionRun === undefined) markTranscriptPromptAnswered(source, toolCallId);
-            setSubmissionOutcome('dismissed');
+            updateForm(current => ({ ...current, outcome: 'dismissed' }));
         } catch (error) {
             reportQuestionResponseFailure(error, answerRequestKey);
         } finally {
-            setIsSubmitting(false);
+            updateForm(current => ({ ...current, busy: false }));
         }
-    }, [sessionId, toolCallId, actions, executionRun, canInteract, source, answerRequestKey]);
+    }, [sessionId, toolCallId, actions, executionRun, canInteract, source, answerRequestKey, request, isEditor, updateForm]);
 
     // The asker withdrew it: the reason replaces the form; nothing is left to answer.
     if (!submissionOutcome && (tool.permission?.status === 'canceled' || withdrawn)) {
@@ -1281,6 +1283,17 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, messageId,
                     </Text>
                 ) : null}
                 {lead ? <AskUserQuestionLeadLine lead={lead} /> : null}
+                {canInteract && !previousDraft.outcome && (previousDraft.freeformAnswers.size + previousDraft.notes.size > 0) ? (
+                    <View testID="ask-user-question.previous-draft">
+                        <Text style={styles.stateTitle}>{t('sessionWork.questions.previousDraft')}</Text>
+                        {[...previousDraft.freeformAnswers.values(), ...previousDraft.notes.values()].map((text, index) => (
+                            <Text key={index} selectable style={styles.withdrawnQuestion}>{text}</Text>
+                        ))}
+                    </View>
+                ) : null}
+                {grouped && request ? <ReadyQuestionEntry ready={canInteract && allQuestionsAnswered}
+                    question={{ id: JSON.stringify([source.serverId, sessionId, request.id, request.turnId, request.createdAt]),
+                        label: questions[0]?.question ?? '', send: handleSubmit }} /> : null}
                 {questions.map((question, qIndex) => {
                     const selectedOptions = selections.get(qIndex) || new Set();
                     const options = Array.isArray(question.options) ? question.options : [];
@@ -1309,23 +1322,15 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, messageId,
                                             style={styles.freeformInput}
                                             value={freeformAnswers.get(qIndex) ?? question.freeform?.initialValue ?? ''}
                                             onChangeText={(text) => {
-                                                if (!canInteract) return;
-                                                setFreeformAnswers((prev) => {
-                                                    const next = new Map(prev);
-                                                    next.set(qIndex, text);
-                                                    return next;
-                                                });
+                                                if (!canInteract || !isEditor()) return;
                                                 const normalizedText = question.freeform?.whitespace === 'preserve'
                                                     ? text
                                                     : text.trim();
-                                                if (options.length > 0 && !question.multiSelect && normalizedText.length > 0) {
-                                                    setSelections((prev) => {
-                                                        if (!prev.has(qIndex)) return prev;
-                                                        const next = new Map(prev);
-                                                        next.delete(qIndex);
-                                                        return next;
-                                                    });
-                                                }
+                                                updateForm(current => {
+                                                    const selections = new Map(current.selections);
+                                                    if (options.length > 0 && !question.multiSelect && normalizedText.length > 0) selections.delete(qIndex);
+                                                    return { ...current, selections, freeformAnswers: new Map(current.freeformAnswers).set(qIndex, text) };
+                                                });
                                             }}
                                             onTouchStart={(event) => event.stopPropagation()}
                                             placeholder={question.freeform?.placeholder ?? t('tools.askUserQuestion.otherPlaceholder')}
@@ -1400,8 +1405,8 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, messageId,
                                     style={styles.freeformInput}
                                     value={notes.get(qIndex) ?? ''}
                                     onChangeText={(text) => {
-                                        if (!canInteract) return;
-                                        setNotes((prev) => new Map(prev).set(qIndex, text));
+                                        if (!canInteract || !isEditor()) return;
+                                        updateForm(current => ({ ...current, notes: new Map(current.notes).set(qIndex, text) }));
                                     }}
                                     onTouchStart={(event) => event.stopPropagation()}
                                     placeholder={t('tools.askUserQuestion.notePlaceholder')}
@@ -1441,7 +1446,7 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, messageId,
                             >
                                 <Text style={[styles.submitButtonText, styles.submitButtonTextQuiet]}>{t('tools.askUserQuestion.dismiss')}</Text>
                             </PermissionDecisionButton>
-                            <PermissionDecisionButton
+                            {!grouped ? <PermissionDecisionButton
                                 testID="ask-user-question.submit"
                                 hitReach={theme.space.s12 / 2}
                                 accessibilityRole="button"
@@ -1456,7 +1461,7 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, messageId,
                                     questionV1?.mode === 'continue' && styles.submitButtonQuiet,
                                     (!allQuestionsAnswered || isSubmitting || answerUnconfirmed) && styles.submitButtonDisabled,
                                 ]}
-                                onPress={handleSubmit}
+                                onPress={() => { void handleSubmit(); }}
                                 disabled={!allQuestionsAnswered || isSubmitting || answerUnconfirmed}
                                 activeOpacity={0.7}
                             >
@@ -1465,7 +1470,7 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, messageId,
                                 ) : (
                                     <Text style={[styles.submitButtonText, questionV1?.mode === 'continue' && styles.submitButtonTextQuiet]}>{t('tools.askUserQuestion.submit')}</Text>
                                 )}
-                            </PermissionDecisionButton>
+                            </PermissionDecisionButton> : null}
                         </View>
                     </View>
                 )}

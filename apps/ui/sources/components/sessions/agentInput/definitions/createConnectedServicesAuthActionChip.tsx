@@ -16,6 +16,7 @@ import { AGENT_INPUT_CHIP_ICON_SIZE_PX, AGENT_INPUT_CHIP_ICON_STYLE, AGENT_INPUT
 import { AgentInputRailChip } from '@/components/sessions/agentInput/definitions/agentInputChipRowReach';
 
 export type ConnectedServicesAuthActionChipSource = 'native' | 'connected' | 'mixed' | 'unknown';
+export const CONNECTED_SERVICES_AUTH_CHIP_KEY = 'new-session-connected-services-auth';
 
 /** The lab's narrow source list (RT1): one column of sources, not a wide sheet. */
 const RUNS_THROUGH_POPOVER_MAX_WIDTH_PX = 400;
@@ -55,7 +56,7 @@ export function createConnectedServicesAuthActionChip(params: Readonly<{
         : {};
 
     return {
-        key: 'new-session-connected-services-auth',
+        key: CONNECTED_SERVICES_AUTH_CHIP_KEY,
         controlId: 'connectedServices',
         placement: { ...getConnectedServicesAuthActionChipPlacement(), ...(params.placementId ? { id: params.placementId } : {}), pending: params.pending === true },
         collapsedContentPopover: {
@@ -75,7 +76,7 @@ export function createConnectedServicesAuthActionChip(params: Readonly<{
                 ref={chipAnchorRef}
                 testID={params.testID ?? 'new-session-connected-services-auth-chip'}
                 webAttributes={webAuthSourceProps}
-                onPress={() => toggleCollapsedPopover?.('new-session-connected-services-auth')}
+                onPress={() => toggleCollapsedPopover?.(CONNECTED_SERVICES_AUTH_CHIP_KEY)}
                 style={chipStyle}
             >
                 {normalizeNodeForView(<Icon name="path" size={AGENT_INPUT_CHIP_ICON_SIZE_PX} color={iconColor} style={AGENT_INPUT_CHIP_ICON_STYLE} />)}

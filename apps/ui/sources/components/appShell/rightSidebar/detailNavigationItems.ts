@@ -187,6 +187,7 @@ export function resolveDetailNavigationItems(input: MachineNavigationInput | Wor
         boardFeatureEnabled: input.boardFeatureEnabled === true,
         browserFeatureEnabled: input.browserFeatureEnabled === true,
         sessionSharingAvailable: input.sessionSharingAvailable === true,
+        sessionAutomationsAvailable: input.sessionAutomationsAvailable === true,
         sourceControlTabAvailable: input.sourceControlTabAvailable !== false,
         sessionProjectCheckoutAvailable: input.sessionProjectCheckoutAvailable === true,
         codeIntelligenceAvailable: input.codeIntelligenceAvailable === true,

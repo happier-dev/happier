@@ -147,7 +147,7 @@ import {
     SessionListIdentity,
     type SessionListIdentityDisplay,
 } from './SessionListIdentity';
-import { readBotActivity, type BotActivity } from '@/components/sessions/bots/botActivity';
+import { classifyBotActivity, type BotActivity } from '@/components/sessions/bots/botActivity';
 import { Icon } from '@/components/ui/icons/Icon';
 import { RowSwipeAction } from '@/components/ui/lists/RowSwipeAction';
 import { IconButton } from '@/components/ui/buttons/IconButton';
@@ -1776,7 +1776,7 @@ const SessionItemContent = React.memo(
                                     agentLogoSize={agentLogoSize}
                                     connected={sessionStatus.isConnected}
                                     roster={actionMenuSurface === 'botsRoster'}
-                                    botActivity={botActivity}
+                                    botActivity={botActivity ?? (resolvedSessionMetadata?.bot ? classifyBotActivity(workStatus) : undefined)}
                                     coordinator={isCoordinator}
                                     testID={`session-list-agent-logo-${occurrenceTestId}`}
                                 />
@@ -2081,7 +2081,7 @@ function SessionItemFromRowViewModel(props: SessionItemProps) {
             activityAt={rowViewModel.activityAt}
             guardState={rowViewModel.guardState}
             sessionStatus={sessionStatus}
-            botActivity={managedWakeFacts ? readBotActivity(session, Date.now(), sessionStatus) : itemProps.botActivity}
+            botActivity={managedWakeFacts ? undefined : itemProps.botActivity}
             externalSessionIdentity={rowViewModel.externalSessionIdentity}
             sessionNameResolved={sessionNameResolved}
             isSessionIdentityLoading={rowViewModel.isIdentityLoading}

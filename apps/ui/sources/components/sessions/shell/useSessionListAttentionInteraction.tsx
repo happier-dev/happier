@@ -108,11 +108,13 @@ export function useSessionListAttentionInteractionHeld(controller: SessionListAt
 /** A disclosure reads the same interaction lifetime as the attention shelves. */
 export function useSessionListOlderRows(
     controller: SessionListAttentionInteraction | null,
-    input: Omit<Parameters<typeof projectOlderSessionRows>[0], 'frozen'> | null,
+    input: (Omit<Parameters<typeof projectOlderSessionRows>[0], 'frozen' | 'nowMs'> & { nowMs?: number }) | null,
 ) {
     const held = useSessionListAttentionInteractionHeld(input ? controller : null);
     const previous = React.useRef<ReturnType<typeof projectOlderSessionRows> | undefined>(undefined);
-    const rows = input ? projectOlderSessionRows({ ...input, ...(held && previous.current ? { frozen: previous.current } : {}) }) : null;
+    const rows = React.useMemo(() => input
+        ? projectOlderSessionRows({ ...input, nowMs: input.nowMs ?? Date.now(), ...(held && previous.current ? { frozen: previous.current } : {}) })
+        : null, [input, held]);
     React.useLayoutEffect(() => { previous.current = rows ?? undefined; }, [rows]);
     return rows;
 }

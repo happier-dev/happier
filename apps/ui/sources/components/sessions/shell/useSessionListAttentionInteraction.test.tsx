@@ -23,24 +23,25 @@ describe('mounted Session list attention interaction', () => {
 
     it('holds newly eligible older rows until mouse leave while immediately revealing a protected row', async () => {
         const day = 24 * 60 * 60 * 1_000;
-        const items: SessionListIndexItem[] = ['first', 'second', 'old', 'recent'].map(sessionId => ({
+        const items: SessionListIndexItem[] = ['first', 'second', 'old', 'also-old', 'recent', 'also-recent'].map(sessionId => ({
             type: 'session', sessionId, serverId: 'home', groupKey: 'project',
         }));
         const hook = await renderHook(({ nowMs, selected }: { nowMs: number; selected: string | null }) => {
             const controller = useSessionListAttentionInteractionOwner();
             const older = useSessionListOlderRows(controller, { items, nowMs, readFacts: item => ({
-                settledAt: item.sessionId === 'recent' ? 2 : 1,
-                lastFocusedAt: null, active: false, needsYou: false, selected: selected === item.sessionId,
+                settledAt: 1,
+                lastFocusedAt: item.sessionId.endsWith('recent') ? 2 : null,
+                active: false, needsYou: false, selected: selected === item.sessionId,
             }) });
             return { controller, ids: older?.get('project')?.rows.map(row => row.sessionId) ?? [] };
         }, { initialProps: { nowMs: day + 1, selected: null } });
-        expect(hook.getCurrent().ids).toEqual(['old']);
+        expect(hook.getCurrent().ids).toEqual(['old', 'also-old']);
         const { zoneProps } = hook.getCurrent().controller;
         act(() => zoneProps.onPointerEnter({ pointerType: 'mouse' }));
         await hook.rerender({ nowMs: day + 2, selected: 'old' });
         expect(hook.getCurrent().ids).toEqual([]);
         act(() => zoneProps.onPointerLeave());
-        expect(hook.getCurrent().ids).toEqual(['recent']);
+        expect(hook.getCurrent().ids).toEqual(['also-old', 'recent', 'also-recent']);
     });
 
     it('holds mouse and pen presence, then releases a clicked row on leave even while focused', async () => {
