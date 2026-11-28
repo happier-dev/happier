@@ -767,7 +767,9 @@ describe('callMachineRpc', () => {
         directory: { kind: 'path', path: '/workspace' },
         agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } },
       requesterBootstrap: { v: 1, disposition: 'ordinary_requester',
-        credentials: { token: 'private-bob-token', secret: encodeBase64(new Uint8Array(32).fill(8)) } },
+        credentials: { token: 'private-bob-token', encryption: {
+          publicKey: encodeBase64(new Uint8Array(32).fill(7)), machineKey: encodeBase64(new Uint8Array(32).fill(8)),
+        } } },
     } as const;
     axiosGet.mockResolvedValue({ data: { machine: { storageMode: 'plain', id: 'machine-session',
       installationId: 'installed-current', installationPublicKey: encodeBase64(installation.publicKey),
@@ -776,7 +778,7 @@ describe('callMachineRpc', () => {
     socket.emit.mockImplementation((_event, payload, ack) => {
       expect(payload.method).toBe(`machine-session:${RPC_METHODS.SESSION_SPAWN_NEW}`);
       expect(JSON.stringify(payload)).not.toContain('private-bob-token');
-      expect(JSON.stringify(payload)).not.toContain(request.requesterBootstrap.credentials.secret);
+      expect(JSON.stringify(payload)).not.toContain(request.requesterBootstrap.credentials.encryption.machineKey);
       expect(openSessionRequesterBootstrapRpcRequestV1({ request: payload.params,
         machineId: 'machine-session', installationId: 'installed-current',
         installationPrivateKey: installation.secretKey })).toEqual(request);
@@ -822,7 +824,8 @@ describe('callMachineRpc', () => {
 
   it.each(['prepare', 'preflight'] as const)('keeps existing-Session handoff %s custody confidential on the same installed-key Machine carrier', async phase => {
     const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(3));
-    const secret = encodeBase64(new Uint8Array(32).fill(8));
+    const keyPair = tweetnacl.box.keyPair.fromSecretKey(new Uint8Array(32).fill(8));
+    const encryption = { publicKey: encodeBase64(keyPair.publicKey), machineKey: encodeBase64(keyPair.secretKey) };
     const request = { kind: phase === 'prepare' ? 'requester_session_handoff_bootstrap_v1' : 'requester_session_handoff_preflight_bootstrap_v1', input: {
       ...(phase === 'prepare' ? {
       handoffId: 'handoff-bob', operationId: 'prepare-bob', sessionId: 'bob-existing-session',
@@ -830,7 +833,7 @@ describe('callMachineRpc', () => {
       } : { sessionId: 'bob-existing-session' }),
       sourceMachineId: 'source', targetMachineId: 'machine-session', sourceSessionStorageMode: 'persisted',
       targetPath: '/workspace',
-    }, requesterBootstrap: { v: 1, disposition: 'ordinary_requester', credentials: { token: 'private-bob-token', secret } } } as const;
+    }, requesterBootstrap: { v: 1, disposition: 'ordinary_requester', credentials: { token: 'private-bob-token', encryption } } } as const;
     axiosGet.mockResolvedValue({ data: { machine: { storageMode: 'plain', id: 'machine-session',
       installationId: 'installed-current', installationPublicKey: encodeBase64(installation.publicKey),
       dataEncryptionKey: encodeBase64(new TextEncoder().encode(JSON.stringify({ t: 'plain', v: null }))),
@@ -847,7 +850,7 @@ describe('callMachineRpc', () => {
       params: { kind: request.kind, input: request.input,
         requesterBootstrap: { kind: 'installation_sealed_v1', installationId: 'installed-current' } } });
     expect(JSON.stringify(emitted)).not.toContain('private-bob-token');
-    expect(JSON.stringify(emitted)).not.toContain(secret);
+    expect(JSON.stringify(emitted)).not.toContain(encryption.machineKey);
   });
 
   it('refuses requester Account material before socket emission when a Plain target has no usable installed key', async () => {
@@ -860,7 +863,9 @@ describe('callMachineRpc', () => {
         directory: { kind: 'path', path: '/workspace' },
         agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } },
       requesterBootstrap: { v: 1, disposition: 'ordinary_requester',
-        credentials: { token: 'private-bob-token', secret: encodeBase64(new Uint8Array(32).fill(8)) } },
+        credentials: { token: 'private-bob-token', encryption: {
+          publicKey: encodeBase64(new Uint8Array(32).fill(7)), machineKey: encodeBase64(new Uint8Array(32).fill(8)),
+        } } },
     } as const;
     await expect(callExactMachineRpc({ credentials: { token: 'bob-token', encryption: null },
       machineId: 'machine-session', method: RPC_METHODS.SESSION_SPAWN_NEW, request })).rejects.toThrow();

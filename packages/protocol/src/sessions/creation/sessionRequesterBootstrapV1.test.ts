@@ -31,11 +31,20 @@ const request = {
     agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
   },
   requesterBootstrap: { v: 1, disposition: 'ordinary_requester', credentials: {
-    token: 'private-bob-token', secret: Buffer.from(new Uint8Array(32).fill(8)).toString('base64'),
+    token: 'private-bob-token', encryption: {
+      publicKey: encodeBase64(new Uint8Array(32).fill(7), 'base64'),
+      machineKey: encodeBase64(new Uint8Array(32).fill(8), 'base64'),
+    },
   } },
 } as const;
 
 describe('requester bootstrap installation confidentiality', () => {
+  it('refuses a recovery secret in requester credentials', () => {
+    const schema = bootstrap.SessionRequesterBootstrapCredentialsV1Schema;
+    expect(schema.safeParse({ token: 'fixture-bearer' }).success).toBe(true);
+    expect(schema.safeParse({ token: 'fixture-bearer', secret: Buffer.alloc(32, 8).toString('base64') }).success).toBe(false);
+  });
+
   it('opens teardown data only for the signed retained copy and recipient installation', () => {
     const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'signed-root', binding: {
       accountId: 'requester', custodianAccountId: 'requester', authentication: { kind: 'account', tokenEpoch: 1 },
@@ -154,8 +163,7 @@ describe('requester bootstrap installation confidentiality', () => {
     if (!invocation) throw new Error('Expected a private Session invocation');
     const sealed = bootstrap.sealExternalActionRequesterAccountContextV1({ authorization,
       credentials: { token: 'requester-token',
-        secret: accountEncryptionMode === 'e2ee' ? encodeBase64(new Uint8Array(32).fill(19), 'base64') : null,
-        encryption: null }, invocation,
+        encryption: accountEncryptionMode === 'e2ee' ? request.requesterBootstrap.credentials.encryption : null }, invocation,
       purpose: { kind: 'external_action' }, installationPublicKey: receiver.publicKey, randomBytes: tweetnacl.randomBytes });
     const input = { authorization: sealed, purpose: { kind: 'external_action' as const }, machineId: target.machineId,
       installationId: 'installation', serverIdentityId: 'home', installationPrivateKey: receiver.secretKey, includeInvocation: true as const };
@@ -276,7 +284,7 @@ describe('requester bootstrap installation confidentiality', () => {
       presentUserConfirmation: { actionId: 'machines.setup.apply' as const, inputDigest: 'b'.repeat(43), requestId: 'install',
         accountId: 'person', serverId: 'home', target } };
     const sealed = bootstrap.sealExternalActionRequesterAccountContextV1({ authorization,
-      credentials: { token: 'fixture-person-credential', secret: null, encryption: null }, invocation,
+      credentials: { token: 'fixture-person-credential', encryption: null }, invocation,
       purpose: { kind: 'external_action' }, installationPublicKey: receiver.publicKey, randomBytes: tweetnacl.randomBytes });
     const opened = { authorization: sealed, purpose: { kind: 'external_action' as const }, machineId: target.machineId,
       installationId: 'installation', serverIdentityId: 'home', installationPrivateKey: receiver.secretKey, includeInvocation: true as const };
@@ -555,7 +563,7 @@ describe('requester bootstrap installation confidentiality', () => {
     const purpose = { kind: 'machine_rpc', method: RPC_METHODS.MACHINE_SETUP_PLAN,
       params,
       recipient: { machineId: 'receiver', installationId: 'receiver-installation' } } as const;
-    const credentials = { token: 'bob-private', secret: null, encryption: null };
+    const credentials = { token: 'bob-private', encryption: null };
     const sealed = bootstrap.sealExternalActionRequesterAccountContextV1({ authorization, credentials, purpose,
       installationPublicKey: receiver.publicKey, randomBytes: tweetnacl.randomBytes });
     const input = { authorization: sealed, purpose, machineId: 'receiver', installationId: 'receiver-installation',
@@ -593,7 +601,7 @@ describe('requester bootstrap installation confidentiality', () => {
       selectedDeploymentId: 'deployment', deploymentId: 'deployment', actionOperationId: 'operation' });
     const purpose = { kind: 'machine_rpc', method: 'daemon.deployments.child.v1', params: job,
       recipient: { machineId: job.machineId, installationId: job.installationId } } as const;
-    const credentials = { token: 'bob-private', secret: null, encryption: null };
+    const credentials = { token: 'bob-private', encryption: null };
     const sealed = bootstrap.sealExternalActionRequesterAccountContextV1({ authorization, credentials, purpose,
       installationPublicKey: receiver.publicKey, randomBytes: tweetnacl.randomBytes });
     const input = { authorization: sealed, purpose, machineId: job.machineId, installationId: job.installationId,
@@ -629,7 +637,7 @@ describe('requester bootstrap installation confidentiality', () => {
       const params = DeploymentChildRpcV1Schema.parse(fixture);
       const purpose = { kind: 'machine_rpc', method: 'daemon.deployments.child.v1', params,
         recipient: { machineId: placement.machineId, installationId: placement.installationId } } as const;
-      const credentials = { token: 'bob-private', secret: null, encryption: null };
+      const credentials = { token: 'bob-private', encryption: null };
       const sealed = bootstrap.sealExternalActionRequesterAccountContextV1({ authorization, credentials, purpose,
         installationPublicKey: receiver.publicKey, randomBytes: tweetnacl.randomBytes });
       expect(bootstrap.openExternalActionRequesterAccountContextV1({ authorization: sealed, purpose,
@@ -647,7 +655,7 @@ describe('requester bootstrap installation confidentiality', () => {
     } });
     const purpose = { kind: 'machine_rpc', method: RPC_METHODS.SESSION_SPAWN_NEW, params: request.input,
       recipient: { machineId: 'machine', installationId: 'recipient-installation' } } as const;
-    const credentials = { token: 'bob-private', secret: null, encryption: null };
+    const credentials = { token: 'bob-private', encryption: null };
     const sealed = bootstrap.sealExternalActionRequesterAccountContextV1({ authorization, credentials, purpose,
       installationPublicKey: recipient.publicKey, randomBytes: tweetnacl.randomBytes });
     const input = { authorization: sealed, purpose, machineId: 'machine', installationId: 'recipient-installation',
@@ -673,7 +681,7 @@ describe('requester bootstrap installation confidentiality', () => {
     } });
     const purpose = { kind: 'workspace_sync_prepare', controller: { machineId: 'controller', installationId: 'controller-installation' },
       request: { sourceWorkspaceRefId: 'source', targetWorkspaceRefId: 'target' } } as const;
-    const credentials = { token: 'bob-private', secret: null, encryption: null };
+    const credentials = { token: 'bob-private', encryption: null };
     const sealed = bootstrap.sealExternalActionRequesterAccountContextV1({ authorization, credentials, purpose,
       installationPublicKey: controller.publicKey, randomBytes: tweetnacl.randomBytes });
     expect(sealed.binding).toEqual(authorization.binding);
@@ -707,7 +715,7 @@ describe('requester bootstrap installation confidentiality', () => {
     const sealed = seal({ request: preflight, installationId: 'installation',
       installationPublicKey: installation.publicKey, randomBytes: tweetnacl.randomBytes });
     expect(JSON.stringify(sealed)).not.toContain(request.requesterBootstrap.credentials.token);
-    expect(JSON.stringify(sealed)).not.toContain(request.requesterBootstrap.credentials.secret);
+    expect(JSON.stringify(sealed)).not.toContain(request.requesterBootstrap.credentials.encryption.machineKey);
     const read = (value: unknown, installationId = 'installation') => open({ request: value, machineId: 'machine',
       installationId, installationPrivateKey: installation.secretKey });
     expect(read(sealed)).toEqual(preflight);
@@ -731,7 +739,7 @@ describe('requester bootstrap installation confidentiality', () => {
     const sealed = seal({ request: handoff, installationId: 'installation',
       installationPublicKey: installation.publicKey, randomBytes: tweetnacl.randomBytes });
     expect(JSON.stringify(sealed)).not.toContain(request.requesterBootstrap.credentials.token);
-    expect(JSON.stringify(sealed)).not.toContain(request.requesterBootstrap.credentials.secret);
+    expect(JSON.stringify(sealed)).not.toContain(request.requesterBootstrap.credentials.encryption.machineKey);
     const read = (value: unknown, installationId = 'installation', installationPrivateKey = installation.secretKey) =>
       open({ request: value, machineId: 'machine', installationId, installationPrivateKey });
     expect(read(sealed)).toEqual(handoff);
@@ -754,7 +762,7 @@ describe('requester bootstrap installation confidentiality', () => {
       installationId: 'installation', installationPublicKey: installation.publicKey, randomBytes: tweetnacl.randomBytes });
     expect(bootstrap.SessionRequesterBootstrapRpcRequestV1Schema.safeParse(sealed).success).toBe(true);
     expect(JSON.stringify(sealed)).not.toContain(request.requesterBootstrap.credentials.token);
-    expect(JSON.stringify(sealed)).not.toContain(request.requesterBootstrap.credentials.secret);
+    expect(JSON.stringify(sealed)).not.toContain(request.requesterBootstrap.credentials.encryption.machineKey);
     const open = (value: unknown, installationId = 'installation') => bootstrap.openSessionRequesterBootstrapRpcRequestV1({
       request: value, machineId: 'machine', installationId, installationPrivateKey: installation.secretKey });
     expect(open(sealed)).toEqual(scoped);
@@ -771,7 +779,7 @@ describe('requester bootstrap installation confidentiality', () => {
       installationId: 'installation', installationPublicKey: installation.publicKey, randomBytes: tweetnacl.randomBytes });
     expect(bootstrap.SessionRequesterBootstrapRpcRequestV1Schema.safeParse(sealed).success).toBe(true);
     expect(JSON.stringify(sealed)).not.toContain(request.requesterBootstrap.credentials.token);
-    expect(JSON.stringify(sealed)).not.toContain(request.requesterBootstrap.credentials.secret);
+    expect(JSON.stringify(sealed)).not.toContain(request.requesterBootstrap.credentials.encryption.machineKey);
     const open = (value: unknown, installationId = 'installation', installationPrivateKey = installation.secretKey) =>
       bootstrap.openSessionRequesterBootstrapRpcRequestV1({ request: value, machineId: 'machine', installationId, installationPrivateKey });
     expect(open(sealed)).toEqual(request);

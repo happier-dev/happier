@@ -459,7 +459,7 @@ it.each(['active', 'warning', 'failed', 'nativeFailure', 'discoveryFailure', 'op
             admittedMachineRole: 'manage', requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
             deploymentPreparationAdmission: projectExternalActionDeploymentPreparationEnvelopeAdmissionV1({ actionId: rootAction, envelope }) } });
         const requester = await prepareRequesterAccountActionContext({ authorization: sealExternalActionRequesterAccountContextV1({ authorization,
-            purpose: { kind: 'external_action' }, credentials: { token: credentials.token, secret: null, encryption: null },
+            purpose: { kind: 'external_action' }, credentials: { token: credentials.token, encryption: null },
             installationPublicKey: Buffer.from(identity.publicKey, 'base64url'), randomBytes: size => new Uint8Array(randomBytes(size)) }),
             purpose: { kind: 'external_action' }, machineId: 'target', installationId: identity.installationId,
             installationPrivateKey: Buffer.from(identity.privateKey, 'base64url'), serverId: 'srv_template_home', serverIdentityId: 'srv_template_home',
@@ -517,7 +517,7 @@ it.each(['active', 'warning', 'failed', 'nativeFailure', 'discoveryFailure', 'op
                         actionId: 'deployments.templates.instantiate', envelope: retryEnvelope }) } });
                 const retryRequester = await prepareRequesterAccountActionContext({ authorization: sealExternalActionRequesterAccountContextV1({
                     authorization: retryAuthorization, purpose: { kind: 'external_action' },
-                    credentials: { token: credentials.token, secret: null, encryption: null },
+                    credentials: { token: credentials.token, encryption: null },
                     installationPublicKey: Buffer.from(identity.publicKey, 'base64url'), randomBytes: size => new Uint8Array(randomBytes(size)) }),
                     purpose: { kind: 'external_action' }, machineId: 'target', installationId: identity.installationId,
                     installationPrivateKey: Buffer.from(identity.privateKey, 'base64url'), serverId: 'srv_template_home', serverIdentityId: 'srv_template_home',

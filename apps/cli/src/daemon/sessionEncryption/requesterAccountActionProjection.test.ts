@@ -46,7 +46,7 @@ import { join } from 'node:path';
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
 import { publishServerHttpRuntimeOrigin, resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { encodeRequesterCredentials, encodeStoredCredentials } from '@/persistence';
+import { encodeRequesterCredentials } from '@/persistence';
 import { createActionExecutor, computeExternalActionRequestEnvelopeDigestV1,
   sealExternalActionRequestV2, openExternalActionRequestV2, openExternalActionResponseV2 } from '@happier-dev/protocol/actions';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
@@ -577,7 +577,7 @@ describe('admitted requester Action projection', () => {
         const sealed = sealExternalActionRequesterAccountContextV1({ authorization: root,
           purpose: { kind: 'machine_rpc', method: RPC_METHODS.SESSION_SPAWN_NEW, params: value,
             recipient: { machineId: 'model-machine', installationId: installation.installationId } },
-          credentials: { token: 'bob-private', secret: null, encryption: null },
+          credentials: { token: 'bob-private', encryption: null },
           installationPublicKey: keys.publicKey, randomBytes: nacl.randomBytes });
         const execution = createExternalActionMachineRpcExecution({ context: { externalActionExecutionAuthorization: sealed,
           externalActionTarget: root.binding.target }, effectActionId: 'session.spawn_new', installationId: root.binding.installationId,
@@ -889,7 +889,7 @@ describe('admitted requester Action projection', () => {
         requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) } });
       const purpose = { kind: 'external_action' } as const;
       const sealed = sealExternalActionRequesterAccountContextV1({ authorization: root, purpose,
-        credentials: encodeStoredCredentials(credentials), installationPublicKey: Buffer.from(installation.publicKey, 'base64url'),
+        credentials: encodeRequesterCredentials(credentials), installationPublicKey: Buffer.from(installation.publicKey, 'base64url'),
         randomBytes: nacl.randomBytes });
       // Exercise the exact production initializer without starting a daemon or its background services.
       // This remains sensitive to either call site being wired to the canonical identity address.
@@ -1038,7 +1038,7 @@ describe('admitted requester Action projection', () => {
     const purpose = { kind: 'machine_rpc', method: 'projects.worker.status', params: {},
       recipient: { machineId: 'recipient', installationId: installed.installationId } } as const;
     const sealed = sealExternalActionRequesterAccountContextV1({ authorization: root, purpose,
-      credentials: { token: 'bob-private', secret: null, encryption: null }, installationPublicKey: keys.publicKey,
+      credentials: { token: 'bob-private', encryption: null }, installationPublicKey: keys.publicKey,
       randomBytes: nacl.randomBytes });
     vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
       if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: 'bob' } };
@@ -1119,7 +1119,7 @@ describe('admitted requester Action projection', () => {
     const purpose = { kind: 'machine_rpc', method: RPC_METHODS.DAEMON_DEPLOYMENT_CHILD, params: job,
       recipient: { machineId: 'receiver', installationId: installed.installationId } } as const;
     const sealed = sealExternalActionRequesterAccountContextV1({ authorization: root, purpose,
-      credentials: { token: 'bob-private', secret: null, encryption: null }, installationPublicKey: keys.publicKey,
+      credentials: { token: 'bob-private', encryption: null }, installationPublicKey: keys.publicKey,
       randomBytes: nacl.randomBytes });
     const packet = { method: `receiver:${RPC_METHODS.DAEMON_DEPLOYMENT_CHILD}`, requestId: 'child-request', params: job,
       originalActionEnvelope: envelope, externalActionExecution: { v: 1 as const, authorization: sealed,
@@ -1344,7 +1344,7 @@ describe('admitted requester Action projection', () => {
     const purpose = { kind: 'workspace_sync_prepare', controller: { machineId: 'controller', installationId: installation.installationId },
       request: params } as const;
     const sealed = sealExternalActionRequesterAccountContextV1({ authorization: root, purpose,
-      credentials: { token: 'bob-private', secret: null, encryption: null }, installationPublicKey: controller.publicKey,
+      credentials: { token: 'bob-private', encryption: null }, installationPublicKey: controller.publicKey,
       randomBytes: nacl.randomBytes });
     const routing = WorkspaceSyncSourceRoutingV1Schema.parse({ v: 1, phase: 'prepare', operationId: 'source-sync',
       accountServerId: 'stable-home', sourceMachineId: 'source', sourceRootPath: '/source', originalActionEnvelope: envelope,
@@ -1480,7 +1480,7 @@ describe('admitted requester Action projection', () => {
     const purpose = { kind: 'workspace_sync_prepare', controller: { machineId: 'controller', installationId: 'controller-installation' },
       request: { sourceWorkspaceRefId: 'source', targetWorkspaceRefId: 'target' } } as const;
     const sealed = sealExternalActionRequesterAccountContextV1({ authorization: root, purpose,
-      credentials: { token: 'bob-private', secret: null, encryption: null }, installationPublicKey: controller.publicKey,
+      credentials: { token: 'bob-private', encryption: null }, installationPublicKey: controller.publicKey,
       randomBytes: nacl.randomBytes });
     vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
       if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: 'bob' } };
@@ -1563,7 +1563,7 @@ describe('admitted requester Action projection', () => {
     const purpose = { kind: 'external_action' } as const;
     const ingress = new AbortController();
     const sealed = sealExternalActionRequesterAccountContextV1({ authorization: root, purpose,
-      credentials: { ...encodeStoredCredentials(credentials), token: credentials.token },
+      credentials: { ...encodeRequesterCredentials(credentials), token: credentials.token },
       installationPublicKey: installation.publicKey, randomBytes: nacl.randomBytes });
     const prepared = await requesterAccountOwner.prepareInstalledRequesterAccountActionContext({ authorization: sealed,
       purpose, machineId: 'machine', serverId: 'home-profile', serverHttpBaseUrl: 'https://requester-home.test',
@@ -1628,7 +1628,7 @@ describe('admitted requester Action projection', () => {
     })), { status: 200, headers: { 'Content-Type': 'application/json' } }));
     const purpose = { kind: 'managed_finite_wake' as const, target: wakeTarget };
     const sealed = sealExternalActionRequesterAccountContextV1({ authorization: root, purpose,
-      credentials: { token: 'bob-ordinary', secret: null, encryption: null }, installationPublicKey: installation.publicKey,
+      credentials: { token: 'bob-ordinary', encryption: null }, installationPublicKey: installation.publicKey,
       randomBytes: nacl.randomBytes });
     const cancel = new AbortController();
     const prepare = (wake = purpose) => requesterAccountOwner.prepareInstalledRequesterAccountActionContext({ authorization: sealed,
@@ -1679,7 +1679,7 @@ describe('admitted requester Action projection', () => {
       features: {}, capabilities: { serverIdentity: { serverIdentityId: homeIdentity } },
     })), { status: 200, headers: { 'Content-Type': 'application/json' } }));
     const sealed = sealExternalActionRequesterAccountContextV1({ authorization: root, purpose,
-      credentials: { token: 'bob-ordinary', secret: null, encryption: null }, installationPublicKey: installation.publicKey,
+      credentials: { token: 'bob-ordinary', encryption: null }, installationPublicKey: installation.publicKey,
       randomBytes: nacl.randomBytes });
     // Use the installed owner; only HTTP and installation/origin OS boundaries
     // are substituted, including the real split of root and local custody.

@@ -183,7 +183,7 @@ describe('raw execution.run.send resume custody (guest on owner Machine, isolati
     const purpose = { kind: 'external_action' } as const;
     const credentials = home.bootstrap.credentials;
     const authorization = sealExternalActionRequesterAccountContextV1({ authorization: binding, purpose,
-      credentials: { token: credentials.token, secret: null, encryption: null },
+      credentials: { token: credentials.token, encryption: null },
       installationPublicKey: Buffer.from(home.installation.publicKey, 'base64url'), randomBytes: nacl.randomBytes });
     const ingress = new AbortController();
     const current = async () => home.isHomeCurrent();

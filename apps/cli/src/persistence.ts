@@ -718,7 +718,7 @@ export function preserveStoredCredentialsHostContext(source: unknown, normalized
   return normalized;
 }
 
-/** Canonical access.key representation; private Session custody uses the same codec. */
+/** Decode access.key or a validated subset of its fields from private Session custody. */
 export function decodeStoredCredentials(value: unknown): StoredCredentials | null {
   const parsed = credentialsSchema.safeParse(value);
   if (!parsed.success || !parsed.data.token) return null;
@@ -793,12 +793,15 @@ export function encodeStoredCredentials(credentials: StoredCredentials): z.infer
  * Home-signed Account mode. A recovery secret leaves as the Account content key
  * it derives: the secret signs in as the Account and survives sign-out.
  */
-export function encodeRequesterCredentials(credentials: StoredCredentials): Omit<ReturnType<typeof encodeStoredCredentials>, 'custody'> {
+export function encodeRequesterCredentials(credentials: StoredCredentials): Pick<ReturnType<typeof encodeStoredCredentials>, 'token' | 'encryption'> {
   if (readAccountE2eeCustody(credentials) !== 'active') return { token: credentials.token };
-  if (credentials.encryption?.type !== 'legacy') return encodeStoredCredentials(credentials);
-  const machineKey = resolveAccountContentSecretKey(credentials.encryption);
-  return encodeStoredCredentials({ token: credentials.token,
-    encryption: { type: 'dataKey', publicKey: tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey, machineKey } });
+  let contentKey = credentials.encryption;
+  if (contentKey?.type === 'legacy') {
+    const machineKey = resolveAccountContentSecretKey(contentKey);
+    contentKey = { type: 'dataKey', publicKey: tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey, machineKey };
+  }
+  const { token, encryption } = encodeStoredCredentials({ token: credentials.token, encryption: contentKey });
+  return encryption ? { token, encryption } : { token };
 }
 
 export class CliReloginRequiredError extends Error {

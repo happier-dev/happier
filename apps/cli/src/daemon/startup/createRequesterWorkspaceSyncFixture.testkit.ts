@@ -62,7 +62,7 @@ import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { authorizeMachineRpcRequest, verifyMachineRpcAdmissionCurrent,
   doesWorkspaceSyncTargetRequestMatchRouting, readWorkspaceSyncTargetMethod,
   doesWorkspaceSyncSourceRootMatchRouting, doesWorkspaceSyncSourceWriterTargetRootMatchRouting } from '@/api/machine/machineRpcAuthorization';
-import { encodeStoredCredentials, readStoredCredentialsForServerId, writeStoredCredentialsForServerId } from '@/persistence';
+import { encodeRequesterCredentials, readStoredCredentialsForServerId, writeStoredCredentialsForServerId } from '@/persistence';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { dispatchOriginalAccountAction, projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
 import { createPlainProjectAccountRefRow, createProjectAccountRowsHttpBoundary } from '@/workspaces/projectAccountRows.testkit';
@@ -775,7 +775,7 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
     const sealed = sealExternalActionRequesterAccountContextV1({ authorization: wire,
       invocation: hostInvocation,
       purpose: { kind: 'machine_rpc', method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE, params: invocation },
-      credentials: encodeStoredCredentials(credentials), installationPublicKey: Buffer.from(installed.installation.publicKey, 'base64url'),
+      credentials: encodeRequesterCredentials(credentials), installationPublicKey: Buffer.from(installed.installation.publicKey, 'base64url'),
       randomBytes: tweetnacl.randomBytes });
     const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: sealed,
       serverId: installed.serverId, serverIdentityId: installed.homeServerIdentityId, serverHttpBaseUrl: installed.serverHttpBaseUrl,

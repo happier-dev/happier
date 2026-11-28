@@ -12,7 +12,7 @@ import { dispatchLocalManagedMachineSetup, dispatchLocalManagedMachineAdminAcces
     dispatchLocalManagedMachineAgentIsolation, dispatchManagedMachineAgentIsolation, createExternalActionMachineRpcExecution } from './externalActionExecutionAuthorization';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { projectApiTokenSessionSpawnAdmissionV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
-import { encodeStoredCredentials, updateSettings, writeStoredCredentialsForServerId, readStoredCredentialsForServerId,
+import { encodeRequesterCredentials, updateSettings, writeStoredCredentialsForServerId, readStoredCredentialsForServerId,
     removeStoredCredentialsForServerId, readStoredCredentials, sameStoredCredentials } from '@/persistence';
 import { configuration } from '@/configuration';
 import { withCliApiToken } from '@/auth/cliApiToken';
@@ -535,7 +535,7 @@ describe('managed continuation through the ordinary public Action transport', ()
                 const sealed = sealExternalActionRequesterAccountContextV1({ authorization,
                     purpose: { kind: 'machine_rpc', method: RPC_METHODS.MACHINE_SETUP_PLAN, params,
                         recipient: { machineId: child.machineId, installationId: installation.installationId } },
-                    credentials: { secret: null, ...encodeStoredCredentials(credentials) },
+                    credentials: encodeRequesterCredentials(credentials),
                     installationPublicKey: keys.publicKey, randomBytes: nacl.randomBytes });
                 const execution = createExternalActionMachineRpcExecution({ context: {
                     externalActionExecutionAuthorization: sealed, externalActionTarget: target }, effectActionId: 'machines.setup.plan',

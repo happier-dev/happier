@@ -9,7 +9,7 @@ import { readOrCreateInstallationIdentity } from '@/daemon/identity/store';
 import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { admitRequesterAccountActionContext, prepareRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
-import { encodeStoredCredentials, type StoredCredentials } from '@/persistence';
+import { decodeStoredCredentials, encodeRequesterCredentials, type StoredCredentials } from '@/persistence';
 import { sealExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
@@ -82,7 +82,7 @@ it.each([
       expect(requester).not.toBeNull();
       if (!requester) throw new Error('Requester admission unavailable');
       const carried = sealExternalActionRequesterAccountContextV1({ authorization, purpose: { kind: 'external_action' },
-        credentials: { ...encodeStoredCredentials(credentials), token: credentials.token },
+        credentials: encodeRequesterCredentials(credentials),
         installationPublicKey: Buffer.from(installation.publicKey, 'base64url'), randomBytes: nacl.randomBytes });
       if (sealed) workflowRequester = await runWithServerHttpBaseUrl(endpoint, () => admitRequesterAccountActionContext({
         authorization: carried, credentials, serverId: configuration.activeServerId, serverIdentityId: homeId,
@@ -113,7 +113,9 @@ it.each([
       if (sealed && workflow) expect(prepared?.authorization.requesterAccountContext).toEqual(carried.requesterAccountContext);
       else expect(prepared?.authorization.requesterAccountContext).toBeUndefined();
       if (sealed) {
-        expect(readRequesterAccountActionContext(prepared?.authorization)?.credentials).toMatchObject(credentials);
+        const expected = decodeStoredCredentials(encodeRequesterCredentials(credentials))!;
+        expect(readRequesterAccountActionContext(prepared?.authorization)?.credentials)
+          .toMatchObject({ token: expected.token, encryption: expected.encryption });
       } else expect(readRequesterAccountActionContext(prepared?.authorization)).toBeNull();
       if (!prepared) throw new Error('Expected replay authorization');
       const action = { pluginId: 'acme.external', localId: 'upload' };

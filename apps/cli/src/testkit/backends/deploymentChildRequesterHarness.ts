@@ -19,7 +19,7 @@ import { createExternalActionMachineRpcExecution } from '@/api/externalActionExe
 import { createMachineContentCodec } from '@/api/machine/machineStoredContent';
 import * as installationStore from '@/daemon/identity/store';
 import { prepareInstalledRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
-import { encodeStoredCredentials, type StoredCredentials } from '@/persistence';
+import { encodeRequesterCredentials, type StoredCredentials } from '@/persistence';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 
 /** Real closed producers and requester admission; only the installation file is substituted. */
@@ -94,7 +94,7 @@ export async function createDeploymentChildRequesterHarness(options: Readonly<{
     const purpose = { kind: 'machine_rpc', method: RPC_METHODS.DAEMON_DEPLOYMENT_CHILD, params: job,
         recipient: { machineId, installationId: installed.installationId } } as const;
     const sealed = sealExternalActionRequesterAccountContextV1({ authorization: root, purpose,
-        credentials: encodeStoredCredentials(bob), installationPublicKey: receiver.publicKey, randomBytes: nacl.randomBytes });
+        credentials: encodeRequesterCredentials(bob), installationPublicKey: receiver.publicKey, randomBytes: nacl.randomBytes });
     const receiverEncryption = encryptionMode === 'plain' ? { encryptionMode: 'plain' as const }
         : { encryptionKey: new Uint8Array(32).fill(76), encryptionVariant: 'dataKey' as const };
     const receiverCodec = createMachineContentCodec(receiverEncryption);

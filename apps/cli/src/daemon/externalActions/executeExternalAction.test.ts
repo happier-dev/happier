@@ -68,7 +68,7 @@ import { createRequesterAccountContextRetiredError } from '../sessionEncryption/
 import { sealExternalActionRequesterAccountContextV1, sealManagedControllerActionCodecV1, type ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { ProjectAccountRowV1Schema, ProjectAccountRowMutationRequestV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
-import { encodeStoredCredentials } from '@/persistence';
+import { encodeRequesterCredentials } from '@/persistence';
 import { prepareAccountSettingsV2Content } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
 import { computeAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
@@ -872,7 +872,7 @@ describe('executeExternalAction', () => {
       ...binding, accountEncryptionMode: 'e2ee', custodianAccountId: 'custodian', machineId: target.machineId,
       installationId: 'installation', requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
       approvalDecisionAdmission: envelope.approvalDecisionAdmission,
-    } }, credentials: encodeStoredCredentials(credentials), purpose: { kind: 'external_action' },
+    } }, credentials: encodeRequesterCredentials(credentials), purpose: { kind: 'external_action' },
       invocation: { caller: { kind: 'host' }, surface: 'cli', authority: 'present_user' },
       installationPublicKey: installation.publicKey, randomBytes: tweetnacl.randomBytes });
     const settings = prepareAccountSettingsV2Content({ credentials, raw: {}, envelopeKind: 'encrypted' });
@@ -970,7 +970,7 @@ describe('executeExternalAction', () => {
     const authorization = sealExternalActionRequesterAccountContextV1({ authorization: { v: 1, token: 'home-terminal-root', binding: {
       ...binding, accountEncryptionMode: 'e2ee', custodianAccountId: 'alice', machineId: target.machineId,
       installationId: 'alice-installation', requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
-    } }, credentials: encodeStoredCredentials(credentials), purpose: { kind: 'external_action' },
+    } }, credentials: encodeRequesterCredentials(credentials), purpose: { kind: 'external_action' },
       installationPublicKey: installation.publicKey, randomBytes: tweetnacl.randomBytes });
     const settings = prepareAccountSettingsV2Content({ credentials, raw: {}, envelopeKind: 'encrypted' });
     let effects = 0;
@@ -1065,7 +1065,7 @@ describe('executeExternalAction', () => {
         machineId: installed.machineId, installationId: installed.installationId, accountEncryptionMode: 'e2ee',
         environmentId: projectExternalActionDeploymentMetadataEnvironmentIdV1(actionId, input),
         requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) },
-    }, credentials: encodeStoredCredentials(credentials), invocation, purpose: { kind: 'external_action' },
+    }, credentials: encodeRequesterCredentials(credentials), invocation, purpose: { kind: 'external_action' },
       installationPublicKey: installation.publicKey, randomBytes: tweetnacl.randomBytes });
     const resource = await createResourceDataKey({ credentials, mode: 'e2ee' });
     if (resource.mode !== 'e2ee') throw new Error('Expected encrypted Account Artifact fixture');

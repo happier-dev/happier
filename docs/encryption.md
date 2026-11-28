@@ -115,6 +115,12 @@ directly with the recovery secret (envelope-less Sessions from recovery-secret
 CLIs, pre-0.2 fallback-key Settings secrets) does not open on another person's
 Machine, as for any paired device.
 
+The host refuses requester bootstrap and custody credentials that carry a
+recovery secret. Custody files from earlier 0.3 development builds can still
+contain that secret on disk. The host rejects those records when it opens them.
+After the Machine owner removes a stale record, the requester can supply fresh
+credentials on the next Session or Action.
+
 MI-1 uses the shared `happier-agent` UID for members and the owner's isolated
 Agent. Direct-delivered keys, selected Provider credentials and readable Session
 MCP context can be copied between processes using that UID. Protection of

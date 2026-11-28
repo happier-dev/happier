@@ -18,7 +18,7 @@ import type { ManagedWorkspaceRefV2 } from '@happier-dev/protocol/workspaces/wor
 import { deriveWorkspaceSyncRelationshipId } from '@happier-dev/protocol/workspaces/workspaceSyncAdmissionV1';
 import { readSessionAccessProjectionRoleV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { configuration } from '@/configuration';
-import { bindRequesterSessionCredentialScope, decodeStoredCredentials, encodeStoredCredentials, preserveStoredCredentialsHostContext, sameStoredCredentials, type StoredCredentials } from '@/persistence';
+import { bindRequesterSessionCredentialScope, decodeStoredCredentials, encodeRequesterCredentials, preserveStoredCredentialsHostContext, sameStoredCredentials, type StoredCredentials } from '@/persistence';
 import { fetchAccountProfile } from '@/api/accountProfile';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentness';
 import { acquireRequesterAccountEncryptionCurrentness, readRequesterAccountEncryptionCurrentness, waitForObservation,
@@ -1231,7 +1231,7 @@ export async function createRequesterSessionCredentialCustody(input: RequesterSe
     ...(input.executionIdentity ? { executionIdentity: input.executionIdentity } : {}),
     ...(input.automationId ? { automationId: input.automationId } : {}),
     ...(input.automationScopePending ? { automationScopePending: true } : {}),
-    attribution: input.attribution, credentials: encodeStoredCredentials(input.credentials),
+    attribution: input.attribution, credentials: encodeRequesterCredentials(input.credentials),
     ...(input.homeServerIdentityId ? { homeServerIdentityId: input.homeServerIdentityId } : {}),
     ...(input.machineAdmission ? { machineAdmission: { custodianAccountId: input.machineAdmission.custodianAccountId,
       ...(input.machineAdmission.role ? { role: input.machineAdmission.role } : {}),
@@ -1406,7 +1406,7 @@ export async function createWorkspaceSyncManagedTargetCredentialCustody(input: W
     scope: 'workspace_sync_relationship', endpointRole: 'managed_target' };
   const contents = JSON.stringify(WorkspaceSyncManagedTargetCustodySchema.parse({ v: 2,
     sessionId: binding.sessionId, attribution: binding.attribution, workspace: binding.workspace,
-    scope: binding.scope, endpointRole: binding.endpointRole, credentials: encodeStoredCredentials(input.credentials),
+    scope: binding.scope, endpointRole: binding.endpointRole, credentials: encodeRequesterCredentials(input.credentials),
     ...(input.homeServerIdentityId ? { homeServerIdentityId: input.homeServerIdentityId } : {}),
     ...(input.sourceExecutionIdentity ? { sourceExecutionIdentity: input.sourceExecutionIdentity } : {}) }));
   return await writeRequesterCredentialCustody({ ...binding,

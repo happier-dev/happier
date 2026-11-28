@@ -998,7 +998,7 @@ describe('installed deployment storage and target composition', () => {
                 requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(createEnvelope), workflowActionOrigin: { runId, requestId },
             } });
             const sealed = sealExternalActionRequesterAccountContextV1({ authorization: signed,
-                purpose: { kind: 'external_action' }, credentials: { token: memberToken, secret: null, encryption: null },
+                purpose: { kind: 'external_action' }, credentials: { token: memberToken, encryption: null },
                 installationPublicKey: receiverKeys.publicKey, randomBytes: length => new Uint8Array(randomBytes(length)),
             });
             const admitted = await prepareRequesterAccountActionContext({ authorization: sealed, purpose: { kind: 'external_action' },
@@ -3237,7 +3237,7 @@ describe('installed deployment storage and target composition', () => {
                         actionId: 'deployments.deploy', requestId: envelope.requestId, requestEnvelopeDigest,
                         environmentId: environment.environment.id, source: { id: environment.environment.projectSourceId, revision: 1 } }) } : {}) } });
                 if (rootSourceForeign || rootApproval) authorization = sealExternalActionRequesterAccountContextV1({ authorization,
-                    purpose: { kind: 'external_action' }, credentials: { token: credentials.token, secret: null, encryption: null },
+                    purpose: { kind: 'external_action' }, credentials: { token: credentials.token, encryption: null },
                     installationPublicKey: identity.publicKey, randomBytes: length => new Uint8Array(randomBytes(length)) });
                 requesterPreparation = await prepareRequesterAccountActionContext({ authorization, purpose: { kind: 'external_action' },
                     machineId: 'machine-a', installationId: 'installation-a', installationPrivateKey: identity.secretKey,
@@ -5659,7 +5659,7 @@ describe('installed deployment storage and target composition', () => {
                                 environmentId: child.input.environmentId, source: { id: environment.environment.projectSourceId, revision: 1 } }),
                         } });
                         const authorization = sealExternalActionRequesterAccountContextV1({ authorization: root, purpose,
-                            credentials: { token: credentials.token, secret: null, encryption: null },
+                            credentials: { token: credentials.token, encryption: null },
                             installationPublicKey: keys.publicKey, randomBytes: tweetnacl.randomBytes });
                         const prepared = await prepareRequesterAccountActionContext({ authorization, purpose,
                             deploymentChildExecution: { method: `${child.machineId}:${purpose.method}`, requestId: 'received-prepare', params: child,
@@ -5708,7 +5708,7 @@ describe('installed deployment storage and target composition', () => {
                     } });
                     const authorization = teamReceiptHistory ? sealExternalActionRequesterAccountContextV1({
                         authorization: rootAuthorization, purpose: { kind: 'external_action' },
-                        credentials: { token: memberToken, secret: null, encryption: null },
+                        credentials: { token: memberToken, encryption: null },
                         installationPublicKey: keys.publicKey, randomBytes: length => new Uint8Array(randomBytes(length)),
                     }) : rootAuthorization;
                     requesterPreparation = await prepareRequesterAccountActionContext({ authorization, purpose: { kind: 'external_action' },
@@ -6036,7 +6036,7 @@ describe('installed deployment storage and target composition', () => {
                             environmentId: environment.environment.id, source: { id: environment.environment.projectSourceId, revision: 1 } }),
                     } });
                     const authorization = sealExternalActionRequesterAccountContextV1({ authorization: root,
-                        purpose: { kind: 'external_action' }, credentials: { token, secret: null, encryption: null },
+                        purpose: { kind: 'external_action' }, credentials: { token, encryption: null },
                         installationPublicKey: keys.publicKey, randomBytes: length => new Uint8Array(randomBytes(length)) });
                     const prepared = await prepareRequesterAccountActionContext({ authorization, purpose: { kind: 'external_action' },
                         machineId: 'machine-a', installationId: 'installation-a', installationPrivateKey: keys.secretKey,

@@ -1,5 +1,6 @@
 import { createProviderAccountUsageStore } from '@/daemon/connectedServices/accountUsage/store';
 import axios from 'axios';
+import tweetnacl from 'tweetnacl';
 import { spawn } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -20,7 +21,7 @@ import { SessionMetadataTuplePatchV1Schema, createAccountScopedCryptoMaterialSna
   convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
   openSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol';
 import { encryptSessionPayload } from '@/session/transport/encryption/sessionEncryptionContext';
-import { encodeStoredCredentials } from '@/persistence';
+import { encodeRequesterCredentials } from '@/persistence';
 import { admitRequesterSessionBootstrap, createRequesterSessionRuntimeContextResolver, releaseUnretainedRequesterSessionRuntimeContext,
   type AdmittedRequesterSessionBootstrap } from './requesterSessionCredentials';
 import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
@@ -34,10 +35,13 @@ it.each(['before_exit', 'during_exit', 'before_cleanup_registration', 'collision
     const requesterToken = `e30.${Buffer.from(JSON.stringify({ sub: 'bob', tokenEpoch: 1,
       provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.fixture`;
     const accountMode = replacement === 'stop_publication_e2ee' ? 'e2ee' : 'plain';
-    const material = { type: 'legacy' as const, secret: new Uint8Array(32).fill(23) };
+    const machineKey = new Uint8Array(32).fill(23);
+    const material = { type: 'dataKey' as const, machineKey, publicKey: tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey };
     const contentKeyFingerprint = accountMode === 'e2ee'
       ? convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(
-        createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee', material }).contentPublicKeyFingerprint)
+        createAccountScopedCryptoMaterialSnapshotV1({
+          accountEncryptionMode: 'e2ee', material, dataKeyPublicKey: material.publicKey,
+        }).contentPublicKeyFingerprint)
       : null;
     const channel = await createRequesterCurrentnessSocketHarness();
     let releaseExitCleanup: (() => void) | undefined;
@@ -73,8 +77,8 @@ it.each(['before_exit', 'during_exit', 'before_cleanup_registration', 'collision
       return { status: 200, data: url.endsWith('/v2/sessions/bob-session')
         ? { session: createSessionRecordFixture({ id: 'bob-session', encryptionMode: accountMode,
           metadataLayoutVersion: 0, metadataVersion: 1,
-          metadata: accountMode === 'e2ee' ? encryptSessionPayload({ ctx: { encryptionKey: material.secret,
-            encryptionVariant: 'legacy' }, payload: metadata }) : JSON.stringify(metadata), dataEncryptionKey: null, share: null }) }
+          metadata: accountMode === 'e2ee' ? encryptSessionPayload({ ctx: { encryptionKey: material.machineKey,
+            encryptionVariant: 'dataKey' }, payload: metadata }) : JSON.stringify(metadata), dataEncryptionKey: null, share: null }) }
         : url.endsWith('/profile') ? { id: 'bob' }
         : url.endsWith('/currentness')
           ? { mode: accountMode, version: 1, signingKeyFingerprint: null, contentKeyFingerprint, updatedAt: 1,
@@ -98,7 +102,7 @@ it.each(['before_exit', 'during_exit', 'before_cleanup_registration', 'collision
       const switchCoordinator = host.runtime.connectedServiceAuthGroupPreTurnSwitchCoordinator;
       const admitBootstrap = async () => {
         const admitted = await admitRequesterSessionBootstrap({
-          bootstrap: { v: 1, disposition: 'ordinary_requester', credentials: encodeStoredCredentials({ token: requesterToken,
+          bootstrap: { v: 1, disposition: 'ordinary_requester', credentials: encodeRequesterCredentials({ token: requesterToken,
             encryption: accountMode === 'e2ee' ? material : null }) },
           existingSessionId: 'bob-session',
           boundary: { serverId: 'bob-home', serverHttpBaseUrl: 'https://bob-home.test', happyHomeDir: directory },

@@ -630,7 +630,7 @@ export async function callExactMachineRpc(params: Readonly<{
           if (bootstrap.installationId !== machineTarget.installationId) throw new MachineRpcTargetNotCurrentError(machineId, 'installation_mismatch');
         } else if (privateRequest.kind === 'requester_session_handoff_preflight_bootstrap_v1'
           || privateRequest.kind === 'requester_session_handoff_workspace_capture_v1'
-          || machineCodec.mode === 'plain' && (bootstrap.credentials.secret || bootstrap.credentials.encryption)) {
+          || machineCodec.mode === 'plain' && bootstrap.credentials.encryption) {
           const installationId = machineTarget.installationId;
           const encodedKey = machineTarget.installationPublicKey;
           if (!installationId || typeof encodedKey !== 'string') throw new MachineRpcTargetNotCurrentError(machineId, 'installation_key_unavailable');

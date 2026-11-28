@@ -40,7 +40,7 @@ import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requ
 import type { PrepareExternalActionRequesterAccountContext } from '@/daemon/externalActions/executeExternalAction';
 import { openExternalActionRequesterAccountContextV1, sealExternalActionRequesterAccountContextV1,
   type ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
-import { encodeStoredCredentials, type StoredCredentials } from '@/persistence';
+import { encodeRequesterCredentials, type StoredCredentials } from '@/persistence';
 import { prepareAccountSettingsV2Content } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
 import { verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externalActionExecutionAuthorization';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
@@ -628,7 +628,7 @@ it.each(['plain', 'e2ee'] as const)('admits arbitrary %s requester custody throu
   const machineKey = new Uint8Array(32).fill(7);
   const credentials: StoredCredentials = { token: `fixture.${Buffer.from(JSON.stringify({ sub: 'bob' })).toString('base64url')}.signature`, encryption: mode === 'plain' ? null
     : { type: 'legacy', secret: new Uint8Array(32).fill(29) } };
-  const encodedCredentials = { ...encodeStoredCredentials(credentials), token: credentials.token };
+  const encodedCredentials = { ...encodeRequesterCredentials(credentials), token: credentials.token };
   const method = 'machine:machines.managed.list';
   const purposeMethod = 'machines.managed.list';
   const params = { homeId: 'home' };

@@ -79,7 +79,7 @@ import { promisify } from 'node:util';
 import { buildScopedProcessEnv } from '@/utils/processEnv/buildScopedProcessEnv';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
-import { bindRequesterSessionCredentialScope, decodeStoredCredentials, encodeStoredCredentials, sameStoredCredentials, type Credentials } from '@/persistence';
+import { bindRequesterSessionCredentialScope, decodeStoredCredentials, encodeRequesterCredentials, encodeStoredCredentials, sameStoredCredentials, type Credentials } from '@/persistence';
 import { createTrackedSessionHandoffCoordinator } from '@/daemon/actionOperations/createTrackedSessionHandoffCoordinator';
 import { createWorkspaceSyncHandoffAdapter } from '@/workspaces/sync/workspaceSyncHandoffAdapter';
 import { WorkspaceSyncController } from '@/workspaces/sync/workspaceSyncController';
@@ -495,6 +495,37 @@ async function home(options: Readonly<{ sessionId?: string; creationMachineId?: 
 }
 
 describe('requester Session lifecycle custody', () => {
+  it('refuses a stale recovery-secret bootstrap at the registered Session RPC', async () => {
+    const host = await home({ encryptionSecret: new Uint8Array(32).fill(23) });
+    const rpc = new RpcHandlerManager({ scopePrefix: 'machine', encryptionMode: 'e2ee',
+      encryptionKey: new Uint8Array(32).fill(8), encryptionVariant: 'dataKey', logger: () => {},
+      authorizeRequest: request => authorizeMachineRpcRequest(request, { machineId: attribution.machineId,
+        resolveCustodianAccountId: async () => 'alice', resolveInstallationId: () => attribution.installationId,
+        verifyMachineAdmission: async () => true }) });
+    sessionLifecycleRpc.registerSessionSpawnNewRpcHandlers({ rpcHandlerManager: rpc,
+      requesterBootstrapBoundary: { serverId: attribution.serverId, serverHttpBaseUrl: origin, happyHomeDir: directory!,
+        getObservedServerIdentityId: () => 'srv_original_home',
+        spawnLifecycleHandler: async () => ({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+          errorMessage: 'Fixture declines launch after requester validation' }) },
+    });
+    const request = { kind: 'requester_session_bootstrap_v1',
+      input: { executionTarget: { serverId: attribution.serverId, machineId: attribution.machineId },
+        directory: { kind: 'path', path: directory! },
+        agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } },
+      requesterBootstrap: { v: 1, disposition: 'ordinary_requester', credentials: { token: credentials.token } } };
+    const invoke = (material: object) => rpc.invokeLocal(RPC_METHODS.SESSION_SPAWN_NEW, {
+      ...request, requesterBootstrap: { ...request.requesterBootstrap, credentials: { token: credentials.token, ...material } },
+    }, { rpcContext: { machineAdmission: { actorAccountId: 'bob', custodianAccountId: 'alice', machineId: 'machine',
+      installationId: 'installation', role: 'use', encryptionMode: 'e2ee' }, verifyMachineAdmissionCurrent: async () => true } });
+    const key = Buffer.alloc(32, 8).toString('base64');
+    await invoke({ encryption: { publicKey: key, machineKey: key } });
+    expect(host.requests.some(({ path }) => path === '/v1/account/profile')).toBe(true);
+    host.requests.length = 0;
+    expect({ response: await invoke({ secret: key }), homeReads: host.requests.map(({ path }) => path) }).toEqual({
+      response: { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' }, homeReads: [],
+    });
+  });
+
   it.each(['plain', 'e2ee'] as const)('retires %s requester custody only after definite non-admission at Resume', async mode => {
     const secret = new Uint8Array(32).fill(23);
     const host = await home(mode === 'e2ee' ? { encryptionSecret: secret } : {});
@@ -684,6 +715,7 @@ describe('requester Session lifecycle custody', () => {
       ...(sourceExecutionIdentity ? { sourceExecutionIdentity } : {}) });
     const stored = JSON.parse(await readFile(custody.path, 'utf8'));
     expect(stored).toMatchObject({ v: 2, scope: 'workspace_sync_relationship', endpointRole: 'managed_target', workspace });
+    expect(stored.credentials).toEqual(encodeRequesterCredentials(requesterCredentials));
     expect(stored.executionIdentity).toBeUndefined();
     expect(stored.machineAdmission).toBeUndefined();
     expect(stored.sourceExecutionIdentity).toEqual(sourceExecutionIdentity);
@@ -695,7 +727,7 @@ describe('requester Session lifecycle custody', () => {
     }] });
     const recovered = await requesterCredentialOwner.resolveWorkspaceSyncManagedTargetCredentialCustody({ ...binding,
       serverHttpBaseUrl: origin, machineAdmissionBoundary: host.boundary });
-    expect(recovered).toEqual({ credentials: { ...requesterCredentials, credentialProvenance: 'stored_session' }, workspace,
+    expect(recovered).toEqual({ credentials: decodeStoredCredentials(encodeRequesterCredentials(requesterCredentials)), workspace,
       ...(sourceExecutionIdentity ? { sourceExecutionIdentity } : {}) });
     expect(host.requests.some(request => request.path.startsWith('/v2/sessions/'))).toBe(false);
     vi.stubEnv(REQUESTER_SESSION_ID_ENV, binding.relationshipId);
@@ -746,7 +778,7 @@ describe('requester Session lifecycle custody', () => {
       status: 'ready', bindings: [{ sessionId: binding.relationshipId, scope: 'workspace_sync_relationship', attribution }] });
     const recovered = await requesterCredentialOwner.resolveWorkspaceSyncRelationshipCredentialCustody({ ...binding,
       serverHttpBaseUrl: origin, machineAdmissionBoundary: host.boundary });
-    expect(recovered).toEqual({ credentials: { ...requesterCredentials, credentialProvenance: 'stored_session' }, executionIdentity });
+    expect(recovered).toEqual({ credentials: decodeStoredCredentials(encodeRequesterCredentials(requesterCredentials)), executionIdentity });
     await expect(requesterCredentialOwner.createWorkspaceSyncRelationshipCredentialCustody({ ...binding,
       credentials: requesterCredentials, executionIdentity: { ...executionIdentity, separationRequired: false },
       homeServerIdentityId: 'srv_original_home' })).rejects.toThrow('requester_session_custody_mismatch');
@@ -1293,7 +1325,7 @@ describe('requester Session lifecycle custody', () => {
       }
       // A supplied but unopened box must not fall back to retained Session custody.
       const wrongRecipient = sealExternalActionRequesterAccountContextV1({ authorization,
-        purpose: { kind: 'external_action' }, credentials: { ...encodeStoredCredentials(requesterCredentials), token: requesterCredentials.token },
+        purpose: { kind: 'external_action' }, credentials: encodeRequesterCredentials(requesterCredentials),
         installationPublicKey: tweetnacl.sign.keyPair().publicKey, randomBytes: tweetnacl.randomBytes });
       await expectRefused({ ...dispatch, executionAuthorization: wrongRecipient });
       host.setAccess(false);
@@ -1461,7 +1493,7 @@ describe('requester Session lifecycle custody', () => {
   it('keeps the exact requester custody refusal cause when a retained Session cannot resume', async () => {
     const host = await home();
     const binding = { happyHomeDir: directory!, sessionId: 'session', attribution };
-    await createRequesterSessionCredentialCustody({ ...binding, credentials, homeServerIdentityId: 'srv_original_home' });
+    const custody = await createRequesterSessionCredentialCustody({ ...binding, credentials, homeServerIdentityId: 'srv_original_home' });
     let observedHomeIdentity = 'srv_original_home';
     const recover = (expectedAttribution = attribution) => requesterCredentialOwner.resolveRequesterSessionBootstrapFromCustody({
       ...binding, serverId: attribution.serverId, expectedAttribution, serverHttpBaseUrl: origin,
@@ -1502,6 +1534,16 @@ describe('requester Session lifecycle custody', () => {
     const recovered = await recover();
     expect(recovered?.getBoundSessionId()).toBe(binding.sessionId);
     await recovered?.dispose();
+
+    const original = JSON.parse(await readFile(custody.path, 'utf8')) as object;
+    await replacePrivateBearerFile({ path: custody.path, contents: JSON.stringify({ ...original,
+      credentials: { token: credentials.token, secret: Buffer.alloc(32, 8).toString('base64') } }) });
+    host.setAccountMode('e2ee');
+    const stale = await captureRequesterCurrentnessRefusal(recover);
+    await stale.value?.dispose();
+    expect({ recovered: stale.value !== null, cause: stale.branch }).toEqual({
+      recovered: false, cause: 'requester_session_custody_record_read_failed',
+    });
   });
 
   it.each(['protected', 'legacy'] as const)('preserves a retryable Home read failure during %s requester recovery and admits only after recovery', async kind => {

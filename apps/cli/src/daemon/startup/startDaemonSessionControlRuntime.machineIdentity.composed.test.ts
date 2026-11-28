@@ -12,7 +12,7 @@ import { ApiClient } from '@/api/api';
 import { ApiMachineClient } from '@/api/apiMachine';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externalActionExecutionAuthorization';
-import { encodeStoredCredentials } from '@/persistence';
+import { encodeRequesterCredentials } from '@/persistence';
 import { deriveAccountMachineKeyFromRecoverySecret, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { computeAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import { executeExternalAction } from '../externalActions/executeExternalAction';
@@ -136,7 +136,7 @@ it('preserves a live Machine identity through Session-control runtime creation a
         ...actionBinding, machineId: registered.id, installationId: installation.installationId,
         custodianAccountId: 'owner', admittedMachineRole: 'manage', accountEncryptionMode: 'e2ee',
         requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
-      } }), credentials: encodeStoredCredentials(credentials), purpose: { kind: 'external_action' },
+      } }), credentials: encodeRequesterCredentials(credentials), purpose: { kind: 'external_action' },
       installationPublicKey: Buffer.from(installation.publicKey, 'base64url'), randomBytes: nacl.randomBytes,
     });
     const dispatch = () => executeExternalAction({ actionId, envelope,

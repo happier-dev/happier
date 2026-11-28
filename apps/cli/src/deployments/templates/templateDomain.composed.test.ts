@@ -311,7 +311,7 @@ it.each(['allowed', 'denied Domain', 'occupied Caddy port', 'approved Create rep
                 try { return admitted.identity; } finally { await admitted.dispose(); }
             };
             requester = await prepareRequesterAccountActionContext({ authorization: sealExternalActionRequesterAccountContextV1({ authorization,
-                purpose: { kind: 'external_action' }, credentials: { token: credentials.token, secret: null, encryption: null },
+                purpose: { kind: 'external_action' }, credentials: { token: credentials.token, encryption: null },
                 installationPublicKey: Buffer.from(identity.publicKey, 'base64url'), randomBytes: size => new Uint8Array(size).fill(31) }),
                 purpose: { kind: 'external_action' }, machineId, installationId: identity.installationId,
                 installationPrivateKey: Buffer.from(identity.privateKey, 'base64url'), serverId, serverIdentityId: serverId,

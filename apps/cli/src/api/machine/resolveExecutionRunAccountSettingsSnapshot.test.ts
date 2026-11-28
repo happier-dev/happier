@@ -212,7 +212,7 @@ describe('Machine Execution Run owner account snapshot', () => {
         } });
         const purpose = { kind: 'external_action' } as const;
         const sealed = sealExternalActionRequesterAccountContextV1({ authorization: root, purpose,
-            credentials: { token: f.bootstrap.credentials.token, encryption: null, secret: null },
+            credentials: { token: f.bootstrap.credentials.token, encryption: null },
             installationPublicKey: decodeBase64(f.installation.publicKey, 'base64url'), randomBytes });
         // Home's exact authorization verification and the installed daemon's
         // lifetime are the system boundaries. Keep private custody and Action cleanup real.
@@ -330,7 +330,7 @@ describe('Machine Execution Run owner account snapshot', () => {
             const purpose = { kind: 'external_action' } as const;
             const prepared = await prepareRequesterAccountActionContext({
                 authorization: sealExternalActionRequesterAccountContextV1({ authorization: root, purpose,
-                    credentials: { token: f.bootstrap.credentials.token, encryption: null, secret: null },
+                    credentials: { token: f.bootstrap.credentials.token, encryption: null },
                     installationPublicKey: decodeBase64(f.installation.publicKey, 'base64url'), randomBytes }),
                 purpose, machineId: machineAdmission.machineId, installationId: machineAdmission.installationId,
                 installationPrivateKey: decodeBase64(f.installation.privateKey, 'base64url'),

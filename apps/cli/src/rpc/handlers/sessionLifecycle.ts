@@ -190,7 +190,7 @@ export async function withSessionHandoffRequesterBootstrap(params: Readonly<{
         if (!opened) return refused();
         bootstrap = opened.requesterBootstrap;
     } else if (readOnly || capture || context.machineAdmission.encryptionMode === 'plain'
-        && (bootstrap.credentials.secret || bootstrap.credentials.encryption)) return refused();
+        && bootstrap.credentials.encryption) return refused();
     let active = true;
     const custody = await admitRequesterSessionBootstrap({ bootstrap, boundary,
         context: readOnly ? { ...context,
@@ -453,8 +453,7 @@ export function registerSessionSpawnNewRpcHandlers(params: Readonly<{
                     installationPrivateKey: decodeBase64(installation.identity.privateKey, 'base64url') }) : null;
             if (!opened) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
             requesterBootstrap = opened.requesterBootstrap;
-        } else if (context.machineAdmission.encryptionMode === 'plain'
-            && (requesterBootstrap.credentials.secret || requesterBootstrap.credentials.encryption)) {
+        } else if (context.machineAdmission.encryptionMode === 'plain' && requesterBootstrap.credentials.encryption) {
             // TLS protects token-only Plain sign-in. Account keys require installation confidentiality,
             // not an assumption that Machine content itself is encrypted.
             return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };

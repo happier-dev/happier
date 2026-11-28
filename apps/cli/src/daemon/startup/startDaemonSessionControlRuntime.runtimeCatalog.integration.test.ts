@@ -150,7 +150,7 @@ import { sealExternalActionRequesterAccountContextV1 } from '@happier-dev/protoc
 import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
 import { computeAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import { prepareAccountSettingsV2Content } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
-import { encodeStoredCredentials } from '@/persistence';
+import { encodeRequesterCredentials } from '@/persistence';
 import { COMPOSER_SOURCE_REF_PRIVATE_META_FIELD_V1 } from '@happier-dev/protocol/plugins/ui/composerRef';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { getResolvedContributionRegistry } from '@/plugins/projection/registry/builtIn/snapshot';
@@ -2343,9 +2343,9 @@ describe('startDaemonSessionControlRuntime', () => {
                 serverIdentityId: homeId, machineId: 'private-guest', installationId: 'guest-installation', actionId: 'projects.prepare',
                 requestId: 'private-finite', target: { kind: 'machine', machineId: 'private-guest' }, requestEnvelopeDigest: 'a'.repeat(43),
             }, managedFiniteWake: { target: wakeTarget, installationPublicKey: installation.publicKey } });
-            const guestCarrier = sealExternalActionRequesterAccountContextV1({ authorization: root, credentials: encodeStoredCredentials(bob),
+            const guestCarrier = sealExternalActionRequesterAccountContextV1({ authorization: root, credentials: encodeRequesterCredentials(bob),
                 purpose: { kind: 'external_action' }, installationPublicKey: guest.publicKey, randomBytes: tweetnacl.randomBytes });
-            const controllerCarrier = sealExternalActionRequesterAccountContextV1({ authorization: guestCarrier, credentials: encodeStoredCredentials(bob),
+            const controllerCarrier = sealExternalActionRequesterAccountContextV1({ authorization: guestCarrier, credentials: encodeRequesterCredentials(bob),
                 purpose: { kind: 'managed_finite_wake', target: wakeTarget },
                 installationPublicKey: decodeBase64(installation.publicKey, 'base64url'), randomBytes: tweetnacl.randomBytes });
             if (finiteRpc) {
@@ -2396,7 +2396,7 @@ describe('startDaemonSessionControlRuntime', () => {
                                 accountEncryptionMode: 'plain', serverIdentityId: homeId, machineId,
                                 installationId: installation.installationId, actionId: 'approval.request.decide',
                                 requestId: 'bob-wake-answer', target: { kind: 'machine', machineId }, requestEnvelopeDigest: 'c'.repeat(43),
-                            } }, credentials: encodeStoredCredentials(bob), purpose: { kind: 'external_action' },
+                            } }, credentials: encodeRequesterCredentials(bob), purpose: { kind: 'external_action' },
                             installationPublicKey: decodeBase64(installation.publicKey, 'base64url'), randomBytes: tweetnacl.randomBytes }) })
                         : null;
                     if (finiteRpc === 'reviewer-retired-after-ask' && !reviewer) throw new Error('Missing admitted reviewer invocation');

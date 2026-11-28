@@ -4,6 +4,7 @@ import { isMachineSetupNativeCodecActionIdV1 } from '../../machines/managed/acti
 import { z } from '../../zodRuntimePolicy.js';
 import { RoleArtifactV1Schema } from '../../prompts/roles/roleArtifactV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { createStoredReadSchema, defineStoredReadProjection } from '../../json/storedReadSchema.js';
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 import { readSessionStopChildTargetV1 } from '../../actions/sessionSectionArchive.js';
 import { SessionSpawnNewInputV2Schema } from './sessionSpawnNewInputV2.js';
@@ -57,17 +58,20 @@ import { SessionPlacementSelectionV1Schema } from './sessionPlacementSelectionV1
 import { ManagedControllerAccessV1Schema } from '../../machines/managed/managedMachineV1.js';
 export { SessionRequesterInstallationSealedBootstrapV1Schema } from './sessionRequesterBootstrapSchemasV1.js';
 
-/** Same serialized fields as the credential custodian's access.key owner, on a private carrier only. */
+/** A device bearer and optional Account content key for the selected Machine. */
 export const SessionRequesterBootstrapCredentialsV1Schema = lazyZodSchema(() => z.strictObject({
     token: z.string().check(z.minLength(1)),
-    secret: z.nullish(z.string().check(z.base64())),
     encryption: z.nullish(z.strictObject({
       publicKey: z.string().check(z.base64()),
       machineKey: z.string().check(z.base64()),
     })),
-  }).check(z.refine(value => !(value.secret && value.encryption), {
-    message: 'Requester credentials cannot select both encryption representations.',
-  })));
+}));
+
+// A retained recovery secret must fail the read instead of being stripped and
+// turning the credentials into a token-only sign-in.
+defineStoredReadProjection(SessionRequesterBootstrapCredentialsV1Schema, () => createStoredReadSchema(
+  z.extend(SessionRequesterBootstrapCredentialsV1Schema, { secret: z.optional(z.never()) }),
+));
 
 /** Private Machine transport only. Never an Action input, output, or persisted metadata. */
 export const SessionRequesterCreationContextV1Schema = lazyZodSchema(() => z.strictObject({
@@ -737,8 +741,8 @@ export function sealExternalActionRequesterAccountContextV1(input: Readonly<{
     purpose: projectRequesterAccountContextPurpose(input.purpose, authorization.binding.machineId), credentials: input.credentials,
     ...(input.invocation ? { invocation: input.invocation } : {}) });
   const mode = authorization.binding.accountEncryptionMode;
-  if (mode === 'plain' && (plaintext.credentials.secret || plaintext.credentials.encryption)
-    || mode === 'e2ee' && !plaintext.credentials.secret && !plaintext.credentials.encryption
+  if (mode === 'plain' && plaintext.credentials.encryption
+    || mode === 'e2ee' && !plaintext.credentials.encryption
     || mode === undefined) throw new Error('requester_account_mode_mismatch');
   const sealed = sealInstallationContext({ ...input, plaintext,
     installationId: moveRecipient?.installationId ?? preparation?.controller.installationId ?? wake?.target.controller?.installationId ?? authorization.binding.installationId,

@@ -39,7 +39,7 @@ import { createCliActionExecutorHarness } from '@/session/actions/createCliActio
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { createWorkflowMaterializationHostV1 } from '@/session/actions/workflowMaterializationHost';
 import { dispatchManagedWorkflowStart, verifyExternalActionExecutionAuthorizationCurrent } from './externalActionExecutionAuthorization';
-import { encodeStoredCredentials, updateSettings } from '@/persistence';
+import { encodeRequesterCredentials, updateSettings } from '@/persistence';
 import { prepareRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { configuration } from '@/configuration';
@@ -346,7 +346,7 @@ describe('guest Workflow Run through public external Action ingress', () => {
         accountEncryptionMode: mode, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
       } });
       const authorization = sealExternalActionRequesterAccountContextV1({ authorization: rootAuthorization,
-        purpose: { kind: 'external_action' }, credentials: { secret: null, ...encodeStoredCredentials(credentials) },
+        purpose: { kind: 'external_action' }, credentials: encodeRequesterCredentials(credentials),
         invocation: { caller: { kind: 'host' }, surface: 'cli', authority: 'present_user', callerPermissionMode: 'default' },
         installationPublicKey: keys.publicKey, randomBytes });
       const receive = async (envelope: ExternalActionRequestEnvelope, authorization: ExternalActionExecutionAuthorizationV1,
@@ -389,7 +389,7 @@ describe('guest Workflow Run through public external Action ingress', () => {
           requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(parentEnvelope),
         } });
         const parent = sealExternalActionRequesterAccountContextV1({ authorization: parentRoot,
-          purpose: { kind: 'external_action' }, credentials: { secret: null, ...encodeStoredCredentials(credentials) },
+          purpose: { kind: 'external_action' }, credentials: encodeRequesterCredentials(credentials),
           invocation: { caller: { kind: 'host' }, surface: 'cli', authority: 'present_user', callerPermissionMode: 'default' },
           installationPublicKey: controllerKeys.publicKey, randomBytes });
         managedReceiver = async body => {

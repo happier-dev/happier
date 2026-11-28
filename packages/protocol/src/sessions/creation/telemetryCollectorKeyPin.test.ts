@@ -234,7 +234,9 @@ function credentialRoot(accountEncryptionMode: 'plain' | 'e2ee') {
   } });
 }
 const credentialsFor = (mode: 'plain' | 'e2ee') => mode === 'e2ee'
-  ? { token: 'requester-token', secret: Buffer.alloc(32, 9).toString('base64') } : { token: 'requester-token' };
+  ? { token: 'requester-token', encryption: {
+    publicKey: Buffer.alloc(32, 8).toString('base64'), machineKey: Buffer.alloc(32, 9).toString('base64'),
+  } } : { token: 'requester-token' };
 
 describe('every installation seal of an E2EE Account checks the executor key its Machine content pins', () => {
   const seal = (mode: 'plain' | 'e2ee', installationPublicKey: Uint8Array, executorKeyPin?: ReturnType<typeof executorPin> | null) =>

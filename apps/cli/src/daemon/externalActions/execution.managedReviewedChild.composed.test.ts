@@ -24,7 +24,7 @@ import { SessionActionRpcOriginV1Schema } from '@happier-dev/protocol/socketRpc'
 import { resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTarget';
 import { dispatchManagedMachineAdminAccess, verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externalActionExecutionAuthorization';
 import { sealExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
-import { encodeStoredCredentials } from '@/persistence';
+import { encodeRequesterCredentials } from '@/persistence';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
 import { encryptSessionPayload } from '@/session/transport/encryption/sessionEncryptionContext';
@@ -240,7 +240,7 @@ it.each([['requester', true, 'one-off', 'ui'], ['team', true, 'one-off', 'ui'], 
   if (delayedChild) {
     const controllerRequester = await prepareRequesterAccountActionContext({
       authorization: sealExternalActionRequesterAccountContextV1({ authorization,
-        credentials: encodeStoredCredentials(credentials), purpose: { kind: 'external_action' },
+        credentials: encodeRequesterCredentials(credentials), purpose: { kind: 'external_action' },
         installationPublicKey: controllerKeys.publicKey, randomBytes: nacl.randomBytes }),
       purpose: { kind: 'external_action' }, ...controller, installationPrivateKey: controllerKeys.secretKey,
       serverId: homeId, serverIdentityId: homeId, serverHttpBaseUrl: serverUrl,

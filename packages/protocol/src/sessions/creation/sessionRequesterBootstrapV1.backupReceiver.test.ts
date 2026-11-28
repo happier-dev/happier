@@ -23,7 +23,7 @@ it('seals and opens requester custody only for the receiver a Backup configure r
     environmentId: 'environment', deploymentNativeAdmission: projectDeploymentNativeAdmissionV1('deployments.backups.configure', rootInput),
   } });
   const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(41));
-  const credentials = { token: 'person-private', secret: null, encryption: null };
+  const credentials = { token: 'person-private', encryption: null };
   const purpose = (machineId: string) => {
     const params = { homeId, machineId };
     return { kind: 'machine_rpc' as const, method: RPC_METHODS.MACHINE_SETUP_PLAN, params,

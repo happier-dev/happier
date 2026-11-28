@@ -94,7 +94,7 @@ describe('Resource read admission through an external authored Action', () => {
                     target: { kind: 'machine', machineId: 'worker' },
                 } });
                 const sealed = sealExternalActionRequesterAccountContextV1({
-                    authorization, purpose, invocation, credentials: { token: 'fixture-requester', secret: null, encryption: null },
+                    authorization, purpose, invocation, credentials: { token: 'fixture-requester', encryption: null },
                     installationPublicKey: installation.publicKey, randomBytes: nacl.randomBytes,
                 });
                 const received = openExternalActionRequesterAccountContextV1({

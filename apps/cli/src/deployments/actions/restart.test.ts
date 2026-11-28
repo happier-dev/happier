@@ -126,7 +126,7 @@ describe('existing deployment native restart', () => {
                     environmentId: request.environmentId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
                     deploymentNativeAdmission: projectDeploymentNativeAdmissionV1('deployments.restart', envelope.input) } });
                 const sealed = sealExternalActionRequesterAccountContextV1({ authorization, purpose: { kind: 'external_action' },
-                    credentials: { token: `h.${Buffer.from(JSON.stringify({ sub: 'member' })).toString('base64url')}.s`, secret: null, encryption: null },
+                    credentials: { token: `h.${Buffer.from(JSON.stringify({ sub: 'member' })).toString('base64url')}.s`, encryption: null },
                     installationPublicKey: keys.publicKey, randomBytes: tweetnacl.randomBytes });
                 const requester = await prepareRequesterAccountActionContext({ authorization: sealed, purpose: { kind: 'external_action' },
                     machineId: 'machine-a', installationId: 'installation-a', installationPrivateKey: keys.secretKey,

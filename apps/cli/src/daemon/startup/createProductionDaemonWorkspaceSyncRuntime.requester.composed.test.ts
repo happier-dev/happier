@@ -36,7 +36,7 @@ import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/execut
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { readRequesterAccountActionContext, requesterActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { encodeStoredCredentials } from '@/persistence';
+import { encodeRequesterCredentials } from '@/persistence';
 import { dispatchOriginalAccountAction, prepareExternalActionHandoffPreflightAuthorization } from '@/api/externalActionExecutionAuthorization';
 import { createWorkspaceSyncRelationshipCredentialCustody } from '@/daemon/sessionEncryption/requesterSessionCredentials';
 import { recoverPrivateWorkspaceSyncExecutions } from './recoverPrivateWorkspaceSyncExecutions';
@@ -273,7 +273,7 @@ it.skipIf(process.platform !== 'linux').each(['requester', 'installed'] as const
     // The UI seals each Action's own root for its RPC. Reusing the creation
     // authorization or invoking a bare handler exercises a different owner.
     const authorization = sealExternalActionRequesterAccountContextV1({ authorization: wire,
-      purpose: { kind: 'machine_rpc', method, params }, credentials: encodeStoredCredentials(setup.credentials),
+      purpose: { kind: 'machine_rpc', method, params }, credentials: encodeRequesterCredentials(setup.credentials),
       installationPublicKey: Buffer.from(setup.installed.installation.publicKey, 'base64url'), randomBytes: tweetnacl.randomBytes });
     return setup.rpc.handleRequest({ method: `${setup.installed.machineId}:${method}`, params,
       callerAuthority: 'present_user', callerInputAuthorization: authorization, machineAdmission: admission });
@@ -1542,7 +1542,7 @@ it.skipIf(process.platform !== 'linux').each([
         sessionId: 'moved-session', sourceMachineId: 'member-source', targetMachineId: installed.machineId,
         operationId: 'handoff-copy', accountServerId: home, sourceRootPath: '/member/workspace', targetPath,
         workspaceAction: action, ...input }, requesterBootstrap: {
-        v: 1, disposition: 'ordinary_requester', credentials: encodeStoredCredentials(setup.credentials) } },
+        v: 1, disposition: 'ordinary_requester', credentials: encodeRequesterCredentials(setup.credentials) } },
       installationId: installed.installation.installationId,
       installationPublicKey: Buffer.from(installed.installation.publicKey, 'base64url'), randomBytes: tweetnacl.randomBytes });
     const authorization = await prepareExternalActionHandoffPreflightAuthorization({ authorization: root, input: request,

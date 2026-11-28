@@ -23,7 +23,7 @@ import { TEAM_CREDENTIAL_MANUAL_CONNECTED_ACCOUNT_DIRECT_CONTRACT_V1, computeTea
     computeTeamCredentialSourceMemberKeyV1, createTeamCredentialDirectMaterialStoredV1 } from '@happier-dev/protocol/teams';
 import { mutateQualifiedConnectedAccountCredentialV4 } from '@/api/client/qualifiedConnectedAccountApi';
 import type { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
-import { encodeStoredCredentials } from '@/persistence';
+import { encodeRequesterCredentials } from '@/persistence';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { actionIds } from '../../../../packages/plugins/deployment-railway/src/actions';
 import { manifest as railwayDataManifest } from '../../../../packages/plugins/deployment-railway/src/manifest';
@@ -126,7 +126,7 @@ export async function runRailwayVolumeRemovalCoverage({ surface, home, artifacts
             confirmed?.digest, confirmed?.reviewedInput).presentUserConfirmation;
         const authorization = sealExternalActionRequesterAccountContextV1({ authorization: root,
             purpose: { kind: 'external_action' }, installationPublicKey: home.keys.publicKey, randomBytes: nacl.randomBytes,
-            credentials: encodeStoredCredentials({ token: home.token, encryption: material }),
+            credentials: encodeRequesterCredentials({ token: home.token, encryption: material }),
             invocation: { surface: 'ui', caller: context.actionCaller, authority: context.authority,
                 ...(confirmation ? { presentUserConfirmation: confirmation } : {}) },
         });
