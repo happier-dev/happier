@@ -102,7 +102,8 @@ describe('Codex native paginated direct history (0.162.1 contract)', () => {
     const f = await fixture(entries);
     const sqliteHome = join(f.root, 'sqlite');
     await mkdir(sqliteHome);
-    f.params.env.CODEX_SQLITE_HOME = sqliteHome;
+    f.params.env.CODEX_SQLITE_HOME = f.codexHome;
+    await writeFile(join(f.codexHome, 'config.toml'), `sqlite_home = ${JSON.stringify(sqliteHome)}\n`);
     const database = openSqliteDatabaseSync(join(sqliteHome, 'thread_history_1.sqlite'));
     database.exec('CREATE TABLE thread_items (thread_id TEXT, turn_id TEXT, item_id TEXT, created_at_ms INTEGER, PRIMARY KEY(thread_id, turn_id, item_id))');
     const dates = [1782474730890, 1782474745123];
