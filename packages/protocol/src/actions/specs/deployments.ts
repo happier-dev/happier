@@ -199,6 +199,9 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
       ],
     } as const : {
       ...(id === deploymentActionIds.DEPLOYMENT_DEPLOY_ACTION_ID_V1 ? { description: deploymentDeployDescription } : {}),
+      ...(id === deploymentActionIds.DEPLOYMENT_DOMAIN_VERIFY_ACTION_ID_V1 ? {
+        description: 'Check a saved Environment Domain, or request a temporary public Caddy name before adding a Domain. For an own-server ingress, use mode: "preview" and content: { hostname: null, target } with the native service target and current Environment and target link revisions. If addressOffer is available, use a hostname from its choices as content.hostname in the reviewed deployments.domains.add Action with the same target and content.addressKind: "generatedCaddy".',
+      } : {}),
       ...(id === deploymentActionIds.DEPLOYMENT_LOGS_READ_ACTION_ID_V1 ? {
         description: 'Read the retained deployment log. Platform targets need serverId, environmentId, deploymentId and kind; the receipt supplies routing. Native Machine logs also need targetLinkId, machineId and installationId, plus service for runtime logs.',
       } : {}),
@@ -464,7 +467,7 @@ function createDeploymentActionSpecsV1(): DeploymentActionSpecsV1 {
   { ...deploymentSpec(deploymentActionIds.DEPLOYMENT_DOMAIN_DNS_CREATE_ACTION_ID_V1, 'Create required DNS records', undefined, 'Create the missing DNS records required by a retained Domain in the selected account and zone. Preserve existing records and report conflicts.'), deploymentPreparationScope: declareDeploymentPreparationScopeV1('membership'), requesterAccountContentDemandForInput: () => true,
     approvalPresentation: { summary: () => 'Create the records required by this Domain using the selected DNS account, hosted zone and TTL. Existing records are preserved.' } },
   { ...deploymentSpec(deploymentActionIds.DEPLOYMENT_DOMAIN_DNS_VERIFY_ACTION_ID_V1, 'Verify required DNS record configuration', undefined, 'Compare the retained Domain’s required records with the selected DNS zone. This read does not prove propagation or application health.', true), deploymentPreparationScope: declareDeploymentPreparationScopeV1('membership'), requesterAccountContentDemandForInput: () => true },
-  { ...deploymentSpec(deploymentActionIds.DEPLOYMENT_DOMAIN_VERIFY_ACTION_ID_V1, 'Verify deployment domain', undefined, 'Check the selected Environment Domain against its configured routing and return the observed state.', true),
+  { ...deploymentSpec(deploymentActionIds.DEPLOYMENT_DOMAIN_VERIFY_ACTION_ID_V1, 'Verify deployment domain', undefined, undefined, true),
     deploymentReadScope: createDeploymentReadScopeV1({ childMetadataReads: DEPLOYMENT_DOMAIN_DNS_CHILD_METADATA_READS_V1 }), requesterAccountContentDemandForInput: () => true },
   deploymentSpec(deploymentActionIds.DEPLOYMENT_DOMAIN_GET_ACTION_ID_V1, 'Read deployment domain', '/v1/deployments/environments/:environmentId/domains/:domainId', 'Read one saved Domain record by Environment and Domain id, including its routing state and revision.', true),
   deploymentSpec(deploymentActionIds.DEPLOYMENT_DOMAIN_LIST_ACTION_ID_V1, 'List deployment domains', '/v1/deployments/environments/:environmentId/domains', 'List saved Domain records for one Environment. Follow the returned cursor to continue.', true),

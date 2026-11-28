@@ -6233,7 +6233,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `deployments.domains.verify`
 
-**Verify deployment domain** — Check the selected Environment Domain against its configured routing and return the observed state.
+**Verify deployment domain** — Check a saved Environment Domain, or request a temporary public Caddy name before adding a Domain. For an own-server ingress, use mode: "preview" and content: &#123; hostname: null, target &#125; with the native service target and current Environment and target link revisions. If addressOffer is available, use a hostname from its choices as content.hostname in the reviewed deployments.domains.add Action with the same target and content.addressKind: "generatedCaddy".
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
