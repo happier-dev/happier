@@ -24,6 +24,7 @@ type FixturePluginInstallation = Readonly<{
   testDir: string;
   daemonPort: number;
   controlToken?: string | null;
+  moduleImportJournal?: string;
 }>;
 
 export function installDatabaseWorkbenchPluginFixture(params: FixturePluginInstallation) {
@@ -56,6 +57,14 @@ async function installDatabaseFixturePlugin(params: FixturePluginInstallation, p
       await symlink(dirname(await realpath(installedManifest)), link, 'junction');
     }),
   ]);
+  if (packageName === 'database-workbench' && params.moduleImportJournal) {
+    const activationEntry = join(pluginRoot, 'src', 'activate.ts');
+    const source = await readFile(activationEntry, 'utf8');
+    const journal = JSON.stringify(params.moduleImportJournal);
+    await writeFile(activationEntry, `import { appendFileSync } from 'node:fs';
+appendFileSync(${journal}, String(process.pid) + '\\n');
+${source}`);
+  }
   const { applyTrustedLocalPluginFixture } = await import('./externalSessionLiveLifecycleFixture');
   const installation = await applyTrustedLocalPluginFixture({
     daemonPort: params.daemonPort, controlToken: params.controlToken, pluginRoot,
@@ -122,6 +131,7 @@ export async function startDatabaseWorkbenchFixture(params: Readonly<{
 export async function startDatabaseWorkbenchInsightsFixture(params: Readonly<{
   testDir: string;
   workspaceDir?: string;
+  workbenchModuleImportJournal?: string;
   completeTerminalConnect?: Parameters<typeof startDatabaseWorkbenchFixture>[0]['completeTerminalConnect'];
   serverEnv?: NodeJS.ProcessEnv;
   daemonEnv?: NodeJS.ProcessEnv;
@@ -144,7 +154,8 @@ export async function startDatabaseWorkbenchInsightsFixture(params: Readonly<{
     if (!managedJavaScriptRuntime) throw new Error('DBW fixture managed JavaScript runtime unavailable');
     const machine = await fixture.enrollDaemon(owner, { env: daemonEnv, workspaceDir: params.workspaceDir });
     const pluginFixture = await installDatabaseWorkbenchPluginFixture({ testDir: params.testDir,
-      daemonPort: machine.daemon.state.httpPort, controlToken: machine.daemon.state.controlToken });
+      daemonPort: machine.daemon.state.httpPort, controlToken: machine.daemon.state.controlToken,
+      moduleImportJournal: params.workbenchModuleImportJournal });
     const envPath = '.env.local';
     const envBindings = {
       DATABASE_URL: fixture.postgres.selectedDatabaseUrl,

@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { expect, it } from 'vitest';
 
 import { PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/account/settings/personalSavedSecretActionsV1';
@@ -12,8 +14,11 @@ const run = createRunDirs({ runLabel: 'core' });
 
 // The native read is the control; a broken activation/fixture cannot prove disable.
 it('F12-known-good-enabled-workbench then disable and re-enable through lifecycle Actions', async () => {
+  const testDir = run.testDir('dbw-lifecycle-f12');
+  const moduleImportJournal = join(testDir, 'workbench-module-imports.txt');
   const fixture = await startDatabaseWorkbenchInsightsFixture({
-    testDir: run.testDir('dbw-lifecycle-f12'),
+    testDir,
+    workbenchModuleImportJournal: moduleImportJournal,
     guestReachableHome: { host: '127.0.0.1' },
     serverEnv: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' },
     daemonEnv: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' },
@@ -47,11 +52,13 @@ it('F12-known-good-enabled-workbench then disable and re-enable through lifecycl
     const beforeControl = BigInt(await selectedStatementCount());
     await readControl();
     expect(BigInt(await selectedStatementCount())).toBeGreaterThan(beforeControl);
+    expect(await readFile(moduleImportJournal, 'utf8')).toMatch(/^\d+\n/m);
     console.info('F12-known-good-enabled-workbench passed', fixture.runtime);
     const lifecycleInput = { pluginId: DATABASE_PLUGIN_ID_V1, machineId: fixture.machine.target.machineId, scope: 'machine' };
     const disabled = await fixture.owner.executeReviewed('plugins.disable', lifecycleInput);
     expect(disabled).toMatchObject({ ok: true, result: { ok: true, change: { kind: 'committed' } } });
     const beforeDisabledStartup = await selectedStatementCount();
+    const importsBeforeDisabledStartup = await readFile(moduleImportJournal, 'utf8');
     fixture.takeRequestObservations();
     const enabledPid = fixture.machine.daemon.state.pid;
     await fixture.machine.restart();
@@ -60,6 +67,7 @@ it('F12-known-good-enabled-workbench then disable and re-enable through lifecycl
     const refused = await fixture.executeDatabase(DATABASE_ROWS_READ_ACTION_ID_V1, input);
     // Disabling the Workbench removes its Action from Machine dispatch.
     expect(refused).toMatchObject({ ok: false, errorCode: 'contributed_action_unavailable' });
+    expect(await readFile(moduleImportJournal, 'utf8')).toBe(importsBeforeDisabledStartup);
     expect(await selectedStatementCount()).toBe(beforeDisabledStartup);
     expect(fixture.readActionOccurrences()).toHaveLength(0);
     expect(fixture.takeRequestObservations().filter(request =>
@@ -74,7 +82,10 @@ it('F12-known-good-enabled-workbench then disable and re-enable through lifecycl
     const beforeReenabled = BigInt(await selectedStatementCount());
     await readControl();
     expect(BigInt(await selectedStatementCount())).toBeGreaterThan(beforeReenabled);
-    console.info('F12 disabled restart census passed', { enabledPid, disabledPid, selectedStatements: 0, eventAdmissions: 0 });
+    expect((await readFile(moduleImportJournal, 'utf8')).length).toBeGreaterThan(importsBeforeDisabledStartup.length);
+    console.info('F12 disabled restart census passed', {
+      enabledPid, disabledPid, moduleImports: 0, selectedStatements: 0, eventAdmissions: 0,
+    });
   } finally {
     await fixture.stop();
   }
