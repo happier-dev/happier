@@ -20,7 +20,7 @@ import { waitForCondition } from '@/testkit/async/waitFor';
 import { writeExecutableShim } from '@/testkit/fs/executableShim';
 import { resolveConnectedServiceHomeDir } from './homes/resolveConnectedServiceHomeDir';
 import { openSqliteDatabaseSync } from '@/utils/sqlite/sqliteSync';
-import { createProviderCliFixture } from '@/testkit/process/providerCliFixture';
+import { writeFakeCodexAppServerScript } from '@/backends/codex/appServer/testkit/fakeCodexAppServer';
 import { resolveSpawnChildEnvironment } from '@/daemon/spawn/resolveSpawnChildEnvironment';
 
 /**
@@ -171,9 +171,23 @@ async function expectPathRemoved(path: string): Promise<void> {
   expect(await pathExists(path)).toBe(false);
 }
 
+function writeCodexStoreProofFixture(dir: string) {
+  return writeFakeCodexAppServerScript({
+    dir,
+    bodyLines: [
+      'for await (const line of rl) {',
+      '  const { id, method } = JSON.parse(line);',
+      '  if (id == null) continue;',
+      '  const result = method === "configRequirements/read" ? { requirements: null }',
+      '    : method === "config/read" ? { config: { sqlite_home: process.env.CODEX_SQLITE_HOME } } : {};',
+      '  process.stdout.write(JSON.stringify({ id, result }) + "\\n");',
+      '}',
+    ],
+  });
+}
+
 describe('resolveConnectedServiceAuthForSpawn post-materialization resume reachability gate', () => {
   it('existing-state resume refuses native-only state and preserves the stable indexed rollout when present', async () => {
-    const providerEnv = await createProviderCliFixture(['codex']);
     const testRoot = await mkdtemp(join(tmpdir(), 'happier-existing-resume-'));
     const activeServerDir = join(testRoot, 'server');
     const sourceCodexHome = join(testRoot, 'native');
@@ -186,7 +200,10 @@ describe('resolveConnectedServiceAuthForSpawn post-materialization resume reacha
     const credentials = makeLegacyCredentials();
     const now = 1_000_000;
     try {
-      const processEnv = { ...providerEnv, CODEX_HOME: sourceCodexHome };
+      const processEnv = {
+        HAPPIER_CODEX_APP_SERVER_BIN: await writeCodexStoreProofFixture(testRoot),
+        CODEX_HOME: sourceCodexHome,
+      };
       await mkdir(join(sourceCodexHome, 'sessions'), { recursive: true });
       await writeFile(sourcePath, 'native-only transcript\n');
       const resolveLaunch = async () => {
@@ -234,7 +251,7 @@ describe('resolveConnectedServiceAuthForSpawn post-materialization resume reacha
     const fakeHome = await mkdtemp(join(tmpdir(), 'happier-reverify-codex-recovery-home-'));
     const originalHome = process.env.HOME;
     const now = 1_000_000;
-    const cwd = '/tmp/reverify-codex-recovery-project';
+    const cwd = baseDir;
     const vendorResumeId = '00000000-0000-4000-8000-000000000002';
     const relativeRolloutPath = join(
       'sessions',
@@ -288,6 +305,7 @@ describe('resolveConnectedServiceAuthForSpawn post-materialization resume reacha
           CODEX_HOME: sourceCodexHome,
           CODEX_SQLITE_HOME: sourceCodexHome,
           HOME: fakeHome,
+          HAPPIER_CODEX_APP_SERVER_BIN: await writeCodexStoreProofFixture(baseDir),
         } as NodeJS.ProcessEnv,
         vendorResumeId,
         resumeReachabilityRequired: true,

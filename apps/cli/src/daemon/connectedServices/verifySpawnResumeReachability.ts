@@ -27,6 +27,7 @@ export async function verifySpawnResumeReachability(params: Readonly<{
   vendorResumeId: string;
   cwd: string;
   materializedEnv: Readonly<Record<string, string>>;
+  processEnv?: NodeJS.ProcessEnv;
   candidatePersistedSessionFile?: string | null;
 }>): Promise<VerifyResumeReachableResult | Readonly<{ ok: false; reason: string }>> {
   const targetMaterializedRoot = resolveConnectedServiceTargetMaterializedRoot({
@@ -39,6 +40,7 @@ export async function verifySpawnResumeReachability(params: Readonly<{
     input: {
       targetMaterializedRoot,
       targetMaterializedEnv: params.materializedEnv,
+      processEnv: params.processEnv,
       vendorResumeId: params.vendorResumeId,
       cwd: params.cwd,
       candidatePersistedSessionFile: params.candidatePersistedSessionFile ?? null,

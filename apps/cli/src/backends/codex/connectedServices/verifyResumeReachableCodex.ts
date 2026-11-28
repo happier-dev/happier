@@ -71,7 +71,7 @@ export async function verifyResumeReachableCodex(
   };
 
   const acceptReachablePath = async (resolvedPath: string): Promise<VerifyResumeReachableResult> => {
-    const env = { ...input.targetMaterializedEnv, CODEX_HOME: codexHome };
+    const env = { ...input.processEnv, ...input.targetMaterializedEnv, CODEX_HOME: codexHome };
     const store = await resolveCodexSqliteLaunch({ env, cwd: input.cwd, materialized: true });
     const sqliteHome = store.sqliteHome ?? await withCodexAppServerClient({
       processEnv: env,
