@@ -445,7 +445,7 @@ async function prepareSharedSourceWebUi({ repoDir, baseDir, stackBaseDir, consum
       const record = { ...built, component: 'web', inputIdentity: captured.inputIdentity, buildOptions,
         outputDigests: await webOutputDigests(built.uiDir), reuseFingerprint: fingerprint,
         ...(uiInputDigest && revision && !revision.overlayDigest ? { uiInputDigest } : {}) };
-      return await withSourceBundlePublication({ stackBaseDir, outputDir, record, signal, dependencySourceDir: repoDir, dependencyEnv: env }, async () => {
+      return await withSourceBundlePublication({ stackBaseDir, outputDir, record, signal, dependencySourceDir: built.dependencyRootDir ?? repoDir, dependencyEnv: env }, async () => {
         signal.throwIfAborted();
         const producerCompletedAt = new Date().toISOString();
         const producerCandidateKey = sourceWebCandidateKey({ repoDir, buildOptions });

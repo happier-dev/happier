@@ -447,6 +447,91 @@ if(resolve(process.argv[1]??'')===${JSON.stringify(publicOwner)}){
   assert.equal((await exports()).length, 2);
 });
 
+test('revision web publication checks its consumed installation across checkout drift', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-web-producer-revisions-', registerCleanup: false });
+  const pendings = [];
+  const cancellation = new AbortController();
+  t.after(async () => {
+    cancellation.abort();
+    try { for (const pending of pendings) await pending.dispose(); }
+    finally { await setBundleReadOnly(fixture.root, false); await fixture.cleanup(); }
+  });
+  const sourceUrl = new URL('./build_source_web_ui.mjs', import.meta.url);
+  const repoDir = fixture.path('repo');
+  const { uiInput } = await prepareFiniteSourceWebFixture({
+    sourceRepo: fileURLToPath(new URL('../../../../', import.meta.url)), repoDir,
+  });
+  const git = (...args) => execFileSync('git', ['-C', repoDir, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { encoding: 'utf8' }).trim();
+  await writeFile(join(repoDir, '.gitignore'), 'node_modules\n');
+  git('init', '--quiet');
+  const commit = message => { git('add', '-A'); git('commit', '--quiet', '--allow-empty', '-m', message); return git('rev-parse', 'HEAD'); };
+  const counter = fixture.path('exports.json');
+  const expo = fixture.path(process.platform === 'win32' ? 'expo.cmd' : 'expo');
+  await writeFile(expo, process.platform === 'win32'
+    ? `@echo off\r\n"${process.execPath}" "${fixture.path('expo.mjs')}" %*\r\n`
+    : `#!/bin/sh\nexec '${process.execPath}' '${fixture.path('expo.mjs')}' "$@"\n`);
+  await chmod(expo, 0o755);
+  // Expo is the external compiler boundary: count runs and copy the captured UI input into the bundle.
+  await writeFile(fixture.path('expo.mjs'), `
+import {copyFile,mkdir,readFile,writeFile} from 'node:fs/promises';import {join} from 'node:path';
+const prior=JSON.parse(await readFile(${JSON.stringify(counter)},'utf8').catch(()=>'[]'));
+prior.push({stack:process.env.HAPPIER_STACK_STACK});await writeFile(${JSON.stringify(counter)},JSON.stringify(prior));
+const web=process.argv[process.argv.indexOf('--output-dir')+1];await mkdir(web,{recursive:true});
+// Like Expo, copy the project's public index.html into the output, then rewrite it.
+await copyFile(join(process.cwd(),'public/index.html'),join(web,'index.html')).catch(error=>{if(error.code!=='ENOENT')throw error});
+await writeFile(join(web,'index.html'),'<script src="./app.js"></script>');
+await writeFile(join(web,'app.js'),await readFile(join(process.cwd(),'sources/app/_layout.tsx'),'utf8'));
+if(process.env.FIXTURE_DRIFT_GENERATION) await writeFile(process.env.FIXTURE_DRIFT_GENERATION,JSON.stringify({generation:String(prior.length),completedGeneration:String(prior.length)}));
+`);
+  const native = process.platform === 'linux' ? await installNativeAdmissionFixture({ root: fixture.root }) : null;
+  const commandBoundary = fixture.path('expo-command.mjs');
+  await writeFile(commandBoundary, `export {prepareExpoCommandEnv} from ${JSON.stringify(new URL('../utils/expo/command.mjs', import.meta.url).href)};export async function resolveExpoBin(){return ${JSON.stringify(expo)}}`);
+  const publicOwner = fixture.path('source-web.mjs');
+  const adapterSource = new URL('../utils/proc/runSourceBuildCommand.mjs', import.meta.url);
+  const adapter = native && fixture.path('native-owner/apps/stack/scripts/utils/proc/runSourceBuildCommand.mjs');
+  if (adapter) {
+    await mkdir(dirname(adapter), { recursive: true });
+    await writeFile(adapter, relocateSourceOwnerImports(await readFile(adapterSource, 'utf8'), adapterSource,
+      new Map([['./workspace_build_admission.mjs', null]])));
+  }
+  await writeFile(publicOwner, relocateSourceOwnerImports((await readFile(sourceUrl, 'utf8'))
+    .replace("fileURLToPath(new URL('../../bin/hstack-exec', import.meta.url))", JSON.stringify(native?.launcher ?? fileURLToPath(new URL('../../bin/hstack-exec', sourceUrl)))),
+  sourceUrl, new Map([['../utils/expo/command.mjs', pathToFileURL(commandBoundary)],
+    ...(adapter ? [['../utils/proc/runSourceBuildCommand.mjs', pathToFileURL(adapter)]] : [])])));
+  const { exportSourceWebUi: exportShared, prepareSourceQaWebUi, publishProducerSourceWebUi, readSourceWebRevisionInputDigest } = await import(pathToFileURL(publicOwner));
+  const env = { ...(native ? buildNativeAdmissionFixtureEnv() : process.env), EXPO_PUBLIC_DEBUG: '0',
+    HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: 'producer', HAPPIER_STACK_STORAGE_DIR: fixture.path('stacks'),
+    // The fixture borrows the host's installed dependencies; pnpm installation is outside this contract.
+    HAPPIER_STACK_SKIP_REFRESH_DEPS: '1' };
+  const { installIdentity } = await inspectDependencyRefresh({ installDir: repoDir, env });
+  await writeFile(resolveDependencyRefreshMarkerPath(repoDir), JSON.stringify({ version: 7, identity: installIdentity }));
+  const producerBaseDir = fixture.path('stacks/producer');
+  const generationPath = `${resolveDependencyRefreshLockPath(repoDir, env)}.generation`;
+  await mkdir(dirname(generationPath), { recursive: true });
+  await writeFile(generationPath, JSON.stringify({ generation: 'before', completedGeneration: 'before' }));
+  const { prepareRevisionInstall, sourceRevisionTreesRoot } = await import('./source_revision_install.mjs');
+  const { workspaceDirs } = await readSourceComponentBuildInputs({ repoDir, component: 'expo' });
+  const installed = await prepareRevisionInstall({ repoDir, baseDir: repoDir,
+    treesRoot: sourceRevisionTreesRoot(producerBaseDir), workspaceDirs, env });
+  const selected = commit('revision on its own installation');
+  const publish = async (rev, mirror) => publishProducerSourceWebUi({ repoDir, stackBaseDir: producerBaseDir,
+    revision: { revision: rev }, sourceRevision: { rev }, signal: cancellation.signal,
+    uiInputDigest: await readSourceWebRevisionInputDigest({ repoDir, revision: rev }),
+    env: { ...env, HAPPIER_STACK_STACK: 'producer', HAPPIER_STACK_SOURCE_MIRROR: mirror,
+      FIXTURE_DRIFT_GENERATION: generationPath } });
+  // Same dependency identity, but a mirror uses the revision's completed installation.
+  const own = await publish(selected, '1');
+  assert.equal(own.exported, true);
+  assert.equal(own.built.dependencyRootDir, installed.dir);
+  assert.equal(await readFile(join(own.built.uiDir, 'app.js'), 'utf8'), await readFile(uiInput, 'utf8'));
+  const record = JSON.parse(await readFile(join(dirname(own.built.uiDir), 'source-bundle.json'), 'utf8'));
+  assert.equal(record.dependencyRootDir, installed.dir);
+  // A controller reusing its checkout still rejects a mutation during every attempt.
+  await writeFile(uiInput, 'export const checkoutDrift = true;');
+  const checkout = commit('revision borrowing checkout installation');
+  await assert.rejects(publish(checkout, '0'), { reason: 'BUILD_INPUTS_CHANGED' });
+});
+
 test('the repository producer publishes one shared web export per changed UI revision and QA Stacks adopt it for their revision', async t => {
   const fixture = await createTempFixture(t, { prefix: 'happier-web-producer-revisions-', registerCleanup: false });
   const pendings = [];
