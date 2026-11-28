@@ -56,7 +56,7 @@ export function readAdmittedProjectActionMachineV1(args: Readonly<{
   const choice = 'choice' in parsed.data ? parsed.data.choice : undefined;
   const primaryOnly = args.actionId === 'projects.compute.exec'
     ? 'execution' in parsed.data && parsed.data.execution === 'primary'
-    : parsed.data.selection.kind === 'native';
+    : 'selection' in parsed.data && parsed.data.selection.kind === 'native';
   if (primaryOnly && (choice?.kind === 'workers' || admittedMachineId !== workspace.machineId)) {
     return failure('primary_only');
   }
