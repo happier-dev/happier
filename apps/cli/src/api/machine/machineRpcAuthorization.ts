@@ -1308,18 +1308,19 @@ export function doesWorkspaceSyncTargetRequestMatchRouting(
 }
 
 /** A raw receipt admits the method. A retained Use root admits local reads in
- * its member folder, or inside a resolved Session workspace it can edit. */
+ * its member folder or editable Session workspace, and comparison capture in an owned Session. */
 function selectRequesterWorkspacePlacement(
   identity: HostRequesterExecutionIdentity,
   method: string,
-  admission: 'machine' | 'editable_session' | 'member_folder' | 'owner_only',
+  admission: 'machine' | 'owned_session' | 'editable_session' | 'member_folder' | 'owner_only',
   readPolicy: MachineRpcAdmissionBoundary['readAgentIsolation'],
   admittedMachineRole?: SocketRpcMachineAdmissionContextV1['role'],
 ): 'owner' | 'daemon' | 'member' | 'unavailable' {
   if (isHostRequesterUnrestrictedOwner(identity)) return 'owner';
   if (identity.kind !== 'isolated' || admission === 'owner_only') return 'unavailable';
   const personOrAccountAutomation = identity.presentPerson === true || identity.accountAutomation === true;
-  const daemonScope = admission === 'machine' || (admission === 'editable_session' && personOrAccountAutomation);
+  const daemonScope = admission === 'machine' || admission === 'owned_session'
+    || (admission === 'editable_session' && personOrAccountAutomation);
   const snapshot = readPolicy?.();
   const placement = snapshot && resolveHostRequesterAgentPlacementForHost({ identity, snapshot });
   if (placement === 'daemon') return daemonScope ? 'daemon' : 'unavailable';
@@ -1328,7 +1329,8 @@ function selectRequesterWorkspacePlacement(
   // repository effects as the Session's member user.
   if (admission === 'machine' && admittedMachineRole === 'manage' && placement === 'member' && memberRepositoryMethod)
     return 'member';
-  return personOrAccountAutomation && (memberRepositoryMethod || isScmHostingCredentialRpcMethod(method))
+  return admission === 'owned_session'
+    || (personOrAccountAutomation && (memberRepositoryMethod || isScmHostingCredentialRpcMethod(method)))
     ? 'member' : 'unavailable';
 }
 
@@ -1814,14 +1816,20 @@ export async function authorizeMachineRpcRequest(
           hostCustodianAccountId: custodianAccountId,
           hostExecutionTarget: installationId ? { machineId: machine.machineId, installationId } : undefined });
         if (identity.kind === 'unknown') return forbidden('machine_admission');
-        const useRead = localRepositoryRead && retainedRequester?.authorization.binding.admittedMachineRole === 'use';
-        const placement = selectRequesterWorkspacePlacement(identity, method, useRead
-          ? request.localActionContext?.hasEditableScmSessionWorkspace ? 'editable_session' : 'member_folder'
+        const session = request.localActionContext?.scmSessionWorkspace;
+        const useGrant = retainedRequester?.authorization.binding.admittedMachineRole === 'use';
+        const ownedCapture = useGrant && method === RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE && session?.access === 'owner'
+          ? session : undefined;
+        const placement = selectRequesterWorkspacePlacement(identity, method, ownedCapture ? 'owned_session'
+          : useGrant && localRepositoryRead ? session ? 'editable_session' : 'member_folder'
           : 'owner_only', machine.readAgentIsolation);
         if (placement === 'unavailable') return forbidden('machine_admission');
         if (request.signal?.aborted || (retainedRequester && !await retainedRequester.isCurrent())) return forbidden('request_cancelled');
-        authorized = { ok: true, directWorkspaceRequester: placement === 'member'
-          ? { ...identity, scmPlacement: 'member' } : identity };
+        authorized = {
+          ok: true,
+          directWorkspaceRequester: placement === 'member' ? { ...identity, scmPlacement: 'member' } : identity,
+          ...(ownedCapture ? { localSessionAuthorization: { kind: 'session.write', sessionId: ownedCapture.sessionId } } : {}),
+        };
       } catch { return forbidden('authorization_unavailable'); }
     }
   }

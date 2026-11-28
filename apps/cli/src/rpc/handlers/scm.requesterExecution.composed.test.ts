@@ -38,6 +38,12 @@ import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { runWorkspaceEffectWorker } from '@/workspaces/activation/workspaceEffectWorker';
 import type { ApiMachineClient } from '@/api/apiMachine';
 import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { ScmComparisonCaptureOutputSchema } from '@happier-dev/protocol/scm/diffSummary';
+import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
+import type { RequesterAccountActionTransportContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import nacl from 'tweetnacl';
 import { SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN } from '@happier-dev/protocol/scm/worktrees';
 import { REMOVE_INDEX_LOCK_CONFIRMATION_TOKEN } from '@happier-dev/protocol/scm/repositoryProvisioning';
 import axios from 'axios';
@@ -649,7 +655,8 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
     expect(os.daemonTouches).toEqual([]);
   });
 
-  it.each(['enabled', 'disabled'] as const)('keeps a reviewed Can use child’s repository reads in its own workspace with isolation %s', async isolation => {
+  it.each(['enabled', 'disabled'] as const)('keeps a reviewed Can use child’s repository reads and comparison capture in their Session scope with isolation %s', isolation =>
+    withConfiguredDaemonTestHome({ prefix: 'happier-reviewed-scm-', machineId: 'separate-users-machine' }, async () => {
     const f = await fixture({ admissionCurrent: false,
       ...(isolation === 'disabled' ? { sourceRuntimeIsolation: 'disabled', memberIdentityUnavailable: true } : {}) });
     const ownRepository = isolation === 'enabled' ? f.memberRepository : await repository(f.directory, 'guest-project');
@@ -657,7 +664,18 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
     const target = { kind: 'machine', machineId: f.machineId } as const;
     const accountId = 'member-account';
     const requestId = 'review-start';
-    const admitted = ExternalActionExecutionAuthorizationV1Schema.parse({
+    const serverId = configuration.activeServerId;
+    const serverHttpBaseUrl = configuration.serverUrl;
+    const token = `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.fixture`;
+    const params = {
+      token, credentials: { token, encryption: null }, sessionId: '', mode: 'plain' as const, ctx: null,
+      machineActionDirectTargetTransport: { machineId: f.machineId, invoke: f.manager.invokeLocal.bind(f.manager) },
+    };
+    const requesterAccountExecutor = createActionExecutor({
+      scmActionExecute: request => execute(request),
+      getActionsSettings: () => normalizeActionsSettingsV1(undefined),
+    });
+    const root = ExternalActionExecutionAuthorizationV1Schema.parse({
       v: 1,
       token: 'admitted-review-start',
       binding: {
@@ -668,19 +686,34 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
       },
     });
     // Home is the network boundary. Preserve its admitted root and currentness.
-    Object.defineProperty(admitted, 'requesterHttpProjection', {
-      value: Object.freeze({
-        accountId, serverId: f.home, serverIdentityId: f.home, serverHttpBaseUrl: 'https://home.test',
-        accountEncryptionMode: 'plain', isCurrent: async () => true, createRequestHeaders: async () => null,
-      }),
-    });
+    const retain = (admitted: typeof root) => {
+      const isCurrent = async () => true;
+      const transport = { authorization: admitted, credentials: params.credentials, serverHttpBaseUrl,
+        isCurrent, resolveEncryption: async () => null } satisfies RequesterAccountActionTransportContext;
+      Object.defineProperties(admitted, {
+        requesterAccountExecutor: { value: requesterAccountExecutor },
+        requesterAccountProjection: { value: Object.freeze({
+          accountId: admitted.binding.accountId, serverId, accountEncryptionMode: 'plain', isCurrent,
+          projectAccountRowCipher: createProjectAccountRowCipherV1({ mode: 'plain', material: null, randomBytes: nacl.randomBytes }),
+          readArtifact: async () => null,
+          [requesterActionContext]: transport,
+        }) },
+        requesterHttpProjection: { value: Object.freeze({
+          accountId: admitted.binding.accountId, serverId, serverIdentityId: f.home, serverHttpBaseUrl,
+          accountEncryptionMode: 'plain', isCurrent,
+          createRequestHeaders: async () => ({ Authorization: `Bearer ${token}` }),
+        }) },
+      });
+      return retainVerifiedExternalActionRequester({ authorization: admitted, isCurrent });
+    };
     const action = { pluginId: 'happier.triage', localId: 'sessions/start-pull-request-review-v1' };
     const reviewed = await invokeHostReviewedChildV1<{ context: ActionExecutorContext }>({
       parent: { actionId: 'action.invoke', input: { action, input: {} } },
       context: {
         surface: 'plugin', authority: 'present_user', runtimeAccountId: accountId,
+        actionCaller: { kind: 'plugin', pluginId: action.pluginId, contributionLocalId: action.localId },
         actionRequestId: requestId, externalActionTarget: target,
-        externalActionExecutionAuthorization: retainVerifiedExternalActionRequester({ authorization: admitted, isCurrent: async () => true }),
+        externalActionExecutionAuthorization: retain(root),
       },
       child: { action, role: 'action_invoke', input: {} },
       admittedReview: { action, role: 'action_invoke', surface: 'plugin' },
@@ -691,11 +724,6 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
     const foreignSession = 'c222222222222222222222222';
     const sharedSession = 'c333333333333333333333333';
     let sharedAccess: 'edit' | 'view' | 'none' = 'edit';
-    const token = 'reviewed-guest-fixture';
-    const params = {
-      token, credentials: { token, encryption: null }, sessionId: '', mode: 'plain' as const, ctx: null,
-      machineActionDirectTargetTransport: { machineId: f.machineId, invoke: f.manager.invokeLocal.bind(f.manager) },
-    };
     vi.spyOn(axios, 'get').mockImplementation(async url => {
       const path = new URL(String(url)).pathname;
       if (path === '/v1/account/encryption/currentness') {
@@ -789,7 +817,55 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
     }
     expect(gitLaunches()).toHaveLength(readCount);
     expect([...new Set(os.runAs.map(run => run.uid))]).toEqual(isolation === 'enabled' ? [2401] : []);
-  });
+
+    const capture = (sessionId: string, context = reviewed.context) => execute({
+      actionId: 'scm.diffSummary.capture',
+      input: { source: { kind: 'workingTree' }, projection: { kind: 'index' } },
+      context: { ...context, defaultSessionId: sessionId, externalActionTarget: undefined },
+      executeCanonicalAction: async () => { throw new Error('Unexpected Action'); },
+    });
+    await expect(capture(foreignSession)).rejects.toMatchObject({
+      rpcErrorCode: RPC_ERROR_CODES.FORBIDDEN, effectAttempted: false,
+    });
+    sharedAccess = 'edit';
+    await expect(capture(sharedSession)).rejects.toMatchObject({
+      rpcErrorCode: RPC_ERROR_CODES.FORBIDDEN, effectAttempted: false,
+    });
+    await expect(capture(ownSession, {
+      ...reviewed.context,
+      externalActionExecutionAuthorization: retain({
+        ...root, binding: { ...root.binding, admittedMachineRole: undefined },
+      }),
+    })).rejects.toMatchObject({
+      rpcErrorCode: RPC_ERROR_CODES.FORBIDDEN, effectAttempted: false,
+    });
+    expect(gitLaunches()).toHaveLength(readCount);
+    await writeFile(join(ownRepository, 'guest-change.txt'), 'requester change\n');
+    git(ownRepository, 'add', 'guest-change.txt');
+    // A member comparison uses its own process, without the host's comparison port.
+    os.subprocessWorker = isolation === 'enabled';
+    const memberLaunchCount = os.runAs.length;
+    const sessionCaller: ActionExecutorContext = {
+      ...reviewed.context,
+      surface: 'agent', authority: 'account_automation',
+      actionCaller: { kind: 'session', sessionId: ownSession, starterDepth: 0, turnDepth: 0 },
+    };
+    for (const context of [reviewed.context, sessionCaller]) {
+      const response = await capture(ownSession, context);
+      expect(response, JSON.stringify({ caller: context.actionCaller?.kind, response })).toMatchObject({ success: true });
+      const comparison = ScmComparisonCaptureOutputSchema.parse(response);
+      expect(comparison, JSON.stringify(comparison)).toMatchObject({
+        success: true, comparison: { source: { kind: 'workingTree' }, repository: { rootPath: ownRepository },
+          inventory: { files: [{ path: 'guest-change.txt' }] } },
+      });
+    }
+    if (isolation === 'enabled') {
+      expect(daemonGit()).toEqual([]);
+      expect(os.runAs.slice(memberLaunchCount).map(run => [run.args[0], run.uid])).toEqual([
+        ['workspace-effect', 2401], ['workspace-effect', 2401],
+      ]);
+    }
+  }));
 
   it('reads history and switches branches for a reviewed Session Agent in its private repository', async () => {
     const f = await fixture({ privateHomeRepository: true, admissionCurrent: accountId => accountId !== 'other-account' });

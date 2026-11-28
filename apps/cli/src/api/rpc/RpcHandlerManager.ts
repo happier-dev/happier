@@ -1562,6 +1562,7 @@ export class RpcHandlerManager {
                 || options?.localActionContext?.actionCaller?.kind === 'session'
                 || options?.verifiedPeerAuthority === 'account_automation';
             let directWorkspaceRequester = options?.admissionResult?.directWorkspaceRequester;
+            let localSessionAuthorization = options?.admissionResult?.localSessionAuthorization;
             if ((localRequester || this.scopeKind === 'session')
                 && resolveMachineRpcRoutePolicy(method).requesterExecutionIsolationRequired === true) {
                 // A fresh Action's local delegation is not an owner-person default.
@@ -1594,6 +1595,7 @@ export class RpcHandlerManager {
                     ...(authorization.errorCode ? { errorCode: authorization.errorCode } : {}),
                     ...(authorization.failureCause ? { failureCause: authorization.failureCause } : {}), effectAttempted: false };
                 directWorkspaceRequester = authorization.directWorkspaceRequester;
+                localSessionAuthorization = authorization.localSessionAuthorization;
             }
             let countedInFlight = !this.pausedRequestAdmission.has(method);
             if (countedInFlight) this.beginInFlightRequest(method);
@@ -1617,6 +1619,7 @@ export class RpcHandlerManager {
                 return await handler(params, Object.freeze({
                     ...(options?.admissionResult?.admittedHostWorkflowRequester ? { admittedHostWorkflowRequester: options.admissionResult.admittedHostWorkflowRequester } : {}),
                     ...(directWorkspaceRequester ? { directWorkspaceRequester } : {}),
+                    ...(localSessionAuthorization ? { authorization: localSessionAuthorization } : {}),
                     ...(options?.admissionResult?.workspaceSyncPrivateExecution
                         ? { workspaceSyncPrivateExecution: options.admissionResult.workspaceSyncPrivateExecution } : {}),
                     ...(options?.rpcContext ? {

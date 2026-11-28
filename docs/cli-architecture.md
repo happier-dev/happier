@@ -3270,7 +3270,14 @@ even when the Project root is an ancestor of the member folder. The child has no
 daemon credentials. Captured comparisons and commit-plan repository effects use
 the same member worker through a host-bound comparison port; the host retains
 the requester's saved-result authority and supplies only the selected comparison
-or result operation. Every other `scm.*` method (fetch, pull, push, publish,
+or result operation. In 0.3 development, a retained Can use requester can
+capture a comparison for a Session they own on the shared Machine. The
+receiver consumes the Home-resolved Session ownership and binds capture to that
+Session. With Separate users, capture runs as the member user. With isolation
+off, it runs in the Session workspace as the daemon user. In both placements
+the capture uses the requester's Account.
+
+Every other `scm.*` method (fetch, pull, push, publish,
 forge, hosting, clone, saved results and comparisons, Agent runs, worktree
 create and remove, which run through the host Project lifecycle) is refused at
 ingress with `machine_manage_required` for a requester without Manage, until the

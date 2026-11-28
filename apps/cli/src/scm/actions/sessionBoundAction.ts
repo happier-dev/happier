@@ -8,6 +8,7 @@ import { executeCapturedMachineAction } from '@/api/machine/capturedMachineActio
 import { SCM_PULL_REQUEST_OPEN_OR_REUSE_ACTION_ID_V1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { createServerUrlComparableKey } from '@happier-dev/protocol/server/urls/serverUrlComparableKey';
 import { externalActionTargetsEqualV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { admitScmRemotePolicy } from '@happier-dev/protocol/scm/remotePolicy';
 import { admitScmCommitPolicy, admitScmCommitUndoLast } from '@happier-dev/protocol/scm/capabilities';
@@ -237,7 +238,7 @@ export function createSessionBoundScmAction(
       v: 1, kind: 'targeted_action_rpc', target: workspace, input: request,
     });
     const executeMachineScmAction = async (machineId: string | null, selectedInput: Readonly<Record<string, unknown>>,
-      sessionAuthorization = context.rpcSessionAuthorization, sessionRoot?: string, hasEditableScmSessionWorkspace?: true) => {
+      sessionAuthorization = context.rpcSessionAuthorization, sessionRoot?: string, scmSessionWorkspace?: NonNullable<RpcHandlerContext['localActionContext']>['scmSessionWorkspace']) => {
       const selectedTarget = context.externalActionTarget?.kind === 'machine' ? context.externalActionTarget : undefined;
       const root = workspace?.rootPath ?? sessionRoot ?? selectedTarget?.project?.directory;
       const [{ bindScmActionToSessionWorkspace }, { tryAcquireAuthoritativePluginRuntimeRegistryLease }, { executeCapturedMachineAction }] = await Promise.all([import("@/scm/actions/placement"), import("@/plugins/runtime/reload/runtimeLease"), import("@/api/machine/capturedMachineAction")]);
@@ -268,21 +269,24 @@ export function createSessionBoundScmAction(
       const installedScmOwner = localRuntime !== null;
       await localRuntime?.release();
       // Live work for another Account needs the receiving identity owner.
-      // Retained evidence keeps its existing Session authorization below.
-      const { isScmRpcOperationActive } = await import('@/scm/rpc/operationContext');
-      if (isScmRpcOperationActive() && params.credentials && nativeScmAction && (retainedReviewAction || installedScmOwner
-        && (!signedAuthorization || signedAuthorization.binding.accountId === signedAuthorization.binding.custodianAccountId))) {
+      const { scmRpcOperationContextStorage } = await import('@/scm/rpc/operationContext');
+      const operation = scmRpcOperationContextStorage.getStore();
+      const captureScope = method === RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE && context.rpcSessionAuthorization
+        && operation?.context.authorization === context.rpcSessionAuthorization ? operation : undefined;
+      if (operation && params.credentials && nativeScmAction && (retainedReviewAction || installedScmOwner
+        && (captureScope || !signedAuthorization || signedAuthorization.binding.accountId === signedAuthorization.binding.custodianAccountId))) {
         const currentMachine = await readCurrentMachineControlIdentity();
         if (currentMachine.machineId === machineId) {
           if (!await localReviewHomeCurrent()) return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
           const [{ executeScmActionOperation }, { resolveCwd }, { resolveFilesystemAccessPolicy }] = await Promise.all([import("@/scm/actions/executeScmActionOperation"), import("@/scm/runtime"), import("@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy")]);
-          return executeScmActionOperation({ actionId, input: inputRecord, workingDirectory: cwd ?? process.cwd(),
+          return executeScmActionOperation({ actionId, input: inputRecord,
+            workingDirectory: captureScope?.workingDirectory ?? cwd ?? process.cwd(),
             emitFileReviewNote,
             ...(root && context.defaultSessionId && (context.actionCaller?.kind === 'session'
               || sessionAuthorization?.sessionId === context.defaultSessionId) ? { sessionId: context.defaultSessionId } : {}),
-            accessPolicy: root ? { kind: 'restrictedRoots', roots: resolveCwd(root, cwd ?? process.cwd(),
+            accessPolicy: captureScope?.accessPolicy ?? (root ? { kind: 'restrictedRoots', roots: resolveCwd(root, cwd ?? process.cwd(),
               params.scmFilesystemAccessPolicy ?? resolveFilesystemAccessPolicy()).ok ? [root] : [] }
-              : params.scmFilesystemAccessPolicy ?? resolveFilesystemAccessPolicy(),
+              : params.scmFilesystemAccessPolicy ?? resolveFilesystemAccessPolicy()),
             ...(readComparisonTranscriptPage ? { readComparisonTranscriptPage } : {}), readPullRequestComparisonPage,
             authorizeSession: authorizeReviewSession,
             executeCanonicalAction, executeHostingProviderAction, actionContext: localReviewContext, ...accountMarksDeps, ...(context.signal ? { signal: context.signal } : {}),
@@ -353,7 +357,7 @@ export function createSessionBoundScmAction(
         invoke: options => callMachineAction({ machineId, serverId: context.serverId ?? undefined, method, request,
           ...(sessionAuthorization ? { authorization: sessionAuthorization } : {}),
           context, effectActionId: actionId,
-          ...(hasEditableScmSessionWorkspace ? { hasEditableScmSessionWorkspace } : {}),
+          ...(scmSessionWorkspace ? { scmSessionWorkspace } : {}),
           authority: context.authority, exactMachine: true,
           // SCM reads, like effects, belong to the containing Action lifetime.
           timeoutMs: null,
@@ -492,7 +496,7 @@ export function createSessionBoundScmAction(
       return await executeMachineScmAction(sessionMachineId, sessionBoundInput,
         context.rpcSessionAuthorization ?? (resolveSocketRpcSessionAuthorization(getActionSpec(actionId).bindings?.rpcMethod ?? '')
           ? { kind: 'session.write', sessionId: transport.sessionId } : undefined), workingDirectory,
-        accessLevel === 'edit' || accessLevel === 'owner' ? true : undefined);
+        accessLevel === 'edit' || accessLevel === 'owner' ? { sessionId: transport.sessionId, access: accessLevel } : undefined);
     }
 
     if (actionId.startsWith('scm.diffSummary.') && !await localReviewHomeCurrent()) {

@@ -64,8 +64,8 @@ export type RpcLocalActionContext = Readonly<Partial<Pick<
     requesterWorkAttributionV1?: RequesterWorkAttributionV1;
     /** Captured Account Environment read; never serialized or accepted from a Process DTO. */
     processEnvironmentRead?: (target: Readonly<{ serverId: string; environmentId: string }>) => Promise<boolean>;
-    /** Home granted the requester edit or owner access to this Session workspace. */
-    hasEditableScmSessionWorkspace?: true;
+    /** Home-resolved access to the exact Session supplying this SCM workspace. */
+    scmSessionWorkspace?: Readonly<{ sessionId: string; access: 'edit' | 'owner' }>;
 }>;
 
 /** Content-free, host-owned operation observations; never part of an RPC DTO. */
@@ -195,7 +195,8 @@ export type RpcAdmissionPredicate = (typeof RPC_ADMISSION_PREDICATES)[number];
 
 export type RpcAuthorizationResult =
     | Readonly<{ ok: true; workspaceSyncPrivateExecution?: RpcHandlerContext['workspaceSyncPrivateExecution']; admittedHostWorkflowRequester?: ActionExecutorContext['admittedHostWorkflowRequester'];
-        directWorkspaceRequester?: RpcHandlerContext['directWorkspaceRequester'] }>
+        directWorkspaceRequester?: RpcHandlerContext['directWorkspaceRequester'];
+        localSessionAuthorization?: Extract<SocketRpcAuthorizationContext, { kind: 'session.write' }> }>
     | Readonly<{ ok: false; error: string; errorCode?: string; admissionPredicate?: RpcAdmissionPredicate;
         failureCause?: import('@happier-dev/protocol/actions/actionExecutionResult').ActionFailureCauseV1 }>;
 
