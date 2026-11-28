@@ -4772,7 +4772,7 @@ describe('production workflow coordinator', () => {
           durableState = 'running';
           checkpointEnvelope = operation.checkpointEnvelope as string;
           const root = operation.rootInvocation as { id: string; contentEnvelope: string };
-          rows.set(root.id, { index: { id: root.id, runId, sequence: '0', parentRecordId: null, memberOrdinal: '0', attempt: '0', contentRevision: '0', lifecycle: 'pending', createdAt: now, updatedAt: now }, contentEnvelope: root.contentEnvelope });
+          rows.set(root.id, { index: { id: root.id, runId, sequence: '0', parentRecordId: null, memberOrdinal: '0', attempt: '0', contentRevision: '0', lifecycle: operation.rootLifecycle === 'running' ? 'running' : 'pending', createdAt: now, updatedAt: now }, contentEnvelope: root.contentEnvelope });
           return { initialization: 'created', run: summary('running') };
         }
         case 'invocations.list': return { invocations: [...rows.values()].map((row) => row.index).filter((index) => {

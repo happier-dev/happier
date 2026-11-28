@@ -2074,6 +2074,18 @@ describe("workflowRunService (integration)", () => {
             .toEqual({ lifecycle: "failed" });
     });
 
+    it("opens a starting worker's root running in the initialization itself", async () => {
+        const seeded = await seed();
+        const runId = randomUUID();
+        const rootId = randomUUID();
+        await admitWorkflowRun({ ...seeded, runId, origin: { kind: "direct" as const }, acceptedEnvelope: await acceptedEnvelope({ ...seeded, runId }) });
+        const initialized = await initializeWorkflowRunExecution({ accountId: seeded.accountId, runId, expectedRevision: 0,
+            checkpointEnvelope: checkpointEnvelope(seeded.accountId, runId, rootId, 1n), rootLifecycle: "running",
+            rootInvocation: { id: rootId, contentEnvelope: progressEnvelope({ ...seeded, runId, id: rootId, sequence: 0n, parentRecordId: null, memberOrdinal: 0n }) } });
+        expect(initialized).toMatchObject({ initialization: "created", run: { state: "running" }, rootInvocation: { index: { id: rootId, lifecycle: "running" } } });
+        expect(await db.workflowRunInvocation.findUniqueOrThrow({ where: { id: rootId }, select: { lifecycle: true } })).toEqual({ lifecycle: "running" });
+    });
+
     it("hints the origin owner only when a row enters admitting, attention changes, or the Run ends", async () => {
         const seeded = await seedPendingAdmission();
         await db.automationRun.update({ where: { id: seeded.runId }, data: {
@@ -3004,6 +3016,7 @@ describe("workflowRunService (integration)", () => {
         expectedRevision: number;
         checkpointEnvelope: string;
         rootInvocation: Readonly<{ id: string; contentEnvelope: string }>;
+        rootLifecycle?: "running";
     }>) {
         if ("machineId" in params) return await initializeWorkflowRunExecutionOwner({ ...params, accountCurrentness: await accountCurrentness(params.accountId) });
         const assignment = await db.automationRunAssignment.findFirstOrThrow({

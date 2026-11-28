@@ -1867,10 +1867,13 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
       return { state: 'failed', reason: 'content_unavailable' };
     }
     const encryption = resolved.encryption;
-    const prepareRecipients = async (signal?: AbortSignal) => await runWorkflowRecipientKeyPreparationV1({
+    // Startup passes the census the claimed snapshot already carries, as the
+    // Account owner does; the commit rechecks live access, the owner key and
+    // recipient bindings. Later conversation materialization reads it afresh.
+    const prepareRecipients = async (signal?: AbortSignal, census?: WorkflowRunRecipientCensusResponseV1) => await runWorkflowRecipientKeyPreparationV1({
       runId: claim.runId, runCrypto: encryption.runCrypto, openedDataEncryptionKey: initial.keyCensus.callerDataEncryptionKey,
       randomBytes: getRandomBytes,
-      readCensus: async () => WorkflowRunRecipientCensusResponseV1Schema.parse(await storage.execute({ operation: 'run-key.census', runId: claim.runId }, signal ? { signal } : {})),
+      readCensus: async () => census ?? WorkflowRunRecipientCensusResponseV1Schema.parse(await storage.execute({ operation: 'run-key.census', runId: claim.runId }, signal ? { signal } : {})),
       commit: async input => WorkflowRunRecipientKeyEnvelopeCommitResponseV1Schema.parse(await storage.execute({ operation: 'run-key.commit', ...input }, signal ? { signal } : {})),
       ...(signal ? { signal } : {}),
     });
@@ -1943,6 +1946,10 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
     let rootRecordId: string;
     let revision = initial.run.revision;
     let createdRoot: Readonly<{ index: unknown; contentEnvelope: unknown; parentRevision: number }> | undefined;
+    // A fresh start that will run at once prepares recipients first and opens
+    // its root running, so no separate running transition follows.
+    const startsOnInitialize = initial.checkpointEnvelope === null && !recoveryFailure;
+    if (startsOnInitialize) await prepareRecipients(claim.signal, initial.keyCensus);
     if (initial.checkpointEnvelope === null) {
       rootRecordId = randomUUID();
       checkpoint = WorkflowCheckpointEnvelopeV1Schema.parse({
@@ -1966,7 +1973,8 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
       const initialized = asRecord(await storage.execute({ operation: 'initialize', runId: claim.runId,
         parentAttempt: claim.attempt, accountCurrentness: encryption.witness,
         expectedRevision: revision, checkpointEnvelope,
-        rootInvocation: { id: rootRecordId, contentEnvelope: rootEnvelope } }));
+        rootInvocation: { id: rootRecordId, contentEnvelope: rootEnvelope },
+        ...(startsOnInitialize ? { rootLifecycle: 'running' } : {}) }));
       const run = WorkflowRunSummaryV1Schema.parse(initialized.run);
       revision = run.revision;
       const root = initialized.initialization === 'created' && initialized.rootInvocation !== undefined
@@ -2025,8 +2033,8 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
         accountCurrentness: encryption.witness, expectedRevision: durableStore.revision, state, checkpointEnvelope });
       return { state, reason: recoveryFailure };
     }
-    await prepareRecipients(claim.signal);
-    if (rootAtStart.lifecycle === 'pending' || initial.run.state === 'claimed') {
+    if (!startsOnInitialize) await prepareRecipients(claim.signal, initial.keyCensus);
+    if (!startsOnInitialize && (rootAtStart.lifecycle === 'pending' || initial.run.state === 'claimed')) {
       const checkpointEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowCheckpointStoredEnvelopeV1({
         ...sealMode(encryption), binding: { v: 1, purpose: 'checkpoint', accountId: params.accountId, runId: claim.runId },
         checkpoint: durableStore.checkpoint,

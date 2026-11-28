@@ -253,7 +253,7 @@ export function createWorkflowRunStorageTestkit(params: Readonly<{
         const root = operation.rootInvocation as Readonly<{ id: string; contentEnvelope: string }>;
         admitRow({
           id: root.id, sequence: '0', parentRecordId: null, memberOrdinal: '0',
-          lifecycle: 'pending', contentEnvelope: root.contentEnvelope,
+          lifecycle: operation.rootLifecycle === 'running' ? 'running' : 'pending', contentEnvelope: root.contentEnvelope,
         });
         return { initialization: 'created', run: summary(), rootInvocation: initializedRoot() };
       }

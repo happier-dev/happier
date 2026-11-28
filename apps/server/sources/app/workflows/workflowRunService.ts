@@ -757,6 +757,8 @@ export async function resolveAutomationWorkflowAcceptedSnapshot(params: Readonly
 export async function initializeWorkflowRunExecution(params: Readonly<{
     accountId: string; runId: string; machineId: string; parentAttempt: number; expectedRevision: number;
     checkpointEnvelope: string; rootInvocation: Readonly<{ id: string; contentEnvelope: string }>;
+    /** A worker that starts at once opens its root running instead of following up with a running transition. */
+    rootLifecycle?: "running";
     accountCurrentness: AutomationAccountCurrentnessWitnessV1;
 }>) {
     return await inTx(async (tx) => {
@@ -784,7 +786,7 @@ export async function initializeWorkflowRunExecution(params: Readonly<{
         if (await tx.workflowRunInvocation.findUnique({ where: { id: params.rootInvocation.id }, select: { id: true } })) throw new WorkflowRunServiceError("currentness_conflict");
         const roots = await tx.workflowRunInvocation.count({ where: { runId: params.runId, parentRecordId: null } });
         if (roots !== 0) throw new WorkflowRunServiceError("currentness_conflict");
-        const root = await tx.workflowRunInvocation.create({ data: { id: params.rootInvocation.id, runId: params.runId, sequence: 0n, parentRecordId: null, memberOrdinal: 0n, attempt: 0n, lifecycle: "pending", contentEnvelope: params.rootInvocation.contentEnvelope }, select: invocationSelect }) as InvocationRow;
+        const root = await tx.workflowRunInvocation.create({ data: { id: params.rootInvocation.id, runId: params.runId, sequence: 0n, parentRecordId: null, memberOrdinal: 0n, attempt: 0n, lifecycle: params.rootLifecycle ?? "pending", contentEnvelope: params.rootInvocation.contentEnvelope }, select: invocationSelect }) as InvocationRow;
         const storedCheckpoint = encodeStoredText(params.checkpointEnvelope);
         const parent = await tx.automationRun.update({
             where: { id: params.runId },

@@ -484,6 +484,12 @@ describe('durable review coordinator', () => {
     })).toMatchObject({ state: 'waiting_for_review' });
     expect(boundary.checkpointEnvelope()).not.toBeNull();
     expect(boundary.rows()).toEqual(expect.arrayContaining([expect.objectContaining({ index: expect.objectContaining({ lifecycle: 'waiting_for_review' }) })]));
+    // A fresh start reuses the claimed snapshot's key census for recipient
+    // preparation and initializes its root already running: no census read and
+    // no separate running transition before the first admission.
+    const startup = boundary.operations().slice(0, boundary.operations().indexOf('invocations.admit'));
+    expect(startup.filter(operation => operation === 'run-key.census' || operation === 'transition')).toEqual([]);
+    expect(boundary.calls.find(call => call.operation === 'initialize')).toMatchObject({ rootLifecycle: 'running' });
     current.witness.version = 4;
     expect(await coordinate({ runId, attempt: 0, expectedRevision: boundary.run().revision,
       accountCurrentness: accountEncryption.witness, acceptedEnvelope })).toMatchObject({ state: 'waiting_for_review' });
