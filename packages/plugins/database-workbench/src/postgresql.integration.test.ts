@@ -258,14 +258,19 @@ $guard$`;
             { sql: 'CREATE FUNCTION commit_fixture_wait() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(60); RETURN NEW; END $$', parameters: [] },
             { sql: 'CREATE CONSTRAINT TRIGGER commit_fixture_wait AFTER INSERT ON commit_fixture DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION commit_fixture_wait()', parameters: [] },
         ] })).ok).toBe(true);
-        const address = new URL(databaseUrl);
-        address.searchParams.set('application_name', 'dbw-commit-cancel');
-        const demand = await openPostgresqlConnection(address.toString());
+        const demand = await openPostgresqlConnection(databaseUrl);
         const controller = new AbortController();
-        const active = demand.execute({ operation: 'statement.run', target, mode: 'write', executionMode: 'transaction', statements: [{ sql: 'INSERT INTO commit_fixture VALUES(1)', parameters: [] }] }, controller.signal);
         try {
+            const backend = await demand.execute({ operation: 'statement.run', target, mode: 'read',
+                statement: { sql: 'SELECT pg_catalog.pg_backend_pid()', parameters: [] } });
+            if (!backend.ok || backend.operation !== 'statement.run') throw new Error('Could not identify the fixture backend');
+            const pid = backend.results[0]?.rows[0]?.cells[0];
+            if (pid?.type !== 'integer') throw new Error('Expected an integer backend PID');
+            const active = demand.execute({ operation: 'statement.run', target, mode: 'write', executionMode: 'transaction', statements: [{ sql: 'INSERT INTO commit_fixture VALUES(1)', parameters: [] }] }, controller.signal);
             for (;;) {
-                const observed = await connection.execute({ operation: 'statement.run', target, mode: 'read', statement: { sql: "SELECT count(*)::int FROM pg_stat_activity WHERE application_name='dbw-commit-cancel' AND query='COMMIT' AND state='active'", parameters: [] } });
+                const observed = await connection.execute({ operation: 'statement.run', target, mode: 'read', statement: {
+                    sql: "SELECT count(*)::int FROM pg_stat_activity WHERE pid=$1 AND query='COMMIT' AND state='active'", parameters: [pid],
+                } });
                 if (!observed.ok || observed.operation !== 'statement.run') throw new Error('Could not observe the fixture COMMIT');
                 const cell = observed.results[0]?.rows[0]?.cells[0];
                 if (cell?.type === 'integer' && cell.value === '1') break;

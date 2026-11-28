@@ -2,13 +2,14 @@ import type { PostgresqlCompiledStatement, PostgresqlExecutionOptions, Postgresq
 import type { DatabaseStatsOperationInputV1 } from '@happier-dev/plugin-sdk/database';
 import type { PostgresqlStatsCompilationV1 } from './stats.js';
 import { statsNativeRowsV1, statsText } from '../stats.js';
+import { postgresqlWorkbenchReadSql } from './workbenchIdentity.js';
 
 /** Fixed statements shared by the admitted deployment admin and credential-backed connections. */
 export const POSTGRESQL_STATISTICS_ENABLE_SQL_V1 = {
-    probe: `SELECT EXISTS (
+    probe: postgresqlWorkbenchReadSql(`SELECT EXISTS (
         SELECT FROM pg_catalog.regexp_split_to_table(pg_catalog.current_setting('shared_preload_libraries'), ',') AS library(name)
         WHERE pg_catalog.btrim(library.name, ' "') IN ('pg_stat_statements', '$libdir/pg_stat_statements')
-    ) AS preloaded, EXISTS (SELECT FROM pg_catalog.pg_extension WHERE extname = 'pg_stat_statements') AS installed`,
+    ) AS preloaded, EXISTS (SELECT FROM pg_catalog.pg_extension WHERE extname = 'pg_stat_statements') AS installed`),
     install: 'CREATE EXTENSION IF NOT EXISTS pg_stat_statements',
 } as const;
 
@@ -22,7 +23,7 @@ export type PostgresqlSetupFactsV1 = Readonly<{
 
 /** Establish the lexer's string grammar and discover installed facts in one startup call. */
 export function compilePostgresqlSetupV1(): PostgresqlCompiledStatement {
-    return { text: `SELECT pg_catalog.set_config('standard_conforming_strings','on',false),
+    return { text: postgresqlWorkbenchReadSql(`SELECT pg_catalog.set_config('standard_conforming_strings','on',false),
         current_database() AS database, d.oid::text AS database_oid, current_user AS current_user,
         pg_catalog.inet_server_addr()::text AS server_address, pg_catalog.inet_server_port()::text AS server_port,
         current_setting('server_version_num') AS server_version, pg_catalog.pg_postmaster_start_time()::text AS engine_started_at,
@@ -30,7 +31,7 @@ export function compilePostgresqlSetupV1(): PostgresqlCompiledStatement {
         FROM pg_catalog.pg_database d
         LEFT JOIN pg_catalog.pg_extension e ON e.extname='pg_stat_statements'
         LEFT JOIN pg_catalog.pg_namespace n ON n.oid=e.extnamespace
-        WHERE d.datname=current_database()`, values: [] };
+        WHERE d.datname=current_database()`), values: [] };
 }
 
 export function decodePostgresqlSetupV1(native: PostgresqlNativeResult): PostgresqlSetupFactsV1 {

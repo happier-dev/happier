@@ -1,8 +1,9 @@
 import type { PostgresqlCompiledStatement } from './operations.js';
+import { postgresqlWorkbenchReadSql } from './workbenchIdentity.js';
 
 export const postgresqlReadRoleSchemas: PostgresqlCompiledStatement = {
-    text: `SELECT nspname FROM pg_catalog.pg_namespace
-        WHERE nspname <> 'information_schema' AND pg_catalog.left(nspname, 3) <> 'pg_'`,
+    text: postgresqlWorkbenchReadSql(`SELECT nspname FROM pg_catalog.pg_namespace
+        WHERE nspname <> 'information_schema' AND pg_catalog.left(nspname, 3) <> 'pg_'`),
     values: [],
 };
 
@@ -10,7 +11,7 @@ export const postgresqlReadRoleSchemas: PostgresqlCompiledStatement = {
  * Members can activate other roles, so they require a dedicated direct-grant login. */
 export function postgresqlReadRoleProof(role: string, schemas: readonly string[] | null): PostgresqlCompiledStatement {
     return {
-        text: `SELECT r.rolcanlogin AND NOT (r.rolsuper OR r.rolcreatedb OR r.rolcreaterole OR r.rolreplication OR r.rolbypassrls)
+        text: postgresqlWorkbenchReadSql(`SELECT r.rolcanlogin AND NOT (r.rolsuper OR r.rolcreatedb OR r.rolcreaterole OR r.rolreplication OR r.rolbypassrls)
             AND NOT EXISTS (SELECT FROM pg_catalog.pg_auth_members m WHERE m.member = r.oid)
             AND pg_catalog.has_database_privilege(r.oid, pg_catalog.current_database(), 'CONNECT')
             AND NOT pg_catalog.has_database_privilege(r.oid, pg_catalog.current_database(), 'CREATE, CONNECT WITH GRANT OPTION')
@@ -43,7 +44,7 @@ export function postgresqlReadRoleProof(role: string, schemas: readonly string[]
                         AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
                         AND NOT pg_catalog.has_table_privilege(r.oid, c.oid, 'SELECT'))
             )
-            FROM pg_catalog.pg_roles r WHERE r.rolname = $1`,
+            FROM pg_catalog.pg_roles r WHERE r.rolname = $1`),
         values: [role, schemas ? JSON.stringify(schemas) : null],
     };
 }

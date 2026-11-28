@@ -128,10 +128,11 @@ it.each([
     }
 }, 30000);
 
-it('settles the Workbench size and loaded statements reads for the owner and a bounded read role', async () => {
+it('preserves user statement counts and Activity while excluding Workbench metadata and sessions', async () => {
     // F5d: the Data page's exact operands (size, empty selection; statements by totalTime, 50 rows from 0) on a loaded extension.
     const directory = await mkdtemp(join(tmpdir(), 'dbw-pg-loaded-'));
     let ownedPid: string | undefined;
+    let external: Client | undefined;
     const opened: Awaited<ReturnType<typeof openPostgresqlConnection>>[] = [];
     try {
         await run(join(binaries, 'initdb'), ['-D', join(directory, 'data'), '-A', 'trust', '-U', 'fixture', '--no-locale', '-E', 'UTF8']);
@@ -144,8 +145,11 @@ it('settles the Workbench size and loaded statements reads for the owner and a b
             { kind: 'stats.read', group: 'size', selection: {} },
             { kind: 'stats.read', group: 'statements', selection: { order: 'totalTime', page: { rows: 50, offset: 0 } } },
         ] as const;
+        external = new Client({ host: directory, user: 'happier_ro', database: 'postgres', application_name: 'fixture-user' });
+        await external.connect();
+        const externalActivityKey = String((await external.query<{ pid: number }>('SELECT pg_catalog.pg_backend_pid() AS pid')).rows[0]!.pid);
         for (const login of ['fixture', 'happier_ro']) {
-            const connection = await openPostgresqlConnection(`postgresql://${login}@localhost/postgres?host=${encodeURIComponent(directory)}`);
+            const connection = await openPostgresqlConnection(`postgresql://${login}@localhost/postgres?host=${encodeURIComponent(directory)}&application_name=fixture-client`);
             opened.push(connection);
             for (const request of requests) {
                 const settled = await connection.execute({ operation: 'stats.read', target, request });
@@ -153,7 +157,43 @@ it('settles the Workbench size and loaded statements reads for the owner and a b
                     observation: { group: request.group } });
             }
         }
+        const connection = opened[1]!;
+        const read = (sql: string) => connection.execute({ operation: 'statement.run', target, mode: 'read', statement: { sql, parameters: [] } });
+        const currentActivity = await read('SELECT pg_catalog.pg_backend_pid()');
+        expect(currentActivity).toMatchObject({ ok: true, operation: 'statement.run' });
+        if (!currentActivity.ok || currentActivity.operation !== 'statement.run') throw new Error('Current backend PID control failed');
+        const pid = currentActivity.results[0]?.rows[0]?.cells[0];
+        if (pid?.type !== 'integer') throw new Error('Current backend did not return an integer PID');
+        const schemaList = await connection.execute({ operation: 'schemas.list', target, page: { rows: 20 } });
+        expect(schemaList).toMatchObject({ ok: true, schemas: expect.arrayContaining([{ name: 'public' }]) });
+        const manualSizeSql = 'SELECT pg_catalog.pg_database_size(current_database())::text AS size_bytes';
+        for (let i = 0; i < 2; i++) expect(await read(manualSizeSql)).toMatchObject({ ok: true });
+        const activity = await connection.execute({ operation: 'stats.read', target, request: {
+            kind: 'stats.read', group: 'activity', selection: { page: { rows: 20 } },
+        } });
+        expect(activity).toMatchObject({ ok: true, operation: 'stats.read', observation: { group: 'activity', status: 'available' } });
+        if (!activity.ok || activity.operation !== 'stats.read' || activity.observation.status !== 'available' || activity.observation.group !== 'activity') {
+            throw new Error('Activity control failed');
+        }
+        const activityKeys = activity.observation.data.map(row => row.key);
+        expect(activityKeys).toContain(externalActivityKey);
+        expect.soft(activityKeys).not.toContain(pid.value);
+        const otherActivityKey = String((await external.query<{ pid: number }>(
+            'SELECT pid FROM pg_catalog.pg_stat_activity WHERE datname=current_database() AND usename=$1', ['fixture'],
+        )).rows[0]!.pid);
+        expect.soft(activityKeys).not.toContain(otherActivityKey);
+
+        const statements = await connection.execute({ operation: 'stats.read', target, request: requests[1] });
+        expect(statements).toMatchObject({ ok: true, operation: 'stats.read', observation: { group: 'statements', status: 'available' } });
+        if (!statements.ok || statements.operation !== 'stats.read' || statements.observation.status !== 'available' || statements.observation.group !== 'statements') {
+            throw new Error('Statements control failed');
+        }
+        const statementRows = statements.observation.data;
+        expect.soft(statementRows.filter(row => row.shape?.includes('pg_database_size'))).toMatchObject([{ calls: '2', rows: '2' }]);
+        expect.soft(statementRows.filter(row => row.shape?.includes('pg_namespace'))).toEqual([]);
+        expect.soft(statementRows.filter(row => row.shape?.includes('pg_stat_statements'))).toEqual([]);
     } finally {
+        await external?.end();
         for (const connection of opened) await connection.close().catch(() => {});
         if (ownedPid && ownedPid === (await readFile(join(directory, 'data/postmaster.pid'), 'utf8')).split('\n')[0]) {
             await run(join(binaries, 'pg_ctl'), ['-D', join(directory, 'data'), '-m', 'immediate', '-w', 'stop']);

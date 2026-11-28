@@ -9,6 +9,7 @@ export {
 } from './operations.js';
 export { createPostgresqlObservationNormalizer, maskPostgresqlObservationError, postgresqlCaptureUrl, type PostgresqlObservation, type PostgresqlObservationValue, type PostgresqlCaptureUrl } from './observation.js';
 export { compilePostgresqlStatsV1, type PostgresqlStatsCompilationV1 } from './stats.js';
+export { POSTGRESQL_WORKBENCH_APPLICATION_NAME } from './workbenchIdentity.js';
 export { POSTGRESQL_STATISTICS_ENABLE_SQL_V1, compilePostgresqlSetupV1, decodePostgresqlSetupV1,
     postgresqlStatsExecutionOptions, type PostgresqlSetupFactsV1 } from './setup.js';
 export { fitDatabaseOperationResult } from '../resultEnvelope.js';

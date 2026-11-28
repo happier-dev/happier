@@ -24,6 +24,7 @@ import { quotePostgresqlIdentifier } from './identifiers.js';
 import { POSTGRESQL_STATISTICS_ENABLE_SQL_V1 } from './setup.js';
 import { readPostgresqlIndexAdvice } from './indexAdvice.js';
 import { compilePostgresqlStatsV1, type PostgresqlStatsCompilationV1 } from './stats.js';
+import { postgresqlWorkbenchReadSql } from './workbenchIdentity.js';
 import { statsNativeRowsV1, statsOperationResultV1, statsSize, type DatabaseStatsExecutionContextV1, type DatabaseStatsNativeRowV1 } from '../stats.js';
 export { quotePostgresqlIdentifier } from './identifiers.js';
 
@@ -171,26 +172,26 @@ export function compilePostgresqlFilter(filter: DatabaseFilterV1, statement: Pos
 async function readRelationMetadata(query: PostgresqlQuery, relation: DatabaseRelationV1, options: {
     primaryOnly?: boolean; missing?: DatabaseFailureV1;
 } = {}) {
-    const identity = await query({ text: 'SELECT c.relkind,c.oid::text FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relname=$2 AND c.relkind IN (\'r\',\'p\',\'v\',\'m\')', values: [relation.schema, relation.name] });
+    const identity = await query({ text: postgresqlWorkbenchReadSql("SELECT c.relkind,c.oid::text FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relname=$2 AND c.relkind IN ('r','p','v','m')"), values: [relation.schema, relation.name] });
     if (!identity.rows[0]) {
         if (options.missing) throw new PostgresqlOperationError(options.missing);
         unavailable('relation_missing');
     }
     const nativeKind = scalar(identity.rows[0], 0);
     const kind: DatabaseRelationStructureV1['kind'] = nativeKind === 'v' ? 'view' : nativeKind === 'm' ? 'materialized_view' : 'table';
-    const columns = await query({ text: `SELECT a.attname, a.atttypid::text, pg_catalog.format_type(a.atttypid,a.atttypmod), a.attnotnull::text,
+    const columns = await query({ text: postgresqlWorkbenchReadSql(`SELECT a.attname, a.atttypid::text, pg_catalog.format_type(a.atttypid,a.atttypmod), a.attnotnull::text,
         pg_catalog.pg_get_expr(d.adbin,d.adrelid), (a.attgenerated<>'' OR a.attidentity='a')::text
         FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_class c ON c.oid=a.attrelid
         JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
         LEFT JOIN pg_catalog.pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum
-        WHERE n.nspname=$1 AND c.relname=$2 AND a.attnum>0 AND NOT a.attisdropped ORDER BY a.attnum`, values: [relation.schema, relation.name] });
-    const indexes = await query({ text: `SELECT ci.relname,i.indisunique::text,i.indisprimary::text,
+        WHERE n.nspname=$1 AND c.relname=$2 AND a.attnum>0 AND NOT a.attisdropped ORDER BY a.attnum`), values: [relation.schema, relation.name] });
+    const indexes = await query({ text: postgresqlWorkbenchReadSql(`SELECT ci.relname,i.indisunique::text,i.indisprimary::text,
         (SELECT json_agg(pg_catalog.pg_get_indexdef(i.indexrelid,k,true) ORDER BY k)::text FROM generate_series(1,i.indnkeyatts) k),
         pg_catalog.pg_get_expr(i.indpred,i.indrelid),
         (SELECT json_agg(COALESCE(a.attname,'') ORDER BY ord)::text FROM unnest(i.indkey::smallint[]) WITH ORDINALITY u(num,ord) LEFT JOIN pg_catalog.pg_attribute a ON a.attrelid=i.indrelid AND a.attnum=u.num WHERE ord<=i.indnkeyatts),
         (SELECT json_agg(CASE WHEN (i.indoption[k-1] & 1)=1 THEN 'desc' ELSE 'asc' END ORDER BY k)::text FROM generate_series(1,i.indnkeyatts) k)
         FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class c ON c.oid=i.indrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
-        JOIN pg_catalog.pg_class ci ON ci.oid=i.indexrelid WHERE n.nspname=$1 AND c.relname=$2${options.primaryOnly ? ' AND i.indisprimary' : ''} ORDER BY ci.relname`, values: [relation.schema, relation.name] });
+        JOIN pg_catalog.pg_class ci ON ci.oid=i.indexrelid WHERE n.nspname=$1 AND c.relname=$2${options.primaryOnly ? ' AND i.indisprimary' : ''} ORDER BY ci.relname`), values: [relation.schema, relation.name] });
     const primary = indexes.rows.find(row => scalar(row, 2) === 'true');
     return {
         oid: scalar(identity.rows[0], 1), kind,
@@ -212,7 +213,7 @@ async function structure(query: PostgresqlQuery, relation: DatabaseRelationV1, o
         SELECT f.*,false FROM pg_catalog.pg_constraint f
         LEFT JOIN pg_catalog.pg_constraint parent ON parent.oid=f.conparentid
         WHERE f.contype='f' AND f.confrelid=$1::oid AND parent.confrelid IS DISTINCT FROM f.confrelid` : '';
-    const foreign = await query({ text: `SELECT f.conname,n.nspname,c.relname,
+    const foreign = await query({ text: postgresqlWorkbenchReadSql(`SELECT f.conname,n.nspname,c.relname,
         (SELECT json_agg(a.attname ORDER BY u.ord)::text FROM unnest(f.conkey) WITH ORDINALITY u(num,ord) JOIN pg_catalog.pg_attribute a ON a.attrelid=f.conrelid AND a.attnum=u.num),
         (SELECT json_agg(a.attname ORDER BY u.ord)::text FROM unnest(f.confkey) WITH ORDINALITY u(num,ord) JOIN pg_catalog.pg_attribute a ON a.attrelid=f.confrelid AND a.attnum=u.num),
         f.outgoing
@@ -222,7 +223,7 @@ async function structure(query: PostgresqlQuery, relation: DatabaseRelationV1, o
         ) f
         JOIN pg_catalog.pg_class c ON c.oid=CASE WHEN f.outgoing THEN f.confrelid ELSE f.conrelid END
         JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
-        ORDER BY f.conname,n.nspname,c.relname`, values: [oid] });
+        ORDER BY f.conname,n.nspname,c.relname`), values: [oid] });
     const foreignKeys: Array<DatabaseRelationStructureV1['foreignKeys'][number]> = [];
     const incomingForeignKeys: DatabaseIncomingForeignKeyV1[] = [];
     for (const row of foreign.rows) {
@@ -246,7 +247,7 @@ async function structure(query: PostgresqlQuery, relation: DatabaseRelationV1, o
             kind === 'table' ? { operation: 'edits.apply', available: true } : { operation: 'edits.apply', available: false, code: 'database_relation_read_only', reason: 'Views are read-only in the workbench' }],
     };
     if (kind !== 'table') {
-        const definition = await query({ text: 'SELECT pg_catalog.pg_get_viewdef($1::regclass,true)', values: [qualified(relation)] });
+        const definition = await query({ text: postgresqlWorkbenchReadSql('SELECT pg_catalog.pg_get_viewdef($1::regclass,true)'), values: [qualified(relation)] });
         return { ...result, viewDefinition: scalar(definition.rows[0]!, 0) };
     }
     return result;
@@ -405,10 +406,10 @@ async function executeDialectOperation(input: DatabaseOperationInputV1, query: P
         case 'describe': return unavailable('Target descriptions belong to the selected-target resolver');
         case 'activity.cancel': {
             // Select the same query on the same database before sending the signal. A PID alone can be reused.
-            const result = await query({ text: `SELECT pg_catalog.pg_cancel_backend(a.pid) AS signalled
+            const result = await query({ text: postgresqlWorkbenchReadSql(`SELECT pg_catalog.pg_cancel_backend(a.pid) AS signalled
                 FROM pg_catalog.pg_stat_activity a
                 WHERE a.datname = current_database() AND a.pid = $1::integer
-                    AND a.query_start = $2::timestamptz AND a.state = 'active' AND a.pid <> pg_catalog.pg_backend_pid()`,
+                    AND a.query_start = $2::timestamptz AND a.state = 'active' AND a.pid <> pg_catalog.pg_backend_pid()`),
                 values: [input.activityKey, input.queryStartedAt] });
             const row = result.rows[0];
             return { ok: true, operation: input.operation, status: !row ? 'activity_ended' : row[0] === 't' ? 'signal_sent' : 'signal_failed' };
@@ -434,7 +435,7 @@ async function executeDialectOperation(input: DatabaseOperationInputV1, query: P
             return statsOperationResultV1('postgresql', input.request, plan, resultSets, options.stats);
         }
         case 'schemas.list': {
-            const native = await query({ text: "SELECT nspname FROM pg_catalog.pg_namespace WHERE nspname NOT LIKE 'pg_%' AND nspname<>'information_schema' AND ($1::text IS NULL OR strpos(nspname,$1)>0) AND ($2::text IS NULL OR nspname>$2) ORDER BY nspname LIMIT $3",
+            const native = await query({ text: postgresqlWorkbenchReadSql("SELECT nspname FROM pg_catalog.pg_namespace WHERE nspname NOT LIKE 'pg_%' AND nspname<>'information_schema' AND ($1::text IS NULL OR strpos(nspname,$1)>0) AND ($2::text IS NULL OR nspname>$2) ORDER BY nspname LIMIT $3"),
                 values: [input.search ?? null, input.page.after ?? null, String(input.page.rows + 1)],
                 resultFields: schemaCatalogFields });
             const rows = native.rows.slice(0, input.page.rows);
@@ -442,12 +443,12 @@ async function executeDialectOperation(input: DatabaseOperationInputV1, query: P
                 ? { complete: false, reason: 'page', continuation: { kind: 'catalog', operation: input.operation, target: input.target, ...(input.database ? { database: input.database } : {}), ...(input.search ? { search: input.search } : {}), after: scalar(rows.at(-1)!, 0) } } : { complete: true } };
         }
         case 'relations.list': {
-            const native = await query({ text: `SELECT c.relname,c.relkind,CASE WHEN c.reltuples>=0 THEN c.reltuples::bigint::text END AS estimated_rows,
+            const native = await query({ text: postgresqlWorkbenchReadSql(`SELECT c.relname,c.relkind,CASE WHEN c.reltuples>=0 THEN c.reltuples::bigint::text END AS estimated_rows,
                 CASE WHEN c.relkind<>'v' THEN pg_catalog.pg_relation_size(c.oid)::text END AS relation_bytes,
                 CASE WHEN c.relkind<>'v' THEN pg_catalog.pg_table_size(c.oid)::text END AS table_bytes,
                 CASE WHEN c.relkind<>'v' THEN pg_catalog.pg_indexes_size(c.oid)::text END AS index_bytes,
                 CASE WHEN c.relkind<>'v' THEN pg_catalog.pg_total_relation_size(c.oid)::text END AS size_bytes
-                FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relkind IN ('r','p','v','m') AND ($2::text IS NULL OR strpos(c.relname,$2)>0) AND ($3::text IS NULL OR c.relname>$3) ORDER BY c.relname LIMIT $4`,
+                FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relkind IN ('r','p','v','m') AND ($2::text IS NULL OR strpos(c.relname,$2)>0) AND ($3::text IS NULL OR c.relname>$3) ORDER BY c.relname LIMIT $4`),
                 values: [input.schema, input.search ?? null, input.page.after ?? null, String(input.page.rows + 1)],
                 resultFields: relationCatalogFields });
             const rows = native.rows.slice(0, input.page.rows);

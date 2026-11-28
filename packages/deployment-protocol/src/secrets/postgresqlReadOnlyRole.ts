@@ -1,8 +1,12 @@
 /** Shared PostgreSQL authority check for the dedicated query login.
  * SQL runs as the selected login before caller SQL; a read-only transaction
  * alone cannot establish database privileges. */
-export const postgresqlReadOnlyRoleGuardSql = `DO $happier_guard$
-BEGIN
+export function compilePostgresqlReadOnlyRoleGuardSql(applicationName?: string): string {
+    // Escape the literal and the enclosing DO delimiter independently.
+    const application = applicationName?.replaceAll('\\', '\\\\').replaceAll("'", "''").replaceAll('$', '\\x24');
+    const tag = application === undefined ? '' : `\n  PERFORM pg_catalog.set_config('application_name', E'${application}', true);`;
+    return `DO $happier_guard$
+BEGIN${tag}
   IF current_setting('server_version_num')::int < 140000
      OR current_user <> 'happier_ro'
      OR EXISTS (SELECT 1 FROM pg_roles WHERE rolname = current_user
@@ -28,3 +32,6 @@ BEGIN
   END IF;
 END
 $happier_guard$;`;
+}
+
+export const postgresqlReadOnlyRoleGuardSql = compilePostgresqlReadOnlyRoleGuardSql();

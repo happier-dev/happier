@@ -4,6 +4,7 @@ import { quotePostgresqlIdentifier as quote } from './identifiers.js';
 import { PostgresqlInputError, psqlInputScanner, type PostgresqlLexicalToken } from './input.js';
 import type { PostgresqlExecutionOptions, PostgresqlQuery } from './operations.js';
 import { compilePostgresqlStatsV1 } from './stats.js';
+import { postgresqlWorkbenchReadSql } from './workbenchIdentity.js';
 
 /** Stats text is only a source of identifiers for this intentionally small grammar. */
 function readStatementShape(sql: string) {
@@ -67,8 +68,8 @@ export async function readPostgresqlIndexAdvice(
         statsOperationResultV1('postgresql', request, { status: 'unavailable', reason }, [], stats);
 
     if (stats.nativeBackendPid === undefined) return unavailable('unsupported_transport');
-    const run = (text: string, values: string[] = []) => query({ text, values });
-    await run('SET LOCAL search_path TO pg_catalog, pg_temp');
+    const run = (text: string, values: string[] = []) => query({ text: postgresqlWorkbenchReadSql(text), values });
+    await query({ text: 'SET LOCAL search_path TO pg_catalog, pg_temp', values: [] });
     const [[version, backendPid, extensionSchema] = []] = (await run(`SELECT current_setting('server_version_num'),
         pg_catalog.pg_backend_pid()::text,
         (SELECT n.nspname FROM pg_extension e JOIN pg_namespace n ON n.oid=e.extnamespace WHERE e.extname='hypopg')`)).rows;
@@ -87,7 +88,7 @@ export async function readPostgresqlIndexAdvice(
         selection: { statementKey: request.selection.statementKey, page: { rows: 1 }, order: 'totalTime' } }, stats, { diagnoseHiddenSelection: true });
     if (statements.status !== 'compiled') return unavailable(statements.reason);
     const selected = statements.statements[0]!;
-    const result = await run(selected.sql, selected.parameters.map(String));
+    const result = await query({ text: selected.sql, values: selected.parameters.map(String) });
     const row = result.rows[0];
     if (row?.[result.fields.findIndex(field => field.name === 'visibility_restricted')] === 't') {
         return unavailable('visibility_restricted');

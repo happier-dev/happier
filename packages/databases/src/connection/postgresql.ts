@@ -2,7 +2,7 @@ import { Client, Query } from 'pg';
 import type { Duplex } from 'node:stream';
 import type { DatabaseOperationInputV1, DatabaseOperationResultV1 } from '@happier-dev/plugin-sdk/database';
 import { statsOperationResultV1 } from '../stats.js';
-import { databaseConnectionUrlWithoutOptions, databaseTlsVerification, type DatabaseConnectionOperationRunner, type DatabaseTls } from '../connection.js';
+import { databaseConnectionUrlWithoutOptions, databaseTlsVerification, withDatabaseConnectionUrlOptions, type DatabaseConnectionOperationRunner, type DatabaseTls } from '../connection.js';
 import {
     executePostgresqlOperation, normalizePostgresqlStatement, PostgresqlInputError, PostgresqlOperationError, postgresqlFailureCause,
     compilePostgresqlSetupV1, decodePostgresqlSetupV1, postgresqlStatsExecutionOptions,
@@ -11,6 +11,7 @@ import {
 } from '../postgresql/index.js';
 import { postgresqlReadRoleProof, postgresqlReadRoleSchemas } from '../postgresql/readRoleSetup.js';
 import { quotePostgresqlIdentifier } from '../postgresql/identifiers.js';
+import { POSTGRESQL_WORKBENCH_APPLICATION_NAME, postgresqlWorkbenchReadSql } from '../postgresql/workbenchIdentity.js';
 import {
     DatabaseReadRoleError, matchesDatabaseReadRolePlan, planDatabaseReadRoleSetup, postgresqlReadRolePassword, readRoleFailure,
     type DatabaseReadRoleConnection, type DatabaseReadRoleVerificationResult,
@@ -32,7 +33,9 @@ export async function openPostgresqlConnection(connectionString: string, signal?
         openStream?: () => Promise<Readonly<{ stream: Duplex; close(): Promise<void> }>>;
     }> = {}): Promise<PostgresqlConnection & DatabaseReadRoleConnection & { normalizeStatementShape(sql: string): string }> {
     signal?.throwIfAborted();
-    const uri = options.tls ? databaseConnectionUrlWithoutOptions(connectionString) : connectionString;
+    const uri = withDatabaseConnectionUrlOptions(options.tls ? databaseConnectionUrlWithoutOptions(connectionString) : connectionString, {
+        application_name: POSTGRESQL_WORKBENCH_APPLICATION_NAME,
+    });
     const tls = options.tls && databaseTlsVerification(options.tls);
     const openClient = async () => {
         const transport = await options.openStream?.();
@@ -122,7 +125,7 @@ export async function openPostgresqlConnection(connectionString: string, signal?
         await client.connect();
         if (options.sessionGuardSql) await query({ text: options.sessionGuardSql, values: [] });
         if (options.writeRoleSetupSql) {
-            const role = (await query({ text: options.writeRoleSetupSql, values: [] })).rows[0]?.[0];
+            const role = (await query({ text: postgresqlWorkbenchReadSql(options.writeRoleSetupSql), values: [] })).rows[0]?.[0];
             if (role === undefined) throw Object.assign(new Error('The PostgreSQL write role is unavailable'), { code: 'write_role_unavailable' });
             if (role !== null) writeRoleSql = `SET LOCAL ROLE ${quotePostgresqlIdentifier(role)}`;
         }

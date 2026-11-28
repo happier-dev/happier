@@ -220,6 +220,11 @@ After setup succeeds, apply the same staged changes again.
   database where the query runs. **History** keeps the SQL on this device for
   that target. A query that returns zero rows still shows its result columns.
 
+PostgreSQL **Insights** excludes the catalog queries Workbench runs to inspect
+the database. SQL you run in the **Console** still counts. **Activity** omits
+Workbench's own database connections. PostgreSQL may retain catalog entries
+from earlier Workbench versions until it evicts them from `pg_stat_statements`.
+
 If PostgreSQL statement statistics need setup, **Insights** shows the required
 setting and offers **Enable statistics** when the connected target supports it.
 **Ask an agent to enable pg_stat_statements** prepares an editable Session

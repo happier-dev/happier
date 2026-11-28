@@ -191,6 +191,7 @@ describe('Neon qualified read-only SQL', () => {
       const payload = JSON.parse(new TextDecoder().decode(sql[0]!.body));
       expect(payload.queries).toHaveLength(2);
       expect(payload.queries[0].query).toContain('happier_read_role_unavailable');
+      expect(payload.queries[0].query).toContain("pg_catalog.set_config('application_name', E'happier-database-workbench', true)");
       expect(payload.queries[1]).toEqual({ query: input.sql, params: ['hello'] });
       expect(h.requests.filter(request => request.credentialBinding)).toHaveLength(2);
     } finally { await h.kit.dispose(); }

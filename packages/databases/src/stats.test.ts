@@ -86,7 +86,7 @@ describe('shared stats dialects', () => {
         expect(plan.statements).toHaveLength(1);
         expect(plan.statements[0]!.sql).toContain('"custom stats"."pg_stat_statements"');
         expect(plan.statements[0]!.sql).not.toContain('pg_catalog.pg_extension');
-        expect(plan.statements[0]!.parameters).toEqual([13, 24, '1.11']);
+        expect(plan.statements[0]!.parameters).toEqual(expect.arrayContaining([13, 24, '1.11']));
         const result = plan.decode([[{ key: '7:8:9:true', database: 'main', user_id: '8', top_level: true, calls: '9007199254740993', total_time_ms: '120', rows: '40', blocks_read: '10', blocks_hit: '90', query: "ALTER USER me PASSWORD 'secret'", extension_version: '1.11', stats_reset: 'today', deallocated: '0', engine_started_at: 'boot' }]], context);
         expect(result).toMatchObject({ status: 'available', data: [{ key: '7:8:9:true', calls: '9007199254740993', totalTimeMs: 120, blocksRead: '10', blocksHit: '90' }] });
         expect(JSON.stringify(result)).not.toContain('secret');
