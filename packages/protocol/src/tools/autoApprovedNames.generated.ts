@@ -661,8 +661,6 @@ export const autoApprovedNames: readonly string[] = Object.freeze([
   "updates_check",
   "updates_get",
   "usage_calendar_export",
-  "usage_coach_dismiss",
-  "usage_coach_snooze",
   "usage_export",
   "usage_history_read",
   "usage_prices_get",

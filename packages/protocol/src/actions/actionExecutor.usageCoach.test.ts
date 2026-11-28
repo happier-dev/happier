@@ -1,8 +1,8 @@
 import { bundledUsageModelPriceCatalog } from '../usage/usageModelPriceCatalog.js';
 import { describe, expect, it, vi } from 'vitest';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
-import { getActionSpec, SignedRootActionIdSchema } from './actionSpecs.js';
-import { resolveCredentialActionAdmissionV1 } from './decisionAuthority.js';
+import { getActionSpec } from './actionSpecs.js';
+import { normalizeActionsSettingsV1 } from './actionSettings.js';
 import { normalizeUsageQuery } from '../inputs/usageQuery.js';
 import type { ActionId } from './actionIds.js';
 import { resolveUsagePageAggregation } from '../usage/resolveUsagePageAggregation.js';
@@ -32,13 +32,7 @@ function coachKv(read: () => ReturnType<typeof UsageCoachSuppressionStateV1Schem
 }
 
 describe('evidence-bound Coach Action admission', () => {
-    it('lets Account automation dismiss, restore and snooze its own finding without approval', async () => {
-        // Home uses this admission for terminal credentials with no delegated grant.
-        for (const id of ['usage.coach.dismiss', 'usage.coach.snooze'] as const) {
-            expect(SignedRootActionIdSchema.safeParse(id).success).toBe(true);
-            expect(resolveCredentialActionAdmissionV1({ spec: getActionSpec(id),
-                authority: 'account_automation', grant: null, surface: 'cli' })).toMatchObject({ ok: true });
-        }
+    it('lets a person dismiss, restore and snooze their own finding directly in the app', async () => {
         const aggregate = () => resolveUsagePageAggregation({ queries: [query], howYouWork: [{ query, asOfMs: 200,
             detail: { status: 'partial', permissions: [{ requestId: 'p', workId: 'w', requestedAtMs: 120,
                 decidedAtMs: 160, toolId: null, answeringClientCategory: null }] } }] }, bundledUsageModelPriceCatalog);
@@ -53,7 +47,7 @@ describe('evidence-bound Coach Action admission', () => {
             },
             coachSuppressions: () => coachKv(() => state, value => { state = value; }),
         } } as ActionExecutorDeps);
-        const context = { surface: 'cli', authority: 'account_automation', actionCaller: { kind: 'host' } } as const;
+        const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } as const;
         const read = () => executor.execute('usage.query', { queries: [query] }, context);
         expect(await executor.execute('usage.coach.dismiss', { query, evidenceKey, dismissed: true }, context)).toMatchObject({ ok: true });
         expect(await read()).toMatchObject({ ok: true, result: { results: [{ coach: { findings: [{ state: { dismissed: true } }] } }] } });
@@ -355,14 +349,22 @@ describe('evidence-bound Coach Action admission', () => {
                 return { anchor: 'usage.coachPreferences', value: preferences, settingsVersion: 2 };
             },
         } as ActionExecutorDeps);
+        let settings = normalizeActionsSettingsV1(null);
         const headless = createActionExecutor({
+            readActionsSettings: () => settings,
             // This transport reaches the existing client Action executor; no private finding crosses in input.
             clientActionExecute: async request => client.execute(request.actionId, request.input, { ...request.context, surface: 'ui' }),
             usageActions: { query: async input => resolveUsagePageAggregation({ queries: input.queries }, bundledUsageModelPriceCatalog),
                 coachSuppressions: () => coachKv(() => suppressions, value => { suppressions = value; }) },
         } as ActionExecutorDeps);
         const input = { query, evidenceKey: finding.evidenceKey, dismissed: true };
-        for (const surface of ['cli', 'agent', 'mcp', 'api'] as const) {
+        expect(await headless.execute('usage.coach.dismiss', input, { surface: 'cli', authority: 'present_user' }))
+            .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+        expect(suppressions.suppressions).toEqual([]);
+
+        const surfaces = ['cli', 'agent', 'mcp', 'api'] as const;
+        settings = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'usage.coach.dismiss': surfaces } });
+        for (const surface of surfaces) {
             const result = await headless.execute('usage.coach.dismiss', input,
                 { surface, authority: 'present_user' });
             expect(result, JSON.stringify(result)).toMatchObject({ ok: true,

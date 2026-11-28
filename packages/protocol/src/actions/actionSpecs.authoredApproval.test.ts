@@ -1,19 +1,20 @@
 import { describe, expect, it } from 'vitest';
+import { USAGE_COACH_ACTION_IDS } from '../usage/usageActionIdsV1.js';
 
 describe('Usage and visual Action approval parity', () => {
   it('keeps retained mutations discoverable and approval-default with explicit user waivers', async () => {
     const [
       { getActionSpec }, { resolveActionSurfaceAvailability },
-      { isApprovalRequiredByActionsSettings }, { ActionsSettingsV1Schema },
+      { isApprovalRequiredByActionsSettings }, { ActionsSettingsV1Schema }, { isHappierToolAutoApprovedByAgentLayerV1 },
     ] = await Promise.all([
       import('./actionSpecs.js'), import('./actionSurfaceAvailability.js'),
-      import('./actionApprovalPolicy.js'), import('./actionSettings.js'),
+      import('./actionApprovalPolicy.js'), import('./actionSettings.js'), import('../tools/happierToolAutoApprovalV1.js'),
     ]);
     const settings = ActionsSettingsV1Schema.parse({ v: 1, actions: {} });
     for (const id of [
       'settings.set', 'widgets.item.add', 'widgets.item.remove', 'widgets.item.inputs.set',
       'widgets.area.layout.create', 'widgets.area.layout.rename', 'widgets.area.layout.delete',
-      'usage.coach.apply', 'usage.coach.undo',
+      ...USAGE_COACH_ACTION_IDS,
       'usage.sources.consent.set', 'usage.sources.stop', 'usage.sources.history.delete',
       'connectedServices.subscription.price.set', 'widgets.definition.saveFromSession',
       'widgets.item.network.set',
@@ -28,10 +29,9 @@ describe('Usage and visual Action approval parity', () => {
       }
     }
     expect(getActionSpec('usage.query').approval).toMatchObject({ result: 'none' });
-    expect(getActionSpec('usage.coach.apply').approval).toMatchObject({ result: 'required' });
-    for (const id of ['usage.coach.dismiss', 'usage.coach.snooze'] as const) {
-      expect(getActionSpec(id).approval).toMatchObject({ result: 'none' });
-      expect(isApprovalRequiredByActionsSettings(id, settings, { surface: 'cli' })).toBe(false);
+    for (const id of USAGE_COACH_ACTION_IDS) {
+      expect(isApprovalRequiredByActionsSettings(id, settings, { surface: 'cli' })).toBe(true);
+      expect(isHappierToolAutoApprovedByAgentLayerV1(getActionSpec(id).bindings!.mcpToolName!)).toBe(false);
     }
   }, 60_000);
 });

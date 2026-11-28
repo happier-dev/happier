@@ -667,8 +667,7 @@ describe('standalone MCP client Action admission', () => {
         if (!text || text.type !== 'text') throw new Error('Missing Coach dismissal result');
         return JSON.parse(text.text) as unknown;
       };
-      // Coach dismiss is a safe preference edit. It preserves the MCP principal
-      // without requiring an approval waiver (the canonical Coach declaration).
+      // The default approval decision settles before the mounted effect.
       const noWaiverResult = await dismissCoach();
       const coachAdmissionsBeforeWaiver = admitted.filter(raw => UiActionDispatchRequestV1Schema.parse(raw).actionId === 'usage.coach.dismiss');
       reviewedSettings = waivedSettings;
@@ -695,14 +694,14 @@ describe('standalone MCP client Action admission', () => {
         errorCode: 'coach_preferences_unavailable', error: 'coach_preferences_unavailable', requestId: expect.any(String),
       };
       expect.soft(dismissed).toEqual(connected ? coachResult : absentCoachOwner);
-      expect.soft(noWaiverResult).toEqual(connected ? coachResult : absentCoachOwner);
-      expect(coachAdmissionsBeforeWaiver).toHaveLength(connected ? 1 : 0);
+      expect(noWaiverResult).toMatchObject({ errorCode: 'approvals_not_supported' });
+      expect(coachAdmissionsBeforeWaiver).toEqual([]);
       expect(daemonAdmissions).toContainEqual(expect.objectContaining({
         actionId: 'usage.coach.dismiss', surface: 'mcp', target: { kind: 'session', sessionId: 'mcp-session-active' },
       }));
       expect(homeSessionLookups.slice(homeLookupsBeforeCoach)).toContain('/v2/sessions/mcp-session-active');
       const coachAdmissions = admitted.filter(raw => UiActionDispatchRequestV1Schema.parse(raw).actionId === 'usage.coach.dismiss');
-      expect(coachAdmissions).toHaveLength(connected ? 2 : 0);
+      expect(coachAdmissions).toHaveLength(connected ? 1 : 0);
       if (connected) {
         const request = UiActionDispatchRequestV1Schema.parse(coachAdmissions[0]);
         expect(request).toMatchObject({ input: { evidenceKey: coachInput.evidenceKey, dismissed: true }, context: {

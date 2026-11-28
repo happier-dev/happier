@@ -4,12 +4,12 @@ import { UsageCoachApplyInputSchema, UsageCoachApplyResultSchema, UsageCoachUndo
 import type { ActionSpecProjectionMetadata, PreNormalizedActionSpec } from '../actionSpecs.js';
 
 export { USAGE_COACH_ACTION_IDS, type UsageCoachActionId } from '../../usage/usageActionIdsV1.js';
-const common = { approvalPolicy: { uiConfirmation: 'direct' }, safety: 'danger', sideEffectClass: 'write', requiredAuthority: 'account_automation', executionPlacement: 'client',
+const common = { approvalPolicy: { uiConfirmation: 'direct' }, approval: { result: 'required' }, safety: 'danger', sideEffectClass: 'write', requiredAuthority: 'account_automation', executionPlacement: 'client',
     placements: [], surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
     cli: { commands: [], acceptsServerId: true },
     inputHints: { fields: [{ path: 'query', title: 'Usage query', widget: 'json', required: true, inputType: { hostType: 'usageQuery' } },
         { path: 'evidenceKey', title: 'Finding evidence', widget: 'text', required: true }] },
-} satisfies Pick<PreNormalizedActionSpec, 'approvalPolicy' | 'safety' | 'sideEffectClass' | 'requiredAuthority' | 'executionPlacement' | 'placements' | 'surfaces' | 'cli' | 'inputHints'>;
+} satisfies Pick<PreNormalizedActionSpec, 'approvalPolicy' | 'approval' | 'safety' | 'sideEffectClass' | 'requiredAuthority' | 'executionPlacement' | 'placements' | 'surfaces' | 'cli' | 'inputHints'>;
 
 type UsageCoachActionSchemas = {
     'usage.coach.apply': { inputSchema: typeof UsageCoachApplyInputSchema; outputSchema: typeof UsageCoachApplyResultSchema };
@@ -18,23 +18,21 @@ type UsageCoachActionSchemas = {
     'usage.coach.snooze': { inputSchema: typeof UsageCoachSnoozeInputSchema; outputSchema: typeof UsageCoachPreferenceResultSchema };
 };
 type UsageCoachActionSpec = {
-    [Id in keyof UsageCoachActionSchemas]: ActionSpecProjectionMetadata & Omit<typeof common, 'safety'> & Readonly<UsageCoachActionSchemas[Id]> & Readonly<{
+    [Id in keyof UsageCoachActionSchemas]: ActionSpecProjectionMetadata & typeof common & Readonly<UsageCoachActionSchemas[Id]> & Readonly<{
         id: Id;
-        safety: Id extends 'usage.coach.dismiss' | 'usage.coach.snooze' ? 'safe' : 'danger';
-        approval: { result: Id extends 'usage.coach.dismiss' | 'usage.coach.snooze' ? 'none' : 'required' };
     }>;
 }[keyof UsageCoachActionSchemas];
 export const USAGE_COACH_ACTION_SPECS: readonly UsageCoachActionSpec[] = lazyActionSpecArray(() => [
-    { ...common, id: 'usage.coach.apply', approval: {result: 'required'}, title: 'Apply a Coach remedy',
+    { ...common, id: 'usage.coach.apply', title: 'Apply a Coach remedy',
         description: 'Re-read the exact authorized query and apply its current supported finding remedy through the canonical owner. Caller-supplied effects and confirmation flags are refused.',
         bindings: { mcpToolName: 'usage_coach_apply' }, inputSchema: UsageCoachApplyInputSchema, outputSchema: UsageCoachApplyResultSchema },
-    { ...common, id: 'usage.coach.undo', approval: {result: 'required'}, title: 'Undo a Coach remedy',
+    { ...common, id: 'usage.coach.undo', title: 'Undo a Coach remedy',
         description: 'Restore an exact captured owner value under its atomic conditional mutation and captured Home/Account authority. Incompatible intervening writes refuse restoration even when the original finding is no longer reported.',
         bindings: { mcpToolName: 'usage_coach_undo' }, inputSchema: UsageCoachUndoInputSchema, outputSchema: UsageCoachUndoResultSchema },
-    { ...common, id: 'usage.coach.dismiss', safety: 'safe', approval: {result: 'none'}, title: 'Dismiss or re-enable a Coach finding',
+    { ...common, id: 'usage.coach.dismiss', title: 'Dismiss or re-enable a Coach finding',
         description: 'Persist dismissal for this exact finding evidence in Account KV. Materially different evidence remains visible.',
         bindings: { mcpToolName: 'usage_coach_dismiss' }, inputSchema: UsageCoachDismissInputSchema, outputSchema: UsageCoachPreferenceResultSchema },
-    { ...common, id: 'usage.coach.snooze', safety: 'safe', approval: {result: 'none'}, title: 'Snooze a Coach finding',
+    { ...common, id: 'usage.coach.snooze', title: 'Snooze a Coach finding',
         description: 'Persist an explicit snooze deadline for this exact finding evidence in Account KV.',
         bindings: { mcpToolName: 'usage_coach_snooze' }, inputSchema: UsageCoachSnoozeInputSchema, outputSchema: UsageCoachPreferenceResultSchema },
 ] as const satisfies readonly PreNormalizedActionSpec[]);
