@@ -22,7 +22,8 @@ export function botStoreTranslations(language: SupportedLanguage) {
         newBotSearch, blankBot, blankBotHint, askHappierHint, newBotIdle,
         newGroup: 'New group with Bots…', roomWhenMentioned: 'When mentioned', roomEveryMessage: 'To every message',
         roomWhenMentionedBody: 'The Bot answers when you @-mention it.',
-        roomEveryMessageBody: 'The Bot answers each message a person posts.' };
+        roomEveryMessageBody: 'The Bot answers each message a person posts.',
+        cancelAsk: 'Cancel ask', askAlreadyDelivered: 'The Bot has already received this ask.' };
 }
 
 const FROM_HAPPIER: Partial<Record<SupportedLanguage, string>> = {

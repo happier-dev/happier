@@ -142,6 +142,21 @@ it('does not bind a draft from a foreign Home with a matching identity hint', as
   expect(http.request).not.toHaveBeenCalled();
 });
 
+it.each(['when_mentioned', 'every_message'] as const)('settles the original C2 Ask when a Bot answers under %s', async answerPolicy => {
+  http.request.mockResolvedValue({ status: 200, data: { discussionId: 'discussion', ownerAccountId: 'owner', access: 'owner', grants: [],
+    participants: [{ participant: { kind: 'session', sessionId: participantSessionId }, answerPolicy, createdAt: 1 }] } });
+  http.get.mockResolvedValue({ status: 200, data: { v: 1, status: 'available', progress: {
+    v: 1, mode: 'return', disposition: 'observing', acceptedTurnId: 'turn', discussion: source.discussionAddressing,
+  } } });
+  const localId = deriveSessionMessageReplyReturnLocalIdV1({ sessionId: participantSessionId, localId: 'input', acceptedTurnId: 'turn' });
+  expect(await bindDiscussionDraftReply({ actionId: 'discussion.reply', input: { ...input,
+    replyTarget: { kind: 'message', messageId: 'question' } }, context, serverId: 'home', discussionAction: readRoster,
+    credentials: { token: 'token' }, serverHttpBaseUrl: 'https://draft-reply.test' }))
+    .toMatchObject({ actionId: 'discussion.reply', input: { localId }, context: {
+      discussionReplyReturn: { serverId: homeIdentityId, requestLocalId: 'input', acceptedTurnId: 'turn' },
+    } });
+});
+
 it.each(['when_addressed', 'reads_only', 'watches_and_speaks_up'] as const)('preserves independent explicit publication under %s', async answerPolicy => {
   http.request.mockResolvedValue({ status: 200, data: { discussionId: 'discussion', ownerAccountId: 'owner', access: 'owner', grants: [],
     participants: [{ participant: { kind: 'session', sessionId: participantSessionId }, answerPolicy, createdAt: 1 }] } });

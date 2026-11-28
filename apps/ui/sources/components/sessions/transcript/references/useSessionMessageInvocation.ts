@@ -21,6 +21,7 @@ export type SessionMessageInvocationTarget = Readonly<{
     code?: string;
     resultRef: CoordinationMessageRefV1 | null;
     replyStatus: SessionMessageReplyReadResultV1['status'] | 'not_requested' | 'loading';
+    canWithdraw?: true;
 }>;
 
 export type InvocationReadState =
@@ -131,6 +132,8 @@ export function projectSessionMessageInvocationRead(input: Readonly<{
                 : 'publicationRef' in outcome ? outcome.publicationRef : null
             : answer?.sourceMessageRef ?? row.immediate.resultRef ?? null;
         return { target: row.target, localId: row.localId ?? null, requestBound, status,
+            ...((status === 'queued' || status === 'held') && reply?.status === 'available' && !reply.progress.acceptedTurnId
+                ? { canWithdraw: true as const } : {}),
             ...(row.immediate.code && !outcome && !answer && !row.immediate.outcome ? { code: row.immediate.code } : {}), resultRef,
             replyStatus: row.immediate.status === 'outcomeUnknown' ? 'unavailable'
                 : invocation.reply === 'none' || row.immediate.outcome || row.immediate.status === 'rejected' ? 'not_requested'

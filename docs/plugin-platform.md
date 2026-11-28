@@ -443,6 +443,11 @@ write settles, or `approvalRequested` with the approval artifact id.
 
 ## Cold Bot template declarations (unreleased 0.3)
 
+Store › Bots lists the ten job templates shipped in the first-party Bot templates
+plugin under **From Happier**. Store preview uses `template.preview` with the
+exact bundled contribution reference. The same release schema validates
+bundled and marketplace templates.
+
 The canonical contribution family registry admits `botTemplates` entries as
 closed `{ id, path }` descriptors. `definePlugin` authors supply a keyed
 `botTemplates` record, projected through the same manifest admission. Several

@@ -32,6 +32,11 @@ import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import { useActiveServerAccountScope } from '@/sync/store/hooks';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
+import { Modal } from '@/modal';
+import { SessionPendingWithdrawResultV1Schema } from '@happier-dev/protocol/sessions/control/pendingWithdrawV1';
 import { t } from '@/text';
 import { HappierListRowRule, HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
@@ -406,7 +411,42 @@ export function SessionAskRecord(props: SessionAskRecordProps) {
     returnedAnswers,
   });
   if (record.status !== 'ready') return null;
-  return <SessionAskRecordContent {...props} record={record} returned={returned} />;
+  const target = record.targets.length === 1 ? record.targets[0] : undefined;
+  const cancel = scope && record.origin === 'composer' && record.invocation.reply !== 'none' && target?.canWithdraw && target.localId
+    ? <CancelQueuedAsk scope={scope} sessionId={target.target.sessionId} localId={target.localId}
+        sourceRowId={record.sourceRowId} refresh={record.refresh} /> : null;
+  return <SessionAskRecordContent {...props} record={record} returned={returned} cancel={cancel} />;
+}
+
+function CancelQueuedAsk(props: Readonly<{
+  scope: ServerAccountScope;
+  sessionId: string;
+  localId: string;
+  sourceRowId: string;
+  refresh: () => void;
+}>) {
+  const execution = useMountedActionExecution(props.scope);
+  const [busy, setBusy] = React.useState(false);
+  return <TextLinkButton size="meta" testID={`session-ask-record-cancel:${props.sourceRowId}`}
+    label={t('botTemplates.cancelAsk')} disabled={busy || !execution.ready} onPress={async () => {
+      if (busy) return;
+      setBusy(true);
+      try {
+        const outcome = SessionPendingWithdrawResultV1Schema.parse(await execution.executeValue('session.pending.withdraw', {
+          sessionId: props.sessionId, localId: props.localId, serverId: props.scope.serverId,
+        }));
+        if (!execution.isCurrent()) return;
+        props.refresh();
+        if (outcome.outcome !== 'removed') {
+          await Modal.alert(t('common.error'), t(outcome.outcome === 'already_delivered'
+            ? 'botTemplates.askAlreadyDelivered' : 'session.askRecord.unsureHint'));
+        }
+      } catch (error) {
+        if (execution.isCurrent()) await Modal.alert(t('common.error'), error instanceof Error ? error.message : t('common.error'));
+      } finally {
+        if (execution.isCurrent()) setBusy(false);
+      }
+    }} />;
 }
 
 /**
@@ -418,6 +458,7 @@ export function SessionAskRecordContent(
     Readonly<{
       record: Extract<SessionMessageInvocationReadState, Readonly<{ status: 'ready' }>>;
       returned: readonly ReturnedAnswerEntry[];
+      cancel?: React.ReactNode;
     }>,
 ) {
   const { theme } = useUnistyles();
@@ -577,6 +618,7 @@ export function SessionAskRecordContent(
           state={headerState}
           testID={`session-ask-record-state:${record.sourceRowId}`}
         />
+        {props.cancel}
         </View>
       </View>
       {group && targets.length > 0 ? (

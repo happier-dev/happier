@@ -1790,6 +1790,11 @@ selected unaddressed/informational events without waking; Custom/off suppresses
 those events. The existing receiver admission, Pending custody and source mute
 still apply; changing the Follow level does not opt out of a direct ask.
 
+In the Session transcript, **Cancel ask** withdraws a queued single-target Ask
+through `session.pending.withdraw` using its target Session and original input
+id. Pending custody decides whether withdrawal succeeded. If the Agent accepted
+the input in the meantime, the same Action reports that it was already delivered.
+
 In development source, the Session recovery control offers the existing person
 Resume action for an inactive, natively resumable Session when its Machine is
 reachable and the viewer retains write access, even with no Pending rows. It
@@ -1806,7 +1811,14 @@ verification or clear a held Session after a failed attempt.
 
 Answer policy belongs to the existing executable participant row. The
 `discussion.participant.policy.set` Action changes that row; invitation defaults
-to `when_addressed`. `reads_only` permits authorized reading but cannot start a
+to `when_addressed`. In development source, `discussion.create` can preselect Bot
+Sessions with `when_mentioned` or `every_message`. `when_mentioned` requires an
+explicit Session mention. `every_message` also addresses original messages from
+people. Both use the same C2 return obligation and preserve the original
+participant, question and turn at publication. Automatic addressing skips Agent
+publications, so room participants do not automatically ask one another.
+
+`reads_only` permits authorized reading but cannot start a
 speaking turn or publish as that participant. `drafts_for_approval` receives
 addressed questions and prepares a private `ApprovalRequestV2` reply. Ordinary
 Action-confirmation waivers do not disable this selected review policy. Its

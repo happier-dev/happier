@@ -3,7 +3,8 @@ import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { ActionExecuteFailureSchema, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { DiscussionPublicationPolicy } from '@happier-dev/protocol/actions/executor/coreInvocation';
 import { DISCUSSION_ACTION_INPUT_SCHEMAS_V1, DiscussionDetailsResultV1Schema } from '@happier-dev/protocol/discussions/actions';
-import { DiscussionParticipantsListResponseV1Schema, type DiscussionAnswerPolicyV1 } from '@happier-dev/protocol/discussions/participants';
+import { DiscussionParticipantsListResponseV1Schema, DiscussionRoomReplyPolicyV1Schema,
+  type DiscussionAnswerPolicyV1 } from '@happier-dev/protocol/discussions/participants';
 import { SessionInputSourceSessionV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { deriveSessionMessageReplyReturnLocalIdV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -76,7 +77,7 @@ export async function bindDiscussionDraftReply(params: Readonly<{
     answerPolicy = participant?.answerPolicy;
   }
   if (context.signal?.aborted) return unavailable();
-  const addressedReply = answerPolicy === 'when_addressed'
+  const addressedReply = (answerPolicy === 'when_addressed' || DiscussionRoomReplyPolicyV1Schema.safeParse(answerPolicy).success)
     && parsed.data.replyTarget?.kind === 'message' && parsed.data.replyTarget.messageId === addressing.messageId;
   if (answerPolicy !== 'drafts_for_approval' && !addressedReply) return unchanged;
   if (!context.serverIdentityId) return unavailable();

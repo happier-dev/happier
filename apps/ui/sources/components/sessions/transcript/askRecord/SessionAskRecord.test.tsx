@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, onTestFinished } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { normalizeRawMessage, type NormalizedMessage } from '@happier-dev/session-core/raw';
@@ -12,6 +12,12 @@ import { SessionMessageReplyReadBatchRequestV1Schema } from '@happier-dev/protoc
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { SessionTargetV1 } from '@happier-dev/protocol/actions/sessionTargetV1';
 import { t } from '@/text';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { PENDING_INPUT_PROTOCOL_VERSION_V4 } from '@happier-dev/protocol/clientCompatibility/primitives';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true }).module);
 
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
@@ -49,12 +55,12 @@ async function activateHome(serverId: string) {
     publishAppliedActiveServerSnapshot({ serverId, serverUrl: 'https://ask-record.test', generation: previousRuntime.generation + 1 });
 }
 
-function answerReplies(serverId: string, outcomes: Readonly<Record<string, 'answer' | 'pass'>>) {
+function answerReplies(serverId: string, outcomes: Readonly<Record<string, 'answer' | 'pass' | 'cancelled'>>) {
     homes.answer(serverId, 'POST /v2/sessions/messages/replies/read-batch', { select: input => ({ body: {
         results: SessionMessageReplyReadBatchRequestV1Schema.parse(input).requests.map(key => ({ ...key, reply: {
             v: 1, status: 'available', progress: { v: 1, mode: 'return', humanOrigin: { sessionId: 'source' },
                 disposition: outcomes[key.sessionId] ? 'returned' : 'observing',
-                ...(outcomes[key.sessionId] ? { outcome: outcomes[key.sessionId] === 'pass' ? { kind: 'pass' }
+                ...(outcomes[key.sessionId] ? { outcome: outcomes[key.sessionId] !== 'answer' ? { kind: outcomes[key.sessionId] }
                     : { kind: 'answer', result: { sessionId: key.sessionId, messageId: `answer-${key.sessionId}` } } } : {}) },
         } })),
     } }) });
@@ -63,6 +69,33 @@ function answerReplies(serverId: string, outcomes: Readonly<Record<string, 'answ
 const label = (screen: Awaited<ReturnType<typeof renderScreen>>, id: string) => screen.findHostByTestId(`${id}:label`)?.children.join('') ?? null;
 
 describe('Ask record row', () => {
+    it('withdraws only the recorded Ask and displays the canonical cancellation outcome', async () => {
+        await loadSyncSingletonForTests();
+        const serverId = await homes.addHome({ name: 'Ask record', serverUrl: 'https://ask-record.test', accountId: 'alice', currentAccount: true });
+        await activateHome(serverId);
+        const baseline = createRootLayoutFeaturesResponse();
+        const features = createRootLayoutFeaturesResponse({ capabilities: { session: { ...baseline.capabilities.session,
+            pendingInput: { protocolVersion: PENDING_INPUT_PROTOCOL_VERSION_V4 } } } });
+        homes.answer(serverId, '/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture() });
+        homes.answer(serverId, '/v1/features', { body: features });
+        homes.answer(serverId, '/v1/features/authenticated', { body: features });
+        const outcomes: Record<string, 'cancelled'> = {};
+        answerReplies(serverId, outcomes);
+        const endpoint = '/v2/sessions/bot/pending/attempt/withdraw';
+        homes.answer(serverId, `POST ${endpoint}`, { select: () => {
+            outcomes.bot = 'cancelled';
+            return { body: { ok: true, outcome: 'removed' } };
+        } });
+        const message = composerEntry(serverId, 'bot', [['bot', accepted]]);
+        const screen = await renderScreen(<AppSessionTranscriptSourceProvider sessionId="source" serverId={serverId}>
+            <SessionAskRecord message={message} sessionId="source" serverId={serverId} />
+        </AppSessionTranscriptSourceProvider>);
+        await flushHookEffects({ cycles: 20 });
+        await screen.pressByTestIdAsync(`session-ask-record-cancel:${message.id}`);
+        await vi.waitFor(() => expect(homes.requestsFor(endpoint)).toMatchObject([{ serverId }]));
+        await vi.waitFor(() => expect(label(screen, `session-ask-record-state:${message.id}`)).toBe(t('session.askRecord.cancelled')));
+        expect(screen.findHostByTestId(`session-ask-record-cancel:${message.id}`)).toBeNull();
+    });
     it('explains a person-held receipt through the invocation projection and clears the explanation for an accepted send', async () => {
         const serverId = await homes.addHome({ name: 'Held record', serverUrl: 'https://ask-record.test', accountId: 'alice', currentAccount: true });
         await activateHome(serverId);
