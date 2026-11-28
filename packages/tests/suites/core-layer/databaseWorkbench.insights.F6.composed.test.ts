@@ -4,7 +4,8 @@ import { ActionOperationAcceptedResultSchema, type ActionExecuteResult } from '@
 import { ACTION_OPERATION_GET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
 import { ActionOperationGetV1ResponseSchema, readActionOperationTerminalResultV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { DATABASE_ACCESS_SET_ACTION_ID_V1, DATABASE_ACTIVITY_CANCEL_ACTION_ID_V1,
-    DATABASE_STATEMENT_EXPLAIN_ACTION_ID_V1, DATABASE_STATS_READ_ACTION_ID_V1 } from '../../../database-protocol/src/actionIdsDatabaseV1';
+    DATABASE_STATEMENT_EXPLAIN_ACTION_ID_V1, DATABASE_STATS_ENABLE_ACTION_ID_V1,
+    DATABASE_STATS_READ_ACTION_ID_V1 } from '../../../database-protocol/src/actionIdsDatabaseV1';
 import {
     DatabaseActivityCancelInputV1Schema,
     DatabaseOperationResultV1Schema,
@@ -212,10 +213,10 @@ it('P4-F6-known-good-stats', async () => {
       const observed = await fixture.owner.execute(ACTION_OPERATION_GET_ACTION_ID_V1, {
         ...fixture.machine.target, machineId, operationId, waitForTerminal: true,
       });
-      if (!observed.ok) throw new Error(`F6 Activity operation observation refused (${observed.errorCode})`);
+      if (!observed.ok) throw new Error(`F6 operation observation refused (${observed.errorCode})`);
       const receipt = ActionOperationGetV1ResponseSchema.parse(observed.result);
       const terminal = receipt.kind === 'found' ? readActionOperationTerminalResultV1(receipt.operation) : undefined;
-      if (!terminal) throw new Error('F6 Activity operation did not settle');
+      if (!terminal) throw new Error('F6 operation did not settle');
       return terminal;
     }
     const ended = await observeOperation(await fixture.executeDatabaseAsPerson(DATABASE_ACTIVITY_CANCEL_ACTION_ID_V1, cancelInput));
@@ -270,18 +271,31 @@ it('P4-F6-known-good-stats', async () => {
       expect(await fixture.executeDatabase(DATABASE_ACCESS_SET_ACTION_ID_V1, { target: targets.selected, agentAccess: 'read' }))
         .toMatchObject({ ok: true, result: { ok: true, agentAccess: 'read' } });
       console.info('P4-F6-external-blocker-and-vanished-cancel passed', fixture.runtime);
+
+      expect(await read(targets.noExtension)).toMatchObject({ status: 'unavailable', group: 'statements',
+        reason: DatabaseStatsReasonV1Schema.parse('extension_missing') });
+      expect(await fixture.owner.executeAsPerson('actions.policy.set', {
+        actionId: DATABASE_STATS_ENABLE_ACTION_ID_V1, audience: 'agent', mode: 'allowed',
+      })).toMatchObject({ ok: true });
+      const enableInput = { operation: 'stats.enable', target: targets.noExtension };
+      expect(await fixture.executeDatabase(DATABASE_ACCESS_SET_ACTION_ID_V1, { target: targets.noExtension, agentAccess: 'read' }))
+        .toMatchObject({ ok: true, result: { ok: true, agentAccess: 'read' } });
+      expect(await observeOperation(await agent.execute(DATABASE_STATS_ENABLE_ACTION_ID_V1, enableInput)))
+        .toMatchObject({ ok: false, errorCode: 'database_agent_access_read_only' });
+      const enabledExtensionCount = () => fixture.postgres.sql('dbw_no_extension',
+        "SELECT count(*) FROM pg_extension WHERE extname = 'pg_stat_statements'");
+      expect(await enabledExtensionCount()).toBe('0');
+      expect(await fixture.executeDatabase(DATABASE_ACCESS_SET_ACTION_ID_V1, {
+        target: targets.noExtension, agentAccess: 'readWriteNoApproval',
+      })).toMatchObject({ ok: true, result: { ok: true, agentAccess: 'readWriteNoApproval' } });
+      expect(await observeOperation(await agent.execute(DATABASE_STATS_ENABLE_ACTION_ID_V1, enableInput)))
+        .toMatchObject({ ok: true, result: { ok: true, operation: 'stats.enable', status: 'enabled' } });
+      expect(await enabledExtensionCount()).toBe('1');
     } finally {
       await agent.stop();
     }
 
-    // Keep the positive target enabled while testing a separate missing-extension DB.
-    expect(await read(targets.noExtension)).toMatchObject({ status: 'unavailable', group: 'statements',
-      reason: DatabaseStatsReasonV1Schema.parse('extension_missing') });
-    expect(await fixture.postgres.sql('dbw_no_extension', "SELECT count(*) FROM pg_extension WHERE extname = 'pg_stat_statements'"))
-      .toBe('0');
     expect(await read(targets.selected)).toMatchObject({ status: 'available', group: 'statements' });
-    // Operator setup on the fixture, then the same public read is the Retry.
-    await fixture.postgres.sql('dbw_no_extension', 'CREATE EXTENSION pg_stat_statements; SELECT 1;');
     expect(await read(targets.noExtension)).toMatchObject({ status: 'available', group: 'statements',
       scope: { database: 'dbw_no_extension' } });
 
