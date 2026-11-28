@@ -1486,9 +1486,54 @@ describe('parseClaudeScreenState — scrolled composer draft', () => {
     expect(state.inputBoxInteractive).toBe(true);
   });
 
-  it('blocks input on a real chooser below the scrolled draft', () => {
+  it.each([
+    ['scrolled', clippedWithQuotedChoice],
+    ['unscrolled', [
+      '────────────────────',
+      '❯ Compare the following:',
+      '  ❯ 1. Build the project',
+      '    2. Review the output',
+      '────────────────────',
+    ].join('\n')],
+  ])('lets a newer composer win over a quoted choice in an earlier %s frame', (_kind, earlierFrame) => {
+    const state = parseClaudeScreenState(`${earlierFrame}\n\n❯ current draft`);
+    expect(state.composerContent).toBe('current draft');
+    expect(state.unrecognizedConfirmationDialogVisible).toBe(false);
+    expect(state.inputBoxInteractive).toBe(true);
+  });
+
+  const earlierNumberedFrame = [
+    '────────────────────',
+    '❯ 1. Compare the following:',
+    '  ❯ 1. Build the project',
+    '    2. Review the output',
+    '────────────────────',
+  ].join('\n');
+
+  it.each([
+    ['scrolled', clippedWithQuotedChoice],
+    ['numbered', earlierNumberedFrame],
+  ])('keeps quoted choices in both an earlier %s frame and the current framed draft', (_kind, earlierFrame) => {
     const state = parseClaudeScreenState([
-      clippedWithQuotedChoice,
+      earlierFrame,
+      '',
+      '────────────────────',
+      '❯ Draft with a different example:',
+      '  ❯ 1. Read the notes',
+      '    2. Summarize them',
+      '────────────────────',
+    ].join('\n'));
+    expect(state.composerContent).toContain('❯ 1. Read the notes');
+    expect(state.unrecognizedConfirmationDialogVisible).toBe(false);
+    expect(state.inputBoxInteractive).toBe(true);
+  });
+
+  it.each([
+    ['scrolled', clippedWithQuotedChoice],
+    ['numbered', earlierNumberedFrame],
+  ])('blocks input on a real chooser below the %s draft', (_kind, earlierFrame) => {
+    const state = parseClaudeScreenState([
+      earlierFrame,
       '',
       'Reset cache?',
       '❯ 1. Yes, reset it',

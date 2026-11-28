@@ -305,23 +305,42 @@ function hasComposerLeadingBorder(text: string, match: RegExpExecArray): boolean
 
 type ComposerMatch = Readonly<{ line: RegExpExecArray; framedContinuation: ComposerContinuation | null }>;
 
-function findLastComposerMatch(text: string): ComposerMatch | null {
-  let last: ComposerMatch | null = null;
+type ComposerDraftRange = readonly [start: number, end: number];
+
+function readComposerFrames(text: string): { latest: ComposerMatch | null; draftRanges: ComposerDraftRange[] } {
+  let latest: ComposerMatch | null = null;
+  const draftRanges: ComposerDraftRange[] = [];
   for (const line of text.matchAll(new RegExp(COMPOSER_LINE.source, 'gm'))) {
     // A verified composer frame owns its indented rows, even if a draft quotes a prompt or option.
-    if ((last?.framedContinuation?.closingRuleIndex ?? 0) > line.index) continue;
+    if ((latest?.framedContinuation?.closingRuleIndex ?? 0) > line.index) continue;
 
     const isMessageComposer = line[1] !== '!';
     const framedContinuation = isMessageComposer && hasComposerLeadingBorder(text, line)
       ? readComposerContinuation(text, line.index + line[0].length)
       : null;
-    if (isMessageComposer && NUMBERED_COMPOSER_CONTENT.test(line[2] ?? '')) {
-      const closingRuleIndex = framedContinuation?.closingRuleIndex;
-      if (closingRuleIndex == null || NUMBERED_SELECTION_OPTION.test(text.slice(closingRuleIndex))) continue;
+    const closingRuleIndex = framedContinuation?.closingRuleIndex;
+    const isNumberedDraft = isMessageComposer && NUMBERED_COMPOSER_CONTENT.test(line[2] ?? '');
+    if (closingRuleIndex != null && (isNumberedDraft || framedContinuation?.lines.length)) {
+      draftRanges.push([line.index, closingRuleIndex]);
     }
-    last = { line, framedContinuation };
+    if (isNumberedDraft && (closingRuleIndex == null || NUMBERED_SELECTION_OPTION.test(text.slice(closingRuleIndex)))) {
+      continue;
+    }
+    latest = { line, framedContinuation };
   }
-  return last;
+  return { latest, draftRanges };
+}
+
+function blankDraftRows(text: string, ranges: ComposerDraftRange[]): string {
+  let selectionText = '';
+  let previousEnd = 0;
+  for (const [start, end] of ranges.sort(([left], [right]) => left - right)) {
+    if (end <= previousEnd) continue;
+    selectionText += text.slice(previousEnd, start);
+    selectionText += text.slice(Math.max(previousEnd, start), end).replace(/[^\n]+/g, '');
+    previousEnd = end;
+  }
+  return selectionText + text.slice(previousEnd);
 }
 
 function readComposerContentStartColumn(line: string): number | null {
@@ -796,24 +815,20 @@ function resolveDialogSelectionPresentation(
 export function parseClaudeScreenState(rawText: string, context?: ClaudeScreenParseContext): ClaudeScreenState {
   const text = normalizeCapturedScreen(rawText);
   const visibleTail = tailLines(text, 30);
-  const composer = findLastComposerMatch(text);
+  const { latest: composer, draftRanges } = readComposerFrames(text);
   const lastComposerMatch = composer?.line ?? null;
-  const scrolledMatch = lastMatch(SCROLLED_COMPOSER, text);
+  let scrolledMatch: RegExpExecArray | null = null;
+  for (const match of text.matchAll(SCROLLED_COMPOSER)) {
+    scrolledMatch = match;
+    const draftRange = match.indices?.groups?.draft;
+    if (draftRange) draftRanges.push(draftRange);
+  }
   const activeScrolledMatch = scrolledMatch
     && (!lastComposerMatch || lastComposerMatch.index < scrolledMatch.index + scrolledMatch[0].length)
     ? scrolledMatch
     : null;
-  const closingRuleIndex = composer?.framedContinuation?.closingRuleIndex ?? null;
-  const draftRange = activeScrolledMatch?.indices?.groups?.draft ?? (
-    composer && closingRuleIndex !== null
-      && (composer.framedContinuation?.lines.length || NUMBERED_COMPOSER_CONTENT.test(composer.line[2] ?? ''))
-      ? [composer.line.index, closingRuleIndex]
-      : null
-  );
-  // Remove draft rows from selection parsing while preserving their screen positions.
-  const selectionText = draftRange
-    ? text.slice(0, draftRange[0]) + text.slice(draftRange[0], draftRange[1]).replace(/[^\n]+/g, '') + text.slice(draftRange[1])
-    : text;
+  // Keep earlier draft rows out of chooser parsing too, while preserving screen line positions.
+  const selectionText = blankDraftRows(text, draftRanges);
   const selectionTail = selectionText === text ? visibleTail : tailLines(selectionText, 30);
   const numberedDialogCandidate = resolveGenericNumberedDialog(selectionTail, 1);
   const selectionCandidate = resolveDialogSelectionPresentation(selectionTail, numberedDialogCandidate);
