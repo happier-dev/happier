@@ -431,6 +431,43 @@ describe('DetailsTabGroupPanel with one tab (lab session-D)', () => {
     expect(screen.findAllHostsByTestId('strip-tab-peek')).toHaveLength(1);
     expect(screen.findAllHostsByTestId('screen-back')).toHaveLength(1);
   });
+
+  // C77 F3 (W41-A11Y-PROD): a tab panel only where its tab strip is drawn. Without the strip the
+  // panel's label reference named a tab that does not exist; the page's own header names it there.
+  it('is a tab panel labelled by its strip tab only while the strip draws that tab', async () => {
+    const hostsWithNativeId = (screen: Awaited<ReturnType<typeof renderScreen>>, id: string) =>
+      screen.root.findAll((node) => typeof node.type === 'string' && node.props?.nativeID === id);
+    const render = (leading: boolean) => renderScreen(
+      <SurfaceStateSizeProvider size="phone">
+        <DetailsTabGroupPanel
+          pane={pane}
+          group={group([tab('peek', 'retry.ts')])}
+          collapseSingleTabStrip
+          testIds={testIds}
+          renderHeaderLeadingActions={leading ? () => <View testID="screen-back" /> : undefined}
+          renderTabContent={() => <DetailsTabHeader testID="peek-header" title="retry.ts" />}
+        />
+      </SurfaceStateSizeProvider>,
+    );
+
+    const withStrip = await render(true);
+    expect(withStrip.findAllHostsByTestId('strip-tab-peek')).toHaveLength(1);
+    const [stripPanel] = hostsWithNativeId(withStrip, 'details-group_1-panel-peek');
+    expect(stripPanel!.props.role).toBe('tabpanel');
+    expect(stripPanel!.props['aria-labelledby']).toBe('details-group_1-tab-peek');
+    expect(hostsWithNativeId(withStrip, 'details-group_1-tab-peek').length).toBeGreaterThan(0);
+    await withStrip.unmount();
+
+    const withoutStrip = await render(false);
+    expect(withoutStrip.findAllHostsByTestId('strip-tab-peek')).toHaveLength(0);
+    expect(hostsWithNativeId(withoutStrip, 'details-group_1-tab-peek')).toHaveLength(0);
+    const [bare] = hostsWithNativeId(withoutStrip, 'details-group_1-panel-peek');
+    expect(bare).toBeDefined();
+    expect(bare!.props.role).toBeUndefined();
+    expect(bare!.props['aria-labelledby']).toBeUndefined();
+    expect(bare!.props.accessibilityLabelledBy).toBeUndefined();
+    await withoutStrip.unmount();
+  });
 });
 
 describe('DetailsTabGroupPanel on a phone: every page header that takes the lent controls offers the other pages', () => {

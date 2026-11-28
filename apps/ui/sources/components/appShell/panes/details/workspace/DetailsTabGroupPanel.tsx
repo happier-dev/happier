@@ -77,6 +77,8 @@ const DetailsTabSurface = React.memo((props: Readonly<{
     tabKey: string;
     publishTitle: (key: string, title: string | null | undefined) => void;
     isActive: boolean;
+    /** Whether the group's strip draws this tab, so the panel can name it (C77 F3). */
+    stripShown: boolean;
     /** Mounted in place of a tab that just left this group (`replaceTab`): it fades in. */
     replacing?: boolean;
     children: React.ReactNode;
@@ -96,9 +98,11 @@ const DetailsTabSurface = React.memo((props: Readonly<{
         <AccessibleTabPanelView
             entering={props.replacing ? REPLACED_TAB_ENTERING : undefined}
             nativeID={detailsTabPanelNativeId(props.groupId, props.tabKey)}
-            role="tabpanel"
-            accessibilityLabelledBy={detailsTabNativeId(props.groupId, props.tabKey)}
-            aria-labelledby={detailsTabNativeId(props.groupId, props.tabKey)}
+            // A tab panel only where its strip draws the tab: without the strip (a phone, a folded one-tab
+            // group) the reference would name nothing; the tab's own page header names it there (C77 F3).
+            role={props.stripShown ? 'tabpanel' : undefined}
+            accessibilityLabelledBy={props.stripShown ? detailsTabNativeId(props.groupId, props.tabKey) : undefined}
+            aria-labelledby={props.stripShown ? detailsTabNativeId(props.groupId, props.tabKey) : undefined}
             {...(Platform.OS === 'web' && !props.isActive ? { inert: true } : {})}
             pointerEvents={props.isActive ? 'auto' : 'none'}
             // Every retained tab fills the group on its own layer; stacked as flex siblings they split
@@ -387,6 +391,7 @@ export const DetailsTabGroupPanel = React.memo((props: DetailsTabGroupPanelProps
                                 tabKey={tab.key}
                                 publishTitle={publishTitle}
                                 isActive={isActive}
+                                stripShown={showStrip}
                                 replacing={tab.key === replacingKey}
                             >
                                 <RetainedPanelSurface isActive={presented} mode="flow">
