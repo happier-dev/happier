@@ -12,6 +12,7 @@ import {
   type LocalSessionHostEndResult,
 } from '@/session/transport/rpc/localSessionRpcChannel';
 import { shareAccountUpdatesInThisProcess } from '@/api/session/sharedAccountUpdatesSocket';
+import { createHostedSessionHttpTransport } from '@/utils/proxy/agents';
 
 import { readHostedSessionScope, runAddedHostedSession, saveHostedSessionForHandover, type HostedSessionScope } from './hostedSessionScope';
 import { registerRunnerTerminationHandlers, requestHostedSessionTermination } from './runnerTerminationHandlers';
@@ -86,11 +87,13 @@ export async function startSessionHost(params: Readonly<{
       scope: null as HostedSessionScope | null,
       ended: new Promise<SessionHostCommandEnd>((resolve) => { resolveEnded = resolve; }),
     };
+    const httpTransport = createHostedSessionHttpTransport();
     sessions.set(request.trackingKey, session);
     let ended = false;
     const end = (exitCode: number): void => {
       if (ended) return;
       ended = true;
+      httpTransport.retire();
       sessions.delete(request.trackingKey);
       const failureCause = session.scope?.failureCause;
       resolveEnded({ exitCode, ...(failureCause ? { failureCause } : {}) });
@@ -98,7 +101,7 @@ export async function startSessionHost(params: Readonly<{
     const launch = request.launch ?? {};
     // Admission can throw while parsing policy, before the async command starts.
     void (async () => {
-      await runAddedHostedSession({ environment: { ...request.env }, workingDirectory: request.cwd, end,
+      await runAddedHostedSession({ environment: { ...request.env }, workingDirectory: request.cwd, end, httpTransport,
         ...(launch.runnerBootstrap ? { runnerBootstrap: launch.runnerBootstrap } : {}) }, async () => {
         session.scope = readHostedSessionScope() ?? null;
         await params.runSessionCommand(request.argv, launch);

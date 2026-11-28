@@ -1,8 +1,10 @@
 import { Agent as HttpAgent } from 'node:http';
 import { Agent as HttpsAgent } from 'node:https';
+import type { Socket } from 'node:net';
 
 import { SERVER_HTTP_KEEP_ALIVE_TIMEOUT_MS_V1 } from '@happier-dev/protocol/server/http/connectionLifetimeV1';
 import { HttpsProxyAgent } from 'https-proxy-agent';
+import { readHostedSessionScope } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 export type DirectHttpAgents = Readonly<{
   httpAgent: HttpAgent;
@@ -50,23 +52,76 @@ const clientKeepAliveAgentOptions = createKeepAliveAgentOptions({
   serverKeepAliveTimeoutMs: SERVER_HTTP_KEEP_ALIVE_TIMEOUT_MS_V1,
   retireBufferMs: CLIENT_HTTP_FREE_SOCKET_RETIRE_BUFFER_MS,
 });
-const directAgents: DirectHttpAgents = {
-  httpAgent: new HttpAgent(clientKeepAliveAgentOptions),
-  httpsAgent: new HttpsAgent(clientKeepAliveAgentOptions),
-};
-
-export function getDirectHttpAgents(): DirectHttpAgents {
-  return directAgents;
+function createHttpAgentPool() {
+  let direct: DirectHttpAgents | undefined;
+  const proxies = new Map<string, HttpsProxyAgent<string>>();
+  return {
+    direct() {
+      return direct ??= {
+        httpAgent: new HttpAgent(clientKeepAliveAgentOptions),
+        httpsAgent: new HttpsAgent(clientKeepAliveAgentOptions),
+      };
+    },
+    proxy(url: string) {
+      const existing = proxies.get(url);
+      if (existing) return existing;
+      const agent = new HttpsProxyAgent(url, clientKeepAliveAgentOptions);
+      proxies.set(url, agent);
+      return agent;
+    },
+  };
 }
 
-// Cache by normalized proxy URL so we don't allocate new agents per request.
-const httpsProxyAgentByProxyUrl = new Map<string, HttpsProxyAgent<string>>();
+const processPool = createHttpAgentPool();
 
+export type HostedSessionHttpTransport = ReturnType<typeof createHttpAgentPool> & { retire(): void };
+
+/** Give a hosted Session's HTTP requests a pool that can retire with its command. */
+export function createHostedSessionHttpTransport(): HostedSessionHttpTransport {
+  const pool = createHttpAgentPool();
+  const agents = new Set<HttpAgent>();
+  let retired = false;
+
+  function own<T extends HttpAgent>(agent: T): T {
+    if (agents.has(agent)) return agent;
+    agents.add(agent);
+    // Account-scoped work can still be reading a response after its initiating
+    // Session ends. Let that request finish and retire its socket when returned.
+    agent.on('free', (socket: Socket) => {
+      if (retired && Object.values(agent.freeSockets).some(sockets => sockets?.includes(socket))) socket.destroy();
+    });
+    return agent;
+  }
+
+  return {
+    direct() {
+      const pair = pool.direct();
+      own(pair.httpAgent);
+      own(pair.httpsAgent);
+      return pair;
+    },
+    proxy: url => own(pool.proxy(url)),
+    retire(): void {
+      retired = true;
+      for (const agent of agents) {
+        for (const sockets of Object.values(agent.freeSockets)) {
+          for (const socket of sockets ?? []) socket.destroy();
+        }
+      }
+    },
+  };
+}
+
+export function getDirectHttpAgents(): DirectHttpAgents {
+  return (readHostedSessionScope()?.httpTransport ?? processPool).direct();
+}
+
+export function getHttpRequestProxyAgent(proxyUrl: string): HttpsProxyAgent<string> {
+  return (readHostedSessionScope()?.httpTransport ?? processPool).proxy(proxyUrl);
+}
+
+/** Account and machine Socket.IO connections have their own process-wide owner. */
 export function getHttpsProxyAgent(proxyUrl: string): HttpsProxyAgent<string> {
-  const existing = httpsProxyAgentByProxyUrl.get(proxyUrl);
-  if (existing) return existing;
-  const agent = new HttpsProxyAgent(proxyUrl, clientKeepAliveAgentOptions);
-  httpsProxyAgentByProxyUrl.set(proxyUrl, agent);
-  return agent;
+  return processPool.proxy(proxyUrl);
 }
 

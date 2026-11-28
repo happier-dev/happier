@@ -1,6 +1,6 @@
 import type { AxiosRequestConfig } from 'axios';
 
-import { getDirectHttpAgents, getHttpsProxyAgent } from './agents';
+import { getDirectHttpAgents, getHttpRequestProxyAgent } from './agents';
 import { resolveProxyForUrl } from './resolveProxyForUrl';
 
 export type AxiosProxyOverrides = Pick<AxiosRequestConfig, 'httpAgent' | 'httpsAgent' | 'proxy'>;
@@ -14,7 +14,7 @@ export function getAxiosProxyOptionsForUrl(params: Readonly<{
   // Always disable axios's built-in proxy implementation; we handle env + NO_PROXY ourselves.
   if (resolved.mode !== 'proxy') return { proxy: false, ...getDirectHttpAgents() };
 
-  const agent = getHttpsProxyAgent(resolved.proxyUrl);
+  const agent = getHttpRequestProxyAgent(resolved.proxyUrl);
   return {
     proxy: false,
     httpAgent: agent,

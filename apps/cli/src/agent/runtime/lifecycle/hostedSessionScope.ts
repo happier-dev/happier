@@ -6,6 +6,7 @@ import { SessionRuntimeConfiguration } from '@/configuration/sessionRuntimeConfi
 import type { TranscriptRecoveryCoordinator } from '@/api/session/recovery/TranscriptRecoveryCoordinator';
 import type { ScmCredentialFreeRepositorySelectorV1 } from '@happier-dev/protocol/scm/repositoryClone';
 import type { SessionInputLiveWork } from '@/agent/runtime/session/input/_types';
+import type { HostedSessionHttpTransport } from '@/utils/proxy/agents';
 
 /**
  * The Session a piece of runner work belongs to. One process can host several
@@ -44,6 +45,7 @@ export type HostedSessionScope = {
    * when it adds the Session). Absent in a one-Session runner: its command ends the process.
    */
   readonly end?: (exitCode: number) => void;
+  readonly httpTransport?: HostedSessionHttpTransport;
   /** Work a planned host hand-over saves before it releases this Session's held Agents. */
   handoverSaves?: Set<() => Promise<void>>;
   /** This Session's current live work: the same non-content facts its runner pushes to the daemon. */
@@ -78,7 +80,7 @@ export function runInHostedSessionScope<T>(
  */
 export function runAddedHostedSession<T>(
   input: Readonly<{ environment: NodeJS.ProcessEnv; workingDirectory: string; end: (exitCode: number) => void;
-    runnerBootstrap?: HostedSessionScope['runnerBootstrap'] }>,
+    httpTransport?: HostedSessionHttpTransport; runnerBootstrap?: HostedSessionScope['runnerBootstrap'] }>,
   run: () => T,
 ): T {
   return hostedSessionScope.run({ ...input, runtimeConfiguration: new SessionRuntimeConfiguration(input.environment), termination: null }, run);
