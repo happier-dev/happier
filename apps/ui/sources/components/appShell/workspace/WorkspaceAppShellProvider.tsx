@@ -1,6 +1,8 @@
 import * as React from 'react';
 import { Platform } from 'react-native';
-import { useCompactAppDestinationCatalog } from '../destinations/compactAppDestinationCatalog';
+import {
+    readWorkspacePluginAppPageAddress, resolveDestinationRefFromHref, useCompactAppDestinationCatalog,
+} from '../destinations/compactAppDestinationCatalog';
 import { WorkspaceProvider } from './WorkspaceProvider';
 import { WorkspacePhoneHomeArrivalContext, WorkspaceShellWillHostRoutesContext } from './WorkspaceRouteHostingContext';
 import { useWorkspacePresentation } from './useWorkspaceShellEnabled';
@@ -11,7 +13,7 @@ import { revealHomeRetryAfterPaint } from '@/components/ui/motion/stepMotion/Ste
 import { HomeReachabilityGate } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
 import { AppLaunchState } from './AppLaunchState';
 import type { AppWindowRecord } from '@/desktop/window/appWindowBoot';
-import { useCurrentRoutePathname, useCurrentRouteSegments } from './currentRouteLocation';
+import { readCurrentRouteAddress, useCurrentRoutePathname, useCurrentRouteSegments } from './currentRouteLocation';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { isUserFacingSession } from '@/sync/domains/session/listing/isUserFacingSession';
 import { isPublicRouteForUnauthenticated, isWelcomeRoute } from '@/auth/routing/authRouting';
@@ -64,8 +66,20 @@ export function WorkspaceAppShellProvider(props: Readonly<{ children: React.Reac
     // A descriptive unscoped catalog is not the authenticated Account's initial
     // workspace. Registering its navigator before core restoration can lose the
     // parsed deep link when the supplied-Home refresh withdraws that first scope.
-    const pendingFirstAccount = coldAuthRefusal || (presentation !== null && presentation !== 'entry'
-        && admittedLifetime.current === undefined && (!accountScope || (!dataReady && !restoreRetainedHome)));
+    const firstWorkspace = presentation !== null && presentation !== 'entry' && admittedLifetime.current === undefined;
+    // Core readiness can precede the first catalog. Keep the compact launch handoff alive
+    // so the retained workspace can protect the addressed plugin page from Expo's index mirror.
+    let pendingPhonePluginHref: string | null = null;
+    if (firstWorkspace && Platform.OS === 'web' && presentation === 'phone' && !ready) {
+        const address = readCurrentRouteAddress();
+        if (address) {
+            const href = address.pathname + address.search;
+            const destination = resolveDestinationRefFromHref(catalog, href);
+            if (destination && readWorkspacePluginAppPageAddress(destination)) pendingPhonePluginHref = href;
+        }
+    }
+    const pendingFirstAccount = coldAuthRefusal || (firstWorkspace
+        && (!accountScope || (!dataReady && !restoreRetainedHome) || pendingPhonePluginHref !== null));
     React.useLayoutEffect(() => {
         if (!pendingFirstAccount && ready && (!accountLifetime || accountLifetime.isCurrent())) admittedLifetime.current = accountLifetime;
     }, [accountLifetime, pendingFirstAccount, ready]);
@@ -112,7 +126,7 @@ export function WorkspaceAppShellProvider(props: Readonly<{ children: React.Reac
         entry={presentation === 'entry'} deferred={deferred} restoreRetainedHome={restoreRetainedHome}
         waitForLaunchBody={Platform.OS === 'web' && !restoring && presentation !== 'entry'} catalog={catalog}>
         {restoring
-            ? <HomeReachabilityGate variant="pane" accountRestoring={{ returnTo: pathname }} onUnavailable={revealHomeRetryAfterPaint}>
+            ? <HomeReachabilityGate variant="pane" accountRestoring={{ returnTo: pendingPhonePluginHref ?? pathname }} onUnavailable={revealHomeRetryAfterPaint}>
                 <AppLaunchState testID="workspace-account-restoring" />
             </HomeReachabilityGate>
             : <WorkspaceShellWillHostRoutesContext.Provider value={Platform.OS === 'web' && requestedPresentation === 'shell'}>
