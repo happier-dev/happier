@@ -5743,9 +5743,12 @@ function matchesWorkspaceSyncProjectSourceInput(value: unknown,
     const actionId = binding.actionId;
     if (isProjectWorkspaceSyncOpenActionV1(actionId)) {
         const input = OpenProjectInputV1Schema.safeParse(value);
-        return input.success && input.data.serverId === binding.serverIdentityId && input.data.machineId === binding.machineId
-            && input.data.materialization.kind === 'sync' && (input.data.source.kind === 'workspace' || input.data.source.kind === 'source')
-            && input.data.source.checkout?.machineId === routing.sourceMachineId && input.data.source.checkout.rootPath === routing.sourceRootPath;
+        if (!input.success || input.data.serverId !== binding.serverIdentityId || input.data.machineId !== binding.machineId
+            || input.data.materialization.kind !== 'sync'
+            || input.data.source.kind !== 'workspace' && input.data.source.kind !== 'source') return false;
+        const checkout = input.data.source.checkout;
+        return checkout !== undefined && 'machineId' in checkout
+            && checkout.machineId === routing.sourceMachineId && checkout.rootPath === routing.sourceRootPath;
     }
     if (!isProjectWorkspaceSyncPreparationActionV1(actionId)) return false;
     if (actionId === 'projects.service.relocate') {
