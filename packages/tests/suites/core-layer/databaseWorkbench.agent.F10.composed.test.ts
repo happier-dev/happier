@@ -5,9 +5,10 @@ import { ApprovalQueueListResultV1Schema } from '@happier-dev/protocol/approvals
 import { ActionApprovalRequestCreatedResultSchema, ActionOperationAcceptedResultSchema, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ACTION_OPERATION_GET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
 import { ActionOperationGetV1ResponseSchema, readActionOperationTerminalResultV1 } from '@happier-dev/protocol/actions/operations/v1';
-import { DATABASE_ACCESS_READ_ACTION_ID_V1, DATABASE_ACCESS_SET_ACTION_ID_V1, DATABASE_EDITS_APPLY_ACTION_ID_V1,
-  DATABASE_ROWS_READ_ACTION_ID_V1, DATABASE_STATEMENT_EXPLAIN_ACTION_ID_V1,
-  DATABASE_STATEMENT_RUN_ACTION_ID_V1, DATABASE_TARGETS_CONNECT_ACTION_ID_V1 } from '../../../database-protocol/src/actionIdsDatabaseV1';
+import { DATABASE_ACCESS_READ_ACTION_ID_V1, DATABASE_ACCESS_SET_ACTION_ID_V1, DATABASE_CELL_READ_ACTION_ID_V1,
+  DATABASE_DESCRIBE_ACTION_ID_V1, DATABASE_EDITS_APPLY_ACTION_ID_V1, DATABASE_RELATIONS_LIST_ACTION_ID_V1,
+  DATABASE_ROWS_READ_ACTION_ID_V1, DATABASE_SCHEMAS_LIST_ACTION_ID_V1, DATABASE_STATEMENT_EXPLAIN_ACTION_ID_V1,
+  DATABASE_STATEMENT_RUN_ACTION_ID_V1, DATABASE_STRUCTURE_READ_ACTION_ID_V1, DATABASE_TARGETS_CONNECT_ACTION_ID_V1 } from '../../../database-protocol/src/actionIdsDatabaseV1';
 import {
     DatabaseEditsApplyInputV1Schema,
     DatabaseOperationResultV1Schema,
@@ -126,10 +127,42 @@ describe.sequential('F10 real agent database access', () => {
     if (!personBefore.ok) throw new Error(`F10 person control refused (${personBefore.errorCode})`);
     expect(DatabaseOperationResultV1Schema.parse(personBefore.result)).toMatchObject({ ok: true, operation: 'rows.read',
       result: { rows: [{ cells: [{ type: 'integer', value: '1' }, { type: 'text', value: 'dbw_selected' }] }] } });
+    const { relation } = input;
+    const reads = [
+      { action: DATABASE_ACCESS_READ_ACTION_ID_V1, operand: { target }, result: { setBy: 'machine', agentAccess: 'read',
+        access: { canRead: true, canWrite: false } } },
+      { action: DATABASE_DESCRIBE_ACTION_ID_V1, operand: { operation: 'describe', target },
+        result: { ok: true, operation: 'describe', descriptor: { target, engine: 'postgresql' } } },
+      { action: DATABASE_SCHEMAS_LIST_ACTION_ID_V1, operand: { operation: 'schemas.list', target,
+        search: 'public', page: { rows: 10 } },
+        result: { ok: true, operation: 'schemas.list', schemas: [{ name: 'public' }] } },
+      { action: DATABASE_RELATIONS_LIST_ACTION_ID_V1, operand: { operation: 'relations.list', target, schema: 'public',
+        search: 'sentinel', page: { rows: 10 } }, result: { ok: true, operation: 'relations.list', relations: [{ relation }] } },
+      { action: DATABASE_STRUCTURE_READ_ACTION_ID_V1, operand: { operation: 'relation.structure', target, relation },
+        result: { ok: true, operation: 'relation.structure', structure: { relation } } },
+      { action: DATABASE_CELL_READ_ACTION_ID_V1, operand: { operation: 'cell.read', target, relation, column: 'target',
+        key: [{ column: 'id', value: { type: 'integer', value: '1' } }], range: { unit: 'utf8_bytes', offset: 0, length: 12 } },
+        result: { ok: true, operation: 'cell.read', value: { type: 'text', value: 'dbw_selected' } } },
+      { action: DATABASE_STATEMENT_RUN_ACTION_ID_V1, operand: { operation: 'statement.run', target, mode: 'read',
+        statement: { sql: 'SELECT target FROM public.sentinel WHERE id = 1', parameters: [] } },
+        result: { ok: true, operation: 'statement.run', results: [{ rows: [{ cells: [{ type: 'text', value: 'dbw_selected' }] }] }] } },
+      { action: DATABASE_STATEMENT_EXPLAIN_ACTION_ID_V1, operand: { operation: 'statement.explain', target,
+        mode: 'analyze', accessMode: 'read', statement: { sql: 'SELECT target FROM public.sentinel WHERE id = 1', parameters: [] } },
+        result: { ok: true, operation: 'statement.explain' } },
+    ] as const;
+    for (const { action, operand, result } of reads) {
+      const observed = await settleDatabaseAction(fixture, await agent.execute(action, operand));
+      expect(observed, action).toMatchObject({ ok: true, result });
+    }
+
     const changed = await fixture.executeDatabase(DATABASE_ACCESS_SET_ACTION_ID_V1, { target, agentAccess: 'none' });
     expect(changed).toMatchObject({ ok: true, result: { ok: true, agentAccess: 'none' } });
     const denied = await agent.execute(DATABASE_ROWS_READ_ACTION_ID_V1, input);
     expect(denied).toMatchObject({ ok: false, errorCode: 'database_agent_access_none' });
+    for (const { action, operand } of reads) {
+      const observed = await settleDatabaseAction(fixture, await agent.execute(action, operand));
+      expect(observed, action).toMatchObject({ ok: false, errorCode: 'database_agent_access_none' });
+    }
     const recovered = await fixture.executeDatabaseAsPerson(DATABASE_ROWS_READ_ACTION_ID_V1, input);
     expect(recovered.ok, JSON.stringify(recovered)).toBe(true);
     if (recovered.ok) expect(DatabaseOperationResultV1Schema.parse(recovered.result)).toMatchObject({ ok: true, operation: 'rows.read' });
