@@ -242,6 +242,8 @@ describe.sequential('F10 real agent database access', () => {
 
   it('returns exact cells and a usable continuation to the admitted Agent tool', async () => {
     const { fixture, target, agent } = prepared;
+    expect(await fixture.executeDatabase(DATABASE_ACCESS_SET_ACTION_ID_V1, { target, agentAccess: 'read' }))
+      .toMatchObject({ ok: true, result: { ok: true, agentAccess: 'read' } });
     await fixture.postgres.sql('dbw_selected', `
       CREATE TABLE dbw_agent_payload (id bigint PRIMARY KEY, note text, bytes bytea, amount numeric);
       INSERT INTO dbw_agent_payload VALUES
