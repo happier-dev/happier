@@ -485,9 +485,10 @@ export function artifactsRoutes(app: Fastify) {
         const userId = request.userId;
         const { id } = request.params;
 
-        const read = await readArtifactForCaller({ actorAccountId: userId, artifactId: id,
-            projectSourceId: request.query.projectSourceId,
-            admittedContent: request.externalActionDeploymentChildArtifactRead });
+        const admission = request.externalActionDeploymentChildArtifactRead;
+        const read = admission && 'artifact' in admission ? admission
+            : await readArtifactForCaller({ actorAccountId: userId, artifactId: id,
+                projectSourceId: request.query.projectSourceId, admittedContent: admission });
         if (!read.ok) {
             if (read.reason) return reply.code(409).send({ error: read.reason });
             const refusal = projectArtifactHttpReadFailure(read, userId);

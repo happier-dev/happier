@@ -6412,6 +6412,19 @@ discovery opens it. Home permits only that signed candidate and binds the prepar
 back to the admitted routing metadata. Team content uses the Environment owner's
 existing Artifact grant path. Refused Action admission creates no private content.
 
+In 0.3 development, `deployments.environments.maintenance.set` accepts
+`serverId`, `environmentId`, and `enabled`. It submits one ordinary Domain Add
+replacement per retained own-server Domain. Each replacement pins its source
+Artifact and current revisions. The signed requester opens the pinned Domain
+body through ordinary Artifact access, including a Team grant. The controller
+changes `maintenancePage` and uses the existing private candidate and
+compare-and-swap path. Each Domain returns its result, refusal, or pending
+approval. The Action never retries a stale replacement.
+
+For managed Caddy ingress, maintenance returns HTTP 503 after existing access
+checks and without `Retry-After`. The application stays running. Outside HTTP
+checks can report the 503 as downtime.
+
 Platform addresses use these same Domain Actions, records and private Artifacts.
 Their desired target is `{ kind: 'provider' }`, with an explicitly selected zone
 for a Worker, rather than a native service, port or Caddy placement. The selected

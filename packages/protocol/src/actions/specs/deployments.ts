@@ -432,11 +432,26 @@ type DeploymentTargetCheckActionSpec = ActionSpecProjectionMetadata & Readonly<{
 export type DeploymentActionSpecsV1 = ReadonlyArray<
   { [TId in DeploymentActionIdV1]: DeploymentActionSpec<TId> }[DeploymentActionIdV1]
   | DeploymentTargetCheckActionSpec
+  | (Omit<DeploymentActionSpec<typeof deploymentActionIds.DEPLOYMENT_ENVIRONMENT_MAINTENANCE_SET_ACTION_ID_V1>, 'approval'>
+    & { approval: { result: 'none' } })
 >;
 
 /** Storage declarations and real daemon effects share this single Action front door. */
 function createDeploymentActionSpecsV1(): DeploymentActionSpecsV1 {
   return [
+  {
+    ...deploymentSpec(deploymentActionIds.DEPLOYMENT_ENVIRONMENT_MAINTENANCE_SET_ACTION_ID_V1, 'Turn on or off the maintenance page',
+      undefined, 'Serve or stop serving a maintenance page on this Environment’s own-server Domains. Each Domain retains its normal review and result.'),
+    // This Action coordinates; each ordinary Domain replacement owns its effect approval.
+    safety: 'safe',
+    approval: { result: 'none' },
+    originalExecution: { accountRoot: 'allowed' },
+    inputHints: { fields: [
+      { path: 'serverId', title: 'Home', widget: 'text', required: true },
+      { path: 'environmentId', title: 'Environment', widget: 'text', required: true },
+      { path: 'enabled', title: 'Show maintenance page', widget: 'boolean', required: true },
+    ] },
+  },
   { ...deploymentSpec(deploymentActionIds.DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1, 'Add or update deployment domain', '/v1/deployments/environments/:environmentId/domains', 'Add or update the route for an Environment hostname. Choose the intended service and ingress; the reviewed operation can configure provider routing and own-server ingress.'),
     deploymentReadScope: createDeploymentReadScopeV1({ childMayMaterializeDomainUse: true,
       childMetadataReads: DEPLOYMENT_DOMAIN_DISCOVERY_CHILD_METADATA_READS_V1 }),

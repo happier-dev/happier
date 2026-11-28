@@ -22,7 +22,7 @@ import type { OwnServerDeploymentTargetHostInput } from './ownServerDeploymentTa
 import { resolveDomainIngress, selectDomainCaddyPlacements, readDomainIngressMembersForHost, selectDomainMembershipMachines } from './domainRouteSelection';
 import { DEFAULT_CLOUDFLARE_TUNNEL_CONNECTORS_PER_MACHINE } from '@happier-dev/protocol/deployments/cloudflareTunnelConnectorsV1';
 import { DeploymentDomainNativeSetupObservationV1Schema, DeploymentDomainPreparedContentInputV1Schema,
-    type DeploymentDomainNativeSetupReviewV1, type DeploymentDomainPlacementV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
+    type DeploymentDomainAddPreparedInputV1, type DeploymentDomainNativeSetupReviewV1, type DeploymentDomainPlacementV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { getDeploymentTargetLinkLineageV1, type DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import { type DeploymentDomainContentV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { readDeploymentDomainArtifactV1, readDeploymentEnvironmentArtifactV1,
@@ -493,21 +493,34 @@ export function createOwnServerDomainActions(host: Readonly<{
                     const link = environment.targetLinks.find(item => item.targetLink.id === original.targetLinkId)?.targetLink;
                     if (!link) return failure('target_mismatch');
                     // Authored content (app, CLI and agent adds alike) gets its default outside check here, once.
-                    const prepared = 'content' in original ? await (async () => {
-                        const authored = withDeploymentDomainHealthCheckDefaultV1(original.content);
+                    let preparedInput: DeploymentDomainAddPreparedInputV1;
+                    let content: DeploymentDomainContentV1;
+                    if ('maintenancePage' in original) {
+                        const { maintenancePage, contentArtifactId, contentHeaderVersion, contentBodyVersion, ...metadata } = original;
+                        const opened = readDeploymentDomainArtifactV1({ contentArtifactId, contentHeaderVersion, contentBodyVersion },
+                            await host.open(contentArtifactId, context));
+                        if (!opened.ok) return failure(opened.error, undefined, opened.failureCause);
+                        if (opened.content.target.kind === 'provider' || opened.content.target.kind === 'telemetry')
+                            return failure('unsupported_action');
+                        content = { ...opened.content, maintenancePage };
+                        preparedInput = { ...metadata, ...await host.createContent(content, environment.environment.owner, context) };
+                    } else if ('content' in original) {
+                        content = withDeploymentDomainHealthCheckDefaultV1(original.content);
                         const { content: _authored, ...metadata } = original;
-                        return { input: { ...metadata, ...await host.createContent(authored, environment.environment.owner, context) },
-                            opened: { ok: true as const, content: authored } };
-                    })() : { input: original,
-                        opened: readDeploymentDomainArtifactV1(original, await host.open(original.contentArtifactId, context,
-                            original.membershipDeploymentId ? DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1 : undefined)) };
-                    const { input: preparedInput, opened } = prepared;
-                    if (!opened.ok) return failure(opened.error, undefined, opened.failureCause);
-                    privateContent = opened.content;
+                        preparedInput = { ...metadata, ...await host.createContent(content, environment.environment.owner, context) };
+                    } else {
+                        const opened = readDeploymentDomainArtifactV1(original, await host.open(original.contentArtifactId, context,
+                            original.membershipDeploymentId ? DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1 : undefined));
+                        if (!opened.ok) return failure(opened.error, undefined, opened.failureCause);
+                        content = opened.content;
+                        preparedInput = original;
+                    }
+                    privateContent = content;
                     const discovered = await discoverOwnServerDomainPlacement({ actionId, input: preparedInput,
-                        environment, content: opened.content, targetLinkId: original.targetLinkId, context }, host);
+                        environment, content, targetLinkId: original.targetLinkId, context }, host);
                     if (!discovered.ok) return discovered;
-                    if (original.placements && !isDeepStrictEqual(original.placements, discovered.placements)) return failure('target_mismatch');
+                    if (original.placements
+                        && !isDeepStrictEqual(original.placements, discovered.placements)) return failure('target_mismatch');
                     const collector = discovered.collector;
                     input = { ...preparedInput, placements: discovered.placements.map(placement =>
                         collector && placement.listener === 'privateOrigin' && placement.machineId === collector.machineId
@@ -515,7 +528,7 @@ export function createOwnServerDomainActions(host: Readonly<{
                             ? { ...placement, telemetryCollectorDeploymentId: collector.deploymentId } : placement),
                         ...(discovered.telemetryMachineId ? { telemetryMachineId: discovered.telemetryMachineId } : {}) };
                     topology = discovered.topology;
-                    if (opened.content.target.kind === 'telemetry' && !original.membershipDeploymentId) {
+                    if (content.target.kind === 'telemetry' && !preparedInput.membershipDeploymentId) {
                         const bindings = discovered.placements.flatMap(placement => {
                             if (placement.listener !== 'privateOrigin') return [];
                             const machine = topology?.machines.find(item => item.machineId === placement.machineId
@@ -525,7 +538,7 @@ export function createOwnServerDomainActions(host: Readonly<{
                                 ? [{ machineId: placement.machineId, installationId: placement.installationId,
                                     nativeServer: placement.nativeServer, dockerEngineId: placement.dockerEngineId, binding }] : [];
                         });
-                        const { privatePlacementBindings: previous, ...authored } = opened.content;
+                        const { privatePlacementBindings: previous, ...authored } = content;
                         if (!isDeepStrictEqual(bindings.length ? bindings : undefined, previous)) {
                             settledContent = bindings.length ? { ...authored, privatePlacementBindings: bindings } : authored;
                         }

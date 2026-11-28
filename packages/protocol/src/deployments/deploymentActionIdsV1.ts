@@ -78,6 +78,7 @@ const DEPLOYMENT_COPY_DATA_LINK_CHILD_ROLE_PREFIX_V1 = 'copy-data-link:';
 export const deploymentCopyDataLinkChildRoleV1 = (sourceTargetLinkId: string) => `${DEPLOYMENT_COPY_DATA_LINK_CHILD_ROLE_PREFIX_V1}${sourceTargetLinkId}`;
 export const DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1 = 'deployments.receipts.observe';
 export const DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 = 'deployments.templates.instantiate';
+export const DEPLOYMENT_ENVIRONMENT_MAINTENANCE_SET_ACTION_ID_V1 = 'deployments.environments.maintenance.set' as const;
 export const DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1 = 'deployments.domains.add' as const;
 export const DEPLOYMENT_DOMAIN_DNS_CREATE_ACTION_ID_V1 = 'deployments.domains.dns.create' as const;
 export const DEPLOYMENT_DOMAIN_DNS_VERIFY_ACTION_ID_V1 = 'deployments.domains.dns.verify' as const;
@@ -120,6 +121,7 @@ export const DEPLOYMENT_ACTION_IDS_V1 = [
   DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1, 'deployments.domains.remove', 'deployments.domains.verify', 'deployments.domains.get', 'deployments.domains.list',
   DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, 'deployments.targets.link', DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_ROLLBACK_ACTION_ID_V1,
   'deployments.environments.controller.set', DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1,
+  DEPLOYMENT_ENVIRONMENT_MAINTENANCE_SET_ACTION_ID_V1,
   DEPLOYMENT_TARGET_UNLINK_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_DELETE_ACTION_ID_V1,
   'deployments.promote',
   'deployments.restart', DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1,
@@ -137,6 +139,7 @@ export const DEPLOYMENT_ACTION_IDS_V1 = [
 export type DeploymentActionIdV1 = typeof DEPLOYMENT_ACTION_IDS_V1[number];
 /** Composed Actions with dedicated ports instead of the common deployment transport. */
 const DEPLOYMENT_SPECIALIZED_ACTION_IDS_V1 = [
+  DEPLOYMENT_ENVIRONMENT_MAINTENANCE_SET_ACTION_ID_V1,
   DEPLOYMENT_PREPARE_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1,
   DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1,
   ...DEPLOYMENT_BACKUP_ACTION_IDS_V1,

@@ -46,14 +46,17 @@ export function readSignedHomeAuthorizationHttpError(status: 401 | 403, payload:
     const response = parsed.success ? parsed.data : undefined;
     const path = requestUrl === undefined ? undefined : URL.parse(requestUrl, 'http://localhost')?.pathname;
     const responseCode = response?.error;
-    const errorCode = path && verifyPath.test(path) && (
-        (status === 403 && responseCode === 'credential_scope_denied')
-        || (status === 401 && responseCode === 'invalid_token')
-    ) ? responseCode : 'action_forbidden';
     const parsedPhase = ExternalActionAuthorizationRefusalPhaseSchema.safeParse(
         payload && typeof payload === 'object' && 'authorizationRefusal' in payload ? payload.authorizationRefusal : undefined,
     );
     const phase = parsedPhase.success ? parsedPhase.data : undefined;
+    const domainPreparationRefusal = phase === 'deployment_domain_preparation'
+        && status === 403 && responseCode === 'credential_scope_denied';
+    const bindingRefusal = path && verifyPath.test(path) && (
+        (status === 403 && responseCode === 'credential_scope_denied')
+        || (status === 401 && responseCode === 'invalid_token')
+    );
+    const errorCode = domainPreparationRefusal || bindingRefusal ? responseCode : 'action_forbidden';
     if (response && (status === 403 && responseCode === 'credential_scope_denied' && phase === 'credential_action_admission'
         || status === 401 && responseCode === 'invalid_token' && phase === 'principal')) {
         return new SignedHomeAuthorizationHttpError(status, {
@@ -67,7 +70,8 @@ export function readSignedHomeAuthorizationHttpError(status: 401 | 403, payload:
         ? response.details : phase ? readHomeAuthorizationRefusalDetails(phase) : undefined;
     const cause = response && 'failureCause' in response ? response.failureCause : undefined;
     const failureCause = readActionFailureCauseV1({
-        errorClass: 'HttpStatusError', errorCode: 'action_forbidden', ...cause, httpStatus: status,
+        errorClass: 'HttpStatusError', errorCode: domainPreparationRefusal ? responseCode : 'action_forbidden',
+        ...cause, httpStatus: status,
         phase: phase ? `${homeAuthorizationPhasePrefix}${phase}` : cause?.phase ?? `${homeAuthorizationPhasePrefix}signed_request`,
     });
     return new SignedHomeAuthorizationHttpError(status, {

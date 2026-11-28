@@ -6,6 +6,72 @@ import { projectDeploymentFailureRecoveryV1 } from '../../deployments/deployment
 import { readDeploymentReceiptFailureCodeV1 } from '../../deployments/deploymentReceiptResultV1.js';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps } from './types.js';
 import { readActionFailureEnvelope } from './actionFailureEnvelope.js';
+import { ActionApprovalRequestCreatedResultSchema } from '../actionExecutionResult.js';
+import { DEPLOYMENT_DOMAIN_LIST_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1 } from '../../deployments/deploymentActionIdsV1.js';
+import { DeploymentDomainListResultV1Schema, DeploymentDomainMutationResultV1Schema, DeploymentEnvironmentGetResultV1Schema,
+  DeploymentEnvironmentMaintenanceSetResultV1Schema, type DeploymentDomainHeaderV1, type DeploymentEnvironmentMaintenanceSetInputV1 } from '../../deployments/deploymentActionsV1.js';
+import type { DeploymentDomainMaintenanceReplaceInputV1Schema } from '../../deployments/deploymentDomainV1.js';
+import type { z } from '../../zodRuntimePolicy.js';
+
+export async function executeEnvironmentMaintenance(
+  input: DeploymentEnvironmentMaintenanceSetInputV1,
+  context: ActionExecutorContext,
+  deps: ActionExecutorDeps,
+  replace: (input: Omit<z.infer<typeof DeploymentDomainMaintenanceReplaceInputV1Schema>, 'requestKey'>,
+    machineId: string) => Promise<ActionExecuteResult>,
+): Promise<ActionExecuteResult> {
+  const { serverId, environmentId, enabled } = input;
+  const address = { serverId, environmentId };
+  const loaded = await executeDeploymentAction(DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, address, context, deps);
+  if (!loaded.ok) return loaded;
+  const detail = DeploymentEnvironmentGetResultV1Schema.parse(loaded.result);
+  if (!detail.ok) return { ok: false, errorCode: detail.error, error: detail.error, details: detail };
+  const links = new Map(detail.targetLinks.filter(link => link.targetKind === 'ownServer').map(link => [link.id, link]));
+  const domains: DeploymentDomainHeaderV1[] = [];
+  let cursor: string | null = null;
+  do {
+    const result = await executeDeploymentAction(DEPLOYMENT_DOMAIN_LIST_ACTION_ID_V1,
+      { ...address, ...(cursor ? { cursor } : {}) }, context, deps);
+    if (!result.ok) return result;
+    const page = DeploymentDomainListResultV1Schema.parse(result.result);
+    if (!page.ok) return { ok: false, errorCode: page.error, error: page.error, details: page };
+    domains.push(...page.domains.filter(domain => !domain.provider && domain.deletedAtMs === undefined && links.has(domain.targetLinkId)));
+    cursor = page.nextCursor;
+  } while (cursor);
+
+  let revision = detail.environment.revision;
+  const outcomes: z.infer<typeof DeploymentEnvironmentMaintenanceSetResultV1Schema>['outcomes'] = [];
+  for (const domain of domains) {
+    const link = links.get(domain.targetLinkId)!;
+    const updated = await replace({ ...address, domainId: domain.id, expectedRevision: revision,
+      expectedDomainRevision: domain.revision, targetLinkId: link.id, expectedTargetLinkRevision: link.revision,
+      contentArtifactId: domain.contentArtifactId, contentHeaderVersion: domain.contentHeaderVersion,
+      contentBodyVersion: domain.contentBodyVersion, maintenancePage: enabled }, detail.environment.controllerMachineId);
+    if (!updated.ok) {
+      const { automationNotices, ...failure } = updated;
+      outcomes.push({ domainId: domain.id, ...failure, ...(automationNotices ? { automationNotices: [...automationNotices] } : {}) });
+      continue;
+    }
+    const approval = ActionApprovalRequestCreatedResultSchema.safeParse(updated.result);
+    if (approval.success) {
+      outcomes.push({ domainId: domain.id, kind: approval.data.kind, artifactId: approval.data.artifactId });
+      continue;
+    }
+    const replacement = DeploymentDomainMutationResultV1Schema.safeParse(updated.result);
+    if (!replacement.success) {
+      outcomes.push({ domainId: domain.id, ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' });
+      continue;
+    }
+    if (!replacement.data.ok) {
+      outcomes.push({ domainId: domain.id, ok: false, errorCode: replacement.data.error, error: replacement.data.error,
+        details: replacement.data });
+      continue;
+    }
+    revision = replacement.data.revision;
+    outcomes.push({ domainId: domain.id, ok: true, state: replacement.data.domain.state });
+  }
+  return { ok: true, result: { ok: true, environmentId, revision, outcomes } };
+}
 
 /** Shared admitted deployment transport and domain-result owner, including file-export reads. */
 export async function executeDeploymentAction(

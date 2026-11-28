@@ -273,7 +273,7 @@ type ArtifactReadFailure = Readonly<{
     reason?: typeof PROJECT_SETUP_REVIEW_UNAVAILABLE_V1;
 }>;
 export type ArtifactReadResult = Readonly<{ ok: true; artifact: ArtifactForCaller }> | ArtifactReadFailure;
-type ArtifactFullReadResult = Readonly<{ ok: true; artifact: ArtifactForCaller & { publicAudience: 'retained' | 'none' } }> | ArtifactReadFailure;
+export type ArtifactFullReadResult = Readonly<{ ok: true; artifact: ArtifactForCaller & { publicAudience: 'retained' | 'none' } }> | ArtifactReadFailure;
 export type ArtifactHeaderForCaller = Omit<ArtifactForCaller, "body" | "bodyVersion" | "provenance">;
 export type ArtifactListItemForCaller = ArtifactHeaderForCaller & Pick<ArtifactForCaller, "bodyVersion" | "provenance">
     & Partial<Pick<ArtifactForCaller, "body">> & Readonly<{ publicAudience: "retained" | "none" }>;
@@ -377,16 +377,28 @@ export async function readArtifactHeaderForCallerInTx(tx: Tx, input: Readonly<{
 }
 
 /** Open only server at-rest Plain content; E2EE stays opaque with the caller's envelope. */
+async function readPinnedArtifactBodyInTx<Row extends Readonly<{
+    id: string; body: Uint8Array; bodyVersion: number; dataEncryptionKey: Uint8Array;
+}>>(tx: Tx, row: Row, bodyVersion: number) {
+    if (row.bodyVersion === bodyVersion) return row;
+    const revision = await tx.artifactRevision.findUnique({
+        where: { artifactId_bodyVersion: { artifactId: row.id, bodyVersion } },
+    });
+    return revision && { ...revision, dataEncryptionKey: row.dataEncryptionKey };
+}
+
 export function readArtifactForCallerInTx(tx: Tx, input: Readonly<{ actorAccountId: string; artifactId: string; projection?: never;
-    admittedContent?: ArtifactContentReadAdmission; projectSourceId?: string }>):
+    admittedContent?: ArtifactContentReadAdmission; projectSourceId?: string;
+    pinnedContent?: DeploymentArtifactContentReferenceV1 }>):
     Promise<ArtifactFullReadResult>;
 export function readArtifactForCallerInTx(tx: Tx, input: Readonly<{ actorAccountId: string; artifactId: string; projection?: 'headers';
     admittedContent?: ArtifactContentReadAdmission; projectSourceId?: string }>):
     Promise<Readonly<{ ok: true; artifact: ArtifactListItemForCaller }> | ArtifactReadFailure>;
 export async function readArtifactForCallerInTx(tx: Tx, input: Readonly<{
     actorAccountId: string; artifactId: string; projection?: 'headers'; admittedContent?: ArtifactContentReadAdmission; projectSourceId?: string;
+    pinnedContent?: DeploymentArtifactContentReferenceV1;
 }>): Promise<Readonly<{ ok: true; artifact: ArtifactListItemForCaller }> | ArtifactReadFailure> {
-    if (input.admittedContent) {
+    if (input.admittedContent && !input.pinnedContent) {
         const { content, requesterAccountId } = input.admittedContent;
         if (requesterAccountId !== input.actorAccountId || content.contentArtifactId !== input.artifactId) {
             return { ok: false, error: 'artifact_not_found' };
@@ -400,11 +412,8 @@ export async function readArtifactForCallerInTx(tx: Tx, input: Readonly<{
         const header = projectArtifactHeaderForRecipient(row, input.actorAccountId, { ownerAccountId: row.accountId,
             level: row.accountId === input.actorAccountId ? 'owner' : 'view', encryptionMode: mode.status === 'ready' ? mode.mode : null });
         if (!header.ok) return header;
-        const selected = row.bodyVersion === content.contentBodyVersion ? row : await tx.artifactRevision.findUnique({
-            where: { artifactId_bodyVersion: { artifactId: row.id, bodyVersion: content.contentBodyVersion } },
-        });
-        if (!selected) return { ok: false, error: 'artifact_content_unavailable', ownerAccountId: row.accountId };
-        const body = { ...selected, dataEncryptionKey: row.dataEncryptionKey };
+        const body = await readPinnedArtifactBodyInTx(tx, row, content.contentBodyVersion);
+        if (!body) return { ok: false, error: 'artifact_content_unavailable', ownerAccountId: row.accountId };
         const read = input.projection === 'headers' ? projectArtifactRevisionMetadata(header.artifact, body) : projectArtifactBody(header.artifact, body);
         if (!read.ok) return read;
         const publication = await tx.publicSessionShare.findUnique({ where: { artifactId: row.id }, select: { expiresAt: true } });
@@ -420,7 +429,14 @@ export async function readArtifactForCallerInTx(tx: Tx, input: Readonly<{
     if (admitted.projectSourceContentReference && admitted.projectSourceContentReference.contentBodyVersion !== row.bodyVersion) {
         return { ok: false, error: 'artifact_content_unavailable', reason: PROJECT_SETUP_REVIEW_UNAVAILABLE_V1, ownerAccountId: row.accountId };
     }
-    const read = input.projection === 'headers' ? projectArtifactRevisionMetadata(header.artifact, row) : projectArtifactBody(header.artifact, row);
+    // A retained content pin selects the version after ordinary Artifact access grants the read.
+    const pin = input.pinnedContent;
+    if (pin && (pin.contentArtifactId !== row.id || pin.contentHeaderVersion !== row.headerVersion)) {
+        return { ok: false, error: 'artifact_content_unavailable', ownerAccountId: row.accountId };
+    }
+    const body = pin ? await readPinnedArtifactBodyInTx(tx, row, pin.contentBodyVersion) : row;
+    if (!body) return { ok: false, error: 'artifact_content_unavailable', ownerAccountId: row.accountId };
+    const read = input.projection === 'headers' ? projectArtifactRevisionMetadata(header.artifact, body) : projectArtifactBody(header.artifact, body);
     if (!read.ok) return read;
     const publication = await tx.publicSessionShare.findUnique({ where: { artifactId: input.artifactId }, select: { expiresAt: true } });
     return { ok: true, artifact: { ...read.artifact, publicAudience: projectArtifactPublicAudience(publication, row.signedInLink !== null) } };

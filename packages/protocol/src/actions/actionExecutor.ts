@@ -272,7 +272,8 @@ import { readInputPath } from '../inputs/inputPredicates.js';
 import { SecretFillSettlementV1Schema } from '../computer/v1.js';
 import { executeWaitActionV1 } from './executor/waitAction.js';
 import { projectDeploymentTelemetryReadAdmissionV1 } from '../deployments/deploymentReadAdmissionV1.js';
-import { DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
+import { DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1,
+  DEPLOYMENT_ENVIRONMENT_MAINTENANCE_SET_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
 import { executeUsageAction, type UsageActionReadChild } from './executor/usageActions.js';
 import { isUsageActionIdV1, USAGE_PUBLIC_RECAP_ACTION_IDS, USAGE_PRIVATE_RECAP_ACTION_IDS } from '../usage/usageActionIdsV1.js';
 import { isPublicProfilePreparationActionIdV1 } from '../account/publicProfileActionIds.js';
@@ -534,7 +535,7 @@ import { AutomationOccurrenceActionIdSchema, AutomationOccurrenceInputSchemas } 
 import { ExternalUrlOpenInputSchema } from './externalLinkActionFamily.js';
 import { FileSaveInputSchema } from './fileSaveActionFamily.js';
 import { executeFileSave } from './executor/fileSave.js';
-import { executeDeploymentAction } from './executor/deploymentAction.js';
+import { executeDeploymentAction, executeEnvironmentMaintenance } from './executor/deploymentAction.js';
 import { readDeploySuggestionCatalogV1 } from './executor/deploySuggestions.js';
 import { DEPLOYMENT_SUGGESTIONS_CATALOG_ACTION_ID_V1, DEPLOYMENT_SUGGESTIONS_CHECK_ACTION_ID_V1, DEPLOYMENT_TARGET_CHECK_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
 import { checkDeploySuggestionV1 } from '../deployments/suggestions/deploySuggestionsV1.js';
@@ -2770,6 +2771,9 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
     // and routed branches. Count per Action so a completed grant/read on retry
     // cannot shift another Action's slots. Nested parents extend the same path.
     const childPositions = new Map<ActionId, number>();
+    const nextChildRequestId = (childId: ActionId, parentRequestId: string) =>
+      deriveActionChildRequestIdV1({ parentRequestId, parentActionId: actionId, childActionId: childId,
+        position: childPositions.get(childId) ?? 0 });
     const childSessionContext = (childId: ActionId, childInput: unknown, caller: ActionExecutorContext): ActionExecutorContext => {
       if (!caller.sessionTargetsV1) return caller;
       const sessionTargetsV1 = projectChildActionSessionTargetsV1({ parentActionId: actionId, actionId: childId,
@@ -2779,8 +2783,6 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
     };
     const executeChild = async (childId: ActionId, childInput: unknown, childContext: ActionExecutorContext, hostInternal: boolean,
       execute?: (actionId: ActionId, input: unknown, context: ActionExecutorContext) => Promise<ActionExecuteResult>) => {
-      const position = childPositions.get(childId) ?? 0;
-      childPositions.set(childId, position + 1);
       const inheritedCaller = hostInternal ? childContext : ordinaryChildContext(childContext);
       // A child is a new authored invocation. Only transport of the same spawn
       // retains its captured creation context.
@@ -2792,10 +2794,17 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
       const childCaller = childSessionContext(childId, childInput, caller);
       const parentRequestId = normalizeId(childCaller.actionRequestId);
       const derivedContext = parentRequestId ? { ...childCaller,
-        actionRequestId: deriveActionChildRequestIdV1({ parentRequestId, parentActionId: actionId,
-          childActionId: childId, position }),
+        actionRequestId: nextChildRequestId(childId, parentRequestId),
       } : childCaller;
+      childPositions.set(childId, (childPositions.get(childId) ?? 0) + 1);
       if (!hostInternal && execute) return execute(childId, childInput, derivedContext);
+      if (!hostInternal && childCaller.executeOrdinaryChildAction) {
+        return childCaller.executeOrdinaryChildAction(childId, childInput, {
+          actionRequestId: derivedContext.actionRequestId, signal: derivedContext.signal,
+          serverId: derivedContext.serverId, expectedAccountId: derivedContext.expectedAccountId,
+          externalActionTarget: derivedContext.externalActionTarget,
+        });
+      }
       // A private Review continuation remains Review-scoped. It can spend
       // the admitted corpus only for the same caller, Home, Account and target.
       let inheritedScope: CoreOptions['workflowSessionScope'];
@@ -7362,6 +7371,16 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
           // The same catalog composition the catalog Action answers with, read at the point of the check.
           const catalog = await readDeploySuggestionCatalogV1(ctx, deps, (childId, childInput) => executeHostChild(childId, childInput, ctx));
           return { ok: true, result: checkDeploySuggestionV1(input.suggestion, catalog) };
+        }
+        if (actionId === DEPLOYMENT_ENVIRONMENT_MAINTENANCE_SET_ACTION_ID_V1) {
+          const input = DeploymentActionInputSchemasV1[actionId].parse(data);
+          const parentRequestId = normalizeId(ctx.actionRequestId);
+          if (!parentRequestId) return { ok: false, errorCode: 'invalid_action_input', error: 'invalid_action_input' };
+          return executeEnvironmentMaintenance(input, ctx, deps, (replacement, machineId) => {
+            const childId = DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1;
+            return executeChild(childId, { ...replacement, requestKey: nextChildRequestId(childId, parentRequestId) },
+              { ...ctx, externalActionTarget: { kind: 'machine', machineId } }, false);
+          });
         }
         if (isDeploymentActionIdV1(actionId)) {
           return executeDeploymentAction(actionId, data as z.infer<(typeof DeploymentActionInputSchemasV1)[typeof actionId]>,

@@ -526,7 +526,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `account.sessions.signOutEverywhere`
 
-**Sign out everywhere** — Invalidate all signed sessions for the current Account. API tokens remain active.
+**Sign out everywhere** — Invalidate all signed sessions for the current Account and optionally revoke all its API tokens.
 
 - Safety: `danger`; side effect: `danger`.
 - Approval: `required` result; `blocking` flow.
@@ -536,7 +536,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-No field hints are published. Use the typed input accepted by `execute`.
+- `revokeApiTokens` (boolean): Also revoke all API tokens
 
 ## `account.signOut`
 
@@ -6120,6 +6120,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `membershipMachines` (json): Membership machines
 - `placements` (json): Placements
 - `provider` (json): Provider
+- `maintenancePage` (json): Maintenance page
 
 ## `deployments.domains.dns.create`
 
@@ -6396,6 +6397,22 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `previewCompanionOfEnvironmentId` (text): Preview companion of environment id
 - `cursor` (text): Cursor
 - `limit` (integer): Limit
+
+## `deployments.environments.maintenance.set`
+
+**Turn on or off the maintenance page** — Serve or stop serving a maintenance page on this Environment’s own-server Domains. Each Domain retains its normal review and result.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `cli`, `agent`, `mcp`, `api`.
+
+### Input guidance
+
+- `serverId` (text, required): Home
+- `environmentId` (text, required): Environment
+- `enabled` (boolean, required): Show maintenance page
 
 ## `deployments.environments.moveToRepository`
 

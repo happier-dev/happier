@@ -11,7 +11,7 @@ import { DeploymentBackupConfigureInputV1Schema, DeploymentBackupConfigureIntent
 import { DeploymentEnvironmentTelemetrySetInputV1Schema } from './deploymentTelemetryV1.js';
 import { DeploymentBackupHistoryInputV1Schema, DeploymentBackupTestInputV1Schema, DeploymentBackupInventoryInputV1Schema, DeploymentBackupRunInputV1Schema, DeploymentBackupVerifyInputV1Schema,
   DeploymentBackupPruneInputV1Schema, DeploymentBackupActionInputSchemasV1 } from './deploymentBackupActionsV1.js';
-import { DeploymentDomainAddInputV1Schema, DeploymentDomainRemoveInputV1Schema,
+import { DeploymentDomainAddInputV1Schema, DeploymentDomainMaintenanceReplaceInputV1Schema, DeploymentDomainRemoveInputV1Schema,
   DeploymentDomainAttachedVerifyInputV1Schema, DeploymentDomainPreviewInputV1Schema } from './deploymentDomainV1.js';
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 import { computeCanonicalDomainSeparatedDigest } from '../crypto/canonicalDigest.js';
@@ -27,6 +27,9 @@ export const DeploymentDomainNativeAdmissionV1Schema = lazyZodSchema(() => z.str
   kind: z.literal('domain'), actionId: z.enum(['deployments.domains.add', 'deployments.domains.remove', 'deployments.domains.verify']),
   environmentId: id, domainId: id, inputDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
   authoredMetadataDigest: z.optional(z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u))),
+  maintenanceSource: z.optional(z.strictObject({
+    ...DeploymentArtifactContentReferenceV1Schema.shape, expectedDomainRevision: revision, targetLinkId: id,
+  })),
 }));
 export type DeploymentDomainNativeAdmissionV1 = z.infer<typeof DeploymentDomainNativeAdmissionV1Schema>;
 export const DeploymentDomainDnsNativeAdmissionV1Schema = lazyZodSchema(() => z.strictObject({
@@ -184,8 +187,16 @@ export function projectDeploymentNativeAdmissionV1(actionId: string, input: unkn
     const schema = actionId === 'deployments.domains.add' ? DeploymentDomainAddInputV1Schema
       : actionId === 'deployments.domains.remove' ? DeploymentDomainRemoveInputV1Schema : DeploymentDomainAttachedVerifyInputV1Schema;
     const value = schema.parse(input);
+    const maintenance = 'maintenancePage' in value ? DeploymentDomainMaintenanceReplaceInputV1Schema.parse(value) : undefined;
+    const maintenanceSource = maintenance ? {
+      contentArtifactId: maintenance.contentArtifactId, contentHeaderVersion: maintenance.contentHeaderVersion,
+      contentBodyVersion: maintenance.contentBodyVersion, expectedDomainRevision: maintenance.expectedDomainRevision,
+      targetLinkId: maintenance.targetLinkId,
+    } : undefined;
     return DeploymentDomainNativeAdmissionV1Schema.parse({ kind: 'domain', actionId, environmentId: value.environmentId,
-      domainId: value.domainId, ...('content' in value ? { authoredMetadataDigest: computeDeploymentDomainAuthoredMetadataDigestV1(value) } : {}),
+      domainId: value.domainId,
+      ...('content' in value || maintenanceSource ? { authoredMetadataDigest: computeDeploymentDomainAuthoredMetadataDigestV1(value) } : {}),
+      ...(maintenanceSource ? { maintenanceSource } : {}),
       inputDigest: computeCanonicalDomainSeparatedDigest('happier-deployment-domain-input-v1',
         [createCanonicalJsonSigningInput(value)]) });
   }
@@ -271,7 +282,7 @@ export function createDeploymentPreparationContentArtifactIdV1(input: Readonly<{
 /** Preserve the admitted routing metadata when private content becomes an Artifact reference. */
 export function computeDeploymentDomainAuthoredMetadataDigestV1(input: Readonly<Record<string, unknown>>): string {
   const { content: _content, contentArtifactId: _artifact, contentHeaderVersion: _header,
-    contentBodyVersion: _body, authoredInputDigest: _digest, ...metadata } = input;
+    contentBodyVersion: _body, authoredInputDigest: _digest, maintenancePage: _maintenance, ...metadata } = input;
   return computeCanonicalDomainSeparatedDigest('happier-deployment-domain-authored-metadata-v1',
     [createCanonicalJsonSigningInput(metadata)]);
 }

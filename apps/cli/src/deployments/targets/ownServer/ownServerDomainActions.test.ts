@@ -8,6 +8,9 @@ import { readDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deploymen
 import { DeploymentDomainTransitionInputV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { DeploymentDomainHeaderV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { createOwnServerDomainActions, prepareOwnServerTeardownDomainReviewedChildren } from './ownServerDomainActions';
+import { createActionExecutor, createDeploymentApprovalScopeResolverV1, DeploymentActionInputSchemasV1, type ActionExecutorDeps } from '@happier-dev/protocol';
+import { readSignedHomeAuthorizationHttpError } from '@/api/client/homeAuthorizationHttpFailure';
+import { DeploymentDomainContentV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 
 const unexpected = async (): Promise<never> => { throw new Error('Provider Domain retirement must not reach this port'); };
 
@@ -143,4 +146,92 @@ it('settles both collector captures before returning the typed private refusal f
             remedy: expect.stringContaining('native interface'), nextAction: { destination: 'domains' },
         });
     } finally { transition.mockRestore(); }
+});
+
+it('publishes only the maintenance toggle and returns a refused Domain body as a typed outcome', async () => {
+    const detail = createDeploymentEnvironmentDetailV1();
+    const { id: environmentId, serverId, controllerMachineId: machineId, revision, createdByAccountId: accountId } = detail.environment;
+    const link = detail.targetLinks[0]!.targetLink;
+    const [member] = link.members;
+    if (!member) throw new Error('Expected an installed member');
+    const content = DeploymentDomainContentV1Schema.parse({
+        hostname: 'app.example.test', target: { service: 'web', containerPort: 8080 },
+        healthCheck: { path: '/ready', expectStatus: 204 },
+        maintenancePage: true,
+    });
+    const domains = ['readable', 'refused'].map(id => DeploymentDomainHeaderV1Schema.parse({
+        v: 1, id, environmentId, targetLinkId: link.id, revision: 3, state: 'active',
+        contentArtifactId: `retained-${id}`, contentHeaderVersion: 2, contentBodyVersion: 4,
+        createdByAccountId: accountId, createdAtMs: 1, updatedAtMs: 1,
+    }));
+    const [readable, refused] = domains;
+    if (!readable || !refused) throw new Error('Expected two retained Domains');
+    const published: unknown[] = [];
+    const publisher = { contentArtifactId: 'replacement-body', contentHeaderVersion: 1, contentBodyVersion: 1 };
+    const target = { kind: 'machine' as const, machineId };
+    const endpoint = 'https://home.test';
+    const denial = readSignedHomeAuthorizationHttpError(403, {
+        error: 'credential_scope_denied', authorizationRefusal: 'deployment_domain_preparation',
+    }, `${endpoint}/v1/artifacts/${refused.contentArtifactId}`);
+    if (!denial) throw new Error('Expected a typed signed Home refusal');
+    const storage: NonNullable<ActionExecutorDeps['deploymentAction']> = async (actionId, input) => {
+        if (actionId === 'deployments.environments.get') return { ok: true, environment: detail.environment, targetLinks: [link] };
+        if (actionId === 'deployments.domains.list') return { ok: true, environmentId, revision, domains, nextCursor: null };
+        if (actionId !== DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1) return unexpected();
+        expect(input).toMatchObject({ domainId: readable.id, expectedDomainRevision: readable.revision,
+            expectedRevision: revision, ...publisher });
+        return { ok: true, environmentId, revision: revision + 1, domain: { ...readable, ...publisher } };
+    };
+    const controller = createOwnServerDomainActions({
+        serverId, machineId, serverHttpBaseUrl: endpoint, credentials: { token: 'fixture', encryption: null }, storage,
+        readEnvironment: async () => detail, readInstallation: unexpected, readReceipt: unexpected,
+        persistPreparedContent: unexpected, headers: unexpected,
+        open: async artifactId => {
+            if (artifactId === refused.contentArtifactId) throw denial;
+            expect(artifactId).toBe(readable.contentArtifactId);
+            return { artifactId, header: { kind: 'deployment-domain.v1', title: content.hostname },
+                body: JSON.stringify(content), revision: { headerVersion: readable.contentHeaderVersion, bodyVersion: readable.contentBodyVersion } };
+        },
+        createContent: async replacement => { published.push(replacement); return publisher; },
+        async dispatch(job) {
+            if (job.kind !== 'domainDiscover') return unexpected();
+            return { machineId: member.machineId, installationId: member.installationId, dockerEngineId: 'engine',
+                privateNetworks: [], replicas: [], caddy: { status: 'ready', containerId: 'caddy', containerName: 'caddy',
+                    adminSocketPath: '/run/caddy.sock', networkNames: [], servers: [
+                        { serverId: 'privateOrigin', listen: [':8080'], tls: false, automaticHttpsDisabled: true, endpoints: [] },
+                        { serverId: 'public', listen: [':443'], tls: true, automaticHttpsDisabled: false,
+                            endpoints: [{ hostAddress: '0.0.0.0', hostPort: 443, containerPort: 443 }] },
+                    ] } };
+        },
+    });
+    const executor = createActionExecutor({
+        deploymentAction: storage, resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(storage),
+    });
+    const result = await executor.execute('deployments.environments.maintenance.set',
+        { serverId, environmentId, enabled: false }, {
+            serverId, runtimeAccountId: accountId, surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+            actionRequestId: 'turn-off-maintenance',
+            async executeOrdinaryChildAction(actionId, raw, options) {
+                expect(actionId).toBe(DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1);
+                const input = DeploymentActionInputSchemasV1[DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1].parse(raw);
+                const envelope = { v: 1 as const, requestId: options?.actionRequestId!, target, input };
+                const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'fixture', binding: {
+                    serverIdentityId: serverId, accountId, custodianAccountId: accountId,
+                    authentication: { kind: 'account', tokenEpoch: 1 }, machineId, installationId: member.installationId,
+                    environmentId, actionId, deploymentChildRoot: true, requestId: envelope.requestId,
+                    accountEncryptionMode: 'plain', target,
+                    requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+                    deploymentNativeAdmission: projectDeploymentNativeAdmissionV1(actionId, input),
+                } });
+                const output = await controller(DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1, input, {
+                    externalActionExecutionAuthorization: authorization, originalActionEnvelope: envelope,
+                });
+                return 'errorCode' in output ? output : { ok: true, result: output };
+            },
+        });
+    expect(published).toEqual([{ ...content, maintenancePage: false }]);
+    expect(result).toMatchObject({ ok: true, result: { revision: revision + 1, outcomes: [
+        { domainId: readable.id, ok: true, state: 'active' },
+        { domainId: refused.id, ok: false, errorCode: 'credential_scope_denied', failureCause: denial.failure.failureCause },
+    ] } });
 });

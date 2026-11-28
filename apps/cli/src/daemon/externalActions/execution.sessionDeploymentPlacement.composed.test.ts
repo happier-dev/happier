@@ -21,7 +21,7 @@ import {
   SOCKET_RPC_EVENTS,
   type SocketRpcRequestPayload,
 } from '@happier-dev/protocol/socketRpc';
-import { isDeploymentChildRootActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_ENVIRONMENT_MAINTENANCE_SET_ACTION_ID_V1, isDeploymentChildRootActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
 import type { startDaemonControlServer } from '@/daemon/controlServer';
 import { createInstalledProjectAgentDaemonFixture } from '@/daemon/testkit/installedProjectAgentDaemonFixture';
@@ -50,7 +50,8 @@ const domainAddActionId = 'deployments.domains.add';
 const controllerMachineId = 'remote-controller';
 
 type Scenario = Readonly<{
-  actionId?: 'deployments.domains.add' | 'deployments.rollback' | 'deployments.health.current'
+  actionId?: typeof DEPLOYMENT_ENVIRONMENT_MAINTENANCE_SET_ACTION_ID_V1
+    | 'deployments.domains.add' | 'deployments.rollback' | 'deployments.health.current'
     | 'machines.capabilities.detect' | 'machines.terminal.list' | 'session.spawn_new';
   relayedResult?: unknown;
   relayExecution?: ActionExecuteResult;
@@ -79,6 +80,8 @@ function rootEnvironmentBinding(actionId: string, machineId: string,
 
 async function runSessionDomainAdd(scenario: Scenario = {}) {
   const actionId = scenario.actionId ?? domainAddActionId;
+  const maintenance = actionId === DEPLOYMENT_ENVIRONMENT_MAINTENANCE_SET_ACTION_ID_V1;
+  const relayedActionId = maintenance ? domainAddActionId : actionId;
   onTestFinished(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
@@ -125,7 +128,7 @@ async function runSessionDomainAdd(scenario: Scenario = {}) {
       accountSettings: {
         actionsSettingsV1: setActionApprovalOverride({
           settings: normalizeActionsSettingsV1(),
-          actionId,
+          actionId: relayedActionId,
           surface: 'agent',
           approvalRequired: scenario.approvalRequired === true,
         }),
@@ -163,6 +166,10 @@ async function runSessionDomainAdd(scenario: Scenario = {}) {
   environment.environment.serverId = home;
   environment.environment.owner = { kind: 'account', accountId: 'requester' };
   environment.environment.controllerMachineId = controllerMachineId;
+  const domain = { v: 1 as const, id: 'domain', environmentId: environment.environment.id,
+    targetLinkId: environment.targetLinks[0]!.targetLink.id, revision: 2, state: 'active' as const,
+    contentArtifactId: 'domain-content', contentHeaderVersion: 1, contentBodyVersion: 1,
+    createdByAccountId: 'requester', createdAtMs: 1, updatedAtMs: 1 };
   const input = scenario.input ? actionId === 'session.spawn_new' ? scenario.input : { serverId: home, ...scenario.input } : {
     serverId: home,
     environmentId: 'environment',
@@ -191,6 +198,22 @@ async function runSessionDomainAdd(scenario: Scenario = {}) {
   let minted:
     | ReturnType<typeof ExternalActionExecutionAuthorizationV1Schema.parse>
     | undefined;
+  if (maintenance) {
+    const requestHome = vi.mocked(axios.request).getMockImplementation();
+    vi.mocked(axios.request).mockImplementation(async (...args) => {
+      switch (new URL(String(args[0].url)).pathname) {
+        case '/v1/deployments/environments/environment':
+          return { status: 200, data: { ok: true, environment: environment.environment,
+            targetLinks: environment.targetLinks.map(item => item.targetLink) } };
+        case '/v1/deployments/environments/environment/domains':
+          return { status: 200, data: { ok: true, environmentId: domain.environmentId,
+            revision: environment.environment.revision, domains: [domain], nextCursor: null } };
+        default:
+          if (!requestHome) throw new Error('Unexpected maintenance storage request');
+          return requestHome(...args);
+      }
+    });
+  }
   vi.mocked(axios.get).mockImplementation(async (...args) => {
     if (new URL(String(args[0])).pathname === `/v1/machines/${controllerMachineId}`) {
       if (scenario.rpcReadError) throw scenario.rpcReadError;
@@ -213,11 +236,14 @@ async function runSessionDomainAdd(scenario: Scenario = {}) {
           targetLinks: environment.targetLinks.map((item) => item.targetLink),
         },
       };
+    // No approval or operation Artifact has been retained for this invocation.
+    if (maintenance && /^\/v1\/artifacts\/[0-9a-f-]{36}$/u.test(new URL(String(args[0])).pathname))
+      return { status: 404, data: { error: 'Artifact not found' } };
     return homeRead(...args);
   });
   vi.mocked(axios.post).mockImplementation(async (...args) => {
     const path = new URL(String(args[0])).pathname;
-    if (path === bindExternalActionExecutionAuthorizationHttpPathV1(actionId)) {
+    if (path === bindExternalActionExecutionAuthorizationHttpPathV1(relayedActionId)) {
       const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(
         args[1],
       );
@@ -235,7 +261,7 @@ async function runSessionDomainAdd(scenario: Scenario = {}) {
           machineId: request.machineId,
           custodianAccountId: 'requester',
           installationId: 'controller-installation',
-          actionId,
+          actionId: relayedActionId,
           requestId: request.envelope.requestId,
           target: request.envelope.target,
           accountEncryptionMode: 'plain',
@@ -245,15 +271,15 @@ async function runSessionDomainAdd(scenario: Scenario = {}) {
           sessionActionOrigin: request.sessionActionOrigin,
           sessionActionSource: request.sessionActionSource,
           // Home binds the Environment facts its own projections derive from the envelope.
-          ...rootEnvironmentBinding(actionId, request.machineId, request.envelope),
+          ...rootEnvironmentBinding(relayedActionId, request.machineId, request.envelope),
         },
       });
-      if (!isExternalActionAuthorizationBoundToEnvelope(minted.binding, { actionId, machineId: request.machineId, envelope: request.envelope })) {
+      if (!isExternalActionAuthorizationBoundToEnvelope(minted.binding, { actionId: relayedActionId, machineId: request.machineId, envelope: request.envelope })) {
         throw new Error('Home fixture root is not bound to its envelope');
       }
       return { status: 200, data: minted };
     }
-    if (path === `${EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1}${actionId}`) {
+    if (path === `${EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1}${relayedActionId}`) {
       const body = ExternalActionExecutionAuthorizationRequestV1Schema.parse(
         args[1],
       );
@@ -267,12 +293,14 @@ async function runSessionDomainAdd(scenario: Scenario = {}) {
             ok: true,
             result: {
               kind: 'approval_request_created',
-              actionId,
+              actionId: relayedActionId,
               artifactId: 'approval-on-controller',
             },
           }
-        : { ok: true, result: scenario.relayedResult ?? { ok: true, domain: { id: 'domain' } } });
-      return { status: 200, data: { v: 1, actionId, requestId, execution } };
+        : { ok: true, result: scenario.relayedResult ?? (maintenance
+          ? { ok: true, environmentId: domain.environmentId, revision: environment.environment.revision + 1, domain }
+          : { ok: true, domain: { id: 'domain' } }) });
+      return { status: 200, data: { v: 1, actionId: relayedActionId, requestId, execution } };
     }
     return homeWrite(...args);
   });
@@ -329,6 +357,8 @@ async function runSessionDomainAdd(scenario: Scenario = {}) {
       .flatMap(key => typeof row[key] === 'string' ? [`${key}=${row[key] as string}`] : []).join(',')];
   });
   const diagnostic = JSON.stringify({ errorCode: outcome && !outcome.ok ? outcome.errorCode : null,
+    error: outcome && !outcome.ok ? outcome.error : null,
+    cause: outcome && !outcome.ok ? outcome.failureCause : null,
     details: outcome && !outcome.ok && outcome.details && typeof outcome.details === 'object'
       ? Object.fromEntries(Object.entries(outcome.details).filter(([, value]) => typeof value === 'string')) : null,
     phases });
@@ -426,6 +456,21 @@ it('delivers a Session-origin domain root to the Environment controller through 
     ok: true,
     result: { ok: true, domain: { id: 'domain' } },
   });
+}, 120_000);
+
+it('uses the original agent Session requester to admit each maintenance replacement', async () => {
+  const run = await runSessionDomainAdd({ actionId: DEPLOYMENT_ENVIRONMENT_MAINTENANCE_SET_ACTION_ID_V1,
+    input: { environmentId: 'environment', enabled: true } });
+  expect(run.outcome, run.diagnostic).toMatchObject({ ok: true, result: { ok: true,
+    outcomes: [{ domainId: 'domain', ok: true, state: 'active' }] } });
+  expect(run.mintMachineIds).toEqual([controllerMachineId]);
+  expect(run.relayed).toHaveLength(1);
+  const { body, headers } = run.relayed[0]!;
+  expect(body.envelope.input).toMatchObject({ maintenancePage: true, domainId: 'domain', contentArtifactId: 'domain-content' });
+  expect(body.executionAuthorization?.binding).toMatchObject({ accountId: 'requester', actionId: domainAddActionId,
+    sessionActionOrigin: { caller: { kind: 'session', sessionId: run.h.sessionId } },
+    deploymentNativeAdmission: { maintenanceSource: { contentArtifactId: 'domain-content' } } });
+  expect(headers.Authorization).toBe(`Bearer ${run.credentials.token}`);
 }, 120_000);
 
 it('returns the controller-decided approval to the agent unchanged', async () => {

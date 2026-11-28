@@ -6932,6 +6932,98 @@ describe('deployment children retain their controller Action authority', () => {
         return { f, target, input, envelope, authorization, mintQueries, receiver };
     }
 
+    it.each(['account', 'agent Session'] as const)('lets a Team manager turn maintenance off through a signed %s replacement', async requester => {
+        const f = await fixture('team', 'account', { separateControllerCustodian: true });
+        const teammate = await fixture();
+        const foreign = await fixture();
+        await db.teamMembership.update({ where: { teamId_accountId: { teamId: f.team!.id, accountId: f.account.id } },
+            data: { role: 'admin' } });
+        await db.teamMembership.create({ data: { teamId: f.team!.id, accountId: teammate.account.id, role: 'member' } });
+        const actionId = 'deployments.domains.add';
+        const target = { kind: 'machine' as const, machineId: f.controller.id };
+        const authentication = { kind: 'account' as const, tokenEpoch: f.account.tokenEpoch };
+        const content = { hostname: 'maintained.example.test', target: { service: 'web', containerPort: 3000 }, maintenancePage: true };
+        const ownRef = await f.content('deployment-domain.v1', content);
+        const teammateRef = await teammate.content('deployment-domain.v1', content);
+        const foreignRef = await foreign.content('deployment-domain.v1', content);
+        const retain = (ref: typeof ownRef, createdByAccountId = f.account.id) => db.deploymentDomain.create({ data: { ...ref,
+            environmentId: f.environment.id, targetLinkId: f.link.id, state: 'active', createdByAccountId } });
+        const own = await retain(ownRef);
+        const teammateDomain = await retain(teammateRef, teammate.account.id);
+        const foreignDomain = await retain(foreignRef);
+        await db.artifactGrant.create({ data: { ...teamResourceGrantFixture({ teamId: f.team!.id,
+            accessLevel: 'admin', createdByAccountId: teammate.account.id }), artifactId: teammateRef.contentArtifactId } });
+        const sourceSession = await db.session.create({ data: { accountId: f.account.id,
+            tag: crypto.randomUUID(), metadata: '{}', encryptionMode: 'plain' } });
+        await db.accessKey.create({ data: { accountId: f.account.id, machineId: f.outsider.id,
+            sessionId: sourceSession.id, data: 'maintenance-session-source' } });
+        const resolveCurrentSessionMachine = async () => f.outsider.id;
+        const mint = async (domain: typeof own) => {
+            const { contentArtifactId, contentHeaderVersion, contentBodyVersion } = domain;
+            const input = { serverId, environmentId: f.environment.id, domainId: domain.id,
+                expectedRevision: f.environmentRevision, targetLinkId: f.link.id, expectedTargetLinkRevision: f.link.revision,
+                requestKey: crypto.randomUUID(), contentArtifactId, contentHeaderVersion, contentBodyVersion,
+                expectedDomainRevision: domain.revision, maintenancePage: false };
+            const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input };
+            const sessionActionOrigin = requester === 'agent Session' ? {
+                v: 1 as const, caller: { kind: 'session' as const, sessionId: sourceSession.id, starterDepth: 0, turnDepth: 0 },
+                sourceTurnId: 'maintenance-turn', requestId: envelope.requestId, callerPermissionMode: null,
+            } : undefined;
+            return auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId, accountId: f.account.id,
+                authentication, actionId, machineId: f.controller.id, target, requestId: envelope.requestId,
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+                ...(sessionActionOrigin ? { sessionActionOrigin, sessionActionSource: {
+                    machineId: f.outsider.id, installationId: f.outsider.installationId,
+                } } : {}) }, {
+                input, deploymentNativeAdmission: projectExternalActionDeploymentNativeEnvelopeAdmissionV1({ actionId, envelope }),
+                resolveCurrentSessionMachine,
+            });
+        };
+        expect(f.controller.accountId).not.toBe(f.account.id);
+        const [ownReplacement, teammateReplacement, foreignReplacement] = await Promise.all([mint(own), mint(teammateDomain), mint(foreignDomain)]);
+        await withAuthenticatedTestApp(app => {
+            app.decorate('resolveCurrentSessionMachine', resolveCurrentSessionMachine);
+            registerDeploymentRoutes(app);
+            artifactsRoutes(app);
+        }, async app => {
+            const open = (authorization: ExternalActionExecutionAuthorizationV1, artifactId: string) => {
+                const path = `/v1/artifacts/${artifactId}`;
+                return app.inject({ method: 'GET', url: path, headers: createExternalActionAuthorizedRequestHeaders({
+                    authorization, effectActionId: actionId, target, method: 'GET', path,
+                    installationId: f.controller.installationId, privateKey: f.controller.keys.secretKey,
+                }) });
+            };
+            const opened = await open(ownReplacement, own.contentArtifactId);
+            expect(opened.statusCode, opened.body).toBe(200);
+            expect(opened.json()).toMatchObject({ id: own.contentArtifactId, ownerAccountId: f.account.id });
+            const teammateOpened = await open(teammateReplacement, teammateDomain.contentArtifactId);
+            expect(teammateOpened.statusCode, teammateOpened.body).toBe(200);
+            expect(ArtifactHttpReadV1Schema.parse(teammateOpened.json())).toMatchObject({
+                id: teammateDomain.contentArtifactId, ownerAccountId: teammate.account.id, access: 'admin',
+                headerVersion: teammateRef.contentHeaderVersion, bodyVersion: teammateRef.contentBodyVersion,
+            });
+            expect(await updateArtifact({ actorUserId: teammate.account.id, artifactId: teammateRef.contentArtifactId,
+                expectedHeaderVersion: teammateRef.contentHeaderVersion, memoryDecisionSource: undefined, body: {
+                    bytes: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: 'newer body' })),
+                    expectedVersion: teammateRef.contentBodyVersion,
+                } })).toMatchObject({ ok: true });
+            const pinned = await open(teammateReplacement, teammateDomain.contentArtifactId);
+            expect(pinned.statusCode, pinned.body).toBe(200);
+            expect(ArtifactHttpReadV1Schema.parse(pinned.json()).body).toBe(ArtifactHttpReadV1Schema.parse(teammateOpened.json()).body);
+
+            const sibling = await open(ownReplacement, teammateDomain.contentArtifactId);
+            expect(sibling.statusCode, sibling.body).toBe(200);
+            const refused = await open(foreignReplacement, foreignDomain.contentArtifactId);
+            expect(refused.statusCode, refused.body).toBe(403);
+            expect(refused.json()).toMatchObject({ error: 'credential_scope_denied' });
+
+            await db.deploymentDomain.update({ where: { id: teammateDomain.id }, data: { revision: { increment: 1 } } });
+            const stale = await open(teammateReplacement, teammateDomain.contentArtifactId);
+            expect(stale.statusCode, stale.body).toBe(403);
+            expect(stale.json()).toMatchObject({ error: 'credential_scope_denied' });
+        }, { authentication: 'real' });
+    });
+
     it.each(['plain', 'e2ee'] as const)('reads the incumbent receipt only inside the signed %s Domain Environment', async mode => {
         const { f, target, authorization } = await domainRootFixture(mode, mode === 'e2ee');
         const foreign = await fixture();

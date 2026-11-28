@@ -64,8 +64,8 @@ import { ProjectSourcesReadInputV1Schema, ProjectSourcesUpdateInputV1Schema } fr
 import { DeploymentEnvironmentContentCasV1Schema } from '@happier-dev/protocol/deployments/deploymentArtifactContentReferenceV1';
 import type { ProjectSourceOwnerV1, ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { readProjectDeploymentDefaultsContentInTx } from '@/app/projects/projectDeploymentDefaultsService';
-import { readArtifactAccessGrantsForAdmittedCustodyInTx,
-    type ArtifactMutationTransactionGuard } from '@/app/artifacts/artifactAccessService';
+import { readArtifactAccessGrantsForAdmittedCustodyInTx, readArtifactForCallerInTx,
+    type ArtifactFullReadResult, type ArtifactMutationTransactionGuard } from '@/app/artifacts/artifactAccessService';
 import { ArtifactAccessGrantSetInputV1Schema, ArtifactRecipientKeyEnvelopeCommitInputV1Schema,
     type ArtifactAccessGrantSetInputV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { deploymentTargetLinkInventoryWhere } from './deploymentTargetLinkReadService';
@@ -1007,6 +1007,26 @@ export async function readDeploymentLinkPreparationHttpPurpose(tx: Tx, binding: 
         } catch { return false; }
     }
     return null;
+}
+
+/** Opens the exact retained Domain through the signed requester's ordinary Artifact access. */
+export async function readDeploymentDomainMaintenanceSourceInTx(tx: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
+    effectActionId: string, artifactId: string): Promise<false | null | Extract<ArtifactFullReadResult, { ok: true }>> {
+    const admission = binding.deploymentNativeAdmission;
+    if (!isDeploymentDomainAddActionIdV1(binding.actionId) || effectActionId !== binding.actionId
+        || !isDeploymentDomainNativeAdmissionV1(admission) || admission.actionId !== effectActionId
+        || !admission.maintenanceSource) return null;
+    const { expectedDomainRevision, targetLinkId, ...content } = admission.maintenanceSource;
+    if (artifactId !== content.contentArtifactId) return null;
+    const retained = await tx.deploymentDomain.findFirst({ where: {
+        id: admission.domainId, environmentId: admission.environmentId, revision: expectedDomainRevision,
+        targetLinkId, ...content, deletedAt: null,
+        targetLink: { targetKind: 'ownServer' },
+        contentArtifact: { kind: DEPLOYMENT_DOMAIN_ARTIFACT_STORED_KIND_V1, deletedAt: null },
+    }, select: { id: true } });
+    if (!retained) return false;
+    const read = await readArtifactForCallerInTx(tx, { actorAccountId: binding.accountId, artifactId, pinnedContent: content });
+    return read.ok ? read : false;
 }
 
 /** Authored Domain preparation retains its root Environment and create-only private candidate. */

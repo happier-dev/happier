@@ -254,6 +254,7 @@ it.each([
   { status: 401, phase: 'verification_purpose', acceptStatus: false, unsigned: false, configuredError: 'authentication_failed' },
   { status: 403, phase: 'effect_family', acceptStatus: true, unsigned: false },
   { status: 403, phase: 'effect_family', acceptStatus: true, unsigned: false, resource: '/resource' },
+  { status: 403, phase: 'deployment_domain_preparation', acceptStatus: true, unsigned: false, resource: '/v1/artifacts/domain' },
   { status: 404, phase: 'verification_purpose', acceptStatus: true, unsigned: false },
   { status: 401, phase: 'verification_purpose', acceptStatus: true, unsigned: true },
 ] as const)('keeps the Home refusal phase and sends one request (%j)', async ({
@@ -281,13 +282,15 @@ it.each([
     if (unsigned || status === 404) {
       await expect(request).resolves.toMatchObject({ status });
     } else {
-      const errorCode = 'configuredError' in fixture || 'resource' in fixture ? 'action_forbidden'
-        : status === 403 ? 'credential_scope_denied' : 'invalid_token';
+      const errorCode = phase === 'deployment_domain_preparation' ? 'credential_scope_denied'
+        : 'configuredError' in fixture || 'resource' in fixture ? 'action_forbidden'
+          : status === 403 ? 'credential_scope_denied' : 'invalid_token';
       const error = await request.then(() => { throw new Error('Expected signed Home refusal'); }, (reason: unknown) => reason);
       expect(error).toMatchObject({
         ok: false, code: errorCode, errorCode, error: `action_forbidden (home_signed_authorization_rejected:${phase})`,
         response: { status },
-        failureCause: { phase: `home.authorization.${phase}`, httpStatus: status },
+        failureCause: { phase: `home.authorization.${phase}`, httpStatus: status,
+          ...(phase === 'deployment_domain_preparation' ? { errorCode } : {}) },
       });
       const verification = await runExternalActionPhase('root_verify', 'controller', () => { throw error; });
       expect(verification).toMatchObject({

@@ -4,6 +4,7 @@ export * from './deploymentTelemetryV1.js';
 import {
   DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1,
   DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_PREPARE_ACTION_ID_V1,
+  DEPLOYMENT_ENVIRONMENT_MAINTENANCE_SET_ACTION_ID_V1,
   DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1, DEPLOYMENT_RESTART_ACTION_ID_V1,
   DEPLOYMENT_TEARDOWN_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1,
   isDeploymentAccountMachineTransportActionIdV1, isDeploymentActionIdV1,
@@ -405,6 +406,19 @@ export const DeploymentActionFailureV1Schema = lazyZodSchema(() => z.union([
 ]));
 export type DeploymentActionFailureV1 = z.infer<typeof DeploymentActionFailureV1Schema>;
 const result = { ok: z.literal(true), environmentId: DeploymentIdentifierV1Schema, revision: DeploymentRevisionV1Schema };
+export const DeploymentEnvironmentMaintenanceSetInputV1Schema = lazyZodSchema(() => z.strictObject({
+  ...home, environmentId: DeploymentIdentifierV1Schema, enabled: z.boolean(),
+}));
+export type DeploymentEnvironmentMaintenanceSetInputV1 = z.infer<typeof DeploymentEnvironmentMaintenanceSetInputV1Schema>;
+export const DeploymentEnvironmentMaintenanceSetResultV1Schema = lazyZodSchema(() => z.strictObject({
+  ...result,
+  outcomes: z.array(z.union([
+    z.extend(ActionExecuteFailureSchema, { domainId: DeploymentIdentifierV1Schema }),
+    z.strictObject({ domainId: DeploymentIdentifierV1Schema, ok: z.literal(true), state: DeploymentDomainHeaderV1Schema.shape.state }),
+    z.strictObject({ domainId: DeploymentIdentifierV1Schema, kind: z.literal('approval_request_created'),
+      artifactId: DeploymentIdentifierV1Schema }),
+  ])),
+}));
 export const DeploymentDomainMutationResultV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ ...result, domain: DeploymentDomainHeaderV1Schema, tunnel: z.optional(DeploymentDomainTunnelDispositionV1Schema) }),
   DeploymentDomainIdInUseFailureV1Schema, DeploymentActionFailureV1Schema,
@@ -785,6 +799,7 @@ export const DeploymentActionInputSchemasV1 = lazyDefinition(() => ({
   'deployments.backups.configure': DeploymentBackupConfigureInputV1Schema,
   'deployments.domains.dns.create': DeploymentDomainDnsInputV1Schema,
   'deployments.domains.dns.verify': DeploymentDomainDnsInputV1Schema,
+  [DEPLOYMENT_ENVIRONMENT_MAINTENANCE_SET_ACTION_ID_V1]: DeploymentEnvironmentMaintenanceSetInputV1Schema,
   'deployments.domains.add': DeploymentDomainAddInputV1Schema,
   'deployments.domains.remove': DeploymentDomainRemoveInputV1Schema,
   'deployments.domains.verify': DeploymentDomainVerifyInputV1Schema,
@@ -850,6 +865,7 @@ export const DeploymentActionOutputSchemasV1 = lazyDefinition(() => ({
   'deployments.backups.configure': DeploymentBackupConfigureResultV1Schema,
   'deployments.domains.dns.create': DeploymentDomainDnsResultV1Schema,
   'deployments.domains.dns.verify': DeploymentDomainDnsResultV1Schema,
+  [DEPLOYMENT_ENVIRONMENT_MAINTENANCE_SET_ACTION_ID_V1]: DeploymentEnvironmentMaintenanceSetResultV1Schema,
   'deployments.domains.add': DeploymentDomainMutationResultV1Schema,
   'deployments.domains.remove': DeploymentDomainMutationResultV1Schema,
   'deployments.domains.verify': lazyZodSchema(() => z.union([DeploymentDomainMutationResultV1Schema, DeploymentDomainDnsPreviewResultV1Schema])),

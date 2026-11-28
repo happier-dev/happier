@@ -190,8 +190,15 @@ export const DeploymentDomainAddPreparedInputV1Schema = lazyZodSchema(() => z.st
 }).check(z.refine(input => (input.membershipDeploymentId === undefined) === (input.membershipMachines === undefined),
     { message: 'Membership reconciliation requires its accepted receipt and desired installations.' })));
 export type DeploymentDomainAddPreparedInputV1 = z.infer<typeof DeploymentDomainAddPreparedInputV1Schema>;
+export const DeploymentDomainMaintenanceReplaceInputV1Schema = lazyZodSchema(() => z.strictObject({
+    ...mutation, targetLinkId: id, expectedTargetLinkRevision: revision, expectedDomainRevision: revision,
+    ...DeploymentArtifactContentReferenceV1Schema.shape, maintenancePage: z.boolean(),
+    placements: z.optional(z.never()), provider: z.optional(z.never()), telemetryMachineId: z.optional(z.never()),
+    membershipDeploymentId: z.optional(z.never()), membershipMachines: z.optional(z.never()),
+}));
 export const DeploymentDomainAddInputV1Schema = lazyZodSchema(() => z.union([
     DeploymentDomainAddPreparedInputV1Schema,
+    DeploymentDomainMaintenanceReplaceInputV1Schema,
     z.strictObject({ ...addMetadata(), content: DeploymentDomainAuthoredContentV1Schema }).check(
         z.refine(input => (input.membershipDeploymentId === undefined) === (input.membershipMachines === undefined),
             { message: 'Membership reconciliation requires its accepted receipt and desired installations.' })),

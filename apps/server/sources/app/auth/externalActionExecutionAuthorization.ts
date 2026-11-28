@@ -1,3 +1,4 @@
+import type { ArtifactContentReadAdmission, ArtifactFullReadResult } from '@/app/artifacts/artifactAccessService';
 import { findActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { WIDGET_CATALOG_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/widgets/instanceIdsV1';
 import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityMaterializationsReadActionInputV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
@@ -74,6 +75,7 @@ import { isDeploymentWorkspaceListHttpPurpose, isDeploymentPreparationHttpPurpos
     readDeploymentTargetRetentionHttpPurpose, type DeploymentTargetRetentionHttpPurpose,
     readDeploymentLinkPreparationHttpPurpose,
     readDeploymentDomainPreparationHttpPurpose,
+    readDeploymentDomainMaintenanceSourceInTx,
     readDeploymentEnvironmentContentPreparationHttpPurpose, readDeploymentEnvironmentSetupHttpPurpose,
     readDeploymentDatabaseReadAccessBindingHttpPurpose,
     isDeploymentMoveToRepositoryHttpEffect, readDeploymentMoveToRepositoryHttpPurpose,
@@ -1293,7 +1295,7 @@ export type VerifiedExternalActionExecutionRequest = Readonly<{
     actionMaterialAdmission?: NonNullable<ReturnType<typeof readActionMaterialHttpPurpose>> & Readonly<{ rootActionId: string; machineId: string; admittedReviewedChildActionId?: string }>;
     /** Exact Environment selected by an admitted finite registry update check. */
     registryAppUpdateRead?: Readonly<{ environmentId: string }>;
-    deploymentChildArtifactRead?: Readonly<{ content: import('@happier-dev/protocol').DeploymentArtifactContentReferenceV1; requesterAccountId: string }>;
+    deploymentChildArtifactRead?: ArtifactContentReadAdmission | Extract<ArtifactFullReadResult, { ok: true }>;
     deploymentDomainPurpose?: DomainHttpPurpose;
     /** One signed create-purpose result; consumers never infer scope from a raw header. */
     createPreparationAdmission?: DeploymentCreateHttpPurpose;
@@ -4831,6 +4833,18 @@ export async function verifyExternalActionDomainExecutionRequest(
     let deploymentChildArtifactRead: VerifiedExternalActionExecutionRequest['deploymentChildArtifactRead'];
     let registryAppUpdateRead: VerifiedExternalActionExecutionRequest['registryAppUpdateRead'];
     let backupHttpPurpose: DeploymentBackupHttpPurpose | undefined;
+    const native = verified.binding.deploymentNativeAdmission;
+    if (!verified.deploymentChildRouting && verified.effectActionId === verified.binding.actionId
+        && isDeploymentDomainNativeAdmissionV1(native) && native.maintenanceSource) {
+        const artifactId = readArtifactGetHttpPurpose(proof);
+        const source = artifactId === native.maintenanceSource.contentArtifactId
+            ? await inReadSnapshot(tx => readDeploymentDomainMaintenanceSourceInTx(tx, verified.binding, verified.effectActionId, artifactId),
+                { transactionClass: 'artifact-read' })
+            : null;
+        if (source === false) return refuse('deployment_domain_preparation',
+            { ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied' });
+        if (source) deploymentChildArtifactRead = source;
+    }
     if (verified.acceptedDeploymentReceipt && verified.binding.actionId === 'deployments.teardown'
         && verified.effectActionId === verified.binding.actionId) {
         const artifactId = readArtifactGetHttpPurpose(proof);

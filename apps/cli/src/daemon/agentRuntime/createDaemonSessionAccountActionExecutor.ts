@@ -13,6 +13,7 @@ import { sameStrictJsonValue, StrictJsonValueSchema } from '@happier-dev/protoco
 import { ActionIdSchema, ACTION_ID_FAMILIES_V1, ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { isWorkspaceSyncStopAction, prepareWorkspaceSyncStopPlacement } from '@/workspaces/sync/resolveWorkspaceSyncStopController';
 import { TELEMETRY_COSTS_READ_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
+import { DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MAINTENANCE_SET_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { USAGE_SOURCE_DISMISS_ACTION_ID, USAGE_SOURCE_GET_ACTION_ID } from '@happier-dev/protocol/usage/usageSources';
 import { isUsageAppCallsReadParentActionIdV1 } from '@happier-dev/protocol/usage/usageActionIdsV1';
 import { MACHINE_ACTIVITY_LIST_ACTION_ID } from '@happier-dev/protocol/actions/specs/machineConnectionActionIdsV1';
@@ -493,7 +494,8 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
         && !(executionPlacement === 'account' && (
           ACTION_ID_FAMILIES_V1.internal_tasks.some(id => id === operation.actionId)
           || ACTION_ID_FAMILIES_V1.todo_session_link.some(id => id === operation.actionId)
-          || ACTION_ID_FAMILIES_V1.list_reorder.some(id => id === operation.actionId)))
+          || ACTION_ID_FAMILIES_V1.list_reorder.some(id => id === operation.actionId)
+          || operation.actionId === DEPLOYMENT_ENVIRONMENT_MAINTENANCE_SET_ACTION_ID_V1))
         && !(operation.actionId === 'action.invoke' && executionPlacement === 'account')
         && !requesterAppReview
         ? await runTracedExternalActionStage(operation.actionId, operation.requestId, 'session_action.authorization',
@@ -631,15 +633,17 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
             ...(operation.executionRun ? { executionRun: operation.executionRun } : {}) }, authority, undefined, target.machineId);
         },
       } : {}),
-      ...(operation.actionId === USAGE_SOURCE_DISMISS_ACTION_ID ? {
+      ...(operation.actionId === USAGE_SOURCE_DISMISS_ACTION_ID
+        || operation.actionId === DEPLOYMENT_ENVIRONMENT_MAINTENANCE_SET_ACTION_ID_V1 ? {
         executeOrdinaryChildAction: (actionId, input, options) => {
           const parsed = StrictJsonValueSchema.safeParse(input);
           const target = options?.externalActionTarget;
-          if (actionId !== USAGE_SOURCE_GET_ACTION_ID || !parsed.success || !options?.actionRequestId || target?.kind !== 'machine') {
+          const child = operation.actionId === DEPLOYMENT_ENVIRONMENT_MAINTENANCE_SET_ACTION_ID_V1
+            ? DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1 : USAGE_SOURCE_GET_ACTION_ID;
+          if (actionId !== child || !parsed.success || !options?.actionRequestId || target?.kind !== 'machine') {
             return Promise.resolve({ ok: false as const, errorCode: 'invalid_action_input', error: 'invalid_action_input' });
           }
-          // The private lookup uses its own exact Machine proof and the original Session witness.
-          // The dismissal itself retains Account placement, including Restore with no Machine read.
+          // Each installed operation uses its own Machine proof and the original Session witness.
           return execute({ kind: 'action.execute', actionId, input: parsed.data, requestId: options.actionRequestId,
             witness: operation.witness, ...(operation.surface ? { surface: operation.surface } : {}),
             ...(operation.executionRun ? { executionRun: operation.executionRun } : {}) },

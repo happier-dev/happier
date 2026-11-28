@@ -35,12 +35,12 @@ async function endpoint(handle: (request: IncomingMessage, response: ServerRespo
     if (!address || typeof address === 'string') throw new Error('TCP listener required');
     return `http://127.0.0.1:${address.port}/health`;
 }
-function admitted(url: string) {
+function admitted(url: string, expectStatus = 200) {
     return { sourceInstanceId: 'saved-source', checkId: 'http',
         subject: { kind: 'machineService', machineId: 'service-machine', serviceId: 'watched-service' },
         observer: { machineId: 'observer-machine', installationId: 'observer-installation' }, vantage: 'outside',
         target: { kind: 'machineService', machineId: 'service-machine', serviceId: 'watched-service',
-            endpoint: url, expectStatus: 200 } } satisfies AdmittedHttpHealthCheckV1;
+            endpoint: url, expectStatus } } satisfies AdmittedHttpHealthCheckV1;
 }
 function context(url: string, overrides: Partial<HealthCheckFiniteLeafContextV1> = {}): HealthCheckFiniteLeafContextV1 {
     return { signal: new AbortController().signal, now: () => 1_800_000_000_000,
@@ -297,10 +297,10 @@ describe('finite saved HTTP and certificate health', () => {
         expect(JSON.stringify(observation)).not.toContain('private-');
     });
 
-    it('records a mismatched status separately from an unavailable HTTP response', async () => {
+    it('accepts a maintenance response when the outside check expects 503', async () => {
         const url = await endpoint((_request, response) => { response.writeHead(503).end(); });
-        const observation = await readHttpHealthCheckV1(admitted(url), context(url));
-        expect(observation).toMatchObject({ status: 'down', cause: {
+        expect(await readHttpHealthCheckV1(admitted(url, 503), context(url))).toMatchObject({ status: 'up' });
+        expect(await readHttpHealthCheckV1(admitted(url), context(url))).toMatchObject({ status: 'down', cause: {
             httpStatus: 503, expectStatus: 200, reason: 'http_status_mismatch',
         } });
     });
