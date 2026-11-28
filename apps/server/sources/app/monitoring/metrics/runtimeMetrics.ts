@@ -4,7 +4,7 @@ import type { Socket } from "socket.io";
 
 import { Counter, Gauge } from "prom-client";
 import { trimProcessAllocator } from "@happier-dev/iroh-native/node";
-import { onShutdown } from "@/utils/process/shutdown";
+import { isShutdown, onShutdown } from "@/utils/process/shutdown";
 import { readMetricsServerConfigFromEnv } from "@/config/monitoring";
 import { log } from "@/utils/logging/log";
 
@@ -25,11 +25,36 @@ const EVENT_LOOP_SAMPLE_MS = 20;
 const LONG_BLOCK_MS = 1000;
 const inFlightHttpRoutes = new Map<ServerResponse, { route: string; startedAtMs: number }>();
 const inFlightSocketEvents = new Set<{ event: string; startedAtMs: number }>();
-let lastSampleAt = performance.now();
+let lastSampleAt = 0;
+let longBlockTimer: NodeJS.Timeout | undefined;
+
+function startLongBlockSampling(): void {
+    if (longBlockTimer || isShutdown()) return;
+    lastSampleAt = performance.now();
+    longBlockTimer = setInterval(() => {
+        const now = performance.now();
+        reportLongBlock(now);
+        lastSampleAt = now;
+    }, EVENT_LOOP_SAMPLE_MS).unref();
+}
+
+function stopLongBlockSampling(): void {
+    clearInterval(longBlockTimer);
+    longBlockTimer = undefined;
+}
+
+function stopLongBlockSamplingIfIdle(): void {
+    if (inFlightHttpRoutes.size === 0 && inFlightSocketEvents.size === 0) {
+        stopLongBlockSampling();
+    }
+}
+
+onShutdown("runtime-metrics", async () => stopLongBlockSampling());
 
 function reportLongBlock(now: number): void {
     // Measuring from the last sample avoids missing a full second of blocking
     // just after a tick. The estimate can include up to one sampling interval.
+    if (!longBlockTimer) return;
     const durationMs = now - lastSampleAt;
     if (durationMs < LONG_BLOCK_MS) return;
     lastSampleAt = now;
@@ -44,6 +69,7 @@ function reportLongBlock(now: number): void {
 
 export function trackRuntimeHttpRequest(response: ServerResponse, route: string, startedAtMs: number): void {
     inFlightHttpRoutes.set(response, { route, startedAtMs });
+    startLongBlockSampling();
     // A closed client may never produce a Fastify onResponse callback.
     response.on("close", finishClosedHttpRequest);
 }
@@ -58,6 +84,7 @@ export function finishRuntimeHttpRequest(response: ServerResponse): string | und
     // Recovery can finish the blocking request before the timer callback runs.
     reportLongBlock(performance.now());
     inFlightHttpRoutes.delete(response);
+    stopLongBlockSamplingIfIdle();
     response.removeListener("close", finishClosedHttpRequest);
     return request.route;
 }
@@ -74,6 +101,7 @@ export function trackRuntimeSocketHandlers(socket: Socket): void {
         const trackedHandler = function (this: Socket, ...args: unknown[]) {
             const work = { event, startedAtMs: Date.now() };
             inFlightSocketEvents.add(work);
+            startLongBlockSampling();
             let result: unknown;
             try {
                 result = Reflect.apply(handler, this, args);
@@ -94,20 +122,15 @@ export function trackRuntimeSocketHandlers(socket: Socket): void {
 function finishRuntimeSocketEvent(work: { event: string; startedAtMs: number }): void {
     reportLongBlock(performance.now());
     inFlightSocketEvents.delete(work);
+    stopLongBlockSamplingIfIdle();
 }
 
 export const runtimeEventLoopLagSecondsGauge = getOrCreateMetric("runtime_event_loop_lag_seconds", () => {
-    const timer = setInterval(() => {
-        const now = performance.now();
-        reportLongBlock(now);
-        lastSampleAt = now;
-    }, EVENT_LOOP_SAMPLE_MS).unref();
     const eventLoopDelayMonitor = runtimeMetricsEnabled
         ? monitorEventLoopDelay({ resolution: EVENT_LOOP_SAMPLE_MS })
         : undefined;
     eventLoopDelayMonitor?.enable();
     onShutdown("runtime-metrics", async () => {
-        clearInterval(timer);
         eventLoopDelayMonitor?.disable();
     });
     return new Gauge({

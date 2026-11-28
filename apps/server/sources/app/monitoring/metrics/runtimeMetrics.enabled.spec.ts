@@ -35,10 +35,18 @@ afterEach(async () => {
 });
 
 describe("runtime metric sampling demand", () => {
-    it("installs zero native event-loop samplers when the exporter is disabled", async () => {
+    it("installs zero event-loop sampling timers at idle when the exporter is disabled", async () => {
         vi.stubEnv("METRICS_ENABLED", "false");
-        await import("./runtimeMetrics");
-        expect(monitors).toHaveLength(0);
+        vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+        try {
+            await import("./runtimeMetrics");
+            expect(monitors).toHaveLength(0);
+            expect(vi.getTimerCount()).toBe(0);
+        } finally {
+            const { initiateShutdown } = await import("@/utils/process/shutdown");
+            await initiateShutdown("runtime-metrics-idle-test");
+            vi.useRealTimers();
+        }
     });
 
     it.each([1500, 0])("reports a %ims stall with only the in-flight route template", async (blockMs) => {
@@ -83,7 +91,7 @@ describe("runtime metric sampling demand", () => {
         }
     });
 
-    it.each([999, 1000])("applies the stall threshold immediately after a tick at %ims", async (blockMs) => {
+    it.each([999, 1000])("applies the stall threshold at %ims and returns to idle", async (blockMs) => {
         vi.stubEnv("METRICS_ENABLED", "false");
         vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
         let monotonicMs = 0;
@@ -96,15 +104,16 @@ describe("runtime metric sampling demand", () => {
             vi.mocked(log).mockClear();
             enableMonitoring(app);
             app.get("/threshold", async () => {
+                expect(vi.getTimerCount()).toBe(1);
                 // The loop makes no progress while the monotonic clock advances.
                 monotonicMs += blockMs;
                 return { ok: true };
             });
             await app.ready();
-            monotonicMs += 20;
-            vi.advanceTimersByTime(20);
+            // Starting a request after a long idle period resets the sample baseline.
+            monotonicMs += 30_000;
             expect((await app.inject("/threshold")).statusCode).toBe(200);
-            vi.advanceTimersByTime(20);
+            expect(vi.getTimerCount()).toBe(0);
 
             const warnings = vi.mocked(log).mock.calls.filter(([, message]) => message === "Long event-loop block");
             if (blockMs === 1000) {
