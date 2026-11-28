@@ -44,6 +44,7 @@ export function createCliConnectedServiceAction(params: Readonly<{
   serverId: string;
   operationContext?: SavedSecretOperationContextV1;
   isCredentialCurrent?: () => boolean | Promise<boolean>;
+  requirePublishedQuotaSource?: true;
   readHomeDomainAction?(): ActionExecutorDeps['homeDomainAction'];
   resolveHeaders(context: ActionExecutorContext, actionId: string, request: Readonly<{ method: string; path: string; body?: unknown }>): Readonly<Record<string, string>> | null;
   callMachineAction(input: Readonly<{ machineId: string; serverId?: string; method: string; request: unknown; signal?: AbortSignal; timeoutMs?: number | null;
@@ -400,6 +401,7 @@ export function createCliConnectedServiceAction(params: Readonly<{
           await assertReadCurrent();
           return await readProviderAccountUsageQuotaV4(input, {
             credentials: params.credentials, accountMode: storage.mode,
+            ...(params.requirePublishedQuotaSource ? { requirePublishedQuotaSource: true } : {}),
             targets: accountSettingsParse(source.raw).usagePacingTargetsV1,
             readEnteredMonthlyPrice: async () => {
               const [{ createInvocationSavedSecretOperationContextV1 }, { createCliConnectedMetadataStore }] = await Promise.all([

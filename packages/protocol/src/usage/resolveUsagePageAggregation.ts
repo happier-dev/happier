@@ -12,7 +12,6 @@ import type { ScmBranchWorkEvidence } from '../scm/branches.js';
 import { resolveUsageHowYouWork, UsageHowYouWorkSchema, type UsageHowYouWorkDetailInput, type UsageSessionEvidenceCoverage } from './resolveUsageHowYouWork.js';
 import type { UsageWorkIntervalsInput } from './usageWorkIntervals.js';
 import { ConnectedServiceQuotaGetResultV1Schema, type ConnectedServiceQuotaGetResultV1 } from '../connect/providerAccountUsageHistorySchemasV1.js';
-import { isBuiltInLegacyConnectedAccountPeerOperationSupported, readBuiltInLegacyConnectedServiceIdForQualifiedService } from '../connect/connectedServiceBindings.js';
 import { isConnectedServiceCredentialHealthStatusReconnectRequired, type ConnectedServiceCredentialHealthStatusV1 } from '../connect/connectedServiceSchemas.js';
 import type { PluginContributionIdentityV1 } from '../plugins/contributionIdentity.js';
 import { isConnectedServiceQuotaObservationFresh, wasConnectedServiceQuotaObserved } from '../connect/quotaObservationTime.js';
@@ -778,7 +777,7 @@ export function projectUsageQuotaAccountSources<Account extends Readonly<{
     status: ConnectedServiceCredentialHealthStatusV1;
 }>>(
     accounts: readonly Account[],
-    // A conflict (null) cannot use the released fallback for a missing declaration (undefined).
+    // An unknown declaration (undefined) can be settled by Home. A conflict (null) stays refused.
     readCapabilities: (service: PluginContributionIdentityV1) => readonly string[] | null | undefined,
 ): Readonly<{ accounts: readonly Account[]; unavailable?: UsageQuotaSourceSnapshot }> {
     if (accounts.length === 0) {
@@ -786,12 +785,7 @@ export function projectUsageQuotaAccountSources<Account extends Readonly<{
     }
     const capable = accounts.filter(({ ref: { service } }) => {
         const capabilities = readCapabilities(service);
-        if (capabilities === null) return false;
-        if (capabilities?.includes('usage')) return true;
-        const legacyServiceId = readBuiltInLegacyConnectedServiceIdForQualifiedService(service);
-        return legacyServiceId !== null && isBuiltInLegacyConnectedAccountPeerOperationSupported({
-            serviceId: legacyServiceId, peerClass: 'revisioned_v2_v3', operation: 'quota_read',
-        });
+        return capabilities === undefined || capabilities?.includes('usage') === true;
     });
     if (capable.length === 0) {
         return { accounts: [], unavailable: { status: 'unsupported', errorCode: 'no_quota_capable_accounts' } };
@@ -835,9 +829,10 @@ export function projectUsageQuotaCoverage(reads: readonly UsageQuotaCoverageRead
     const value = reads.flatMap(read => read.value ? [read.value] : []);
     const sources = reads.flatMap(read => read.state ? [read.state] : []);
     const pending = reads.some(read => read.pending || read.state?.status === 'pending');
-    const failure = sources.find(state => state.errorCode);
+    const failure = sources.find(state => state.status !== 'unsupported' && state.errorCode);
     if (!value.length) {
-        const status = pending || requestedHistoryPending ? 'pending' : failure ? 'error' : emptyStatus;
+        const unsupported = sources.length > 0 && sources.every(state => state.status === 'unsupported');
+        const status = pending || requestedHistoryPending ? 'pending' : failure ? 'error' : unsupported ? 'unsupported' : emptyStatus;
         return { status, sources, ...(status === 'available' ? { value } : {}),
             ...(failure ? { errorCode: failure.errorCode } : {}) };
     }

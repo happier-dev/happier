@@ -1016,11 +1016,14 @@ describe('CLI and MCP personal usage Account transport', () => {
     expect(denied.howYouWork?.autopsy).toBeUndefined();
     await app.close();
   });
-  it('composes retained quota/history/targets and persists Coach suppressions through Account KV without changing preferences', async () => {
+  it.each([
+    { pluginId: 'happier.agent.cursor', localId: 'cursor-account' },
+    { pluginId: 'acme.sleeping', localId: 'usage' },
+  ])('composes retained quota/history/targets for $pluginId and persists Coach suppressions through Account KV', async service => {
     vi.spyOn(Date, 'now').mockReturnValue(1_000);
     const app = fastify();
     const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 } });
-    const source = { bindingKind: 'account' as const, ref: { service: { pluginId: 'happier.agent.cursor', localId: 'cursor-account' }, accountId: 'work' } };
+    const source = { bindingKind: 'account' as const, ref: { service, accountId: 'work' } };
     const key = { providerId: 'test', accountSubjectId: 'subject', subjectKind: 'account' as const, quotaScope: 'account' as const };
     const snapshot = ProviderAccountUsageSnapshotV1Schema.parse({ v: 1, recordId: buildProviderAccountUsageRecordId(key), recordKey: key,
       providerId: 'test', accountSubject: { kind: 'providerSubject', id: 'subject' }, observedAtMs: 150, fetchedAtMs: 150,
@@ -1209,11 +1212,16 @@ describe('CLI and MCP personal usage Account transport', () => {
     for (const missingRecord of [true, false]) {
       noUsageObserved = missingRecord;
       const noSample = await read(normalizeUsageQuery({ ...query, includeQuotaHistory: false }));
-      expect(noSample.quota, JSON.stringify(noSample.sources)).toMatchObject([
-        { current: missingRecord ? null : { state: 'not_loaded', observedAtMs: 0 } },
-      ]);
+      if (missingRecord) {
+        expect(noSample.quota, JSON.stringify(noSample.sources)).toBeUndefined();
+      } else {
+        expect(noSample.quota, JSON.stringify(noSample.sources)).toMatchObject([
+          { current: { state: 'not_loaded', observedAtMs: 0 } },
+        ]);
+      }
+      const expectedStatus = missingRecord ? 'unsupported' : 'available';
       expect(noSample.sources.filter(row => row.source === 'quota' || row.source.startsWith('quota:')))
-        .toEqual([expect.objectContaining({ status: 'available' }), expect.objectContaining({ status: 'available' })]);
+        .toEqual([expect.objectContaining({ status: expectedStatus }), expect.objectContaining({ status: expectedStatus })]);
       expect(noSample.sources.filter(row => row.source === 'quota' || row.source.startsWith('quota:')))
         .toEqual([expect.not.objectContaining({ asOfMs: expect.any(Number) }), expect.not.objectContaining({ asOfMs: expect.any(Number) })]);
     }
@@ -1356,7 +1364,7 @@ describe('CLI and MCP personal usage Account transport', () => {
   });
   it('exports selected retained quota dates through the real MCP calendar Action without accounting or provider refresh', async () => {
     const app = fastify();
-    let state: 'current' | 'denied' | 'retired' | 'cancelled' = 'current';
+    let state: 'current' | 'unpublished' | 'denied' | 'retired' | 'cancelled' = 'current';
     const controller = new AbortController();
     let current = true;
     const source = { bindingKind: 'account' as const, ref: { service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' }, accountId: 'work' } };
@@ -1372,6 +1380,7 @@ describe('CLI and MCP personal usage Account transport', () => {
     app.get('/v1/account/encryption/currentness', async () => ({ mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }));
     app.get('/v2/account/settings', async () => ({ content: { t: 'plain', v: {} }, version: 1 }));
     app.get('/v4/connect/qualified/provider-account-usage/sources/resolve', async (_request, reply) => {
+      if (state === 'unpublished') return reply.code(404).send({ error: 'provider_account_usage_source_not_found' });
       if (state === 'denied') return reply.code(403).send({ error: 'denied' });
       if (state === 'retired') current = false;
       if (state === 'cancelled') controller.abort();
@@ -1407,12 +1416,13 @@ describe('CLI and MCP personal usage Account transport', () => {
         details: { authorizationRefusalReason: 'external_credential_without_authorization' },
         failureCause: { phase: 'execution_authorization' } });
     expect(paths).toHaveLength(beforeUnadmitted);
-    for (const next of ['denied', 'retired', 'cancelled'] as const) {
+    for (const next of ['unpublished', 'denied', 'retired', 'cancelled'] as const) {
       state = next;
       const result = await executor.execute('usage.calendar.export', input, { surface: 'mcp', serverId: 'home',
         ...(next === 'cancelled' ? { signal: controller.signal } : {}) });
       expect(result.ok).toBe(false);
       expect(result).not.toHaveProperty('result');
+      if (next === 'unpublished') expect(result).toMatchObject({ errorCode: 'usage_calendar_fact_unavailable' });
       if (next === 'retired') expect(result).toMatchObject({ errorCode: 'credential_scope_retired' });
       if (next === 'cancelled') expect(result).toMatchObject({ errorCode: 'cancelled' });
       current = true;

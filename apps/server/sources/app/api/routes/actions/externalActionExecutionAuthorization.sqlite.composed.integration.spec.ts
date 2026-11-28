@@ -5265,6 +5265,68 @@ describe("external Action execution authorization", () => {
         } finally { await app.close(); }
     });
 
+    it('reads only a guest’s published Usage quota on a shared Machine', async () => {
+        const fixture = await createFixture({ qualifiedPat: false });
+        const guest = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
+        await db.machine.update({ where: { id: fixture.machine.id }, data: {
+            active: true, operationProtocolCapabilities: { requesterExecutionIsolation: { protocolVersions: [1] } },
+            operationProtocolCapabilitiesRevision: 1,
+        } });
+        await db.machineGrant.create({ data: { principalKind: 'account', machineId: fixture.machine.id,
+            accountId: guest.id, accessLevel: 'view', createdByAccountId: fixture.account.id } });
+        const service = { pluginId: 'example.remote-usage', localId: 'quota' };
+        const published = { service, accountId: 'published' };
+        const unpublished = { service, accountId: 'unpublished-for-guest' };
+        const connect = async (accountId: string, ref: typeof published, subject: string) => {
+            const credential = await mutateQualifiedConnectedServiceCredential({ accountId, ref,
+                expectedCredentialRevision: null, authenticationModeId: 'api-key', content: { t: 'plain', v: { token: 'fixture' } },
+                metadata: { scopes: [], providerIdentity: { accountId: subject } } });
+            if (credential.status !== 'written') throw new Error('Credential fixture rejected');
+            return credential.credentialRevision;
+        };
+        const publish = async (accountId: string, ref: typeof published, subject: string) => {
+            const revision = await connect(accountId, ref, subject);
+            const snapshot = createUsageSnapshot({ fetchedAt: Date.now(),
+                recordKey: { providerId: 'codex', accountSubjectId: subject, subjectKind: 'account', quotaScope: 'account' } });
+            await writeQualifiedProviderAccountUsageRecord({ accountId, source: { ref, bindingKind: 'account' },
+                expectedCredentialRevision: revision, expectedConfigurationRevision: null,
+                recordId: snapshot.recordId, recordKey: snapshot.recordKey, payloadMode: 'plain_json_v1', status: 'ok', snapshot,
+                fetchedAt: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs });
+            return snapshot;
+        };
+        const guestSnapshot = await publish(guest.id, published, 'guest-subject');
+        await publish(fixture.account.id, published, 'custodian-subject');
+        await publish(fixture.account.id, unpublished, 'custodian-only-subject');
+        await connect(guest.id, unpublished, 'guest-unpublished-subject');
+        const serverId = await getOrCreateServerIdentityId();
+        const guestToken = await auth.createToken(guest.id, undefined, { kind: 'account', authority: 'present_user' });
+        const installedToken = await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: 'present_user' });
+        const actionId = 'usage.query';
+        const input = getActionSpec(actionId).inputSchema.parse({ queries: [{ includeAccounting: false, includeComparison: false,
+            includeQuota: true, includeQuotaHistory: false, includeSessionEvidence: false,
+            includeTranscriptEvidence: false, includeWorkEvidence: false, includeCoach: false }] });
+        const envelope = { ...fixture.envelope, input };
+        const { app } = await createApp(fixture.team.id, false, undefined, undefined, true);
+        try {
+            const serverHttpBaseUrl = await app.listen({ host: '127.0.0.1', port: 0 });
+            const authorization = await mint(app, fixture, actionId, envelope, guestToken);
+            expect(authorization.binding).toMatchObject({ accountId: guest.id, custodianAccountId: fixture.account.id });
+            const deps = createAccountServerActionDeps({ token: installedToken, serverId, serverIdentityId: serverId, serverHttpBaseUrl,
+                externalActionMachineRequestPrivateKey: fixture.keyPair.secretKey,
+                externalActionMachineInstallationId: fixture.machine.installationId! });
+            const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps });
+            const result = await executor.execute(actionId, input, { surface: 'agent', serverId, authority: 'present_user',
+                externalActionTarget: authorization.binding.target, externalActionExecutionAuthorization: authorization,
+                actionRequestId: envelope.requestId, originalActionEnvelope: envelope });
+            expect(result.ok, JSON.stringify(result)).toBe(true);
+            const [slice] = UsageQueryBatchResultSchema.parse(result.ok ? result.result : undefined).results;
+            expect(slice?.quota).toEqual([expect.objectContaining({
+                source: { bindingKind: 'account', ref: published }, current: expect.objectContaining({ recordId: guestSnapshot.recordId }),
+            })]);
+            expect(slice?.sources.find(row => row.source.includes(unpublished.accountId))).toMatchObject({ status: 'unsupported' });
+        } finally { await app.close(); }
+    });
+
     it('composes signed viewer pricing from Environment labels, collector operands and Account prices', async () => {
         const fixture = await createFixture({ qualifiedPat: false });
         const serverId = await getOrCreateServerIdentityId();

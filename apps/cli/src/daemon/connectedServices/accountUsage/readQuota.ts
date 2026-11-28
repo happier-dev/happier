@@ -1,4 +1,5 @@
 import { ConnectedServiceQuotaGetInputV1Schema, openProviderAccountUsageRecordV4, openProviderAccountUsageHistoryPageV4, projectProviderAccountUsageQuotaReadV1, ProviderAccountUsageReadErrorV1, type ConnectedServiceQuotaGetInputV1, type ConnectedServiceQuotaGetResultV1, type ProviderAccountUsageHistoryWitnessV1 } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { StoredCredentials } from '@/persistence';
 import type { UsagePacingTargetsV1 } from '@happier-dev/protocol/account/settings/usagePacingPreferencesV1';
 import { resolveQualifiedProviderAccountUsageSourceV4, readQualifiedProviderAccountUsageRecordV4, readQualifiedProviderAccountUsageHistoryV4 } from '@/api/client/qualifiedConnectedAccountApi';
@@ -21,6 +22,8 @@ export type ProviderAccountUsageReadOptions = Readonly<{
   nowMs?: number;
   targets?: UsagePacingTargetsV1;
   assertCurrent?: () => void | Promise<void>;
+  /** Usage needs a published source to distinguish absence from an unobserved record. */
+  requirePublishedQuotaSource?: true;
   /** Reset admission needs B evidence, without an Account-wide Pending read. */
   includePendingWork?: boolean;
   authorizeRequest?: (request: Readonly<{ method: 'GET'; path: string }>) => Readonly<Record<string, string>> | null;
@@ -33,6 +36,9 @@ export async function readProviderAccountUsageQuotaV4(input: ConnectedServiceQuo
     requestPurpose: 'connected-accounts:quota-qualification' as const };
   const resolution = await resolveQualifiedProviderAccountUsageSourceV4({ ...transport, source: request.source });
   await options.assertCurrent?.();
+  if (!resolution && options.requirePublishedQuotaSource) {
+    throw createActionExecuteFailureError({ ok: false, errorCode: 'unsupported', error: 'unsupported' });
+  }
   const material = options.accountMode === 'e2ee' ? requireAccountEncryptionCredentials(options.credentials).encryption : undefined;
   const record = resolution ? await readQualifiedProviderAccountUsageRecordV4({ ...transport, recordId: resolution.recordId }) : null;
   await options.assertCurrent?.();

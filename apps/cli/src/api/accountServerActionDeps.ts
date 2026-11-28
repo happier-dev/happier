@@ -518,7 +518,7 @@ export function createAccountServerActionDeps(input: Readonly<{
     const parsed = UsageModelPriceCatalogSchema.safeParse(dispatched.response.data);
     return parsed.success ? parsed.data : failure(refresh ? 'outcome_unknown' : 'usage_price_catalog_invalid');
   };
-  const readQuota: NonNullable<NonNullable<ActionExecutorDeps['usageActions']>['readQuota']> = async (request, context) => {
+  const createQuotaReader = (requirePublishedQuotaSource?: true): NonNullable<NonNullable<ActionExecutorDeps['usageActions']>['readQuota']> => async (request, context) => {
         const mismatch = await accountServerTargetMismatch(context);
         if (mismatch) return mismatch;
         const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
@@ -533,6 +533,7 @@ export function createAccountServerActionDeps(input: Readonly<{
           const { createCliConnectedServiceAction } = await import('@/session/actions/connectedServiceActionDeps');
           await check();
           const quotaAction = createCliConnectedServiceAction({
+            ...(requirePublishedQuotaSource ? { requirePublishedQuotaSource } : {}),
             credentials: input.credentials?.token === input.token ? input.credentials : { token: input.token, encryption: null },
             serverId, serverHttpBaseUrl,
             ...(input.isCredentialCurrent ? { isCredentialCurrent: input.isCredentialCurrent } : {}),
@@ -561,6 +562,7 @@ export function createAccountServerActionDeps(input: Readonly<{
           return failure('usage_quota_read_failed');
         }
       };
+  const readPublishedUsageQuota = createQuotaReader(true);
   const coachSuppressions = (context: ActionExecutorContext,
     effectActionId = context.externalActionExecutionAuthorization?.binding.actionId ?? 'usage.coach.dismiss') => createUsageCoachSuppressionPort({
     transport: createCliAccountKvJsonTransport({ credentials, key: USAGE_COACH_SUPPRESSIONS_KV_KEY, serverBaseUrl: serverHttpBaseUrl,
@@ -600,7 +602,7 @@ export function createAccountServerActionDeps(input: Readonly<{
     },
     usageActions: {
       coachSuppressions,
-      readQuota,
+      readQuota: createQuotaReader(),
       readPublicProfile: async (context) => {
         const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
         const mismatch = await accountServerTargetMismatch(context);
@@ -770,8 +772,8 @@ export function createAccountServerActionDeps(input: Readonly<{
             })),
           })));
           const { readCliUsageQuota } = await import('@/usage/readCliUsageQuota');
-          const quotaReads = await readCliUsageQuota({ queries: request.queries.filter(query => !appEnvironments(query)), nowMs: accountingNowMs, context, readQuota,
-            accounts: profile.connectedAccountsV4,
+          const quotaReads = await readCliUsageQuota({ queries: request.queries.filter(query => !appEnvironments(query)), nowMs: accountingNowMs, context,
+            readQuota: readPublishedUsageQuota, accounts: profile.connectedAccountsV4,
           });
           await check();
           quotaByQuery = quotaReads;
