@@ -196,7 +196,7 @@ function DiscussionSessionMentionPreview(props: Readonly<{
     return readConversationLine(props.discussion, preview ?? props.fallback);
 }
 
-function renderColumnPreview(discussion: DiscussionOpenedSummaryV1, viewerAccountId: string, serverId: string, fallback: string): React.ReactNode {
+function renderDiscussionPreview(discussion: DiscussionOpenedSummaryV1, viewerAccountId: string, serverId: string, fallback: string): React.ReactNode {
     // A mentioned agent reads by its name, as the thread names it, never as "Session participant" (R2-5).
     const sessionIds = readLatestMentionedSessionIds(discussion);
     if (sessionIds.length > 0) return <DiscussionSessionMentionPreview
@@ -300,18 +300,15 @@ export const DiscussionRow = React.memo(function DiscussionRow(props: Readonly<{
         { serverId: props.serverId, accountId: props.viewerAccountId },
     );
     const selected = props.selected ?? false;
-    // In the column the second line is the conversation itself (its latest message); what needs the viewer
-    // is the row's calm status mark at its end (ruling 2026-11-01: approval and draft the amber dot, a mention the
-    // ink dot); unread news is the bold title alone.
     // The amber dot alone says it needs the viewer (ruling 2026-11-01): the "Needs you" heading carries the meaning,
     // and the word sits beside the dot only with status words on; the dot is also the request's peek.
     const statusGlyph = (column || requestRef !== null) && resolveWorkStatusRowMark(workStatus) !== 'none'
         && workStatus.state !== 'unread' ? workStatus : null;
     // The second line is what the Discussion is, from the list's summary facts (round outcome, open comments); a Doc
     // conversation without one says so before its latest message (lab T2-L "On a doc").
-    const summaryLine = column ? resolveDiscussionRowSummary(discussion, rowLabels) : null;
+    const summaryLine = resolveDiscussionRowSummary(discussion, rowLabels);
     const fallback = subtitle.join(' · ');
-    const secondLine = summaryLine ?? (column ? renderColumnPreview(discussion, props.viewerAccountId, props.serverId, fallback) : fallback);
+    const secondLine = summaryLine ?? renderDiscussionPreview(discussion, props.viewerAccountId, props.serverId, fallback);
     const statusContent = statusGlyph ? <View style={styles.trailing}>
         {props.statusWords && statusGlyph.word ? <Text testID={`session-discussion-row-status-word-${discussion.id}`}
             variant="meta" numberOfLines={1} style={workStatusWordStyle(statusGlyph.tone)}>{statusGlyph.word}</Text> : null}

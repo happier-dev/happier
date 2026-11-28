@@ -79,17 +79,32 @@ describe('DiscussionRow presentation', () => {
             updates.length = 0;
             await act(async () => setScreenSharingPrivacyActive(true));
             expect(screen.getTextContent()).not.toContain('Private review queue');
-            expect(updates).toEqual(['mentioned']);
+            expect(updates).toEqual(['pane', 'mentioned']);
             updates.length = 0;
             await act(async () => setScreenSharingPrivacyActive(false));
             expect(screen.getTextContent()).toContain('Private review queue');
-            expect(updates).toEqual(['mentioned']);
+            expect(updates).toEqual(['pane', 'mentioned']);
         } finally {
             await act(async () => {
                 setScreenSharingPrivacyActive(false);
                 storage.setState(previous);
             });
         }
+    });
+
+    it('shows the conversation preview in the pane and keeps its fallback for unopened content', async () => {
+        const discussion = discussionFixture();
+        const opened = { ...discussion, id: 'opened', latestMessage: { ...discussion.latestMessage,
+            content: { v: 1 as const, parts: [{ t: 'text' as const, text: 'Read the findings' }] },
+        } };
+        const unavailable = { ...discussion, id: 'unavailable', encryptionMode: 'e2ee' as const, keyReadiness: false };
+        const screen = await renderScreen(React.createElement(React.Fragment, null,
+            [opened, unavailable].map(row => React.createElement(DiscussionRow, {
+                key: row.id, discussion: row, viewerAccountId: 'viewer', onOpenDiscussion: () => {}, geometry: 'pane',
+            })),
+        ));
+        expect(screen.findByTestId('session-discussion-row-subtitle-opened')?.props.children).toContain('Read the findings');
+        expect(screen.findByTestId('session-discussion-row-subtitle-unavailable')?.props.children).toContain('250');
     });
 
     it('uses the shared phone page card and chevron while preserving the approval action and row facts', async () => {
