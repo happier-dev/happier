@@ -9,6 +9,7 @@ import { SessionModelSelectionSchema } from '@happier-dev/protocol/providers/sel
 import { readCanonicalSpawnRuntimeSelection } from '@/rpc/handlers/spawnRuntimeSelection';
 import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionOptions, type SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 import { pickSessionCreateOriginFields } from '@/session/shared/sessionCreateOrigin';
+import { stableJsonStringify, toStableJsonValue, type StableJson } from '@/utils/stableJsonIdentity';
 
 function sha256Hex(value: string): string {
   return createHash('sha256').update(value, 'utf8').digest('hex');
@@ -17,32 +18,6 @@ function sha256Hex(value: string): string {
 function normalizeNonEmptyString(raw: unknown): string | null {
   const s = String(raw ?? '').trim();
   return s.length > 0 ? s : null;
-}
-
-type Json = null | boolean | number | string | Json[] | { [k: string]: Json };
-
-function toStableJson(value: unknown, seen: WeakSet<object>): Json {
-  if (value === null) return null;
-  if (typeof value === 'string') return value;
-  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
-  if (typeof value === 'boolean') return value;
-  if (Array.isArray(value)) return value.map((v) => toStableJson(v, seen));
-  if (typeof value !== 'object') return null;
-
-  const obj = value as Record<string, unknown>;
-  if (seen.has(obj)) return null;
-  seen.add(obj);
-  const out: Record<string, Json> = {};
-  for (const key of Object.keys(obj).sort()) {
-    const v = obj[key];
-    if (v === undefined) continue;
-    out[key] = toStableJson(v, seen);
-  }
-  return out;
-}
-
-function stableJsonStringify(value: unknown): string {
-  return JSON.stringify(toStableJson(value, new WeakSet()), null, 0);
 }
 
 function hashRecordValues(record: Record<string, string> | undefined): Record<string, string> | null {
@@ -56,7 +31,7 @@ function hashRecordValues(record: Record<string, string> | undefined): Record<st
   return out;
 }
 
-function normalizeCapabilitySelectionForFingerprint(value: SpawnSessionOptions['capabilitySelection']): Json {
+function normalizeCapabilitySelectionForFingerprint(value: SpawnSessionOptions['capabilitySelection']): StableJson {
   if (value === undefined) return null;
   const parsed = SessionCapabilitySelectionV1Schema.safeParse(value);
   if (!parsed.success) return null;
@@ -79,20 +54,20 @@ function normalizeCapabilitySelectionForFingerprint(value: SpawnSessionOptions['
   };
 }
 
-function normalizeModelSelectionForFingerprint(value: SpawnSessionOptions['modelSelection']): Json {
+function normalizeModelSelectionForFingerprint(value: SpawnSessionOptions['modelSelection']): StableJson {
   if (value === undefined) return null;
   const parsed = SessionModelSelectionSchema.safeParse(value);
   if (!parsed.success) return null;
 
   return {
     v: parsed.data.v,
-    ref: toStableJson(parsed.data.ref, new WeakSet()),
+    ref: toStableJsonValue(parsed.data.ref),
   };
 }
 
 function normalizeSessionConfigOptionOverridesForFingerprint(
   value: SpawnSessionOptions['sessionConfigOptionOverrides'],
-): Json {
+): StableJson {
   if (value === undefined) return null;
   const parsed = AcpConfigOptionOverridesV1Schema.safeParse(value);
   if (!parsed.success) return null;
@@ -109,13 +84,13 @@ function normalizeSessionConfigOptionOverridesForFingerprint(
 
 function normalizeRuntimeDescriptorForFingerprint(
   value: SpawnSessionOptions['runtimeDescriptorV1'],
-): Json {
+): StableJson {
   const parsed = readRuntimeDescriptorV1(value);
   if (!parsed) return null;
-  return toStableJson(parsed, new WeakSet());
+  return toStableJsonValue(parsed);
 }
 
-function buildSpawnSemanticFingerprint(options: SpawnSessionOptions): Json {
+function buildSpawnSemanticFingerprint(options: SpawnSessionOptions): StableJson {
   const runtimeSelection = readCanonicalSpawnRuntimeSelection(options);
   const transcriptStorage = normalizeNonEmptyString(options.transcriptStorage) === 'direct' ? 'direct' : null;
   const initialTranscriptAfterSeq = typeof options.initialTranscriptAfterSeq === 'number'
@@ -130,14 +105,14 @@ function buildSpawnSemanticFingerprint(options: SpawnSessionOptions): Json {
     directoryKind: options.directoryKind ?? 'path',
     agentTarget: options.agentTarget === undefined
       ? null
-      : toStableJson(options.agentTarget, new WeakSet()),
+      : toStableJsonValue(options.agentTarget),
     backendTarget: options.backendTarget === undefined
       ? null
-      : toStableJson(options.backendTarget, new WeakSet()),
+      : toStableJsonValue(options.backendTarget),
     runtimeDescriptor: normalizeRuntimeDescriptorForFingerprint(runtimeSelection.runtimeDescriptorV1),
     approvedNewDirectoryCreation: options.approvedNewDirectoryCreation === true,
     profileId: options.profileId !== undefined ? String(options.profileId ?? '') : null,
-    terminal: toStableJson(options.terminal ?? null, new WeakSet()),
+    terminal: toStableJsonValue(options.terminal ?? null),
     windowsRemoteSessionLaunchMode: normalizeNonEmptyString(options.windowsRemoteSessionLaunchMode),
     windowsRemoteSessionConsole: normalizeNonEmptyString(options.windowsRemoteSessionConsole),
     windowsTerminalWindowName: normalizeNonEmptyString(options.windowsTerminalWindowName),
@@ -164,7 +139,7 @@ function buildSpawnSemanticFingerprint(options: SpawnSessionOptions): Json {
     initialSessionRolesHash: options.initialSessionRolesV1 === undefined
       ? null
       : sha256Hex(stableJsonStringify(options.initialSessionRolesV1)),
-    creationOrigin: options.existingSessionId ? null : toStableJson(pickSessionCreateOriginFields(options), new WeakSet()),
+    creationOrigin: options.existingSessionId ? null : toStableJsonValue(pickSessionCreateOriginFields(options)),
     pendingFirstInputHash: options.pendingFirstInput === undefined
       ? null
       : sha256Hex(stableJsonStringify(options.pendingFirstInput)),
@@ -179,13 +154,13 @@ function buildSpawnSemanticFingerprint(options: SpawnSessionOptions): Json {
       : sha256Hex(stableJsonStringify(options.connectedServices)),
     connectedServiceMaterializationIdentity: options.connectedServiceMaterializationIdentityV1 === undefined
       ? null
-      : toStableJson(options.connectedServiceMaterializationIdentityV1, new WeakSet()),
+      : toStableJsonValue(options.connectedServiceMaterializationIdentityV1),
     providerBindingMetadata: options.providerBindingMetadataV1 === undefined
       ? null
-      : toStableJson(options.providerBindingMetadataV1, new WeakSet()),
+      : toStableJsonValue(options.providerBindingMetadataV1),
     providerBindingSecurityChangeConfirmation: options.providerBindingSecurityChangeConfirmationV1 === undefined
       ? null
-      : toStableJson(options.providerBindingSecurityChangeConfirmationV1, new WeakSet()),
+      : toStableJsonValue(options.providerBindingSecurityChangeConfirmationV1),
     capabilitySelection: normalizeCapabilitySelectionForFingerprint(options.capabilitySelection),
     sessionConfigOptionOverrides: normalizeSessionConfigOptionOverridesForFingerprint(
       options.sessionConfigOptionOverrides,

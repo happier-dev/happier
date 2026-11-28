@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 
-type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
+export type StableJson = null | boolean | number | string | StableJson[] | { [key: string]: StableJson };
 
-function toStableJson(value: unknown, seen: WeakSet<object>): Json {
+function toStableJson(value: unknown, seen: WeakSet<object>): StableJson {
   if (value === null) return null;
   if (typeof value === 'string') return value;
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;
@@ -14,13 +14,21 @@ function toStableJson(value: unknown, seen: WeakSet<object>): Json {
   if (seen.has(objectValue)) return null;
   seen.add(objectValue);
 
-  const result: Record<string, Json> = {};
+  const result: Record<string, StableJson> = {};
   for (const key of Object.keys(objectValue).sort()) {
     const child = objectValue[key];
     if (child === undefined) continue;
     result[key] = toStableJson(child, seen);
   }
+  // `seen` tracks the current path only: a cycle collapses to null, while an
+  // object shared by two fields still serializes in full under each of them.
+  seen.delete(objectValue);
   return result;
+}
+
+/** Sorted-key JSON value: undefined fields dropped, non-finite numbers and cycles become null. */
+export function toStableJsonValue(value: unknown): StableJson {
+  return toStableJson(value, new WeakSet());
 }
 
 export function stableJsonStringify(value: unknown): string {
