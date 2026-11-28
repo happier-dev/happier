@@ -289,7 +289,7 @@ function bindRetainedRunProjectLaunch(
         operationAcceptance: undefined, operationCancellation: undefined, operationReview: undefined,
       });
       return { ...launch, isCurrent, requester: undefined, operation: undefined,
-        ingress: { ...ingress, signal, verifyMachineAdmissionCurrent: isCurrent, callerInputAuthorization: authorization,
+        ingress: { ...bindActionContext(ingress),
           requesterSessionBootstrap: undefined,
           ...(ingress.localActionContext ? { localActionContext: bindActionContext(ingress.localActionContext) } : {}) },
         ...(launch.setupAutostart ? { setupAutostart: { ...launch.setupAutostart, callerInputAuthorization: authorization,

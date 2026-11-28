@@ -30,6 +30,8 @@ import { createRunnerAgentProjectLaunchInvocation } from '@/daemon/agentRuntime/
 import type { ExecutionRunProjectLaunchContext } from '@/agent/runtime/registry/engineRegistryTypes';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { authorizePluginExecLaunchForHost, createStablePluginExecService, issueAgentNativeLaunchQualifierForHost } from '@/plugins/runtime/invocation/services/exec';
+import { buildActionExecutorContextForRpc } from '@/rpc/handlers/_actionDispatchAdapter';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 // Load the publication policy before replacing its filesystem boundary.
 const { createBundledPluginPublicationFsFixture } = await vi.hoisted(async () =>
@@ -364,7 +366,15 @@ describe('Machine Execution Run owner account snapshot', () => {
                     const projectContext = runtimeOptions?.projectLaunchContext;
                     if (!projectContext) throw new Error('Missing Project launch context');
                     const signal = native.getRuntimeLifetimeSignal();
-                    launch = createRunnerAgentProjectLaunchInvocation({ ...(projectContext.forRunLifetime?.(signal) ?? projectContext),
+                    const captured = projectContext.forRunLifetime?.(signal) ?? projectContext;
+                    const actionContext = captured.ingress && buildActionExecutorContextForRpc(captured.ingress);
+                    const sealed = await actionContext?.externalActionExecutionAuthorization?.requesterAccountProjection?.sealRequesterAccountContext?.({
+                        authorization: actionContext.externalActionExecutionAuthorization,
+                        purpose: { kind: 'machine_rpc', method: RPC_METHODS.SCM_STATUS_SNAPSHOT, params: { cwd: project.cwd } },
+                        installationPublicKey: decodeBase64(f.installation.publicKey, 'base64url'),
+                    });
+                    expect(sealed?.requesterAccountContext, 'Native reviewer Actions keep the Run custody after ingress settles').toBeDefined();
+                    launch = createRunnerAgentProjectLaunchInvocation({ ...captured,
                         cwd: project.cwd, signal });
                     const exec = createStablePluginExecService({ signal, isOccurrenceCurrent: () => true,
                         resolveExecutable: async () => ({ command: '/installed/agent' }), resolvePath: async () => project.cwd,
@@ -442,7 +452,7 @@ describe('Machine Execution Run owner account snapshot', () => {
                             ioMode: 'request_response', modelSelection: null, connectedServices: null,
                             projectLaunchContext: { isCurrent: async () => !context.signal!.aborted && await verifyMachineAdmissionCurrent(),
                                 resolveRuntime: ingress => project.machine.resolveProjectFiniteRuntime(ingress),
-                                ingress: { signal: context.signal!, machineAdmission, verifyMachineAdmissionCurrent,
+                                ingress: { ...context, signal: context.signal!, machineAdmission, verifyMachineAdmissionCurrent,
                                     callerInputAuthorization: context.externalActionExecutionAuthorization } },
                         });
                         runId = run.runId;
