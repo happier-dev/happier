@@ -30,7 +30,6 @@ installSettingsViewCommonModuleMocks({
             importOriginal,
             overrides: {
                 ...actual,
-                useEntitlement: () => false,
                 useLocalSetting,
                 useLocalSettingMutable: createUseLocalSettingMutableMock(useLocalSetting),
                 useSetting: (key: string) => {
@@ -107,13 +106,11 @@ vi.mock('@/auth/context/AuthContext', () => ({
 vi.mock('@/sync/sync', () => ({
     sync: {
         refreshMachinesThrottled: vi.fn(async () => {}),
-        presentPaywall: vi.fn(async () => ({ success: false, error: 'paywall unavailable' })),
         refreshProfile: vi.fn(async () => {}),
     },
 }));
 
 vi.mock('@/track', () => ({
-    trackPaywallButtonClicked: vi.fn(),
     trackWhatsNewClicked: vi.fn(),
 }));
 
@@ -156,10 +153,6 @@ vi.mock('@/agents/catalog/catalog', async (importOriginal) => ({
     DEFAULT_AGENT_ID: 'agent_default',
     getAgentCore: () => ({ uiConnectedService: { serviceId: 'anthropic', label: 'Anthropic', connectRoute: null } }),
     resolveAgentIdFromConnectedServiceId: () => null,
-}));
-
-vi.mock('@/components/settings/supportUsBehavior', () => ({
-    resolveSupportUsAction: () => 'github',
 }));
 
 vi.mock('@/utils/system/bugReportActionTrail', () => ({

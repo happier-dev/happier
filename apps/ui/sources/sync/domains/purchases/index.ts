@@ -8,13 +8,12 @@ export type {
     Offerings,
     PurchaseResult,
     RevenueCatConfig,
-    PaywallOptions,
     Offering,
     Package
 } from './types';
 
 // Export enums as values since they are used as runtime values
-export { LogLevel, PaywallResult } from './types';
+export { LogLevel } from './types';
 
 // This will be resolved to either revenueCat.native.ts or revenueCat.web.ts
 // based on the platform

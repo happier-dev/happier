@@ -63,6 +63,21 @@ const IGNORED_UNTRANSLATED_KEYS = new Set([
     // Literal terminal multiplexer executable names.
     'settingsProviders.plugins.claude.fields.claudeUnifiedTerminalHost.options.tmux.title',
     'settingsProviders.plugins.claude.fields.claudeUnifiedTerminalHost.options.zellij.title',
+    // Store names and export file formats on the Plans & Supporter surface.
+    'planSurface.billedByAppStore',
+    'planSurface.billedByPlay',
+    'planSurface.exportFormats',
+    'transcriptExport.formatMarkdown',
+    'transcriptExport.formatJson',
+    // "Format" is the same word in German, French, Catalan and Polish.
+    'transcriptExport.formatLabel',
+    // "Supporter" names the pack (as on the pass); Aurora, Pixel, Paper and Gold are icon names
+    // that are already the native word in several languages.
+    'settingsAppearance.appIcon.supporterTag',
+    'settingsAppearance.appIcon.names.aurora',
+    'settingsAppearance.appIcon.names.pixel',
+    'settingsAppearance.appIcon.names.paper',
+    'settingsAppearance.appIcon.names.gold',
 ]);
 const IGNORED_UNTRANSLATED_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<string>>> = {
     es: new Set([
@@ -72,6 +87,8 @@ const IGNORED_UNTRANSLATED_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<s
     it: new Set([
         // "Offline" is the standard Italian status word for a disconnected machine.
         'updates.offline',
+        // "Self-hosted" is the established Italian term for running your own server.
+        'planSurface.selfHosted',
         // "Feedback" is an established Italian loanword used for user feedback.
         'settingsAppearance.feedback',
         // "File" is the standard Italian computing noun, not an untranslated fallback.
@@ -94,6 +111,7 @@ const IGNORED_UNTRANSLATED_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<s
     fr: new Set([
         // "Session" is also the French noun for an agent session.
         'message.provenanceSession',
+        'planSurface.ladderSessions',
         'machine.thisComputer.cliChannelStable',
         // "Machine" is the French word for a computer here, not an untranslated fallback.
         'updates.sections.machine',
@@ -491,6 +509,8 @@ const IGNORED_UNTRANSLATED_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<s
     ca: new Set([
         // "Context" is the Catalan word.
         'agentInput.context.badgeLabel',
+        // "Sessions" is the Catalan plural of "sessió".
+        'planSurface.ladderSessions',
         'agentInput.suggestionGroups.sessions',
         'automations.form.schedule.manualTitle',
         // "Errors" is the Catalan plural of "error", not an untranslated fallback.
@@ -514,6 +534,9 @@ const IGNORED_UNTRANSLATED_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<s
     // the UI read worse, not better.
     de: new Set([
         'machine.thisComputer.cliChannelStable',
+        // "Name" and "Credits" are the German words for these.
+        'planSurface.passName',
+        'planSurface.creditsTitle',
         // "Updates" and "Offline" are the German words for these, not untranslated fallbacks.
         'updates.title',
         'updates.offline',

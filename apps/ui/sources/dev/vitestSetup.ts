@@ -679,6 +679,11 @@ vi.mock('react-native-unistyles', () => {
                     controlBackgroundPressed: '#F2F2F7',
                 },
             },
+            supporter: {
+                accent: '#B07C1C',
+                tint: 'rgba(212, 162, 58, 0.14)',
+                onTint: '#855A0B',
+            },
 
             //
             // System components

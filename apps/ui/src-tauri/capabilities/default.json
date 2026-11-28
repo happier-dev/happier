@@ -27,6 +27,8 @@
     "allow-desktop-install-update",
     "allow-desktop-pick-ssh-identity-file",
     "allow-desktop-set-tray-state",
+    "allow-desktop-get-app-icon",
+    "allow-desktop-set-app-icon",
     "allow-sync-desktop-pet-overlay-state",
     "allow-desktop-pet-overlay-read-window-state",
     "allow-desktop-pet-overlay-set-input-locked",

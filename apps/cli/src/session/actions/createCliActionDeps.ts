@@ -5,6 +5,7 @@ import {
   ACTION_OPERATION_RPC_METHODS_V1,
   ActionOperationListV1ResponseSchema,
   ActionOperationGetV1ResponseSchema,
+  LocalHistoryRpcResponseSchema,
   getActionSpec,
   listNativeReviewEngines,
   normalizeSessionMetadataForRead,
@@ -28,6 +29,7 @@ import {
 } from '@happier-dev/agents';
 import { createCliApprovalsArtifactStore } from '@/approvals/cliApprovalsArtifactStore';
 import { fetchAccountProfile } from '@/api/accountProfile';
+import { fetchAccountPlan, postBillingRefresh, putSupporterRing } from '@/api/accountPlan';
 import { getPreferredHostName } from '@/daemon/machine/metadata';
 import type { Credentials } from '@/persistence';
 import { buildAgentBackendItems } from './buildAgentBackendItems';
@@ -255,6 +257,14 @@ function readRawSessionMetadata(params: Readonly<{
     mode: params.mode,
     ctx: params.ctx,
   });
+}
+
+function createPlanActionDeps(token: string): Pick<ActionExecutorDeps, 'accountPlanGet' | 'billingRefresh' | 'supporterRingSet'> {
+  return {
+    accountPlanGet: async ({ signal }) => await fetchAccountPlan({ token, ...(signal ? { signal } : {}) }),
+    billingRefresh: async () => await postBillingRefresh({ token }),
+    supporterRingSet: async ({ visible }) => await putSupporterRing({ token, visible }),
+  };
 }
 
 async function readLiveActionAccountSettings(credentials?: Credentials): Promise<Readonly<Record<string, unknown>>> {
@@ -1303,6 +1313,16 @@ export function createCliActionDeps(params: Readonly<{
       return await callResolvedSessionRpc(sessionId, SESSION_RPC_METHODS.SESSION_REVIEW_START_INLINE, input);
     },
 
+    localHistory: async ({ machineId, request }) => {
+      if (!params.credentials) return { ok: false, errorCode: 'provider_unavailable' };
+      return LocalHistoryRpcResponseSchema.parse(await callMachineRpc({
+        credentials: params.credentials,
+        machineId,
+        method: RPC_METHODS.DAEMON_LOCAL_HISTORY,
+        request,
+      }));
+    },
+
     daemonMemorySearch: async () => notSupported(),
     daemonMemoryGetWindow: async () => notSupported(),
     daemonMemoryEnsureUpToDate: async () => notSupported(),
@@ -1651,6 +1671,7 @@ export function createCliActionDeps(params: Readonly<{
     },
     ...(approvalsStore ?? {}),
     ...inventoryDeps,
+    ...(params.credentials ? createPlanActionDeps(params.credentials.token) : {}),
     sessionSendMessage: async ({ sessionId, message, provenance, kind, from, localId, requestedAction, wait, timeoutSeconds, permissionModeOverride, modelOverride, callerSurface, callerPermissionMode }) => {
       if (!params.credentials) {
         return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };

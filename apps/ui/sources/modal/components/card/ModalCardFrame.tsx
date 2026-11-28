@@ -7,6 +7,7 @@ import { resolveThemeSurfaceBorderStyle } from '@/components/ui/surfaces/resolve
 import { RoundButtonSizeScope } from '@/components/ui/buttons/RoundButton';
 import { ModalCardBody } from './ModalCardBody';
 import { ModalCardHeader } from './ModalCardHeader';
+import { ModalCloseButton } from './ModalCloseButton';
 import { useModalCardDimensions, type ModalCardDimensionOptions, type ModalCardSizePreset } from './useModalCardDimensions';
 
 type ModalCardFrameProps = Readonly<{
@@ -23,6 +24,8 @@ type ModalCardFrameProps = Readonly<{
     titleTestID?: string;
     subtitleTestID?: string;
     closeButtonTestID?: string;
+    /** `floatingClose`: no header bar, only the close button over the body's top-right corner. */
+    header?: 'bar' | 'floatingClose';
     style?: StyleProp<ViewStyle>;
     headerStyle?: StyleProp<ViewStyle>;
     bodyStyle?: StyleProp<ViewStyle>;
@@ -53,6 +56,13 @@ const stylesheet = StyleSheet.create((theme) => ({
         minHeight: 0,
     },
     footer: {},
+    // Above the scrolling body, in the corner the header's close button would sit in.
+    floatingClose: {
+        position: 'absolute',
+        top: 14,
+        right: 14,
+        zIndex: 2,
+    },
     bodyFillLayout: {
         flexBasis: 0,
     },
@@ -77,11 +87,12 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
         size: props.size ?? props.dimensions?.size,
     });
 
-    const hasHeader = props.leading != null
+    const floatingClose = props.header === 'floatingClose';
+    const hasHeader = !floatingClose && (props.leading != null
         || props.title != null
         || props.subtitle != null
         || props.actions != null
-        || typeof props.onClose === 'function';
+        || typeof props.onClose === 'function');
 
     const frameSizingStyle: ViewStyle = {
         width: dimensions.width,
@@ -145,6 +156,13 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
                 {props.footer != null ? (
                     <View testID="modal-card-footer" style={[styles.footer, props.footerStyle]}>
                         <RoundButtonSizeScope size="small">{props.footer}</RoundButtonSizeScope>
+                    </View>
+                ) : null}
+
+                {/* Last, so it paints over the body on every platform. */}
+                {floatingClose && typeof props.onClose === 'function' ? (
+                    <View style={styles.floatingClose}>
+                        <ModalCloseButton testID={props.closeButtonTestID} onPress={props.onClose} />
                     </View>
                 ) : null}
             </View>

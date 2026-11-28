@@ -60,7 +60,7 @@ export function createAccountFeaturesResponse(
 }
 
 export function isFeaturesRequest(url: string): boolean {
-    return url.endsWith('/v1/features');
+    return url.split('?')[0]?.endsWith('/v1/features');
 }
 
 export function isUsernameRequest(url: string): boolean {

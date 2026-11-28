@@ -1,120 +1,181 @@
 ---
 title: Privacy Policy
-description: Your privacy is our priority
+description: What Happier collects, why, who processes it, how long we keep it, and how to turn it off.
 ---
-
-**Last Updated: August 2026**
 
 ## Overview
 
-Happier is committed to protecting your privacy. This policy explains how we handle your data with our zero-knowledge encryption architecture.
+This policy covers two things:
 
-It covers Happier Cloud — the hosted service we run. If you self-host a Happier server, the person or organisation running it holds your data and sets its own policy, including whether content is stored encrypted at all. Everything below describes what *we* can and cannot see on the service we operate.
+- **Happier Cloud**, the hosted server we run.
+- **The Happier apps we publish** (iOS, Android, desktop and the web app at our own addresses), whichever server you connect them to.
+
+Your conversations and code are end-to-end encrypted on your devices. We store them, but we cannot read them. Around that content, the service and the apps produce some data we can see: account and session metadata, anonymous usage analytics, crash reports and, when you send one, bug reports. This page lists all of it.
+
+If you self-host a Happier server, the person or organisation running it holds your data and sets its own policy for it, including whether content is stored encrypted at all. See [Self-hosting](#self-hosting) for what still reaches us.
+
+**Who is responsible.** Leeroy Brun operates Happier Cloud and publishes the apps. See the [imprint](/legal/imprint) for our postal address, or write to [hello@happier.dev](mailto:hello@happier.dev).
 
 ## What We Collect
 
-### Encrypted Data
-- **Messages and Code**: All your agent conversations and code snippets are end-to-end encrypted on your device before transmission. We store this encrypted data but have no ability to decrypt or read it.
-- **Encryption Keys**: When you pair devices, encryption keys are transmitted between your devices in encrypted form. We cannot access or decrypt these keys.
+### Encrypted content
 
-### Metadata (Not Encrypted)
-- **Message IDs**: Unique identifiers for message ordering and synchronization
-- **Timestamps**: When messages were created and synced
-- **Device IDs**: Anonymous identifiers for device pairing
-- **Session IDs**: Identifiers for your coding-agent sessions
-- **Push Notification Tokens**: Device tokens for sending push notifications via Expo's push notification service
+- **Messages and code.** Agent conversations, code snippets and session content are encrypted on your device before they leave it. We store the encrypted data and cannot decrypt it.
+- **Encryption keys.** When you pair devices, keys travel between your devices in encrypted form. We cannot read them.
 
-### Analytics (PostHog)
+### Metadata (not encrypted)
 
-We use PostHog for product analytics. It runs in PostHog's **EU region (Frankfurt)**. One PostHog project covers both the app and our websites; every event carries a property naming which of the two it came from, so they can be told apart without ever sharing an identity between them.
+To sync your devices, Happier Cloud needs some data it can read:
 
-**In the app**
-- **Anonymous Events**: We collect basic app usage events to improve the app experience
-- **Privacy by Design**: All analytics events use an anonymized ID derived from a secret key - we cannot match this back to any user or account
-- **No Content Tracking**: We only track basic app usage events, never any message content, code, or personal information
-- **Opt-Out Available**: You can disable analytics collection at any time in the app settings
+- **Account and device identifiers**, used for sign-in and pairing.
+- **Session and message identifiers and timestamps**, used to order and sync messages.
+- **Push notification tokens**, so notifications can reach your devices.
+- **Operational data** such as request times and the IP address a request came from, in server logs.
 
-**On happier.dev, docs.happier.dev and guides.happier.dev**
-- **No cookies and no visitor ID**: The websites run PostHog in cookieless mode. We set no cookie, store no identifier, and build no profile that follows you between visits or between pages.
-- **Global Privacy Control is honoured**: If your browser sends the GPC signal — Brave and DuckDuckGo do by default — analytics never start at all.
-- **First-party only**: Analytics requests go to a path on the site you are already reading and are forwarded to PostHog from our own server. The pages make no third-party requests.
-- **No IP addresses**: Client IP addresses are discarded on arrival. A coarse country and region derived from the address is kept; the address itself is never stored.
-- **What is recorded**: which pages were viewed, in which language, and which links and buttons were clicked. Never the contents of a form, and never anything you type.
-- **Opt-Out Available**: There is a switch in the footer of every page. The record of that choice is the only thing these sites ever write to your device.
+### Product analytics (PostHog)
 
-### Subscription Management (Revenue Cat)
-- **Account ID**: Revenue Cat uses your account ID to manage subscriptions and enable premium features
-- **Backend Integration**: This ID allows us to provide additional features from our backend while maintaining end-to-end encryption for your content
-- **Data Separation**: Purchase analytics sent to PostHog use the anonymized ID instead - we cannot match Revenue Cat data with PostHog analytics
+We use PostHog, in its **EU region**, to understand how the app is used. You can turn it off at any time (see [Turning things off](#turning-things-off)).
 
-## What We Don't Collect
-- Your actual code or conversation content (we can't decrypt it)
-- Personal information beyond what you voluntarily include in encrypted messages
-- Device information beyond anonymous IDs
-- Location data
+**When it runs.** Nothing is sent before you sign in, and nothing is sent until the app has read your account's analytics setting. If you have turned analytics off, it stays off on every device you sign in to. On a new device, analytics starts only after your settings have loaded from the server.
+
+**How you are identified.** Events use an anonymous ID that the app derives one way from your account's secret key. We cannot turn it back into your account, and our server cannot compute it. The ID is the same on every device you use with the same account, so we can count one person once. Accounts without an encryption key use a random ID per installation instead.
+
+**What is sent.**
+
+- **App events.** Things like: an account was created or restored, a message was sent (not its content), a permission request was answered yes or no, a screen was opened (the screen's name, with any IDs removed), a setting was changed, purchase steps, and whether a source-control action succeeded or failed (a fixed error code such as `COMMAND_FAILED`, never the error text, file paths or branch names).
+- **Settings, as coarse values.** The app sends the state of your settings so we can see which features people use. Values are reduced to on/off, a choice from a fixed list, a range, a count, or "set / not set". Text you type, paths, URLs, API keys and other secrets are never sent, only whether they are set.
+- **Server kind.** Every event carries a `server_kind` property saying whether the app is connected to Happier Cloud or to a self-hosted server: just `cloud` or `self_hosted`. Never the server's address.
+- **Device and app information** that PostHog collects by default: app version, device type and model, operating system and version, language, time zone and screen size.
+- **Location.** PostHog uses the IP address your app connects from to derive an approximate location (country, region, city), then discards the IP address. It is never stored.
+
+**What is not sent.** Message content, code, file names and paths, prompts, session titles, server addresses, links you open the app with, or the error messages your tools produce.
+
+### Website analytics
+
+On happier.dev, docs.happier.dev and guides.happier.dev:
+
+- **No cookies and no visitor ID.** The websites run PostHog in cookieless mode. We set no cookie, store no identifier, and build no profile that follows you between visits or between pages.
+- **Global Privacy Control is honoured.** If your browser sends the GPC signal (Brave and DuckDuckGo do by default), analytics never start.
+- **First-party only.** Analytics requests go to a path on the site you are reading and are forwarded to PostHog from our own server.
+- **IP addresses.** Client IP addresses are discarded on arrival. A coarse country and region derived from the address is kept.
+- **What is recorded.** Which pages were viewed, in which language, and which links and buttons were clicked. Never the contents of a form, and never anything you type.
+- **Opt-out.** There is a switch in the footer of every page. The record of that choice is the only thing these sites write to your device.
+
+### Crash reports (Sentry)
+
+When the app crashes or hits an unexpected error, it sends a report to Sentry so we can fix it. Reports are processed and stored in Sentry's EU region (Frankfurt, Germany).
+
+- **What a report contains.** The error and where in the code it happened, app version, device model, operating system, and a short trail of what the app did just before: screens visited, network requests made, and log lines.
+- **What the app removes first.** Before a report leaves your device, the app strips the query and fragment from every address, removes the address of any server other than ours (including a self-hosted server), and removes the folder paths and the machine, session and account identifiers it finds.
+- **What it does not contain.** Message content or code. We do not enable Sentry's collection of personal data, and screen recording is off.
+- **On by default**, with its own switch under Settings > Account > Crash reports. Once you turn it off, the app no longer starts crash reporting on that device. On a device you have not used before, it turns off as soon as your settings load.
+
+### Bug reports
+
+When you send a bug report from the app (Settings > Report an issue) or with `happier bug-report`, we receive:
+
+- your description;
+- diagnostics, if the "include diagnostics" option is on (it is on by default, and you can turn it off per report): app and CLI versions, platform, recent logs with secrets and tokens redacted, and recent request addresses with sensitive parts removed.
+
+Bug reports go to our report service at `reports.happier.dev`. Nothing is sent unless you send a report.
+
+### Push notifications
+
+There are two kinds of push notification, and they are not handled the same way:
+
+- **From your computer.** When an agent finishes or needs your approval, the Happier CLI on your computer sends the notification through Expo's push service, which hands it to Apple or Google. **This text is not end-to-end encrypted.** By default it includes the session title, a short preview of the agent's last message, and for approval requests the tool and its details (for example the command it wants to run). Expo, Apple and Google can see that text. You can leave message text out under the notification settings in the app.
+- **From Happier Cloud.** Our server sends only badge updates: the number on your app icon, with no title, no text and no session content.
+
+We store your device's push token so notifications can reach you. Expo, Apple and Google see that token.
+
+### Purchases and Supporter Pack
+
+- **iOS and Android.** RevenueCat receives your Happier account ID and your store purchase history to work out your plan. Apple or Google processes the payment. We never receive your card details.
+- **Web and desktop.** Polar is the merchant of record. It collects your email, billing country and payment details, and shares the order and a Happier account or purchase reference with us. We never receive your card details.
+- **Supporter Pack.** We keep your supporter number and purchase status, tied to a random supporter code. If you opt in, your public name, an optional link and the year you joined appear on the supporters wall, in Credits and in the README. You can remove your public listing. If your avatar badge is on, others on your server can see it. Public session share links omit the badge.
+- **GitHub linking.** If you link a GitHub account for the supporter label, we store the login and include it in the list used by the label workflow.
+- **Discord Linked Roles.** If you link from Happier, we store your Discord user ID with your supporter record. To verify the Contributor role, we check whether the GitHub account you verified in Discord has a merged Happier pull request. We send Discord your role eligibility and, when available, your supporter number or GitHub login. We discard Discord tokens after verification.
+- **Analytics.** Purchase steps sent to PostHog use the anonymous analytics ID, not the IDs used for billing.
 
 ## How We Use Data
 
-### Encrypted Data
-- Stored on our servers solely for synchronization between your devices
-- Transmitted to your paired devices when requested
-- Retained until you delete it through the app
+- **Encrypted content** is stored only to sync it between your devices and is kept under the retention rules below.
+- **Metadata** keeps messages in order, pairs your devices, and delivers notifications.
+- **Analytics** tells us which features are used, on which platforms and versions, so we know what to improve.
+- **Crash reports and bug reports** are used to find and fix bugs.
 
-### Metadata
-- Message IDs and timestamps are used to maintain proper message ordering
-- Device IDs enable secure pairing between your devices
-- Session IDs track your coding-agent sessions for synchronization
-- Push notification tokens are stored to enable notifications through Expo's service
-
-### Push Notifications
-Notification content is composed on your device, never on our backend. Our backend does send one kind of push, and it is deliberately empty of content:
-
-- **The text stays on your device.** A notification's title and body are built locally from data your device has already decrypted. We never see them.
-- **The one push we send is a badge refresh.** When your attention count changes, our backend asks Expo to update the number on your app icon. That message carries the count and nothing else — no title, no body, no session or message content.
-- **We store your device push token** so delivery can reach you. Expo and the operating-system push services (Apple, Google) see that token and the badge count above, as any push service must.
+We do not use any of this for advertising, and we do not sell it.
 
 ## Data Security
 
-- **End-to-End Encryption**: Messages are encrypted on your device under a per-session key (32 random bytes, AES-256-GCM, a fresh nonce per message). That session key is sealed to your account's own key with an ephemeral X25519 exchange, and account-scoped data is sealed with XSalsa20-Poly1305. We claim no certification and no external audit; the implementation is in the open for you to read.
-- **Zero-Knowledge**: We cannot decrypt your data even if compelled
-- **Secure Key Exchange**: Encryption keys are transmitted between your devices only in encrypted form that we cannot access
-- **Open Source**: Our encryption implementation is publicly auditable
-- **No Backdoors**: The architecture makes it impossible for us to access your content
+- **End-to-end encryption.** Messages are encrypted on your device under a per-session key (32 random bytes, AES-256-GCM, a fresh nonce per message). That session key is sealed to your account's own key with an ephemeral X25519 exchange, and account-scoped data is sealed with XSalsa20-Poly1305. We claim no certification and no external audit; the implementation is open for you to read.
+- **What that means in practice.** We cannot read your encrypted content, and we could not hand it over in readable form if asked.
+- **Key exchange.** Keys travel between your own devices only in encrypted form.
+- **Open source.** The encryption code, and every analytics and crash-report call described on this page, is in the public repository.
 
 ## Data Retention
 
-- Encrypted messages are retained indefinitely until you delete them
-- Metadata is retained for system functionality
-- Deleted data is permanently removed from our servers within 30 days
+**Self-hosted servers** follow their operator's rules. Happier Cloud keeps encrypted messages until you delete them or the announced retention policy takes effect. We announce changes at least 30 days ahead in the app and on [How Happier stays free](https://happier.dev/open).
+
+Once the policy takes effect, Happier Cloud keeps messages based on a session's last activity:
+
+| Cloud plan | Session history | Subagent transcripts | Pins |
+| --- | --- | --- | --- |
+| Free | 60 days | 7 days | 50 |
+| Lite | 90 days | 14 days | 100 |
+| Plus | 1 year | 30 days | 500 |
+
+Pinned sessions stay while pinned. Their subagent transcripts follow the normal period. The app shows eligible sessions seven days before they leave. Paid history limits continue for 90 days after Lite or Plus ends. See [Plans & Supporter](https://happier.dev/plans) for current limits.
+
+When a session leaves Happier Cloud, we delete its messages, subagent transcripts and associated usage records, and remove its shares and public links. We cannot recover the encrypted messages. We keep the session record, including its encrypted title and metadata, account association, timestamps and counters, so it can stay in your list under External until you remove it or your account is deleted. Logs on your machine follow each coding agent's own retention rules.
+
+- **Analytics events** are kept only as long as they help us understand how Happier is used, and are deleted automatically under our analytics provider's retention settings.
+- **Crash reports** are kept while they help us fix problems, and are deleted automatically under our crash-reporting provider's retention settings.
+- **Bug reports** are kept while we investigate the issue and anything related to it, then deleted.
+- **Operational metadata** is kept as long as needed to run Happier Cloud.
+- **Accounting records** are kept for ten years under Swiss law. After account deletion, a previously assigned supporter number stays reserved.
+
+## Turning things off
+
+All of these are under **Settings > Account > Privacy** in the app, and they follow your account to every device:
+
+- **Analytics.** Turn it off and the app stops sending usage events and settings. It sends nothing at the moment you switch it off.
+- **Crash reports.** Turn them off and the app stops sending crash reports, and does not start them again on later launches.
+
+Before you sign in, the app sends no analytics. Notification text from your computer can be limited in the app's notification settings. Bug reports are only ever sent by you.
+
+## Self-hosting
+
+- **Our apps report to us whichever server you use.** If you use an app we publish (from an app store, our desktop downloads, or our web app address) with a self-hosted server, the analytics and crash reports described above still come to us, with `server_kind` set to `self_hosted`. Your settings in the app turn them off the same way. We never receive the server's address in analytics events. Your content stays on that server.
+- **Self-hosted servers.** By default, a self-hosted Happier server sends one anonymous heartbeat a day to our PostHog (EU), so we can count servers and see which versions run. It contains a random instance ID the server makes up, the server version and flavor (full or light), the database type, and the operating system and CPU architecture. It carries no user counts, accounts, hostnames, URLs or content, no IP address is stored with it, and location lookup is turned off. Operators turn it off with `HAPPIER_INSTANCE_PING=0` or `DO_NOT_TRACK=1`. The server sends no crash reports unless its operator configures their own Sentry.
+- **The generic web app image** (the `happierdev/webapp` Docker image) sends no analytics and no crash reports unless its operator sets their own PostHog key or Sentry DSN.
+- **Bug reports from a self-hosted setup** go to `reports.happier.dev` unless the operator points them elsewhere, and only when someone sends one.
+
+## Who processes data for us
+
+| Service | What it processes |
+| --- | --- |
+| Happier Cloud hosting infrastructure | Encrypted content and operational metadata |
+| Cloudflare | Website and analytics requests, emails sent to us, and opted-in listings on the supporters wall |
+| PostHog (EU) | Anonymous app analytics, website analytics, self-hosted server heartbeats |
+| Sentry (EU) | App crash reports |
+| Expo, Apple and Google | Push tokens; notification text sent from your computer; badge counts sent by Happier Cloud |
+| RevenueCat | Happier account ID and store purchase history |
+| Polar | Email, billing country, order and payment details for web and desktop purchases |
+| Apple and Google | App Store and Google Play purchases |
+
+**Where data is processed.** Happier Cloud runs on servers in the European Union, and PostHog and Sentry process data in their EU regions (Frankfurt, Germany). Cloudflare, Expo, RevenueCat, Polar, Apple and Google may process data in the United States and other countries. Where data leaves Switzerland or the EU, those providers protect it under the EU-U.S. and Swiss-U.S. Data Privacy Framework or the European Commission's standard contractual clauses.
+
+Your device or computer sends what a request needs to the agent, model or voice provider you choose; that provider's privacy policy applies. If you share a session or publish a public link, the people you share it with can see that content. If the law requires us to disclose data, we can only provide what we hold, and your encrypted content stays encrypted.
 
 ## Your Rights
 
-You have the right to:
-- Delete all your data through the app
-- Export your encrypted data
-- Audit our open-source code
-- Use the app without providing any personal information
-
-## Data Sharing
-
-We do not share your data with anyone. Period.
+You can delete sessions in the app and export them as Markdown or JSON when export is available. To request account deletion, a copy of your data or a correction, or to ask us to restrict or stop processing, write to [hello@happier.dev](mailto:hello@happier.dev). A copy of encrypted content stays encrypted and can be read on your paired devices. You can also complain to your local data protection authority or to the [Swiss Federal Data Protection and Information Commissioner](https://www.edoeb.admin.ch/en).
 
 ## Changes to This Policy
 
-We will notify users of any material changes to this privacy policy through the app. Continued use of the service after changes constitutes acceptance.
+We announce material changes at least 30 days ahead in the app and on [How Happier stays free](https://happier.dev/open).
 
 ## Contact
 
-For privacy concerns or questions:
-- GitHub Issues: https://github.com/happier-dev/happier/issues
-
-## Compliance
-
-Happier is designed with privacy by default and complies with:
-- GDPR (General Data Protection Regulation)
-- CCPA (California Consumer Privacy Act)
-- Privacy by Design principles
-
----
-
-**Remember**: Your encryption keys are only shared between your own devices in encrypted form. We cannot read your code or conversations even if we wanted to.
+Questions about this policy or your data: [hello@happier.dev](mailto:hello@happier.dev).

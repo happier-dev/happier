@@ -34,12 +34,14 @@ export function isApprovalRequiredByActionsSettings(
   actionId: ActionId,
   settings: ActionsSettingsV1,
   ctx?: Pick<ActionExecutorContext, 'surface'> | null,
+  defaultRequired = false,
 ): boolean {
   const surface = ctx?.surface ?? null;
   if (!surface) return false;
 
   const override = (settings as any)?.actions?.[actionId] as ActionSettingsOverride | undefined;
-  const required = override?.approvalRequiredSurfaces ?? [];
+  if (!override) return defaultRequired;
+  const required = override.approvalRequiredSurfaces;
   return Array.isArray(required) && required.includes(surface as any);
 }
 

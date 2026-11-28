@@ -129,6 +129,7 @@ test('build-tauri gates the production desktop publish on desktop-setup against 
   assert.equal(checkout.with.repository, '${{ job.workflow_repository }}');
   assert.equal(checkout.with.path, undefined, 'trusted validation control owns the workspace root');
   assert.equal(checkout.with['persist-credentials'], false);
+  assert.equal(checkout.with['fetch-depth'], 0, 'setup contract resolution needs immutable desktop tag objects');
 
   // The registry is the one selection owner: the job asks it, and every later step follows it.
   const plan = steps.find((step) => step.id === 'plan');

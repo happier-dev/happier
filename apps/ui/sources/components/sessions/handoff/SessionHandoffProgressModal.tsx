@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { ActivitySpinner, iconMatchedSpinnerSize } from '@/components/ui/feedback/ActivitySpinner';
+import { StyleSheet } from 'react-native-unistyles';
+import { StepProgressList, type StepProgressItem } from '@/components/ui/feedback/StepProgressList';
 import {
     SessionHandoffProgressCheckpointSchema,
     SESSION_HANDOFF_PROGRESS_FULL_TIMELINE,
@@ -18,7 +18,6 @@ import { Typography } from '@/constants/Typography';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { formatByteSize } from '@/utils/files/formatByteSize';
-import { Icon } from '@/components/ui/icons/Icon';
 import { ActionOperationDetailFooter } from '@/components/inbox/actionOperations/ActionOperationDetail';
 import { useActionOperationStopControl } from '@/components/inbox/actionOperations/useActionOperationStopControl';
 
@@ -69,47 +68,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     progressSection: {
         gap: 10,
     },
-    timeline: {
-        gap: 4,
-    },
-    timelineRow: {
-        flexDirection: 'row',
-        alignItems: 'flex-start',
-        gap: 12,
-        minHeight: 34,
-    },
-    timelineMarker: {
-        width: 20,
-        height: 20,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    timelineDot: {
-        width: 14,
-        height: 14,
-        borderRadius: 999,
-        borderWidth: 1.5,
-        borderColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.base,
-    },
-    timelineContent: {
-        flex: 1,
-        gap: 8,
-        paddingBottom: 6,
-    },
-    timelineContentWithProgress: {
-        paddingBottom: 14,
-    },
-    timelineLabel: {
-        fontSize: 14,
-        color: theme.colors.text.secondary,
-        ...Typography.default(),
-        flex: 1,
-    },
-    timelineLabelCurrent: {
-        color: theme.colors.text.primary,
-        ...Typography.default('semiBold'),
-    },
     summaryRow: {
         flexDirection: 'row',
         flexWrap: 'wrap',
@@ -147,18 +105,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         color: theme.colors.text.primary,
         ...Typography.default(),
         textAlign: 'right',
-    },
-    progressTrack: {
-        height: 6,
-        borderRadius: 999,
-        backgroundColor: theme.colors.border.default,
-        overflow: 'hidden',
-    },
-    progressFill: {
-        height: '100%',
-        borderRadius: 999,
-        backgroundColor: theme.colors.accent.blue,
-        minWidth: 6,
     },
     progressMetaRow: {
         flexDirection: 'row',
@@ -379,7 +325,6 @@ function translateCheckpoint(checkpoint: SessionHandoffProgressCheckpoint): stri
 }
 
 export function SessionHandoffProgressModal({ onClose, setChrome, title, message, status, operation, workspaceTransferEnabled = false }: Props) {
-    const { theme } = useUnistyles();
     const styles = stylesheet;
 
     // Keep a monotonic "effective" status so the checkpoint selection never regresses when
@@ -535,103 +480,51 @@ export function SessionHandoffProgressModal({ onClose, setChrome, title, message
                 </Text>
             ) : null}
             {operation || (!effectiveStatus && showSpinner) ? (
-                <View testID="session-handoff-operation-progress" style={styles.timeline}>
-                    {operationSteps.map((step, index) => {
+                <StepProgressList
+                    testID="session-handoff-operation-progress"
+                    steps={operationSteps.map((step, index): StepProgressItem => {
                         const isCompleted = operation?.state === 'succeeded' || index < Math.max(operationStepIndex, 0);
                         const isCurrent = operation?.state !== 'succeeded' && index === Math.max(operationStepIndex, 0);
-                        return (
-                            <View
-                                key={step.id}
-                                testID={`session-handoff-step-${step.id}`}
-                                accessibilityState={{ checked: isCompleted, selected: isCurrent }}
-                                style={styles.timelineRow}
-                            >
-                                <View style={styles.timelineMarker}>
-                                    {isCompleted ? (
-                                        <Icon name="check" size={16} color={theme.colors.accent.blue} />
-                                    ) : isCurrent ? (
-                                        <ActivitySpinner size={iconMatchedSpinnerSize(16)} color={theme.colors.accent.blue} />
-                                    ) : (
-                                        <View style={styles.timelineDot} />
-                                    )}
+                        const determinate = isCurrent && operationProgressFraction !== null;
+                        return {
+                            id: step.id,
+                            label: step.label,
+                            testID: `session-handoff-step-${step.id}`,
+                            state: isCompleted ? 'done' : isCurrent ? 'current' : 'pending',
+                            caption: determinate
+                                ? (operationProgressLabel && !isRedundantOperationProgressLabel(operationProgressLabel, step.label) ? operationProgressLabel : null)
+                                : (operationProgressLabel && operationProgress?.kind !== 'phase' ? operationProgressLabel : null),
+                            progress: determinate ? { fraction: operationProgressFraction, testID: 'session-handoff-operation-progress-bar' } : null,
+                            meta: determinate ? (
+                                <View style={styles.progressMetaRow}>
+                                    <Text style={styles.progressMetaText}>{Math.round(operationProgressFraction * 100)}%</Text>
+                                    <Text style={styles.currentPath}>{formatByteSize(determinateOperationProgress!.current)} / {formatByteSize(determinateOperationProgress!.total)}</Text>
                                 </View>
-                                <View style={[styles.timelineContent, isCurrent && operationProgressFraction !== null ? styles.timelineContentWithProgress : null]}>
-                                    <Text style={[styles.timelineLabel, isCurrent ? styles.timelineLabelCurrent : null]}>
-                                        {step.label}
-                                    </Text>
-                                    {isCurrent && operationProgressFraction !== null ? (
-                                        <>
-                                            {operationProgressLabel && !isRedundantOperationProgressLabel(operationProgressLabel, step.label) ? (
-                                                <Text style={styles.progressMetaText}>{operationProgressLabel}</Text>
-                                            ) : null}
-                                            <View
-                                                testID="session-handoff-operation-progress-bar"
-                                                accessibilityRole="progressbar"
-                                                accessibilityValue={{ min: 0, max: 100, now: Math.round(operationProgressFraction * 100) }}
-                                                style={styles.progressTrack}
-                                            >
-                                                <View style={[styles.progressFill, { width: `${Math.max(operationProgressFraction * 100, 4)}%` }]} />
-                                            </View>
-                                            <View style={styles.progressMetaRow}>
-                                                <Text style={styles.progressMetaText}>{Math.round(operationProgressFraction * 100)}%</Text>
-                                                <Text style={styles.currentPath}>{formatByteSize(determinateOperationProgress!.current)} / {formatByteSize(determinateOperationProgress!.total)}</Text>
-                                            </View>
-                                        </>
-                                    ) : isCurrent && operationProgressLabel && operationProgress?.kind !== 'phase' ? (
-                                        <Text style={styles.progressMetaText}>{operationProgressLabel}</Text>
-                                    ) : null}
-                                </View>
-                            </View>
-                        );
+                            ) : null,
+                        };
                     })}
-                </View>
+                />
             ) : null}
             {effectiveStatus && !operation ? (
                 <View style={styles.progressSection}>
                     {currentCheckpoint && currentCheckpointIndex >= 0 ? (
-                        <View testID="session-handoff-progress-timeline" style={styles.timeline}>
-                            {timeline.map((checkpoint, index) => {
+                        <StepProgressList
+                            testID="session-handoff-progress-timeline"
+                            steps={timeline.map((checkpoint, index): StepProgressItem => {
                                 const isDone =
                                     effectiveStatus.status === 'completed'
                                     || (currentCheckpointIndex >= 0 && index < currentCheckpointIndex);
                                 const isCurrent = currentCheckpointIndex >= 0 && index === currentCheckpointIndex;
-                                return (
-                                    <View
-                                        key={checkpoint}
-                                        testID={`session-handoff-progress-checkpoint-${checkpoint}`}
-                                        accessibilityState={{ selected: isCurrent }}
-                                        style={styles.timelineRow}
-                                    >
-                                        <View style={styles.timelineMarker}>
-                                            {isDone ? (
-                                                <Icon name="check" size={16} color={theme.colors.accent.blue} />
-                                            ) : isCurrent && isFailureState ? (
-                                                <Icon name="warning" size={16} color={theme.colors.state.danger.foreground} />
-                                            ) : isCurrent ? (
-                                                <ActivitySpinner size={iconMatchedSpinnerSize(16)} color={theme.colors.accent.blue} />
-                                            ) : (
-                                                <View style={styles.timelineDot} />
-                                            )}
-                                        </View>
-                                        <View style={[styles.timelineContent, isCurrent && progressFraction !== null ? styles.timelineContentWithProgress : null]}>
-                                            <Text style={[styles.timelineLabel, isCurrent ? styles.timelineLabelCurrent : null]}>
-                                                {translateCheckpoint(checkpoint)}
-                                            </Text>
-                                            {isCurrent && progressFraction !== null ? (
-                                                <View
-                                                    testID="session-handoff-progress-bar"
-                                                    accessibilityRole="progressbar"
-                                                    accessibilityValue={{ min: 0, max: 100, now: Math.round(progressFraction * 100) }}
-                                                    style={styles.progressTrack}
-                                                >
-                                                    <View style={[styles.progressFill, { width: `${Math.max(progressFraction * 100, 4)}%` }]} />
-                                                </View>
-                                            ) : null}
-                                        </View>
-                                    </View>
-                                );
+                                return {
+                                    id: checkpoint,
+                                    label: translateCheckpoint(checkpoint),
+                                    testID: `session-handoff-progress-checkpoint-${checkpoint}`,
+                                    state: isDone ? 'done' : isCurrent ? (isFailureState ? 'failed' : 'current') : 'pending',
+                                    selected: isCurrent,
+                                    progress: isCurrent && progressFraction !== null ? { fraction: progressFraction, testID: 'session-handoff-progress-bar' } : null,
+                                };
                             })}
-                        </View>
+                        />
                     ) : null}
                     {summaryChips.length > 0 ? (
                         <View testID="session-handoff-progress-summary" style={styles.summaryRow}>

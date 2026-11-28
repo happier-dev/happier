@@ -56,4 +56,10 @@ describe('runtime fallback capability', () => {
     it('fails closed for services with no runtime fallback implementation', () => {
         expect(isConnectedServiceRuntimeFallbackSupported('github')).toBe(false);
     });
+
+    it('names the pool agents that take an automatic switch only when the turn ends', () => {
+        expect(resolveConnectedServiceRuntimeFallbackCapability('antigravity').turnEndSwitchAgentIds).toEqual(['agy']);
+        expect(resolveConnectedServiceRuntimeFallbackCapability('claude-subscription').turnEndSwitchAgentIds).toEqual([]);
+        expect(resolveConnectedServiceRuntimeFallbackCapability('openai-codex').turnEndSwitchAgentIds).not.toContain('codex');
+    });
 });

@@ -1,32 +1,42 @@
+import { resolveLimitTable } from '@/app/plans/accountLimits';
 import type { RetentionPolicy } from '@/app/retention/config/retentionPolicyTypes';
+
+import { isSessionRetentionEnforcing } from '@/app/retention/retentionNotice';
 
 import { createRetentionRuleRegistry } from './retentionRuleRegistry';
 
 export type RetentionSweepResult = Readonly<{
     deleted: number;
     byRule: Readonly<Record<string, number>>;
+    byTier: Readonly<Record<string, Readonly<Record<string, number>>>>;
     details: Readonly<Record<string, Readonly<{
         deleted: number;
+        dryRun: boolean;
         candidatesExamined: number;
         batches: number;
-        stopReason: 'exhausted' | 'time_budget' | 'row_budget' | 'candidate_budget' | 'stalled';
+        stopReason: 'exhausted' | 'time_budget' | 'row_budget' | 'candidate_budget' | 'stalled' | 'config_invalid';
     }>>>;
 }>;
 
 export async function runRetentionSweep(params: {
     policy: RetentionPolicy;
     now?: Date;
+    env?: NodeJS.ProcessEnv;
     readClockMs?: () => number;
 }): Promise<RetentionSweepResult> {
     const now = params.now ?? new Date();
     const readClockMs = params.readClockMs ?? Date.now;
+    const sessionDryRun = !isSessionRetentionEnforcing(params.policy, now);
+    const limitTable = resolveLimitTable(params.env ?? process.env);
     const registry = createRetentionRuleRegistry();
     const byRule: Record<string, number> = {};
+    const byTier: Record<string, Record<string, number>> = {};
     const details: Record<string, {
         deleted: number;
+        dryRun: boolean;
         candidatesExamined: number;
         batches: number;
-        stopReason: 'exhausted' | 'time_budget' | 'row_budget' | 'candidate_budget' | 'stalled';
+        stopReason: 'exhausted' | 'time_budget' | 'row_budget' | 'candidate_budget' | 'stalled' | 'config_invalid';
     }> = {};
     let deleted = 0;
 
@@ -37,6 +47,7 @@ export async function runRetentionSweep(params: {
     for (const rule of registry) {
         details[rule.id] = {
             deleted: 0,
+            dryRun: rule.requiresSessionNotice ? sessionDryRun : params.policy.dryRun,
             candidatesExamined: 0,
             batches: 0,
             stopReason: 'exhausted',
@@ -66,8 +77,9 @@ export async function runRetentionSweep(params: {
             const batchLimit = Math.max(1, Math.min(params.policy.batchSize, remainingDeletes));
             const result = await rule.run({
                 policy: params.policy,
+                limitTable,
                 batchSize: batchLimit,
-                dryRun: params.policy.dryRun,
+                dryRun: detail.dryRun,
                 maxDeletesPerRulePerRun: batchLimit,
                 // Candidate scanning is paged at the same bounded size as deletion. The
                 // per-rule candidate budget applies across the whole sweep, not one turn.
@@ -80,12 +92,16 @@ export async function runRetentionSweep(params: {
             detail.candidatesExamined += candidatesExamined;
             detail.batches += 1;
             byRule[result.id] = detail.deleted;
+            if (result.tier !== undefined) {
+                const tiers = byTier[result.id] ??= Object.create(null) as Record<string, number>;
+                tiers[result.tier] = (tiers[result.tier] ?? 0) + result.deleted;
+            }
             deleted += result.deleted;
             roundMadeProgress ||= result.deleted > 0 || candidatesExamined > 0;
 
             const hasMore = result.hasMore ?? result.deleted >= batchLimit;
             if (!hasMore) {
-                detail.stopReason = 'exhausted';
+                detail.stopReason = result.stopReason ?? 'exhausted';
                 active.delete(rule.id);
             } else if (detail.deleted >= params.policy.maxDeletesPerRulePerRun) {
                 detail.stopReason = 'row_budget';
@@ -95,7 +111,7 @@ export async function runRetentionSweep(params: {
                 active.delete(rule.id);
             }
         }
-        if (!roundMadeProgress) {
+        if (!roundMadeProgress && readClockMs() < deadline) {
             for (const id of active) details[id]!.stopReason = 'stalled';
             active.clear();
         }
@@ -108,6 +124,7 @@ export async function runRetentionSweep(params: {
     return {
         deleted,
         byRule,
+        byTier,
         details,
     };
 }

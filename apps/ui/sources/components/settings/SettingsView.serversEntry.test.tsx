@@ -34,7 +34,6 @@ function createPropPassthroughNode(name: string) {
 
 function createSettingsViewStorageOverrides() {
     return {
-        useEntitlement: () => false,
         // Boundary mock: this suite only reads a boolean local setting toggle.
         useLocalSettingMutable: (() => [false, vi.fn()]) as any,
         useSetting: (key: string) => {
@@ -149,13 +148,11 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
 vi.mock('@/sync/sync', () => ({
     sync: {
         refreshMachinesThrottled: vi.fn(async () => {}),
-        presentPaywall: vi.fn(async () => ({ success: false, error: 'nope' })),
         refreshProfile: vi.fn(async () => {}),
     },
 }));
 
 vi.mock('@/track', () => ({
-    trackPaywallButtonClicked: vi.fn(),
     trackWhatsNewClicked: vi.fn(),
 }));
 
@@ -206,10 +203,6 @@ vi.mock('@/agents/catalog/catalog', () => ({
     resolveAgentIdFromConnectedServiceId: () => null,
 }));
 
-vi.mock('@/components/settings/supportUsBehavior', () => ({
-    resolveSupportUsAction: () => 'github',
-}));
-
 vi.mock('@/utils/system/bugReportActionTrail', () => ({
     recordBugReportUserAction: vi.fn(),
 }));
@@ -227,6 +220,7 @@ vi.mock('@/hooks/server/useFeatureDecision', () => ({
 }));
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
+    isHappierCloudServerUrl: () => false,
     getActiveServerSnapshot: () => ({ serverId: 'server-1', serverUrl: 'https://local.example.test', generation: 0 }),
     listServerProfiles: () => [],
     subscribeActiveServer: (listener: any) => {

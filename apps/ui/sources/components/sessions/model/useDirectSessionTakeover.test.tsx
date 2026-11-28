@@ -1,4 +1,5 @@
 import { renderHook, createSessionFixture, flushHookEffects, createDeferred } from '@/dev/testkit';
+import { projectRetainedSessionLink } from '@/sync/domains/session/directSessions/retainedSessionLink';
 import { storage } from '@/sync/domains/state/storage';
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
@@ -12,6 +13,7 @@ import { useDirectSessionTakeover } from './useDirectSessionTakeover';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+const patchMetadataSpy = vi.hoisted(() => vi.fn());
 const machineRpcSpy = vi.hoisted(() => vi.fn());
 const refreshSessionMessagesSpy = vi.hoisted(() => vi.fn(async () => {}));
 const refreshSessionsSpy = vi.hoisted(() => vi.fn(async () => {}));
@@ -61,6 +63,7 @@ vi.mock('@/sync/sync', () => ({
   sync: {
     refreshSessionMessages: refreshSessionMessagesSpy,
     refreshSessions: refreshSessionsSpy,
+    patchSessionMetadataWithRetry: patchMetadataSpy,
   },
 }));
 
@@ -114,6 +117,32 @@ describe('useDirectSessionTakeover', () => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.clearAllMocks();
+  });
+
+  it('writes the derived link before consulting the daemon capability for cloud conversion', async () => {
+    const initial = storage.getState().sessions.s1!;
+    const retained = projectRetainedSessionLink({
+      ...initial, cloudCopyLeftAt: 150,
+      metadata: { ...initial.metadata!, flavor: 'codex', codexSessionId: 'vendor-session-1', machineId: 'machine-1' },
+    });
+    expect(JSON.parse(JSON.stringify(retained.metadata)).directSessionV1).toBeUndefined();
+    storage.setState({ sessions: { s1: retained } });
+    const unavailable = { ...status, canTakeOverPersist: false };
+    let persisted = false;
+    patchMetadataSpy.mockImplementationOnce(async (_id, updater) => {
+      const metadata = updater(retained.metadata);
+      persisted = JSON.parse(JSON.stringify(metadata)).directSessionV1?.remoteSessionId === 'vendor-session-1';
+      storage.setState({ sessions: { s1: { ...retained, metadata } } });
+    });
+    const refreshNow = async () => (persisted ? status : unavailable);
+    const harness = await renderHarness({ directSessionLink, status: unavailable, refreshNow });
+    machineRpcSpy.mockResolvedValue({ ok: true, operation: operation({
+      state: 'succeeded', settledAt: 110, cancellation: 'unsupported',
+    }) });
+    await act(async () => { expect(await harness.getCurrent().requestTakeover('persisted')).toBe(true); });
+    expect(persisted).toBe(true);
+    expect(patchMetadataSpy).toHaveBeenCalledTimes(1);
+    await harness.unmount();
   });
 
   it('restores shared import progress, accepts pushed revisions and exposes connection failures', async () => {

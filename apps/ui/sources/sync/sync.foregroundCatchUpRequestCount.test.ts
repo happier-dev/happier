@@ -83,7 +83,6 @@ async function createResumableSync() {
         feedSync: createSyncUnitStub(),
         automationsSync: createSyncUnitStub(),
         todosSync: createSyncUnitStub(),
-        purchasesSync: createSyncUnitStub(),
         pushTokenSync: createSyncUnitStub(),
         nativeUpdateSync: createSyncUnitStub(),
     };
@@ -190,7 +189,6 @@ describe('foreground catch-up request count', () => {
         expect(fetchSessions).toHaveBeenCalledTimes(1);
         expect(units.sessionsSync.invalidateCoalesced).toHaveBeenCalledTimes(1);
         expect(units.machinesSync.invalidateCoalesced).toHaveBeenCalledTimes(1);
-        expect(units.purchasesSync.invalidateCoalesced).toHaveBeenCalledTimes(1);
         expect(units.pushTokenSync.invalidateCoalesced).toHaveBeenCalledTimes(1);
         expect(units.nativeUpdateSync.invalidateCoalesced).toHaveBeenCalledTimes(1);
     });

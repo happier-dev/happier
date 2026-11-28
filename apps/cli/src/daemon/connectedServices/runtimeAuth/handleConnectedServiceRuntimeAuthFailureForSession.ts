@@ -23,10 +23,12 @@ import {
   type ConnectedServiceSessionAuthSwitchReason,
   type ConnectedServiceSessionAuthSwitchCore,
 } from './connectedServiceSessionAuthSwitchCore';
+import { resolveTrackedConnectedServiceBindingsRaw } from '../trackedSessionConnectedServiceBindings';
 import { buildConnectedServiceSwitchContinuationAttemptId } from '../sessionAuthSwitch/buildConnectedServiceSwitchContinuationAttemptId';
 import {
   isGroupRuntimeRecoverySelection,
   resolveConnectedServiceRuntimeAuthRecoverySelection,
+  resolveRuntimeRecoverySelectionThroughBoundPool,
   type RuntimeRecoverySelection,
 } from './resolveConnectedServiceRuntimeAuthRecoverySelection';
 import type { ConnectedServiceRuntimeAuthApplyCapability } from '../credentials/lifecycleTypes';
@@ -1574,6 +1576,12 @@ export async function handleConnectedServiceRuntimeAuthFailureForSession(input: 
           profileId: sourceAuthorization.sourceBinding.profileId,
         }
     : resolvedRecoverySelection;
+  if (selection) {
+    selection = resolveRuntimeRecoverySelectionThroughBoundPool({
+      selection,
+      trackedConnectedServices: resolveTrackedConnectedServiceBindingsRaw(tracked),
+    });
+  }
   if (failedCurrentProfileId && selection && isGroupRuntimeRecoverySelection(selection)) {
     selection = { ...selection, activeProfileId: failedCurrentProfileId };
   }

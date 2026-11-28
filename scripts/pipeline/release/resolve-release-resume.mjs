@@ -188,7 +188,10 @@ function resolveDesktopArtifacts(artifacts, run, workflowSha, channel, allowLega
     if (typeof artifact.expired !== 'boolean') throw new Error('[release] desktop artifact expiry must be boolean');
     if (!artifact.expired) (prefix === 'tauri-updates-' ? finalized : selected)[platform] = admitted;
   }
-  return { runNumber: Number(run.run_number), artifacts: selected,
+  // The desktop build version embeds the run number its bytes were built with. Only reused bytes carry the origin's
+  // number; when nothing is reusable the resumed run rebuilds with its own number, so a later resume binds correctly.
+  const reusable = Object.keys(selected).length > 0 || Object.keys(finalized).length > 0;
+  return { ...(reusable ? { runNumber: Number(run.run_number) } : {}), artifacts: selected,
     ...(!allowLegacy || Object.keys(finalized).length > 0 ? { finalizedArtifacts: finalized } : {}) };
 }
 

@@ -3,14 +3,12 @@ import { log } from "@/utils/logging/log";
 import { db } from "@/storage/db";
 import { parseIntEnv } from "@/config/env";
 import { resolveElevenLabsAgentId, resolveElevenLabsApiBaseUrl } from "@/voice/elevenLabsEnv";
-import { readVoiceFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { resolveServerFeaturesForGating } from "@/app/features/catalog/serverFeatureGate";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 import { type Fastify } from "../../types";
 
 type VoiceDenyReason =
     | "voice_disabled"
-    | "subscription_required"
     | "quota_exceeded"
     | "too_many_sessions"
     | "misconfigured"
@@ -19,13 +17,6 @@ type VoiceDenyReason =
 function getPeriodKey(date: Date): string {
     // YYYY-MM in UTC
     return date.toISOString().slice(0, 7);
-}
-
-function hasRevenueCatVoiceEntitlement(payload: any): boolean {
-    const active = payload?.subscriber?.entitlements?.active ?? null;
-    if (!active || typeof active !== "object") return false;
-    // Prefer explicit "voice" entitlement but keep "pro" as a compatibility fallback.
-    return Boolean((active as any).voice) || Boolean((active as any).pro);
 }
 
 export function registerVoiceMintRoute(app: Fastify, path: "/v1/voice/token" | "/v1/voice/lease/mint"): void {
@@ -96,8 +87,6 @@ export function registerVoiceMintRoute(app: Fastify, path: "/v1/voice/token" | "
             return reply.code(503).send({ allowed: false, reason: "misconfigured" satisfies VoiceDenyReason });
         }
 
-        const voiceFeatureEnv = readVoiceFeatureEnv(env);
-        const requireSubscription = voiceFeatureEnv.requireSubscription;
         const freeSessionsPerMonth = Math.max(0, parseIntEnv(env.VOICE_FREE_SESSIONS_PER_MONTH, 0));
         const freeMinutesPerMonth = Math.max(0, parseIntEnv(env.VOICE_FREE_MINUTES_PER_MONTH, 0));
         const maxConcurrentSessions = Math.max(1, parseIntEnv(env.VOICE_MAX_CONCURRENT_SESSIONS, 1));
@@ -157,85 +146,37 @@ export function registerVoiceMintRoute(app: Fastify, path: "/v1/voice/token" | "
             // ignore
         }
 
-        // Subscription / quota check (production by default).
-        let grantedBy: "subscription" | "free" = "subscription";
-        if (requireSubscription) {
-            const revenueCatSecret = env.REVENUECAT_SECRET_KEY?.trim() ?? "";
-            if (!revenueCatSecret) {
-                log({ module: "voice" }, "Missing REVENUECAT_SECRET_KEY");
-                return reply.code(503).send({ allowed: false, reason: "misconfigured" satisfies VoiceDenyReason });
-            }
-
-            let subscribed = false;
+        // Operator per-Account monthly minute cap (on the operator's own ElevenLabs bill).
+        const grantedBy = "free";
+        if (freeMinutesPerMonth > 0) {
+            const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0));
             try {
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 10_000);
-                let rcRes: Response;
-                try {
-                    rcRes = await fetch(`https://api.revenuecat.com/v1/subscribers/${encodeURIComponent(userId)}`, {
-                        method: "GET",
-                        headers: {
-                            Authorization: `Bearer ${revenueCatSecret}`,
-                            "Content-Type": "application/json",
+                const [agg, pendingLeaseCount] = await Promise.all([
+                    db.voiceConversation.aggregate({
+                        where: {
+                            accountId: userId,
+                            createdAt: { gte: monthStart },
                         },
-                        signal: controller.signal,
-                    });
-                } finally {
-                    clearTimeout(timeoutId);
-                }
-
-                if (rcRes.ok) {
-                    const rcData = (await rcRes.json()) as any;
-                    subscribed = hasRevenueCatVoiceEntitlement(rcData);
-                } else {
-                    log({ module: "voice" }, `RevenueCat check failed for user ${userId}: ${rcRes.status}`);
-                    if (rcRes.status >= 500 || rcRes.status === 401 || rcRes.status === 403) {
-                        return reply.code(503).send({ allowed: false, reason: "upstream_error" satisfies VoiceDenyReason });
-                    }
-                    // 404 (subscriber not found) falls through as not subscribed.
+                        _sum: { durationSeconds: true },
+                    }),
+                    db.voiceSessionLease.count({
+                        where: {
+                            accountId: userId,
+                            createdAt: { gte: monthStart },
+                            conversation: null,
+                        },
+                    }),
+                ]);
+                const usedSeconds = Number(agg._sum.durationSeconds ?? 0);
+                const pendingSeconds = Math.max(0, Number(pendingLeaseCount ?? 0)) * maxSessionSeconds;
+                const effectiveSeconds = usedSeconds + pendingSeconds;
+                if (Number.isFinite(effectiveSeconds) && effectiveSeconds >= freeMinutesPerMonth * 60) {
+                    return reply.code(403).send({ allowed: false, reason: "quota_exceeded" satisfies VoiceDenyReason });
                 }
             } catch (e) {
-                log({ module: "voice" }, "RevenueCat check threw", e);
+                log({ module: "voice" }, "Failed to enforce VOICE_FREE_MINUTES_PER_MONTH", e);
                 return reply.code(503).send({ allowed: false, reason: "upstream_error" satisfies VoiceDenyReason });
             }
-
-            if (!subscribed) {
-                if (freeMinutesPerMonth > 0) {
-                    const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0));
-                    try {
-                        const [agg, pendingLeaseCount] = await Promise.all([
-                            db.voiceConversation.aggregate({
-                                where: {
-                                    accountId: userId,
-                                    createdAt: { gte: monthStart },
-                                },
-                                _sum: { durationSeconds: true },
-                            }),
-                            db.voiceSessionLease.count({
-                                where: {
-                                    accountId: userId,
-                                    createdAt: { gte: monthStart },
-                                    conversation: null,
-                                },
-                            }),
-                        ]);
-                        const usedSeconds = Number(agg._sum.durationSeconds ?? 0);
-                        const pendingSeconds = Math.max(0, Number(pendingLeaseCount ?? 0)) * maxSessionSeconds;
-                        const effectiveSeconds = usedSeconds + pendingSeconds;
-                        if (Number.isFinite(effectiveSeconds) && effectiveSeconds >= freeMinutesPerMonth * 60) {
-                            return reply.code(403).send({ allowed: false, reason: "quota_exceeded" satisfies VoiceDenyReason });
-                        }
-                    } catch (e) {
-                        log({ module: "voice" }, "Failed to enforce VOICE_FREE_MINUTES_PER_MONTH", e);
-                        return reply.code(503).send({ allowed: false, reason: "upstream_error" satisfies VoiceDenyReason });
-                    }
-                } else if (freeSessionsPerMonth <= 0) {
-                    return reply.code(403).send({ allowed: false, reason: "subscription_required" satisfies VoiceDenyReason });
-                }
-                grantedBy = "free";
-            }
-        } else {
-            grantedBy = "free";
         }
 
         let leaseId: string | null = null;
@@ -267,7 +208,7 @@ export function registerVoiceMintRoute(app: Fastify, path: "/v1/voice/token" | "
                     return { ok: false as const, statusCode: 429 as const, reason: "too_many_sessions" satisfies VoiceDenyReason };
                 }
 
-                if (requireSubscription && grantedBy === "free" && freeSessionsPerMonth > 0) {
+                if (freeSessionsPerMonth > 0) {
                     const quotaWinners = await tx.voiceSessionLease.findMany({
                         where: { accountId: userId, periodKey, grantedBy: "free" },
                         orderBy: [{ createdAt: "asc" }, { id: "asc" }],

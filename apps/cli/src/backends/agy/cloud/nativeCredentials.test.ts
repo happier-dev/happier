@@ -5,8 +5,7 @@ import * as fs from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AGY_OAUTH_CLIENT_ID } from '@happier-dev/agents';
-import { parseAgyNativeCredential, readAgyNativeCredential } from './nativeCredentials';
+import { parseAgyNativeCredential, readAgyNativeCredential, serializeAgyNativeCliCredential } from './nativeCredentials';
 
 vi.mock('node:child_process', async (original) => ({ ...await original<typeof import('node:child_process')>(), spawn: vi.fn() }));
 vi.mock('node:fs/promises', async (original) => {
@@ -24,8 +23,8 @@ let docker = false;
 
 beforeEach(async () => {
   home = await fs.mkdtemp(join(tmpdir(), 'agy-native-selection-'));
-  vi.stubEnv('HOME', home); vi.stubEnv('USERPROFILE', home); vi.stubEnv('GEMINI_HOME', join(home, 'other-gemini'));
-  for (const key of ['SSH_TTY', 'SSH_CLIENT', 'SSH_CONNECTION', 'WSL_DISTRO_NAME', 'WSL_INTEROP', 'AGY_ACP_FORCE_FILE_STORAGE']) vi.stubEnv(key, '');
+  vi.stubEnv('HOME', home); vi.stubEnv('USERPROFILE', home); vi.stubEnv('GEMINI_HOME', '');
+  for (const key of ['SSH_TTY', 'SSH_CLIENT', 'SSH_CONNECTION', 'WSL_DISTRO_NAME', 'WSL_INTEROP']) vi.stubEnv(key, '');
   vi.stubEnv('DBUS_SESSION_BUS_ADDRESS', 'unix:path=/synthetic/bus');
   Object.defineProperty(process, 'platform', { ...platformDescriptor, value: 'linux' });
   cgroup = ''; osrelease = 'Linux'; docker = false;
@@ -51,7 +50,7 @@ beforeEach(async () => {
 afterEach(async () => { Object.defineProperty(process, 'platform', platformDescriptor); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllEnvs(); vi.mocked(childProcess.spawn).mockReset(); await fs.rm(home, { recursive: true, force: true }); });
 
 describe('native CLI 1.3.3 storage selection', () => {
-  it('uses the native Keyring account when no bypass applies, ignoring GEMINI_HOME', async () => {
+  it('uses the native Keyring account when no bypass applies', async () => {
     await expect(readAgyNativeCredential('cli')).resolves.toMatchObject({ refreshToken: 'keyring-account' });
     expect(childProcess.spawn).toHaveBeenCalledWith('secret-tool', ['lookup', 'service', 'gemini', 'username', 'antigravity'], expect.anything());
   });
@@ -174,17 +173,6 @@ describe('platform authority', () => {
     await expect(readAgyNativeCredential('cli-file')).resolves.toMatchObject({ refreshToken: 'file-account' });
     expect(childProcess.spawn).not.toHaveBeenCalled();
   });
-  it('uses the ACP file when macOS has no default Keychain', async () => {
-    Object.defineProperty(process, 'platform', { ...platformDescriptor, value: 'darwin' });
-    await fs.mkdir(join(home, 'other-gemini/antigravity-acp'), { recursive: true });
-    await fs.writeFile(join(home, 'other-gemini/antigravity-acp/acp_token.json'), JSON.stringify({ client_id: AGY_OAUTH_CLIENT_ID, refresh_token: 'acp-file-account' }));
-    vi.mocked(childProcess.spawn).mockImplementation(() => {
-      const child = new ChildProcess(); child.stdout = new PassThrough(); child.stderr = new PassThrough();
-      queueMicrotask(() => child.emit('close', 1));
-      return child;
-    });
-    await expect(readAgyNativeCredential('acp')).resolves.toMatchObject({ refreshToken: 'acp-file-account' });
-  });
   it('does not apply the Linux D-Bus bypass to macOS', async () => {
     Object.defineProperty(process, 'platform', { ...platformDescriptor, value: 'darwin' });
     vi.stubEnv('DBUS_SESSION_BUS_ADDRESS', '');
@@ -196,31 +184,31 @@ describe('platform authority', () => {
     await expect(readAgyNativeCredential('cli')).rejects.toMatchObject({ code: 'credentials_unavailable' });
     expect(childProcess.spawn).not.toHaveBeenCalled();
   });
-  it('does not turn an empty healthy ACP Keychain into file selection', async () => {
-    Object.defineProperty(process, 'platform', { ...platformDescriptor, value: 'darwin' });
-    await fs.mkdir(join(home, 'other-gemini/antigravity-acp'), { recursive: true });
-    await fs.writeFile(join(home, 'other-gemini/antigravity-acp/acp_token.json'), JSON.stringify({ client_id: 'synthetic', refresh_token: 'stale-file' }));
-    vi.mocked(childProcess.spawn).mockImplementation((_command, args) => {
-      const child = new ChildProcess(); child.stdout = new PassThrough(); child.stderr = new PassThrough();
-      queueMicrotask(() => {
-        if (args?.[0] === 'default-keychain') { child.stdout?.emit('data', '"/synthetic/login.keychain-db"'); child.emit('close', 0); }
-        else child.emit('close', 44);
-      });
-      return child;
-    });
-    await expect(readAgyNativeCredential('acp')).rejects.toMatchObject({ code: 'credentials_unavailable' });
-  });
 });
 
 
-describe('ACP authorized-user token field', () => {
-  it.each([
-    [{ token: 'projected-access' }, 'projected-access'],
-    [{ token: 'projected-access', access_token: 'historical-access' }, 'projected-access'],
-    [{ access_token: 'historical-access' }, 'historical-access'],
-    [{ token: { access_token: 'not-an-acp-token' } }, null],
-    [{}, null],
-  ] as const)('reads only supported ACP access fields from %j', (fields, accessToken) => {
-    expect(parseAgyNativeCredential({ client_id: AGY_OAUTH_CLIENT_ID, refresh_token: 'refresh', ...fields }, 'acp')).toMatchObject({ accessToken, refreshToken: 'refresh' });
+describe('CLI token envelope codec', () => {
+  it('reads back what connected-account materialization writes', () => {
+    const now = Date.parse('2026-11-26T00:00:00.000Z');
+    const written = serializeAgyNativeCliCredential({ accessToken: 'access', refreshToken: 'refresh', expiresAt: now + 3_600_000, email: 'a@example.test' }, now);
+    expect(written).toMatchObject({ auth_method: 'consumer', id_token_email: 'a@example.test', token: { token_type: 'Bearer', expires_in: 3600 } });
+    expect(parseAgyNativeCredential(JSON.parse(JSON.stringify(written)))).toEqual({ accessToken: 'access', refreshToken: 'refresh', expiresAt: now + 3_600_000 });
+  });
+  it('writes an unknown expiry as already expired so the CLI refreshes first', () => {
+    const written = serializeAgyNativeCliCredential({ accessToken: null, refreshToken: 'refresh', expiresAt: null, email: null });
+    expect(parseAgyNativeCredential(written)).toEqual({ accessToken: null, refreshToken: 'refresh', expiresAt: 0 });
+  });
+  it('rejects business and retired-server token shapes', () => {
+    expect(parseAgyNativeCredential({ auth_method: 'business', token: { refresh_token: 'refresh' } })).toBeNull();
+    expect(parseAgyNativeCredential({ client_id: 'client', refresh_token: 'refresh' })).toBeNull();
+  });
+});
+
+describe('machine login profile', () => {
+  it('reads the CLI file from the GEMINI_HOME profile that machine-login sessions use', async () => {
+    vi.stubEnv('GEMINI_HOME', join(home, 'profile'));
+    await fs.mkdir(join(home, 'profile/antigravity-cli'), { recursive: true });
+    await fs.writeFile(join(home, 'profile/antigravity-cli/antigravity-oauth-token'), nativeToken('profile-account'));
+    await expect(readAgyNativeCredential('cli-file')).resolves.toMatchObject({ refreshToken: 'profile-account' });
   });
 });

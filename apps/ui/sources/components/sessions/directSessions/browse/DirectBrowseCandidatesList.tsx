@@ -76,6 +76,7 @@ export const DirectBrowseCandidatesList = React.memo(function DirectBrowseCandid
     onSearchQueryChange: (value: string) => void;
     onSelectCandidate: (candidate: DirectBrowseCandidate) => void;
     onDeleteCandidate: (candidate: DirectBrowseCandidate) => void;
+    onKeepCandidate?: (candidate: DirectBrowseCandidate) => void;
     onLoadMore: () => void;
 }>) {
     const { theme } = useUnistyles() as { theme: AppTheme };
@@ -125,7 +126,7 @@ export const DirectBrowseCandidatesList = React.memo(function DirectBrowseCandid
                             testID={`direct-session-candidate:${candidate.remoteSessionId}`}
                             title={buildDirectBrowseCandidateDisplayTitle(candidate)}
                             subtitle={buildDirectBrowseCandidateSubtitle(candidate, theme, itemDensity)}
-                            rightElement={props.canDeleteCandidates ? (
+                            rightElement={props.canDeleteCandidates || props.onKeepCandidate ? (
                                 <View style={styles.candidateAccessory}>
                                     {buildDirectBrowseCandidateRightElement(candidate, theme, itemDensity)}
                                     <DirectBrowseCandidateActions
@@ -133,11 +134,13 @@ export const DirectBrowseCandidatesList = React.memo(function DirectBrowseCandid
                                         candidateId={candidate.remoteSessionId}
                                         providerLabel={props.providerLabel}
                                         deleting={props.deletingSessionId !== null}
+                                        canDelete={props.canDeleteCandidates}
                                         onDelete={() => props.onDeleteCandidate(candidate)}
+                                        onKeep={props.onKeepCandidate ? () => props.onKeepCandidate?.(candidate) : undefined}
                                     />
                                 </View>
                             ) : buildDirectBrowseCandidateRightElement(candidate, theme, itemDensity)}
-                            rightElementOutsidePressable={props.canDeleteCandidates}
+                            rightElementOutsidePressable={props.canDeleteCandidates || Boolean(props.onKeepCandidate)}
                             onPress={() => props.onSelectCandidate(candidate)}
                             loading={props.linkingSessionId === candidate.remoteSessionId || props.deletingSessionId === candidate.remoteSessionId}
                             disabled={props.deletingSessionId === candidate.remoteSessionId}

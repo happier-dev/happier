@@ -28,6 +28,8 @@ import {
     useSessionListPaneSourceScopeKey,
 } from '@/components/sessions/shell/surface/sessionListPaneRetention';
 import { useNewSessionDraftProjections } from '@/components/sessions/shell/NewSessionDraftsSection';
+import { LeavingFoot } from '@/components/sessions/keepOrLetGo/LeavingFoot';
+import { LeavingSessionsProvider } from '@/components/sessions/keepOrLetGo/leavingSessionsView';
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -114,7 +116,7 @@ const ActiveSessionsListPaneStateSubscriber = React.memo((props: Readonly<{
 const SessionsListWrapperContent = React.memo((props: { pathname: string; surfaceRoutePathname: string }) => {
     const { theme } = useUnistyles();
     const isFocused = useIsFocused();
-    const { directSessionsEnabled, storageKind, setStorageKind } = useSessionListStorageKind();
+    const { directSessionsEnabled, storageKind: activeTab, storageFilter: storageKind, setStorageKind } = useSessionListStorageKind();
     const newSessionDrafts = useNewSessionDraftProjections();
     const pathname = props.pathname;
     const surfaceRoutePathname = props.surfaceRoutePathname;
@@ -220,7 +222,7 @@ const SessionsListWrapperContent = React.memo((props: { pathname: string; surfac
     const storageChrome = (
         <SessionsListStorageChrome
             directSessionsEnabled={directSessionsEnabled}
-            storageKind={storageKind}
+            storageKind={activeTab}
             onSelectStorageKind={setStorageKind}
         />
     );
@@ -265,6 +267,7 @@ const SessionsListWrapperContent = React.memo((props: { pathname: string; surfac
                         )}
                     </View>
                 </View>
+                <LeavingFoot />
             </View>
         );
     } else {
@@ -272,12 +275,15 @@ const SessionsListWrapperContent = React.memo((props: { pathname: string; surfac
             <View style={styles.container}>
                 {storageChrome}
                 {sessionListContent}
+                <LeavingFoot />
             </View>
         );
     }
 
+    // The leaving foot sits below the list, never inside it, so it stays put while the list scrolls
+    // and its arrival never shifts a row. Only the Happier (cloud) tab has sessions that leave.
     return (
-        <>
+        <LeavingSessionsProvider enabled={activeTab === 'persisted'}>
             {surfaceOwnership.dataActive ? (
                 <ActiveSessionsListPaneStateSubscriber
                     storageKind={storageKind}
@@ -286,6 +292,6 @@ const SessionsListWrapperContent = React.memo((props: { pathname: string; surfac
                 />
             ) : null}
             {content}
-        </>
+        </LeavingSessionsProvider>
     );
 });

@@ -1,3 +1,4 @@
+import type { Prisma } from '@prisma/client';
 import { afterTx, inTx } from '@/storage/inTx';
 import { log } from '@/utils/logging/log';
 import { markAccountChanged } from '@/app/changes/markAccountChanged';
@@ -13,11 +14,11 @@ export async function deleteOwnedSession(params: {
     sessionId: string;
     ownerAccountId?: string | null;
     reason: 'user_request' | 'retention_policy';
-    sessionWhereGuard?: Record<string, unknown>;
+    sessionWhereGuard?: Prisma.SessionWhereInput;
 }): Promise<boolean> {
     try {
         return await inTx(async (tx) => {
-            const session = await loadSessionDeleteRecipients(tx as any, {
+            const session = await loadSessionDeleteRecipients(tx, {
                 sessionId: params.sessionId,
                 ownerAccountId: params.ownerAccountId ?? null,
                 sessionWhereGuard: params.sessionWhereGuard,
@@ -39,7 +40,7 @@ export async function deleteOwnedSession(params: {
 
             const recipientCursors: Array<{ accountId: string; cursor: number }> = [];
             for (const accountId of recipientAccountIds) {
-                const cursor = await markAccountChanged(tx as any, {
+                const cursor = await markAccountChanged(tx, {
                     accountId,
                     kind: 'session',
                     entityId: params.sessionId,
@@ -55,14 +56,14 @@ export async function deleteOwnedSession(params: {
                 ...(params.ownerAccountId ? { accountId: params.ownerAccountId } : null),
                 ...(params.sessionWhereGuard ?? null),
             };
-            const deleted = await deleteSessionTree(tx as any, {
+            const deleted = await deleteSessionTree(tx, {
                 sessionId: params.sessionId,
                 actorAccountId: session.accountId,
                 reason: params.reason,
                 sessionDeleteWhere: Object.keys(sessionDeleteWhere).length > 0 ? sessionDeleteWhere : undefined,
             });
 
-            afterTx(tx as any, async () => {
+            afterTx(tx, async () => {
                 // The session and its access keys are gone: cached relay publish authorizations are stale.
                 invalidateSessionRelayAuthorizationForSession(params.sessionId);
                 log(

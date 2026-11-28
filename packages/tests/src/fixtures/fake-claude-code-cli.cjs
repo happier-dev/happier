@@ -536,7 +536,7 @@ function emitHookEvent(hookEventName, payload = {}) {
   });
 }
 
-void emitHookEvent('SessionStart', {
+const sessionStartHook = emitHookEvent('SessionStart', {
   source: resumeSessionId ? 'resume' : 'startup',
 });
 
@@ -1447,7 +1447,8 @@ if (isSdkStreamJson) {
   let localStdinTurn = 0;
   let localComposerBuffer = '';
   let skipNextLfAfterCr = false;
-  const renderLocalIdleComposer = () => {
+  let localTurnTail = sessionStartHook;
+  const renderLocalIdleComposer = (turn = localStdinTurn) => {
     // Keep the new composer on a distinct terminal row from the submitted prompt. The real Claude
     // TUI renders turn output between them; a single shared newline makes two composer-shaped rows
     // overlap in the screen parser's global matcher and falsely leaves the submitted prompt active.
@@ -1456,7 +1457,7 @@ if (isSdkStreamJson) {
       type: 'local_idle_composer_rendered',
       invocationId,
       ts: Date.now(),
-      turn: localStdinTurn,
+      turn,
     });
   };
 
@@ -1492,10 +1493,15 @@ if (isSdkStreamJson) {
       });
       return;
     }
-    void emitHookEvent('UserPromptSubmit');
-    appendLocalStdinTurn(promptText, localStdinTurn);
-    void emitHookEvent('Stop', { background_tasks: [] });
-    renderLocalIdleComposer();
+    const turn = localStdinTurn;
+    // Claude's command hooks block by default. Keep each turn behind its hooks so a slow
+    // UserPromptSubmit cannot arrive after Stop and leave the real CLI's lifecycle active.
+    localTurnTail = localTurnTail.then(async () => {
+      await emitHookEvent('UserPromptSubmit');
+      appendLocalStdinTurn(promptText, turn);
+      await emitHookEvent('Stop', { background_tasks: [] });
+      renderLocalIdleComposer(turn);
+    });
   }
 
   process.stdin.on('data', (chunk) => {

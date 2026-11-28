@@ -103,6 +103,7 @@ export interface SessionListRenderableSession {
     active: boolean;
     activeAt: number;
     archivedAt?: number | null;
+    cloudCopyLeftAt?: number | null;
     pendingVersion?: number;
     pendingCount?: number;
     pendingBlockedCount?: number;
@@ -244,7 +245,8 @@ export function buildSessionListRenderableMetadata(metadata: Metadata | null | u
     if (!metadata) return null;
     const agentActivityEntries = readSessionAgentActivityEntriesFromMetadata(metadata);
     const directSessionV1 = (() : DirectSessionRenderableMetadata | null => {
-        const candidate = metadata.directSessionV1;
+        const candidate = Object.prototype.propertyIsEnumerable.call(metadata, 'directSessionV1')
+            ? metadata.directSessionV1 : null;
         if (!candidate || typeof candidate !== 'object') return null;
         if (!('v' in candidate) || candidate.v !== 1) return null;
         return {
@@ -341,6 +343,7 @@ export function buildSessionListRenderableFromSession(
         active: session.active,
         activeAt: session.activeAt,
         archivedAt: session.archivedAt ?? null,
+        cloudCopyLeftAt: session.cloudCopyLeftAt ?? null,
         pendingVersion: session.pendingVersion,
         pendingCount: session.pendingCount,
         pendingBlockedCount: session.pendingBlockedCount,
@@ -586,6 +589,7 @@ export function areSessionListRenderablesEqual(
         && previous.active === next.active
         && previous.activeAt === next.activeAt
         && (previous.archivedAt ?? null) === (next.archivedAt ?? null)
+        && (previous.cloudCopyLeftAt ?? null) === (next.cloudCopyLeftAt ?? null)
         && (previous.pendingVersion ?? null) === (next.pendingVersion ?? null)
         && (previous.pendingCount ?? null) === (next.pendingCount ?? null)
         && (previous.pendingBlockedCount ?? null) === (next.pendingBlockedCount ?? null)
@@ -761,6 +765,7 @@ export function didSessionListRenderableStructuralFieldsChange(
     if (previous.active !== next.active) return true;
     if (previous.createdAt !== next.createdAt) return true;
     if ((previous.archivedAt ?? null) !== (next.archivedAt ?? null)) return true;
+    if ((previous.cloudCopyLeftAt ?? null) !== (next.cloudCopyLeftAt ?? null)) return true;
     if ((previous.keepVisibleWhenInactive === true) !== (next.keepVisibleWhenInactive === true)) return true;
 
     const prevMeta = previous.metadata;
@@ -942,6 +947,7 @@ export function didSessionListRenderableWarmCacheFieldsChange(
     if (previous.active !== next.active) return true;
     if (previous.activeAt !== next.activeAt) return true;
     if ((previous.archivedAt ?? null) !== (next.archivedAt ?? null)) return true;
+    if ((previous.cloudCopyLeftAt ?? null) !== (next.cloudCopyLeftAt ?? null)) return true;
     if ((previous.lastViewedSessionSeq ?? null) !== (next.lastViewedSessionSeq ?? null)) return true;
     if ((previous.pendingCount ?? null) !== (next.pendingCount ?? null)) return true;
     if ((previous.pendingBlockedCount ?? null) !== (next.pendingBlockedCount ?? null)) return true;
@@ -996,6 +1002,7 @@ export function isSessionListRenderableWarmCacheProgressOnlyChange(
     if (previous.presence !== next.presence) return false;
     if (previous.thinking !== next.thinking) return false;
     if ((previous.archivedAt ?? null) !== (next.archivedAt ?? null)) return false;
+    if ((previous.cloudCopyLeftAt ?? null) !== (next.cloudCopyLeftAt ?? null)) return false;
     if ((previous.pendingCount ?? null) !== (next.pendingCount ?? null)) return false;
     if ((previous.pendingBlockedCount ?? null) !== (next.pendingBlockedCount ?? null)) return false;
     if ((previous.pendingVersion ?? null) !== (next.pendingVersion ?? null)) return false;

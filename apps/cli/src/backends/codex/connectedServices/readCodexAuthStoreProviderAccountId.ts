@@ -13,6 +13,22 @@ function readString(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
 
+/** Only Codex-backend managed accounts can add requirements through cloud config. */
+export function isCodexAuthFileKnownUnmanaged(value: unknown): boolean {
+  const auth = readRecord(value);
+  if (!auth) return false;
+  if (auth.auth_mode === 'apikey' || (auth.auth_mode == null && readString(auth.OPENAI_API_KEY))) return true;
+  if (auth.auth_mode != null && auth.auth_mode !== 'chatgpt') return false;
+  const token = readString(readRecord(auth.tokens)?.id_token);
+  const claims = token ? decodeJwtPayload(token) : null;
+  switch (readRecord(claims?.['https://api.openai.com/auth'])?.chatgpt_plan_type) {
+    case 'free': case 'go': case 'plus': case 'pro': case 'prolite': case 'promax':
+      return true;
+    default:
+      return false;
+  }
+}
+
 export type CodexAuthStoreProviderAccountIdProof =
   | Readonly<{ status: 'resolved'; accountId: string; accountEmail?: string }>
   | Readonly<{ status: 'missing' }>

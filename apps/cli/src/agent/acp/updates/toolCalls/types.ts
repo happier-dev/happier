@@ -1,5 +1,9 @@
 export type AcpToolCallStatus = 'pending' | 'in_progress' | 'completed' | 'failed' | 'cancelled';
 
+export function isAcpToolCallTerminalStatus(status: unknown): status is 'completed' | 'failed' | 'cancelled' {
+  return status === 'completed' || status === 'failed' || status === 'cancelled';
+}
+
 export type AcpToolCallSnapshot = Readonly<{
   toolCallId: string;
   title?: string | null;

@@ -1,49 +1,25 @@
+import { captureAccountEvent } from './analyticsConsent';
 import { tracking } from './tracking';
 
 // Re-export tracking for direct access
 export { tracking } from './tracking';
-
-let trackingAnonymousUserId: string | null = null;
-const trackingAnonymousUserIdListeners = new Set<() => void>();
-
-function publishTrackingAnonymousUserIdChange() {
-    trackingAnonymousUserIdListeners.forEach((listener) => listener());
-}
-
-/**
- * Initialize tracking with an anonymous user ID.
- * Should be called once during auth initialization.
- */
-export function initializeTracking(anonymousUserId: string) {
-    trackingAnonymousUserId = anonymousUserId;
-    publishTrackingAnonymousUserIdChange();
-    tracking?.identify(anonymousUserId, { name: anonymousUserId });
-}
-
-export function getTrackingAnonymousUserId(): string | null {
-    return trackingAnonymousUserId;
-}
-
-export function subscribeTrackingAnonymousUserId(listener: () => void): () => void {
-    trackingAnonymousUserIdListeners.add(listener);
-    return () => trackingAnonymousUserIdListeners.delete(listener);
-}
+export {
+    applyAnalyticsOptOut,
+    getTrackingAnonymousUserId,
+    initializeTracking,
+    subscribeTrackingAnonymousUserId,
+    trackLogout,
+} from './analyticsConsent';
 
 /**
  * Auth events
  */
 export function trackAccountCreated() {
-    tracking?.capture('account_created');
+    captureAccountEvent('account_created');
 }
 
 export function trackAccountRestored() {
-    tracking?.capture('account_restored');
-}
-
-export function trackLogout() {
-    trackingAnonymousUserId = null;
-    publishTrackingAnonymousUserIdChange();
-    tracking?.reset();
+    captureAccountEvent('account_restored');
 }
 
 /**
@@ -57,6 +33,15 @@ export function trackMessageSent() {
     tracking?.capture('message_sent');
 }
 
+// Voice events name the provider only: no session id, no error text.
+export function trackVoiceSessionToggled(providerId: string) {
+    tracking?.capture('voice_session_toggled', { providerId });
+}
+
+export function trackVoiceSessionError(providerId: string) {
+    tracking?.capture('voice_session_error', { providerId });
+}
+
 export function trackVoiceRecording(action: 'start' | 'stop') {
     tracking?.capture('voice_recording', { action });
 }
@@ -66,49 +51,14 @@ export function trackPermissionResponse(allowed: boolean) {
 }
 
 /**
- * Paywall events
- */
-export function trackPaywallButtonClicked() {
-    tracking?.capture('paywall_button_clicked');
-}
-
-export function trackPaywallPresented() {
-    tracking?.capture('paywall_presented');
-}
-
-export function trackPaywallPurchased() {
-    tracking?.capture('paywall_purchased');
-}
-
-export function trackPaywallCancelled() {
-    tracking?.capture('paywall_cancelled');
-}
-
-export function trackPaywallRestored() {
-    tracking?.capture('paywall_restored');
-}
-
-export function trackPaywallError(error: string) {
-    tracking?.capture('paywall_error', { error });
-}
-
-/**
  * Review request events
  */
-export function trackReviewPromptShown() {
-    tracking?.capture('review_prompt_shown');
-}
-
-export function trackReviewPromptResponse(likesApp: boolean) {
-    tracking?.capture('review_prompt_response', { likes_app: likesApp });
-}
-
 export function trackReviewStoreShown() {
     tracking?.capture('review_store_shown');
 }
 
-export function trackReviewRetryScheduled(daysUntilRetry: number) {
-    tracking?.capture('review_retry_scheduled', { days_until_retry: daysUntilRetry });
+export function trackStarAsk(outcome: 'shown' | 'starred' | 'already_starred' | 'opened_github' | 'dismissed') {
+    tracking?.capture('star_ask', { outcome });
 }
 
 /**

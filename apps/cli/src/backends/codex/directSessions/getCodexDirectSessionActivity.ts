@@ -19,7 +19,7 @@ export async function getCodexDirectSessionActivity(params: Readonly<{
 
   let maxMtimeMs: number | null = null;
   for (const home of homes) {
-    const rollouts = await collectCodexSessionRolloutFiles({ codexHome: home, remoteSessionId: params.remoteSessionId });
+    const rollouts = await collectCodexSessionRolloutFiles({ includeCompressed: true, codexHome: home, remoteSessionId: params.remoteSessionId });
     for (const file of rollouts) {
       const rawMtimeMs = file.mtimeMs;
       const mtimeMs = typeof rawMtimeMs === 'number' && Number.isFinite(rawMtimeMs) ? Math.trunc(rawMtimeMs) : null;

@@ -109,6 +109,7 @@ type HandleSessionMessageSocketUpdateParams = {
     applyCacheOnlySessionProjectionPatch?: (params: Readonly<{
         sessionId: string;
         updateData: any;
+        cloudCopyLeftAt?: null;
         rawMessage: ApiMessage | undefined;
         messageSeq: number | null;
         updateType: 'new-message' | 'message-updated';
@@ -229,6 +230,7 @@ function applyProjectionOnlySessionPatch(params: Readonly<{
     if (params.applyCacheOnlySessionProjectionPatch?.({
         sessionId: params.sessionId,
         updateData: params.updateData,
+        ...(params.updateData.body.cloudCopyLeftAt === null ? { cloudCopyLeftAt: null } : {}),
         rawMessage: params.rawMessage,
         messageSeq: params.messageSeq,
         updateType: params.updateType,
@@ -286,7 +288,7 @@ function applyAlreadyLoadedReplayProjectionPatch(params: Readonly<{
     }]);
 }
 
-type SessionProjectionPatch = Partial<Pick<Session, 'seq' | 'updatedAt' | 'meaningfulActivityAt'>>;
+type SessionProjectionPatch = Partial<Pick<Session, 'seq' | 'updatedAt' | 'meaningfulActivityAt' | 'cloudCopyLeftAt'>>;
 
 function hasSessionProjectionPatch(patch: SessionProjectionPatch): boolean {
     return Object.keys(patch).length > 0;
@@ -330,6 +332,8 @@ function buildMessageSessionProjectionPatch(params: Readonly<{
         && (params.updateType === 'new-message' || advancesSeq || advancesMeaningfulActivityAt);
 
     return {
+        ...(params.updateData.body.cloudCopyLeftAt === null && typeof params.session.cloudCopyLeftAt === 'number'
+            && (updateCreatedAt ?? 0) >= params.session.cloudCopyLeftAt ? { cloudCopyLeftAt: null } : {}),
         ...(advancesSeq ? { seq: nextSessionSeq } : {}),
         ...(advancesUpdatedAt ? { updatedAt: updateCreatedAt } : {}),
         ...(advancesMeaningfulActivityAt ? { meaningfulActivityAt: nextMeaningfulActivityAt } : {}),

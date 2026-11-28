@@ -42,6 +42,19 @@ describe('filterSessionListViewDataByStorageKind', () => {
         }
     });
 
+    it('moves a retained row to External even without a readable provider link, including on warm start', () => {
+        const row = makeSession('moved', false);
+        const moved = { ...row, session: { ...row.session, cloudCopyLeftAt: 100 } };
+        const cache = SessionListCacheEntryV1Schema.parse(buildSessionListCacheEntryFromRenderable(moved.session));
+        const warm = { ...row, session: buildSessionListRenderableFromCacheEntry(cache) };
+        for (const source of [moved, warm]) {
+            expect(readDirectSessionLink(source.session.metadata)).toBeNull();
+            expect(filterSessionListViewDataByStorageKind([source], 'direct')).toEqual([source]);
+            expect(filterSessionListViewDataByStorageKind([source], 'persisted')).toEqual([]);
+        }
+        expect(filterSessionListViewDataByStorageKind([row], 'persisted')).toEqual([row]);
+    });
+
     it('keeps only direct sessions and the headers that still own visible rows', () => {
         const groupKey = 'server:server-a:day:2026-03-05';
         const source: SessionListViewItem[] = [
@@ -56,6 +69,16 @@ describe('filterSessionListViewDataByStorageKind', () => {
             'h:Today',
             's:direct-1',
         ]);
+    });
+
+    it('keeps moved rows in the single list when Direct Sessions is disabled', () => {
+        const hosted = makeSession('hosted', false);
+        const moved = makeSession('moved', true);
+        moved.session.cloudCopyLeftAt = 100;
+        const direct = makeSession('direct', true);
+
+        expect(filterSessionListViewDataByStorageKind([hosted, moved, direct], 'persistedWithRetained'))
+            .toEqual([hosted, moved]);
     });
 
     it('keeps only persisted sessions and removes orphaned headers', () => {

@@ -23,7 +23,7 @@ export async function probeClaudeCatalogs(params: PreflightSessionControlsProbeP
   const processEnv = params.processEnv ?? process.env;
   const subprocessEnv = buildClaudeSubprocessEnv({
     baseEnv: processEnv,
-    envOverlay: resolveClaudeSessionEnvOverlay({ claudeCodeIncludeInNativeHistory: params.accountSettings?.claudeCodeIncludeInNativeHistory === true }),
+    envOverlay: resolveClaudeSessionEnvOverlay({ claudeCodeIncludeInNativeHistory: params.accountSettings?.claudeCodeIncludeInNativeHistory }),
   });
   const messages = new PushableAsyncIterable<SDKUserMessage>();
   const abortController = new AbortController();

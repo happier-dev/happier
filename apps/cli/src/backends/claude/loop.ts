@@ -187,7 +187,7 @@ export async function loop(opts: LoopOptions): Promise<number> {
         runtimeActivityContributions,
     });
     session.claudeCodeExperimentalAgentTeamsEnabled = opts.claudeCodeExperimentalAgentTeamsEnabled === true;
-    session.claudeCodeIncludeInNativeHistory = opts.claudeCodeIncludeInNativeHistory === true;
+    session.claudeCodeIncludeInNativeHistory = opts.claudeCodeIncludeInNativeHistory;
 
     // Seed permission mode without blocking on transcript fetches.
     // The session's metadata snapshot is already available locally, and for fresh sessions

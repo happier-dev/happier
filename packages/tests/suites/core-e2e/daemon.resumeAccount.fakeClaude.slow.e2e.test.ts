@@ -1,5 +1,6 @@
+import { constants as bufferConstants } from 'node:buffer';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, open } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 
@@ -9,6 +10,7 @@ import { spawnLoggedProcess, type SpawnedProcess } from '../../src/testkit/proce
 import { resolveCliTestLaunchSpec } from '../../src/testkit/process/cliLaunchSpec';
 import { createTestAuth } from '../../src/testkit/auth';
 import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { resolveClaudeProjectId } from '../../src/testkit/claudeProjectId.cjs';
 import { sanitizeDaemonEnvForSpawn, startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
 import { fakeClaudeFixturePath, waitForFakeClaudeInvocation } from '../../src/testkit/fakeClaude';
@@ -91,6 +93,18 @@ it('preserves a terminal-selected Claude account and refuses a second entry for 
         return true;
     }, { timeoutMs: 60_000 });
     await terminal.stop();
+    const transcriptPath = resolve(accountB, 'projects', resolveClaudeProjectId(workspace), `${vendorId}.jsonl`);
+    const transcript = await open(transcriptPath, 'r+');
+    try {
+        const { size } = await transcript.stat();
+        // Pad with newline-delimited sparse rows so no record approaches the string limit.
+        const newline = Buffer.from('\n');
+        for (let offset = size; offset <= bufferConstants.MAX_STRING_LENGTH; offset += 64 * 1024) {
+            await transcript.write(newline, 0, newline.length, offset + 64 * 1024 - 1);
+        }
+    } finally {
+        await transcript.close();
+    }
     const resumed = await control<{ success: boolean; sessionId?: string }>('/spawn-session', {
         directory: workspace, agent: 'claude', resume: vendorId, existingSessionId: sessionId,
         terminal: { mode: 'plain' },
@@ -99,6 +113,7 @@ it('preserves a terminal-selected Claude account and refuses a second entry for 
     await enqueueSessionPromptForScenario({ baseUrl: server.baseUrl, token: auth.token, sessionId, secret, text: 'SECOND' });
     const second = await waitForFakeClaudeInvocation(log, (entry) => entry.mode === 'sdk' && entry.pid !== first.pid, { timeoutMs: 60_000 });
     expect(second.claudeConfigDir).toBe(accountB);
+    expect(second.argv[second.argv.indexOf('--resume') + 1]).toBe(vendorId);
     const stopped = await control<{ status: string }>('/stop-session', { sessionId });
     expect(stopped.data.status).toBe('stopped');
     const replacement = launch('replacement', ['claude', '--happy-starting-mode', 'remote', '--resume', vendorId], {

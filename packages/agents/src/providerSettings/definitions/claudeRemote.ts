@@ -237,7 +237,7 @@ export const CLAUDE_REMOTE_PROVIDER_FIELDS = {
   },
   claudeCodeIncludeInNativeHistory: {
     schema: z.boolean(),
-    default: false,
+    default: true,
     description: 'Use Happier attribution for Claude sessions so they can appear in Claude Code history',
     storageScope: 'account',
     analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
@@ -346,6 +346,10 @@ const CLAUDE_REMOTE_PROVIDER_ARTIFACTS = buildSettingArtifacts(CLAUDE_REMOTE_PRO
 
 export const CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS = Object.freeze(CLAUDE_REMOTE_PROVIDER_ARTIFACTS.defaults);
 
+export function resolveClaudeCodeIncludeInNativeHistory(value: unknown): boolean {
+  return typeof value === 'boolean' ? value : CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS.claudeCodeIncludeInNativeHistory;
+}
+
 export function buildClaudeRemoteProviderSettingsShape(_zod: typeof z) {
   return CLAUDE_REMOTE_PROVIDER_ARTIFACTS.shape;
 }
@@ -400,7 +404,7 @@ export function buildClaudeRemoteOutgoingMessageMetaExtras(settings: Readonly<Re
       ?? CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS.claudeUnifiedTerminalWorkspaceTrust,
     claudeRemoteSettingSourcesV2: effectiveV2,
     ...(legacyFromV2 ? { claudeRemoteSettingSources: legacyFromV2 } : {}),
-    claudeCodeIncludeInNativeHistory: readBoolean('claudeCodeIncludeInNativeHistory'),
+    claudeCodeIncludeInNativeHistory: resolveClaudeCodeIncludeInNativeHistory(settings.claudeCodeIncludeInNativeHistory),
     claudeCodeExperimentalAgentTeamsEnabled: readBoolean('claudeCodeExperimentalAgentTeamsEnabled'),
     claudeLocalPermissionBridgeEnabled: readBoolean('claudeLocalPermissionBridgeEnabled'),
     claudeLocalPermissionBridgeWaitIndefinitely: readBoolean('claudeLocalPermissionBridgeWaitIndefinitely'),

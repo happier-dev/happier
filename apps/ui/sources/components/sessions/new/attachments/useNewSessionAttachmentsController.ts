@@ -13,6 +13,7 @@ import { resolveReviewCommentDraftAnchorsForPrompt } from '@/components/sessions
 import { useWorkspaceReviewCommentDraftHandlers } from '@/components/sessions/reviews/comments/useWorkspaceReviewCommentDraftHandlers';
 import { useAttachmentDraftManager } from '@/components/sessions/attachments/useAttachmentDraftManager';
 import { useAttachmentsUploadConfig } from '@/components/sessions/attachments/useAttachmentsUploadConfig';
+import { buildAttachmentMessageMeta } from '@/components/sessions/attachments/buildAttachmentMessageMeta';
 import { formatAttachmentsBlock, uploadAttachmentDraftsToSession } from '@/components/sessions/attachments/uploadAttachmentDraftsToSession';
 import { blurActiveElementOnWeb, deferOnWeb } from '@/utils/platform/deferOnWeb';
 import { nativeReadClipboardImageAttachment } from '@/utils/files/nativeClipboardImageAttachment';
@@ -276,20 +277,7 @@ export function useNewSessionAttachmentsController(params: Readonly<{
                             applyDraftPatch: applyNewSessionDraftPatch,
                         });
                         attachmentsBlock = formatAttachmentsBlock(uploaded);
-                        attachmentsMetaOverrides = {
-                            happier: {
-                                kind: 'attachments.v1',
-                                payload: {
-                                    attachments: uploaded.map((attachment) => ({
-                                        name: attachment.name,
-                                        path: attachment.path,
-                                        mimeType: attachment.mimeType,
-                                        sizeBytes: attachment.sizeBytes,
-                                        sha256: attachment.sha256,
-                                    })),
-                                },
-                            },
-                        };
+                        attachmentsMetaOverrides = buildAttachmentMessageMeta(uploaded);
                     }
 
                     const reviewCommentDraftsForPrompt = hasReviewCommentDrafts

@@ -1,10 +1,10 @@
 import type { SessionListViewItem } from './sessionListViewData';
-import type { SessionStorageKind } from '../sessionStorageKind';
+import type { SessionListStorageFilter } from '../sessionStorageKind';
 import { getSessionStorageKind } from '../sessionStorageKind';
 
 export function filterSessionListViewDataByStorageKind(
     source: ReadonlyArray<SessionListViewItem>,
-    storageKind: SessionStorageKind,
+    storageKind: Exclude<SessionListStorageFilter, 'all'>,
 ): SessionListViewItem[] {
     const out: SessionListViewItem[] = [];
     let pendingServerHeader: Extract<SessionListViewItem, { type: 'header' }> | null = null;
@@ -26,7 +26,11 @@ export function filterSessionListViewDataByStorageKind(
             continue;
         }
 
-        if (getSessionStorageKind(item.session) !== storageKind) {
+        const kind = getSessionStorageKind(item.session);
+        const visible = storageKind === 'persistedWithRetained'
+            ? kind === 'persisted' || item.session.cloudCopyLeftAt != null
+            : kind === storageKind;
+        if (!visible) {
             continue;
         }
 

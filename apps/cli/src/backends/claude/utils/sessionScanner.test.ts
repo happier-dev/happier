@@ -6,7 +6,8 @@ import { readClaudeTaskLifecycleEnvelope } from '../taskNotifications/claudeTask
 import { createClaudeProviderActivityLedger, readClaudeProviderTaskActivity } from '../providerActivity/createClaudeProviderActivityLedger'
 import { createLocalTurnLifecycleController } from '@/agent/localControl/turnLifecycle'
 import { createClaudeLocalLifecycleTracker } from '../localControl/claudeLocalLifecycleTracker'
-import { mkdir, writeFile, appendFile, rm, readFile, utimes, rename } from 'node:fs/promises'
+import { constants as bufferConstants } from 'node:buffer'
+import { mkdir, writeFile, appendFile, rm, readFile, truncate, utimes, rename } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { existsSync } from 'node:fs'
@@ -1436,6 +1437,24 @@ describe('sessionScanner', () => {
     expect(missing).toEqual([
       { sessionId, filePath: join(projectDir, `${sessionId}.jsonl`) },
     ])
+  })
+
+  it('does not warn that a readable transcript larger than a Node string is missing', async () => {
+    const sessionId = '11111111-1111-1111-1111-111111111111'
+    const filePath = join(projectDir, `${sessionId}.jsonl`)
+    const missing = vi.fn()
+    await writeFile(filePath, '{}\n')
+    await truncate(filePath, bufferConstants.MAX_STRING_LENGTH + 1)
+
+    scanner = await createSessionScanner({
+      sessionId,
+      workingDirectory: testDir,
+      onMessage: (msg) => collectedMessages.push(msg),
+      onTranscriptMissing: missing,
+      transcriptMissingWarningMs: 5,
+    })
+
+    await expect(waitFor(() => missing.mock.calls.length > 0, 1500)).rejects.toThrow('Timed out waiting for condition')
   })
 
   it('never emits rows from a pre-existing sibling session that grows in a shared project dir (cross-session contamination, pid-14419)', async () => {

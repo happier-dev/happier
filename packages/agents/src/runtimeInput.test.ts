@@ -17,16 +17,22 @@ describe('agent runtime input capability', () => {
       inFlightSteerSupported: true,
       terminalPromptInjectionSupported: false,
     });
+    // agy acp steers a running turn when a second session/prompt arrives.
+    expect(Reflect.get(AGENTS_CORE.agy, 'runtimeInput')).toEqual({
+      inFlightSteerSupported: true,
+      terminalPromptInjectionSupported: false,
+    });
   });
 
   it('re-exports the shared in-flight steer helper from the package root', () => {
     expect(Reflect.get(agents, 'supportsAgentInFlightSteer')).toBeTypeOf('function');
     const supportsAgentInFlightSteer = Reflect.get(agents, 'supportsAgentInFlightSteer') as
-      | ((agentId: 'pi' | 'claude' | 'grok') => boolean)
+      | ((agentId: 'pi' | 'claude' | 'grok' | 'agy') => boolean)
       | undefined;
     expect(supportsAgentInFlightSteer?.('pi')).toBe(true);
     expect(supportsAgentInFlightSteer?.('claude')).toBe(true);
     expect(supportsAgentInFlightSteer?.('grok')).toBe(true);
+    expect(supportsAgentInFlightSteer?.('agy')).toBe(true);
   });
 
   it('re-exports the shared terminal input injection type surface from the package root', () => {

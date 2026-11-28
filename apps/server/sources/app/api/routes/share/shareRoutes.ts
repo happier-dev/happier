@@ -1,6 +1,7 @@
 import { type Fastify } from "../../types";
 import { db } from "@/storage/db";
 import { z } from "zod";
+import { lockShareableSessionInTx } from "@/app/share/lockShareableSessionInTx";
 import { canManageSharing, canManagePermissionDelegation, areFriends } from "@/app/share/accessControl";
 import { ShareAccessLevel } from "@/storage/prisma";
 import { PROFILE_SELECT, toShareUserProfile } from "@/app/share/types";
@@ -158,7 +159,12 @@ export function shareRoutes(app: Fastify) {
             }
         }
 
-        const share = await inTx(async (tx) => {
+        const result = await inTx(async (tx) => {
+            if (!await lockShareableSessionInTx(tx, sessionId)) return { type: 'unavailable' as const };
+            if (!await canManageSharing(ownerId, sessionId, tx)) return { type: 'forbidden' as const };
+            if (canApprovePermissions && !await canManagePermissionDelegation(ownerId, sessionId, tx)) {
+                return { type: 'forbidden' as const };
+            }
             const share = await tx.sessionShare.upsert({
                 where: {
                     sessionId_sharedWithUserId: {
@@ -205,8 +211,11 @@ export function shareRoutes(app: Fastify) {
                 });
             });
 
-            return share;
+            return { type: 'ok' as const, share };
         });
+        if (result.type === 'unavailable') return reply.code(409).send({ error: 'Session cloud copy unavailable' });
+        if (result.type === 'forbidden') return reply.code(403).send({ error: 'Forbidden' });
+        const { share } = result;
 
         return reply.send({
             share: {

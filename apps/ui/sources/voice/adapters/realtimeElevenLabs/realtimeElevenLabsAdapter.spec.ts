@@ -127,7 +127,7 @@ describe('realtime elevenlabs voice adapter', () => {
     });
     await dispatch?.({ localId: 'voice-local-2', handoffMode: 'interrupt_and_send' });
 
-    expect(startRealtimeSession).toHaveBeenCalledWith('voice-global', undefined, false, { textOnly: true });
+    expect(startRealtimeSession).toHaveBeenCalledWith('voice-global', undefined, { textOnly: true });
     expect(appendVoiceConversationUserText).toHaveBeenCalledWith({
       conversationSessionId: 'carrier-s1',
       text: 'hello',
@@ -155,7 +155,7 @@ describe('realtime elevenlabs voice adapter', () => {
     });
     await expect(dispatch?.({ localId: 'voice-local-3', handoffMode: 'interrupt_and_send' })).rejects.toThrow('voice_service_unavailable');
 
-    expect(startRealtimeSession).toHaveBeenCalledWith('voice-global', undefined, false, { textOnly: true });
+    expect(startRealtimeSession).toHaveBeenCalledWith('voice-global', undefined, { textOnly: true });
     expect(sendTextMessage).not.toHaveBeenCalled();
   });
 });

@@ -7,6 +7,7 @@ import type {
     RetentionPolicy,
     SessionRetentionPolicy,
 } from './retentionPolicyTypes';
+import { DEFAULT_RETENTION_NOTICE_DAYS, readRetentionStartsAt } from '@/app/retention/retentionNotice';
 import { readRetentionDomainDefinitions } from '@/app/retention/runtime/retentionRuleRegistry';
 
 const DEFAULT_INTERVAL_MS = 60 * 60 * 1000;
@@ -95,7 +96,13 @@ export function readRetentionPolicyFromEnv(env: NodeJS.ProcessEnv): RetentionPol
             key: 'HAPPIER_SERVER_RETENTION__BATCH_SIZE',
             fallback: DEFAULT_BATCH_SIZE,
         }),
-        dryRun: parseBooleanEnv(safeEnv.HAPPIER_SERVER_RETENTION__DRY_RUN, false),
+        dryRun: parseBooleanEnv(safeEnv.HAPPIER_SERVER_RETENTION__DRY_RUN, true),
+        startsAt: readRetentionStartsAt(safeEnv),
+        noticeDays: parsePositiveInt({
+            env: safeEnv,
+            key: 'HAPPIER_SERVER_RETENTION__NOTICE_DAYS',
+            fallback: DEFAULT_RETENTION_NOTICE_DAYS,
+        }),
         maxDeletesPerRulePerRun: parsePositiveInt({
             env: safeEnv,
             key: 'HAPPIER_SERVER_RETENTION__MAX_DELETES_PER_RULE_PER_RUN',
