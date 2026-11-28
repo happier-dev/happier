@@ -329,17 +329,17 @@ export class WorkspaceSyncSidecarLifecycle {
     let broker: WorkspaceSyncSidecarBroker | null = null;
     let process: WorkspaceSyncSidecarProcess | null = null;
     let startupTimer: ReturnType<typeof setTimeout> | undefined;
-    const startupDeadline = new Promise<never>((_resolve, reject) => {
-      startupTimer = setTimeout(
-        () => reject(new Error('sidecar startup deadline exceeded')),
-        this.dependencies.startupDeadlineMs ?? WORKSPACE_SYNC_SIDECAR_STARTUP_DEADLINE_MS,
-      );
-      startupTimer.unref();
-    });
-    // Directory and broker preparation can be awaiting when the shared deadline fires.
-    void startupDeadline.catch(() => undefined);
     try {
-      const runtime = await Promise.race([this.dependencies.resolveRuntime(), startupDeadline]);
+      const runtime = await this.dependencies.resolveRuntime();
+      const startupDeadline = new Promise<never>((_resolve, reject) => {
+        startupTimer = setTimeout(
+          () => reject(new Error('sidecar startup deadline exceeded')),
+          this.dependencies.startupDeadlineMs ?? WORKSPACE_SYNC_SIDECAR_STARTUP_DEADLINE_MS,
+        );
+        startupTimer.unref();
+      });
+      // Directory and broker preparation can be awaiting when the shared deadline fires.
+      void startupDeadline.catch(() => undefined);
       this.assertNotStopping();
       await this.dependencies.ensurePrivateDirectory(runtime.dataDir);
       this.assertNotStopping();

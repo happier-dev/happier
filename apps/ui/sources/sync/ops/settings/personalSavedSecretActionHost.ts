@@ -46,17 +46,16 @@ export function createUiPersonalSavedSecretActionExecute(account: LazyActionAcco
         const execute = createPersonalSavedSecretActionExecuteV1({
             usedBy: async secretId => readSavedSecretUsedBy(scope, formatSharedSavedSecretRefV1(secretId)),
             list: async secretId => {
-                const secrets = [];
-                for (const entry of await read(secretId)) {
+                const secrets = await Promise.all((await read(secretId)).map(async entry => {
                     const ref = parseSavedSecretRefV1(entry.ref);
-                    if (ref.kind !== 'shared_resource' || !entry.name || !entry.kind || entry.revision === null) continue;
+                    if (ref.kind !== 'shared_resource' || !entry.name || !entry.kind || entry.revision === null) return null;
                     const opened = entry.storage?.kind === 'external'
                         ? await readSavedSecretContentsInContext(account, [entry.ref], context.signal, { expectedRevision: entry.revision }) : null;
                     const content = opened?.ok ? opened.contents.get(entry.ref)?.content : undefined;
-                    secrets.push({ secretId: ref.resourceId, name: entry.name, kind: entry.kind, revision: entry.revision,
-                        ...(content?.v === 2 && content.source.kind === 'external' ? { source: content.source } : {}) });
-                }
-                return secrets;
+                    return { secretId: ref.resourceId, name: entry.name, kind: entry.kind, revision: entry.revision,
+                        ...(content?.v === 2 && content.source.kind === 'external' ? { source: content.source } : {}) };
+                }));
+                return secrets.filter(secret => secret !== null);
             },
             sources: () => listSavedSecretSources(installedSecretSourceDeclarations(readPluginAccountAvailability(scope).readInstalledPlugins()))
                 .map(({ contribution, title, capabilities }) => ({ contribution, title,

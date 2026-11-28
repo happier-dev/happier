@@ -802,6 +802,47 @@ describe('Saved Secret operations through their real Account and Action owners',
         } finally { context.dispose(); }
     });
 
+    it.each(['plain', 'e2ee'] as const)('personal list reads external descriptors in one ordered parallel wave: %s', async mode => {
+        const account = await openAccount(mode);
+        const source = { kind: 'external' as const, contribution: { pluginId: 'happier.secret-source.onepassword', localId: 'onepassword' },
+            account: 'vault-account', reference: 'op://vault/item/password' };
+        for (const id of ['first', 'second']) {
+            const content = { v: 2, name: id, kind: 'password', source } as const;
+            const key = new Uint8Array(32).fill(7);
+            const storedContent = mode === 'plain'
+                ? sealSavedSecretResourceStoredContentV1({ resourceId: id, mode, content })
+                : sealSavedSecretResourceStoredContentV1({ resourceId: id, mode, content, resourceDataKey: key, randomBytes: tweetnacl.randomBytes });
+            const row = account.materialRow(id, mode, storedContent, 3, mode === 'e2ee' ? key : undefined);
+            account.resources.set(id, { ...row, entry: { ...row.entry, storage: { kind: 'external', provider: source.contribution } } });
+        }
+        const gates = [createDeferred<void>(), createDeferred<void>()];
+        let dispatched = 0;
+        account.setBeforeMaterialRead(() => gates[dispatched++]!.promise);
+        const context = await captureLazyActionAccountContext(account.scope.serverId);
+        const controller = new AbortController();
+        const execute = createUiPersonalSavedSecretActionExecute(context, createHomeDomainActionExecutorForScope(account.scope));
+        const listing = execute({ actionId: 'secrets.list', input: {}, context: { surface: 'ui', signal: controller.signal } });
+        try {
+            await vi.waitFor(() => expect(dispatched).toBe(2));
+            gates[1]!.resolve();
+            gates[0]!.resolve();
+            expect(await listing).toMatchObject({ secrets: [{ secretId: 'first', source }, { secretId: 'second', source }] });
+            expect(account.materialReadPaths).toHaveLength(2);
+            expect(account.materialReadPaths.every(path => path.includes('expectedRevision=3'))).toBe(true);
+            account.setBeforeMaterialRead(undefined);
+            account.setMaterialReadStatus(503);
+            const unavailable = await execute({ actionId: 'secrets.list', input: {}, context: { surface: 'ui' } });
+            expect(unavailable)
+                .toMatchObject({ secrets: [{ secretId: 'first', secretRef: 'happier:shared-secret:v1:first', name: 'first', kind: 'password', updatedAt: 3 },
+                    { secretId: 'second', secretRef: 'happier:shared-secret:v1:second', name: 'second', kind: 'password', updatedAt: 3 }] });
+            expect(JSON.stringify(unavailable)).not.toContain('op://');
+        } finally {
+            gates.forEach(gate => gate.resolve());
+            await listing;
+            context.dispose();
+        }
+    });
+
     it('vault fields retain missing-tool recovery through the list Action and Retry reads the same draft', async () => {
         const account = await openAccount();
         if (!vaultSocket) throw new Error('Expected socket boundary');

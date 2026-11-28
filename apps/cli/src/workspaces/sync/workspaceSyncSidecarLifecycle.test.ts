@@ -12,45 +12,53 @@ import {
 } from './workspaceSyncSidecarLifecycle';
 
 describe('WorkspaceSyncSidecarLifecycle', () => {
-  it('settles pending artifact acquisition at the startup deadline and ignores its late result', async () => {
+  // RU2 F3: the child-start budget excludes first-party runtime acquisition.
+  it('allows runtime acquisition beyond the child-start deadline and then enforces handshake timeout', async () => {
     vi.useFakeTimers();
     let releaseArtifact!: () => void;
-    let markAcquiring!: () => void;
-    const acquiring = new Promise<void>(resolve => { markAcquiring = resolve; });
     const artifact = new Promise<void>(resolve => { releaseArtifact = resolve; });
-    const broker = vi.fn<WorkspaceSyncSidecarLifecycleDependencies['createBroker']>();
-    const spawn = vi.fn<SpawnWorkspaceSyncSidecar>();
+    let terminate!: (event: { type: 'exited'; code: number }) => void;
+    const termination = new Promise<{ type: 'exited'; code: number }>(resolve => { terminate = resolve; });
+    const stop = vi.fn(async () => terminate({ type: 'exited', code: 0 }));
+    const close = vi.fn(async () => {});
     const states: string[] = [];
     const lifecycle = new WorkspaceSyncSidecarLifecycle({
       resolveRuntime: async () => {
-        markAcquiring();
         await artifact;
         return { managerPath: '/verified/manager', agentPath: '/verified/agent',
           dataDir: '/private/data', brokerDir: '/private/broker',
           manifest: { engineVersion: '1', protocolEpoch: 'external-stream-v1' } };
       },
-      createBroker: broker, spawn, ensurePrivateDirectory: async () => {},
-      openExternalStream: vi.fn(), randomBytes: () => new Uint8Array(32), randomId: () => 'id',
+      createBroker: async () => ({ bootstrapDescriptor: new Uint8Array([1]),
+        waitForReady: async () => await new Promise<void>(() => {}), command: async () => [], close }),
+      spawn: async () => ({ pid: 42, waitForTermination: async () => await termination, stop }),
+      ensurePrivateDirectory: async () => {}, openExternalStream: vi.fn(),
+      randomBytes: () => new Uint8Array(32), randomId: () => 'id',
       onRestartReady: async () => {}, onReadinessChanged: state => states.push(state.state),
+      shutdownGraceMs: 0,
     });
     let outcome: unknown = 'pending';
     const starting = lifecycle.start().then(
       () => { outcome = 'ready'; }, error => { outcome = error; },
     );
     try {
-      await acquiring;
-      await vi.advanceTimersByTimeAsync(WORKSPACE_SYNC_SIDECAR_STARTUP_DEADLINE_MS);
+      await vi.advanceTimersByTimeAsync(WORKSPACE_SYNC_SIDECAR_STARTUP_DEADLINE_MS + 1);
+      expect(outcome).toBe('pending');
+      expect(states).toEqual(['starting']);
+      releaseArtifact();
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(WORKSPACE_SYNC_SIDECAR_STARTUP_DEADLINE_MS - 1);
+      expect(outcome).toBe('pending');
+      await vi.advanceTimersByTimeAsync(1);
+      await starting;
       expect(outcome).toMatchObject({ code: 'engine_unavailable' });
       expect(states).toEqual(['starting', 'unavailable']);
-      await lifecycle.stop();
-      releaseArtifact();
-      await starting;
-      await Promise.resolve();
-      expect(broker).not.toHaveBeenCalled();
-      expect(spawn).not.toHaveBeenCalled();
+      expect(stop).toHaveBeenCalledTimes(1);
+      expect(close).toHaveBeenCalledTimes(1);
       expect(lifecycle.readProcessRoots()).toEqual([]);
     } finally {
       releaseArtifact();
+      await vi.advanceTimersByTimeAsync(WORKSPACE_SYNC_SIDECAR_STARTUP_DEADLINE_MS);
       await starting;
       await lifecycle.stop();
       vi.useRealTimers();
