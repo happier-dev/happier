@@ -519,6 +519,26 @@ describe('SessionView composer typing', () => {
     }
   });
 
+  it('keeps the mounted composer input unchanged when the Machine re-describes an equal contribution projection', async () => {
+    composerInventoryEnabled = true;
+    const screen = await renderScreen();
+    try {
+      await renderer.act(async () => { await new Promise(resolve => setTimeout(resolve, 1500)); });
+      const { publishMachineContributionRegistryProjectionInvalidation } = await import('@/sync/ops/machineContributionRegistryProjectionRevision');
+      const requestsBefore = composerProjectionRequests.length;
+      const before = { ...findAgentInput(screen).props };
+      await renderer.act(async () => publishMachineContributionRegistryProjectionInvalidation({ machineId: 'm1', serverId: runtime.serverId }, 'refresh'));
+      await renderer.act(async () => { await new Promise(resolve => setTimeout(resolve, 600)); });
+      expect(composerProjectionRequests.length, 'the refresh re-describes the Machine').toBeGreaterThan(requestsBefore);
+      const after = findAgentInput(screen).props;
+      const changed = Object.keys({ ...before, ...after }).filter(key => key !== 'children' && !Object.is(before[key], after[key]));
+      // The held projection stays ready while it revalidates, so chips, regions and handlers keep their identity.
+      expect(changed).toEqual([]);
+    } finally {
+      await screen.unmount();
+    }
+  });
+
   it('keeps the composer controller still when only the Session header changes, and shows the new header', async () => {
     // Every composer controller run publishes a new composer model to the slot's renderer.
     const publishedComposers = new Set<SessionComposerModel>();

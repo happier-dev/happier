@@ -269,6 +269,38 @@ describe('useDaemonMergedProjectionInputs', () => {
         } finally { await hook.unmount(); }
     });
 
+    it('keeps the held ready answer while a content refresh revalidates, and still withdraws it for authority', async () => {
+        await primeCache(7);
+        const accountLifetime = captureActiveServerAccountScopeLifetime();
+        const observed: Array<ReturnType<typeof useDaemonMergedProjectionInputs>> = [];
+        const hook = await renderHook(() => {
+            const snapshot = useDaemonMergedProjectionInputs({ serverId, machineId: 'machine-1', accountLifetime, sections: 'complete' });
+            observed.push(snapshot);
+            return snapshot;
+        }, { initialProps: {} });
+        try {
+            const initial = hook.getCurrent();
+            expect(initial).toMatchObject({ phase: 'ready', inputs: { pluginProjectionV2: { generation: 7 } } });
+            const refreshed = createDeferred<ReturnType<typeof readyResponse>>();
+            daemonDescribe.mockReturnValueOnce(refreshed.promise);
+            await act(async () => publishMachineContributionRegistryProjectionInvalidation({ serverId, machineId: 'machine-1' }, 'refresh'));
+            await vi.waitFor(() => expect(daemonDescribe).toHaveBeenCalledTimes(1));
+            // The held answer stays usable while the daemon re-describes it.
+            expect(hook.getCurrent()).toBe(initial);
+            await act(async () => { refreshed.resolve(readyResponse(8)); });
+            await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ phase: 'ready', inputs: { pluginProjectionV2: { generation: 8 } } }));
+            expect(observed.filter(snapshot => snapshot.phase !== 'ready')).toEqual([]);
+
+            const reauthorized = createDeferred<ReturnType<typeof readyResponse>>();
+            daemonDescribe.mockReturnValueOnce(reauthorized.promise);
+            const beforeAuthority = hook.getCurrent();
+            await act(async () => publishMachineContributionRegistryProjectionInvalidation({ serverId, machineId: 'machine-1' }, 'authority'));
+            expect(hook.getCurrent()).toMatchObject({ phase: 'loading', inputs: beforeAuthority.inputs });
+            await act(async () => { reauthorized.resolve(readyResponse(9)); });
+            await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ phase: 'ready', inputs: { pluginProjectionV2: { generation: 9 } } }));
+        } finally { await hook.unmount(); }
+    });
+
     async function adoptRowActionHome() {
         const serverIdentityId = 'srv_session_row_menu';
         // Restore the adopted Home through the actual connection owner. Merely

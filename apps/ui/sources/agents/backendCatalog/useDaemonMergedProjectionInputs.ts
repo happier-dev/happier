@@ -6,6 +6,7 @@ import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot'
 import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGeneration';
 
 import {
+    getMachineContributionRegistryProjectionAuthorityRevision,
     getMachineContributionRegistryProjectionRevision,
     subscribeMachineContributionRegistryProjectionInvalidation,
     type MachineContributionRegistryProjectionFailureReason,
@@ -140,6 +141,7 @@ export function useDaemonMergedProjectionInputs(params: Readonly<{
 
     const refreshKeyRef = React.useRef(params.refreshKey);
     const projectionRevisionRef = React.useRef(projectionRevision);
+    const authorityRevisionRef = React.useRef(machineId ? getMachineContributionRegistryProjectionAuthorityRevision({ machineId, serverId: serverId || null }) : 0);
     const localeRef = React.useRef(locale);
     const machineIdRef = React.useRef(machineId);
     const serverIdRef = React.useRef(serverId);
@@ -213,6 +215,12 @@ export function useDaemonMergedProjectionInputs(params: Readonly<{
 
     React.useEffect(() => {
         const refreshRequested = refreshKeyRef.current !== params.refreshKey;
+        const authorityRevision = machineId ? getMachineContributionRegistryProjectionAuthorityRevision({ machineId, serverId: serverId || null }) : 0;
+        // Revalidating a held answer under the same authority, locale and explicit refresh
+        // (a content refresh or an aged answer) keeps it; an authority change withdraws it.
+        const sameAuthority = !refreshRequested && localeRef.current === locale
+            && authorityRevisionRef.current === authorityRevision;
+        authorityRevisionRef.current = authorityRevision;
         const forceReload = refreshRequested
             || projectionRevisionRef.current !== projectionRevision
             || localeRef.current !== locale;
@@ -283,7 +291,11 @@ export function useDaemonMergedProjectionInputs(params: Readonly<{
         }
         if (cached) {
             stateAccountLifetimeRef.current = accountLifetime;
-            if (forceReload || !reusable) {
+            if ((forceReload || !reusable) && cached.kind === 'ready' && sameAuthority && !scopeChanged && !accountLifetimeChanged) {
+                // Keep only the ready answer this reader already holds for this Account and scope.
+                const revalidating: DaemonMergedProjectionInputsState = { phase: 'loading', inputs: cached.inputs };
+                publishState(previous => previous.phase === 'ready' ? previous : revalidating);
+            } else if (forceReload || !reusable) {
                 publishState({
                     phase: 'loading',
                     inputs: cached.kind === 'ready' || cached.kind === 'error'
@@ -393,7 +405,8 @@ export function useDaemonMergedProjectionInputs(params: Readonly<{
     }
     if (
         refreshKeyRef.current !== params.refreshKey
-        || projectionRevisionRef.current !== projectionRevision
+        || (projectionRevisionRef.current !== projectionRevision && authorityRevisionRef.current !== (machineId
+            ? getMachineContributionRegistryProjectionAuthorityRevision({ machineId, serverId: serverId || null }) : 0))
         || localeRef.current !== locale
     ) {
         return { phase: 'loading', inputs: state.inputs };

@@ -77,6 +77,7 @@ import {
 } from './machineContributionRegistryProjectionRevision';
 
 export {
+    getMachineContributionRegistryProjectionAuthorityRevision,
     getMachineContributionRegistryProjectionRevision,
     publishMachineContributionRegistryProjectionInvalidation,
     publishMachineContributionRegistryProjectionRefresh,
