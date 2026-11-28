@@ -23,7 +23,9 @@ vi.mock('@/utils/platform/tauri/transferFetch', () => ({
 
 import { DATABASE_ACCESS_READ_ACTION_ID_V1, DATABASE_PLUGIN_ID_V1, UI_DATABASE_HISTORY_CLEAR_ACTION_ID_V1, databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
 import { TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from '@happier-dev/triage-protocol/v1';
-import { TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1 } from '../../../../../../packages/plugins/triage/src/actions/mountedUiProtocol';
+import { TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1, TriageMountedUiInputV1Schema } from '../../../../../../packages/plugins/triage/src/actions/mountedUiProtocol';
+import { readPluginUiAccountExecutableOrigin } from '@/sync/domains/plugins/ui/projectionOrigins';
+import { derivePluginUiEphemeralSharedScopeIdentity, getPluginUiEphemeralSharedScope } from '@/components/plugins/surfaces/pluginUiEphemeralSharedScope';
 import { PluginActionContributionV2Schema } from '@happier-dev/protocol/plugins/actions/v2';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import type { PluginClientApi } from '@happier-dev/plugin-sdk';
@@ -2001,8 +2003,8 @@ describe('current UI context Voice tool port', () => {
         { name: 'DB Workbench History Clear', mountId: '0dc76ace-1589-4749-bf0b-77189d8a19f1',
             action: { pluginId: DATABASE_PLUGIN_ID_V1, localId: databaseActionLocalIdV1(UI_DATABASE_HISTORY_CLEAR_ACTION_ID_V1) },
             status: 'cleared', operation: null, confirm: true },
-        { name: 'Triage Summary', mountId: '_r_16_', action: TRIAGE_MOUNTED_ACTION, status: 'applied',
-            operation: { kind: 'setPublicationSummary', summary: '' } },
+        { name: 'Triage Summary', mountId: 'review-panel', action: TRIAGE_MOUNTED_ACTION, status: 'applied',
+            operation: { kind: 'setPublicationSummary', summary: 'Keep the retry deadline across reconnects.' } },
         { name: 'Triage saved View', mountId: '_r_16_', action: TRIAGE_MOUNTED_ACTION, status: 'applied',
             operation: { kind: 'selectSavedView', viewId: 'c6027590-2b4c-42ea-8528-0d16be2a4d98' } },
     ])('admits $name from the mounted Account Client Action reverse ingress', async ({ mountId, action, operation, status, confirm }) => {
@@ -2023,7 +2025,9 @@ describe('current UI context Voice tool port', () => {
         const accessReadKey = `${accessRead.pluginId}/${accessRead.localId}`;
         const machineId = 'machine-public-authoring-client-action';
         const applied = vi.fn();
+        const publication = operation?.kind === 'setPublicationSummary' ? await import('./mountGithubReviewPublication.test-support') : null;
         const handler = vi.fn<PluginClientActionHandler>(async (input, context) => {
+            if (publication) return publication.handleMountedReviewAction(TriageMountedUiInputV1Schema.parse(input), context);
             if (!mounted || JSON.stringify(input) !== JSON.stringify(actionInput({ mountId }))) return { status: 'unavailable' };
             if (confirm) await context.ui.executeAction(accessRead.localId, { target: { linkId: 'workbench-link' } });
             applied();
@@ -2057,8 +2061,19 @@ describe('current UI context Voice tool port', () => {
         const binding = { machineId, ...lifetime.scope,
             readProjection: () => projection, isCurrent: lifetime.isCurrent, execute };
         const receive = createCurrentUiContributedActionRpcHandler(binding);
+        let sheet: Awaited<ReturnType<NonNullable<typeof publication>['mountGithubReviewPublication']>> | undefined;
         try {
             expect(await fixture.composition.reconcile([fixture.activation])).toMatchObject([{ result: { ok: true } }]);
+            if (publication) {
+                const scope = getPluginUiEphemeralSharedScope({ ...derivePluginUiEphemeralSharedScopeIdentity({
+                    accountLifetime: lifetime, pluginId: action.pluginId, occurrenceId: 'review-renderer',
+                    accountExecutionOrigin: readPluginUiAccountExecutableOrigin(fixture.action),
+                    artifactDigest: `sha256:${'c'.repeat(64)}`,
+                }), isCurrent: lifetime.isCurrent });
+                if (!scope) throw new Error('Expected the Account review renderer scope');
+                sheet = await publication.mountGithubReviewPublication({ mountId, scope });
+                expect(await sheet.getByRole('textbox', { name: 'Summary' })).toHaveProperty('value', '');
+            }
             const read = await executeCurrentUiContextAction({ actionId: 'ui.current_context.read', input: {}, context: { surface: 'agent' } });
             if (!read?.ok) throw new Error('Expected current mounted UI context');
             expect(read.result).toEqual(snapshot);
@@ -2078,7 +2093,12 @@ describe('current UI context Voice tool port', () => {
             });
             expect(handler).not.toHaveBeenCalled();
             const answer = async (beforeConfirm: () => void) => {
-                if (!confirm) return invoke(request);
+                if (!confirm) {
+                    if (!publication) return invoke(request);
+                    let result!: Awaited<ReturnType<typeof invoke>>;
+                    await act(async () => { result = await invoke(request); });
+                    return result;
+                }
                 let pending!: ReturnType<typeof invoke>;
                 await act(async () => { pending = invoke(request); });
                 await vi.waitFor(() => expect(modalScreen.findByTestId('app-shell-confirmation-confirm')).not.toBeNull());
@@ -2094,6 +2114,18 @@ describe('current UI context Voice tool port', () => {
             publishedProjection = projection;
             expect(answered).toEqual({ ok: true, result: { status } });
             expect(handler).toHaveBeenCalledTimes(1);
+            if (sheet && operation?.kind === 'setPublicationSummary') {
+                expect(await sheet.getByRole('textbox', { name: 'Summary' })).toHaveProperty('value', operation.summary);
+                await act(async () => {
+                    expect(await invoke({ ...request, input: { mountId, operation: { ...operation, summary: '' } } }))
+                        .toEqual({ ok: true, result: { status: 'applied' } });
+                });
+                expect(await sheet.getByRole('textbox', { name: 'Summary' })).toHaveProperty('value', '');
+                await sheet.dispose();
+                sheet = undefined;
+                expect(await invoke(request)).toEqual({ ok: true, result: { status: 'unavailable' } });
+                return;
+            }
             expect(applied).toHaveBeenCalledTimes(1);
             if (confirm) expect(daemonReply).toHaveBeenCalledWith(expect.objectContaining({
                 machineId, method: RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE,
@@ -2106,6 +2138,7 @@ describe('current UI context Voice tool port', () => {
                 .toMatchObject({ ok: true, result: { status: 'unavailable' } });
             expect(applied).toHaveBeenCalledTimes(1);
         } finally {
+            await sheet?.dispose();
             unregister(); unpublish(); await fixture.composition.unload(); await connection.dispose();
         }
     });

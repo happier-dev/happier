@@ -45,6 +45,9 @@ import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testH
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { parseDecryptedSessionMetadata } from '@/sync/engine/sessions/parsePlainSessionPayload';
 import { MINIMUM_CLI_SESSION_FORK_REQUEST_ID_VERSION } from '@/utils/system/versionUtils';
+import { ApprovalRequestV2Schema, resolveApprovalExecutor } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { Modal } from '@/modal';
+import type { SessionHandoffPickerResult } from '@/components/sessions/handoff/openSessionHandoffPicker';
 import { readMachineDaemonCliVersionForServerScope } from '@/sync/domains/machines/readMachineDaemonCliVersionForServerScope';
 
 // Only native modal presentation is replaced; custom content and Action admission stay real.
@@ -936,6 +939,62 @@ describe('default Action executor Session lifecycle contracts', () => {
       },
     }, { ...context(), actionRequestId: 'preflight-denied-handoff', bypassApprovals: true });
     expect(result).toMatchObject(targetPreflightAdmissionFailure);
+  });
+
+  it('blocks the picker before handoff and settles an app-claimed approval when destination review is missing', async () => {
+    const { runSessionHandoffPickerFlow } = await import('@/sync/domains/sessionHandoff/runSessionHandoffPickerFlow');
+    const { SessionHandoffPickerModalEntry } = await import('@/components/sessions/handoff/SessionHandoffPickerModalEntry');
+    installSession();
+    const app = executor();
+    const policy = { v: 1 as const, selection: 'git_worktree' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
+    const selection = { targetMachineId: 'machine_2', targetPath: '/target/repo', workspaceAction: {
+      kind: 'create_relationship', mode: 'mirror_exactly',
+      contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) }, flushBeforeCommit: true,
+    } } satisfies SessionHandoffPickerResult;
+    daemonAnswer = () => targetPreflightAdmissionFailure;
+
+    const handoff = runSessionHandoffPickerFlow({
+      execute: app.execute, sessionId: 'sess_parent', sourceMachineId: 'machine_1', serverId, placement: 'session_info',
+    });
+    const picker = vi.mocked(Modal.show).mock.calls.find(([config]) => config.component === SessionHandoffPickerModalEntry)?.[0];
+    if (!picker?.props) throw new Error('Expected the Session handoff picker');
+    const { onResolve } = picker.props as { onResolve: (value: SessionHandoffPickerResult | null) => void };
+    onResolve(selection);
+    expect(await handoff).toMatchObject(targetPreflightAdmissionFailure);
+    expect(rpcRequests(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3)).toEqual([]);
+
+    // A cold deciding app still has the authoritative Home Session read, but
+    // no cached source Machine custody when it records this explicit proposal.
+    storage.setState({ sessions: {}, sessionListRowsByServerId: {} });
+    const proposed = await app.execute('approval.request.create', {
+      actionId: 'session.handoff', actionArgs: { sessionId: 'sess_parent', ...selection },
+      summary: 'Hand off this session', createdBy: { surface: 'system' },
+    }, context());
+    expect(proposed).toMatchObject({ ok: true, result: { artifactId: expect.any(String) } });
+    if (!proposed.ok) throw new Error(proposed.errorCode);
+    const { artifactId } = proposed.result as { artifactId: string };
+    const readRequest = () => ApprovalRequestV2Schema.parse(JSON.parse(homes.artifacts(serverId).readPlainBody(artifactId) ?? 'null'));
+    const request = readRequest();
+    expect(resolveApprovalExecutor(request)).toEqual({ kind: 'app', placement: 'session' });
+    expect(request.handoffTargetReplacementApproval).toBeUndefined();
+    expect(request.status).toBe('open');
+
+    // Refreshing the source before decision does not move the recorded app claim.
+    installSession();
+    daemonAnswer = (rpc) => {
+      if (!rpc.method.endsWith(`:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT}`)) {
+        throw new Error('Approval without the destination review must never start handoff');
+      }
+      expect(readRequest().status).toBe('executing');
+      return { type: 'approval_required', approval: {
+        v: 1, consequences: ['replace_nonempty_workspace_target'], serverId,
+        machineId: 'machine_2', canonicalRoot: '/target/repo', rootFingerprint: 'a'.repeat(64),
+        operationId: request.executionOriginV1.requestId,
+      } };
+    };
+    const decided = await app.execute('approval.request.decide', { artifactId, decision: 'approve' }, context());
+    expect(readRequest(), JSON.stringify(decided)).toMatchObject({ status: 'failed', execution: { ok: false, errorCode: 'approval_stale' } });
+    expect(rpcRequests(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3)).toEqual([]);
   });
 
   it('sends the exact approved target receipt and Action input through the real handoff adapter', async () => {

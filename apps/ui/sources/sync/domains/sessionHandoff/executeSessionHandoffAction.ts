@@ -30,6 +30,7 @@ export type ExecuteSessionHandoffActionResult =
       error: string;
       errorCode?: string;
       failureCause?: ActionFailureCauseV1;
+      effectAttempted?: boolean;
       details?: Extract<OpenProjectResultV1, { kind: 'refused' }>;
       recovery?: unknown;
       workspacePreparation?: Extract<WorkspaceSyncPrepareBetweenResultV1, { ok: false }>;
@@ -65,6 +66,7 @@ export async function executeSessionHandoffAction(
       ok: false,
       error: normalizeNonEmptyString(actionResult.error) ?? 'failed_to_start_session_handoff',
       ...(actionResult.failureCause ? { failureCause: actionResult.failureCause } : {}),
+      ...(actionResult.effectAttempted === undefined ? {} : { effectAttempted: actionResult.effectAttempted }),
       ...(handoffDetails && 'kind' in handoffDetails ? { details: handoffDetails } : {}),
       ...(normalizeNonEmptyString(actionResult.errorCode) ? { errorCode: actionResult.errorCode } : {}),
       ...(detail?.success && !detail.data.ok ? { workspacePreparation: detail.data } : {}),
