@@ -21,7 +21,8 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import { useActiveServerAccountScope, useActiveServerAccountScopeLifetime } from '@/sync/store/hooks';
+import { useActiveServerAccountScope, useActiveServerAccountScopeLifetime, useArtifact } from '@/sync/store/hooks';
+import { ArtifactView } from '@/components/artifacts/ArtifactView';
 import { useProjectSourceNames } from '@/components/projects/sources/useProjectSources';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useAppShellColumn } from '@/components/navigation/shell/appRail/appShellColumnContext';
@@ -64,9 +65,10 @@ export function ReviewsListHost({ surface = 'home' }: Readonly<{ surface?: 'home
     const focused = useIsFocused();
     const presented = useLayoutPresentationActive();
     const { columnVisible } = useAppShellColumn();
-    // Beside the Reviews column the column is the list, so the page holds no second copy of it (the Projects and
-    // Discussions index pattern): it says no Review is open and offers to start one. Collapsed, or on a phone, the page
-    // is the list. Home's section is the overview: what waits on the person, then running.
+    // Beside the Reviews column the column is the list and carries its saved views, filter, search and "+"; the page
+    // opens the latest Review in place (the Boards index pattern, owner 2026-11-28), or with none to open says so or
+    // invites the first. Collapsed, or on a phone, the page is the list. Home's section is the overview: what waits on
+    // the person, then running.
     const besideColumn = surface === 'home' && columnVisible;
     const overview = surface === 'hub';
     const view = useReviewsCollectionView(focused, surface === 'home');
@@ -165,19 +167,26 @@ export function ReviewsListHost({ surface = 'home' }: Readonly<{ surface?: 'home
             : <ReviewsEmptyInvitation startReview={scope ? startReview : undefined} />)} /></ReviewRowActionsContext.Provider>;
     const homeNotice = surface === 'hub' ? null : <HomeReachabilityGate variant="line" presentation="inline"
         relevantServerIds={scope ? [scope.serverId] : []}>{null}</HomeReachabilityGate>;
+    const startWithReviews = scope && list.items?.length ? startReview : undefined;
     if (surface !== 'home') return <CoreCollectionScope>
+        {surface === 'column' ? <ReviewsControls view={view} layout="column" startReview={startWithReviews} /> : null}
         {homeNotice}{list.items?.length ? failure : null}{collection}
     </CoreCollectionScope>;
-    return <ReviewsCollectionPage view={view} failure={failure} homeNotice={homeNotice}
-        startReview={scope && list.items?.length && !besideColumn ? startReview : undefined}>
+    // The latest of the column's current rows: a Review its view or search leaves out never stays open here.
+    const latest = besideColumn ? items[0] ?? null : null;
+    if (latest) return <ReviewsLatestOpen reviewId={latest.reviewId} />;
+    // Until the first answer, the page beside the loading column stays empty rather than drawing a header it then drops.
+    if (besideColumn && list.items === null && list.error === null) return <View style={styles.grow} />;
+    return <ReviewsCollectionPage view={view} failure={failure} homeNotice={homeNotice} controls={!besideColumn}
+        startReview={besideColumn ? undefined : startWithReviews}>
         {besideColumn ? <ReviewsNoneOpen hasReviews={list.items === null ? null : list.items.length > 0}
             startReview={scope ? startReview : undefined} /> : collection}
     </ReviewsCollectionPage>;
 }
 
 /**
- * `/reviews` beside the Reviews column: no Review is open. With none yet, the page owns the first-run invitation (the
- * column says one line); otherwise it asks for one from the list and offers Start a review. It never opens one itself.
+ * `/reviews` beside the Reviews column with nothing to open. With none yet, the page owns the first-run invitation (the
+ * column says one line); when the column's search leaves no row, it asks for one from the list and offers Start a review.
  */
 function ReviewsNoneOpen({ hasReviews, startReview }: Readonly<{ hasReviews: boolean | null; startReview?: () => void }>): React.ReactElement | null {
     if (hasReviews === null) return null;
@@ -190,50 +199,71 @@ function ReviewsNoneOpen({ hasReviews, startReview }: Readonly<{ hasReviews: boo
     </View>;
 }
 
+/** `/reviews` beside its column with Reviews: the latest opens in place, as the Boards index opens its first board. */
+function ReviewsLatestOpen({ reviewId }: Readonly<{ reviewId: string }>): React.ReactElement {
+    const artifact = useArtifact(reviewId);
+    return <ArtifactView key={reviewId} artifactId={reviewId} artifact={artifact} presentation="page" />;
+}
+
 /**
- * Only the home owns the saved-view toolbar; its draft also narrows the adjacent column. A wide page leads with its
- * title and purpose; a phone recomposes (lab list-home-390): the saved view is the page title, with search and Start a
- * review beside it and the spaces on their own line, all on the page's text edge.
+ * The page when it is the list (a phone, or a collapsed column): its title and purpose on a wide page, then the list's
+ * controls. Beside the column the controls stand at the column's head instead, so the page shows only its state.
  */
-function ReviewsCollectionPage({ view, failure, homeNotice, children, startReview }: Readonly<{
-    view: ReviewsCollectionView; failure: React.ReactNode; homeNotice: React.ReactNode; children: React.ReactNode; startReview?: () => void;
+function ReviewsCollectionPage({ view, failure, homeNotice, children, startReview, controls }: Readonly<{
+    view: ReviewsCollectionView; failure: React.ReactNode; homeNotice: React.ReactNode; children: React.ReactNode;
+    startReview?: () => void; controls: boolean;
 }>): React.ReactElement {
     const phone = useViewportClass() === 'compact';
-    const header = useReviewsSpaceHeader(view, 'reviews-space', phone ? 'page' : 'section');
-    const [searchOpen, setSearchOpen] = React.useState(false);
-    const searching = searchOpen || view.searchQuery.length > 0;
-    const closeSearch = React.useCallback(() => { setSearchOpen(false); view.setSearchQuery(''); }, [view]);
-    const searchToggle = <CollectionSearchToggle testID="reviews:search-toggle" accessibilityLabel={t('reviewWalkthrough.collection.search')}
-        open={searching} onPress={() => (searching ? closeSearch() : setSearchOpen(true))} />;
     return <ItemList pageColumn="wide"><CoreCollectionScope renderPageScroller={passThrough}>
         <PageContentColumn>
             {phone ? null : <PageHeader title={t('homeSettings.groups.reviews')} description={t('reviewWalkthrough.collection.description')}
                 primaryAction={startReview ? { title: t('reviewWalkthrough.detail.startReview'),
                     onPress: startReview, testID: 'reviews:start' } : undefined} />}
-            <View testID="reviews:scope-line" style={[styles.controlLine, phone ? styles.controlLinePhone : null]}>
-                {header.titleControl}
-                {phone ? <View style={styles.grow} /> : <View style={styles.strip}>{header.strip}</View>}
-                {header.filterButton}
-                {searchToggle}
-                {phone && startReview ? <IconButton testID="reviews:start" iconName="plus" variant="plain"
-                    accessibilityLabel={t('reviewWalkthrough.detail.startReview')} onPress={startReview} /> : null}
-            </View>
-            {phone ? <View style={styles.stripLine}>{header.strip}</View> : null}
-            {searching ? <View style={styles.searchLine}>
-                <CompactSearchField testID="reviews:search" accessibilityLabel={t('reviewWalkthrough.collection.search')}
-                    placeholder={t('reviewWalkthrough.collection.search')} value={view.searchQuery}
-                    onChangeText={view.setSearchQuery} autoFocus
-                    onKeyPress={event => { if (event.nativeEvent.key === 'Escape') closeSearch(); }} />
-                {view.searchQuery.trim() ? <Text testID="reviews:search-scope" style={styles.searchScope}>
-                    {t('reviewWalkthrough.collection.filteredWithinLoaded')}</Text> : null}
-            </View> : null}
-            {header.conditionRow ? <View style={styles.stripLine}>{header.conditionRow}</View> : null}
-            {header.overlays}
+            {controls ? <ReviewsControls view={view} layout={phone ? 'narrow' : 'wide'} startReview={phone ? startReview : undefined} /> : null}
             {homeNotice}
             {view.list.items?.length ? failure : null}
             {children}
         </PageContentColumn>
     </CoreCollectionScope></ItemList>;
+}
+
+/**
+ * The list's one set of controls; its draft narrows the page and the column alike. Wide, they make one line under the
+ * page's title. Narrow (lab list-home-390, and the Reviews column at the head of its rows): the saved view leads, with
+ * the filter, search and Start a review beside it and the spaces on their own line, all on the list's text edge.
+ */
+function ReviewsControls({ view, layout, startReview }: Readonly<{
+    view: ReviewsCollectionView; layout: 'wide' | 'narrow' | 'column'; startReview?: () => void;
+}>): React.ReactElement {
+    const narrow = layout !== 'wide';
+    // On a phone the saved view is the page's title; in the column it heads the rows under the shell's own title.
+    const header = useReviewsSpaceHeader(view, 'reviews-space', layout === 'narrow' ? 'page' : 'section');
+    const [searchOpen, setSearchOpen] = React.useState(false);
+    const searching = searchOpen || view.searchQuery.length > 0;
+    const closeSearch = React.useCallback(() => { setSearchOpen(false); view.setSearchQuery(''); }, [view]);
+    const searchToggle = <CollectionSearchToggle testID="reviews:search-toggle" accessibilityLabel={t('reviewWalkthrough.collection.search')}
+        open={searching} onPress={() => (searching ? closeSearch() : setSearchOpen(true))} />;
+    return <>
+        <View testID="reviews:scope-line" style={[styles.controlLine, narrow ? styles.controlLinePhone : null]}>
+            {header.titleControl}
+            {narrow ? <View style={styles.grow} /> : <View style={styles.strip}>{header.strip}</View>}
+            {header.filterButton}
+            {searchToggle}
+            {narrow && startReview ? <IconButton testID="reviews:start" iconName="plus" variant="plain"
+                accessibilityLabel={t('reviewWalkthrough.detail.startReview')} onPress={startReview} /> : null}
+        </View>
+        {narrow ? <View style={styles.stripLine}>{header.strip}</View> : null}
+        {searching ? <View style={styles.searchLine}>
+            <CompactSearchField testID="reviews:search" accessibilityLabel={t('reviewWalkthrough.collection.search')}
+                placeholder={t('reviewWalkthrough.collection.search')} value={view.searchQuery}
+                onChangeText={view.setSearchQuery} autoFocus
+                onKeyPress={event => { if (event.nativeEvent.key === 'Escape') closeSearch(); }} />
+            {view.searchQuery.trim() ? <Text testID="reviews:search-scope" style={styles.searchScope}>
+                {t('reviewWalkthrough.collection.filteredWithinLoaded')}</Text> : null}
+        </View> : null}
+        {header.conditionRow ? <View style={styles.stripLine}>{header.conditionRow}</View> : null}
+        {header.overlays}
+    </>;
 }
 
 /** The mounted Reviews view, for each row's own menu (the Collection calls `useRowActions` per row). */

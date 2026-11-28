@@ -212,7 +212,83 @@ describe('/reviews live host', () => {
             publishAppliedActiveServerSnapshot(previousApplied, previousAvailable);
         }
     });
-    it.each([['desktop', 1024, true], ['phone', 390, false], ['collapsed desktop', 1024, false]] as const)('projects the %s collection from per-person attention and shares list, titles and search demand', async (surface, width, columnVisible) => {
+    it.each([true, false])('beside the column at 1440 opens the latest Review in place and keeps the view controls on the column (Reviews=%s)', async hasReviews => {
+        vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 1440, height: 900, scale: 1, fontScale: 1 });
+        const serverUrl = `https://reviews-latest-${hasReviews}.example`;
+        const serverId = await homes.addHome({ serverUrl, name: 'Reviews latest', accountId: 'alice', currentAccount: true });
+        const row = (reviewId: string): ReviewListResponseV1['items'][number] => ({
+            reviewId, projectSourceId: null, workflowId: null, subjectKind: 'repository', sourceKind: 'direct', state: 'completed',
+            currentRoundOrdinal: 1, startedAt: 1, finishedAt: 2, createdAt: 1, updatedAt: 2, counts: { total: 0, needsDecision: 0 },
+            needsYou: { reviewId, roundOrdinal: 1, reason: 'review_needs_you', needsYou: false, requestedVerdict: false,
+                pendingDecisions: false, canSubmitVerdict: false },
+        });
+        const items = hasReviews ? [row('latest'), row('older')] : [];
+        homes.answer(serverId, 'POST /v1/reviews/list', { body: { items, cursor: null } });
+        const opened: string[] = [];
+        homes.answer(serverId, 'POST /v1/reviews/get', { select: input => {
+            const reviewId = (input as { reviewId: string }).reviewId;
+            opened.push(reviewId);
+            const { needsYou, ...review } = row(reviewId);
+            return { body: { review, human: { reviewId, roundOrdinal: 1, requests: [], verdicts: [], needsYou } } };
+        } });
+        homes.answer(serverId, 'POST /v1/reviews/comments', { body: { items: [], cursor: null } });
+        for (const item of items) homes.artifacts(serverId).replaceStoredRow({ id: item.reviewId, ownerAccountId: 'alice', access: 'owner',
+            publicAudience: 'none', encryptionMode: 'plain', headerVersion: 1, bodyVersion: 1, seq: 1,
+            createdAt: 1, updatedAt: 1, dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+            header: encodePlainArtifactStoredContent({ kind: REVIEW_ARTIFACT_KIND_V1, v: 1, reviewId: item.reviewId, title: `Exact ${item.reviewId}` }),
+            body: encodePlainArtifactStoredContent({ body: JSON.stringify({ v: 1, rounds: [] }) }) });
+        const connection = await restoreServerAccountForTest({ serverUrl, accountId: 'alice', request: homes.request });
+        await sync.awaitBootstrapForegroundAcquisition();
+        const { View } = await import('react-native');
+        const restorePopoverGlobals = withPopoverWebGlobals();
+        const screen = await renderScreen(<PluginSurfaceFocusEligibilityProvider active presentationActive>
+            <AppShellColumnContext.Provider value={{ present: true, columnVisible: true }}>
+                <View testID="test:shell-column"><ReviewsListHost surface="column" /></View>
+                <View testID="test:page"><WorkspaceRouteBody /></View>
+            </AppShellColumnContext.Provider>
+        </PluginSurfaceFocusEligibilityProvider>);
+        const region = (id: string) => screen.findHostByTestId(id)!;
+        const inRegion = (id: string, testID: string) => region(id).findAll(node => node.props.testID === testID).length > 0;
+        const textIn = (node: { children: readonly (string | { children: readonly unknown[] })[] }): string =>
+            node.children.map(child => typeof child === 'string' ? child : textIn(child as never)).join('');
+        try {
+            // The list's own controls stand at the head of the column it narrows; the page beside it holds none.
+            await waitForHomeGovernance(() => expect(inRegion('test:shell-column', 'reviews:scope-line')).toBe(true));
+            expect(inRegion('test:page', 'reviews:scope-line')).toBe(false);
+            expect(inRegion('test:page', 'reviews:list')).toBe(false);
+            if (!hasReviews) {
+                await waitForHomeGovernance(() => expect(inRegion('test:page', 'reviews:empty:start')).toBe(true));
+                expect(screen.getTextContent()).toContain(t('reviewWalkthrough.collection.columnEmpty'));
+                expect(screen.findByTestId('review-detail:header')).toBeNull();
+                expect(screen.findAllHostsByTestId('reviews:start')).toHaveLength(0);
+                expect(opened).toEqual([]);
+                return;
+            }
+            // No Review open and the list has some: the latest opens in place, without a route write.
+            await waitForHomeGovernance(() => expect(screen.findByTestId('review-detail:header')).not.toBeNull());
+            expect(inRegion('test:page', 'review-detail:header')).toBe(true);
+            expect(textIn(region('test:page'))).toContain('Exact latest');
+            expect(screen.findByTestId('reviews:none-open')).toBeNull();
+            expect(opened).toEqual(['latest']);
+            expect(inRegion('test:shell-column', 'reviews:start')).toBe(true);
+            expect(routerPush).not.toHaveBeenCalled();
+            // Narrowing the column opens the latest Review that still matches; a filtered-out one never stays open.
+            await screen.pressByTestIdAsync('reviews:search-toggle');
+            await act(async () => { screen.changeTextByTestId('reviews:search', 'Exact older'); });
+            await waitForHomeGovernance(() => expect(screen.findHostByTestId('reviews:column:row:latest')).toBeNull());
+            await waitForHomeGovernance(() => expect(textIn(region('test:page'))).toContain('Exact older'));
+            expect(textIn(region('test:page'))).not.toContain('Exact latest');
+            await act(async () => { screen.changeTextByTestId('reviews:search', 'matches nothing'); });
+            await waitForHomeGovernance(() => expect(screen.findByTestId('reviews:none-open')).not.toBeNull());
+            expect(screen.findByTestId('review-detail:header')).toBeNull();
+            expect(routerPush).not.toHaveBeenCalled();
+        } finally {
+            await screen.unmount();
+            await connection.dispose();
+            restorePopoverGlobals();
+        }
+    });
+    it.each([['phone', 390, false], ['collapsed desktop', 1024, false]] as const)('projects the %s collection from per-person attention and shares list, titles and search demand', async (surface, width, columnVisible) => {
         vi.spyOn(Dimensions, 'get').mockReturnValue({ width, height: 900, scale: 1, fontScale: 1 });
         const serverUrl = `https://review-groups-${surface.replaceAll(' ', '-')}.example`;
         const serverId = await homes.addHome({ serverUrl, name: 'Review groups', accountId: 'alice', currentAccount: true });
@@ -247,20 +323,13 @@ describe('/reviews live host', () => {
         </PluginSurfaceFocusEligibilityProvider>;
         const screen = await renderScreen(page(true));
         try {
-            if (columnVisible) {
-                // Beside the column the column is the list: the page holds no second copy (Projects/Discussions pattern).
-                await reportCollectionLayout(screen, 'reviews:column');
-                await vi.waitFor(() => expect(screen.findByTestId('reviews:none-open')).not.toBeNull());
-                expect(screen.findByTestId('reviews:list')).toBeNull();
-                expect(screen.findHostByTestId('reviews:row:needs')).toBeNull();
-                expect(screen.getTextContent()).toContain(t('reviewWalkthrough.collection.noneOpenTitle'));
-                expect(screen.findAllHostsByTestId('reviews:start')).toHaveLength(1);
-            } else {
-                await reportCollectionLayout(screen, 'reviews:list');
-                await vi.waitFor(() => expect(screen.findHostByTestId('reviews:row:needs')).not.toBeNull());
-                expect(screen.findHostByTestId('reviews:row:running')).not.toBeNull();
-            }
-            const prefix = columnVisible ? 'reviews:column:row' : 'reviews:row';
+            await reportCollectionLayout(screen, 'reviews:list');
+            await vi.waitFor(() => expect(screen.findHostByTestId('reviews:row:needs')).not.toBeNull());
+            expect(screen.findHostByTestId('reviews:row:running')).not.toBeNull();
+            // Without the column the page is the list: nothing opens on its own.
+            expect(screen.findByTestId('review-detail:header')).toBeNull();
+            expect(routerPush).not.toHaveBeenCalled();
+            const prefix = 'reviews:row';
             await vi.waitFor(() => expect(screen.findHostByTestId(`${prefix}:finished`)).not.toBeNull());
             expect(screen.findHostByTestId(`${prefix}:elsewhere`)).not.toBeNull();
             await vi.waitFor(() => expect(screen.getTextContent()).toContain('Website'));
