@@ -6414,8 +6414,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         loadingIndicatorPauseUnavailable: "此樣式連續循環，不會停頓。",
         loadingIndicatorSpeedUnavailable: "經典圓環以固定的節奏轉動。",
         avatarStyle: '頭像風格',
-        homeBotFaces: "主頁上的 Bot 頭像",
-        homeBotFacesDescription: "在手機上，主頁頂部顯示一排 Bot 頭像。輕點即可開啟。",
+        homeBotFaces: "Bot 頭像",
+        homeBotFacesDescription: "在工作階段列表頂部（手機上也在主頁頂部）顯示一排 Bot 頭像。輕點即可開啟。",
         avatarStyleDescription: '選擇工作階段頭像外觀',
         botFaceStyle: "機器人",
         botFaceStyleDescription: "選擇機器人的預設臉孔風格",
@@ -16253,12 +16253,16 @@ settingsSession: {
             needsYou: (params: { count: number }) => `${params.count} 個需要你`,
             moreOnHome: (params: { count: number }) => `+${params.count}`,
             moreOnHomeA11y: (params: { count: number }) => `還有 ${params.count} 個 Bot。打開 Bot`,
+            // The last cell of the Bots rail: it opens the one roster.
+            all: '全部 Bot',
             working: (params: { count: number }) => `${params.count} 個工作中`,
             rowNeedsYou: (params: { name: string }) => `${params.name}，需要你`,
             rowWorking: (params: { name: string }) => `${params.name}，工作中`,
             moonNeedsYou: (params: { name: string }) => `${params.name} · 需要你`,
             moonWorking: (params: { name: string }) => `${params.name} · 工作中`,
         },
+        // The row of Bot faces at the top of the session list, and its View menu switch.
+        rail: 'Bot 欄',
         promote: '設為機器人', demote: '設為一般工作階段',
         menu: {
             toolsSubtitle: '顯示或隱藏工具詳細資訊',

@@ -1,7 +1,9 @@
+import * as React from 'react';
 import { useIsFocused } from '@/components/appShell/workspace/destinationRoute';
 import { usePathname } from '@/components/appShell/workspace/destinationRoute';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import { HomeBotFaces } from '@/components/hub/HomeBotFaces';
 import { SessionsListPaneContent } from '@/components/sessions/shell/SessionsListPaneContent';
 import {
     resolvePhoneRootSessionListSurfaceDataActive,
@@ -37,6 +39,9 @@ export function SessionsListWrapper(props: Readonly<{
         dataActive: isFocused && anchoredToPhoneRoot && !overlayRouteActive,
     });
     const styles = stylesheet;
+    // The phone's Sessions tab opens on the Bots rail under My work (lab session-orchestration L1 phone).
+    const railVisible = surfaceOwnership.visible;
+    const botsRail = React.useMemo(() => <HomeBotFaces presentation="phoneList" visible={railVisible} />, [railVisible]);
 
     return (
         <View style={styles.container}>
@@ -46,6 +51,7 @@ export function SessionsListWrapper(props: Readonly<{
                 surfaceRoutePathname={routePathname}
                 sessionListSurfaceDataActive={surfaceOwnership.dataActive}
                 surfaceOwnership={surfaceOwnership}
+                leading={botsRail}
             />
         </View>
     );

@@ -8603,8 +8603,8 @@ const enSettingsAppearance = {
   loadingIndicatorSpeedUnavailable:
     'The Classic Ring turns at its own fixed pace.',
   avatarStyle: 'Avatar style',
-  homeBotFaces: "Bot faces on Home",
-  homeBotFacesDescription: "On a phone, a row of your Bots' faces at the top of Home. Tap one to open it.",
+  homeBotFaces: "Bot faces",
+  homeBotFacesDescription: "A row of your Bots' faces at the top of your sessions, and of Home on a phone. Tap one to open it.",
   avatarStyleDescription: 'Choose session avatar appearance',
   botFaceStyle: "Bots",
   botFaceStyleDescription: "Choose the default Bot face style",
@@ -25562,6 +25562,8 @@ export const en: TranslationStructure = {
         needsYou: (params: { count: number }) => params.count === 1 ? '1 needs you' : `${params.count} need you`,
         moreOnHome: (params: { count: number }) => `+${params.count}`,
         moreOnHomeA11y: (params: { count: number }) => `${params.count} more bots. Open Bots`,
+        // The last cell of the Bots rail: it opens the one roster.
+        all: 'All Bots',
         working: (params: { count: number }) => `${params.count} working`,
         rowNeedsYou: (params: { name: string }) => `${params.name}, needs you`,
         rowWorking: (params: { name: string }) => `${params.name}, working`,
@@ -25569,6 +25571,8 @@ export const en: TranslationStructure = {
         moonNeedsYou: (params: { name: string }) => `${params.name} · needs you`,
         moonWorking: (params: { name: string }) => `${params.name} · working`,
     },
+    // The row of Bot faces at the top of the session list, and its View menu switch.
+    rail: 'Bots rail',
     promote: 'Make this a bot',
     demote: 'Make a regular session',
     menu: {
@@ -25844,8 +25848,9 @@ type EnglishNamespaces0 = {
         readonly newHint: string; readonly pinHint: string;
         readonly needsYou: (params: { count: number }) => string; readonly working: (params: { count: number }) => string;
         readonly rowNeedsYou: (params: { name: string }) => string; readonly rowWorking: (params: { name: string }) => string; readonly moonNeedsYou: (params: { name: string }) => string; readonly moonWorking: (params: { name: string }) => string;
-        readonly moreOnHome: (params: { count: number }) => string; readonly moreOnHomeA11y: (params: { count: number }) => string;
+        readonly moreOnHome: (params: { count: number }) => string; readonly moreOnHomeA11y: (params: { count: number }) => string; readonly all: string;
     };
+    readonly rail: string;
     readonly promote: 'Make this a bot';
     readonly demote: 'Make a regular session';
     readonly menu: {

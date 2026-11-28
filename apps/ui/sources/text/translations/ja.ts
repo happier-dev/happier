@@ -7809,8 +7809,8 @@ localTailscale: {
     loadingIndicatorPauseUnavailable: "このスタイルは休まずにループします。",
     loadingIndicatorSpeedUnavailable: "クラシックリングは独自の一定の速さで回転します。",
     avatarStyle: "アバタースタイル",
-    homeBotFaces: "ホームのBotの顔",
-    homeBotFacesDescription: "スマートフォンで、ホームの上部にBotの顔を一列に表示します。タップで開きます。",
+    homeBotFaces: "Botの顔",
+    homeBotFacesDescription: "セッション一覧の上部と、スマートフォンではホームの上部に、Botの顔を一列に表示します。タップで開きます。",
     avatarStyleDescription: "セッションアバターの外観を選択",
     botFaceStyle: "ボット",
     botFaceStyleDescription: "ボットの顔のデフォルトスタイルを選択",
@@ -21657,12 +21657,16 @@ settingsSession: {
             needsYou: (params: { count: number }) => `${params.count} 件が対応待ち`,
             moreOnHome: (params: { count: number }) => `+${params.count}`,
             moreOnHomeA11y: (params: { count: number }) => `ほかに ${params.count} 個の Bot。Bot を開く`,
+            // The last cell of the Bots rail: it opens the one roster.
+            all: 'すべての Bot',
             working: (params: { count: number }) => `${params.count} 件が作業中`,
             rowNeedsYou: (params: { name: string }) => `${params.name}、対応待ち`,
             rowWorking: (params: { name: string }) => `${params.name}、作業中`,
             moonNeedsYou: (params: { name: string }) => `${params.name} · 対応が必要`,
             moonWorking: (params: { name: string }) => `${params.name} · 作業中`,
         },
+        // The row of Bot faces at the top of the session list, and its View menu switch.
+        rail: 'Bot バー',
         promote: 'ボットにする', demote: '通常のセッションにする',
         menu: {
             toolsSubtitle: 'ツールの詳細を表示または非表示にする',

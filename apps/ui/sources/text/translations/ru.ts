@@ -7245,8 +7245,8 @@ export const ru: TranslationStructure = {
     loadingIndicatorPauseUnavailable: "Этот стиль повторяется без паузы.",
     loadingIndicatorSpeedUnavailable: "Классическое кольцо вращается в собственном постоянном темпе.",
     avatarStyle: "Стиль аватара",
-    homeBotFaces: "Лица ботов на главной",
-    homeBotFacesDescription: "На телефоне — ряд лиц ваших ботов вверху главной. Нажмите, чтобы открыть.",
+    homeBotFaces: "Лица ботов",
+    homeBotFacesDescription: "Ряд лиц ваших ботов вверху списка сессий, а на телефоне — и вверху главной. Нажмите, чтобы открыть.",
     avatarStyleDescription: "Выберите внешний вид аватара сессии",
     botFaceStyle: "Боты",
     botFaceStyleDescription: "Выберите стиль лица ботов по умолчанию",
@@ -21698,12 +21698,16 @@ settingsSession: {
             needsYou: (params: { count: number }) => `Ждут вас: ${params.count}`,
             moreOnHome: (params: { count: number }) => `+${params.count}`,
             moreOnHomeA11y: (params: { count: number }) => `Ещё ботов: ${params.count}. Открыть ботов`,
+            // The last cell of the Bots rail: it opens the one roster.
+            all: 'Все боты',
             working: (params: { count: number }) => `Работают: ${params.count}`,
             rowNeedsYou: (params: { name: string }) => `${params.name}, ждёт вас`,
             rowWorking: (params: { name: string }) => `${params.name}, работает`,
             moonNeedsYou: (params: { name: string }) => `${params.name} · ждёт вас`,
             moonWorking: (params: { name: string }) => `${params.name} · работает`,
         },
+        // The row of Bot faces at the top of the session list, and its View menu switch.
+        rail: 'Панель ботов',
         promote: 'Сделать ботом', demote: 'Сделать обычной сессией',
         menu: {
             toolsSubtitle: 'Показать или скрыть подробности инструментов',

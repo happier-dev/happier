@@ -157,6 +157,7 @@ const SESSION_LIST_NEW_SECTION_MENU_ITEM_ID = 'newSection';
 const SESSION_LIST_FILTER_MENU_ITEM_ID = 'filter';
 const SESSION_LIST_ROW_DETAIL_MENU_PREFIX = 'detail:';
 const SESSION_LIST_SETTINGS_MENU_ITEM_ID = 'settings';
+const SESSION_LIST_BOTS_RAIL_MENU_ITEM_ID = 'botsRail';
 /** The View menu holds whole placement sentences (lab `clfilter:view`) at the menu's own type size. */
 const VIEW_MENU_OVERLAY_STYLE = { minWidth: 300 } as const;
 
@@ -174,6 +175,9 @@ export const SessionListViewOptionsButton = React.memo(function SessionListViewO
     const rowDetails = useSessionCollectionRowDetails();
     const writeRowDetail = useSessionCollectionRowDetailWriter();
     const [sessionListStatusWords] = useSettingMutable('sessionListStatusWords');
+    // The Bots rail over the list (lab session-orchestration L1) shares phone Home's faces switch: one row of faces, one choice.
+    const [homeBotFacesEnabled, setHomeBotFacesEnabled] = useSettingMutable('homeBotFacesEnabled');
+    const botsRailOn = homeBotFacesEnabled !== false;
     const { theme } = useUnistyles();
     const [sessionListAttentionPlacementV1] = useSettingMutable('sessionListAttentionPlacementV1');
     const applyViewOption = useSessionListViewOptionWriter();
@@ -248,6 +252,14 @@ export const SessionListViewOptionsButton = React.memo(function SessionListViewO
                 checked: sessionListStatusWords === true,
                 multiSelect: true,
             },
+            {
+                id: SESSION_LIST_BOTS_RAIL_MENU_ITEM_ID,
+                testID: 'session-list-view-bots-rail',
+                title: t('bots.rail'),
+                category: t('bots.title'),
+                checked: botsRailOn,
+                multiSelect: true,
+            },
             // A new section is named in place, where it lands (lab `clsections:custom`).
             ...(openNewSection ? [{
                 id: SESSION_LIST_NEW_SECTION_MENU_ITEM_ID,
@@ -276,7 +288,7 @@ export const SessionListViewOptionsButton = React.memo(function SessionListViewO
                 icon: <Icon name="gear" size={16} color={actionIconColor} />,
             },
         ];
-    }, [actionIconColor, densityItems, identityItems, openNewSection, organize.available, presentation, props.onOpenFilter, rowsCategory,
+    }, [actionIconColor, botsRailOn, densityItems, identityItems, openNewSection, organize.available, presentation, props.onOpenFilter, rowsCategory,
         rowDetails, sessionListDensity, sessionListIdentityDisplay, sessionListStatusWords, styles.viewMenuValue, styles.viewMenuValueText, withSelection]);
 
     const handleMenuSelect = React.useCallback(async (itemId: string) => {
@@ -301,6 +313,10 @@ export const SessionListViewOptionsButton = React.memo(function SessionListViewO
             return;
         }
         if (itemId.startsWith('menu:')) return;
+        if (itemId === SESSION_LIST_BOTS_RAIL_MENU_ITEM_ID) {
+            setHomeBotFacesEnabled(!botsRailOn);
+            return;
+        }
         if (itemId.startsWith(SESSION_LIST_ROW_DETAIL_MENU_PREFIX)) {
             const detail = SESSION_COLLECTION_ROW_DETAILS.find((entry) => `${SESSION_LIST_ROW_DETAIL_MENU_PREFIX}${entry.id}` === itemId);
             if (detail) writeRowDetail(detail.id, !rowDetails[detail.id]);
@@ -313,7 +329,7 @@ export const SessionListViewOptionsButton = React.memo(function SessionListViewO
         // choice applies here and now instead of only after leaving the route.
         if (itemId.startsWith('layout:')) yieldLayoutIntent();
         setMenuOpen(false);
-    }, [applyViewOption, openNewSection, organize, props, router, rowDetails, writeRowDetail, yieldLayoutIntent]);
+    }, [applyViewOption, botsRailOn, openNewSection, organize, props, router, rowDetails, setHomeBotFacesEnabled, writeRowDetail, yieldLayoutIntent]);
     const headerControl = useHeaderControlMetrics(SESSION_LIST_HEADER_CONTROL);
 
     return (

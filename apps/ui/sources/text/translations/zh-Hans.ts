@@ -7230,8 +7230,8 @@ export const zhHans: TranslationStructure = {
     loadingIndicatorPauseUnavailable: "此样式连续循环，不会停顿。",
     loadingIndicatorSpeedUnavailable: "经典圆环以固定的节奏转动。",
     avatarStyle: "头像风格",
-    homeBotFaces: "主页上的 Bot 头像",
-    homeBotFacesDescription: "在手机上，主页顶部显示一排 Bot 头像。轻点即可打开。",
+    homeBotFaces: "Bot 头像",
+    homeBotFacesDescription: "在会话列表顶部（手机上也在主页顶部）显示一排 Bot 头像。轻点即可打开。",
     avatarStyleDescription: "选择会话头像外观",
     botFaceStyle: "机器人",
     botFaceStyleDescription: "选择机器人的默认面孔风格",
@@ -21363,12 +21363,16 @@ settingsSession: {
             needsYou: (params: { count: number }) => `${params.count} 个需要你`,
             moreOnHome: (params: { count: number }) => `+${params.count}`,
             moreOnHomeA11y: (params: { count: number }) => `还有 ${params.count} 个 Bot。打开 Bot`,
+            // The last cell of the Bots rail: it opens the one roster.
+            all: '全部 Bot',
             working: (params: { count: number }) => `${params.count} 个工作中`,
             rowNeedsYou: (params: { name: string }) => `${params.name}，需要你`,
             rowWorking: (params: { name: string }) => `${params.name}，工作中`,
             moonNeedsYou: (params: { name: string }) => `${params.name} · 需要你`,
             moonWorking: (params: { name: string }) => `${params.name} · 工作中`,
         },
+        // The row of Bot faces at the top of the session list, and its View menu switch.
+        rail: 'Bot 栏',
         promote: '设为机器人', demote: '设为普通会话',
         menu: {
             toolsSubtitle: '显示或隐藏工具详情',

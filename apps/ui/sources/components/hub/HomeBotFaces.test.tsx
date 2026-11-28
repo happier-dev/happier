@@ -12,6 +12,10 @@ import {
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { SessionBotFace } from '@/components/sessions/bots/face/SessionBotFace';
 import { BotFaceMarker } from '@/components/sessions/bots/BotFaceMarker';
+import {
+  BotsRosterRuntimeProvider,
+  useOptionalBotsRosterRuntime,
+} from '@/components/sessions/bots/BotsRosterRuntime';
 import { HomeBotFaces } from './HomeBotFaces';
 
 // Where the router was sent (navigate or push): the route boundary of a face's tap.
@@ -133,6 +137,41 @@ it('marks a Bot that needs you with the attention dot on its face, as every row 
     const markers = screen.findAllByType(BotFaceMarker);
     expect(markers.map((marker) => marker.props.activity).filter((activity) => activity === 'needsYou')).toHaveLength(1);
     expect(markers.filter((marker) => marker.props.activity !== 'needsYou')).toHaveLength(2);
+  } finally {
+    await screen.unmount();
+  }
+});
+
+function RegisterRosterOpener(props: Readonly<{ onOpen: () => void }>) {
+  const runtime = useOptionalBotsRosterRuntime();
+  React.useEffect(() => runtime?.registerAnchoredOpener(props.onOpen), [runtime, props.onOpen]);
+  return null;
+}
+
+it('ends the session list rail in All Bots, which opens the one Bots roster (lab list L1)', async () => {
+  const { bots } = await seedBots(7);
+  const opened: string[] = [];
+  const onOpen = () => { opened.push('roster'); };
+  const screen = await renderScreen(
+    <InjectedAuthProvider credentials={null}>
+      <BotsRosterRuntimeProvider>
+        <RegisterRosterOpener onOpen={onOpen} />
+        <HomeBotFaces presentation="column" />
+      </BotsRosterRuntimeProvider>
+    </InjectedAuthProvider>,
+  );
+  try {
+    // Every Bot is a compact face in the column, then the All Bots cell closes the row.
+    const markers = screen.findAllByType(BotFaceMarker);
+    expect(markers).toHaveLength(bots.length);
+    expect(new Set(markers.map((marker) => marker.props.size)).size).toBe(1);
+    expect(markers[0]!.props.size).toBeLessThan(44);
+    const all = screen.findByTestId('home-bot-faces.all');
+    expect(all).not.toBeNull();
+    await act(async () => {
+      all!.props.onPress();
+    });
+    expect(opened).toEqual(['roster']);
   } finally {
     await screen.unmount();
   }
