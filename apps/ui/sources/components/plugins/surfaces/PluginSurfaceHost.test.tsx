@@ -2064,14 +2064,14 @@ function documentResourceRead(
     };
 }
 
-function declarativeDocumentPlacement(): PluginUiSurfacePlacementProjection {
+function declarativeDocumentPlacement(appPage = false): PluginUiSurfacePlacementProjection {
     return surfacePlacementFixture({
         binding: {
             pluginId: 'acme.live-dashboard',
             destinationId: 'dashboard-view',
             rendererId: 'dashboard',
-            container: 'rightPane',
-            target: { kind: 'session', sessionIdPath: '/session/id' },
+            ...(appPage ? { container: 'appPage', target: { kind: 'app' } } as const
+                : { container: 'rightPane', target: { kind: 'session', sessionIdPath: '/session/id' } } as const),
         },
         renderer: {
             kind: 'declarative',
@@ -4507,6 +4507,42 @@ describe('PluginSurfacePlacementHost', () => {
                 },
             },
         });
+    });
+
+    it('keeps independently mounted copies of an App page in distinct surface Resource contexts', async () => {
+        const document = documentResourceRead({ version: 1, root: { kind: 'text', text: 'Live dashboard' } });
+        resourceReadMock.mockResolvedValue(document);
+        resourceWatchOpenMock.mockImplementation(async (_machineId, request) => ({ supported: true,
+            result: { ok: true, subscriptionId: request.subscriptionId,
+                digest: PluginUiArtifactDigestV1Schema.parse(document.result.digest) },
+        }));
+        resourceWatchNextMock.mockImplementation(parkPluginResourceWatchUntilAbort);
+        const projection = declarativeDocumentProjection();
+        const placement = declarativeDocumentPlacement(true);
+        const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
+        const mount = (directory: string) => renderScreen(<PluginSurfacePlacementHost placement={placement}
+            machineId="machine-1" serverId="server-a" pluginUiProjection={projection} platform="web"
+            launchInput={{ directory }} />);
+        const readContext = (directory: string) => resourceWatchOpenMock.mock.calls.find(([, request]) =>
+            request.context?.kind === 'surface' && JSON.stringify(request.context.launchInput) === JSON.stringify({ directory }),
+        )?.[1].context;
+
+        const first = await mount('/first');
+        try {
+            await vi.waitFor(() => expect(readContext('/first')).toMatchObject({ kind: 'surface', target: { kind: 'app' } }));
+            const second = await mount('/second');
+            try {
+                await vi.waitFor(() => expect(readContext('/second')).toMatchObject({ kind: 'surface', target: { kind: 'app' } }));
+                const firstContext = readContext('/first');
+                const secondContext = readContext('/second');
+                if (firstContext?.kind !== 'surface' || secondContext?.kind !== 'surface') throw new Error('Missing surface Resource context');
+                expect(firstContext.mountInstanceKey).not.toBe(secondContext.mountInstanceKey);
+            } finally {
+                await second.unmount();
+            }
+        } finally {
+            await first.unmount();
+        }
     });
 
     it('captures installed declarative rendered values through the shared widget snapshot slot', async () => {

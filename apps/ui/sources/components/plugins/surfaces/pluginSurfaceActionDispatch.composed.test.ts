@@ -7334,8 +7334,9 @@ describe('plugin-surface action branch selection', () => {
         const stop = new AbortController();
         const fixtureLifetime = new AbortController();
         const onSettled = vi.fn();
-        const execute: NonNullable<DispatchPluginSurfaceActionInput['hostAction']>['execute'] = async (_id, input, context) =>
-            await runner.observe({ actionId, requestId: context?.actionRequestId, input, scope, cancellation: 'supported',
+        const execute: NonNullable<DispatchPluginSurfaceActionInput['hostAction']>['execute'] = async (_id, input, context) => {
+            const dispatchSignal = context?.signal;
+            const operation = runner.observe({ actionId, requestId: context?.actionRequestId, input, scope, cancellation: 'supported',
                 execute: async ({ signal }) => {
                     await new Promise<void>(resolve => {
                         signal.addEventListener('abort', () => resolve(), { once: true });
@@ -7343,6 +7344,19 @@ describe('plugin-surface action branch selection', () => {
                     });
                     return signal.aborted ? { ok: false, errorCode: 'cancelled', error: 'cancelled' } : { ok: true, result: null };
                 } });
+            // The request transport drops its response on abort while an already
+            // admitted operation continues at its owner.
+            if (!dispatchSignal) return operation;
+            let detachAbort = () => {};
+            const disconnected = new Promise<never>((_resolve, reject) => {
+                const abort = () => reject(new DOMException('Request detached', 'AbortError'));
+                detachAbort = () => dispatchSignal.removeEventListener('abort', abort);
+                dispatchSignal.addEventListener('abort', abort, { once: true });
+                if (dispatchSignal.aborted) abort();
+            });
+            try { return await Promise.race([operation, disconnected]); }
+            finally { detachAbort(); }
+        };
         network.setRpcResponder(async request => {
             if (request.method === ACTION_OPERATION_RPC_METHODS_V2.list) {
                 const { requestIdentity } = request.payload as { requestIdentity: { actionId: string; requestId: string } };

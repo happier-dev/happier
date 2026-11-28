@@ -207,7 +207,14 @@ export function createPluginSurfaceActionControls(input: Readonly<{
             const declaration = contributed?.pluginId === input.pluginId ? input.resolveContributedAction?.(contributed) : null;
             const occurrenceId = declaration?.execution.target === 'daemon' ? declaration.occurrenceId : undefined;
             const machineId = occurrenceId ? input.readMountedActionMachineId?.(occurrenceId) : undefined;
-            const context = { ...input.hostAction.context, signal, actionRequestId: requestId,
+            if (signal.aborted) return { ok: false, errorCode: 'aborted', error: 'aborted', effectAttempted: false };
+            const scope = input.projectionScope;
+            const cancellationTarget = scope && machineId && contributed && declaration?.operation?.cancellation === 'supported'
+                ? { ...scope, machineId, requestIdentity: { actionId: buildQualifiedPluginContributionKey(contributed), requestId } }
+                : null;
+            // Stop is a request to the operation owner. Keep the admitted dispatch
+            // connected so that its terminal result can settle the control.
+            const context = { ...input.hostAction.context, signal: cancellationTarget ? input.signal : signal, actionRequestId: requestId,
                 presentedActionControlRequestId: requestId,
                 surface: 'ui' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const },
                 bypassApprovals: false,
@@ -225,21 +232,18 @@ export function createPluginSurfaceActionControls(input: Readonly<{
             const actionInput = hostId?.success ? preparation.input : { action: contributed!,
                 ...(machineId ? { expectedContributorOccurrenceId: occurrenceId } : {}),
                 ...(preparation.input === undefined ? {} : { input: preparation.input }) };
-            const scope = input.projectionScope;
             const stopObservation = new AbortController();
             const requestStop = () => {
                 // A retired mount withdraws its observer. Only the authored Stop
                 // on this still-mounted control requests cancellation of its run.
-                if (!current() || !scope || !machineId || !contributed
-                    || declaration?.operation?.cancellation !== 'supported') return;
+                if (!current() || !cancellationTarget) return;
                 void observeActionOperationByRequestId({
-                    ...scope, machineId, signal: stopObservation.signal,
-                    requestIdentity: { actionId: buildQualifiedPluginContributionKey(contributed), requestId },
+                    ...cancellationTarget, signal: stopObservation.signal,
                     onUpdate: operation => {
                         if (isActionOperationTerminal(operation.state)) return;
                         stopObservation.abort();
                         void import('@/components/inbox/actionOperations/requestActionOperationStop').then(({ requestActionOperationStop }) =>
-                            requestActionOperationStop({ serverId: scope.serverId, snapshot: operation }, { confirmed: true }),
+                            requestActionOperationStop({ serverId: cancellationTarget.serverId, snapshot: operation }, { confirmed: true }),
                         ).catch(error => {
                             void import('@/utils/errors/alertActionFailure').then(({ alertActionFailure }) => {
                                 const failure = parseActionExecuteFailure(error);

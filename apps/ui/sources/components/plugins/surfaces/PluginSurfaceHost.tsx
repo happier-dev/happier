@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { randomUUID } from '@/platform/randomUUID';
 import { PluginCompanionOpenedFromContext } from '@/components/plugins/pages/pluginPageNavigationContext';
 import { resolveQualifiedPluginPageArtifact } from '@/components/plugins/pages/pluginPages';
 import { pluginSurfacePageOwnsMachineChip } from './pluginSurfaceMachineChip';
@@ -2468,6 +2469,10 @@ function PluginSurfaceHostMount(props: Readonly<(
     const surfacePlatform = props.platform ?? 'web';
     const surfaceEnvironment = usePluginSurfaceEnvironment(surfacePlatform);
     const reviewContext = props.reviewContext ?? surfaceEnvironment.openedFrom?.review;
+    const ownsAppPageResourceKey = !hasEmbeddedRendererMount && mountedInstanceKey === undefined
+        && projectedMountBinding?.kind === 'destination' && projectedMountBinding.destinationBinding.container === 'appPage';
+    // Singleton navigation does not imply a single live App page across clients.
+    const appPageResourceKey = React.useMemo(() => ownsAppPageResourceKey ? randomUUID() : undefined, [ownsAppPageResourceKey]);
     const ordinaryResourceContext = React.useMemo(() => {
         if (!resolvedSurfaceTarget.resolved) return undefined;
         const target = resolvedSurfaceTarget.target;
