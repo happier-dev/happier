@@ -99,7 +99,7 @@ export async function createFreshBoundLayout1SessionInTx(
         return { kind: "rejected", rejection: { reason: "session-tag-taken" } };
     }
 
-    const created = await insertLayout1SessionRowInTx(tx, {
+    const { session: created, machineAccessBindingCommittedFor } = await insertLayout1SessionRowInTx(tx, {
         prepared,
         effectiveEncryptionMode: invariants.effectiveEncryptionMode,
         ownerAccountMode: invariants.accountEncryptionMode,
@@ -110,6 +110,7 @@ export async function createFreshBoundLayout1SessionInTx(
     return {
         kind: "created",
         session: created,
+        ...(machineAccessBindingCommittedFor ? { machineAccessBindingCommittedFor } : {}),
         ownerAccountMode: invariants.accountEncryptionMode,
         organizationPlacement: await applyRequestedSessionPlacementInTx(tx, {
             prepared,

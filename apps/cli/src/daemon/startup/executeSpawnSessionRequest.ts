@@ -1087,7 +1087,10 @@ export async function executeSpawnSessionRequest(
                             providerSettingsOperationContext: acpOperationContext,
                             signal: optionsWithProviderIsolation.projectSetupOperation?.signal ?? params.signal });
                     } } : {}),
-                    ...(requesterRuntime ? { accountSettings: requesterRuntime.readAccountSettingsSnapshot().settings } : {}),
+                    ...(requesterRuntime ? {
+                        accountSettings: requesterRuntime.readAccountSettingsSnapshot().settings,
+                        localBirthMachineId: requesterRuntime.bootstrap.allowNativeAccountCredentials ? requesterRuntime.bootstrap.attribution.machineId : undefined,
+                    } : {}),
                     api: params.api,
                     credentials: params.credentials,
                     options: optionsWithProviderIsolation,
@@ -1154,7 +1157,9 @@ export async function executeSpawnSessionRequest(
                     && requesterRuntime.bootstrap.getBoundSessionId() === normalizedExistingSessionId
                     ? await requesterRuntime.bootstrap.bindExistingSession(normalizedExistingSessionId, materializationKey)
                     : launchExistingSessionId && tag
-                      ? await requesterRuntime.bootstrap.bindSession(launchExistingSessionId, tag, materializationKey) : null;
+                      ? await requesterRuntime.bootstrap.bindSession(launchExistingSessionId, tag, materializationKey,
+                            ...(committedLaunchSession?.machineAccessBindingCommittedFor
+                                ? [committedLaunchSession.machineAccessBindingCommittedFor] as const : [])) : null;
                 if (!custody) return await refuseSpawn(projectDaemonSpawnUnavailable('requester_session_custody_unavailable', 'Requester Session custody unavailable'));
                 launchOptions = { ...launchOptions, requesterSessionCredentialFile: custody.path };
                 launchResourceScope.register({ onFailure: custody.cleanup, onExit: () => undefined });

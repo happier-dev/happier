@@ -535,6 +535,8 @@ export class ApiClient {
     teamCredentialBindings?: import('@happier-dev/protocol/teams').SessionTeamCredentialBindingIntentListV1,
     /** The admitted Action's creation token and, for Action-child births, its body-proof signer. */
     creationAuthorization?: import('@happier-dev/protocol/sessions/creation/sessionCreationAuthorizationV1').SessionCreationAuthorizationV1,
+    /** Machine chosen by admitted requester custody for the daemon's installation proof. */
+    localBirthMachineId?: string,
     signal?: AbortSignal,
   }): Promise<SessionCreateOrLoadResult | null> {
     const environment = sessionProcessEnvironment();
@@ -542,6 +544,7 @@ export class ApiClient {
     const correspondence = SessionCreationCorrespondenceV1ReadSchema.safeParse(opts.metadata.sessionCreationCorrespondenceV1);
     const managedCreation = correspondence.success ? correspondence.data.recipe.managedCreation : undefined;
     const sessionsUrl = `${resolveServerHttpBaseUrl()}/v1/sessions`;
+    const localBirthMachineId = opts.localBirthMachineId ?? this.localMachineId;
 
     // One terminal classification for every failure this call can meet on its
     // way to a Session: the Account currentness preflight and the sessions
@@ -707,8 +710,8 @@ export class ApiClient {
         const response = await postSessionCreationRequest<CreateSessionResponse>({
           serverUrl: serverBaseUrl,
           token: this.credential.token,
-          ...(!managedCreation && this.localMachineId && 'sharedMetadata' in metadataEnvelopeFields
-            ? { localBirthMachineId: this.localMachineId } : {}),
+          ...(!managedCreation && localBirthMachineId && 'sharedMetadata' in metadataEnvelopeFields
+            ? { localBirthMachineId } : {}),
           ...('sharedMetadata' in metadataEnvelopeFields && typeof creationMetadata.profileId === 'string'
             ? { launchProfileId: creationMetadata.profileId } : {}),
           body: {
@@ -750,8 +753,11 @@ export class ApiClient {
               organizationPlacement: parsedOrganizationPlacement.data,
             }
           : undefined;
+        const machineAccessBindingCommittedFor = response.data.created === true
+          && typeof response.data.machineAccessBindingCommittedFor === 'string'
+          ? response.data.machineAccessBindingCommittedFor : undefined;
         const ensureLocalMachineAccess = async () => {
-          if (!this.localMachineId) return;
+          if (!this.localMachineId || machineAccessBindingCommittedFor === this.localMachineId) return;
           // Machine admission may begin as soon as creation settles. The
           // Session socket also ensures this binding, but can connect later.
           preparingMachineAccess = true;
@@ -846,6 +852,7 @@ export class ApiClient {
               : null,
             agentStateVersion: raw.agentStateVersion,
             ...(sessionCreationOutcome ? { sessionCreationOutcome } : {}),
+            ...(machineAccessBindingCommittedFor ? { machineAccessBindingCommittedFor } : {}),
           };
         }
 
@@ -917,6 +924,7 @@ export class ApiClient {
           agentState,
           agentStateVersion: raw.agentStateVersion,
           ...(sessionCreationOutcome ? { sessionCreationOutcome } : {}),
+          ...(machineAccessBindingCommittedFor ? { machineAccessBindingCommittedFor } : {}),
         };
       } catch (error) {
         const outcomeUnknown = error instanceof Error && 'code' in error && error.code === 'outcome_unknown';

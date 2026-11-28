@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 import tweetnacl from "tweetnacl";
@@ -6,6 +7,14 @@ import {
     sealEncryptedDataKeyEnvelopeV1,
     V2SessionByIdResponseSchema,
 } from "@happier-dev/protocol";
+
+import {
+    buildManagedSessionBirthProofPayloadV1,
+    MANAGED_SESSION_BIRTH_HEADER_V1,
+} from "@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1";
+import { signMachineInstallationProof } from "@happier-dev/protocol/machines/identity/installationIdentity";
+import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from "@happier-dev/protocol";
+import { decodeBase64 } from "privacy-kit";
 
 import { eventRouter } from "@/app/events/eventRouter";
 import { buildAccountStoredContentUpgradeRequired } from "@/app/clientCompatibility/accountStoredContentCompatibility";
@@ -95,6 +104,47 @@ describe("session create-or-load metadata envelope (SQLite integration)", () => 
             select: { id: true },
         });
     }
+
+    it("commits an owned installation's machine-control binding with signed fresh birth only", async () => {
+        const owner = await createAccount("pk-machine-binding-birth");
+        const keys = tweetnacl.sign.keyPair();
+        const installationId = randomUUID();
+        const machine = await db.machine.create({ data: {
+            id: randomUUID(), accountId: owner.id, installationId,
+            installationPublicKey: Buffer.from(keys.publicKey),
+            metadata: encodePlainMachineStoredContent({ host: "birth", platform: "linux", happyCliVersion: "test",
+                homeDir: "/home/test", happyHomeDir: "/home/test/.happier" }),
+            dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
+        } });
+        await withApp(async app => {
+            const body = { ...layoutOneBody, tag: "machine-binding-birth" };
+            const proof = signMachineInstallationProof({
+                privateKey: keys.secretKey,
+                payload: buildManagedSessionBirthProofPayloadV1({ accountId: owner.id, machineId: machine.id, installationId, body }),
+            });
+            const headers = {
+                "x-test-user-id": owner.id,
+                "x-happier-account-stored-content-protocol": "4",
+                [MANAGED_SESSION_BIRTH_HEADER_V1]: JSON.stringify({ machineId: machine.id, proof }),
+            };
+            const birth = await app.inject({ method: "POST", url: "/v1/sessions", headers, payload: body });
+            expect(birth.statusCode, birth.body).toBe(200);
+            const sessionId: string = birth.json().session.id;
+            expect(birth.json()).toMatchObject({ created: true, machineAccessBindingCommittedFor: machine.id });
+            const where = { accountId: owner.id, machineId: machine.id, sessionId };
+            expect(await db.accessKey.count({ where })).toBe(1);
+            const rejoin = await app.inject({ method: "POST", url: "/v1/sessions", headers, payload: body });
+            expect(rejoin.statusCode, rejoin.body).toBe(200);
+            expect(rejoin.json()).toMatchObject({ created: false, session: { id: sessionId } });
+            expect(rejoin.json()).not.toHaveProperty("machineAccessBindingCommittedFor");
+            expect(await db.accessKey.count({ where })).toBe(1);
+            const forged = await app.inject({ method: "POST", url: "/v1/sessions", headers,
+                payload: { ...body, tag: "machine-binding-altered-body" } });
+            expect(forged.statusCode, forged.body).toBe(200);
+            expect(forged.json()).not.toHaveProperty("machineAccessBindingCommittedFor");
+            expect(await db.accessKey.count({ where: { accountId: owner.id, machineId: machine.id } })).toBe(1);
+        });
+    });
 
     it("keeps external Session source dates on birth and replay, and records current activity on rejoin", async () => {
         const owner = await createAccount("pk-external-source-dates");

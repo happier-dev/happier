@@ -75,6 +75,7 @@ export type CommittedDaemonLaunchSession = Readonly<{
   /** True only when the Home reported this call created the row; a launch refused before start archives only such a row. */
   created: boolean;
   sessionCreationOutcome?: SessionCreationOutcome;
+  machineAccessBindingCommittedFor?: string;
   attachPayload: SessionAttachFilePayload;
   /** The launch continues as an attach to this Session with these options. */
   options: SpawnSessionOptions;
@@ -98,6 +99,7 @@ export async function commitDaemonLaunchSession(input: Readonly<{
   agentModeId?: string;
   agentModeUpdatedAt?: number;
   accountSettings?: Readonly<Record<string, unknown>>;
+  localBirthMachineId?: string;
   prepareNativeTeamCredentialBinding?: (input: Readonly<{
     sessionId: string;
     created: boolean;
@@ -119,6 +121,7 @@ export async function commitDaemonLaunchSession(input: Readonly<{
       ...pickSessionCreateOriginFields(options),
       ...(options.projectSetupOperation ? { signal: options.projectSetupOperation.signal } : {}),
       tag,
+      ...(input.localBirthMachineId ? { localBirthMachineId: input.localBirthMachineId } : {}),
       ...(options.creationAuthorization ? { creationAuthorization: options.creationAuthorization } : {}),
       metadata: buildCommittedLaunchMetadata({
         options,
@@ -207,6 +210,8 @@ export async function commitDaemonLaunchSession(input: Readonly<{
       ...(releaseNativeBindingOnLaunchFailure ? { releaseNativeBindingOnLaunchFailure } : {}),
       sessionId: created.id,
       created: createdHere,
+      ...(createdHere && created.machineAccessBindingCommittedFor
+        ? { machineAccessBindingCommittedFor: created.machineAccessBindingCommittedFor } : {}),
       ...(created.sessionCreationOutcome
         ? { sessionCreationOutcome: created.sessionCreationOutcome }
         : {}),

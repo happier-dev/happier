@@ -380,7 +380,8 @@ export type AdmittedRequesterSessionBootstrap = Readonly<{
   projectHandoffCaptureAccountContext(authorization: ExternalActionExecutionAuthorizationV1,
     observedServerIdentityId: string, signal?: AbortSignal): Promise<import('./requesterAccountActionContext').RequesterAccountActionContext | null>;
   /** `materializationKey` names the Session's Agent home, removed when the Session is deleted. */
-  bindSession(sessionId: string, sessionCreationTag: string, materializationKey?: string): Promise<Readonly<{ path: string; cleanup(): Promise<void> }> | null>;
+  bindSession(sessionId: string, sessionCreationTag: string, materializationKey?: string,
+    machineAccessBindingCommittedFor?: string): Promise<Readonly<{ path: string; cleanup(): Promise<void> }> | null>;
   /** Existing-Session adoption retains the original immutable creation recipe. */
   bindExistingSession(sessionId: string, materializationKey?: string): Promise<Readonly<{ path: string; cleanup(): Promise<void> }> | null>;
 }>;
@@ -517,21 +518,25 @@ export async function prepareRequesterSessionBootstrap(input: Readonly<{
       await observation?.dispose();
     };
     const persistVerifiedCustody = async (binding: Parameters<typeof verifyRequesterSessionCredentialBinding>[0],
-      materializationKey: string | undefined) => {
-      await bindRequesterSessionMachineControl(binding);
+      materializationKey: string | undefined, machineAccessBindingCommittedFor?: string) => {
+      if (machineAccessBindingCommittedFor !== binding.attribution.machineId) {
+        await bindRequesterSessionMachineControl(binding);
+      }
       if (!await verifyRequesterSessionCredentialBinding(binding, 'custody_after_machine_binding')) return null;
       return await createRequesterSessionCredentialCustody({ ...binding, happyHomeDir: input.boundary.happyHomeDir,
         ...(materializationKey ? { materializationKey } : {}),
         ...(machineAdmission ? { machineAdmission } : {}),
         ...(homeServerIdentityId ? { homeServerIdentityId } : {}) });
     };
-    const bindSession: AdmittedRequesterSessionBootstrap['bindSession'] = async (sessionId, sessionCreationTag, materializationKey) => {
+    const bindSession: AdmittedRequesterSessionBootstrap['bindSession'] = async (
+      sessionId, sessionCreationTag, materializationKey, machineAccessBindingCommittedFor,
+    ) => {
       if (!verifyRuntime || preparedSessionId && preparedSessionId !== sessionId || bound && (bound.sessionId !== sessionId
         || bound.sessionCreationTag !== undefined && bound.sessionCreationTag !== sessionCreationTag) || !await isCurrent()) return null;
       const binding = { credentials, sessionId, attribution, serverHttpBaseUrl: input.boundary.serverHttpBaseUrl,
         verifyMachineAdmissionCurrent: bound ? verifyRuntime : verify,
         signal: currentnessSignal(), expectedSessionCreationTag: sessionCreationTag };
-      const custody = await persistVerifiedCustody(binding, materializationKey);
+      const custody = await persistVerifiedCustody(binding, materializationKey, machineAccessBindingCommittedFor);
       if (!custody) return null;
       bound = { sessionId, sessionCreationTag };
       cleanup = custody.cleanup;

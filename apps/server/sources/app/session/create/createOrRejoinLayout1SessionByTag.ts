@@ -203,7 +203,7 @@ async function insertAdmittedLayout1SessionInTx(
     sessionCreationAuthorization?: SessionCreationExecutionAuthorization,
     validatedInitialAccessAudience?: readonly string[],
 ): Promise<Extract<Layout1SessionCreateOutcome, { kind: "created" }>> {
-    const created = await insertLayout1SessionRowInTx(tx, {
+    const { session: created, machineAccessBindingCommittedFor } = await insertLayout1SessionRowInTx(tx, {
         prepared,
         ...(prepared.preparedFinalSessionId ? { sessionId: prepared.preparedFinalSessionId } : {}),
         effectiveEncryptionMode: invariants.effectiveEncryptionMode,
@@ -221,6 +221,7 @@ async function insertAdmittedLayout1SessionInTx(
     return {
         kind: "created",
         session: created,
+        ...(machineAccessBindingCommittedFor ? { machineAccessBindingCommittedFor } : {}),
         ownerAccountMode: invariants.accountEncryptionMode,
         organizationPlacement: await applyRequestedSessionPlacementInTx(tx, {
             prepared,

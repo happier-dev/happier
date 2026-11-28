@@ -1615,6 +1615,12 @@ and never fall back to an unrestricted list. See
 - `GET /v2/sessions/active?limit=...`
 - `GET /v2/sessions?cursor=cursor_v1_<id>&limit=...&changedSince=...`
 - `POST /v1/sessions` (create or load by `tag`)
+  In 0.3 development, a fresh layout-1 birth with an authenticated owned
+  Machine installation can commit its Machine control binding in the same
+  transaction. The optional `machineAccessBindingCommittedFor` response field
+  identifies that Machine. Clients skip the separate binding request only when
+  the fresh receipt names their exact Machine. Rejoins and earlier Homes keep
+  the existing binding route.
   In 0.3 development, a new layout-1 Session with a primary Team or an initial
   Team grant requires the creator's verified credential to satisfy that Team's
   sign-in policy. The same admission applies to setting a new primary Team via

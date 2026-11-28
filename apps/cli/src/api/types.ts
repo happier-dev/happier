@@ -361,6 +361,7 @@ export type SessionCreationOutcome = Readonly<{
 
 export type SessionCreateOrLoadResult = Session & Readonly<{
   sessionCreationOutcome?: SessionCreationOutcome;
+  machineAccessBindingCommittedFor?: string;
 }>;
 
 /**
@@ -489,6 +490,7 @@ export type MessageMeta = z.infer<typeof MessageMetaSchema>
  */
 export const CreateSessionResponseSchema = lazyZodSchema(() => z.object({
   created: z.optional(z.boolean()),
+  machineAccessBindingCommittedFor: z.optional(z.string()),
   organizationPlacement: mini.optional(SessionOrganizationPlacementV1Schema),
   session: z.looseObject({
     id: z.string(),

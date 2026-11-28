@@ -262,6 +262,7 @@ export function registerSessionCreateOrLoadRoute(app: Fastify) {
         let resolvedSession;
         let resolvedOwnerAccountMode = accountEncryptionMode;
         let resolvedOrganizationPlacement: SessionOrganizationPlacement | undefined;
+        let machineAccessBindingCommittedFor: string | undefined;
         if (isLayoutOneRequest) {
             const launch = readSessionLaunchHeaderV1(request.headers[SESSION_LAUNCH_HEADER_V1]);
             const enrolledBirth = layoutOneRequest.managedCreation ? undefined
@@ -315,6 +316,7 @@ export function registerSessionCreateOrLoadRoute(app: Fastify) {
                 return sendSessionCreateRejection(outcome.rejection);
             }
             createdFresh = outcome.kind === "created";
+            if (outcome.kind === "created") machineAccessBindingCommittedFor = outcome.machineAccessBindingCommittedFor;
             resolvedSession = outcome.session;
             resolvedOwnerAccountMode = outcome.ownerAccountMode;
             resolvedOrganizationPlacement = outcome.organizationPlacement;
@@ -504,6 +506,7 @@ export function registerSessionCreateOrLoadRoute(app: Fastify) {
         log({ module: "session-create", sessionId: resolvedSession.id, userId }, `Session resolved: ${resolvedSession.id}`);
         return reply.serializer(JSON.stringify).send(parseProjectedSessionByIdResponse({
             created: createdFresh,
+            ...(machineAccessBindingCommittedFor ? { machineAccessBindingCommittedFor } : {}),
             ...(resolvedOrganizationPlacement
                 ? { organizationPlacement: resolvedOrganizationPlacement }
                 : {}),

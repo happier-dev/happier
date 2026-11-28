@@ -34,6 +34,8 @@ import {
     scheduleReleasedDirectShareEvent,
 } from "@/app/session/access/publishSessionAccessChange";
 import { ACCOUNT_DISPLAY_PROFILE_SELECT } from "@/app/account/profile/accountDisplayProfile";
+import { randomUUID } from "node:crypto";
+import { createSessionMachineAccessKeyInTx } from "@/app/accessKeys/sessionMachineAccessKeyMutations";
 import { bindManagedCreationScopeRetentionInTx, recordManagedPresetSessionBirthInTx, readSignedSessionBirthInTx, validateManagedCreationBirthInTx } from "@/app/machines/managed/managedCreationBirth";
 import { validateDiscussionParticipantBirthInTx, bindDiscussionParticipantSessionInTx } from "@/app/discussions/accessService";
 import {
@@ -60,6 +62,7 @@ export type Layout1SessionCreateOutcome<
     | Readonly<{
         kind: "created";
         session: CreatedSessionRow;
+        machineAccessBindingCommittedFor?: string;
         ownerAccountMode: "e2ee" | "plain";
         organizationPlacement: SessionOrganizationPlacement;
     }>
@@ -171,7 +174,7 @@ export async function insertLayout1SessionRowInTx(
         validatedInitialAccessAudience?: readonly string[];
         sessionCreationAuthorization?: SessionCreationExecutionAuthorization;
     }>,
-): Promise<CreatedSessionRow> {
+): Promise<Readonly<{ session: CreatedSessionRow; machineAccessBindingCommittedFor?: string }>> {
     const { prepared, effectiveEncryptionMode } = params;
     const display = prepared.displayProjectionV1 == null ? null
         : validateSessionDisplayProjectionV1({ projection: prepared.displayProjectionV1,
@@ -255,6 +258,19 @@ export async function insertLayout1SessionRowInTx(
             ...(prepared.primaryTeamId !== undefined ? { primaryTeamId: prepared.primaryTeamId } : {}),
         }),
     }).then(decodeSessionStoredContent);
+    // The Account-local birth fence already covers binding an owned installation.
+    // Shared or unproven targets keep the independently admitted binding request.
+    const signedOwnedMachineId = authorization && !('binding' in authorization)
+        && authorization.actionId === 'session.spawn_new' && authorization.custodianAccountId === prepared.accountId
+        ? authorization.machineId
+        : !authorization && signedBirth?.custodianAccountId === prepared.accountId ? signedBirth.machineId : undefined;
+    let machineAccessBindingCommittedFor: string | undefined;
+    if (!managedBirth && signedOwnedMachineId) {
+        const binding = await createSessionMachineAccessKeyInTx(tx, {
+            accountId: prepared.accountId, sessionId: session.id, machineId: signedOwnedMachineId, data: randomUUID(),
+        });
+        if (binding.ok || binding.reason === 'already-exists') machineAccessBindingCommittedFor = signedOwnedMachineId;
+    }
     if (managedBirth) await bindManagedCreationScopeRetentionInTx(tx, managedBirth, { kind: 'session', sessionId: session.id });
     const presetBirth = managedBirth ?? signedBirth?.preset;
     if (presetBirth) await recordManagedPresetSessionBirthInTx(tx, presetBirth, now);
@@ -388,7 +404,7 @@ export async function insertLayout1SessionRowInTx(
         }
     }
     await publishSessionCreationInTx(tx, { session, ownerAccountMode: params.ownerAccountMode });
-    return session;
+    return { session, ...(machineAccessBindingCommittedFor ? { machineAccessBindingCommittedFor } : {}) };
 }
 
 /** Applies the submitted organization placement to a freshly created Session. */

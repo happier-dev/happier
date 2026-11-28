@@ -68,6 +68,7 @@ export async function validateManagedCreationBirthInTx(tx: Tx, input: Readonly<{
 export async function readSignedSessionBirthInTx(tx: Tx, accountId: string,
     input: ManagedSessionBirthProofV1 & { body: unknown }): Promise<Readonly<{
         machineId: string;
+        custodianAccountId: string;
         preset: Pick<StoredManagedMachine, 'id' | 'homeId' | 'presetId'> | null;
     }> | null> {
     const machine = await tx.machine.findUnique({
@@ -85,7 +86,7 @@ export async function readSignedSessionBirthInTx(tx: Tx, accountId: string,
     const row = machine.managedResource;
     const preset = row?.presetId && row.archivedAt === null && row.allocation === 'bound' && row.creationState === 'active'
         && isCurrentMachineManagedEnrollment(row, machine, await readCurrentServerIdentityId(process.env, tx)) ? row : null;
-    return { machineId: input.machineId, preset };
+    return { machineId: input.machineId, custodianAccountId: machine.accountId, preset };
 }
 
 /** Usage belongs to the retained allocation and advances only with a committed fresh Session. */
