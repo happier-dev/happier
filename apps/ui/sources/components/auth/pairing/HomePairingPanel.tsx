@@ -10,6 +10,7 @@ import {
 } from '@/auth/pairing/pairingPresentation';
 import { PairingLinkDisclosure } from '@/components/auth/pairing/PairingLinkDisclosure';
 import { resolveHomeDisplayName } from '@/components/settings/server/homeDisplayName';
+import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { CopiedPill } from '@/components/ui/copy/CopiedPill';
@@ -333,6 +334,10 @@ export const HomePairingPanel = React.memo(function HomePairingPanel(props: Read
 
 /** Why no code could be made, said after "Couldn't make a code for this Home." */
 function describePairingFailure(cause: PairingFailureCause, home: string): string {
+    if (typeof cause !== 'string') {
+        const fallback = t('homeSetup.codeFailedUnexpected');
+        return resolveActionExecutionFailureMessage(cause, fallback, { closedCodesOnly: true }) ?? fallback;
+    }
     switch (cause) {
         case 'home_unreachable': return t('homeSetup.codeFailedUnreachable', { home });
         case 'home_identity_unverified': return t('homeSetup.codeFailedIdentity', { home });

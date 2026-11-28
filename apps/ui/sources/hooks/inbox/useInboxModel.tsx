@@ -71,7 +71,7 @@ import { openInboxMachineSignInTarget, useInboxMachineSignInItems } from './useI
 import { useManagedMachineInventory } from '@/components/settings/machines/managed/useManagedMachineInventory';
 import { readManagedLaunchName } from '@/components/approvals/approvalReferenceReading';
 import type { InboxMachineSignInItem, InboxMachineSignInTarget } from '@/components/inbox/inboxItems';
-import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import type { InboxPluginSessionControlInvoker } from './useInboxPluginSessionControls';
 import { useInboxDiscussionSource } from './useInboxDiscussionSource';
@@ -353,7 +353,7 @@ function useCreateInboxModel(
                 artifactId: entry.artifact.id,
                 expectedRevision: { headerVersion: entry.artifact.headerVersion, bodyVersion: entry.artifact.bodyVersion },
             }, context);
-            if (!result.ok) throw new Error(result.errorCode ?? 'usage_notice_unavailable');
+            if (!result.ok) throw createActionExecuteFailureError(result);
             return;
         }
         const read = await executeInboxAction('artifact.get', { artifactId: entry.artifact.id }, context);

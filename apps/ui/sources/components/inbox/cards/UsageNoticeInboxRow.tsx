@@ -2,7 +2,7 @@ import * as React from 'react';
 import { InboxWorkRow } from '../InboxWorkRow';
 import { InboxDismissRowMenu } from '../InboxRowMenu';
 import type { OpenUsageNoticeArtifact } from '@/sync/domains/artifacts/usageNoticeArtifacts';
-import { Modal } from '@/modal';
+import { alertInboxNoticeDismissalFailure } from '../noticeDismissalFailure';
 import { t } from '@/text';
 
 export const UsageNoticeInboxRow = React.memo(function UsageNoticeInboxRow(props: Readonly<{
@@ -14,7 +14,7 @@ export const UsageNoticeInboxRow = React.memo(function UsageNoticeInboxRow(props
 }>) {
     const dismiss = React.useCallback(async () => {
         try { await props.onDismiss(props.entry); }
-        catch { Modal.alert(t('common.error'), t('errors.unknownError')); }
+        catch (error) { alertInboxNoticeDismissalFailure(error); }
     }, [props.entry, props.onDismiss]);
     return (
         <InboxWorkRow

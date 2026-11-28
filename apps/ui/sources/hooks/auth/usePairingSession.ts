@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { StartPairingForHomeResult, StartedHomePairing, HomePairingFailureCause } from '@/auth/pairing/startPairingForHome';
 import type { PairingCallTarget, PairingStatus } from '@/sync/api/account/apiPairingAuth';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
@@ -26,7 +27,7 @@ export type PairingPresentation =
  * - `home_refused`: the Home turned the code down.
  * - `unexpected`: anything else.
  */
-export type PairingFailureCause = HomePairingFailureCause;
+export type PairingFailureCause = HomePairingFailureCause | ActionExecuteFailure;
 type StartedLifecycle = StartedHomePairing;
 
 /**
@@ -122,9 +123,9 @@ export function usePairingSession(params: Readonly<{
             if (!isCurrent()) { if (started?.kind === 'started') await started.cancel(); return { ok: false, status: 409 }; }
             if (!execution.ok && started?.kind === 'started') {
                 await started.cancel();
-                return fail('home_refused', 403);
+                return fail(execution, 403);
             }
-            if (!started) return fail('home_refused', 403);
+            if (!started) return !execution.ok ? fail(execution, 403) : fail('unexpected', 500);
             if (started.kind === 'update_required') { setCompletionState('update_required'); return { ok: false, status: 426, reason: 'update_required' }; }
             if (started.kind === 'failed') {
                 fail(started.cause, started.status);

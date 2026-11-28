@@ -12,7 +12,7 @@ import { machineVitalsNoticeHref, machineVitalsNoticeTab } from '@/components/ma
 import { beginMachinePageTabIntent } from '@/components/machines/page/machinePageIntent';
 import { InboxDismissRowMenu } from '../InboxRowMenu';
 import { Icon } from '@/components/ui/icons/Icon';
-import { Modal } from '@/modal';
+import { alertInboxNoticeDismissalFailure } from '../noticeDismissalFailure';
 import type { OpenUsageNoticeArtifact } from '@/sync/domains/artifacts/usageNoticeArtifacts';
 import { useMachine } from '@/sync/store/hooks';
 import { t } from '@/text';
@@ -161,8 +161,8 @@ export const MachineVitalsNoticeInboxRow = React.memo(
     const dismiss = React.useCallback(async () => {
       try {
         await onDismiss(entry);
-      } catch {
-        Modal.alert(t('common.error'), t('errors.unknownError'));
+      } catch (error) {
+        alertInboxNoticeDismissalFailure(error);
       }
     }, [entry, onDismiss]);
     return (

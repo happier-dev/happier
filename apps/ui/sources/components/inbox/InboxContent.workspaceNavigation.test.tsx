@@ -16,6 +16,8 @@ import type { InboxView } from './InboxContent';
 import { evaluateMachineVitalsAlertsV1 } from '@happier-dev/protocol/machines/vitals/evaluateMachineVitalsAlertsV1';
 import { MachineVitalsAlertsPolicyV1Schema } from '@happier-dev/protocol/machines/vitals/machineVitalsAlertsV1';
 import { MachineVitalsNotificationV1Schema } from '@happier-dev/protocol/activity/webhookPayload';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { Modal } from '@/modal';
 import { t } from '@/text';
 
 vi.mock('expo-router', async () => {
@@ -101,6 +103,19 @@ it('files a machine alert under Machines, opens the tab its push would, and dism
     expect(screen.getTextContent()).toContain('Critical for 5 min · swap 1.8 of 2 GiB');
     await chooseDropdownMenuItem(screen, 'inbox.machine-notice.dismiss.notice-machine', 'inbox.dismiss');
     expect(dismiss.mock.calls[0]?.[0]).toEqual(model.openUsageNotices[0]);
+    const alert = vi.spyOn(Modal, 'alert').mockImplementation(() => {});
+    try {
+        dismiss.mockRejectedValueOnce(createActionExecuteFailureError({
+            ok: false, errorCode: 'usage_notice_changed', error: 'usage_notice_changed',
+        }));
+        await chooseDropdownMenuItem(screen, 'inbox.machine-notice.dismiss.notice-machine', 'inbox.dismiss');
+        const details = alert.mock.calls.at(-1)?.[2]?.find(button => button.text === t('approvals.technicalDetails'));
+        expect(details?.onPress).toBeDefined();
+        details?.onPress?.();
+        expect(alert.mock.calls.at(-1)?.[1]).toContain('usage_notice_changed');
+    } finally {
+        alert.mockRestore();
+    }
     await screen.pressByTestIdAsync('inbox.machine-notice.notice-machine');
     expect(screen.findByTestId('opened-destination')?.props.children).toBe('/machines/edge-1-id?tab=processes&sort=memory');
 });

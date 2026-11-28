@@ -3,7 +3,7 @@ import type { MachineVitalsNotificationV1 } from '@happier-dev/protocol/activity
 import { happierPageTextMetrics, type HappierSceneId } from '@happier-dev/plugin-ui/presentation';
 import { Platform, Pressable, View } from 'react-native';
 import { InboxDismissRowMenu } from './InboxRowMenu';
-import { Modal } from '@/modal';
+import { alertInboxNoticeDismissalFailure } from './noticeDismissalFailure';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -136,7 +136,7 @@ const InboxItemRow = React.memo(function InboxItemRow(props: Readonly<{
     }, [item, navigate, onSelectItem, markOpened]);
     const dismiss = React.useCallback(async () => {
         try { await dismissNotice(item); }
-        catch { Modal.alert(t('common.error'), t('errors.unknownError')); }
+        catch (error) { alertInboxNoticeDismissalFailure(error); }
     }, [dismissNotice, item]);
     // Where it comes from leads the line, unless the title already says it.
     const source = item.sourceLabel ?? (item.source.displayName && item.source.displayName !== item.title ? item.source.displayName : null);

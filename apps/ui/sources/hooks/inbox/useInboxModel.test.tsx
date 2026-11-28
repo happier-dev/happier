@@ -2006,7 +2006,9 @@ describe('useInboxModel work groups (ORC R-10)', () => {
             const reopened = createServiceHealthNoticeArtifactFixture(appliedSnapshot().serverId,
                 { headerVersion: artifact.headerVersion + 1, bodyVersion: artifact.bodyVersion! + 1 });
             artifactStore.replaceStoredRow(createPlainArtifactHttpFixture(reopened, 'account-a'));
-            await expect(model!.dismissAccountNotice(stale)).rejects.toThrow('usage_notice_changed');
+            await expect(model!.dismissAccountNotice(stale)).rejects.toMatchObject({
+                ok: false, errorCode: 'usage_notice_changed',
+            });
             expect(JSON.parse(artifactStore.readPlainBody(artifact.id)!)).toMatchObject({ healthPhase: 'open', resolved: false });
             expect(artifactStore.read(artifact.id)).toMatchObject({ headerVersion: reopened.headerVersion, bodyVersion: reopened.bodyVersion });
         } finally { await screen.unmount(); }

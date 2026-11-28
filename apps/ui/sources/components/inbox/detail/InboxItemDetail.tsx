@@ -28,7 +28,7 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { useWorkRelativeTime } from '@/components/sessions/agents/presentation/agentActivityClock';
-import { Modal } from '@/modal';
+import { alertInboxNoticeDismissalFailure } from '../noticeDismissalFailure';
 import { InvestigationOutcomeBanner } from './InvestigationOutcomeBanner';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -238,7 +238,7 @@ export const InboxNoticeDetail = React.memo(function InboxNoticeDetail(props: Re
   const dismiss = React.useCallback(async () => {
     setPending(true);
     try { await onDismiss(); }
-    catch { Modal.alert(t('common.error'), t('errors.unknownError')); setPending(false); }
+    catch (error) { alertInboxNoticeDismissalFailure(error); setPending(false); }
   }, [onDismiss]);
   const machineNames = useMachineDisplayNamesById(service ? [service.machineId] : NO_MACHINES);
   // The Machine is named by its display-name owner; an unnamed one is left out, never shown as its raw id.

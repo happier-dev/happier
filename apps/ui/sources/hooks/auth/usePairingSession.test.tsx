@@ -264,6 +264,10 @@ describe('usePairingSession through real Home enrollment owners', () => {
         let result: unknown;
         await act(async () => { result = await hook.getCurrent().startPairing(); });
         expect(result).toMatchObject({ ok: false });
+        expect(hook.getCurrent().presentation).toMatchObject({
+            phase: 'invalid_request',
+            cause: { ok: false, errorCode: 'action_disabled' },
+        });
         expect(requestsFor('/v1/auth/pairing/start')).toHaveLength(0);
         expect(hook.getCurrent().deepLink).toBeNull();
     });
