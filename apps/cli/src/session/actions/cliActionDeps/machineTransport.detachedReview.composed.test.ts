@@ -17,11 +17,21 @@ import { createInMemoryReviewRecordPortV1 } from '../../../../../../packages/pro
 import { GITLAB_PLUGIN_ID, GITLAB_TRIAGE_DETAIL_ACTION_IDS } from '../../../../../../packages/plugins/scm-gitlab/src/triage/contribution';
 import { createCliMachineActionTransport } from './machineTransport';
 
-it.each(['installed Home', 'foreign Home'] as const)('captures the GitLab head and title only for the %s on direct detached Review start', async home => {
+it.each([
+  { requester: 'custodian', allowed: true },
+  { requester: 'Machine manager', allowed: true },
+  { requester: 'manager’s agent Session', allowed: false },
+  { requester: 'foreign Home', allowed: false },
+] as const)('uses the admitted requester on direct detached Review start for the $requester', async ({ requester, allowed }) => {
   await withTempDir('detached-review-', async cwd => {
     const machineId = 'machine';
     const installationId = 'installation';
-    const accountId = 'owner';
+    const custodianAccountId = 'owner';
+    const isAgent = requester === 'manager’s agent Session';
+    const accountId = requester === 'Machine manager' || isAgent ? 'manager' : custodianAccountId;
+    const caller = isAgent ? { kind: 'session', sessionId: 'requester-session', starterDepth: 0, turnDepth: 0 } as const
+      : { kind: 'host' } as const;
+    const actionRequestId = 'detached-review-start';
     const serverId = configuration.activeServerId;
     const token = `e30.${Buffer.from(JSON.stringify({ sub: accountId, tokenEpoch: 0,
       provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.fixture`;
@@ -29,24 +39,33 @@ it.each(['installed Home', 'foreign Home'] as const)('captures the GitLab head a
     const authorization = retainVerifiedExternalActionRequester({
       authorization: ExternalActionExecutionAuthorizationV1Schema.parse({
         v: 1, token: 'admitted-review-start',
-        binding: { accountId, custodianAccountId: accountId, authentication: { kind: 'account', tokenEpoch: 0 },
-          accountEncryptionMode: 'plain', serverIdentityId: home === 'installed Home' ? serverId : 'foreign-home', machineId, installationId,
-          admittedMachineRole: 'manage', actionId: REVIEW_START_ACTION_ID_V1, requestId: 'detached-review-start',
-          requestEnvelopeDigest: 'a'.repeat(43), target },
+        binding: { accountId, custodianAccountId, authentication: { kind: 'account', tokenEpoch: 0 },
+          accountEncryptionMode: 'plain', serverIdentityId: requester === 'foreign Home' ? 'foreign-home' : serverId, machineId, installationId,
+          admittedMachineRole: 'manage', actionId: REVIEW_START_ACTION_ID_V1, requestId: actionRequestId,
+          requestEnvelopeDigest: 'a'.repeat(43), target,
+          ...(caller.kind === 'session' ? {
+            sessionActionOrigin: { v: 1, caller, sourceTurnId: 'requester-turn', callerPermissionMode: 'default', requestId: actionRequestId },
+            sessionActionSource: { machineId, installationId },
+          } : {}),
+        },
       }),
       isCurrent: async () => true,
     });
+    let receiverAuthorization: Awaited<ReturnType<typeof authorizeMachineRpcRequest>> | undefined;
     const rpc = new RpcHandlerManager({
       scopePrefix: machineId, encryptionMode: 'plain', logger: () => {},
-      authorizeRequest: request => authorizeMachineRpcRequest(request, {
-        machineId, resolveHomeServerIdentityId: async () => serverId, resolveCustodianAccountId: async () => accountId,
-        resolveInstallationId: () => installationId, verifyMachineAdmission: async () => false,
-      }),
+      authorizeRequest: async request => {
+        receiverAuthorization = await authorizeMachineRpcRequest(request, {
+          machineId, resolveHomeServerIdentityId: async () => serverId, resolveCustodianAccountId: async () => custodianAccountId,
+          resolveInstallationId: () => installationId, verifyMachineAdmission: async () => false,
+        });
+        return receiverAuthorization;
+      },
     });
     // The native receiver owns the capture and storage. Its default executor has
     // no contributed Action invoker of its own, as on the signed daemon route.
     registerScmHandlers(rpc, cwd, { machineId, actionExecutor: createActionExecutor({
-      actionAutomations: createEmptyActionAutomationPort(accountId),
+      actionAutomations: createEmptyActionAutomationPort(custodianAccountId),
       scmActionExecute: input => executeScmActionOperation({
         ...input, actionContext: input.context, workingDirectory: cwd, accessPolicy: { kind: 'restrictedRoots', roots: [cwd] },
         registry: createTestGitScmBackendRegistry(),
@@ -84,6 +103,9 @@ it.each(['installed Home', 'foreign Home'] as const)('captures the GitLab head a
         expect(request.action).toEqual(sourceAction.action);
         expect(request.input).toEqual({ ...sourceAction.input, comparison: true });
         expect(request.requiredDangerLevel).toBe('safe');
+        expect(request.context).toMatchObject({ actionCaller: caller, runtimeAccountId: accountId,
+          externalActionExecutionAuthorization: { binding: { accountId, custodianAccountId } },
+        });
         return { ok: true, result: { kind: 'changedFiles', rows: [], omittedRowCount: 0, projectionTruncated: false,
           comparison: { title, url, locator, beforeOid: baseOid, baseOid, headOid, freshness: 'current',
             totalFileCount: 0, enumeratedFileCount: 0, inventory: 'complete', content: 'complete', reasons: [] } } };
@@ -101,17 +123,23 @@ it.each(['installed Home', 'foreign Home'] as const)('captures the GitLab head a
     const started = await executor.execute(REVIEW_START_ACTION_ID_V1, {
       target: { kind: 'detached' }, cwd, instructions: 'Review the changed files.', reviewers: [person],
       source: { kind: 'pullRequest', locator: { ...locator, headOid, baseOid, sourceAction } },
-    }, { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, serverId, serverIdentityId: serverId,
+    }, { surface: isAgent ? 'agent' : 'cli', authority: isAgent ? 'account_automation' : 'present_user',
+      actionCaller: caller, serverId, serverIdentityId: serverId,
       externalActionTarget: target, externalActionExecutionAuthorization: authorization, runtimeAccountId: accountId,
-      actionRequestId: 'detached-review-start',
+      actionRequestId,
     });
-    if (home === 'foreign Home') {
+    if (!allowed) {
       expect(started, JSON.stringify(started)).toMatchObject({ ok: false, errorCode: 'RPC_FORBIDDEN' });
+      expect(receiverAuthorization).toMatchObject({ ok: false, errorCode: 'RPC_FORBIDDEN' });
       expect(sourceRead).toBe(false);
       return;
     }
     expect(started, JSON.stringify(started)).toMatchObject({ ok: true, result: { sessionId: null, reviewRound: { reviewId: expect.any(String) } } });
     if (!started.ok) return;
+    expect(receiverAuthorization).toMatchObject({ ok: true, directWorkspaceRequester: {
+      requester: { accountId, machineId, installationId },
+    } });
+    expect(sourceRead).toBe(true);
     const result = started.result as { reviewRound: { reviewId: string } };
     expect.soft(result).toMatchObject({ reviewTarget: { locator, headOid, url } });
     expect(await records.read(result.reviewRound.reviewId)).toMatchObject({ title });
