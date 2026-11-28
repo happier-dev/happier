@@ -83,7 +83,7 @@ function managedDatabaseOrigin(origin: DatabaseDescriptorV1['origin'], providerL
 }
 
 /** Captures actual invocation custody; operands select a Link, never a caller or credential. */
-export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabasesHostInput): DeploymentDatabasesServiceV1 {
+export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabasesHostInput): Required<DeploymentDatabasesServiceV1> {
     const context = input.seed.approvalContext;
     const binding = context?.externalActionExecutionAuthorization?.binding;
     const read = binding?.deploymentReadAdmission;
@@ -342,7 +342,7 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
         finally { bound.dispose(); }
     };
 
-    return Object.freeze<DeploymentDatabasesServiceV1>({
+    return Object.freeze<Required<DeploymentDatabasesServiceV1>>({
         attachReadAccess(request) {
             return setupReadAccess(request.target, 'attach', owner => owner.attach({
                 ref: request.savedSecretRef, resourceRevision: request.resourceRevision,

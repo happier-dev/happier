@@ -60,7 +60,6 @@ import {
     type PackagedRuntimeBinaryExecutableRef,
 } from '@/providers/lifecycle/resolveManagedProviderRuntimeLaunch';
 import { normalizeLocalServiceScan } from '@/daemon/local/services/inventory/scanner';
-import { scanPlatformLocalServices } from '@/daemon/local/services/inventory/platform/scan';
 import { selectManagedOwnedTreeEndpoint, type ManagedEndpointConfidence } from './managedOwnedTreeEndpoint';
 import {
     reserveLoopbackPort,
@@ -1395,6 +1394,7 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
             let sameProject: boolean | undefined;
             if (port !== undefined && (collision || !result)) {
                 try {
+                    const { scanPlatformLocalServices } = await import('@/daemon/local/services/inventory/platform/scan');
                     const scan = await scanPlatformLocalServices();
                     const listeners = scan.listeners.filter(listener => listener.port === port);
                     if (scope.kind === 'project' && scope.projectRoot) {
@@ -1708,6 +1708,8 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
 
         async function scanOwnedTreeEndpoint(managedPid: number, signal: AbortSignal,
             minimumConfidence: ManagedEndpointConfidence, listenerOwnerPids?: readonly number[]) {
+            const { scanPlatformLocalServices } = await import('@/daemon/local/services/inventory/platform/scan');
+            assertNotAborted(signal);
             const scan = await waitWithAbort(scanPlatformLocalServices(listenerOwnerPids ? { listenerOwnerPids } : {}), signal);
             assertNotAborted(signal);
             await assertProcessRunning();

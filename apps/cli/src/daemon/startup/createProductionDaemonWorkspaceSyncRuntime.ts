@@ -68,12 +68,11 @@ import { captureRetainedCheckoutTeardown } from '@/workspaces/projectSetup/captu
 import { isManagedWorkspaceRefV2, type ManagedWorkspaceRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import type { ManagedWorkspaceSyncTarget } from '@/machines/managed/acquire';
-import { startPrivateProjectSyncChannel } from '@/workspaces/activation/privateProjectCheckoutProcess';
+import type { startPrivateProjectSyncChannel } from '@/workspaces/activation/privateProjectCheckoutProcess';
 import { prepareAdmittedScmEffect } from '@/workspaces/activation/workspaceEffect';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import type { PrivateProjectNativeSync, PrivateProjectSyncNetwork } from '@/workspaces/activation/privateProjectSyncEffect';
 import type { WorkspaceNativeCopyBaselineEffect } from '@/workspaces/activation/privateProjectSyncEffect';
-import { runWorkspaceEffectChannel } from '@/workspaces/activation/workspaceEffectProcess';
 import { createBufferTransferPayloadSource, readTransferPayloadChunk, resolveTransferPayloadSizeBytes, resolveTransferPayloadManifestHash, type TransferPayloadSource } from '@/machines/transfer/transferPayloadSource';
 import { resolveWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import type { TransferEndpointCandidate } from '@happier-dev/protocol';
@@ -247,7 +246,7 @@ export type ProductionDaemonWorkspaceSyncRuntime = Readonly<{
   stop(): Promise<void>;
 }>;
 
-const defaultFactories: ProductionDaemonWorkspaceSyncFactories = {
+const defaultFactories: Omit<ProductionDaemonWorkspaceSyncFactories, 'startManagedSyncChannel'> = {
   createDaemonRuntime: createDaemonWorkspaceSyncRuntime,
   createTargetAuthority: createWorkspaceSyncTargetAuthority,
   createRootOwnershipManager: createWorkspaceRootOwnershipManager,
@@ -268,7 +267,6 @@ const defaultFactories: ProductionDaemonWorkspaceSyncFactories = {
   prepareSourceSeedExport: createWorkspaceSyncSeedExport,
   materializeSeedExport: materializeWorkspaceSyncSeedExport,
   materializeLocalSeed: materializeLocalWorkspaceSyncSeed,
-  startManagedSyncChannel: startPrivateProjectSyncChannel,
   warn: (message, error) => logger.warn(message, error),
 };
 
@@ -603,7 +601,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
   const semanticServerId = input.homeTarget?.homeServerIdentityId ?? input.activeServerId ?? configuration.activeServerId;
   const localProfileId = input.activeServerId ?? configuration.activeServerId;
   const readServerHttpBaseUrl = captureServerHttpBaseUrl();
-  const factories: ProductionDaemonWorkspaceSyncFactories = { ...defaultFactories, ...overrides };
+  const factories = { ...defaultFactories, ...overrides };
   const requesterMachineAdmissionBoundary: RequesterSessionMachineAdmissionBoundary | undefined = input.requesterMachineAdmissionBoundary
     ? {
         ...input.requesterMachineAdmissionBoundary,
@@ -1042,8 +1040,11 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
       // The admitted managed platform is POSIX. Paths remain argv operands.
       const launch = request.createParent ? 'mkdir -p -- "$1" && cd "$1" && exec "$2" workspace-effect'
         : 'cd "$1" && exec "$2" workspace-effect';
+      const startManagedSyncChannel = factories.startManagedSyncChannel
+        ?? (await import('@/workspaces/activation/privateProjectCheckoutProcess')).startPrivateProjectSyncChannel;
+      request.signal.throwIfAborted();
       const channel = request.target.openChannel(['sh', '-c', launch, 'workspace-sync', root, installed.binaryPath], request.signal);
-      return await factories.startManagedSyncChannel({ channel, signal: request.signal, memberHome: request.target.home,
+      return await startManagedSyncChannel({ channel, signal: request.signal, memberHome: request.target.home,
         effect: { request: { serverId: semanticServerId, machineId: input.localMachineId,
           source: { kind: 'workspace', workspaceId: request.counterpartWorkspaceRefId },
           materialization: { kind: 'sync', targetPath: request.workspace.rootPath,
@@ -3728,6 +3729,8 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
           requesterAccountId: accountId, lifetime: signal });
         const installed = await target.ensureWorkspaceRuntime();
         const workspaceRoot = dirname(workspace.rootPath);
+        const { runWorkspaceEffectChannel } = await import('@/workspaces/activation/workspaceEffectProcess');
+        signal.throwIfAborted();
         const channel = target.openChannel(['sh', '-c', 'cd "$1" && exec "$2" workspace-effect', 'workspace-sync',
           workspaceRoot, installed.binaryPath], signal);
         const effect: WorkspaceNativeCopyBaselineEffect = { kind: 'native_copy_baseline', workspaceRoot,

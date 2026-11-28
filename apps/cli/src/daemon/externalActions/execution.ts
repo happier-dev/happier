@@ -22,7 +22,6 @@ import { createEndOwnerRemainder } from "@/daemon/processes/endOwnerRemainder";
 import { createApprovedApiTokenExecutionPreparer } from "@/daemon/externalActions/prepareApprovedApiTokenExecution";
 import { createDaemonApprovalExecutionAuthorizationPreparer } from "@/daemon/externalActions/approvalExecutionAuthorization";
 import { join } from "node:path";
-import type { ActionOperationRpcContext } from "@/daemon/actionOperations/actionOperationRpcHandlers";
 import { createDaemonManagedMachineActionAdapter } from "@/daemon/startup/managedMachineActionAdapter";
 import type { RecordedApprovalExecutionObservationArgs } from '@/session/actions/createCliActionExecutorHarness';
 import { observeAccountChanges } from "@/api/observeAccountChanges";
@@ -38,7 +37,7 @@ import { resolveRuntimeActionExecutionFamily } from "@happier-dev/protocol/actio
 import { callExactMachineRpc } from "@/session/transport/rpc/machineRpc";
 import { isRpcError } from '@happier-dev/protocol/rpcErrors';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
-import { createActionExecuteFailureError, parseActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { parseActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createClientActionReverseDispatcher } from "@/session/actions/clientActionReverseDispatch";
 import { createHostExternalSessionActionAdapter } from '@/session/actions/externalSessions/hostExternalSessionActionTransport';
 import type { ApiMachineClient } from "@/api/apiMachine";
@@ -46,7 +45,7 @@ import { createProviderErrorV1 as createForegroundProviderError } from "@happier
 import { configuration } from "@/configuration";
 import { runWithServerHttpBaseUrl } from "@/api/client/serverHttpBaseUrl";
 import type { RequesterSessionRuntimeContext } from "@/daemon/sessionEncryption/requesterSessionCredentials";
-import { isOriginalOwnAccountActionCustody, readRequesterDeploymentArtifactStore } from "@/daemon/sessionEncryption/requesterAccountActionProjection";
+import { readRequesterDeploymentArtifactStore } from "@/daemon/sessionEncryption/requesterAccountActionProjection";
 import { readRequesterAccountActionContext, rebindRequesterAccountActionContext, type RequesterAccountActionContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
 import { withAgentPreflightCatalog } from '@/capabilities/probes/withAgentPreflightCatalog';
 import { modelCatalogUnavailable, readNativeExecutionRunOfferedModel } from '@/agent/runtime/bridges/executionRun/structuredOutputAdmission';
@@ -113,45 +112,8 @@ export function projectAdmittedExternalActionMachineContext(context: RpcActionEx
   } };
 }
 
-export function requiresPortableSessionSpawnServerIdentity(actionId: string, input: unknown): boolean {
-  if (actionId === 'session.spawn_new' || actionId === 'approval.request.decide') return true;
-  if (actionId !== 'approval.request.create' || !input || typeof input !== 'object' || Array.isArray(input)) return false;
-  return (input as Readonly<Record<string, unknown>>).actionId === 'session.spawn_new';
-}
-
-export function createRequesterAccountOperationContext(input: Readonly<{
-  machineId: string; custodianAccountId: string | null;
-  installationIdentity: ReturnType<typeof readInstallationIdentityIfExistsSync>;
-}>) {
-  return (apiMachine: ApiMachineClient, requester: Pick<RequesterAccountActionContext, 'authorization' | 'isCurrent'>,
-    signal?: AbortSignal): ActionOperationRpcContext => {
-    if (!input.installationIdentity || !input.custodianAccountId) {
-      throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
-    }
-    // Resource mode belongs to the installed controller, not the requester.
-    const ownCustodian = isOriginalOwnAccountActionCustody(requester.authorization.binding)
-      && requester.authorization.binding.custodianAccountId === input.custodianAccountId;
-    const role = requester.authorization.binding.admittedMachineRole ?? (ownCustodian ? 'manage' : undefined);
-    // The receipt names the deciding fact: no Home-admitted role and not original own custody.
-    if (!role) throw createActionExecuteFailureError({
-      ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable', effectAttempted: false,
-      failureCause: { phase: 'dispatch', errorClass: 'Error', errorCode: 'admission_unavailable', httpStatus: null,
-        nativeErrorReason: 'admitted_machine_role' },
-    });
-    return {
-      machineAdmission: {
-        actorAccountId: requester.authorization.binding.accountId,
-        custodianAccountId: input.custodianAccountId,
-        machineId: input.machineId,
-        installationId: input.installationIdentity.installationId,
-        role,
-        encryptionMode: apiMachine.getMachineEncryptionMode(),
-      },
-      verifyMachineAdmissionCurrent: requester.isCurrent,
-      ...(signal ? { signal } : {}),
-    };
-  };
-}
+export { createRequesterAccountOperationContext, requiresPortableSessionSpawnServerIdentity } from './executionAdmission';
+import type { createRequesterAccountOperationContext } from './executionAdmission';
 
 export type DaemonExternalActionExecutorFactory = (credentials: Parameters<typeof createCliActionExecutorFromCredentials>[0]['credentials'], getCurrentTurnWorkDepth?: Parameters<
       typeof createCliActionExecutorFromCredentials

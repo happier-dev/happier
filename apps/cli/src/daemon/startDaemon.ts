@@ -195,10 +195,7 @@ import { createMachineSessionSpawnRpcHandler } from '@/session/actions/sessionLi
 import { normalizeSpawnSessionNonceResolution } from '@happier-dev/protocol/sessions/spawnSessionNonce';
 import { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2 } from '@happier-dev/protocol/actions/operations/v1';
 import { isWorkflowRuntimeEnabled } from './automation/workflowFeatureGate';
-import {
-  createProductionDaemonWorkspaceSyncRuntime,
-  type ProductionDaemonWorkspaceSyncRuntime,
-} from './startup/createProductionDaemonWorkspaceSyncRuntime';
+import type { ProductionDaemonWorkspaceSyncRuntime } from './startup/createProductionDaemonWorkspaceSyncRuntime';
 import { createDaemonWorkspaceSyncRuntimeCustody } from './startup/daemonWorkspaceSyncRuntimeCustody';
 import { createProjectWorkerAdmission } from '@/workspaces/execution/projectWorkerAdmission';
 import { createProjectWorkerMemorySource } from '@/workspaces/execution/projectWorkerMemorySource';
@@ -4294,6 +4291,7 @@ export async function startDaemon(
                 mintGrant: async (request, signal) => await api.mintPeerMediationRouteGrant(request, { signal }),
               })
               : undefined;
+            const { createProductionDaemonWorkspaceSyncRuntime } = await import('./startup/createProductionDaemonWorkspaceSyncRuntime');
             const runtime = await createProductionDaemonWorkspaceSyncRuntime({
               homeTarget,
               resolveProjectRuntime: async ingress => await apiMachineForSessions?.resolveProjectFiniteRuntime(ingress) ?? null,

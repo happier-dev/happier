@@ -43,6 +43,11 @@ const HOT_OWNERS = [
 // Owners the idle daemon never runs (same trace, N=0): each loads at its own first use, in the daemon
 // or in the process that owns it. A static edge from the start graph would load it in every daemon.
 const COLD_OWNERS = [
+  'apps/cli/src/daemon/externalActions/execution.ts',
+  'apps/cli/src/daemon/local/services/inventory/platform/scan.ts',
+  'apps/cli/src/daemon/local/services/inventory/pageTitle.ts',
+  'apps/cli/src/daemon/startup/createProductionDaemonWorkspaceSyncRuntime.ts',
+  'apps/cli/src/deployments/targets/createDeploymentDatabasesServiceForHost.ts',
   // Request dispatch is cold. The handlers and independently triggered observation stay registered.
   'apps/cli/src/rpc/handlers/executionRuns/dispatchExecutionRunRpcAction.ts',
   'apps/cli/src/session/actions/externalSessions/takeoverAction.ts',

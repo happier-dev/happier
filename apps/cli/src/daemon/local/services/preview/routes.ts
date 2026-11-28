@@ -37,7 +37,6 @@ import { readProjectManagedServicePreviewEndpoint } from './projectEndpoint';
 import { isProjectServiceDeclarationTargetIdV1 } from '@happier-dev/protocol/local/services/actions/v1';
 import { formatLocalServiceLauncherTitle } from '../launch/suggestions';
 import { readProcessCensus } from '@/processes/census/processCensus';
-import { scanPlatformLocalServices } from '../inventory/platform/scan';
 import { normalizeHostnameForLoopbackCheck } from '@happier-dev/protocol/server/urls/loopbackHostname';
 
 export type LocalServicePreviewLifecycleResult<TResponse> =
@@ -373,6 +372,7 @@ export function createLocalServicePreviewRoutes(input: Readonly<{
                 if (!observed || observed.state === 'zombie' || observed.start.startTimeMs !== process.processStartTimeMs) return false;
                 // A live process can close its listener without exiting. Reuse the
                 // socket owner with only this PID's FDs, never a machine process walk.
+                const { scanPlatformLocalServices } = await import('../inventory/platform/scan');
                 const sockets = await scanPlatformLocalServices({ includeProcessFacts: false, listenerOwnerPids: [process.pid] });
                 if (sockets.diagnostics.length || sockets.socketOwnerReadFailures?.includes(process.pid)) throw unavailable();
                 if (!sockets.listeners.some(listener => listener.pid === process.pid && listener.port === registeredEntry.port

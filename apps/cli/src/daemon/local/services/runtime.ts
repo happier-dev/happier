@@ -62,11 +62,8 @@ import {
     type TerminalProcessRegistry,
 } from './inventory/terminalRegistry';
 import { discoverLocalServiceRunTargets, type LocalServiceRunTargetDiscoveryOptions } from './launch/runTargets';
-import {
-    scanPlatformLocalServices,
-    type LocalServicesScanResult,
-} from './inventory/platform/scan';
-import { enrichLocalServiceInventoryPageTitles, type LocalPageTitleEnricher } from './inventory/pageTitle';
+import type { scanPlatformLocalServices, LocalServicesScanResult } from './inventory/platform/scan';
+import type { LocalPageTitleEnricher } from './inventory/pageTitle';
 import {
     createLocalServiceEndpointEnricher,
     type LocalServiceEndpointEnricher,
@@ -271,7 +268,10 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
             logger.debug('[DAEMON RUN] Preview inventory publication failed', error);
         }));
     });
-    const scan = params.scan ?? scanPlatformLocalServices;
+    const scan: LocalServicesScanner = params.scan ?? (async options => {
+        const { scanPlatformLocalServices } = await import('./inventory/platform/scan');
+        return scanPlatformLocalServices(options);
+    });
     const endpointCancellation = new AbortController();
     const endpointEnricher = params.endpointEnricher ?? (params.scan ? null : createLocalServiceEndpointEnricher({
         now, signal: endpointCancellation.signal,
@@ -460,6 +460,7 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
             // This optional caller explicitly requests HTTP presentation. The
             // daemon installs no page-title enricher for ordinary inventory.
             if (endpointEnricher) snapshotWithDiagnostics = await endpointEnricher.enrich(snapshotWithDiagnostics);
+            const { enrichLocalServiceInventoryPageTitles } = await import('./inventory/pageTitle');
             snapshotWithDiagnostics = await enrichLocalServiceInventoryPageTitles({
                 snapshot: snapshotWithDiagnostics,
                 enricher: params.pageTitleEnricher,

@@ -846,7 +846,8 @@ import { removeRuntimeAuthFailureReportOutboxItemsForSession } from '../connecte
 import { createConnectedServiceRecoverySupersessionCleaner } from '../connectedServices/continuation/continuationRecoverySupersession';
 import { createDaemonRunnerInvocationServices, type OpenRunnerAccountConnectionProviderBrokerAccess } from '@/daemon/agentRuntime/invocationServices';
 import { acquireWorkflowRequesterCredentials } from '@/daemon/workflows/requesterCustody';
-import { createDaemonExternalActionExecution, createRequesterAccountOperationContext, requiresPortableSessionSpawnServerIdentity } from '@/daemon/externalActions/execution';
+import type { createDaemonExternalActionExecution, DaemonExternalActionExecutorFactory } from '@/daemon/externalActions/execution';
+import { createRequesterAccountOperationContext, requiresPortableSessionSpawnServerIdentity } from '@/daemon/externalActions/executionAdmission';
 
 type ShutdownSource = 'happier-app' | 'happier-cli' | 'os-signal' | 'exception';
 type HostedWebStaticAssetSyncReason =
@@ -11951,10 +11952,26 @@ export async function startDaemonSessionControlRuntime(
             : {}),
         }
       : undefined;
-  const createExternalActionExecutor = createDaemonExternalActionExecution({
+  const externalActionExecutionInput: Parameters<typeof createDaemonExternalActionExecution>[0] = {
     readGuestHomeHostIdentity,
     params, requiresPortableSessionSpawnServerIdentity, requesterAccountOperationContext, acquireDaemonPluginRuntimeRegistryLease, shutdownCancellationDomains, isSessionCallerCurrent, externalActionApprovalExecutionOriginCurrentness, externalActionIngressOwner, externalActionContributedApprovalReplay, observeContributedPluginExecution, relayDiscussionAgentPublication, externalActionInstallationIdentity, ownerRemainder, isRuntimePublicationQuiescing, pluginRuntimeController, connectedAccountRequestAuthRegistry, requireConnectedAccountRequestAuthHttpPort, localServicesActionFeatureGate, localServicesRuntimeActionRoutes, localServicesRuntime, externalActionContributedInvoker, externalActionContributedDefinitionLister, externalActionTranscriptFollowLeaseRegistry,
-  });
+  };
+  let actionExecutorFactory: DaemonExternalActionExecutorFactory | undefined;
+  const createExternalActionExecutor: DaemonExternalActionExecutorFactory = (...args) => {
+    let executor: ReturnType<DaemonExternalActionExecutorFactory> | undefined;
+    const load = async () => {
+      const { createDaemonExternalActionExecution } = await import('@/daemon/externalActions/execution');
+      actionExecutorFactory ??= createDaemonExternalActionExecution(externalActionExecutionInput);
+      return executor ??= actionExecutorFactory(...args);
+    };
+    return {
+      execute: async (...request) => (await load()).execute(...request),
+      prepare: async (...request) => (await load()).prepare(...request),
+      observeSessionBirth: async (...request) => (await load()).observeSessionBirth(...request),
+      replayApprovedApprovalRequest: async (...request) => (await load()).replayApprovedApprovalRequest(...request),
+      continueConfidentialApprovalRequest: async (...request) => (await load()).continueConfidentialApprovalRequest(...request),
+    };
+  };
   const createSessionAccountActionAuthorizationPreparer = (
     credentials: StoredCredentials,
     requesterRuntime: RequesterSessionRuntimeContext | null,
