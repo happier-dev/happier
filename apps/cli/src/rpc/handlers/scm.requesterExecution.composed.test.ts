@@ -658,7 +658,9 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
     expect(os.daemonTouches).toEqual([]);
   });
 
-  it.each(['enabled', 'disabled'] as const)('keeps a reviewed Can use child’s repository reads and comparison capture in their Session scope with isolation %s', isolation =>
+  it.each([
+    ['enabled', 'use'], ['disabled', 'use'], ['enabled', 'manage'], ['disabled', 'manage'],
+  ] as const)('keeps repository reads and comparison capture in Session scope with isolation %s and Session Agent role %s', (isolation, agentRole) =>
     withConfiguredDaemonTestHome({ prefix: 'happier-reviewed-scm-', machineId: 'separate-users-machine' }, async () => {
     const f = await fixture({ admissionCurrent: false,
       ...(isolation === 'disabled' ? { sourceRuntimeIsolation: 'disabled', memberIdentityUnavailable: true } : {}) });
@@ -827,7 +829,18 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
       context: { ...context, defaultSessionId: sessionId, externalActionTarget: undefined },
       executeCanonicalAction: async () => { throw new Error('Unexpected Action'); },
     });
+    const sessionCaller: ActionExecutorContext = {
+      ...reviewed.context,
+      surface: 'agent', authority: 'account_automation',
+      actionCaller: { kind: 'session', sessionId: ownSession, starterDepth: 0, turnDepth: 0 },
+      externalActionExecutionAuthorization: agentRole === 'use' ? reviewed.context.externalActionExecutionAuthorization : retain({
+        ...root, binding: { ...root.binding, admittedMachineRole: 'manage' },
+      }),
+    };
     await expect(capture(foreignSession)).rejects.toMatchObject({
+      rpcErrorCode: RPC_ERROR_CODES.FORBIDDEN, effectAttempted: false,
+    });
+    await expect(capture(foreignSession, sessionCaller)).rejects.toMatchObject({
       rpcErrorCode: RPC_ERROR_CODES.FORBIDDEN, effectAttempted: false,
     });
     sharedAccess = 'edit';
@@ -848,12 +861,8 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
     // A member comparison uses its own process, without the host's comparison port.
     os.subprocessWorker = isolation === 'enabled';
     const memberLaunchCount = os.runAs.length;
-    const sessionCaller: ActionExecutorContext = {
-      ...reviewed.context,
-      surface: 'agent', authority: 'account_automation',
-      actionCaller: { kind: 'session', sessionId: ownSession, starterDepth: 0, turnDepth: 0 },
-    };
-    for (const context of [reviewed.context, sessionCaller]) {
+    const captureCallers = agentRole === 'use' ? [reviewed.context, sessionCaller] : [sessionCaller];
+    for (const context of captureCallers) {
       const response = await capture(ownSession, context);
       expect(response, JSON.stringify({ caller: context.actionCaller?.kind, response })).toMatchObject({ success: true });
       const comparison = ScmComparisonCaptureOutputSchema.parse(response);
@@ -864,9 +873,8 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
     }
     if (isolation === 'enabled') {
       expect(daemonGit()).toEqual([]);
-      expect(os.runAs.slice(memberLaunchCount).map(run => [run.args[0], run.uid])).toEqual([
-        ['workspace-effect', 2401], ['workspace-effect', 2401],
-      ]);
+      expect(os.runAs.slice(memberLaunchCount).map(run => [run.args[0], run.uid]))
+        .toEqual(captureCallers.map(() => ['workspace-effect', 2401]));
     }
   }));
 

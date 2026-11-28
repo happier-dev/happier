@@ -1817,11 +1817,12 @@ export async function authorizeMachineRpcRequest(
           hostExecutionTarget: installationId ? { machineId: machine.machineId, installationId } : undefined });
         if (identity.kind === 'unknown') return forbidden('machine_admission');
         const session = request.localActionContext?.scmSessionWorkspace;
-        const useGrant = retainedRequester?.authorization.binding.admittedMachineRole === 'use';
-        const ownedCapture = useGrant && method === RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE && session?.access === 'owner'
+        const role = retainedRequester?.authorization.binding.admittedMachineRole;
+        const ownedCapture = (role === 'use' || role === 'manage')
+          && method === RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE && session?.access === 'owner'
           ? session : undefined;
         const placement = selectRequesterWorkspacePlacement(identity, method, ownedCapture ? 'owned_session'
-          : useGrant && localRepositoryRead ? session ? 'editable_session' : 'member_folder'
+          : role === 'use' && localRepositoryRead ? session ? 'editable_session' : 'member_folder'
           : 'owner_only', machine.readAgentIsolation);
         if (placement === 'unavailable') return forbidden('machine_admission');
         if (request.signal?.aborted || (retainedRequester && !await retainedRequester.isCurrent())) return forbidden('request_cancelled');
