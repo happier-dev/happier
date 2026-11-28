@@ -162,15 +162,12 @@ describe('TranscriptMessageCursorHost', () => {
 
   it('enters from the composer, moves across user and agent messages, runs the focused row action and returns', async () => {
     const jumps: string[] = [];
-    const jumpToTarget = vi.fn(
-      async (
-        target: { routeMessageId?: string },
-        options?: { landingCue?: boolean; align?: { kind: string } },
-      ) => {
+    const jumpToTarget = vi.fn<React.ComponentProps<typeof TranscriptMessageCursorHost>['jumpToTarget']>(
+      async (target, options) => {
         jumps.push(
-          `${target.routeMessageId}:${options?.align?.kind}:${options?.landingCue}`,
+          `${target.kind === 'route-message-id' ? target.routeMessageId : target.seq}:${options?.align?.kind}:${options?.landingCue}`,
         );
-        return { status: 'scrolled' } as never;
+        return { status: 'scrolled', target };
       },
     );
     const copy = vi.fn();

@@ -155,8 +155,8 @@ function applyVoicePrivacy(privacy: Partial<VoiceSettings['privacy']>): void {
 }
 
 function CurrentUiContextTestProvider(props: React.PropsWithChildren): React.ReactElement {
-    return React.createElement(InjectedAuthProvider, { credentials: currentUiCredentials },
-        React.createElement(CurrentUiContextProvider, null, props.children));
+    return React.createElement(InjectedAuthProvider, { credentials: currentUiCredentials,
+        children: React.createElement(CurrentUiContextProvider, null, props.children) });
 }
 
 function StrictCurrentUiContextTestProvider(props: React.PropsWithChildren): React.ReactElement {
@@ -345,7 +345,7 @@ describe('CurrentUiContextProvider', () => {
             { wrapper: CurrentUiContextTestProvider });
         const reader = requireCurrentUiContextReader(hook.getCurrent().reader);
         const publication = hook.getCurrent().publisher!.createMount();
-        const local: CurrentUiContextMountedCommand = { kind: 'hostLocal', invoke: () => ({ ok: true }) };
+        const local: CurrentUiContextMountedCommand = { kind: 'hostLocal', invoke: () => ({ ok: true as const }) };
         const author = { kind: 'executeAction' as const, action: { pluginId: 'triage', localId: 'file-remote-update' } };
         const publish = (summary: string) => publication.publish({ entity: { kind: 'usage_summary', label: 'Usage', summary },
             commands: [{ title: 'Today', command: local }, { title: 'File update', command: author }] });
@@ -665,7 +665,7 @@ describe('CurrentUiContextProvider', () => {
             React.createElement(CurrentUiContextReaderProbe, { onReader: next => { reader = next; } }),
             React.createElement(BuiltInCurrentUiContextSurface, { enrichment: {
                 entity: { kind: 'usage_summary', label: 'Usage' },
-                commands: [{ title: 'Refresh', command: { kind: 'hostLocal', invoke: () => ({ ok: true }) } }],
+                commands: [{ title: 'Refresh', command: { kind: 'hostLocal', invoke: () => ({ ok: true as const }) } }],
             } }),
             React.createElement(VoiceSessionRuntime)));
         const current = requireCurrentUiContextReader(reader);
@@ -1011,7 +1011,7 @@ describe('CurrentUiContextProvider', () => {
         const reader = requireCurrentUiContextReader(hook.getCurrent().reader);
         const publication = hook.getCurrent().publisher!.createMount();
         await act(async () => {
-            publication.publish({ commands: [{ title: 'Refresh', command: { kind: 'hostLocal', invoke: () => ({ ok: true }) } }] });
+            publication.publish({ commands: [{ title: 'Refresh', command: { kind: 'hostLocal', invoke: () => ({ ok: true as const }) } }] });
         });
         expect(reader.readCurrentUiContext()!.commands.map(command => command.title)).toEqual(['Refresh', 'Send draft']);
         providerState.focusedDetailsWorkspace = true;

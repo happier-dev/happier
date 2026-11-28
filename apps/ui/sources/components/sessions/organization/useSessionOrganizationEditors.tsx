@@ -100,7 +100,7 @@ function SessionTagsEditorContent(props: TagsEditorProps) {
     const listView = React.useMemo(() => buildSessionOrganizationListViewState({ serverId, projection }), [projection, serverId]);
     const editor = useSessionOrganizationEditors({ ...props, projection, listView, actions });
     return actions.ready ? <SelectionList rootStep={editor.tagMenuContent.selectionListStep} onRequestClose={props.onRequestClose}
-        keyboardHintsEnabled={false} disableTransitions testID="session-tags-editor" /> : null;
+        onSelect={() => {}} keyboardHintsEnabled={false} disableTransitions testID="session-tags-editor" /> : null;
 }
 
 function SessionTagsEditor(props: TagsEditorProps) {

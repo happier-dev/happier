@@ -259,14 +259,14 @@ describe('AgentInput (modelOptionsOverride)', () => {
         const onSessionModeChange = vi.fn();
         const onPermissionModeChange = vi.fn();
         const onPickFile = vi.fn();
-        const screen = await renderScreen(<KeyboardShortcutProvider>
+        const screen = await renderScreen(<KeyboardShortcutProvider handlers={{}}>
             <KeyboardCommandProbe onReady={command => { execute = command; }} />
             <AgentInput value="draft" placeholder="placeholder" onChangeText={() => {}} onSend={() => {}}
                 autocompleteKinds={[]} autocompleteSuggestions={async () => []}
                 agentType="codex" permissionMode="default" onPermissionModeChange={onPermissionModeChange}
                 modelMode="default" onModelModeChange={() => {}}
                 extraActionChips={[createAttachmentActionChip({ onPickFile, onPickImage: () => {} })]}
-                modelOptionsOverride={[{ value: 'default', label: 'Default' }]}
+                modelOptionsOverride={[{ value: 'default', label: 'Default', description: '' }]}
                 acpSessionModeOptionsOverride={[{ id: 'build', name: 'Build' }, { id: 'plan', name: 'Plan' }]}
                 acpSessionModeSelectedIdOverride="build" onAcpSessionModeChange={onSessionModeChange} />
         </KeyboardShortcutProvider>);

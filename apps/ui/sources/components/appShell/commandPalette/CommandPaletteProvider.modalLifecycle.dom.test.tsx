@@ -82,7 +82,7 @@ it('opens Search with legacy gates off while honoring individual command opt-out
     const settings = { ...settingsDefaults, commandPaletteEnabled: false, keyboardShortcutsV2Enabled: false,
         keyboardShortcutOverridesV1: { 'session.action:ui.session.rename': [{ binding: 'Mod+Alt+U' }] } };
     const homes = await serveActionHomes({ homes: [{ key: 'session', serverUrl: 'https://session-menu-search.test',
-        serverIdentityId: 'srv_session_menu_search', accountId: 'alice', currentAccount: true, settings }] });
+        serverIdentityId: 'srv_session_menu_search', accountId: 'alice', currentAccount: true, settings }], route: () => undefined });
     const credentials = (await TokenStorage.getCredentialsForServerUrl(homes.homes.session!.serverUrl))!;
     const before = storage.getState();
     const container = document.createElement('div');
