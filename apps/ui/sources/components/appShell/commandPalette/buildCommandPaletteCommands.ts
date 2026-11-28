@@ -1,9 +1,14 @@
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
+import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { detachedReviewStartSeed, type ExecutionRunLauncherDraftSeed } from '@/components/sessions/runs/launcher/prepareExecutionRunLauncherDraft';
-import { REVIEW_START_ACTION_ID_V1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
-import { listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
+import { ACTION_ID_FAMILIES_V1, REVIEW_START_ACTION_ID_V1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { listUiActionSpecsForPlacement } from '@happier-dev/protocol/actions/actionSpecs';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { buildActionDraftInput } from '@/sync/domains/actions/buildActionDraftInput';
+import { openCatalogAction } from '@/components/sessions/actions/openCatalogAction';
 import { readBuiltInSettingDeclarationV1 } from '@happier-dev/protocol/actions/settings/settingsDeclarations';
 import { VoiceConversationActionResultSchema, type VoiceConversationActionId, type VoiceConversationStatus } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
+import { isExecutionRunsFeatureAction } from '@/sync/domains/actions/isExecutionRunsFeatureAction';
 
 import type { Command } from './types';
 import type { SessionComposerModelFavorite } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
@@ -123,6 +128,7 @@ type BuildCommandPaletteCommandsBaseParams = Readonly<{
     workflowsEnabled?: boolean;
   }>;
   shortcutLabels?: Partial<Record<KeyboardCommandId, string>>;
+  sessionCommands?: readonly Command[];
   petControls?: PetCommandControls;
   paneControls?: PaneCommandControls;
   fileViewControls?: FileViewCommandControls;
@@ -479,6 +485,7 @@ export function buildCommandPaletteCommands(
         id: `plugin-action:${action.qualifiedActionId}`,
         actionSpecId: action.qualifiedActionId,
         title: action.title,
+        shortcut: params.shortcutLabels?.[`action:${formatQualifiedPluginActionId(action.identity)}`],
         ...(subtitle ? { subtitle } : {}),
         icon: resolvePluginContributedActionIconName(action.icon),
         // Grouped under the plugin's display name; its id is never a heading.
@@ -495,10 +502,11 @@ export function buildCommandPaletteCommands(
   }
 
   const state = storage.getState() as any;
-  const actionSpecs = listActionSpecs().filter((spec) =>
-    isActionEnabledInState(state as any, spec.id, { surface: 'ui_button', placement: 'command_palette' } as any),
+  const commandPaletteActionSpecs = listUiActionSpecsForPlacement('command_palette').filter((spec) =>
+    (features.voiceEnabled || !(ACTION_ID_FAMILIES_V1.voice_controls as readonly string[]).includes(spec.id))
+    && (features.executionRunsEnabled || !isExecutionRunsFeatureAction(spec.id))
+    && isActionEnabledInState(state, spec.id, { surface: 'ui', placement: 'command_palette' }),
   );
-  const commandPaletteActionSpecs = actionSpecs.filter((spec) => (spec.placements ?? []).includes('command_palette'));
   const byId = new Map(commandPaletteActionSpecs.map((spec) => [spec.id, spec]));
 
   const notch = byId.get('desktop.notch.set');
@@ -711,5 +719,47 @@ export function buildCommandPaletteCommands(
     });
   }
 
+  const session = activeSessionId ? sessionsById[activeSessionId] : null;
+  const metadata = session ? readSessionOwnerMetadataView(session) : null;
+  const context = {
+    defaultSessionId: activeSessionId,
+    defaultSessionMachineId: metadata?.machineId,
+    defaultSessionRootPath: metadata?.path,
+  };
+  const contextCategory = session ? getSessionName(session) : undefined;
+  const handled = new Set(cmds.map(command => command.actionSpecId).filter(Boolean));
+  // The desktop opener decides Notch availability, including unsupported hosts.
+  if (notch) handled.add(notch.id);
+  for (const spec of commandPaletteActionSpecs) {
+    if (handled.has(spec.id)) continue;
+    const input = buildActionDraftInput({ actionId: spec.id, context });
+    const parsed = spec.inputSchema.safeParse(input);
+    const sessionScoped = spec.contextualDefaults?.sessionId === 'current_session'
+      || spec.inputHints?.fields.some(field => field.path === 'sessionId');
+    cmds.push({
+      id: `action:${spec.id}`, actionSpecId: spec.id,
+      title: spec.title, subtitle: spec.description,
+      icon: 'lightning', category: t('commandPalette.commands.actionsCategory'),
+      ...(sessionScoped && contextCategory ? { contextCategory } : {}),
+      ...(parsed.success ? { invokeAction: caller => caller.executeOrdinaryChildAction!(spec.id, parsed.data) } : {}),
+      action: () => openCatalogAction({ spec, context,
+        pickerContext: { sessionId: activeSessionId, machineId: metadata?.machineId, serverId: activeSessionServerId },
+        execute: async input => await actions.execute(spec.id, input, { defaultSessionId: activeSessionId, surface: 'ui' }) as ActionExecuteResult,
+      }),
+    });
+  }
+  const shortcutActions = new Set<string>();
+  for (const command of cmds) {
+    if (!command.actionSpecId) continue;
+    const spec = byId.get(command.actionSpecId as ActionId);
+    if (contextCategory && (spec?.contextualDefaults?.sessionId === 'current_session'
+      || spec?.inputHints?.fields.some(field => field.path === 'sessionId'))) command.contextCategory = contextCategory;
+    // Derived dispatch chooses the first bespoke variant when an Action has several controls.
+    if (!shortcutActions.has(command.actionSpecId)) {
+      command.shortcut = params.shortcutLabels?.[`action:${command.actionSpecId}` as KeyboardCommandId] ?? command.shortcut;
+      shortcutActions.add(command.actionSpecId);
+    }
+  }
+  if (contextCategory) cmds.push(...(params.sessionCommands ?? []).map(command => ({ ...command, contextCategory })));
   return cmds;
 }

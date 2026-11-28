@@ -517,7 +517,7 @@ function createSessionLifecycleActionSpecs() {
     title: 'Hand off session',
     description: 'Move the current session to another machine or another directory on the same machine while keeping the same session id. Select target storage and workspace transfer behavior explicitly when needed.',
     safety: 'safe',
-    placements: ['session_action_menu', 'session_info'],
+    placements: ['session_action_menu', 'session_info', 'command_palette'],
     bindings: {
       rpcMethod: RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3,
       rpcMethodAliases: [RPC_METHODS.DAEMON_SESSION_HANDOFF_START],

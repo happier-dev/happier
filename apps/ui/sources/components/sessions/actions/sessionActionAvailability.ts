@@ -13,6 +13,7 @@ import {
     SESSION_ACTION_ARCHIVE_ID,
     SESSION_ACTION_CLEAR_ATTENTION_STANDING_ID,
     SESSION_ACTION_DELETE_ID,
+    SESSION_ACTION_EDIT_TAGS_ID,
     SESSION_ACTION_FOLLOW_ID,
     SESSION_ACTION_MARK_READ_ID,
     SESSION_ACTION_MARK_UNREAD_ID,
@@ -68,6 +69,7 @@ export function listVisibleSessionActionIds(params: Readonly<{
      * Read by menus only while open; the colour action's whole gate is decided here.
      */
     sessionAppearancesSupported?: boolean;
+    organizationEditors?: Readonly<{ tagsAvailable: boolean; foldersAvailable: boolean }>;
 }>): SessionActionId[] {
     const { target, surface } = params;
     const ids: SessionActionId[] = [];
@@ -179,7 +181,11 @@ export function listVisibleSessionActionIds(params: Readonly<{
         ids.push(SESSION_ACTION_DELETE_ID);
     }
 
-    if (surface === 'rowMenu' || surface === 'nativeContextMenu') {
+    if ((surface === 'sessionHeader' || surface === 'sessionInfo') && params.organizationEditors?.tagsAvailable) {
+        ids.push(SESSION_ACTION_EDIT_TAGS_ID);
+    }
+    if (surface === 'rowMenu' || surface === 'nativeContextMenu'
+        || ((surface === 'sessionHeader' || surface === 'sessionInfo') && params.organizationEditors?.foldersAvailable)) {
         ids.push(SESSION_ACTION_MOVE_TO_FOLDER_ID);
     }
 

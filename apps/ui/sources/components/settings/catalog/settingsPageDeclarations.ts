@@ -22,7 +22,9 @@ import { MACHINES_DEFAULTS_SETTINGS } from '@/components/settings/machines/machi
 import { MACHINES_INDEX_SETTINGS } from '@/components/settings/machines/machinesIndexSettings';
 import { MACHINES_THIS_COMPUTER_SETTINGS } from '@/components/settings/machines/machinesThisComputerSettings';
 import { REMOTE_HOSTS_ACCESS_SETTINGS, REMOTE_HOSTS_SETTINGS } from '@/components/settings/remoteHosts/remoteHostsSettings';
-import { KEYBOARD_SETTINGS } from '@/components/settings/keyboard/keyboardSettings';
+import { KEYBOARD_SETTINGS, getPluginKeyboardSettingsDeclarations } from '@/components/settings/keyboard/keyboardSettings';
+import { readPluginKeyboardCommands } from '@/keyboard/pluginCommands';
+import type { KeyboardCommand } from '@/keyboard/types';
 import { PETS_SETTINGS } from '@/components/settings/pets/petsSettings';
 import { FEATURES_SETTINGS } from '@/components/settings/features/featuresSettings';
 import { LANGUAGE_SETTINGS } from '@/components/settings/language/languageSettings';
@@ -188,7 +190,7 @@ export const SETTINGS_PAGE_DECLARATIONS: readonly SettingsPageDeclaration[] = [
 ];
 
 /** Static host declarations plus fields from the one currently admitted Voice registry. */
-export function getSettingsPageDeclarations(localize?: PluginLocalizedTextResolver, settings?: Pick<Settings, 'voice'>): readonly SettingsPageDeclaration[] {
+export function getSettingsPageDeclarations(localize?: PluginLocalizedTextResolver, settings?: Pick<Settings, 'voice'>, keyboardCommands: readonly KeyboardCommand[] = readPluginKeyboardCommands(localize)): readonly SettingsPageDeclaration[] {
     const host = settings ? projectVoiceSettingsPageDeclarations(SETTINGS_PAGE_DECLARATIONS, settings.voice, voiceSettingsDeclarationRegistry) : SETTINGS_PAGE_DECLARATIONS;
-    return [...host, ...getVoiceContributedSettingsDeclarations(undefined, localize)];
+    return [...host, ...getVoiceContributedSettingsDeclarations(undefined, localize), ...getPluginKeyboardSettingsDeclarations(keyboardCommands)];
 }

@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { buildDeferredDaemonProjectionSections, DaemonContributionRegistryProjectionDescribeResponseSchema, DaemonProjectionSectionBodyResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
-import { createMachineFixture, createSessionFixture, flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
+import { createHydratedPlainMachineFixture, createSessionFixture, flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { storage } from '@/sync/domains/state/storage';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -34,8 +34,8 @@ it('opens Home Search Actions on their individual selected origins when the cata
     const lifetime = captureActiveServerAccountScopeLifetime();
     if (!lifetime) throw new Error('Flower Home must be current');
     const pluginIds = ['qa.flowers', 'qa.notes', 'qa.flowers'];
-    storage.setState({ machineListByServerId: { [serverId]: pluginIds.map((_, index) => createMachineFixture({
-        id: `palette-machine-${index}`, isShared: false,
+    storage.setState({ machineListByServerId: { [serverId]: pluginIds.map((_, index) => createHydratedPlainMachineFixture({
+        id: `palette-machine-${index}`, accountId: 'flowers', machine: { isShared: false },
     })) } });
     const members = pluginIds.map((pluginId, index) => {
         const machineId = `palette-machine-${index}`;
@@ -219,7 +219,8 @@ it('keeps a routed Session Action form on its Home through focused Account rotat
     publishAppliedActiveServerSnapshot({ serverId: focusedHome, serverUrl: 'https://palette-focused.test', generation: 1 });
     const focusedLifetime = captureActiveServerAccountScopeLifetime();
     expect(focusedLifetime?.scope.accountId).toBe('account-a');
-    const machine = createMachineFixture({ id: 'palette-machine-b', active: true, activeAt: Date.now(), isShared: false });
+    const machine = createHydratedPlainMachineFixture({ id: 'palette-machine-b', accountId: 'account-b',
+        machine: { active: true, activeAt: Date.now(), isShared: false } });
     const session = createSessionFixture({ id: 'palette-session-b', serverId: routedHome, active: true,
         metadata: { machineId: machine.id, path: '/workspace/b', host: 'machine-b' } });
     storage.setState({ sessions: { [session.id]: session },

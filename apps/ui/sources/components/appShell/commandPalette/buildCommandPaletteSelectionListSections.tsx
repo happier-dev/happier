@@ -81,11 +81,16 @@ export function buildCommandPaletteSelectionListSections(
     const previousOptions = new Map(previousSections?.flatMap(section => section.kind === 'static'
         ? section.options.map(option => [option.id, option] as const) : []));
     const optionsByCategory = new Map<string, SelectionListOption[]>();
-    for (const command of commands) {
+    const contextFirst = !titleQuery?.trim();
+    const orderedCommands = contextFirst ? [
+        ...commands.filter(command => command.contextCategory),
+        ...commands.filter(command => !command.contextCategory),
+    ] : commands;
+    for (const command of orderedCommands) {
         const option = buildOption(command, previousOptions.get(buildCommandPaletteOptionId(command.id)), titleQuery);
         // Uncategorized commands share one untitled leading section rather than
         // borrowing another category's heading.
-        const category = command.category ?? '';
+        const category = (contextFirst ? command.contextCategory : undefined) ?? command.category ?? '';
         const existing = optionsByCategory.get(category);
         if (existing) {
             existing.push(option);

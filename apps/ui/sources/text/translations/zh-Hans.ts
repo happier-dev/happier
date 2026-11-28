@@ -9988,6 +9988,7 @@ export const zhHans: TranslationStructure = {
     metadataCopied: "元数据已复制到剪贴板",
     failedToCopyMetadata: "复制元数据失败",
     copyDebugInformation: "复制信息",
+    copyProviderSessionId: '复制提供商会话 ID',
     sessionInformation: "会话信息",
     happierSessionId: "Happier 会话 ID",
     providerSessionId: ({ provider }: { provider: string }) => `${provider} 会话 ID`,

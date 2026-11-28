@@ -1,0 +1,163 @@
+import {
+    SESSION_ACTION_MAKE_BOT_ID,
+    SESSION_ACTION_MAKE_REGULAR_ID,
+    SESSION_ACTION_RAIL_PIN_ID,
+    SESSION_ACTION_RAIL_UNPIN_ID,
+    SESSION_ACTION_WORK_OPEN_ID,
+    SESSION_ACTION_TALK_ID,
+    SESSION_ACTION_TOOL_CALLS_TOGGLE_ID,
+    SESSION_ACTION_TOOL_CALLS_USE_DEFAULT_ID,
+    SESSION_ACTION_CLEAR_STATUS_ID,
+    SESSION_ACTION_ARCHIVE_ID,
+    SESSION_ACTION_CLEAR_ATTENTION_STANDING_ID,
+    SESSION_ACTION_DELETE_ID,
+    SESSION_ACTION_EDIT_TAGS_ID,
+    SESSION_ACTION_FOLLOW_ID,
+    SESSION_ACTION_MARK_READ_ID,
+    SESSION_ACTION_MARK_UNREAD_ID,
+    SESSION_ACTION_MOVE_TO_FOLDER_ID,
+    SESSION_ACTION_SET_APPEARANCE_COLOR_ID,
+    SESSION_ACTION_PIN_ID,
+    SESSION_ACTION_PUT_UNDER_ID,
+    SESSION_ACTION_COORDINATOR_MAKE_ID,
+    SESSION_ACTION_COORDINATOR_EDIT_ID,
+    SESSION_ACTION_COORDINATOR_BOARD_ID,
+    SESSION_ACTION_COORDINATOR_ANSWERS_ID,
+    SESSION_ACTION_COORDINATOR_STOP_ID,
+    SESSION_ACTION_RENAME_ID,
+    SESSION_ACTION_RESUME_ID,
+    SESSION_ACTION_SET_ATTENTION_STANDING_ID,
+    SESSION_ACTION_STOP_ID,
+    SESSION_ACTION_UNARCHIVE_ID,
+    SESSION_ACTION_UNPIN_ID,
+} from './sessionActionIds.js';
+
+/** Portable labels and identity for the canonical Session action registry. */
+export const SESSION_ACTION_METADATA = {
+    'header.reportIssue': { titleKey: 'bugReports.reportSession', icon: 'bug', group: 'open' },
+    'header.share': { titleKey: 'common.share', icon: 'share-network', group: 'open' },
+    'session.copyDebugInformation': { titleKey: 'sessionInfo.sessionInformation', icon: 'copy', group: 'open' },
+    'session.copySessionId': { titleKey: 'sessionInfo.happierSessionId', icon: 'copy', group: 'open' },
+    'session.copyProviderSessionId': { titleKey: 'sessionInfo.copyProviderSessionId', icon: 'copy', group: 'open' },
+    'session.info.session-log': { titleKey: 'sessionPages.info.sessionLog', icon: 'file-text', group: 'open' },
+    'session.info.machine': { titleKey: 'machinePools.executionMachine', icon: 'desktop', group: 'open' },
+    'session.info.same-setup': { titleKey: 'sessionInfo.newSessionSameSetup', icon: 'copy', group: 'work' },
+    'session.info.sharing': { titleKey: 'sessionPages.info.sharing', icon: 'share-network', group: 'open' },
+    'session.info.all-automations': { titleKey: 'sessionPages.info.allAutomations', icon: 'lightning', group: 'open' },
+    [SESSION_ACTION_WORK_OPEN_ID]: { titleKey: 'bots.instructionsAndVoice', icon: 'file-text', group: 'open' },
+    [SESSION_ACTION_TALK_ID]: { titleKey: 'bots.talk', icon: 'microphone', group: 'session' },
+    [SESSION_ACTION_RAIL_PIN_ID]: { titleKey: 'bots.pin', icon: 'push-pin', group: 'session' },
+    [SESSION_ACTION_RAIL_UNPIN_ID]: { titleKey: 'bots.unpin', icon: 'push-pin', group: 'session' },
+    [SESSION_ACTION_MAKE_BOT_ID]: { titleKey: 'bots.promote', subtitleKey: 'bots.menu.promoteSubtitle', icon: 'robot', group: 'behavior' },
+    [SESSION_ACTION_MAKE_REGULAR_ID]: { titleKey: 'bots.demote', subtitleKey: 'bots.menu.demoteSubtitle', icon: 'robot', group: 'behavior' },
+    [SESSION_ACTION_TOOL_CALLS_TOGGLE_ID]: { titleKey: 'session.toolCallActions.show', subtitleKey: 'bots.menu.toolsSubtitle', icon: 'list-bullets', group: 'behavior' },
+    [SESSION_ACTION_TOOL_CALLS_USE_DEFAULT_ID]: { titleKey: 'session.toolCallActions.useDefault', icon: 'arrows-clockwise', group: 'behavior' },
+    [SESSION_ACTION_CLEAR_STATUS_ID]: { titleKey: 'session.clearStatus', icon: 'x', group: 'session' },
+    [SESSION_ACTION_FOLLOW_ID]: {
+        titleKey: 'session.follow.editor.title',
+        icon: 'bell', group: 'session',
+    },
+    [SESSION_ACTION_MARK_READ_ID]: {
+        titleKey: 'sessionInfo.markSessionRead',
+        subtitleKey: 'sessionInfo.markSessionReadSubtitle',
+        icon: 'envelope-open', group: 'session',
+    },
+    [SESSION_ACTION_MARK_UNREAD_ID]: {
+        titleKey: 'sessionInfo.markSessionUnread',
+        subtitleKey: 'sessionInfo.markSessionUnreadSubtitle',
+        icon: 'envelope-simple-open', group: 'session',
+    },
+    [SESSION_ACTION_COORDINATOR_MAKE_ID]: {
+        titleKey: 'sessionCoordinator.menu.make',
+        icon: 'tree-structure', group: 'work',
+    },
+    [SESSION_ACTION_COORDINATOR_ANSWERS_ID]: {
+        titleKey: 'sessionCoordinator.menu.answers',
+        subtitleKey: 'sessionCoordinator.menu.answersSubtitle',
+        icon: 'chat-circle-dots', group: 'work',
+    },
+    [SESSION_ACTION_COORDINATOR_EDIT_ID]: {
+        titleKey: 'sessionCoordinator.menu.edit',
+        subtitleKey: 'sessionCoordinator.menu.editSubtitle',
+        icon: 'funnel-simple', group: 'work',
+    },
+    [SESSION_ACTION_COORDINATOR_BOARD_ID]: {
+        titleKey: 'sessionCoordinator.menu.openAsBoard',
+        // Says what the Board holds, so it never reads as this session's own Board above it.
+        subtitleKey: 'sessionCoordinator.menu.openAsBoardSubtitle',
+        icon: 'kanban', group: 'work',
+    },
+    [SESSION_ACTION_COORDINATOR_STOP_ID]: {
+        titleKey: 'sessionCoordinator.menu.stop',
+        subtitleKey: 'sessionCoordinator.menu.stopSubtitle',
+        icon: 'minus-circle', group: 'work',
+    },
+    [SESSION_ACTION_PUT_UNDER_ID]: {
+        titleKey: 'sessionWork.putUnder.title',
+        subtitleKey: 'sessionWork.putUnder.subtitle',
+        icon: 'tree-structure', group: 'work',
+    },
+    [SESSION_ACTION_RENAME_ID]: {
+        titleKey: 'sessionInfo.renameSession',
+        subtitleKey: 'sessionInfo.renameSessionSubtitle',
+        icon: 'pencil', group: 'session',
+    },
+    [SESSION_ACTION_RESUME_ID]: {
+        titleKey: 'session.workState.goal.resume',
+        subtitleKey: 'session.inactiveResumable',
+        icon: 'play', group: 'work',
+    },
+    [SESSION_ACTION_STOP_ID]: {
+        titleKey: 'sessionInfo.stopSession',
+        subtitleKey: 'sessionInfo.stopSessionSubtitle',
+        icon: 'stop-circle', group: 'finish',
+    },
+    [SESSION_ACTION_ARCHIVE_ID]: {
+        titleKey: 'sessionInfo.archiveSession',
+        subtitleKey: 'sessionInfo.archiveSessionSubtitle',
+        icon: 'archive', group: 'finish',
+    },
+    [SESSION_ACTION_UNARCHIVE_ID]: {
+        titleKey: 'sessionInfo.unarchiveSession',
+        subtitleKey: 'sessionInfo.unarchiveSessionSubtitle',
+        icon: 'archive', group: 'session',
+    },
+    [SESSION_ACTION_DELETE_ID]: {
+        titleKey: 'sessionInfo.deleteSession',
+        subtitleKey: 'sessionInfo.deleteSessionSubtitle',
+        icon: 'trash', group: 'finish',
+        irreversible: true,
+    },
+    [SESSION_ACTION_PIN_ID]: {
+        titleKey: 'sessionInfo.pinSession',
+        icon: 'push-pin', group: 'session',
+    },
+    [SESSION_ACTION_UNPIN_ID]: {
+        titleKey: 'sessionInfo.unpinSession',
+        icon: 'push-pin', group: 'session',
+    },
+    [SESSION_ACTION_EDIT_TAGS_ID]: {
+        titleKey: 'sessionTags.editTagsLabel',
+        icon: 'tag', group: 'session',
+    },
+    [SESSION_ACTION_MOVE_TO_FOLDER_ID]: {
+        titleKey: 'sessionsList.moveToFolder',
+        icon: 'folder', group: 'session',
+    },
+    [SESSION_ACTION_SET_APPEARANCE_COLOR_ID]: {
+        titleKey: 'sessionsList.appearance.setColor',
+        icon: 'palette', group: 'session',
+    },
+    [SESSION_ACTION_SET_ATTENTION_STANDING_ID]: {
+        titleKey: 'sessionInfo.keepInAttention',
+        subtitleKey: 'sessionInfo.keepInAttentionSubtitle',
+        icon: 'bell', group: 'session',
+    },
+    [SESSION_ACTION_CLEAR_ATTENTION_STANDING_ID]: {
+        titleKey: 'sessionInfo.removeFromAttention',
+        subtitleKey: 'sessionInfo.removeFromAttentionSubtitle',
+        icon: 'bell-slash', group: 'session',
+    },
+} as const;
+
+export type SessionActionMetadataId = keyof typeof SESSION_ACTION_METADATA;

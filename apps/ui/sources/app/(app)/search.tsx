@@ -3,6 +3,7 @@ import { useRouter } from 'expo-router';
 import { useCurrentRouteParams } from '@/components/appShell/workspace/currentRouteLocation';
 import { Platform } from 'react-native';
 
+import { useOptionalCurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
 import { UniversalSearchController } from '@/components/appShell/search/UniversalSearchController';
 import { RouteModalPortalScope } from '@/components/navigation/RouteModalPortalScope';
 import { useUniversalSearchRuntime } from '@/components/appShell/search/UniversalSearchRuntimeContext';
@@ -26,15 +27,20 @@ function UniversalSearchNativeRoute(): React.ReactElement {
     const params = useCurrentRouteParams<UniversalSearchRouteParams>();
     const runtime = useUniversalSearchRuntime();
     const symbols = runtime.routeSymbols;
+    React.useEffect(() => () => runtime.releaseSessionCommands?.(), [runtime]);
     const initialQuery = typeof params.q === 'string' ? params.q : '';
     const initialSource = readRouteSource(params.source);
     const initialReplace = params.replace === '1' && initialSource === 'fileContent';
     const activeSessionId = typeof params.sessionId === 'string' ? params.sessionId : null;
     const initialScope = React.useMemo(() => resolveUniversalSearchRouteInitialScope(params), [params]);
     const terminalJump = React.useMemo(() => readRouteTerminalJump(params), [params]);
+    const currentUiContext = useOptionalCurrentUiContextReader();
+    const subscribeCommands = React.useCallback((listener: () => void) => currentUiContext?.subscribe(listener) ?? (() => {}), [currentUiContext]);
+    const readCommandIds = React.useCallback(() => JSON.stringify(currentUiContext?.readCurrentUiContext()?.commands.map(command => command.id) ?? []), [currentUiContext]);
+    const commandIds = React.useSyncExternalStore(subscribeCommands, readCommandIds, readCommandIds);
     const commands = React.useMemo(
         () => runtime.buildCommands(activeSessionId, initialScope ?? undefined, symbols),
-        [activeSessionId, initialScope, runtime, symbols],
+        [activeSessionId, commandIds, initialScope, runtime, symbols],
     );
     const close = React.useCallback(() => {
         if (router.canGoBack()) router.back();

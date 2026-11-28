@@ -3,7 +3,7 @@ title: Keyboard shortcuts
 description: Every rebindable shortcut and Search, with the defaults for web and native.
 ---
 
-Happier has 170 keyboard commands. Every one can be rebound, and the defaults
+Happier has 253 keyboard commands. Every one can be rebound, and the defaults
 differ between the web client and the native apps where the platform already
 claims a key.
 
@@ -23,6 +23,12 @@ built-in commands, sessions, projects, settings pages, messages, workspace
 files and commits in one grouped list.
 
 `Mod+K` · `Alt+K` (web)
+
+In unreleased 0.3 development source, Search includes enabled catalog Actions.
+Actions for the open Session appear first before you type. An Action runs with
+the available context or opens its input form when more information is needed.
+Use **Settings → Keyboard shortcuts** to assign a shortcut to an Action; these commands
+have no default binding and use the same execution path as their Search row.
 
 In unreleased 0.3 development source, file quick open uses this same Search
 surface, scoped to the workspace. Its registered shortcut is
@@ -118,6 +124,89 @@ available there. Space selection leaves the workspace tab shortcuts unchanged.
 
 | Command | Default |
 | --- | --- |
+| `action:desktop.notch.set` | _Unbound by default_ |
+| `action:ui.voice_global.say.start` | _Unbound by default_ |
+| `action:ui.voice_global.say.stop` | _Unbound by default_ |
+| `action:ui.voice_global.get` | _Unbound by default_ |
+| `action:ui.voice_global.start` | _Unbound by default_ |
+| `action:ui.voice_global.end` | _Unbound by default_ |
+| `action:ui.voice_global.set_muted` | _Unbound by default_ |
+| `action:ui.voice_global.new_conversation` | _Unbound by default_ |
+| `action:ui.voice_global.continue_conversation` | _Unbound by default_ |
+| `action:ui.voice_global.conversations.open` | _Unbound by default_ |
+| `action:ui.voice_global.recover` | _Unbound by default_ |
+| `action:ui.voice_global.dismiss` | _Unbound by default_ |
+| `action:ui.voice_global.turn_control` | _Unbound by default_ |
+| `action:ui.voice_global.brief.request` | _Unbound by default_ |
+| `action:ui.voice_global.brief.retry` | _Unbound by default_ |
+| `action:ui.voice_global.brief.stop` | _Unbound by default_ |
+| `action:ui.voice_global.brief.close` | _Unbound by default_ |
+| `action:ui.voice_global.glance.open` | _Unbound by default_ |
+| `action:ui.voice_global.glance.close` | _Unbound by default_ |
+| `action:ui.voice_global.transcript.set_visible` | _Unbound by default_ |
+| `action:ui.voice_global.companion.reveal` | _Unbound by default_ |
+| `action:ui.voice_global.setup.open` | _Unbound by default_ |
+| `action:ui.voice_global.setup.close` | _Unbound by default_ |
+| `action:ui.voice_global.open_conversation` | _Unbound by default_ |
+| `action:ui.voice_global.setup.microphone.permission.request` | _Unbound by default_ |
+| `action:ui.voice_global.setup.system_settings.open` | _Unbound by default_ |
+| `action:ui.voice_global.history.export` | _Unbound by default_ |
+| `action:ui.voice_global.history.clear` | _Unbound by default_ |
+| `action:review.start` | _Unbound by default_ |
+| `action:review.walkthrough` | _Unbound by default_ |
+| `action:review.explain_findings` | _Unbound by default_ |
+| `action:subagents.plan.start` | _Unbound by default_ |
+| `action:subagents.delegate.start` | _Unbound by default_ |
+| `action:execution.run.list` | _Unbound by default_ |
+| `action:session.open` | _Unbound by default_ |
+| `action:session.fork` | _Unbound by default_ |
+| `action:session.handoff` | _Unbound by default_ |
+| `action:session.spawn_new` | _Unbound by default_ |
+| `action:session.compact` | _Unbound by default_ |
+| `action:ui.voice_global.reset` | _Unbound by default_ |
+| `action:memory.search` | _Unbound by default_ |
+| `action:session.pending.next` | _Unbound by default_ |
+| `session.action:header.reportIssue` | _Unbound by default_ |
+| `session.action:header.share` | _Unbound by default_ |
+| `session.action:session.copyDebugInformation` | _Unbound by default_ |
+| `session.action:session.copySessionId` | _Unbound by default_ |
+| `session.action:session.copyProviderSessionId` | _Unbound by default_ |
+| `session.action:session.info.session-log` | _Unbound by default_ |
+| `session.action:session.info.machine` | _Unbound by default_ |
+| `session.action:session.info.same-setup` | _Unbound by default_ |
+| `session.action:session.info.sharing` | _Unbound by default_ |
+| `session.action:session.info.all-automations` | _Unbound by default_ |
+| `session.action:ui.session.work.open` | _Unbound by default_ |
+| `session.action:ui.session.talk` | _Unbound by default_ |
+| `session.action:ui.session.rail.pin` | _Unbound by default_ |
+| `session.action:ui.session.rail.unpin` | _Unbound by default_ |
+| `session.action:ui.session.make-bot` | _Unbound by default_ |
+| `session.action:ui.session.make-regular` | _Unbound by default_ |
+| `session.action:ui.session.tool-calls.toggle` | _Unbound by default_ |
+| `session.action:ui.session.tool-calls.use-default` | _Unbound by default_ |
+| `session.action:session.status.clear` | _Unbound by default_ |
+| `session.action:ui.session.follow` | _Unbound by default_ |
+| `session.action:ui.session.mark-read` | _Unbound by default_ |
+| `session.action:ui.session.mark-unread` | _Unbound by default_ |
+| `session.action:ui.session.coordinator.make` | _Unbound by default_ |
+| `session.action:ui.session.coordinator.answers` | _Unbound by default_ |
+| `session.action:ui.session.coordinator.edit` | _Unbound by default_ |
+| `session.action:ui.session.coordinator.board` | _Unbound by default_ |
+| `session.action:ui.session.coordinator.stop` | _Unbound by default_ |
+| `session.action:ui.session.put-under` | _Unbound by default_ |
+| `session.action:ui.session.rename` | _Unbound by default_ |
+| `session.action:ui.session.resume` | _Unbound by default_ |
+| `session.action:ui.session.stop` | _Unbound by default_ |
+| `session.action:ui.session.archive` | _Unbound by default_ |
+| `session.action:ui.session.unarchive` | _Unbound by default_ |
+| `session.action:ui.session.delete` | _Unbound by default_ |
+| `session.action:ui.session.pin` | _Unbound by default_ |
+| `session.action:ui.session.unpin` | _Unbound by default_ |
+| `session.action:ui.session.tags.edit` | _Unbound by default_ |
+| `session.action:ui.session.move-to-folder` | _Unbound by default_ |
+| `session.action:ui.session.appearance-color` | _Unbound by default_ |
+| `session.action:ui.session.set-attention-standing` | _Unbound by default_ |
+| `session.action:ui.session.clear-attention-standing` | _Unbound by default_ |
 | `code.goToDefinition` | `F12` |
 | `code.findReferences` | `Shift+F12` |
 | `code.showInfo` | _Unbound by default_ |

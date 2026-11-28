@@ -8389,6 +8389,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
 	    sessionInfo: {
 	        // Used by Session Info screen (app/(app)/session/[id]/info.tsx)
 	        title: '工作階段資訊',
+            copyProviderSessionId: '複製供應商工作階段 ID',
 	        killSession: '終止工作階段',
         killSessionConfirm: '您確定要終止此工作階段嗎？',
         stopSession: '停止工作階段',

@@ -33,6 +33,36 @@ function keyEvent(event: Partial<NormalizedKeyboardEvent>): NormalizedKeyboardEv
 }
 
 describe('createKeyboardShortcutDispatcher', () => {
+    it('consumes configured qualified plugin and catalog Action shortcuts on native hardware', () => {
+        for (const commandId of ['action:review.start', 'action:acme.tools/actions/run'] as const) {
+            expect(resolveNativeHardwareKeyboardConsumableEventSignatures({ enabled: true, platform: 'ios', surface: 'native',
+                singleKeyShortcutsEnabled: false, disabledCommandIds: [], overrides: { [commandId]: [{ binding: 'Mod+Shift+9' }] },
+                handlers: { [commandId]: () => {} }, getContext: () => context }))
+                .toContain('9|shift=true|ctrl=false|meta=true|alt=false');
+        }
+    });
+    it('dispatches a configured qualified plugin Action through the registered palette handler', () => {
+        const commandId = 'action:acme.tools/actions/run';
+        const run = vi.fn();
+        const overrides = { [commandId]: [{ binding: 'Mod+Shift+9' }] };
+        const handlers = { [commandId]: run };
+        const dispatch = createKeyboardShortcutDispatcher({ enabled: true, platform: 'macos', surface: 'web', singleKeyShortcutsEnabled: false,
+            disabledCommandIds: [], overrides, handlers, getContext: () => context });
+        expect(dispatch(keyEvent({ key: '9', code: 'Digit9', metaKey: true, shiftKey: true }))).toBe(true);
+        expect(run).toHaveBeenCalledOnce();
+        expect(buildKeyboardShortcutLabels('macos', 'web', { overrides, handlers })[commandId]).toBe('Cmd+Shift+9');
+    });
+    it('dispatches an explicitly bound catalog Action and publishes its shortcut label', () => {
+        let invoked = false;
+        const commandId = 'action:review.start';
+        const overrides = { [commandId]: [{ binding: 'Mod+Shift+9' }] };
+        const handlers = { [commandId]: () => { invoked = true; } };
+        const dispatch = createKeyboardShortcutDispatcher({ enabled: true, platform: 'macos', surface: 'web', singleKeyShortcutsEnabled: false,
+            disabledCommandIds: [], overrides, handlers, getContext: () => context });
+        expect(dispatch(keyEvent({ key: '9', code: 'Digit9', metaKey: true, shiftKey: true }))).toBe(true);
+        expect(invoked).toBe(true);
+        expect(buildKeyboardShortcutLabels('macos', 'web', { overrides, handlers })[commandId]).toBe('Cmd+Shift+9');
+    });
     it('advertises only registered focused commands to native hardware when both global preferences are off', () => {
         const options = {
             enabled: false, platform: 'ios' as const, surface: 'native' as const,

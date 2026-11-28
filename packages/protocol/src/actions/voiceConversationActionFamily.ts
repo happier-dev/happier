@@ -1,5 +1,5 @@
 import { lazyActionSpecArray } from './lazyActionSpecValue.js';
-import { VOICE_BRIEF_REQUEST_ACTION_ID_V1, VOICE_CONVERSATION_ACTION_IDS } from './voiceConversationActionIdsV1.js';
+import { VOICE_BRIEF_REQUEST_ACTION_ID_V1, VOICE_CONVERSATION_ACTION_IDS, VOICE_CONVERSATION_COMMAND_PALETTE_ACTION_IDS } from './voiceConversationActionIdsV1.js';
 export { VOICE_CONVERSATION_ACTION_IDS } from './voiceConversationActionIdsV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
@@ -280,7 +280,8 @@ function createVoiceConversationActionSpecs() {
     || id === 'ui.voice_global.history.clear' || id === 'ui.voice_global.say.start'
     || id === 'ui.voice_global.brief.request' || id === 'ui.voice_global.brief.retry' ? 'danger' : 'safe',
   sideEffectClass: id === 'ui.voice_global.get' || id === 'ui.voice_global.conversations.list' || (isVoiceHistoryActionId(id) && id !== 'ui.voice_global.history.clear') ? 'read' : 'write',
-  requiredAuthority: 'account_automation', executionPlacement: 'client', placements: ['command_palette'],
+  requiredAuthority: 'account_automation', executionPlacement: 'client',
+  placements: VOICE_CONVERSATION_COMMAND_PALETTE_ACTION_IDS.includes(id) ? ['command_palette'] : [],
   bindings: { mcpToolName: id.replaceAll('.', '_'),
     ...(id === VOICE_BRIEF_REQUEST_ACTION_ID_V1 ? { voiceClientToolName: 'requestVoiceBrief' } : {}),
   },

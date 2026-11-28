@@ -1,8 +1,52 @@
-import { describe, expect, it } from 'vitest';
-import { executeCommandPaletteAction, registerCommandPaletteActionCatalog } from './commandPaletteActionRuntime';
+import { describe, expect, it, vi } from 'vitest';
+import { executeCommandPaletteAction, executeCommandPaletteKeyboardCommand, registerCommandPaletteActionCatalog } from './commandPaletteActionRuntime';
 import type { Command } from './types';
 
 describe('mounted command palette Actions', () => {
+    it('invokes the current plugin contribution for its durable qualified binding id', async () => {
+        let invoked = false;
+        const release = registerCommandPaletteActionCatalog(() => [{
+            id: 'plugin-action:acme.tools/run', actionSpecId: 'acme.tools/run', title: 'Run',
+            action: () => { invoked = true; },
+        }]);
+        try {
+            expect(executeCommandPaletteKeyboardCommand('action:acme.tools/actions/run')).toBe('handled');
+            await Promise.resolve();
+            expect(invoked).toBe(true);
+        } finally { release(); }
+    });
+
+    it('prepares an unopened Session menu before running its bound operation and withdraws demand afterwards', async () => {
+        let demanded = false;
+        let invoked = false;
+        const release = registerCommandPaletteActionCatalog(() => demanded ? [{
+            id: 'session.action:ui.session.rename', title: 'Rename', action: () => { invoked = true; },
+        }] : [], async () => {
+            demanded = true;
+            return () => { demanded = false; };
+        });
+        try {
+            expect(executeCommandPaletteKeyboardCommand('session.action:ui.session.rename')).toBe('handled');
+            await vi.waitFor(() => expect(invoked).toBe(true));
+            expect(demanded).toBe(false);
+        } finally { release(); }
+    });
+    it('runs the current palette callback for bound Actions including bespoke variants and releases unavailable commands', async () => {
+        let invoked = '';
+        let commands: readonly Command[] = [{ id: 'voice-mode:0', actionSpecId: 'ui.voice_global.reset', title: 'Reset', action: () => { invoked = 'voice'; } },
+            { id: 'session.action:ui.session.rename', title: 'Rename', action: () => { invoked = 'rename'; } }];
+        const release = registerCommandPaletteActionCatalog(() => commands);
+        try {
+            expect(executeCommandPaletteKeyboardCommand('action:ui.voice_global.reset')).toBe('handled');
+            await Promise.resolve();
+            expect(invoked).toBe('voice');
+            expect(executeCommandPaletteKeyboardCommand('session.action:ui.session.rename')).toBe('handled');
+            await Promise.resolve();
+            expect(invoked).toBe('rename');
+            commands = [];
+            expect(executeCommandPaletteKeyboardCommand('session.action:ui.session.rename')).toBe('pass');
+        } finally { release(); }
+    });
     it('does not reclassify commands with an existing Action policy as generic host commands', async () => {
         let invoked = false;
         const release = registerCommandPaletteActionCatalog(() => [{

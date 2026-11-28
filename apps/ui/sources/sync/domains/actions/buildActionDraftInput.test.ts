@@ -55,3 +55,12 @@ describe('buildActionDraftInput', () => {
     });
   });
 });
+
+it('binds context only to declared fields, keeping no-input Actions valid', () => {
+  expect(buildActionDraftInput({ actionId: 'session.pending.next', context: {
+    defaultSessionId: 's1', defaultSessionMachineId: 'm1', defaultSessionRootPath: '/repo',
+  } })).toEqual({});
+  expect(buildActionDraftInput({ actionId: 'session.fork', context: {
+    defaultSessionId: 's1', defaultSessionMachineId: 'm1', defaultSessionRootPath: '/repo',
+  } })).toMatchObject({ sessionId: 's1' });
+});

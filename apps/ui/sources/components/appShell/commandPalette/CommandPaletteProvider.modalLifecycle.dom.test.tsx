@@ -356,3 +356,34 @@ it.each(['rail', 'railItem'] as const)('moves focus into the Search input when A
         container.remove();
     }
 });
+
+
+it('runs a configured plugin shortcut through the globally mounted palette catalog', async () => {
+    const { registerCommandPaletteActionCatalog } = await import('./commandPaletteActionRuntime');
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    const before = storage.getState().settings;
+    let invoked = false;
+    let release: (() => void) | undefined;
+    storage.setState({ settings: { ...settingsDefaults, commandPaletteEnabled: true, keyboardShortcutsV2Enabled: true,
+        keyboardShortcutOverridesV1: { 'action:acme.tools/actions/run': [{ binding: 'Ctrl+Shift+F12' }] } } });
+    try {
+        await act(async () => root.render(<InjectedAuthProvider credentials={null}>
+            <ModalProvider><CommandPaletteProvider><button>Session</button></CommandPaletteProvider></ModalProvider>
+        </InjectedAuthProvider>));
+        // A committed plugin projection is an input to the existing mounted catalog;
+        // the real global provider, keyboard dispatcher and identity bridge remain active.
+        release = registerCommandPaletteActionCatalog(() => [{ id: 'plugin-action:acme.tools/run',
+            actionSpecId: 'acme.tools/run', title: 'Run', action: () => { invoked = true; } }]);
+        await act(async () => document.dispatchEvent(new KeyboardEvent('keydown', {
+            key: 'F12', code: 'F12', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true,
+        })));
+        expect(invoked).toBe(true);
+    } finally {
+        release?.();
+        await act(async () => root.unmount());
+        storage.setState({ settings: before });
+        container.remove();
+    }
+});

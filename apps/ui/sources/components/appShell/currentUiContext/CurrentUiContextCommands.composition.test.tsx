@@ -124,6 +124,125 @@ afterEach(async () => {
 });
 
 describe('mounted current-context descendant commands', () => {
+    it('keeps the mounted Session menu out of another requested Session on the same Home', async () => {
+        // Browser event subscription is the platform boundary; no keyboard event is dispatched here.
+        vi.stubGlobal('window', new EventTarget());
+        home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://session-palette-target.test', accountId: 'account-a', currentAccount: true }],
+            route: request => request.path === '/v1/kv/bulk' ? Response.json({ values: [] }) : undefined });
+        const server = home.homes.a!;
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
+        const [{ CommandPaletteProvider }, { useUniversalSearchRuntime }, { buildSessionMenuCommands }] = await Promise.all([
+            import('../commandPalette/CommandPaletteProvider'), import('../search/UniversalSearchRuntimeContext'),
+            import('@/components/sessions/actions/sessionMenuCommands'),
+        ]);
+        routeState.pathname = '/session/palette-a'; routeState.segments = ['(app)', 'session', '[id]'];
+        routeState.params = { id: 'palette-a', serverId: server.id };
+        getStorage().setState({ sessions: Object.fromEntries(['palette-a', 'palette-b'].map(id => [id,
+            { ...createSessionFixture({ id, serverId: server.id }), accountId: 'account-a' }])) });
+        let runtime!: ReturnType<typeof useUniversalSearchRuntime>;
+        function Presenter() {
+            runtime = useUniversalSearchRuntime();
+            useCurrentUiContextLocalCommands(buildSessionMenuCommands({
+                items: [{ id: 'ui.session.rename', title: 'Rename Session A' }], select: () => {},
+            }));
+            return null;
+        }
+        await renderScreen(<InjectedAuthProvider credentials={credentials}>
+            <MainAppTabStateProvider><AppPaneProvider><ModalProvider><CurrentUiContextProvider>
+                <PluginSurfaceFocusEligibilityProvider active currentUiContextActive>
+                    <CommandPaletteProvider><Presenter /></CommandPaletteProvider>
+                </PluginSurfaceFocusEligibilityProvider>
+            </CurrentUiContextProvider></ModalProvider></AppPaneProvider></MainAppTabStateProvider>
+        </InjectedAuthProvider>);
+        const scope = { serverId: server.id, accountId: 'account-a', machineId: null, rootPath: null };
+        expect(runtime.buildCommands('palette-a', { ...scope, sessionId: 'palette-a' }).map(command => command.id))
+            .toContain('session.action:ui.session.rename');
+        expect(runtime.buildCommands('palette-b', { ...scope, sessionId: 'palette-b' }).map(command => command.id))
+            .not.toContain('session.action:ui.session.rename');
+    });
+
+    it.each(['modal', 'route'] as const)('lends Session commands to the requesting %s palette, restores them on dismissal, and settles when their owner retires', async presentation => {
+        home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://session-palette.test', accountId: 'account-a', currentAccount: true }],
+            route: request => request.path === '/v1/kv/bulk' ? Response.json({ values: [] }) : undefined });
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const credentials = (await TokenStorage.getCredentialsForServerUrl(home.homes.a!.serverUrl))!;
+        const { buildSessionCommands, setSessionCommandPalettePresented } = await import('../commandPalette/sessionCommands');
+        const { buildSessionMenuCommands } = await import('@/components/sessions/actions/sessionMenuCommands');
+        function SessionPresenter(props: Readonly<{ ready: boolean }>) {
+            const [presented, setPresented] = React.useState(false);
+            const [modalId, setModalId] = React.useState<string | null | undefined>(undefined);
+            useCurrentUiContextLocalCommands([
+                { key: 'session.menu.open', title: 'Session menu', invoke: () => {},
+                    setCommandPalettePresented: (next, modal) => { setPresented(next); setModalId(modal); } },
+                ...buildSessionMenuCommands({ items: presented && props.ready ? [{ id: 'ui.session.rename', title: 'Rename Session' }] : [], select: () => { changes.push('renamed'); } }),
+            ], { foregroundModalId: presented ? modalId : undefined });
+            return null;
+        }
+        const tree = (presenter: boolean, focused = true, ready = true) => <InjectedAuthProvider credentials={credentials}>
+            <MainAppTabStateProvider><AppPaneProvider><ModalProvider><CurrentUiContextProvider>
+                <CurrentUiContextActionHost /><ObserveReader />
+                <PluginSurfaceFocusEligibilityProvider active={focused} currentUiContextActive={focused}>
+                    {presenter ? <SessionPresenter ready={ready} /> : null}
+                </PluginSurfaceFocusEligibilityProvider>
+            </CurrentUiContextProvider></ModalProvider></AppPaneProvider></MainAppTabStateProvider>
+        </InjectedAuthProvider>;
+        const screen = await renderScreen(tree(true));
+        const executor = (await import('@/sync/ops/actions/defaultActionExecutor')).createDefaultActionExecutor();
+        const current = reader!;
+        const execute: Parameters<typeof buildSessionCommands>[0]['execute'] = (actionId, input) => executor.execute(actionId, input, { surface: 'ui' });
+        let preparing: ReturnType<typeof setSessionCommandPalettePresented> | undefined;
+        await act(async () => { preparing = setSessionCommandPalettePresented({ reader: current, execute, presented: true, ...(presentation === 'route' ? { modalId: null } : {}) }); });
+        let demand = (await preparing)!;
+        if (presentation === 'route') {
+            await screen.update(tree(true, false));
+            expect(buildSessionCommands({ reader: current, execute }).map(command => command.id)).toContain('session.action:ui.session.rename');
+            await screen.update(tree(true));
+        }
+        let modalId = '';
+        await act(async () => { modalId = Modal.show({ component: () => <View /> }); demand.setModalId(modalId); });
+        expect(current.readCurrentUiContext()!.navigation.area).toBe('modal');
+        let command = buildSessionCommands({ reader: current, execute }).find(candidate => candidate.id === 'session.action:ui.session.rename');
+        expect(command).toBeDefined();
+        await act(async () => { Modal.hide(modalId); demand.setModalId(undefined); });
+        const descriptor = current.readCurrentUiContext()!.commands.find(candidate => candidate.title === 'Rename Session')!;
+        expect(await executor.execute('ui.current_context.command.invoke', { commandId: descriptor.id }, { surface: 'agent' }))
+            .toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+        expect(changes).toEqual([]);
+        await command!.action();
+        expect(changes).toEqual(['renamed']);
+        await act(async () => { demand(); });
+        expect(buildSessionCommands({ reader: current, execute })).toEqual([]);
+        await act(async () => { preparing = setSessionCommandPalettePresented({ reader: current, execute, presented: true }); });
+        demand = (await preparing)!;
+        command = buildSessionCommands({ reader: current, execute }).find(candidate => candidate.id === 'session.action:ui.session.rename');
+        await act(async () => { modalId = Modal.show({ component: () => <View /> }); });
+        const alert = vi.spyOn(Modal, 'alert');
+        let settled = false;
+        const pending = Promise.resolve(command!.action()).finally(() => { settled = true; });
+        const retired = expect(pending).resolves.toBeUndefined();
+        await act(async () => {});
+        expect(settled).toBe(false);
+        await screen.update(tree(false));
+        await retired;
+        const details = alert.mock.lastCall?.[2]?.find(button => button.text === t('approvals.technicalDetails'));
+        expect(details).toBeDefined();
+        details!.onPress?.();
+        expect(alert.mock.lastCall?.[1]).toContain('unsupported_action');
+        demand();
+        await act(async () => { Modal.hideAll(); });
+        if (presentation === 'route') {
+            await screen.update(tree(true, true, false));
+            let completed = false;
+            await act(async () => { preparing = setSessionCommandPalettePresented({ reader: current, execute, presented: true }); });
+            const waiting = Promise.resolve(preparing).then(withdraw => { completed = true; return withdraw; });
+            await act(async () => {});
+            expect(completed).toBe(false);
+            await screen.update(tree(false));
+            (await waiting)?.();
+            expect(completed).toBe(true);
+        }
+    });
     it('publishes focused host commands and withdraws them with only the focus commits', async () => {
         home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://focused-commands.test', accountId: 'account-a', currentAccount: true }],
             route: request => request.path === '/v1/kv/bulk' ? Response.json({ values: [] }) : undefined });

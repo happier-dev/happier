@@ -28,6 +28,8 @@ export interface Command {
     mark?: 'askHappier' | Readonly<{ kind: 'theme'; miniature: ThemeMiniatureData }>;
     shortcut?: string;
     category?: string;
+    /** Active-screen grouping used only before typing; query matching keeps ordinary categories. */
+    contextCategory?: string;
     /** The shared SelectionList opens this group and acquires its commands on demand. */
     loadCommands?: () => Promise<readonly Command[]>;
     action: () => void | Promise<void>;

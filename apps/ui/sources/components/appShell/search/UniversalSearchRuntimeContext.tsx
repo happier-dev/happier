@@ -48,6 +48,8 @@ export type UniversalSearchRuntime = Readonly<{
     buildCommands(activeSessionId?: string | null, scope?: UniversalSearchScopeSeed, symbols?: WorkspaceSymbolSearchInput): readonly Command[];
     /** Retained only while the native Search route owns this invocation. */
     routeSymbols?: WorkspaceSymbolSearchInput;
+    /** The native Search host releases the Session presenter when its exit finishes. */
+    releaseSessionCommands?(): void;
 }>;
 
 const UniversalSearchRuntimeContext = React.createContext<UniversalSearchRuntime | null>(null);

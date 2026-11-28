@@ -1,6 +1,12 @@
 import type { KeyboardCommand, KeyboardCommandId, KeyboardCommandSettingsTitleKey, KeybindingRule } from './types';
+import { DERIVED_KEYBOARD_COMMAND_METADATA } from '@happier-dev/protocol/actions/settings/keyboardCommandMetadata';
+import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 
 export const defaultKeyboardCommands: readonly KeyboardCommand[] = [
+    ...DERIVED_KEYBOARD_COMMAND_METADATA.map((command): KeyboardCommand => ({
+        id: command.id, settingsTitleKey: command.titleKey, nativeConsumable: true,
+        ...('title' in command ? { settingsTitle: command.title } : {}),
+    })),
     {
         id: 'sessionList.filter.open',
         settingsTitleKey: 'settingsKeyboard.commands.sessionListFilterOpen',
@@ -764,13 +770,41 @@ export const defaultKeyboardCommands: readonly KeyboardCommand[] = [
     },
 ];
 
+const keyboardCommandsById: ReadonlyMap<string, KeyboardCommand> = new Map(defaultKeyboardCommands.map(command => [command.id, command]));
+
+/** Configured plugin commands use the same durable identity grammar as other Action preferences. */
+export function getKeyboardCommand(commandId: string): KeyboardCommand | undefined {
+    const command = keyboardCommandsById.get(commandId);
+    if (command) return command;
+    if (!commandId.startsWith('action:')) return undefined;
+    const identity = parseQualifiedPluginActionId(commandId.slice('action:'.length));
+    if (!identity) return undefined;
+    const qualifiedId = formatQualifiedPluginActionId(identity);
+    return { id: `action:${qualifiedId}`, settingsTitleKey: 'settingsKeyboard.groupApp', settingsTitle: qualifiedId, nativeConsumable: true };
+}
+
+/** Saved plugin preferences remain configurable even while their contribution is unavailable. */
+export function resolveKeyboardCommands(
+    overrides: Readonly<Record<string, readonly KeybindingRule[]>> = {},
+    contributions: readonly KeyboardCommand[] = [],
+): readonly KeyboardCommand[] {
+    const commands: Map<string, KeyboardCommand> = new Map(defaultKeyboardCommands.map(command => [command.id, command]));
+    for (const id of Object.keys(overrides)) {
+        if (commands.has(id)) continue;
+        const command = getKeyboardCommand(id);
+        if (command) commands.set(command.id, command);
+    }
+    for (const command of contributions) commands.set(command.id, command);
+    return Array.from(commands.values());
+}
+
 export function getDefaultKeybinding(commandId: KeyboardCommandId): KeybindingRule | undefined {
-    const command = defaultKeyboardCommands.find((entry) => entry.id === commandId);
+    const command = getKeyboardCommand(commandId);
     return command?.defaultBindings?.[0] ?? command?.defaultBinding;
 }
 
 export function getKeyboardCommandSettingsTitleKey(commandId: KeyboardCommandId): KeyboardCommandSettingsTitleKey {
-    const titleKey = defaultKeyboardCommands.find((command) => command.id === commandId)?.settingsTitleKey;
+    const titleKey = getKeyboardCommand(commandId)?.settingsTitleKey;
     if (!titleKey) {
         throw new Error(`Keyboard command ${commandId} is missing settings title metadata.`);
     }

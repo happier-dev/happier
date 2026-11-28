@@ -36,6 +36,12 @@ export function canActivateCurrentUiContextMount(snapshot: CurrentUiContextSnaps
 /** Trusted host-local state only; outward effects retain their ordinary Action owner. */
 export type CurrentUiContextHostCommand = Readonly<{
     kind: 'hostLocal';
+    /** Stable first-party command identity; never serialized with the opaque descriptor. */
+    key?: string;
+    /** Presentation demand stays with the mounted menu that owns these commands. */
+    setCommandPalettePresented?: (presented: boolean, modalId?: string | null) => void;
+    /** Reports definition retirement even while an overlay withholds its descriptor. */
+    isMounted?: () => boolean;
     /** Host-private Settings alias of this exact mounted command, never serialized. */
     setting?: Readonly<{ anchor: string; scope: ServerAccountScope }>;
     /** Host-private Settings cancellation target; the public snapshot keeps only the opaque command id. */

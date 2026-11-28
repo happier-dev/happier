@@ -9,6 +9,16 @@ import { BUILT_IN_SETTINGS_DECLARATIONS_V1, readBuiltInSettingDeclarationV1,
   buildBuiltInAccountSettingMutationV1, readPortablePlatformAccountSettingBindingV1,
   readBuiltInSettingsOperationPolicyV1, resolveBuiltInAccountSettingResetValueV1 } from './settingsDeclarations.js';
 
+it('declares catalog-derived keyboard shortcuts through the existing command preference owner', () => {
+  for (const commandId of ['action:review.start', 'session.action:ui.session.rename', 'action:acme.tools/actions/run']) {
+    const declaration = readBuiltInSettingDeclarationV1(`keyboard.${commandId}`);
+    expect(declaration).toMatchObject({ storage: { owner: 'commandStorage', options: [commandId] } });
+    if (!declaration) throw new Error('Derived shortcut is not declared');
+    expect(buildBuiltInAccountSettingMutationV1(declaration, accountSettingsParse({}), { enabled: true, binding: 'Mod+Shift+9' }))
+      .toMatchObject({ keyboardShortcutOverridesV1: { [commandId]: [{ binding: 'Mod+Shift+9' }] } });
+  }
+});
+
 it('lets Settings Actions configure the existing Connected Account quota summaries', () => {
   const declaration = readBuiltInSettingDeclarationV1('connectedServices.quotaSummaryStrategy');
   expect(declaration).toBeTruthy();

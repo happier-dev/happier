@@ -3,7 +3,16 @@ import { act } from 'react-test-renderer';
 
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createDeferred, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createDeferred, createMachineFixture, createMachineMetadataFixture, createSessionFixture, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
+import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
+import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
+import { getStorage } from '@/sync/domains/state/storage';
+import { setFocusedSessionId } from '@/sync/domains/session/sessionSurfaceVisibility';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { normalizeVoiceSettingsLocalDelta } from '@/sync/domains/settings/voiceSettingsPersistence';
+import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 const nativeAppState = vi.hoisted(() => ({
@@ -67,17 +76,11 @@ vi.mock('@/utils/runtime/useHostActivelyViewed', async () => {
 });
 
 const providerState = vi.hoisted(() => ({
-    focusedSessionId: 'session-b' as string | null,
     routeParams: { id: 'session-a' } as Record<string, string | string[] | undefined>,
     routeSegments: ['(app)', 'session', '[id]'] as string[],
     visibleModalKind: null as string | null,
     focusedDetailsWorkspace: false,
     settingsTitle: null as string | null,
-    session: null as object | null,
-    sessionDisplaySource: null as object | null,
-    machine: null as object | null,
-    voiceSettings: null as unknown,
-    authority: null as object | null,
 }));
 
 vi.mock('expo-router', async () => {
@@ -122,32 +125,6 @@ vi.mock('@/components/navigation/mobile/chrome/MainAppTabStateProvider', () => (
     useMainAppTabState: () => ({ activeTab: null }),
 }));
 
-vi.mock('@/sync/domains/session/sessionSurfaceVisibility', () => ({
-    useFocusedSessionId: () => providerState.focusedSessionId,
-}));
-
-vi.mock('@/sync/store/hooks', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-        useMachine: () => providerState.machine as never,
-        useSession: () => providerState.session as never,
-        useSessionDisplayNameSource: () => (providerState.sessionDisplaySource ?? providerState.session) as never,
-        useSetting: (key: string) => key === 'secrets' ? [] : providerState.voiceSettings as never,
-    });
-});
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    // These provider fixtures supply every consumed storage value. Importing
-    // the real hook graph here cycles through dictation back to this provider.
-    return createStorageModuleStub({
-        useActiveServerAccountScope: () => null,
-        useActiveServerAccountScopeLifetime: () => providerState.authority as never,
-        useProfile: () => null,
-        useSetting: (key: string) => key === 'secrets' ? [] : providerState.voiceSettings as never,
-    });
-});
-
 import {
     type CurrentUiContextMountedEnrichment,
     type CurrentUiContextMountedCommand,
@@ -167,8 +144,19 @@ import { CurrentRouteLocationProvider } from '@/components/appShell/workspace/cu
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+let currentUiHome: Awaited<ReturnType<typeof serveActionHomes>> | undefined;
+let currentUiCredentials: AuthCredentials;
+
+function applyVoicePrivacy(privacy: Partial<VoiceSettings['privacy']>): void {
+    const state = getStorage().getState();
+    state.applySettingsLocal(normalizeVoiceSettingsLocalDelta({
+        voice: { ...state.settings.voice, privacy: { ...state.settings.voice.privacy, ...privacy } },
+    }, state.settings));
+}
+
 function CurrentUiContextTestProvider(props: React.PropsWithChildren): React.ReactElement {
-    return React.createElement(CurrentUiContextProvider, null, props.children);
+    return React.createElement(InjectedAuthProvider, { credentials: currentUiCredentials },
+        React.createElement(CurrentUiContextProvider, null, props.children));
 }
 
 function StrictCurrentUiContextTestProvider(props: React.PropsWithChildren): React.ReactElement {
@@ -229,25 +217,27 @@ afterAll(() => {
     nativeAppState.listeners.clear();
 });
 
-beforeEach(() => {
+beforeEach(async () => {
     nativeAppState.currentState = 'active';
     nativeAppState.platformOS = 'ios';
     hostView.visibility = 'visible';
     hostView.focused = true;
     setDesktopHost(false);
-    providerState.focusedSessionId = 'session-b';
     providerState.routeParams = { id: 'session-a' };
     providerState.routeSegments = ['(app)', 'session', '[id]'];
     providerState.visibleModalKind = null;
     providerState.focusedDetailsWorkspace = false;
     providerState.settingsTitle = null;
-    providerState.session = null;
-    providerState.sessionDisplaySource = null;
-    providerState.machine = null;
-    providerState.voiceSettings = null;
+    currentUiHome = await serveActionHomes({ homes: [{ key: 'context',
+        serverUrl: 'https://current-ui-context.test', accountId: 'context-account', currentAccount: true }],
+        route: request => request.path === '/v1/kv/bulk' ? Response.json({ values: [] }) : undefined });
+    const credentials = await TokenStorage.getCredentialsForServerUrl(currentUiHome.homes.context!.serverUrl);
+    if (!credentials) throw new Error('Current UI context Home credentials unavailable');
+    currentUiCredentials = credentials;
+    setFocusedSessionId('session-b', currentUiHome.homes.context!.id);
 });
 
-afterEach(() => {
+afterEach(async () => {
     standardCleanup();
     nativeAppState.currentState = 'active';
     nativeAppState.platformOS = 'ios';
@@ -255,7 +245,8 @@ afterEach(() => {
     hostView.focused = true;
     setDesktopHost(false);
     setHostVisibility('visible');
-    vi.doUnmock('@/voice/adapters/registerBuiltinVoiceAdapters');
+    await currentUiHome?.dispose();
+    currentUiHome = undefined;
 });
 
 describe('CurrentUiContextProvider', () => {
@@ -400,7 +391,7 @@ describe('CurrentUiContextProvider', () => {
         expect(selectedPeriod).toBe('today');
         await act(async () => { publication.publish({ ...enrichment, commands: [] }); });
         selectedPeriod = '7days';
-        await expect(port.invokeCurrentUiCommand!({ commandId })).resolves.toEqual({ ok: false, code: 'unavailable' });
+        await expect(port.invokeCurrentUiCommand!({ commandId })).resolves.toEqual({ ok: false, code: 'unavailable', errorCode: 'unsupported_action' });
         expect(selectedPeriod).toBe('7days');
         await hook.unmount();
     });
@@ -440,7 +431,7 @@ describe('CurrentUiContextProvider', () => {
                 } }] });
             });
             const port = createCurrentUiContextVoiceToolPort({ reader, readProjection: () => null, readNavigationBinding: () => null });
-            await expect(port.invokeCurrentUiCommand!({ commandId: oldCommandId })).resolves.toEqual({ ok: false, code: 'unavailable' });
+            await expect(port.invokeCurrentUiCommand!({ commandId: oldCommandId })).resolves.toEqual({ ok: false, code: 'unavailable', errorCode: 'unsupported_action' });
             expect(selectedPeriod).toBe('7days');
             expect(reader.resolveCurrentUiCommand(oldCommandId)).toBeNull();
 
@@ -665,32 +656,28 @@ describe('CurrentUiContextProvider', () => {
     });
 
     it('provides VoiceSessionRuntime its non-null reader through the AppShell provider wiring', async () => {
-        const { CanonicalVoiceSettingsSchema } = await import('@/sync/domains/settings/voiceSettings');
-        providerState.voiceSettings = CanonicalVoiceSettingsSchema.parse({});
-        const createAssembly = vi.fn(() => ({ adapters: [], dispose: vi.fn(async () => {}) }));
-        vi.doMock('@/voice/adapters/registerBuiltinVoiceAdapters', () => ({
-            createBuiltinVoiceAdapterAssembly: createAssembly,
-        }));
-
+        nativeAppState.platformOS = 'web';
+        applyVoicePrivacy({ currentUiContextMode: 'on_demand' });
         const { VoiceSessionRuntime } = await import('@/voice/session/VoiceSessionRuntime');
-        await renderScreen(
-            React.createElement(
-                CurrentUiContextProvider,
-                null,
-                React.createElement(VoiceSessionRuntime),
-            ),
-        );
-
-        expect(createAssembly).toHaveBeenCalledTimes(1);
-        expect(createAssembly).toHaveBeenCalledWith({
-            currentUiContext: expect.objectContaining({
-                readCurrentUiContext: expect.any(Function),
-                resolveCurrentUiCommand: expect.any(Function),
-                subscribe: expect.any(Function),
-                invokeCurrentUiCommand: expect.any(Function),
-                invokeAction: expect.any(Function),
-            }),
-        });
+        const { getCurrentBundledConversationRuntimeHost } = await import('@/voice/registry/bundledConversationRuntimeHost');
+        let reader: CurrentUiContextReader | null = null;
+        await renderScreen(React.createElement(CurrentUiContextTestProvider, null,
+            React.createElement(CurrentUiContextReaderProbe, { onReader: next => { reader = next; } }),
+            React.createElement(BuiltInCurrentUiContextSurface, { enrichment: {
+                entity: { kind: 'usage_summary', label: 'Usage' },
+                commands: [{ title: 'Refresh', command: { kind: 'hostLocal', invoke: () => ({ ok: true }) } }],
+            } }),
+            React.createElement(VoiceSessionRuntime)));
+        const current = requireCurrentUiContextReader(reader);
+        const snapshot = current.readCurrentUiContext();
+        expect(snapshot).not.toBeNull();
+        const host = getCurrentBundledConversationRuntimeHost();
+        expect(host).not.toBeNull();
+        const readToolName = getActionSpec('ui.current_context.read').bindings?.voiceClientToolName;
+        const readTool = host!.getRealtimeClientToolDefinitions({ exposure: 'current_ui_only' })
+            .find(tool => tool.name === readToolName);
+        expect(readTool).toBeDefined();
+        expect(await readTool!.execute({})).toEqual(snapshot);
     });
 
     it('lets a reader observe the current snapshot without granting a stale focused Session route', async () => {
@@ -701,7 +688,7 @@ describe('CurrentUiContextProvider', () => {
         expect(hook.getCurrent()?.readCurrentUiContext()?.navigation.area).toBe('app');
         expect(hook.getCurrent()?.readCurrentSessionId?.()).toBeNull();
 
-        providerState.focusedSessionId = 'session-a';
+        await act(async () => { setFocusedSessionId('session-a', currentUiHome!.homes.context!.id); });
         await hook.rerender();
         expect(hook.getCurrent()?.readCurrentUiContext()?.navigation.area).toBe('session');
         expect(hook.getCurrent()?.readCurrentSessionId?.()).toBe('session-a');
@@ -714,8 +701,8 @@ describe('CurrentUiContextProvider', () => {
             presentation: 'modal',
             screen: 'confirm',
         });
-        providerState.focusedSessionId = 'session-b';
         providerState.routeParams = { id: 'session-b' };
+        await act(async () => { setFocusedSessionId('session-b', currentUiHome!.homes.context!.id); });
         await hook.rerender();
         expect(hook.getCurrent()?.readCurrentSessionId?.()).toBe('session-b');
         const retainedReader = hook.getCurrent();
@@ -725,7 +712,7 @@ describe('CurrentUiContextProvider', () => {
 
     it('follows the workspace URL to the switched Session while Expo still mirrors the previous one', async () => {
         // Expo's mirror keeps /session/session-a; the workspace switched the same route pattern to session-b.
-        providerState.focusedSessionId = 'session-b';
+        setFocusedSessionId('session-b', currentUiHome!.homes.context!.id);
         providerState.routeParams = { id: 'session-a' };
         const location = { pathname: '/session/session-b', params: { id: 'session-b' } };
         const hook = await renderHook(() => useOptionalCurrentUiContextReader(), {
@@ -737,28 +724,21 @@ describe('CurrentUiContextProvider', () => {
     });
 
     it('does not notify current-context readers for a foreground Session activity update that preserves display metadata', async () => {
-        providerState.focusedSessionId = 'session-a';
-        providerState.session = {
-            id: 'session-a',
-            metadata: { summary: { text: 'Stable title' } },
-            active: true,
-            thinking: false,
-        };
-        providerState.sessionDisplaySource = {
-            id: 'session-a',
-            metadata: { summary: { text: 'Stable title' } },
-        };
-        providerState.voiceSettings = {
-            privacy: {
+        setFocusedSessionId('session-a', currentUiHome!.homes.context!.id);
+        const session = createSessionFixture({
+            id: 'session-a', serverId: currentUiHome!.homes.context!.id,
+            metadata: { ...createSessionFixture().metadata!, summary: { text: 'Stable title', updatedAt: 1 } }, active: true, thinking: false,
+        });
+        getStorage().getState().applySessions([session]);
+        await act(async () => { applyVoicePrivacy({
                 shareSessionSummary: true,
                 shareFilePaths: false,
                 shareDeviceInventory: false,
-            },
-        };
+        }); });
 
         let reader: CurrentUiContextReader | null = null;
         const renderProvider = () => React.createElement(
-            CurrentUiContextProvider,
+            CurrentUiContextTestProvider,
             null,
             React.createElement(CurrentUiContextReaderProbe, { onReader: (next) => { reader = next; } }),
         );
@@ -767,10 +747,7 @@ describe('CurrentUiContextProvider', () => {
         const onSnapshotChange = vi.fn();
         const unsubscribe = currentReader.subscribe(onSnapshotChange);
 
-        providerState.session = {
-            ...providerState.session,
-            thinking: true,
-        };
+        await act(async () => { getStorage().getState().applySessions([{ ...session, thinking: true }]); });
         await screen.update(renderProvider());
 
         expect(currentReader.readCurrentUiContext()?.navigation).toMatchObject({
@@ -782,21 +759,20 @@ describe('CurrentUiContextProvider', () => {
     });
 
     it('enriches only the exact foreground Session or machine with privacy-approved incumbent labels', async () => {
-        providerState.focusedSessionId = 'session-a';
-        providerState.session = {
-            id: 'session-a',
+        setFocusedSessionId('session-a', currentUiHome!.homes.context!.id);
+        getStorage().getState().applySessions([createSessionFixture({
+            id: 'session-a', serverId: currentUiHome!.homes.context!.id,
             metadata: {
+                ...createSessionFixture().metadata!,
                 summary: { text: 'FOCUSED_SESSION_TITLE', updatedAt: 1 },
                 path: '/Users/alice/SECRET_PROVIDER_WORKSPACE',
             },
-        };
-        providerState.voiceSettings = {
-            privacy: {
+        })]);
+        await act(async () => { applyVoicePrivacy({
                 shareSessionSummary: true,
                 shareFilePaths: false,
                 shareDeviceInventory: false,
-            },
-        };
+        }); });
 
         const hook = await renderHook(() => useOptionalCurrentUiContextReader(), {
             wrapper: CurrentUiContextTestProvider,
@@ -809,54 +785,48 @@ describe('CurrentUiContextProvider', () => {
 
         // The provider must use the canonical fail-closed reader, rather than
         // treating a truthy raw settings value as disclosure authority.
-        providerState.voiceSettings = {
-            privacy: {
-                shareSessionSummary: 'true',
-                shareFilePaths: false,
-                shareDeviceInventory: false,
-            },
-        };
+        await act(async () => {
+            const state = getStorage().getState();
+            const invalidVoice = { ...state.settings.voice, privacy: { ...state.settings.voice.privacy } };
+            // Deliberately corrupt persisted disclosure data; the reader must fail closed.
+            // @ts-expect-error A non-boolean persisted value must not grant disclosure.
+            invalidVoice.privacy.shareSessionSummary = 'true';
+            getStorage().setState({ settings: { ...state.settings, voice: invalidVoice } });
+        });
         await hook.rerender();
         expect(hook.getCurrent()?.readCurrentUiContext()?.navigation).not.toHaveProperty('title');
 
-        providerState.voiceSettings = {
-            privacy: {
+        await act(async () => { applyVoicePrivacy({
                 shareSessionSummary: false,
                 shareFilePaths: false,
                 shareDeviceInventory: false,
-            },
-        };
+        }); });
         await hook.rerender();
         expect(hook.getCurrent()?.readCurrentUiContext()?.navigation).not.toHaveProperty('title');
 
-        providerState.focusedSessionId = null;
-        providerState.session = null;
         providerState.routeSegments = ['(app)', 'machine', '[id]'];
         providerState.routeParams = { id: 'machine-a' };
-        providerState.machine = {
-            id: 'machine-a',
-            metadata: { displayName: 'FOCUSED_MACHINE_LABEL' },
-        };
-        providerState.voiceSettings = {
-            privacy: {
+        await act(async () => {
+            setFocusedSessionId(null);
+            getStorage().getState().applyMachines([createMachineFixture({ id: 'machine-a',
+                metadata: createMachineMetadataFixture({ displayName: 'FOCUSED_MACHINE_LABEL' }) })]);
+        });
+        await act(async () => { applyVoicePrivacy({
                 shareSessionSummary: false,
                 shareFilePaths: false,
                 shareDeviceInventory: true,
-            },
-        };
+        }); });
         await hook.rerender();
         expect(hook.getCurrent()?.readCurrentUiContext()?.navigation).toMatchObject({
             area: 'machine',
             title: 'FOCUSED_MACHINE_LABEL',
         });
 
-        providerState.voiceSettings = {
-            privacy: {
+        await act(async () => { applyVoicePrivacy({
                 shareSessionSummary: false,
                 shareFilePaths: false,
                 shareDeviceInventory: false,
-            },
-        };
+        }); });
         await hook.rerender();
         expect(hook.getCurrent()?.readCurrentUiContext()?.navigation).not.toHaveProperty('title');
     });
@@ -1030,26 +1000,24 @@ describe('CurrentUiContextProvider', () => {
     });
 
     it('withholds the page host controls beneath the focused Details workspace', async () => {
-        providerState.authority = { scope: { serverId: 'home', accountId: 'account' }, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+        expect(captureActiveServerAccountScopeLifetime()?.isCurrent()).toBe(true);
         const pageControls = [{ key: 'send', title: 'Send draft', invoke: () => true }];
         function PageControls() { useCurrentUiContextLocalCommands(pageControls); return null; }
-        try {
-            const hook = await renderHook(() => {
-                return { publisher: useCurrentUiContextMountPublisher(), reader: useOptionalCurrentUiContextReader() };
-            }, { wrapper: (props: React.PropsWithChildren) => React.createElement(CurrentUiContextTestProvider, null,
-                React.createElement(PageControls),
-                React.createElement(CurrentUiContextWorkspaceBoundary, null, props.children)) });
-            const reader = requireCurrentUiContextReader(hook.getCurrent().reader);
-            const publication = hook.getCurrent().publisher!.createMount();
-            await act(async () => {
-                publication.publish({ commands: [{ title: 'Refresh', command: { kind: 'hostLocal', invoke: () => ({ ok: true }) } }] });
-            });
-            expect(reader.readCurrentUiContext()!.commands.map(command => command.title)).toEqual(['Refresh', 'Send draft']);
-            providerState.focusedDetailsWorkspace = true;
-            await hook.rerender();
-            expect(reader.readCurrentUiContext()!.commands.map(command => command.title)).toEqual(['Refresh']);
-            await hook.unmount();
-        } finally { providerState.authority = null; }
+        const hook = await renderHook(() => {
+            return { publisher: useCurrentUiContextMountPublisher(), reader: useOptionalCurrentUiContextReader() };
+        }, { wrapper: (props: React.PropsWithChildren) => React.createElement(CurrentUiContextTestProvider, null,
+            React.createElement(PageControls),
+            React.createElement(CurrentUiContextWorkspaceBoundary, null, props.children)) });
+        const reader = requireCurrentUiContextReader(hook.getCurrent().reader);
+        const publication = hook.getCurrent().publisher!.createMount();
+        await act(async () => {
+            publication.publish({ commands: [{ title: 'Refresh', command: { kind: 'hostLocal', invoke: () => ({ ok: true }) } }] });
+        });
+        expect(reader.readCurrentUiContext()!.commands.map(command => command.title)).toEqual(['Refresh', 'Send draft']);
+        providerState.focusedDetailsWorkspace = true;
+        await hook.rerender();
+        expect(reader.readCurrentUiContext()!.commands.map(command => command.title)).toEqual(['Refresh']);
+        await hook.unmount();
     });
 
     it('resolves only commands advertised by the current composed snapshot', async () => {
@@ -1152,7 +1120,7 @@ describe('CurrentUiContextProvider', () => {
                 React.StrictMode,
                 null,
                 React.createElement(
-                    CurrentUiContextProvider,
+                    CurrentUiContextTestProvider,
                     null,
                     React.createElement(
                         PluginSurfaceFocusEligibilityProvider,
@@ -1235,7 +1203,7 @@ describe('CurrentUiContextProvider', () => {
     it('omits simultaneous pane-like publications without a named current-focus owner, including after A retires', async () => {
         let reader: CurrentUiContextReader | null = null;
         const renderAmbiguousSurfaces = (showA: boolean) => React.createElement(
-            CurrentUiContextProvider,
+            CurrentUiContextTestProvider,
             null,
             React.createElement(
                 PluginSurfaceFocusEligibilityProvider,
@@ -1295,7 +1263,7 @@ describe('CurrentUiContextProvider', () => {
             enrichment: CurrentUiContextMountedEnrichment | null,
             mounted = true,
         ) => React.createElement(
-            CurrentUiContextProvider,
+            CurrentUiContextTestProvider,
             null,
             React.createElement(
                 PluginSurfaceFocusEligibilityProvider,
@@ -1361,7 +1329,7 @@ describe('CurrentUiContextProvider', () => {
             enrichment: CurrentUiContextMountedEnrichment,
             focusEligible = true,
         ) => React.createElement(
-            CurrentUiContextProvider,
+            CurrentUiContextTestProvider,
             null,
             React.createElement(
                 PluginSurfaceFocusEligibilityProvider,
@@ -1428,7 +1396,7 @@ describe('CurrentUiContextProvider', () => {
             }],
         };
         const renderCurrentSurface = () => React.createElement(
-            CurrentUiContextProvider,
+            CurrentUiContextTestProvider,
             null,
             React.createElement(
                 PluginSurfaceFocusEligibilityProvider,

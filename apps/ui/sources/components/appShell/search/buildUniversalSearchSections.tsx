@@ -937,7 +937,7 @@ export function buildUniversalSearchSections(
     const visibleCommands = query.length > 0
         ? nonRecentCommands
         : nonRecentCommands
-            .filter((command) => command.emptyQuerySuggested === true);
+            .filter((command) => command.emptyQuerySuggested === true || command.contextCategory !== undefined);
     const commandSections = buildCommandPaletteSelectionListSections(visibleCommands, previousSections, query || undefined);
 
     // Empty query: pinned Sessions lead (lab palette "Pinned"), and Recent shows only the unpinned ones.
@@ -1026,12 +1026,15 @@ export function buildUniversalSearchSections(
         : null;
 
     // One stable group order; a group appears only when it has rows (or a truthful hint).
-    // Empty query: what you had open first, then the suggested commands (Actions, Go to).
+    // Empty query: the current context's commands, recent Sessions, then other suggestions.
     // With a query: matching commands, then Settings, then Sessions.
     if (query.length === 0) {
+        const contextSectionIds = new Set(visibleCommands.flatMap(command => command.contextCategory === undefined
+            ? [] : [`commands:${command.contextCategory}`]));
+        sections.push(...commandSections.filter(section => contextSectionIds.has(section.id)));
         if (pinnedSessionSection) sections.push(pinnedSessionSection);
         if (sessionSection) sections.push(sessionSection);
-        sections.push(...commandSections);
+        sections.push(...commandSections.filter(section => !contextSectionIds.has(section.id)));
     } else {
         sections.push(...commandSections);
         if (settingsSection) sections.push(settingsSection);

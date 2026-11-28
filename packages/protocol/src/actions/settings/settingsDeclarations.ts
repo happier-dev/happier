@@ -8,6 +8,8 @@ import { applyAtmosphereLayoutDefault, type HomeAtmosphere } from '../../account
 import { readCollectionSpaceDeletionApprovalV1 } from './collectionSpaceApproval.js';
 import { getFeatureAliases, isFeatureId } from '../../features/catalog.js';
 import type { SettingNumberDisplayV1 } from './settingNumberDisplay.js';
+import { lazyActionSpecArray, memoizeActionSpecValue } from '../lazyActionSpecValue.js';
+import { parseQualifiedPluginActionId } from '../../plugins/actions/qualifiedActionId.js';
 
 export type PortableSettingStorageV1 = Readonly<{
   scope: 'account' | 'local' | 'home' | 'team' | 'project';
@@ -48,20 +50,33 @@ export type PortableSettingDeclarationV1 = Readonly<{
   operation?: Readonly<{ kind: 'interaction' | 'invoke'; requiresHumanInteraction: boolean; requiresApproval?: boolean; uiConfirmation?: 'direct' | 'policy'; owner?: string; options?: readonly string[] }>;
 }>;
 
-const builtInSettingsDeclarations: readonly PortableSettingDeclarationV1[] = BUILT_IN_SETTINGS_METADATA_V1;
+const builtInSettingsDeclarations: readonly PortableSettingDeclarationV1[] = lazyActionSpecArray(() => BUILT_IN_SETTINGS_METADATA_V1);
 /** Portable discovery excludes the mounted editor's private, null-only binding. */
-export const BUILT_IN_SETTINGS_DECLARATIONS_V1: readonly PortableSettingDeclarationV1[] = builtInSettingsDeclarations.filter(
+export const BUILT_IN_SETTINGS_DECLARATIONS_V1: readonly PortableSettingDeclarationV1[] = lazyActionSpecArray(() => builtInSettingsDeclarations.filter(
   declaration => declaration.storage?.owner !== 'voiceSettingsEditBinding',
-);
+));
 // Approval and host-intent admission still resolve the canonical private declaration.
-const declarationsByAnchor = new Map(builtInSettingsDeclarations.map(declaration => [declaration.anchor, declaration]));
-for (const declaration of builtInSettingsDeclarations) {
-  const featureId = declaration.storage?.owner === 'featureToggle' ? declaration.storage.options?.[0] : undefined;
-  if (!isFeatureId(featureId) || declaration.anchor !== `features.${featureId}`) continue;
-  for (const alias of getFeatureAliases(featureId)) declarationsByAnchor.set(`features.${alias}`, declaration);
-}
+const readDeclarationsByAnchor = memoizeActionSpecValue(() => {
+  const declarationsByAnchor = new Map(builtInSettingsDeclarations.map(declaration => [declaration.anchor, declaration]));
+  for (const declaration of builtInSettingsDeclarations) {
+    const featureId = declaration.storage?.owner === 'featureToggle' ? declaration.storage.options?.[0] : undefined;
+    if (!isFeatureId(featureId) || declaration.anchor !== `features.${featureId}`) continue;
+    for (const alias of getFeatureAliases(featureId)) declarationsByAnchor.set(`features.${alias}`, declaration);
+  }
+  return declarationsByAnchor;
+});
 export function readBuiltInSettingDeclarationV1(anchor: unknown): PortableSettingDeclarationV1 | null {
-  return typeof anchor === 'string' ? declarationsByAnchor.get(anchor) ?? null : null;
+  if (typeof anchor !== 'string') return null;
+  const declaration = readDeclarationsByAnchor().get(anchor);
+  if (declaration) return declaration;
+  const prefix = 'keyboard.action:';
+  if (!anchor.startsWith(prefix) || !parseQualifiedPluginActionId(anchor.slice(prefix.length))) return null;
+  // A plugin shortcut is a reversible personal preference. Execution remains with the admitted Action controller.
+  const commandId = anchor.slice('keyboard.'.length);
+  return { anchor, pageId: 'keyboard', sectionId: 'keyboard.commands.general',
+    titleKey: 'settingsKeyboard.groupApp', title: anchor.slice(prefix.length), sectionTitleKey: 'settingsKeyboard.groupApp',
+    storage: { scope: 'account', kind: 'owner', access: 'read_write', owner: 'commandStorage', options: [commandId] },
+    targetKinds: [], sensitive: false };
 }
 
 /** Keyed owners dispatch separately. An exact scalar Voice anchor already selects the written field. */

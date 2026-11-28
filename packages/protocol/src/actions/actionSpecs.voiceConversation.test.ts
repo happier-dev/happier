@@ -62,7 +62,6 @@ describe('local Voice Action contract', () => {
       expect(spec.requiredAuthority).toBe('account_automation');
       expect(spec.surfaces).toMatchObject({ agent: true, mcp: true, plugin: true, cli: false, voice: id === 'brief.request' });
       expect(PublicActionIdSchema.safeParse(actionId).success).toBe(true);
-      expect(spec.placements).toContain('command_palette');
     }
   });
 

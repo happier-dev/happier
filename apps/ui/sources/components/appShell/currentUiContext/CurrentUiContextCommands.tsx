@@ -36,6 +36,7 @@ export type CurrentUiContextLocalCommand = Readonly<{
     key: string;
     title: string;
     description?: string;
+    setCommandPalettePresented?: (presented: boolean, modalId?: string | null) => void;
     setting?: Extract<CurrentUiContextMountedCommand, { kind: 'hostLocal' }>['setting'];
     invoke(input: PluginUiJsonValueV1 | undefined, context: ActionExecutorContext,
         invocation: CurrentUiContextCommandInvocation): LocalCommandResult | Promise<LocalCommandResult>;
@@ -281,10 +282,11 @@ export function useCurrentUiContextLocalCommandDefinitions(
         lifetime: { mounted: boolean };
     }>;
     const previous = React.useRef<Readonly<{ isCurrent: () => boolean; contextKey?: string; rows: readonly Definition[] }> | null>(null);
-    const definitionKey = JSON.stringify(commands.map(({ key, title, description, setting }) => ({ key, title, description, setting })));
+    const definitionKey = JSON.stringify(commands.map(({ key, title, description, setting, setCommandPalettePresented }) => ({ key, title, description, setting,
+        paletteDemand: setCommandPalettePresented !== undefined })));
     const definitions = React.useMemo(() => {
         const prior = previous.current?.isCurrent === isCurrent && previous.current.contextKey === contextKey ? previous.current.rows : [];
-        const rows = commands.map(({ key, title, description, setting }) => {
+        const rows = commands.map(({ key, title, description, setting, setCommandPalettePresented }) => {
             const kept = prior.find(row => row.key === key && row.title === title && row.description === description
                 && (row.setting === setting || row.setting?.anchor === setting?.anchor && areServerAccountScopesEqual(row.setting?.scope, setting?.scope)));
             if (kept) return kept;
@@ -292,6 +294,14 @@ export function useCurrentUiContextLocalCommandDefinitions(
             return { key, title, lifetime, ...(description === undefined ? {} : { description }),
                 ...(setting === undefined ? {} : { setting }), command: {
                 kind: 'hostLocal' as const,
+                key,
+                isMounted: () => lifetime.mounted,
+                ...(setCommandPalettePresented ? {
+                    setCommandPalettePresented: (presented: boolean, modalId?: string | null) => {
+                        if (!lifetime.mounted) return;
+                        latest.current.find(candidate => candidate.key === key)?.setCommandPalettePresented?.(presented, modalId);
+                    },
+                } : {}),
                 ...(setting === undefined ? {} : { setting }),
                 invoke: async ({ signal, input, context }: Readonly<{ signal: AbortSignal; input?: PluginUiJsonValueV1; context: ActionExecutorContext }>) => {
                     const current = latest.current.find(candidate => candidate.key === key);
@@ -349,6 +359,8 @@ function createLocalCommandInvoker(binding: { current: LocalCommandInvocationSta
 }
 
 export function useCurrentUiContextLocalCommands(commands: readonly CurrentUiContextLocalCommand[], options?: Readonly<{
+    /** A mounted presenter may lend its commands to the exact overlay that requested them. */
+    foregroundModalId?: string | null;
     foregroundOverlay?: boolean;
     contextKey?: string;
     /** Shared controls in non-page hosts (PluginPageWidgetArea, ProjectAsideDocument) may run the same
@@ -363,18 +375,20 @@ export function useCurrentUiContextLocalCommands(commands: readonly CurrentUiCon
     const reader = useOptionalCurrentUiContextReader();
     const modalId = useModalContentId();
     const layoutEligibility = usePluginSurfaceFocusEligibilityStore();
+    const foregroundModalIdRef = React.useRef(options?.foregroundModalId);
+    foregroundModalIdRef.current = options?.foregroundModalId;
     // Modal commands already retain their addresses behind another modal; the
     // current-context composer selects them by modalId when that modal returns.
     // Eligibility is followed by subscription, so a layout focus move does not render the command's owner.
     const eligible = React.useMemo(() => ({
-        get: () => modalId !== null || layoutEligibility.read()?.currentUiContextEffective !== false,
+        get: () => foregroundModalIdRef.current !== undefined || modalId !== null || layoutEligibility.read()?.currentUiContextEffective !== false,
         subscribe: layoutEligibility.subscribe,
     }), [layoutEligibility, modalId]);
     const isCurrent = React.useCallback(() => eligible.get() && composition?.isCurrent() === true, [composition, eligible]);
     const definitions = useCurrentUiContextLocalCommandDefinitions(commands, isCurrent, options?.contextKey);
-    const mountedDefinitions = React.useMemo(() => options?.foregroundOverlay
-        ? definitions.map(definition => ({ ...definition, foreground: { modalId } })) : definitions,
-    [definitions, options?.foregroundOverlay, modalId]);
+    const mountedDefinitions = React.useMemo(() => options?.foregroundOverlay || options?.foregroundModalId !== undefined
+        ? definitions.map(definition => ({ ...definition, foreground: { modalId: options?.foregroundModalId ?? modalId } })) : definitions,
+    [definitions, options?.foregroundOverlay, options?.foregroundModalId, modalId]);
     React.useLayoutEffect(() => followSignal(eligible, (on) => on ? composition?.register(definitions, mountedDefinitions) : undefined),
         [composition, definitions, mountedDefinitions, eligible]);
     const binding = React.useMemo<{ current: LocalCommandInvocationState | null }>(() => ({ current: null }),

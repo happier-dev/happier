@@ -1,9 +1,10 @@
+import { useSessionOrganizationEditors } from '@/components/sessions/organization/useSessionOrganizationEditors';
+import { createUiSessionPresenterCommand } from '@/components/sessions/actions/sessionMenuCommands';
 import * as React from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { SessionSectionResultV1Schema } from '@happier-dev/protocol/actions/sessionSections';
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 
@@ -118,17 +119,7 @@ import { useCurrentUiContextLocalCommands, type CurrentUiContextCommandInvocatio
 import { buildSessionDestinationRouteHref } from '@/components/workspaceCockpit/session/sessionCockpitNavigation';
 import { useMobileWorkspaceExperienceState } from '@/components/workspaceCockpit/useMobileWorkspaceExperienceState';
 import { sessionTagKey } from '@/components/sessions/shell/sessionTagUtils';
-import { openSessionFolderSelection } from '@/components/sessions/organization/SessionFolderSelection';
-import { useSessionSectionChoiceLabels } from '@/sync/domains/session/organization/useSessionSectionChoiceLabels';
-import { requestSessionSectionName } from '@/components/sessions/organization/sessionSectionEditing';
-import {
-  requireSessionOrganizationMutationScope,
-  writeSessionOrganizationTagLabels,
-  type SessionOrganizationMutationScope,
-} from '@/sync/ops/sessionOrganization';
 import { buildSessionOrganizationListViewState } from '@/sync/domains/session/organization/viewState';
-import { buildSessionOrganizationTagLabelById } from '@/sync/domains/session/organization/tagLabels';
-import { buildSessionTagsMenuContent } from '@/components/sessions/organization/SessionTagsMenuContent';
 import { resolveSessionAttentionStanding } from '@/sync/domains/session/organization/attentionStanding';
 import { useSessionAttentionStandingInputs } from '@/hooks/session/useSessionAttentionStandingInputs';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
@@ -292,10 +283,6 @@ function SessionInfoContent({
     serverId: sessionServerId,
   });
   const sessionHandoffEnabled = useFeatureEnabled('sessions.handoff');
-  const sessionFoldersEnabled = useFeatureEnabled('sessions.folders', {
-    scopeKind: 'spawn',
-    serverId: sessionServerId,
-  });
   // Scoped to THIS Session's server, like the in-Session picker: the child is
   // created on that server, so an unrelated selected server must not decide
   // whether this conversation may continue with another Agent.
@@ -614,7 +601,6 @@ function SessionInfoContent({
     [organizationProjection, sessionServerId],
   );
   const pinnedSessionKeysV1 = organizationListViewState.pinnedSessionKeysV1;
-  const sessionTagsV1 = organizationListViewState.sessionTagsV1;
   const sessionSettingsKey = sessionTagKey(sessionServerId, session.id);
   const isPinnedSession = pinnedSessionKeysV1.includes(sessionSettingsKey);
   const isArchivedSession = session.archivedAt != null;
@@ -673,10 +659,16 @@ function SessionInfoContent({
   );
   const canArchiveSession = sessionActionTarget.canArchive;
   const archivePending = useSessionArchivePending(collaborationTarget);
+  const organizationEditors = useSessionOrganizationEditors({ target: sessionActionTarget,
+    sourceLabel: sessionName, projection: organizationProjection,
+    listView: organizationListViewState, actions: sessionActions });
+  const { tagMenuOpen, setTagMenuOpen, editingTags, tagMenuContent,
+    tagsDetail: sessionInfoTagDetail, currentSectionTitle, movingToFolder, performMoveToFolder } = organizationEditors;
   const visibleSessionActionIds = React.useMemo(() => {
     const actionIds = listVisibleSessionActionIds({
       target: sessionActionTarget,
       surface: 'sessionInfo',
+      organizationEditors,
     });
     return new Set(
       contentUnavailable
@@ -687,36 +679,9 @@ function SessionInfoContent({
           )
         : actionIds,
     );
-  }, [contentUnavailable, sessionActionTarget]);
+  }, [contentUnavailable, sessionActionTarget, organizationEditors.tagsAvailable, organizationEditors.foldersAvailable]);
   const canRenameSession = visibleSessionActionIds.has(
     SESSION_ACTION_RENAME_ID,
-  );
-  const sessionInfoTagEntries = sessionTagsV1[sessionSettingsKey] ?? [];
-  const sessionInfoTags = sessionInfoTagEntries.flatMap((tag) =>
-    tag.display.status === 'available' ? [tag.display.value] : [],
-  );
-  const sessionInfoTagIds = sessionInfoTagEntries.map((tag) => tag.tagId);
-  const sessionInfoTagLabelById = buildSessionOrganizationTagLabelById(
-    organizationProjection?.tagsById ?? {},
-  );
-  const sessionInfoTagDetail = sessionInfoTagEntries
-    .map((tag) =>
-      tag.display.status === 'available'
-        ? tag.display.value
-        : t('common.unavailable'),
-    )
-    .join(', ');
-  const getSessionOrganizationMutationScopeOrThrow = React.useCallback(
-    async (
-      serverIdRaw?: string | null,
-    ): Promise<SessionOrganizationMutationScope> => {
-      const serverId =
-        typeof serverIdRaw === 'string' && serverIdRaw.trim()
-          ? serverIdRaw.trim()
-          : sessionServerId;
-      return await requireSessionOrganizationMutationScope(serverId);
-    },
-    [sessionServerId],
   );
   const pinInfoItemProps = React.useMemo(
     () =>
@@ -835,126 +800,6 @@ function SessionInfoContent({
   }, [sessionActions.execute, isPinnedSession, session.id, sessionActionTarget]);
   const [pinningSession, performTogglePinned] =
     useHappyAction(handleTogglePinned);
-
-  const [tagMenuOpen, setTagMenuOpen] = React.useState(false);
-  const [editingTags, setEditingTags] = React.useState(false);
-  const applySessionInfoTagLabels = React.useCallback(
-    async (nextTags: readonly string[]) => {
-      await executeSessionAction({
-        actionId: SESSION_ACTION_EDIT_TAGS_ID,
-        target: sessionActionTarget,
-        input: { tags: [...nextTags] },
-        context: {
-          operations: {
-            setTags: async (_sessionId, tags, opts) => {
-              const scope = await getSessionOrganizationMutationScopeOrThrow(
-                opts?.serverId ?? sessionServerId,
-              );
-              await writeSessionOrganizationTagLabels({
-                scope,
-                sessionId: session.id,
-                tags: [...tags],
-                executeAction: sessionActions.execute,
-              });
-            },
-          },
-        },
-      });
-    },
-    [
-      sessionActions.execute,
-      getSessionOrganizationMutationScopeOrThrow,
-      sessionServerId,
-      session.id,
-      sessionActionTarget,
-    ],
-  );
-  const runSessionInfoTagUpdate = React.useCallback(
-    (nextTags: readonly string[]) => {
-      setEditingTags(true);
-      void applySessionInfoTagLabels(nextTags)
-        .catch((error) => {
-          Modal.alert(
-            t('common.error'),
-            error instanceof HappyError
-              ? error.message
-              : t('errors.unknownError'),
-          );
-        })
-        .finally(() => setEditingTags(false));
-    },
-    [applySessionInfoTagLabels],
-  );
-  const tagMenuContent = React.useMemo(
-    () =>
-      buildSessionTagsMenuContent({
-        tags: Object.entries(sessionInfoTagLabelById).map(([id, label]) => ({
-          id,
-          label,
-        })),
-        selectedTagIds: sessionInfoTagIds,
-        iconColor: theme.colors.text.secondary,
-        onToggle: (tagId) => {
-          const nextTagIds = sessionInfoTagIds.includes(tagId)
-            ? sessionInfoTagIds.filter((candidate) => candidate !== tagId)
-            : [...sessionInfoTagIds, tagId];
-          runSessionInfoTagUpdate(
-            nextTagIds.flatMap((id) => sessionInfoTagLabelById[id] ?? []),
-          );
-        },
-        onCreate: (label) =>
-          runSessionInfoTagUpdate([...sessionInfoTags, label]),
-      }),
-    [
-      runSessionInfoTagUpdate,
-      sessionInfoTagIds,
-      sessionInfoTagLabelById,
-      sessionInfoTags,
-      theme.colors.text.secondary,
-    ],
-  );
-
-  // The Section this Session sits in now, named as the chooser names it; none reads "None".
-  const currentSectionFolderId =
-    organizationListViewState.sessionFolderAssignmentsBySessionKey[sessionSettingsKey] ?? null;
-  const sectionChoiceLabels = useSessionSectionChoiceLabels(
-    organizationListViewState.sections, sessionServerId, t('common.unavailable'),
-  );
-  const currentSectionTitle = currentSectionFolderId
-    ? sectionChoiceLabels.get(currentSectionFolderId) ?? t('common.unavailable')
-    : null;
-  const handleMoveToFolder = React.useCallback(async () => {
-    if (!sessionFoldersEnabled) return;
-    // This mounted executor retains the Session's Home+Account before the picker awaits.
-    const selected = await openSessionFolderSelection({
-      sourceLabel: sessionName,
-      serverId: sessionServerId,
-      sections: organizationListViewState.sections,
-      value: currentSectionFolderId ? { serverId: sessionServerId, sectionId: currentSectionFolderId } : null,
-      onCreate: async () => {
-        const name = await requestSessionSectionName(null);
-        if (!name) return null;
-        const created = SessionSectionResultV1Schema.parse(await sessionActions.executeValue(
-          'session.sections.create', { name },
-        ));
-        return { serverId: sessionServerId, sectionId: created.section.sectionId };
-      },
-    });
-    if (selected === undefined) return;
-    await sessionActions.executeValue('session.section.set', {
-      sessionId: session.id, sectionId: selected?.sectionId ?? null,
-    });
-  }, [
-    currentSectionFolderId,
-    organizationListViewState.sections,
-    sessionServerId,
-    session.id,
-    sessionActions.executeValue,
-    sessionFoldersEnabled,
-    sessionName,
-  ]);
-  const [movingToFolder, performMoveToFolder] =
-    useHappyAction(handleMoveToFolder);
 
   const handleStopAndMaybeArchive = React.useCallback(async () => {
     await executeSessionAction({
@@ -1196,7 +1041,7 @@ function SessionInfoContent({
     deleteInfoItemProps;
   const showPin = !isArchivedSession && Boolean(pinInfoItemProps);
   const showFolder =
-    sessionFoldersEnabled &&
+    visibleSessionActionIds.has(SESSION_ACTION_MOVE_TO_FOLDER_ID) &&
     Boolean(moveToFolderInfoItemProps);
   const retentionSummary = useSessionRetentionSummary(
     contentUnavailable ? null : sessionServerId,
@@ -1248,9 +1093,13 @@ function SessionInfoContent({
     sessionId: session.id, serverId: sessionServerId, suffix: '/permissions',
   }) as never), [router, session.id, sessionServerId]);
 
+  const [paletteModalId, setPaletteModalId] = React.useState<string | null | undefined>(undefined);
   useCurrentUiContextLocalCommands(React.useMemo(() => contentUnavailable ? [] : [
+    createUiSessionPresenterCommand({ key: `session.action:${SESSION_ACTION_EDIT_TAGS_ID}`, title: t('sessionTags.editTagsLabel'), invoke: () => setTagMenuOpen(true) }),
+    ...(showFolder ? [createUiSessionPresenterCommand({ key: `session.action:${SESSION_ACTION_MOVE_TO_FOLDER_ID}`, title: t('sessionPages.info.section'), invoke: performMoveToFolder })] : []),
     { key: 'session.info.skills', title: t('capabilities.skills.title'), invoke: openSessionSkills },
     { key: 'session.info.same-setup', title: t('sessionInfo.newSessionSameSetup'),
+      setCommandPalettePresented: (_presented: boolean, modalId?: string | null) => setPaletteModalId(modalId),
       invoke: (_input: unknown, _context: unknown, invocation: CurrentUiContextCommandInvocation) => handleOpenSameSetup(invocation) },
     ...(followEditor.enabled ? [{ key: 'session.info.follow', title: t('sessionPages.info.follow'), invoke: handleOpenFollow }] : []),
     ...(collaborationAdmitted ? [
@@ -1265,10 +1114,10 @@ function SessionInfoContent({
     ...(showAutomations ? [{ key: 'session.info.all-automations', title: t('sessionPages.info.allAutomations'), invoke: openAllAutomations }] : []),
     ...(addMachineToWorkspace ? [{ key: 'session.info.another-machine', title: t('settings.addMachine'), invoke: addMachineToWorkspace }] : []),
     ...(sessionActionTarget.isOwnedByCurrentUser ? [{ key: 'session.info.permissions', title: t('sessionRemotePermissionGrants.entryTitle'), invoke: openRemotePermissions }] : []),
-  ], [collaborationAdmitted, contentUnavailable, contextAction?.id, followEditor.enabled, openSessionSkills,
+  ], [collaborationAdmitted, contentUnavailable, contextAction?.id, followEditor.enabled, openSessionSkills, showFolder, performMoveToFolder,
     handleOpenSameSetup, handleOpenFollow, openSessionCollaboration, openSessionSharing,
     openSessionToResume, handleResume, handleUnarchive, showUnarchive, showAutomations,
-    addMachineToWorkspace, openAllAutomations, openRemotePermissions, sessionActionTarget.isOwnedByCurrentUser]));
+    addMachineToWorkspace, openAllAutomations, openRemotePermissions, sessionActionTarget.isOwnedByCurrentUser]), { foregroundModalId: paletteModalId });
 
   // I2min: a section its own mounted read proves empty folds into one "Add to this session" row; unknown
   // keeps its slot. Pressing the row unfolds the real section in its place (its own add flow is there).

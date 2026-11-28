@@ -11957,6 +11957,7 @@ const enSessionInfo = {
   metadataCopied: 'Metadata copied to clipboard',
   failedToCopyMetadata: 'Failed to copy metadata',
   copyDebugInformation: 'Copy information',
+  copyProviderSessionId: 'Copy provider Session ID',
   sessionInformation: "Session information",
   happierSessionId: "Happier Session ID",
   providerSessionId: ({ provider }: { provider: string }) => `${provider} Session ID`,

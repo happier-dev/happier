@@ -1,3 +1,7 @@
+import { openSessionTagsEditor, useSessionOrganizationEditors } from '@/components/sessions/organization/useSessionOrganizationEditors';
+import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import { SESSION_INFO_SAME_SETUP_ACTION_ID, SESSION_INFO_SESSION_LOG_ACTION_ID, SESSION_INFO_MACHINE_ACTION_ID, SESSION_INFO_ALL_AUTOMATIONS_ACTION_ID } from './sessionActionIds';
+import { machinePageHref } from '@/components/machines/page/machinePageHref';
 import { useOpenBotTemplate } from '@/components/sessions/bots/templates/openBotTemplate';
 import { useDeleteBotTemplate } from '@/components/sessions/bots/templates/useDeleteBotTemplate';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
@@ -78,7 +82,7 @@ import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerS
 import { readExternalSessionFollowPolicy } from '@/sync/domains/session/external/externalSessionFollowMetadata';
 import { setExternalSessionFollowPolicy, useExternalSessionFollowPolicyIntent } from '@/components/sessions/external/follow/setExternalSessionFollowPolicy';
 import { readSessionDisplayTitleField } from '@/sync/state/selectors';
-import { getSessionStatus } from '@/utils/sessions/sessionUtils';
+import { getSessionName, getSessionStatus } from '@/utils/sessions/sessionUtils';
 import { EXACT_TURN_AUTOMATION_HEADER_ACTION_ID, readExactActiveParentTurn } from '@/components/automations/sessionLifecycle/exactTurnAutomationPrefill';
 import { useSessionReachableMachineTarget } from '@/components/sessions/model/useSessionMachineReachability';
 import {
@@ -97,6 +101,8 @@ import {
 import {
   SESSION_ACTION_ARCHIVE_ID,
   SESSION_ACTION_DELETE_ID,
+  SESSION_ACTION_EDIT_TAGS_ID,
+  SESSION_ACTION_MOVE_TO_FOLDER_ID,
   SESSION_ACTION_RENAME_ID,
   SESSION_ACTION_SET_APPEARANCE_COLOR_ID,
   SESSION_ACTION_RESUME_ID,
@@ -155,11 +161,14 @@ import {
   resolveSessionHeaderExtraItemGroup,
   type SessionHeaderMenuGroup,
 } from './sessionHeaderMenuGroups';
-import { getSessionActionMetadata } from './sessionActionMetadata';
+import { getSessionActionMetadata, resolveSessionActionTitle } from './sessionActionMetadata';
 import { useOpenSessionComputerScreen } from '@/components/computer/useOpenSessionComputerScreen';
 import { useOpenSessionSimulatorPreview } from '@/components/sessions/simulator/useOpenSessionSimulatorPreview';
 import { SESSION_HEADER_TASK_MENU_ID_PREFIX, useSessionHeaderTaskLinks, type SessionHeaderTaskSession } from '@/components/sessions/shell/view/SessionHeaderTaskLinks';
 import { SessionHeaderOptionalEntriesFoldedContext } from '@/components/sessions/shell/view/sessionHeaderTitleCompact';
+import { buildSessionMenuCommands } from './sessionMenuCommands';
+import { openSessionAuthoringAction } from '@/sync/ops/actions/sessionAuthoringActions';
+import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 
 const SESSION_FOLLOW_IN_ANOTHER_SESSION_ACTION_ID = 'follow.set';
 
@@ -413,6 +422,8 @@ function SessionHeaderMenuDropdown(props: Omit<React.ComponentProps<typeof Dropd
 
 type SessionHeaderMenuRowsProps = SessionHeaderActionMenuProps & Readonly<{
   open: boolean;
+  palettePresented: boolean;
+  paletteModalId: string | null | undefined;
   setOpen: (open: boolean) => void;
   session: Session;
   sessionServerId: ReturnType<typeof resolveSessionTargetServerId>;
@@ -433,6 +444,8 @@ type SessionHeaderMenuRowsProps = SessionHeaderActionMenuProps & Readonly<{
 function SessionHeaderActionMenuRows(props: SessionHeaderMenuRowsProps) {
   const { open, setOpen, session, sessionServerId, companionAddress, followEditor, showCompanionInOverflow,
     companionHeaderIntent, applyCompanionHeaderIntent, invokePluginHeaderAction } = props;
+  const detailPresented = open || props.palettePresented;
+  const automationsSupport = useAutomationsSupport();
   const openExecutionRunDraft = useOpenExecutionRunLauncherDraft();
   const commandBridge = useCurrentUiContextCommandBridge();
   const presentationActiveSignal = useLayoutPresentationSignal();
@@ -484,7 +497,7 @@ function SessionHeaderActionMenuRows(props: SessionHeaderMenuRowsProps) {
     sessionId: props.sessionId, serverId: sessionServerId ?? null,
     onNavigate: React.useCallback(() => safeRouterBack({ router, fallbackHref: '/' }), [router]),
   });
-  const writeClipboard = useClipboardWrite(sessionServerId ?? null, { enabled: open });
+  const writeClipboard = useClipboardWrite(sessionServerId ?? null, { enabled: detailPresented });
   const followApproval = useActionApprovalContinuation({
     scopeKey: JSON.stringify([sessionServerId, props.sessionId, profileId]),
     serverId: sessionServerId ?? '', onExecuted: () => {},
@@ -535,8 +548,8 @@ function SessionHeaderActionMenuRows(props: SessionHeaderMenuRowsProps) {
   const isAttentionStandingSession = sessionAttentionStandingKey != null
     && resolveSessionAttentionStanding(attentionStanding.policy, sessionAttentionStandingKey);
   // Colour data is detail: read only while this menu is open (closed-popover rule).
-  const sessionAppearancesSupported = useSessionAppearancesSupported(sessionServerId, { enabled: open });
-  const appearanceDataActive = open && sessionAppearancesSupported;
+  const sessionAppearancesSupported = useSessionAppearancesSupported(sessionServerId, { enabled: detailPresented });
+  const appearanceDataActive = detailPresented && sessionAppearancesSupported;
   const ownAppearanceColor = useSessionOwnAppearanceColor(sessionServerId, props.sessionId, { enabled: appearanceDataActive });
   const customAppearanceColors = useCustomSessionAppearanceColors(sessionServerId, { enabled: appearanceDataActive });
   const [customColorPickerLoading, setCustomColorPickerLoading] = React.useState(false);
@@ -564,8 +577,8 @@ function SessionHeaderActionMenuRows(props: SessionHeaderMenuRowsProps) {
   // Open, the executable target follows the live row. Closed, the header needs only which Actions the
   // row offers, so it subscribes to those decisions: a streamed row write (seq, activity, thinking) or
   // a text-only message revision commits nothing, while a read, access or lifecycle change does.
-  const openSessionActionSnapshot = storage((state) => open ? readSessionActionSnapshot(state) : null);
-  const closedSessionActionDecisions = storage((state) => open
+  const openSessionActionSnapshot = storage((state) => detailPresented ? readSessionActionSnapshot(state) : null);
+  const closedSessionActionDecisions = storage((state) => detailPresented
     ? null
     : describeSessionActionTargetDecisions(buildSessionActionTarget(readSessionActionSnapshot(state))));
   const sessionActionTarget = React.useMemo(
@@ -587,6 +600,10 @@ function SessionHeaderActionMenuRows(props: SessionHeaderMenuRowsProps) {
       sessionServerId,
     ],
   );
+  const organizationActions = useMountedActionExecution(sessionServerId ?? null);
+  const organizationEditors = useSessionOrganizationEditors({ target: sessionActionTarget,
+    sourceLabel: getSessionName(session), projection: organizationProjection,
+    listView: organizationListViewState, actions: organizationActions });
   const executor = React.useMemo(
     () => createDefaultActionExecutor({
       resolveServerIdForSessionId: () => sessionServerId,
@@ -652,7 +669,7 @@ function SessionHeaderActionMenuRows(props: SessionHeaderMenuRowsProps) {
   const tasksFolded = React.useContext(SessionHeaderOptionalEntriesFoldedContext);
   const taskLinks = useSessionHeaderTaskLinks(tasksFolded ? props.taskSession ?? null : null);
   const actions = React.useMemo(() => {
-    if (!open) return NO_MENU_ROWS;
+    if (!detailPresented) return NO_MENU_ROWS;
     const actionItems: DropdownMenuItem[] = listActionSpecs()
       // Placement first: only the few specs placed in this menu reach the enablement check.
       .filter((spec) => Array.isArray(spec.placements) && spec.placements.includes('session_action_menu' as any))
@@ -744,6 +761,7 @@ function SessionHeaderActionMenuRows(props: SessionHeaderMenuRowsProps) {
       target: sessionActionTarget,
       surface: 'sessionHeader',
       sessionAppearancesSupported,
+      organizationEditors,
     })) {
       if (actionId === SESSION_ACTION_SET_APPEARANCE_COLOR_ID) {
         push(getSessionActionMetadata(actionId)?.group ?? 'session', buildSessionAppearanceColorMenuItem({
@@ -804,10 +822,24 @@ function SessionHeaderActionMenuRows(props: SessionHeaderMenuRowsProps) {
       });
     }
 
-    push('session', { id: 'header.reportIssue', title: t('bugReports.reportSession'),
+    if (sessionServerId) {
+      push('open', { id: SESSION_INFO_SESSION_LOG_ACTION_ID, title: resolveSessionActionTitle(getSessionActionMetadata(SESSION_INFO_SESSION_LOG_ACTION_ID)!),
+        icon: <Icon name="file-text" size={16} color={iconColor} /> });
+      if (reachableMachineId) push('open', { id: SESSION_INFO_MACHINE_ACTION_ID, title: resolveSessionActionTitle(getSessionActionMetadata(SESSION_INFO_MACHINE_ACTION_ID)!),
+        icon: <Icon name="desktop" size={16} color={iconColor} /> });
+    }
+    if (props.actionAccountLifetime && sessionServerId) {
+      push('work', { id: SESSION_INFO_SAME_SETUP_ACTION_ID, title: resolveSessionActionTitle(getSessionActionMetadata(SESSION_INFO_SAME_SETUP_ACTION_ID)!),
+        icon: <Icon name="copy" size={16} color={iconColor} /> });
+    }
+    if (automationsSupport?.enabled !== false && sessionServerId) {
+      push('open', { id: SESSION_INFO_ALL_AUTOMATIONS_ACTION_ID, title: resolveSessionActionTitle(getSessionActionMetadata(SESSION_INFO_ALL_AUTOMATIONS_ACTION_ID)!),
+        icon: <Icon name="clock" size={16} color={iconColor} /> });
+    }
+    push('session', { id: 'header.reportIssue', title: resolveSessionActionTitle(getSessionActionMetadata('header.reportIssue')!),
       icon: <Icon name="bug" size={16} color={iconColor} /> });
 
-    if (open) push('session', createSessionCopyMenuItem({
+    if (detailPresented) push('session', createSessionCopyMenuItem({
       iconColor,
       information: buildSessionDebugInformationForSession(session),
     }));
@@ -831,7 +863,12 @@ function SessionHeaderActionMenuRows(props: SessionHeaderMenuRowsProps) {
     return composeSessionHeaderMenu(out);
   }, [
     open,
+    detailPresented,
+    automationsSupport?.enabled,
+    props.actionAccountLifetime,
     sessionAppearancesSupported,
+    organizationEditors.tagsAvailable,
+    organizationEditors.foldersAvailable,
     ownAppearanceColor,
     customAppearanceColors,
     customColorPickerLoading,
@@ -864,6 +901,7 @@ function SessionHeaderActionMenuRows(props: SessionHeaderMenuRowsProps) {
     supportsExternalSessionBackgroundFollowForLink,
     followEditor.enabled,
     sessionServerId,
+    reachableMachineId,
     sessionActionTarget,
     accountShowToolCalls,
     workspaceOpen.presentationItems,
@@ -873,8 +911,37 @@ function SessionHeaderActionMenuRows(props: SessionHeaderMenuRowsProps) {
     theme.colors.chrome.header.foreground,
   ]);
   const select = (actionId: string, selection?: DropdownMenuSelection) => {
+    if (actionId === SESSION_ACTION_EDIT_TAGS_ID) {
+      setOpen(false);
+      openSessionTagsEditor({ target: sessionActionTarget, sourceLabel: getSessionName(session), binding: organizationActions.binding });
+      return;
+    }
+    if (actionId === SESSION_ACTION_MOVE_TO_FOLDER_ID) {
+      setOpen(false);
+      organizationEditors.performMoveToFolder();
+      return;
+    }
+    if (actionId === SESSION_INFO_SAME_SETUP_ACTION_ID) {
+      const lifetime = props.actionAccountLifetime;
+      if (lifetime && sessionServerId) fireAndForget(openSessionAuthoringAction({
+        sourceSession: { sessionId: props.sessionId, serverId: sessionServerId },
+      }, lifetime), { tag: 'SessionHeaderActionMenu.sameSetup' });
+      return;
+    }
+    if (actionId === SESSION_INFO_SESSION_LOG_ACTION_ID) {
+      router.push(buildScopedSessionRouteHref({ sessionId: props.sessionId, serverId: sessionServerId, suffix: '/log' }) as never);
+      return;
+    }
+    if (actionId === SESSION_INFO_MACHINE_ACTION_ID) {
+      if (reachableMachineId && sessionServerId) router.push(machinePageHref({ door: 'rail', target: { machineId: reachableMachineId, serverId: sessionServerId } }) as never);
+      return;
+    }
+    if (actionId === SESSION_INFO_ALL_AUTOMATIONS_ACTION_ID) {
+      router.push(buildScopedSessionRouteHref({ sessionId: props.sessionId, serverId: sessionServerId, suffix: '/automations' }) as never);
+      return;
+    }
     if (workspaceOpen.select(actionId)) { setOpen(false); return; }
-    if (actionId.startsWith(`${SESSION_ACTION_SET_APPEARANCE_COLOR_ID}:`)) {
+    if (actionId === SESSION_ACTION_SET_APPEARANCE_COLOR_ID || actionId.startsWith(`${SESSION_ACTION_SET_APPEARANCE_COLOR_ID}:`)) {
       // Custom color… keeps the menu open while the picker loads; the choice closes it when ready.
       fireAndForget((async () => {
         const color = await resolveSessionAppearanceColorMenuChoice({
@@ -1145,6 +1212,10 @@ function SessionHeaderActionMenuRows(props: SessionHeaderMenuRowsProps) {
   const latestSelect = React.useRef(select);
   latestSelect.current = select;
   const stableSelect = React.useCallback((actionId: string, selection?: DropdownMenuSelection) => latestSelect.current(actionId, selection), []);
+  const paletteCommands = React.useMemo(() => props.palettePresented ? buildSessionMenuCommands({
+    items: actions, select: stableSelect,
+  }) : [], [actions, props.palettePresented, stableSelect]);
+  useCurrentUiContextLocalCommands(paletteCommands, { contextKey: JSON.stringify(companionAddress), foregroundModalId: props.paletteModalId });
   const { publish } = props;
   // Only an open menu draws rows; a shut one keeps whatever it last showed and publishes nothing.
   React.useLayoutEffect(() => { if (open) publish({ items: actions, select: stableSelect }); }, [actions, open, publish, stableSelect]);
@@ -1153,18 +1224,26 @@ function SessionHeaderActionMenuRows(props: SessionHeaderMenuRowsProps) {
 
 function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
   const [open, setOpen] = React.useState(false);
+  const [palettePresented, setPalettePresented] = React.useState(false);
+  const [paletteModalId, setPaletteModalId] = React.useState<string | null | undefined>(undefined);
   // A shut menu is its trigger (DropdownMenu's rule): the rows, and the hooks that feed only them, mount
   // when the menu first opens.
   const [rowsMounted, setRowsMounted] = React.useState(false);
   const [rowsStore] = React.useState(createSessionHeaderMenuRowsStore);
+  const rowsDemanded = rowsMounted || palettePresented;
   const handleOpenChange = React.useCallback((next: boolean) => {
     if (next) setRowsMounted(true);
     setOpen(next);
   }, []);
+  const setCommandPalettePresented = React.useCallback((presented: boolean, modalId?: string | null) => {
+    setPaletteModalId(presented ? modalId : undefined);
+    if (presented) setRowsMounted(true);
+    setPalettePresented(presented);
+  }, []);
   const currentUiContextReader = useOptionalCurrentUiContextReader();
   const session = React.useMemo(
-    () => open ? readCurrentSessionForOpenMenu(props.sessionId, props.session) : props.session,
-    [open, props.session, props.sessionId],
+    () => open || palettePresented ? readCurrentSessionForOpenMenu(props.sessionId, props.session) : props.session,
+    [open, palettePresented, props.session, props.sessionId],
   );
   const preferredSessionServerId = usePreferredServerIdForSession({
     serverId: session.serverId ?? null,
@@ -1178,8 +1257,9 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
     () => normalizeSessionAddress(sessionServerId, props.sessionId),
     [props.sessionId, sessionServerId],
   );
-  useCurrentUiContextLocalCommands(!open ? [{ key: 'session.menu.open', title: t('session.actionMenu.openA11y'),
-    invoke: () => handleOpenChange(true) }] : [], { contextKey: JSON.stringify(companionAddress) });
+  useCurrentUiContextLocalCommands([{ key: 'session.menu.open', title: t('session.actionMenu.openA11y'),
+    setCommandPalettePresented,
+    invoke: () => handleOpenChange(true) }], { contextKey: JSON.stringify(companionAddress), foregroundModalId: paletteModalId });
   const companionRevealPort = useSessionCompanionRevealPort(companionAddress);
   const openCompanionFullSurface = React.useCallback(() => {
     companionRevealPort?.openFullSurface();
@@ -1308,10 +1388,12 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
       ) : null}
       {followEditor.editor}
       {props.beforeMenu ?? null}
-      {rowsMounted ? (
+      {rowsDemanded ? (
         <SessionHeaderActionMenuRows
           {...props}
           open={open}
+          palettePresented={palettePresented}
+          paletteModalId={paletteModalId}
           setOpen={setOpen}
           session={session}
           sessionServerId={sessionServerId}

@@ -10630,6 +10630,7 @@ localTailscale: {
     metadataCopied: "メタデータがクリップボードにコピーされました",
     failedToCopyMetadata: "メタデータのコピーに失敗しました",
     copyDebugInformation: "情報をコピー",
+    copyProviderSessionId: 'プロバイダーのセッション ID をコピー',
     sessionInformation: "セッション情報",
     happierSessionId: "Happier セッション ID",
     providerSessionId: ({ provider }: { provider: string }) => `${provider} セッション ID`,

@@ -1,8 +1,9 @@
-import { defaultKeyboardCommands } from '@/keyboard/commands';
+import { getKeyboardCommand, resolveKeyboardCommands } from '@/keyboard/commands';
 import { browserShortcutConflicts, formatKeybindingLabel, keybindingRulesAreSemanticallyEqual, parseKeybindingRule } from '@/keyboard/bindings';
 import { isKeybindingRuleAvailable } from '@/keyboard/runtime';
 import type {
     KeyboardCommandId,
+    KeyboardCommand,
     KeyboardCommandSettingsTitleKey,
     KeyboardPlatform,
     KeyboardSurface,
@@ -19,6 +20,7 @@ export type KeyboardShortcutSettingsConflict = Readonly<{
 export type KeyboardShortcutSettingsCommandRow = Readonly<{
     commandId: KeyboardCommandId;
     titleKey: KeyboardCommandSettingsTitleKey;
+    title?: string;
     bindingValue: string | null;
     /** The shortcut that runs the command now (a custom one when set, else the registry default). */
     defaultLabel: string | null;
@@ -42,6 +44,7 @@ export const KEYBOARD_SHORTCUT_COMMAND_GROUP_ORDER: readonly KeyboardShortcutCom
 
 /** Commands are grouped by their id's area; anything new and unrecognised lands under General. */
 export function resolveKeyboardShortcutCommandGroupId(commandId: KeyboardCommandId): KeyboardShortcutCommandGroupId {
+    if (commandId.startsWith('session.action:')) return 'sessions';
     if (commandId.startsWith('annotation.') || commandId === 'media.annotate') return 'annotate';
     if (commandId.startsWith('review.') || commandId === 'editor.selection.ask' || commandId === 'files.track.toggle' || commandId === 'file.blame.toggle') return 'review';
     const area = commandId.split('.')[0];
@@ -105,7 +108,7 @@ function getEffectiveBindings(
     overrides: Readonly<Record<string, readonly KeybindingRule[]>>,
 ): readonly KeybindingRule[] {
     const override = overrides[commandId];
-    const command = defaultKeyboardCommands.find((entry) => entry.id === commandId);
+    const command = getKeyboardCommand(commandId);
     if (override && override.length > 0) {
         const defaultAllowInEditable = command?.defaultBindings?.find((rule) => rule.allowInEditable != null)?.allowInEditable
             ?? command?.defaultBinding?.allowInEditable;
@@ -136,6 +139,7 @@ function getActiveEffectiveBindings(params: Readonly<{
 
 
 function buildBrowserReservedConflicts(params: Readonly<{
+    commands: readonly KeyboardCommand[];
     surface: KeyboardSurface;
     platform: KeyboardPlatform;
     disabledIds: ReadonlySet<string>;
@@ -144,7 +148,7 @@ function buildBrowserReservedConflicts(params: Readonly<{
 }>): readonly KeyboardShortcutSettingsConflict[] {
     if (params.surface !== 'web') return [];
 
-    return defaultKeyboardCommands.flatMap((command) => {
+    return params.commands.flatMap((command) => {
         if (params.disabledIds.has(command.id)) return [];
         const activeBindings = getActiveEffectiveBindings({
             commandId: command.id,
@@ -164,6 +168,7 @@ function buildBrowserReservedConflicts(params: Readonly<{
 }
 
 function buildDuplicateBindingConflicts(params: Readonly<{
+    commands: readonly KeyboardCommand[];
     platform: KeyboardPlatform;
     surface: KeyboardSurface;
     disabledIds: ReadonlySet<string>;
@@ -172,7 +177,7 @@ function buildDuplicateBindingConflicts(params: Readonly<{
 }>): readonly KeyboardShortcutSettingsConflict[] {
     const commandIdsByLabel = new Map<string, KeyboardCommandId[]>();
 
-    for (const command of defaultKeyboardCommands) {
+    for (const command of params.commands) {
         if (params.disabledIds.has(command.id)) continue;
         for (const binding of getActiveEffectiveBindings({
             commandId: command.id,
@@ -200,6 +205,7 @@ function buildDuplicateBindingConflicts(params: Readonly<{
 }
 
 export function buildKeyboardShortcutSettingsModel(params: Readonly<{
+    commands?: readonly KeyboardCommand[];
     settings: ShortcutSettingsSubset;
     platform: KeyboardPlatform;
     surface: KeyboardSurface;
@@ -209,8 +215,9 @@ export function buildKeyboardShortcutSettingsModel(params: Readonly<{
         disabledIds.add('commandPalette.open');
     }
     const overrides = params.settings.keyboardShortcutOverridesV1;
+    const commands = params.commands ?? resolveKeyboardCommands(overrides);
     const singleKeyShortcutsEnabled = params.settings.keyboardSingleKeyShortcutsEnabled === true;
-    const commandRows = defaultKeyboardCommands.map((command): KeyboardShortcutSettingsCommandRow => {
+    const commandRows = commands.map((command): KeyboardShortcutSettingsCommandRow => {
         const effectiveBinding = getActiveEffectiveBindings({
             commandId: command.id,
             overrides,
@@ -231,6 +238,7 @@ export function buildKeyboardShortcutSettingsModel(params: Readonly<{
         return {
             commandId: command.id,
             titleKey: command.settingsTitleKey,
+            ...(command.settingsTitle ? { title: command.settingsTitle } : {}),
             bindingValue: effectiveBinding?.binding ?? null,
             defaultLabel,
             registryDefaultLabel: registryBinding ? formatKeybindingLabel(registryBinding, params.platform) : null,
@@ -248,6 +256,7 @@ export function buildKeyboardShortcutSettingsModel(params: Readonly<{
             .filter((group) => group.rows.length > 0),
         conflicts: [
             ...buildBrowserReservedConflicts({
+                commands,
                 surface: params.surface,
                 platform: params.platform,
                 disabledIds,
@@ -255,6 +264,7 @@ export function buildKeyboardShortcutSettingsModel(params: Readonly<{
                 singleKeyShortcutsEnabled,
             }),
             ...buildDuplicateBindingConflicts({
+                commands,
                 platform: params.platform,
                 surface: params.surface,
                 disabledIds,

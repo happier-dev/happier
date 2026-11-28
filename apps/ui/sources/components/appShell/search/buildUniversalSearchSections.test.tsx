@@ -1143,6 +1143,18 @@ describe('buildUniversalSearchSections', () => {
         }
     });
 
+    it('shows current Session actions before recents while retaining ordinary typed-search grouping', () => {
+        const commands = [{ id: 'rename', title: 'Rename session', category: 'Actions', contextCategory: 'My project', action: () => {} }];
+        const sessions = [sessionEntity('s1', 1)];
+        const empty = buildUniversalSearchSections(input({ commands, sessions }));
+        expect(empty[0]?.id).toBe('commands:My project');
+        expect(staticOptionIds(empty, 'commands:My project')).toEqual(['command:rename']);
+        expect(empty.some(section => section.id === 'sessions')).toBe(true);
+        const typed = buildUniversalSearchSections(input({ query: 'rename', commands, sessions }));
+        expect(typed.some(section => section.id === 'commands:My project')).toBe(false);
+        expect(staticOptionIds(typed, 'commands:Actions')).toEqual(['command:rename']);
+    });
+
     it('orders groups by what the user reaches for: recents first when empty, then commands, settings and sessions for a query', () => {
         const commands = [{
             id: 'new-session',

@@ -14,6 +14,8 @@ import type { CustomModalInjectedProps } from '@/modal/types';
 import { t } from '@/text';
 
 import { splitKeybindingLabel } from '../shortcutLabels';
+import { resolveKeyboardCommands } from '../commands';
+import { usePluginKeyboardCommands } from '../usePluginKeyboardCommands';
 import type { KeyboardPlatform, KeyboardWebHost, KeybindingRule } from '../types';
 import { buildShortcutsSheetModel } from './shortcutsSheetModel';
 
@@ -38,13 +40,16 @@ export function ShortcutsSheet(props: ShortcutsSheetProps) {
     const router = useRouter();
     const [host, setHost] = React.useState<KeyboardWebHost>(props.host);
     const [bodyWidthPx, setBodyWidthPx] = React.useState<number | null>(null);
+    const pluginCommands = usePluginKeyboardCommands();
+    const commands = React.useMemo(() => resolveKeyboardCommands(props.overrides, pluginCommands), [props.overrides, pluginCommands]);
     const model = React.useMemo(() => buildShortcutsSheetModel({
+        commands,
         platform: props.platform,
         host,
         singleKeyShortcutsEnabled: props.singleKeyShortcutsEnabled,
         disabledCommandIds: props.disabledCommandIds,
         overrides: props.overrides,
-    }), [host, props.disabledCommandIds, props.overrides, props.platform, props.singleKeyShortcutsEnabled]);
+    }), [host, props.disabledCommandIds, props.overrides, props.platform, props.singleKeyShortcutsEnabled, commands]);
     const groups = React.useMemo(() => model.groups
         .map(group => ({ ...group, rows: group.rows.filter(row => row.label) }))
         .filter(group => group.rows.length > 0), [model.groups]);
@@ -108,7 +113,7 @@ export function ShortcutsSheet(props: ShortcutsSheetProps) {
                                 <Text accessibilityRole="header" style={styles.groupTitle}>{t(KEYBOARD_COMMAND_GROUP_TITLE_KEYS[group.id])}</Text>
                                 {group.rows.map((row, index) => (
                                     <View key={row.commandId} style={[styles.row, index > 0 ? styles.rowDivider : null]} testID={`shortcuts-sheet-row-${row.commandId}`}>
-                                        <Text numberOfLines={2} style={styles.rowTitle}>{t(row.titleKey)}</Text>
+                                        <Text numberOfLines={2} style={styles.rowTitle}>{row.title ?? t(row.titleKey)}</Text>
                                         <View style={styles.keys} accessibilityLabel={row.label}>
                                             {splitKeybindingLabel(row.label ?? '').map((key, keyIndex) => <KeyHint key={`${key}-${keyIndex}`} label={key} />)}
                                         </View>

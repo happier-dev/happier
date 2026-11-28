@@ -7578,9 +7578,19 @@ aliases or a headless replacement for a mounted owner.
 
 `ui.command_palette.list` and `ui.command_palette.invoke` use the mounted
 `CommandPaletteProvider`'s current command builder. Removed commands and retired
-mounts cannot retain an executable callback. Entries already governed by an
-Action are excluded from this generic host-command path; use their original
-Action so its caller policy remains intact.
+mounts cannot retain an executable callback. Catalog-backed entries that can
+execute with their current input invoke the original Action through ordinary
+child admission, preserving caller policy. Entries needing interactive input
+are excluded from agent invocation.
+
+In 0.3 development, the palette discovers personally enabled `command_palette`
+placements from the Action catalog. `buildActionDraftInput` consumes the
+canonical contextual binder for the active Session, Machine and root; complete
+input executes through the UI Action executor, while incomplete input opens the
+existing Action input form. Bespoke launchers retain their existing callbacks.
+Empty-query Search puts the current Session's commands first; typed Search
+retains its matching order. Derived `action:<id>` and `session.action:<ui id>`
+keyboard commands have no defaults and dispatch the same mounted palette row.
 
 `workspace.tabs.*`, `workspace.groups.*`, `workspace.split` and
 `workspace.resize` consume the mounted Workspace provider's navigation, reducer

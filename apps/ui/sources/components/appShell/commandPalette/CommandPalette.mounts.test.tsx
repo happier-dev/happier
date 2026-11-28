@@ -17,6 +17,19 @@ vi.mock('@legendapp/list/react-native', async () => {
 });
 
 describe('command palette row lifetime', () => {
+    it('puts current Session commands first only before a query, preserving ordinary search grouping', () => {
+        const commands: Command[] = [
+            { id: 'general', title: 'Rename preset', category: 'Actions', action: () => {} },
+            { id: 'session', title: 'Rename session', category: 'Actions', contextCategory: 'My project', action: () => {} },
+        ];
+        const empty = buildCommandPaletteSelectionListSections(commands);
+        expect(empty[0]?.title).toBe('My project');
+        expect(empty[0]?.kind === 'static' && empty[0].options[0]?.id).toBe('command:session');
+        const searching = buildCommandPaletteSelectionListSections(commands, empty, 'rename');
+        expect(searching.map(section => section.title)).toEqual(['Actions']);
+        expect(searching[0]?.kind === 'static' && searching[0].options.map(option => option.id))
+            .toEqual(['command:general', 'command:session']);
+    });
     it('retains a visible result when its source refresh fails and recovers', async () => {
         const { SelectionListBodyVirtualized } = await import('@/components/ui/selectionList/SelectionListVirtualizedBody');
         const { PlanOptionRow } = await import('@/components/ui/selectionList/SelectionListOptionRow');

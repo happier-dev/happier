@@ -1,7 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { PluginProjectedActionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
-import { DaemonPluginStructuredMessageActionExecuteResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
@@ -9,6 +7,9 @@ import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } 
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createServerScopedMachineRpcBoundaryMock } from '@/dev/testkit/mocks/serverScopedRpc';
 import type { PluginProjectionAction, PluginProjectionEntry } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
+import { createHydratedPlainMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
+import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 
 installDisconnectedServerSocketBoundary();
 const machineRpc = vi.hoisted(() => vi.fn<Parameters<typeof createServerScopedMachineRpcBoundaryMock>[0]>());
@@ -55,16 +56,31 @@ afterAll(async () => {
 
 describe('command-palette contributed Actions', () => {
     it('projects an admitted Action with its canonical presentation, occurrence and current Home executor', async () => {
+        const executeAtHome = vi.fn(async (_input: unknown) => ({ applied: true }));
+        const homeAction = await createExternalActionAccountHttpBoundary({
+            serverUrl: 'https://command-palette-home.example.test', serverIdentityId: 'srv_command_palette',
+            accountId: 'account-command-palette', machineId: 'machine-command-palette',
+            actionId: 'action.invoke', tokenEpoch: 0, execute: executeAtHome,
+        });
         connection = await restoreServerAccountForTest({
             serverUrl: 'https://command-palette-home.example.test',
+            serverIdentityId: 'srv_command_palette',
             accountId: 'account-command-palette',
-            request: async (input) => new URL(String(input)).pathname === '/v1/account/encryption/currentness'
-                ? Response.json(createPlainAccountEncryptionCurrentnessFixture())
-                : new Response('{}', { status: 404 }),
+            credentials: { token: createAccountTokenForTests('account-command-palette', { currentAccount: true }) },
+            request: async (input, init) => {
+                const path = new URL(String(input)).pathname;
+                if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+                if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
+                if (path === '/v2/account/settings') return Response.json({ content: null, version: 0 });
+                return await homeAction.handle(new URL(String(input)), init)
+                    ?? new Response('{}', { status: 404 });
+            },
         });
         const lifetime = captureActiveServerAccountScopeLifetime();
         expect(lifetime?.isCurrent()).toBe(true);
         if (!lifetime) throw new Error('Command palette Account did not restore');
+        storage.getState().applyMachines([createHydratedPlainMachineFixture({ id: 'machine-command-palette', accountId: lifetime.scope.accountId })],
+            false, { sourceServerId: lifetime.scope.serverId, sourceAccountId: lifetime.scope.accountId });
         const action: PluginProjectionAction = {
             id: 'sync-notes', occurrenceId: 'commands-occurrence-a', title: 'Sync notes',
             description: 'Synchronize the current notes', icon: 'magic-wand',
@@ -82,7 +98,6 @@ describe('command-palette contributed Actions', () => {
             description: null, version: '1.0.0', enabled: true, generation: 7, generationLabel: '7',
             status: null, provenance: null, diagnostics: [], actions: [action], resources: [], editableSettingsGroups: [],
         };
-        machineRpc.mockResolvedValue(DaemonPluginStructuredMessageActionExecuteResponseSchema.parse({ ok: true, result: { applied: true } }));
         // The controller's public projection port consumes the producer's parsed descriptor;
         // Account currentness still comes from the real restored Home lifetime.
         const controller = createPluginContributedActionController({
@@ -98,24 +113,24 @@ describe('command-palette contributed Actions', () => {
             features: { executionRunsEnabled: false, voiceEnabled: false },
             nav: { push: () => {}, openNewSession: () => {}, navigateToSession: () => {} },
             actions: { execute: async () => ({ ok: true, result: {} }) }, alert: async () => {},
+            shortcutLabels: { 'action:acme.commands/actions/sync-notes': 'Ctrl+Shift+Y' },
             pluginActionPresentation: { controller, scope: 'session' },
         }).find((candidate) => candidate.id === 'plugin-action:acme.commands/sync-notes');
-        expect(command).toMatchObject({ title: 'Sync notes', subtitle: 'Synchronize the current notes', icon: 'magic-wand', category: 'Acme commands' });
+        expect(command).toMatchObject({ title: 'Sync notes', subtitle: 'Synchronize the current notes', icon: 'magic-wand', category: 'Acme commands', shortcut: 'Ctrl+Shift+Y' });
         await command?.action();
-        expect(machineRpc).toHaveBeenCalledWith(expect.objectContaining({
-            machineId: 'machine-command-palette', serverId: lifetime.scope.serverId,
-            method: RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE,
-            payload: expect.objectContaining({
-                qualifiedActionId: 'acme.commands/sync-notes', expectedContributorOccurrenceId: 'commands-occurrence-a',
-                sessionId: 'session-command-palette', executionSurface: 'ui', input: {},
-            }),
-        }));
+        expect(executeAtHome).toHaveBeenCalledWith(expect.objectContaining({
+            action: { pluginId: 'acme.commands', localId: 'sync-notes' }, expectedContributorOccurrenceId: 'commands-occurrence-a',
+            sessionId: 'session-command-palette', input: {},
+        }), expect.objectContaining({ target: { kind: 'machine', machineId: 'machine-command-palette' } }));
+        expect(machineRpc).not.toHaveBeenCalled();
 
         machineRpc.mockClear();
+        executeAtHome.mockClear();
         await connection.dispose();
         connection = undefined;
         expect(lifetime.isCurrent()).toBe(false);
         await command?.action();
         expect(machineRpc).not.toHaveBeenCalled();
+        expect(executeAtHome).not.toHaveBeenCalled();
     });
 });

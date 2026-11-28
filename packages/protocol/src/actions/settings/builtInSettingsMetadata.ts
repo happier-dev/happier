@@ -1,4 +1,5 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
+import { DERIVED_KEYBOARD_COMMAND_METADATA } from './keyboardCommandMetadata.js';
 /** Canonical built-in Settings metadata. UI pages attach host callbacks to these declarations. */
 import { AvatarStyleSchema, BotMotionSchema } from '../../account/settings/accountSettings.js';
 import { ATMOSPHERE_PLANET_INTENSITIES, HOME_BACKGROUND_FIELD_MODES } from '../../account/settings/homeAtmosphere.js';
@@ -18,7 +19,14 @@ function featureToggleSection(featureId: FeatureId) {
   } as const;
 }
 
-export const BUILT_IN_SETTINGS_METADATA_V1 = lazyActionSpecArray(() => [
+export const BUILT_IN_SETTINGS_METADATA_V1 = lazyActionSpecArray(() => ([
+  ...DERIVED_KEYBOARD_COMMAND_METADATA.map(command => ({
+    anchor: `keyboard.${command.id}`, pageId: 'keyboard', sectionId: `keyboard.commands.${command.group}`,
+    titleKey: command.titleKey, title: 'title' in command ? command.title : command.titleKey,
+    sectionTitleKey: command.group === 'sessions' ? 'settingsKeyboard.groupSessions' as const : 'settingsKeyboard.groupApp' as const,
+    storage: { scope: 'account' as const, kind: 'owner', access: 'read_write' as const, owner: 'commandStorage', options: [command.id] },
+    targetKinds: [], sensitive: false,
+  })),
   {"anchor":"appearance.collectionColumns","pageId":"appearance","sectionId":"appearance.display","titleKey":"navigationPlacement.title","title":"Collection columns","description":"Read column preferences by collection. Set {collectionId,preferences}; null resets that collection.","storage":{"scope":"account","kind":"owner","owner":"collectionColumnsStorageBinding","access":"read_write"},"targetKinds":[],"sensitive":false,"agentSafety":"safe"},
   {"anchor":"appearance.collectionDisplay","pageId":"appearance","sectionId":"appearance.display","titleKey":"sessionsList.viewOptions","title":"Collection display","description":"Read or patch display preferences by collection kind. Workflows support presentation, groupBy, lines and details. Runs support groupBy, lines and details. Artifacts support presentation. Sessions support groupBy, lines and details.","storage":{"scope":"account","kind":"owner","owner":"collectionDisplayStorageBinding","access":"read_write"},"targetKinds":[],"sensitive":false,"agentSafety":"safe"},
   {"anchor":"appearance.collectionRailWidths","pageId":"appearance","sectionId":"appearance.display","titleKey":"ui.resizableDockedPane.resizeA11y","title":"Collection rail widths","description":"Device-local Collection rail widths. Read returns the map by resize key. Set accepts {resizeKey:string,widthPx:number|null}; null resets that rail while preserving other rails. Layout geometry clamps the rendered width.","storage":{"scope":"local","kind":"localOwner","owner":"collectionRailWidthStorageBinding","access":"read_write"},"targetKinds":[],"sensitive":false,"agentSafety":"safe"},
@@ -1441,4 +1449,4 @@ export const BUILT_IN_SETTINGS_METADATA_V1 = lazyActionSpecArray(() => [
   {"anchor":"voiceAdvanced.cancelSpeechModel","pageId":"voiceAdvanced","sectionId":"voiceAdvanced.models","titleKey":"common.cancel","title":"Cancel","sectionTitleKey":"settingsVoice.pages.advanced.speechModelsTitle","targetKinds":[],"sensitive":false,"operation":{"kind":"invoke","requiresHumanInteraction":false,"requiresApproval":false,"owner":"voiceSettingsOperation","options":["model_cancel","conversation"]}},
   {"anchor":"voiceAdvanced.removeSpeechModel","pageId":"voiceAdvanced","sectionId":"voiceAdvanced.models","titleKey":"settingsVoice.local.models.removeConfirmTitle","title":"Remove model pack","sectionTitleKey":"settingsVoice.pages.advanced.speechModelsTitle","targetKinds":[],"sensitive":false,"operation":{"kind":"invoke","requiresHumanInteraction":true,"requiresApproval":true,"uiConfirmation":"direct","owner":"voiceSettingsOperation","options":["model_remove","conversation"]}},
   {"anchor":"voiceAdvanced.defaultSpeechModel","pageId":"voiceAdvanced","sectionId":"voiceAdvanced.models","titleKey":"settingsVoice.local.models.setDefaultSubtitle","title":"Tap to use as the default","sectionTitleKey":"settingsVoice.pages.advanced.speechModelsTitle","targetKinds":[],"sensitive":false,"operation":{"kind":"invoke","requiresHumanInteraction":true,"requiresApproval":true,"uiConfirmation":"direct","owner":"voiceSettingsOperation","options":["model_default","conversation"]}},
-] as const);
+] as const));

@@ -1,3 +1,5 @@
+import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
+import { SelectionList } from '@/components/ui/selectionList';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -23,9 +25,9 @@ import { resetScopedMachineTransportCacheForTests } from '@/sync/runtime/orchest
 import { serverScopedRpcSocketPool } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool';
 import { publishDaemonMergedProjectionInputs } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
 import { DropdownMenu, type DropdownMenuProps } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { buildSessionOrganizationLabelKey, buildSessionOrganizationSessionKey } from '@/sync/domains/session/organization/keys';
+import { buildSessionOrganizationLabelKey, buildSessionOrganizationSessionKey, buildSessionOrganizationServerKey } from '@/sync/domains/session/organization/keys';
 import { selectEffectiveSessionAppearanceColor } from '@/sync/store/selectors/sessionAppearance';
-import { SESSION_ACTION_DELETE_ID, SESSION_ACTION_MARK_READ_ID, SESSION_ACTION_MARK_UNREAD_ID, SESSION_ACTION_SET_APPEARANCE_COLOR_ID, SESSION_ACTION_STOP_ID } from './sessionActionIds';
+import { SESSION_ACTION_DELETE_ID, SESSION_ACTION_MARK_READ_ID, SESSION_ACTION_MARK_UNREAD_ID, SESSION_ACTION_RENAME_ID, SESSION_ACTION_SET_APPEARANCE_COLOR_ID, SESSION_ACTION_STOP_ID } from './sessionActionIds';
 import { SessionHeaderActionMenu } from './SessionHeaderActionMenu';
 import { resolvePluginSessionHeaderActionPresentations } from './pluginHeaderActions';
 import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindingStore';
@@ -39,6 +41,15 @@ import { publishMachineActivity } from '@/sync/domains/machines/machineActivity'
 import { WorkspaceNavigationProvider, type WorkspaceNavigationContextValue } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 import { createWorkspaceState } from '@/components/appShell/workspace/workspaceState';
 import { UNSUPPORTED_AGENT_SESSION_CAPABILITIES } from '@happier-dev/agents';
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
+import { MainAppTabStateProvider } from '@/components/navigation/mobile/chrome/MainAppTabStateProvider';
+import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
+import { CurrentUiContextProvider, useOptionalCurrentUiContextReader, usePublishCurrentUiContext, type CurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
+import { CurrentUiContextCommandsProvider, useCurrentUiContextComposedCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { CurrentUiContextActionHost } from '@/components/appShell/currentUiContext/currentUiContextVoiceToolPort';
+import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 
 vi.hoisted(async () => {
     const { mkdirSync, realpathSync } = await import('node:fs');
@@ -49,8 +60,10 @@ vi.hoisted(async () => {
 });
 
 const ioSpy = vi.hoisted(() => vi.fn());
-const modalShow = vi.hoisted(() => vi.fn(() => 'modal-id'));
+const modalShow = vi.hoisted(() => vi.fn((_config: unknown) => 'modal-id'));
 const modalAlert = vi.hoisted(() => vi.fn());
+const modalPrompt = vi.hoisted(() => vi.fn(async () => null));
+let organizationEditorsEnabled = false;
 
 // Native UI adapters and HTTP/Socket.IO are external boundaries. The menu,
 // projection, Home/store readers, ask-first policy and scoped RPC remain real.
@@ -59,7 +72,7 @@ vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({
-    spies: { show: modalShow, alert: modalAlert },
+    spies: { show: modalShow, alert: modalAlert, prompt: modalPrompt },
 }).module);
 vi.mock('socket.io-client', () => ({ io: (...args: unknown[]) => ioSpy(...args) }));
 // Native role/event delivery is external; the shared menu and host-role decision stay real.
@@ -164,9 +177,13 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
                 const actionResponse = await externalAction?.handle(url, { method, headers,
                     ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
                 if (actionResponse) return actionResponse;
-                if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse({
-                    capabilities: { serverIdentity: { serverIdentityId: url.hostname === 'projection.home.test' ? SERVER_IDENTITY_ID : null } },
-                }));
+                if (path === '/v1/features') {
+                    const features = createRootLayoutFeaturesResponse({
+                        capabilities: { serverIdentity: { serverIdentityId: url.hostname === 'projection.home.test' ? SERVER_IDENTITY_ID : null } },
+                    });
+                    tryWriteServerEnabledBitInPlace(features, 'sessions.folders', organizationEditorsEnabled);
+                    return Response.json(features);
+                }
                 if (path === '/v2/sessions/sess_1/read-state' && readStateReply) return readStateReply();
                 if (path === '/v1/sessions/sess_1' && method === 'DELETE' && deleteReply) return deleteReply();
                 if (path === '/v2/sessions/sess_1' && method === 'GET' && deleteReply) return Response.json({
@@ -217,6 +234,8 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
         ioSpy.mockReset();
         modalShow.mockClear();
         modalAlert.mockClear();
+        modalPrompt.mockClear();
+        organizationEditorsEnabled = false;
     });
 
     it('offers a labelled reset in the session header for an override and clears back to the project colour', async () => {
@@ -271,6 +290,86 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
         expect(selectEffectiveSessionAppearanceColor(storage.getState(), target)).toEqual(projectColor);
         await act(async () => { menu().onOpenChange(true); });
         expect(resetItem()).toBeUndefined();
+    });
+
+    it('publishes the current Session menu on palette demand and runs rename through its existing prompt', async () => {
+        organizationEditorsEnabled = true;
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const credentials = (await TokenStorage.getCredentialsForServerUrl(homes.homes.projection!.serverUrl))!;
+        let reader: CurrentUiContextReader | null = null;
+        function Publication() {
+            reader = useOptionalCurrentUiContextReader();
+            const commands = useCurrentUiContextComposedCommands();
+            usePublishCurrentUiContext(React.useMemo(() => ({ commands }), [commands]));
+            return null;
+        }
+        const session = storage.getState().sessions.sess_1!;
+        const serverId = homes.homes.projection!.id;
+        const sessionKey = buildSessionOrganizationSessionKey(serverId, session.id);
+        storage.setState({
+            sessionOrganizationTagsByTagKey: { [buildSessionOrganizationServerKey(serverId, 'urgent')]: {
+                tagId: 'urgent', tagKey: 'urgent', sortKey: null, archivedAt: null, createdAt: 1, updatedAt: 1,
+                display: { t: 'plain', v: { label: 'Urgent' } }, displayState: { status: 'available', value: null },
+            } },
+            sessionOrganizationTagAssignmentsBySessionKey: { [sessionKey]: { sessionId: session.id, tagIds: ['urgent'] } },
+            sessionOrganizationFolderAssignmentsBySessionKey: { [sessionKey]: { sessionId: session.id, folderId: 'work' } },
+        });
+        const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}>
+            <MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider>
+                <PluginSurfaceFocusEligibilityProvider active currentUiContextActive>
+                <CurrentUiContextCommandsProvider authority={captureActiveServerAccountScopeLifetime()}>
+                    <CurrentUiContextActionHost /><Publication /><SessionHeaderActionMenu sessionId={session.id} session={session} />
+                </CurrentUiContextCommandsProvider>
+                </PluginSurfaceFocusEligibilityProvider>
+            </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
+        </InjectedAuthProvider>);
+        const current = reader!;
+        const source = current.readCurrentUiContext()!.commands.find(descriptor => {
+            const command = current.resolveCurrentUiCommand(descriptor.id)?.command;
+            return command?.kind === 'hostLocal' && 'key' in command && command.key === 'session.menu.open';
+        });
+        expect(source).toBeDefined();
+        const { buildSessionCommands, setSessionCommandPalettePresented } = await import('@/components/appShell/commandPalette/sessionCommands');
+        const executor = createDefaultActionExecutor();
+        const execute: Parameters<typeof buildSessionCommands>[0]['execute'] = (actionId, input) => executor.execute(actionId, input, { surface: 'ui' });
+        expect(buildSessionCommands({ reader: current, execute })).toEqual([]);
+        let demand: ReturnType<typeof setSessionCommandPalettePresented> | undefined;
+        await act(async () => { demand = setSessionCommandPalettePresented({ reader: current, execute, presented: true }); });
+        await flushHookEffects();
+        await demand;
+        const commands = buildSessionCommands({ reader: current, execute });
+        expect(commands).toEqual(expect.arrayContaining([
+            expect.objectContaining({ id: `session.action:${SESSION_ACTION_RENAME_ID}` }),
+            expect.objectContaining({ id: 'session.action:header.reportIssue' }),
+            expect.objectContaining({ id: 'session.action:session.copySessionId' }),
+            expect.objectContaining({ id: 'session.action:ui.session.tags.edit' }),
+            expect.objectContaining({ id: 'session.action:ui.session.move-to-folder' }),
+        ]));
+        expect(screen.findByType(DropdownMenu).props.open).toBe(false);
+        await act(async () => { await commands.find(command => command.id === `session.action:${SESSION_ACTION_RENAME_ID}`)!.action(); });
+        expect(modalPrompt).toHaveBeenCalledWith(expect.any(String), undefined, expect.objectContaining({ defaultValue: expect.any(String) }));
+        await act(async () => { await commands.find(command => command.id === 'session.action:ui.session.tags.edit')!.action(); });
+        const tagsModal = modalShow.mock.calls.at(-1)![0] as { component: React.ComponentType<Record<string, unknown>>; props: Record<string, unknown> };
+        const editor = await renderScreen(React.createElement(tagsModal.component, tagsModal.props));
+        expect(editor.findByType(SelectionList).props.rootStep.sections[0].options).toEqual(expect.arrayContaining([
+            expect.objectContaining({ id: 'urgent', label: 'Urgent', rightAccessory: expect.anything() }),
+        ]));
+        await editor.unmount();
+        await act(async () => { await commands.find(command => command.id === 'session.action:ui.session.move-to-folder')!.action(); });
+        const folderModal = modalShow.mock.calls.at(-1)![0] as { props: { value: unknown; onCancel(): void } };
+        expect(folderModal.props.value).toEqual({ serverId, sectionId: 'work' });
+        await act(async () => { folderModal.props.onCancel(); });
+        await act(async () => { await commands.find(command => command.id === 'session.action:ui.session.tags.edit')!.action(); });
+        const retainedTagsModal = modalShow.mock.calls.at(-1)![0] as { component: React.ComponentType<Record<string, unknown>>; props: Record<string, unknown> };
+        await act(async () => { await homes.switchAccount('projection', 'replacement-account'); });
+        const retiredEditor = await renderScreen(React.createElement(retainedTagsModal.component, retainedTagsModal.props));
+        await flushHookEffects();
+        expect(retiredEditor.findAllByType(SelectionList).length).toBe(0);
+        await retiredEditor.unmount();
+        await act(async () => { await setSessionCommandPalettePresented({ reader: current, execute, presented: false }); });
+        await flushHookEffects();
+        expect(buildSessionCommands({ reader: current, execute })).toEqual([]);
+        await screen.unmount();
     });
 
     it('keeps a typed Home refusal behind Technical details in the real header action catch', async () => {

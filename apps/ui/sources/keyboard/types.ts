@@ -1,8 +1,11 @@
 import type { TranslationKeyNoParams } from '@/text';
+import type { DerivedKeyboardCommandId } from '@happier-dev/protocol/actions/settings/keyboardCommandMetadata';
+import type { SESSION_ACTION_METADATA } from '@happier-dev/protocol/sessions/actions/sessionActionMetadata';
 
 export type KeyboardPlatform = 'macos' | 'ios' | 'windows' | 'linux' | 'android' | 'web';
 
 export type KeyboardCommandId =
+    | DerivedKeyboardCommandId
     | 'code.goToDefinition'
     | 'code.findReferences'
     | 'code.goToTypeDefinition' | 'code.goToImplementation' | 'code.peekReferences'
@@ -131,7 +134,12 @@ export type KeyboardCommandId =
     | 'files.editor.change.next'
     | 'files.editor.change.previous';
 
-export type KeyboardCommandSettingsTitleKey = Extract<
+type SessionKeyboardCommandTitleKey = Extract<
+    (typeof SESSION_ACTION_METADATA)[keyof typeof SESSION_ACTION_METADATA]['titleKey'],
+    TranslationKeyNoParams
+>;
+
+export type KeyboardCommandSettingsTitleKey = SessionKeyboardCommandTitleKey | 'settingsKeyboard.groupApp' | Extract<
     TranslationKeyNoParams,
     | 'actionPresentation.titles.code_definition_get'
     | 'actionPresentation.titles.code_references_list'
@@ -290,6 +298,10 @@ export type ParsedKeybindingRule = KeybindingRule & Readonly<{
 export type KeyboardCommand = Readonly<{
     id: KeyboardCommandId;
     settingsTitleKey: KeyboardCommandSettingsTitleKey;
+    /** Catalog Actions already own their display title; do not translate an Action id. */
+    settingsTitle?: string;
+    /** Consume an explicitly configured chord through the existing native keyboard bridge. */
+    nativeConsumable?: boolean;
     /** A registered focused editor owns these keys, independent of app-wide shortcut opt-ins. */
     singleKeyScope?: 'focused';
     allowInEditable?: boolean;

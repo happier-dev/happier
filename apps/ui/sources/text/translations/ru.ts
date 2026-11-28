@@ -8585,6 +8585,7 @@ export const ru: TranslationStructure = {
     metadataCopied: "Метаданные скопированы в буфер обмена",
     failedToCopyMetadata: "Не удалось скопировать метаданные",
     copyDebugInformation: "Копировать информацию",
+    copyProviderSessionId: 'Копировать ID сессии провайдера',
     sessionInformation: "Информация о сессии",
     happierSessionId: "ID сессии Happier",
     providerSessionId: ({ provider }: { provider: string }) => `ID сессии ${provider}`,

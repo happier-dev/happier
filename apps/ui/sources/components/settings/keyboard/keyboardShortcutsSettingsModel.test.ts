@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { Settings } from '@/sync/domains/settings/settings';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 
 import {
     buildKeyboardShortcutResetDelta,
@@ -32,6 +33,20 @@ const isolatedOverrideSettings = {
 };
 
 describe('keyboardShortcutsSettingsModel', () => {
+    it('keeps predecessor override rules readable when a catalog shortcut is added', () => {
+        // 0.2 4df6e9e1: registry/keyboardShortcutSettingSchemas.ts accepts this persisted rule shape.
+        const overrides = { 'settings.open': [{ binding: 'Mod+,', platforms: ['macos'] as const, blockedSurfaces: ['native'] as const, allowInEditable: true }] };
+        const delta = buildKeyboardShortcutSetDelta({ commandId: 'action:review.start', binding: 'Mod+Shift+9', disabledCommandIds: [], overrides });
+        expect(accountSettingsParse(delta).keyboardShortcutOverridesV1).toEqual({ ...overrides, 'action:review.start': [{ binding: 'Mod+Shift+9' }] });
+    });
+    it('lists catalog Actions without defaults and persists their ordinary shortcut overrides', () => {
+        const commandId = 'action:review.start';
+        const initial = buildKeyboardShortcutSettingsModel({ settings: baseSettings, platform: 'macos', surface: 'web' });
+        expect(initial.commandRows.find(row => row.commandId === commandId)).toMatchObject({ bindingValue: null, registryDefaultLabel: null });
+        const delta = buildKeyboardShortcutSetDelta({ commandId, binding: 'Mod+Shift+9', disabledCommandIds: [], overrides: {} });
+        const configured = buildKeyboardShortcutSettingsModel({ settings: { ...baseSettings, ...delta }, platform: 'macos', surface: 'web' });
+        expect(configured.commandRows.find(row => row.commandId === commandId)).toMatchObject({ bindingValue: 'Mod+Shift+9', hasOverride: true });
+    });
     it('does not report a command’s host-specific alternative defaults as a conflict with itself', () => {
         const model = buildKeyboardShortcutSettingsModel({
             settings: baseSettings,

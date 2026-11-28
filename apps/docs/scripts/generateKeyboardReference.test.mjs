@@ -1,14 +1,13 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
 
-import { parseKeyboardCommands, renderKeyboardReferenceMarkdown } from './generateKeyboardReference.mjs';
+import { readKeyboardCommands, renderKeyboardReferenceMarkdown } from './generateKeyboardReference.mjs';
 
 test('projects mapped space ordinals and their OS/host scopes from the real registry', async () => {
-  const source = await readFile(new URL('../../ui/sources/keyboard/commands.ts', import.meta.url), 'utf8');
-  const commands = await parseKeyboardCommands(source);
+  const commands = await readKeyboardCommands();
   assert.equal(commands.has('sessionList.space.select1'), true);
   assert.deepEqual(commands.get('sessionList.space.select9'), [
     { key: 'Ctrl+9', scope: 'macOS' },
@@ -16,20 +15,31 @@ test('projects mapped space ordinals and their OS/host scopes from the real regi
   ]);
 });
 
-test('preserves browser and desktop-host availability in shortcut projections', async () => {
-  const commands = await parseKeyboardCommands(`export const defaultKeyboardCommands = [
+test('projects imported bindings with browser and desktop-host availability', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-keyboard-reference-'));
+  try {
+    const commandsPath = join(root, 'commands.ts');
+    await writeFile(join(root, 'bindings.ts'), `export const browserBinding = {
+  binding: 'Alt+Shift+J', platforms: ['web'], webHost: 'browser',
+};\n`);
+    await writeFile(commandsPath, `import { browserBinding } from './bindings';
+export const defaultKeyboardCommands = [
     {
       id: 'session.pending.next',
       defaultBindings: [
-        { binding: 'Alt+Shift+J', platforms: ['web'], webHost: 'browser' },
+        browserBinding,
         { binding: 'Mod+Shift+J', webHost: 'desktop' },
       ],
     },
 ];`);
-  assert.deepEqual(commands.get('session.pending.next'), [
-    { key: 'Alt+Shift+J', scope: 'browser' },
-    { key: 'Mod+Shift+J', scope: 'desktop and native' },
-  ]);
+    const commands = await readKeyboardCommands(commandsPath);
+    assert.deepEqual(commands.get('session.pending.next'), [
+      { key: 'Alt+Shift+J', scope: 'browser' },
+      { key: 'Mod+Shift+J', scope: 'desktop and native' },
+    ]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test('documents Search independent gating and account-synced shortcut preferences', async () => {

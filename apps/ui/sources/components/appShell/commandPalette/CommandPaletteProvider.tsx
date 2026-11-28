@@ -1,4 +1,5 @@
 import { CommandPalettePluginActionProjectionDemand, useCommandPalettePluginActionPresentation } from './useCommandPalettePluginActionPresentation';
+import { buildSessionCommands, setSessionCommandPalettePresented, type SessionCommandDemand } from './sessionCommands';
 export { useCommandPalettePluginActionPresentation, type CommandPalettePluginActionPresentation } from './useCommandPalettePluginActionPresentation';
 import { useOpenExecutionRunLauncherDraft } from '@/components/sessions/runs/launcher/useOpenExecutionRunLauncherDraft';
 import React, { useCallback, useMemo } from 'react';
@@ -49,7 +50,8 @@ import { buildCommandPaletteCommands, selectCommandPaletteRecentSessions, type F
 import { useWorkflowsAvailability } from '@/components/workflows/gating/workflowsAvailability';
 import { useWorkflowAgentAuthoring } from '@/components/workflows/authoring/useWorkflowAgentAuthoring';
 import { buildWorkflowAgentAuthoringSeed } from '@/sync/domains/workflows/workflowAgentAuthoringSeed';
-import { registerCommandPaletteActionCatalog } from './commandPaletteActionRuntime';
+import { executeCommandPaletteKeyboardCommand, registerCommandPaletteActionCatalog } from './commandPaletteActionRuntime';
+import { resolveKeyboardCommands } from '@/keyboard/commands';
 import { KeyboardShortcutProvider, buildKeyboardShortcutLabels, resolveKeyboardPlatform, type KeyboardShortcutHandlers } from '@/keyboard';
 import { useOptionalCurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
 import { useDesktopAppWindowCommands } from '@/desktop/window/useDesktopAppWindowCommands';
@@ -156,8 +158,14 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
     const applySettings = useApplySettings();
     const applyLocalSettings = useApplyLocalSettings();
     const keyboardPlatform = useMemo(resolveKeyboardPlatform, []);
+    const derivedKeyboardCommands = useMemo(
+        () => resolveKeyboardCommands(keyboardShortcutOverridesV1 ?? {})
+            .filter(({ id }) => id.startsWith('action:') || id.startsWith('session.action:')),
+        [keyboardShortcutOverridesV1],
+    );
     const labelHandlers = useMemo<KeyboardShortcutHandlers>(
         () => ({
+            ...Object.fromEntries(derivedKeyboardCommands.map(command => [command.id, () => undefined])),
             'shell.column.toggle': () => undefined,
             'panes.main.toggle': () => undefined,
             'panes.side.toggle': () => undefined,
@@ -174,7 +182,7 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
             'search.symbols': () => undefined,
             ...(commandPaletteEnabled ? { 'commandPalette.open': () => undefined } : {}),
         }),
-        [commandPaletteEnabled, workflowsEnabled],
+        [commandPaletteEnabled, workflowsEnabled, derivedKeyboardCommands],
     );
     const shortcutLabels = useMemo(
         () => buildKeyboardShortcutLabels(keyboardPlatform, Platform.OS === 'web' ? 'web' : 'native', {
@@ -272,20 +280,24 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
     const openExecutionRunDraft = useOpenExecutionRunLauncherDraft();
     const textSearchOpener = React.useRef<(scope?: UniversalSearchScopeSeed, replace?: boolean) => void>(() => undefined);
     const fileSearchOpener = React.useRef<(source: 'files' | 'symbols', scope?: UniversalSearchScopeSeed, symbols?: UniversalSearchOpenOptions['symbols']) => void>(() => undefined);
+    const isExactSessionContext = useCallback((requestedActiveSessionId: string | null, requestedScope?: UniversalSearchScopeSeed) => {
+        if (requestedActiveSessionId !== commandContextSessionId) return false;
+        const ambientSession = requestedActiveSessionId
+            ? (storage.getState().sessions as Record<string, { serverId?: string; accountId?: string } | undefined>)[requestedActiveSessionId]
+            : null;
+        return !requestedScope || !requestedActiveSessionId || (
+            resolveServerProfileScopeIdForIdentifier(ambientSession?.serverId ?? null)
+                === resolveServerProfileScopeIdForIdentifier(requestedScope.serverId)
+            && (requestedScope.accountId === null || ambientSession?.accountId === requestedScope.accountId)
+        );
+    }, [commandContextSessionId]);
     const buildCommands = useCallback((requestedActiveSessionId: string | null = commandContextSessionId, requestedScope?: UniversalSearchScopeSeed, symbols?: UniversalSearchOpenOptions['symbols']) => {
         // The contributed Action presentation is captured for the rendered
         // route's exact Session. An imperative opener may target another Home
         // or Session, so never attach the ambient Session's Actions to that
         // command inventory. The Search provider catalog still supplies
         // exact-target plugin entities for the requested scope.
-        const ambientSession = requestedActiveSessionId
-            ? (storage.getState().sessions as Record<string, { serverId?: string; accountId?: string } | undefined>)[requestedActiveSessionId]
-            : null;
-        const exactSessionContext = requestedScope && requestedActiveSessionId
-            ? resolveServerProfileScopeIdForIdentifier(ambientSession?.serverId ?? null)
-                === resolveServerProfileScopeIdForIdentifier(requestedScope.serverId)
-                && (requestedScope.accountId === null || ambientSession?.accountId === requestedScope.accountId)
-            : requestedActiveSessionId === commandContextSessionId;
+        const exactSessionContext = isExactSessionContext(requestedActiveSessionId, requestedScope);
         const scopedPluginActionPresentation = exactSessionContext
             ? pluginActionPresentation
             : null;
@@ -309,6 +321,8 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
                 ?? (requestedActiveSessionId === commandContextSessionId ? commandContextServerId : null),
             features: { executionRunsEnabled, voiceEnabled, petsCompanionEnabled, workflowsEnabled },
             shortcutLabels,
+            sessionCommands: exactSessionContext ? buildSessionCommands({ reader: currentUiContextReader, shortcutLabels,
+                execute: (actionId, input) => actionExecutor.execute(actionId, input, { surface: 'ui' }) }) : [],
             petControls,
             fileViewControls,
             themeCommands: loadThemeCommands,
@@ -354,11 +368,18 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
                 await Modal.alertAsync(title, message);
             },
         });
-    }, [openExecutionRunDraft, commandContextSessionId, commandContextServerId, currentUiContextReader, executionRunsEnabled, voiceEnabled, petsCompanionEnabled, workflowsEnabled, paletteDestinations, activateCompactAppDestination, shortcutLabels, petControls, pluginActionPresentation, router, openNewSession, openNewWorkflow, openWorkflowAgentAuthoring, navigateToSession, actionExecutor, desktopWindowCommands, fileViewControls, loadThemeCommands, startAskHappier, togglePaneArrangement]);
+    }, [openExecutionRunDraft, isExactSessionContext, commandContextSessionId, commandContextServerId, currentUiContextReader, executionRunsEnabled, voiceEnabled, petsCompanionEnabled, workflowsEnabled, paletteDestinations, activateCompactAppDestination, shortcutLabels, petControls, pluginActionPresentation, router, openNewSession, openNewWorkflow, openWorkflowAgentAuthoring, navigateToSession, actionExecutor, desktopWindowCommands, fileViewControls, loadThemeCommands, startAskHappier, togglePaneArrangement]);
 
     const actionCommandBuilder = React.useRef(buildCommands);
     actionCommandBuilder.current = buildCommands;
-    React.useEffect(() => registerCommandPaletteActionCatalog(() => actionCommandBuilder.current()), []);
+    const prepareSessionCommands = useEventCallback((modalId?: string | null,
+        requestedSessionId: string | null = commandContextSessionId, requestedScope?: UniversalSearchScopeSeed) => setSessionCommandPalettePresented({
+        reader: isExactSessionContext(requestedSessionId, requestedScope) ? currentUiContextReader : null, presented: true, modalId,
+        execute: (actionId, input) => actionExecutor.execute(actionId, input, { surface: 'ui' }),
+    }));
+    React.useEffect(() => registerCommandPaletteActionCatalog(() => actionCommandBuilder.current(), prepareSessionCommands), [prepareSessionCommands]);
+    const sessionCommandDemandRelease = React.useRef<SessionCommandDemand | null>(null);
+    React.useEffect(() => () => sessionCommandDemandRelease.current?.(), []);
 
     const openUniversalSearchModalRef = React.useRef<Readonly<{
         id: string;
@@ -410,7 +431,8 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
     // The open palette lists sessions, so it follows them while open, and only while open.
     React.useEffect(() => {
         if (!paletteOpen) return;
-        return storage.subscribe(() => {
+        const unsubscribeContext = currentUiContextReader?.subscribe(refreshOpenPaletteCommands);
+        const unsubscribeSessions = storage.subscribe(() => {
             const openModal = openUniversalSearchModalRef.current;
             const previous = openPaletteSessionFacts.current;
             if (openModal && previous) {
@@ -419,7 +441,8 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
             }
             refreshOpenPaletteCommands();
         }, { sessions: true });
-    }, [paletteOpen, refreshOpenPaletteCommands]);
+        return () => { unsubscribeContext?.(); unsubscribeSessions(); };
+    }, [currentUiContextReader, paletteOpen, refreshOpenPaletteCommands]);
 
     // Opening reads the latest route and Account facts when invoked; its identity must not follow them,
     // because the Search runtime and the shortcut handlers are retained by always-mounted consumers.
@@ -453,7 +476,9 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
             if (universalSearchRouteActive || universalSearchRouteOpenRequestedRef.current) return;
             universalSearchRouteOpenRequestedRef.current = true;
             routeSymbolsRef.current = symbols;
-            router.push({
+            const pushSearchRoute = (release: SessionCommandDemand) => {
+                sessionCommandDemandRelease.current = release;
+                router.push({
                 pathname: UNIVERSAL_SEARCH_ROUTE,
                 params: {
                     ...(initialQuery ? { q: initialQuery } : {}),
@@ -467,8 +492,13 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
                     ...(invocationScope.workspace ? { workspace: JSON.stringify(invocationScope.workspace) } : {}),
                     ...(options?.terminals ? { [TERMINAL_JUMP_ROUTE_PARAM]: options.terminals.scopeId } : {}),
                 },
-            } as never);
-            return;
+                } as never);
+            };
+            const demand = prepareSessionCommands(null, invocationScope.sessionId, invocationScope);
+            if (typeof demand === 'function') { pushSearchRoute(demand); return; }
+            const opening = demand.then(pushSearchRoute);
+            fireAndForget(opening, { tag: 'CommandPaletteProvider.openNative' });
+            return opening;
         }
         if (openUniversalSearchModalRef.current || pendingPaletteOpen.current) return;
         const pending = {};
@@ -479,12 +509,15 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
         pendingPaletteFocus.current = focusReturnRef.current;
         const opening = (async () => {
             const { UniversalSearchModal } = await import('@/components/appShell/search/UniversalSearchModal');
-            if (pendingPaletteOpen.current !== pending || (lifetime && !lifetime.isCurrent())) return;
+            const releaseSessionCommands = await prepareSessionCommands(undefined, invocationScope.sessionId, invocationScope);
+            sessionCommandDemandRelease.current = releaseSessionCommands;
+            if (pendingPaletteOpen.current !== pending || (lifetime && !lifetime.isCurrent())) { releaseSessionCommands(); return; }
             let modalId = '';
             const clearOpenPalette = () => {
                 if (openUniversalSearchModalRef.current?.id === modalId) {
                     openUniversalSearchModalRef.current = null;
                     setPaletteOpen(false);
+                    releaseSessionCommands.setModalId(undefined);
                 }
             };
             openPaletteSessionFacts.current = readOpenPaletteSessionFacts(invocationScope.sessionId);
@@ -493,7 +526,11 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
                 focusReturnRef,
                 webPlacement: COMMAND_SURFACE_WEB_PLACEMENT,
                 onRequestClose: clearOpenPalette,
-                onHostUnmount: clearOpenPalette,
+                onHostUnmount: () => {
+                    clearOpenPalette();
+                    releaseSessionCommands();
+                    if (sessionCommandDemandRelease.current === releaseSessionCommands) sessionCommandDemandRelease.current = null;
+                },
                 props: {
                     commands: actionCommandBuilder.current(invocationScope.sessionId, invocationScope, symbols),
                     openWorkspaceFile,
@@ -506,6 +543,7 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
                     ...(options?.terminals ? { terminalJump: options.terminals } : {}),
                 },
             });
+            releaseSessionCommands.setModalId(modalId);
             openUniversalSearchModalRef.current = {
                 id: modalId,
                 activeSessionId: invocationScope.sessionId,
@@ -528,6 +566,7 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
         open: showCommandPalette,
         buildCommands: buildRuntimeCommands,
         get routeSymbols() { return routeSymbolsRef.current; },
+        releaseSessionCommands: () => { sessionCommandDemandRelease.current?.(); sessionCommandDemandRelease.current = null; },
     }), [buildRuntimeCommands, showCommandPalette]);
     textSearchOpener.current = (requestedScope, replace) => showCommandPalette(undefined, requestedScope, { source: 'fileContent', ...(replace ? { replace } : {}) });
     fileSearchOpener.current = (source, requestedScope, symbols) => showCommandPalette(undefined, requestedScope, { source, ...(symbols ? { symbols } : {}) });
@@ -535,6 +574,7 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
     const toggleTheme = useToggleThemeMode();
     const keyboardHandlers = useMemo<KeyboardShortcutHandlers>(
         () => ({
+            ...Object.fromEntries(derivedKeyboardCommands.map(command => [command.id, () => executeCommandPaletteKeyboardCommand(command.id)])),
             ...(commandPaletteEnabled ? { 'commandPalette.open': showCommandPalette } : {}),
             'appearance.theme.toggle': toggleTheme,
             'panes.arrangement.toggle': () => {
@@ -557,7 +597,7 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
                 router.push('/settings' as any);
             },
         }),
-        [commandPaletteEnabled, workflowsEnabled, fileViewControls, openNewSession, openNewWorkflow, openWorkflowAgentAuthoring, router, showCommandPalette, toggleTheme, togglePaneArrangement],
+        [commandPaletteEnabled, workflowsEnabled, derivedKeyboardCommands, fileViewControls, openNewSession, openNewWorkflow, openWorkflowAgentAuthoring, router, showCommandPalette, toggleTheme, togglePaneArrangement],
     );
     const keyboardEnabledWhenDisabledCommandIds = useMemo(
         () => commandPaletteEnabled ? ['commandPalette.open'] as const : [],

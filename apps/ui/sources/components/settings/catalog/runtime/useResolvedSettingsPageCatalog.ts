@@ -7,6 +7,7 @@ import { t } from '@/text';
 import { useProjectedPluginLocalizedTextResolver } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { voiceSettingsDeclarationRegistry } from '@/voice/settings/voiceContributedSettingsDeclarations';
 import { projectConversationLanguagePreference } from '@/voice/settings/language/conversationLanguage';
+import { usePluginKeyboardCommands } from '@/keyboard/usePluginKeyboardCommands';
 
 import { flattenSettingsPageCatalog } from '../pageCatalog';
 import { settingsRoutePathname } from '../routes';
@@ -148,6 +149,7 @@ export function useResolvedSettingsPageCatalog(): ResolvedSettingsPageCatalog & 
     const searchFeatures = useSettingsPageFeatureSnapshot(SETTINGS_SEARCH_FEATURE_IDS);
     const featureSnapshot = React.useMemo(() => ({ ...pageFeatures, ...searchFeatures }), [pageFeatures, searchFeatures]);
     const localizePluginText = useProjectedPluginLocalizedTextResolver();
+    const pluginKeyboardCommands = usePluginKeyboardCommands();
     const voiceDeclarationRevision = React.useSyncExternalStore(
         voiceSettingsDeclarationRegistry.subscribe ?? (() => () => {}),
         voiceSettingsDeclarationRegistry.getRevision ?? (() => 0),
@@ -159,7 +161,7 @@ export function useResolvedSettingsPageCatalog(): ResolvedSettingsPageCatalog & 
     const voiceSettings = storage((state) => state.settings.voice, { settings: ['voice'] });
     const voiceLanguageKind = React.useMemo(() => projectConversationLanguagePreference(voiceSettings, voiceSettingsDeclarationRegistry).kind,
         [voiceDeclarationRevision, voiceSettings]);
-    const declarations = React.useMemo(() => getSettingsPageDeclarations(localizePluginText, storage.getState().settings), [localizePluginText, voiceDeclarationRevision, voiceProviderId, voiceLanguageKind]);
+    const declarations = React.useMemo(() => getSettingsPageDeclarations(localizePluginText, storage.getState().settings, pluginKeyboardCommands), [localizePluginText, voiceDeclarationRevision, voiceProviderId, voiceLanguageKind, pluginKeyboardCommands]);
 
     const searchDocs = React.useMemo(() => buildSearchDocs(tree, featureSnapshot, host, routeContext, {
         teams: teamRouteAdmitted,

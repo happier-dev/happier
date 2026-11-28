@@ -8,18 +8,18 @@
  * not what the registry says on any platform; a generated page cannot repeat
  * that mistake.
  *
- * The command registry is a pure TypeScript module with type-only imports. Read
- * its actual exported declarations, including mapped ordinals, rather than
- * reconstructing a second registry from source formatting.
+ * Read the command registry's actual exported declarations and runtime metadata,
+ * including mapped ordinals, rather than reconstructing a second registry from
+ * source formatting.
  */
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import ts from 'typescript';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, '..', '..', '..');
 const COMMANDS = join(REPO, 'apps', 'ui', 'sources', 'keyboard', 'commands.ts');
+const SOURCE_RUNTIME = join(REPO, 'packages', 'cli-common', 'registerSourceRuntime.mjs');
 const SETTINGS = join(REPO, 'packages', 'protocol', 'src', 'account', 'settings', 'accountSettings.ts');
 export const OUTPUT_PATH = join(HERE, '..', 'content', 'docs', 'apps', 'keyboard-shortcuts.mdx');
 
@@ -99,17 +99,10 @@ const GROUPS = [
   },
 ];
 
-export async function parseKeyboardCommands(source) {
-  const compiled = ts.transpileModule(source, {
-    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
-    reportDiagnostics: true,
-  });
-  const errors = (compiled.diagnostics ?? []).filter(diagnostic => diagnostic.category === ts.DiagnosticCategory.Error);
-  if (errors.length) throw new Error(ts.formatDiagnosticsWithColorAndContext(errors, {
-    getCanonicalFileName: path => path, getCurrentDirectory: () => REPO, getNewLine: () => '\n',
-  }));
-  // Only the repository's pure declaration module is evaluated; type imports disappear.
-  const module = await import(`data:text/javascript;base64,${Buffer.from(compiled.outputText).toString('base64')}`);
+export async function readKeyboardCommands(commandsPath = COMMANDS) {
+  // The registry imports authored workspace metadata, so use its canonical loader.
+  await import(pathToFileURL(SOURCE_RUNTIME).href);
+  const module = await import(pathToFileURL(commandsPath).href);
   const registry = module.defaultKeyboardCommands;
   if (!Array.isArray(registry) || registry.length === 0) throw new Error('keyboard commands.ts exported no commands');
   const commands = new Map();
@@ -162,7 +155,7 @@ export async function renderKeyboardReferenceMarkdown({
   commandsPath = COMMANDS,
   settingsPath = SETTINGS,
 } = {}) {
-  const commands = await parseKeyboardCommands(readFileSync(commandsPath, 'utf8'));
+  const commands = await readKeyboardCommands(commandsPath);
   const settings = readFileSync(settingsPath, 'utf8');
   const paletteOn = readDefault(settings, 'commandPaletteEnabled');
   const shortcutsOn = readDefault(settings, 'keyboardShortcutsV2Enabled');
@@ -216,6 +209,12 @@ built-in commands, sessions, projects, settings pages, messages, workspace
 files and commits in one grouped list.
 
 ${formatBindings(commands.get('commandPalette.open'))}
+
+In unreleased 0.3 development source, Search includes enabled catalog Actions.
+Actions for the open Session appear first before you type. An Action runs with
+the available context or opens its input form when more information is needed.
+Use **Settings → Keyboard shortcuts** to assign a shortcut to an Action; these commands
+have no default binding and use the same execution path as their Search row.
 
 ${commands.has('search.files') ? `In unreleased 0.3 development source, file quick open uses this same Search
 surface, scoped to the workspace. Its registered shortcut is

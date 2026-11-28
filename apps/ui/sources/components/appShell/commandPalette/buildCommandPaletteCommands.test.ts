@@ -1,3 +1,5 @@
+import { storage as machineStorage } from '@/sync/domains/state/storageStore';
+import { createHydratedPlainMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import type { ExecutionRunLauncherDraftSeed } from '@/components/sessions/runs/launcher/prepareExecutionRunLauncherDraft';
 import { describe, expect, it } from 'vitest';
 import { vi } from 'vitest';
@@ -301,6 +303,9 @@ function pluginActionSnapshot(input: Readonly<{
   generation?: number;
   sessionId?: string;
 }>): PluginContributedActionCurrentSnapshot {
+  // The palette host represents a Machine this Account can manage; admission reads that published role.
+  machineStorage.getState().applyMachines([createHydratedPlainMachineFixture({ id: MACHINE_ID, accountId: 'account-command-palette' })],
+    false, { sourceServerId: SERVER_ID });
   const generation = input.generation ?? 7;
   const actionsById = new Map(input.actions.map((action) => [action.id, action] as const));
   return {

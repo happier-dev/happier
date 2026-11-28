@@ -1,6 +1,9 @@
 import { VENDOR_HANDOFF_UNSUPPORTED } from '@happier-dev/agents';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { isDeferredApprovalResult } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { Modal } from '@/modal';
 import type { PluginUiActionFailureV1, PluginUiActionFailurePresentationV1 } from '@happier-dev/protocol/plugins/ui/client';
-import { readSafeFailureDetails } from '@/utils/errors/alertActionFailure';
+import { alertActionFailure, readSafeFailureDetails } from '@/utils/errors/alertActionFailure';
 import { isPluginError } from '@happier-dev/protocol/plugins/errors';
 import { readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
 import { PluginDiagnosticRemediationV1Schema } from '@happier-dev/protocol/daemon/pluginContributionIntrospection';
@@ -397,4 +400,26 @@ export function presentActionExecutionFailure(failure: PluginUiActionFailureV1, 
     return { reason: resolveActionExecutionFailureMessage(failure, fallbackMessage, options) ?? fallbackMessage,
         // The presenter currently owns one combined message; never infer a second instruction from code.
         nextStep: null, technicalDetails };
+}
+
+/** UI callbacks preserve typed refusals and distinguish pending approval from completion. */
+export function presentActionExecutionResult(result: ActionExecuteResult): void {
+    if (!result.ok) {
+        alertActionExecutionFailure(result);
+    } else if (isDeferredApprovalResult(result)) {
+        Modal.alert(t('toolView.approvalRequested.title'), t('toolView.approvalRequested.description'));
+    }
+}
+
+export function alertActionExecutionFailure(failure: PluginUiActionFailureV1): void {
+    alertActionFailure({
+        reason: presentActionExecutionFailure(failure).reason,
+        code: failure.errorCode,
+        requestId: failure.requestId,
+        context: {
+            ...readSafeFailureDetails(failure.details),
+            ...(failure.effectAttempted === undefined ? {} : { effectAttempted: failure.effectAttempted }),
+        },
+        failureCause: failure.failureCause,
+    });
 }

@@ -1,6 +1,8 @@
 import { defineSettingsPage, type SettingRef, type SettingsPageDeclaration, type SettingsSectionDeclaration } from '@/components/settings/catalog/settingDeclarations';
-import { defaultKeyboardCommands } from '@/keyboard/commands';
-import type { KeyboardCommandId } from '@/keyboard/types';
+import { defaultKeyboardCommands, getKeyboardCommand } from '@/keyboard/commands';
+import { readPluginKeyboardCommands } from '@/keyboard/pluginCommands';
+import type { KeyboardCommand, KeyboardCommandId } from '@/keyboard/types';
+import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import type { TranslationKeyNoParams } from '@/text';
 
 import {
@@ -33,7 +35,7 @@ const commandSections: Record<string, SettingsSectionDeclaration> = Object.fromE
         titleKey: KEYBOARD_COMMAND_GROUP_TITLE_KEYS[groupId],
         settings: Object.fromEntries(defaultKeyboardCommands
             .filter((command) => resolveKeyboardShortcutCommandGroupId(command.id) === groupId)
-            .map((command) => [command.id, { storage: commandStorage(command.id) }])),
+            .map((command) => [command.id, { storage: commandStorage(command.id), ...(command.settingsTitle ? { title: command.settingsTitle } : {}) }])),
     }]),
 );
 
@@ -55,5 +57,18 @@ export const KEYBOARD_SETTINGS: SettingsPageDeclaration = defineSettingsPage({
 /** A command's declared setting (its search anchor); commands are declared from the registry above. */
 export function resolveKeyboardCommandSetting(commandId: KeyboardCommandId): SettingRef | undefined {
     const settings: Readonly<Record<string, SettingRef>> = KEYBOARD_SETTINGS.settings;
-    return settings[commandId];
+    if (settings[commandId]) return settings[commandId];
+    const command = readPluginKeyboardCommands().find(command => command.id === commandId) ?? getKeyboardCommand(commandId);
+    return command ? getPluginKeyboardSettingsDeclarations([command])[0]?.settings[commandId] : undefined;
+}
+
+export function getPluginKeyboardSettingsDeclarations(commands: readonly KeyboardCommand[] = readPluginKeyboardCommands()): readonly SettingsPageDeclaration[] {
+    const settings = Object.fromEntries(commands.flatMap(command => {
+        const identity = command.id.startsWith('action:') ? parseQualifiedPluginActionId(command.id.slice('action:'.length)) : null;
+        return identity ? [[command.id, { titleKey: command.settingsTitleKey, title: command.settingsTitle,
+            contribution: identity, storage: commandStorage(command.id) }]] : [];
+    }));
+    return Object.keys(settings).length ? [defineSettingsPage({ pageId: 'keyboard', sections: {
+        'commands.general': { titleKey: 'settingsKeyboard.groupApp', settings },
+    } })] : [];
 }

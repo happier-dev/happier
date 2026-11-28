@@ -858,6 +858,25 @@ describe('useResolvedSettingsPageCatalog', () => {
         await hook.unmount();
     });
 
+    it('finds contributed palette shortcuts by their Action title and withdraws their search rows with the projection', async () => {
+        const { useResolvedSettingsPageCatalog } = await import('./useResolvedSettingsPageCatalog');
+        appShellPluginProjectionState.projection = normalizePluginUiProjection(PluginProjectionV2Schema.parse({
+            v: 2, generation: 1, installedPackagesById: {}, agentsById: {}, resourcesById: {}, settingsById: {}, diagnostics: [],
+            actionsById: { 'acme.tools/run': { id: 'run', pluginId: 'acme.tools', occurrenceId: 'tools-running',
+                title: 'Launch telescope', scopes: ['global'], surfaces: ['ui'], placementBindings: ['commandPalette'],
+                execution: { target: 'daemon' }, dangerLevel: 'safe', available: true } },
+        }));
+        const hook = await renderHook(() => useResolvedSettingsPageCatalog());
+        try {
+            expect(hook.getCurrent().search('Launch telescope')).toContainEqual(expect.objectContaining({
+                id: 'keyboard', setting: expect.objectContaining({ anchor: 'keyboard.action:acme.tools/actions/run', title: 'Launch telescope' }),
+            }));
+            appShellPluginProjectionState.projection = null;
+            await hook.rerender();
+            expect(hook.getCurrent().search('Launch telescope').some(result => result.setting?.anchor === 'keyboard.action:acme.tools/actions/run')).toBe(false);
+        } finally { await hook.unmount(); }
+    });
+
     it('requires explainable matches without losing title typos, explicit aliases or neighboring settings', async () => {
         const { en } = await import('@/text/translations/en');
         const { SETTINGS_PAGE_DECLARATIONS } = await import('../settingsPageDeclarations');

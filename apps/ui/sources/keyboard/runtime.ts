@@ -3,7 +3,7 @@ import { Platform } from 'react-native';
 import { resolveHappierPointerPlatform } from '@happier-dev/plugin-ui/presentation';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
 
-import { defaultKeyboardCommands } from './commands';
+import { getKeyboardCommand, resolveKeyboardCommands } from './commands';
 import { formatKeybindingLabel, matchKeybindingRule, parseKeybindingRule } from './bindings';
 import type {
     KeyboardCommandId,
@@ -83,11 +83,11 @@ function getCommandBindings(
     overrides: Readonly<Record<string, readonly KeybindingRule[]>>,
 ): readonly KeybindingRule[] {
     const override = overrides[commandId];
-    const command = defaultKeyboardCommands.find((entry) => entry.id === commandId);
+    const command = getKeyboardCommand(commandId);
     if (override && override.length > 0) {
-        const defaultAllowInEditable = command?.allowInEditable ?? command?.defaultBindings?.find((rule) => rule.allowInEditable != null)?.allowInEditable
+        const defaultAllowInEditable = command?.defaultBindings?.find((rule) => rule.allowInEditable != null)?.allowInEditable
             ?? command?.defaultBinding?.allowInEditable;
-        const defaultNativeConsumable = command?.defaultBindings?.find((rule) => rule.nativeConsumable != null)?.nativeConsumable
+        const defaultNativeConsumable = command?.nativeConsumable ?? command?.defaultBindings?.find((rule) => rule.nativeConsumable != null)?.nativeConsumable
             ?? command?.defaultBinding?.nativeConsumable;
         return override.map((rule) => ({
             ...rule,
@@ -130,7 +130,7 @@ export function isKeybindingRuleAvailable(
     if (options.surface === 'web' && parsed.webHost
         && parsed.webHost !== (options.webHost ?? (isDesktopHost() ? 'desktop' : 'browser'))) return false;
     const focusedCommand = options.commandId !== undefined
-        && defaultKeyboardCommands.find(command => command.id === options.commandId)?.singleKeyScope === 'focused';
+        && getKeyboardCommand(options.commandId)?.singleKeyScope === 'focused';
     if (options.enabled === false && !focusedCommand
         && !(options.commandId && options.enabledWhenDisabledCommandIds?.includes(options.commandId))) return false;
     if (!options.singleKeyShortcutsEnabled && !focusedCommand && isSingleKeyRule(parsed) && rule.conflictScope !== 'findInput') return false;
@@ -195,7 +195,7 @@ export function commandHasAvailableKeyboardHandler(params: Readonly<{
 }>): boolean {
     if (params.disabledCommandIds.includes(params.commandId)) return false;
     if (!params.handlers[params.commandId]) return false;
-    const command = defaultKeyboardCommands.find((entry) => entry.id === params.commandId);
+    const command = getKeyboardCommand(params.commandId);
     if (!command) return false;
     if (command.when && !command.when(params.context)) return false;
     return getCommandBindings(params.commandId, params.overrides).some((rule) => isKeybindingRuleAvailable(rule, {
@@ -212,7 +212,7 @@ export function commandHasAvailableKeyboardHandler(params: Readonly<{
 export function hasAnyAvailableKeyboardHandler(options: KeyboardShortcutDispatcherOptions): boolean {
     const surface = options.surface ?? 'native';
     const context = options.getContext();
-    return defaultKeyboardCommands.some((command) => commandHasAvailableKeyboardHandler({
+    return resolveKeyboardCommands(options.overrides).some((command) => commandHasAvailableKeyboardHandler({
         commandId: command.id,
         enabled: options.enabled,
         enabledWhenDisabledCommandIds: options.enabledWhenDisabledCommandIds,
@@ -234,7 +234,7 @@ export function resolveNativeHardwareKeyboardConsumableEventSignatures(
     const context = options.getContext();
     const signatures = new Set<string>();
 
-    for (const command of defaultKeyboardCommands) {
+    for (const command of resolveKeyboardCommands(options.overrides)) {
         if (!commandHasAvailableKeyboardHandler({
             commandId: command.id,
             enabled: options.enabled,
@@ -283,10 +283,11 @@ export function resolveNativeHardwareKeyboardConsumableEventSignatures(
 }
 
 export function createKeyboardShortcutDispatcher(options: KeyboardShortcutDispatcherOptions) {
+    const commands = resolveKeyboardCommands(options.overrides);
     return (event: NormalizedKeyboardEvent): boolean => {
         const surface = options.surface ?? 'native';
         const context = options.getContext();
-        for (const command of defaultKeyboardCommands) {
+        for (const command of commands) {
             if (!commandHasAvailableKeyboardHandler({
                 commandId: command.id,
                 enabled: options.enabled,
@@ -404,7 +405,7 @@ export function buildKeyboardShortcutLabels(
 ): Partial<Record<KeyboardCommandId, string>> {
     const singleKeyShortcutsEnabled = options.singleKeyShortcutsEnabled === true;
     return Object.fromEntries(
-        defaultKeyboardCommands
+        resolveKeyboardCommands(options.overrides)
             .filter((command) => !options.disabledCommandIds?.includes(command.id))
             .filter((command) => !options.handlers || Boolean(options.handlers[command.id]))
             .filter((command) => !options.context || !command.when || command.when(options.context))

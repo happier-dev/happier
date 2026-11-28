@@ -127,6 +127,7 @@ export function buildSessionAppearanceColorMenuItem(params: SessionAppearanceCol
 }
 
 export function resolveSessionAppearanceColorMenuSelection(menuId: string, itemId: string): SessionAppearanceColorMenuSelection | null {
+    if (itemId === menuId) return { kind: 'custom' };
     const prefix = `${menuId}:`;
     if (!itemId.startsWith(prefix)) return null;
     const rest = itemId.slice(prefix.length);

@@ -13,9 +13,16 @@ vi.mock('react-native-unistyles', async () => {
     return createUnistylesMock();
 });
 
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock().module;
+});
+
+// Load the real sheet during collection, as Settings renderer tests do, outside interaction deadlines.
+const { ShortcutsSheet } = await import('./ShortcutsSheet');
+
 describe('ShortcutsSheet (the ? sheet, lab KB1)', () => {
     it('lists bound commands by group with the keys of the host it shows', async () => {
-        const { ShortcutsSheet } = await import('./ShortcutsSheet');
         const render = (host: 'desktop' | 'browser') => renderScreen(<ShortcutsSheet onClose={vi.fn()} platform="macos" host={host}
             singleKeyShortcutsEnabled={true} disabledCommandIds={['panes.side.toggle']} overrides={{}} />);
         const keysOf = (screen: Awaited<ReturnType<typeof render>>) => screen.findByTestId('shortcuts-sheet-row-shell.column.toggle')

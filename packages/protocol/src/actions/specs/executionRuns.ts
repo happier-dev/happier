@@ -500,7 +500,7 @@ function createExecutionRunActionSpecs(): ExecutionRunActionSpecs {
     title: 'Get execution run',
     description: `Get one execution run from the selected scope. ${EXECUTION_RUN_SESSION_SCOPE_DESCRIPTION}`,
     safety: 'safe',
-    placements: ['run_list', 'run_card', 'command_palette'],
+    placements: ['run_list', 'run_card'],
     prompting: { voiceHotPath: true },
     bindings: { rpcMethod: SESSION_RPC_METHODS.EXECUTION_RUN_GET, voiceClientToolName: 'getExecutionRun', mcpToolName: 'execution_run_get' },
     sideEffectClass: 'read',
