@@ -209,7 +209,12 @@ it.skipIf(process.env.HAPPIER_RUN_SESSION_HOST_GATE !== '1')(
       console.info('[shgate] logs', gateDir, 'completed', completed);
       try { await plugin?.dispose(); }
       finally { try { await home?.close(); }
-        finally { environment.restore(); reloadConfiguration(); if (completed) await rm(directory, { recursive: true, force: true }); } }
+        finally {
+          environment.restore();
+          reloadConfiguration();
+          // A source subprocess can still be flushing its compile cache when cleanup starts.
+          if (completed) await rm(directory, { recursive: true, force: true, maxRetries: 3 });
+        } }
     }
   });
   environment.patch(Object.fromEntries(Object.keys(process.env).filter(key => key.startsWith('HAPPIER_')).map(key => [key, undefined])));
@@ -509,9 +514,10 @@ it.skipIf(process.env.HAPPIER_RUN_SESSION_HOST_GATE !== '1')(
     };
     await stop(before);
     const endedAt = performance.now();
+    const cpuTicksAtEnd = await cpuTicks(before.hostPid);
     await sleep(2_000);
     const idleHost = await smaps(before.hostPid);
-    const idleCpuTicks = await cpuTicks(before.hostPid);
+    const idleCpuTicks = await cpuTicks(before.hostPid) - cpuTicksAtEnd;
     const launchesAtStart = await hostLaunches();
     const idleGapMs = round(performance.now() - endedAt);
     const after = await openSession('SHGATE');
