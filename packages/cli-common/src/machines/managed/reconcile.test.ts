@@ -547,8 +547,9 @@ describe('portable managed reconciliation', () => {
             } },
             settleBootstrapFailure: retained => retained,
         });
-        if (reportFails) await expect(work).rejects.toBe(reportFailure);
+        if (reportFails) await expect(work).rejects.toBe(failure);
         else expect(await work).toEqual(run.read());
+        expect(reportFailures).toEqual(reportFails ? [reportFailure] : []);
         expect(run.read()).toMatchObject({ allocation: 'bound', resource,
             observation: { reason: reportFails ? 'bootstrap.incomplete' : 'bootstrap.remote_command_failed' } });
         expect(run.read().enrolledMachineId).toBeUndefined();
