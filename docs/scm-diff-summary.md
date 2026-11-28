@@ -1368,6 +1368,13 @@ its Session identity. Finding explanation returns targeted refinement to the
 existing SCM Action, retaining saved-result authorization and revision checks.
 These source contracts do not establish loaded-runtime certification.
 
+In unreleased 0.3 source, a new PR Review and its reviewer Workflow use the
+subject from the admitted PR scope when available. An exact comparison capture
+can also carry an optional `pullRequest.title` from the GitHub or GitLab metadata
+read that established the endpoints. With neither subject, the Review uses
+`owner/repository#number`. Existing captures can omit the title, and later
+rounds keep the stored Review title.
+
 In unreleased 0.3 source, a PR `review.start` result carries
 `reviewTarget: { locator: { providerId, repository, number }, headOid, url? }`
 beside its `reviewRound` binding in the private `action.execute.after` hook.

@@ -1275,8 +1275,11 @@ provided by Channels when the relationship result includes one.
 Configured sources still determine the Account-wide and source-scoped lists
 and supply richer details when available. Related-PR refusals carry the optional
 originating request ID in the Channels relation result. The Session pane shows
-it beside the refusal code in Details. Use matching development declarations and
-readers for this closed result shape.
+it beside the refusal code in Details. A `collection_update_required` refusal
+shows Update instructions for the CLI on the machine that reads the connection.
+The same refusal from a configured source and Channels appears once when the
+code and request ID match. Use matching development declarations and readers
+for this closed result shape.
 
 ### Error-source writes (0.3 development source)
 
