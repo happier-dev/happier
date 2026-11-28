@@ -395,6 +395,7 @@ describe('portable managed reconciliation', () => {
 
     it.each(['empty', 'command_failed'] as const)('finishes acquisition when pinned SSH trust initially reports %s', async resultClass => {
         const run = boundary();
+        const phases: string[] = [];
         let attempts = 0;
         let waits = 0;
         const nativeCause = { localCause: 'ssh_keyscan_failed', resultClass } as const;
@@ -406,9 +407,11 @@ describe('portable managed reconciliation', () => {
                 return run.input.bootstrap.enroll(enrollment);
             } },
             waitForObservation: async () => { waits++; },
+            onProgress: progress => { if (progress.kind === 'phase') phases.push(progress.phase); },
         });
         expect(result).toMatchObject({ allocation: 'bound', enrolledMachineId: 'guest', observation: { availability: 'present' } });
         expect(waits).toBe(1);
+        expect(phases).toEqual(['native.bootstrap.ready', 'native.running.observed', 'ssh.readiness.wait']);
         expect(run.roles.filter(role => role === 'acquire')).toHaveLength(1);
     });
 

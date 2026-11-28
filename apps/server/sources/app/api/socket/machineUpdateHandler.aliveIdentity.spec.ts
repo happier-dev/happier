@@ -33,7 +33,11 @@ vi.mock("@/app/monitoring/metrics/index", () => ({
     websocketEventsCounter: { inc: vi.fn() },
 }));
 
-const recordMachineAlive = vi.fn(async () => {});
+const recordMachineAlive = vi.fn(async (): Promise<{
+    recipientAccountIds: string[];
+    wasOffline: boolean;
+    lastActiveAt: Date;
+} | undefined> => undefined);
 vi.mock("@/app/presence/presenceRecorder", () => ({ recordMachineAlive }));
 
 const captureMachineSessionTerminal = vi.fn();
@@ -406,6 +410,21 @@ describe("machineUpdateHandler authenticated machine identity binding", () => {
             "Machine alive handling failed.",
         );
         expect(JSON.stringify(log.mock.calls)).not.toContain(sentinel);
+    });
+
+    it('records the Home observation time only when admitted presence becomes online', async () => {
+        const { machineUpdateHandler } = await import('./machineUpdateHandler');
+        const socket = createFakeSocket({ data: { clientType: 'machine-scoped', machineId: 'm1' } });
+        machineUpdateHandler('u1', socket as unknown as import('socket.io').Socket, defaultMachineUpdateHandlerOptions);
+        recordMachineAlive
+            .mockResolvedValueOnce({ recipientAccountIds: ['u1'], wasOffline: true, lastActiveAt: new Date(1) })
+            .mockResolvedValueOnce({ recipientAccountIds: [], wasOffline: false, lastActiveAt: new Date() });
+        const alive = getSocketHandler(socket, 'machine-alive');
+        await alive({ time: 1 });
+        await alive({ time: 1 });
+        const observations = log.mock.calls.map(([fields]) => fields).filter(fields => fields?.event === 'machine.presence.online');
+        expect(observations).toEqual([expect.objectContaining({ machineId: 'm1', observedAt: expect.any(Number) })]);
+        expect(observations[0].observedAt).toBeGreaterThan(1);
     });
 
     it("rejects metadata updates from session-scoped sockets", async () => {

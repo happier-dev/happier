@@ -482,9 +482,16 @@ export async function reconcileManagedMachine(input: ManagedMachineReconciliatio
         const bootstrapInput = buildManagedBootstrapInput({ resource: boundResource.value,
             credentialKind: bootstrapCredentialKind, credentialRef: machine.bootstrapCredentialRef, credential });
         let readinessCause: ProviderObservationV1['nativeCause'];
+        let runningObserved = false;
         const observeResourceRunning = async (acceptedStart = false) => {
             const observation = ProviderObservationV1Schema.parse(await invoke('inspect', { resource: bootstrapInput.resource }));
-            if (observation.availability === 'present' && observation.power === 'running') return true;
+            if (observation.availability === 'present' && observation.power === 'running') {
+                if (!runningObserved) {
+                    runningObserved = true;
+                    input.onProgress?.({ kind: 'phase', phase: 'native.running.observed', label: 'Provider reports machine running' });
+                }
+                return true;
+            }
             if (acceptedStart && observation.availability === 'present') return false;
             const nativeCause = observation.nativeCause ?? readinessCause;
             machine = await input.home.row('report', { ...input.home.correlation(machine),
@@ -495,6 +502,7 @@ export async function reconcileManagedMachine(input: ManagedMachineReconciliatio
                 nativeCause ? { kind: 'managedNative', nativeCause } : undefined);
         };
         let carrier: ManagedBootstrapCarrierV1;
+        let carrierReady = false;
         let waitingFor: 'native' | 'ssh' | undefined;
         for (;;) {
             try {
@@ -513,6 +521,10 @@ export async function reconcileManagedMachine(input: ManagedMachineReconciliatio
                     }
                     if (waitingFor === 'ssh') { input.signal?.throwIfAborted(); await observeResourceRunning(); }
                     carrier = ManagedBootstrapCarrierV1Schema.parse(await invoke('bootstrap', bootstrapInput));
+                    if (!carrierReady) {
+                        carrierReady = true;
+                        input.onProgress?.({ kind: 'phase', phase: 'native.bootstrap.ready', label: 'Provider bootstrap transport ready' });
+                    }
                 } catch (error) {
                     if (input.signal?.aborted && (waitingFor || bootstrapCredentialKind === 'ssh'
                         && !(error instanceof ManagedMachineNativeEffectGuardRefusal))) throw new ManagedMachineControllerError('cancelled');

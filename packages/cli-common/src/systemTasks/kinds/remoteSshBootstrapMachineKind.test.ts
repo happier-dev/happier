@@ -2438,6 +2438,7 @@ describe('createRemoteSshBootstrapMachineTaskKind', () => {
     expect(secondPoll.pendingPrompt?.kind).toBe('auth.approveRemoteProvisioning');
     expect(secondPoll.events.map((event) => event.stepId)).toEqual([
       'ssh.installCli',
+      'ssh.payload.ready',
       'relay.runtime.install',
       'ssh.auth.request',
       'ssh.auth.wait',
@@ -2447,7 +2448,7 @@ describe('createRemoteSshBootstrapMachineTaskKind', () => {
 
     const finalPoll = await waitForResult(runner, { taskId: 'ssh-relay-task', cursor: secondPoll.nextCursor });
 
-    expect(finalPoll.events.map((event) => event.stepId)).toEqual(['ssh.complete']);
+    expect(finalPoll.events.map((event) => event.stepId)).toEqual(['ssh.enrollment.ready', 'ssh.complete']);
     expect(finalPoll.result).toEqual({
       protocolVersion: 1,
       taskId: 'ssh-relay-task',

@@ -802,7 +802,12 @@ export async function reconcileManagedMachine(params: ManagedMachineReconciliati
         onResource: row => params.options.context?.operationOwnerUpdate?.update({ domainRef: {
             kind: 'managedMachine', id: row.id, controller: row.controller, resource: row.resource,
         } }),
-        onProgress: progress => params.options.context?.operationOwnerUpdate?.update({ progress }),
+        onProgress: progress => {
+            if (progress.kind === 'phase') logger.infoFile('[MANAGED MACHINE] Startup phase', {
+                managedId: params.machine.id, phase: progress.phase, observedAt: Date.now(),
+            });
+            params.options.context?.operationOwnerUpdate?.update({ progress });
+        },
     });
     return params.action === 'machines.managed.inspect' ? projectNativeJsonValueForTransport({ machine }) : null;
 }
@@ -840,6 +845,9 @@ function createManagedBootstrapProgress(params: Pick<ManagedMachineReconciliatio
             onEvent: (event) => {
                 if (event.type !== 'progress' || !event.message) return;
                 if (event.stepId === 'ssh.auth.wait') onEnrollmentWait?.();
+                if (event.stepId) logger.infoFile('[MANAGED MACHINE] Startup phase', {
+                    managedId: machine.id, taskId: bootstrapTask?.id, phase: event.stepId, observedAt: Date.now(),
+                });
                 const progress = (event.stepId
                     ? { kind: 'phase', phase: event.stepId, label: event.message }
                     : { kind: 'indeterminate', label: event.message }) satisfies ActionOperationProgressV1;

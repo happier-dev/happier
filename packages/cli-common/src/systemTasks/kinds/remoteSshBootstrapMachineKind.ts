@@ -476,6 +476,7 @@ export function createRemoteSshBootstrapMachineTaskKind(
             message: 'Ensuring Happier is installed on the remote machine',
           });
           await installRemoteCli({ parsed: parsedRemote, auth, knownHostsMode });
+          ctx.emit({ type: 'progress', stepId: 'ssh.payload.ready', message: 'Remote Happier payload ready' });
         }
 
         let relayRuntime: Readonly<{ relayUrl: string; mode: 'user' | 'system' }> | undefined;
@@ -1152,6 +1153,9 @@ async function runRemoteMachineBootstrapRecipe({
         },
       });
 
+      if (!resumeMachineId) {
+        ctx.emit({ type: 'progress', stepId: 'ssh.enrollment.ready', message: 'Remote machine enrollment completed' });
+      }
       let daemonStatus = flowResult.daemonStatus;
       if (shouldManageService) {
         processManaged = await installRemoteDaemonLifecycle({ preferProcess: false, installService: async () => {
@@ -1188,6 +1192,7 @@ async function runRemoteMachineBootstrapRecipe({
               { details: error.details });
           }
         }
+        ctx.emit({ type: 'progress', stepId: 'daemon.process.verify', message: 'Verifying daemon process' });
         daemonStatus = await createEnrollMachineFlowExecutorFromHappierJsonExecutor({ executor }).waitForReadyDaemon!({
           signal: ctx.signal, timeoutMs: remainingEnrollmentMs(), requireServiceInstalled: false,
           requireMachineControlReady: parsedRemote.managedEnrollment !== undefined,
@@ -1265,6 +1270,7 @@ export function createRemoteNativeBootstrapMachineTaskKind(input: Readonly<{
       ctx.signal?.throwIfAborted();
       ctx.emit({ type: 'progress', stepId: 'ssh.installCli', message: 'Ensuring Happier is installed on the remote machine' });
       await input.installRemoteCli(ctx.signal, ctx);
+      ctx.emit({ type: 'progress', stepId: 'ssh.payload.ready', message: 'Remote Happier payload ready' });
       ctx.signal?.throwIfAborted();
       const executor: HappierJsonExecutor = {
         runHappierText: async (args, options) => {

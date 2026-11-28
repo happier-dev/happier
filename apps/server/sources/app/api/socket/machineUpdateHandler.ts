@@ -110,6 +110,10 @@ export async function observeMachineAliveFromSocket(input: Readonly<{
         installationId: readVerifiedMachineSocketInstallationIdFromSocketData(socket.data),
     } : undefined);
     if (!presence) return;
+    if (presence.wasOffline) {
+        log({ module: 'websocket', event: 'machine.presence.online', machineId, observedAt: timestamp },
+            'Home observed an authenticated Machine come online');
+    }
     // Ordinary beats only renew reachability. Transitions and changed work facts
     // publish their separate content-free notifications.
     await publishMachineAliveObservation(userId, machineId, timestamp, presence, !input.continuingBeat,
