@@ -321,7 +321,11 @@ function createPluginReactNativeHostRequestTransport(params: Readonly<{
             envelope,
             () => params.handleRequest(envelope, options),
         );
-        const response = await (subscriptionEstablishmentMethods.has(method)
+        const submittedControl = method === 'actionControl' && payload !== null && typeof payload === 'object'
+            && 'kind' in payload && payload.kind === 'prepared';
+        // The prepared request carries an explicit Stop to the mounted owner. Keep
+        // its receipt so the control can present the operation's terminal result.
+        const response = await (submittedControl || subscriptionEstablishmentMethods.has(method)
             && (method !== 'actionControl' || options?.actionControlSubscription !== undefined)
             ? settlement
             : settleWithCallerCancellation(settlement, options?.signal));

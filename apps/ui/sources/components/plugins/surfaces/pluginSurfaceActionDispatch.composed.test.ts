@@ -7318,6 +7318,67 @@ describe('plugin-surface action branch selection', () => {
             expect(effects).toHaveLength(2);
         } finally { binding.dispose(); retireSource(); api.dispose?.(); }
     });
+    it('stops the exact running daemon Action and delivers its terminal result to the mounted author', async () => {
+        const { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2 } = await import('@happier-dev/protocol/actions/operations/v1');
+        const { actionOperationStore } = await import('@/sync/domains/actionOperations/actionOperationStore');
+        const { createPluginSurfaceActionControls } = await import('./pluginSurfaceActionControls');
+        const account = clientAccountLifetime(resolveServerProfileScopeIdForIdentifier(rpcHomes.get('server-client-action')!.id));
+        const scope = { accountId: account.scope.accountId, machineId: 'machine-1' };
+        const identity = { pluginId: CALLER_PLUGIN_ID, localId: 'run-cancellable' };
+        const actionId = buildQualifiedPluginContributionKey(identity);
+        const projection = PluginProjectedActionV2Schema.parse({ ...resolveDaemonTargetAction(identity),
+            operation: { version: 1, cancellation: 'supported', visibility: 'activity', progress: 'indeterminate',
+                presentation: { onStart: 'activity' } } });
+        const store = createActionOperationStore();
+        const runner = createActionOperationRunner({ store, resolveAction: id => ({ actionId: id, title: 'Run', operation: projection.operation }) });
+        const stop = new AbortController();
+        const fixtureLifetime = new AbortController();
+        const onSettled = vi.fn();
+        const execute: NonNullable<DispatchPluginSurfaceActionInput['hostAction']>['execute'] = async (_id, input, context) =>
+            await runner.observe({ actionId, requestId: context?.actionRequestId, input, scope, cancellation: 'supported',
+                execute: async ({ signal }) => {
+                    await new Promise<void>(resolve => {
+                        signal.addEventListener('abort', () => resolve(), { once: true });
+                        fixtureLifetime.signal.addEventListener('abort', () => resolve(), { once: true });
+                    });
+                    return signal.aborted ? { ok: false, errorCode: 'cancelled', error: 'cancelled' } : { ok: true, result: null };
+                } });
+        network.setRpcResponder(async request => {
+            if (request.method === ACTION_OPERATION_RPC_METHODS_V2.list) {
+                const { requestIdentity } = request.payload as { requestIdentity: { actionId: string; requestId: string } };
+                return store.list({ ...scope, requestIdentity });
+            }
+            if (request.method === ACTION_OPERATION_RPC_METHODS_V1.cancel) {
+                return runner.cancel(scope, (request.payload as { operationId: string }).operationId);
+            }
+            return answerActionSchemasRead(request);
+        });
+        const controls = createPluginSurfaceActionControls({ pluginId: identity.pluginId, surfaceId: surfaceContext().surfaceId,
+            hostAction: { execute, context: { serverId: account.scope.serverId, runtimeAccountId: scope.accountId } },
+            resolveContributedAction: resolveExactClientAction(projection), readMountedActionMachineId: () => scope.machineId,
+            projectionScope: account.scope, signal: fixtureLifetime.signal, isCurrent: account.isCurrent,
+            captureCurrentBinding: () => account.isCurrent });
+        const requestSurface = surfaceContext();
+        const host = createPluginSurfaceHostApi({ surfaceContext: requestSurface, handlers: { actionControl: controls.handleRequest } });
+        const carrier = await physicalHostApiCarrier('react-native', host, account.isCurrent, 'plain', requestSurface);
+        let pressed: Promise<void> | undefined;
+        try {
+            await carrier.api.actionControl({ action: identity, presentation: { title: 'Run' } },
+                { prepare: () => ({ input: {} }), onSettled }, { signal: stop.signal });
+            pressed = controls.press(controls.getSnapshot()[0]!.id);
+            await vi.waitFor(() => expect(store.list(scope).items[0]?.state).toBe('running'));
+            stop.abort();
+            await vi.waitFor(() => expect(store.list(scope).items[0]?.state,
+                `Machine requests: ${network.requests.map(request => request.method).join(', ')}`).toBe('cancelled'));
+            await pressed;
+            expect(onSettled).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ ok: false, errorCode: 'cancelled' }));
+        } finally {
+            fixtureLifetime.abort();
+            await pressed;
+            controls.dispose(); host.dispose?.(); await carrier.dispose(); account.retire(); actionOperationStore.reset();
+        }
+    });
+
     it('keeps mounted entity drops on the real approval/provenance and explicit-waiver front door', async () => {
         const custody = { kind: 'development' as const, registeredRootId: 'caller-root' };
         const approval = await runMountedHomeApproval(custody, false, true);

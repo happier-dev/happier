@@ -13,6 +13,7 @@ import {
 import { PluginInvocableActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
 import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { isDatabaseActionIdV1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { parseActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { normalizePluginUiMountedContributedActionReferenceV1, type PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
@@ -21,6 +22,8 @@ import { createPluginSurfaceHostApiError, type PluginSurfaceHostApiMethodHandler
 import type { PluginSurfaceContributedActionDescriptorResolver, PluginSurfaceHostActionBinding } from './pluginSurfaceActionDispatch';
 import { randomUUID } from '@/platform/randomUUID';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { observeActionOperationByRequestId } from '@/sync/domains/actionOperations/observeActionOperationByRequestId';
+import { isActionOperationTerminal } from '@/sync/domains/actionOperations/actionOperationStore';
 
 export type MountedPluginActionControl = Readonly<{
     id: string;
@@ -222,8 +225,38 @@ export function createPluginSurfaceActionControls(input: Readonly<{
             const actionInput = hostId?.success ? preparation.input : { action: contributed!,
                 ...(machineId ? { expectedContributorOccurrenceId: occurrenceId } : {}),
                 ...(preparation.input === undefined ? {} : { input: preparation.input }) };
-            const result = await dispatch(actionId, actionInput, context);
-            execution = PluginUiActionControlExecutionV1Schema.parse(projectNativeJsonValueForTransport(result));
+            const scope = input.projectionScope;
+            const stopObservation = new AbortController();
+            const requestStop = () => {
+                // A retired mount withdraws its observer. Only the authored Stop
+                // on this still-mounted control requests cancellation of its run.
+                if (!current() || !scope || !machineId || !contributed
+                    || declaration?.operation?.cancellation !== 'supported') return;
+                void observeActionOperationByRequestId({
+                    ...scope, machineId, signal: stopObservation.signal,
+                    requestIdentity: { actionId: buildQualifiedPluginContributionKey(contributed), requestId },
+                    onUpdate: operation => {
+                        if (isActionOperationTerminal(operation.state)) return;
+                        stopObservation.abort();
+                        void import('@/components/inbox/actionOperations/requestActionOperationStop').then(({ requestActionOperationStop }) =>
+                            requestActionOperationStop({ serverId: scope.serverId, snapshot: operation }, { confirmed: true }),
+                        ).catch(error => {
+                            void import('@/utils/errors/alertActionFailure').then(({ alertActionFailure }) => {
+                                const failure = parseActionExecuteFailure(error);
+                                alertActionFailure({ reason: failure?.error ?? String(error), code: failure?.errorCode ?? null, requestId });
+                            });
+                        });
+                    },
+                });
+            };
+            signal.addEventListener('abort', requestStop, { once: true });
+            try {
+                const result = await dispatch(actionId, actionInput, context);
+                execution = PluginUiActionControlExecutionV1Schema.parse(projectNativeJsonValueForTransport(result));
+            } finally {
+                signal.removeEventListener('abort', requestStop);
+                stopObservation.abort();
+            }
         }
         return execution;
     };

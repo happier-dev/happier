@@ -26,7 +26,7 @@ async function withWorkbench(page: Page, caseName: string,
   }
 }
 
-test('F2 mounted Console runs the selected statement and restores SQL history', async ({ page }) => {
+test('F2 mounted Console stops native SQL and restores SQL history', async ({ page }) => {
   test.setTimeout(0);
   await withWorkbench(page, 'f2-console', async fixture => {
     await page.getByRole('button', { name: 'Console', exact: true }).click();
@@ -43,6 +43,15 @@ test('F2 mounted Console runs the selected statement and restores SQL history', 
     await page.getByRole('button', { name: 'Run', exact: true }).click();
     await expect(page.getByText('desktop-control', { exact: true })).toBeVisible();
     console.info('P2-F2-known-good-mounted-console', fixture.runtime);
+
+    const activeQueryCount = () => fixture.sql('dbw_selected', `SELECT count(*) FROM pg_stat_activity
+      WHERE pid <> pg_backend_pid() AND state = 'active' AND query LIKE '%DBW_DESKTOP_F2_STOP%'`);
+    await replaceSql('SELECT pg_sleep(600) /* DBW_DESKTOP_F2_STOP */');
+    await page.getByRole('button', { name: 'Run', exact: true }).click();
+    await expect.poll(activeQueryCount).toBe('1');
+    await page.getByRole('button', { name: 'Stop', exact: true }).click();
+    await expect.poll(activeQueryCount).toBe('0');
+    await expect(page.getByText('Stopped. Nothing was changed.', { exact: true })).toBeVisible();
 
     // A bad second statement must not run when only the first is selected.
     await replaceSql("SELECT 'selected-only' AS result;\nSELECT FROM");
