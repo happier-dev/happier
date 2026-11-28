@@ -3,7 +3,7 @@ export const GEMINI_UI_DESCRIPTOR = Object.freeze({
   pluginId: 'gemini',
   agentId: 'gemini',
   version: 1,
-  identityColor: { light: '#1baf7a', dark: '#199e70' },
+  identityColor: { light: '#199e70', dark: '#1baf7a' },
   display: {
     nameKey: 'agentInput.agent.gemini',
     subtitleKey: 'profiles.aiBackend.geminiSubtitleExperimental',

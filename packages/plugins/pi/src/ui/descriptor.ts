@@ -3,7 +3,7 @@ export const PI_UI_DESCRIPTOR = Object.freeze({
   pluginId: 'pi',
   agentId: 'pi',
   version: 1,
-  identityColor: { light: '#e87ba4', dark: '#d55181' },
+  identityColor: { light: '#d55181', dark: '#e87ba4' },
   display: {
     nameKey: 'agentInput.agent.pi',
     subtitleKey: 'profiles.aiBackend.piSubtitleExperimental',
