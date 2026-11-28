@@ -4,8 +4,9 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
 
-import { formatRelativeTime, formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
+import { formatRelativeTime, formatRelativeTimeShort, readRelativeTimeShortRefreshAtMs } from '@/utils/time/formatShortRelativeTime';
 import { Text } from '@/components/ui/text/Text';
+import { useSessionListRuntimeDeadlineNowMs } from '@/hooks/session/sessionListRuntimeClock';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { Typography } from '@/constants/Typography';
 import { readDocumentFocusReturnTarget, type FocusReturnTarget } from '@/keyboard/focusReturn';
@@ -127,7 +128,7 @@ const styles = StyleSheet.create((theme) => ({
         columnGap: theme.space.s12,
         paddingVertical: theme.space.s4,
     },
-    // A renamed part: its name, then yours and the saved value beneath, each on one line.
+    // A renamed part: its name, then yours and the saved value beneath.
     renamed: {
         gap: theme.space.s2,
         paddingVertical: theme.space.s4,
@@ -178,7 +179,7 @@ function WorkflowSaveComparisonSheet(props: CustomModalInjectedProps & WorkflowS
         ? t('workflows.authoring.agent')
         : viewer?.label ?? (cachedPerson ? formatAccountDisplayName(cachedPerson) : null);
     const presented = useLayoutPresentationActive();
-    const nowMs = useMinuteClock(presented && name !== null && savedAt !== undefined, props.nowMs);
+    const nowMs = useSaveAgeClock(presented && name !== null ? savedAt ?? null : null, props.nowMs);
     const attribution = name !== null && savedAt !== undefined
         ? t('workflows.page.saveStatus.compareSavedBy', { name, age: formatRelativeTime(savedAt, nowMs) })
         : null;
@@ -215,14 +216,12 @@ function WorkflowSaveComparisonSheet(props: CustomModalInjectedProps & WorkflowS
             {rows.length === 0 ? null : (
                 <View accessibilityRole="list">
                     {rows.map(row => row.values ? (
-                        // A renamed part says what it was renamed from and to; each value keeps one line, whole in its name.
                         <View key={row.key} testID={`${props.testID}-${row.key}`} style={styles.renamed}>
                             <Text style={styles.differenceLabel}>{row.label}</Text>
                             {(['yours', 'saved'] as const).map(side => {
                                 const value = t(side === 'yours' ? 'workflows.page.saveStatus.compareYours' : 'workflows.page.saveStatus.compareSaved',
                                     { value: row.values[side] });
-                                return <Text key={side} testID={`${props.testID}-${row.key}-${side}`} style={styles.status}
-                                    numberOfLines={1} ellipsizeMode="tail" accessibilityLabel={value}>{value}</Text>;
+                                return <Text key={side} testID={`${props.testID}-${row.key}-${side}`} style={styles.status}>{value}</Text>;
                             })}
                         </View>
                     ) : (
@@ -238,16 +237,13 @@ function WorkflowSaveComparisonSheet(props: CustomModalInjectedProps & WorkflowS
     );
 }
 
-/** Re-renders once a minute while an age is on screen, so "Saved 2m ago" keeps its word true. */
-function useMinuteClock(active: boolean, fixedNowMs: number | undefined): number {
-    const [now, setNow] = React.useState(() => fixedNowMs ?? Date.now());
-    React.useEffect(() => {
-        if (!active || fixedNowMs !== undefined) return;
-        setNow(Date.now());
-        const id = setInterval(() => setNow(Date.now()), MINUTE_MS);
-        return () => clearInterval(id);
-    }, [active, fixedNowMs]);
-    return fixedNowMs ?? now;
+/** Compact and full save ages share the same display boundaries. */
+function useSaveAgeClock(savedAtMs: number | null, fixedNowMs: number | undefined): number {
+    const readNextRefresh = React.useCallback((nowMs: number) =>
+        savedAtMs === null ? null : readRelativeTimeShortRefreshAtMs(savedAtMs, nowMs),
+    [savedAtMs]);
+    const nowMs = useSessionListRuntimeDeadlineNowMs(readNextRefresh, savedAtMs !== null && fixedNowMs === undefined);
+    return fixedNowMs ?? nowMs;
 }
 
 function StatusAction(props: Readonly<{
@@ -348,9 +344,8 @@ export function WorkflowSaveStatus(props: Readonly<{
     const [comparing, setComparing] = React.useState(false);
     const comparisonFocusReturnRef = React.useRef<FocusReturnTarget>(null);
     const saveKeyHint = useKeyboardShortcutLabel('workflow.save');
-    const savedAtMs = state.kind === 'saved' ? state.savedAtMs : null;
     const presented = useLayoutPresentationActive();
-    const nowMs = useMinuteClock(presented && savedAtMs !== null, props.nowMs);
+    const nowMs = useSaveAgeClock(presented && state.kind === 'saved' && !state.discarded ? state.savedAtMs : null, props.nowMs);
     // The status line hangs in the page header's action column, too narrow for two documents: Compare opens
     // them in the canonical card, a centred dialog wide enough to set them side by side, a bottom sheet on a phone.
     const conflict = state.kind === 'conflict' ? state.conflict : null;

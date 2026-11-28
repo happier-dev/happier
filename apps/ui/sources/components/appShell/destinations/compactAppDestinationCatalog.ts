@@ -77,7 +77,7 @@ import { readDiscussionTitle, useDiscussionTitleProjections } from '@/sync/ops/d
 import { matchWorkspaceDestinationRoute, registeredWorkspaceRoutes, workspacePluginAppPageRouteKey, workspaceRouteHref } from '@/components/appShell/workspace/workspaceRoutes';
 import { useWorkspaceDestinationTitles, type WorkspaceDestinationTitle } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
-import { formatWorkflowRunDisplayName, resolveWorkflowRunDisplayName } from '@/components/workflows/presentation/workflowRunDisplayName';
+import { presentWorkflowRunTitle, resolveWorkflowRunDisplayName } from '@/components/workflows/presentation/workflowRunDisplayName';
 import { getProfileCatalogSnapshot, subscribeProfileCatalogSnapshots } from '@/sync/store/settings/profileCatalogSnapshot';
 import { getProviderCatalogSnapshot, subscribeProviderCatalogSnapshots } from '@/sync/store/settings/providerCatalogSnapshot';
 import { getMcpServerCatalogSnapshot, subscribeMcpServerCatalogSnapshots } from '@/sync/store/settings/mcpServerCatalogSnapshot';
@@ -1455,11 +1455,11 @@ function resolveStoredInstanceTitle(ref: DestinationRef, state: ReturnType<typeo
     }
     if (ref.kind === 'workflowRun' && ref.params.runId) {
         if (readWorkflowRunTarget(ref.params)?.kind !== 'managed') return fallbackTitle ?? t('workflows.run.title');
-        const scope = state.profileScope;
-        const inScope = scope && (!ref.params.serverId || areServerProfileIdentifiersEquivalent(ref.params.serverId, scope.serverId));
-        const run = inScope ? state.workflowRunsById[workflowRunStoreKey(ref.params.runId, scope)] : undefined;
-        return run ? formatWorkflowRunDisplayName(resolveWorkflowRunDisplayName(run.metadata))
-            : fallbackTitle ?? formatWorkflowRunDisplayName(resolveWorkflowRunDisplayName(null));
+        const run = state.workflowRunsById[workflowRunStoreKey(ref.params.runId, state.profileScope)];
+        // The mounted page publishes settlement from its exact reads. A restored tab only has the summary sidecar.
+        return presentWorkflowRunTitle(resolveWorkflowRunDisplayName(run?.metadata), {
+            pending: true, state: run?.summary?.state,
+        }).title;
     }
     const builtinWorkflowTitle = resolveBuiltinWorkflowTitle(ref);
     if (builtinWorkflowTitle) return builtinWorkflowTitle;

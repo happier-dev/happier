@@ -1,3 +1,4 @@
+import { isValidElement } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { WorkflowDefinitionListResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { WorkflowTriggerSetV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
@@ -9,7 +10,7 @@ vi.mock('@/text', async () => {
 
 const { projectWorkflowLibraryRecords } =
   await import('./workflowLibraryCollection');
-const { readWorkflowLibraryRowFacts, readWorkflowLineThree } =
+const { buildWorkflowLibraryFields, readWorkflowLibraryRowFacts, readWorkflowLineThree } =
   await import('./workflowLibraryCells');
 
 const NOW = Date.UTC(2026, 10, 20, 12, 0, 0);
@@ -76,6 +77,21 @@ it('keeps the standalone trigger clause when its Library row is Off', () => {
   expect(state).toMatchObject({ state: 'off', triggerLine: row!.triggerSummary });
   expect(state.triggerLine).toContain('workflows.triggers.link.beforeAction');
   expect(state.triggerLine).not.toContain('workflows.triggers.row.off');
+});
+
+it('lets a missed Table trigger keep its complete occurrence when the cell wraps', () => {
+  const triggerLine = 'Missed on Nov 26, 10:52 AM';
+  const row = savedRow({ triggers: [schedule], nextRunAt: null });
+  const facts = { ...readWorkflowLibraryRowFacts(row), triggerLine };
+  const field = buildWorkflowLibraryFields(() => facts, () => {}).find(field => field.key === 'trigger');
+  const cell = field?.render(row);
+  if (!isValidElement<{ children: string; numberOfLines?: number }>(cell)) {
+    throw new Error('The Table clips a plain trigger string to one line');
+  }
+  expect(cell.props.children).toBe(triggerLine);
+  expect(cell.props.numberOfLines).toBe(2);
+  const queuedField = buildWorkflowLibraryFields(() => ({ ...facts, state: 'queued' }), () => {}).find(field => field.key === 'trigger');
+  expect(queuedField?.render(row)).toBeNull();
 });
 
 const lineThree = (row: ReturnType<typeof savedRow>, details = ALL) =>

@@ -395,15 +395,22 @@ describe('Project destination instance titles', () => {
             header, rawHeader, isDecrypted: true,
             headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
         storage.getState().applyArtifacts([workflow], storage.getState().artifacts);
-        storage.getState().upsertWorkflowRuns([workflowRunRowFromSummary(
-            createWorkflowRunSummaryFixture({ id: 'saved-run', ownerAccountId: scope.accountId }),
-            { kind: 'available', value: { title: 'Check the release' } },
-        )], scope);
-        const entries = [`/workflows/${definitionId}`, '/workflows/runs/saved-run', '/workflows/removed-workflow'].map((href, index) => ({
+        storage.getState().upsertWorkflowRuns([
+            workflowRunRowFromSummary(
+                createWorkflowRunSummaryFixture({ id: 'saved-run', ownerAccountId: scope.accountId }),
+                { kind: 'available', value: { title: 'Check the release' } },
+            ),
+            workflowRunRowFromSummary(
+                createWorkflowRunSummaryFixture({ id: 'queued-run', ownerAccountId: scope.accountId, state: 'queued',
+                    sourceArtifactId: '00000000-0000-4000-8000-000000000012' }),
+                null,
+            ),
+        ], scope);
+        const entries = [`/workflows/${definitionId}`, '/workflows/runs/saved-run', '/workflows/removed-workflow', '/workflows/runs/queued-run'].map((href, index) => ({
             key: `inactive-${index}`, ref: destination(href),
         }));
         const hook = await renderHook(() => useDestinationInstanceTitles(catalog, entries));
-        const expected = ['Release checks', 'Check the release', t('common.unavailable')];
+        const expected = ['Release checks', 'Check the release', t('common.unavailable'), t('common.loading')];
         expect(entries.map(entry => readDestinationInstanceTitle(catalog, entry.ref))).toEqual(expected);
         expect([...hook.getCurrent().values()]).toEqual(expected);
         expect(readDestinationInstanceTitle(catalog, entries[0]!.ref, {

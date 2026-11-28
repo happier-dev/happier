@@ -2,7 +2,7 @@ import { setScreenSharingPrivacyActive } from '@/desktop/capture/useNativeRecord
 import * as React from 'react';
 import 'fake-indexeddb/auto';
 import { act } from 'react-test-renderer';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
@@ -50,6 +50,11 @@ import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePres
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { DestinationInstanceHost } from '@/components/appShell/workspace/DestinationInstanceHost';
+import { resolveCompactAppDestinations } from '@/components/appShell/destinations/compactAppDestinationCatalog';
+import { WorkspaceProvider } from '@/components/appShell/workspace/WorkspaceProvider';
+import { WorkspaceShell } from '@/components/appShell/workspace/WorkspaceShell';
+import { registerWorkspaceRouteContext } from '@/components/appShell/workspace/workspaceRouteContext';
+import { t } from '@/text';
 import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
 import { clearMachineRequestReachabilityForMachine, isMachineReachable, recordMachineRequestFailed } from '@/sync/domains/machines/reachability/machineReachability';
 
@@ -166,6 +171,7 @@ const sourceAccessResponse = vi.hoisted(() => vi.fn());
 const catalogResponse = vi.hoisted(() => vi.fn());
 const routerSpy = vi.hoisted(() => ({ push: vi.fn(), back: vi.fn() }));
 const routeState = vi.hoisted((): { runId: string; invocationId?: string; serverId?: string } => ({ runId: '11111111-1111-4111-8111-111111111111' }));
+const workspaceRoute = vi.hoisted(() => ({ pathname: '/' }));
 const platformViewport = vi.hoisted(() => ({ width: 800, height: 600, scale: 1, fontScale: 1 }));
 // Per-Action transport replies. The real detail client still parses every reply.
 const detailActions = vi.hoisted(() => ({
@@ -260,7 +266,7 @@ vi.mock('@/utils/web/radixCjs', async () =>
     (await import('@/dev/testkit/mocks/radixCjs')).createRadixCjsModuleMock());
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock({ router: routerSpy, params: () => ({ ...routeState }) }).module;
+    return createExpoRouterMock({ router: routerSpy, pathname: () => workspaceRoute.pathname, params: () => ({ ...routeState }) }).module;
 });
 vi.mock('expo-crypto', async () => ({ randomUUID: (await import('node:crypto')).randomUUID }));
 // Clipboard is an OS boundary; keep the UI helper and Action admission real.
@@ -912,6 +918,7 @@ beforeEach(async (context) => {
     routeState.runId = '11111111-1111-4111-8111-111111111111';
     routeState.invocationId = undefined;
     routeState.serverId = undefined;
+    workspaceRoute.pathname = '/';
     Object.assign(platformViewport, { width: 800, height: 600 });
     accountScopeHarness.reset();
     storeState.reset();
@@ -2015,30 +2022,65 @@ describe('WorkflowRunScreen', () => {
         expect(readContentProps()?.onCancel).toBeTypeOf('function');
     });
 
-    // Round 16 SHOULD 2: a cold queued Run is named by its Workflow, whose header is still being read. The title
-    // keeps the loading bar until that name lands; it never reads "Untitled run" first.
-    it('keeps the title loading, not untitled, while a cold queued Run waits for its Workflow name', async () => {
-        await sourceArtifact('owner'); // Persisted HTTP fixture; the client Artifact store remains cold.
+    it.each(['named', 'missing'] as const)('keeps the page and workspace on the same Run title with a %s source', async (source) => {
+        const namedSource = source === 'named';
+        Object.assign(platformViewport, { width: 1440, height: 900 });
+        if (namedSource) await sourceArtifact('owner'); // Persisted HTTP fixture; the client Artifact store remains cold.
         const header = createDeferred<void>();
         heldSourceHeaderRead = header.promise;
         const run = createWorkflowRunSummaryFixture({ state: 'queued', workflowCustodyState: 'pending', sourceArtifactId,
             availability: { cancel: true, pause: true } });
+        workspaceRoute.pathname = createWorkflowRunRoute(run.id);
+        const { JSDOM } = await import('jsdom');
+        const browser = new JSDOM('', { pretendToBeVisual: true });
+        vi.stubGlobal('document', browser.window.document);
+        onTestFinished(() => browser.window.close());
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
+            externalSessions: false, inbox: false, workflows: true, friends: false,
+        } });
+        registerWorkspaceRouteContext(() => ({ WorkspaceRouteBody: WorkflowRunScreen }));
+        let tabId: string | undefined;
+        let groupId: string | undefined;
         const screen = await renderRunScreen({
             run,
             getRunFailure: new WorkflowActionError({ message: 'Custody pending', rawCode: 'custody_pending' }),
-            wrap: (element) => {
+            wrap: () => {
                 getStorage().getState().upsertWorkflowRuns([workflowRunRowFromSummary(run, null, undefined, { canEdit: true })]);
-                return element;
+                getStorage().setState({ isDataReady: true });
+                return <AppPaneProvider><ModalProvider><WorkspaceProvider enabled catalog={catalog}>{navigation => {
+                    groupId = navigation.state.focusedGroupId;
+                    tabId = navigation.state.groups[groupId].activeTabId;
+                    return <WorkspaceShell catalog={catalog} />;
+                }}</WorkspaceProvider></ModalProvider></AppPaneProvider>;
             },
         });
-        await vi.waitFor(() => expect(sourceHeaderReads).toHaveLength(1));
-        await act(async () => {});
-        expect(readContentProps()?.titlePending).toBe(true);
-        expect(screen.findHostByTestId('page-header-title-pending')).not.toBeNull();
-        await act(async () => { header.resolve(); });
-        await vi.waitFor(() => expect(readContentProps()?.title).toBe('Source'));
+        const expectWorkspaceTitle = (title: string) => {
+            const tab = screen.findHostByTestId(`workspace-tab-${tabId}`);
+            const panel = screen.findHostByTestId(`workspace-retained-${tabId}`);
+            expect(panel).not.toBeNull();
+            expect(panel?.props['aria-labelledby']).toBe(tab?.props.nativeID);
+            expect(tab?.findAllByProps({ children: title }).length).toBeGreaterThan(0);
+            expect(document.title).toBe(title);
+        };
+        try {
+            await act(async () => {
+                const slot = screen.findByTestId(`split-canvas-content-slot-${groupId}`);
+                expect(slot).not.toBeNull();
+                slot?.props.onLayout({ nativeEvent: { layout: { x: 0, y: 32, width: 1440, height: 820 } } });
+            });
+            await vi.waitFor(() => expect(sourceHeaderReads).toHaveLength(1));
+            expect(readContentProps()?.titlePending).toBe(true);
+            expect(screen.findHostByTestId('page-header-title-pending')).not.toBeNull();
+            expectWorkspaceTitle(t('common.loading'));
+        } finally {
+            await act(async () => { header.resolve(); });
+        }
+        const settledTitle = namedSource ? 'Source' : t('workflows.run.untitled');
+        await vi.waitFor(() => expect(readContentProps()?.title).toBe(settledTitle));
         expect(readContentProps()?.titlePending).toBe(false);
         expect(screen.findHostByTestId('page-header-title-pending')).toBeNull();
+        expectWorkspaceTitle(settledTitle);
+        expect(sourceHeaderReads).toHaveLength(1);
     });
 
     it('keeps a deleted source distinct from a sourceless Run', async () => {

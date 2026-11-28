@@ -46,3 +46,11 @@ export function formatWorkflowRunDisplayName(name: WorkflowRunDisplayName, listS
         case 'unknown': return t('workflows.run.untitled');
     }
 }
+
+export function presentWorkflowRunTitle(
+    name: WorkflowRunDisplayName,
+    facts: Readonly<{ pending: boolean; state?: WorkflowRunStateV1 }>,
+): Readonly<{ kind: 'pending' | 'name' | 'fallback'; title: string }> {
+    if (name.kind === 'unknown' && facts.pending) return { kind: 'pending', title: t('common.loading') };
+    return { kind: name.kind === 'name' ? 'name' : 'fallback', title: formatWorkflowRunDisplayName(name, facts.state) };
+}

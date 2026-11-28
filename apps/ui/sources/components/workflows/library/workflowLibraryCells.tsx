@@ -5,6 +5,7 @@ import type {
   CollectionAnatomy,
   CollectionField,
 } from '@happier-dev/plugin-ui';
+import { HappierText } from '@happier-dev/plugin-ui/presentation';
 import { countWorkflowStepsV1 } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contributionIdentity';
 import { workflowDefinitionPreviewAgentsV1, workflowDefinitionPreviewStepsV1 } from '@happier-dev/protocol/workflows/workflowStepLabel';
@@ -395,7 +396,14 @@ export function buildWorkflowLibraryFields(
       minWidth: 140,
       maxWidth: 320,
       priority: 6,
-      render: (row) => readWorkflowLibraryLineTrigger(readFacts(row)),
+      render: (row) => {
+        const trigger = readWorkflowLibraryLineTrigger(readFacts(row));
+        return trigger === null ? null : (
+          <HappierText variant="meta" tone="secondary" numberOfLines={2}>
+            {trigger}
+          </HappierText>
+        );
+      },
     },
     {
       key: 'steps',

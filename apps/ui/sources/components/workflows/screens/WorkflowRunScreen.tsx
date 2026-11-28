@@ -130,7 +130,7 @@ import { useMachinePresenceSummary } from '@/sync/domains/machines/reachability/
 import { normalizeResultPreview } from '../presentation/resultPreview';
 import { formatWorkflowUsageLabel } from '../presentation/workflowUsagePresentation';
 import {
-    formatWorkflowRunDisplayName,
+    presentWorkflowRunTitle,
     resolveWorkflowRunDisplayName,
 } from '../presentation/workflowRunDisplayName';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
@@ -303,10 +303,10 @@ function resolveAnnouncementTerminal(
  * to the navigation chrome (or draws it on wide layouts), so a Run that no longer exists is never a
  * dead end. A pane that hosts the Run (`embedded`) owns Back itself and draws no header.
  */
-function RunStateFrame(props: Readonly<{ embedded: boolean; testID?: string; children: React.ReactNode }>): React.ReactElement {
+function RunStateFrame(props: Readonly<{ embedded: boolean; title?: string; testID?: string; children: React.ReactNode }>): React.ReactElement {
     return (
         <View testID={props.testID} style={props.embedded ? styles.embeddedRoot : styles.root}>
-            {props.embedded ? null : <PageHeader testID="workflow-run-state-header" title={t('workflows.run.title')} alwaysShowBack />}
+            {props.embedded ? null : <PageHeader testID="workflow-run-state-header" title={props.title ?? t('workflows.run.title')} alwaysShowBack />}
             {props.children}
         </View>
     );
@@ -1004,7 +1004,9 @@ function WorkflowRunBody(props: Readonly<{ runId?: string; occurrenceDetails?: R
     const pluginSourceActive = activelyViewed && sourceAccountAvailable && catalogSource?.kind === 'plugin';
     const pluginSource = useWorkflowPluginSource(catalogSource?.kind === 'plugin' ? catalogSourceRef : null, pluginSourceActive);
     const pluginSourcePresent = pluginSource.status === 'ready';
-    const sourceArtifact = useArtifact(activelyViewed && sourceAccountAvailable ? sourceArtifactId ?? '' : '');
+    // A retained tab still names its Run while hidden. The keyed cache read stays local;
+    // the source header request below still belongs to the actively viewed page.
+    const sourceArtifact = useArtifact(sourceAccountAvailable ? sourceArtifactId ?? '' : '');
     const sourceAccess = sourceArtifact?.access;
     const sourceAvailable = (sourceAccountAvailable && sourceArtifactId !== null && sourceAccess !== undefined)
         || (catalogSource?.kind === 'builtin' && resolveBuiltinWorkflowDefinitionV1(catalogSource.id) !== null)
@@ -1053,18 +1055,14 @@ function WorkflowRunBody(props: Readonly<{ runId?: string; occurrenceDetails?: R
             }) as never) } : {}),
         };
     }, [accountLifetime, activelyViewed, mountedRef, router, sourceAccess, sourceArtifactId, sourceAvailable, sourceIdentity, sourceRef]);
-    const sourceActionPending = sourceAction === null && activelyViewed && sourceAccountAvailable && sourceArtifactId !== null
+    const sourceHeaderPending = sourceAccountAvailable && sourceArtifactId !== null && sourceAccess === undefined
         && sourceReadIdentity !== sourceIdentity;
-    // Use the same accepted display facts as the private list sidecar without rewriting the frozen replay context.
-    // A queued Run is named by its Workflow (the source Artifact's projected title) until its own content is admitted
-    // (R12 M3).
-    const runDisplayName = resolveWorkflowRunDisplayName(cachedRow?.metadata, visibleAcceptedContext ?? undefined,
-        sourceArtifact?.title);
-    // While the Run's own content or its Workflow's header is still being read, the name is not known yet: the title
-    // keeps its loading bar rather than naming the Run "Untitled" first (round 16 SHOULD 2).
-    const runDisplayNamePending = runDisplayName.kind === 'unknown'
-        && (loadState === 'loading' || (sourceArtifact === null && activelyViewed && sourceAccountAvailable
-            && sourceArtifactId !== null && sourceReadIdentity !== sourceIdentity));
+    const sourceActionPending = sourceAction === null && activelyViewed && sourceHeaderPending;
+    // A queued Run can use its source Workflow's title. PageHeader publishes the same presentation to the workspace.
+    const runTitle = presentWorkflowRunTitle(
+        resolveWorkflowRunDisplayName(cachedRow?.metadata, visibleAcceptedContext ?? undefined, sourceArtifact?.title),
+        { pending: loadState === 'loading' || sourceHeaderPending, state: summary?.state },
+    );
     const visibleResult = contentBelongsToActiveScope ? result : undefined;
     const visibleFinalOutputInvocationId = contentBelongsToActiveScope ? finalOutputInvocationId : null;
     // The Review this Run produced and whether it is the Run's result (a Hunt): the page shows that Review in place.
@@ -2209,7 +2207,8 @@ function WorkflowRunBody(props: Readonly<{ runId?: string; occurrenceDetails?: R
 
     if (summary === null) {
         return (
-            <RunStateFrame embedded={props.embedded === true} testID="workflow-run-screen">
+            <RunStateFrame embedded={props.embedded === true} testID="workflow-run-screen"
+                {...(runTitle.kind === 'pending' ? { title: runTitle.title } : {})}>
                 {loadState === 'failed' ? <View style={styles.centered}>
                     <SurfaceStateCard
                         testID="workflow-run-load-failed"
@@ -2252,8 +2251,8 @@ function WorkflowRunBody(props: Readonly<{ runId?: string; occurrenceDetails?: R
                 {...(runMachineId === null
                     ? {}
                     : { machineReachable: runMachineReachable })}
-                title={formatWorkflowRunDisplayName(runDisplayName, summary.state)}
-                titlePending={runDisplayNamePending}
+                title={runTitle.title}
+                titlePending={runTitle.kind === 'pending'}
                 definition={visibleDefinition}
                 mapUnavailable={visibleDefinition === null && loadState !== 'loading'}
                 frozenChildren={visibleAcceptedContext?.frozenChildren}

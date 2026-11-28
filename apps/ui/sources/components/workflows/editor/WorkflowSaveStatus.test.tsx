@@ -92,9 +92,9 @@ describe('WorkflowSaveStatus', () => {
     it('installs no saved-age clock while its retained editor is hidden, then resumes current age on presentation', async () => {
         const { WorkflowSaveStatus } = await import('./WorkflowSaveStatus');
         vi.useFakeTimers();
-        const now = Date.UTC(2026, 9, 23, 12);
+        const now = Math.ceil(Date.now() / 60_000) * 60_000;
         vi.setSystemTime(now);
-        const census = installTimerCensus(stack => stack.includes('WorkflowSaveStatus.tsx') ? 'save-age' : null);
+        const census = installTimerCensus(stack => /sessionListRuntimeClock\.ts/.test(stack) ? 'save-age' : null);
         const content = <WorkflowSaveStatus state={{ kind: 'saved', savedAtMs: now - 120_000 }} localDraft={draft}
             onSave={() => {}} onSaveAsCopy={() => {}} testIDPrefix="clock" />;
         const screen = await renderScreen(<PluginSurfaceFocusEligibilityProvider active={false}>{content}</PluginSurfaceFocusEligibilityProvider>);
@@ -105,7 +105,7 @@ describe('WorkflowSaveStatus', () => {
             // A visible second pane still ages even when it does not own keyboard focus.
             await screen.update(<PluginSurfaceFocusEligibilityProvider active={false} presentationActive>{content}</PluginSurfaceFocusEligibilityProvider>);
             expect(census.read().filter(timer => timer.consumer === 'save-age')).toEqual([
-                { kind: 'interval', delayMs: 60_000, consumer: 'save-age' },
+                { kind: 'timeout', delayMs: 60_000, consumer: 'save-age' },
             ]);
             expect(screen.getTextContent()).toContain('workflows.page.saveStatus.savedAge');
             expect(screen.getTextContent()).toContain(JSON.stringify({ age: formatRelativeTimeShort(now - 120_000, now + 60_000) }));
@@ -113,6 +113,28 @@ describe('WorkflowSaveStatus', () => {
             await screen.update(<PluginSurfaceFocusEligibilityProvider active={false}>{content}</PluginSurfaceFocusEligibilityProvider>);
             expect(census.read().filter(timer => timer.consumer === 'save-age')).toEqual([]);
             expect(vi.getTimerCount()).toBe(0);
+        } finally {
+            await screen.unmount();
+            census.stop();
+            vi.useRealTimers();
+        }
+    });
+
+    it('stops the saved-age clock when discarding edits keeps the saved timestamp', async () => {
+        const { WorkflowSaveStatus } = await import('./WorkflowSaveStatus');
+        vi.useFakeTimers();
+        const now = Math.ceil(Date.now() / 60_000) * 60_000;
+        vi.setSystemTime(now);
+        const census = installTimerCensus(stack => /WorkflowSaveStatus\.tsx|sessionListRuntimeClock\.ts/.test(stack) ? 'save-age' : null);
+        const status = (discarded: boolean) => <WorkflowSaveStatus
+            state={{ kind: 'saved', savedAtMs: now - 120_000, discarded }} localDraft={draft}
+            onSaveAsCopy={() => {}} testIDPrefix="clock" />;
+        const screen = await renderScreen(status(false));
+        try {
+            expect(census.read().filter(timer => timer.consumer === 'save-age')).toHaveLength(1);
+            await screen.update(status(true));
+            expect(screen.getTextContent()).toBe('workflows.page.saveStatus.discarded');
+            expect(census.read().filter(timer => timer.consumer === 'save-age')).toEqual([]);
         } finally {
             await screen.unmount();
             census.stop();
@@ -278,7 +300,7 @@ describe('WorkflowSaveStatus', () => {
         const group = (laneName?: string) => ({ kind: 'parallel' as const, id: 'group', failurePolicy: 'fail_stop' as const,
             branches: [{ id: 'lane-1', ...(laneName ? { name: laneName } : {}), blocks: [step('draft')] },
                 { id: 'lane-2', blocks: [step('wait')] }] });
-        const longName = 'R15 kept local Compare draft';
+        const longName = 'R18 Alpha renamed locally to describe both the original review and its follow-up';
         const localDraft = { ...draft, blocks: [group(longName)] };
         const currentDraft = { ...draft, draftId: 'current-draft', blocks: [group()] };
         const { ModalProvider } = await import('@/modal/ModalProvider');
@@ -293,10 +315,12 @@ describe('WorkflowSaveStatus', () => {
         expect(text).toContain(`workflows.page.saveStatus.compareSaved:${JSON.stringify({ value: 'workflows.page.inspector.lane:{"position":1}' })}`);
         // The values say the difference, so the bare "Different" does not repeat it.
         expect(text).not.toContain('workflows.page.saveStatus.compareChanged');
-        // A long value stays on its line, with the whole value in its accessible name.
-        const yours = screen.findAllByTestId('lane-comparison-sheet-block:group-yours').find(node => node.props.numberOfLines !== undefined);
-        expect(yours?.props.numberOfLines).toBe(1);
-        expect(yours?.props.accessibilityLabel).toContain(longName);
+        // Both values can wrap in the body of Compare.
+        for (const side of ['yours', 'saved']) {
+            const values = screen.findAllByTestId(`lane-comparison-sheet-block:group-${side}`);
+            expect(values.length).toBeGreaterThan(0);
+            expect(values.every(node => node.props.numberOfLines !== 1)).toBe(true);
+        }
         await screen.unmount();
     });
 
