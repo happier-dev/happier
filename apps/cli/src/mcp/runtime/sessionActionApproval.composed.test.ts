@@ -56,12 +56,18 @@ it.each(['bound', 'foreign-owner', 'missing-witness'] as const)(
     try {
       await runtime.mcp.connect(serverTransport);
       await client.connect(clientTransport);
-      const response = CallToolResultSchema.parse(await client.callTool({ name: 'action_execute', arguments: {
-        actionId: 'session.needs_you.raise', input: {
-          mode: 'continue', assumption: 'Proceed with this harmless QA check', lasting: false, type: 'decision',
-          questions: [{ id: 'c7-decision', prompt: 'Should this worker record manager attribution?', type: 'text' }],
-        },
-      } }));
+      const input = {
+        mode: 'continue', assumption: 'Proceed with this harmless QA check', lasting: false, type: 'decision',
+        questions: [{ id: 'c7-decision', prompt: 'Should this worker record manager attribution?', type: 'text' }],
+      };
+      if (binding === 'bound') {
+        expect((await client.listTools()).tools).toEqual(expect.arrayContaining([
+          expect.objectContaining({ name: 'session_needs_you_raise' }),
+        ]));
+      }
+      const response = CallToolResultSchema.parse(await client.callTool(binding === 'bound'
+        ? { name: 'session_needs_you_raise', arguments: input }
+        : { name: 'action_execute', arguments: { actionId: 'session.needs_you.raise', input } }));
       const requests = Object.values(session.getAgentStateSnapshot()?.requests ?? {});
       if (binding === 'bound') {
         expect(response, JSON.stringify(response)).not.toHaveProperty('isError', true);

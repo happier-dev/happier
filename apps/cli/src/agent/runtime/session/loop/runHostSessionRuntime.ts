@@ -314,6 +314,8 @@ import {
 import type { SessionFollowSourceMaterialController } from '@/agent/runtime/session/follow/sessionFollowSourceMaterialResolver';
 import { measureSessionFollowUtf8Bytes, resolveSessionFollowContextUtf8AllowanceV1, sameSessionFollowContextAllowanceUsage } from '@/agent/runtime/session/follow/sessionFollowContextBudget';
 import { createLiveWorkPrompt } from '@/agent/prompting/coding/liveWorkPrompt';
+import { isAgentStructuredQuestionRequest } from '@/agent/permissions/requestKind';
+import { readSessionWorkStateV1FromMetadata } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateV1';
 
 type TransformSessionInputBeforeCommit = NonNullable<
   ApiSessionClientOptions['transformSessionInputBeforeCommit']
@@ -2270,7 +2272,12 @@ async function runHostedSessionRuntime(
           prepareLiveWorkPrompt = createLiveWorkPrompt();
         }
         const snapshot = runtimeActivityProjection?.readSnapshot();
-        const prepared = snapshot && prepareLiveWorkPrompt(snapshot, () => allowance.maxUtf8Bytes - readUsedOptionalUtf8Bytes() - 2);
+        const requests = currentLifecycleSession.getAgentStateRequestStore?.()?.listOutstandingRequests() ?? [];
+        const work = readSessionWorkStateV1FromMetadata(currentLifecycleSession.getMetadataSnapshot());
+        const prepared = prepareLiveWorkPrompt(snapshot, () => allowance.maxUtf8Bytes - readUsedOptionalUtf8Bytes() - 2, {
+          questionCount: requests.filter(isAgentStructuredQuestionRequest).length,
+          activeItemCount: work?.items.filter(item => item.status === 'active').length ?? 0,
+        });
         acceptedLiveWork = prepared?.acknowledgeAccepted;
         return prepared?.text;
       },

@@ -10857,6 +10857,70 @@ describe('runHostSessionRuntime', () => {
     await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
   });
 
+  it('includes live work once per change in the actual provider prompt', async () => {
+    const harness = createHarness();
+    harness.session.hasPendingProviderInput.mockReturnValue(false);
+    harness.config.runtimeActivityApplicability = 'not_applicable';
+    let observeRuns: ((count: number) => void) | undefined;
+    harness.session.subscribeExecutionRunActivitySnapshots = (observe: (count: number) => void) => {
+      observeRuns = observe;
+      observe(2);
+      return () => undefined;
+    };
+    const checklist = { v: 1, backendId: 'claude', updatedAt: 1,
+      items: [{ id: 'verify', kind: 'todo', origin: 'happier', status: 'active', title: 'Verify the change', updatedAt: 1 }] };
+    await harness.session.updateMetadata((metadata: Metadata) => ({ ...metadata, sessionWorkStateV1: checklist }));
+    const { AgentStateRequestStore } = await import('@/agent/permissions/agentStateRequestStore');
+    const requestStore = new AgentStateRequestStore({ session: harness.session, logPrefix: '[live work test]' });
+    harness.session.getAgentStateRequestStore = () => requestStore;
+    harness.session.updateAgentState(() => ({ requests: { question: {
+      tool: 'AskUserQuestion', arguments: {}, createdAt: 1, kind: 'user_action',
+    } } }));
+
+    const prompts: string[] = [];
+    let providerOutcome: ((outcome: HostProviderInputOutcomeEvidence) => void) | null = null;
+    const runtime = {
+      ...harness.runtime, readSessionIdentity: vi.fn(() => ({ sessionId: null })),
+      updateSessionRuntimeConfig: vi.fn(unsupportedRuntimeConfigUpdate), beginTurnLifecycle: vi.fn(),
+      setOnPromptDeliveryOutcome: (handler: typeof providerOutcome) => { providerOutcome = handler; },
+      sendTurnPrompt: vi.fn(async (prompt: string, meta?: { localId?: string }) => {
+        prompts.push(prompt);
+        if (!meta?.localId || !providerOutcome) throw new Error('Expected the queued input identity and provider outcome port');
+        providerOutcome({ type: 'input-accepted', localInputId: meta.localId, userMessageSeq: prompts.length,
+          delivery: { kind: 'newTurn', turnId: `live-work-${prompts.length}` } });
+      }),
+      waitForTurnCompletion: vi.fn(async () => undefined),
+    };
+    setSessionRuntimeFactory(harness.config, () => ({ operations: runtime, nativeRuntime: runtime }));
+    let completed = 0;
+    harness.deps.runPermissionModePromptLoopFn = async (params: Parameters<typeof runPermissionModePromptLoop>[0]) => {
+      const enqueue = () => params.messageQueue.push({ text: `Continue ${completed}`, localId: `input-live-work-${completed}` }, { permissionMode: 'default' });
+      enqueue();
+      await runPermissionModePromptLoop({ ...params, shouldExit: () => completed === 4, onAfterLoopBoundary: async (boundary) => {
+        await params.onAfterLoopBoundary?.(boundary);
+        if (boundary.reason !== 'turn_completed') return;
+        completed += 1;
+        if (completed === 1) {
+          // Metadata churn with the same visible work does not add another note.
+          await harness.session.updateMetadata((metadata: Metadata) => ({ ...metadata, sessionWorkStateV1: { ...checklist, updatedAt: 2 } }));
+        } else if (completed === 2) {
+          observeRuns?.(0);
+          harness.session.updateAgentState(() => ({ requests: {} }));
+          await harness.session.updateMetadata((metadata: Metadata) => ({ ...metadata, sessionWorkStateV1: { ...checklist, items: [] } }));
+        }
+        if (completed < 4) enqueue();
+      } });
+    };
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+    const liveWork = prompts.map(prompt => prompt.match(/<happier_live_work>(.*?)<\/happier_live_work>/)?.[1]);
+    expect(liveWork).toEqual([
+      '2 background activities are still running. 1 Needs you question is still open. 1 work item is in progress.',
+      undefined,
+      'Background activity has settled. Review any outstanding work before reporting completion.',
+      undefined,
+    ]);
+  });
+
   it('retains Activity slot truth across a same-session client swap', async () => {
     const harness = createHarness();
     harness.config.runtimeActivityApplicability = 'supported';

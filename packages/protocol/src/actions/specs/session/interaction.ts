@@ -478,6 +478,7 @@ function createSessionInteractionActionSpecs() {
     executionPlacement: 'session',
     safety: 'safe',
     placements: [],
+    toolExposure: { agent: 'direct', mcp: 'direct' },
     bindings: { voiceClientToolName: 'raiseNeedsYou', mcpToolName: 'session_needs_you_raise', rpcMethod: 'session.needs_you.raise' },
     surfaces: { ui: false, voice: true, agent: true, mcp: true, cli: true, rpc: true },
     inputHints: { fields: [
