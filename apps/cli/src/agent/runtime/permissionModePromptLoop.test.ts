@@ -134,9 +134,45 @@ describe('runPermissionModePromptLoop', () => {
     expect(runtime.sendTurnPrompt.mock.calls.map(([prompt]) => prompt)).toEqual(['unrestricted']);
     expect(observed).toHaveBeenCalledWith(expect.objectContaining({
       localId: 'restricted', kind: 'rejected_before_effect',
+      reason: scenario === 'permission bypass' ? 'permission_mode_not_granted' : 'model_not_granted',
       diagnostic: expect.objectContaining({ code: scenario === 'permission bypass' ? 'permission_mode_not_granted' : 'model_not_granted' }),
     }));
     expect(runtime.updateSessionRuntimeConfig).not.toHaveBeenCalledWith(expect.objectContaining({ permissionMode: 'bypassPermissions' }));
+  });
+
+  it('reopens the Team binding for fresh input after a refused Turn completes', async () => {
+    const session = createPromptLoopSession();
+    const runtime = createRuntime();
+    const queue = createModeQueue();
+    queue.pushIsolate({ text: 'withdrawn', localId: 'old-input' }, { permissionMode: 'default' });
+    runtime.waitForTurnCompletion.mockRejectedValueOnce(Object.assign(new Error('Team binding refused'), {
+      failureCause: {
+        code: 'session_team_credential_binding_rejected', phase: 'turn_start',
+        failureReason: 'permission_denied', providerErrorCode: 'access_removed',
+      },
+    }));
+    let renewed = false;
+    const sends: { prompt: string; renewed: boolean }[] = [];
+    runtime.resetOrDisposeRuntime.mockImplementation(async () => { renewed = true; });
+    runtime.sendTurnPrompt.mockImplementation(async prompt => { sends.push({ prompt, renewed }); });
+    let ready = 0;
+    await runPermissionModePromptLoop({
+      providerName: 'Test Provider', agentMessageType: 'claude', explicitPermissionMode: undefined,
+      session, runtime: runtime as RuntimeTurnOperations, messageQueue: queue,
+      permissionHandler: { setPermissionMode() {}, reset() {} },
+      createOverrideSynchronizer: () => ({ syncFromMetadata() {}, async flushPendingAfterStart() {} }),
+      messageBuffer: new MessageBuffer(), shouldExit: () => ready === 2,
+      getAbortSignal: () => new AbortController().signal, keepAlive() {}, setThinking() {},
+      sendReady() {
+        ready += 1;
+        if (ready === 1) queue.pushIsolate({ text: 'fresh after regrant', localId: 'fresh-input' }, { permissionMode: 'default' });
+      },
+      currentPermissionModeUpdatedAt: 0, setCurrentPermissionMode() {}, setCurrentPermissionModeUpdatedAt() {},
+      registerProviderAcceptedEffect() {}, formatPromptErrorMessage: String,
+    });
+    expect(sends).toEqual([
+      { prompt: 'withdrawn', renewed: false }, { prompt: 'fresh after regrant', renewed: true },
+    ]);
   });
 
   it('applies replay seed exactly once to the first real user prompt', async () => {

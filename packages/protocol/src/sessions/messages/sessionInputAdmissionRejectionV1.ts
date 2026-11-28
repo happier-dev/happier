@@ -5,6 +5,7 @@ import type { SessionAccessErrorCodeV1 } from '../access/sessionAccessOperations
 export const SESSION_MODEL_TRANSITION_APPLY_FAILED_CODE = 'session_model_transition_apply_failed';
 
 const PRE_DISPATCH_INPUT_REJECTION_CODES = [
+  'model_not_granted',
   'permission_mode_not_granted',
   SESSION_MODEL_TRANSITION_APPLY_FAILED_CODE,
   'attachment_unavailable',
@@ -24,7 +25,6 @@ export function isPreDispatchInputRejectionCodeV1(code: unknown): code is PreDis
  */
 export const SESSION_INPUT_ADMISSION_REJECTION_CODES_V1 = [
   'session_input_invalid',
-  'model_not_granted',
   ...PRE_DISPATCH_INPUT_REJECTION_CODES,
   'session_input_archived',
   'session_input_unauthorized',

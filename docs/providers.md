@@ -2209,15 +2209,15 @@ These checks add no idle timer or release retry loop.
 
 In 0.3 development, Home's new-Turn credential-binding refusal retains its code
 and reason through socket and HTTP publication. The CLI publication owner exposes
-that refusal as a typed runtime failure cause. Pending-input settlement ends on
-the refusal instead of retrying an impossible publication prerequisite. A withdrawn
-Team grant produces `team_access_removed` in Pending and
-`session_input_unauthorized` from a waiting Send. Publication alone does not prove
-whether a native/direct Agent already acted, so Pending retains conservative
-effect-uncertainty recovery. A committed user row proves transcript custody;
-waiting Send still observes Pending until delivery settles. The refused original
-stays visible and is never automatically retried, while fresh input after regrant
-can advance past it. This adds no authorization read or retry policy.
+that refusal as a typed runtime failure cause. If Home refuses Turn publication
+after native acceptance because a Team grant was withdrawn, Pending records
+`team_access_removed`. Native acceptance leaves the provider effect uncertain.
+Sending the same input ID again returns `session_input_turn_outcome_unknown`.
+Confirmed **Send as new** archives the original and enqueues a new input ID.
+A committed user row proves transcript custody, and waiting Send still observes
+Pending until delivery settles. The runner wakes the next input after releasing
+local custody and reopens the runtime through the existing binding admission
+after the typed Team refusal. Fresh input can advance after access returns.
 
 Home checks an admitted Run through its existing daemon attestation on the next
 request. It has no Run-end publication to the broker custodian: Home does not

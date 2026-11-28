@@ -155,13 +155,21 @@ describe('ApiSessionClient provider-input settlement', () => {
     vi.spyOn(axios, 'post').mockImplementation(async url => {
       if (String(url).endsWith('/turns/mutations')) throw createTranscriptLookupHttpError({ status: 400,
         message: 'Invalid parameters', data: { error: 'Invalid parameters', code: 'session_team_credential_binding_rejected', ...(classified ? { reason: 'access_removed' } : {}) } });
-      if (String(url).endsWith('/block')) return { status: 200, data: { ok: true, didUpdate: true } };
+      if (String(url).endsWith('/block')) return { status: 200, data: {
+        ok: true, didUpdate: true, pendingCount: 2, pendingBlockedCount: 1, pendingVersion: 3,
+      } };
       throw new Error('Unexpected HTTP POST');
     });
     const client = createTestApiSessionClient(ApiSessionClient, 'tok', createPlainSessionFixture({ id: 's1' }));
     const localId = 'e180e7dc-d935-4a19-90a1-e9fe9b65ce8a';
     const turnId = 'native-turn-da3b2bdb-b307-41ee-bfa2-7615634d4b8f-2';
     markMaterializedProviderInput(client, localId);
+    const claimableAfterWake: boolean[] = [];
+    client.on('metadata-updated', () => {
+      if (client.getPendingQueueState().known && client.shouldAttemptPendingMaterialization()) {
+        claimableAfterWake.push(!client.hasPendingProviderInput(localId));
+      }
+    });
     try {
       await client.enqueueSessionTurnMutation({ v: 1, sessionId: 's1', mutationId: 'withdrawn-begin',
         observedAt: 1794531278625, agentId: 'claude', action: 'begin', turnId, startingInputId: localId,
@@ -176,6 +184,7 @@ describe('ApiSessionClient provider-input settlement', () => {
         phase: 'turn_start', failureReason: classified ? 'permission_denied' : 'unknown',
         ...(classified ? { providerErrorCode: 'access_removed' } : {}) } });
       await vi.waitFor(() => expect(client.hasPendingProviderInput(localId)).toBe(false));
+      if (classified) expect(claimableAfterWake.at(-1)).toBe(true);
       expect(axios.post).toHaveBeenCalledWith(expect.stringContaining('/block'),
         expect.objectContaining({ reason: classified ? 'team_access_removed' : 'delivery_outcome_uncertain',
           runtimeIssueV1: expect.objectContaining({ code: 'session_team_credential_binding_rejected' }) }), expect.any(Object));

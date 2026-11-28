@@ -1528,11 +1528,12 @@ Home retains the existing Team binding rejection code and its canonical reason
 in socket and HTTP mutation failures. The CLI preserves that cause through Turn
 publication and ends the input's Pending settlement. Readers also settle a final
 rejection without a reason, retaining an unknown cause rather than inventing a
-withdrawal. The new Pending presentation reason `team_access_removed` maps to the
-existing Send rejection `session_input_unauthorized`. A committed user row does
-not end delivery observation: Send keeps following Pending to settlement. A
-retained Team refusal does not fence fresh input after regrant or automatically
-retry the refused original.
+withdrawal. Pending records `team_access_removed` when Home refuses Turn
+publication for a withdrawn grant after native acceptance. That retained state
+allows confirmed **Send as new** with a fresh ID and returns
+`session_input_turn_outcome_unknown` for same-ID resubmission. Send keeps
+following Pending to settlement after a user row commits. A retained Team
+refusal allows fresh input to advance after regrant.
 
 Home, CLI and UI refresh together under the unpublished 0.3 direct cut. The
 Pending reason is a bounded presentation addition, with no new authority,

@@ -1989,10 +1989,7 @@ export class ApiSessionClient extends EventEmitter {
             offMetadataUpdated: (handler) => {
                 this.off('metadata-updated', handler);
             },
-            onPendingMessageEditHoldIdsChanged: () => {
-                this.pendingWakeSeq += 1;
-                this.emit('metadata-updated');
-            },
+            onPendingMessageEditHoldIdsChanged: () => this.publishPendingMaterializationWake(),
             getAgentStateVersion: () => this.agentStateVersion,
             getRuntimeActivityRevision: () => typeof this.runtimeActivityProjection.runtimeActivityRevision === 'number'
                 ? this.runtimeActivityProjection.runtimeActivityRevision
@@ -5817,6 +5814,8 @@ export class ApiSessionClient extends EventEmitter {
                             this.deletePendingProviderInputLocalState(localId);
                             this.executionRunPendingCustody.delete(localId);
                             this.terminalPendingSettlementLocalIds.delete(localId);
+                            // A queue update can wake the consumer while this input still holds local custody.
+                            if (!authority.executionRun) this.publishPendingMaterializationWake();
                             return;
                         }
                         logger.infoFile('[pendingQueue] provider-input settlement retried after own Turn publication', {
@@ -6063,6 +6062,12 @@ export class ApiSessionClient extends EventEmitter {
             });
     }
 
+    private publishPendingMaterializationWake(): void {
+        if (this.closed) return;
+        this.pendingWakeSeq += 1;
+        this.emit('metadata-updated');
+    }
+
     wakePendingMaterialization(): void {
         if (this.closed) return;
         void this.reconcilePendingQueueState({ force: true })
@@ -6072,11 +6077,7 @@ export class ApiSessionClient extends EventEmitter {
                     error: serializeAxiosErrorForLog(error),
                 });
             })
-            .finally(() => {
-                if (this.closed) return;
-                this.pendingWakeSeq += 1;
-                this.emit('metadata-updated');
-            });
+            .finally(() => this.publishPendingMaterializationWake());
     }
 
     async discardPendingMessageQueueV2All(opts: { reason: 'switch_to_local' | 'manual' }): Promise<number> {

@@ -251,6 +251,13 @@ describe('consumed ACP input → host turn → Pending', () => {
         });
         // The grant owner separately proves regrant admission. This is the
         // retained queue shape after that boundary: a fresh enqueue, no bypass.
+        const pendingInputUrl = origin + '/v2/sessions/' + session.id + '/pending/' + localId;
+        const headers = { Authorization: 'Bearer ' + token };
+        const retry = await axios.patch(pendingInputUrl + '/action', {
+            requestedAction: { v: 1, kind: 'enqueue' }, resumeWhenAvailable: true,
+        }, { headers, validateStatus: () => true });
+        expect(retry.status).toBe(409);
+        expect(retry.data).toEqual({ error: 'action-conflict' });
         expect(await client.reconcilePendingProviderInputCustodyBeforeMaterialization()).toBe(true);
         const freshId = localId + '-after-regrant';
         const queue = new MessageQueue2<string>(mode => mode);
@@ -289,6 +296,14 @@ describe('consumed ACP input → host turn → Pending', () => {
         })).toMatchObject({ localId: freshId, messageRole: 'user' });
         expect(await db.sessionPendingMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: session.id, localId } } }))
             .toMatchObject({ deliveryState: 'blocked', deliveryBlockedReason: 'team_access_removed' });
+        const resend = await axios.post(pendingInputUrl + '/delivery/send-as-new', {}, { headers });
+        expect(resend.data).toMatchObject({ ok: true, newLocalId: expect.any(String) });
+        expect(resend.data.newLocalId).not.toBe(localId);
+        expect(await db.sessionPendingMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: session.id, localId } } }))
+            .toMatchObject({ status: 'discarded', discardedReason: 'resent_as_new' });
+        expect(await db.sessionPendingMessage.findUniqueOrThrow({
+            where: { sessionId_localId: { sessionId: session.id, localId: resend.data.newLocalId } },
+        })).toMatchObject({ status: 'queued', deliveryState: null });
     });
 
     it.each(['retained', 'reconnect', 'reconnect-after-dispatch', 'successor', 'ordinary-head', 'person-hold', 'omitted', 'file-review', 'busy-wake'] as const)(
