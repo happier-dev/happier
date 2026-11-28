@@ -1603,13 +1603,15 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
       const evidenceContent = claim.automationEvidenceEnvelope == null ? null
         : openAutomationStoredContent({ serialized: claim.automationEvidenceEnvelope,
           kind: 'automation_trigger_evidence', encryption: accountEncryption });
-      const pluginEvent = AutomationRunPluginEventTriggerEvidenceV1Schema.safeParse(evidenceContent);
-      const occurrence = pluginEvent.success ? pluginEvent : AutomationPluginEventOccurrenceEvidenceV1Schema.safeParse(evidenceContent);
-      const matchesOccurrence = claim.automationCause.kind === 'trigger' && claim.automationCause.triggerKind === 'pluginEvent'
-        && occurrence.success && matchesCauseEvidence(claim.automationCause, occurrence.data);
-      const pluginEventOccurrence = matchesOccurrence && occurrence.success
-        ? { event: occurrence.data.eventRef, payload: occurrence.data.payload } : undefined;
-      if (storedDefinition.data.postSummaryToSource === true && pluginEvent.success && matchesOccurrence) {
+      const pluginEvent = claim.automationCause.kind === 'trigger' && claim.automationCause.triggerKind === 'pluginEvent'
+        ? AutomationRunPluginEventTriggerEvidenceV1Schema.safeParse(evidenceContent) : undefined;
+      const occurrence = pluginEvent?.success === false
+        ? AutomationPluginEventOccurrenceEvidenceV1Schema.safeParse(evidenceContent) : pluginEvent;
+      const matchedOccurrence = occurrence?.success && matchesCauseEvidence(claim.automationCause, occurrence.data)
+        ? occurrence.data : undefined;
+      const pluginEventOccurrence = matchedOccurrence
+        ? { event: matchedOccurrence.eventRef, payload: matchedOccurrence.payload } : undefined;
+      if (storedDefinition.data.postSummaryToSource === true && pluginEvent?.success && matchedOccurrence) {
         postSummaryRequest = {
           enabled: true,
           occurrence: {
