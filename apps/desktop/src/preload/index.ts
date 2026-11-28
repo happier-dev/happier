@@ -16,10 +16,12 @@ import type {
     BridgeCallbackMessage,
     CallbackChannel,
     InvokeChannel,
+    RawInvokeBodyArg,
 } from '../shared/bridge';
 import type { DesktopRuntimeConfig } from '../main/renderer/runtimeConfig';
 
 const INVOKE_CHANNEL: InvokeChannel = 'happier-desktop:invoke';
+const RAW_INVOKE_BODY_ARG: RawInvokeBodyArg = 'rawBody';
 const CALLBACK_CHANNEL: CallbackChannel = 'happier-desktop:callback';
 const RUNTIME_CONFIG_ARGUMENT_PREFIX = '--happier-runtime-config=';
 
@@ -32,6 +34,9 @@ const callbacks = new Map<number, RegisteredCallback>();
 let nextCallbackId = 1;
 
 function normalizeInvokeArgs(args: unknown): Record<string, unknown> {
+    if (ArrayBuffer.isView(args)) {
+        return { [RAW_INVOKE_BODY_ARG]: new Uint8Array(args.buffer, args.byteOffset, args.byteLength) };
+    }
     return args && typeof args === 'object' && !Array.isArray(args)
         ? (args as Record<string, unknown>)
         : {};

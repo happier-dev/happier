@@ -3,8 +3,8 @@
 //! The renderer's owner is `apps/ui/sources/utils/platform/tauri/transferFetch.ts`; the Electron
 //! target implements the same three commands in `apps/desktop/src/main/commands/httpTransport.ts`.
 //!
-//! One `desktop_http_fetch` invoke performs the request and answers with one raw frame:
-//! `[u32 LE head length][head JSON][body bytes]`. A body the server declared small enough is in
+//! One `desktop_http_fetch` invoke performs the request. The renderer sends the request as one raw
+//! frame and the host answers with one raw frame, both `[u32 LE head length][head JSON][body bytes]`. A body the server declared small enough is in
 //! that frame. A larger or open-ended body is held here and flows through
 //! `desktop_http_read_body` into a channel, so streams, downloads and their progress keep working.
 //! `desktop_http_cancel` ends a request at any phase. Requests are keyed by the calling webview and
@@ -15,7 +15,7 @@ use std::str::FromStr;
 use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
-use tauri::ipc::{Channel, InvokeResponseBody, Response};
+use tauri::ipc::{Channel, InvokeBody, InvokeResponseBody, Response};
 use tauri::{Runtime, State, Webview};
 use tauri_plugin_http::reqwest::{
     self,
@@ -48,11 +48,44 @@ pub struct ClientConfig {
     url: url::Url,
     #[serde(default)]
     headers: Vec<(String, String)>,
-    #[serde(default)]
+    /// The frame's body bytes, never a JSON field.
+    #[serde(skip)]
     data: Option<Vec<u8>>,
     /// `0` is the renderer's `redirect: 'manual'`; anything else follows redirects.
     #[serde(default)]
     max_redirections: Option<usize>,
+}
+
+/// The head of a request frame: the renderer's id for the request and what to send.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RequestFrameHead {
+    request_id: u64,
+    #[serde(flatten)]
+    config: ClientConfig,
+}
+
+/// The request frame's bytes. The custom-protocol IPC delivers them raw; its postMessage fallback
+/// delivers the same bytes as a JSON array.
+fn request_frame_bytes(body: &InvokeBody) -> Result<std::borrow::Cow<'_, [u8]>, String> {
+    match body {
+        InvokeBody::Raw(bytes) => Ok(std::borrow::Cow::Borrowed(bytes)),
+        InvokeBody::Json(value) => Vec::<u8>::deserialize(value)
+            .map(std::borrow::Cow::Owned)
+            .map_err(|error| format!("desktop_http_fetch expects a request frame: {error}")),
+    }
+}
+
+/// Decodes `[u32 LE head length][head JSON][body bytes]`; an empty body is no body.
+fn decode_request_frame(frame: &[u8]) -> Result<(u64, ClientConfig), String> {
+    let malformed = || "desktop_http_fetch received a malformed request frame".to_owned();
+    let head_length = frame.get(..4).and_then(|bytes| <[u8; 4]>::try_from(bytes).ok()).ok_or_else(malformed)?;
+    let body_start = 4_usize.checked_add(u32::from_le_bytes(head_length) as usize).ok_or_else(malformed)?;
+    let head = frame.get(4..body_start).ok_or_else(malformed)?;
+    let RequestFrameHead { request_id, mut config } = serde_json::from_slice(head).map_err(|error| error.to_string())?;
+    let body = &frame[body_start..];
+    config.data = (!body.is_empty()).then(|| body.to_vec());
+    Ok((request_id, config))
 }
 
 #[derive(Debug, Serialize)]
@@ -312,9 +345,9 @@ fn request_key<R: Runtime>(webview: &Webview<R>, request_id: u64) -> RequestKey 
 pub async fn desktop_http_fetch<R: Runtime>(
     webview: Webview<R>,
     http: State<'_, DesktopHttp>,
-    request_id: u64,
-    client_config: ClientConfig,
+    request: tauri::ipc::Request<'_>,
 ) -> Result<Response, String> {
+    let (request_id, client_config) = decode_request_frame(&request_frame_bytes(request.body())?)?;
     // Same Origin the renderer's own document has, as a browser fetch would send.
     let origin = webview.url().ok().map(|url| url.origin().ascii_serialization());
     let frame = http.fetch(request_key(&webview, request_id), origin.as_deref(), client_config).await?;
@@ -353,10 +386,20 @@ mod tests {
         let url = format!("http://{}/probe", listener.local_addr().expect("addr"));
         let handle = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("accept");
-            let mut request = vec![0_u8; 8192];
-            let read = stream.read(&mut request).expect("read");
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 8192];
+            // Read the head and any declared body, which can arrive in a later segment.
+            loop {
+                let read = stream.read(&mut buffer).expect("read");
+                request.extend_from_slice(&buffer[..read]);
+                let text = String::from_utf8_lossy(&request).to_lowercase();
+                let Some(head_end) = text.find("\r\n\r\n") else { if read == 0 { break } else { continue } };
+                let declared = text.lines().find_map(|line| line.strip_prefix("content-length:"))
+                    .and_then(|value| value.trim().parse::<usize>().ok()).unwrap_or(0);
+                if read == 0 || request.len() >= head_end + 4 + declared { break; }
+            }
             stream.write_all(&response).expect("write");
-            String::from_utf8_lossy(&request[..read]).into_owned()
+            String::from_utf8_lossy(&request).into_owned()
         });
         (url, handle)
     }
@@ -374,6 +417,38 @@ mod tests {
     fn decode(frame: &[u8]) -> (serde_json::Value, Vec<u8>) {
         let length = u32::from_le_bytes(frame[..4].try_into().expect("length")) as usize;
         (serde_json::from_slice(&frame[4..4 + length]).expect("head"), frame[4 + length..].to_vec())
+    }
+
+    fn request_frame(head: serde_json::Value, body: &[u8]) -> Vec<u8> {
+        let head = serde_json::to_vec(&head).expect("head");
+        let mut frame = (head.len() as u32).to_le_bytes().to_vec();
+        frame.extend_from_slice(&head);
+        frame.extend_from_slice(body);
+        frame
+    }
+
+    #[test]
+    fn a_request_frame_carries_its_body_bytes_to_the_server() {
+        let (url, server) = serve_once(b"HTTP/1.1 204 No Content\r\n\r\n".to_vec());
+        let body = [0_u8, 255, 10, 13, 128];
+        let frame = request_frame(serde_json::json!({ "requestId": 7, "method": "PUT", "url": url, "headers": [] }), &body);
+        let (request_id, config) = decode_request_frame(&request_frame_bytes(&InvokeBody::Raw(frame)).expect("raw")).expect("decode");
+        assert_eq!(request_id, 7);
+        let http = DesktopHttp::default();
+        tauri::async_runtime::block_on(http.fetch(("main".into(), request_id), None, config)).expect("fetch");
+        let request = server.join().expect("server");
+        assert!(request.to_lowercase().contains("content-length: 5"));
+        assert!(request.ends_with(&*String::from_utf8_lossy(&body)), "the body bytes reach the server unchanged");
+    }
+
+    #[test]
+    fn request_frames_decode_from_both_ipc_forms_and_refuse_truncation() {
+        let frame = request_frame(serde_json::json!({ "requestId": 3, "method": "GET", "url": "https://example.test/", "maxRedirections": 0 }), b"");
+        let json = InvokeBody::Json(serde_json::to_value(&frame).expect("json array"));
+        let (request_id, config) = decode_request_frame(&request_frame_bytes(&json).expect("json")).expect("decode");
+        assert_eq!((request_id, config.data, config.max_redirections), (3, None, Some(0)));
+        assert!(decode_request_frame(&frame[..frame.len() - 1]).is_err());
+        assert!(decode_request_frame(&[1, 0]).is_err());
     }
 
     #[test]

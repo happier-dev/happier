@@ -17,6 +17,13 @@ export const BRIDGE_CHANNELS = {
     callback: 'happier-desktop:callback' satisfies CallbackChannel,
 } as const;
 
+/**
+ * Tauri's `invoke` also accepts one raw byte payload instead of named args (the desktop HTTP request
+ * frame). The preload forwards that payload under this one arg.
+ */
+export type RawInvokeBodyArg = 'rawBody';
+export const RAW_INVOKE_BODY_ARG: RawInvokeBodyArg = 'rawBody';
+
 /** Payload sent over {@link BRIDGE_CHANNELS.invoke}. */
 export type BridgeInvokeRequest = Readonly<{
     command: string;

@@ -1,3 +1,4 @@
+import { RAW_INVOKE_BODY_ARG } from '../../shared/bridge';
 import type { CommandArgs, CommandContext, CommandHandler } from './types';
 
 /**
@@ -8,7 +9,7 @@ import type { CommandArgs, CommandContext, CommandHandler } from './types';
  * commands in `apps/ui/src-tauri/src/desktop_http.rs`. Requests run in the main process, which is
  * what exempts them from the renderer's same-origin rules, as Rust does for Tauri.
  *
- *   `desktop_http_fetch`     -> performs the request and answers one frame:
+ *   `desktop_http_fetch`     -> takes one raw request frame and answers one frame, both
  *                               `[u32 LE head length][head JSON][body]`. A body the server declared
  *                               no larger than {@link INLINE_BODY_LIMIT} is in the frame; any other
  *                               body is held and the head says `streamed: true`.
@@ -60,7 +61,7 @@ type ClientConfig = Readonly<{
     method: string;
     url: string;
     headers: readonly (readonly [string, string])[];
-    data: readonly number[] | null;
+    data: Uint8Array | null;
     maxRedirections?: number;
 }>;
 
@@ -78,15 +79,31 @@ export function parseClientConfig(value: unknown): ClientConfig | null {
                 : [])
         : [];
 
-    const data = Array.isArray(record.data) ? record.data.filter((byte): byte is number => typeof byte === 'number') : null;
-
     return {
         method,
         url,
         headers,
-        data,
+        data: null,
         ...(typeof record.maxRedirections === 'number' ? { maxRedirections: record.maxRedirections } : {}),
     };
+}
+
+/** Decodes the renderer's `[u32 LE head length][head JSON][body bytes]` request; an empty body is no body. */
+export function decodeRequestFrame(value: unknown): Readonly<{ requestId: number; config: ClientConfig }> | null {
+    if (!(value instanceof Uint8Array) || value.byteLength < 4) return null;
+    const bodyStart = 4 + new DataView(value.buffer, value.byteOffset, value.byteLength).getUint32(0, true);
+    if (bodyStart > value.byteLength) return null;
+    let head: unknown;
+    try {
+        head = JSON.parse(Buffer.from(value.subarray(4, bodyStart)).toString('utf8'));
+    } catch {
+        return null;
+    }
+    const requestId = (head as { requestId?: unknown } | null)?.requestId;
+    const config = parseClientConfig(head);
+    if (typeof requestId !== 'number' || !Number.isInteger(requestId) || config === null) return null;
+    const body = value.subarray(bodyStart);
+    return { requestId, config: { ...config, data: body.byteLength === 0 ? null : body } };
 }
 
 function encodeFrame(head: Readonly<Record<string, unknown>>, body: Uint8Array): Uint8Array {
@@ -121,7 +138,7 @@ export class HttpTransportState {
         const entry: InFlight = { controller: new AbortController(), pendingBody: null };
         this.requests.set(key, entry);
         try {
-            const body = config.data && config.data.length > 0 ? new Uint8Array(config.data) : null;
+            const body = config.data;
             const response = await fetch(config.url, {
                 method: config.method,
                 headers: config.headers.map((header) => [header[0], header[1]]),
@@ -214,11 +231,11 @@ export function registerHttpTransportCommands(
     state: HttpTransportState,
 ): void {
     registry.set(DESKTOP_HTTP_COMMANDS.fetch, (args, context) => {
-        const config = parseClientConfig(args.clientConfig);
-        if (config === null) {
-            throw new Error(`${DESKTOP_HTTP_COMMANDS.fetch} requires a clientConfig with a method and url`);
+        const request = decodeRequestFrame(args[RAW_INVOKE_BODY_ARG]);
+        if (request === null) {
+            throw new Error(`${DESKTOP_HTTP_COMMANDS.fetch} requires a request frame with a requestId, method and url`);
         }
-        return state.fetch(readRequestId(args), config, context);
+        return state.fetch(request.requestId, request.config, context);
     });
 
     registry.set(DESKTOP_HTTP_COMMANDS.readBody, (args, context) => {

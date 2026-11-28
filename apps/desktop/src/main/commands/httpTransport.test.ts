@@ -1,9 +1,20 @@
 import assert from 'node:assert/strict';
-import { createServer, type ServerResponse } from 'node:http';
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { test } from 'node:test';
 
+import { RAW_INVOKE_BODY_ARG } from '../../shared/bridge';
 import { HttpTransportState, parseChannelId, parseClientConfig, registerHttpTransportCommands } from './httpTransport';
 import type { CommandContext, CommandHandler } from './types';
+
+/** The renderer's `desktop_http_fetch` payload as the preload forwards it: one raw request frame. */
+function requestFrame(head: Readonly<Record<string, unknown>>, body: Uint8Array = new Uint8Array()) {
+    const encodedHead = Buffer.from(JSON.stringify(head), 'utf8');
+    const frame = new Uint8Array(4 + encodedHead.byteLength + body.byteLength);
+    new DataView(frame.buffer).setUint32(0, encodedHead.byteLength, true);
+    frame.set(encodedHead, 4);
+    frame.set(body, 4 + encodedHead.byteLength);
+    return { [RAW_INVOKE_BODY_ARG]: frame };
+}
 
 type Delivered = { callbackId: number; payload: unknown };
 
@@ -18,8 +29,8 @@ function createContext(delivered: Delivered[]): CommandContext {
     };
 }
 
-async function withServer<T>(handle: (response: ServerResponse) => void, run: (origin: string) => Promise<T>): Promise<T> {
-    const server = createServer((_request, response) => handle(response));
+async function withServer<T>(handle: (response: ServerResponse, request: IncomingMessage) => void, run: (origin: string) => Promise<T>): Promise<T> {
+    const server = createServer((request, response) => handle(response, request));
     await new Promise<void>((resolveListen) => server.listen(0, '127.0.0.1', () => resolveListen()));
     const address = server.address();
     const port = typeof address === 'object' && address !== null ? address.port : 0;
@@ -60,6 +71,31 @@ test('a client config without a method or url is refused rather than half-execut
     assert.equal(parseClientConfig({ method: 'GET' }), null);
 });
 
+test('a request frame delivers its exact body bytes and a malformed frame is refused', async () => {
+    const { registry, context } = setup();
+    const body = new Uint8Array([0, 255, 10, 13, 128]);
+    let received: Buffer | undefined;
+    await withServer(
+        (response, request) => {
+            const chunks: Buffer[] = [];
+            request.on('data', (chunk: Buffer) => chunks.push(chunk));
+            request.on('end', () => {
+                received = Buffer.concat(chunks);
+                response.writeHead(204);
+                response.end();
+            });
+        },
+        async (origin) => {
+            const frame = decodeFrame(await registry.get('desktop_http_fetch')!(
+                requestFrame({ requestId: 4, method: 'PUT', url: origin, headers: [] }, body), context));
+            assert.equal(frame.head.status, 204);
+        },
+    );
+    assert.deepEqual([...received!], [...body]);
+    assert.throws(() => registry.get('desktop_http_fetch')!({ [RAW_INVOKE_BODY_ARG]: new Uint8Array([9, 0]) }, context), /request frame/);
+    assert.throws(() => registry.get('desktop_http_fetch')!({ requestId: 5, clientConfig: { method: 'GET', url: 'https://example.test' } }, context), /request frame/);
+});
+
 test('a declared small body comes back with status and headers in the one fetch answer', async () => {
     const { registry, state, delivered, context } = setup();
     await withServer(
@@ -70,7 +106,7 @@ test('a declared small body comes back with status and headers in the one fetch 
         },
         async (origin) => {
             const frame = decodeFrame(await registry.get('desktop_http_fetch')!(
-                { requestId: 1, clientConfig: { method: 'GET', url: `${origin}/probe`, headers: [['x-test', '1']], data: null } },
+                requestFrame({ requestId: 1, method: 'GET', url: `${origin}/probe`, headers: [['x-test', '1']] }),
                 context,
             ));
             assert.equal(frame.head.status, 201);
@@ -93,7 +129,7 @@ test('an undeclared body streams into the channel in order and ends with the end
         },
         async (origin) => {
             const frame = decodeFrame(await registry.get('desktop_http_fetch')!(
-                { requestId: 2, clientConfig: { method: 'GET', url: origin, headers: [], data: null } },
+                requestFrame({ requestId: 2, method: 'GET', url: origin, headers: [] }),
                 context,
             ));
             assert.equal(frame.head.streamed, true);
@@ -121,7 +157,7 @@ test('a cancel ends a request that is waiting for its response', async () => {
         () => {},
         async (origin) => {
             const pending = registry.get('desktop_http_fetch')!(
-                { requestId: 3, clientConfig: { method: 'GET', url: origin, headers: [], data: null } },
+                requestFrame({ requestId: 3, method: 'GET', url: origin, headers: [] }),
                 context,
             );
             assert.equal(state.inFlightCount, 1);

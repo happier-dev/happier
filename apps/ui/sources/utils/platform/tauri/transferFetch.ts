@@ -41,8 +41,10 @@ export function shouldUseTauriRuntimeFetch(input: RequestInfo | URL): boolean {
 /**
  * Desktop HTTP transport. Both shells implement these commands: Tauri in
  * `src-tauri/src/desktop_http.rs`, Electron in `apps/desktop/src/main/commands/httpTransport.ts`.
- * A request is one `fetch` invoke whose answer carries status, headers and, for a body the server
- * declared small, the body. Any other body streams through `readBody` into a channel.
+ * A request is one `fetch` invoke. It sends one raw frame `[u32 LE head length][head JSON][body bytes]`,
+ * so body bytes never become a JSON number array. Its answer is a frame of the same shape that carries
+ * status, headers and, for a body the server declared small, the body. Any other body streams through
+ * `readBody` into a channel.
  */
 export const DESKTOP_HTTP_COMMANDS = {
     fetch: 'desktop_http_fetch',
@@ -82,22 +84,30 @@ function decodeFetchFrame(value: unknown): Readonly<{ head: DesktopHttpHead; bod
     return { head, body: frame.subarray(4 + headLength) };
 }
 
-/** The request as the browser would send it: init headers win, Request adds its own defaults. */
-async function describeRequest(input: RequestInfo | URL, init: RequestInit | undefined) {
+/**
+ * The request as the browser would send it, as one host frame: init headers win, Request adds its own
+ * defaults, and the body bytes follow the head unchanged.
+ */
+async function encodeRequestFrame(requestId: number, input: RequestInfo | URL, init: RequestInit | undefined): Promise<Uint8Array> {
     const headers = new Headers(init?.headers);
     const request = new Request(input, init);
     const body = await request.arrayBuffer();
     for (const [name, value] of request.headers) {
         if (!headers.has(name)) headers.set(name, value);
     }
-    return {
+    const head = new TextEncoder().encode(JSON.stringify({
+        requestId,
         method: request.method,
         url: request.url,
         headers: Array.from(headers.entries()),
-        data: body.byteLength === 0 ? null : Array.from(new Uint8Array(body)),
         // The host reads redirect control from here, not from RequestInit.redirect.
         ...(init?.redirect === 'manual' ? { maxRedirections: 0 } : {}),
-    };
+    }));
+    const frame = new Uint8Array(4 + head.byteLength + body.byteLength);
+    new DataView(frame.buffer).setUint32(0, head.byteLength, true);
+    frame.set(head, 4);
+    frame.set(new Uint8Array(body), 4 + head.byteLength);
+    return frame;
 }
 
 function streamHostBody(requestId: number, signal: AbortSignal | null | undefined, cancelHost: () => void): ReadableStream<Uint8Array> {
@@ -145,17 +155,17 @@ function streamHostBody(requestId: number, signal: AbortSignal | null | undefine
 async function desktopHttpFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
     const signal = init?.signal;
     if (signal?.aborted) throw new Error(REQUEST_CANCELLED);
-    const clientConfig = await describeRequest(input, init);
+    const requestId = nextDesktopRequestId++;
+    const requestFrame = await encodeRequestFrame(requestId, input, init);
     if (signal?.aborted) throw new Error(REQUEST_CANCELLED);
 
-    const requestId = nextDesktopRequestId++;
     const cancelHost = () => {
         void invokeDesktopHost<null>(DESKTOP_HTTP_COMMANDS.cancel, { requestId }).catch(() => {});
     };
     signal?.addEventListener('abort', cancelHost, { once: true });
     let decoded: ReturnType<typeof decodeFetchFrame>;
     try {
-        decoded = decodeFetchFrame(await invokeDesktopHost<unknown>(DESKTOP_HTTP_COMMANDS.fetch, { requestId, clientConfig }));
+        decoded = decodeFetchFrame(await invokeDesktopHost<unknown>(DESKTOP_HTTP_COMMANDS.fetch, requestFrame));
     } catch (error) {
         if (signal?.aborted) throw new Error(REQUEST_CANCELLED);
         throw error;

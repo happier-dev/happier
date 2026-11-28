@@ -40,10 +40,12 @@ describe('transferFetch', () => {
         expect(response.headers.get('content-type')).toBe('application/json');
         expect(await response.json()).toEqual({ ok: true });
         expect(host.calls.map(call => call.command)).toEqual(['desktop_http_fetch']);
+        // The request crosses the bridge as one raw frame, never a JSON array of body bytes.
+        expect(host.calls[0]!.payload).toBeInstanceOf(Uint8Array);
         expect(host.calls[0]!.args.clientConfig).toMatchObject({
             method: 'POST',
             url: 'https://example.test/v1/probe',
-            data: Array.from(new TextEncoder().encode('ping')),
+            data: new TextEncoder().encode('ping'),
             maxRedirections: 0,
         });
         expect(host.calls[0]!.args.clientConfig).toHaveProperty('headers', expect.arrayContaining([['x-probe', '1']]));

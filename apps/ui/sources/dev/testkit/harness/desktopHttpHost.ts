@@ -4,7 +4,26 @@
  * Request/Response, the Tauri `Channel` and streams stay real.
  */
 
-export type DesktopHostCall = Readonly<{ command: string; args: Record<string, unknown> }>;
+export type DesktopHostCall = Readonly<{
+    command: string;
+    args: Record<string, unknown>;
+    /** What the renderer passed to `invoke`: an args object, or the raw `desktop_http_fetch` request frame. */
+    payload: Record<string, unknown> | Uint8Array;
+}>;
+
+/** Decodes a `[u32 LE head length][head JSON][body bytes]` frame, the shape of both directions. */
+function decodeDesktopHttpFrame(frame: Uint8Array): Readonly<{ head: Record<string, unknown>; body: Uint8Array }> {
+    const headLength = new DataView(frame.buffer, frame.byteOffset, frame.byteLength).getUint32(0, true);
+    const head = JSON.parse(new TextDecoder().decode(frame.subarray(4, 4 + headLength))) as Record<string, unknown>;
+    return { head, body: frame.subarray(4 + headLength) };
+}
+
+/** The args a host reads from a raw request frame: `requestId` plus the request with its body bytes. */
+function readDesktopHostArgs(payload: Record<string, unknown> | Uint8Array): Record<string, unknown> {
+    if (!(payload instanceof Uint8Array)) return payload;
+    const { head: { requestId, ...request }, body } = decodeDesktopHttpFrame(payload);
+    return { requestId, clientConfig: { ...request, data: body.byteLength === 0 ? null : body } };
+}
 
 /** The host's answer to `desktop_http_fetch`: `[u32 LE head length][head JSON][body]`. */
 export function desktopHttpFrame(head: Readonly<Record<string, unknown>>, body: string | Uint8Array = ''): ArrayBuffer {
@@ -32,8 +51,8 @@ export function createDesktopHostInternals(answer: (call: DesktopHostCall) => un
                 return id;
             },
             unregisterCallback: (id: number) => { callbacks.delete(id); },
-            invoke: async (command: string, args: Record<string, unknown> = {}) => {
-                const call = { command, args };
+            invoke: async (command: string, payload: Record<string, unknown> | Uint8Array = {}) => {
+                const call = { command, args: readDesktopHostArgs(payload), payload };
                 calls.push(call);
                 return await answer(call);
             },
@@ -45,7 +64,7 @@ type ClientConfig = Readonly<{
     method: string;
     url: string;
     headers: [string, string][];
-    data: number[] | null;
+    data: Uint8Array | null;
     maxRedirections?: number;
 }>;
 

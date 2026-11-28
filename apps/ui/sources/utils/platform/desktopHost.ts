@@ -20,7 +20,9 @@ export type DesktopHostRoleAvailability =
     | Readonly<{ kind: 'unavailable'; reason: string }>;
 export type DesktopHostAvailability = Readonly<Record<DesktopHostRole, DesktopHostRoleAvailability>>;
 
-type DesktopHostInvoke = (command: string, args?: Record<string, unknown>) => unknown;
+/** Args are named values, or one raw byte payload the host reads as its request body. */
+type DesktopHostInvokeArgs = Record<string, unknown> | Uint8Array;
+type DesktopHostInvoke = (command: string, args?: DesktopHostInvokeArgs) => unknown;
 
 function readHostGlobal(key: string): unknown {
     return (
@@ -97,7 +99,7 @@ export function isDesktopHost(): boolean {
     return desktopHostKind() !== null;
 }
 
-export async function invokeDesktopHost<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+export async function invokeDesktopHost<T>(command: string, args?: DesktopHostInvokeArgs): Promise<T> {
     const invoke = readHostInvoke();
     if (invoke !== undefined) {
         return invoke(command, args) as T;
