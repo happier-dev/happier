@@ -36,7 +36,11 @@ import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityMaterializations
 import { DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1, MachineRolesGetResultV1Schema } from '@happier-dev/protocol/machines/roles/machineRolesV1';
 import { DATABASE_FINDING_EVENT_REF, DATABASE_FINDING_SETUP_LOCAL_ID } from '../../../plugins/database-workbench/src/insights/events';
 import { projectAutomationDatabaseFindingSubjectV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
-import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { ACTION_INVOKE_ACTION_ID_V1, SESSION_PERMISSION_MODE_SET_ACTION_ID_V1,
+  type ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { bindExternalActionExecutionAuthorizationHttpPathV1,
+  ExternalActionExecutionAuthorizationRequestV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { TeamSummaryV1Schema } from '@happier-dev/protocol/teams/projections';
 import { ConnectedAccountAttemptResponseSchema } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
 import { CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/connect/configurationActionsV1';
 import { DeploymentBindingsSetResultV1Schema, DeploymentEnvironmentCreateIntentInputV1Schema, DeploymentEnvironmentCreateResultV1Schema,
@@ -45,15 +49,12 @@ import { ProjectSourcesReadOutputV1Schema } from '@happier-dev/protocol/projects
 import { sealSavedSecretResourceRecipientEnvelopeV1, sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 
-import { ActionOperationAcceptedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { ACTION_OPERATION_GET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
-import { ActionOperationGetV1ResponseSchema, readActionOperationTerminalResultV1 } from '@happier-dev/protocol/actions/operations/v1';
-import { startSessionMcpAgent } from '../../src/testkit/sessionMcpAgent';
 import { readAccountIdFromToken } from '../../../../apps/cli/src/cloud/decodeJwtPayload';
 import { startDatabaseWorkbenchFixture } from '../../src/testkit/databaseWorkbench';
 import { startDeploymentProvidersHttp } from '../../src/testkit/deploymentProvidersHttp';
 import { repoRootDir } from '../../src/testkit/paths';
 import { fetchJson } from '../../src/testkit/http';
+import { createIsolatedFakeClaudeControlShim } from '../../src/testkit/fakeClaude';
 import { waitFor } from '../../src/testkit/timing';
 import { reserveAvailablePort } from '../../src/testkit/network/reserveAvailablePort';
 import { createEphemeralTlsServerFixture } from '../../src/testkit/tls/ephemeralTlsServerFixture.mjs';
@@ -74,7 +75,12 @@ beforeAll(async () => {
 // transport's supported path: selected semantic reads plus the bound
 // direct write precede missing-connection and provider-error controls.
 // A failure before those positive controls is a setup blocker, not valid RED.
-it.each(providers)('F4 selects %s preview/production without a neighboring fallback', async provider => {
+it.each(providers)('F4 selects %s preview/production without a neighboring fallback', provider => exerciseManagedDatabase(provider), 0);
+
+it('F4 managed Session reads admit the owner and refuse requesters without Source access',
+  () => exerciseManagedDatabase('neon', 'session'), 0);
+
+async function exerciseManagedDatabase(provider: (typeof providers)[number], mode: 'managed' | 'session' = 'managed') {
   const testDir = await mkdtemp(join(tmpdir(), `happier-dbw-${provider}-`));
   const readers = new Map<string, string>();
   // Use the server's existing PostgreSQL driver at the fixture's wire boundary.
@@ -89,6 +95,9 @@ it.each(providers)('F4 selects %s preview/production without a neighboring fallb
   const collectorPort = await reserveAvailablePort();
   const eventAdmitPath = AutomationEventActionHttpPathsV1['automation.event.admit'];
   const eventSourcePath = AUTOMATION_EVENT_STORED_DEFINITIONS_READ_HTTP_PATH_V1;
+  const actionAdmissionPath = bindExternalActionExecutionAuthorizationHttpPathV1(ACTION_INVOKE_ACTION_ID_V1);
+  let observeSessionReads = false;
+  const sessionReadAdmissions: { sessionId: string; target: unknown; statusCode: number | null }[] = [];
   const collectorReadStatus = new Map<string, number | null>();
   const admittedFindings: string[] = [];
   let databaseSourceReads = 0;
@@ -124,13 +133,22 @@ it.each(providers)('F4 selects %s preview/production without a neighboring fallb
     fixture = await startDatabaseWorkbenchFixture({
       testDir, postgresTls, serverEnv: { ...hostEnv, NODE_ENV: process.env.NODE_ENV },
       advertiseRequestObservationEndpoint: provider === 'neon',
-      captureRequestBody: request => request.path === eventAdmitPath || request.path === eventSourcePath,
+      captureRequestBody: request => request.path === eventAdmitPath || request.path === eventSourcePath
+        || observeSessionReads && request.path === actionAdmissionPath,
       beforeForwardResponse(request) {
         if (request.method === 'GET' && /^\/v1\/deployments\/environments\/[^/?]+(?:\?|$)/.test(request.path)) {
           const id = request.path.split('/').at(-1)?.split('?')[0];
           if (id) collectorReadStatus.set(id, request.statusCode);
         }
         if (!request.body?.complete || request.body.truncated) return;
+        if (request.path === actionAdmissionPath) {
+          const { envelope, sessionActionOrigin } = ExternalActionExecutionAuthorizationRequestV1Schema.parse(JSON.parse(request.body.text));
+          const admission = 'deploymentReadAdmission' in envelope ? envelope.deploymentReadAdmission : undefined;
+          if (sessionActionOrigin && admission && 'databaseTarget' in admission) {
+            sessionReadAdmissions.push({ sessionId: sessionActionOrigin.caller.sessionId, target: admission.databaseTarget,
+              statusCode: request.statusCode });
+          }
+        }
         if (request.path === eventAdmitPath) {
           const admission = AutomationEventAdmitHttpRequestV1Schema.parse(JSON.parse(request.body.text));
           const ref = 'input' in admission ? admission.input.eventRef : admission.hostEvidence.eventRef;
@@ -152,11 +170,16 @@ it.each(providers)('F4 selects %s preview/production without a neighboring fallb
     expect(await fixture.postgres.sql('happier', 'SELECT count(*) FROM "Machine"')).toBe('0');
     await fixture.claimHomeOwner(account);
     expect((await fetchJson(`${fixture.server.baseUrl}/health`)).status, 'Plan 85 Home READY').toBe(200);
-    const machine = await fixture.enrollDaemon(account, { cliLaunchSpec: { command: process.execPath,
+    const requesterVendor = mode === 'session' ? await createIsolatedFakeClaudeControlShim({
+      testDir: join(testDir, 'requester-claude'), captureEnvironmentKeys: [], logFullStdin: false,
+    }) : undefined;
+    const managedDaemonOptions = { cliLaunchSpec: { command: process.execPath,
       args: ['--import', resolve(repoRootDir(), 'packages/cli-common/registerSourceRuntime.mjs'),
         resolve(repoRootDir(), 'apps/cli/src/index.ts')], cwd: repoRootDir() }, env: { ...hostEnv,
+      ...(requesterVendor ? { HAPPIER_CLAUDE_PATH: requesterVendor.executablePath } : {}),
       HAPPIER_DEPLOYED_TELEMETRY_PORT: String(collectorPort),
-      NODE_OPTIONS: `${fixture.sourceOptions} --import ${new URL('../../src/testkit/deploymentProvidersHttpPreload.mjs', import.meta.url).href}` } });
+      NODE_OPTIONS: `${fixture.sourceOptions} --import ${new URL('../../src/testkit/deploymentProvidersHttpPreload.mjs', import.meta.url).href}` } };
+    const machine = await fixture.enrollDaemon(account, managedDaemonOptions);
     await writeFile(join(testDir, 'runtime.json'), JSON.stringify({ homeId: fixture.serverId,
       serverPid: fixture.server.proc.child.pid, daemonPid: machine.daemon.state.pid,
       machineId: machine.target.machineId, sourceRuntime: true }));
@@ -216,7 +239,10 @@ it.each(providers)('F4 selects %s preview/production without a neighboring fallb
         repository: { nameWithOwner: 'journey/database', cloneUrl: 'https://github.com/journey/database.git' }, protocol: 'https' } }));
     if (!source.ok) throw new Error(`F4 Project creation failed (${source.error})`);
 
-    for (const branch of boundary.managedBranches) {
+    const branches = mode === 'session' ? boundary.managedBranches.filter(branch => branch.name === 'production')
+      : boundary.managedBranches;
+    if (mode === 'session') expect(branches).toHaveLength(1);
+    for (const branch of branches) {
       const created = await account.executeReviewed('deployments.environments.create', DeploymentEnvironmentCreateIntentInputV1Schema.parse({
         serverId: fixture.serverId, projectSourceId: source.source.id, requestKey: randomUUID(), name: `${provider} ${branch.name}`,
         definition: { from: 'repository', ref: branch.name }, retainPreviousDeployments: 1,
@@ -307,31 +333,19 @@ it.each(providers)('F4 selects %s preview/production without a neighboring fallb
           { type: 'integer', value: '9007199254740993' }, { type: 'null' }, { type: 'text', value: '' }]
         : [{ type: 'text', value: branch.marker }, { type: 'null' }, { type: 'text', value: '' }] }],
       completeness: provider === 'neon' ? { complete: true } : { complete: false, reason: 'transport_unproven' } }] });
-      if (provider === 'neon' && branch.name === 'production') {
+      if (mode === 'session') {
         const input = DatabaseReadStatementInputV1Schema.parse({
           operation: 'statement.run', mode: 'read', target, statement: { sql, parameters: [] },
         });
         const person = await executeDatabase(DATABASE_STATEMENT_RUN_ACTION_ID_V1, input, 'person');
         expect(person).toMatchObject({ ok: true, result: selected });
 
-        const agent = await startSessionMcpAgent({ testDir, directory: machine.workspaceDir,
-          daemonState: machine.daemon.state, executeAsPerson: account.executeAsPerson });
+        if (!requesterVendor) throw new Error('F4 native Session vendor fixture is missing');
+        const ownerSession = await fixture.assertKnownGoodSessionControl(account, machine);
         try {
-          const runRead = async () => {
-            const result = await agent.execute(DATABASE_STATEMENT_RUN_ACTION_ID_V1, input);
-            if (!result.ok) return result;
-            const accepted = ActionOperationAcceptedResultSchema.safeParse(result.result);
-            if (!accepted.success) return result;
-            const receipt = await account.execute(ACTION_OPERATION_GET_ACTION_ID_V1, {
-              ...machine.target, operationId: accepted.data.operationId, waitForTerminal: true,
-            });
-            if (!receipt.ok) throw new Error(`Managed Session Read observation refused (${receipt.errorCode})`);
-            const observed = ActionOperationGetV1ResponseSchema.parse(receipt.result);
-            if (observed.kind !== 'found') throw new Error('Managed Session Read operation was not found');
-            const settled = readActionOperationTerminalResultV1(observed.operation);
-            if (!settled) throw new Error(`Managed Session Read did not settle (${observed.operation.state})`);
-            return settled;
-          };
+          await setDefaultPermissionMode(account, ownerSession.sessionId);
+          const runRead = () => fixture.executeSessionMcpAction(account,
+            { ...ownerSession, logPath: requesterVendor.logPath }, DATABASE_STATEMENT_RUN_ACTION_ID_V1, input);
           const setAgentAccess = async (dataAgentAccess: 'none' | 'read') => {
             const current = DeploymentEnvironmentGetResultV1Schema.parse(await invoke('deployments.environments.get', address));
             if (!current.ok) throw new Error(`Managed role policy read refused (${current.error})`);
@@ -347,8 +361,50 @@ it.each(providers)('F4 selects %s preview/production without a neighboring fallb
           await setAgentAccess('read');
           expect(await runRead()).toMatchObject({ ok: true, result: selected });
         } finally {
-          await agent.stop();
+          await account.executeAsPerson('session.stop', { sessionId: ownerSession.sessionId });
         }
+
+        const outsider = await fixture.createAccount('f4-foreign-session');
+        const member = await fixture.createAccount('f4-team-member-without-source');
+        const memberId = readAccountIdFromToken(member.credentials.token);
+        if (!accountId || !memberId) throw new Error('F4 foreign Session fixture is incomplete');
+        const team = TeamSummaryV1Schema.parse(await reviewed('teams.create', {
+          v: 1, name: 'F4 Team without Source access', initialOwnerAccountId: accountId, requestKey: randomUUID(),
+        }));
+        await reviewed('teams.members.add', {
+          v: 1, teamId: team.id, accountId: memberId, role: 'member', historyAccess: 'all_existing',
+        });
+        for (const requester of [outsider, member]) {
+          const requesterMachine = await fixture.enrollDaemon(requester, managedDaemonOptions);
+          const { sessionId } = await fixture.assertKnownGoodSessionControl(requester, requesterMachine);
+          try {
+            await setDefaultPermissionMode(requester, sessionId);
+            observeSessionReads = true;
+            const providerRequests = boundary.entries().length;
+            const refused = await fixture.executeSessionMcpAction(requester, { sessionId, logPath: requesterVendor.logPath },
+              DATABASE_STATEMENT_RUN_ACTION_ID_V1, input);
+            expect(refused, requester.name).toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+            expect(sessionReadAdmissions, requester.name).toContainEqual({ sessionId, target, statusCode: 403 });
+            expect(boundary.entries().slice(providerRequests).some(request => request.path === '/sql')).toBe(false);
+          } finally {
+            observeSessionReads = false;
+            await requester.executeAsPerson('session.stop', { sessionId });
+          }
+        }
+        async function setDefaultPermissionMode(requester: typeof account, sessionId: string) {
+          // Let the database authorization owner decide the read through action_execute.
+          const permission = await requester.executeAsPerson(SESSION_PERMISSION_MODE_SET_ACTION_ID_V1, {
+            sessionId, permissionMode: 'default', applyTiming: 'immediate',
+          });
+          expect(permission, requester.name).toMatchObject({ ok: true, result: { ok: true } });
+        }
+
+        async function reviewed(actionId: ActionId, input: unknown) {
+          const result = await account.executeReviewed(actionId, input, { presentUserConfirmation: { actionId } });
+          if (!result.ok) throw new Error(`F4 setup ${actionId} refused (${result.errorCode})`);
+          return result.result;
+        }
+        return;
       }
       const empty = await read(`${sql} WHERE false`);
       expect(empty).toMatchObject({ ok: true, operation: 'statement.run', results: [{ rows: [],
@@ -659,4 +715,4 @@ it.each(providers)('F4 selects %s preview/production without a neighboring fallb
       try { await boundary.stop(); } finally { await postgresTls?.cleanup(); }
     }
   }
-}, 0);
+}
