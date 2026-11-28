@@ -112,6 +112,11 @@ link previews preserves received input that is still waiting to be delivered.
 Revoking access, changing the target or recipients, or changing permission policy
 still prevents that input from using its previous authority.
 
+When a Session target is a paused Bot, Channels holds new messages from admitted
+senders. Each sender gets one acknowledgement per conversation during that
+pause. When the Bot resumes, Channels delivers the held messages oldest first.
+Work that the Bot already started can finish while it is paused.
+
 ### Binding support in development source
 
 This matrix describes the current unreleased 0.3 implementation, not completed

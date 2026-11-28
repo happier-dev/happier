@@ -90,6 +90,7 @@ export const CHANNEL_STATE_INDEX_ID = {
   byPullRequestSessionBindingV1: 'by-pr-session-binding-v1',
   byAttention: 'by-attention',
   byIngressDue: 'by-ingress-due',
+  byHeldBot: 'by-held-bot',
 } as const;
 
 export const CHANNEL_DELIVERIES_FIELD = {
@@ -997,6 +998,17 @@ const INGRESS_OBLIGATION_PAYLOAD_SCHEMA = {
             required: ['phase', 'attemptCount', 'dueAt'],
             additionalProperties: false,
           })),
+        {
+          type: 'object',
+          properties: {
+            phase: { const: 'heldForBotPause' },
+            attemptCount: { const: 0 },
+            dueAt: nullable(NON_NEGATIVE_SAFE_INTEGER_SCHEMA),
+            pausedAt: NON_NEGATIVE_SAFE_INTEGER_SCHEMA,
+          },
+          required: ['phase', 'attemptCount', 'dueAt', 'pausedAt'],
+          additionalProperties: false,
+        },
       ],
     },
     // The host-stamped turn resolved for a frozen chat approval, written
@@ -1033,7 +1045,7 @@ const INGRESS_OBLIGATION_PAYLOAD_SCHEMA = {
         properties: {
           lifecycle: {
             type: 'object',
-            properties: { phase: { type: 'string', enum: ['batchCollecting', 'debounceDue', 'ready', 'attempting', 'retryDue', 'blocked'] } },
+            properties: { phase: { type: 'string', enum: ['batchCollecting', 'debounceDue', 'ready', 'attempting', 'retryDue', 'blocked', 'heldForBotPause'] } },
             required: ['phase'],
           },
           disposition: NULL_SCHEMA,
@@ -1250,6 +1262,18 @@ const SESSION_ROTATION_PAYLOAD_SCHEMA = {
 
 const INGRESS_OBLIGATION_ROW_CONSISTENCY_SCHEMA: PluginJsonSchema = {
   oneOf: [
+    {
+      properties: {
+        [CHANNEL_STATE_FIELD.terminal]: { const: false },
+        [CHANNEL_STATE_FIELD.attention]: { const: false },
+        [CHANNEL_STATE_FIELD.dueAt]: nullable(NON_NEGATIVE_SAFE_INTEGER_SCHEMA),
+        payload: { type: 'object', properties: {
+          lifecycle: { type: 'object', properties: { phase: { const: 'heldForBotPause' } }, required: ['phase'] },
+          disposition: NULL_SCHEMA, nonAdmission: NULL_SCHEMA,
+        }, required: ['lifecycle', 'disposition', 'nonAdmission'] },
+      },
+      required: [CHANNEL_STATE_FIELD.terminal, CHANNEL_STATE_FIELD.attention, CHANNEL_STATE_FIELD.heldBotId, 'payload'],
+    },
     {
       properties: {
         [CHANNEL_STATE_FIELD.terminal]: BOOLEAN_SCHEMA,
@@ -1535,8 +1559,8 @@ const STATE_RECORDS: readonly StateRecordDefinition[] = [
  */
 export const CHANNEL_STATE_COLLECTION = defineAccountCollection({
   id: CHANNEL_STATE_COLLECTION_ID,
-  schemaVersion: 31,
-  readableSchemaVersions: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30],
+  schemaVersion: 32,
+  readableSchemaVersions: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31],
   // V21 publishes the V20 document with its reused subschemas under `$defs`
   // (same validation, a fraction of the size every reader compiles).
   // V22 admits due unclassified PR captures so interrupted batching can resume.
@@ -1562,6 +1586,7 @@ export const CHANNEL_STATE_COLLECTION = defineAccountCollection({
       [CHANNEL_STATE_FIELD.connectionId]: CONNECTION_ID_SCHEMA,
       [CHANNEL_STATE_FIELD.bindingId]: BINDING_ID_SCHEMA,
       [CHANNEL_STATE_FIELD.sessionId]: boundedString(MAX_PLUGIN_ID_LENGTH),
+      [CHANNEL_STATE_FIELD.heldBotId]: boundedString(MAX_PLUGIN_ID_LENGTH),
       [CHANNEL_STATE_FIELD.prBinding]: BOOLEAN_SCHEMA,
       [CHANNEL_STATE_FIELD.prUpdateAt]: NON_NEGATIVE_SAFE_INTEGER_SCHEMA,
       [CHANNEL_STATE_FIELD.terminal]: BOOLEAN_SCHEMA,
@@ -1630,6 +1655,7 @@ export const CHANNEL_STATE_COLLECTION = defineAccountCollection({
     CHANNEL_STATE_FIELD.connectionId,
     CHANNEL_STATE_FIELD.bindingId,
     CHANNEL_STATE_FIELD.sessionId,
+    CHANNEL_STATE_FIELD.heldBotId,
     CHANNEL_STATE_FIELD.prBinding,
     CHANNEL_STATE_FIELD.prUpdateAt,
     CHANNEL_STATE_FIELD.terminal,
@@ -1706,6 +1732,14 @@ export const CHANNEL_STATE_COLLECTION = defineAccountCollection({
         { field: CHANNEL_STATE_FIELD.id, direction: 'asc' },
       ],
     },
+    {
+      id: CHANNEL_STATE_INDEX_ID.byHeldBot,
+      fields: [
+        { field: CHANNEL_STATE_FIELD.heldBotId, direction: 'asc' },
+        { field: CHANNEL_STATE_FIELD.createdAt, direction: 'asc' },
+        { field: CHANNEL_STATE_FIELD.id, direction: 'asc' },
+      ],
+    },
   ],
   uiQueries: [],
   relations: [],
@@ -1748,7 +1782,7 @@ const DELIVERY_SOURCE_SCHEMA: PluginJsonSchema = {
         controlId: boundedString(MAX_PLUGIN_ID_LENGTH),
         controlKind: {
           type: 'string',
-          enum: ['pairing', 'newSession', 'approval', 'userAction', 'stop', 'refusal', 'recovery'],
+          enum: ['pairing', 'newSession', 'approval', 'userAction', 'stop', 'refusal', 'recovery', 'botPaused'],
         },
       },
       required: ['kind', 'controlId', 'controlKind'],
@@ -2160,8 +2194,8 @@ const DELIVERY_ROW_STATE_CONSISTENCY_SCHEMA: PluginJsonSchema = {
  */
 export const CHANNEL_DELIVERIES_COLLECTION = defineAccountCollection({
   id: CHANNEL_DELIVERIES_COLLECTION_ID,
-  schemaVersion: 6,
-  readableSchemaVersions: [1, 2, 3, 4, 5],
+  schemaVersion: 7,
+  readableSchemaVersions: [1, 2, 3, 4, 5, 6],
   schema: {
     type: 'object',
     properties: {

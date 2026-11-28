@@ -269,6 +269,10 @@ export class MemoryCollection<TValue extends Record<string, unknown> = Record<st
           ? compareCanonicalText(String(left.value['record-kind']), String(right.value['record-kind']))
             || Number(left.value['due-at'] ?? -1) - Number(right.value['due-at'] ?? -1)
             || compareCanonicalText(left.rowId, right.rowId)
+        : input.index === CHANNEL_STATE_INDEX_ID.byHeldBot
+          ? compareCanonicalText(String(left.value['held-bot-id'] ?? ''), String(right.value['held-bot-id'] ?? ''))
+            || Number(left.value['created-at']) - Number(right.value['created-at'])
+            || compareCanonicalText(left.rowId, right.rowId)
         : input.index === CHANNEL_STATE_INDEX_ID.byPullRequestSessionBindingV1
           ? compareCanonicalText(String(left.value['session-id'] ?? ''), String(right.value['session-id'] ?? ''))
             || compareCanonicalText(String(left.value['binding-id'] ?? ''), String(right.value['binding-id'] ?? ''))
@@ -293,6 +297,10 @@ export class MemoryCollection<TValue extends Record<string, unknown> = Record<st
           const dueAt = row.value['due-at'];
           return row.value['record-kind'] === prefix
             && matchesTestCollectionNumericRange(dueAt, input.range);
+        }
+        if (input.index === CHANNEL_STATE_INDEX_ID.byHeldBot) {
+          const botId = row.value['held-bot-id'];
+          return typeof botId === 'string' && relationPrefixes.some(([id]) => id === undefined || id === botId);
         }
         if (input.index === CHANNEL_STATE_INDEX_ID.byConnectionKindV1) {
           return relationPrefixes.some(([connectionId, kind]) => row.value['connection-id'] === connectionId

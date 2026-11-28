@@ -394,9 +394,10 @@ type IngressObligationPayload = Readonly<{
     bindingAuthorityEpoch?: number | null;
   }>;
   lifecycle: Readonly<{
-    phase: 'batchCollecting' | 'debounceDue' | 'ready' | 'attempting' | 'retryDue' | 'blocked' | 'terminal';
+    phase: 'batchCollecting' | 'debounceDue' | 'ready' | 'attempting' | 'retryDue' | 'blocked' | 'terminal' | 'heldForBotPause';
     attemptCount: number;
     dueAt: number | null;
+    pausedAt?: number;
   }>;
   /**
    * The host-stamped turn resolved for this obligation's frozen chat approval,
@@ -429,6 +430,7 @@ type IngressObligationRecord = Readonly<{
   /** Omitted for connection-owned provider Event obligations. */
   'binding-id'?: string;
   'session-id'?: string;
+  'held-bot-id'?: string;
   'pr-update-at'?: number;
   terminal: boolean;
   attention: boolean;
@@ -832,6 +834,7 @@ function asIngressObligation(row: StateRow | null):
   const connectionId = own(row.value, CHANNEL_STATE_FIELD.connectionId);
   const bindingId = own(row.value, CHANNEL_STATE_FIELD.bindingId);
   const sessionId = own(row.value, CHANNEL_STATE_FIELD.sessionId);
+  const heldBotId = own(row.value, CHANNEL_STATE_FIELD.heldBotId);
   const prUpdateAt = own(row.value, CHANNEL_STATE_FIELD.prUpdateAt);
   const terminal = own(row.value, CHANNEL_STATE_FIELD.terminal);
   const attention = own(row.value, CHANNEL_STATE_FIELD.attention);
@@ -962,10 +965,15 @@ function asIngressObligation(row: StateRow | null):
   ) return undefined;
   const phase = stringMember(
     own(lifecycle, 'phase'),
-    ['batchCollecting', 'debounceDue', 'ready', 'attempting', 'retryDue', 'blocked', 'terminal'] as const,
+    ['batchCollecting', 'debounceDue', 'ready', 'attempting', 'retryDue', 'blocked', 'terminal', 'heldForBotPause'] as const,
   );
   const attemptCount = own(lifecycle, 'attemptCount');
   const dueAt = own(lifecycle, 'dueAt');
+  const pausedAt = own(lifecycle, 'pausedAt');
+  if (phase === 'heldForBotPause') {
+    if (terminal || attention || target?.kind !== 'session' || target.sessionId !== heldBotId
+      || attemptCount !== 0 || !isNonNegativeSafeInteger(pausedAt)) return undefined;
+  } else if (heldBotId !== undefined || pausedAt !== undefined) return undefined;
   if (
     phase === undefined
     || !isNonNegativeSafeInteger(attemptCount)
@@ -1004,6 +1012,7 @@ function asIngressObligation(row: StateRow | null):
       'connection-id': connectionId,
       ...(bindingId === undefined ? {} : { 'binding-id': bindingId }),
       ...(sessionId === undefined ? {} : { 'session-id': sessionId }),
+      ...(typeof heldBotId === 'string' ? { 'held-bot-id': heldBotId } : {}),
       ...(prUpdateAt === undefined ? {} : { 'pr-update-at': prUpdateAt }),
       terminal,
       attention,
@@ -1017,7 +1026,7 @@ function asIngressObligation(row: StateRow | null):
         ...(eventCandidate === undefined ? {} : { eventCandidate: eventCandidate === null ? null : eventCandidate.data }),
         target,
         sourceAuthority: parsedSourceAuthority,
-        lifecycle: { phase, attemptCount, dueAt },
+        lifecycle: { phase, attemptCount, dueAt, ...(typeof pausedAt === 'number' ? { pausedAt } : {}) },
         approvalTurnId,
         userActionAnswerTurnId,
         ...(userActionAnswerRequestId === undefined ? {} : { userActionAnswerRequestId }),
@@ -1559,6 +1568,7 @@ async function opaqueHmacRowId(input: Readonly<{
     | 'inbound-conversation'
     | 'discussion-thread-input'
     | 'checkpoint'
+    | 'bot-pause-notice'
     | 'session-rotation';
   parts: readonly string[];
 }>): Promise<string> {
@@ -2148,7 +2158,8 @@ function terminalIngressObligationValue(input: Readonly<{
   nonAdmission?: IngressNonAdmission;
   now: number;
 }>): JsonRecord {
-  const { [CHANNEL_STATE_FIELD.dueAt]: _dueAt, ...obligationWithoutDueAt } = input.obligation;
+  const { [CHANNEL_STATE_FIELD.dueAt]: _dueAt, [CHANNEL_STATE_FIELD.heldBotId]: _heldBotId,
+    ...obligationWithoutDueAt } = input.obligation;
   const { prFixExhausted: _exhausted, prEventActors: _actors, userActionAnswerRequestId: _request,
     resumeWitness: _resumeWitness, carryForward, ...payload } = input.obligation.payload;
   return {
@@ -3875,6 +3886,35 @@ async function settleTerminalRefusalCustody(input: Readonly<{
   });
 }
 
+async function acknowledgeHeldBotIngress(input: Readonly<{
+  context: PluginInvocationContext;
+  routingIdentityKey: string;
+  obligation: IngressObligationRecord;
+}>): Promise<IngressCheckpointOutcome> {
+  const { obligation } = input;
+  const { lifecycle, observationShell } = obligation.payload;
+  const bindingId = obligation['binding-id'];
+  const botId = obligation['held-bot-id'];
+  const principalId = observationShell.actor.principalId;
+  if (bindingId === undefined || botId === undefined || principalId === null || lifecycle.pausedAt === undefined) return 'checkpointSafe';
+  const { endpoint } = observationShell;
+  const noticeId = await opaqueHmacRowId({ routingIdentityKey: input.routingIdentityKey, domain: 'bot-pause-notice',
+    parts: [bindingId, botId, String(lifecycle.pausedAt), principalId, endpoint.kind, endpoint.id] });
+  return acceptIngressControlResponseCustody({
+    context: input.context,
+    outward: {
+      connectionId: obligation['connection-id'], bindingId, routeAuthority: {},
+      source: { kind: 'controlResponse', controlId: noticeId, controlKind: 'botPaused' },
+      endpoint,
+      content: { text: "I'm paused, so your message is held. I'll pick it up when I'm resumed." },
+      deliveryKey: `ingress-bot-pause:${noticeId}`, linkPreviewPolicy: 'suppress',
+      ...(endpoint.kind === 'thread' ? { replyContext: { threadId: endpoint.id } } : {}),
+    },
+    invalidCode: 'channels_ingress_bot_pause_notice_invalid',
+    invalidMessage: 'The paused Bot acknowledgement has an invalid route.',
+  });
+}
+
 /**
  * This is deliberately a second, obligation-only CAS. A failed first-attempt
  * authority fence must never turn a concurrently claimed attempting row
@@ -3970,15 +4010,20 @@ async function dispatchIngressObligationAttempt(input: Readonly<{
   /** Occurrence owner supplies the original payload; old targets remain readable. */
   nativeEventCandidate?: ConversationIngressAutomationEventCandidateV1 | null;
   admittedAuthority?: IngressDispatchAuthority;
+  heldSessionTarget?: Awaited<ReturnType<typeof readSessionIngressTarget>>;
   threadBirthAdmitted?: true;
 }>): Promise<IngressCheckpointOutcome> {
   let obligation = input.obligation;
   let authority: IngressDispatchAuthority | undefined;
   let currentBinding: Readonly<{ row: StateRow; value: ChannelBindingRecord }> | undefined;
+  const held = obligation.value.payload.lifecycle.phase === 'heldForBotPause';
   if (obligation.value.payload.lifecycle.phase === 'terminal') {
     return settleTerminalRefusalCustody({ context: input.context, obligation });
   }
   if (obligation.value.payload.lifecycle.phase === 'blocked') return 'checkpointSafe';
+  if (held && input.entryPoint !== 'dueWork') {
+    return acknowledgeHeldBotIngress({ ...input, obligation: obligation.value });
+  }
   // Only the classified poll cycle can finish capture. Members have no
   // independent input effect: the leader settles them atomically with itself.
   if (obligation.value.payload.lifecycle.phase === 'batchCollecting'
@@ -4039,7 +4084,7 @@ async function dispatchIngressObligationAttempt(input: Readonly<{
     });
   }
   let sessionTarget: Awaited<ReturnType<typeof readSessionIngressTarget>> | undefined;
-  if (['ready', 'debounceDue', 'retryDue'].includes(obligation.value.payload.lifecycle.phase)) {
+  if (held || ['ready', 'debounceDue', 'retryDue'].includes(obligation.value.payload.lifecycle.phase)) {
     authority = input.admittedAuthority ?? await revalidateFirstDispatchAuthority({
       context: input.context,
       source: input.source,
@@ -4052,7 +4097,7 @@ async function dispatchIngressObligationAttempt(input: Readonly<{
       return terminalizeUnadmittedIngress({ context: input.context, obligation });
     }
     currentBinding = authority.bindings[0];
-    if (currentBinding !== undefined && input.admittedAuthority === undefined) {
+    if (!held && currentBinding !== undefined && input.admittedAuthority === undefined) {
       const decision = ingressAdmissionDecision({ binding: currentBinding.value, ingress,
         ...(input.threadBirthAdmitted ? { threadBirthAdmitted: true } : {}) });
       if (decision.terminalOutcome !== undefined) {
@@ -4077,11 +4122,37 @@ async function dispatchIngressObligationAttempt(input: Readonly<{
     if (obligation.value.payload.lifecycle.attemptCount === 0 && target?.kind === 'session'
       && !target.stop && !target.resume && target.approval === null && target.userActionAnswer === null
       && obligation.value.payload.userActionAnswerRequestId === undefined) {
-      sessionTarget = await readSessionIngressTarget(input.context, target.sessionId);
-      if (sessionTarget?.summary.botPausedAt != null) {
-        const terminal = await settleIngressTerminal({ context: input.context, authority, obligation,
-          disposition: 'suppressed', nonAdmission: { reason: 'bot_paused', senderFeedbackEligible: false } });
-        return settleTerminalRefusalCustody({ context: input.context, obligation: terminal });
+      sessionTarget = input.heldSessionTarget === undefined
+        ? await readSessionIngressTarget(input.context, target.sessionId) : input.heldSessionTarget;
+      const pausedAt = sessionTarget?.summary.botPausedAt;
+      if (pausedAt != null) {
+        if (!held) {
+          // Schedule one observation of the newly held row. A resume can arrive
+          // before this write becomes visible to the supervisor's Session watch.
+          obligation = await putIngressObligationLifecycle({ context: input.context, obligation, value: {
+            ...obligation.value, [CHANNEL_STATE_FIELD.heldBotId]: target.sessionId,
+            [CHANNEL_STATE_FIELD.dueAt]: now, [CHANNEL_STATE_FIELD.updatedAt]: now,
+            payload: { ...obligation.value.payload, lifecycle: { phase: 'heldForBotPause', pausedAt, dueAt: now, attemptCount: 0 } },
+          } });
+        }
+        const notice = await acknowledgeHeldBotIngress({ ...input, obligation: obligation.value });
+        if (held && notice === 'unsettled') {
+          throw pluginError('channels_ingress_bot_pause_notice_unavailable', 'The paused Bot acknowledgement could not be retained.', true);
+        }
+        if (held && obligation.value.payload.lifecycle.dueAt !== null && notice === 'checkpointSafe') {
+          const { [CHANNEL_STATE_FIELD.dueAt]: _dueAt, ...value } = obligation.value;
+          await putIngressObligationLifecycle({ context: input.context, obligation, value: {
+            ...value, [CHANNEL_STATE_FIELD.updatedAt]: now,
+            payload: { ...value.payload, lifecycle: { ...value.payload.lifecycle, dueAt: null } },
+          } });
+        }
+        return notice;
+      }
+      if (held) {
+        const { [CHANNEL_STATE_FIELD.heldBotId]: _heldBotId, ...value } = obligation.value;
+        obligation = { ...obligation, value: { ...value, payload: { ...value.payload,
+          lifecycle: { phase: 'ready', attemptCount: 0, dueAt: null },
+        } } };
       }
     }
     const carry = obligation.value.payload.lifecycle.attemptCount === 0 && ingress.kind === 'fullText'
@@ -4984,6 +5055,7 @@ async function settleFailedIngressDueWork(input: Readonly<{
   if (current === undefined) return 'unsettled';
   if (current.value.terminal) return 'checkpointSafe';
   if (current.value.payload.lifecycle.phase === 'blocked') return 'checkpointSafe';
+  if (current.value.payload.lifecycle.phase === 'heldForBotPause') throw input.error;
   if (current.value.payload.lifecycle.phase !== 'attempting') return 'unsettled';
   // Retain a stop attempt: retryDue would authorize another non-idempotent
   // cancellation. Its existing recovery deadline resumes custody only.
@@ -5040,10 +5112,15 @@ async function dispatchIngressObligation(input: Parameters<typeof dispatchIngres
 }
 
 /** Account-wide due rows belong only to their connection's current Home and Machine. */
+type PlacedIngressWork = Readonly<{
+  obligation: NonNullable<ReturnType<typeof asIngressObligation>>;
+  connection: NonNullable<ReturnType<typeof asConnection>>;
+}>;
+
 async function* readPlacedConversationIngressDueWork(
   context: PluginInvocationContext,
-  input: Readonly<{ upper?: number; limit?: number }> = {},
-) {
+  input: Readonly<{ upper?: number; limit?: number; heldBotId?: string | null }> = {},
+): AsyncGenerator<PlacedIngressWork> {
   const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
   // Selection shares one placement observation per connection. First-effect
   // admission still rereads its authority before dispatch.
@@ -5052,19 +5129,28 @@ async function* readPlacedConversationIngressDueWork(
   let selected = 0;
   do {
     const page = await collection.query({
-      index: CHANNEL_STATE_INDEX_ID.byIngressDue,
-      prefix: [CHANNEL_STATE_RECORD_KIND.ingressObligation],
-      // Null due keys precede numeric keys; only nonnegative numbers are due work.
-      range: { lower: 0, ...(input.upper === undefined ? {} : { upper: input.upper }) },
+      ...(input.heldBotId !== undefined ? {
+        index: CHANNEL_STATE_INDEX_ID.byHeldBot,
+        ...(input.heldBotId === null ? { range: { lower: '' } } : { prefix: [input.heldBotId] }),
+      } : {
+        index: CHANNEL_STATE_INDEX_ID.byIngressDue,
+        prefix: [CHANNEL_STATE_RECORD_KIND.ingressObligation],
+        // Null due keys precede numeric keys; only nonnegative numbers are due work.
+        range: { lower: 0, ...(input.upper === undefined ? {} : { upper: input.upper }) },
+      }),
       order: 'asc',
       limit: PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1,
       ...(cursor === undefined ? {} : { cursor }),
     }, { signal: context.signal });
     for (const raw of page.rows) {
       const obligation = asIngressObligation(readStateRow(raw) ?? null);
-      if (obligation === undefined || obligation.value.terminal
-        || obligation.value.payload.lifecycle.dueAt === null
-        || (input.upper !== undefined && obligation.value.payload.lifecycle.dueAt > input.upper)) continue;
+      if (obligation === undefined || obligation.value.terminal) continue;
+      if (input.heldBotId !== undefined) {
+        if (obligation.value.payload.lifecycle.phase !== 'heldForBotPause') continue;
+      } else {
+        const dueAt = obligation.value.payload.lifecycle.dueAt;
+        if (dueAt === null || input.upper !== undefined && dueAt > input.upper) continue;
+      }
       const connectionId = obligation.value['connection-id'];
       if (!placedConnections.has(connectionId)) {
         const connection = asConnection(readStateRow(await collection.get(connectionId, { signal: context.signal })) ?? null);
@@ -5099,6 +5185,8 @@ export async function readNextConversationIngressDueAtForInvocation(
 export async function runConversationIngressDueWorkForInvocation(input: Readonly<{
   now?: number;
   limit?: number;
+  /** Snapshot/reset reconciles all held Bots, ordinary Session pushes name exact Bots. */
+  heldBotIds?: readonly string[] | null;
 }>, context: PluginInvocationContext, retention?: IngressAttemptRetention): Promise<number> {
   const now = input.now ?? Date.now();
   const limit = input.limit ?? PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1;
@@ -5107,16 +5195,15 @@ export async function runConversationIngressDueWorkForInvocation(input: Readonly
   }
   const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
   let processed = 0;
-  for await (const { obligation, connection } of readPlacedConversationIngressDueWork(context, {
-    upper: now, limit,
-  })) {
+  async function dispatch({ obligation, connection }: PlacedIngressWork,
+    heldSessionTarget?: Awaited<ReturnType<typeof readSessionIngressTarget>>): Promise<void> {
     try {
       const content = obligation.value.payload;
       if (content.normalizedIngress === null) {
         await collection.batch([{ kind: 'put', value: blockedIngressObligationValue({ obligation: obligation.value, now }),
           expectedRevision: obligation.row.revision }], { signal: context.signal });
         processed += 1;
-        continue;
+        return;
       }
       const ingress = content.normalizedIngress;
       const provider = ingressShell(ingress).endpoint.kind === 'githubPullRequest'
@@ -5132,7 +5219,8 @@ export async function runConversationIngressDueWorkForInvocation(input: Readonly
         authorityEpoch: connection.value.payload.authorityEpoch,
         pullRequestProvider: provider?.descriptor?.pullRequests,
       };
-      const needsPullRequestAdmission = obligation.value.payload.prBatchLeaderId === undefined
+      const needsPullRequestAdmission = obligation.value.payload.lifecycle.phase !== 'heldForBotPause'
+        && obligation.value.payload.prBatchLeaderId === undefined
         && (obligation.value.payload.lifecycle.phase === 'batchCollecting'
           || (obligation.value.payload.prUpdate !== undefined && obligation.value.payload.lifecycle.attemptCount === 0));
       // A retained aggregate with no native attempt is still a new admission.
@@ -5143,7 +5231,7 @@ export async function runConversationIngressDueWorkForInvocation(input: Readonly
           routingIdentityKey: connection.value.payload.routingIdentityKey,
           observations: [{ observation: ingress, eventCandidate: content.eventCandidate ?? null }] });
         processed += 1;
-        continue;
+        return;
       }
       await dispatchIngressObligation({
         context,
@@ -5155,6 +5243,7 @@ export async function runConversationIngressDueWorkForInvocation(input: Readonly
         obligation,
         ingress,
         nativeEventCandidate: content.eventCandidate,
+        heldSessionTarget,
       });
 
     } catch (error) {
@@ -5162,6 +5251,33 @@ export async function runConversationIngressDueWorkForInvocation(input: Readonly
       throw error;
     }
     processed += 1;
+  }
+  const heldTargets = new Map<string, Awaited<ReturnType<typeof readSessionIngressTarget>>>();
+  const drained = new Set<string>();
+  async function targetForHeldBot(id: string) {
+    if (!heldTargets.has(id)) heldTargets.set(id, await readSessionIngressTarget(context, id));
+    return heldTargets.get(id) ?? null;
+  }
+  async function drainHeldBots(heldBotId: string | null) {
+    for await (const work of readPlacedConversationIngressDueWork(context, { heldBotId })) {
+      const id = work.obligation.value['held-bot-id'];
+      if (id === undefined) continue;
+      const target = await targetForHeldBot(id);
+      if (target?.summary.botPausedAt != null) continue;
+      await dispatch(work, target);
+      drained.add(id);
+    }
+  }
+  if (input.heldBotIds === null) await drainHeldBots(null);
+  else for (const id of input.heldBotIds ?? []) await drainHeldBots(id);
+  for await (const work of readPlacedConversationIngressDueWork(context, { upper: now, limit })) {
+    const id = work.obligation.value['held-bot-id'];
+    if (id === undefined) await dispatch(work);
+    else if (!drained.has(id)) {
+      const target = await targetForHeldBot(id);
+      if (target?.summary.botPausedAt != null) await dispatch(work, target);
+      else await drainHeldBots(id);
+    }
   }
   return processed;
 }

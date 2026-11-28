@@ -116,6 +116,7 @@ export type ConversationControlResponseKind =
   | 'userAction'
   | 'stop'
   | 'refusal'
+  | 'botPaused'
   | 'recovery';
 
 /**
@@ -3020,6 +3021,7 @@ const CONVERSATION_CONTROL_RESPONSE_KINDS = new Set<ConversationControlResponseK
   'userAction',
   'stop',
   'refusal',
+  'botPaused',
   'recovery',
 ]);
 

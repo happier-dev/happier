@@ -499,8 +499,8 @@ describe('Channels collection declarations', () => {
     const before = JSON.stringify(retained);
     const migration = CHANNEL_ACCOUNT_COLLECTION_MIGRATIONS['channel-deliveries']?.find((edge) => edge.fromSchemaVersion === 2);
     expect(migration).toMatchObject({ toSchemaVersion: 3 });
-    expect(CHANNEL_DELIVERIES_COLLECTION.schemaVersion).toBe(6);
-    expect(CHANNEL_DELIVERIES_COLLECTION.readableSchemaVersions).toEqual([1, 2, 3, 4, 5]);
+    expect(CHANNEL_DELIVERIES_COLLECTION.schemaVersion).toBe(7);
+    expect(CHANNEL_DELIVERIES_COLLECTION.readableSchemaVersions).toEqual([1, 2, 3, 4, 5, 6]);
     const migrated = await migration?.migrate(retained, { currentRevision: 1 });
     expect(migrated).toEqual({ ...retained, payload: {
       ...(retained.payload as Readonly<Record<string, JsonValue>>), content: fixture.targetContent,
@@ -525,7 +525,7 @@ describe('Channels collection declarations', () => {
     expect(retentionIndex).toMatchObject({ toSchemaVersion: 6 });
     if (!retentionIndex) throw new Error('Missing delivery retention index migration');
     const declared = CHANNEL_ACCOUNT_COLLECTION_DECLARATIONS.find(collection => collection.id === 'channel-deliveries');
-    expect(declared).toMatchObject({ schemaVersion: 6, readableSchemaVersions: [1, 2, 3, 4, 5] });
+    expect(declared).toMatchObject({ schemaVersion: 7, readableSchemaVersions: [1, 2, 3, 4, 5, 6] });
     const validate = compilePluginJsonSchema(CHANNEL_DELIVERIES_COLLECTION.schema);
     const base = { attemptCount: 1, providerMessageIds: [] };
     const custodies = {
@@ -802,6 +802,14 @@ describe('Channels collection declarations', () => {
           { field: 'id', direction: 'asc' },
         ],
       },
+      {
+        id: 'by-held-bot',
+        fields: [
+          { field: 'held-bot-id', direction: 'asc' },
+          { field: 'created-at', direction: 'asc' },
+          { field: 'id', direction: 'asc' },
+        ],
+      },
     ]);
   });
 
@@ -830,8 +838,8 @@ describe('Channels collection declarations', () => {
       },
     } as const;
 
-    expect(CHANNEL_STATE_COLLECTION.schemaVersion).toBe(31);
-    expect(CHANNEL_STATE_COLLECTION.readableSchemaVersions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]);
+    expect(CHANNEL_STATE_COLLECTION.schemaVersion).toBe(32);
+    expect(CHANNEL_STATE_COLLECTION.readableSchemaVersions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]);
     expect(JSON.parse(JSON.stringify(CHANNEL_ACCOUNT_COLLECTION_DECLARATIONS)))
       .toEqual(CHANNEL_ACCOUNT_COLLECTION_DECLARATIONS);
     expect(staticDeclaration?.migrations).toEqual([{
@@ -906,6 +914,8 @@ describe('Channels collection declarations', () => {
       id: 'channel-state-v29-to-v30', fromSchemaVersion: 29, toSchemaVersion: 30,
     }, {
       id: 'channel-state-v30-to-v31', fromSchemaVersion: 30, toSchemaVersion: 31,
+    }, {
+      id: 'channel-state-v31-to-v32', fromSchemaVersion: 31, toSchemaVersion: 32,
     }]);
     expect(staticDeclaration).not.toHaveProperty('migrations.0.migrate');
     expect(censusPayload?.required).toContain('conflict');

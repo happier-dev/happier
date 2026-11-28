@@ -513,6 +513,7 @@ describe('Channels core manifest', () => {
         CHANNEL_STATE_FIELD.connectionId,
         CHANNEL_STATE_FIELD.bindingId,
         CHANNEL_STATE_FIELD.sessionId,
+        CHANNEL_STATE_FIELD.heldBotId,
         CHANNEL_STATE_FIELD.prBinding,
         CHANNEL_STATE_FIELD.prUpdateAt,
         CHANNEL_STATE_FIELD.terminal,
@@ -579,14 +580,22 @@ describe('Channels core manifest', () => {
             { field: CHANNEL_STATE_FIELD.id, direction: 'asc' },
           ],
         },
+        {
+          id: CHANNEL_STATE_INDEX_ID.byHeldBot,
+          fields: [
+            { field: CHANNEL_STATE_FIELD.heldBotId, direction: 'asc' },
+            { field: CHANNEL_STATE_FIELD.createdAt, direction: 'asc' },
+            { field: CHANNEL_STATE_FIELD.id, direction: 'asc' },
+          ],
+        },
       ],
       uiQueries: [],
       relations: [],
     });
     expect(collections?.find(({ id }) => id === CHANNEL_DELIVERIES_COLLECTION_ID)).toMatchObject({
       id: CHANNEL_DELIVERIES_COLLECTION_ID,
-      schemaVersion: 6,
-      readableSchemaVersions: [1, 2, 3, 4, 5],
+      schemaVersion: 7,
+      readableSchemaVersions: [1, 2, 3, 4, 5, 6],
       rowIdField: CHANNEL_DELIVERIES_FIELD.id,
       serverReadable: [
         CHANNEL_DELIVERIES_FIELD.recordKind,

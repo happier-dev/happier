@@ -5,7 +5,7 @@ import { startPackedChannelProviderLoopback } from '../../../tests/src/plugin-pl
 import { createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
 import { arePluginMachineExecutionOriginsEqual, definePlugin, PluginError } from '@happier-dev/plugin-sdk';
 import { arePluginMachineExecutionRoutingsEqual, getPluginMachineExecutionRouting, type PluginMachineExecutionOriginV1, type PluginMachineExecutionRoutingV1 } from '@happier-dev/plugin-sdk/actions';
-import type { SessionSendRequest, SessionSpawnNewInputV2, SessionSummary } from '@happier-dev/plugin-sdk/sessions';
+import type { SessionSendRequest, SessionSpawnNewInputV2, SessionSummary, SessionWatchEvent } from '@happier-dev/plugin-sdk/sessions';
 import { getActionSpec, parsePluginHostActionInvocation } from '@happier-dev/plugin-sdk/actions';
 import { AutomationConversationAdmitInputV1Schema } from '@happier-dev/plugin-sdk/automations';
 import { createScmCapabilities } from '@happier-dev/plugin-sdk/scm';
@@ -1037,6 +1037,7 @@ function createIngressHarness(options: IngressHarnessOptions = {}) {
     }>) {
       assertChannelsTestCollectionQueryLimit(request.limit);
       if (request.index === CHANNEL_STATE_INDEX_ID.bySessionKindBindingUpdateV1
+        || request.index === CHANNEL_STATE_INDEX_ID.byHeldBot
         || request.index === CHANNEL_STATE_INDEX_ID.byConnectionKindV1
         || request.index === CHANNEL_STATE_INDEX_ID.byPullRequestSessionBindingV1) {
         // Reuse the canonical persistence testkit for selected indexes;
@@ -1240,6 +1241,7 @@ function createIngressHarness(options: IngressHarnessOptions = {}) {
         ?? options.pollExecutionOrigin ?? telegramExecutionOrigin), pluginId: 'happier.channels' }) },
     targetedContributions: targetedTelegramPollContribution(options.readAdmittedProviderContributions),
     sessions: {
+      watch: () => ({ dispose() {} }),
       get: async (sessionId: string) => (options.availableSessionIds ?? ['session-1']).includes(sessionId)
         ? { send, summary: async () => options.sessionSummary?.(sessionId) ?? {
           id: sessionId, state: 'idle', runtimeAvailability: { status: 'available' },
@@ -2465,24 +2467,54 @@ describe('Conversation provider observation ingress', () => {
     });
   });
 
-  it('settles input to a paused Bot without replaying it after resume', async () => {
-    let botPausedAt: number | null = 1_800_000_000_000;
-    const harness = createIngressHarness({ sessionSummary: id => ({
+  it('holds messages to a paused Bot, announces once to the sender, and drains oldest first after resume', async () => {
+    const now = Date.now();
+    let botPausedAt: number | null = now - 1;
+    const sessionSummary = (id: string): SessionSummary => ({
       id, state: 'idle', runtimeAvailability: { status: 'available' },
       storagePolicy: 'optional', encryptionMode: 'e2ee', updatedAtMs: 1, botPausedAt,
-    }) });
-    const input = observation({ messageRevision: 'while-paused' });
-    await ingestConversationProviderObservationForInvocation(input, harness.context);
+    });
+    const harness = createIngressHarness({ sessionSummary });
+    const first = observation({ messageRevision: 'first', messageText: 'First question', occurredAt: now });
+    const second = observation({ messageRevision: 'second', occurrenceId: 'telegram:update:9002',
+      messageId: 'telegram:message:6', messageText: 'Second question', occurredAt: now + 1 });
+    await ingestConversationProviderObservationForInvocation(first, harness.context);
+    await ingestConversationProviderObservationForInvocation(second, harness.context);
+    await ingestConversationProviderObservationForInvocation(first, harness.context);
+    await runConversationIngressDueWorkForInvocation({}, harness.context);
     expect(harness.send).not.toHaveBeenCalled();
     const obligations = [...harness.rows.values()].filter(row => row.value['record-kind'] === 'ingress-obligation');
-    expect(obligations).toHaveLength(1);
-    expect(obligations[0]?.value.payload).toMatchObject({ disposition: 'suppressed',
-      nonAdmission: { reason: 'bot_paused', senderFeedbackEligible: false } });
-    botPausedAt = null;
-    await ingestConversationProviderObservationForInvocation(input, harness.context);
-    expect(harness.send).not.toHaveBeenCalled();
-    await ingestConversationProviderObservationForInvocation(observation({ messageRevision: 'after-resume', occurrenceId: 'telegram:update:9002', messageId: 'telegram:message:6' }), harness.context);
-    expect(harness.send).toHaveBeenCalledTimes(1);
+    expect(obligations).toHaveLength(2);
+    expect(obligations.every(row => row.value.terminal === false)).toBe(true);
+    expect([...harness.rows.values()].filter(row => row.value['record-kind'] === 'outward-delivery').map(row => row.value.payload))
+      .toMatchObject([{ content: { text: "I'm paused, so your message is held. I'll pick it up when I'm resumed." } }]);
+    // Restart the supervisor over the retained Account rows. Its host Session
+    // watch must wake the parked rows even with no new provider input.
+    const state = new MemoryCollection();
+    for (const [id, row] of harness.rows) state.rows.set(id, row);
+    const generation = new AbortController();
+    let publishSession!: (event: SessionWatchEvent) => void;
+    const services = { ...harness.context.services, storage: { account: { collection: () => state } },
+      sessions: { ...harness.context.services.sessions, watch: (_query: unknown, listener: typeof publishSession) => {
+        publishSession = listener;
+        listener({ kind: 'snapshot', revision: '1', items: [sessionSummary('session-1')] });
+        return { dispose() {} };
+      } },
+    } as unknown as PluginServices;
+    const supervisor = createIngressSupervisor();
+    const running = supervisor.run({ ...harness.context, signal: generation.signal, services } as unknown as BackgroundServiceContext);
+    try {
+      await vi.waitFor(() => expect(publishSession).toBeDefined());
+      botPausedAt = null;
+      publishSession({ kind: 'upserted', revision: '2', item: sessionSummary('session-1') });
+      await vi.waitFor(() => expect(obligations.every(row => state.rows.get(row.rowId)?.value.terminal === true)).toBe(true));
+      await ingestConversationProviderObservationForInvocation(first, { ...harness.context, services });
+      expect(harness.send.mock.calls.map(([request]) => sentUserTextRequest(request).text))
+        .toEqual(['First question', 'Second question']);
+    } finally {
+      generation.abort();
+      await running;
+    }
   });
 
   it.each(['mixed', 'filesOnly'] as const)('visibly refuses %s Workflow file input instead of admitting only its text', async kind => {

@@ -81,6 +81,7 @@ function backgroundContext(
     signal,
     services: {
       storage: { account: { collection: () => collection } },
+      sessions: { watch: () => ({ dispose() {} }) },
       logger: { info: vi.fn(), ...(logger ?? { warn: vi.fn() }) },
       events: { host: { subscribe: () => ({ dispose() {} }) },
         plugin: { emit: async () => ({ status: 'admitted', sequence: 1, subscriberCount: 0 }) } },

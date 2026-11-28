@@ -16,6 +16,7 @@ export const CHANNEL_STATE_FIELD = {
   connectionId: 'connection-id',
   bindingId: 'binding-id',
   sessionId: 'session-id',
+  heldBotId: 'held-bot-id',
   prBinding: 'pr-binding',
   prUpdateAt: 'pr-update-at',
   terminal: 'terminal',
@@ -458,6 +459,11 @@ export const CHANNEL_COLLECTION_MIGRATIONS = {
     // Both v30 writers persisted the resolved Session ID. Only the
     // declaration of the unused selector branches differed.
     migrate: (value) => value,
+  }, {
+    id: 'channel-state-v31-to-v32',
+    fromSchemaVersion: 31,
+    toSchemaVersion: 32,
+    migrate: (value) => value,
   }],
   [CHANNEL_DELIVERIES_COLLECTION_ID]: [{
     id: 'channel-deliveries-v1-to-v2',
@@ -490,6 +496,11 @@ export const CHANNEL_COLLECTION_MIGRATIONS = {
     fromSchemaVersion: 5,
     toSchemaVersion: 6,
     // Adopt the terminal/update-time index without rewriting delivery custody.
+    migrate: (value) => value,
+  }, {
+    id: 'channel-deliveries-v6-to-v7',
+    fromSchemaVersion: 6,
+    toSchemaVersion: 7,
     migrate: (value) => value,
   }],
 } satisfies Readonly<Record<string, readonly PluginAccountCollectionMigration[]>>;

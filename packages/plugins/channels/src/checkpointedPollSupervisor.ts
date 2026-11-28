@@ -74,7 +74,7 @@ export type IngressSupervisorOptions = Readonly<{
     context: BackgroundServiceContext,
   ) => Promise<ConversationCheckpointedPollRunResult>;
   runDueWork?: (
-    input: Readonly<{ now: number; limit: number }>,
+    input: Readonly<{ now: number; limit: number; heldBotIds?: readonly string[] | null }>,
     context: BackgroundServiceContext,
   ) => Promise<number>;
 }>;
@@ -237,6 +237,9 @@ export function createIngressSupervisor(
     // Collection pushes may wake maintenance during recovery; they do not
     // bring a failed due-work attempt forward from the owner's retry time.
     let dueWorkRetryAt = 0;
+    let reconcileHeldBots = true;
+    const pausedBotIds = new Set<string>();
+    const resumedBotIds = new Set<string>();
     const retainDiscussionAttempt = (attempt: Promise<unknown>): void => {
       // Dispatch releases row custody before notifying us. A Collection wake
       // alone can run earlier, skip the busy row and park its next due attempt.
@@ -268,6 +271,25 @@ export function createIngressSupervisor(
         // changing a provider's schedule or permanent-failure parking.
         observations.push(collection.watch({ index: CHANNEL_STATE_INDEX_ID.byKind,
           prefix: [CHANNEL_STATE_RECORD_KIND.ingressObligation], order: 'asc' }, () => wake.wake()));
+        observations.push(context.services.sessions.watch({}, event => {
+          if (event.kind === 'snapshot' || event.kind === 'resyncRequired') {
+            if (event.kind === 'snapshot') {
+              pausedBotIds.clear();
+              for (const item of event.items) if (item.botPausedAt != null) pausedBotIds.add(item.id);
+            }
+            reconcileHeldBots = true;
+            wake.wake();
+          } else if (event.kind === 'upserted') {
+            if (event.item.botPausedAt != null) pausedBotIds.add(event.item.id);
+            else if (pausedBotIds.delete(event.item.id)) {
+              resumedBotIds.add(event.item.id);
+              wake.wake();
+            }
+          } else if (pausedBotIds.delete(event.id)) {
+            resumedBotIds.add(event.id);
+            wake.wake();
+          }
+        }));
         const invalidateProviderConnections = () => {
           context.services.logger.info('[Channels] Provider connections invalidated', { phase: 'connectionsInvalidated' });
           void context.services.events.plugin.emit('connections-invalidated-v1', {}, { signal: supervisorController.signal })
@@ -296,10 +318,15 @@ export function createIngressSupervisor(
           } satisfies BackgroundServiceContext;
           const now = clock.now();
           if (now >= dueWorkRetryAt) {
+            const heldBotIds = reconcileHeldBots ? null : [...resumedBotIds];
+            reconcileHeldBots = false;
+            resumedBotIds.clear();
             try {
-              await runDueWork({ now, limit: PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1 }, workerContext);
+              await runDueWork({ now, limit: PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1, heldBotIds }, workerContext);
             } catch (error) {
               if (supervisorController.signal.aborted) break;
+              if (heldBotIds === null) reconcileHeldBots = true;
+              else for (const id of heldBotIds) resumedBotIds.add(id);
               logIngressSupervisorFailure(workerContext, 'due-work', error);
               dueWorkRetryAt = clock.now() + reconciliationIntervalMs;
             }
