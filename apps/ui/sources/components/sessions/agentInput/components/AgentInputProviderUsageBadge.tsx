@@ -18,11 +18,6 @@ import type {
 
 import { AgentInputContentPopover } from './AgentInputContentPopover';
 
-type WebHoverablePressableState = Readonly<{
-    pressed: boolean;
-    hovered?: boolean;
-}>;
-
 type AgentInputProviderUsageBadgeProps = Readonly<{
     viewModel: ConnectedServiceQuotaGaugeViewModel;
     marginLeft?: number;
@@ -188,14 +183,12 @@ export const AgentInputProviderUsageBadge = React.memo(function AgentInputProvid
                 }}
                 onHoverIn={Platform.OS === 'web' ? () => setIsHovered(true) : undefined}
                 onHoverOut={Platform.OS === 'web' ? () => setIsHovered(false) : undefined}
-                style={(state) => {
-                    const hovered = (state as WebHoverablePressableState).hovered === true;
-                    return [
-                        styles.badge,
-                        { marginLeft: props.marginLeft ?? 0 },
-                        (state.pressed || hovered) ? styles.badgePressed : null,
-                    ];
-                }}
+                // Press feedback only: hovering opens the preview popover and must not resize the gauge.
+                style={(state) => [
+                    styles.badge,
+                    { marginLeft: props.marginLeft ?? 0 },
+                    state.pressed ? styles.badgePressed : null,
+                ]}
             >
                 <View style={styles.windowRing}>
                     {props.showLabels === true ? (
@@ -208,6 +201,7 @@ export const AgentInputProviderUsageBadge = React.memo(function AgentInputProvid
                         </Text>
                     ) : null}
                     <TokenUsageRing
+                        measures="remaining"
                         used={100 - rings[0].usedPct}
                         limit={100}
                         rings={rings.map(ring => ({

@@ -440,6 +440,12 @@ export default React.memo(function SessionSettingsScreen() {
                     onPress={() => router.push('/settings/session/provider-limits')}
                 />
                 <Item
+                    title={t('settingsSession.localHistory.title')}
+                    subtitle={t('settingsSession.localHistory.openHint')}
+                    icon={<Icon name="clock-counter-clockwise" size={29} color={theme.colors.accent.indigo} />}
+                    onPress={() => router.push('/settings/session/local-history')}
+                />
+                <Item
                     title={t('settingsSession.resume.title')}
                     subtitle={t('settingsSession.resume.entrySubtitle')}
                     icon={<Icon name="arrow-clockwise" size={29} color={theme.colors.state.success.foreground} />}

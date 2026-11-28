@@ -12,6 +12,7 @@ import { buildRollingReleaseEditArgs } from './lib/gh-release-commands.mjs';
 import {
   downloadReleaseAssetWithRetry,
   formatExecError,
+  isAlreadyUploadedReleaseAssetError,
   isTransientReleaseTransferError,
   resolveReleaseAssetTransferPolicy,
 } from './lib/release-asset-transfer.mjs';
@@ -614,6 +615,11 @@ async function main() {
           uploaded = true;
           break;
         } catch (err) {
+          // The timed-out attempt landed; the byte audit below proves it matches.
+          if (!dryRun && attempt > 1 && isAlreadyUploadedReleaseAssetError(err)) {
+            uploaded = true;
+            break;
+          }
           if (!dryRun && isTransientReleaseTransferError(err) && attempt < uploadRetries) {
             sleepSync(uploadRetryDelayMs);
             continue;

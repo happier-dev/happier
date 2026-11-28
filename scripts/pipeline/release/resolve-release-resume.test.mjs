@@ -274,7 +274,9 @@ test('resume resolution reuses only successful verified immutable candidates', (
   }), {
     sourceSha: SOURCE_SHA,
     uiCompleted: { ota: false, nativeIos: false, nativeAndroid: false, apk: false },
-    desktop: { runNumber: 337, artifacts: {} },
+    // No reusable desktop bytes: no inherited run number, so rebuilt candidates carry the new run's own number
+    // and a later resume from that run binds the number they actually contain (2026-11-26, preview .229 vs .230).
+    desktop: { artifacts: {} },
     versions: {
       cli: '0.2.10-dev.73',
       stack: '',

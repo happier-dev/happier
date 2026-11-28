@@ -43,6 +43,8 @@ data, not exclusive access.
 - [Guides](https://guides.happier.dev/): task-shaped walkthroughs.
 - [Self-hosting the runtime](https://docs.happier.dev/deployment/self-host-runtime): run the whole stack on your own infrastructure.
 - [Encryption design](https://docs.happier.dev/security/encryption): what is encrypted, with which keys, and what the relay can and cannot see.
+- [Plans & Supporter](https://happier.dev/plans): Happier Cloud history limits and the Supporter Pack.
+- [How Happier stays free](https://happier.dev/open): project funding and notices about Cloud limits.
 
 ## Source and community
 

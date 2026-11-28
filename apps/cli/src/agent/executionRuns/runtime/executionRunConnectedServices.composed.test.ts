@@ -47,7 +47,7 @@ describe('execution run connected services (integration: codex profile -> run CO
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-er-cs-server-'));
     const sourceCodexHome = await mkdtemp(join(tmpdir(), 'happier-er-cs-source-codex-'));
     await writeFile(join(sourceCodexHome, 'config.toml'), 'model = "gpt-5.2-codex"\n');
-    await writeFile(join(sourceCodexHome, 'auth.json'), '{"access_token":"source-access"}\n');
+    await writeFile(join(sourceCodexHome, 'auth.json'), '{"auth_mode":"apikey","OPENAI_API_KEY":"fixture-source-key"}\n');
 
     const record = buildConnectedServiceCredentialRecord({
       now: 10,

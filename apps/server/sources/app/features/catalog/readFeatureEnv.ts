@@ -25,7 +25,6 @@ export type BugReportsFeatureEnv = Readonly<{
 
 export type VoiceFeatureEnv = Readonly<{
   enabled: boolean;
-  requireSubscription: boolean;
 }>;
 
 export type ConnectedServicesFeatureEnv = Readonly<{
@@ -240,10 +239,8 @@ export function readBugReportsFeatureEnv(env: NodeJS.ProcessEnv): BugReportsFeat
 }
 
 export function readVoiceFeatureEnv(env: NodeJS.ProcessEnv): VoiceFeatureEnv {
-  const isProduction = env.NODE_ENV === 'production';
   return {
     enabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.voiceEnabled], true),
-    requireSubscription: parseBooleanEnv(env[FEATURE_ENV_KEYS.voiceRequireSubscription], isProduction),
   };
 }
 
@@ -329,6 +326,27 @@ export function readSessionAgentSwitchingFeatureEnv(env: NodeJS.ProcessEnv): Ses
 export function readSessionFoldersFeatureEnv(env: NodeJS.ProcessEnv): SessionFoldersFeatureEnv {
   return {
     foldersEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.sessionsFoldersEnabled], true),
+  };
+}
+
+export type PlansFeatureEnv = Readonly<{
+  plansEnabled: boolean;
+  supporterEnabled: boolean;
+  /** Raw `HAPPIER_PLANS__CONFIG`; parsed only by `app/plans/plansConfig.ts`. */
+  plansConfigRaw: string | null;
+  /** Base-tier pin limit; null = no plan limit (the structural 1,000 ceiling still applies). */
+  sessionPinsMax: number | null;
+}>;
+
+export function readPlansFeatureEnv(env: NodeJS.ProcessEnv): PlansFeatureEnv {
+  const rawConfig = env[FEATURE_ENV_KEYS.plansConfig]?.trim();
+  const rawPins = env[FEATURE_ENV_KEYS.sessionPinsMax]?.trim();
+  const pins = rawPins && /^\d+$/.test(rawPins) ? Number(rawPins) : null;
+  return {
+    plansEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.plansEnabled], true),
+    supporterEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.supporterEnabled], true),
+    plansConfigRaw: rawConfig ? rawConfig : null,
+    sessionPinsMax: pins !== null && Number.isSafeInteger(pins) ? pins : null,
   };
 }
 

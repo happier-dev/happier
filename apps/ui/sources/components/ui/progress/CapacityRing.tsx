@@ -13,6 +13,12 @@ import { Svg, Circle } from 'react-native-svg';
  * `color`): this primitive has no opinion about any domain's tone vocabulary.
  */
 export type CapacityRingProps = Readonly<{
+    /**
+     * What the arcs measure. `progress` (default) grows clockwise from 12 o'clock. `remaining` is a
+     * countdown: the arc ends at 12 o'clock, so the used share sweeps clockwise like a clock hand and
+     * what is left sits on the left side, receding toward 12.
+     */
+    measures?: 'progress' | 'remaining';
     /** Single-arc fill fraction 0..1 (used when `rings` is not provided). */
     ratio?: number;
     /** Single-arc resolved color (used when `rings` is not provided). */
@@ -80,7 +86,9 @@ export function CapacityRing(props: CapacityRingProps) {
                     const radius = outerRadius - index * (strokeWidth + RING_GAP);
                     if (radius < strokeWidth) return null;
                     const circumference = 2 * Math.PI * radius;
-                    const dashOffset = circumference * (1 - clamp01(arc.ratio));
+                    const skipped = circumference * (1 - clamp01(arc.ratio));
+                    // A positive offset trims the arc's end; a negative one skips its start instead.
+                    const dashOffset = props.measures === 'remaining' ? -skipped : skipped;
                     return (
                         <React.Fragment key={index}>
                             <Circle

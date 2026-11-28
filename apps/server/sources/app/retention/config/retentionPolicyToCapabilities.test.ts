@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { retentionPolicyToCapabilities } from './retentionPolicyToCapabilities';
 import type { RetentionPolicy } from './retentionPolicyTypes';
+import { resolveServerRetentionCapabilitiesFeature } from '@/app/features/serverRetentionCapabilitiesFeature';
 
 function createPolicy(overrides?: Partial<RetentionPolicy>): RetentionPolicy {
     return {
@@ -32,6 +33,24 @@ function createPolicy(overrides?: Partial<RetentionPolicy>): RetentionPolicy {
 }
 
 describe('retention/retentionPolicyToCapabilities', () => {
+    it('publishes the start of a paid-only retention policy while preserving the unlimited base tier', () => {
+        const startsAt = '2026-12-31T00:00:00.000Z';
+        const feature = resolveServerRetentionCapabilitiesFeature({
+            HAPPIER_SERVER_RETENTION__ENABLED: 'true',
+            HAPPIER_SERVER_RETENTION__STARTS_AT: startsAt,
+            HAPPIER_PLANS__CONFIG: JSON.stringify({
+                v: 1, graceDays: 0, teams: null, supporter: null,
+                plans: [{
+                    id: 'custom', name: 'Custom', prices: [],
+                    limits: { sessionRetentionDays: 90, subagentRetentionDays: null, toolOutputRetentionDays: null, pinnedSessions: 10, artifactStorageBytes: null },
+                }],
+            }),
+        });
+        expect(feature).toMatchObject({
+            capabilities: { server: { retention: { enabled: true, startsAt: Date.parse(startsAt), sessions: { mode: 'keep_forever' } } } },
+        });
+    });
+
     it('reports keep_forever across all domains when retention is effectively disabled', () => {
         const capabilities = retentionPolicyToCapabilities(createPolicy({
             enabled: false,

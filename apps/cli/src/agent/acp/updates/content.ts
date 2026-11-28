@@ -1,3 +1,4 @@
+import { isAcpToolCallTerminalStatus } from './toolCalls/types';
 import type { SessionUpdate } from './types';
 
 /**
@@ -23,8 +24,7 @@ export function extractToolInput(update: SessionUpdate): unknown {
 }
 
 export function extractToolOutput(update: SessionUpdate): unknown {
-  const isTerminalStatus =
-    update.status === 'completed' || update.status === 'failed' || update.status === 'cancelled';
+  const isTerminalStatus = isAcpToolCallTerminalStatus(update.status);
 
   if (update.rawOutput !== undefined) {
     const isEmptyRawOutput = typeof update.rawOutput === 'string' && update.rawOutput.trim() === '';

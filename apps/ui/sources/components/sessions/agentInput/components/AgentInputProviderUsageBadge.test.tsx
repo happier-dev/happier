@@ -154,7 +154,8 @@ describe('AgentInputProviderUsageBadge', () => {
         expect(arcs[0].props.r).toBeGreaterThan(arcs[1].props.r);
         for (const [index, remainingFraction] of [0.18, 0.70].entries()) {
             const circumference = 2 * Math.PI * arcs[index].props.r;
-            expect(1 - arcs[index].props.strokeDashoffset / circumference).toBeCloseTo(remainingFraction);
+            // Remaining arcs end at 12 o'clock: the offset skips the used share.
+            expect(1 + arcs[index].props.strokeDashoffset / circumference).toBeCloseTo(remainingFraction);
         }
         const aggregate = String(screen.findByTestId('agent-input-provider-usage-badge')?.props.accessibilityLabel);
         expect(aggregate).toContain('Weekly 18% left');
@@ -162,6 +163,17 @@ describe('AgentInputProviderUsageBadge', () => {
         expect(screen.findByTestId('agent-input-provider-usage-meter-label')).toBeNull();
         act(() => { screen.findByTestId('agent-input-provider-usage-badge')?.props.onPress?.(); });
         expect(screen.findByTestId('agent-input-provider-usage-meter:daily')).toBeTruthy();
+    });
+
+    it('keeps the gauge size steady on hover and shrinks it only while pressed', async () => {
+        const screen = await renderScreen(<AgentInputProviderUsageBadge viewModel={viewModel()} />);
+        const style = screen.findByTestId('agent-input-provider-usage-badge')?.props.style;
+        const resolve = (state: { pressed: boolean; hovered?: boolean }) => {
+            const resolved = typeof style === 'function' ? style(state) : style;
+            return Object.assign({}, ...[resolved].flat(Infinity).filter(Boolean)) as Record<string, unknown>;
+        };
+        expect(resolve({ pressed: false, hovered: true }).transform).toBeUndefined();
+        expect(resolve({ pressed: true, hovered: true }).transform).toEqual([{ scale: 0.96 }]);
     });
 
     it('keeps meter labels off by default and shows them when enabled', async () => {
@@ -193,7 +205,7 @@ describe('AgentInputProviderUsageBadge', () => {
             const arcs = screen.findAll(node => String(node.type) === 'Circle' && typeof node.props.strokeDashoffset === 'number');
             expect(arcs).toHaveLength(1);
             const circumference = 2 * Math.PI * arcs[0].props.r;
-            expect(1 - arcs[0].props.strokeDashoffset / circumference).toBeCloseTo(remainingPct / 100);
+            expect(1 + arcs[0].props.strokeDashoffset / circumference).toBeCloseTo(remainingPct / 100);
             expect(screen.findByTestId('agent-input-provider-usage-value')?.props.children).toBe(String(remainingPct));
         };
         expectRemainingFill();

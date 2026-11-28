@@ -233,6 +233,7 @@ vi.mock('@/sync/sync', () => ({
         decryptSecretValue: vi.fn(),
         refreshAutomations: vi.fn(async () => {}),
         refreshSessions: vi.fn(async () => {}),
+        refreshSessionMessages: vi.fn(async () => {}),
         ensureSessionVisibleForMessageRoute: ensureSessionVisibleForMessageRouteMock,
         refreshMachines: vi.fn(async () => {}),
         acquireUserRequestLease: () => () => {},
@@ -281,8 +282,6 @@ vi.mock('@/sync/domains/state/persistence', async (importOriginal) => {
         loadLocalSettings: () => ({}),
         saveLocalSettings: vi.fn(),
         loadThemePreference: () => 'adaptive',
-        loadPurchases: () => ({}),
-        savePurchases: vi.fn(),
         loadSessionDrafts: loadSessionDraftsMock,
         saveSessionDrafts: saveSessionDraftsMock,
         loadSessionReviewCommentsDrafts: () => ({}),
@@ -1379,6 +1378,9 @@ describe('useCreateNewSession (worktree gating)', () => {
                 extra: expect.objectContaining({ phase: 'create_session' }),
             }),
         );
+        const reportedExtra = captureExceptionIfEnabledMock.mock.calls[0]?.[1]?.extra;
+        expect(reportedExtra).not.toHaveProperty('machineId');
+        expect(reportedExtra).not.toHaveProperty('selectedPath');
         expect(vi.mocked(Modal.alert)).toHaveBeenCalledWith('common.error', 'spawn exploded');
 
         consoleErrorSpy.mockRestore();

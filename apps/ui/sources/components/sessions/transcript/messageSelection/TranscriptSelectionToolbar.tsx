@@ -28,6 +28,7 @@ export function TranscriptSelectionToolbar(props: Readonly<{
     roleLabels: Readonly<{ user: string; assistant: string }>;
     sendToSessionEnabled: boolean;
     maxWidth?: number;
+    onExportSelection?: (selectedIds: ReadonlySet<string>) => void;
     onSendToSession?: (messages: ReadonlyArray<TranscriptSelectionToolbarMessage>) => void | Promise<void>;
 }>): React.ReactElement | null {
     const state = useTranscriptSelectionState();
@@ -129,6 +130,14 @@ export function TranscriptSelectionToolbar(props: Readonly<{
                             disabled={selectedMessages.length === 0 || busyAction != null}
                             onPress={handleCopy}
                         />
+                        {props.onExportSelection ? (
+                            <ToolbarButton
+                                testID="transcript-selection-export"
+                                label={t('transcriptExport.selection')}
+                                disabled={selectedMessages.length === 0 || busyAction != null}
+                                onPress={() => props.onExportSelection?.(new Set(selectedMessages.map((message) => message.id)))}
+                            />
+                        ) : null}
                         {props.sendToSessionEnabled && props.onSendToSession ? (
                             <ToolbarButton
                                 testID="transcript-selection-send"
@@ -210,6 +219,7 @@ const styles = StyleSheet.create((theme) => ({
     },
     actions: {
         flexDirection: 'row',
+        flexWrap: 'wrap',
         alignItems: 'center',
         gap: 8,
     },

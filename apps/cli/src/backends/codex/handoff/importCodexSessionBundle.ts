@@ -15,7 +15,7 @@ import {
 import type { CodexSessionBundle, ImportedSessionHandoffBundle } from '../../../session/handoff/types';
 import { copySessionHandoffFileSlice } from '../../../session/handoff/sessionHandoffProviderBundleFile';
 import { resolveConfiguredCodexHome } from '../utils/resolveConfiguredCodexHome';
-import { resolveConfiguredCodexSqliteHome } from '../connectedServices/codexStateFileNames';
+import { resolveCodexSqliteLaunch } from '../connectedServices/codexStateFileNames';
 import { isMatchingCodexRolloutFileName } from '../utils/codexSessionFiles';
 
 async function hashFilePrefix(filePath: string, offsetBytes: number, sizeBytes: number): Promise<string> {
@@ -65,7 +65,7 @@ export async function importCodexSessionBundle(params: Readonly<{
   sessionStorageMode?: 'direct' | 'persisted';
 }>): Promise<ImportedSessionHandoffBundle> {
   const codexHome = resolveConfiguredCodexHome(params.env);
-  const sqliteHome = resolveConfiguredCodexSqliteHome(params.env);
+  const { sqliteHome } = await resolveCodexSqliteLaunch({ env: params.env, cwd: params.targetPath });
   const runtimeIdentity = resolvePersistedCodexRuntimeIdentity(params.bundle) ?? { backendMode: 'appServer' as const };
   const importedRuntimeDescriptor = readCanonicalAgentRuntimeDescriptorV1ForProvider(params.bundle.affinity?.runtimeDescriptor, 'codex');
   const sourceAffinity = resolveCodexRuntimeSourceAffinity(params.bundle.affinity?.source);
@@ -80,14 +80,14 @@ export async function importCodexSessionBundle(params: Readonly<{
       // Handoff bundles must be portable across machines; never import a source-machine homePath.
       // Rollout files are written into the *target* CODEX_HOME below, so the runtime must use that.
       homePath: codexHome,
-      sqliteHomePath: sqliteHome,
+      sqliteHomePath: sqliteHome ?? undefined,
     })
     : buildCodexAgentRuntimeDescriptor({
       backendMode: runtimeIdentity.backendMode,
       vendorSessionId: params.bundle.remoteSessionId,
       ...sourceAffinity,
       homePath: codexHome,
-      sqliteHomePath: sqliteHome,
+      sqliteHomePath: sqliteHome ?? undefined,
     });
   const directSource = runtimeDescriptor.provider.home === 'connectedService'
     ? {
@@ -143,7 +143,7 @@ export async function importCodexSessionBundle(params: Readonly<{
       directory: params.targetPath,
       agent: 'codex',
       resume: params.bundle.remoteSessionId,
-      environmentVariables: { CODEX_HOME: codexHome, CODEX_SQLITE_HOME: sqliteHome },
+      environmentVariables: { CODEX_HOME: codexHome, ...(params.env.CODEX_SQLITE_HOME ? { CODEX_SQLITE_HOME: params.env.CODEX_SQLITE_HOME } : {}) },
       transcriptStorage: params.sessionStorageMode === 'persisted' ? 'persisted' : 'direct',
       approvedNewDirectoryCreation: true,
       ...(runtimeIdentity ? { codexBackendMode: runtimeIdentity.backendMode } : {}),

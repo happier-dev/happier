@@ -94,6 +94,7 @@ export function useNotificationResponseRouting(params: Readonly<{
             }), { tag: 'notificationSessionNavigation' });
         };
 
+        let restoredSavedNavigation = false;
         const pendingAction = getPendingNotificationAction();
         if (pendingAction && Platform.OS === 'android') {
             // Old versions queued actions across server switches. Do not replay an
@@ -110,22 +111,22 @@ export function useNotificationResponseRouting(params: Readonly<{
             const active = normalizeServerUrl(getActiveServerUrl());
             if (normalizeServerUrl(pendingAction.serverUrl) === active) {
                 clearPendingNotificationAction();
+                restoredSavedNavigation = true;
                 // Legacy pending records have no occurrence identity and are review-only.
                 const saved = findSavedServerProfileForUrl(pendingAction.serverUrl);
                 fireAndForget((async () => {
                     navigateToSessionRoute({ router, sessionId: pendingAction.sessionId, serverId: saved?.id, refreshAuth: refreshAuthRef.current });
                 })(), { tag: 'RootLayout.pendingNotificationAction' });
-                return;
             }
         }
 
         const pending = getPendingNotificationNav();
-        if (pending) {
+        if (!restoredSavedNavigation && pending) {
             const active = normalizeServerUrl(getActiveServerUrl());
             if (normalizeServerUrl(pending.serverUrl) === active) {
                 clearPendingNotificationNav();
+                restoredSavedNavigation = true;
                 navigateToNotificationAccount(pending, () => { router.push(pending.route); });
-                return () => { disposed = true; };
             }
         }
 
@@ -257,16 +258,18 @@ export function useNotificationResponseRouting(params: Readonly<{
             .then((Notifications) => {
                 if (disposed) return;
                 const defaultActionIdentifier = Notifications.DEFAULT_ACTION_IDENTIFIER;
-                void Notifications.getLastNotificationResponseAsync()
-                    .then(async (response) => {
-                        if (disposed || !response) return;
-                        maybeRedirectFromResponse(response, defaultActionIdentifier, false);
-                        const clearLastNotificationResponseAsync = (Notifications as ExpoNotificationsWithClear).clearLastNotificationResponseAsync;
-                        if (typeof clearLastNotificationResponseAsync === 'function') {
-                            await clearLastNotificationResponseAsync();
-                        }
-                    })
-                    .catch(() => {});
+                if (!restoredSavedNavigation) {
+                    void Notifications.getLastNotificationResponseAsync()
+                        .then(async (response) => {
+                            if (disposed || !response) return;
+                            maybeRedirectFromResponse(response, defaultActionIdentifier, false);
+                            const clearLastNotificationResponseAsync = (Notifications as ExpoNotificationsWithClear).clearLastNotificationResponseAsync;
+                            if (typeof clearLastNotificationResponseAsync === 'function') {
+                                await clearLastNotificationResponseAsync();
+                            }
+                        })
+                        .catch(() => {});
+                }
 
                 subscription = Notifications.addNotificationResponseReceivedListener((response) => {
                     maybeRedirectFromResponse(response, defaultActionIdentifier);

@@ -46,6 +46,19 @@ test("Dockerfile deps stages copy the shared yarn-install-with-retry helper from
   }
 });
 
+test("Dockerfile dependency stages install with the repository .npmrc", () => {
+  // Release run 45662976860: deps-alpine-build's install failed on a 404 for onnxruntime's GPU archive. The
+  // repository .npmrc owns that skip, so each dependency stage copies it in before installing.
+  const raw = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
+  for (const marker of [
+    "FROM node:${NODE_VERSION}-alpine AS deps-alpine",
+    "FROM --platform=$BUILDPLATFORM node:${NODE_VERSION}-alpine AS deps-alpine-build",
+    "FROM node:${NODE_VERSION} AS deps-debian",
+  ]) {
+    assert.match(extractStageSection(raw, marker), /^ *COPY package\.json yarn\.lock \.npmrc \.\/$/m, marker);
+  }
+});
+
 test("Dockerfile installs UI postinstall assets only in web dependency stages", () => {
   const dockerfilePath = path.join(repoRoot, "Dockerfile");
   const raw = fs.readFileSync(dockerfilePath, "utf8");

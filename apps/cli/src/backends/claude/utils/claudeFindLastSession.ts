@@ -1,4 +1,4 @@
-import { readdirSync, statSync, readFileSync } from 'node:fs';
+import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { getProjectPath } from './path';
 import { claudeCheckSession } from './claudeCheckSession';

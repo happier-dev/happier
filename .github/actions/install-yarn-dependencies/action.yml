@@ -56,8 +56,6 @@ runs:
     - name: Verify restored dependencies and refresh workspace setup
       if: steps.dependencies.outputs.cache-hit == 'true'
       shell: bash
-      env:
-        ONNXRUNTIME_NODE_INSTALL_CUDA: skip
       run: |
         set -euo pipefail
         if ! yarn install ${{ inputs.args }} --offline --non-interactive; then
@@ -70,8 +68,6 @@ runs:
     - name: Install dependencies with retry
       if: steps.dependencies.outputs.cache-hit != 'true'
       shell: bash
-      env:
-        ONNXRUNTIME_NODE_INSTALL_CUDA: skip
       run: |
         set -euo pipefail
         bash scripts/ci/yarn-install-with-retry.sh ${{ inputs.args }} --network-timeout 600000 --prefer-offline --non-interactive

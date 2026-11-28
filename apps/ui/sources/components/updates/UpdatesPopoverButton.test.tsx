@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { DeferredAnchoredTooltip } from '@/components/ui/overlays/DeferredAnchoredTooltip';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { UpdatesSummary } from '@/updates/items/buildUpdatesSummary';
 import { storage } from '@/sync/domains/state/storageStore';
@@ -142,7 +143,11 @@ describe('UpdatesPopoverButton', () => {
         const screen = await renderScreen(<UpdatesPopoverButton summary={FAILED} variant="icon" testID="pill" />);
         const pill = screen.findByTestId('pill');
         expect(pill?.props.accessibilityLabel).toBe('updates.a11y.pillFailed');
-        expect(screen.findAllByTestId('pill').find((node) => node.props.webTooltip)?.props.webTooltip).toBe('updates.pill.failed');
+        await act(async () => { pill?.props.onHoverIn?.(); });
+        const tooltips = screen.findAllByType(DeferredAnchoredTooltip);
+        expect(tooltips).toHaveLength(1);
+        expect(tooltips[0]!.props.label).toBe(pill?.props.accessibilityLabel);
+        await act(async () => { pill?.props.onHoverOut?.(); });
         // No words in the chrome: only the mark and the count.
         expect(screen.findAll((node) => typeof node.type === 'string' && node.props?.children === 'updates.pill.failed')).toHaveLength(0);
         expect(screen.findAll((node) => typeof node.type === 'string' && node.props?.children === '3').length).toBeGreaterThan(0);

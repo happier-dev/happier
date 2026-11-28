@@ -39,7 +39,7 @@ it('applies Happier attribution to metadata probes and isolates cached catalogs 
   vi.stubEnv('CLAUDECODE', '1');
   vi.resetModules();
   const { extractSDKMetadata } = await import('./metadataExtractor');
-  expect(await extractSDKMetadata()).toMatchObject({ tools: ['default', 'clean'] });
+  expect(await extractSDKMetadata()).toMatchObject({ tools: ['happier', 'clean'] });
   expect(await extractSDKMetadata({ claudeCodeIncludeInNativeHistory: true })).toMatchObject({ tools: ['happier', 'clean'] });
   expect(await extractSDKMetadata({ claudeCodeIncludeInNativeHistory: false })).toMatchObject({ tools: ['default', 'clean'] });
   expect(await import('node:fs/promises').then(fs => fs.readdir(configDir))).not.toContain('probe.jsonl');

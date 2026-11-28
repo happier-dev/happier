@@ -36,11 +36,10 @@ function resolveSharedNativeTranscriptRetention(env: NodeJS.ProcessEnv, proposed
     const native = readHomeCleanupPeriodDays(nativeHome);
     const active = readHomeCleanupPeriodDays(activeHome);
     if (!native || !active) return undefined;
-    const nativeDays = native.days;
-    const activeDays = proposedDays ?? active.days ?? CLAUDE_DEFAULT_CLEANUP_PERIOD_DAYS;
-    // An isolated settings home can otherwise apply its shorter policy to the native store.
-    // Native's explicit choice is the authority; an unset native key adds no launch policy.
-    return nativeDays !== undefined && nativeDays > activeDays ? nativeDays : undefined;
+    const launchDays = proposedDays ?? active.days ?? CLAUDE_DEFAULT_CLEANUP_PERIOD_DAYS;
+    // Either settings home can retain transcripts in their shared store.
+    const sharedDays = Math.max(launchDays, native.days ?? launchDays, active.days ?? launchDays);
+    return sharedDays > launchDays ? sharedDays : undefined;
 }
 
 function chmodPrivateFileIfSupported(path: string): void {

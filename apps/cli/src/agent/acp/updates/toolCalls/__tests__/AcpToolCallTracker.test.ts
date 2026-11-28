@@ -257,7 +257,7 @@ describe('createAcpToolCallTracker', () => {
     tracker.observe({ toolCallId: 'pending-plan', title: 'Create Plan', status: 'pending' });
     tracker.observe({ toolCallId: 'running-read', title: 'Read', status: 'in_progress' });
 
-    expect(tracker.abandonAll()).toEqual(['pending-plan', 'running-read']);
+    expect(tracker.abandonTurn()).toEqual(['pending-plan', 'running-read']);
     expect(tracker.activeSize).toBe(0);
     expect(tracker.isFinalized('pending-plan')).toBe(true);
     expect(tracker.observe({ toolCallId: 'pending-plan', status: 'completed' })).toBe(false);
@@ -305,7 +305,7 @@ describe('createAcpToolCallTracker', () => {
     tracker.observe({ toolCallId: 'cancelled', status: 'in_progress' });
     tracker.cancel('cancelled');
     tracker.observe({ toolCallId: 'abandoned', status: 'pending' });
-    expect(tracker.abandonAll()).toEqual(['abandoned']);
+    expect(tracker.abandonTurn()).toEqual(['abandoned']);
 
     expect(closed).toEqual([
       { callId: 'done', reason: 'terminal', activeSize: 0 },

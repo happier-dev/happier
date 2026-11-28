@@ -1,10 +1,10 @@
 import type { ConnectedServiceRefreshReason } from '@/daemon/connectedServices/credentials/lifecycleTypes';
 import type { ApiClient } from '@/api/api';
-import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
-import { logger } from '@/ui/logger';
+import { readConnectedServiceProfileHealths } from '@/cloud/connectedServices/resolveConnectedServiceCredentials';
 import type { BoundProfile } from './refreshTypes';
 
 export type CredentialHealthReprobeState = Readonly<{
+  credentialRevision: string;
   failureCount: number;
   nextProbeAt: number;
 }>;
@@ -48,18 +48,9 @@ export async function readCredentialHealthStatusForRefresh(input: Readonly<{
   api: ApiClient;
   binding: BoundProfile;
 }>): Promise<unknown> {
-  const listProfiles = input.api.listConnectedServiceProfiles;
-  if (typeof listProfiles !== 'function') return null;
-  try {
-    const result = await listProfiles.call(input.api, { serviceId: input.binding.serviceId });
-    const profile = result.profiles.find((candidate) => candidate.profileId === input.binding.profileId);
-    return profile?.status ?? null;
-  } catch (error) {
-    logger.warn('[DAEMON RUN] Failed to read connected-service profile health before refresh', {
-      serviceId: input.binding.serviceId,
-      profileId: input.binding.profileId,
-      error: serializeAxiosErrorForLog(error),
-    });
-    return null;
-  }
+  const { serviceId, profileId } = input.binding;
+  const health = (await readConnectedServiceProfileHealths({
+    api: input.api, serviceId, profileIds: [profileId],
+  })).get(profileId);
+  return health && 'status' in health ? health.status : null;
 }

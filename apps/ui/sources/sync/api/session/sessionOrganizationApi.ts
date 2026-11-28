@@ -230,6 +230,27 @@ export async function importLegacySessionOrganization(params: Readonly<{
     return parseJsonResponse(response, ImportLegacySessionOrganizationResponseSchema, 'Failed to import legacy session organization');
 }
 
+/**
+ * The server refused a new pin at the Account's limit. `limit` is the number it refused at; older
+ * servers omit it, and there the structural ceiling is the truth.
+ */
+export class SessionPinLimitExceededError extends HappyError {
+    readonly limit: number | null;
+
+    constructor(limit: number | null, status?: number) {
+        super('session-pin-limit-exceeded', false, { status, code: 'session-pin-limit-exceeded' });
+        this.limit = limit;
+        this.name = 'SessionPinLimitExceededError';
+        Object.setPrototypeOf(this, SessionPinLimitExceededError.prototype);
+    }
+}
+
+function readPinLimit(raw: unknown): number | null {
+    if (!raw || typeof raw !== 'object') return null;
+    const limit = (raw as Record<string, unknown>).limit;
+    return typeof limit === 'number' && Number.isSafeInteger(limit) && limit >= 0 ? limit : null;
+}
+
 export async function setSessionPin(params: Readonly<{
     credentials: AuthCredentials;
     serverUrl?: string;
@@ -246,6 +267,13 @@ export async function setSessionPin(params: Readonly<{
             body: JSON.stringify(params.request),
         },
     });
+    if (response.status === 409) {
+        const raw = await readJsonBody(response);
+        if (readErrorMessage(raw, '') === 'session-pin-limit-exceeded') {
+            throw new SessionPinLimitExceededError(readPinLimit(raw), response.status);
+        }
+        throw new HappyError(readErrorMessage(raw, 'Failed to set session pin'), false);
+    }
     return parseJsonResponse(response, SetSessionPinResponseSchema, 'Failed to set session pin');
 }
 

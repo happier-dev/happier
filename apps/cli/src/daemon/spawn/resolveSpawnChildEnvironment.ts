@@ -17,6 +17,7 @@ import { SESSION_REQUESTED_DIRECTORY_ENV } from '@/agent/runtime/resolveRequeste
 import { SESSION_MACHINE_WORKSPACE_PATH_ENV } from '@/agent/runtime/sessionWorkspaceLocation';
 import {
   HAPPIER_SESSION_CONNECTED_SERVICES_BINDINGS_ENV_KEY,
+  HAPPIER_SESSION_CONNECTED_SERVICES_UPDATED_AT_ENV_KEY,
   serializeSessionConnectedServicesBindingsForEnv,
 } from '@/agent/runtime/sessionConnectedServicesBindingsEnv';
 import {
@@ -283,6 +284,9 @@ export async function resolveSpawnChildEnvironment(params: {
   const connectedServicesBindingsJson = serializeSessionConnectedServicesBindingsForEnv(params.options.connectedServices);
   if (connectedServicesBindingsJson) {
     extraEnvForChild[HAPPIER_SESSION_CONNECTED_SERVICES_BINDINGS_ENV_KEY] = connectedServicesBindingsJson;
+    if (typeof params.options.connectedServicesUpdatedAt === 'number' && Number.isSafeInteger(params.options.connectedServicesUpdatedAt)) {
+      extraEnvForChild[HAPPIER_SESSION_CONNECTED_SERVICES_UPDATED_AT_ENV_KEY] = String(params.options.connectedServicesUpdatedAt);
+    }
   }
   const connectedServiceMaterializationIdentityJson =
     serializeSessionConnectedServiceMaterializationIdentityForEnv(

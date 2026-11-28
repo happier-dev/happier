@@ -696,6 +696,44 @@ describe('createAcpRuntime (session models)', () => {
     expect(lastSetConfig).toEqual({ sessionId: 'sess_main', configId: 'model', value: 'model-b' });
   });
 
+  it.each([
+    { advertised: true, expected: { configId: 'model', value: 'model-b' }, setModel: null },
+    { advertised: false, expected: null, setModel: 'model-b' },
+  ])('applies a config-option model provider through set_model when the session does not advertise a model option (advertised: $advertised)', async ({ advertised, expected, setModel }) => {
+    let lastSetConfig: { configId: string; value: unknown } | null = null;
+    let lastSetModel: string | null = null;
+    const backend = Object.assign(createFakeAcpRuntimeBackend({
+      async setSessionConfigOption(_sessionId: string, configId: string, value: unknown) {
+        lastSetConfig = { configId, value };
+      },
+      async setSessionModel(_sessionId: string, modelId: string) {
+        lastSetModel = modelId;
+      },
+    }), {
+      // An older agy only lists legacy models; it has no `model` config option.
+      getSessionConfigOptionsState: () => advertised ? [{
+        id: 'model', name: 'Model', category: 'model', type: 'select', currentValue: 'model-a',
+        options: [{ value: 'model-a', name: 'Model A' }, { value: 'model-b', name: 'Model B' }],
+      }] : [],
+    });
+    const runtime = createAcpRuntime({
+      provider: 'agy',
+      directory: '/tmp',
+      session: createBasicSessionClient(),
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createApprovedPermissionHandler(),
+      onThinkingChange: () => {},
+      ensureBackend: async () => backend,
+    });
+
+    await runtime.startOrLoad({ resumeId: null });
+    await runtime.setSessionModel('model-b');
+
+    expect(lastSetConfig).toEqual(expected);
+    expect(lastSetModel).toBe(setModel);
+  });
+
   it('does not issue a fallback while a slow session/set_model request is still pending', async () => {
     vi.useFakeTimers();
     const previousTimeout = process.env.HAPPIER_ACP_SESSION_CONTROL_TIMEOUT_MS;

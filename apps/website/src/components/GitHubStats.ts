@@ -17,16 +17,16 @@ import { readCount, statsUrl, usePublicStat } from './publicStats';
  * The publisher that already writes those two needs one more field group:
  *
  *     { "schemaVersion": 1, "generatedAt": "…",
- *       "stars": 1445, "forks": 122, "contributors": 71 }
+ *       "stars": 2303, "forks": 241, "contributors": 71 }
  *
  * Until that document exists the fallbacks below render, which is the same
  * degradation every other counter on the page has.
  */
 
-/** Measured 2026-08-08 via api.github.com; only shown until github.json loads. */
+/** Repository counters from GitHub on 2026-11-27. Contributor fallback from 2026-08-08. */
 export const FALLBACK_GITHUB_STATS = {
-    stars: 1445,
-    forks: 122,
+    stars: 2303,
+    forks: 241,
     contributors: 71,
 } as const;
 

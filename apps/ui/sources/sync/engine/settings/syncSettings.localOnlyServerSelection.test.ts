@@ -154,7 +154,6 @@ vi.mock('@/sync/domains/state/persistence', async (importOriginal) => ({
     loadPendingSettings: mocks.loadPendingSettings,
     loadSettings: () => ({ settings: createBaseMockSettings(), version: 9 }),
     loadLocalSettings: () => localSettingsDefaults,
-    loadPurchases: () => ({}),
     loadProfile: () => ({}),
     loadThemePreference: () => 'adaptive',
     loadLocalPetSourcesBySourceKey: () => ({}),
@@ -174,7 +173,6 @@ vi.mock('@/sync/domains/state/persistence', async (importOriginal) => ({
     loadDeviceAnalyticsId: () => null,
     saveSettings: vi.fn(),
     saveLocalSettings: vi.fn(),
-    savePurchases: vi.fn(),
     saveProfile: vi.fn(),
     saveLocalPetSourcesBySourceKey: vi.fn(),
     saveSessionDrafts: vi.fn(),
@@ -844,13 +842,13 @@ describe('applySettingsLocalDelta server-selection local-only keys', () => {
         expect(schedulePendingSettingsFlush).not.toHaveBeenCalled();
     });
 
-    it('captures tracked account and derived setting changes before opting out of analytics', () => {
+    it('captures derived setting changes', () => {
+        // Opting out sends nothing at all: syncSettings.analyticsConsent.test.ts owns that contract.
         const setPendingSettings = vi.fn();
         const schedulePendingSettingsFlush = vi.fn();
 
         applySettingsLocalDelta({
             delta: {
-                analyticsOptOut: true,
                 sessionListDensity: 'narrow',
             },
             settingsSecretsKey: null,
@@ -863,17 +861,6 @@ describe('applySettingsLocalDelta server-selection local-only keys', () => {
         expect(mocks.tracking.capture).toHaveBeenCalledWith(
             'setting_changed',
             expect.objectContaining({
-                setting_key: 'analyticsOptOut',
-                scope: 'account_setting',
-                identity_scope: 'person',
-                source: 'ui',
-                prev_value: false,
-                next_value: true,
-            }),
-        );
-        expect(mocks.tracking.capture).toHaveBeenCalledWith(
-            'setting_changed',
-            expect.objectContaining({
                 setting_key: 'compact_session_view_minimal',
                 scope: 'derived',
                 identity_scope: 'person',
@@ -882,17 +869,7 @@ describe('applySettingsLocalDelta server-selection local-only keys', () => {
                 next_value: true,
             }),
         );
-        expect(mocks.tracking.identify).toHaveBeenCalledWith('anon-user', {
-            acct_setting__analyticsOptOut: true,
-        });
-        expect(mocks.callSequence.indexOf('capture')).toBeGreaterThanOrEqual(0);
-        expect(mocks.callSequence.indexOf('identify')).toBeGreaterThanOrEqual(0);
         expect(mocks.callSequence.indexOf('flush')).toBeGreaterThanOrEqual(0);
-        const finalOptOutIndex = mocks.callSequence.lastIndexOf('optOut');
-        expect(finalOptOutIndex).toBeGreaterThanOrEqual(0);
-        expect(mocks.callSequence.indexOf('capture')).toBeLessThan(finalOptOutIndex);
-        expect(mocks.callSequence.indexOf('identify')).toBeLessThan(finalOptOutIndex);
-        expect(mocks.callSequence.indexOf('flush')).toBeLessThan(finalOptOutIndex);
     });
 
     it('skips equal rebuilt object deltas without scheduling pending sync', () => {

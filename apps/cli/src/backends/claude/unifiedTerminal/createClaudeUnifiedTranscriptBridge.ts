@@ -447,6 +447,11 @@ export function createClaudeUnifiedTranscriptBridge(opts: Readonly<{
             const modelId = readClaudeMainChainAssistantModelId(message);
             if (modelId) opts.onEffectiveModel?.({ modelId });
           }
+          // Acceptance reserves the provider's user echo before the visible
+          // transcript path can commit it as another user message.
+          if (lifecycleOwnedByCurrentRunner) {
+            opts.onTranscriptMessage?.(message);
+          }
           if (
             shouldForwardFreshResumeTranscriptToMessage(message, freshResumeLiveMessageAfterMsBySessionId)
             && !shouldSuppressPriorEraFailedTurnVisibleReplay(message, lifecycleOwnedByCurrentRunner)
@@ -455,9 +460,6 @@ export function createClaudeUnifiedTranscriptBridge(opts: Readonly<{
               ? (opts.onHistoricalMessage ?? opts.onMessage)
               : opts.onMessage;
             await handler?.(message);
-          }
-          if (lifecycleOwnedByCurrentRunner) {
-            opts.onTranscriptMessage?.(message);
           }
         },
         onRawJsonlValue: opts.onRawTranscriptValue || opts.onMainTranscriptForPromptAcceptance

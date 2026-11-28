@@ -323,6 +323,7 @@ export type AgentCatalogEntry = Readonly<{
    * and expose them through this catalog hook instead of side registries.
    */
   getDirectSessionProviderOps?: () => Promise<DirectSessionProviderOps>;
+  readLocalHistoryKeptDueAtMs?: () => Promise<number | null>;
   /**
    * Optional provider-owned attach operations for shared local-control backends.
    *

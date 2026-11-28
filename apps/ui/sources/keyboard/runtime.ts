@@ -264,14 +264,15 @@ export function resolveKeyboardPlatform(): KeyboardPlatform {
     return 'linux';
 }
 
-export function readKeyboardContextFromEventTarget(target: EventTarget | null): KeyboardContext {
+export function readKeyboardContextFromEventTarget(target: unknown): KeyboardContext {
     const element = target as HTMLElement | null;
     const tagName = String(element?.tagName ?? '').toLowerCase();
     const isEditableTarget = tagName === 'input'
         || tagName === 'textarea'
         || tagName === 'select'
         || element?.isContentEditable === true
-        || element?.closest?.('[contenteditable="true"], [data-keyboard-shortcuts-owned="true"]') != null;
+        || element?.getAttribute?.('role') === 'textbox'
+        || element?.closest?.('[contenteditable="true"], [role="textbox"], [data-keyboard-shortcuts-owned="true"]') != null;
     return {
         isEditableTarget,
         isComposing: false,

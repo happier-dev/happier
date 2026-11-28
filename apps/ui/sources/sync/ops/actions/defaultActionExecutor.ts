@@ -29,6 +29,7 @@ import { delegateSessionHandoffToSourceDaemon } from '@/sync/ops/delegatedSessio
 import { sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
 import { sendSessionMessageWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionSendMessage';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
+import { machineLocalHistory } from '@/sync/ops/machineDirectSessions';
 import { voiceActivityController } from '@/voice/activity/voiceActivityController';
 import { voiceSessionManager } from '@/voice/session/voiceSession';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
@@ -64,6 +65,7 @@ import { resolveLocalFeaturePolicyEnabled } from '@/sync/domains/features/featur
 import { resolveSessionForkStrategyAvailability } from '@/sync/domains/sessionFork/forkUiSupport';
 import { resolveSessionForkReplayOptions } from '@/sync/domains/sessionFork/resolveSessionForkReplayOptions';
 import { readMachineControlTargetForSession } from '@/sync/ops/sessionMachineTarget';
+import { createPlanActionDeps } from './planActionDeps';
 import { randomUUID } from '@/platform/randomUUID';
 import {
   isRequestedSessionModeSupported,
@@ -124,10 +126,10 @@ export function createDefaultActionExecutor(opts?: Readonly<{
         const session = (storage.getState() as any)?.sessions?.[sessionId] ?? null;
         return isSessionModeActionAvailable(session);
       },
-    isActionApprovalRequired: (actionId, ctx) =>
+    isActionApprovalRequired: (actionId, ctx, defaultRequired) =>
       isApprovalRequiredByActionsSettings(actionId, resolveActionsSettingsSnapshot(), {
         surface: ctx.surface ?? null,
-      }),
+      }, defaultRequired),
     executionRunStart: sessionExecutionRunStart,
     executionRunList: sessionExecutionRunList,
     executionRunGet: sessionExecutionRunGet,
@@ -616,6 +618,8 @@ export function createDefaultActionExecutor(opts?: Readonly<{
       return { ok: true, artifactId: result.artifactId, exported: result.exported };
     },
 
+    localHistory: ({ machineId, serverId, request }) => machineLocalHistory(machineId, request, { serverId }),
+    ...createPlanActionDeps(() => storage.getState().profile.id),
     ...(opts?.resolveServerIdForSessionId ? { resolveServerIdForSessionId: opts.resolveServerIdForSessionId } : {}),
   };
 

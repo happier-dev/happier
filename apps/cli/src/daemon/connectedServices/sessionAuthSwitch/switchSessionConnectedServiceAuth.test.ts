@@ -563,6 +563,111 @@ describe('switchSessionConnectedServiceAuth', () => {
     }));
   });
 
+  it('moves an inactive session off a profile that no longer exists on the account', async () => {
+    // The old profile is gone (removed or renamed). Re-assigning the session must not depend on it:
+    // only the profile being switched TO has to exist.
+    const persistSessionBindings = vi.fn();
+    const resolveContinuity = vi.fn(async () => ({ mode: 'restart_rematerialize' as const }));
+
+    const result = await switchSessionConnectedServiceAuth({
+      core: createCore(),
+      postSwitchVerificationMode: {
+        kind: 'disabled_for_test_only',
+        reason: 'existing switch fixture does not exercise provider adoption verification',
+      },
+      getChildren: () => [],
+      resolveInactiveSession: async () => ({
+        agentId: 'claude',
+        connectedServices: bindings('Claude-2'),
+        connectedServiceMaterializationIdentityV1: materializationIdentity,
+      }),
+      api: {
+        listConnectedServiceProfiles: async () => ({
+          serviceId: 'anthropic',
+          profiles: [{ profileId: 'Claude2', status: 'connected' }],
+        }),
+        getConnectedServiceAuthGroup: async () => null,
+      },
+      resolveContinuity,
+      restartSession: vi.fn(),
+      hotApply: async () => {
+        throw new Error('Inactive sessions should not hot-apply');
+      },
+      registerHotApplyTargets: () => {},
+      emitSessionEvent: vi.fn(),
+      persistSessionBindings,
+      request: {
+        sessionId: 'sess_inactive',
+        agentId: 'claude',
+        bindings: bindings('Claude2'),
+      },
+    } as any);
+
+    expect(result).toMatchObject({ ok: true, action: 'metadata_updated', normalizedBindings: bindings('Claude2') });
+    expect(persistSessionBindings).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'sess_inactive',
+      normalizedBindings: bindings('Claude2'),
+    }));
+  });
+
+  it('restarts a resume runner that raced an inactive switch onto the accepted binding', async () => {
+    // Live incident 2026-11-27 14:06: a pool switch on an inactive session persisted the group
+    // while a concurrent resume spawn had already read the old selection; that runner kept it.
+    const children: TrackedSession[] = [];
+    const racingRunner = trackedSession({
+      happySessionId: 'sess_raced',
+      spawnOptions: {
+        directory: '/tmp/project',
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        connectedServices: bindings('old-profile'),
+        connectedServiceMaterializationIdentityV1: materializationIdentity,
+      } as TrackedSession['spawnOptions'],
+    });
+    const restartSession = vi.fn(async () => {});
+    const persistSessionBindings = vi.fn(async () => {});
+    const settleRacingSessionSpawns = vi.fn(async () => {
+      children.push(racingRunner);
+    });
+
+    const result = await switchSessionConnectedServiceAuth({
+      core: createCore(),
+      postSwitchVerificationMode: {
+        kind: 'disabled_for_test_only',
+        reason: 'existing switch fixture does not exercise provider adoption verification',
+      },
+      getChildren: () => children,
+      resolveInactiveSession: async () => ({
+        agentId: 'claude',
+        connectedServices: bindings('old-profile'),
+        connectedServiceMaterializationIdentityV1: materializationIdentity,
+      }),
+      settleRacingSessionSpawns,
+      api: {
+        listConnectedServiceProfiles: async () => ({
+          serviceId: 'anthropic',
+          profiles: [{ profileId: 'new-profile', status: 'connected' }],
+        }),
+        getConnectedServiceAuthGroup: async () => null,
+      },
+      resolveContinuity: async () => ({ mode: 'restart_rematerialize' as const }),
+      restartSession,
+      hotApply: async () => ({ ok: true }),
+      registerHotApplyTargets: () => {},
+      emitSessionEvent: vi.fn(),
+      persistSessionBindings,
+      request: {
+        sessionId: 'sess_raced',
+        agentId: 'claude',
+        bindings: bindings('new-profile'),
+      },
+    } as any);
+
+    expect(settleRacingSessionSpawns).toHaveBeenCalledWith({ sessionId: 'sess_raced' });
+    expect(restartSession).toHaveBeenCalledWith(racingRunner);
+    expect(racingRunner.spawnOptions?.connectedServices).toEqual(bindings('new-profile'));
+    expect(result).toMatchObject({ ok: true, action: 'restart_requested' });
+  });
+
   it('threads the inactive session cwd and persisted session-file hint into the continuity check', async () => {
     // Regression: the inactive-switch continuity check ran with tracked=null, so the daemon adapter
     // (which derives cwd/target root from tracked.spawnOptions) starved the shared-state reachability

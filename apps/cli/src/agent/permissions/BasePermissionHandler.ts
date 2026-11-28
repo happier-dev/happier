@@ -67,6 +67,7 @@ export interface PendingRequest {
     toolName: string;
     input: unknown;
     resolveDecisionIfPolicyChanges?: () => PermissionResult | null;
+    requiresExplicitDecision?: boolean;
 }
 
 /**
@@ -439,7 +440,7 @@ export abstract class BasePermissionHandler {
 
     private autoApproveNowAllowedPendingRequests(excludePermissionId: string): void {
         for (const [permissionId, pending] of this.pendingRequests.entries()) {
-            if (permissionId === excludePermissionId) continue;
+            if (permissionId === excludePermissionId || pending.requiresExplicitDecision) continue;
             if (this.requestCoordinator.isRequestClaimed(permissionId)) continue;
             if (resolveAgentRequestKind(pending.toolName) !== 'permission') continue;
             if (!this.isAllowedForSession(pending.toolName, pending.input)) continue;
@@ -486,6 +487,7 @@ export abstract class BasePermissionHandler {
         toolName: string,
         input: unknown,
         resolveDecisionIfPolicyChanges?: () => PermissionResult | null,
+        requiresExplicitDecision?: boolean,
     ): Promise<PermissionResult> {
         if (this.isPermissionRequestClaimed(toolCallId)) {
             return Promise.reject(new Error(`Permission request ${toolCallId} is reserved by a newer runtime`));
@@ -501,6 +503,7 @@ export abstract class BasePermissionHandler {
                 toolName,
                 input: normalizedInput,
                 resolveDecisionIfPolicyChanges,
+                requiresExplicitDecision,
             });
         }
 

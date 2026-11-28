@@ -130,7 +130,10 @@ function resolveTrackedConnectedServiceResumeContext(input: Readonly<{
 
   return {
     vendorResumeId: explicitVendorResumeId,
-    candidatePersistedSessionFile: explicitCandidatePersistedSessionFile,
+    candidatePersistedSessionFile: explicitCandidatePersistedSessionFile
+      ?? (explicitVendorResumeId === null
+        ? persistedMetadataCandidatePersistedSessionFile ?? trackedMetadataCandidatePersistedSessionFile
+        : null),
   };
 }
 

@@ -8,20 +8,24 @@ export async function requestGoogleCodeAssist(params: Readonly<{
   accessToken: string;
   userAgent?: string;
   endpoint: string;
-  method: 'loadCodeAssist' | 'retrieveUserQuota' | 'retrieveUserQuotaSummary';
-  body: unknown;
   signal: AbortSignal;
-}>): Promise<unknown> {
+} & (
+  | { method: 'loadCodeAssist' | 'onboardUser' | 'retrieveUserQuota' | 'retrieveUserQuotaSummary'; body: unknown }
+  /** Reads a long-running operation resource (e.g. `operations/…` returned by onboardUser). */
+  | { method: 'operation'; operationName: string }
+)>): Promise<unknown> {
   let response: Response;
   try {
-    response = await params.fetchRuntime(`${params.endpoint}/v1internal:${params.method}`, {
-      method: 'POST',
+    response = await params.fetchRuntime(params.method === 'operation'
+      ? `${params.endpoint}/v1internal/${params.operationName}`
+      : `${params.endpoint}/v1internal:${params.method}`, {
+      method: params.method === 'operation' ? 'GET' : 'POST',
       headers: {
         authorization: `Bearer ${params.accessToken}`,
         'content-type': 'application/json',
         ...(params.userAgent ? { 'user-agent': params.userAgent } : {}),
       },
-      body: JSON.stringify(params.body),
+      ...(params.method === 'operation' ? {} : { body: JSON.stringify(params.body) }),
       signal: params.signal,
     });
   } catch (error) {

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionClientPort } from '@/api/session/sessionClientPort';
-import type { PermissionMode } from '@/api/types';
+import type { Metadata, PermissionMode } from '@/api/types';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
 import type { SessionTurnMutationV1 } from '@/api/session/mutations/sessionMutationTypes';
@@ -272,7 +272,7 @@ describe('claudeLocalLauncher', () => {
     vi.useRealTimers();
   });
 
-  it('imports the first fresh local transcript after a provisional identity even when the replay baseline is unavailable', async () => {
+  it('imports the first fresh local transcript and publishes its provisional identity when the file arrives', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-local-provisional-baseline-'));
     const workspaceDir = join(dir, 'workspace');
     const configDir = join(dir, 'claude-config');
@@ -283,6 +283,10 @@ describe('claudeLocalLauncher', () => {
     env.patch({ CLAUDE_CONFIG_DIR: configDir, HAPPIER_CLAUDE_PATH: process.execPath });
     const stdinWasPaused = process.stdin.isPaused();
     const { session, client } = createLocalHarness({ path: workspaceDir });
+    let metadata: Metadata = {
+      path: workspaceDir, host: 'test', homeDir: dir, happyHomeDir: dir, happyLibDir: dir, happyToolsDir: dir,
+    };
+    vi.mocked(client.updateMetadata).mockImplementation(async update => { metadata = update(metadata); });
     session.onSessionFound('provisional-local', {
       hook_event_name: 'SessionStart', source: 'startup',
       transcript_path: join(projectDir, 'provisional-local.jsonl'),
@@ -305,6 +309,9 @@ describe('claudeLocalLauncher', () => {
       await spawned.promise;
       const freshId = 'fresh-local-session';
       const transcriptPath = join(projectDir, `${freshId}.jsonl`);
+      session.onSessionFound(freshId, { hook_event_name: 'SessionStart', source: 'startup', transcript_path: transcriptPath });
+      await session.drainCriticalMetadataWrites({ timeoutMs: 500 });
+      expect(metadata.claudeSessionId).toBeUndefined();
       await writeFile(transcriptPath, `${[
         { type: 'user', uuid: 'fresh-local-user', sessionId: freshId,
           timestamp: new Date().toISOString(),
@@ -313,10 +320,10 @@ describe('claudeLocalLauncher', () => {
           timestamp: new Date().toISOString(),
           message: { role: 'assistant', content: [{ type: 'text', text: 'First fresh local reply' }] } },
       ].map(row => JSON.stringify(row)).join('\n')}\n`);
-      session.onSessionFound(freshId, { hook_event_name: 'SessionStart', source: 'startup', transcript_path: transcriptPath });
       await vi.waitFor(() => {
         expect(client.sendClaudeSessionMessageCommitted).toHaveBeenCalledWith(expect.objectContaining({ uuid: 'fresh-local-user' }), expect.anything());
         expect(client.sendClaudeSessionMessageCommitted).toHaveBeenCalledWith(expect.objectContaining({ uuid: 'fresh-local-assistant' }), expect.anything());
+        expect(metadata).toMatchObject({ claudeSessionId: freshId, claudeTranscriptPath: transcriptPath });
       }, { timeout: 5_000 });
     } finally {
       child.emit('exit', 0, null);

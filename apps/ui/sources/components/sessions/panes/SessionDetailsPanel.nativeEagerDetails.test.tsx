@@ -50,10 +50,6 @@ vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}), mono: () => ({}), eyebrow: () => ({}), keyHint: () => ({}) },
 }));
 
-vi.mock('@/components/ui/scroll/useWebScrollLockBypass', () => ({
-    useWebScrollLockBypass: () => {},
-}));
-
 vi.mock('@/components/sessions/files/views/SessionFileDetailsView', () => ({
     SessionFileDetailsView: (props: any) => React.createElement('SessionFileDetailsView', props),
 }));

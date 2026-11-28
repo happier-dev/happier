@@ -1,21 +1,19 @@
-import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { chmod, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import axios, { type AxiosAdapter } from 'axios';
 import { describe, expect, it, vi } from 'vitest';
-import { AGY_ACP_SERVER_VERSION, buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
+import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { configuration } from '@/configuration';
-import { resolveAgyAcpReleaseAsset } from '@/runtime/managedTools/providers/agyAcpRelease';
 import { resetInMemoryAccountSettingsContextForTests } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { createEncryptedRpcTestClient } from './encryptedRpc.testkit';
 import { registerCapabilitiesHandlers } from './capabilities';
-import { verifyExistingAgyAcpManagedBinPath } from '@/capabilities/deps/agyAcp';
 import { validateCatalogAcpProbeSpawn } from '@/capabilities/probes/validateCatalogAcpProbeSpawn';
 
-describe('selected AGY discovery process and temporary-state custody', () => {
+// The scripted `agy` runs through its shebang, which Windows cannot execute.
+describe.skipIf(process.platform === 'win32')('selected AGY discovery process and temporary-state custody', () => {
   it.each([
     ['probeModels', 'success'], ['probeModels', 'failure'], ['probeModels', 'cancel'],
     ['probeModes', 'success'], ['probeModes', 'cancel'],
@@ -26,8 +24,8 @@ describe('selected AGY discovery process and temporary-state custody', () => {
       const descriptors = Object.fromEntries(Object.keys(overrides).map((key) => [key, Object.getOwnPropertyDescriptor(configuration, key)!]));
       Object.defineProperties(configuration, Object.fromEntries(Object.entries(overrides).map(([key, value]) => [key, { value, configurable: true }])));
       const native = join(cwd, 'native');
-      await mkdir(join(native, 'antigravity-acp', 'conversations'), { recursive: true });
-      await mkdir(join(native, 'antigravity-acp', 'brain'), { recursive: true });
+      await mkdir(join(native, 'antigravity-cli', 'conversations'), { recursive: true });
+      await mkdir(join(native, 'antigravity-cli', 'brain'), { recursive: true });
       await mkdir(join(native, 'config', 'skills'), { recursive: true });
       await writeFile(join(native, 'config', 'skills', 'SKILL.md'), 'native skill');
       vi.stubEnv('GEMINI_HOME', native);
@@ -42,7 +40,7 @@ describe('selected AGY discovery process and temporary-state custody', () => {
         } }, version: 1 }
           : path === '/v1/account/encryption' ? { mode: 'plain', updatedAt: 0 }
           : path === '/v3/connect/antigravity/profiles/a/credential' ? { content: { t: 'plain', v: record }, credentialRevision: 'csr_1123456789ABCDEFGHJKMNPQRS' }
-          : path === '/v2/connect/antigravity/profiles' ? { serviceId: 'antigravity', profiles: [] } : null;
+          : path === '/v2/connect/antigravity/profiles' ? { serviceId: 'antigravity', profiles: [{ profileId: 'a', status: 'connected' }] } : null;
         if (!data) throw new Error(`Unexpected HTTP fixture: ${path}`);
         return { config, status: 200, statusText: 'OK', headers: {}, data };
       };
@@ -54,31 +52,28 @@ describe('selected AGY discovery process and temporary-state custody', () => {
       const fixture = `#!${process.execPath}\n
         const { mkdirSync, readFileSync, writeFileSync, existsSync } = require('node:fs');
         const { join } = require('node:path');
-        const home=process.env.GEMINI_HOME;
-        const token=join(home,'antigravity-acp','acp_token.json');
+        if(process.argv.includes('--help')){console.log('Usage: agy acp [flags]');process.exit(0)}
+        const home=process.argv[process.argv.indexOf('--gemini-dir')+1];
+        const token=join(home,'antigravity-cli','antigravity-oauth-token');
         const send=m=>process.stdout.write(JSON.stringify({jsonrpc:'2.0',...m})+'\\n');
         process.on('SIGTERM',()=>{writeFileSync(${JSON.stringify(stopped)},JSON.stringify({tokenPresent:existsSync(token)}));process.exit(0)});
         let buffer='';process.stdin.on('data',chunk=>{buffer+=chunk;const lines=buffer.split('\\n');buffer=lines.pop()||'';for(const line of lines){if(!line.trim())continue;const r=JSON.parse(line);
-          if(r.method==='initialize')send({id:r.id,result:{protocolVersion:1,agentCapabilities:{loadSession:true},authMethods:[{id:'oauth-personal',name:'Personal'}]}});
+          if(r.method==='initialize')send({id:r.id,result:{protocolVersion:1,agentInfo:{name:'Antigravity ACP Server',version:'1.5.18'},agentCapabilities:{loadSession:true},authMethods:[{id:'oauth-personal',name:'Personal'}]}});
           else if(r.method==='session/new'){
-            mkdirSync(join(home,'antigravity-acp','conversations'),{recursive:true});
-            mkdirSync(join(home,'antigravity-acp','brain','probe'),{recursive:true});
-            writeFileSync(join(home,'antigravity-acp','conversations','probe.db'),'probe');
-            writeFileSync(${JSON.stringify(observations)},JSON.stringify({pid:process.pid,home,refresh:JSON.parse(readFileSync(token,'utf8')).refresh_token,inheritedSkill:existsSync(join(home,'config','skills','SKILL.md'))}));
+            mkdirSync(join(home,'antigravity-cli','conversations'),{recursive:true});
+            mkdirSync(join(home,'antigravity-cli','brain','probe'),{recursive:true});
+            writeFileSync(join(home,'antigravity-cli','conversations','probe.db'),'probe');
+            writeFileSync(${JSON.stringify(observations)},JSON.stringify({pid:process.pid,home,refresh:JSON.parse(readFileSync(token,'utf8')).token.refresh_token,fileTokenStorage:process.env.AGY_CLI_FORCE_FILE_TOKEN_STORAGE??null,inheritedSkill:existsSync(join(home,'config','skills','SKILL.md'))}));
             ${outcome === 'success' ? "send({id:r.id,result:{sessionId:'probe',models:{currentModelId:'fixture-model',availableModels:[{modelId:'fixture-model',name:'Fixture'}]},modes:{currentModeId:'default',availableModes:[{id:'default',name:'Default'}]}}});" : outcome === 'failure' ? "send({id:r.id,error:{code:-32000,message:'fixture auth denied'}});" : ''}
           } else if(r.id!==undefined)send({id:r.id,result:{}});
         }});
       `;
-      const install = join(cwd, 'tools', 'agy-acp-server');
-      const executable = join(install, 'current', resolveAgyAcpReleaseAsset().executableSubpath);
-      await mkdir(join(install, 'current'), { recursive: true });
+      const executable = join(cwd, 'agy');
       await writeFile(executable, fixture);
       await chmod(executable, 0o755);
-      const metadata = await stat(executable);
-      await writeFile(join(install, 'install-state.json'), JSON.stringify({ installedVersion: AGY_ACP_SERVER_VERSION,
-        executableSha256: createHash('sha256').update(fixture).digest('hex'), executableSize: metadata.size, executableMtimeMs: metadata.mtimeMs }));
-      await expect(verifyExistingAgyAcpManagedBinPath()).resolves.toBe(executable);
-      const validation = await validateCatalogAcpProbeSpawn('agy', { processEnv: process.env, cwd });
+      vi.stubEnv('HAPPIER_AGY_PATH', executable);
+      const validation = await validateCatalogAcpProbeSpawn('agy', { processEnv: { ...process.env,
+        HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([{ kind: 'profile', serviceId: 'antigravity', profileId: 'a' }]) }, cwd });
       expect(validation, JSON.stringify(validation)).toMatchObject({ ok: true });
       const controller = new AbortController();
       const { manager } = createEncryptedRpcTestClient({ scopePrefix: 'agy-auth-discovery', registerHandlers: registerCapabilitiesHandlers });
@@ -94,12 +89,13 @@ describe('selected AGY discovery process and temporary-state custody', () => {
         if (outcome === 'cancel') expect(response).toMatchObject({ ok: false });
         const observed = JSON.parse(await readFile(observations, 'utf8'));
         expect(observed.refresh).toBe('fixture-a-refresh');
+        expect(observed.fileTokenStorage).toBe('1');
         expect(observed.inheritedSkill).toBe(false);
         expect(() => process.kill(observed.pid, 0)).toThrow();
         expect(JSON.parse(await readFile(stopped, 'utf8'))).toEqual({ tokenPresent: true });
         expect(existsSync(observed.home)).toBe(false);
-        expect(await readdir(join(native, 'antigravity-acp', 'conversations'))).toEqual([]);
-        expect(await readdir(join(native, 'antigravity-acp', 'brain'))).toEqual([]);
+        expect(await readdir(join(native, 'antigravity-cli', 'conversations'))).toEqual([]);
+        expect(await readdir(join(native, 'antigravity-cli', 'brain'))).toEqual([]);
       } finally {
         controller.abort();
         await pending;

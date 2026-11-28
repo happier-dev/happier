@@ -95,13 +95,18 @@ describe('withCodexNativeStartupLock', () => {
     } finally { release(); await first; await second; }
   });
 
-  it('pins the root used by launch and never publishes failed readiness as warm', async () => {
+  it('retains a Connected Account pin and never publishes failed readiness as warm', async () => {
     const root = join(state.homedir, 'sqlite');
+    const configuration = startup(root);
+    await mkdir(configuration.processEnv.CODEX_HOME, { recursive: true });
+    await writeFile(join(configuration.processEnv.CODEX_HOME, '.happier-state-sharing.json'), JSON.stringify({
+      v: 1, effectiveStateMode: 'shared', lastSyncAtMs: 1,
+    }));
     await expect(withCodexNativeStartupLock(10, async overrides => {
       expect(overrides).toEqual(['model="kept"', `sqlite_home=${JSON.stringify(root)}`]);
       await completeDatabase(root);
       throw new Error('initialize failed');
-    }, undefined, { ...startup(root), configOverrides: ['model="kept"'] })).rejects.toThrow('initialize failed');
+    }, undefined, { ...configuration, configOverrides: ['model="kept"'] })).rejects.toThrow('initialize failed');
     await expect(readFile(join(root, '.happier-codex-native-startup.version'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
@@ -123,7 +128,7 @@ describe('withCodexNativeStartupLock', () => {
     { name: 'cloud requirements', file: 'cloud-config-bundle-cache.json', override: 'model="kept"' },
     { name: 'explicit SQLite config', file: null, override: 'sqlite_home="native-choice"' },
     { name: 'explicit keyring config', file: null, override: 'cli_auth_credentials_store="keyring"' },
-  ])('keeps $name globally excluded while pinning projected SQLite unless the caller overrides it', async ({ file, override }) => {
+  ])('keeps $name globally excluded and preserves native configuration', async ({ file, override }) => {
     const configuration = startup(join(state.homedir, 'sqlite'));
     if (file) {
       await mkdir(configuration.processEnv.CODEX_HOME, { recursive: true });
@@ -139,10 +144,7 @@ describe('withCodexNativeStartupLock', () => {
       await vi.waitFor(() => expect(state.infoFile).toHaveBeenCalledOnce());
       expect(initialize).not.toHaveBeenCalled();
     } finally { release(); await owner; await contender; }
-    expect(initialize).toHaveBeenCalledWith([
-      override,
-      ...(override.startsWith('sqlite_home=') ? [] : [`sqlite_home=${JSON.stringify(configuration.processEnv.CODEX_SQLITE_HOME)}`]),
-    ]);
+    expect(initialize.mock.calls.map(([overrides]) => overrides)).toEqual([[override]]);
     await expect(readFile(join(configuration.processEnv.CODEX_SQLITE_HOME, '.happier-codex-native-startup.version'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
   });
 

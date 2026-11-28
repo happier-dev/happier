@@ -1,5 +1,5 @@
 import type { Log } from "@sentry/node";
-import { redactPublicShareCapabilityUrl } from "@happier-dev/protocol";
+import { readOAuthCallbackPath, redactHttpRequestUrl } from "@/utils/logging/redactHttpRequestUrl";
 
 const REDACTED_VALUE = "[redacted]";
 
@@ -17,7 +17,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 function redactRecursive(value: unknown, seen: WeakMap<object, unknown>): unknown {
-    if (typeof value === "string") return redactPublicShareCapabilityUrl(value);
+    if (typeof value === "string") return redactHttpRequestUrl(value);
     if (!value || typeof value !== "object") return value;
     if (seen.has(value)) return seen.get(value);
 
@@ -34,7 +34,9 @@ function redactRecursive(value: unknown, seen: WeakMap<object, unknown>): unknow
         /** @type {Record<string, unknown>} */
         const out: Record<string, unknown> = {};
         seen.set(value, out);
+        const hasOAuthCallbackUrl = typeof value.url === "string" && readOAuthCallbackPath(value.url) !== null;
         for (const [key, v] of Object.entries(value)) {
+            if (hasOAuthCallbackUrl && key === "query_string") continue;
             const redacted = redactValueForKey(key);
             out[key] = redacted ?? redactRecursive(v, seen);
         }
@@ -53,7 +55,7 @@ export function redactSentryLogAttributes(attributes: Log["attributes"] | undefi
 export function redactSentryLog(log: Log): Log {
     return {
         ...log,
-        message: redactPublicShareCapabilityUrl(String(log.message)),
+        message: redactHttpRequestUrl(String(log.message)),
         attributes: redactSentryLogAttributes(log.attributes),
     };
 }

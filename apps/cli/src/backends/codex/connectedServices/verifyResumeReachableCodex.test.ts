@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { openSqliteDatabaseSync } from '@/utils/sqlite/sqliteSync';
 import { resolveExistingCodexIndexedRolloutPath } from './reconcileCodexResumeRolloutPath';
 import { verifyResumeReachableCodex } from './verifyResumeReachableCodex';
+import { writeFakeCodexAppServerScript } from '../appServer/testkit/fakeCodexAppServer';
 
 describe('verifyResumeReachableCodex', () => {
   it('accepts compressed state behind a plain SQLite path without rewriting the native index', async () => {
@@ -29,7 +30,7 @@ describe('verifyResumeReachableCodex', () => {
         })).resolves.toEqual({ ok: true, resolvedPath: `${plain}.zst` });
         expect(database.prepare('SELECT rollout_path FROM threads WHERE id = ?').get(vendorResumeId))
           .toEqual({ rollout_path: plain });
-        await expect(resolveExistingCodexIndexedRolloutPath({ env, vendorResumeId, cwd: root }))
+        await expect(resolveExistingCodexIndexedRolloutPath({ sqliteHome, vendorResumeId }))
           .resolves.toBe(`${plain}.zst`);
       } finally {
         database.close();
@@ -38,7 +39,11 @@ describe('verifyResumeReachableCodex', () => {
       await rm(root, { recursive: true, force: true });
     }
   });
-  it.each(['.jsonl', '.jsonl.zst'])('repairs a stale home path for a promoted %s rollout using the logical plain path', async (extension) => {
+  it.each([
+    { extension: '.jsonl', nativeProof: false },
+    { extension: '.jsonl.zst', nativeProof: false },
+    { extension: '.jsonl', nativeProof: true },
+  ])('repairs a promoted $extension rollout with native proof=$nativeProof', async ({ extension, nativeProof }) => {
     const root = await mkdtemp(join(tmpdir(), 'happier-codex-reachable-sqlite-'));
     const vendorResumeId = '019f2339-9299-7e51-b192-9751a0a03586';
     const otherVendorResumeId = '019f2339-9299-7e51-b192-9751a0a03587';
@@ -59,6 +64,21 @@ describe('verifyResumeReachableCodex', () => {
       await mkdir(join(codexHome, 'sessions', '2026', '09', '07'), { recursive: true });
       await mkdir(sqliteHome, { recursive: true });
       await writeFile(foundPath, '{}\n');
+      const appServer = nativeProof ? await writeFakeCodexAppServerScript({
+        dir: root,
+        bodyLines: [
+          'for await (const line of rl) {',
+          '  const { id, method } = JSON.parse(line);',
+          '  if (id == null) continue;',
+          '  if (method === "configRequirements/read") {',
+          '    process.stdout.write(JSON.stringify({ id, result: { requirements: null } }) + "\\n");',
+          '  } else if (method === "config/read") {',
+          '    process.stdout.write(JSON.stringify({ id, result: { config: { sqlite_home: process.env.TEST_CODEX_NATIVE_SQLITE_HOME } } }) + "\\n");',
+          '  } else process.stdout.write(JSON.stringify({ id, result: {} }) + "\\n");',
+          '}',
+        ],
+      }) : null;
+      if (appServer) await writeFile(join(codexHome, 'auth.json'), '{}');
 
       const databasePath = join(sqliteHome, 'state_5.sqlite');
       const database = openSqliteDatabaseSync(databasePath);
@@ -74,7 +94,8 @@ describe('verifyResumeReachableCodex', () => {
         targetMaterializedRoot: root,
         targetMaterializedEnv: {
           CODEX_HOME: codexHome,
-          CODEX_SQLITE_HOME: sqliteHome,
+          CODEX_SQLITE_HOME: appServer ? join(root, 'decoy') : sqliteHome,
+          ...(appServer ? { HAPPIER_CODEX_APP_SERVER_BIN: appServer, TEST_CODEX_NATIVE_SQLITE_HOME: sqliteHome } : {}),
         },
         vendorResumeId,
         cwd: root,

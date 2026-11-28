@@ -69,8 +69,20 @@ const listeners = new Set<() => void>();
  * so a cache is not needed for correctness here — it is needed so a render never
  * touches the DOM, which is what keeps this safe to call from any island at any
  * time.
+ *
+ * `null` until the first island subscribes. Until then every render answers the
+ * server's value, so hydration sees exactly what the build-time renderer painted.
+ * preact/compat's hydrate keeps the server's attributes rather than diffing them,
+ * so answering the document's class DURING hydration left a light-theme visitor
+ * with the dark wordmark, toggle icon and CTA art. The first `subscribe` (an
+ * effect, after hydration) reads the class and notifies, which is a real render
+ * that patches the DOM.
  */
 let snapshot: ThemeName | null = null;
+
+function currentTheme(): ThemeName {
+    return snapshot ?? readFromDocument();
+}
 
 function getSnapshot(): ThemeName {
     /*
@@ -86,8 +98,7 @@ function getSnapshot(): ThemeName {
      * getServerSnapshot stays for React's benefit and returns the same value.
      */
     if (typeof document === 'undefined') return 'dark';
-    if (snapshot === null) snapshot = readFromDocument();
-    return snapshot;
+    return snapshot ?? getServerSnapshot();
 }
 
 /**
@@ -107,11 +118,16 @@ function getServerSnapshot(): ThemeName {
 
 function subscribe(listener: () => void): () => void {
     listeners.add(listener);
+    if (snapshot === null) {
+        const hydrated = getSnapshot();
+        snapshot = readFromDocument();
+        if (snapshot !== hydrated) for (const notify of listeners) notify();
+    }
     return () => listeners.delete(listener);
 }
 
 export function setTheme(next: ThemeName): void {
-    if (getSnapshot() === next) return;
+    if (currentTheme() === next) return;
     snapshot = next;
 
     const root = document.documentElement;
@@ -128,7 +144,7 @@ export function setTheme(next: ThemeName): void {
 }
 
 export function toggleTheme(): void {
-    setTheme(getSnapshot() === 'dark' ? 'light' : 'dark');
+    setTheme(currentTheme() === 'dark' ? 'light' : 'dark');
 }
 
 export type ThemeStoreValue = {

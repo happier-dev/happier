@@ -7,7 +7,7 @@ import { deriveDirectSessionActivityFromTimestamp } from '@/api/directSessions/a
 import { mapWithConcurrency } from '@/api/directSessions/discovery/mapWithConcurrency';
 
 import { readCodexSessionMetaFromRollout } from '../localControl/rolloutDiscovery';
-import { parseCodexRolloutFilename } from '../utils/codexSessionFiles';
+import { isCodexRolloutCandidate, parseCodexRolloutFilename } from '../utils/codexSessionFiles';
 import { readCodexSessionTitleFromRollout } from './readCodexSessionTitleFromRollout';
 import { isCodexGuardianReviewSource } from './isCodexGuardianReviewSource';
 import type { CodexDirectSessionHomeEntry } from './resolveCodexHomeEntriesForDirectSessionsSource';
@@ -43,6 +43,7 @@ async function collectRolloutFiles(params: Readonly<{
     } catch {
       return;
     }
+    const fileNames = new Set(entries.filter(entry => entry.isFile()).map(entry => String(entry.name)));
     for (const entry of entries) {
       if (entry.isSymbolicLink()) continue;
       const name = typeof entry.name === 'string' ? entry.name : String(entry.name);
@@ -52,7 +53,7 @@ async function collectRolloutFiles(params: Readonly<{
         continue;
       }
       if (!entry.isFile()) continue;
-      if (!name.startsWith('rollout-') || !name.endsWith('.jsonl')) continue;
+      if (!isCodexRolloutCandidate(name, fileNames)) continue;
       if (filenameIncludes && !name.toLowerCase().includes(filenameIncludes)) continue;
       try {
         const s = await stat(full);

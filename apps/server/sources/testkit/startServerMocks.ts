@@ -55,6 +55,9 @@ export function installStartServerCommonWiringMocks(): void {
   vi.mock('@/app/retention/runtime/startRetentionWorker', () => ({
     startRetentionWorker: vi.fn(() => null),
   }))
+  vi.mock('@/app/monitoring/instanceHeartbeat', () => ({
+    startInstanceHeartbeat: vi.fn(() => null),
+  }))
   vi.mock('@/app/features/catalog/serverFeatureGate', () => ({
     isServerFeatureEnabledForRequest: vi.fn(() => false),
   }))
