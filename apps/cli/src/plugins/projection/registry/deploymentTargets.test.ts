@@ -7,7 +7,7 @@ import { createResolvedContributionRegistry } from './createResolvedContribution
 import { buildPluginProjectionV2 } from './projection/v2';
 import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
 import { DeploymentTargetPreparationBaseV1ProtocolSchema, DeploymentTargetRoleInputProtocolSchemasV1,
-    DeploymentTargetRoleResultV1ProtocolSchema } from '@happier-dev/protocol/plugins/contributions/v2';
+    DeploymentTargetRoleResultV1ProtocolSchema, deploymentTargetRoleWithNativeSelectorV1 } from '@happier-dev/protocol/plugins/contributions/v2';
 
 it('indexes managed data resource backing Actions and mutations through the same target role owner', () => {
     const pluginId = 'com.example.data';
@@ -15,12 +15,13 @@ it('indexes managed data resource backing Actions and mutations through the same
     const manifest = normalizePluginManifestV2({ schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'Data target',
         entrypoints: { daemon: './daemon.mjs' }, contributes: {
             deploymentTargets: [{ id: 'data', role: 'data', targetKind: 'database', title: 'Data', icon: 'server-outline',
-                targetSchema: closed, linkSchema: closed, dataV1: { database: { engineId: 'postgresql' }, projects: {
+                targetSchema: closed, linkSchema: closed, nativeSelectorSchema: closed, dataV1: { database: { engineId: 'postgresql' }, projects: {
                     list: 'projects', listAction: 'list-projects', provision: 'provision',
                 } } }],
             resources: [{ id: 'projects', source: 'dynamic', scope: 'surface', kind: 'config', contentType: 'application/json' }],
-            actions: ['list-projects', 'provision'].map(id => ({ id, title: id, scopes: ['global'], surfaces: ['plugin'],
-                execution: { target: 'daemon' }, inputSchema: DeploymentTargetPreparationBaseV1ProtocolSchema.jsonSchema,
+            actions: ([['list-projects', 'projects.list'], ['provision', 'projects.provision']] as const).map(([id, role]) => ({ id, title: id, scopes: ['global'], surfaces: ['plugin'],
+                execution: { target: 'daemon' }, inputSchema: deploymentTargetRoleWithNativeSelectorV1(
+                    DeploymentTargetRoleInputProtocolSchemasV1[role].jsonSchema, closed),
                 resultSchema: closed, dangerLevel: id === 'list-projects' ? 'safe' : 'writesLocal', readOnly: id === 'list-projects' })),
         } });
     const loaded: LoadedPlugin = { pluginId, pluginRootPath: '/plugins/data', manifestPath: '/plugins/data/plugin.json',
@@ -45,12 +46,14 @@ it('projects an admitted external runtime target and withdraws it with its suppl
     const pluginId = 'com.example.deploy';
     const closed = { type: 'object', properties: {}, additionalProperties: false };
     const definition = { id: 'runtime', role: 'runtime', targetKind: 'example', title: 'Example runtime', icon: 'server-outline',
-        targetSchema: closed, linkSchema: closed,
+        targetSchema: closed, linkSchema: closed, nativeSelectorSchema: closed,
         actions: { inspect: 'inspect', link: 'link', deploy: 'deploy', observe: 'observe' } };
     const manifest = normalizePluginManifestV2({ schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'Example target',
         entrypoints: { daemon: './daemon.mjs' }, contributes: { deploymentTargets: [definition],
             actions: (['inspect', 'link', 'deploy', 'observe'] as const).map(id => ({ id, title: id, scopes: ['global'], surfaces: ['plugin'],
-                execution: { target: 'daemon' }, inputSchema: DeploymentTargetRoleInputProtocolSchemasV1[id].jsonSchema,
+                execution: { target: 'daemon' }, inputSchema: deploymentTargetRoleWithNativeSelectorV1(
+                    id === 'inspect' || id === 'link' ? DeploymentTargetPreparationBaseV1ProtocolSchema.jsonSchema
+                        : DeploymentTargetRoleInputProtocolSchemasV1[id].jsonSchema, closed),
                 resultSchema: id === 'deploy' || id === 'observe' ? DeploymentTargetRoleResultV1ProtocolSchema.jsonSchema : closed,
                 dangerLevel: id === 'inspect' || id === 'observe' ? 'safe' : 'writesLocal' })) } });
     const loaded: LoadedPlugin = { pluginId, pluginRootPath: '/plugins/example', manifestPath: '/plugins/example/plugin.json',
