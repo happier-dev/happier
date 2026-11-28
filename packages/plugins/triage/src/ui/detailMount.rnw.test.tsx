@@ -1637,8 +1637,11 @@ describe('opening a row into the source detail', () => {
 
         await vi.waitFor(() => expect(currentHarness?.exactReads).toMatchObject(
             [{ entryRef, sourceInstanceId: retired ? SECOND_INSTANCE : INSTANCE }]));
+        await expect(shell.getByText('No configured connection currently observes this entry, so there is nothing to read it with.')).resolves.toBeDefined();
+        const state = document.querySelector('[data-testid="triage-detail-read-failure"]');
+        expect(state?.textContent).toContain('Details');
         await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Details' })); });
-        expect(document.body.textContent).toContain('scope-outside-binding');
+        expect(state?.textContent).toContain('scope-outside-binding');
         expect(document.body.textContent).toContain(requestId);
         // One failure code, one message (N29): a retired connection in the roster never rewords it later.
         await vi.waitFor(async () => expect(await shell.getByText('This entry’s source is no longer connected')).toBeDefined());

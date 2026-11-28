@@ -24,7 +24,11 @@ export function presentTriageSourceConnectionFailure(
     return presentRetiredTriageSourceConnection(text);
   }
   if (code === TRIAGE_SOURCE_SCOPE_OUTSIDE_BINDING_CODE_V1) {
-    return { title: text('plugins.triage.sourceFailure.scope-outside-binding', 'This entry’s source is no longer connected') };
+    return {
+      title: text('plugins.triage.sourceFailure.scope-outside-binding', 'This entry’s source is no longer connected'),
+      description: text('plugins.triage.surface.detail.noConnection.description',
+        'No configured connection currently observes this entry, so there is nothing to read it with.'),
+    };
   }
   if (code === 'collection_update_required') {
     return {

@@ -709,6 +709,19 @@ export function TriageDetailReadFailure(props: Readonly<{
   const code = sourceFailure?.code ?? failure?.code ?? rosterFailure?.code;
   // One message per failure code, from the one presenter: never a second, later read that rewords it (N29).
   const connectionFailure = presentTriageSourceConnectionFailure(code, text);
+  if (connectionFailure !== undefined) {
+    const details = [
+      code,
+      ...(failure?.diagnostics ?? []).map(diagnostic => diagnostic.code),
+      ...(rosterFailure?.diagnostics ?? []),
+      sourceFailure?.requestId ?? (failure === undefined ? rosterFailure?.requestId : readPluginErrorRequestIdV1(failure)),
+      sourceFailure?.detail ?? failure?.data.message,
+    ];
+    return <ErrorState testID="triage-detail-read-failure" kind="unavailable" {...connectionFailure}
+      details={[...new Set(details.filter(Boolean))].join('\n')}
+      action={props.manageSources === undefined ? undefined
+        : <Button titleKey="plugins.triage.surface.sources.manage" title="Manage sources" variant="secondary" onPress={props.manageSources} />} />;
+  }
   const refusal = presentInternalTaskReadFailure(code, text);
   const canRetry = (failure?.data.retryable ?? rosterFailure?.retryable) !== false;
   const recovery = canRetry
@@ -720,14 +733,10 @@ export function TriageDetailReadFailure(props: Readonly<{
   });
   return <Stack gap="small">
     <ErrorState
-      titleKey={connectionFailure === undefined && refusal === null ? 'plugins.triage.surface.detail.accountError.title' : undefined}
-      title={connectionFailure?.title ?? refusal ?? 'These details could not be read'}
-      description={connectionFailure !== undefined ? connectionFailure.description
-        : refusal === null ? [age, description].filter(Boolean).join(' ') : undefined}
-      action={connectionFailure !== undefined
-        ? props.manageSources === undefined ? undefined
-          : <Button titleKey="plugins.triage.surface.sources.manage" title="Manage sources" variant="secondary" onPress={props.manageSources} />
-        : canRetry ? <Button titleKey="plugins.triage.surface.actions.retry" title="Retry" variant="secondary" onPress={props.retry} /> : undefined}
+      titleKey={refusal === null ? 'plugins.triage.surface.detail.accountError.title' : undefined}
+      title={refusal ?? 'These details could not be read'}
+      description={refusal === null ? [age, description].filter(Boolean).join(' ') : undefined}
+      action={canRetry ? <Button titleKey="plugins.triage.surface.actions.retry" title="Retry" variant="secondary" onPress={props.retry} /> : undefined}
     />
     {sourceFailure !== undefined ? <ActionFailureDetails code={sourceFailure.code} requestId={sourceFailure.requestId}
       detail={sourceFailure.detail} showReason={false} />
