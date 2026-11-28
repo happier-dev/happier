@@ -1,6 +1,7 @@
 import { defineProtocolJsonValue } from '@happier-dev/plugin-sdk/protocol';
 import { readPluginActionFailureAuthorPayload } from '@happier-dev/plugin-sdk/actions';
 import { isActionApprovalDeclinedErrorCode, isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/plugin-sdk/errors';
+import { isPluginErrorData } from '@happier-dev/protocol/plugins/errors';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { isPluginError, readPluginErrorRequestIdV1, type JsonValue, type PluginDiagnosticData } from '@happier-dev/plugin-sdk';
 import type {
@@ -136,10 +137,14 @@ export function projectPluginActionRejectionV1<Result>(error: unknown, translate
   const authoredMessage = readAuthoredMessage(pluginError?.data.message ?? (error as { message?: unknown } | null)?.message, code);
   const message = authoredMessage ?? translateRefusal(code, translate);
   const authored = pluginError ? { success: true as const, data: pluginError.data } : StrictJsonValueSchema.safeParse(error);
-  const author = readPluginActionFailureAuthorPayload(authored.success ? authored.data : undefined);
+  const { details: carriedDetails, ...author } = readPluginActionFailureAuthorPayload(authored.success ? authored.data : undefined);
+  // Immediate contributed failures carry PluginError data where recorded failures can carry the author details directly.
+  const authorPayload = isPluginErrorData(carriedDetails) && carriedDetails.code === code
+    ? readPluginActionFailureAuthorPayload(carriedDetails)
+    : carriedDetails === undefined ? {} : { details: carriedDetails };
   const effectAttempted = (error as { effectAttempted?: unknown } | null)?.effectAttempted
     ?? (details && typeof details === 'object' ? Reflect.get(details, 'effectAttempted') : undefined);
-  const metadata = { ...author,
+  const metadata = { ...authorPayload, ...author,
     ...(authoredMessage === undefined ? {} : { authoredMessage }),
     ...(typeof effectAttempted === 'boolean' ? { effectAttempted } : {}),
   };

@@ -15117,6 +15117,12 @@ refusal when the Action supplies no ID. The Agent shell bridge includes that ID
 in its JSON error when the Session tool supplies one. Pi includes the ID with
 the failure code in the tool result.
 
+Plugin UI exposes the author's domain data as `execution.details` on errors
+and unknown outcomes. The Action projection reads that data from the matching
+contributed `PluginError` envelope and also accepts details carried directly
+by a settlement, such as a recorded approval. Surfaces read the same field
+and validate it against their domain schema before offering recovery.
+
 `Action.Failure` accepts a Plugin UI execution from `useExecutePluginAction` or
 `projectPluginActionControlExecutionV1`. It uses the host presenter for the
 reason and safe details. An optional `onRetry` callback adds a recovery control

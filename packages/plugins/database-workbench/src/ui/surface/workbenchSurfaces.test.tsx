@@ -739,7 +739,14 @@ describe('Database workbench surfaces', () => {
             ...(outcome === 'recoverable binding failure' ? { savedSecretRef, resourceRevision } : {}) },
           failureCause: { phase: 'deployment.bindings.prepare.destination', errorClass: 'Error' as const,
             errorCode: 'deployment_conflict', httpStatus: null } };
-        if (approval === 'direct') return failure;
+        const contributedFailure = projectContributedActionFailure({
+          errorCode: failure.errorCode, error: failure.error, data: {
+            effectAttempted: failure.effectAttempted, failureCause: failure.failureCause, details: failure.details,
+          },
+        });
+        if (approval === 'direct') {
+          return PluginUiActionControlExecutionV1Schema.parse(projectNativeJsonValueForTransport(contributedFailure));
+        }
         // In-memory required-E2EE Artifact storage and a remote database refusal.
         // Consent, encryption, settlement and recorded-result reading use production owners.
         const dataKey = new Uint8Array(32).fill(23);
@@ -773,12 +780,7 @@ describe('Database workbench surfaces', () => {
           executeApproved: async ({ request, persist, nextTimestamp }) => {
             const executing = { ...request, status: 'executing' as const, updatedAtMs: nextTimestamp(request) };
             expect(await persist(executing)).toBeNull();
-            const result = projectContributedActionFailure({
-              errorCode: failure.errorCode, error: failure.error, data: {
-                effectAttempted: failure.effectAttempted, failureCause: failure.failureCause, details: failure.details,
-              },
-            });
-            return settleTargetActionExecution({ request: executing, result, persist,
+            return settleTargetActionExecution({ request: executing, result: contributedFailure, persist,
               operationCredentialUses: [], executedAtMs: nextTimestamp(executing) });
           },
         });
