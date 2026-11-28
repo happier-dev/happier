@@ -64,6 +64,7 @@ import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent } from
 import { getActiveAccountSettingsSnapshot, setActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { prepareRequesterAccountActionContext } from '../sessionEncryption/requesterAccountActionProjection';
+import { createRequesterAccountContextRetiredError } from '../sessionEncryption/requesterAccountActionContext';
 import { sealExternalActionRequesterAccountContextV1, sealManagedControllerActionCodecV1, type ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { ProjectAccountRowV1Schema, ProjectAccountRowMutationRequestV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
@@ -2990,19 +2991,19 @@ describe('executeExternalAction', () => {
     } } });
   });
 
-  it.each(['typed', 'untyped'] as const)('seals a %s executor exception after dispatch', async kind => {
+  it.each(['typed', 'untyped', 'requester custody'] as const)('seals a %s executor exception after dispatch', async kind => {
     const diagnostic = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
     const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(7) };
     const binding = {
       serverIdentityId: 'srv_test', accountId: principal.accountId,
       credentialId: '00000000-0000-4000-8000-000000000001',
-      actionId: kind === 'typed' ? 'deployments.teardown' : 'session.activity.get', requestId: 'protected-executor-failure',
+      actionId: kind === 'untyped' ? 'session.activity.get' : 'deployments.teardown', requestId: 'protected-executor-failure',
       target: { kind: 'machine' as const, machineId: 'machine-1' },
     };
     const request = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
       binding,
       material,
-      input: kind === 'typed'
+      input: kind !== 'untyped'
         ? { serverId: binding.serverIdentityId, environmentId: 'environment', targetLinkId: 'link',
           reason: 'manual', removeEnvironment: true, volumes: [], requestKey: 'remove' }
         : { sessionId: 'session-1' },
@@ -3010,6 +3011,7 @@ describe('executeExternalAction', () => {
     });
 
     const submitOperation = vi.fn(async () => {
+      if (kind === 'requester custody') throw createRequesterAccountContextRetiredError(false);
       throw new PluginError({ code: 'controller_unavailable', message: 'private executor failure',
         failureCause: { phase: 'machines.managed.list', errorClass: 'Error', errorCode: 'controller_unavailable',
           nativeErrorReason: 'server_error', httpStatus: 503 } });
@@ -3021,7 +3023,7 @@ describe('executeExternalAction', () => {
       currentMachineId: 'machine-1',
       resolveEncryption: async () => ({ serverIdentityId: binding.serverIdentityId, material }),
       resolveTarget: async () => binding.target,
-      executor: kind === 'typed'
+      executor: kind !== 'untyped'
         ? createActionExecutor({ ...createUnavailableHostActionDeps(), runActionOperation: submitOperation })
         : { execute: async () => {
           throw Object.assign(new TypeError('private executor failure'), {
@@ -3030,14 +3032,18 @@ describe('executeExternalAction', () => {
         } },
     });
 
-    if (kind === 'typed') expect(submitOperation).toHaveBeenCalledOnce();
+    if (kind !== 'untyped') expect(submitOperation).toHaveBeenCalledOnce();
     expect(result.kind).toBe('response');
     if (result.kind !== 'response') throw new Error('Expected encrypted failure');
     expect(result.response.v).toBe(2);
     expect(result.prepared.body).not.toContain('private executor failure');
     const execution = openExternalActionResponseV2({ envelope: result.response, binding, request, material });
-    expect(execution).toMatchObject({ ok: false, errorCode: 'action_outcome_unknown' });
-    expect(execution).not.toHaveProperty('effectAttempted');
+    if (kind === 'requester custody') {
+      expect(execution).toMatchObject({ ok: false, errorCode: 'requester_account_context_unavailable', effectAttempted: false });
+    } else {
+      expect(execution).toMatchObject({ ok: false, errorCode: 'action_outcome_unknown' });
+      expect(execution).not.toHaveProperty('effectAttempted');
+    }
     expect(JSON.stringify(execution)).not.toContain('private executor failure');
     expect(diagnostic.mock.calls.filter(([tag]) => tag === '[external-action-phase]')).toEqual([
       ['[external-action-phase]', expect.objectContaining({ actionId: binding.actionId, requestId: binding.requestId,

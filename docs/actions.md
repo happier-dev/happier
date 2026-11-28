@@ -2055,11 +2055,13 @@ codes as compatible with an older closed reader.
 
 Unexpected Action exceptions in 0.3 development return the original request ID.
 A managed admission failure returns `action_not_admitted` only when it occurred
-before write submission and the admission lookup confirms no retained allocation. A retained allocation,
-an unavailable admission check, an uncertain transaction completion, or a daemon
-execution exception returns `action_outcome_unknown` instead;
-callers must inspect current state before trying again. The existing server and
-daemon log owners record Action/request correlation, phase, allowlisted error
+before write submission and the admission lookup confirms no retained allocation.
+A retained allocation, an unavailable admission check, an uncertain transaction
+completion, or a daemon execution exception with an uncertain effect returns
+`action_outcome_unknown`. Inspect current state before trying again. A typed
+daemon refusal that establishes the effect never started, such as requester
+custody retirement, keeps its refusal code and `effectAttempted: false`.
+The existing server and daemon log owners record Action/request correlation, phase, allowlisted error
 class/code, and source callsites without exception messages or Action input.
 Source frames are selected only after the complete rendered exception message;
 unrecognized stack headers contribute no frames. The UI and CLI HTTP adapters

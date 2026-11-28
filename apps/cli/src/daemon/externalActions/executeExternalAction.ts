@@ -1222,14 +1222,15 @@ async function executeExternalActionRequest(input: Readonly<{
     trace('action_execution.threw');
     return refuseExternalActionPhase('action_execution', input.currentMachineId, error, { actionId: actionId.data, requestId });
   };
-  const projectPreparationFailure = (error: unknown, requestId: string, phase: ReturnType<typeof recordExecutionThrow>): ActionExecuteFailure => {
+  const projectPreparationFailure = (error: unknown, requestId: string,
+    phase: ReturnType<typeof recordExecutionThrow>, typedFailure: ActionExecuteFailure | null): ActionExecuteFailure => {
     // Only the typed identity and validated cause can leave this phase.
     // Author details, exception prose, stacks and raw schema input stay private.
     if (error instanceof AccountSettingsContentInvalidError) {
       return { ok: false, errorCode: error.code, error: error.code, effectAttempted: false };
     }
     const typed = phase.executionFailure ?? (error instanceof ManagedMachineControllerError
-      ? error.toActionFailure(actionId.data) : parseActionExecuteFailure(error));
+      ? error.toActionFailure(actionId.data) : typedFailure);
     const code = typed?.errorCode ?? (isPluginError(error) ? error.code : undefined);
     return code ? { ok: false, errorCode: code, error: code, effectAttempted: false,
       failureCause: typed?.failureCause ?? projectActionFailureCauseV1(error, actionId.data) }
@@ -1309,9 +1310,11 @@ async function executeExternalActionRequest(input: Readonly<{
     const requestId = failureRequestId();
     const phase = recordExecutionThrow(error, requestId);
     const resource = logsOperands.resourceContinuation;
+    const typedFailure = parseActionExecuteFailure(error);
     let execution: ActionExecuteFailure;
-    if (!effectMayHaveStarted) {
-      execution = projectPreparationFailure(error, requestId, phase);
+    // Dispatch can reach a host operation that explicitly refuses before its effect.
+    if (!effectMayHaveStarted || typedFailure?.effectAttempted === false) {
+      execution = projectPreparationFailure(error, requestId, phase, typedFailure);
     } else if (resource && context.signal?.aborted) {
       execution = { ok: false, errorCode: 'cancelled', error: 'cancelled' };
     } else {
