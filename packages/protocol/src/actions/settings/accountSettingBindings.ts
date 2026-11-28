@@ -40,7 +40,6 @@ type CoupledSettings = Pick<AccountSettings, 'codingPromptBehaviorV1' | 'usageLi
     | 'sessionTmuxSessionName' | 'sessionTmuxIsolated' | 'sessionTmuxTmpDir' | 'actionsSettingsV1'
     | 'sessionDefaultPermissionModeByTargetKey' | 'backendEnabledByTargetKey' | 'backendCliSourcePreferenceByTargetKey'
     | 'sessionIdleCompactionEnabledByTargetKey' | 'sessionIdleCompactionMinContextTokensByTargetKey' | 'sessionIdleCompactionCacheWindowOverrideMsByTargetKey'
-    | 'connectedAccountStatusEnabledByTargetKey'
     | 'scmGitRepoPreferredBackend' | 'scmGitRepoPreferredBackendQualifiedId' | 'scmDefaultDiffModeByBackend'
     | 'toolViewDetailLevelByToolName' | 'toolViewExpandedDetailLevelByToolName' | 'sessionReminderPresetsV1'
     | 'externalSessionsSettingsV1' | 'collectionDisplayPreferencesV1' | 'sessionListDensity' | 'sessionListLayoutV1'
