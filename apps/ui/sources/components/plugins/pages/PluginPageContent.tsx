@@ -1,14 +1,17 @@
 import * as React from 'react';
-import { ownChromeHeaderRight } from '@/components/navigation/ownChromeHeaderItems';
+import { DefaultBackButton } from '@/components/navigation/Header';
+import { ownChromeHeaderLeft, ownChromeHeaderRight } from '@/components/navigation/ownChromeHeaderItems';
 import { NavigationContext } from '@react-navigation/native';
 import { PluginUiSetUnsavedChangesRequestV1Schema } from '@happier-dev/protocol/plugins/ui';
-import { useDestinationPageTitle } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { Platform, View } from 'react-native';
 import { Stack } from '@/components/appShell/workspace/destinationRoute';
 import { useIsAppDestinationRootPath } from '@/components/appShell/destinations/useCompactAppDestinations';
 import { PhoneMainTabLine } from '@/components/navigation/shell/PhoneMainTabLine';
 import { useDeviceType } from '@/utils/platform/responsive';
-import { useDestinationFocus, useDestinationRouter, useDestinationVisibility } from '@/components/appShell/workspace/DestinationInstanceHost';
+import {
+    type DestinationScreenOptions, useDestinationFocus, useDestinationInstanceKey, useDestinationPageTitle,
+    useDestinationRouter, useDestinationVisibility,
+} from '@/components/appShell/workspace/DestinationInstanceHost';
 
 import { PluginSurfacePlacementHost } from '@/components/plugins/surfaces';
 import { PluginSurfaceFallback } from '@/components/sessions/panes/PluginSurfaceFallback';
@@ -408,14 +411,23 @@ export function PluginPageContent(props: Readonly<{
         phoneTitleChrome,
         phone,
     ]);
-    // A rail page's own route is a main screen: the tab bar is its way around, so its bar carries no Back (owner 11-10).
-    // The page's own place (its location's root, not where its search or lens moved the location) is what is a rail
-    // destination; a detail it pushed (a back step) is a page over it, with its bar and Back.
+    // An addressed entry is already pushed on a phone, even before its renderer reports a Back step.
+    const phoneEntry = props.appChrome === true && phone && props.entryDetail === true;
+    const rootPath = props.routePathFor('', null);
     const pageBackStep = React.useSyncExternalStore(locationOwner.subscribe, locationOwner.hasBackStep, locationOwner.hasBackStep);
-    const mainScreen = useIsAppDestinationRootPath(props.routePathFor('', null)) && !pageBackStep;
+    const mainScreen = useIsAppDestinationRootPath(rootPath) && !pageBackStep && !phoneEntry;
+    const hosted = useDestinationInstanceKey() !== null;
+    const pageLabel = page?.label;
+    const headerFallbackLeft = React.useCallback(() => <DefaultBackButton label={pageLabel} onPress={() => {
+        if (!consumePageBack()) router.replace(rootPath as Parameters<typeof router.replace>[0]);
+    }} />, [consumePageBack, pageLabel, rootPath, router]);
     // The page's controls (a Machine picker, its actions) carry their own chrome: no iOS shared item glass under them.
-    const headerOptions = React.useMemo(() => ({ headerTitle, ...(mainScreen ? { headerBackVisible: false } : {}),
-        ...ownChromeHeaderRight(() => routeActions) }), [headerTitle, mainScreen, routeActions]);
+    const headerOptions = React.useMemo<DestinationScreenOptions>(() => ({
+        headerTitle,
+        ...(mainScreen ? { headerBackVisible: false } : {}),
+        ...(phoneEntry ? hosted ? { headerFallbackLeft } : ownChromeHeaderLeft(headerFallbackLeft) : {}),
+        ...ownChromeHeaderRight(() => routeActions),
+    }), [headerFallbackLeft, headerTitle, hosted, mainScreen, phoneEntry, routeActions]);
     // A phone's top-level collection page (an app page whose header is its Collection toolbar) leads with its name as
     // its large title under the navigation row, as the Inbox tab does (lab `merged-list` 390, `phone-P4`); the bar then
     // carries Back and the page's controls only. Wide layouts keep the name in the toolbar row.

@@ -24,7 +24,12 @@ import { normalizeSessionAddress, sessionAddressKey } from '@/sync/domains/sessi
 import { DestinationInstanceContext, DestinationHeaderOptionsContext, useDestinationFocus, useDestinationInstance, useDestinationInstanceIdentity, useDestinationInstanceKey, useHasDestinationRoute, type DestinationInstanceContextValue, type DestinationNavigation } from './destinationInstanceContext';
 export { useDestinationInstanceKey, useDestinationNavigation, type DestinationNavigation } from './destinationInstanceContext';
 
-const EMPTY_SCREEN_OPTIONS: NativeStackNavigationOptions = {};
+export type DestinationScreenOptions = NativeStackNavigationOptions & Readonly<{
+    /** A route's leading control until its content publishes Back. */
+    headerFallbackLeft?: NativeStackNavigationOptions['headerLeft'];
+}>;
+
+const EMPTY_SCREEN_OPTIONS: DestinationScreenOptions = {};
 
 type DestinationRouter = ReturnType<typeof useRouter> & {
     redirect: ReturnType<typeof useRouter>['replace'];
@@ -183,11 +188,11 @@ function DestinationNavigationChrome(props: Readonly<{
     const identity = React.useRef({ ref, publishTitle });
     identity.current = { ref, publishTitle };
     type TitleIdentity = Readonly<{ key: unknown; owner: typeof publishTitle }>;
-    const [declared, setDeclared] = React.useState<TitleIdentity & Readonly<{ options: NativeStackNavigationOptions }>>({ key: identityKey, owner: publishTitle, options: {} });
+    const [declared, setDeclared] = React.useState<TitleIdentity & Readonly<{ options: DestinationScreenOptions }>>({ key: identityKey, owner: publishTitle, options: {} });
     const [chromeTitle, setChromeTitle] = React.useState<TitleIdentity & Readonly<{ title: string | null | undefined }>>({ key: identityKey, owner: publishTitle, title: undefined });
     const isCurrent = (current: TitleIdentity) => Object.is(current.key, identityKey) && current.owner === publishTitle;
     const overrides = isCurrent(declared) ? declared.options : EMPTY_SCREEN_OPTIONS;
-    const options = React.useMemo<NativeStackNavigationOptions>(() => ({
+    const options = React.useMemo<DestinationScreenOptions>(() => ({
         ...props.baseOptions,
         // Withdrawing a leaf declaration restores the inherited layout option.
         ...Object.fromEntries(Object.entries(overrides).filter(([, value]) => value !== undefined)),
@@ -234,11 +239,11 @@ function DestinationNavigationChrome(props: Readonly<{
     const fallbackTitle = Object.hasOwn(options, 'title') ? options.title ?? null : undefined;
     React.useEffect(() => { titlePublication.setFallbackTitle(fallbackTitle); }, [fallbackTitle, titlePublication]);
     const [back, setBack] = React.useState<React.ReactNode>(null);
-    const updateOptions = React.useCallback((next: NativeStackNavigationOptions) => {
+    const updateOptions = React.useCallback((next: DestinationScreenOptions) => {
         setDeclared(previous => {
             const current = Object.is(previous.key, identityKey) && previous.owner === publishTitle;
             const options = current ? previous.options : {};
-            return current && Object.entries(next).every(([key, value]) => options[key as keyof NativeStackNavigationOptions] === value)
+            return current && Object.entries(next).every(([key, value]) => options[key as keyof DestinationScreenOptions] === value)
                 ? previous : { key: identityKey, owner: publishTitle, options: { ...options, ...next } };
         });
     }, [identityKey, publishTitle]);
@@ -265,7 +270,7 @@ function DestinationNavigationChrome(props: Readonly<{
         ? (title === null ? null : <NavigationHeaderTitle title={title} tintColor={tintColor} />)
         : typeof options.headerTitle === 'function' ? options.headerTitle({ children: declaredTitle ?? '', tintColor })
             : declaredTitle ? <NavigationHeaderTitle title={declaredTitle} tintColor={tintColor} style={options.headerTitleStyle} /> : null;
-    const hasChrome = title !== undefined || titleNode !== null || options.headerLeft || options.headerRight || back;
+    const hasChrome = title !== undefined || titleNode !== null || options.headerLeft || options.headerRight || back || options.headerFallbackLeft;
     if (publicationOnly) return <DestinationHeaderOptionsContext.Provider value={updateOptions}>
         <NavigationTitleChromeProvider showsTitle={nativeShowsTitle} showsBack={nativeShowsBack} publisher={identityPublisher}>
             {props.children}
@@ -273,11 +278,11 @@ function DestinationNavigationChrome(props: Readonly<{
     </DestinationHeaderOptionsContext.Provider>;
     return <DestinationHeaderOptionsContext.Provider value={updateOptions}>
         <NavigationTitleChromeProvider showsTitle={chromeShown}
-            showsBack={chromeShown && Boolean(hasChrome) && Boolean(options.headerLeft || back || canGoBack)} publisher={publisher}>
+            showsBack={chromeShown && Boolean(hasChrome) && Boolean(options.headerLeft || back || options.headerFallbackLeft || canGoBack)} publisher={publisher}>
             {chromeShown && hasChrome ? <View testID="workspace-destination-header">
                 <Header title={titleNode}
                     subtitle={(options as Readonly<{ headerSubtitle?: string }>).headerSubtitle}
-                    headerLeft={options.headerLeft ? () => options.headerLeft!({ tintColor, canGoBack }) : () => back ?? (canGoBack
+                    headerLeft={options.headerLeft ? () => options.headerLeft!({ tintColor, canGoBack }) : () => back ?? options.headerFallbackLeft?.({ tintColor, canGoBack }) ?? (canGoBack
                         ? <DefaultBackButton tintColor={tintColor} onPress={() => props.navigation?.back()} /> : null)}
                     headerRight={options.headerRight ? () => options.headerRight!({ tintColor, canGoBack }) : undefined} />
             </View> : null}

@@ -398,6 +398,7 @@ const pageCacheIdentity = {
 } as const;
 
 function daemonProjection(input: Readonly<{
+    primaryPage?: Readonly<{ pluginId: string; localId: string; label: string }>;
     machineId?: string;
     connectionResource?: boolean;
     reviewContext?: boolean;
@@ -417,6 +418,8 @@ function daemonProjection(input: Readonly<{
     /** Notes also declares a sibling `tasks` app page, a view the notes page can present a lens apart. */
     tasksView?: boolean;
 }> = {}) {
+    const primaryPluginId = input.primaryPage?.pluginId ?? NOTES_PLUGIN_ID;
+    const primaryLocalId = input.primaryPage?.localId ?? 'notes';
     const generation = input.generation ?? 9;
     fixtureDaemonGeneration.value = generation;
     const sourceCustody = input.localArtifactDigest ? { kind: 'development', registeredRootId: 'plugin-app-page-fixture-root' } as const
@@ -426,7 +429,7 @@ function daemonProjection(input: Readonly<{
     const serverIdentityId = getServerProfileById(pluginSurfaceAccountLifetime.value!.scope.serverId)?.serverIdentityId;
     const packageEntry = (pluginId: string) => ({
         id: pluginId,
-        displayName: pluginId === NOTES_PLUGIN_ID ? 'Notes' : 'Journal',
+        displayName: pluginId === primaryPluginId ? input.primaryPage?.label ?? 'Notes' : 'Journal',
         version: '1.0.0',
         enabled: true,
         source: input.localArtifactDigest ? { kind: 'localPath', locator: '/fixture' } : { kind: 'bundled', locator: pluginId },
@@ -462,7 +465,7 @@ function daemonProjection(input: Readonly<{
             renderer: { kind: 'reactNative', contributionId: 'notes-renderer' },
             ...(input.connectionResource ? { runtime: { resourceCapability: { readable: true, dynamic: false } } } : {}),
             display: { titleKey: destinationId, developerFallback: destinationId === 'tasks' ? 'Tasks'
-                : pluginId === NOTES_PLUGIN_ID ? 'Notes' : 'Journal',
+                : pluginId === primaryPluginId ? input.primaryPage?.label ?? 'Notes' : 'Journal',
                 ...(input.description === undefined ? {} : { description: input.description }),
                 ...(input.headerStyle === undefined ? {} : { headerStyle: input.headerStyle }) },
             actions: [],
@@ -508,8 +511,8 @@ function daemonProjection(input: Readonly<{
         },
     });
     const entries: Record<string, unknown> = {
-        ...(input.omitPage ? {} : { [`surfacePlacement:${NOTES_PLUGIN_ID}:notes`]: placementEntry(NOTES_PLUGIN_ID) }),
-        [`reactNativeBundle:${NOTES_PLUGIN_ID}:notes-renderer`]: bundleEntry(NOTES_PLUGIN_ID),
+        ...(input.omitPage ? {} : { [`surfacePlacement:${primaryPluginId}:${primaryLocalId}`]: placementEntry(primaryPluginId, primaryLocalId) }),
+        [`reactNativeBundle:${primaryPluginId}:notes-renderer`]: bundleEntry(primaryPluginId),
         ...(input.tasksView ? { [`surfacePlacement:${NOTES_PLUGIN_ID}:tasks`]: placementEntry(NOTES_PLUGIN_ID, 'tasks') } : {}),
     };
     if (input.reviewCompanion) {
@@ -528,7 +531,7 @@ function daemonProjection(input: Readonly<{
         v: 2,
         generation,
         installedPackagesById: {
-            [NOTES_PLUGIN_ID]: packageEntry(NOTES_PLUGIN_ID),
+            [primaryPluginId]: packageEntry(primaryPluginId),
             ...(input.secondPlugin ? { [JOURNAL_PLUGIN_ID]: packageEntry(JOURNAL_PLUGIN_ID) } : {}),
         },
         agentsById: {},
@@ -536,10 +539,10 @@ function daemonProjection(input: Readonly<{
         // never a header-local reconstruction, so the page header can only be
         // enabled for an Action this projection actually carries.
         actionsById: {
-            [`${NOTES_PLUGIN_ID}/refresh`]: {
+            [`${primaryPluginId}/refresh`]: {
                 id: 'refresh',
-                pluginId: NOTES_PLUGIN_ID,
-                occurrenceId: `${NOTES_PLUGIN_ID}-generation-${generation}`,
+                pluginId: primaryPluginId,
+                occurrenceId: `${primaryPluginId}-generation-${generation}`,
                 title: 'Refresh notes',
                 scopes: ['global'],
                 surfaces: ['ui'],
@@ -1222,6 +1225,49 @@ describe('plugin app page host route (EU-5b)', () => {
             expect(stackOptions.at(-1)?.headerTitle).toBe('');
             expect(reactNativeSurfaceProps).toHaveLength(0);
         } finally { releaseRead(); }
+    });
+
+    it('draws the parent Back row and Machine control on a cold phone PR entry', async () => {
+        const { Dimensions } = await import('react-native');
+        const window = vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 390, height: 844, scale: 1, fontScale: 1 });
+        const { AuthProvider } = await import('@/auth/context/AuthContext');
+        const { DefaultBackButton } = await import('@/components/navigation/Header');
+        const releaseRead = deferPageAccountEncryptionRead();
+        const pluginId = 'happier.triage';
+        const localId = 'triage';
+        const root = `/plugins/${pluginId}/${localId}`;
+        const subPath = 'e,happier.scm.forge.github,github-forge,pull-request,github%3A1424792902,54';
+        const pathname = `${root}/${encodeURIComponent(subPath)}`;
+        const projection = daemonProjection({ primaryPage: { pluginId, localId, label: 'PRs & Issues' }, headerStyle: 'toolbar' });
+        try {
+            const wrap = (path: string) => (children: React.ReactNode) => (
+                <AuthProvider initialCredentials={pageConnection!.credentials}>
+                <DestinationInstanceHost tabId="phone-triage" ref={{ kind: 'plugin:happier.triage:triage', params: { pluginId, localId } }}
+                    pathname={path} phone focused visible
+                    navigation={{ push() {}, replace: value => { routerReplacements.push(value); }, back() {} }}>
+                    {children}
+                </DestinationInstanceHost>
+                </AuthProvider>
+            );
+            const list = await renderPage({ pluginId, localId, projection, wrap: wrap(root) });
+            expect(list.findByTestId('main-tab-nav-row')).toBeTruthy();
+            await list.unmount();
+
+            const detail = await renderPage({ pluginId, localId, subPath, projection, wrap: wrap(pathname) });
+            expect(detail.findByTestId('plugin-app-page-host')).toBeTruthy();
+            expect(reactNativeSurfaceProps).toHaveLength(0);
+            expect(detail.findByTestId('main-tab-nav-row')).toBeNull();
+            const header = detail.findByTestId('workspace-destination-header');
+            expect(header).toBeTruthy();
+            expect(header!.findAll(node => node.props.testID === 'plugin-page-execution.chip').length).toBeGreaterThan(0);
+            const back = header!.findByType(DefaultBackButton);
+            expect(back.props.label).toBe('PRs & Issues');
+            await back.props.onPress();
+            expect(routerReplacements.at(-1)).toBe(root);
+        } finally {
+            window.mockRestore();
+            releaseRead();
+        }
     });
 
     it('draws no Back on a rail page\'s own route and keeps it on a location under it', async () => {

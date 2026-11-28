@@ -11,6 +11,20 @@ function createChromeInput(overrides: Partial<ChromeInput> = {}): ChromeInput {
 const sessionDetail = (activeId: string) => ({ pageKind: 'session', identity: 'mounted-session', activeId });
 
 describe('resolveMobileBottomChromeModel', () => {
+    it('reserves the entry bar on a cold PR route claimed by a main tab', () => {
+        const root = '/plugins/happier.triage/triage';
+        const pathname = `${root}/e%2Chappier.scm.forge.github%2Cgithub-forge%2Cpull-request%2Cgithub%253A1424792902%2C54`;
+        const base = createChromeInput({ pathname, sectionPage: true, mobileWorkspaceExperience: 'cockpit' });
+        expect(resolveMobileBottomChromeModel(base)).toEqual({ kind: 'detailPending' });
+        expect(resolveMobileBottomChromeModel({ ...base, mobileWorkspaceExperience: 'classic' })).toEqual({ kind: 'hidden' });
+        const detail = { pageKind: 'happier.triage/triage', identity: 'pr-54', activeId: 'overview' };
+        expect(resolveMobileBottomChromeModel({ ...base, mountedDetail: detail, rootHostedDetail: true }))
+            .toEqual({ kind: 'detail', ...detail });
+        for (const pathname of [root, `${root}/sv%2Cassigned?view=pull-requests`]) {
+            expect(resolveMobileBottomChromeModel({ ...base, pathname })).toEqual({ kind: 'mainAppTabs' });
+        }
+    });
+
     it('uses the presented root-hosted plugin detail and withdraws without a pathname fallback', () => {
         const mountedDetail = { pageKind: 'acme.review/entry', identity: 'entry-1', activeId: 'files' };
         for (const pathname of ['/', '/plugins/acme.review/inbox', '/workflows']) {

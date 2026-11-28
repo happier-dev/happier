@@ -54,7 +54,7 @@ const { DetailsPaneSlotHost, useDetailsPaneSlotBinding } = await import('./Detai
 const { AppPaneScopeHost } = await import('../AppPaneScopeHost');
 const { useAppPaneScope } = await import('../hooks/useAppPaneScope');
 
-async function mountPluginPage(renderHost?: React.ComponentProps<typeof DetailsPaneSlotHost>['renderHost'], initiallyOpen = true) {
+async function mountPluginPage(renderHost?: React.ComponentProps<typeof DetailsPaneSlotHost>['renderHost'], initiallyOpen = true, wrap = (children: React.ReactNode) => <>{children}</>) {
     const { DetailsPane, Text, defineUiSurface, usePluginTheme, useSurfaceContext } = await import('@happier-dev/plugin-ui');
     const { createSurfaceContextFixture } = await import('@happier-dev/plugin-sdk/testing');
     const { createPluginUiPrivatePresentationHost } = await import('@/components/plugins/surfaces/pluginUiPrivatePresentationHost');
@@ -120,7 +120,7 @@ async function mountPluginPage(renderHost?: React.ComponentProps<typeof DetailsP
     // The details pane stands in the App's pane host, whose state is the app-lifetime pane provider's.
     const { AppPaneProvider } = await import('../AppPaneProvider');
     const screen = await renderScreen(
-        <AppPaneProvider><DetailsPaneSlotHost testID="page-details" renderHost={renderHost}><Mount /></DetailsPaneSlotHost></AppPaneProvider>,
+        wrap(<AppPaneProvider><DetailsPaneSlotHost testID="page-details" renderHost={renderHost}><Mount /></DetailsPaneSlotHost></AppPaneProvider>),
     );
     return { screen, context, setDetailText: (value: string) => act(() => setDetailText(value)),
         setDetailOpen: (value: boolean) => act(() => setDetailOpen(value)) };
@@ -172,6 +172,35 @@ describe('DetailsPaneSlotHost (the page details pane a plugin DetailsPane render
         expect(screen.root.findByType(TextField).props.value).toBe('Retain this review note');
         expect(readResource).not.toHaveBeenCalled();
     });
+    it('moves the host control beside Close when a retained detail becomes a phone sheet', async () => {
+        const { View } = await import('react-native');
+        const { PageHeaderActionsHost } = await import('@/components/navigation/Header');
+        const { HeaderActionsScope } = await import('@/components/navigation/stackHeaderActions');
+        const render = () => <View testID="execution-origin" />;
+        const { screen, setDetailOpen } = await mountPluginPage(undefined, true, (children) => (
+            <HeaderActionsScope scopeKey="test-plugin-page">
+                <PageHeaderActionsHost scopeKey="test-plugin-page" render={render} />
+                {children}
+            </HeaderActionsScope>
+        ));
+        expect(screen.findByTestId('app-stack-header-actions')).toBeTruthy();
+
+        await act(async () => {
+            state.deviceType = 'phone';
+            state.deviceListeners.forEach(listener => listener());
+        });
+
+        const header = screen.findByTestId('entry-pane.header');
+        expect(header).toBeTruthy();
+        expect(header!.findAll(node => node.props.testID === 'execution-origin').length).toBeGreaterThan(0);
+        expect(header!.findAll(node => node.props.testID === 'entry-pane.header.close').length).toBeGreaterThan(0);
+        expect(screen.findByTestId('app-stack-header-actions')).toBeNull();
+
+        setDetailOpen(false);
+        expect(screen.findByTestId('entry-pane.header')).toBeNull();
+        expect(screen.findByTestId('app-stack-header-actions')).toBeTruthy();
+    });
+
     it('does not mount a closed external detail, then mounts only that detail on demand', async () => {
         const { screen, setDetailOpen } = await mountPluginPage(undefined, false);
         expect(state.detailMounts).toBe(0);

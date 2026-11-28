@@ -4,6 +4,9 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { PluginUiDetailsPaneHost, PluginUiDetailsPanePresentation } from '@happier-dev/plugin-ui/advanced';
 
+import { useClaimedStackHeaderActions } from '@/components/navigation/stackHeaderActions';
+import { useDeviceType } from '@/utils/platform/responsive';
+
 import { PaneHeader } from '../PaneHeader';
 import { DetailsPaneHost, type DetailsPaneContent } from './DetailsPaneHost';
 import { useDetailsPaneAvailable } from './detailsPaneAvailability';
@@ -155,6 +158,13 @@ const DetailsPaneSlotBodyView = React.memo(function DetailsPaneSlotBodyView(prop
     frame: DetailsPaneSlotFrame;
 }>) {
     const body = React.useSyncExternalStore(props.store.subscribeBody, props.store.getBody, props.store.getBody);
+    const phone = useDeviceType() === 'phone';
+    // The retained phone sheet owns the same route controls as a freshly pushed detail's Back row.
+    const routeActions = useClaimedStackHeaderActions({
+        scopeOnly: true,
+        release: !phone || !props.frame.title || props.frame.companion === true,
+    });
+    const actions = routeActions == null ? body?.actions : <>{body?.actions}{routeActions}</>;
     const testID = props.frame.testID ?? 'details-pane';
     return (
         <View style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
@@ -176,7 +186,7 @@ const DetailsPaneSlotBodyView = React.memo(function DetailsPaneSlotBodyView(prop
                             segments: subtitleSegments(props.frame.subtitle) } })}
                     leading={body?.leading}
                     mainRestoreChip
-                    actions={body?.actions}
+                    actions={actions}
                     headingRef={body?.headingRef}
                     onClose={props.store.close}
                 />

@@ -1,3 +1,5 @@
+import { parsePluginAppPageRoutePath, PLUGIN_APP_PAGE_ROUTE_PREFIX, pluginAppPageRouteSelectsEntry } from '@/components/plugins/pages/pluginPageRoute';
+
 import type { MobileBottomChromeModel } from './mobileBottomChromeTypes';
 
 export function resolveMobileBottomChromeModel(input: Readonly<{
@@ -25,6 +27,7 @@ export function resolveMobileBottomChromeModel(input: Readonly<{
         return { kind: 'mainAppTabs' };
     }
 
+    const detailHostRoute = isDetailHostRoutePathname(pathname);
     if (input.mobileWorkspaceExperience === 'cockpit') {
         if (input.mountedDetail?.pageKind === 'session'
             && isImmersiveSessionDetailsRoute(pathname, input.sessionDetailsKind, input.mountedDetail.activeId)) {
@@ -35,7 +38,7 @@ export function resolveMobileBottomChromeModel(input: Readonly<{
         if (input.mountedDetail && !isSessionHistoryRoutePathname(pathname)) return { kind: 'detail', ...input.mountedDetail };
         // Before its host mounts, a page whose detail host draws its own bar already knows the bar will stand there
         // (a slow Home delays the host by seconds); the pushed SCM reading keeps its own bottom controls instead.
-        if (!input.mountedDetail && isDetailHostRoutePathname(pathname) && input.sessionDetailsKind !== 'scmReview') {
+        if (!input.mountedDetail && detailHostRoute && input.sessionDetailsKind !== 'scmReview') {
             return { kind: 'detailPending' };
         }
     }
@@ -43,7 +46,7 @@ export function resolveMobileBottomChromeModel(input: Readonly<{
     // The bar is coherent on every page (owner 11-06): a page a section or More destination claims keeps the
     // main bar, pushed details included. A page whose detail host draws its own bar waits for that host
     // instead, so its bar never shows the main bar first; Classic keeps those pages bar-free.
-    if (input.sectionPage === true && !isDetailHostRoutePathname(pathname)) return { kind: 'mainAppTabs' };
+    if (input.sectionPage === true && !detailHostRoute) return { kind: 'mainAppTabs' };
     return { kind: 'hidden' };
 }
 
@@ -55,6 +58,10 @@ export function resolveMobileBottomChromeModel(input: Readonly<{
 const DETAIL_HOST_ROUTE = /^\/(?:session\/(?!recent$|archived$)[^/]+|projects\/(?!open$|sources$|deployments$)[^/]+|discussions\/(?!new$)[^/]+|machines\/(?!(?:managed|updates|activity)(?:\/|$))[^/]+|workflows\/.+|deployments\/[^/]+)/;
 
 function isDetailHostRoutePathname(pathname: string): boolean {
+    if (pathname.startsWith(`${PLUGIN_APP_PAGE_ROUTE_PREFIX}/`)) {
+        const page = parsePluginAppPageRoutePath(pathname);
+        return page !== null && pluginAppPageRouteSelectsEntry(page.pluginId, page.subPath);
+    }
     return DETAIL_HOST_ROUTE.test(normalizeRoutePath(pathname));
 }
 
