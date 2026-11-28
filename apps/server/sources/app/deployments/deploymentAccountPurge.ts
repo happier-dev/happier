@@ -242,8 +242,13 @@ export async function purgeRetiredAccountDeploymentGraphInTx(tx: Tx, input: Read
     // All references are admitted as one graph. Break cycles, then remove
     // leaves before owners. No external side effects occur inside this Tx.
     await clearErasedAccountDeploymentEnvironmentReferencesInTx(tx, { accountId, environmentIds });
+    // The preview CHECK applies until deletion, including to tombstones.
+    // Clear the whole preview identity in the same write that changes purpose.
     await forIds(environmentIds, ids => tx.deploymentEnvironment.updateMany({ where: { id: { in: ids } }, data: {
-        runtimeTargetLinkId: null, previewTemplateEnvironmentId: null, previewCompanionOfEnvironmentId: null, previewTargetLinkId: null } }), 5);
+        purpose: 'standard', runtimeTargetLinkId: null, previewTemplateEnvironmentId: null,
+        previewRepositoryId: null, previewPullRequestId: null, previewTargetLinkId: null,
+        previewCompanionOfEnvironmentId: null,
+    } }), 8);
     await forIds(linkIds, ids => tx.deploymentTargetLink.updateMany({ where: { id: { in: ids } }, data: { activeDeploymentId: null, predecessorTargetLinkId: null } }), 3);
     await forIds(receiptIds, ids => tx.deployment.updateMany({ where: { id: { in: ids } }, data: {
         predecessorDeploymentId: null, rollbackOfDeploymentId: null, promotedFromDeploymentId: null } }), 3);

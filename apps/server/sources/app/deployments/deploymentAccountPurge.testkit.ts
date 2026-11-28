@@ -154,17 +154,55 @@ export function deploymentAccountPurgeCases() {
         expect(await db.deploymentTargetLink.findUnique({ where: { id: owner.link.id }, select: { state: true } })).toEqual({ state: 'provisioned' });
     });
 
-    it('erases a retired solely Account-owned graph including an unknown Deploy before its Artifacts and Machines', async () => {
+    it('erases native-removed and Action-removed Environments, a deployed PR preview and an unknown Deploy', async () => {
         const f = await fixture(true);
+        const removedAt = new Date();
+        const content = { contentArtifactId: f.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };
+        const environment = { projectSourceId: f.source.id, createdByAccountId: f.account.id,
+            controllerMachineId: f.machine.id, protection: 'nonProduction', deployerMode: 'managers', ...content };
+        const preview = await db.deploymentEnvironment.create({ data: {
+            ...environment, purpose: 'preview', previewTemplateEnvironmentId: f.environment.id,
+            previewRepositoryId: f.source.id, previewPullRequestId: '4', previewTargetLinkId: f.link.id,
+        } });
+        const companion = await db.deploymentEnvironment.create({ data: {
+            ...environment, purpose: 'standard', previewCompanionOfEnvironmentId: preview.id,
+        } });
+        const previewLink = await db.deploymentTargetLink.create({ data: {
+            environmentId: preview.id, createdByAccountId: f.account.id, role: 'runtime', sourceKind: 'host',
+            hostTargetId: 'own-server', targetKind: 'ownServer', state: 'configured', revision: 2,
+            machines: { create: [{ machineId: f.machine.id, installationId: f.machine.installationId!,
+                position: 0, state: 'active' }] }, ...content,
+        } });
+        const release = await db.deployment.create({ data: {
+            environmentId: preview.id, targetLinkId: previewLink.id, operation: 'deploy', state: 'succeeded',
+            requestKey: randomUUID(), actionOperationId: randomUUID(), requestedByAccountId: f.account.id,
+            requestedAt: new Date(1), settledAt: new Date(2), ...content,
+        } });
+        // Persist native teardown settlement before applying the Action's Environment removal.
+        const teardown = await db.deployment.create({ data: {
+            environmentId: preview.id, targetLinkId: previewLink.id, operation: 'teardown', state: 'succeeded',
+            requestKey: randomUUID(), actionOperationId: randomUUID(), requestedByAccountId: f.account.id,
+            predecessorDeploymentId: release.id, requestedAt: new Date(3), settledAt: removedAt,
+            teardownProof: teardownProof(f.machine, false),
+            ...deploymentAcceptedExecutionColumns(createDeploymentAcceptedExecution({ controller: {
+                machineId: f.machine.id, installationId: f.machine.installationId! } })),
+            ...content,
+        } });
+        const source = sourceFromRow(f.source);
+        if (!source.success) throw source.error;
+        await inTx(async tx => {
+            await removeAdmittedDeploymentEnvironmentInTx(tx, { environment: preview, source: source.data, now: removedAt });
+            await removeAdmittedDeploymentEnvironmentInTx(tx, { environment: companion, source: source.data, now: removedAt });
+        });
         const unknown = await db.deployment.create({ data: { environmentId: f.environment.id, targetLinkId: f.link.id,
             state: 'outcome_unknown', operation: 'deploy', requestKey: randomUUID(), actionOperationId: randomUUID(),
-            requestedAt: new Date(1), startedAt: new Date(2),
-            requestedByAccountId: f.account.id, contentArtifactId: f.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 } });
+            requestedAt: new Date(1), startedAt: new Date(2), settledAt: removedAt,
+            requestedByAccountId: f.account.id, ...content } });
         expect(await deleteAccountForErasure({ accountId: f.account.id })).toEqual({ status: 'deleted' });
         expect(await db.account.findUnique({ where: { id: f.account.id } })).toBeNull();
-        expect(await db.deploymentEnvironment.findUnique({ where: { id: f.environment.id } })).toBeNull();
-        expect(await db.deployment.findUnique({ where: { id: f.receipt.id } })).toBeNull();
-        expect(await db.deployment.findUnique({ where: { id: unknown.id } })).toBeNull();
+        expect(await db.deploymentEnvironment.count({ where: { projectSourceId: f.source.id } })).toBe(0);
+        expect(await db.deploymentTargetLink.count({ where: { id: { in: [f.link.id, previewLink.id] } } })).toBe(0);
+        expect(await db.deployment.count({ where: { id: { in: [f.receipt.id, release.id, teardown.id, unknown.id] } } })).toBe(0);
         expect(await db.artifact.findUnique({ where: { id: f.artifact.id } })).toBeNull();
     });
 
