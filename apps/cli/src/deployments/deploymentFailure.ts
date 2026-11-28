@@ -15,7 +15,8 @@ import { DeploymentSourceAdmissionFailureV1Schema, DeploymentReceiptFailureV1Sch
 import { DeploymentFailureRecoveryV1Schema, DeploymentImageResolutionFailureV1Schema, describeDeploymentImageResolutionFailureV1,
     DEPLOYMENT_PULL_REQUEST_SOURCE_ACQUISITION_PHASE_V1, projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { readDeploymentBackupMaintenanceFailureEvidenceV1 } from '@happier-dev/deployments/contracts/v1';
-import { DeploymentMissingRequiredSecretsV1Schema } from '@happier-dev/protocol/deployments/deploymentReviewV1';
+import { DeploymentBuildSupportV1Schema, DeploymentMissingRequiredSecretsV1Schema } from '@happier-dev/protocol/deployments/deploymentReviewV1';
+import { isRecord } from '@happier-dev/protocol/common/records';
 import { MachineCarrierError } from '@/daemon/peer/iroh/machineCarrier';
 import type { DeploymentArtifactReadFailureV1 } from '@happier-dev/protocol/deployments/deploymentArtifactContentReferenceV1';
 import { ManagedMachineControllerError, readManagedNativeFailureDetails } from '@/machines/managed/controllerErrors';
@@ -164,7 +165,10 @@ function readAuthoredDeploymentFailure(errorCode: string, error: unknown, phase:
         ? recovery : undefined;
     const statefulService = errorCode === 'stateful_service_multi_machine' && reason && typeof reason === 'object' && 'service' in reason
         ? DeploymentFailureRecoveryV1Schema.shape.statefulService.safeParse(reason.service).data : undefined;
+    const buildSupport = (errorCode === 'build_platform_unsupported' || errorCode === 'native_build_failed')
+        && isRecord(reason) ? DeploymentBuildSupportV1Schema.safeParse(reason.buildSupport).data : undefined;
     const retainedDetails = commandRecovery
+        ?? (buildSupport?.status === 'failed' ? { buildSupport } : undefined)
         ?? (statefulService ? projectDeploymentFailureRecoveryV1({ statefulService }, errorCode) : undefined)
         ?? readDeploymentBackupMaintenanceFailureEvidenceV1(error)
         ?? (error instanceof MachineNativeEffectAdmissionError && error.code === errorCode ? error.details : undefined)

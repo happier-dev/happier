@@ -62,6 +62,10 @@ function dockerSocketAccessRecovery(endpoint?: string) {
 
 const recoveries = {
     deployment_docker_socket_access_denied: dockerSocketAccessRecovery(),
+    deployment_docker_daemon_unavailable: recovery('Docker did not answer on the executing Machine. Start Docker or review the Machine’s Docker connection before trying again.', 'machines', 'Review Docker on the Machine'),
+    deployment_bind_address_unavailable: recovery('Docker could not bind a published port to its configured address. Check that the address exists on the serving Machine or correct the host address in Compose.', 'source', 'Review published address'),
+    deployment_build_runtime_incompatible: recovery('The build uses a runtime version outside the application’s declared requirements. Check the package manifest and the Dockerfile base image.', 'source', 'Review build runtime'),
+    deployment_build_dependencies_incompatible: recovery('The build could not resolve dependencies for its current runtime. Check package requirements, the lockfile and the runtime in the Dockerfile before deploying again.', 'source', 'Review build dependencies'),
     restore_snapshot_not_confirmed: recovery('The Machine snapshot was not confirmed. Data has not been replaced. Stop here, or reopen Restore and review continuing without a confirmed snapshot. An agent can review the original restore input with snapshot disabled.', 'settings', 'Review restore'),
     stateful_service_multi_machine: recovery('A service keeps data on its server, so this Environment needs one server. To run the app on several servers, move its database to a separate Environment or review creating or linking a managed database. Managed setup does not import existing data.', 'databaseRecovery', 'Review database options'),
     deployment_start_first_unavailable: recovery('Start First runs the new release beside the current one, so every service needs a health check and must not keep data on the server, publish a fixed host port, or set a container name or fixed address. Switch the rollout to Recreate in Environment Settings, or change the Compose file.', 'settings', 'Review rollout'),

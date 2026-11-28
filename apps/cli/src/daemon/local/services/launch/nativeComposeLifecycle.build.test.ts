@@ -18,10 +18,17 @@ describe('phase-correct native platform image production', () => {
         ['Bind for 0.0.0.0:3000 failed: port is already allocated', 'deployment_port_in_use', 'source'],
         ['pull access denied for private/image', 'deployment_image_pull_denied', 'connectedAccounts'],
         ['manifest unknown', 'deployment_image_not_found', 'source'],
-        ['toomanyrequests: pull rate limit reached', 'deployment_image_rate_limited', 'connectedAccounts'],
+        ['toomanyrequests: pull rate limit reached', 'deployment_image_rate_limited', 'registryCredentials'],
         ['getaddrinfo EAI_AGAIN registry.example.test', 'deployment_network_unavailable', 'machines'],
         ['Missing script: "build"', 'deployment_build_script_missing', 'source'],
         ['COPY failed: file not found in build context', 'deployment_build_input_missing', 'source'],
+        ['npm error code EBADENGINE\nnpm error engine Unsupported engine', 'deployment_build_runtime_incompatible', 'source'],
+        ['Your lock file does not contain a compatible set of packages. Please run composer update.', 'deployment_build_dependencies_incompatible', 'source'],
+        ['ERROR: No matching distribution found for example-package==1.0.0', 'deployment_build_dependencies_incompatible', 'source'],
+        ['E: Unable to locate package happier-sos-1128-nonexistent-package', 'deployment_build_dependencies_incompatible', 'source'],
+        ['failed to authorize: failed to fetch oauth token: unexpected status from GET request to https://registry.example.test/token: 401 Unauthorized', 'deployment_image_pull_denied', 'connectedAccounts'],
+        ['Error response from daemon: driver failed programming external connectivity: bind: cannot assign requested address', 'deployment_bind_address_unavailable', 'source'],
+        ['Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?', 'deployment_docker_daemon_unavailable', 'machines'],
     ] as const)('retains a safe classified cause through build, command and receipt for %s', async (output, code, destination) => {
         for (const command of ['bake', 'compose'] as const) {
             await withBuilder(async ({ project, requests }) => {
@@ -143,8 +150,9 @@ describe('phase-correct native platform image production', () => {
             expect(failure).toMatchObject({ ok: false, errorCode, details: { buildSupport: {
                 status: 'failed', requestedPlatforms: ['linux/amd64', 'linux/arm64'], builtPlatforms: ['linux/amd64'], cause, exitCode: 1,
             } } });
-            const child = readDeploymentChildResult(JSON.parse(JSON.stringify(failure)));
-            expect(projectDeploymentFailure(errorCode, new Error(errorCode, { cause: child }))).toEqual(failure);
+            const serialized = JSON.stringify(failure);
+            const child = readDeploymentChildResult(JSON.parse(serialized));
+            expect(JSON.stringify(projectDeploymentFailure(errorCode, new Error(errorCode, { cause: child })))).toBe(serialized);
             expect(projectDeploymentReceiptFailure(failure, 'build')).toMatchObject({ code: errorCode,
                 failureCause: { phase: `deployment.native.build.${cause}` }, effectAttempted: true });
             expect(JSON.stringify(failure)).not.toContain('private-registry-sentinel');
