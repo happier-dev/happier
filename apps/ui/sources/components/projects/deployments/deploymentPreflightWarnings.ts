@@ -3,6 +3,7 @@ import { parseDeploymentComposeSourceV1 } from '@happier-dev/protocol/deployment
 import { LocalServiceEndpointV1Schema } from '@happier-dev/protocol/local/services/inventory/v1';
 import { projectDeploymentConfigurePreflightV1, type DeploymentConfigureDraftV1 } from '@happier-dev/protocol/deployments/deploymentPublishPreparationV1';
 import { ProjectDefinitionInspectOutputSchema, type ProjectDefinitionWorkspace } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
+import type { MachineServicesListInputV1 } from '@happier-dev/protocol/actions/specs/machine/services';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 
@@ -48,8 +49,8 @@ export type DeploymentDeclaredAddInputs = Readonly<{
     services: ReadonlyArray<Readonly<{ service: string; name: string | null; ports: ReadonlyArray<string | number | Readonly<{
         target: string | number | null; published: string | number | null; bindAddress: string | null; protocol: string | null;
     }>> }>>;
-    /** Literal numeric long-form publications only. No interpolation or short-form evaluation. */
-    query: { ports: number[]; nativeNames: [] };
+    /** Literal names and numeric long-form publications. */
+    query: NonNullable<MachineServicesListInputV1['preflight']>;
     /** Native effective ports and runtime names settle only after first start. */
     unresolved: true;
 }>;
@@ -61,6 +62,7 @@ export async function readDeploymentAddDeclaredInputs(document: string, services
     const text = (value: unknown) => typeof value === 'string' ? value : null;
     const declarations = record(source.services) ? source.services : {};
     const published = new Set<number>();
+    const names = new Set<string>();
     const selected = services.map(service => {
         const declaration = declarations[service];
         const value = record(declaration) ? declaration : {};
@@ -73,9 +75,12 @@ export async function readDeploymentAddDeclaredInputs(document: string, services
             ports.push({ target: scalar(port.target), published: scalar(port.published),
                 bindAddress: text(port.host_ip), protocol: text(port.protocol) });
         }
-        return { service, name: text(value.container_name), ports };
+        const name = text(value.container_name);
+        if (name && /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/u.test(name)) names.add(name);
+        return { service, name, ports };
     });
-    return { services: selected, query: { ports: [...published], nativeNames: [] }, unresolved: true };
+    return { services: selected, query: { ports: [...published], nativeNames: [],
+        ...(names.size > 0 ? { displayNames: [...names] } : {}) }, unresolved: true };
 }
 
 /**

@@ -19316,6 +19316,8 @@ settingsSession: {
         addPortsUnresolved: "运行时名称和实际端口会在首次启动后确定。",
         addPortsClash: ({ machine }: { machine: string }) => `${machine} 上已有程序在使用此应用声明的端口`,
         addPortsClashBody: "在该端口空闲之前，它可能无法启动。请在定义中更改端口，或在另一个服务的页面中停止它。",
+        addNameOrPortClash: ({ machine }: { machine: string }) => `${machine} 上的名称或端口可能已被使用`,
+        addNameOrPortClashBody: "添加此应用前，请查看匹配的服务。",
         addPortsUnavailable: ({ machine }: { machine: string }) => `无法检查 ${machine} 上的端口`,
         domainRemove: "移除域名",
         domainApprovalBody: "在批准之前不会有任何更改。",

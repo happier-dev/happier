@@ -19570,6 +19570,8 @@ settingsSession: {
         addPortsUnresolved: "Les noms et les ports effectifs sont connus après le premier démarrage.",
         addPortsClash: ({ machine }: { machine: string }) => `Quelque chose sur ${machine} utilise déjà un port déclaré par cette app`,
         addPortsClashBody: "Elle risque de ne pas démarrer tant que ce port n’est pas libre. Changez le port dans la définition, ou arrêtez l’autre service depuis sa page.",
+        addNameOrPortClash: ({ machine }: { machine: string }) => `Un nom ou un port est peut-être déjà utilisé sur ${machine}`,
+        addNameOrPortClashBody: "Vérifiez les services correspondants avant d’ajouter cette app.",
         addPortsUnavailable: ({ machine }: { machine: string }) => `Impossible de vérifier les ports de ${machine}`,
         domainRemove: "Retirer le domaine",
         domainApprovalBody: "Rien ne change tant que ce n’est pas approuvé.",

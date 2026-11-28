@@ -1150,6 +1150,9 @@ export type ActionDtoShape_054f97eca65ec55e = [
         triggerId?: (string) | undefined;
     }
 ][0];
+export type ActionDtoShape_05527538fd1ee617 = [
+    ActionDtoShape_3af7f81cfafc9e3e | ActionDtoShape_3baa7284bb26b149
+][0];
 export type ActionDtoShape_055724a4e5f0deeb = [
     {
         v: 1;
@@ -2750,6 +2753,12 @@ export type ActionDtoShape_0d5744bc0e83314a = [
 export type ActionDtoShape_0d59ccd7c04f15b4 = [
     undefined | ActionDtoShape_64898e2dd45aa209 | ActionDtoShape_9476facc01627f12
 ][0];
+export type ActionDtoShape_0d68a694918681cb = [
+    {
+        hostRead: 'machines.services.list';
+        input: ActionDtoShape_df2e0d06027eed59;
+    }
+][0];
 export type ActionDtoShape_0d69fc24d8cde7ab = [
     {
         kind: 'parallel';
@@ -3128,46 +3137,6 @@ export type ActionDtoShape_0f4185e08344f350 = [
         hasCommand: boolean;
         kind?: string | undefined;
         disabledReason?: string | undefined;
-    }
-][0];
-export type ActionDtoShape_0f4eaba6f8bb2fdd = [
-    {
-        id: string;
-        homeId: string;
-        custodianAccountId: string;
-        launch: ActionDtoShape_760c1b772512d398;
-        allocation: 'bound' | 'confirmed-absent' | 'may-exist' | 'unsubmitted';
-        creationState: 'active' | 'canceled';
-        desired: 'delete' | 'rebuild' | 'resume' | 'start' | 'stop' | 'suspend';
-        desiredWhen: 'after-idle' | 'now';
-        intentRevision: number;
-        retention: ActionDtoShape_7b289ed034224780;
-        wakeOnAcceptedMessage: boolean;
-        enrollmentAccountId?: string | undefined;
-        guestCli?: ActionDtoShape_ca06cfe1604502f9;
-        acquisitionMode?: 'resource-bound' | undefined;
-        workspaceAttachment?: ActionDtoShape_48c5d9f669a30430;
-        preset?: ActionDtoShape_2d79904ca1664b72;
-        controller?: ActionDtoShape_b1514a53343d4182;
-        controllerAccess?: ActionDtoShape_e28db0e539c46906;
-        enrollmentIdentity?: ActionDtoShape_6b88f77fbe370482;
-        guestActivityRole?: 'manage' | 'use' | undefined;
-        reviewedFacts?: ActionDtoShape_31f0150082840ee3;
-        machineSetup?: ActionDtoShape_a6109590a0b480b7;
-        nativeOperationRef?: ActionDtoShape_9a036b55bdddaa98;
-        recovery?: ActionDtoShape_bf662a04aa8833b6;
-        bootstrapCredentialRef?: ActionDtoShape_0f760a32190a038a;
-        bootstrapInstalled?: true | undefined;
-        resource?: ActionDtoShape_e5a7dcf1dab2b35a;
-        devcontainerChild?: ActionDtoShape_83236c6ceedd91f5;
-        enrolledMachineId?: string | undefined;
-        desiredAfterMs?: number | undefined;
-        archivedAt?: number | undefined;
-        submittedNativeEffect?: ActionDtoShape_7dafb7098b1285b2;
-        creationScopeRetention?: ActionDtoShape_e8665a9c10d7de91;
-        observation?: ActionDtoShape_6234c859c54f9c24;
-        cleanup?: ActionDtoShape_29b121716997f5ff;
-        retainedWorkflowRoot?: ActionDtoShape_820092ff3c164a1b;
     }
 ][0];
 export type ActionDtoShape_0f54b2bf2b8a1526 = [
@@ -3825,6 +3794,9 @@ export type ActionDtoShape_127d9f77dfde4634 = [
         agentIsolationRefusal?: ActionDtoShape_c339d95748cd678d;
     }
 ][0];
+export type ActionDtoShape_127eef16ab9059f0 = [
+    undefined | ActionDtoShape_e4949d1d3a8124e7
+][0];
 export type ActionDtoShape_128237f00cf05a62 = [
     {
         targetLinkId: string;
@@ -3933,6 +3905,9 @@ export type ActionDtoShape_131a40b022d757ff = [
         pluginId: string;
         occurrenceId: string;
     }
+][0];
+export type ActionDtoShape_131df0bda8db65d1 = [
+    PluginUiDatabaseConnectionReadReferenceV1 | ActionDtoShape_51b46e8bba19729c | ActionDtoShape_bd824b4613f53951 | ActionDtoShape_1a14c3c7ae86e778 | ActionDtoShape_0d68a694918681cb | ActionDtoShape_ad85d535231e0580 | ActionDtoShape_a04039d83eacfc64
 ][0];
 export type ActionDtoShape_132a124396d39700 = [
     {
@@ -4817,6 +4792,9 @@ export type ActionDtoShape_180678ebb8ed21bf = [
 export type ActionDtoShape_180cdbf58afc15cc = [
     undefined | ActionDtoShape_a3cd259f0089e29f
 ][0];
+export type ActionDtoShape_180f302902f1b87b = [
+    ActionDtoShape_c9812b348dc847dd | ActionDtoShape_4ff948aa47249336
+][0];
 export type ActionDtoShape_1811cc52ebd42d4d = [
     {
         status: 'notEligible';
@@ -5421,6 +5399,12 @@ export type ActionDtoShape_1b37566b48f362b7 = [
         generation?: string | undefined;
     }
 ][0];
+export type ActionDtoShape_1b49d582332b37e0 = [
+    {
+        method: 'daemon.plugins.ui.resources.watch.open';
+        params: ActionDtoShape_e7e7237350374870;
+    }
+][0];
 export type ActionDtoShape_1b4cddb34b6109d9 = [
     {
         kind: 'builtin';
@@ -5473,9 +5457,6 @@ export type ActionDtoShape_1b7316e582d4b073 = [
 ][0];
 export type ActionDtoShape_1b75c48a279349a1 = [
     undefined | ActionDtoShape_05e915785aa3d311
-][0];
-export type ActionDtoShape_1b76d5182bf603e5 = [
-    PluginUiDatabaseConnectionReadReferenceV1 | ActionDtoShape_51b46e8bba19729c | ActionDtoShape_bd824b4613f53951 | ActionDtoShape_1a14c3c7ae86e778 | ActionDtoShape_5950e987788a4ddb | ActionDtoShape_ad85d535231e0580 | ActionDtoShape_a04039d83eacfc64
 ][0];
 export type ActionDtoShape_1b7c83b243f58898 = [
     (ActionDtoShape_df3434ae2b23af81)[] | undefined
@@ -5559,13 +5540,6 @@ export type ActionDtoShape_1c052b9e2b0bcee2 = [
     {
         kind: 'inline';
         definition: ActionDtoShape_e97e3feff82ecbd2;
-    }
-][0];
-export type ActionDtoShape_1c12d86eff240eab = [
-    {
-        machine: ActionDtoShape_9e65d6bc3ea3ccb9;
-        presetContent: ActionDtoShape_5fffbead64997ec1;
-        retainedWorkflowRoot?: ActionDtoShape_820092ff3c164a1b;
     }
 ][0];
 export type ActionDtoShape_1c181b612d09ba1a = [
@@ -6443,9 +6417,6 @@ export type ActionDtoShape_20b8355dcdcaa9f4 = [
         bytes?: number | undefined;
         blobs?: number | undefined;
     }
-][0];
-export type ActionDtoShape_20c5af1085cf3cc5 = [
-    undefined | ActionDtoShape_8db92e372f9d277f | ActionDtoShape_4e6b2f5002254a49 | ActionDtoShape_bb1106843de08803 | ActionDtoShape_27394f937242113d
 ][0];
 export type ActionDtoShape_20c8b968ad8c515a = [
     {
@@ -7726,12 +7697,6 @@ export type ActionDtoShape_2736cb56caae4c97 = [
     {
         closingSide: 'broker' | 'initiator' | 'peer_or_transport' | 'unknown';
         closingStage: 'local_capability' | 'local_http_head' | 'pre_application_custody' | 'stream_admission' | 'stream_decision' | 'transport' | 'unknown';
-    }
-][0];
-export type ActionDtoShape_27394f937242113d = [
-    {
-        method: 'daemon.plugins.ui.resources.watch.open';
-        params: ActionDtoShape_496f605239796018;
     }
 ][0];
 export type ActionDtoShape_273b1fad11953fe7 = [
@@ -9352,6 +9317,12 @@ export type ActionDtoShape_3008737a19b66ba7 = [
         [x: string]: unknown;
         kind: 'branch';
         baseBranch: string;
+    }
+][0];
+export type ActionDtoShape_300c4e3640da53bc = [
+    {
+        machineId: string;
+        resource: ActionDtoShape_131df0bda8db65d1;
     }
 ][0];
 export type ActionDtoShape_30104aed8d5c48b5 = [
@@ -11572,6 +11543,25 @@ export type ActionDtoShape_3af0516898aaf6b3 = [
         accountId: string;
     }
 ][0];
+export type ActionDtoShape_3af7f81cfafc9e3e = [
+    {
+        v: 1;
+        input: JsonValue;
+        requestId?: string | undefined;
+        idempotencyKey?: string | undefined;
+        target?: ActionDtoShape_b47b3f510e786181;
+        workflowPreparation?: ActionDtoShape_3685375798706494;
+        resourceContinuation?: ActionDtoShape_dcd3980c87fd7a4a;
+        machineServiceLogsGeneration?: ActionDtoShape_3f071b320546288b;
+        registryThemeContent?: true | undefined;
+        selectedActionInputDigest?: string | undefined;
+        pluginInvocation?: ActionDtoShape_eaecd9880724a121;
+        managedAdmission?: ActionDtoShape_bddb76c6d2af05d1;
+        managedCreationCodec?: ActionDtoShape_443ba31b86325f18;
+        sessionSpawnAdmission?: ActionDtoShape_186d81ae822583ea;
+        handoffAdmission?: ActionDtoShape_5721bdf5a4e59c52;
+    }
+][0];
 export type ActionDtoShape_3b0c3ec6c11f445e = [
     {
         kind: 'unavailable';
@@ -12825,6 +12815,12 @@ export type ActionDtoShape_429f4e8d3193c830 = [
 ][0];
 export type ActionDtoShape_42b4b8a73abc2f93 = [
     ActionDtoShape_1de3a0c498c6c197 | ActionDtoShape_292930ce58461303
+][0];
+export type ActionDtoShape_42b8f67857ce992e = [
+    {
+        method: 'daemon.plugins.ui.resources.watch.next';
+        params: ActionDtoShape_d568aef3d1e551ed;
+    }
 ][0];
 export type ActionDtoShape_42c681295e335484 = [
     {
@@ -14108,13 +14104,6 @@ export type ActionDtoShape_493d9ca5c5854637 = [
 export type ActionDtoShape_49531d7a13e3a6bb = [
     undefined | ActionDtoShape_1bdf5932940101e7
 ][0];
-export type ActionDtoShape_496f605239796018 = [
-    {
-        subscriptionId: string;
-        machineId: string;
-        resource: ActionDtoShape_1b76d5182bf603e5;
-    }
-][0];
 export type ActionDtoShape_4972d99b6433b3d9 = [
     undefined | ActionDtoShape_30b92f959ee9c956 | ActionDtoShape_045ce964ea391ad1
 ][0];
@@ -15059,12 +15048,6 @@ export type ActionDtoShape_4e512131ffdfc12d = [
 export type ActionDtoShape_4e62bd393bb00948 = [
     undefined | ActionDtoShape_4198e196d256f426
 ][0];
-export type ActionDtoShape_4e6b2f5002254a49 = [
-    {
-        method: 'daemon.plugins.ui.resources.watch.close';
-        params: ActionDtoShape_496f605239796018;
-    }
-][0];
 export type ActionDtoShape_4e7479e7f90d5df2 = [
     {
         challengeId: string;
@@ -15337,6 +15320,13 @@ export type ActionDtoShape_4ff61a48a87a96c6 = [
         target: ActionDtoShape_02a86096a043b13d;
         missingFieldIds: string[];
         attemptId?: string | undefined;
+    }
+][0];
+export type ActionDtoShape_4ff948aa47249336 = [
+    {
+        machine: ActionDtoShape_9e65d6bc3ea3ccb9;
+        presetContent: ActionDtoShape_5fffbead64997ec1;
+        retainedWorkflowRoot?: ActionDtoShape_b3b16bc0b4c69f34;
     }
 ][0];
 export type ActionDtoShape_4ffca3f4ffdce361 = [
@@ -17167,12 +17157,6 @@ export type ActionDtoShape_594d47edcf0d25c3 = [
 ][0];
 export type ActionDtoShape_594fcf193c15097d = [
     null | undefined | ActionDtoShape_3c5ee2a62e9860a4 | ActionDtoShape_b5b87876125ff2e1
-][0];
-export type ActionDtoShape_5950e987788a4ddb = [
-    {
-        hostRead: 'machines.services.list';
-        input: ActionDtoShape_9270985c4d0aa7ad;
-    }
 ][0];
 export type ActionDtoShape_5961c5f8b2836ac1 = [
     null | undefined | ActionDtoShape_ced0351403049665
@@ -19961,25 +19945,6 @@ export type ActionDtoShape_683da4e7136e9da8 = [
         annotations?: ActionDtoShape_50dcabf8a8df56e2;
     }
 ][0];
-export type ActionDtoShape_683ff5f046e7e9d3 = [
-    {
-        v: 1;
-        input: JsonValue;
-        requestId?: string | undefined;
-        idempotencyKey?: string | undefined;
-        target?: ActionDtoShape_b47b3f510e786181;
-        workflowPreparation?: ActionDtoShape_3685375798706494;
-        resourceContinuation?: ActionDtoShape_20c5af1085cf3cc5;
-        machineServiceLogsGeneration?: ActionDtoShape_3f071b320546288b;
-        registryThemeContent?: true | undefined;
-        selectedActionInputDigest?: string | undefined;
-        pluginInvocation?: ActionDtoShape_eaecd9880724a121;
-        managedAdmission?: ActionDtoShape_bddb76c6d2af05d1;
-        managedCreationCodec?: ActionDtoShape_443ba31b86325f18;
-        sessionSpawnAdmission?: ActionDtoShape_186d81ae822583ea;
-        handoffAdmission?: ActionDtoShape_5721bdf5a4e59c52;
-    }
-][0];
 export type ActionDtoShape_68450f4e5e3c5f9f = [
     {
         expectedRevision: number;
@@ -20223,6 +20188,12 @@ export type ActionDtoShape_695c167d8ec7e278 = [
         agentId?: string | undefined;
         issueFingerprint?: string | undefined;
         resumePromptMode?: 'custom' | 'off' | 'standard' | undefined;
+    }
+][0];
+export type ActionDtoShape_696889c8e5f04f63 = [
+    {
+        binding: ActionDtoShape_0939b79099611b11;
+        envelope: ActionDtoShape_05527538fd1ee617;
     }
 ][0];
 export type ActionDtoShape_6991545ab857dad8 = [
@@ -24686,9 +24657,6 @@ export type ActionDtoShape_81ea8407be0c3fc5 = [
 export type ActionDtoShape_81f35dc2fddd004e = [
     undefined | ActionDtoShape_9f840c5e826ef585
 ][0];
-export type ActionDtoShape_820092ff3c164a1b = [
-    undefined | ActionDtoShape_f1e729a5029bbd15
-][0];
 export type ActionDtoShape_82044ba547fcdb16 = [
     {
         reason: 'access_removed' | 'authentication_required' | 'authentication_unavailable' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'disabled' | 'feature_disabled' | 'invalid_input' | 'resource_changed' | 'resource_corrupt' | 'resource_missing' | 'session_missing' | 'session_owner_mismatch' | 'source_owner_required' | 'source_replaced_or_missing' | 'team_context_required' | 'team_visibility_required' | 'update_required';
@@ -25053,6 +25021,12 @@ export type ActionDtoShape_8477a7f25b1f79f7 = [
 ][0];
 export type ActionDtoShape_84788350bd8e1b3e = [
     undefined | ActionDtoShape_0a6e90ed81ea19a4[]
+][0];
+export type ActionDtoShape_8482037fe42582c3 = [
+    {
+        method: 'daemon.plugins.ui.resources.read';
+        params: ActionDtoShape_300c4e3640da53bc;
+    }
 ][0];
 export type ActionDtoShape_848e41ba8401ed26 = [
     ActionDtoShape_b9169b55ab259fe6 | ActionDtoShape_e9b94d42f3ead7ac | {
@@ -26791,12 +26765,6 @@ export type ActionDtoShape_8dafb4cd7d7cbe2b = [
         sessionId?: string | undefined;
     }
 ][0];
-export type ActionDtoShape_8db92e372f9d277f = [
-    {
-        method: 'daemon.plugins.ui.resources.read';
-        params: ActionDtoShape_ac27de55b8c8390d;
-    }
-][0];
 export type ActionDtoShape_8dc7fb49e476c6c8 = [
     null | undefined | ActionDtoShape_07a6cc65e2a03d06
 ][0];
@@ -27667,15 +27635,6 @@ export type ActionDtoShape_9269c27a1a72ddfd = [
     {
         templateDomainId: string;
         hostname: string;
-    }
-][0];
-export type ActionDtoShape_9270985c4d0aa7ad = [
-    {
-        serverId: string;
-        machineId: string;
-        environmentId?: string | undefined;
-        composeService?: string | undefined;
-        preflight?: ActionDtoShape_ccb0d3308ce94f83;
     }
 ][0];
 export type ActionDtoShape_928e14e17f2332a2 = [
@@ -29798,6 +29757,12 @@ export type ActionDtoShape_9e65d6bc3ea3ccb9 = [
         submittedNativeEffect?: ActionDtoShape_7dafb7098b1285b2;
         creationScopeRetention?: ActionDtoShape_e8665a9c10d7de91;
         cleanup?: ActionDtoShape_29b121716997f5ff;
+    }
+][0];
+export type ActionDtoShape_9e709b786424ab31 = [
+    {
+        method: 'daemon.plugins.ui.resources.watch.close';
+        params: ActionDtoShape_e7e7237350374870;
     }
 ][0];
 export type ActionDtoShape_9e791aa88c7865f7 = [
@@ -32266,12 +32231,6 @@ export type ActionDtoShape_ac1049cb91b44119 = [
         profileId: string;
     }
 ][0];
-export type ActionDtoShape_ac27de55b8c8390d = [
-    {
-        machineId: string;
-        resource: ActionDtoShape_1b76d5182bf603e5;
-    }
-][0];
 export type ActionDtoShape_ac44551b6cfdddfd = [
     {
         status: 'success';
@@ -33624,6 +33583,9 @@ export type ActionDtoShape_b3adbd02c6456a72 = [
         source: string;
     }
 ][0];
+export type ActionDtoShape_b3b16bc0b4c69f34 = [
+    undefined | ActionDtoShape_696889c8e5f04f63
+][0];
 export type ActionDtoShape_b3b247d8a6e39b17 = [
     null | ActionDtoShape_fbb569a6bbf58a7f
 ][0];
@@ -33819,9 +33781,6 @@ export type ActionDtoShape_b50766f23eaac09d = [
         serverId: string;
         projectKey: string;
     }
-][0];
-export type ActionDtoShape_b50a0cb0337b1226 = [
-    ActionDtoShape_683ff5f046e7e9d3 | ActionDtoShape_3baa7284bb26b149
 ][0];
 export type ActionDtoShape_b50c6f80daba47cb = [
     undefined | ActionDtoShape_581272f9bd2e00e4 | ActionDtoShape_fd13e0badfb1b60e
@@ -34225,14 +34184,6 @@ export type ActionDtoShape_b7002da74436fe27 = [
         forges: ActionDtoShape_b12bc11e41136b9c[];
         connectedAccounts?: ActionDtoShape_1724f3f01418dac2;
         issues?: ActionDtoShape_ba4b825c87a6ba3a;
-    }
-][0];
-export type ActionDtoShape_b70603a5047201e0 = [
-    {
-        subscriptionId: string;
-        machineId: string;
-        resource: ActionDtoShape_1b76d5182bf603e5;
-        waitMs?: number | undefined;
     }
 ][0];
 export type ActionDtoShape_b708a05826a632a8 = [
@@ -34946,12 +34897,6 @@ export type ActionDtoShape_bb0dd605b5bf816a = [
 ][0];
 export type ActionDtoShape_bb10aaf15d29cf6b = [
     ActionDtoShape_9f620bbad680cdd9 | ActionDtoShape_8de638e0ea1f08f8 | ActionDtoShape_8d3a61b83bfe7cf8 | ActionDtoShape_0880dae39b356235 | ActionDtoShape_674b0c03d58b3242
-][0];
-export type ActionDtoShape_bb1106843de08803 = [
-    {
-        method: 'daemon.plugins.ui.resources.watch.next';
-        params: ActionDtoShape_b70603a5047201e0;
-    }
 ][0];
 export type ActionDtoShape_bb233471b882a81e = [
     {
@@ -37149,9 +37094,6 @@ export type ActionDtoShape_c630a3b6a16d4fca = [
 export type ActionDtoShape_c65441930981f4e1 = [
     undefined | ActionDtoShape_39767c198606bd4e | ActionDtoShape_4a3d6091f858590e | ActionDtoShape_c68dd0838515e852 | ActionDtoShape_ff94abf3e5abe5ca | ActionDtoShape_562f719adfe2f6d4 | ActionDtoShape_e754dde736df000a | ActionDtoShape_9e34d7847ad3ee00
 ][0];
-export type ActionDtoShape_c65ab223c8ae760a = [
-    ActionDtoShape_0f4eaba6f8bb2fdd | ActionDtoShape_1c12d86eff240eab
-][0];
 export type ActionDtoShape_c660df3e595026bb = [
     {
         kind: 'configured' | 'default' | 'materialized' | 'override';
@@ -37854,6 +37796,46 @@ export type ActionDtoShape_c97d81c29e855981 = [
 export type ActionDtoShape_c980140a2429b7af = [
     undefined | ActionDtoShape_bd2883cc6a57736f
 ][0];
+export type ActionDtoShape_c9812b348dc847dd = [
+    {
+        id: string;
+        homeId: string;
+        custodianAccountId: string;
+        launch: ActionDtoShape_760c1b772512d398;
+        allocation: 'bound' | 'confirmed-absent' | 'may-exist' | 'unsubmitted';
+        creationState: 'active' | 'canceled';
+        desired: 'delete' | 'rebuild' | 'resume' | 'start' | 'stop' | 'suspend';
+        desiredWhen: 'after-idle' | 'now';
+        intentRevision: number;
+        retention: ActionDtoShape_7b289ed034224780;
+        wakeOnAcceptedMessage: boolean;
+        enrollmentAccountId?: string | undefined;
+        guestCli?: ActionDtoShape_ca06cfe1604502f9;
+        acquisitionMode?: 'resource-bound' | undefined;
+        workspaceAttachment?: ActionDtoShape_48c5d9f669a30430;
+        preset?: ActionDtoShape_2d79904ca1664b72;
+        controller?: ActionDtoShape_b1514a53343d4182;
+        controllerAccess?: ActionDtoShape_e28db0e539c46906;
+        enrollmentIdentity?: ActionDtoShape_6b88f77fbe370482;
+        guestActivityRole?: 'manage' | 'use' | undefined;
+        reviewedFacts?: ActionDtoShape_31f0150082840ee3;
+        machineSetup?: ActionDtoShape_a6109590a0b480b7;
+        nativeOperationRef?: ActionDtoShape_9a036b55bdddaa98;
+        recovery?: ActionDtoShape_bf662a04aa8833b6;
+        bootstrapCredentialRef?: ActionDtoShape_0f760a32190a038a;
+        bootstrapInstalled?: true | undefined;
+        resource?: ActionDtoShape_e5a7dcf1dab2b35a;
+        devcontainerChild?: ActionDtoShape_83236c6ceedd91f5;
+        enrolledMachineId?: string | undefined;
+        desiredAfterMs?: number | undefined;
+        archivedAt?: number | undefined;
+        submittedNativeEffect?: ActionDtoShape_7dafb7098b1285b2;
+        creationScopeRetention?: ActionDtoShape_e8665a9c10d7de91;
+        observation?: ActionDtoShape_6234c859c54f9c24;
+        cleanup?: ActionDtoShape_29b121716997f5ff;
+        retainedWorkflowRoot?: ActionDtoShape_b3b16bc0b4c69f34;
+    }
+][0];
 export type ActionDtoShape_c995cbf701b1f19b = [
     ActionDtoShape_d9c31bdd253791cf | ActionDtoShape_15f9981a65b64679 | ActionDtoShape_a2725c0748e8c907 | ActionDtoShape_da90bb7bb10ddfa1
 ][0];
@@ -38487,9 +38469,6 @@ export type ActionDtoShape_cc8cbcf100922a71 = [
         startLine: number;
         lineCount: number;
     }
-][0];
-export type ActionDtoShape_ccb0d3308ce94f83 = [
-    undefined | ActionDtoShape_d5024abf149bf0d7
 ][0];
 export type ActionDtoShape_ccb955cb936ee76d = [
     undefined | ActionDtoShape_ad57c687dabe75ce[]
@@ -39950,12 +39929,6 @@ export type ActionDtoShape_d4f895fc51267c2d = [
 export type ActionDtoShape_d4fd3ed11b159a28 = [
     undefined | ActionDtoShape_5f9492d8a723bc24
 ][0];
-export type ActionDtoShape_d5024abf149bf0d7 = [
-    {
-        ports: number[];
-        nativeNames: ActionDtoShape_074c2edcb3957817[];
-    }
-][0];
 export type ActionDtoShape_d518ef3eb3b30d69 = [
     {
         kind: 'unknown';
@@ -39979,6 +39952,14 @@ export type ActionDtoShape_d52a3ad02377c2be = [
 ][0];
 export type ActionDtoShape_d55d5592e4da4564 = [
     ActionDtoShape_a41a6ad2919a9b01 | ActionDtoShape_f84bfc2d5eb63898
+][0];
+export type ActionDtoShape_d568aef3d1e551ed = [
+    {
+        subscriptionId: string;
+        machineId: string;
+        resource: ActionDtoShape_131df0bda8db65d1;
+        waitMs?: number | undefined;
+    }
 ][0];
 export type ActionDtoShape_d56a76deaacefc0e = [
     {
@@ -41247,6 +41228,9 @@ export type ActionDtoShape_dcc7b9374c5b6232 = [
         reason: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported';
     }
 ][0];
+export type ActionDtoShape_dcd3980c87fd7a4a = [
+    undefined | ActionDtoShape_8482037fe42582c3 | ActionDtoShape_9e709b786424ab31 | ActionDtoShape_42b8f67857ce992e | ActionDtoShape_1b49d582332b37e0
+][0];
 export type ActionDtoShape_dcd886f89f4b87a6 = [
     {
         kind: 'execution_run';
@@ -41578,6 +41562,15 @@ export type ActionDtoShape_df2b6c9c48b1c643 = [
         surface: ActionDtoShape_964ce6373ebb5217;
         items: (ActionDtoShape_70ac9a9cef1740c5)[];
         name?: string | undefined;
+    }
+][0];
+export type ActionDtoShape_df2e0d06027eed59 = [
+    {
+        serverId: string;
+        machineId: string;
+        environmentId?: string | undefined;
+        composeService?: string | undefined;
+        preflight?: ActionDtoShape_127eef16ab9059f0;
     }
 ][0];
 export type ActionDtoShape_df3434ae2b23af81 = [
@@ -42506,6 +42499,13 @@ export type ActionDtoShape_e48e8dd074a01bc5 = [
         delivery: ActionDtoShape_44563ff180339a3c;
     }
 ][0];
+export type ActionDtoShape_e4949d1d3a8124e7 = [
+    {
+        ports: number[];
+        nativeNames: ActionDtoShape_074c2edcb3957817[];
+        displayNames?: string[] | undefined;
+    }
+][0];
 export type ActionDtoShape_e49d5976b44dbb7d = [
     {
         attentionRequired: boolean;
@@ -43118,6 +43118,13 @@ export type ActionDtoShape_e7e4c105d4833428 = [
         v: 1;
         sessionTitleUpdates?: 'disabled' | 'initial' | 'ongoing' | undefined;
         responseOptions?: 'agent' | 'disabled' | undefined;
+    }
+][0];
+export type ActionDtoShape_e7e7237350374870 = [
+    {
+        subscriptionId: string;
+        machineId: string;
+        resource: ActionDtoShape_131df0bda8db65d1;
     }
 ][0];
 export type ActionDtoShape_e7ee87f907d9adb1 = [
@@ -44859,12 +44866,6 @@ export type ActionDtoShape_f1e1fa63a8cfd50d = [
     {
         readTokens: null | number;
         writeTokens: null | number;
-    }
-][0];
-export type ActionDtoShape_f1e729a5029bbd15 = [
-    {
-        binding: ActionDtoShape_0939b79099611b11;
-        envelope: ActionDtoShape_b50a0cb0337b1226;
     }
 ][0];
 export type ActionDtoShape_f1edf10e3298501c = [

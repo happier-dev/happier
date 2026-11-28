@@ -19521,6 +19521,8 @@ settingsSession: {
         addPortsUnresolved: "Nazwy i rzeczywiste porty będą znane po pierwszym uruchomieniu.",
         addPortsClash: ({ machine }: { machine: string }) => `Coś na ${machine} już używa portu zadeklarowanego przez tę aplikację`,
         addPortsClashBody: "Może nie uruchomić się, dopóki port nie będzie wolny. Zmień port w definicji albo zatrzymaj drugą usługę na jej stronie.",
+        addNameOrPortClash: ({ machine }: { machine: string }) => `Nazwa lub port mogą być już używane na ${machine}`,
+        addNameOrPortClashBody: "Przed dodaniem tej aplikacji sprawdź pasujące usługi.",
         addPortsUnavailable: ({ machine }: { machine: string }) => `Nie udało się sprawdzić portów na ${machine}`,
         domainRemove: "Usuń domenę",
         domainApprovalBody: "Nic się nie zmieni, dopóki nie zostanie zatwierdzone.",

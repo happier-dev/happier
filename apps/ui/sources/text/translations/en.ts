@@ -23065,6 +23065,8 @@ const enProjects = {
       addPortsUnresolved: "Runtime names and effective ports are known after the first start.",
       addPortsClash: ({ machine }: { machine: string }) => `Something on ${machine} already uses a port this app declares`,
       addPortsClashBody: "It may not start until that port is free. Change the port in the definition, or stop the other service from its page.",
+      addNameOrPortClash: ({ machine }: { machine: string }) => `A name or port may already be in use on ${machine}`,
+      addNameOrPortClashBody: "Review the matching services before adding this app.",
       addPortsUnavailable: ({ machine }: { machine: string }) => `Couldn’t check ports on ${machine}`,
       domainRemove: "Remove domain",
       domainApprovalBody: "Nothing changes until this is approved.",

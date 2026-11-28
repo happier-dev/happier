@@ -16,9 +16,7 @@ type DeclaredPort = DeploymentDeclaredAddInputs['services'][number]['ports'][num
 
 /**
  * What an app being added declares about its ports and names (SOS-GAP-PREFLIGHT #4), read from the reviewed
- * definition without evaluating it, and the managed services already on a declared literal port of the Machine it
- * runs on. A match is a possible clash, never a promised refusal; no match is never Machine-wide clearance, and the
- * confirmation stays where it is.
+ * definition without evaluating it, and matches in the target Machine's retained managed services inventory.
  */
 export function DeploymentAddPortsFacts(props: Readonly<{
   document: string;
@@ -50,15 +48,15 @@ export function DeploymentAddPortsFacts(props: Readonly<{
             subtitle={service.ports.map(formatDeclaredPort).join(', ') || undefined} />
         ))}
       </ItemGroup>
-      {props.serverId && props.machineId && declared.query.ports.length > 0 ? (
-        <DeclaredPortMatches serverId={props.serverId} machineId={props.machineId} query={declared.query} testID={props.testID} />
+      {props.serverId && props.machineId && (declared.query.ports.length > 0 || declared.query.displayNames?.length) ? (
+        <DeclaredServiceMatches serverId={props.serverId} machineId={props.machineId} query={declared.query} testID={props.testID} />
       ) : null}
     </>
   );
 }
 
-/** The one selected services read for the declared literal ports; mounted only while the review shows a selector. */
-function DeclaredPortMatches(props: Readonly<{
+/** The one selected services read for the declared names and ports. */
+function DeclaredServiceMatches(props: Readonly<{
   serverId: string;
   machineId: string;
   query: DeploymentDeclaredAddInputs['query'];
@@ -67,12 +65,8 @@ function DeclaredPortMatches(props: Readonly<{
   const list = useMachineServicesList({ serverId: props.serverId, machineId: props.machineId, active: true, preflight: props.query });
   const machine = useServerScopedMachineLabel(props.serverId, props.machineId) ?? t('projects.deployments.aMachine');
   if (list.rows && list.rows.length > 0) {
-    return (
-      <AttentionBanner testID={`${props.testID}.clash`} tone="warning"
-        title={t('projects.deployments.addPortsClash', { machine })}
-        description={t('projects.deployments.addPortsClashBody')}
-        points={list.rows.map((row) => row.port ? [row.name, ' · ', { code: String(row.port) }] : [row.name])} />
-    );
+    return <DeploymentAddServiceMatches machine={machine} names={Boolean(props.query.displayNames?.length)}
+      rows={list.rows} testID={`${props.testID}.clash`} />;
   }
   if (list.unavailable || list.error) {
     return (
@@ -83,6 +77,15 @@ function DeclaredPortMatches(props: Readonly<{
     );
   }
   return null;
+}
+
+export function DeploymentAddServiceMatches(props: Readonly<{ machine: string; names: boolean;
+  rows: readonly Readonly<{ name: string; port?: number | null }>[]; testID: string }>) {
+  return <AttentionBanner testID={props.testID} tone="warning"
+    title={props.names ? t('projects.deployments.addNameOrPortClash', { machine: props.machine })
+      : t('projects.deployments.addPortsClash', { machine: props.machine })}
+    description={props.names ? t('projects.deployments.addNameOrPortClashBody') : t('projects.deployments.addPortsClashBody')}
+    points={props.rows.map((row) => row.port ? [row.name, ' · ', { code: String(row.port) }] : [row.name])} />;
 }
 
 /** A port exactly as declared: short forms verbatim, long forms as `[address:]published:target[/protocol]`. */

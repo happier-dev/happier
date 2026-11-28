@@ -14403,6 +14403,8 @@ settingsSession: {
             overviewStatus: deploymentOverviewTranslations['zh-Hant'],
             editors: deploymentEditorsTranslations['zh-Hant'],
       preparation: deploymentPreparationTranslations['zh-Hant'],
+      addNameOrPortClash: ({ machine }: { machine: string }) => `${machine} 上的名稱或連接埠可能已被使用`,
+      addNameOrPortClashBody: '新增此應用程式前，請查看符合條件的服務。',
             settingsSections: deploymentSettingsTranslations['zh-Hant'],
             platformLink: deploymentPlatformLinkTranslations['zh-Hant'],
             promotion: deploymentPromotionTranslations['zh-Hant'],

@@ -19698,6 +19698,8 @@ settingsSession: {
         addPortsUnresolved: "Nomi e porte effettive si conoscono dopo il primo avvio.",
         addPortsClash: ({ machine }: { machine: string }) => `Qualcosa su ${machine} usa già una porta dichiarata da questa app`,
         addPortsClashBody: "Potrebbe non avviarsi finché la porta non è libera. Cambia la porta nella definizione o ferma l’altro servizio dalla sua pagina.",
+        addNameOrPortClash: ({ machine }: { machine: string }) => `Un nome o una porta potrebbe essere già in uso su ${machine}`,
+        addNameOrPortClashBody: "Controlla i servizi corrispondenti prima di aggiungere questa app.",
         addPortsUnavailable: ({ machine }: { machine: string }) => `Impossibile controllare le porte su ${machine}`,
         domainRemove: "Rimuovi dominio",
         domainApprovalBody: "Non cambia nulla finché non viene approvato.",

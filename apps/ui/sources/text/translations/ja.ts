@@ -19610,6 +19610,8 @@ settingsSession: {
         addPortsUnresolved: "実行時の名前と実際のポートは初回起動後にわかります。",
         addPortsClash: ({ machine }: { machine: string }) => `${machine} で、このアプリが宣言するポートがすでに使われています`,
         addPortsClashBody: "そのポートが空くまで起動できない場合があります。定義のポートを変えるか、もう一方のサービスをそのページから停止してください。",
+        addNameOrPortClash: ({ machine }: { machine: string }) => `${machine} では名前またはポートがすでに使われている可能性があります`,
+        addNameOrPortClashBody: "このアプリを追加する前に、一致するサービスを確認してください。",
         addPortsUnavailable: ({ machine }: { machine: string }) => `${machine} のポートを確認できませんでした`,
         domainRemove: "ドメインを削除",
         domainApprovalBody: "承認されるまで何も変わりません。",

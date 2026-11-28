@@ -19696,6 +19696,8 @@ settingsSession: {
         addPortsUnresolved: "Los nombres y puertos efectivos se conocen tras el primer inicio.",
         addPortsClash: ({ machine }: { machine: string }) => `Algo en ${machine} ya usa un puerto que declara esta app`,
         addPortsClashBody: "Puede que no arranque hasta que ese puerto quede libre. Cambia el puerto en la definición o detén el otro servicio desde su página.",
+        addNameOrPortClash: ({ machine }: { machine: string }) => `Puede que un nombre o puerto ya esté en uso en ${machine}`,
+        addNameOrPortClashBody: "Revisa los servicios que coinciden antes de añadir esta app.",
         addPortsUnavailable: ({ machine }: { machine: string }) => `No se pudieron comprobar los puertos de ${machine}`,
         domainRemove: "Quitar dominio",
         domainApprovalBody: "Nada cambia hasta que se apruebe.",

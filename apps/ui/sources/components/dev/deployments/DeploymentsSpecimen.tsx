@@ -17,6 +17,7 @@ import { createTelemetryCaptureFixtureInvoke, TelemetryCaptureFixtureProvider } 
 import { showDeploymentDispositionSheet, type DeploymentDispositionSheetInput } from '@/components/projects/deployments/DeploymentDispositionSheet';
 import { deploymentSheetStyles, showDeploymentSheet } from '@/components/projects/deployments/deploymentSheet';
 import { DeploymentPreparationRecognized } from '@/components/projects/deployments/DeploymentPreparationRecognized';
+import { DeploymentAddServiceMatches } from '@/components/approvals/DeploymentAddPortsFacts';
 import { ActionInputFields } from '@/components/sessions/actions/ActionInputFields';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -914,6 +915,9 @@ export function DeploymentsSpecimen(
   const telemetryInvoke = React.useMemo(() => props.telemetry
     ? createTelemetryCaptureFixtureInvoke(props.telemetry === 'offline' || props.telemetry === 'waiting' ? props.telemetry : 'populated')
     : null, [props.telemetry]);
+  if (props.state === 'add-name-conflict') return <ListPresentationProvider value="page" pageInsets="contained">
+    <DeploymentAddServiceMatches machine="Home server" names rows={[{ name: 'search-1' }]} testID="review.add.name-conflict" />
+  </ListPresentationProvider>;
   if (props.state === 'prepare-recognized' || props.state === 'prepare-unknown') {
     const known = props.state === 'prepare-recognized';
     return <ListPresentationProvider value="page" pageInsets="contained">

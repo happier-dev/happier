@@ -86,6 +86,7 @@ export const MachineServicesListInputV1Schema = lazyZodSchema(() => z.strictObje
   preflight: z.optional(z.strictObject({
     ports: z.array(LocalServiceEndpointV1Schema.shape.port),
     nativeNames: z.array(z.pick(MachineServiceWatchV1Schema, { adapter: true, nativeResourceId: true })),
+    displayNames: z.optional(z.array(MachineServiceRowV1Schema.shape.name)),
   })),
 }).check(z.superRefine((input, ctx) => {
   if (input.composeService && !input.environmentId) {

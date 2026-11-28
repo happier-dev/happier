@@ -484,14 +484,19 @@ describe('Machine Services exact demand cost', () => {
                 } finally { demand.abort(); await subscription?.dispose(); }
             }
             const nativeAtRest = inspections;
-            const preflight = (ports: number[]) => runtime.execute({ actionId: 'machines.services.list',
-                input: { ...target, preflight: { ports, nativeNames: [] } }, context, canReadEnvironments });
+            const preflight = (ports: number[], displayNames?: string[], read = canReadEnvironments) => runtime.execute({ actionId: 'machines.services.list',
+                input: { ...target, preflight: { ports, nativeNames: [], ...(displayNames ? { displayNames } : {}) } },
+                context, canReadEnvironments: read });
             expect(await preflight([15432])).toMatchObject({ kind: 'snapshot', services: [
                 { serviceId: 'instance/web' }, { serviceId: 'instance/worker' },
             ] });
             expect(await preflight([5432])).toEqual({ kind: 'snapshot', services: [], coverage: 'managed_services' });
             expect(await preflight([5433])).toEqual({ kind: 'snapshot', services: [], coverage: 'managed_services' });
             expect(await preflight([])).toEqual({ kind: 'snapshot', services: [], coverage: 'managed_services' });
+            expect(await preflight([], ['web'])).toMatchObject({ kind: 'snapshot', services: [
+                { serviceId: 'instance/web', name: 'web' },
+            ] });
+            expect(await preflight([], ['web'], async () => new Set())).toEqual({ kind: 'snapshot', services: [], coverage: 'managed_services' });
             expect(samples, 'advisory preflight never acquires native accounting').toBe(0);
             expect(inspections).toBe(nativeAtRest);
             const list = async () => MachineServicesListResultV1Schema.parse(await runtime.execute({

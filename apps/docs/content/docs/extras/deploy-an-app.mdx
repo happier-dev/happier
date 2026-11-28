@@ -163,6 +163,11 @@ Choose the Machine and either an existing Project or a new Project, then confirm
 the reviewed installation. This creates an Environment and attempts its deployment.
 Open the resulting Environment to see what completed.
 
+For a Compose-based app, the review can flag a declared container name or port
+that matches a managed service you can see on the selected Machine. The review
+uses Happier's service inventory. The Machine checks actual availability when it
+starts the app.
+
 If you already have a definition, open **Apps** in the Store and choose
 **Paste a Compose file** or **Run an image**, then choose an existing Project or
 **New project**. A new Project is created when you confirm Environment creation.
@@ -178,9 +183,12 @@ if it is not.
 
 If the repository has no Compose file, including a repository with only a
 Dockerfile, choose **Prepare with an agent** in the Project's **Deployments**
-tab. Choose a workspace checkout and continue in the resulting Session. The
-agent prepares repository changes for review and a pull request, preserving
-valid deployment files. Review the proposed validation and pull request before
+tab. Choose a workspace checkout. Before starting the Session, review what
+Happier recognized, including the framework, runtime, listening port, health
+path, and whether the checkout has a Dockerfile, Compose file or `.env.example`.
+Facts the inspection cannot establish appear as **Unknown**. In the resulting
+Session, the agent prepares repository changes for review and a pull request,
+preserving valid deployment files. Review the proposed validation and pull request before
 merging, then return to create and deploy an Environment from the updated source.
 The handoff itself does not deploy the app or merge the pull request for you.
 Validation of the exact PR head needs its own review, using a non-production

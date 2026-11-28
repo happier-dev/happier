@@ -1497,7 +1497,20 @@ describe('Add review → declared ports (#4)', () => {
             expect(text).toContain('meili-old');
             expect(text).toContain(t('projects.deployments.addPortsUnresolved'));
             // Only the literal long-form publication is asked about; the short form is not evaluated.
-            expect(selections).toContainEqual(expect.objectContaining({ preflight: { ports: [7700], nativeNames: [] } }));
+            expect(selections).toContainEqual(expect.objectContaining({ preflight: { ports: [7700], nativeNames: [], displayNames: ['search-1'] } }));
+        } finally { await screen.unmount(); }
+    });
+
+    it('warns about a matching visible service name without a published port', async () => {
+        const selections: unknown[] = [];
+        answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [service('search-1')] }),
+            'machines.services.list', (value, reference) => { selections.push(reference.input); return value; });
+        const { DeploymentAddPortsFacts } = await import('@/components/approvals/DeploymentAddPortsFacts');
+        const screen = await renderScreen(<DeploymentAddPortsFacts document="services: { search: { container_name: search-1 } }"
+            services={['search']} serverId={serverId} machineId={machineId} testID="ports" />);
+        try {
+            await vi.waitFor(async () => { await flushHookEffects(); expect(screen.findByTestId('ports.clash')).not.toBeNull(); });
+            expect(selections).toContainEqual(expect.objectContaining({ preflight: { ports: [], nativeNames: [], displayNames: ['search-1'] } }));
         } finally { await screen.unmount(); }
     });
 });

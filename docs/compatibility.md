@@ -1596,7 +1596,9 @@ The inspected scoped-clean `../0.2` frontier
 ## Machine-service advisory selection (unreleased 0.3)
 
 The closed `machines.services.list` input accepts optional `preflight` selectors
-for published ports and adapter-qualified native resource names. Selected
+for published ports, adapter-qualified native resource names, and exact names of
+readable managed service rows. Name matches are advisory and use the same
+Machine and Environment disclosure rules as the other selectors. Selected
 snapshots carry optional `coverage: 'managed_services'`; omission is unknown,
 never proof of whole-Machine clearance. Protocol, daemon and app readers refresh
 together under the unpublished 0.3 direct cut. Earlier strict development readers

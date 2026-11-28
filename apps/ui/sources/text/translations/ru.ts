@@ -19650,6 +19650,8 @@ settingsSession: {
         addPortsUnresolved: "Имена и фактические порты станут известны после первого запуска.",
         addPortsClash: ({ machine }: { machine: string }) => `На ${machine} уже занят порт, который объявляет это приложение`,
         addPortsClashBody: "Оно может не запуститься, пока порт не освободится. Измените порт в определении или остановите другую службу на её странице.",
+        addNameOrPortClash: ({ machine }: { machine: string }) => `На ${machine} имя или порт уже могут быть заняты`,
+        addNameOrPortClashBody: "Проверьте совпадающие службы перед добавлением приложения.",
         addPortsUnavailable: ({ machine }: { machine: string }) => `Не удалось проверить порты на ${machine}`,
         domainRemove: "Удалить домен",
         domainApprovalBody: "Ничего не изменится, пока это не одобрят.",
