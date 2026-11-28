@@ -1,7 +1,7 @@
 import { ActionExecuteResultSchema, ActionFailureCauseV1Schema } from '../actions/actionExecutionResult.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
-import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '../connect/connectedServiceUxDiagnostics.js';
+import { ProviderBrokerAdmissionFailureCodeV1Schema } from './brokerAdmissionFailureCodeV1.js';
 
 import { AuthTokenAuthenticationEvidenceSnapshotV1Schema } from '../auth/authToken.js';
 import { AutomationEventAdmitDefinitionSelectorV1Schema } from '../automations/automationEventAdmissionSelectorV1.js';
@@ -244,26 +244,6 @@ export const ProviderBrokerModelCatalogAuthorizationV1Schema = lazyZodSchema(() 
   expectedResourceRevision: z.number().check(z.int(), z.nonnegative()),
 }));
 
-export const ProviderBrokerAdmissionFailureCodeV1Schema = lazyZodSchema(() => z.enum([
-  CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired,
-  'invalid_request',
-  'resource_forbidden',
-  'access_removed',
-  'resource_unavailable',
-  'resource_changed',
-  'session_not_active',
-  'operation_not_current',
-  'execution_run_not_found',
-  'execution_run_terminal',
-  'execution_run_authority_unavailable',
-  'broker_unavailable',
-  'update_required',
-  'team_credential_usage_limit',
-  'token_limit_unavailable',
-  'cost_limit_unavailable',
-  'duplicate_request',
-]));
-
 /** Closed source prerequisites safe for requester diagnostics; never raw exception text. */
 export const ProviderBrokerSourceOpenFailureReasonV1Schema = lazyZodSchema(() => z.enum([
   'broker_machine_mismatch',
@@ -378,7 +358,7 @@ export const ProviderBrokerModelCatalogAuthorizationResponseV1Schema = lazyZodSc
 export type ProviderBrokerConsumerV1 = z.infer<typeof ProviderBrokerConsumerV1Schema>;
 export type ProviderBrokerApplicationBindingV1 = z.infer<typeof ProviderBrokerApplicationBindingV1Schema>;
 /** The one admission-failure vocabulary for broker open and per-request admission. */
-export type ProviderBrokerAdmissionFailureCodeV1 = z.infer<typeof ProviderBrokerAdmissionFailureCodeV1Schema>;
+export { ProviderBrokerAdmissionFailureCodeV1Schema, type ProviderBrokerAdmissionFailureCodeV1 } from './brokerAdmissionFailureCodeV1.js';
 export type ProviderBrokerRouteGrantPayloadV1 = z.infer<typeof ProviderBrokerRouteGrantPayloadV1Schema>;
 export type ProviderBrokerModelRouteGrantPayloadV1 = z.infer<typeof ProviderBrokerModelRouteGrantPayloadV1Schema>;
 export type ProviderBrokerWatcherRouteGrantPayloadV1 = z.infer<typeof ProviderBrokerWatcherRouteGrantPayloadV1Schema>;

@@ -122,6 +122,7 @@ describe('daemon start graph in the single CLI graph', () => {
 
   it('loads boot credential and policy parsers without loading Action admission', () => {
     const bootReaders = [
+      'apps/cli/src/cli/bootstrap.ts',
       'apps/cli/src/api/client/credentialAxios.ts',
       'apps/cli/src/auth/cliApiToken.ts',
       'packages/cli-common/src/organizationPolicy/readOrganizationPolicyFile.ts',

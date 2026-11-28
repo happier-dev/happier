@@ -16,7 +16,7 @@ import { ConnectedAccountServiceKeyIngressSchema } from '../../connect/connected
 import { ConnectedServiceLimitCategoryV1Schema } from '../../connect/connectedServiceLimitCategory.js';
 import { AgentIdV1Schema } from '../../agents/agentIdV1.js';
 import { NonBlankOpaqueIdentifierSchema } from '../../strings/opaqueIdentifier.js';
-import { ProviderBrokerAdmissionFailureCodeV1Schema, type ProviderBrokerAdmissionFailureCodeV1 } from '../../providers/brokerRouteGrantV1.js';
+import { ProviderBrokerAdmissionFailureCodeV1Schema, type ProviderBrokerAdmissionFailureCodeV1 } from '../../providers/brokerAdmissionFailureCodeV1.js';
 import { TeamCredentialUsageLimitDenialV1Schema } from '../../teams/credentials/usageV1.js';
 import { ConnectedServicesDefaultUnavailableDetailsV1Schema } from '../../connect/connectedServiceUxDiagnostics.js';
 
