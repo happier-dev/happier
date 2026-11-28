@@ -83,10 +83,11 @@ function scopeActions(kind: 'project' | 'environment'): Record<string, AccountAc
       description: `Run ${railwayIdentity.id}/actions/${previewId} first. Submit its scope and lists unchanged to review and delete the selected Railway ${kind}.`,
       confirmation: {
         title: `Delete this Railway ${kind} and its data?`,
-        body: 'Railway will remove the listed resources. Happier could not check which of its Environments and Links use this scope. Any that do will stop working and remain in Happier.',
+        // The body says once that Links were not checked; the `happierLinks` operand stays in the input, not as a review row.
+        body: { key: 'plugins.railway.scopeDelete.confirm.body',
+          fallback: 'Railway will remove the listed resources. This can’t be undone. Happier could not check which of its Environments and Links use this scope. Any that do will stop working and remain in Happier.' },
         inputFields: [{ path: 'scope.name', title: `Railway ${kind}` },
-          ...Object.entries(vendorLists).map(([key, title]) => ({ path: `${key}.[].name`, title })),
-          { path: 'happierLinks', title: 'Happier Environments and Links using this scope' }],
+          ...Object.entries(vendorLists).map(([key, title]) => ({ path: `${key}.[].name`, title }))],
       },
       inputSchema: actionObject({ ...inputFields, ...reviewFields }),
       resultSchema: actionObject({ status: { type: 'string' as const, enum: ['removed', 'kept-unchecked'] } }),

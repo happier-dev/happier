@@ -3280,6 +3280,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.railway.picker.duplicateProject": "已存在同名專案。",
   "plugins.railway.picker.environmentNamePlaceholder": "例如：staging",
   "plugins.railway.picker.projectNamePlaceholder": "例如：Orders API",
+  "plugins.railway.scopeDelete.confirm.body": "Railway 將刪除列出的資源。此操作無法復原。Happier 無法檢查哪些環境和連結在使用此範圍。使用它的將停止運作，並保留在 Happier 中。",
   "plugins.sentry.account.description": "用於讀取組織和問題的 Sentry 部署及驗證權杖。",
   "plugins.sentry.account.title": "Sentry 帳戶",
   "plugins.sentry.auth.cloud.title": "Sentry Cloud 權杖",

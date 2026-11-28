@@ -795,8 +795,8 @@ export function DeploymentPlatformTargetEditor(
   return (
     <ListPresentationProvider value={embedded ? hostPresentation : 'page'} pageInsets={embedded ? hostInsets : 'contained'}>
       <View testID="project-deployments.platform" style={embedded ? styles.embedded : deploymentSheetStyles.body}>
-        {props.onPrepared || !target ? null : <Text style={deploymentSheetStyles.lead}>
-          {t('projects.deployments.platformLink.lead')}
+        {props.onPrepared || !target ? null : <Text testID="project-deployments.platform.lead" style={deploymentSheetStyles.lead}>
+          {create ? t('projects.deployments.platformLink.leadCreate', { platform: target.title }) : t('projects.deployments.platformLink.lead')}
         </Text>}
         {createdBranchOutcome ? <SurfaceStateCard testID="project-deployments.platform.productionBranch" size="line"
           kind={createdBranchOutcome.status === 'set' ? 'success' : 'warning'}

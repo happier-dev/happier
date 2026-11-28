@@ -3280,6 +3280,7 @@ export type BundledPluginTranslationKey =
     | 'plugins.railway.picker.duplicateProject'
     | 'plugins.railway.picker.environmentNamePlaceholder'
     | 'plugins.railway.picker.projectNamePlaceholder'
+    | 'plugins.railway.scopeDelete.confirm.body'
     | 'plugins.sentry.account.description'
     | 'plugins.sentry.account.title'
     | 'plugins.sentry.auth.cloud.title'
@@ -8067,6 +8068,7 @@ export const BUNDLED_PLUGIN_TRANSLATION_KEYS: readonly BundledPluginTranslationK
   "plugins.railway.picker.duplicateProject",
   "plugins.railway.picker.environmentNamePlaceholder",
   "plugins.railway.picker.projectNamePlaceholder",
+  "plugins.railway.scopeDelete.confirm.body",
   "plugins.sentry.account.description",
   "plugins.sentry.account.title",
   "plugins.sentry.auth.cloud.title",

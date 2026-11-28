@@ -2,5 +2,6 @@
   "plugins.railway.picker.duplicateProject": "Un projet porte déjà ce nom.",
   "plugins.railway.picker.duplicateEnvironment": "Un environnement porte déjà ce nom.",
   "plugins.railway.picker.projectNamePlaceholder": "ex. Orders API",
-  "plugins.railway.picker.environmentNamePlaceholder": "ex. staging"
+  "plugins.railway.picker.environmentNamePlaceholder": "ex. staging",
+  "plugins.railway.scopeDelete.confirm.body": "Railway supprimera les ressources listées. C’est irréversible. Happier n’a pas pu vérifier lesquels de ses environnements et liens utilisent cette portée. Ceux qui le font cesseront de fonctionner et resteront dans Happier."
 }

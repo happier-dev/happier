@@ -1048,6 +1048,7 @@ const deploymentPlatformLinkTranslations = {
     uploadBody: "Happier 透過控制器傳送已審核的提交，無需平台的 Git 存取權限。",
     title: ({ name }) => `將 ${name} 部署到平台`,
     lead: '連結你在託管平台上已有的專案。連結不會在那裡做任何變更；下一次部署才會。',
+    leadCreate: ({ platform }) => `在 ${platform} 上建立新資源並連結到這裡。確認後會立即建立。`,
     add: '新增平台',
     usePlatform: '使用平台',
     platform: '平台',

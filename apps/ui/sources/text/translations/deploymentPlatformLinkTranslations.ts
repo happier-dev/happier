@@ -53,6 +53,7 @@ export type DeploymentPlatformLinkCopy = Readonly<{
   providerScope: string;
   title: (params: { name: string }) => string;
   lead: string;
+  leadCreate: (params: { platform: string }) => string;
   add: string;
   usePlatform: string;
   platform: string;
@@ -169,6 +170,7 @@ export const deploymentPlatformLinkTranslations = {
     uploadBody: "Happier sends the reviewed commit through the controller, without provider Git access.",
     title: ({ name }) => `Deploy ${name} to a platform`,
     lead: 'Link a project you already have on a hosting platform. Linking changes nothing there; the next Deploy does.',
+    leadCreate: ({ platform }) => `Create a new resource on ${platform} and link it here. It is created as soon as you confirm.`,
     add: 'Add platform',
     usePlatform: 'Use a platform',
     platform: 'Platform',

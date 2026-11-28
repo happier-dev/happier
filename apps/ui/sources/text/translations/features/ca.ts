@@ -1068,6 +1068,7 @@ const deploymentPlatformLinkTranslations = {
     uploadBody: "Happier envia el commit revisat a través del controlador, sense accés Git de la plataforma.",
     title: ({ name }) => `Desplega ${name} a una plataforma`,
     lead: 'Enllaça un projecte que ja tens en una plataforma d’allotjament. Enllaçar no hi canvia res; ho fa el proper desplegament.',
+    leadCreate: ({ platform }) => `Crea un recurs nou a ${platform} i enllaça’l aquí. Es crea tan bon punt confirmis.`,
     add: 'Afegeix una plataforma',
     usePlatform: 'Fes servir una plataforma',
     platform: 'Plataforma',

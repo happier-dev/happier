@@ -1057,6 +1057,7 @@ const deploymentPlatformLinkTranslations = {
     uploadBody: "Happier がコントローラー経由で確認済みのコミットを送信します。プラットフォームの Git アクセスは不要です。",
     title: ({ name }) => `${name} をプラットフォームにデプロイ`,
     lead: 'ホスティングプラットフォームにすでにあるプロジェクトをリンクします。リンクしても向こうでは何も変わりません。次のデプロイで反映されます。',
+    leadCreate: ({ platform }) => `${platform} に新しいリソースを作成し、ここにリンクします。確定するとすぐに作成されます。`,
     add: 'プラットフォームを追加',
     usePlatform: 'プラットフォームを使う',
     platform: 'プラットフォーム',

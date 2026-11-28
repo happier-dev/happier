@@ -475,6 +475,7 @@ it.each(['new', 'existing'] as const)(
       });
 
       const screen = await renderScreen(<ModalProvider>{null}</ModalProvider>);
+      let existingLead: unknown;
       try {
         await act(async () =>
           showDeploymentPlatformTargetSheet({
@@ -596,6 +597,11 @@ it.each(['new', 'existing'] as const)(
           expect(screen.root.findAllByType(SurfaceStateCard)
             .filter((card) => card.props.testID === 'project-deployments.platform.choicesFailed')).toEqual([]);
           expect(screen.findByTestId('project-deployments.platform.check')?.props.disabled).toBe(true);
+          // An empty choice with a next step draws no dead field box: it says it is empty and offers the step.
+          expect(screen.root.findAllByType('Pressable' as never)
+            .filter((node) => String(node.props.accessibilityLabel ?? '').startsWith('Railway service'))).toEqual([]);
+          existingLead = screen.findByTestId('project-deployments.platform.lead')?.props.children;
+          expect(existingLead).toEqual(expect.any(String));
           await screen.pressByTestIdAsync('project-deployments.platform.createNew');
         }
         // New carries the created project and its environment: Create and link is the next step, nothing re-chosen.
@@ -611,6 +617,10 @@ it.each(['new', 'existing'] as const)(
           expect(screen.findByTestId('project-deployments.platform.create')?.props.disabled, screen.getTextContent()).toBe(false);
         });
         expect(screen.findByTestId('project-deployments.platform.check')).toBeNull();
+        // The sheet's lead says what this mode does: New creates at the provider, so it no longer claims nothing changes there.
+        const newLead = screen.findByTestId('project-deployments.platform.lead')?.props.children;
+        expect(newLead).toEqual(expect.any(String));
+        if (existingLead !== undefined) expect(newLead).not.toBe(existingLead);
         expect(creates).toHaveLength(1);
       } finally {
         await screen.unmount();

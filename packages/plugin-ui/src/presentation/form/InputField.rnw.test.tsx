@@ -71,17 +71,23 @@ describe('one typed field decides how a fixed choice is drawn, for every form', 
     const connect = vi.fn();
     const props = { field: metric, value: undefined, options: [], onChange: vi.fn(),
       optionsEmptyAction: <button onClick={connect}>Connect a source</button>,
-      frame: 'none' as const, theme };
+      frame: 'none' as const, theme, testID: 'metric' };
     const view = mountThroughReactNativeWeb(<HappierInputField {...props} optionsStatus="ready" />);
     const button = () => [...view.container.querySelectorAll<HTMLElement>('[role="button"],button')]
       .find(item => item.textContent === 'Connect a source');
+    const box = () => view.container.querySelector('[data-testid="metric.trigger"]');
     try {
       expect(button()).toBeDefined();
+      // Nothing to choose and a next step: the empty line and its action stand alone, with no dead field box above.
+      expect(box()).toBeNull();
+      expect(view.container.querySelector('[aria-live="polite"]')?.textContent?.trim()).toBeTruthy();
       await act(async () => button()!.click());
       expect(connect).toHaveBeenCalledOnce();
       expect(props.onChange).not.toHaveBeenCalled();
       await view.render(<HappierInputField {...props} optionsStatus="ready" disabled />);
       expect(button()).toBeUndefined();
+      // Without an offered step the field box stays and reads the (empty) answer.
+      expect(box()?.getAttribute('aria-disabled')).toBe('true');
       await view.render(<HappierInputField {...props} optionsStatus="loading" />);
       expect(button()).toBeUndefined();
       await view.render(<HappierInputField {...props} optionsStatus="failed" />);

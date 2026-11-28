@@ -62,6 +62,18 @@ it('offers scope create, Delete preview and Delete to plugin Action callers', ()
   }
 });
 
+it('reviews a scope Delete by name, says it is irreversible, and shows the unchecked Links once, as words', () => {
+  for (const scope of ['environment', 'project']) {
+    // The manifest types confirmation loosely; read the two declared parts this review shows.
+    const confirmation = plugin.manifest.contributes.actions?.find(action => action.id === `${scope}-delete`)?.confirmation as
+      { inputFields?: readonly { path: string }[]; body?: string | { fallback: string } } | undefined;
+    // The body already says the Links were not checked; the raw `not-checked` operand is not a second review row.
+    expect(confirmation?.inputFields?.map(field => field.path)).not.toContain('happierLinks');
+    const body = confirmation?.body;
+    expect(typeof body === 'object' ? body.fallback : body).toMatch(/can’t be undone/);
+  }
+});
+
 it('previews the selected environment and its named inventory', () => withVendor(
   request => ({ data: vendorInventory(request) }),
   async (kit, requests) => {

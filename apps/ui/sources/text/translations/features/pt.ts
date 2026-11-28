@@ -1068,6 +1068,7 @@ const deploymentPlatformLinkTranslations = {
     uploadBody: "O Happier envia o commit revisado pelo controlador, sem acesso Git da plataforma.",
     title: ({ name }) => `Implementar ${name} numa plataforma`,
     lead: 'Ligue um projeto que já tem numa plataforma de alojamento. Ligar não muda nada lá; a próxima implementação sim.',
+    leadCreate: ({ platform }) => `Crie um novo recurso em ${platform} e ligue-o aqui. É criado assim que confirmar.`,
     add: 'Adicionar plataforma',
     usePlatform: 'Usar uma plataforma',
     platform: 'Plataforma',

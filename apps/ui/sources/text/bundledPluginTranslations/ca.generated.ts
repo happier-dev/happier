@@ -3280,6 +3280,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.railway.picker.duplicateProject": "Ja existeix un projecte amb aquest nom.",
   "plugins.railway.picker.environmentNamePlaceholder": "p. ex. staging",
   "plugins.railway.picker.projectNamePlaceholder": "p. ex. Orders API",
+  "plugins.railway.scopeDelete.confirm.body": "Railway eliminarà els recursos de la llista. No es pot desfer. Happier no ha pogut comprovar quins dels seus entorns i enllaços utilitzen aquest àmbit. Els que ho facin deixaran de funcionar i es mantindran a Happier.",
   "plugins.sentry.account.description": "Desplegament de Sentry i testimoni d’autenticació utilitzats per llegir organitzacions i incidències.",
   "plugins.sentry.account.title": "Compte de Sentry",
   "plugins.sentry.auth.cloud.title": "Testimoni de Sentry Cloud",

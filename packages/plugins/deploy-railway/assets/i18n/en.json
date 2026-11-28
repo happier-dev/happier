@@ -2,5 +2,6 @@
   "plugins.railway.picker.duplicateProject": "A project with that name already exists.",
   "plugins.railway.picker.duplicateEnvironment": "An environment with that name already exists.",
   "plugins.railway.picker.projectNamePlaceholder": "e.g. Orders API",
-  "plugins.railway.picker.environmentNamePlaceholder": "e.g. staging"
+  "plugins.railway.picker.environmentNamePlaceholder": "e.g. staging",
+  "plugins.railway.scopeDelete.confirm.body": "Railway will remove the listed resources. This can’t be undone. Happier could not check which of its Environments and Links use this scope. Any that do will stop working and remain in Happier."
 }

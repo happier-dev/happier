@@ -3295,6 +3295,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.railway.picker.duplicateProject": "A project with that name already exists.",
   "plugins.railway.picker.environmentNamePlaceholder": "e.g. staging",
   "plugins.railway.picker.projectNamePlaceholder": "e.g. Orders API",
+  "plugins.railway.scopeDelete.confirm.body": "Railway will remove the listed resources. This can’t be undone. Happier could not check which of its Environments and Links use this scope. Any that do will stop working and remain in Happier.",
   "plugins.sentry.account.description": "Sentry deployment and auth token used to read organizations and issues.",
   "plugins.sentry.account.title": "Sentry account",
   "plugins.sentry.auth.cloud.title": "Sentry Cloud token",

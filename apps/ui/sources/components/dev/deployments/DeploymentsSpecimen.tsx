@@ -821,6 +821,17 @@ function RailwayServiceEmptySpecimen() {
   </View></ListPresentationProvider>;
 }
 
+const EMPTY_SOURCE_FIELD = { path: 'source', title: 'Source', widget: 'select', visible: true, required: true, disabled: false } as const;
+
+/** A framed Action form field (label above) whose choice is settled empty with a next step, as a plugin's declared emptyAction draws. */
+function EmptyChoiceFormSpecimen() {
+  return <ListPresentationProvider value="page" pageInsets="contained"><View style={deploymentSheetStyles.body}>
+    <ActionInputFields fields={[EMPTY_SOURCE_FIELD]} input={{}} editable resolveFieldOptions={NO_SERVICES}
+      resolveFieldTestID={() => 'empty-choice-form-specimen'}
+      resolveOptionsEmptyAction={() => ({ label: 'Connect GitHub', onPress: () => {} })} onPatch={() => {}} />
+  </View></ListPresentationProvider>;
+}
+
 /** A Home/Account that stays current for the specimen's lifetime, so the Variables draft is editable. */
 const SPECIMEN_LIFETIME = {
   scope: { serverId: 'home', accountId: ACCOUNT },
@@ -837,6 +848,10 @@ export function DeploymentsSpecimen(
     if (props.state === 'railway-service-empty') {
       showDeploymentSheet({ component: RailwayServiceEmptySpecimen, props: {}, title: 'Deploy Orders API to a platform',
         testID: 'project-deployments.railway-service-empty.specimen' });
+    }
+    if (props.state === 'empty-choice-form') {
+      showDeploymentSheet({ component: EmptyChoiceFormSpecimen, props: {}, title: 'Watch issues',
+        testID: 'project-deployments.empty-choice-form.specimen' });
     }
     if (props.state !== 'railway-project-picker') return;
     showDeploymentSheet({ component: RailwayProjectPickerSpecimen, props: {}, title: 'Choose a Railway project',

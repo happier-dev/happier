@@ -2,5 +2,6 @@
   "plugins.railway.picker.duplicateProject": "已存在同名專案。",
   "plugins.railway.picker.duplicateEnvironment": "已存在同名環境。",
   "plugins.railway.picker.projectNamePlaceholder": "例如：Orders API",
-  "plugins.railway.picker.environmentNamePlaceholder": "例如：staging"
+  "plugins.railway.picker.environmentNamePlaceholder": "例如：staging",
+  "plugins.railway.scopeDelete.confirm.body": "Railway 將刪除列出的資源。此操作無法復原。Happier 無法檢查哪些環境和連結在使用此範圍。使用它的將停止運作，並保留在 Happier 中。"
 }

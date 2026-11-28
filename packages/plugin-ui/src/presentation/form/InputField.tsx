@@ -109,16 +109,30 @@ export function HappierInputField<Value>(props: HappierInputFieldProps<Value>): 
   const allowsCustomValue = field.allowCustomValue === true;
   // A picker-only type has no list to show: its field box is the picker's trigger.
   const pickerOnly = presentation.kind === 'select' && !allowsCustomValue && (props.options ?? []).length === 0 && picker.affordance !== null;
-  // Nothing to choose from: the field box stays and reads its value; there is no blank list to open.
+  // Nothing to choose from: the field box stays and reads its value; there is no blank list to open. When the host
+  // offers a next step beside the empty line, that line and its step replace the box (below).
   const noChoices = presentation.kind === 'select' && !allowsCustomValue && optionsSettled && props.options?.length === 0 && !pickerOnly;
+  // With a next step to offer, the empty line and its action are the whole answer: a disabled box above them
+  // would draw a control that has nothing to choose (DESIGN-REVIEW-DEPLOY-3 P2).
+  const emptyAction = noChoices && !disabled && props.optionsStatus === 'ready' && props.optionsEmptyAction != null
+    && props.optionsEmptyAction !== false ? props.optionsEmptyAction : undefined;
   const optionsNoticeContent = props.optionsStatus === 'failed' ? props.optionsNotice
     : props.optionsStatus === 'loading' && presentation.kind === 'select' && !allowsCustomValue
       ? <HappierStatus label={localization?.translate('happier.plugin-ui.state.loading', 'Loading') ?? 'Loading'}
           tone="neutral" indicator={false} theme={theme} />
-    : noChoices
-      ? <HappierStatus label={localization?.translate('happier.plugin-ui.select.empty', 'No options available') ?? 'No options available'}
-          tone="neutral" indicator={false} theme={theme}
-          action={!disabled && props.optionsStatus === 'ready' ? props.optionsEmptyAction : undefined} />
+    : noChoices ? (() => {
+      const empty = <HappierStatus label={localization?.translate('happier.plugin-ui.select.empty', 'No options available') ?? 'No options available'}
+        tone="neutral" indicator={false} theme={theme} />;
+      // The empty line and its step read as one line where they fit (a field's narrow trailing column included),
+      // and the step wraps beneath the words only when they do not.
+      return emptyAction === undefined ? empty : (
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center',
+          columnGap: theme.spacing.small, rowGap: theme.spacing.xsmall }}>
+          {empty}
+          {emptyAction}
+        </View>
+      );
+    })()
       : null;
   // A field's notice (its choices failed to load) stands on the field's own edge, under its box: it adds no
   // list row's inset or glyph column, so even a narrow field (a binding inside a step card) reads it by words.
@@ -179,6 +193,8 @@ export function HappierInputField<Value>(props: HappierInputFieldProps<Value>): 
         {...(props.testID === undefined ? {} : { testID: `${props.testID}.segmented` })}
       />
     );
+  } else if (emptyAction !== undefined) {
+    control = null;
   } else if (presentation.kind === 'select') {
     const options = props.options ?? [];
     control = pickerOnly ? renderPicker(open => (
