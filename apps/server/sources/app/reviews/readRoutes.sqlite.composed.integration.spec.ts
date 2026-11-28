@@ -667,6 +667,42 @@ describe('Review read Actions through authenticated HTTP', () => {
         expect(await executeFor(outsider.id)).toMatchObject({ ok: false, errorCode: 'review_not_found' });
     });
 
+    it('bundles the same opaque Review Artifact as the exact read only on demand', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'e2ee' } });
+        const outsider = await db.account.create({ data: { encryptionMode: 'e2ee' } });
+        const reviewId = randomUUID();
+        await db.artifact.create({ data: { id: reviewId, accountId: owner.id,
+            header: randomBytes(32), body: randomBytes(48), dataEncryptionKey: randomBytes(32),
+            reviewMetadata: { create: { subjectKind: 'repository', sourceKind: 'direct', state: 'completed',
+                currentRoundOrdinal: 1, startedAt: new Date(1000), finishedAt: new Date(2000) } } } });
+        const ownerToken = await auth.createToken(owner.id, undefined, { kind: 'account', authority: 'present_user' });
+        const outsiderToken = await auth.createToken(outsider.id, undefined, { kind: 'account', authority: 'present_user' });
+        const read = (token: string, includeContentArtifact = false) => app.inject({
+            method: 'POST',
+            url: includeContentArtifact ? '/v1/reviews/get?includeContentArtifact=true' : '/v1/reviews/get',
+            headers: { authorization: `Bearer ${token}` }, payload: { reviewId },
+        });
+        const exact = await app.inject({ method: 'GET', url: `/v1/artifacts/${reviewId}`,
+            headers: { authorization: `Bearer ${ownerToken}` } });
+        expect(exact.statusCode).toBe(200);
+        const summary = await read(ownerToken);
+        expect(summary.statusCode).toBe(200);
+        expect(summary.json()).not.toHaveProperty('contentArtifact');
+        const bundled = await read(ownerToken, true);
+        expect(bundled.statusCode).toBe(200);
+        expect(bundled.json()).toEqual({ ...summary.json(), contentArtifact: exact.json() });
+        const denied = await read(outsiderToken, true);
+        expect(denied.statusCode).toBe(404);
+        expect(denied.json()).toEqual({ error: 'review_not_found' });
+
+        // A grant admits the summary, but there is no E2EE key envelope for this recipient.
+        await db.artifactGrant.create({ data: { artifactId: reviewId, principalKind: 'account',
+            accountId: outsider.id, accessLevel: 'view', createdByAccountId: owner.id } });
+        const locked = await read(outsiderToken, true);
+        expect(locked.statusCode).toBe(200);
+        expect(locked.json()).not.toHaveProperty('contentArtifact');
+    });
+
     it('reads persisted findings beyond one page and only the current requested-person verdict', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const reviewId = randomUUID();

@@ -22,16 +22,24 @@ export async function readReviewDetail(scope: ServerAccountScope, reviewId: stri
     });
     let account: LazyActionAccountContext | undefined;
     let artifact: ReturnType<LazyActionAccountContext['readArtifactContent']> | undefined;
+    let contentArtifact: ReturnType<typeof ReviewGetResponseV1Schema.parse>['contentArtifact'];
     const readArtifact = () => artifact ??= (async () => {
         account = await captureLazyActionAccountContext(scope.serverId, signal, undefined, scope);
-        return account.readArtifactContent(reviewId, { includeAssociatedContentOpener: true, signal });
+        const openOptions = { includeAssociatedContentOpener: true, signal };
+        if (contentArtifact?.id !== reviewId) return account.readArtifactContent(reviewId, openOptions);
+        const [opened] = await account.openArtifactContents([contentArtifact], openOptions);
+        if (opened?.status === 'rejected') throw opened.reason;
+        return opened?.value ?? null;
     })();
     try {
-        const result = await execute('review.get', { reviewId }, {
+        const result = await execute('review.get', {
+            reviewId, ...(options?.includeRecord() === true ? { includeContentArtifact: true } : {}),
+        }, {
             surface: 'ui', authority: 'present_user', serverId: scope.serverId, signal,
         });
         requireActionSuccess(result, 'review.get');
-        const value = ReviewGetResponseV1Schema.parse(result.result);
+        const { contentArtifact: bundledArtifact, ...value } = ReviewGetResponseV1Schema.parse(result.result);
+        contentArtifact = bundledArtifact;
         const human = await openReviewHumanStateV1(value.human,
             () => readReviewHumanResource({ readArtifactContent: readArtifact }, reviewId, signal));
         // Reviewer names and outcomes live in the opened Review body. A body the

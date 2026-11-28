@@ -8,7 +8,7 @@ import { deriveArtifactStoredKindV1, REVIEW_ARTIFACT_KIND_V1 } from '@happier-de
 import { setActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { captureServerCredentialAccountScopeLifetime, resolveServerCredentialAccountScope } from '@/sync/domains/scope/serverCredentialAccountScope';
-import { createPlainArtifactHttpFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { createPlainArtifactHttpFixture, projectArtifactBoundaryReadRow } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { observeReviewList } from './list';
 import { getReviewListSnapshot, reviewListKey } from '@/sync/store/domains/reviews/list';
 
@@ -88,20 +88,35 @@ describe('demanded Review detail through the real Action and Account transport',
             reads += 1;
             return { body: detail('record') };
         } });
-        homes.artifacts(serverId).replaceStoredRow(createPlainArtifactHttpFixture({
+        const artifact = createPlainArtifactHttpFixture({
             id: 'record', title: 'Code review · Changes',
             header: { kind: 'review.v1', v: 1, reviewId: 'record', title: 'Code review · Changes' },
             body: JSON.stringify({ v: 1, rounds: [{ ordinal: 1, state: 'completed', startedAt: 1, finishedAt: 2,
                 reviewerIds: [], runs: [{ kind: 'workflow', runId: 'original-run' }] }] }),
             ownerAccountId: 'alice', access: 'owner', storageMode: 'plain', headerVersion: 1, bodyVersion: 1,
             seq: 1, createdAt: 1, updatedAt: 2,
-        }, 'alice'));
+        }, 'alice');
+        homes.artifacts(serverId).replaceStoredRow(artifact);
+        const bundledPath = '/v1/reviews/get?includeContentArtifact=true';
+        homes.answer(serverId, `POST ${bundledPath}`, { select: input => {
+            expect(input).toEqual({ reviewId: 'record' });
+            reads += 1;
+            return { body: { ...detail('record'), contentArtifact: projectArtifactBoundaryReadRow(artifact) } };
+        } });
         const summary = observeReviewDetail(scope, 'record');
         await waitForHomeGovernance(() => expect(getReviewDetailSnapshot(key).status).toBe('ready'));
         expect(getReviewDetailSnapshot(key).data).not.toHaveProperty('record');
+        const requestStart = homes.requests.length;
+        const startedAt = performance.now();
         const workflow = observeReviewDetail(scope, 'record', { includeRecord: true });
         try {
             await waitForHomeGovernance(() => expect(getReviewDetailSnapshot(key).data).toHaveProperty('record.title', 'Code review · Changes'));
+            const paths = homes.requests.slice(requestStart).map(request => request.path)
+                .filter(path => path.startsWith('/v1/reviews/get') || path === '/v1/artifacts/record');
+            if (process.env.HAPPIER_P03_JOURNEY_COST === '1') {
+                console.info('P03_REVIEW_DETAIL_COST', JSON.stringify({ paths, elapsedMs: performance.now() - startedAt }));
+            }
+            expect(paths).toEqual([bundledPath]);
             expect(reads).toBe(2);
             const other = observeReviewDetail(scope, 'record', { includeRecord: true });
             other();
@@ -119,6 +134,13 @@ describe('demanded Review detail through the real Action and Account transport',
                 // The Resource's published fields stay metadata/person state; opened history belongs to native detail.
                 await waitForHomeGovernance(() => expect(resource.getSnapshot().value).toEqual(detail('record')));
             } finally { release(); store.dispose(); }
+            // An older Home ignores the query hint and returns the metadata shape.
+            homes.answer(serverId, `POST ${bundledPath}`, { body: detail('record') });
+            const fallbackStart = homes.requests.length;
+            await refreshReviewDetail(scope, 'record');
+            expect(getReviewDetailSnapshot(key).data?.record?.title).toBe('Code review · Changes');
+            expect(homes.requests.slice(fallbackStart).map(request => request.path))
+                .toEqual(expect.arrayContaining([bundledPath, '/v1/artifacts/record']));
         } finally { workflow(); summary(); }
     });
     it('shares the Review owner with a live plugin Resource, explicit refresh, scoped pushes and refusal', async () => {

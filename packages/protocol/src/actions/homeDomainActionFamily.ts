@@ -1,5 +1,6 @@
 import { ReviewCommentOperationErrorCodeV1Schema } from '../reviews/comments/actions.js';
 import { ReviewHumanErrorV1Schema } from '../reviews/reviewHumanV1.js';
+import { REVIEW_GET_CONTENT_ARTIFACT_QUERY_V1, ReviewGetRequestV1Schema } from '../reviews/reviewListV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { AccountUsernameUpdateErrorV1Schema } from '../account/profile.js';
 import { z } from '../zodRuntimePolicy.js';
@@ -219,6 +220,13 @@ export function bindHomeDomainActionHttpRequestV1(
     inputSchema: homeDomainActionHttpWireInputSchemaV1(actionId),
     input,
   });
+  if (actionId === 'review.get') {
+    const { includeContentArtifact, ...body } = ReviewGetRequestV1Schema.parse(request.body);
+    // Older Homes ignore this projection hint and receive the same closed POST body.
+    return includeContentArtifact
+      ? { ...request, path: `${request.path}?${REVIEW_GET_CONTENT_ARTIFACT_QUERY_V1}=true`, body }
+      : request;
+  }
   // Both closed input shapes belong to the same admitted Action. Finite Team
   // probes keep their route; known catalog sets use the existing discovery route.
   return actionId === 'teams.credentials.entitled.list' && request.body

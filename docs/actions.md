@@ -556,6 +556,11 @@ owns these facts; callers do not infer them from the number of runs.
 Existing saved and accepted Workflow definitions retain their authored loops
 and effects, with historical engine-list inputs decoded at the Review owner.
 
+The Workflow Review view requests `includeContentArtifact: true` when it needs
+the Review record. Home then includes the exact caller-authorized Artifact in
+that snapshot. Earlier Homes return the same aggregate and the UI opens the
+record with the existing exact Artifact read.
+
 In unreleased 0.3, `review.apply` also accepts a Review id and a destination
 Session. Its existing executor reads the Review's canonical finding pages,
 selects accepted findings through the shared acceptance owner, and sends one

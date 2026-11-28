@@ -1169,6 +1169,13 @@ null means findings only and an absent field means an older unknown selection.
 Matching development Protocol, CLI, daemon, UI and generated SDK readers reload
 together. These additions introduce no wire epoch or released mixed-version promise.
 
+For exact Review detail, newer clients send the optional
+`includeContentArtifact=true` HTTP query parameter. Older development Homes
+ignore it because the POST body is unchanged. When the response omits
+`contentArtifact`, the client can use the existing exact Artifact read. Homes
+include the new field only on explicit demand, so existing strict clients keep
+their original response shape.
+
 ## Failure cause carriers (unreleased 0.3)
 
 Computer source-admission and relay-start refusals retain optional canonical

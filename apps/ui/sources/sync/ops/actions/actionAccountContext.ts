@@ -173,7 +173,7 @@ async function createLazyActionAccountContext(serverIdRaw: string, signal?: Abor
                 grants: ArtifactAccessGrantsListResponseV1;
                 publicShares: Awaited<ReturnType<typeof readArtifactPublicLinksV1>> | null;
             }> => artifactUnavailable(),
-            openArtifactContents: async (_artifacts: Parameters<typeof openArtifactsWithBodiesFromApi>[0]['artifacts'], _options?: Parameters<WorkflowDefinitionArtifactOperations['read']>[1]):
+            openArtifactContents: async (_artifacts: Parameters<typeof openArtifactsWithBodiesFromApi>[0]['artifacts'], _options?: ArtifactContentReadOptions):
                 Promise<PromiseSettledResult<Awaited<ReturnType<WorkflowDefinitionArtifactOperations['read']>>>[]> => artifactUnavailable(),
             readArtifactContents: async (_ids: readonly string[], _options?: ArtifactContentReadOptions):
                 Promise<PromiseSettledResult<ArtifactContentRead | null>[]> => artifactUnavailable(),
@@ -770,7 +770,7 @@ async function createLazyActionAccountContext(serverIdRaw: string, signal?: Abor
             }));
         };
         const openArtifactContents = async (artifacts: Parameters<typeof openArtifactsWithBodiesFromApi>[0]['artifacts'],
-            options?: Parameters<WorkflowDefinitionArtifactOperations['read']>[1]) => {
+            options?: ArtifactContentReadOptions) => {
             assertCurrent(); throwIfAborted(options?.signal);
             const results = await withArtifactReadSignal(options?.signal, async borrowerSignal =>
                 openArtifactsWithBodiesFromApi({ ...await artifactParams(), artifacts, signal: borrowerSignal }));

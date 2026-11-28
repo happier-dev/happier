@@ -4,6 +4,7 @@ import { ReviewListFilterV1Schema } from './reviewListFilterV1.js';
 import { ResourceSpaceMembershipV1Schema } from '../collections/spaces/resourceSpaceMembershipV1.js';
 import { ReviewCommentAppearanceInputV1Schema } from './comments/v1.js';
 import { ReviewHumanStateV1Schema, ReviewNeedsYouV1Schema } from './reviewHumanV1.js';
+import { ArtifactHttpReadV1Schema } from '../artifacts/artifactAccessV1.js';
 
 const id = z.string().check(z.minLength(1));
 const ordinal = z.number().check(z.int(), z.minimum(1));
@@ -34,9 +35,17 @@ export const ReviewListResponseV1Schema = z.strictObject({
 });
 export type ReviewListResponseV1 = z.infer<typeof ReviewListResponseV1Schema>;
 
-export const ReviewGetRequestV1Schema = z.strictObject({ reviewId: id });
+export const REVIEW_GET_CONTENT_ARTIFACT_QUERY_V1 = 'includeContentArtifact';
+export const ReviewGetHttpBodyV1Schema = z.strictObject({ reviewId: id });
+export const ReviewGetRequestV1Schema = z.extend(ReviewGetHttpBodyV1Schema, {
+  includeContentArtifact: z.optional(z.literal(true)),
+});
 export type ReviewGetRequestV1 = z.infer<typeof ReviewGetRequestV1Schema>;
-export const ReviewGetResponseV1Schema = z.strictObject({ review: ReviewListItemV1Schema, human: ReviewHumanStateV1Schema });
+export const ReviewGetResponseV1Schema = z.strictObject({
+  review: ReviewListItemV1Schema,
+  human: ReviewHumanStateV1Schema,
+  contentArtifact: z.optional(ArtifactHttpReadV1Schema),
+});
 export type ReviewGetResponseV1 = z.infer<typeof ReviewGetResponseV1Schema>;
 
 export const ReviewWorkflowHistoryRequestV1Schema = z.strictObject({ workflowId: id, reviewId: id });

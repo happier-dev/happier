@@ -843,8 +843,10 @@ metadata contains identifiers, enum values and lifecycle timestamps; titles,
 comparisons, summaries and round/run evidence remain in the Artifact content.
 The kind policy permits addressed `artifact.get` reads for authorized recipients
 while keeping Reviews out of the generic document browser. Triage opens the
-recipient's title through that same Artifact reader; `review.get` returns only
-the server-readable Review and human-request facts.
+recipient's title through that same Artifact reader. By default, `review.get`
+returns server-readable Review and human-request facts. Its explicit content
+projection reuses the exact Artifact reader, so E2EE bytes stay opaque and the
+recipient must have the same readable key envelope as for a standalone read.
 
 Team-visible schedule summaries use the selected Run audience, not personal
 definition-sharing access. The Account recipe-seal owner also writes optional

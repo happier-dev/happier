@@ -2,7 +2,7 @@ import { z } from 'zod/mini';
 import { ReviewCommentOperationErrorCodeV1Schema } from '@happier-dev/protocol/reviews/comments/actions';
 import {
     ReviewListRequestV1Schema, ReviewListResponseV1Schema,
-    ReviewGetRequestV1Schema, ReviewGetResponseV1Schema,
+    REVIEW_GET_CONTENT_ARTIFACT_QUERY_V1, ReviewGetHttpBodyV1Schema, ReviewGetResponseV1Schema,
     ReviewHistoryRequestV1Schema, ReviewHistoryResponseV1Schema,
 } from '@happier-dev/protocol/reviews/reviewListV1';
 import { ReviewHumanErrorCodeV1Schema, ReviewHumanErrorV1Schema } from '@happier-dev/protocol/reviews/reviewHumanV1';
@@ -10,6 +10,8 @@ import { TeamErrorCodeV1Schema, TeamErrorV1Schema, teamErrorHttpStatusV1 } from 
 import type { Fastify } from '@/app/api/types';
 import { homeDomainActionPathForMethod } from '@/app/api/routes/actions/homeDomainActionRoute';
 import { inReadSnapshot } from '@/storage/inTx';
+import { readArtifactForCallerInTx } from '@/app/artifacts/artifactAccessService';
+import { projectArtifactHttpRead } from '@/app/artifacts/artifactHttpRead';
 import { listReviewsInTx, readAdmittedReviewDetailInTx, readReviewHistoryInTx } from './reviewListService';
 import { resolveReviewAccessInTx } from './reviewAccess';
 import { readAdmittedReviewHumanStateInTx } from './reviewHumanService';
@@ -59,7 +61,11 @@ export function registerReviewReadRoutes(app: Fastify) {
     app.post(homeDomainActionPathForMethod('review.get', 'POST'), {
         preHandler: app.authenticate,
         attachValidation: true,
-        schema: { body: ReviewGetRequestV1Schema, response: { 200: ReviewGetResponseV1Schema, ...errorResponses } },
+        schema: {
+            body: ReviewGetHttpBodyV1Schema,
+            querystring: z.object({ [REVIEW_GET_CONTENT_ARTIFACT_QUERY_V1]: z.optional(z.literal('true')) }),
+            response: { 200: ReviewGetResponseV1Schema, ...errorResponses },
+        },
     }, async (request, reply) => {
         if (request.validationError) return reply.code(400).send({ error: 'review_invalid_request' });
         try {
@@ -69,7 +75,9 @@ export function registerReviewReadRoutes(app: Fastify) {
                 const review = await readAdmittedReviewDetailInTx(tx, access);
                 const human = await readAdmittedReviewHumanStateInTx(tx, { actorAccountId: request.userId, access,
                     facts: { currentRoundOrdinal: review.currentRoundOrdinal, pendingDecisionCount: review.counts.needsDecision } });
-                return { review, human };
+                if (!request.query[REVIEW_GET_CONTENT_ARTIFACT_QUERY_V1]) return { review, human };
+                const content = await readArtifactForCallerInTx(tx, { actorAccountId: request.userId, artifactId: access.reviewId });
+                return { review, human, ...(content.ok ? { contentArtifact: projectArtifactHttpRead(content.artifact) } : {}) };
             }));
         } catch (error) { sendReadError(reply, error); return reply; }
     });
