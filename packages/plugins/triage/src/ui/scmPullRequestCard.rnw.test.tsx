@@ -73,6 +73,7 @@ afterEach(async () => {
 
 async function linkFromBranchHint(defaultMode: string, options: Readonly<{
   settingsReply?: JsonValue | Promise<JsonValue>;
+  settingsRefusal?: PluginError;
   pendingApproval?: ReturnType<typeof createSurfaceContextFixture>['pendingApproval'];
   latestUpdate?: TriageSessionPullRequestBindingV1['latestUpdate'];
 }> = {}) {
@@ -113,6 +114,7 @@ async function linkFromBranchHint(defaultMode: string, options: Readonly<{
       executeAction: ({ action, input }) => {
         calls.push({ action, input });
         if (action === 'plugins.settings.list') {
+          if (options.settingsRefusal !== undefined) throw options.settingsRefusal;
           if (options.settingsReply !== undefined) return options.settingsReply;
           // The host transport is the boundary; validate its raw JSON with the
           // real Action schema before returning through the generic test port.
@@ -375,6 +377,19 @@ describe('Git pane PR card', () => {
     await expect(
       fixture.queryByText('Watch this PR?'),
     ).resolves.toBeUndefined();
+    expect(calls.some(call => (call.input as { kind?: string } | undefined)?.kind === 'configure')).toBe(false);
+  });
+
+  it('shows the Watch defaults refusal beside the linked PR without configuring it', async () => {
+    const { fixture, calls } = await linkFromBranchHint('address', {
+      settingsRefusal: new PluginError({
+        code: 'plugin_action_generation_retired', details: { requestId: 'watch-settings-request' },
+      }),
+    });
+    await expect(fixture.findByRole('button', { name: 'Watch mode: Off' })).resolves.toBeDefined();
+    await act(async () => { await fixture.press(await fixture.findByRole('button', { name: 'Details' })); });
+    await expect(fixture.getByText('plugin_action_generation_retired')).resolves.toBeDefined();
+    await expect(fixture.getByText('watch-settings-request')).resolves.toBeDefined();
     expect(calls.some(call => (call.input as { kind?: string } | undefined)?.kind === 'configure')).toBe(false);
   });
 

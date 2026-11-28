@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { SessionPullRequestWatchReadResultV1Schema } from '@happier-dev/channels-protocol/v1';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import type { SessionAcceptedWorkspaceV1 } from '@happier-dev/plugin-sdk/sessions';
 import { ProtocolActionApprovalRequestCreatedResultSchema } from '@happier-dev/plugin-sdk/protocol';
 import { getActionSpec } from '@happier-dev/plugin-sdk/actions';
@@ -77,6 +78,12 @@ describe('Session PR control operands', () => {
             artifactId: 'settings-approval', actionId: 'plugins.settings.list' });
         await expect(readTriageSessionPullRequestWatchDefaultsV1({ executeAction: async () => approval as never }))
             .resolves.toEqual(approval);
+    });
+
+    it('retains the host refusal when reading the Account Watch defaults', async () => {
+        const refusal = new PluginError({ code: 'plugin_action_generation_retired', details: { requestId: 'watch-request' } });
+        await expect(readTriageSessionPullRequestWatchDefaultsV1({ async executeAction() { throw refusal; } }))
+            .resolves.toEqual({ kind: 'unavailable', failure: { code: refusal.code, requestId: 'watch-request' } });
     });
 
     it('offers the Account mode after open/link without configuring or escalating an existing choice', () => {

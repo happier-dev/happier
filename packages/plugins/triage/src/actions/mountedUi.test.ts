@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { PluginError, readPluginErrorRequestIdV1 } from '@happier-dev/plugin-sdk';
 import { act } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { TriageMountedUiInputV1Schema } from './mountedUiProtocol.js';
@@ -295,13 +296,14 @@ it('discards a refused navigation and never resolves a draft in a different Acco
   const other = createTriageEphemeralSharedScopeOriginFixture();
   const sharedScope = shared.forExecutionOrigin('action');
   const opened: unknown[] = [];
+  const refusal = new PluginError({ code: 'plugin_surface_open_denied', details: { requestId: 'draft-request' } });
   let refuse = true;
   const fixture = await createPluginUiTestkit({ identity: { instanceId: 'refused', mountNonce: 'refused' },
     authorPlugin: { id: PLUGIN_MANIFEST.id, version: PLUGIN_MANIFEST.version },
     surface: defineUiSurface(() => null), surfaceContext: createSurfaceContextFixture(),
     adapter: createPluginUiRnwSemanticSurfaceAdapter(), handlers: { openSurface: ({ view, input }) => {
       opened.push(PluginUiOpenSurfaceRequestV1Schema.parse({ destination: view, input }).input);
-      if (refuse) throw new Error('Navigation refused');
+      if (refuse) throw refusal;
     } },
   });
   const context = {
@@ -311,7 +313,12 @@ it('discards a refused navigation and never resolves a draft in a different Acco
     ui: fixture.context.hostApi, ephemeralSharedScope: sharedScope,
   };
   try {
-    expect(await handler({ body: 'a'.repeat(9_000) }, context)).toEqual({ status: 'unavailable' });
+    const rejected = await handler({ body: 'a'.repeat(9_000) }, context).then(
+      () => { throw new Error('Expected the host navigation refusal'); },
+      (error: unknown) => error,
+    );
+    expect(rejected).toMatchObject({ code: refusal.code });
+    expect(readPluginErrorRequestIdV1(rejected)).toBe('draft-request');
     expect(readTriageTaskDraftLaunch(sharedScope, opened[0])).toEqual({ status: 'unavailable' });
     refuse = false;
     expect(await handler({ body: 'second draft' }, context)).toEqual({ status: 'applied' });

@@ -1,3 +1,4 @@
+import { isPluginError, readPluginErrorRequestIdV1 } from '@happier-dev/plugin-sdk';
 import type { JsonValue, PluginCancellationOptions, PluginContributionRef } from '@happier-dev/plugin-sdk';
 import { throwIfAborted } from '@happier-dev/plugin-sdk/async';
 import type { ActionApprovalRequestCreatedResult } from '@happier-dev/plugin-sdk/actions';
@@ -52,7 +53,7 @@ export async function executeTriageSessionPullRequestOperationV1(
 type Binding = Extract<SessionPullRequestWatchReadResultV1, { kind: 'ready' }>['bindings'][number];
 export type TriagePullRequestWatchDefaultsResultV1 = Readonly<{
     kind: 'ready'; policy: SessionPullRequestWatchPolicyV1; fixAttemptLimit: number | null;
-}> | Readonly<{ kind: 'unavailable' }> | ActionApprovalRequestCreatedResult;
+}> | Readonly<{ kind: 'unavailable'; failure?: Readonly<{ code: string; requestId?: string }> }> | ActionApprovalRequestCreatedResult;
 export async function readTriageSessionPullRequestWatchDefaultsV1(
     host: Pick<PluginUiHostApi, 'executeAction'>,
     options?: PluginCancellationOptions,
@@ -75,9 +76,13 @@ export async function readTriageSessionPullRequestWatchDefaultsV1(
         });
         const limit = SessionPullRequestFixAttemptLimitV1Schema.safeParse(fields.get(SESSION_PULL_REQUEST_WATCH_SETTINGS.fixAttemptLimit));
         return policy.success && limit.success ? { kind: 'ready', policy: policy.data, fixAttemptLimit: limit.data } : { kind: 'unavailable' };
-    } catch {
+    } catch (error) {
         throwIfAborted(options?.signal);
-        return { kind: 'unavailable' };
+        if (!isPluginError(error)) throw error;
+        const requestId = readPluginErrorRequestIdV1(error);
+        return { kind: 'unavailable', failure: {
+            code: error.code, ...(requestId === undefined ? {} : { requestId }),
+        } };
     }
 }
 export type TriagePullRequestWatchAcceptanceResultV1 = SessionPullRequestWatchResultV1

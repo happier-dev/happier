@@ -89,9 +89,9 @@ export function activate(api: PluginClientApi): void {
       else await context.ui.openSurface(TRIAGE_TASK_DETAIL_DESTINATION_V1, handoff.input,
         { subPath: 'tasks,mine', signal: context.signal });
       return { status: 'applied' };
-    } catch {
+    } catch (error) {
       handoff.discard();
-      return { status: 'unavailable' };
+      throw error;
     }
   });
   api.actions.register(TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1, createTriageMountedUiActionHandler());

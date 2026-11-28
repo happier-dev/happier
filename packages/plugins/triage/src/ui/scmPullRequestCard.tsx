@@ -384,7 +384,11 @@ function OfferForLink(props: Readonly<{
   if (state === 'approval') return <PendingApprovalLine />;
   // Keep loading, unavailable and explicit Off distinct at this presentation
   // boundary; none may be reinterpreted as a default or configure a binding.
-  if (defaults === null || ('kind' in defaults && defaults.kind === 'unavailable')) return null;
+  if (defaults === null) return null;
+  if ('kind' in defaults && defaults.kind === 'unavailable') {
+    const failure = defaults.failure;
+    return failure === undefined ? null : <PullRequestFailureDetails codes={[failure.code]} requestId={failure.requestId} />;
+  }
   if (!('kind' in defaults) || defaults.kind !== 'ready') return <PendingApprovalLine />;
   const defaultPolicy = defaults.policy;
   const offer = projectTriagePullRequestWatchOfferV1(props.session, props.binding, defaultPolicy);
