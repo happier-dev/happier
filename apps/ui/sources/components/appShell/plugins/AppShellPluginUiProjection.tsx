@@ -86,7 +86,6 @@ import {
 } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import {
     reconcileAppShellProjectedClientExecutables,
-    retainAppShellProjectedClientExecutables,
     unloadAppShellProjectedClientExecutables,
 } from './appShellClientExecutableActivation';
 import type { PluginUiClientActionAdmissionSource } from '@/components/plugins/reactNative/clientActionAdmission';
@@ -837,36 +836,27 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
             ? Object.freeze({ projection: voiceProjection, machineId: basis.voiceMachineId, serverId: basis.voiceServerId,
                 providerIds: basis.voiceProviderIds })
             : null;
-        // Withdrawal is synchronous inside the existing composition owner,
-        // before this request waits on prior cleanup or successor Artifact bytes.
-        const retention = retainAppShellProjectedClientExecutables({ projection: next, voice,
-            mountedActionProjections: basis.mountedActionProjections,
-            platform: basis.platform, accountLifetime: basis.accountLifetime });
         // Every request publishes its complete rights set immediately. Exact
         // target adoption is independent of a retired request's preparation.
         const update = (async () => {
             const settlement = await settleAppShellPluginRuntimeUpdate({
                 isCancelled: () => cancelled,
-                activate: async () => {
-                    const activation = reconcileAppShellProjectedClientExecutables({
-                        projection: next,
-                        mountedActionProjections: basis.mountedActionProjections,
-                        platform: basis.platform,
-                        // Catalog authority is independent from executable
-                        // interaction readiness. Keeping it here prevents a
-                        // disabled/offline projected provider from reappearing
-                        // through generated fallback metadata.
-                        voiceProviderProjection: voiceProjection,
-                        voice,
-                        reader: basis.availabilityReader,
-                        accountLifetime: basis.accountLifetime,
-                        readNavigationBinding: readAppNavigationBinding,
-                        isCurrent: () => !cancelled
-                            && projectionPublication.getSnapshot().mountedActionProjections === basis.mountedActionProjections,
-                    });
-                    const [attempts] = await Promise.all([activation, retention]);
-                    return attempts;
-                },
+                activate: () => reconcileAppShellProjectedClientExecutables({
+                    projection: next,
+                    mountedActionProjections: basis.mountedActionProjections,
+                    platform: basis.platform,
+                    // Catalog authority is independent from executable
+                    // interaction readiness. Keeping it here prevents a
+                    // disabled/offline projected provider from reappearing
+                    // through generated fallback metadata.
+                    voiceProviderProjection: voiceProjection,
+                    voice,
+                    reader: basis.availabilityReader,
+                    accountLifetime: basis.accountLifetime,
+                    readNavigationBinding: readAppNavigationBinding,
+                    isCurrent: () => !cancelled
+                        && projectionPublication.getSnapshot().mountedActionProjections === basis.mountedActionProjections,
+                }),
             });
             if (!cancelled && settlement.status !== 'cancelled') {
                 setSettledClientExecutableActivation({ request, state: settlement });

@@ -5,7 +5,6 @@ import {
 } from '@/components/plugins/reactNative/clientExecutableContributions';
 import {
     reconcileProjectedPluginUiClientExecutables,
-    retainProjectedPluginUiClientExecutables,
     type PluginUiClientExecutableReconciliationAttempt,
 } from '@/components/plugins/reactNative/clientExecutableActivation';
 import {
@@ -31,24 +30,6 @@ type AppShellVoiceExecutableProjection = Readonly<{
     providerIds: ReadonlySet<string>;
 }>;
 
-export function retainAppShellProjectedClientExecutables(input: Readonly<{
-    projection: PluginUiProjectionModel | null;
-    mountedActionProjections?: readonly PluginUiClientExecutableProjectionSource[];
-    voice: AppShellVoiceExecutableProjection | null;
-    platform: PluginContributionClientPlatform;
-    accountLifetime?: ActiveServerAccountScopeLifetime | null;
-}>): Promise<void> {
-    return retainProjectedPluginUiClientExecutables({
-        actionProjection: input.projection ? { projection: input.projection } : null,
-        mountedActionProjections: input.mountedActionProjections,
-        voiceProjection: input.voice ? { projection: input.voice.projection, directMachineAuthority: {
-            machineId: input.voice.machineId, serverId: input.voice.serverId,
-        } } : null,
-        voiceProviderIds: input.voice?.providerIds,
-        platform: input.platform, accountLifetime: input.accountLifetime,
-    });
-}
-
 /**
  * AppShell publishes the complete admitted set before independent target
  * preparation. The existing composition fences superseded target adoption.
@@ -69,15 +50,6 @@ export async function reconcileAppShellProjectedClientExecutables(input: Readonl
     isCurrent?: () => boolean;
 }>): Promise<readonly PluginUiClientExecutableReconciliationAttempt[]> {
     const executableHost = input.executableHost ?? getInstalledPluginUiExecutableModuleHost();
-    const createDerivedScope = createProjectedExternalVoiceProviderDerivedScopeFactory({
-        projection: input.voiceProviderProjection ?? input.voice?.projection ?? null,
-        hostPlatform: input.platform,
-        executableHost,
-        actionProjection: input.projection,
-        readNavigationBinding: input.readNavigationBinding,
-        isCurrent: input.isCurrent,
-        createInvocationUi: createAppShellPluginUiInvocationHost,
-    });
     return await reconcileProjectedPluginUiClientExecutables({
         mountedActionProjections: input.mountedActionProjections,
         actionProjection: input.projection
@@ -100,7 +72,15 @@ export async function reconcileAppShellProjectedClientExecutables(input: Readonl
         accountLifetime: input.accountLifetime,
         isCurrent: input.isCurrent,
         retainCommittedActivation: true,
-        createDerivedScope,
+        prepareDerivedScope: () => createProjectedExternalVoiceProviderDerivedScopeFactory({
+            projection: input.voiceProviderProjection ?? input.voice?.projection ?? null,
+            hostPlatform: input.platform,
+            executableHost,
+            actionProjection: input.projection,
+            readNavigationBinding: input.readNavigationBinding,
+            isCurrent: input.isCurrent,
+            createInvocationUi: createAppShellPluginUiInvocationHost,
+        }),
     });
 }
 

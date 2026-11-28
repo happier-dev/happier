@@ -2643,19 +2643,21 @@ export function createPluginAccountAvailabilityReaderStore(input: (Readonly<{
             loadHostBundledUi = undefined;
         }
         const sameScope = state !== null && areServerAccountScopesEqual(state.scope, next.scope);
+        const sameIntentReads = sameScope && state!.snapshot.intentReads === next.snapshot.intentReads;
+        const sameRetirements = sameScope && sameStrictJsonValue(state!.retiredPluginIds ?? [], next.retiredPluginIds ?? []);
         if (declarationBodies && !areServerAccountScopesEqual(declarationBodies.scope, next.scope)) declarationBodies = null;
         if (sameScope && state!.snapshot.availabilityCursor === next.snapshot.availabilityCursor
             && state!.intentCensusIncomplete === next.intentCensusIncomplete
             && state!.snapshot.inventoryComplete === next.snapshot.inventoryComplete
-            && state!.snapshot.intentReads === next.snapshot.intentReads
+            && sameIntentReads
             && state!.snapshot.materializations === next.snapshot.materializations
             && state!.snapshot.snapshots === next.snapshot.snapshots
             && state!.snapshot.releases === next.snapshot.releases
             && sameStrictJsonValue(state!.stalePluginIds, next.stalePluginIds)
-            && sameStrictJsonValue(state!.retiredPluginIds ?? [], next.retiredPluginIds ?? [])) return false;
+            && sameRetirements) return false;
         const nextState = Object.freeze({ ...next,
             bundledUiByPluginId,
-            intentReadsByPluginId: sameScope && state!.snapshot.intentReads === next.snapshot.intentReads
+            intentReadsByPluginId: sameIntentReads
                 ? state!.intentReadsByPluginId : indexAvailabilityRows(next.snapshot.intentReads, row => row.pluginId),
             materializationsByIdentity: sameScope && state!.snapshot.materializations === next.snapshot.materializations
                 ? state!.materializationsByIdentity : indexMaterializations(next.snapshot),
@@ -2664,12 +2666,15 @@ export function createPluginAccountAvailabilityReaderStore(input: (Readonly<{
         });
         const admitted = retainIfEqual(sameScope ? derived?.materializations : undefined,
             readMaterializationAdmission(nextState, nextState.scope));
+        // Machine facts and the census cursor publish independently of Account UI declarations.
+        const accountUi = derived && sameIntentReads && sameRetirements && state!.bundledUiByPluginId === bundledUiByPluginId
+            ? derived.accountUi
+            : deriveAccountUiProjection({ scope: nextState.scope, hostBundledUi }, nextState, sameScope ? derived?.accountUi : undefined);
         const nextProjection = {
             materializations: admitted,
             installed: readInstalledPluginsAdmission(nextState, nextState.scope, admitted,
                 sameScope && derived ? { state: state!, installed: derived.installed } : undefined),
-            accountUi: deriveAccountUiProjection({ scope: nextState.scope, hostBundledUi }, nextState,
-                sameScope ? derived?.accountUi : undefined),
+            accountUi,
         };
         const previousInputs = sameScope ? derived?.uiInputs : undefined;
         const materializations = retainUiMaterializations(previousInputs?.materializations,
@@ -2686,7 +2691,7 @@ export function createPluginAccountAvailabilityReaderStore(input: (Readonly<{
             && previousInputs.installedPlugins === installedPlugins && previousInputs.accountUiProjection === accountUiProjection
             && previousInputs.reportedMachines === reportedMachines
             && state!.snapshot.inventoryComplete === nextState.snapshot.inventoryComplete
-            && sameStrictJsonValue(state!.retiredPluginIds ?? [], nextState.retiredPluginIds ?? [])
+            && sameRetirements
             ? previousInputs : Object.freeze({ materializations, installedPlugins, reportedMachines, accountUiProjection });
         const nextDerived = Object.freeze({ ...nextProjection, uiInputs });
         state = nextState;

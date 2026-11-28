@@ -9,7 +9,7 @@ import { PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY } from '@/sync/domains/plugins/ui/pro
 import { createPluginAccountAvailabilityReaderStore } from '@/sync/domains/plugins/availability/reader';
 import { BUNDLED_PLUGIN_UI_APP_ARTIFACTS } from '@/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import { reconcileProjectedPluginUiClientExecutables, retainProjectedPluginUiClientExecutables } from './clientExecutableActivation';
+import { reconcileProjectedPluginUiClientExecutables } from './clientExecutableActivation';
 import { createPluginUiExecutableModuleHost } from './executableModuleHost';
 import { getPluginUiClientExecutableComposition } from './clientExecutableContributions';
 import { resolveProjectedPluginUiClientExecutables } from './clientExecutableProjection';
@@ -304,7 +304,7 @@ it('publishes a healthy target while unrelated bytes are parked, then withdraws 
         const handler = registration!.registration.value;
         if (typeof handler !== 'function') throw new Error('Missing real Action handler');
         expect(await Reflect.apply(handler, undefined, [{}])).toBe(target.pluginId);
-        await retainProjectedPluginUiClientExecutables({ ...state.input,
+        await reconcileProjectedPluginUiClientExecutables({ ...state.input,
             actionProjection: { projection: EMPTY_PLUGIN_UI_PROJECTION } });
         expect(state.composition.read({ family: 'actions', pluginId: target.pluginId, localId: 'run',
             occurrenceId: target.occurrenceId, target: target.target, executionOrigin: target.executionOrigin })).toBeNull();
@@ -402,7 +402,6 @@ it('keeps retained predecessor registrations when a successor is superseded', as
     const state = fixture();
     assetIo.read.mockImplementation(async id => executableBytes(id));
     await reconcileProjectedPluginUiClientExecutables({ ...state.input, retainCommittedActivation: true });
-    await retainProjectedPluginUiClientExecutables(state.input);
     const diagnosticsBeforeRefresh = log.getCount();
     let current = true;
     const pending = reconcileProjectedPluginUiClientExecutables({ ...state.input, retainCommittedActivation: true, isCurrent: () => current });

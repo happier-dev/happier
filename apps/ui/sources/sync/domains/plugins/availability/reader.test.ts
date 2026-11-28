@@ -1939,6 +1939,41 @@ describe('Plugin Account Availability reader', () => {
         expect(reader.readInstalledPlugins()).not.toBe(installed);
         expect(reader.readMaterializations()).toMatchObject({ kind: 'available', availabilityCursor: 43 });
     });
+    it('reuses the Account UI projection when only the census cursor advances', () => {
+        const store = createPluginAccountAvailabilityReaderStore();
+        const reader = store.bind(scope);
+        const pluginId = 'com.acme.fixture';
+        const intent = intentRead();
+        const release = intent.release!;
+        const manifest = PluginPortableReleaseManifestV1Schema.parse({
+            ...release.normalizedManifest,
+            contributes: { actions: [{ id: 'read', title: 'Read', scopes: ['global'], surfaces: ['ui'],
+                placementBindings: [], dangerLevel: 'safe', execution: { target: 'account',
+                    account: { artifactId: 'account-actions', exportName: 'activate' } },
+                inputSchema: { type: 'object', additionalProperties: false } }] },
+        });
+        const response = { ...intent, release: { ...release, normalizedManifest: manifest } };
+        const initial = snapshot({ intentReads: [{ pluginId, response }], materializations: [], snapshots: [] });
+        store.replace({ scope, snapshot: initial });
+        const projection = reader.readAccountUiProjection();
+        expect(projection?.actionsById[`${pluginId}/read`]).toBeDefined();
+        const select = vi.spyOn(availability, 'resolvePluginAccountExecutionSelectionV1');
+        onTestFinished(() => select.mockRestore());
+
+        for (const availabilityCursor of [43, 44, 45, 46]) {
+            store.replace({ scope, snapshot: { ...initial, availabilityCursor } });
+            expect(reader.readAccountUiProjection()).toBe(projection);
+            expect(reader.readMaterializations()).toMatchObject({ kind: 'available', availabilityCursor });
+        }
+        expect(select).toHaveBeenCalledTimes(0);
+
+        store.replace({ scope, snapshot: { ...initial, availabilityCursor: 47, intentReads: [{ pluginId,
+            response: { ...response, intent: { ...response.intent!, enabled: false } },
+        }] } });
+        expect(select).toHaveBeenCalledTimes(1);
+        expect(reader.readAccountUiProjection()?.actionsById[`${pluginId}/read`]).toBeUndefined();
+    });
+
     it('retains identical all-plugin observations while publishing changed cursors, facts, and lifecycle', () => {
         const store = createPluginAccountAvailabilityReaderStore();
         const reader = store.bind(scope);

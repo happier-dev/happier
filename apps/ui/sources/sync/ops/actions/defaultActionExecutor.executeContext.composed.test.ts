@@ -1346,6 +1346,27 @@ describe('withDefaultActionExecuteContext', () => {
         expect(lifetime.disposed).toBe(1);
     });
 
+    it('does not prepare Workflow definitions for repeated Session navigation Actions', async () => {
+        const serverId = await addHome();
+        const { createDefaultActionExecutor } = await loadExecutor();
+        const workflow = await import('@happier-dev/protocol/actions');
+        const prepareDefinitions = vi.spyOn(workflow, 'createWorkflowDefinitionActions');
+        const openSession = vi.fn();
+        const executor = createDefaultActionExecutor({ openSession });
+        try {
+            for (const sessionId of ['session-a', 'session-b', 'session-c']) {
+                await expect(executor.execute('session.open', { sessionId }, { serverId }))
+                    .resolves.toMatchObject({ ok: true });
+            }
+            expect(openSession.mock.calls).toEqual([
+                ['session-a', { serverId }], ['session-b', { serverId }], ['session-c', { serverId }],
+            ]);
+            expect(prepareDefinitions).toHaveBeenCalledTimes(0);
+        } finally {
+            prepareDefinitions.mockRestore();
+        }
+    });
+
     it.each([true, false])('opens Files Explain=%s through the real executor and shared pane target', async (explain) => {
         const serverId = await addHome();
         const { registerMountedWorkspaceAction } = await import('@/components/appShell/workspace/workspaceActionRuntime');

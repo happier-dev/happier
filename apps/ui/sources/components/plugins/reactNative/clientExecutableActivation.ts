@@ -93,23 +93,6 @@ function retireRevokedArtifact(
     }));
 }
 
-/** Same normalization and composition fingerprint as adoption, without acquiring bytes. */
-export function retainProjectedPluginUiClientExecutables(input: Readonly<{
-    actionProjection?: PluginUiClientExecutableProjectionSource | null;
-    mountedActionProjections?: readonly PluginUiClientExecutableProjectionSource[];
-    voiceProjection?: PluginUiClientExecutableProjectionSource | null;
-    voiceProviderIds?: ReadonlySet<string>;
-    platform: PluginContributionClientPlatform;
-    accountLifetime?: ActiveServerAccountScopeLifetime | null;
-    executableHost?: PluginUiExecutableModuleHost;
-}>): Promise<void> {
-    const composition = getPluginUiClientExecutableComposition(input.executableHost ?? getInstalledPluginUiExecutableModuleHost());
-    const targets = input.accountLifetime?.isCurrent()
-        ? resolveProjectedPluginUiClientExecutables(input)
-        : [];
-    return composition.retain(targets.map(targetAdmission));
-}
-
 async function createProjectedClientExecutableActivation(input: Readonly<{
     target: PluginUiProjectedClientExecutableTarget;
     composition: PluginUiClientExecutableComposition;
@@ -319,7 +302,8 @@ export async function reconcileProjectedPluginUiClientExecutables(input: Readonl
     isCurrent?: () => boolean;
     /** AppShell publishes every latest exact target set before independent preparation. */
     retainCommittedActivation?: boolean;
-    createDerivedScope?: PluginUiClientExecutableDerivedScopeFactory;
+    /** Prepare presentation after the complete retained set has withdrawn obsolete targets. */
+    prepareDerivedScope?: () => PluginUiClientExecutableDerivedScopeFactory;
 }>): Promise<readonly PluginUiClientExecutableReconciliationAttempt[]> {
     const executableHost = input.executableHost ?? getInstalledPluginUiExecutableModuleHost();
     const composition = getPluginUiClientExecutableComposition(executableHost);
@@ -330,35 +314,38 @@ export async function reconcileProjectedPluginUiClientExecutables(input: Readonl
         voiceProviderIds: input.voiceProviderIds,
         platform: input.platform,
     });
-    const cache = getInstalledPluginReactNativeBundleCache();
-    const backend = input.loaderBackend ?? resolveDefaultReactNativeLoaderBackend();
     // Retain the complete rights set synchronously. Each exact target can then
     // prepare and publish without joining a peer's bytes or plugin cleanup.
     // retain owns withdrawal; adopt cannot revive a target it has withdrawn.
     const retention = composition.retain(isCurrent(input) ? targets.map(targetAdmission) : []);
-    const preparations = targets.map(async (target) => {
-        const candidate = await createProjectedClientExecutableActivation({
-            target,
-            composition,
-            cache,
-            backend,
-            reader: input.reader,
-            accountLifetime: input.accountLifetime,
-            isCurrent: input.isCurrent,
-            retainCommittedActivation: input.retainCommittedActivation,
-            createDerivedScope: input.createDerivedScope,
-        });
-        if (!candidate) return [];
-        if ('refusal' in candidate) return [{ activation: targetAdmission(target), result: candidate.refusal, reused: false }];
-        try {
-            const attempts = await composition.adopt([candidate.activation]);
-            if (!attempts[0]?.result.ok || attempts[0]?.reused) release(candidate.release);
-            return attempts;
-        } catch (error) {
-            release(candidate.release);
-            throw error;
-        }
-    });
-    const [attempts] = await Promise.all([Promise.all(preparations), retention]);
+    const prepare = async () => {
+        const createDerivedScope = input.prepareDerivedScope?.();
+        const cache = getInstalledPluginReactNativeBundleCache();
+        const backend = input.loaderBackend ?? resolveDefaultReactNativeLoaderBackend();
+        return Promise.all(targets.map(async (target) => {
+            const candidate = await createProjectedClientExecutableActivation({
+                target,
+                composition,
+                cache,
+                backend,
+                reader: input.reader,
+                accountLifetime: input.accountLifetime,
+                isCurrent: input.isCurrent,
+                retainCommittedActivation: input.retainCommittedActivation,
+                createDerivedScope,
+            });
+            if (!candidate) return [];
+            if ('refusal' in candidate) return [{ activation: targetAdmission(target), result: candidate.refusal, reused: false }];
+            try {
+                const attempts = await composition.adopt([candidate.activation]);
+                if (!attempts[0]?.result.ok || attempts[0]?.reused) release(candidate.release);
+                return attempts;
+            } catch (error) {
+                release(candidate.release);
+                throw error;
+            }
+        }));
+    };
+    const [attempts] = await Promise.all([prepare(), retention]);
     return isCurrent(input) ? Object.freeze(attempts.flat()) : Object.freeze([]);
 }

@@ -161,14 +161,35 @@ type WorkflowStartConfirmation = Readonly<{ reviewDigest?: string }>;
 export type UiWorkflowAction = WorkflowActionExecute
     & ((args: WorkflowActionExecuteArgs, confirmation: WorkflowStartConfirmation) => ReturnType<WorkflowActionExecute>)
     & Readonly<{
-    actionAutomationChecks: ReturnType<typeof createWorkflowActorConsentPortV1> & Pick<ActionAutomationPortV1, 'wait' | 'cancel'>;
+    actionAutomationChecks: ReturnType<typeof createWorkflowActorConsentPortV1> & Required<Pick<ActionAutomationPortV1, 'wait' | 'cancel'>>;
+    prepareTriggerMutation: NonNullable<WorkflowActionExecute['prepareTriggerMutation']>;
 }>;
 
-export function createUiWorkflowAction(params: Readonly<{
+type UiWorkflowActionInput = Readonly<{
     account: LazyActionAccountContext;
     transport?: AccountActionTransport;
     listContributedActionDefinitions?: ActionExecutorDeps['listContributedActionDefinitions'];
-}>): UiWorkflowAction {
+}>;
+
+export function createUiWorkflowAction(params: UiWorkflowActionInput): UiWorkflowAction {
+    // An ordinary Action may never select a Workflow or an automatic check.
+    // Prepare their shared owner on first demand using this invocation's Account.
+    let bound: UiWorkflowAction | undefined;
+    const read = () => bound ??= buildUiWorkflowAction(params);
+    const execute = (args: WorkflowActionExecuteArgs, confirmation?: WorkflowStartConfirmation) =>
+        confirmation ? read()(args, confirmation) : read()(args);
+    const actionAutomationChecks: UiWorkflowAction['actionAutomationChecks'] = {
+        prepareMatching: (...args) => read().actionAutomationChecks.prepareMatching(...args),
+        resolveConsent: (...args) => read().actionAutomationChecks.resolveConsent(...args),
+        allowConsent: args => read().actionAutomationChecks.allowConsent(args),
+        wait: args => read().actionAutomationChecks.wait(args),
+        cancel: args => read().actionAutomationChecks.cancel(args),
+    };
+    const prepareTriggerMutation: UiWorkflowAction['prepareTriggerMutation'] = args => read().prepareTriggerMutation(args);
+    return Object.assign(execute, { actionAutomationChecks, prepareTriggerMutation });
+}
+
+function buildUiWorkflowAction(params: UiWorkflowActionInput): UiWorkflowAction {
     const account = params.account;
     const executeRelay = createUiAccountAction(params);
     const resolveOriginSessionProject = async ({ context, input, signal }: WorkflowActionExecuteArgs<'workflow.run.start'>) => {

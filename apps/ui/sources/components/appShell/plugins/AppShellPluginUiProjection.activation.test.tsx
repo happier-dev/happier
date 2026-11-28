@@ -45,6 +45,7 @@ import { mergeInstalledPluginUiProjections } from '@/sync/domains/plugins/ui/pro
 import { getInstalledPluginUiClientExecutableComposition } from '@/components/plugins/reactNative/clientExecutableContributions';
 import { derivePluginReactNativeBundleCacheKey, getInstalledPluginReactNativeBundleCache } from '@/components/plugins/reactNative/bundleCache';
 import { resolveProjectedPluginUiClientExecutables } from '@/components/plugins/reactNative/clientExecutableProjection';
+import * as executableProjection from '@/components/plugins/reactNative/clientExecutableProjection';
 import { buildPluginSearchProviderSections } from '@/components/appShell/search/pluginSearchProviderSections';
 import { useMountedTargetedContributions } from '@/components/plugins/surfaces/mountedTargetedContributions';
 import { useBoundPluginSurfaceController } from '@/components/plugins/surfaces/boundPluginSurfaceController';
@@ -770,6 +771,30 @@ it('activates an exact mounted-only client Action through AppShell and releases 
     expect(fixture.lifetime.isCurrent()).toBe(true);
     expect(pluginBoundary.peerActivations).toBe(0);
     expect(daemon.peerMountedReads).toBe(0);
+});
+
+it('projects executable targets once per Retry and skips equal Account settings updates', async () => {
+    const resolveTargets = vi.spyOn(executableProjection, 'resolveProjectedPluginUiClientExecutables');
+    const fixture = await mountClientExecutableFixture({ mountedOnly: true, waitForAdmission: false,
+        artifactLabel: 'client-executable-projection-cost' });
+    await vi.waitFor(() => expect(fixture.composition.read(fixture.address)).not.toBeNull());
+    const registration = fixture.composition.read(fixture.address);
+    const version = storage.getState().settingsVersion ?? 0;
+    resolveTargets.mockClear();
+
+    for (let update = 0; update < 4; update += 1) {
+        await act(async () => {
+            const state = storage.getState();
+            state.applySettings({ ...state.settings }, (state.settingsVersion ?? 0) + 1);
+        });
+    }
+    expect(storage.getState().settingsVersion).toBe(version + 4);
+    expect(resolveTargets).toHaveBeenCalledTimes(0);
+
+    await act(async () => fixture.readObserved()?.reloadClientExecutables());
+    await vi.waitFor(() => expect(fixture.readObserved()?.clientExecutableActivation.status).toBe('ready'));
+    expect(resolveTargets).toHaveBeenCalledTimes(1);
+    expect(fixture.composition.read(fixture.address)).toBe(registration);
 });
 
 it('keeps a retained mount\'s client executable registered while its surface is hidden and shown again', async () => {
