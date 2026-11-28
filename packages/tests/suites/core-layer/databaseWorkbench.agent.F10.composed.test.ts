@@ -1,5 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { createCredentialedAccountArtifactStore } from '../../../../apps/cli/src/api/artifacts/accountArtifactStore';
+import { runWithServerHttpBaseUrl } from '../../../../apps/cli/src/api/client/serverHttpBaseUrl';
 import { PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/account/settings/personalSavedSecretActionsV1';
 import { ApprovalQueueListResultV1Schema } from '@happier-dev/protocol/approvals/approvalRequestPublicRead';
 import { ActionApprovalRequestCreatedResultSchema, ActionOperationAcceptedResultSchema, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -237,10 +239,58 @@ describe.sequential('F10 real agent database access', () => {
     expect(await fixture.postgres.sql('dbw_selected', 'SELECT note FROM dbw_f10_approval WHERE id = 1')).toBe('before');
   }, 0);
 
-  it('asks once for three ordered statements and rolls back an allowed batch when its second statement fails', async () => {
+  it('returns exact cells and a usable continuation to the admitted Agent tool', async () => {
+    const { fixture, target, agent } = prepared;
+    await fixture.postgres.sql('dbw_selected', `
+      CREATE TABLE dbw_agent_payload (id bigint PRIMARY KEY, note text, bytes bytea, amount numeric);
+      INSERT INTO dbw_agent_payload VALUES
+        (9007199254740993, NULL, decode('0001ff', 'hex'), 12345678901234567890.1234),
+        (9007199254740994, '', decode('abcd', 'hex'), 0.5);
+    `);
+    const input = DatabaseRowsReadInputV1Schema.parse({
+      operation: 'rows.read', target, relation: { schema: 'public', name: 'dbw_agent_payload' },
+      columns: ['id', 'note', 'bytes', 'amount'], order: [], page: { rows: 1 },
+    });
+    const first = await agent.execute(DATABASE_ROWS_READ_ACTION_ID_V1, input);
+    if (!first.ok) throw new Error(`Agent payload read refused (${first.errorCode})`);
+    const page = DatabaseOperationResultV1Schema.parse(first.result);
+    expect(page).toMatchObject({
+      ok: true, operation: 'rows.read', result: {
+        rows: [{ cells: [{ type: 'integer', value: '9007199254740993' }, { type: 'null' },
+          { type: 'binary', value: 'AAH/' }, { type: 'decimal', value: '12345678901234567890.1234' }] }],
+        completeness: { complete: false, continuation: { kind: 'keyset' } },
+      },
+    });
+    if (!page.ok || page.operation !== 'rows.read' || page.result.completeness.complete) {
+      throw new Error('Agent payload omitted the incomplete page');
+    }
+    const continuation = page.result.completeness.continuation;
+    if (continuation?.kind !== 'keyset') throw new Error('Agent payload omitted the keyset continuation');
+    const next = await agent.execute(DATABASE_ROWS_READ_ACTION_ID_V1, {
+      ...input, page: { ...input.page, continuation },
+    });
+    if (!next.ok) throw new Error(`Agent payload continuation refused (${next.errorCode})`);
+    expect(DatabaseOperationResultV1Schema.parse(next.result)).toMatchObject({
+      ok: true, operation: 'rows.read', result: {
+        rows: [{ cells: [{ type: 'integer', value: '9007199254740994' }, { type: 'text', value: '' },
+          { type: 'binary', value: 'q80=' }, { type: 'decimal', value: '0.5' }] }],
+        completeness: { complete: true },
+      },
+    });
+  }, 0);
+
+
+  it('asks once without storing protected SQL and rolls back an allowed batch when its second statement fails', async () => {
     const { fixture, agent } = prepared;
     const target = fixture.targets.selected;
-    await fixture.postgres.sql('dbw_selected', 'CREATE TABLE dbw_f10_ordered (id integer PRIMARY KEY, note text)');
+    const sqlMarker = 'dbw_f10_private_sql';
+    const parameterMarker = 'dbw_f10_private_parameter';
+    const resultMarker = 'dbw_f10_private_result';
+    await fixture.postgres.sql('dbw_selected', `
+      CREATE TABLE dbw_f10_ordered (id integer PRIMARY KEY, note text);
+      CREATE TABLE dbw_f10_output (note text NOT NULL);
+      INSERT INTO dbw_f10_output VALUES ('${resultMarker}');
+    `);
     expect(await fixture.executeDatabase(DATABASE_ACCESS_SET_ACTION_ID_V1, { target, agentAccess: 'readWriteAsk' }))
       .toMatchObject({ ok: true, result: { ok: true, agentAccess: 'readWriteAsk' } });
     expect(await fixture.owner.executeAsPerson('actions.policy.set', {
@@ -250,18 +300,28 @@ describe.sequential('F10 real agent database access', () => {
     const existing = new Set((await listSessionApprovals(fixture, agent.sessionId)).map(item => item.artifactId));
     const newApprovals = async () => (await listSessionApprovals(fixture, agent.sessionId))
       .filter(item => !existing.has(item.artifactId));
-    const executeBatch = (statements: string[]) => agent.execute(
+    const artifacts = createCredentialedAccountArtifactStore(fixture.owner.credentials);
+    const expectProtectedApproval = async (artifactId: string) => {
+      const artifact = await runWithServerHttpBaseUrl(fixture.server.baseUrl, () => artifacts.read(artifactId));
+      expect(typeof artifact?.body).toBe('string');
+      const stored = JSON.stringify(artifact);
+      for (const marker of [sqlMarker, parameterMarker, resultMarker]) {
+        expect(stored.includes(marker), `Home approval contains ${marker}`).toBe(false);
+      }
+    };
+    const executeBatch = (statements: ReturnType<typeof DatabaseWriteStatementInputV1Schema.parse>['statements']) => agent.execute(
       DATABASE_STATEMENT_RUN_ACTION_ID_V1,
       DatabaseWriteStatementInputV1Schema.parse({
         operation: 'statement.run', target, mode: 'write', executionMode: 'transaction',
-        statements: statements.map(sql => ({ sql, parameters: [] })),
+        statements,
       }),
     );
 
     const pending = await executeBatch([
-      "INSERT INTO dbw_f10_ordered VALUES (1, 'first')",
-      "UPDATE dbw_f10_ordered SET note = 'second' WHERE id = 1",
-      'SELECT note FROM dbw_f10_ordered WHERE id = 1',
+      { sql: "INSERT INTO dbw_f10_ordered VALUES (1, 'first')", parameters: [] },
+      { sql: `UPDATE dbw_f10_ordered SET note = $1 WHERE id = 1 /* ${sqlMarker} */`,
+        parameters: [{ type: 'text', value: parameterMarker }] },
+      { sql: 'SELECT note FROM dbw_f10_output', parameters: [] },
     ]);
     if (!pending.ok) throw new Error(`F10 ordered write refused (${pending.errorCode})`);
     ActionOperationAcceptedResultSchema.parse(pending.result);
@@ -272,6 +332,7 @@ describe.sequential('F10 real agent database access', () => {
     expect(opened).toMatchObject([{ status: 'open' }]);
     expect(await read()).toBe('');
     const { artifactId } = opened[0]!;
+    await expectProtectedApproval(artifactId);
     expect(await fixture.owner.executeAsPerson('approval.request.decide', { artifactId, decision: 'approve' }))
       .toMatchObject({ ok: true });
     const applied = await settleDatabaseAction(fixture, pending);
@@ -279,10 +340,11 @@ describe.sequential('F10 real agent database access', () => {
     expect(DatabaseOperationResultV1Schema.parse(applied.result)).toMatchObject({ ok: true, operation: 'statement.run', results: [
       { affectedRows: '1' },
       { affectedRows: '1' },
-      { rows: [{ cells: [{ type: 'text', value: 'second' }] }] },
+      { rows: [{ cells: [{ type: 'text', value: resultMarker }] }] },
     ] });
-    expect(await read()).toBe('second');
+    expect(await read()).toBe(parameterMarker);
     expect(await newApprovals()).toMatchObject([{ artifactId }]);
+    await expectProtectedApproval(artifactId);
 
     expect(await fixture.executeDatabase(DATABASE_ACCESS_SET_ACTION_ID_V1, { target, agentAccess: 'readWriteNoApproval' }))
       .toMatchObject({ ok: true, result: { ok: true, agentAccess: 'readWriteNoApproval' } });
@@ -290,11 +352,11 @@ describe.sequential('F10 real agent database access', () => {
       "UPDATE dbw_f10_ordered SET note = 'must-rollback' WHERE id = 1",
       "INSERT INTO dbw_f10_ordered VALUES (1, 'duplicate')",
       "UPDATE dbw_f10_ordered SET note = 'must-not-run' WHERE id = 1",
-    ]));
+    ].map(sql => ({ sql, parameters: [] }))));
     if (!rolledBack.ok) throw new Error(`F10 rollback result could not settle (${rolledBack.errorCode})`);
     expect(DatabaseOperationResultV1Schema.parse(rolledBack.result))
       .toMatchObject({ ok: false, status: 'failed', cause: { source: 'engine', code: '23505', statementIndex: 1 } });
-    expect(await read()).toBe('second');
+    expect(await read()).toBe(parameterMarker);
     expect(await newApprovals()).toMatchObject([{ artifactId }]);
   }, 0);
 });

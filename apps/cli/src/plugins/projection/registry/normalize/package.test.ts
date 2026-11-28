@@ -60,7 +60,10 @@ it.each(['database-workbench', 'telemetry'] as const)(
       expect(run?.definition.surfaces).toMatchObject({ cli: true, ui: true, plugin: true });
       expect(run?.definition.readOnly).toEqual({ op: 'eq', path: 'mode', value: 'read' });
       expect(run?.definition.approvalInputCustody).toBe('live_only');
-      expect(run?.definition.secretInputPaths).toEqual(['statement.parameters.[].value', 'statements.[].parameters.[].value']);
+      expect(run?.definition.secretInputPaths).toEqual(declaredRun?.secretInputPaths);
+      const publishedRun = bundled.admittedGraph.loadedPlugins.find(entry => entry.pluginId === manifest.id)
+        ?.manifest.contributes.actions.find(action => action.id === declaredRun?.id);
+      expect(publishedRun?.secretInputPaths).toEqual(declaredRun?.secretInputPaths);
     }
   },
 );

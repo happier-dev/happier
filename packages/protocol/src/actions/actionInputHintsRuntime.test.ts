@@ -1,7 +1,7 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import { getActionSpec } from './actionSpecs.js';
-import { DATABASE_STATEMENT_RUN_ACTION_ID_V1 } from './actionIdsDatabaseV1.js';
+import { DATABASE_STATEMENT_EXPLAIN_ACTION_ID_V1, DATABASE_STATEMENT_RUN_ACTION_ID_V1 } from './actionIdsDatabaseV1.js';
 import { databaseActionMetadata } from './databaseActionMetadata.js';
 import { projectTargetActionApprovalInput } from './actionApprovalPresentation.js';
 import type { ActionSpec } from './actionSpecs.js';
@@ -27,17 +27,23 @@ describe('resolveEffectiveActionInputFields', () => {
     expect(readActionSecretInputPaths(spec, {}, { includeInactive: true })).toEqual(['required', 'optional', 'hidden']);
   });
 
-  it('admits a SQL statement with optional parameter redaction patterns', () => {
-    const metadata = databaseActionMetadata[DATABASE_STATEMENT_RUN_ACTION_ID_V1];
-    const statement = { mode: 'read', statement: { sql: 'SELECT 1', parameters: [] } };
-    expect(readActionSecretInputAdmission(metadata, statement).missingPaths).toEqual([]);
-    const parameterized = { mode: 'read', statement: {
-      sql: 'SELECT $1', parameters: [{ type: 'text', value: 'private' }],
-    } };
-    expect(readActionSecretInputAdmission(metadata, parameterized).missingPaths).toEqual([]);
-    const projection = projectTargetActionApprovalInput(parameterized, metadata.secretInputPaths);
-    expect(projection?.confidentialPaths).toEqual(['statement.parameters.0.value']);
-    expect(JSON.stringify(projection?.input)).not.toContain('private');
+  const sql = 'SELECT $1 /* private_sql */';
+  const statement = { sql, parameters: [{ type: 'text', value: 'private_parameter' }] };
+  it.each([
+    { action: DATABASE_STATEMENT_RUN_ACTION_ID_V1, input: { mode: 'read', statement }, path: 'statement' },
+    { action: DATABASE_STATEMENT_RUN_ACTION_ID_V1, input: { mode: 'write', statements: [statement] }, path: 'statements.0' },
+    { action: DATABASE_STATEMENT_EXPLAIN_ACTION_ID_V1, input: { mode: 'analyze', statement }, path: 'statement' },
+  ])('withholds SQL and parameters from the durable $action $input.mode preview', ({ action, input, path }) => {
+    const metadata = databaseActionMetadata[action];
+    expect(readActionSecretInputAdmission(metadata, input).missingPaths).toEqual([]);
+    const projection = projectTargetActionApprovalInput(input, metadata.secretInputPaths);
+    expect(projection?.confidentialPaths).toEqual([`${path}.sql`, `${path}.parameters.0.value`]);
+    expect(projection?.input).toMatchObject({ mode: input.mode });
+    expect(JSON.stringify(projection?.input)).not.toContain('private_');
+    expect(readActionSecretInputAdmission(metadata, {
+      mode: input.mode,
+      ...(path === 'statement' ? { statement: { sql } } : { statements: [{ sql }] }),
+    }).missingPaths).toEqual([]);
   });
 
   it('retains contributed Action partial inputs without a host-owned provider key shortlist', () => {

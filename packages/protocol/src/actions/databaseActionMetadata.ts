@@ -37,6 +37,8 @@ const write = { dangerLevel: 'writesRemote', readOnly: false } as const;
 const databaseOperation = { version: 1, visibility: 'activity', progress: 'indeterminate',
     cancellation: 'supported', presentation: { onStart: 'activity' } } as const;
 const targetWrite = { ...write, automationSubject: { kind: 'database', field: 'target' } } as const;
+// Redact the single-statement arm without requiring it on an ordered write.
+const confidentialStatementInput = ['statement.**.sql', 'statement.parameters.[].value'];
 const selectedExport = { ...read, approvalInputCustody: 'live_only',
     secretInputPaths: ['result.rows.[].cells.[].value', 'result.rows.[].identity.**.value.value', 'result.completeness.continuation.**.value.value'],
 } satisfies Omit<Metadata, 'title'>;
@@ -80,7 +82,7 @@ const databaseActionDeclarations = {
         readOnly: { op: 'eq', path: 'mode', value: 'read' },
         confirmationWhen: { op: 'eq', path: 'mode', value: 'write' },
         confirmation: { title: 'Run these database changes?' },
-        secretInputPaths: ['statement.parameters.[].value', 'statements.[].parameters.[].value'],
+        secretInputPaths: [...confidentialStatementInput, 'statements.[].sql', 'statements.[].parameters.[].value'],
     },
     [database.DATABASE_STATEMENT_EXPLAIN_ACTION_ID_V1]: {
         ...targetWrite, title: 'Explain SQL', placementBindings: ['toolbar'], approvalScope: 'environment',
@@ -94,7 +96,7 @@ const databaseActionDeclarations = {
             { op: 'eq', path: 'accessMode', value: 'write' },
         ] },
         confirmation: { title: 'Analyze these database changes?' },
-        approvalInputCustody: 'live_only', secretInputPaths: ['statement.parameters.[].value'],
+        approvalInputCustody: 'live_only', secretInputPaths: confidentialStatementInput,
     },
     [database.DATABASE_EDITS_APPLY_ACTION_ID_V1]: {
         ...targetWrite, title: 'Apply database changes', placementBindings: ['primary'], approvalScope: 'environment',
