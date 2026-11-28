@@ -61,9 +61,11 @@ vi.mock('node:https', async importOriginal => {
 
 // The daemon catalog is an IPC boundary. Runtime, bridge, selectors and
 // materialization remain real, including the local HTTP listener lifecycle.
+const readDaemonPluginCatalogBoundary = vi.hoisted(() => vi.fn(async () => ({ kind: 'available' as const, plugins: [], tools: [] })));
+
 vi.mock('@/daemon/controlClient', async importOriginal => ({
   ...await importOriginal<typeof import('@/daemon/controlClient')>(),
-  readDaemonPluginCatalog: async () => ({ kind: 'available', plugins: [], tools: [] }),
+  readDaemonPluginCatalog: readDaemonPluginCatalogBoundary,
   requestDaemonPluginActionExecution: async () => ({ matched: false }),
 }));
 
@@ -109,6 +111,87 @@ function resolve(input: Readonly<{ snapshot: ActiveAccountSettingsSnapshot | nul
 }
 
 describe('resolveRunnerMcpServers catalog admission', () => {
+  it('prepares selected MCP plugins while the built-in bridge is still reading its catalog', async () => {
+    vi.stubEnv('HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT', '1');
+    const catalogStarted = createDeferred<void>();
+    const catalogReleased = createDeferred<void>();
+    readDaemonPluginCatalogBoundary.mockImplementationOnce(async () => {
+      catalogStarted.resolve();
+      await catalogReleased.promise;
+      return { kind: 'available', plugins: [], tools: [] };
+    });
+    let materializationStarted = false;
+    const owner = { ...session(), getPluginMcpPort: () => ({ prepare: async () => ({
+      preparationId: '8888511a-7215-4f28-a706-ce09732d4194',
+      items: [],
+      discoverNativeServers: async () => [],
+      materialize: async (selected: readonly import('../runtimeTypes').ResolvedSessionMcpServer[]) => {
+        materializationStarted = true;
+        return selected;
+      },
+      dispose: async () => undefined,
+    }) }) };
+    const captured = runWithServerHttpBaseUrl(owner.getServerBinding().serverUrl, () => snapshot([server('selected')]));
+    setActiveAccountSettingsSnapshot(captured);
+    const pending = runWithServerHttpBaseUrl(owner.getServerBinding().serverUrl, () => resolveRunnerMcpServers({
+      session: owner, credentials, accountSettings: captured.settings, accountSettingsSnapshot: captured,
+      machineId: 'machine-1', directory: '/tmp/repo',
+    }));
+    try {
+      await Promise.race([catalogStarted.promise, pending]);
+      expect(materializationStarted).toBe(true);
+    } finally {
+      catalogReleased.resolve();
+      const profile = await pending;
+      try { expect(Object.keys(profile.mcpServers)).toContain('selected'); }
+      finally { await profile.happierMcpServer.stop(); }
+    }
+  });
+
+  it('retires the selected plugin preparation after it settles when bridge startup fails', async () => {
+    const catalogStarted = createDeferred<void>();
+    const catalogReleased = createDeferred<void>();
+    const materializationReleased = createDeferred<void>();
+    const events: string[] = [];
+    readDaemonPluginCatalogBoundary.mockImplementationOnce(async () => {
+      catalogStarted.resolve();
+      await catalogReleased.promise;
+      throw new Error('fixture daemon catalog unavailable');
+    });
+    const owner = { ...session(), enqueueSessionEventCommitted: undefined, getPluginMcpPort: () => ({ prepare: async () => ({
+      preparationId: '8888511a-7215-4f28-a706-ce09732d4194',
+      items: [],
+      discoverNativeServers: async () => [],
+      materialize: async (selected: readonly import('../runtimeTypes').ResolvedSessionMcpServer[]) => {
+        events.push('materializing');
+        await materializationReleased.promise;
+        events.push('materialized');
+        return selected;
+      },
+      dispose: async () => { events.push('disposed'); },
+    }) }) };
+    const captured = runWithServerHttpBaseUrl(owner.getServerBinding().serverUrl, () => snapshot([server('selected')]));
+    setActiveAccountSettingsSnapshot(captured);
+    const pending = runWithServerHttpBaseUrl(owner.getServerBinding().serverUrl, () => resolveRunnerMcpServers({
+      session: owner, credentials, accountSettings: captured.settings, accountSettingsSnapshot: captured,
+      machineId: 'machine-1', directory: '/tmp/repo',
+    }));
+    const observed = pending.catch(error => error);
+    try {
+      await Promise.race([catalogStarted.promise, observed]);
+      expect(events).toEqual(['materializing']);
+      catalogReleased.resolve();
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(events).toEqual(['materializing']);
+    } finally {
+      catalogReleased.resolve();
+      materializationReleased.resolve();
+      await observed;
+    }
+    await expect(pending).rejects.toMatchObject({ code: 'daemon_plugin_catalog_unavailable' });
+    expect(events).toEqual(['materializing', 'materialized', 'disposed']);
+  });
+
   it.runIf(process.platform === 'linux')('initializes the relay from the managed payload selected for an isolated Agent', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-isolated-mcp-payload-'));
     const client = new Client({ name: 'isolated-mcp-fixture', version: '1' });

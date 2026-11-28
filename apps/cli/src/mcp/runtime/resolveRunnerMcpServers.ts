@@ -298,10 +298,10 @@ export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): P
     materializedServers?: readonly Readonly<{ serverId?: string; wireName: string }>[];
     refusalCode?: string;
     requestId?: string;
-  }>) => {
+  }>, operationStartedAt = phaseStartedAt) => {
     const now = performance.now();
     logger.infoFile('[mcp] Startup phase', { sessionId: params.session.sessionId, phase,
-      durationMs: Math.round(now - phaseStartedAt), elapsedMs: Math.round(now - startedAt), ...details });
+      durationMs: Math.round(now - operationStartedAt), elapsedMs: Math.round(now - startedAt), ...details });
     phaseStartedAt = now;
   };
   recordStartupPhase('entered');
@@ -614,9 +614,28 @@ export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): P
   const resolvedExtras = params.resolvedMcpServers ? Object.fromEntries(Object.entries(params.resolvedMcpServers)
     .map(([name, config]) => [name, { kind: 'stdio' as const, config }])) : undefined;
   if (resolvedExtras) setCustomServers(resolvedExtras);
-  const builtIn = params.includeHappierMcpServer === false && !params.localTransport
-    ? { happierMcpServer: { supportedSessionReadActions: [], stop: async () => undefined, localContext: undefined, contextFilePath: undefined }, mcpServers: emptyMcpServers }
-    : await createHappierMcpBridge(scopedSession, {
+  const preparePluginSelection = async (selection: typeof resolvedSelection) => {
+    if (!accountSettings || !accountCredentials || !mcpSettings || !selection
+      || (!daemonPluginPreparation && !pluginRegistry?.materializePluginMcpServers)) return selection;
+    const materializationStartedAt = performance.now();
+    const selected = Object.values(selection.selectedServersByName).map(server => ({
+      id: server.serverId, name: server.name, title: server.config.title,
+      transport: server.config.remote ? { kind: server.config.transport === 'sse' ? 'sse' as const : 'http' as const, url: server.config.remote.url }
+        : { kind: 'stdio' as const }, scope: { sessionId: params.session.sessionId, directory: params.directory },
+    }));
+    const attached = daemonPluginPreparation ? await daemonPluginPreparation.materialize(selected)
+      : await pluginRegistry!.materializePluginMcpServers!({ scope: { kind: 'session', sessionId: params.session.sessionId }, directory: params.directory,
+      permissionHandler: params.mcpPermissionHandler,
+      servers: selected, signal: run?.signal ?? params.session.getRuntimeLifetimeSignal?.() ?? undefined,
+      addDisposable: attachment => pluginAttachments.push(attachment) });
+    recordStartupPhase('plugin_materialization', undefined, materializationStartedAt);
+    return { ...selection, selectedServersByName: Object.fromEntries(attached.map(server => [server.name,
+      applyAttachedPluginMcpTransport(selection.selectedServersByName[server.name]!, server.transport)])) };
+  };
+  const bridgeStartedAt = performance.now();
+  const bridgePreparation = params.includeHappierMcpServer === false && !params.localTransport
+    ? Promise.resolve({ happierMcpServer: { supportedSessionReadActions: [], stop: async () => undefined, localContext: undefined, contextFilePath: undefined }, mcpServers: emptyMcpServers })
+    : createHappierMcpBridge(scopedSession, {
     sessionToolsBridge,
     sessionMetadata: params.sessionMetadata ?? params.session.getMetadataSnapshot?.(),
     ...(params.localTransport ? { localTransport: params.localTransport } : {}),
@@ -636,10 +655,21 @@ export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): P
       ? { pluginRuntimeRegistryLease: params.pluginRuntimeRegistryLease }
       : {}),
     requiredDirectActionIds: run ? SESSION_RUN_PROMPT_READ_ACTION_IDS_V1 : undefined,
-  }).catch(async error => {
-    await pool.dispose();
-    throw error;
   });
+  // The bridge reads the Action tool inventory. The plugin port attaches the
+  // already-selected MCP servers. Join both before auth, publication or cleanup.
+  const [bridgeResult, selectionResult] = await Promise.allSettled([
+    bridgePreparation.then(bridge => {
+      recordStartupPhase('builtin_bridge', undefined, bridgeStartedAt);
+      return bridge;
+    }),
+    preparePluginSelection(resolvedSelection),
+  ]);
+  if (bridgeResult.status === 'rejected') {
+    await pool.dispose();
+    throw bridgeResult.reason;
+  }
+  const builtIn = bridgeResult.value;
   const ownedBridge = {
     ...builtIn.happierMcpServer,
     get localContext() { return builtIn.happierMcpServer.localContext; },
@@ -648,6 +678,11 @@ export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): P
       finally { await pool.dispose(); }
     },
   };
+  if (selectionResult.status === 'rejected') {
+    await ownedBridge.stop();
+    throw selectionResult.reason;
+  }
+  resolvedSelection = selectionResult.value;
   // The one mapping of an Agent's context file (a placed Session's Agents are named none: `sessionTargetRelay.ts`).
   const nativeContextFile = params.admittedStdio && builtIn.happierMcpServer.localContext
     ? resolveSessionAgentMcpContextFile(sessionMcpAgentLaunchContextFile(params.admittedStdio.target.runtimeHome)) : undefined;
@@ -669,8 +704,6 @@ export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): P
   const naming = 'readToolNames' in builtIn.happierMcpServer && nativeBuiltInServers.happier
     ? { resolveMcpToolNaming: createHappierMcpToolNamingResolver(nativeBuiltInServers.happier, builtIn.happierMcpServer.readToolNames) }
     : {};
-  recordStartupPhase('builtin_bridge');
-
   if (operationContext && !await operationContext.isCurrent()) {
     await ownedBridge.stop();
     throw new McpServerCatalogUnavailableError('scope-retired');
@@ -733,21 +766,6 @@ export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): P
   };
   let materialized: Awaited<ReturnType<typeof materializeMcpServerConfigRecord>>;
   try {
-    if (daemonPluginPreparation || pluginRegistry?.materializePluginMcpServers) {
-      const selected = Object.values(resolvedSelection.selectedServersByName).map(server => ({
-        id: server.serverId, name: server.name, title: server.config.title,
-        transport: server.config.remote ? { kind: server.config.transport === 'sse' ? 'sse' as const : 'http' as const, url: server.config.remote.url }
-          : { kind: 'stdio' as const }, scope: { sessionId: params.session.sessionId, directory: params.directory },
-      }));
-      const attached = daemonPluginPreparation ? await daemonPluginPreparation.materialize(selected)
-        : await pluginRegistry!.materializePluginMcpServers!({ scope: { kind: 'session', sessionId: params.session.sessionId }, directory: params.directory,
-        permissionHandler: params.mcpPermissionHandler,
-        servers: selected, signal: run?.signal ?? params.session.getRuntimeLifetimeSignal?.() ?? undefined,
-        addDisposable: attachment => pluginAttachments.push(attachment) });
-      resolvedSelection = { ...resolvedSelection, selectedServersByName: Object.fromEntries(attached.map(server => [server.name,
-        applyAttachedPluginMcpTransport(resolvedSelection!.selectedServersByName[server.name]!, server.transport)])) };
-    }
-    recordStartupPhase('plugin_materialization');
     const authIssuances = await Promise.allSettled(Object.values(resolvedSelection.selectedServersByName).map(async ({ config: server }) => {
       const remote = server.remote;
       if (server.transport === 'stdio' || remote?.auth?.kind !== 'oauth') return;
