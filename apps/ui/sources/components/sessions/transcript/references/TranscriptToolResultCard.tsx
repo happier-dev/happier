@@ -8,6 +8,7 @@ import { useTranscriptVisualContext } from '../source/SessionTranscriptSourceCon
 import { useTranscriptRowContentDemand } from '../viewport/visibility/TranscriptRowContentDemand';
 import { BrowserActionResultReference } from './BrowserActionResultReference';
 import { ComputerActionResultReference } from './ComputerActionResultReference';
+import { MemoryMutationActionResultReference } from './MemoryMutationActionResultReference';
 import { SessionBoardActionResultReference } from './SessionBoardActionResultReference';
 import { WorkflowDefinitionActionResultReference } from './WorkflowDefinitionActionResultReference';
 import { WorkflowRunActionResultReference } from './WorkflowRunActionResultReference';
@@ -28,6 +29,7 @@ export function TranscriptToolResultCard(props: Readonly<{
             return fact ? <SavedSkillResult fact={fact} sessionId={props.sessionId} serverId={props.serverId} /> : null;
         }
         case 'template-draft': return <BotTemplateDraftCard tool={props.tool} />;
+        case 'memory-mutation': return <MemoryMutationActionResultReference tool={props.tool} serverId={props.serverId} />;
         case 'workflow-run': return <WorkflowRunActionResultReference tool={props.tool} serverId={props.serverId} />;
         case 'workflow-definition': return <WorkflowDefinitionActionResultReference tool={props.tool} serverId={props.serverId} />;
         case 'browser': return <BrowserActionResultReference {...props} />;
