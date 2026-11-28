@@ -60,12 +60,11 @@ describe('resolveBoundedTransferRouteDecision', () => {
         });
     });
 
-    it('does not select direct peer when no final direct route kind is available', () => {
+    it('honors a relay-first preference when both strategies are available', () => {
         expect(resolveBoundedTransferRouteDecision({
             serverFeatures: createServerFeatures(),
-            preferredStrategies: ['direct_peer', 'server_relay_stream'],
+            preferredStrategies: ['server_relay_stream', 'direct_peer'],
             directPeerAvailable: true,
-            directRouteKinds: [],
         })).toEqual({
             kind: 'selected',
             strategy: 'server_relay_stream',

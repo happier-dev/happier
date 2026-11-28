@@ -36,11 +36,7 @@ export {
     type MachineLiveStreamDisabledReasonCode,
 } from './flows/stream/index.js';
 export {
-    DEFAULT_BOUNDED_TRANSFER_DIRECT_ROUTE_KINDS,
     normalizeMachineTransferStrategy,
-    toBoundedTransferPeerRouteKind,
-    toBoundedTransferPeerRouteKinds,
-    toLegacyMachineTransferStrategy,
     type CanonicalMachineTransferStrategy,
     type LegacyMachineTransferStrategy,
     type MachineTransferNegotiationResult,

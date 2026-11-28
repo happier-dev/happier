@@ -21,7 +21,6 @@ export type PeerEndpointMechanism =
     | 'loopback_http'
     | 'tailscale_serve_https'
     | 'loopback_ws'
-    | 'lan_ws'
     | 'tailscale_serve_wss'
     | 'server_socket_io';
 

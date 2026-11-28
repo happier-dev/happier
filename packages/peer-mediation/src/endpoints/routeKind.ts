@@ -9,8 +9,6 @@ export function resolvePeerRouteKindForEndpointMechanism(
         case 'loopback_http':
         case 'loopback_ws':
             return 'loopback_direct';
-        case 'lan_ws':
-            return 'lan_direct';
         case 'tailscale_serve_https':
         case 'tailscale_serve_wss':
             return 'tailscale_serve_direct';

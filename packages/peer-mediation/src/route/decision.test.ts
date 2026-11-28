@@ -51,11 +51,11 @@ describe('resolvePeerRouteDecision', () => {
     it('skips disabled and unavailable routes before selecting a fallback route', () => {
         expect(resolvePeerRouteDecision({
             flowKind: 'bounded_transfer',
-            preferredRouteKinds: ['loopback_direct', 'lan_direct', 'server_relay'],
+            preferredRouteKinds: ['loopback_direct', 'tailscale_serve_direct', 'server_relay'],
             candidates: [
                 createCandidate({ routeKind: 'loopback_direct', enabled: false }),
                 createCandidate({
-                    routeKind: 'lan_direct',
+                    routeKind: 'tailscale_serve_direct',
                     viability: {
                         status: 'unavailable',
                         checkedAt: 1_000,
@@ -81,10 +81,10 @@ describe('resolvePeerRouteDecision', () => {
     it('selects a later viable candidate for the same preferred route kind', () => {
         expect(resolvePeerRouteDecision({
             flowKind: 'bounded_transfer',
-            preferredRouteKinds: ['lan_direct', 'server_relay'],
+            preferredRouteKinds: ['tailscale_serve_direct', 'server_relay'],
             candidates: [
                 createCandidate({
-                    routeKind: 'lan_direct',
+                    routeKind: 'tailscale_serve_direct',
                     viability: {
                         status: 'unavailable',
                         checkedAt: 1_000,
@@ -93,20 +93,20 @@ describe('resolvePeerRouteDecision', () => {
                     },
                 }),
                 createCandidate({
-                    routeKind: 'lan_direct',
+                    routeKind: 'tailscale_serve_direct',
                     endpoint: {
-                        transport: 'ws',
-                        mechanism: 'lan_ws',
-                        url: 'ws://192.168.1.10:46001/peer-mediation',
-                        endpointFingerprint: 'fingerprint-lan-b',
+                        transport: 'wss',
+                        mechanism: 'tailscale_serve_wss',
+                        url: 'wss://machine.example.test/peer-mediation',
+                        endpointFingerprint: 'fingerprint-tailscale-b',
                     },
                 }),
             ],
         })).toEqual(expect.objectContaining({
             kind: 'selected',
-            routeKind: 'lan_direct',
+            routeKind: 'tailscale_serve_direct',
             endpoint: expect.objectContaining({
-                endpointFingerprint: 'fingerprint-lan-b',
+                endpointFingerprint: 'fingerprint-tailscale-b',
             }),
         }));
     });
