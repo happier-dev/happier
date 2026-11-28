@@ -10572,6 +10572,29 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `serverId` (text, required): Home ID
 - `machineId` (text, required): Machine ID
 
+## `machines.activity.list`
+
+**List Fleet Activity** — Read a page of deployment receipts and Machine operations visible to this Account.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
+
+### Input guidance
+
+- `serverId` (text): Home ID
+- `limit` (number, required): Page size
+- `cursor` (json): Continuation cursor
+- `projectSourceId` (text): Project source id
+- `environmentId` (text): Environment id
+- `machineId` (text): Machine id
+- `actorAccountId` (text): Actor account id
+- `kind` (select): Kind
+- `requestedAtFromMs` (integer): Requested at from ms
+- `requestedAtToMs` (integer): Requested at to ms
+
 ## `machines.add.command`
 
 **Prepare machine setup command** — Get the existing SSH or another-computer setup command for a saved Home. This does not install or connect the machine.
@@ -11004,6 +11027,22 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `serverId` (text): Home ID
 - `machineId` (text, required): Machine ID
+
+## `machines.doctor.snapshot`
+
+**Read Machine Doctor** — Read fresh Machine Doctor health for one Machine without logs, paths, or Account identity.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
+
+### Input guidance
+
+- `serverId` (text): Home ID
+- `machineId` (text, required): Machine ID
+- `refresh` (boolean): Refresh
 
 ## `machines.guard.activity.list`
 

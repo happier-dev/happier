@@ -296,6 +296,18 @@ The plural `hdev machines` command lists Account machines. The singular
 `happier machine` command manages remote-machine setup over SSH; it is a
 different workflow.
 
+### Read Fleet Activity and Doctor (0.3 development)
+
+Use `hdev machines activity list --limit 20` to page through deployment receipts and
+machine operations visible to the current Account. With JSON output, reuse
+`nextCursor` with the same query to continue. When `coverage` is `partial`,
+`unavailableSources` identifies the sources the page could not read.
+
+Use `hdev machines doctor snapshot --machine-id <machine-id>` to collect the
+current Doctor snapshot from a specific machine. The Action returns the
+collection time and daemon and service health. For full local diagnostics, run
+`hdev doctor` on that machine.
+
 ### Inspect processes (development only)
 
 With a CLI built from the current unreleased 0.3 source, inspect the exact

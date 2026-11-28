@@ -10877,6 +10877,17 @@ not assume that a source process came from `dist`. Its daemon status preserves t
 reported as stale or dead; Machine RPC readiness remains separately true, false, or unknown.
 The former diagnostic environment flags no longer bypass Machine sync or Automation worker startup.
 
+In 0.3 development, the `machines.doctor.snapshot` Action reaches the exact
+Machine through its authenticated Home route. The receiving daemon collects
+the existing Doctor snapshot and projects its collection time, daemon health
+and service health at the Action boundary. The full snapshot stays with the
+local diagnostics surface.
+
+The Account-placed `machines.activity.list` Action reads through the Session
+requester's Home and the Account's exact Machine routes. CLI and app adapters
+feed the same Deployment Activity merge, receipt projection, and cursor owner.
+Each source contributes its admitted rows or an explicit partial-coverage reason.
+
 Current 0.3 development Doctor inventory also reads the daemon's cached vitals
 sample and attention through the authenticated local `/doctor/vitals` control
 route. Self memory, heap, active handles and event-loop busy share come from the
