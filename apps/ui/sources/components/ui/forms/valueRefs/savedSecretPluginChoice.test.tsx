@@ -213,4 +213,30 @@ describe('plugin saved-secret choice', () => {
         await listed.pressByTestIdAsync('picker:mode:new');
         expect(listed.findByTestId('saved-secret-create-name')).not.toBeNull();
     });
+
+    it('shows a newly saved key by name and marks it selected when other keys already exist', async () => {
+        await home!.addOwnerResource();
+        await refreshSavedSecretCatalog(home!.scope, { includeMaterial: false });
+        function InlineChoice() {
+            const [selectedRef, setSelectedRef] = React.useState<string | null>(null);
+            return <SavedSecretChoiceList testIDPrefix="inline" selectedRef={selectedRef}
+                onSelect={({ ref }) => setSelectedRef(ref)} />;
+        }
+        const screen = await renderScreen(
+            <PluginUiPresentationHostProviderInternal host={createPluginUiPrivatePresentationHost(undefined)}>
+                <InlineChoice />
+            </PluginUiPresentationHostProviderInternal>,
+        );
+        await screen.pressByTestIdAsync('inline:mode:new');
+        await act(async () => {
+            screen.changeTextByTestId('saved-secret-create-name', 'Database key');
+            screen.changeTextByTestId('saved-secret-create-value', 'synthetic-connection-address');
+        });
+        await screen.pressByTestIdAsync('saved-secret-create-submit');
+        await vi.waitFor(() => expect(home!.creations).toHaveLength(1));
+        const createdRef = home!.resources.at(-1)!.entry.ref;
+        await vi.waitFor(() => expect(screen.findAllByTestId(`inline:saved:${createdRef}`)
+            .find(node => node.props.title === 'Database key')).toBeDefined());
+        expect(screen.findByTestId(`inline:selected:${createdRef}`)).not.toBeNull();
+    });
 });

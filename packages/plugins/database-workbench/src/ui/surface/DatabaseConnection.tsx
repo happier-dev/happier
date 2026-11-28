@@ -67,11 +67,14 @@ function SavedSecretConnection({ scope, onConnected, onForgot, onCancel }: Reado
   const [execution, setExecution] = React.useState<PluginActionExecution>({ status: 'idle' });
   const awaitingApproval = execution.status === 'success' && isPluginActionApprovalRequestCreated(execution.result);
   const failed = execution.status === 'error' || execution.status === 'outcomeUnknown';
+  const connectionName = t('plugins.database.connect.name', 'Connection name');
 
   return <>
     <SavedSecretChoiceList testIDPrefix="database-connect-secret" selectedRef={ref}
-      onConnect={next => { setExecution({ status: 'idle' }); setRef(next); }} />
-    {ref ? <TextField label={t('plugins.database.connect.name', 'Connection name')} value={name} onChange={setName} /> : null}
+      onSelect={({ ref: next }) => { setExecution({ status: 'idle' }); setRef(next); }} />
+    {ref ? <Form.Field label={connectionName}>
+      <TextField label={connectionName} value={name} onChange={setName} />
+    </Form.Field> : null}
     <Action.Failure execution={execution} />
     {awaitingApproval ? <Text tone="secondary" value={t('plugins.database.connect.pending', 'Waiting for approval.')} /> : null}
     <ConnectActions onCancel={onCancel} footnote={t('plugins.database.connect.footnote', 'The address stays in your Saved Secrets.')}>

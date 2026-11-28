@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, Profiler, useEffect, useState, useSyncExternalStore } from 'react';
+import { act, Profiler, useEffect, useSyncExternalStore } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import {
     DATABASE_ACCESS_READ_ACTION_ID_V1,
@@ -1909,20 +1909,14 @@ describe('Database workbench surfaces', () => {
     const control = createPluginUiActionControlTestHost(write);
     const render = container === 'servicesPanel' ? renderPanel : renderRail;
     function SavedKeyPicker(input: SavedSecretChoiceListProps) {
-      const [open, setOpen] = useState(false);
-      const [choice, setChoice] = useState(input.selectedRef);
-      if (!open) return <Button title="Add a key" onPress={() => { setChoice(input.selectedRef); setOpen(true); }} />;
-      return <>
-        <SelectionTiles accessibilityLabel="Saved key" value={choice ?? ''} onChange={setChoice}
-          options={[
-            { id: 'saved-url', title: 'Saved database URL' },
-            { id: 'different-url', title: 'Different database URL' },
-          ]} />
-        <Button title="Use" disabled={!choice} onPress={() => {
-          setOpen(false);
-          if (choice) input.onConnect?.(choice);
-        }} />
-      </>;
+      const select = input.onSelect;
+      if (!select) return <Button title="Add a key" onPress={() => input.onConnect?.('new-url')} />;
+      return <SelectionTiles accessibilityLabel="Saved key" value={input.selectedRef ?? ''}
+        onChange={ref => select({ ref, resourceRevision: 1 })}
+        options={[
+          { id: 'saved-url', title: 'Saved database URL' },
+          { id: 'different-url', title: 'Different database URL' },
+        ]} />;
     }
     const fixture = await createPluginUiTestkit({
       identity: { instanceId: container, mountNonce: 'connect-empty' },
@@ -1949,9 +1943,9 @@ describe('Database workbench surfaces', () => {
         expect(node?.textContent).not.toContain('No databases found');
       }
       await act(async () => { await fixture.press(start); });
-      await fixture.press(await fixture.getByRole('button', { name: 'Add a key' }));
       await fixture.press(await fixture.getByRole('radio', { name: 'Saved database URL' }));
-      await fixture.press(await fixture.getByRole('button', { name: 'Use' }));
+      expect((await fixture.getByRole('radio', { name: 'Saved database URL' })).state?.checked).toBe(true);
+      expect(await fixture.getByText('Connection name')).toBeTruthy();
       const name = document.querySelector<HTMLInputElement>('input[aria-label="Connection name"]')!;
       expect(name).toBeTruthy();
       expect(control.presentation('Test and connect')?.disabled).toBe(false);
@@ -1959,9 +1953,10 @@ describe('Database workbench surfaces', () => {
         Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(name, 'Database with a Saved Secret');
         name.dispatchEvent(new Event('input', { bubbles: true }));
       });
-      await fixture.press(await fixture.getByRole('button', { name: 'Add a key' }));
+      await fixture.press(await fixture.getByRole('radio', { name: 'Different database URL' }));
+      expect((await fixture.getByRole('radio', { name: 'Different database URL' })).state?.checked).toBe(true);
+      await fixture.press(await fixture.getByRole('radio', { name: 'Saved database URL' }));
       expect((await fixture.getByRole('radio', { name: 'Saved database URL' })).state?.checked).toBe(true);
-      await fixture.press(await fixture.getByRole('button', { name: 'Use' }));
       expect(name.value).toBe('Database with a Saved Secret');
       await act(async () => control.press('Test and connect'));
       expect(control.presentation('Try again')).toBeDefined();

@@ -107,7 +107,10 @@ export function SavedSecretReferenceChoice(props: Readonly<{
     // A new secret is chosen as soon as the catalog reads it ready, with the revision the reference needs.
     const [createdRef, setCreatedRef] = React.useState<string | null>(null);
     React.useEffect(() => {
-        if (createdRef !== null && choose(createdRef)) setCreatedRef(null);
+        if (createdRef !== null && choose(createdRef)) {
+            setCreatedRef(null);
+            setChosenMode('saved');
+        }
     }, [createdRef, choose, catalog.entries]);
     const tabs = React.useMemo(() => [
         { id: 'saved' as const, label: t('secrets.savedTitle') },
