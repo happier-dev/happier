@@ -318,10 +318,10 @@ describe('activate', () => {
         materializeActiveProfile: expect.any(Function),
         canHotApply: expect.any(Function),
         hotApply: expect.any(Function),
-        probeQuota: expect.any(Function),
       }),
       verifyResumeReachable: expect.any(Function),
     });
+    expect(launch?.continuity?.runtimeAuthAdapter).not.toHaveProperty('probeQuota');
     expect(launch).not.toHaveProperty('serviceIds');
     expect(launch).not.toHaveProperty('requestAuthUses');
     expect(launch?.stateSharingDescriptor).not.toHaveProperty('providerId');

@@ -52,38 +52,6 @@ describe('Codex runtime auth adapter', () => {
     });
   });
 
-  it('returns a public runtime usage observation from the provider probe', async () => {
-    const record = buildCodexCredential();
-    const adapter = createCodexConnectedServiceRuntimeAuthAdapter();
-
-    await expect(adapter.probeQuota({
-      target: { agentId: 'codex' },
-      selection: {
-        groupId: 'team',
-        sourceProviderAccountId: record.oauth.providerAccountId,
-        sourceAccountLabel: record.oauth.providerEmail,
-      },
-      readProviderUsage: vi.fn(async () => ({
-            rateLimits: {
-              primary: { usedPercent: 12, resetsAt: 1_768_010_000 },
-            },
-          })),
-    })).resolves.toMatchObject({
-      status: 'available',
-      usageSnapshot: {
-        providerId: 'openai-codex',
-        recordKey: {
-          providerId: 'openai-codex',
-          accountSubjectId: 'acct-work',
-          subjectKind: 'account',
-          quotaScope: 'account',
-        },
-        accountSubject: { kind: 'providerSubject', id: 'acct-work' },
-        source: 'runtimeSignal',
-      },
-    });
-  });
-
   it('applies the selected generation through the canonical session runtime callback', async () => {
     const record = buildCodexCredential();
     const applyConnectedServiceAuthGeneration = vi.fn(async () => ({

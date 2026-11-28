@@ -6,7 +6,6 @@ import type {
   AgentConnectedAccountRuntimeAuthAdapterResultV1,
   AgentConnectedAccountRuntimeAuthHotApplyInputV1,
   AgentConnectedAccountRuntimeAuthTargetV1,
-  AgentConnectedAccountRuntimeAuthUsageInputV1,
   AgentConnectedAccountRuntimeAuthVerificationInputV1,
   AgentConnectedAccountTransitionVerificationResultV1,
 } from '@happier-dev/plugin-sdk/agents/runtime';
@@ -20,17 +19,12 @@ import {
   classifyCodexConnectedServiceAuthFailure,
   type CodexConnectedServiceRuntimeFailureClassification,
 } from '../auth/failure.js';
-import { resolveCodexRuntimeQuotaProbeSupport } from '../../quota/probe.js';
-import { readCodexRuntimeRateLimitsSnapshot } from '../../quota/runtimeRateLimits.js';
-import { resolveCodexUsageSubjectRef } from '../../usage/identity.js';
-import { mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot } from '../../usage/snapshot.js';
 import { buildCodexCloudAuthFile, isCodexCloudAuthFileProjectionCurrent } from '../../openai/cloud/authFile.js';
 import { CODEX_OPENAI_CONNECTED_ACCOUNT_SERVICE_KEY } from '../../../../../constants.js';
 
 type RuntimeAuthTargetInput = AgentConnectedAccountRuntimeAuthTargetV1;
 type RuntimeAuthHotApplyInput = AgentConnectedAccountRuntimeAuthHotApplyInputV1;
 type RuntimeAuthVerificationInput = AgentConnectedAccountRuntimeAuthVerificationInputV1;
-type RuntimeAuthUsageInput = AgentConnectedAccountRuntimeAuthUsageInputV1;
 
 type RuntimeFailureInput = Readonly<{
   target: Readonly<{ agentId: string; targetId?: string | null }>;
@@ -55,7 +49,6 @@ export type CodexConnectedServiceRuntimeAuthAdapter = Readonly<{
   canHotApply(input: RuntimeAuthHotApplyInput): RuntimeAuthAdapterResult;
   hotApply(input: RuntimeAuthHotApplyInput): Promise<RuntimeAuthAdapterResult>;
   verifyActiveAccount(input: RuntimeAuthVerificationInput): Promise<CodexAccountTransitionVerificationResult>;
-  probeQuota(input: RuntimeAuthUsageInput): Promise<RuntimeAuthAdapterResult>;
   refreshActiveProfile(input: RuntimeAuthTargetInput): Promise<RuntimeAuthAdapterResult>;
 }>;
 
@@ -183,34 +176,6 @@ export function createCodexConnectedServiceRuntimeAuthAdapter(): CodexConnectedS
         rawAccount,
         authStoreProviderAccountIdProof,
       });
-    },
-    async probeQuota(input: RuntimeAuthUsageInput) {
-      const selection = readSelection(input);
-      const support = resolveCodexRuntimeQuotaProbeSupport(selection);
-      if (!support.supported) {
-        return {
-          status: 'unsupported',
-          reason: support.reason,
-        };
-      }
-      if (!input.readProviderUsage) {
-        return { status: 'unsupported' };
-      }
-      const { rawSnapshot } = await readCodexRuntimeRateLimitsSnapshot({
-        request: async (_method, requestParams) => await input.readProviderUsage!(requestParams as never),
-      });
-      const observedAtMs = Date.now();
-      const usageSnapshot = mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot({
-        subject: resolveCodexUsageSubjectRef({
-          connectedServiceProviderAccountId: readString(selection?.sourceProviderAccountId),
-          provisionalDiscriminator: `${readString(selection?.serviceId) ?? 'openai-codex'}:${readString(selection?.profileId ?? selection?.activeProfileId) ?? 'unknown'}`,
-        }),
-        accountLabel: readString(selection?.sourceAccountLabel),
-        observedAtMs,
-        fetchedAtMs: observedAtMs,
-        rawSnapshot,
-      });
-      return { status: 'available', usageSnapshot };
     },
     async refreshActiveProfile() {
       return {
