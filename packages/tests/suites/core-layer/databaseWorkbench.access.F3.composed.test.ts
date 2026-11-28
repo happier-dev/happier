@@ -13,6 +13,9 @@ import { databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
 import { ArtifactAccessRecipientCensusResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { MachineAccessGrantsListResultV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { TeamSummaryV1Schema } from '@happier-dev/protocol/teams/projections';
+import { ApprovalQueueListResultV1Schema } from '@happier-dev/protocol/approvals/approvalRequestPublicRead';
+import { ActionOperationAcceptedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { StoredTargetActionApprovalRequestV1Schema } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 import { ACTION_INVOKE_ACTION_ID_V1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { bindExternalActionExecutionAuthorizationHttpPathV1,
   ExternalActionExecutionAuthorizationRequestV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
@@ -42,7 +45,7 @@ import { runWithServerHttpBaseUrl } from '../../../../apps/cli/src/api/client/se
 import { readAccountIdFromToken } from '../../../../apps/cli/src/cloud/decodeJwtPayload';
 import { DATABASE_FINDING_EVENT_REF, DATABASE_FINDING_SETUP_LOCAL_ID } from '../../../plugins/database-workbench/src/insights/events';
 import { fetchJson } from '../../src/testkit/http';
-import { startSessionMcpAgent } from '../../src/testkit/sessionMcpAgent';
+import { settleReviewedSessionMcpAction, startSessionMcpAgent } from '../../src/testkit/sessionMcpAgent';
 import { waitFor } from '../../src/testkit/timing';
 import { startDatabaseWorkbenchFixture } from '../../src/testkit/databaseWorkbench';
 import { trackDatabaseWorkbenchDeployments } from '../../src/testkit/databaseWorkbenchDeployments';
@@ -127,8 +130,15 @@ it('TS.P3.F3: an editor applies through the bounded write role; editing off, mis
           ? onMachine(actionId)
           : { presentUserConfirmation: { actionId } },
       );
-      if (!result.ok)
+      if (!result.ok) {
+        const cause = result.failureCause;
+        if (cause) console.info('F3 setup Action failure', {
+          phase: cause.phase, errorCode: cause.errorCode,
+          nativeErrorCode: 'nativeErrorCode' in cause ? cause.nativeErrorCode : undefined,
+          nativeErrorReason: 'nativeErrorReason' in cause ? cause.nativeErrorReason : undefined,
+        });
         throw new Error(`F3 setup ${actionId} refused (${result.errorCode})`);
+      }
       return result.result;
     }
     async function asPerson(actionId: ActionId, input: unknown) {
@@ -551,9 +561,116 @@ it('TS.P3.F3: an editor applies through the bounded write role; editing off, mis
       if (!readAsAgent.ok) throw new Error(`F9 Environment Agent refused (${readAsAgent.errorCode})`);
       expect(DatabaseOperationResultV1Schema.parse(readAsAgent.result)).toMatchObject(expectedStats);
       await expectRuns(2);
+      await reviewed('workflow.trigger.remove', { automationId: armed.set.automationId, triggerId: armed.triggerId });
+      step('F9 selected Environment Agent and Worker passed');
+
+      const changePolicy = (mode: 'allowed' | 'ask_first') => asPerson('actions.policy.set', {
+        actionId: DATABASE_STATEMENT_RUN_ACTION_ID_V1, audience: 'agent', mode,
+      });
+      const execute = (statements: ReturnType<typeof DatabaseWriteStatementInputV1Schema.parse>['statements']) =>
+        agent.execute(DATABASE_STATEMENT_RUN_ACTION_ID_V1, DatabaseWriteStatementInputV1Schema.parse({
+          operation: 'statement.run', target, mode: 'write', executionMode: 'transaction', statements,
+        }));
+      const note = async () => (await admin('SELECT note FROM dbw_f3 WHERE id=1')).stdout.trim();
+      const approvals = async () => ApprovalQueueListResultV1Schema.parse(await asPerson('approval.request.list', {}))
+        .items.filter(item => item.sessionId === agent.sessionId);
+      const finish = (result: Awaited<ReturnType<typeof execute>>) =>
+        settleReviewedSessionMcpAction(result, { serverId: fixture.serverId, serverHttpBaseUrl: fixture.server.baseUrl,
+          token: owner.credentials.token, execute: owner.executeAsPerson,
+          decide: async () => { throw new Error('An approval must be reviewed before observing its operation'); } });
+      const replaceNote = (value: string) => ({
+        sql: 'UPDATE dbw_f3 SET note=$1 WHERE id=1',
+        parameters: [{ type: 'text' as const, value }],
+      });
+      const expectNativeWrite = async (result: Awaited<ReturnType<typeof execute>>, value: string) => {
+        expect(result.ok).toBe(true);
+        if (!result.ok) throw new Error(`Deployed Agent write refused (${result.errorCode})`);
+        expect(DatabaseOperationResultV1Schema.parse(result.result)).toMatchObject({
+          ok: true, operation: 'statement.run', results: [ { affectedRows: '1' } ],
+        });
+        expect(await note()).toBe(value);
+      };
+      await update({ dataAgentAccess: 'readWriteNoApproval' });
+      await changePolicy('allowed');
+      const baseline = await note();
+      const baselineApprovals = await approvals();
+      await expectNativeWrite(await finish(await execute([replaceNote('f10-control')])), 'f10-control');
+      expect(await approvals()).toEqual(baselineApprovals);
+      step('P3-F10-known-good-agent-write passed on exact deployed target');
+
+      await update({ dataAgentAccess: 'read' });
+      expect(await finish(await execute([replaceNote('must-not-run')])))
+        .toMatchObject({ ok: false, errorCode: 'database_agent_access_read_only' });
+      await update({ dataAgentAccess: 'none' });
+      expect(await finish(await agent.execute(DATABASE_STATS_READ_ACTION_ID_V1, stats)))
+        .toMatchObject({ ok: false, errorCode: 'database_agent_access_none' });
+      expect(await note()).toBe('f10-control');
+      expect(await approvals()).toEqual(baselineApprovals);
+
+      const readApproval = async (artifactId: string) => {
+        const record = await runWithServerHttpBaseUrl(fixture.server.baseUrl,
+          () => createCredentialedAccountArtifactStore(owner.credentials).read(artifactId));
+        if (typeof record?.body !== 'string') throw new Error('Deployed Agent review omitted the Artifact body');
+        return StoredTargetActionApprovalRequestV1Schema.parse(JSON.parse(record.body));
+      };
+      async function reviewBatch(value: string, priorValue: string) {
+        const before = new Set((await approvals()).map(item => item.artifactId));
+        const after = async () => (await approvals()).filter(item => !before.has(item.artifactId));
+        const statements = [
+          { sql: 'SELECT txid_current() AS transaction_id', parameters: [] },
+          replaceNote(value),
+          { sql: 'SELECT txid_current() AS transaction_id', parameters: [] },
+        ];
+        const result = await execute(statements);
+        if (!result.ok) throw new Error(`Deployed Agent batch refused (${result.errorCode})`);
+        ActionOperationAcceptedResultSchema.parse(result.result);
+        await waitFor(async () => (await after()).some(item => item.status === 'open'), { context: 'deployed Agent review' });
+        const opened = await after();
+        expect(opened).toMatchObject([{ status: 'open' }]);
+        const { artifactId } = opened[0]!;
+        expect(await note()).toBe(priorValue);
+        expect(await readApproval(artifactId)).toMatchObject({
+          status: 'open', input: { target, statements: [
+            statements[0], { ...statements[1], parameters: [{ type: 'text', value: '[REDACTED]' }] }, statements[2],
+          ] },
+        });
+        await asPerson('approval.request.decide', { artifactId, decision: 'approve' });
+        const applied = await finish(result);
+        if (!applied.ok) throw new Error(`Deployed Agent review failed (${applied.errorCode})`);
+        const native = DatabaseOperationResultV1Schema.parse(applied.result);
+        expect(native).toMatchObject({ ok: true, results: [
+          { rows: [{ cells: [expect.objectContaining({ value: expect.stringMatching(/^\d+$/u) })] }] },
+          { affectedRows: '1' }, { rows: [{ cells: [expect.any(Object)] }] },
+        ] });
+        if (!native.ok || native.operation !== 'statement.run') throw new Error('Expected deployed batch result');
+        expect(native.results[2]?.rows).toEqual(native.results[0]?.rows);
+        expect(await note()).toBe(value);
+        expect(await after()).toMatchObject([{ artifactId }]);
+        expect(await readApproval(artifactId)).toMatchObject({ status: 'executed', input: null });
+      }
+      await update({ dataAgentAccess: 'readWriteAsk' });
+      await reviewBatch('f10-target-ask', 'f10-control');
+      await update({ dataAgentAccess: 'readWriteNoApproval' });
+      await changePolicy('ask_first');
+      await reviewBatch('f10-preference-ask', 'f10-target-ask');
+
+      await changePolicy('allowed');
+      const priorRollback = await approvals();
+      const failed = await finish(await execute([
+        replaceNote('must-roll-back'),
+        { sql: "INSERT INTO dbw_f3 VALUES (1, 'duplicate')", parameters: [] },
+        replaceNote('must-not-run'),
+      ]));
+      expect(failed).toMatchObject({ ok: true, result: {
+        ok: false, status: 'failed', cause: { source: 'engine', code: '23505', statementIndex: 1 },
+      } });
+      expect(await note()).toBe('f10-preference-ask');
+      expect(await approvals()).toEqual(priorRollback);
+      await expectNativeWrite(await finish(await execute([replaceNote(baseline)])), baseline);
+      expect(await approvals()).toEqual(priorRollback);
+      await update({ dataAgentAccess: 'read' });
+      step('P3-F10 deployed level, Ask floors, redaction, rollback and replay passed');
     } finally { await agent.stop(); }
-    await reviewed('workflow.trigger.remove', { automationId: armed.set.automationId, triggerId: armed.triggerId });
-    step('F9 selected Environment Agent and Worker passed');
 
     const apply = (note: string, before = 'committed', ids = ['1']) =>
       invokeAsPerson(
