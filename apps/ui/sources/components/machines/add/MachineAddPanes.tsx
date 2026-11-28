@@ -22,6 +22,7 @@ import { Typography } from '@/constants/Typography';
 import { useElapsedTime } from '@/hooks/ui/useElapsedTime';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { t } from '@/text';
+import { MachineArrivalHardening } from './MachineArrivalHardening';
 import type { MachineAddArrivalNext } from './useMachineAddFlow';
 
 /** A pushed way's page (lab add/sshp, phone-system-1109 p5-pair): its page header names the way and shows its lead. */
@@ -203,6 +204,7 @@ export const MachineArrivedCard = React.memo(function MachineArrivedCard(props: 
     facts: string;
     /** Where continuing takes the person (the add flow decides from where they started); absent, Start a session. */
     next?: MachineAddArrivalNext;
+    hardeningOffer?: React.ReactNode;
     onStartSession: () => void;
     onAddAnother: () => void;
 }>) {
@@ -248,6 +250,13 @@ export const MachineArrivedCard = React.memo(function MachineArrivedCard(props: 
                     </View>
                 </SurfaceCard>
             </View>
+            {props.hardeningOffer ?? <MachineArrivalHardening
+                key={JSON.stringify([serverId, machineId])}
+                testID={`${props.testID}.hardening`}
+                machineId={machineId}
+                serverId={serverId}
+                machineName={props.name}
+            />}
             <View style={styles.actions}>
                 {next === 'session' ? <RoundButton
                     testID={`${props.testID}.startSession`}

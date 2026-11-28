@@ -3285,6 +3285,7 @@ const addFlowsTranslations = { fr: {
         subjectAnotherComputer: 'la machine',
         machineNotSeeingTitle: ({ subject }) => `Toujours pas de ${subject} ?`,
         machineNotSeeingBody: ({ home }) => `Happier attend toujours. En général la configuration s’est arrêtée sur une erreur, la machine ne joint pas ${home} ou elle a été configurée pour un autre Home.`,
+        machineHardenServer: 'Sécuriser ce serveur',
         machineArrived: ({ machine }) => `${machine} est connecté`,
         machineConnectedJustNow: 'connecté à l’instant',
         machineStartSession: ({ machine }) => `Démarrer une session sur ${machine}`,

@@ -3274,6 +3274,7 @@ const addFlowsTranslations = { it: {
         subjectAnotherComputer: 'la macchina',
         machineNotSeeingTitle: ({ subject }) => `Ancora nessuna traccia di ${subject}?`,
         machineNotSeeingBody: ({ home }) => `Happier sta ancora aspettando. Di solito la configurazione si è fermata con un errore, la macchina non raggiunge ${home} o è stata configurata per un altro Home.`,
+        machineHardenServer: 'Metti in sicurezza questo server',
         machineArrived: ({ machine }) => `${machine} è collegato`,
         machineConnectedJustNow: 'collegato ora',
         machineStartSession: ({ machine }) => `Avvia una sessione su ${machine}`,

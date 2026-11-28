@@ -3271,6 +3271,7 @@ const addFlowsTranslations = { ru: {
         subjectAnotherComputer: 'машина',
         machineNotSeeingTitle: ({ subject }) => `Пока не видно ${subject}?`,
         machineNotSeeingBody: ({ home }) => `Happier всё ещё ждёт. Обычно настройка завершилась с ошибкой, машина не видит ${home} или её настроили для другого Home.`,
+        machineHardenServer: 'Защитить этот сервер',
         machineArrived: ({ machine }) => `${machine} подключён`,
         machineConnectedJustNow: 'подключён только что',
         machineStartSession: ({ machine }) => `Начать сеанс на ${machine}`,

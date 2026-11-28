@@ -3,6 +3,7 @@ import { ScrollView, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { HomeAddForm } from '@/components/homes/add/HomeAddForm';
+import { MachineArrivalHardeningOffer } from '@/components/machines/add/MachineArrivalHardening';
 import { MachineAddForm } from '@/components/machines/add/MachineAddForm';
 import {
     MachineAddFailureNotice,
@@ -118,6 +119,9 @@ function FrameBody(props: Readonly<{ frame: Frame }>) {
                             serverId="specimen"
                             name="devbox"
                             facts={['Linux · x86_64', t('addFlows.machineConnectedJustNow')].join(' · ')}
+                            hardeningOffer={<MachineArrivalHardeningOffer testID="specimen.arrived.hardening"
+                                description="Security updates, SSH hardening, bounded logs, Docker, Caddy and a firewall."
+                                onReview={noop} onSkip={noop} />}
                             onStartSession={noop}
                             onAddAnother={noop}
                         />

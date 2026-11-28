@@ -69,6 +69,7 @@ export type AddFlowsTranslation = Readonly<{
     subjectAnotherComputer: string;
     machineNotSeeingTitle: (params: Readonly<{ subject: string; }>) => string;
     machineNotSeeingBody: (params: Readonly<{ home: string; }>) => string;
+    machineHardenServer: string;
     machineArrived: (params: Readonly<{ machine: string; }>) => string;
     machineConnectedJustNow: string;
     machineStartSession: (params: Readonly<{ machine: string; }>) => string;
@@ -169,6 +170,7 @@ export const addFlowsTranslationsEnglish = { en: {
         subjectAnotherComputer: 'the machine',
         machineNotSeeingTitle: ({ subject }) => `Not seeing ${subject} yet?`,
         machineNotSeeingBody: ({ home }) => `Happier is still watching. Usually setup stopped with an error, the machine can’t reach ${home}, or it was set up for another Home.`,
+        machineHardenServer: 'Harden this server',
         machineArrived: ({ machine }) => `${machine} is connected`,
         machineConnectedJustNow: 'connected just now',
         machineStartSession: ({ machine }) => `Start a session on ${machine}`,

@@ -3170,6 +3170,7 @@ const addFlowsTranslations = { 'zh-Hans': {
         subjectAnotherComputer: '那台机器',
         machineNotSeeingTitle: ({ subject }) => `还没看到 ${subject}？`,
         machineNotSeeingBody: ({ home }) => `Happier 仍在等待。通常是设置出错停止、机器无法访问 ${home}，或它被设置到了另一个 Home。`,
+        machineHardenServer: '加固此服务器',
         machineArrived: ({ machine }) => `${machine} 已连接`,
         machineConnectedJustNow: '刚刚连接',
         machineStartSession: ({ machine }) => `在 ${machine} 上开始会话`,

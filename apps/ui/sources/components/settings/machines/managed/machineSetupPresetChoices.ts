@@ -11,8 +11,20 @@ export type SavedMachineSetupPresetChoice = OpenedManagedMachinePresetV1
     & Readonly<{ setup: NonNullable<OpenedManagedMachinePresetV1['setup']> }>;
 export type MachineSetupPresetChoice = SavedMachineSetupPresetChoice | BundledMachineSetupPresetChoice;
 export type MachineSetupPresetInput = Pick<OpenedManagedMachinePresetV1,
-    'id' | 'revision' | 'contentEncryptionMode' | 'setup' | 'setupRevision'> & Partial<Pick<OpenedManagedMachinePresetV1, 'recipientProjection'>>
+    'id' | 'revision' | 'contentEncryptionMode' | 'setup' | 'setupRevision'> & Partial<Pick<OpenedManagedMachinePresetV1, 'name' | 'recipientProjection'>>
     | Extract<MachineSetupSourceEntryV1, { kind: 'bundledPreset' }>;
+
+export function readBundledMachineSetupPresetChoice(
+    entry: PluginUiProjectionModel['machineSetupPresetsById'][string],
+    localize: PluginLocalizedTextResolver,
+): BundledMachineSetupPresetChoice {
+    return {
+        kind: 'bundledPreset', id: entry.id, name: localize(entry.pluginId, entry.definition.title),
+        description: entry.definition.description ? localize(entry.pluginId, entry.definition.description) : '',
+        ref: { pluginId: entry.pluginId, localId: entry.definition.id, revision: entry.definition.revision },
+        setup: entry.definition.setup,
+    };
+}
 
 /** Saved and bundled setup presets share the same list and source preparation. */
 export function readMachineSetupPresetChoices(
@@ -22,12 +34,7 @@ export function readMachineSetupPresetChoices(
 ): MachineSetupPresetChoice[] {
     return [
         ...saved.filter(isOpenedManagedMachinePresetV1).filter((preset): preset is SavedMachineSetupPresetChoice => !!preset.setup && preset.archivedAt == null),
-        ...Object.values(projection?.machineSetupPresetsById ?? {}).map((entry): BundledMachineSetupPresetChoice => ({
-            kind: 'bundledPreset', id: entry.id, name: localize(entry.pluginId, entry.definition.title),
-            description: entry.definition.description ? localize(entry.pluginId, entry.definition.description) : '',
-            ref: { pluginId: entry.pluginId, localId: entry.definition.id, revision: entry.definition.revision },
-            setup: entry.definition.setup,
-        })),
+        ...Object.values(projection?.machineSetupPresetsById ?? {}).map(entry => readBundledMachineSetupPresetChoice(entry, localize)),
     ];
 }
 

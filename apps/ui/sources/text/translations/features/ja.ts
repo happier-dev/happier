@@ -3225,6 +3225,7 @@ const addFlowsTranslations = { ja: {
         subjectAnotherComputer: 'そのマシン',
         machineNotSeeingTitle: ({ subject }) => `${subject} がまだ見えませんか？`,
         machineNotSeeingBody: ({ home }) => `Happier は待機を続けています。多くの場合、セットアップがエラーで止まったか、マシンが ${home} に届かないか、別の Home 用に設定されています。`,
+        machineHardenServer: 'このサーバーのセキュリティを強化',
         machineArrived: ({ machine }) => `${machine} が接続されました`,
         machineConnectedJustNow: 'たった今接続',
         machineStartSession: ({ machine }) => `${machine} でセッションを開始`,

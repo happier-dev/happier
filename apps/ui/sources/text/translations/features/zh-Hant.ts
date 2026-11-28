@@ -3171,6 +3171,7 @@ const addFlowsTranslations = { 'zh-Hant': {
         subjectAnotherComputer: '那台機器',
         machineNotSeeingTitle: ({ subject }) => `還沒看到 ${subject}？`,
         machineNotSeeingBody: ({ home }) => `Happier 仍在等待。通常是設定出錯停止、機器無法連到 ${home}，或它被設定到了另一個 Home。`,
+        machineHardenServer: '強化此伺服器的安全性',
         machineArrived: ({ machine }) => `${machine} 已連線`,
         machineConnectedJustNow: '剛剛連線',
         machineStartSession: ({ machine }) => `在 ${machine} 上開始工作階段`,

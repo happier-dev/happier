@@ -3261,6 +3261,7 @@ const addFlowsTranslations = { pt: {
         subjectAnotherComputer: 'a máquina',
         machineNotSeeingTitle: ({ subject }) => `Ainda não vê ${subject}?`,
         machineNotSeeingBody: ({ home }) => `O Happier continua à espera. Normalmente a configuração parou com um erro, a máquina não chega a ${home} ou foi configurada para outro Home.`,
+        machineHardenServer: 'Reforçar a segurança deste servidor',
         machineArrived: ({ machine }) => `${machine} está ligado`,
         machineConnectedJustNow: 'ligado agora mesmo',
         machineStartSession: ({ machine }) => `Iniciar uma sessão em ${machine}`,
