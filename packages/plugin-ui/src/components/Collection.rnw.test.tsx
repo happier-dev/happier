@@ -768,7 +768,7 @@ describe('Collection table', () => {
     }
   });
 
-  it('draws its own column resize handle and commits the width once per gesture', () => {
+  it('commits a pointer resize once after displaying its preview', async () => {
     const onResizeEnd = vi.fn();
     const anatomyWithField = { ...anatomy, columnsOverflow: 'scroll' as const, fields: [
       { key: 'subject', title: 'Subject', minWidth: 100, priority: 1, render: (item: Entry) => item.title },
@@ -782,9 +782,23 @@ describe('Collection table', () => {
       const handle = view.container.querySelector<HTMLElement>('[aria-label="Resize Subject"]');
       expect(handle).not.toBeNull();
       act(() => {
+        handle!.dispatchEvent(new MouseEvent('pointerdown', { clientX: 320, bubbles: true, cancelable: true }));
+      });
+      await act(async () => {
+        window.dispatchEvent(new MouseEvent('pointermove', { clientX: 368 }));
+        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+      });
+      expect(handle!.getAttribute('aria-valuenow')).toBe('268');
+      expect(onResizeEnd).not.toHaveBeenCalled();
+      act(() => { window.dispatchEvent(new MouseEvent('pointerup')); });
+      expect(onResizeEnd).toHaveBeenCalledExactlyOnceWith({ columnKey: 'subject', width: 268 });
+      await view.update({ tableColumnSizing: { widths: new Map([['subject', 268]]), onResizeEnd } });
+      expect(handle!.getAttribute('aria-valuenow')).toBe('268');
+      act(() => {
         handle!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
       });
-      expect(onResizeEnd).toHaveBeenCalledExactlyOnceWith({ columnKey: 'subject', width: 228 });
+      expect(onResizeEnd).toHaveBeenCalledTimes(2);
+      expect(onResizeEnd).toHaveBeenLastCalledWith({ columnKey: 'subject', width: 276 });
     } finally {
       view.unmount();
     }

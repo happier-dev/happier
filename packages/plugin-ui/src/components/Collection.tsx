@@ -794,7 +794,7 @@ const SLOT_KEYS: readonly SlotKey[] = ['where', 'reason', 'signal', 'agent', 'ti
 const TRAILING_SLOT_KEYS: ReadonlySet<SlotKey> = new Set(['titleMeta', 'age']);
 
 type ResolvedColumn<Item> = HappierCollectionTableColumn & Readonly<{
-  sizing?: Readonly<{ width: number; minWidth: number }>;
+  sizing?: Readonly<{ width: number; minWidth: number; committedWidth: number }>;
   title: string;
   /** The header's second line (`CollectionField.subtitle`). */
   subtitle?: string;
@@ -1007,6 +1007,7 @@ function resolveColumns<Item>(
   rowAccessoryWidth: number,
   leadingWidth: number,
   widths?: ReadonlyMap<string | null, number>,
+  draftColumn?: CollectionTableColumnResize | null,
 ): readonly ResolvedColumn<Item>[] {
   const declared: ResolvedColumn<Item>[] = [{
     key: 'title',
@@ -1061,8 +1062,9 @@ function resolveColumns<Item>(
     const guttered = declared.map((column, index) => {
       const minWidth = column.minWidth / textScale;
       const held = widths?.get(column.fieldKey);
+      const committedWidth = held !== undefined && Number.isFinite(held) ? Math.max(minWidth, held) : minWidth;
       const sizing = widths !== undefined && (index === 0 || column.fieldKey !== null)
-        ? { minWidth, width: held !== undefined && Number.isFinite(held) ? Math.max(minWidth, held) : minWidth }
+        ? { minWidth, committedWidth, width: draftColumn?.columnKey === column.fieldKey ? Math.max(minWidth, draftColumn.width) : committedWidth }
         : undefined;
       return {
         ...column,
@@ -2939,11 +2941,9 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
   // A column being dragged stands at its drag width; the author hears the width once, when the gesture ends.
   const [draftColumn, setDraftColumn] = useState<CollectionTableColumnResize | null>(null);
   const heldWidths = tableColumnSizing?.widths;
-  const columnWidths = useMemo(() => heldWidths === undefined || draftColumn === null ? heldWidths
-    : new Map(heldWidths).set(draftColumn.columnKey, draftColumn.width), [draftColumn, heldWidths]);
   const columns = useMemo(
-    () => resolveColumns(anatomy, tableWidth, accessibility.textScale, rowAccessoryWidth, treeLeadingWidth, columnWidths),
-    [accessibility.textScale, anatomy, columnWidths, rowAccessoryWidth, tableWidth, treeLeadingWidth],
+    () => resolveColumns(anatomy, tableWidth, accessibility.textScale, rowAccessoryWidth, treeLeadingWidth, heldWidths, draftColumn),
+    [accessibility.textScale, anatomy, draftColumn, heldWidths, rowAccessoryWidth, tableWidth, treeLeadingWidth],
   );
   const tableCells = rowGeometry === 'table' ? props.tableCells : undefined;
   const hasTableCells = tableCells !== undefined;
@@ -3387,17 +3387,18 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
     const sizing = column.sizing;
     if (sizing === undefined || tableColumnSizing === undefined) return null;
     const columnKey = column.fieldKey;
+    const { width, minWidth, committedWidth } = sizing;
     const resizeEnd = (width: number) => {
       if (!Number.isFinite(width)) return;
-      const acceptedWidth = Math.max(sizing.minWidth, width);
-      if (acceptedWidth !== sizing.width) tableColumnSizing.onResizeEnd({ columnKey, width: acceptedWidth });
+      const acceptedWidth = Math.max(minWidth, width);
+      if (acceptedWidth !== committedWidth) tableColumnSizing.onResizeEnd({ columnKey, width: acceptedWidth });
     };
-    if (tableColumnSizing.renderHandle !== undefined) return tableColumnSizing.renderHandle({ columnKey, ...sizing, resizeEnd });
+    if (tableColumnSizing.renderHandle !== undefined) return tableColumnSizing.renderHandle({ columnKey, width, minWidth, resizeEnd });
     return (
       <CollectionColumnResizeHandle
         title={column.title}
-        width={sizing.width}
-        minWidth={sizing.minWidth}
+        width={width}
+        minWidth={minWidth}
         // A column never needs to be wider than the table's own room.
         maxWidth={Math.max(sizing.minWidth, tableWidth)}
         onDrag={(width) => setDraftColumn(width === null ? null : { columnKey, width })}
