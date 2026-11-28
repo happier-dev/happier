@@ -517,6 +517,16 @@ describe('PR review automation through the workflow coordinator', () => {
     expect(h.reviews).toEqual([expect.objectContaining({ sessionId: h.source.savedInput.sessionId })]);
   });
 
+  it('resolves repository-qualified PR shorthand through the connected GitHub source', async () => {
+    const h = await createPrWorkflow({ manual: true });
+    const accepted = await h.manual('manual-pr-qualified', 'example/repository#17', true);
+    expect(await h.coordinator.run(accepted)).toMatchObject({ state: 'succeeded' });
+    expect(h.source.prepareInputs).toEqual([expect.objectContaining({
+      entryRef: expect.objectContaining({ entryId: '17' }),
+      observed: expect.objectContaining({ headSha: TESTKIT_OBSERVED_REVISION.headSha }),
+    })]);
+  });
+
   it('asks for the repository when Run now receives a number without a repository context', async () => {
     const h = await createPrWorkflow({ manual: true, missingRepository: true });
     const accepted = await h.manual('manual-pr-needs-repository', '#17', false);

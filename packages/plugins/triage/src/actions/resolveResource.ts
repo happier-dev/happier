@@ -105,7 +105,9 @@ async function resourceForSession(
 ) {
   const reference = typeof input.reference === 'string' ? input.reference.trim() : input.reference;
   if (typeof reference === 'string' && !/^#?\d+$/u.test(reference)) {
-    return { kind: 'pullRequest' as const, url: reference };
+    const qualified = /^((?!\.{1,2}\/)[\w.-]+\/(?!\.{1,2}#)[\w.-]+)#([1-9]\d*)$/u.exec(reference);
+    return { kind: 'pullRequest' as const,
+      url: qualified ? `https://github.com/${qualified[1]}/pull/${qualified[2]}` : reference };
   }
   const number = typeof reference === 'string' ? Number(reference.replace(/^#/u, '')) : reference;
   if (!Number.isSafeInteger(number) || number < 1) throw new PluginError({
