@@ -267,13 +267,15 @@ describe('Pi shared-control bridge (TUI mode)', () => {
 
   it('A3: reports busy until Pi settles: the extension agent_end is suppressed and agent_settled ends the run', async () => {
     const bridge = await startBridge();
+    bridge.state.idle = false;
     await bridge.emit('agent_start');
     await bridge.emit('agent_end', { messages: [] });
-    await roundTrip(bridge, 'mid');
+    expect((await roundTrip(bridge, 'mid')).data).toMatchObject({ isStreaming: true });
     expect(bridge.runner.outRecords().filter((record) => record.type === 'agent_end')).toEqual([]);
 
+    bridge.state.idle = true;
     await bridge.emit('agent_settled', { aborted: false });
-    await roundTrip(bridge, 'end');
+    expect((await roundTrip(bridge, 'end')).data).toMatchObject({ isStreaming: false });
     expect(bridge.runner.outRecords().filter((record) => record.type === 'agent_end')).toEqual([
       { type: 'agent_end', willRetry: false },
     ]);
@@ -283,18 +285,28 @@ describe('Pi shared-control bridge (TUI mode)', () => {
     const bridge = await startBridge();
     await bridge.emit('session_before_compact', { reason: 'threshold', willRetry: false });
     expect((await roundTrip(bridge, 's1')).data).toMatchObject({ isCompacting: true });
-    await bridge.emit('session_compact', { reason: 'threshold', willRetry: false, compactionEntry: {}, fromExtension: false });
+    await bridge.emit('session_compact', {
+      reason: 'threshold',
+      willRetry: false,
+      compactionEntry: { tokensBefore: 4096, summary: 'Pi compaction summary' },
+      fromExtension: false,
+    });
     expect((await roundTrip(bridge, 's2')).data).toMatchObject({ isCompacting: false });
     await bridge.emit('session_before_compact', { reason: 'manual', willRetry: false });
     await bridge.emit('session_compact_failed', { reason: 'manual', willRetry: false, aborted: false, errorMessage: 'boom', fromExtension: false });
     expect((await roundTrip(bridge, 's3')).data).toMatchObject({ isCompacting: false });
 
-    const phases = bridge.runner.outRecords().flatMap((record) => mapPiRpcEventToAgentMessages(record))
-      .map((message) => (message.type === 'event' ? (message.payload as JsonRecord).phase : null));
-    expect(phases).toEqual(['started', 'completed', 'started', 'failed']);
+    const compactionEvents = bridge.runner.outRecords().flatMap((record) => mapPiRpcEventToAgentMessages(record))
+      .map((message) => (message.type === 'event' ? message.payload : null));
+    expect(compactionEvents).toEqual([
+      expect.objectContaining({ phase: 'started' }),
+      expect.objectContaining({ phase: 'completed', tokenCountBefore: 4096 }),
+      expect.objectContaining({ phase: 'started' }),
+      expect.objectContaining({ phase: 'failed' }),
+    ]);
     expect(bridge.runner.outRecords().filter((record) => String(record.type).startsWith('compaction_'))).toEqual([
       { type: 'compaction_start', reason: 'threshold' },
-      { type: 'compaction_end', reason: 'threshold', aborted: false, willRetry: false },
+      { type: 'compaction_end', reason: 'threshold', aborted: false, willRetry: false, result: { tokensBefore: 4096 } },
       { type: 'compaction_start', reason: 'manual' },
       { type: 'compaction_end', reason: 'manual', aborted: false, willRetry: false, errorMessage: 'boom' },
     ]);

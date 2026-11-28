@@ -4,11 +4,13 @@ import { join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 
+import { updateSessionMetadataWithAck } from '@/api/session/stateUpdates';
 import type { Metadata } from '@/api/types';
 import { buildPiAgentRuntimeDescriptorV1 } from '@happier-dev/protocol';
 import { createDeferred } from '@/testkit/async/deferred';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { formatPiSessionDirectoryForCwd } from '@/backends/pi/utils/piSessionFiles';
+import { AsyncLock } from '@/utils/lock';
 
 import {
   maybeUpdatePiSessionIdMetadata,
@@ -365,6 +367,79 @@ describe('maybeUpdatePiSessionIdMetadata', () => {
       await rm(cwd, { recursive: true, force: true });
     }
   });
+
+  it.each(['create', 'resume'] as const)(
+    'reconciles the current %s with an older file write already awaiting acknowledgement',
+    async (operation) => {
+      const cwd = await mkdtemp(join(tmpdir(), 'pi-session-in-flight-file-'));
+      const currentFile = join(cwd, 'current.jsonl');
+      const supersededFile = join(cwd, 'superseded.jsonl');
+      const sessionId = 'pi-session-1';
+      const header = `${JSON.stringify({ type: 'session', id: sessionId, cwd })}\n`;
+      const lastPublished = { value: null as string | null, sessionFile: null as string | null };
+      const olderWriteSent = createDeferred<void>();
+      const releaseOlderWrite = createDeferred<void>();
+      const lock = new AsyncLock();
+      let metadata = createTestMetadata({ flavor: 'pi' });
+      let metadataVersion = 0;
+      const session = {
+        getMetadataSnapshot: () => metadata,
+        updateMetadata: (handler: (current: Metadata) => Metadata) => lock.inLock(() =>
+          updateSessionMetadataWithAck({
+            socket: {
+              emitWithAck: async (_event, rawPayload) => {
+                const payload = rawPayload as { metadata: string; expectedVersion: number };
+                const sent = JSON.parse(payload.metadata) as Metadata;
+                if (sent.piSessionFile === supersededFile) {
+                  olderWriteSent.resolve();
+                  await releaseOlderWrite.promise;
+                }
+                return { result: 'success', metadata: payload.metadata, version: payload.expectedVersion + 1 };
+              },
+            },
+            sessionId: 'happier-pi-session',
+            sessionEncryptionMode: 'plain',
+            encryptionKey: new Uint8Array(),
+            encryptionVariant: 'legacy',
+            getMetadata: () => metadata,
+            setMetadata: (updated) => { if (updated) metadata = updated; },
+            getMetadataVersion: () => metadataVersion,
+            setMetadataVersion: (version) => { metadataVersion = version; },
+            syncSessionSnapshotFromServer: async () => {},
+            handler,
+          })),
+      };
+      const publish = (reportedSessionFile: string, kind: 'create' | 'resume' = 'create') =>
+        publishPiSessionIdMetadata({
+          operation: kind,
+          session,
+          getPiSessionId: () => sessionId,
+          reportedSessionFile,
+          cwd,
+          lastPublished,
+        });
+      try {
+        await Promise.all([writeFile(currentFile, header), writeFile(supersededFile, header)]);
+        await publish(currentFile);
+        const older = publish(supersededFile);
+        await olderWriteSent.promise;
+
+        const current = publish(currentFile, operation);
+        releaseOlderWrite.resolve();
+        await Promise.all([older, current]);
+
+        expect(metadata.piSessionFile).toBe(currentFile);
+        expect(metadata.agentRuntimeDescriptorV1).toEqual(buildPiAgentRuntimeDescriptorV1({
+          resumeStrategy: 'sessionFileAbsolutePreferred',
+          vendorSessionId: sessionId,
+          sessionFile: currentFile,
+        }));
+      } finally {
+        releaseOlderWrite.resolve();
+        await rm(cwd, { recursive: true, force: true });
+      }
+    },
+  );
 
   it('reverts lastPublished when the metadata update fails', async () => {
     const lastPublished = { value: null as string | null, sessionFile: null as string | null };

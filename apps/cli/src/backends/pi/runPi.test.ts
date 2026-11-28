@@ -209,15 +209,16 @@ describe('runPi', () => {
   });
 
   it('tells the terminal user before falling back to RPC for connected-service credentials', async () => {
+    advertiseServerPendingHandoff(true);
     const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     const previous = process.env[PI_BROKER_SELECTIONS_ENV];
     process.env[PI_BROKER_SELECTIONS_ENV] = serializePiBrokerSelections({
       anthropic: { serviceId: 'claude-subscription', profileId: 'claude-pro', accountId: null, planType: null },
     });
-    let stderrWrites = 0;
+    let notice: string | undefined;
     try {
       await withTty(true, () => runPi({ credentials, startedBy: 'terminal', accountSettingsContext: accountSettingsContext(true) }));
-      stderrWrites = stderr.mock.calls.length;
+      notice = stderr.mock.calls.map(([text]) => String(text)).join('');
     } finally {
       if (previous === undefined) delete process.env[PI_BROKER_SELECTIONS_ENV];
       else process.env[PI_BROKER_SELECTIONS_ENV] = previous;
@@ -225,7 +226,7 @@ describe('runPi', () => {
     }
 
     expect(runStandardAcpProviderMock.mock.calls[0]?.[1].startRuntimeBeforeFirstPrompt).toBeUndefined();
-    expect(stderrWrites).toBe(1);
+    expect(notice).toContain('connected-service credentials');
   });
 
   it('uses the native Pi tool catalog as the unrestricted permission queue key', async () => {

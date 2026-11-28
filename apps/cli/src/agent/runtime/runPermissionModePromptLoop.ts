@@ -482,11 +482,12 @@ export async function runPermissionModePromptLoop(opts: {
     await overrideSync.flushPendingAfterStart();
     opts.messageBuffer.addMessage(message.message.text, 'user');
 
+    const providerOwnsPromptTurn = opts.runtime.promptTurnOwner === 'provider';
     const special = parseSpecialCommand(message.message.text);
     if (special.type === 'clear' && opts.describeUnavailableRuntimeReset) {
       postNotice(opts.describeUnavailableRuntimeReset('clear'));
       confirmQueuedUserMessageDeliveredToProvider(message, undefined, { kind: 'command' });
-      opts.sendReady();
+      if (!providerOwnsPromptTurn) opts.sendReady();
       continue;
     }
     if (special.type === 'clear') {
@@ -518,7 +519,6 @@ export async function runPermissionModePromptLoop(opts: {
     // entire carry-over context onto the next message.
     let pendingReplaySeedSettlement: (() => Promise<unknown>) | null = null;
     let replaySeedSettlement: Promise<unknown> | null = null;
-    const providerOwnsPromptTurn = opts.runtime.promptTurnOwner === 'provider';
     const confirmProviderDelivery = (delivery?: Readonly<{ kind: 'terminal_handoff' }>): void => {
       if (didConfirmProviderAccepted) return;
       didConfirmProviderAccepted = true;

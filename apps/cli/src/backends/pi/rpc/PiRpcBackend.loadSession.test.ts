@@ -10,6 +10,14 @@ import type { AgentBackend } from '@/agent/core';
 import { PiRpcBackend, type PiRpcSpawnOptions } from './PiRpcBackend';
 import { spawnedPiRpcChannelHost } from './piRpcChannel';
 
+function observeCleanPiExit(backend: AgentBackend): Promise<void> {
+  return new Promise((resolve) => {
+    backend.onMessage((message) => {
+      if (message.type === 'status' && message.status === 'stopped') resolve();
+    });
+  });
+}
+
 function makeTempDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));
 }
@@ -506,8 +514,9 @@ describe('PiRpcBackend loadSession', () => {
     });
 
     const loaded = await backend.loadSession!('pi-session-1' as any);
+    const exited = observeCleanPiExit(backend);
     await backend.sendPrompt(loaded.sessionId as any, 'first prompt exits');
-    await new Promise((resolve) => setTimeout(resolve, 40));
+    await exited;
 
     await expect(backend.sendPrompt(loaded.sessionId as any, 'recover')).resolves.toBeUndefined();
 
@@ -539,8 +548,9 @@ describe('PiRpcBackend loadSession', () => {
     });
 
     const { sessionId } = await backend.startSession();
+    const exited = observeCleanPiExit(backend);
     await backend.sendPrompt(sessionId, 'first prompt exits');
-    await new Promise((resolve) => setTimeout(resolve, 40));
+    await exited;
     await expect(backend.sendPrompt(sessionId, 'recover')).resolves.toBeUndefined();
 
     const boots = parseBootLog(await readFile(bootLogPath, 'utf8'));

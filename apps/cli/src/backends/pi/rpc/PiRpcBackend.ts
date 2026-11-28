@@ -56,6 +56,7 @@ import {
   resolveExpectedPiSessionIdForResume,
 } from '../utils/piSessionFiles';
 import {
+  PiSharedTerminalSessionMismatchError,
   PiSharedTerminalUnavailableError,
   spawnedPiRpcChannelHost,
   type PiRpcChannel,
@@ -1444,6 +1445,12 @@ export class PiRpcBackend implements AgentBackend {
 
   async compactContext(sessionId: SessionId, command: string): Promise<void> {
     this.assertSession(sessionId);
+    if (this.channelHost.kind === 'attached') {
+      throw new ProviderPromptSubmissionRejectedBeforeEffectError(
+        'provider_rejected_before_acceptance',
+        new Error('Run /compact in the Pi terminal to compact this session.'),
+      );
+    }
     const maybeRestart = this.maybeRestartForUpdatedAuthJson();
     if (maybeRestart) await maybeRestart;
     const customInstructions = parseCompactInstructions(command);
@@ -1573,7 +1580,7 @@ export class PiRpcBackend implements AgentBackend {
   private reattachSharedTerminal(): void {
     void this.ensureProcess().catch((error: unknown) => {
       if (this.disposed) return;
-      if (error instanceof PiSharedTerminalUnavailableError) {
+      if (error instanceof PiSharedTerminalSessionMismatchError) {
         // The terminal is on another session; the host already posted the fence notice.
         logger.debug('[pi] Shared terminal re-attach refused: the terminal is on another session');
         return;
@@ -2115,7 +2122,7 @@ export class PiRpcBackend implements AgentBackend {
         const detail = `Pi session mismatch after --session (expected ${params.expectedSessionId}, got ${nextSessionId})`;
         // The user's terminal switched sessions (`/new`, `/resume`, `/fork`); it may come back.
         throw this.channelHost.kind === 'attached'
-          ? new PiSharedTerminalUnavailableError(`The Pi terminal is on another session; ${detail}`)
+          ? new PiSharedTerminalSessionMismatchError(`The Pi terminal is on another session; ${detail}`)
           : new Error(detail);
       }
       return state;

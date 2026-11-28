@@ -8,6 +8,7 @@ import type { ApiSessionClient } from '@/api/session/sessionClient';
 import { buildPiBridgeExtensionSource } from '@/backends/pi/bridgeExtension/piBridgeExtensionSource';
 import { attachPiRpcJsonlLineReader } from '@/backends/pi/rpc/attachPiRpcJsonlLineReader';
 import {
+  PiSharedTerminalSessionMismatchError,
   PiSharedTerminalUnavailableError,
   type PiRpcChannel,
   type PiRpcChannelClosure,
@@ -25,6 +26,7 @@ import {
   PI_SHARED_CONTROL_ADMISSION_FRAME,
   PI_SHARED_CONTROL_BRIDGE_UNAVAILABLE_ERROR,
   PI_SHARED_CONTROL_HELLO_MAX_BYTES,
+  PI_SHARED_CONTROL_TOKEN_BYTES,
   PiSharedControlBridgeFrameSchema,
   PiSharedControlHelloSchema,
   type PiSharedControlConfig,
@@ -85,8 +87,8 @@ function digestToken(token: string): Buffer {
   return createHash('sha256').update(token, 'utf8').digest();
 }
 
-function bridgeUnavailable(): Error {
-  return new Error(PI_SHARED_CONTROL_BRIDGE_UNAVAILABLE_ERROR);
+function bridgeUnavailable(): PiSharedTerminalUnavailableError {
+  return new PiSharedTerminalUnavailableError(PI_SHARED_CONTROL_BRIDGE_UNAVAILABLE_ERROR);
 }
 
 function attachCancelled(signal: AbortSignal): Error {
@@ -394,7 +396,7 @@ export function createPiSharedTerminalHost(params: Readonly<{
         reject(bridgeUnavailable());
         return;
       }
-      const token = randomBytes(32).toString('base64url');
+      const token = randomBytes(PI_SHARED_CONTROL_TOKEN_BYTES).toString('base64url');
       tokenDigest = digestToken(token);
       const created = createServer(handleSocket);
       server = created;
@@ -447,7 +449,7 @@ export function createPiSharedTerminalHost(params: Readonly<{
   const bindChannel = (live: BridgeConnection): PiRpcChannel => {
     // A bridge can send frames in the same read as hello, before the backend can query its state.
     if (!isBoundSession(live.hello)) {
-      throw new PiSharedTerminalUnavailableError('The Pi terminal is on another session');
+      throw new PiSharedTerminalSessionMismatchError('The Pi terminal is on another session');
     }
     const binding = createAttachedChannel(live, () => {
       if (attached === binding) attached = null;

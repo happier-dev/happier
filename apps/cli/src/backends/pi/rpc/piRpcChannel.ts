@@ -14,6 +14,13 @@ export class PiSharedTerminalUnavailableError extends Error {
   }
 }
 
+export class PiSharedTerminalSessionMismatchError extends PiSharedTerminalUnavailableError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PiSharedTerminalSessionMismatchError';
+  }
+}
+
 /**
  * Transport between `PiRpcBackend` and one Pi process. The backend owns the RPC protocol, turn
  * lifecycle and event mapping; a channel only moves JSONL lines.

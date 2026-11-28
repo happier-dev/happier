@@ -283,7 +283,14 @@ function startSharedControl(pi, ctx, endpoint, sideChannel) {
   });
   on("session_compact", (event) => {
     compacting = false;
-    sendOut({ type: "compaction_end", reason: event.reason, aborted: false, willRetry: event.willRetry === true });
+    const tokensBefore = event.compactionEntry?.tokensBefore;
+    sendOut({
+      type: "compaction_end",
+      reason: event.reason,
+      aborted: false,
+      willRetry: event.willRetry === true,
+      ...(Number.isFinite(tokensBefore) ? { result: { tokensBefore } } : {}),
+    });
   });
   on("session_compact_failed", (event) => {
     compacting = false;

@@ -23,17 +23,29 @@ import type { PiRpcCommandWithoutId } from '../rpc/types';
  */
 export const PI_SHARED_CONTROL_PROTOCOL_VERSION = 1;
 export const PI_SHARED_CONTROL_ADMISSION_FRAME = 'happier_session_admitted';
+export const PI_SHARED_CONTROL_TOKEN_BYTES = 32;
 
 /** Timeout for a command response from the native terminal bridge. */
 export const PI_SHARED_CONTROL_RESPONSE_TIMEOUT_MS = 30_000;
 
+const WINDOWS_EXTENDED_PATH_MAX_CODE_UNITS = 32_767;
+// A JSON Unicode escape for one UTF-16 code unit occupies six UTF-8 bytes.
+const MAX_JSON_BYTES_PER_UTF16_CODE_UNIT = 6;
+const HELLO_ENVELOPE_BYTES = JSON.stringify({
+  type: 'hello',
+  v: PI_SHARED_CONTROL_PROTOCOL_VERSION,
+  token: 'x'.repeat(Math.ceil(PI_SHARED_CONTROL_TOKEN_BYTES * 8 / 6)), // Unpadded base64url.
+  sessionId: '0'.repeat(36), // Pi generates a session UUID.
+  sessionFile: '',
+}).length;
+
 /**
  * Pre-auth bound: the most bytes the runner reads before the first newline on an unauthenticated
- * connection. Protects the runner from unauthenticated local peers. Derivation: the hello carries a
- * ~43-byte token, a session UUID and `sessionFile`, which is bounded by the Windows long-path limit
- * of 32 767 characters.
+ * connection. Protects the runner from unauthenticated local peers while allowing for the JSON
+ * encoding of a Windows extended-length session file path.
  */
-export const PI_SHARED_CONTROL_HELLO_MAX_BYTES = 64 * 1024;
+export const PI_SHARED_CONTROL_HELLO_MAX_BYTES =
+  WINDOWS_EXTENDED_PATH_MAX_CODE_UNITS * MAX_JSON_BYTES_PER_UTF16_CODE_UNIT + HELLO_ENVELOPE_BYTES;
 
 /** Pi RPC commands the bridge executes in shared mode; everything else calls no Pi API. */
 export const PI_SHARED_CONTROL_SUPPORTED_COMMANDS = [

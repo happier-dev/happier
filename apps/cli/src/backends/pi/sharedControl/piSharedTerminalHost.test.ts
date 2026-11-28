@@ -184,6 +184,21 @@ describe('Pi shared terminal host', () => {
     await peer.closed;
   });
 
+  it('accepts a hello with a long Unicode Windows session file path', async () => {
+    const { host } = createHost();
+    const config = await host.ensureListening();
+    const opening = host.channelHost.open(SPEC);
+    const sessionFile = ['\\\\?\\C:', ...Array.from({ length: 128 }, () => '界'.repeat(250)), 'session.jsonl'].join('\\');
+    const bridge = await connectBridge(config, { sessionFile });
+    sockets.push(bridge.socket);
+    bridge.sendHello();
+
+    await expect(Promise.race([
+      opening.then(() => 'admitted'),
+      bridge.closed.then(() => 'closed'),
+    ])).resolves.toBe('admitted');
+  });
+
   it('launches Pi once and re-attaches later backends to the live bridge', async () => {
     const { host, launch } = createHost();
     const { bridge, channel } = await attachFirstBridge(host);
@@ -308,7 +323,7 @@ describe('Pi shared terminal host', () => {
     await vi.waitFor(() => expect(first.closures).toHaveLength(1));
 
     expect(first.closures[0]).toMatchObject({ kind: 'failed', error: { message: PI_SHARED_CONTROL_BRIDGE_UNAVAILABLE_ERROR } });
-    await expect(host.channelHost.open(SPEC)).rejects.toThrow(PI_SHARED_CONTROL_BRIDGE_UNAVAILABLE_ERROR);
+    await expect(host.channelHost.open(SPEC)).rejects.toBeInstanceOf(PiSharedTerminalUnavailableError);
   });
 
   it.each([

@@ -23,6 +23,7 @@ import {
 
 import { PiRpcBackend } from './PiRpcBackend';
 import {
+  PiSharedTerminalSessionMismatchError,
   PiSharedTerminalUnavailableError,
   type PiRpcChannel,
   type PiRpcChannelHost,
@@ -365,7 +366,7 @@ describe('PiRpcBackend over an attached shared-terminal channel', () => {
     const { backend, messages } = createAttachedBackend(fake);
     const { sessionId } = await backend.startSession();
 
-    const unavailable = new PiSharedTerminalUnavailableError('The Pi terminal is on another session');
+    const unavailable = new PiSharedTerminalSessionMismatchError('The Pi terminal is on another session');
     if (source === 'host refusal') {
       fake.failNextOpen(unavailable);
     } else {
@@ -443,7 +444,7 @@ describe('PiRpcBackend over an attached shared-terminal channel', () => {
     const fake = createFakeAttachedPi('pi-terminal-session');
     const { backend, messages } = createAttachedBackend(fake);
     await backend.startSession();
-    fake.failNextOpen(new Error('pi_shared_bridge_unavailable'));
+    fake.failNextOpen(new PiSharedTerminalUnavailableError('pi_shared_bridge_unavailable'));
 
     fake.detach();
 
@@ -487,6 +488,18 @@ describe('PiRpcBackend over an attached shared-terminal channel', () => {
     const completion = expect(submission.completion).rejects.toThrow();
     expect(await submission.admission).toMatchObject({ status: 'effect_may_have_occurred' });
     await completion;
+  });
+
+  it('directs native compaction to the terminal without writing an unsupported command', async () => {
+    const fake = createFakeAttachedPi('pi-terminal-session');
+    const { backend } = createAttachedBackend(fake);
+    const { sessionId } = await backend.startSession();
+
+    await expect(backend.compactContext(sessionId, '/compact custom instructions')).rejects.toMatchObject({
+      reason: 'provider_rejected_before_acceptance',
+      message: expect.stringContaining('Run /compact in the Pi terminal'),
+    });
+    expect(fake.commands.flat().map(({ type }) => type)).not.toContain('compact');
   });
 
   it('leaves native compaction and continuation to Pi after handoff', async () => {

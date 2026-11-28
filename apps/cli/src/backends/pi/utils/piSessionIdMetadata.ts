@@ -30,6 +30,7 @@ type PiSessionIdMetadataLastPublishedState = {
   value: string | null;
   sessionFile?: string | null;
   publication?: symbol;
+  needsMetadataReconciliation?: boolean;
 };
 
 const PI_SESSION_FILE_RESOLVE_RETRY_DELAYS_MS = [0, 250, 1_000, 2_500] as const;
@@ -116,11 +117,18 @@ export async function maybeUpdatePiSessionIdMetadata(params: {
   if (!next || params.isCurrent?.() === false) return;
 
   const lastPublishedSessionFile = normalizeOptionalAbsolutePath(params.lastPublished.sessionFile);
-  if (params.lastPublished.value === next && lastPublishedSessionFile === nextSessionFile) return;
+  if (
+    !params.lastPublished.needsMetadataReconciliation
+    && params.lastPublished.value === next
+    && lastPublishedSessionFile === nextSessionFile
+  ) return;
 
   await params.updateHappySessionMetadata((metadata) => {
     // The session client may invoke this updater after a newer Pi file has been published.
     if (params.isCurrent?.() === false) return metadata;
+    // A payload can commit after this publication loses ownership. Until the
+    // current binding confirms its own write, cached identity proofs may be stale.
+    params.lastPublished.needsMetadataReconciliation = true;
     const nextMetadata = {
       ...metadata,
       piSessionId: next,
@@ -143,6 +151,7 @@ export async function maybeUpdatePiSessionIdMetadata(params: {
     return withoutSessionFile;
   });
   if (params.isCurrent?.() === false) return;
+  params.lastPublished.needsMetadataReconciliation = false;
   params.lastPublished.value = next;
   params.lastPublished.sessionFile = nextSessionFile;
 }
@@ -207,6 +216,7 @@ export async function publishPiSessionIdMetadata(params: Readonly<{
   const isCurrent = () => params.lastPublished.publication === publication;
 
   const reportedSessionFile = normalizeOptionalAbsolutePath(params.reportedSessionFile);
+  const canReuseMetadataSnapshot = !params.lastPublished.needsMetadataReconciliation;
   const metadataSnapshot = params.operation === 'resume'
     ? params.session.getMetadataSnapshot?.()
     : null;
@@ -232,15 +242,16 @@ export async function publishPiSessionIdMetadata(params: Readonly<{
     ? candidateDurableResumeIdentity
     : null;
   if (!isCurrent()) return;
-  if (durableResumeIdentity) {
+  if (durableResumeIdentity && canReuseMetadataSnapshot) {
     params.lastPublished.value = currentSessionReference;
     params.lastPublished.sessionFile = durableResumeIdentity.sessionFile;
   } else {
-    const persistedSessionFileSurfaces = metadataSnapshot
-      ? readPiResumeSessionFileSurfaces(metadataSnapshot, currentSessionReference)
-      : null;
-    const persistedResumeSessionFile = reportedSessionFile || params.operation === 'resume'
-      ? await resolvePiSessionFileForRuntimeSession({
+    let persistedResumeSessionFile = durableResumeIdentity?.sessionFile ?? null;
+    if (!durableResumeIdentity && (reportedSessionFile || params.operation === 'resume')) {
+      const persistedSessionFileSurfaces = metadataSnapshot
+        ? readPiResumeSessionFileSurfaces(metadataSnapshot, currentSessionReference)
+        : null;
+      persistedResumeSessionFile = await resolvePiSessionFileForRuntimeSession({
         vendorSessionReference: currentSessionReference,
         cwd: params.cwd,
         processEnv: params.processEnv,
@@ -248,8 +259,8 @@ export async function publishPiSessionIdMetadata(params: Readonly<{
         candidatePersistedSessionFile: persistedSessionFileSurfaces?.coherent
           ? persistedSessionFileSurfaces.sessionFile
           : null,
-      })
-      : null;
+      });
+    }
     await maybeUpdatePiSessionIdMetadata({
       getPiSessionId: () => currentSessionReference,
       getPiSessionFile: () => persistedResumeSessionFile,
