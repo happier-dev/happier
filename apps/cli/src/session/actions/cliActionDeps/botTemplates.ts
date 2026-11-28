@@ -110,6 +110,8 @@ export function createCliBotTemplateActionDeps(
       }),
       randomId: randomUUID,
       resolvePluginRelease: async (source, _context, _signal, purpose) => {
+        const { isBundledBotTemplateSource, readBundledBotTemplate } = await import('@happier-dev/plugins-bot-templates/catalog');
+        if (isBundledBotTemplateSource(source)) return readBundledBotTemplate(source, purpose) ?? refuse('source_unavailable');
         const { createCliRegistryHostV1 } = await import('@/registries/createCliRegistryHost');
         const registry = createCliRegistryHostV1({ credentials: params.credentials, port: host.registryPort, signal,
           operationContext: params.savedSecretOperationContext, actionContext: context });

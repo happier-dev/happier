@@ -1265,6 +1265,10 @@ export const BUNDLED_FIRST_PARTY_PLUGIN_PRESENTATION: Readonly<Record<string, Re
   "happier.backup.destinations": Object.freeze({
   "displayName": "Backup destinations"
 }),
+  "happier.bot.templates": Object.freeze({
+  "description": "Ready-made Bots from Happier.",
+  "displayName": "Bot templates"
+}),
   "happier.channel.discord": Object.freeze({
   "description": "Connects Discord conversations to Happier Channels.",
   "displayName": "Discord Channels"

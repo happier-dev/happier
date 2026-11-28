@@ -130,6 +130,8 @@ export function createUiBotTemplateAction(account: LazyActionAccountContext, ope
         randomId: randomUUID,
         isSameServerId: areServerProfileIdentifiersEquivalent,
         resolvePluginRelease: async (source, context, signal, purpose) => {
+            const { isBundledBotTemplateSource, readBundledBotTemplate } = await import('@happier-dev/plugins-bot-templates/catalog');
+            if (isBundledBotTemplateSource(source)) return readBundledBotTemplate(source, purpose) ?? unavailable('source_unavailable');
             if (!registryPort) return unavailable('unsupported_action');
             const { createUiRegistryHostV1 } = await import('@/registries/registryHostDeps');
             const registry = await createUiRegistryHostV1(account, registryPort, { ...context, signal: signal ?? context.signal });

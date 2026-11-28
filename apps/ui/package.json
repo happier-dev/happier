@@ -180,6 +180,7 @@
     "@happier-dev/plugins-antigravity": "0.0.0",
     "@happier-dev/plugins-app-context": "0.0.0",
     "@happier-dev/plugins-auggie": "0.0.0",
+    "@happier-dev/plugins-bot-templates": "0.0.0",
     "@happier-dev/plugins-channels": "0.0.0",
     "@happier-dev/plugins-claude": "0.0.0",
     "@happier-dev/plugins-cursor": "0.0.0",

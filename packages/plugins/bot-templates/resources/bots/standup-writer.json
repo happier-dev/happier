@@ -1,0 +1,116 @@
+{
+  "v": 1,
+  "version": "1.0.0",
+  "releasedAtMs": 0,
+  "changelog": "First release.",
+  "content": {
+    "v": 1,
+    "identity": {
+      "name": "Standup writer",
+      "description": "Writes a short standup from yesterday’s sessions and pull requests.",
+      "face": {
+        "seed": "Standup writer"
+      }
+    },
+    "instructions": {
+      "markdown": "Use yesterday’s Sessions and pull requests. Separate finished work, today’s plan and blockers. Ask before sending the standup to a conversation."
+    },
+    "memoryRules": [
+      {
+        "key": "job-context",
+        "text": "Remember the team’s standup format and timezone."
+      }
+    ],
+    "skills": [
+      {
+        "key": "standup-writer",
+        "title": "Standup writer guide",
+        "bundleSchemaId": "skills.skill_md_v1",
+        "entries": [
+          {
+            "path": "SKILL.md",
+            "contentKind": "utf8",
+            "contentBase64": "LS0tCm5hbWU6IHN0YW5kdXAtd3JpdGVyCmRlc2NyaXB0aW9uOiBTdGFuZHVwIHdyaXRlciBvcGVyYXRpbmcgZ3VpZGUKLS0tCgpVc2UgeWVzdGVyZGF54oCZcyBTZXNzaW9ucyBhbmQgcHVsbCByZXF1ZXN0cy4gU2VwYXJhdGUgZmluaXNoZWQgd29yaywgdG9kYXnigJlzIHBsYW4gYW5kIGJsb2NrZXJzLiBBc2sgYmVmb3JlIHNlbmRpbmcgdGhlIHN0YW5kdXAgdG8gYSBjb252ZXJzYXRpb24uCg=="
+          }
+        ]
+      }
+    ],
+    "needs": {
+      "software": [],
+      "connectedAccounts": [],
+      "mcpServers": [],
+      "channels": [
+        {
+          "key": "slack",
+          "name": "Slack conversation",
+          "requirement": "optional",
+          "purpose": "Send approved standups to the team.",
+          "skipConsequence": "The standup stays a draft in Happier.",
+          "providerKinds": [
+            "slack"
+          ]
+        }
+      ]
+    },
+    "pausedWorkflows": [
+      {
+        "kind": "inline",
+        "key": "standup-writer",
+        "title": "Draft standup",
+        "definition": {
+          "version": 1,
+          "defaults": {
+            "conversation": {
+              "kind": "origin_session"
+            }
+          },
+          "inputs": [],
+          "blocks": [
+            {
+              "kind": "step",
+              "id": "check",
+              "name": "Draft standup",
+              "document": {
+                "text": "Write today’s standup from yesterday’s work.",
+                "references": [],
+                "attachments": []
+              },
+              "input": [],
+              "result": {
+                "kind": "text"
+              }
+            }
+          ],
+          "finalOutput": {
+            "kind": "result",
+            "producer": {
+              "blockId": "check",
+              "scope": {
+                "kind": "current"
+              }
+            },
+            "path": []
+          }
+        },
+        "trigger": {
+          "kind": "schedule",
+          "schedule": {
+            "kind": "cron",
+            "scheduleExpr": "15 9 * * 1-5",
+            "everyMs": null,
+            "timezone": null
+          }
+        }
+      },
+      {
+        "kind": "memoryUpkeep",
+        "key": "weekly-memory-upkeep"
+      }
+    ],
+    "workedExample": {
+      "request": "Draft today’s standup.",
+      "reply": "Yesterday: shipped the reconnect retry. Today: review #2481 and run smoke checks. Blocked: the signing job needs an owner. The Slack draft is ready for review."
+    },
+    "firstTask": "Write today’s standup from yesterday’s work."
+  }
+}

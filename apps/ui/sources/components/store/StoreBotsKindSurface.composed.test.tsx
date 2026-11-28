@@ -16,7 +16,7 @@ const { default: StoreBotsKindSurface } = await import('./StoreBotsKindSurface')
 const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
 const { resolveCompactAppDestinations, resolveDestinationRefFromHref } = await import('@/components/appShell/destinations/compactAppDestinationCatalog');
 
-it.each(['open', 'add'] as const)('browses metadata and reaches the shared preview from package %s without installation', async path => {
+it.each(['open', 'add', 'bundled'] as const)('reaches the shared preview from the %s Store entry without installation', async path => {
     const serverUrl = `https://store-bot-${path}.test`;
     const sourceUrl = `${serverUrl}/catalog.json`;
     const sourceId = deriveMarketplaceSourceId(sourceUrl);
@@ -33,7 +33,8 @@ it.each(['open', 'add'] as const)('browses metadata and reaches the shared previ
     promptRegistriesRouterPushSpy.mockClear();
     const destinations = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, workflows: false, friends: false } });
     const resolved = resolveDestinationRefFromHref(destinations, '/plugins/bots')!;
-    const target = { ...resolved, params: { ...resolved.params, filters: JSON.stringify({ source: { include: [sourceId], exclude: [] } }) } };
+    const target = path === 'bundled' ? resolved
+        : { ...resolved, params: { ...resolved.params, filters: JSON.stringify({ source: { include: [sourceId], exclude: [] } }) } };
     // A real ScrollView retains its content host; the tracker rejects a host that changed during measurement.
     const content = {};
     const screen = await renderScreen(<DestinationInstanceHost tabId="bots" ref={target} pathname="/plugins/bots" focused visible
@@ -47,6 +48,19 @@ it.each(['open', 'add'] as const)('browses metadata and reaches the shared previ
             node.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 900, height: 900 } } });
         }
     });
+    if (path === 'bundled') {
+        await waitForHomeGovernance(() => expect(screen.findByTestId('store.kind.bot.bundled')).toBeTruthy());
+        const builtIn = screen.findAllByType(Directory).find(node => node.props.label === 'botTemplates.fromHappier');
+        expect(builtIn?.props.rows.map(row => row.title)).toEqual(['Release captain', 'PR reviewer', 'CI fixer',
+            'Dependency gardener', 'Issue sorter', 'Docs keeper', 'Spec drafter', 'Support desk', 'Standup writer', 'Machine caretaker']);
+        await act(async () => { builtIn?.props.rows[0]?.open(); });
+        const href = promptRegistriesRouterPushSpy.mock.lastCall![0];
+        expect(href.pathname).toBe('/bot-template');
+        expect(JSON.parse(href.params.source)).toMatchObject({ kind: 'plugin', contributionId: 'release-captain',
+            registryItem: { sourceId: 'happier.bot.templates/bundled', itemId: 'happier.bot.templates' } });
+        expect(fixture.requests.some(request => request.path.includes('.tgz'))).toBe(false);
+        return;
+    }
     await waitForHomeGovernance(() => expect(screen.findAllByType(Directory).flatMap(node => node.props.rows).map(row => row.title)).toEqual(['Garden']))
         .catch(error => {
             console.error('Store boundary evidence', JSON.stringify({ requests: fixture.requests.map(request => request.path),

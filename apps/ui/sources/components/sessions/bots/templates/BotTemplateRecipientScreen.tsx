@@ -15,6 +15,7 @@ import { resolveAgentExecutionTargetForPersistedSelection } from '@/agents/backe
 import { getSessionDraftSnapshot } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import type { NewSessionHostParams } from '@/components/sessions/new/navigation/newSessionHost';
 import { BotTemplateHeader } from './BotTemplateHeader';
+import { isBundledBotTemplateSource } from '@happier-dev/plugins-bot-templates/catalog';
 import { BotTemplatePreview } from './BotTemplatePreview';
 import { BotTemplatePageLayout, BotTemplateWhatItDoes } from './BotTemplatePageLayout';
 import { useBotTemplateRecipient } from './useBotTemplateRecipient';
@@ -115,6 +116,7 @@ export function BotTemplateRecipientBody({ reader, source, serverId }: Readonly<
     return <BotTemplatePageLayout testID="bot-template-recipient" content={preview.release.content}
         footer={phone ? makeOwnButton : undefined}
         header={<BotTemplateHeader identity={preview.release.content.identity} pet={preview.release.content.pet} version={preview.release.version}
+            author={isBundledBotTemplateSource(preview.source) ? t('botTemplates.fromHappier') : undefined}
             presentation={preview.presentation} descriptionPlacement="body"
             actions={phone ? undefined : makeOwnButton} />}
         notice={<>

@@ -1,0 +1,26 @@
+{
+  "name": "@happier-dev/plugins-bot-templates",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": { "happier-source": "./src/index.ts", "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+    "./manifest": { "happier-source": "./src/manifest.ts", "types": "./dist/manifest.d.ts", "default": "./dist/manifest.js" },
+    "./catalog": { "happier-source": "./src/catalog.ts", "types": "./dist/catalog.d.ts", "default": "./dist/catalog.js" }
+  },
+  "files": ["dist", ".happier-plugin", "resources", "package.json"],
+  "scripts": {
+    "build": "node ../../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
+    "build:finite": "pnpm --silent run build",
+    "project:finite": "node --experimental-strip-types ../../../apps/cli/scripts/build-owned/checkBundledPluginWorkspace.mjs",
+    "typecheck": "../../../apps/stack/bin/hstack-exec --script=typecheck:local",
+    "typecheck:local": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@happier-dev/plugin-sdk": "0.0.0",
+    "@happier-dev/protocol": "0.0.0"
+  },
+  "devDependencies": { "typescript": "^5.9.2" }
+}

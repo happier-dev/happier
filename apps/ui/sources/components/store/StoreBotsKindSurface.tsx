@@ -20,6 +20,7 @@ import type { StoreKindSurfaceInput } from './StoreKindSurface';
 import { useReceivedBotTemplates } from './catalog/useReceivedBotTemplates';
 import { StoreDirectoryUnavailable } from './StoreDirectoryUnavailable';
 import { useStoreDirectorySources } from './StoreSearch';
+import { BundledBotTemplateSection } from './BundledBotTemplateSection';
 
 const NO_TEMPLATES: readonly { id: string; path: string }[] = [];
 const NO_FILTERS = {};
@@ -97,6 +98,8 @@ export default function StoreBotsKindSurface(props: Readonly<{ kind: string; inp
                 : <Directory kind="bot" rows={templateRows} groups={[{ key: 'templates', title: read.item?.summary.title ?? '' }]}
                     list={{ loading: read.loading, hasNextPage: false }} query="" sourceTitle={null} />}
         </> : <>
+            {!source ? <BundledBotTemplateSection query={query} presented={presented} open={open}
+                minCardWidth={BOT_CARD_MIN_WIDTH} markSize={BOT_CARD_MARK_PX} /> : null}
             {showShared ? <ItemGroup surface="none" title={t('botTemplates.sharedWithYou')} description={t('botTemplates.sharedWithYouDescription')}
                 // A healthy section asks its reader again; a failed read already offers Try again on its own line.
                 action={received.error ? undefined : <SectionActionButton testID="store.kind.bot.shared.refresh"

@@ -1,0 +1,115 @@
+{
+  "v": 1,
+  "version": "1.0.0",
+  "releasedAtMs": 0,
+  "changelog": "First release.",
+  "content": {
+    "v": 1,
+    "identity": {
+      "name": "Issue sorter",
+      "description": "Labels and de-duplicates new issues and asks you about the unclear ones.",
+      "face": {
+        "seed": "Issue sorter"
+      }
+    },
+    "instructions": {
+      "markdown": "Use the repository’s label taxonomy. Compare symptoms and reproductions before proposing duplicates. Show ambiguous cases and ask before updating an issue."
+    },
+    "memoryRules": [
+      {
+        "key": "job-context",
+        "text": "Remember approved label mappings and who owns ambiguous categories."
+      }
+    ],
+    "skills": [
+      {
+        "key": "issue-sorter",
+        "title": "Issue sorter guide",
+        "bundleSchemaId": "skills.skill_md_v1",
+        "entries": [
+          {
+            "path": "SKILL.md",
+            "contentKind": "utf8",
+            "contentBase64": "LS0tCm5hbWU6IGlzc3VlLXNvcnRlcgpkZXNjcmlwdGlvbjogSXNzdWUgc29ydGVyIG9wZXJhdGluZyBndWlkZQotLS0KClVzZSB0aGUgcmVwb3NpdG9yeeKAmXMgbGFiZWwgdGF4b25vbXkuIENvbXBhcmUgc3ltcHRvbXMgYW5kIHJlcHJvZHVjdGlvbnMgYmVmb3JlIHByb3Bvc2luZyBkdXBsaWNhdGVzLiBTaG93IGFtYmlndW91cyBjYXNlcyBhbmQgYXNrIGJlZm9yZSB1cGRhdGluZyBhbiBpc3N1ZS4K"
+          }
+        ]
+      }
+    ],
+    "needs": {
+      "software": [],
+      "connectedAccounts": [
+        {
+          "key": "github",
+          "name": "GitHub",
+          "requirement": "required",
+          "purpose": "Read work and check its current state.",
+          "skipConsequence": "GitHub work cannot be read in this Bot.",
+          "serviceId": "github"
+        }
+      ],
+      "mcpServers": [],
+      "channels": []
+    },
+    "pausedWorkflows": [
+      {
+        "kind": "sourceBound",
+        "key": "issue-sorter",
+        "title": "Issue opens",
+        "definition": {
+          "version": 1,
+          "defaults": {
+            "conversation": {
+              "kind": "origin_session"
+            }
+          },
+          "inputs": [],
+          "blocks": [
+            {
+              "kind": "step",
+              "id": "check",
+              "name": "Issue opens",
+              "document": {
+                "text": "Sort the ten newest issues and show you the labels before saving.",
+                "references": [],
+                "attachments": []
+              },
+              "input": [],
+              "result": {
+                "kind": "text"
+              }
+            }
+          ],
+          "finalOutput": {
+            "kind": "result",
+            "producer": {
+              "blockId": "check",
+              "scope": {
+                "kind": "current"
+              }
+            },
+            "path": []
+          }
+        },
+        "source": {
+          "name": "GitHub repository",
+          "trigger": {
+            "kind": "pluginEvent",
+            "eventRef": {
+              "pluginId": "happier.scm.forge.github",
+              "localId": "automation/issue-opened-v1"
+            }
+          }
+        }
+      },
+      {
+        "kind": "memoryUpkeep",
+        "key": "weekly-memory-upkeep"
+      }
+    ],
+    "workedExample": {
+      "request": "Sort the newest issues.",
+      "reply": "I drafted labels for eight issues. #151 may duplicate #118 but has different reproduction steps. #153 needs its platform and app version before I can classify it."
+    },
+    "firstTask": "Sort the ten newest issues and show you the labels before saving."
+  }
+}

@@ -17,5 +17,12 @@ const words = {
 
 export function botStoreTranslations(language: SupportedLanguage) {
     const [fromTemplate, storeDescription, storeSearch, fromStore, sharedWithYou, sharedWithYouDescription, fromStoreDescription, sharedEmptyTitle, sharedEmptyBody] = words[language];
-    return { fromTemplate, storeDescription, storeSearch, fromStore, sharedWithYou, sharedWithYouDescription, fromStoreDescription, sharedEmptyTitle, sharedEmptyBody };
+    return { fromHappier: FROM_HAPPIER[language] ?? 'From Happier', fromTemplate, storeDescription, storeSearch, fromStore, sharedWithYou, sharedWithYouDescription, fromStoreDescription, sharedEmptyTitle, sharedEmptyBody };
 }
+
+
+const FROM_HAPPIER: Partial<Record<SupportedLanguage, string>> = {
+    fr: 'Par Happier', de: 'Von Happier', es: 'De Happier', it: 'Da Happier', pt: 'Da Happier',
+    ca: 'De Happier', ja: 'Happier 提供', ru: 'От Happier', pl: 'Od Happier',
+    'zh-Hans': '来自 Happier', 'zh-Hant': '來自 Happier',
+};

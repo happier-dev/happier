@@ -1,9 +1,11 @@
 import * as React from 'react';
 import { BotTemplateArtifactHeaderV1Schema, type BotTemplateInstanceV1 } from '@happier-dev/protocol/bots/templates/botTemplateV1';
 import { readBotTemplateUpdateOfferV1 } from '@happier-dev/protocol/bots/templates/botTemplateActionsV1';
+import { readBundledBotTemplate } from '@happier-dev/plugins-bot-templates/catalog';
 import { useArtifactRows } from '@/sync/domains/state/storage';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { t } from '@/text';
 
 export type BotTemplateFollowOffer = Readonly<{
     offer: ReturnType<typeof readBotTemplateUpdateOfferV1>;
@@ -47,6 +49,9 @@ export function useBotTemplateReleasedHeader(source: Readonly<{ serverId: string
 export function useBotTemplateFollowOffer(instance: BotTemplateInstanceV1): BotTemplateFollowOffer | null {
     const source = instance.source.kind === 'artifact' && instance.follow ? instance.source : null;
     const released = useBotTemplateReleasedHeader(source);
+    const bundled = instance.source.kind === 'plugin' ? readBundledBotTemplate(instance.source, 'update') : null;
+    if (bundled) return { offer: readBotTemplateUpdateOfferV1(instance, bundled.version),
+        name: bundled.content.identity.name, author: t('botTemplates.fromHappier'), version: bundled.version };
     return released ? { offer: readBotTemplateUpdateOfferV1(instance, released.version), name: released.title,
         author: released.author, version: released.version } : null;
 }

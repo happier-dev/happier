@@ -1,0 +1,131 @@
+{
+  "v": 1,
+  "version": "1.0.0",
+  "releasedAtMs": 0,
+  "changelog": "First release.",
+  "content": {
+    "v": 1,
+    "identity": {
+      "name": "Dependency gardener",
+      "description": "Keeps dependencies current: one pull request per group, tests run first.",
+      "face": {
+        "seed": "Dependency gardener",
+        "pet": {
+          "kind": "builtIn",
+          "petId": "titi"
+        }
+      }
+    },
+    "instructions": {
+      "markdown": "Read the repository’s lockfile, package-manager declaration and update policy. Group compatible updates. Run the project’s tests and ask before opening a pull request."
+    },
+    "memoryRules": [
+      {
+        "key": "job-context",
+        "text": "Remember approved update groups, supported versions, and the repository’s validation commands."
+      }
+    ],
+    "skills": [
+      {
+        "key": "dependency-gardener",
+        "title": "Dependency gardener guide",
+        "bundleSchemaId": "skills.skill_md_v1",
+        "entries": [
+          {
+            "path": "SKILL.md",
+            "contentKind": "utf8",
+            "contentBase64": "LS0tCm5hbWU6IGRlcGVuZGVuY3ktZ2FyZGVuZXIKZGVzY3JpcHRpb246IERlcGVuZGVuY3kgZ2FyZGVuZXIgb3BlcmF0aW5nIGd1aWRlCi0tLQoKUmVhZCB0aGUgcmVwb3NpdG9yeeKAmXMgbG9ja2ZpbGUsIHBhY2thZ2UtbWFuYWdlciBkZWNsYXJhdGlvbiBhbmQgdXBkYXRlIHBvbGljeS4gR3JvdXAgY29tcGF0aWJsZSB1cGRhdGVzLiBSdW4gdGhlIHByb2plY3TigJlzIHRlc3RzIGFuZCBhc2sgYmVmb3JlIG9wZW5pbmcgYSBwdWxsIHJlcXVlc3QuCg=="
+          }
+        ]
+      }
+    ],
+    "needs": {
+      "software": [
+        {
+          "key": "package-manager",
+          "name": "Your package manager",
+          "requirement": "required",
+          "purpose": "Use the project’s package manager to update the lockfile and validate changes.",
+          "skipConsequence": "Dependency changes cannot be validated on this Machine.",
+          "recipe": {
+            "pluginId": "happier.machine.recipes",
+            "recipeId": "install-package",
+            "revision": "1"
+          }
+        }
+      ],
+      "connectedAccounts": [
+        {
+          "key": "github",
+          "name": "GitHub",
+          "requirement": "required",
+          "purpose": "Read work and check its current state.",
+          "skipConsequence": "GitHub work cannot be read in this Bot.",
+          "serviceId": "github"
+        }
+      ],
+      "mcpServers": [],
+      "channels": []
+    },
+    "pausedWorkflows": [
+      {
+        "kind": "inline",
+        "key": "dependency-gardener",
+        "title": "Check dependencies",
+        "definition": {
+          "version": 1,
+          "defaults": {
+            "conversation": {
+              "kind": "origin_session"
+            }
+          },
+          "inputs": [],
+          "blocks": [
+            {
+              "kind": "step",
+              "id": "check",
+              "name": "Check dependencies",
+              "document": {
+                "text": "List what is out of date and propose the first group.",
+                "references": [],
+                "attachments": []
+              },
+              "input": [],
+              "result": {
+                "kind": "text"
+              }
+            }
+          ],
+          "finalOutput": {
+            "kind": "result",
+            "producer": {
+              "blockId": "check",
+              "scope": {
+                "kind": "current"
+              }
+            },
+            "path": []
+          }
+        },
+        "trigger": {
+          "kind": "schedule",
+          "schedule": {
+            "kind": "cron",
+            "scheduleExpr": "0 9 * * 1",
+            "everyMs": null,
+            "timezone": null
+          }
+        }
+      },
+      {
+        "kind": "memoryUpkeep",
+        "key": "weekly-memory-upkeep"
+      }
+    ],
+    "workedExample": {
+      "request": "What should we update first?",
+      "reply": "The three test-tooling patch releases can go together. The runtime major changes its config format, so I’d handle it separately. I’ll run the project’s tests before asking you to open a PR."
+    },
+    "firstTask": "List what is out of date and propose the first group."
+  }
+}

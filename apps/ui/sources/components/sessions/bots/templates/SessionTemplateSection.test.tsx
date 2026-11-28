@@ -31,6 +31,7 @@ import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccoun
 import { resolveFreshMachineAdministrationExecutionTarget } from '@/sync/domains/machines/administration/executionTarget';
 import { router } from 'expo-router';
 import { buildBotTemplateRecipientRoute } from './botTemplateRecipientDestination';
+import { listBundledBotTemplates } from '@happier-dev/plugins-bot-templates/catalog';
 
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
@@ -39,6 +40,27 @@ vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNati
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 
 describe('Template Info slot', () => {
+    it('opens the shipped template through the preview Action without a Machine or a marketplace read', async () => {
+        const home = await createPlainArtifactHomeFixture('https://bundled-template.test', { currentAccount: true });
+        const { source } = listBundledBotTemplates().find(entry => entry.identity.name === 'PR reviewer')!;
+        try {
+            const { createUiBotTemplateAction } = await import('@/sync/ops/actions/botTemplateActionDeps');
+            const { createActionExecutor } = await import('@happier-dev/protocol');
+            const account = await captureLazyActionAccountContext(home.home.id);
+            try {
+                const execute = createUiBotTemplateAction(account, () => {});
+                const executor = createActionExecutor({ botTemplateAction: args => execute(args) });
+                const context = { surface: 'ui', authority: 'present_user', serverId: home.home.id } as const;
+                expect(await executor.execute('template.preview', { source }, context)).toMatchObject({
+                    ok: true, result: { source, release: { content: { identity: { name: 'PR reviewer' },
+                        workedExample: { request: expect.any(String), reply: expect.any(String) } } } },
+                });
+                expect(await executor.execute('template.preview', { source: { ...source, contributionId: 'private-file' } }, context))
+                    .toMatchObject({ ok: false, errorCode: 'source_unavailable' });
+            } finally { account.dispose(); }
+        } finally { await home.dispose(); }
+    });
+
     it('opens the ordinary Automations editor with a paused draft for the linked PR', async () => {
         const home = await createPlainArtifactHomeFixture('https://template-pr-prefill.test', { currentAccount: true });
         const account = await captureLazyActionAccountContext(home.home.id);

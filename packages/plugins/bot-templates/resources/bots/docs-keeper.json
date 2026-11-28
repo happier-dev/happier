@@ -1,0 +1,114 @@
+{
+  "v": 1,
+  "version": "1.0.0",
+  "releasedAtMs": 0,
+  "changelog": "First release.",
+  "content": {
+    "v": 1,
+    "identity": {
+      "name": "Docs keeper",
+      "description": "Finds pages that no longer match the code and opens a docs pull request.",
+      "face": {
+        "seed": "Docs keeper"
+      }
+    },
+    "instructions": {
+      "markdown": "Compare claims and examples with their current implementation. Link every verified mismatch to its source, run the docs checks, and ask before opening a pull request."
+    },
+    "memoryRules": [
+      {
+        "key": "job-context",
+        "text": "Remember which sources own public commands, flags, and examples."
+      }
+    ],
+    "skills": [
+      {
+        "key": "docs-keeper",
+        "title": "Docs keeper guide",
+        "bundleSchemaId": "skills.skill_md_v1",
+        "entries": [
+          {
+            "path": "SKILL.md",
+            "contentKind": "utf8",
+            "contentBase64": "LS0tCm5hbWU6IGRvY3Mta2VlcGVyCmRlc2NyaXB0aW9uOiBEb2NzIGtlZXBlciBvcGVyYXRpbmcgZ3VpZGUKLS0tCgpDb21wYXJlIGNsYWltcyBhbmQgZXhhbXBsZXMgd2l0aCB0aGVpciBjdXJyZW50IGltcGxlbWVudGF0aW9uLiBMaW5rIGV2ZXJ5IHZlcmlmaWVkIG1pc21hdGNoIHRvIGl0cyBzb3VyY2UsIHJ1biB0aGUgZG9jcyBjaGVja3MsIGFuZCBhc2sgYmVmb3JlIG9wZW5pbmcgYSBwdWxsIHJlcXVlc3QuCg=="
+          }
+        ]
+      }
+    ],
+    "needs": {
+      "software": [],
+      "connectedAccounts": [
+        {
+          "key": "github",
+          "name": "GitHub",
+          "requirement": "required",
+          "purpose": "Read work and check its current state.",
+          "skipConsequence": "GitHub work cannot be read in this Bot.",
+          "serviceId": "github"
+        }
+      ],
+      "mcpServers": [],
+      "channels": []
+    },
+    "pausedWorkflows": [
+      {
+        "kind": "inline",
+        "key": "docs-keeper",
+        "title": "Check for docs drift",
+        "definition": {
+          "version": 1,
+          "defaults": {
+            "conversation": {
+              "kind": "origin_session"
+            }
+          },
+          "inputs": [],
+          "blocks": [
+            {
+              "kind": "step",
+              "id": "check",
+              "name": "Check for docs drift",
+              "document": {
+                "text": "List the pages that drifted from the code.",
+                "references": [],
+                "attachments": []
+              },
+              "input": [],
+              "result": {
+                "kind": "text"
+              }
+            }
+          ],
+          "finalOutput": {
+            "kind": "result",
+            "producer": {
+              "blockId": "check",
+              "scope": {
+                "kind": "current"
+              }
+            },
+            "path": []
+          }
+        },
+        "trigger": {
+          "kind": "schedule",
+          "schedule": {
+            "kind": "cron",
+            "scheduleExpr": "0 9 * * 5",
+            "everyMs": null,
+            "timezone": null
+          }
+        }
+      },
+      {
+        "kind": "memoryUpkeep",
+        "key": "weekly-memory-upkeep"
+      }
+    ],
+    "workedExample": {
+      "request": "Find setup docs that no longer match.",
+      "reply": "The setup guide still lists the old environment variable. I found the replacement in the config schema and drafted a small docs diff with a checked example."
+    },
+    "firstTask": "List the pages that drifted from the code."
+  }
+}

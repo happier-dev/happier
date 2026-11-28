@@ -1,0 +1,115 @@
+{
+  "v": 1,
+  "version": "1.0.0",
+  "releasedAtMs": 0,
+  "changelog": "First release.",
+  "content": {
+    "v": 1,
+    "identity": {
+      "name": "CI fixer",
+      "description": "Watches failing checks on your branches, explains the cause and proposes a fix.",
+      "face": {
+        "seed": "CI fixer"
+      }
+    },
+    "instructions": {
+      "markdown": "Find the first actionable failure in the actual job logs. Compare it with the last passing run, reproduce narrowly, and present the smallest verified change for review."
+    },
+    "memoryRules": [
+      {
+        "key": "job-context",
+        "text": "Record confirmed failure signatures and fixes separately from unverified hypotheses."
+      }
+    ],
+    "skills": [
+      {
+        "key": "ci-fixer",
+        "title": "CI fixer guide",
+        "bundleSchemaId": "skills.skill_md_v1",
+        "entries": [
+          {
+            "path": "SKILL.md",
+            "contentKind": "utf8",
+            "contentBase64": "LS0tCm5hbWU6IGNpLWZpeGVyCmRlc2NyaXB0aW9uOiBDSSBmaXhlciBvcGVyYXRpbmcgZ3VpZGUKLS0tCgpGaW5kIHRoZSBmaXJzdCBhY3Rpb25hYmxlIGZhaWx1cmUgaW4gdGhlIGFjdHVhbCBqb2IgbG9ncy4gQ29tcGFyZSBpdCB3aXRoIHRoZSBsYXN0IHBhc3NpbmcgcnVuLCByZXByb2R1Y2UgbmFycm93bHksIGFuZCBwcmVzZW50IHRoZSBzbWFsbGVzdCB2ZXJpZmllZCBjaGFuZ2UgZm9yIHJldmlldy4K"
+          }
+        ]
+      }
+    ],
+    "needs": {
+      "software": [],
+      "connectedAccounts": [
+        {
+          "key": "github",
+          "name": "GitHub",
+          "requirement": "required",
+          "purpose": "Read work and check its current state.",
+          "skipConsequence": "GitHub work cannot be read in this Bot.",
+          "serviceId": "github"
+        }
+      ],
+      "mcpServers": [],
+      "channels": []
+    },
+    "pausedWorkflows": [
+      {
+        "kind": "sourceBound",
+        "key": "ci-fixer",
+        "title": "Checks fail on your branches",
+        "definition": {
+          "version": 1,
+          "defaults": {
+            "conversation": {
+              "kind": "origin_session"
+            }
+          },
+          "inputs": [],
+          "blocks": [
+            {
+              "kind": "step",
+              "id": "check",
+              "name": "Checks fail on your branches",
+              "document": {
+                "text": "Explain the last failing run on your branch.",
+                "references": [],
+                "attachments": []
+              },
+              "input": [],
+              "result": {
+                "kind": "text"
+              }
+            }
+          ],
+          "finalOutput": {
+            "kind": "result",
+            "producer": {
+              "blockId": "check",
+              "scope": {
+                "kind": "current"
+              }
+            },
+            "path": []
+          }
+        },
+        "source": {
+          "name": "GitHub repository",
+          "trigger": {
+            "kind": "pluginEvent",
+            "eventRef": {
+              "pluginId": "happier.scm.forge.github",
+              "localId": "automation/pull-request-checks-failed-v1"
+            }
+          }
+        }
+      },
+      {
+        "kind": "memoryUpkeep",
+        "key": "weekly-memory-upkeep"
+      }
+    ],
+    "workedExample": {
+      "request": "Why did the latest check fail?",
+      "reply": "The Linux job failed while reading the test fixture after the path changed in #2481. I reproduced it and drafted the fixture-path change for review."
+    },
+    "firstTask": "Explain the last failing run on your branch."
+  }
+}

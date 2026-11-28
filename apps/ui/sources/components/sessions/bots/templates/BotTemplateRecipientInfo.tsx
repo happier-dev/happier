@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { BotTemplateInstanceV1, BotTemplateSourceSessionRefV1 } from '@happier-dev/protocol/bots/templates/botTemplateV1';
+import { isBundledBotTemplateSource } from '@happier-dev/plugins-bot-templates/catalog';
 import { BotTemplateFollowResultV1Schema } from '@happier-dev/protocol/bots/templates/botTemplateActionsV1';
 import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { Item } from '@/components/ui/lists/Item';
@@ -47,7 +48,7 @@ export function BotTemplateRecipientInfo({ instance: suppliedInstance, serverId,
         </>;
         return renderTemplate ? renderTemplate({ name: current?.name ?? null, author: current?.author ?? null, availableVersion, review, details }) : details;
     };
-    return instance.follow && instance.source.kind === 'plugin'
+    return instance.follow && instance.source.kind === 'plugin' && !isBundledBotTemplateSource(instance.source)
         ? <React.Suspense fallback={present(null)}><PluginFollowOffer instance={{ ...instance, source: instance.source }} serverId={serverId}>
             {present}</PluginFollowOffer></React.Suspense> : present(offer);
 }
