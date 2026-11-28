@@ -49,6 +49,12 @@ export async function observeExternalSessionBirth(params: Readonly<{
 
   const localId = actionInput.data.initialInput ? buildSessionSpawnInitialInputLocalIdV1({ sessionCreationTag: tag }) : null;
   if (actionInput.data.initialInput && !localId) return null;
+  const placement = actionInput.data.sessionPlacement;
+  if (localId && placement?.kind === 'machine' && placement.configuredSandbox
+    && session.active === false && session.seq === 0 && session.runtimeActivityRevision === 0) {
+    // Birth is committed. The runner and first input still belong to the original launch.
+    return { type: 'pending', outcome: 'accepted', retryWithSameCreationKey: true, sessionId: session.id };
+  }
   return {
     type: 'success',
     disposition: 'rejoined',

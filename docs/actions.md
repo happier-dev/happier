@@ -2033,14 +2033,19 @@ Once the request reaches the daemon, the Session creation operation owns startup
 and first-input settlement. A caller with the operation address can read the
 terminal result through `action.operations.get` on a new connection.
 
-If a managed guest loses the completion acknowledgement for `session.spawn_new`,
-Home keeps the original invocation open for the same guest to reconnect. The
-guest reads the Session by its original creation identity and verifies the
-signed request digest retained in owner metadata. An exact match returns the
-committed Session without claiming initial-input delivery. If the lookup finds
-no Session, the caller gets a retryable `spawn_failed` with
-`daemon_reconnected_before_session_birth_confirmed`. Retry uses the same
-creation identity. Home never resends the start automatically.
+If the daemon socket disconnects during `session.spawn_new`, Home can observe
+the original invocation on a replacement socket from the admitted installation
+while the caller is connected. A configured sandbox uses the paired controller
+for this observation. The daemon reads the Session by the original creation
+identity and checks the signed request digest in owner metadata. A matching
+configured-sandbox birth with an initial input, an inactive Session, and zero
+transcript sequence and runtime activity revision returns an accepted pending
+receipt. It identifies the Session and instructs the caller to retry with the
+same creation key. If the lookup finds no Session, the caller gets a retryable
+`spawn_failed` with `daemon_reconnected_before_session_birth_confirmed`.
+Other matching births return the committed Session with the observed input
+disposition. Observation reads the existing birth. It does not start a runner or
+submit input again.
 The diagnostic is an unreleased 0.3 source-contract correction; load Home and its
 consuming Protocol/UI/CLI/SDK closure together. An older closed reader may refuse
 the richer envelope; this change introduces no compatibility retry or downgrade.

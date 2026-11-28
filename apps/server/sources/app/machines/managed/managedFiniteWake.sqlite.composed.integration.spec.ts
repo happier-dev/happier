@@ -2015,21 +2015,43 @@ describe('finite managed wake original Action authority (real storage)', () => {
         expect(methods.filter(method => method === guestMethod)).toHaveLength(disposition === 'failed' || disposition === 'cancelled' ? 0 : 1);
     });
 
-    it.each(['committed', 'missing'] as const)('settles a managed Session start after the guest reconnects (%s)', async birth => {
+    it.each([
+        { receiver: 'guest', birth: 'committed', replacement: 'same installation' },
+        { receiver: 'guest', birth: 'missing', replacement: 'same installation' },
+        { receiver: 'controller', birth: 'committed', replacement: 'same installation' },
+        { receiver: 'controller', birth: 'committed', replacement: 'different installation' },
+        { receiver: 'controller', birth: 'missing', replacement: 'same installation' },
+    ] as const)('settles a signed Session start after the $receiver reconnects ($birth, $replacement)', async ({ receiver, birth, replacement: replacementKind }) => {
         const test = await setup();
-        await db.machine.update({ where: { id: test.guest.id }, data: { active: true, lastActiveAt: new Date() } });
+        const machine = test[receiver];
+        await db.machine.update({ where: { id: machine.id }, data: { active: true, lastActiveAt: new Date() } });
+        if (receiver === 'controller') {
+            await db.managedMachine.update({ where: { id: test.row.id }, data: {
+                enrolledMachineId: null, admittedInput: { acquisitionMode: 'resource-bound', enrollmentAccountId: test.account.id },
+            } });
+        }
         const actionId = 'session.spawn_new';
+        const executionTarget = { serverId: homeId, machineId: machine.id };
         const envelope = { v: 1 as const, requestId: test.requestId,
-            target: { kind: 'machine' as const, machineId: test.guest.id },
+            target: { kind: 'machine' as const, machineId: machine.id },
             input: { creationKey: test.requestId,
-                executionTarget: { serverId: homeId, machineId: test.guest.id }, directory: { kind: 'managed' },
+                executionTarget, directory: receiver === 'controller'
+                    ? { kind: 'path' as const, path: '/work' } : { kind: 'managed' as const },
                 organizationPlacement: { sectionId: null, tagIds: [] },
+                ...(receiver === 'controller' ? {
+                    sessionPlacement: { kind: 'machine', target: executionTarget, configuredSandbox: {
+                        kind: 'sandbox', configuredSandboxId: 'test-sandbox', lifecycle: 'fresh',
+                        provisioner: { pluginId: 'happier.machine.lima', localId: 'lima' }, presetId: 'test-preset',
+                    } },
+                    initialInput: { text: 'Send once' },
+                } : {}),
                 agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
             } };
         const outcome = birth === 'committed'
-            ? { type: 'success', disposition: 'rejoined', sessionId: 'committed-session',
-                executionTarget: envelope.input.executionTarget,
-                organizationPlacement: { sectionId: null, tagIds: [] }, initialInput: { status: 'notRequested' } }
+            ? receiver === 'controller'
+                ? { type: 'pending', outcome: 'accepted', retryWithSameCreationKey: true, sessionId: 'committed-session' }
+                : { type: 'success', disposition: 'rejoined', sessionId: 'committed-session', executionTarget,
+                    organizationPlacement: { sectionId: null, tagIds: [] }, initialInput: { status: 'notRequested' } }
             : { type: 'error', code: 'spawn_failed', retryable: true,
                 failureCause: { phase: 'session.creation', errorClass: 'Error', errorCode: 'spawn_failed',
                     nativeErrorReason: 'daemon_reconnected_before_session_birth_confirmed', httpStatus: null } };
@@ -2038,37 +2060,44 @@ describe('finite managed wake original Action authority (real storage)', () => {
         });
         const deliveries: Array<readonly [string, true | undefined]> = [];
         let reconnected = false;
-        const guestSocket = (id: string) => ({
+        const machineSocket = (id: string, installationId = machine.installationId) => ({
             id,
             data: { clientType: 'machine-scoped', userId: test.account.id,
-                machineId: test.guest.id, verifiedMachineInstallationId: test.guest.installationId },
+                machineId: machine.id, verifiedMachineInstallationId: installationId },
             timeout: () => ({
                 emitWithAck: async (_event: string, request: { params: unknown }) => {
                     const relay = ExternalActionDaemonDispatchRequestSchema.parse(request.params);
                     deliveries.push([id, relay.observeSessionBirth]);
                     expect(relay.envelope).toEqual(envelope);
-                    expect(relay.executionAuthorization?.binding.machineId).toBe(test.guest.id);
-                    if (id === 'original-guest') {
+                    expect(relay.executionAuthorization?.binding.machineId).toBe(machine.id);
+                    if (id === 'original-daemon') {
                         reconnected = true;
-                        throw Object.assign(new Error('Guest dropped its completion ACK'), { code: 'SOCKET_DISCONNECTED' });
+                        throw Object.assign(new Error('Daemon disconnected before the completion ACK'), { code: 'SOCKET_DISCONNECTED' });
                     }
                     return createExternalActionDaemonDispatchResponseV1(response);
                 },
             }),
         });
-        const original = guestSocket('original-guest');
-        const replacement = guestSocket('replacement-guest');
+        const original = machineSocket('original-daemon');
+        const sameInstallation = replacementKind === 'same installation';
+        const replacement = machineSocket('replacement-daemon', sameInstallation ? machine.installationId : randomUUID());
         for (const socket of [original, replacement]) qualifyCurrentAccountStoredContentSocket(socket);
-        const methodRoom = `rpc:${test.account.id}:${test.guest.id}:${EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1}`;
+        const methodRoom = `rpc:${test.account.id}:${machine.id}:${EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1}`;
         const io = createSocketRoomDiscoveryHarness(async room => {
             const current = reconnected ? replacement : original;
             return room === methodRoom || room === current.id ? [current] : [];
         });
         const dispatch = createExternalActionDaemonDispatcher({ io });
-        await expect(dispatch({ actionId, envelope, principal: { accountId: test.account.id, authority: 'present_user',
+        const result = await dispatch({ actionId, envelope, principal: { accountId: test.account.id, authority: 'present_user',
             authentication: { kind: 'account', tokenEpoch: test.account.tokenEpoch } } },
-        { signal: new AbortController().signal })).resolves.toMatchObject({ kind: 'response', prepared: response });
-        expect(deliveries).toEqual([['original-guest', undefined], ['replacement-guest', true]]);
+        { signal: new AbortController().signal });
+        if (!sameInstallation) {
+            expect(deliveries).toEqual([['original-daemon', undefined]]);
+            expect(result).toEqual({ kind: 'submitted_unknown', cause: { reason: 'daemon_acknowledgement_lost' } });
+        } else {
+            expect(deliveries).toEqual([['original-daemon', undefined], ['replacement-daemon', true]]);
+            expect(result).toMatchObject({ kind: 'response', prepared: response });
+        }
     });
 
     it.each(['cancel', 'unknown', 'credential-retired'] as const)('preserves local wake cancellation and next-destination admission (%s)', async disposition => {

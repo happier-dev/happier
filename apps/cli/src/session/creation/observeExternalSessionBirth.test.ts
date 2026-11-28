@@ -29,13 +29,22 @@ const correspondence = buildSessionCreationCorrespondence({
 describe('observeExternalSessionBirth', () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it.each(['different submission', 'matching submission', 'no Session', 'unknown Account mode'] as const)('settles %s using only the committed row', async scenario => {
+  it.each(['different submission', 'matching submission', 'unstarted configured sandbox', 'started configured sandbox', 'no Session', 'unknown Account mode'] as const)('settles %s using only the committed row', async scenario => {
+    const sandbox = scenario === 'unstarted configured sandbox' || scenario === 'started configured sandbox';
+    const observedInput = sandbox ? { ...actionInput, sessionPlacement: {
+      kind: 'machine', target: actionInput.executionTarget, configuredSandbox: {
+        kind: 'sandbox', configuredSandboxId: 'test-sandbox', lifecycle: 'fresh',
+        provisioner: { pluginId: 'happier.machine.lima', localId: 'lima' }, presetId: 'test-preset',
+      },
+    } } : actionInput;
     const fields = buildSessionMetadataEnvelopeCreateFields({ credentials, accountEncryptionMode: 'plain',
       storedContentMode: 'plain', agentState: null, metadata: { path: '/guest/session', host: 'guest', machineId: 'guest',
         sessionCreationCorrespondenceV1: { ...correspondence,
           externalActionRequestDigest: scenario === 'different submission' ? 'b'.repeat(43) : digest } } });
     const session = createCurrentSessionProjectionRecordFixture({ ...createSessionNotificationContextFixture('committed-session'),
       encryptionMode: 'plain', share: null, active: false, archivedAt: null, dataEncryptionKey: null,
+      runtimeActivityState: 'unknown', runtimeActivityActiveCount: 0, runtimeActivityObservedAt: null,
+      runtimeActivityRevision: scenario === 'started configured sandbox' ? 1 : 0,
       metadataLayoutVersion: fields.metadataLayoutVersion, metadata: fields.sharedMetadata.ciphertext,
       ownerMetadata: fields.ownerMetadata });
     const request = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
@@ -46,10 +55,13 @@ describe('observeExternalSessionBirth', () => {
     const externalActionExecutionAuthorization = scenario === 'unknown Account mode'
       ? { ...authorization, binding: { ...authorization.binding, accountEncryptionMode: undefined } }
       : authorization;
-    const result = await observeExternalSessionBirth({ credentials, actionInput,
+    const result = await observeExternalSessionBirth({ credentials, actionInput: observedInput,
       context: { authority: 'present_user', externalActionExecutionAuthorization } });
     if (scenario === 'different submission') expect(result).toBeNull();
-    if (scenario === 'matching submission') expect(result).toMatchObject({ type: 'success', sessionId: 'committed-session',
+    if (scenario === 'unstarted configured sandbox') expect(result).toEqual({
+      type: 'pending', outcome: 'accepted', retryWithSameCreationKey: true, sessionId: 'committed-session',
+    });
+    if (scenario === 'matching submission' || scenario === 'started configured sandbox') expect(result).toMatchObject({ type: 'success', sessionId: 'committed-session',
       initialInput: { status: 'outcomeUnknown', localId: expect.any(String) } });
     if (scenario === 'no Session') expect(result).toMatchObject({ type: 'error', code: 'spawn_failed', retryable: true,
       failureCause: { nativeErrorReason: 'daemon_reconnected_before_session_birth_confirmed' } });

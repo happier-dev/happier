@@ -1058,9 +1058,14 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
         if (submittedUnknown && (forwarded.kind === 'failed' || !forwarded.value.ok)
             && request.actionId === 'session.spawn_new' && targetSocketId && signal && !signal.aborted) {
             const previousSocketId = targetSocketId;
+            const disconnectedAfterSubmit = forwarded.kind === 'ready' && !forwarded.value.ok
+                && forwarded.value.errorCode === RPC_ERROR_CODES.OUTCOME_UNKNOWN;
             const recovered = await runDispatchPhase('daemon_forward', machineId, async () => {
-                if (!await readManagedGuestActivityPublicationRowInTx(db, { accountId: relay.targetUserId,
-                    machineId, installationId: relay.admittedMachineTarget.installationId })) return null;
+                // A resource-bound sandbox keeps Action custody on its paired controller.
+                // Unclassified ACK failures retain the enrolled-guest recovery path.
+                if (!disconnectedAfterSubmit && !await readManagedGuestActivityPublicationRowInTx(db, {
+                    accountId: relay.targetUserId, machineId, installationId: relay.admittedMachineTarget.installationId,
+                })) return null;
                 // Only the replacement socket observes birth. The original effect is never resubmitted.
                 return forwardRpc({
                     ...relay,
