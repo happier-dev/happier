@@ -19,7 +19,7 @@ import type {
   AgentSessionModelsService,
   AgentSessionOpenRequest,
 } from '@happier-dev/plugin-sdk/agents/runtime';
-import { AgentSessionRuntimeEventSchema, resolvePromptCacheLastUseAtMs } from '@happier-dev/plugin-sdk/agents/runtime';
+import { AgentSessionRuntimeEventSchema, canPublishSessionResumeIdentity, resolvePromptCacheLastUseAtMs } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { PluginDiagnosticData } from '@happier-dev/plugin-sdk';
 import type {
   ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
@@ -579,6 +579,16 @@ function createRuntimeOperations(params: Readonly<{
   let joinHeldTurn = params.adoptsHeldAgent === true;
   let activeTurnJoinedInProgress = false;
 
+  function publishResumeIdentity(evidence: Parameters<typeof canPublishSessionResumeIdentity>[0]): void {
+    if (!sessionId || publishedProviderSessionId === sessionId || !canPublishSessionResumeIdentity(evidence)) return;
+    publishedProviderSessionId = sessionId;
+    params.publishRuntimeEvent({
+      kind: 'provider-session-id',
+      emittedAtMs: Date.now(),
+      providerSessionId: sessionId,
+    });
+  }
+
   function beginTurn(
     agentTurnId: string | null = null,
     turnId: string = randomUUID(),
@@ -877,6 +887,11 @@ function createRuntimeOperations(params: Readonly<{
       return;
     }
     if (type === 'turn_end') {
+      // Pi appends the assistant message before emitting turn_end. The ID in
+      // get_state alone is allocated before the native conversation is saved.
+      if (isRecord(record.message) && record.message.role === 'assistant') {
+        publishResumeIdentity({ isExistingResume: false, hasResumeEvidence: true });
+      }
       if (agentTurnId) readOrBeginTurn(agentTurnId);
       return;
     }
@@ -959,13 +974,8 @@ function createRuntimeOperations(params: Readonly<{
         if (requestedProviderSessionId && requestedProviderSessionId !== sessionId) {
           throw new Error(`Pi session mismatch (expected ${requestedProviderSessionId}, got ${sessionId})`);
         }
-        if (publishedProviderSessionId !== sessionId) {
-          publishedProviderSessionId = sessionId;
-          params.publishRuntimeEvent({
-            kind: 'provider-session-id',
-            emittedAtMs: Date.now(),
-            providerSessionId: sessionId,
-          });
+        if (params.initialSessionId) {
+          publishResumeIdentity({ isExistingResume: true, hasResumeEvidence: false });
         }
         params.refreshCommands?.();
         params.refreshModels?.();
@@ -977,7 +987,8 @@ function createRuntimeOperations(params: Readonly<{
           { type: 'get_state' },
           ownedLifecycle.remainingMs('provider session state'),
         ), 'provider session state');
-        sessionId = readSessionIdFromState(stateBefore.data);
+        let openedState = stateBefore.data;
+        sessionId = readSessionIdFromState(openedState);
         if (!sessionId && !requestedResumeSelector) {
           await ownedLifecycle.waitFor(params.rpc.send(
             { type: 'new_session' },
@@ -987,7 +998,8 @@ function createRuntimeOperations(params: Readonly<{
             { type: 'get_state' },
             ownedLifecycle.remainingMs('provider session state'),
           ), 'provider session state');
-          sessionId = readSessionIdFromState(stateAfter.data);
+          openedState = stateAfter.data;
+          sessionId = readSessionIdFromState(openedState);
         }
         if (!sessionId && requestedResumeSelector && requestedProviderSessionId) {
           sessionId = requestedProviderSessionId;
@@ -995,14 +1007,10 @@ function createRuntimeOperations(params: Readonly<{
         if (!sessionId) {
           throw new Error('Pi did not return a session id');
         }
-        if (publishedProviderSessionId !== sessionId) {
-          publishedProviderSessionId = sessionId;
-          params.publishRuntimeEvent({
-            kind: 'provider-session-id',
-            emittedAtMs: Date.now(),
-            providerSessionId: sessionId,
-          });
-        }
+        publishResumeIdentity({
+          isExistingResume: requestedResumeSelector !== null,
+          hasResumeEvidence: isRecord(openedState) && typeof openedState.messageCount === 'number' && openedState.messageCount > 0,
+        });
         params.refreshCommands?.();
         params.refreshModels?.();
         return sessionId;

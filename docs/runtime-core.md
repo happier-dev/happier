@@ -20,6 +20,12 @@ daemon log for `Pi RPC exited during Session startup` near the failed launch.
 The record uses the invocation correlation ID and carries the redacted stderr
 tail. The Action and stored Session carry the typed exit code.
 
+Pi allocates a native ID at startup. A fresh runtime publishes a resumable
+identity once Pi reports conversation history or finishes a native turn. If
+someone stops before sending anything, the next Send starts a new Pi runtime
+under the existing Happier Session ID. A saved native resume target still uses
+Pi's exact session selector.
+
 In 0.3 development, the Machine Session-start binding for Automation preserves
 the Action's content-free `failureCause` in the existing Session creation
 result. A credential-store read exception returns `spawn_failed` with its

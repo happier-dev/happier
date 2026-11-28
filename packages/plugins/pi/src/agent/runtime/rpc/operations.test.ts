@@ -600,7 +600,7 @@ describe('createPiRuntimeOperations', () => {
     await emit(capture, { type: 'agent_start' });
     await emit(capture, { type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'startup answer' } });
     await emit(capture, { type: 'agent_end' });
-    await ackLastCommand(capture, { sessionId: 'startup-native-session' });
+    await ackLastCommand(capture, { sessionId: 'startup-native-session', messageCount: 2 });
     const runtime = await opening;
     try {
       clock.mockReturnValue(observedAtMs + 1_000);
