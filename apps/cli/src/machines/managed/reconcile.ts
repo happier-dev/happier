@@ -467,7 +467,7 @@ export function createManagedNativeInvocation<NativePolicyAdmission extends true
                     } } : {}),
                     ...(io?.managedNativeCredentials
                         ? { managedNativeCredentials: io.managedNativeCredentials } : {}),
-                    ...(remoteHostWorkspace && (role === 'exec' || role === 'putFile' || role === 'stream')
+                    ...(remoteHostWorkspace && (role === 'inspect' || role === 'exec' || role === 'putFile' || role === 'stream')
                         ? { readBootstrapCredential: async (registerRawForRedaction?: (value: string) => void) => {
                             assertBootstrapCredentialAccount(params, machine);
                             const remoteHostId = readInputPath(machine.launch.choices, remoteHostWorkspace.remoteHostIdPath);

@@ -3,17 +3,22 @@ import { chmod, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { PluginError, type MachineProvisionersService, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import {
-    quoteMachineProvisionerShellArgument as quote, type MachineProvisionerNativeExecResultV1,
-    type MachineProvisionerNativeStreamResultV1,
+    projectMachineProvisionerActionFailure, quoteMachineProvisionerShellArgument as quote,
+    type MachineProvisionerNativeExecResultV1, type MachineProvisionerNativeStreamResultV1,
+    type MachineProvisionerObservationV1,
 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import {
     buildOpenScpCommand, buildOpenSshCommand, createHappierTempDir, MANAGED_NATIVE_GUEST_PLATFORM_COMMAND,
     materializeSshIdentityPrivateKeyToTempFile, parseRemoteHostWorkspaceBindingV1, removeHappierTempDirAsync,
     SSH_PASSWORD_ENV, type OpenSshAuth,
 } from '@happier-dev/plugin-sdk/machine-provisioners/ssh';
-import { SSH_CLIENT_TOOL_ID, type ROLE_SCHEMAS } from './manifest.js';
+import { binding, SSH_CLIENT_TOOL_ID, type ROLE_SCHEMAS } from './manifest.js';
 
 type Connection = Pick<Parameters<typeof buildOpenSshCommand>[0], 'target' | 'port' | 'auth' | 'knownHostsPath' | 'knownHostsMode' | 'sshConfigFile'>;
+
+// Aligned with buildOpenSshCommand's default ConnectTimeout=10 so a TCP-accepting
+// stalled SSH banner or remote shell cannot hang `inspect` for OpenSSH's 45s+ keepalive window.
+const SSH_INSPECT_TIMEOUT_MS = 15_000;
 
 export async function withRemoteHostSsh<T>(input: Pick<MachineProvisionersService, 'materializeBootstrapCredential'>
     & Readonly<{ signal: AbortSignal }>, effect: (connection: Connection) => Promise<T>) {
@@ -70,6 +75,10 @@ export function runSshExec(value: ReturnType<typeof ROLE_SCHEMAS.execInput.parse
         });
         let stdout = Buffer.from(result.stdout);
         let termination = result.termination;
+        if (context.signal.aborted && termination.requestedBy.kind === 'abort'
+            && (termination.observed.kind === 'exit' || termination.observed.kind === 'signal')) {
+            throw new PluginError({ code: 'cancelled', message: 'SSH command execution was cancelled' });
+        }
         if (probing) {
             const eol = stdout.indexOf(10);
             const marker = stdout.subarray(0, eol < 0 ? stdout.length : eol).toString('utf8').trim();
@@ -79,9 +88,30 @@ export function runSshExec(value: ReturnType<typeof ROLE_SCHEMAS.execInput.parse
                 termination = { ...termination, observed: { kind: 'exit', exitCode: 0 } };
             }
         }
-        return { termination, stdoutBase64: stdout.toString('base64'), stderrBase64: '',
-            stdoutTruncated: result.stdoutTruncated, stderrTruncated: false };
+        return { termination, stdoutBase64: stdout.toString('base64'), stderrBase64: Buffer.from(result.stderr).toString('base64'),
+            stdoutTruncated: result.stdoutTruncated, stderrTruncated: result.stderrTruncated };
     });
+}
+
+export async function inspectSsh(_value: ReturnType<typeof ROLE_SCHEMAS.resourceInput.parse>, context: PluginInvocationContext): Promise<MachineProvisionerObservationV1> {
+    const unavailable = (): MachineProvisionerObservationV1 => ({
+        observedAt: context.invokedAtMs, availability: 'unavailable', power: 'unknown',
+        billing: binding.billing, reason: 'provider_unavailable',
+    });
+    try {
+        return await withInvocationSsh(context, async connection => {
+            const invocation = buildOpenSshCommand({ ...connection, sshBin: 'ssh', tty: false, remoteCommand: ['echo ok'] });
+            const { termination } = await runOpenSshInvocation(context, SSH_CLIENT_TOOL_ID, invocation, { timeoutMs: SSH_INSPECT_TIMEOUT_MS });
+            context.signal.throwIfAborted();
+            if (termination.requestedBy.kind === 'none' && termination.observed.kind === 'exit' && termination.observed.exitCode === 0) {
+                return { observedAt: context.invokedAtMs, availability: 'present', power: 'running', storage: 'unknown', billing: binding.billing };
+            }
+            return unavailable();
+        });
+    } catch (error) {
+        context.signal.throwIfAborted();
+        return projectMachineProvisionerActionFailure(error, unavailable);
+    }
 }
 
 export function putSshFile(value: ReturnType<typeof ROLE_SCHEMAS.putFileInput.parse>, context: PluginInvocationContext) {

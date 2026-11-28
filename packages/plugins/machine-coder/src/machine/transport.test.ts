@@ -16,27 +16,47 @@ async function fixture() {
   cleanup.push(() => rm(directory, {recursive:true,force:true}));
   const fake = join(directory, 'coder.mjs');
   // Coder v2.39.0 cli/ssh.go joins post-selector arguments with spaces, then
-  // runs that command with no PTY. This fake is an executable OS boundary.
+  // runs that command with no PTY under `coder agent --no-reap`: killing the
+  // local `coder ssh` client closes remote stdin without sending SIGTERM to the
+  // remote process. This fake models that OS boundary faithfully.
   await writeFile(fake, `import {spawn} from 'node:child_process';
 const args=process.argv.slice(2);const boundary=args.indexOf('--');
 if(args[0]!=='ssh'||args[boundary-1]!=='alice/workspace.main'||args.includes('--tty'))process.exit(90);
 if(!process.env.CODER_SESSION_TOKEN||!process.env.CODER_URL)process.exit(91);
-if(args.slice(boundary+1).join(' ')==="'reflect-private'"){process.stdout.write(process.env.CODER_SESSION_TOKEN);process.exit(0);}
+if(args.slice(boundary+1).includes("'reflect-private'")){process.stdout.write(process.env.CODER_SESSION_TOKEN);process.exit(0);}
 const env={...process.env};delete env.CODER_SESSION_TOKEN;delete env.CODER_URL;
 for(const field of (process.env.CODER_SSH_ENV??'').split(',')){const at=field.indexOf('=');if(at>0)env[field.slice(0,at)]=field.slice(at+1);}
-const child=spawn('sh',['-c','exec '+args.slice(boundary+1).join(' ')],{env,stdio:'inherit'});
-process.on('SIGTERM',()=>{child.kill('SIGTERM');});child.on('exit',(code)=>process.exit(code??255));\n`);
+const detached=args.includes('--disable-autostart')&&!process.env.CODER_SSH_ENV;
+const child=spawn('sh',['-c','exec '+args.slice(boundary+1).join(' ')],{env,stdio:['pipe','inherit','inherit'],detached});
+process.stdin.on('error',()=>{});child.stdin.on('error',()=>{});
+process.stdin.pipe(child.stdin);
+process.on('SIGTERM',()=>{if(detached){child.stdin.end();process.exit(143);}else{child.kill('SIGTERM');}});
+child.on('exit',(code)=>process.exit(code??255));\n`);
   const requests: PluginExecSpawnRequest[] = [];
-  const spawned: Array<{ request: PluginExecSpawnRequest; outputDelivery?: string }> = [];
+  const spawned: Array<{ request: PluginExecSpawnRequest; outputDelivery?: string; stdinChunks: Buffer[] }> = [];
   const exec: Pick<ExecService,'run'|'spawn'> = { spawn: async (request, options) => {
-    spawned.push({ request, outputDelivery: options?.outputDelivery });
+    const stdinChunks: Buffer[] = [];
+    spawned.push({ request, outputDelivery: options?.outputDelivery, stdinChunks });
     const child=spawn(process.execPath,[fake,...(request.args??[])],{env:{...process.env,...request.env},stdio:['pipe','pipe','pipe']});
     const listeners=new Set<(chunk: PluginProcessOutput)=>void>();let sequence=0;
-    child.stdout.on('data',(data:Buffer)=>{for(const listener of listeners)listener({sequence:++sequence,stream:'stdout',data});});
+    const stdout:Buffer[]=[],stderr:Buffer[]=[];let aborted=false;
+    child.stdout.on('data',(data:Buffer)=>{stdout.push(data);for(const listener of listeners)listener({sequence:++sequence,stream:'stdout',data});});
+    child.stderr.on('data',(data:Buffer)=>{stderr.push(data);for(const listener of listeners)listener({sequence:++sequence,stream:'stderr',data});});
+    const abort=()=>{aborted=true;child.kill('SIGTERM');};options?.signal?.addEventListener('abort',abort,{once:true});
     const exited=new Promise<PluginProcessResult['termination']>(resolve=>child.once('exit',(code,signal)=>resolve({
-      observed:signal?{kind:'signal',signal}:{kind:'exit',exitCode:code??255},requestedBy:{kind:'none'}})));
-    const handle = { write: async (data: Uint8Array) => { child.stdin.write(data); }, closeStdin: async () => { child.stdin.end(); },
-      waitForExit: () => exited, onOutput: (listener: (chunk: PluginProcessOutput)=>void) => { listeners.add(listener); return { [Symbol.dispose]() { listeners.delete(listener); } }; },
+      observed:signal?{kind:'signal',signal}:{kind:'exit',exitCode:code??255},requestedBy:aborted?{kind:'abort'}:{kind:'none'}})));
+    const completed=new Promise<PluginProcessResult>((resolve,reject)=>{
+      child.once('error',reject);
+      child.once('close',(code,signal)=>{
+        options?.signal?.removeEventListener('abort',abort);
+        resolve({stdout:Buffer.concat(stdout),stderr:Buffer.concat(stderr),stdoutTruncated:false,stderrTruncated:false,
+          termination:{observed:signal?{kind:'signal',signal}:{kind:'exit',exitCode:code??255},requestedBy:aborted?{kind:'abort'}:{kind:'none'}}});
+      });
+    });
+    if(options?.signal?.aborted)abort();
+    child.stdin.on('error',()=>{});
+    const handle = { write: async (data: Uint8Array) => { stdinChunks.push(Buffer.from(data)); child.stdin.write(data); }, closeStdin: async () => { child.stdin.end(); },
+      waitForExit: () => exited, wait: () => completed, onOutput: (listener: (chunk: PluginProcessOutput)=>void) => { listeners.add(listener); return { [Symbol.dispose]() { listeners.delete(listener); } }; },
       dispose: async () => { child.kill('SIGTERM'); } };
     return handle as unknown as PluginProcessHandle;
   }, run: async (request, options) => {
@@ -66,8 +86,8 @@ describe('Coder native bootstrap at a fake executable process boundary',()=>{
     if(!('stdoutBase64' in result))throw new Error('Missing command bytes');
     expect(Buffer.from(result.stdoutBase64,'base64')).toEqual(bytes);
     expect(Buffer.from(result.stderrBase64,'base64').toString()).toBe("spaces ' quote $HOME ; literal");
-    expect(h.requests[0]?.args).toContain('--disable-autostart');
-    expect(JSON.stringify(h.requests[0]?.args)).not.toContain(token);expect(Buffer.from(h.requests[0]?.stdin??[]).includes(Buffer.from(token))).toBe(false);
+    expect(h.spawned[0]?.request.args).toContain('--disable-autostart');
+    expect(JSON.stringify(h.spawned[0]?.request.args)).not.toContain(token);expect(Buffer.concat(h.spawned[0]?.stdinChunks??[]).includes(Buffer.from(token))).toBe(false);
   });
   it('writes binary fragments privately with reviewed mode and exact guest path',async()=>{
     const h=await fixture();const guestPath=join(h.directory,"private file 'quoted");const bytes=Buffer.alloc(65_792);for(let i=0;i<bytes.length;i++)bytes[i]=i%256;
@@ -84,11 +104,22 @@ describe('Coder native bootstrap at a fake executable process boundary',()=>{
     expect(h.requests[0]?.env?.CODER_SSH_ENV).toContain('HAPPIER_CODER_HOME='+destination);
     expect(JSON.stringify(h.requests[0]?.args)).not.toContain(token);
   });
-  it('does not turn canceled finite native IO or canceled process configuration into success',async()=>{
+  it('terminates the remote process group on abort with zero orphans and throws typed cancelled',async()=>{
     const h=await fixture();
-    const running=h.transport.exec({resource,argv:['sh','-c','exec sleep 30']});
-    const timer=setTimeout(()=>h.controller.abort(),100);cleanup.push(async()=>clearTimeout(timer));
-    expect(await running).toMatchObject({termination:{requestedBy:{kind:'abort'}}});
+    const pidFile=join(h.directory,'guest-sleep.pid');
+    const running=h.transport.exec({resource,argv:['sh','-s'],allowWake:false,inputBase64:Buffer.from(`echo $$ > '${pidFile}'; exec sleep 30\n`).toString('base64')});
+    let guestPid=0;
+    await expect.poll(async()=>{
+      const raw=await readFile(pidFile,'utf8').catch(()=>'');
+      guestPid=Number.parseInt(raw.trim(),10);
+      return Number.isInteger(guestPid)&&guestPid>0;
+    },{timeout:5_000}).toBe(true);
+    cleanup.push(async()=>{try{process.kill(guestPid,'SIGKILL');}catch{}});
+    h.controller.abort();
+    await expect(running).rejects.toMatchObject({code:'cancelled'});
+    await expect.poll(()=>{
+      try{process.kill(guestPid,0);return true;}catch(error){return (error as NodeJS.ErrnoException).code!=='ESRCH';}
+    },{timeout:5_000}).toBe(false);
     const configured=await fixture();const start=configured.transport.exec({resource,argv:['true'],processConfig:{environment:{HOME:'/tmp',HAPPIER_HOME_DIR:'/tmp/.happier'},detachedDaemonStartArgv:['sh','-c','exec sleep 30']}});
     const timer2=setTimeout(()=>configured.controller.abort(),100);cleanup.push(async()=>clearTimeout(timer2));
     await expect(start).rejects.toMatchObject({code:'native_boot_unconfirmed'});
@@ -113,5 +144,62 @@ describe('Coder native bootstrap at a fake executable process boundary',()=>{
     const h=await fixture();const result=await h.transport.exec({resource,argv:['reflect-private']});
     if(!('stdoutBase64'in result))throw new Error('Missing bytes');
     expect(Buffer.from(result.stdoutBase64,'base64').toString()).toBe('[redacted]');
+  });
+  it('hardens guestCommandLifetime for non-sudo kill-first, POSIX sh without bash, BusyBox sleep fallback, and reap-safe watcher',async()=>{
+    const h=await fixture();
+    const result=await h.transport.exec({resource,argv:['sh','-c','echo ok'],allowWake:false});
+    expect(result).toMatchObject({termination:{observed:{kind:'exit',exitCode:0},requestedBy:{kind:'none'}}});
+    const script=h.spawned[0]?.request.args?.find(arg=>arg.includes('stop_group'))??'';
+    expect(script).toContain('sleep 0.2 2>/dev/null || sleep 1');
+    // Plain kill must be attempted before sudo fallback so normal non-sudo Coder sessions avoid sudo noise.
+    const plainKillIndex=script.indexOf('kill -TERM');
+    const sudoKillIndex=script.indexOf('sudo -n -- /bin/kill -TERM');
+    expect(plainKillIndex).toBeGreaterThan(-1);
+    expect(sudoKillIndex).toBeGreaterThan(plainKillIndex);
+    // Guarded POSIX sh execution without bash: works cleanly for normal exit AND abort without invoking sudo.
+    const binDir=join(h.directory,'posix-bin');
+    const sudoLog=join(h.directory,'sudo.log');
+    const {mkdir,chmod}=await import('node:fs/promises');
+    await mkdir(binDir,{recursive:true});
+    // Provide a fake `sudo` that logs any invocation and hides `bash` by omitting it from a minimal PATH.
+    const sudoShim=join(binDir,'sudo');
+    await writeFile(sudoShim,`#!/bin/sh\necho "$@" >> '${sudoLog}'\nexit 1\n`);
+    await chmod(sudoShim,0o755);
+    const {execFileSync}=await import('node:child_process');
+    for(const tool of ['sh','base64','setsid','sleep','cat','kill','echo']){
+      try{
+        const resolved=execFileSync('which',[tool],{encoding:'utf8'}).trim();
+        if(resolved){
+          const {symlink}=await import('node:fs/promises');
+          await symlink(resolved,join(binDir,tool));
+        }
+      }catch{}
+    }
+    const prevPath=process.env.PATH;
+    process.env.PATH=binDir;
+    try{
+      const posixNormal=await h.transport.exec({resource,argv:['sh','-c','cat; exit 7'],allowWake:false,inputBase64:Buffer.from('hello').toString('base64')});
+      expect(posixNormal).toMatchObject({termination:{observed:{kind:'exit',exitCode:7},requestedBy:{kind:'none'}}});
+      if(!('stdoutBase64'in posixNormal))throw new Error('Missing stdout');
+      expect(Buffer.from(posixNormal.stdoutBase64,'base64').toString()).toBe('hello');
+      const posixPidFile=join(h.directory,'posix-sleep.pid');
+      const posixCancel=h.transport.exec({resource,argv:['sh','-s'],allowWake:false,inputBase64:Buffer.from(`sleep 30 & echo $! > '${posixPidFile}'; wait\n`).toString('base64')});
+      let posixPid=0;
+      await expect.poll(async()=>{
+        const raw=await readFile(posixPidFile,'utf8').catch(()=>'');
+        posixPid=Number.parseInt(raw.trim(),10);
+        return Number.isInteger(posixPid)&&posixPid>0;
+      },{timeout:5_000}).toBe(true);
+      cleanup.push(async()=>{try{process.kill(posixPid,'SIGKILL');}catch{}});
+      h.controller.abort();
+      await expect(posixCancel).rejects.toMatchObject({code:'cancelled'});
+      await expect.poll(()=>{
+        try{process.kill(posixPid,0);return true;}catch(error){return (error as NodeJS.ErrnoException).code!=='ESRCH';}
+      },{timeout:5_000}).toBe(false);
+      // Normal non-sudo cancel must never invoke sudo.
+      await expect(readFile(sudoLog,'utf8')).rejects.toThrow();
+    }finally{
+      process.env.PATH=prevPath;
+    }
   });
 });
