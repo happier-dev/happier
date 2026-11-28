@@ -547,6 +547,7 @@ const ProjectDeploymentsPage = React.memo(
           deploymentId={selection.deploymentId}
           workspaceRef={props.workspaceRef}
           environmentName={selectedTitle}
+          projectName={sourceRead.source?.source.name ?? null}
           demand={props.demand}
           accountId={props.accountId}
           onBack={back}

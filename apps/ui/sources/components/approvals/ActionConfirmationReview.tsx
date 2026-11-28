@@ -17,7 +17,8 @@ import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServe
 import { storage } from '@/sync/domains/state/storageStore';
 import { getMachineSentenceName } from '@/utils/sessions/machineDisplayNames';
 import { ApprovalReviewFacts, type ApprovalReviewFactsInput } from './ApprovalReviewFacts';
-import { describeDeploymentBackupConfigureDecision, describeDeploymentReviewDecision, readDeploymentReviewApproval, readSoleDeploymentReviewMachineId } from './DeploymentReviewApprovalFacts';
+import { describeDeploymentBackupConfigureDecision, describeDeploymentReviewDecision, readDeploymentReviewApproval, readSoleDeploymentReviewMachineId,
+  useDeploymentEnvironmentDecision } from './DeploymentReviewApprovalFacts';
 
 /** The exact review a receiving executor carried back for the person's own press (`{ review, reviewDigest }`). */
 export type ActionConfirmationReviewInput = Pick<ApprovalReviewFactsInput, 'actionId' | 'actionArgs' | 'preview'> & Readonly<{
@@ -56,7 +57,11 @@ type ConfirmationReviewModalProps = CustomModalInjectedProps &
   }>;
 
 function ConfirmationReviewModal(props: ConfirmationReviewModalProps) {
-  const { onAnswer, onClose, setChrome, confirmLabel, irreversible, destructive, typedConfirmation, reviewRecovery } = props;
+  const { onAnswer, onClose, setChrome, irreversible, destructive, typedConfirmation, reviewRecovery } = props;
+  // An Environment update or a preview Create says what it does once its Project and Environment are read
+  // ("Turn on previews for field-guide-site Production"): the card's title and its verb, never the Action's name.
+  const environmentDecision = useDeploymentEnvironmentDecision(props, props.serverId);
+  const confirmLabel = environmentDecision ?? props.confirmLabel;
   const [typedValue, setTypedValue] = React.useState('');
   const [retryResult, setRetryResult] = React.useState<ReviewRetryResult | null>(null);
   const [retrying, setRetrying] = React.useState(false);
@@ -80,6 +85,7 @@ function ConfirmationReviewModal(props: ConfirmationReviewModalProps) {
   React.useEffect(() => {
     setChrome?.({
       kind: 'card',
+      ...(environmentDecision ? { title: environmentDecision } : {}),
       ...(retryResult?.ok && retryResult.summary ? { subtitle: retryResult.summary } : {}),
       footer: (
         // The same footer as every other confirmation card: Cancel, then the Action's verb, trailing.
@@ -105,7 +111,7 @@ function ConfirmationReviewModal(props: ConfirmationReviewModalProps) {
         </ModalCardFooterActions>
       ),
     });
-  }, [answer, confirmLabel, destructive, irreversible, notice, retryResult, retryReview, retrying, setChrome]);
+  }, [answer, confirmLabel, destructive, environmentDecision, irreversible, notice, retryResult, retryReview, retrying, setChrome]);
   return (
     <ListPresentationProvider value="page" pageInsets="contained">
       <View testID="actions.confirmation-review" style={styles.body}>

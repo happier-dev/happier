@@ -38,6 +38,10 @@ export type ConnectSheetAccountRequest = Readonly<{
     purposeSettlement?: 'resourceDefault';
     initialMachineTarget?: MachineAdministrationTargetV1 | null;
     targetSelection?: MachineAdministrationTargetSelectionV1;
+    /** Why the caller needs the account, said in the band in place of which agents use it (Previews: its pull requests). */
+    reason?: string;
+    /** A use no agent signs in for leads with the service's declared default method, not the agent sign-in ranking. */
+    methodOrder?: 'declaredDefault';
 }>;
 export type ConnectSheetKeyRequest = Readonly<{
     service: Readonly<{ kind: 'key'; suggestedName?: string; keyKind?: 'apiKey' | 'token' | 'password' | 'other' }>;

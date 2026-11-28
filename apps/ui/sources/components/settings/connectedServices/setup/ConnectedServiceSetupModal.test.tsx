@@ -14,6 +14,8 @@ vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () =
 
 import { Modal } from '@/modal';
 import { presentConnectSheet } from './ConnectedServiceSetupModal';
+import type * as Testkit from '@/dev/testkit';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
 const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
 const account = { service, accountId: 'work' };
@@ -67,7 +69,22 @@ describe('presentConnectSheet result lifecycle', () => {
 vi.mock('socket.io-client', async importOriginal =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 
-it('keeps the invoking Machine over the remembered target with zero RPC until a method is chosen', async () => {
+type CountedLoginSheet = Readonly<{
+    screen: Awaited<ReturnType<typeof Testkit.renderScreen>>;
+    nativeCommands: readonly Readonly<{ machineId: string; method: string; operation: string }>[];
+    chrome: readonly Readonly<{ title?: unknown; subtitle?: unknown }>[];
+    modal: Parameters<typeof Modal.show>[0];
+    result: ReturnType<typeof presentConnectSheet>;
+    target: Readonly<{ serverIdentityId: string; machineId: string }>;
+}>;
+
+/** The composed Connect sheet over a declared login whose declared default is its pasted token, behind its real controller. */
+async function withCountedLoginSheet(
+    request: (input: Readonly<{ scope: ServerAccountScope;
+        service: Readonly<{ pluginId: string; localId: string }>; target: Readonly<{ serverIdentityId: string; machineId: string }> }>) =>
+        Parameters<typeof presentConnectSheet>[0] & Readonly<{ intent: 'add' | 'link' | 'reconnect' }>,
+    run: (sheet: CountedLoginSheet) => Promise<void>,
+) {
     const { indexedDB, IDBKeyRange } = await import('fake-indexeddb');
     vi.stubGlobal('indexedDB', indexedDB);
     vi.stubGlobal('IDBKeyRange', IDBKeyRange);
@@ -134,20 +151,15 @@ it('keeps the invoking Machine over the remembered target with zero RPC until a 
             descriptors: [{ id: scopedService.localId, serviceId: 'counted-login', pluginId: scopedService.pluginId, title: 'Counted login',
                 provenance: 'external', sourceKind: 'installed', authentication, capabilities: [],
                 availability: { state: 'available', reason: 'resolved' }, diagnostics: [] }] }, lifetime);
-        const result = presentConnectSheet({ scope, service: scopedService, initialMachineTarget: target, intent: 'link' });
+        const result = presentConnectSheet(request({ scope, service: scopedService, target }));
         const modal = vi.mocked(Modal.show).mock.calls.at(-1)![0];
         if (!modal.component) throw new Error('Expected the composed Connect body');
+        const chrome: Readonly<{ title?: unknown; subtitle?: unknown }>[] = [];
         screen = await renderScreen(<InjectedAuthProvider credentials={null}>{React.createElement(modal.component,
-            { ...modal.props, onClose: () => modal.onRequestClose?.() })}</InjectedAuthProvider>);
+            { ...modal.props, onClose: () => modal.onRequestClose?.(),
+                setChrome: (next: Readonly<{ title?: unknown; subtitle?: unknown }> | null) => { if (next) chrome.push(next); } })}</InjectedAuthProvider>);
         await flushHookEffects({ cycles: 10 });
-        await vi.waitFor(() => expect(screen!.findByTestId('connected-service-setup:method:manual'),
-            JSON.stringify({ nativeCommands, text: screen!.getTextContent() })).not.toBeNull());
-        expect(nativeCommands).toEqual([]);
-        await screen.pressByTestIdAsync('connected-service-setup:method:manual');
-        await vi.waitFor(() => expect(nativeCommands.length).toBeGreaterThan(0));
-        expect(nativeCommands.every(command => command.machineId === target.machineId)).toBe(true);
-        modal.onRequestClose?.();
-        await expect(result).resolves.toEqual({ kind: 'dismissed' });
+        await run({ screen, nativeCommands, chrome, modal, result, target });
     } finally {
         await screen?.unmount();
         rpc.mockRestore();
@@ -155,4 +167,34 @@ it('keeps the invoking Machine over the remembered target with zero RPC until a 
         await account.dispose();
         vi.unstubAllGlobals();
     }
+}
+
+it('keeps the invoking Machine over the remembered target with zero RPC until a method is chosen', async () => {
+    await withCountedLoginSheet(({ scope, service, target }) => ({ scope, service, initialMachineTarget: target, intent: 'link' }),
+        async ({ screen, nativeCommands, modal, result, target }) => {
+            await vi.waitFor(() => expect(screen.findByTestId('connected-service-setup:method:manual'),
+                JSON.stringify({ nativeCommands, text: screen.getTextContent() })).not.toBeNull());
+            expect(nativeCommands).toEqual([]);
+            await screen.pressByTestIdAsync('connected-service-setup:method:manual');
+            await vi.waitFor(() => expect(nativeCommands.length).toBeGreaterThan(0));
+            expect(nativeCommands.every(command => command.machineId === target.machineId)).toBe(true);
+            modal.onRequestClose?.();
+            await expect(result).resolves.toEqual({ kind: 'dismissed' });
+        });
+}, 180_000);
+
+it('says the caller\'s reason and leads with the service\'s declared method for a non-agent use (R21-D6)', async () => {
+    await withCountedLoginSheet(({ scope, service, target }) => ({ scope, service, initialMachineTarget: target, intent: 'add',
+        reason: 'Previews read pull requests on this repository.', methodOrder: 'declaredDefault' }),
+    async ({ screen, chrome, modal, result }) => {
+        const methods = () => screen.root.findAll((node) => node.props?.testIDPrefix === 'connected-service-setup:method')[0];
+        await vi.waitFor(() => expect(methods(), screen.getTextContent()).toBeTruthy(), { timeout: 15_000 });
+        // The declared token method leads and is selected; the agent ranking would have led with the device code.
+        expect(methods()!.props.tabs.map((tab: { id: string }) => tab.id)).toEqual(['manual', 'device']);
+        expect(methods()!.props.activeTabId).toBe('manual');
+        expect(screen.findByTestId('connected-account-device:start')).toBeNull();
+        expect(chrome.at(-1)?.subtitle).toBe('Previews read pull requests on this repository.');
+        modal.onRequestClose?.();
+        await expect(result).resolves.toEqual({ kind: 'dismissed' });
+    });
 }, 180_000);

@@ -112,21 +112,42 @@ function presentedProjectSource(state: SourceReadState, sourceId: string | null)
 }
 
 export function useProjectSourceName(lifetime: ServerAccountScopeLifetime | null, sourceId: string | null) {
+    return useProjectSourceNameReading(lifetime, sourceId).name;
+}
+
+/**
+ * One Source's name, and whether its read is still on its way: a surface that names it can hold the name's place
+ * instead of inserting it after first paint. A refused, offline or retired read is settled, with no name.
+ */
+export function useProjectSourceNameReading(lifetime: ServerAccountScopeLifetime | null, sourceId: string | null) {
     const sourceIds = React.useMemo(() => sourceId ? [sourceId] : [], [sourceId]);
-    return useProjectSourceNames(lifetime, sourceIds, sourceId !== null)[0] ?? null;
+    const reading = useProjectSourceReadings(lifetime, sourceIds, sourceId !== null)[0];
+    const name = reading ?? null;
+    const resolving = reading === undefined && sourceId !== null && lifetime?.isCurrent() === true;
+    return React.useMemo(() => ({ name, resolving }), [name, resolving]);
 }
 
 /** Names for the Sources already referenced by loaded rows; shares their exact readers, never lists the inventory. */
 export function useProjectSourceNames(lifetime: ServerAccountScopeLifetime | null, sourceIds: readonly string[], enabled: boolean) {
+    const readings = useProjectSourceReadings(lifetime, sourceIds, enabled);
+    return React.useMemo(() => readings.map(reading => reading ?? null), [readings]);
+}
+
+/** Each Source's name, null when its read settled without one, undefined while it is still being read. */
+function useProjectSourceReadings(lifetime: ServerAccountScopeLifetime | null, sourceIds: readonly string[], enabled: boolean) {
     const execute = useProjectSourceActionExecute();
     const selection = React.useMemo(() => {
         const catalog = lifetime?.isCurrent() && enabled ? readProjectSourcesCatalog(lifetime, execute) : null;
         const owners = catalog ? sourceIds.map(id => ({ id, owner: catalog.readSource(id) })) : [];
-        let names: readonly (string | null)[] = [];
-        const getSnapshot = (): readonly (string | null)[] => {
+        let names: readonly (string | null | undefined)[] = [];
+        const read = (state: SourceReadState, id: string): string | null | undefined => {
+            const presented = presentedProjectSource(state, id);
+            if (presented) return presented.name;
+            return state.detailStatus === 'initial' || state.detailStatus === 'loading' ? undefined : null;
+        };
+        const getSnapshot = (): readonly (string | null | undefined)[] => {
             const current = lifetime?.isCurrent();
-            names = retainShallow(names, owners.map(({ id, owner }) => current
-                ? presentedProjectSource(owner.controller.getSnapshot(), id)?.name ?? null : null));
+            names = retainShallow(names, owners.map(({ id, owner }) => current ? read(owner.controller.getSnapshot(), id) : null));
             return names;
         };
         const subscribe = (listener: () => void) => {

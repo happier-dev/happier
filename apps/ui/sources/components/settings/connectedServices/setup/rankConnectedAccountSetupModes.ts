@@ -17,9 +17,11 @@ const KIND_RANK: Readonly<Record<string, number>> = {
  */
 export function rankConnectedAccountSetupModes<M extends RankableMode>(
     modes: readonly M[],
+    /** The method the caller's use needs (a repository's previews: the service's declared default), led and recommended. */
+    leadModeId?: string | null,
 ): readonly Readonly<{ mode: M; recommended: boolean }>[] {
     const ranked = modes
-        .map((mode, index) => ({ mode, index, rank: KIND_RANK[mode.kind] ?? 3 }))
+        .map((mode, index) => ({ mode, index, rank: mode.id === leadModeId ? -1 : KIND_RANK[mode.kind] ?? 3 }))
         .sort((left, right) => left.rank - right.rank || left.index - right.index);
     return ranked.map((entry, position) => ({
         mode: entry.mode,
@@ -27,6 +29,7 @@ export function rankConnectedAccountSetupModes<M extends RankableMode>(
     }));
 }
 
-export function resolveConnectedAccountSetupMode<M extends RankableMode>(modes: readonly M[], selectedId?: string | null): M | null {
-    return modes.find(mode => mode.id === selectedId) ?? rankConnectedAccountSetupModes(modes)[0]?.mode ?? null;
+export function resolveConnectedAccountSetupMode<M extends RankableMode>(modes: readonly M[], selectedId?: string | null,
+    leadModeId?: string | null): M | null {
+    return modes.find(mode => mode.id === selectedId) ?? rankConnectedAccountSetupModes(modes, leadModeId)[0]?.mode ?? null;
 }

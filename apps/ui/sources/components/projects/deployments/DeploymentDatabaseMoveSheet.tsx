@@ -204,15 +204,20 @@ function DeploymentDatabaseMoveSheet(props: Input & CustomModalInjectedProps) {
       },
     } } : {})} /> : null;
   const footer = <ModalCardFooterActions cancel={{ onPress: props.onClose, disabled: busy }}>
-    <RoundButton testID="project-deployments.move.copy" size="normal" title={t('projects.deployments.databaseMoveReview')}
+    <RoundButton testID="project-deployments.move.copy" size="normal" title={t('projects.deployments.databaseMoveTitle')}
       disabled={busy || !selection || !props.backupTarget} loading={busy} onPress={() => { void reviewDestination(); }} />
   </ModalCardFooterActions>;
+  // The app this database serves, by its Compose services ("points web at the copy"), when its definition names them.
+  const definition = props.source.content.definition;
+  const appServices = definition.kind === 'stored' ? definition.services.filter(service => service !== props.data.service) : [];
+  const appNames = appServices.length > 0 ? appServices.join(', ') : null;
   const { setChrome } = props;
   React.useEffect(() => { setChrome?.({ kind: 'card', footer }); });
   React.useEffect(() => () => setChrome?.(null), [setChrome]);
   return <ListPresentationProvider value="page" pageInsets="contained">
     <View testID="project-deployments.move" style={deploymentSheetStyles.body}>
-      <Text style={deploymentSheetStyles.lead}>{t('projects.deployments.databaseMoveLead')}</Text>
+      <Text style={deploymentSheetStyles.lead}>{appNames
+        ? t('projects.deployments.databaseMoveLeadApp', { app: appNames }) : t('projects.deployments.databaseMoveLead')}</Text>
       {sourceNeedsBackups ? <SurfaceStateCard testID="project-deployments.move.source.backups" size="line" kind="unavailable"
         title={t('projects.deployments.databaseMoveBackupsRequired')}
         action={{ label: t('projects.deployments.settingsSections.setupTitle'),

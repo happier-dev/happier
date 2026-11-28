@@ -28,6 +28,16 @@ vi.mock('@/text', async () => {
     : key === 'projects.deployments.review.replacesNote'
     ? `${key} ${String(params?.revision)}`
     : key === 'projects.deployments.review.versionStored' ? `Compose revision ${String(params?.revision)}`
+    : key === 'projects.deployments.review.updatePreviewsOn' ? review.updatePreviewsOn({ environment: String(params?.environment) })
+    : key === 'projects.deployments.review.updatePreviewsOff' ? review.updatePreviewsOff({ environment: String(params?.environment) })
+    : key === 'projects.deployments.review.decisionUpdatePreviews' ? review.decisionUpdatePreviews({ environment: String(params?.environment) })
+    : key === 'projects.deployments.review.updatePreviewsOnNote' ? review.updatePreviewsOnNote({ repository: String(params?.repository), machine: String(params?.machine) })
+    : key === 'projects.deployments.review.previewCreateValue' ? review.previewCreateValue({ environment: String(params?.environment), number: Number(params?.number) })
+    : key === 'projects.deployments.review.decisionPreviewCreate' ? review.decisionPreviewCreate({ environment: String(params?.environment) })
+    : key === 'projects.deployments.review.decisionPreviewCreatePullRequest' ? review.decisionPreviewCreatePullRequest({
+        project: String(params?.project), number: Number(params?.number), title: String(params?.title) })
+    : key === 'projects.deployments.environmentInProject' ? en.projects.deployments.environmentInProject({
+        project: String(params?.project), environment: String(params?.environment) })
     : key === 'projects.deployments.review.decisionPromote' ? `Promote ${String(params?.version)} to ${String(params?.environment)}`
     : key === 'projects.deployments.review.railwayVolumeWillKeep' ? `${key} ${params?.count}`
     : key === 'projects.deployments.review.folderContents'
@@ -38,7 +48,8 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 const { DeploymentReviewApprovalFacts, describeDeploymentReviewDecision, readDeploymentReviewApproval,
   readDeploymentEnvironmentUpdateApproval, describeDeploymentEnvironmentUpdateFields, describeDeploymentEnvironmentUpdateDecision,
-  readDeploymentPreviewCreateApproval, describeDeploymentPreviewCreateFields, describeDeploymentPreviewCreateDecision } = await import('./DeploymentReviewApprovalFacts');
+  readDeploymentPreviewCreateApproval, describeDeploymentPreviewCreateFields, describeDeploymentPreviewCreateDecision,
+  readDeploymentReviewedNames } = await import('./DeploymentReviewApprovalFacts');
 
 
 const { ApprovalIncludedSteps, readApprovalIncludedSteps } = await import('./ApprovalIncludedSteps');
@@ -463,10 +474,14 @@ describe('DeploymentReviewApprovalFacts', () => {
     const render = (replaces: unknown) => renderScreen(<DeploymentReviewApprovalFacts approval={{ review: { ...machineReview, risks: [],
       revision: { kind: 'repository', sha: 'a'.repeat(40) }, replaces, ownServer } as never, promotion: null }}
       serverId={null} testID="facts" />);
-    expect((await render(null)).getTextContent()).not.toContain('projects.deployments.review.ifItFails');
+    const first = (await render(null)).getTextContent();
+    expect(first).not.toContain('projects.deployments.review.ifItFails');
+    // Nothing serves yet, so there is no old version to stop: no rollout line (R21-D7).
+    expect(first).not.toContain('projects.deployments.review.rollouts.recreate');
     standardCleanup();
-    expect((await render({ deploymentId: 'serving', revision: { kind: 'repository', sha: 'b'.repeat(40) } })).getTextContent())
-      .toContain('projects.deployments.review.restoresVersion');
+    const next = (await render({ deploymentId: 'serving', revision: { kind: 'repository', sha: 'b'.repeat(40) } })).getTextContent();
+    expect(next).toContain('projects.deployments.review.restoresVersion');
+    expect(next).toContain('projects.deployments.review.rollouts.recreate');
   });
 
   it('does not redraw the approval page when only the Machine presence changes', async () => {
@@ -573,14 +588,14 @@ describe('an Environment update approval (a data Move cutover) reads as what it 
     const { rows } = describeDeploymentEnvironmentUpdateFields(approval!,
       { name: 'field-guide-site Production', services: null, previewsOn: false, previewMachine: 'NLDW3-5-36-33' }, {});
     const facts = rows.map(row => row.kind === 'value' ? `${row.title}=${row.value}` : row.kind);
-    expect(facts).toEqual(['projects.deployments.review.updatePreviews=projects.deployments.review.updatePreviewsOn']);
+    expect(facts).toEqual(['projects.deployments.review.updatePreviews=Turn on previews for field-guide-site Production']);
     const shown = JSON.stringify(rows);
     for (const raw of ['env-fg', 'link-runtime', '786dc6c9', 'true', 'github']) expect(shown).not.toContain(raw);
     // Turning previews off says so; a change while they stay on says it changes how they are made.
     const off = readDeploymentEnvironmentUpdateApproval({ actionId: 'deployments.environments.update',
       actionArgs: { ...previewsArgs, patch: { previewTemplate: { ...previewTemplate, enabled: false } } } });
     expect(describeDeploymentEnvironmentUpdateFields(off!, { name: 'Staging', services: null, previewsOn: true, previewMachine: null }, {})
-      .rows.map(row => row.kind === 'value' ? row.value : row.kind)).toEqual(['projects.deployments.review.updatePreviewsOff']);
+      .rows.map(row => row.kind === 'value' ? row.value : row.kind)).toEqual(['Turn off previews for Staging']);
     expect(describeDeploymentEnvironmentUpdateFields(approval!, { name: 'Staging', services: null, previewsOn: true, previewMachine: null }, {})
       .rows.map(row => row.kind === 'value' ? row.value : row.kind)).toEqual(['projects.deployments.review.updatePreviewsChanged']);
   });
@@ -596,13 +611,78 @@ describe('an Environment update approval (a data Move cutover) reads as what it 
     expect(approval).toEqual({ templateEnvironmentId: 'env-fg', runtimeTargetLinkId: 'link-runtime', pullRequestNumber: 3 });
     const { rows } = describeDeploymentPreviewCreateFields(approval!, { name: 'field-guide-site Production', machine: 'NLDW3-5-36-33' });
     expect(rows.map(row => row.kind === 'value' ? `${row.title}=${row.value}` : row.kind)).toEqual([
-      'projects.deployments.review.previewCreate=projects.deployments.review.previewCreateValue',
+      'projects.deployments.review.previewCreate=Create a preview of field-guide-site Production for #3',
       'projects.deployments.review.previewCreateMachine=NLDW3-5-36-33',
     ]);
-    expect(describeDeploymentPreviewCreateDecision(approval, 'field-guide-site Production'))
-      .toBe('projects.deployments.review.decisionPreviewCreate');
+    expect(describeDeploymentPreviewCreateDecision(approval, 'field-guide-site'))
+      .toBe('Create a preview of field-guide-site for #3');
     // A standard Create keeps its own reading.
     expect(readDeploymentPreviewCreateApproval({ actionId: 'deployments.environments.create',
       actionArgs: { serverId: 'server-1', purpose: 'standard' } })).toBeNull();
+  });
+
+  it('R21-D3: titles a previews switch by what it does to the named Environment, never "Update deployment environment"', () => {
+    const approval = readDeploymentEnvironmentUpdateApproval({ actionId: 'deployments.environments.update', actionArgs: previewsArgs });
+    const off = readDeploymentEnvironmentUpdateApproval({ actionId: 'deployments.environments.update',
+      actionArgs: { ...previewsArgs, patch: { previewTemplate: { ...previewTemplate, enabled: false } } } });
+    expect(describeDeploymentEnvironmentUpdateDecision(approval, 'field-guide-site Production', false))
+      .toBe('Turn on previews for field-guide-site Production');
+    expect(describeDeploymentEnvironmentUpdateDecision(approval, 'field-guide-site Production', true))
+      .toBe('Update previews for field-guide-site Production');
+    expect(describeDeploymentEnvironmentUpdateDecision(off, 'field-guide-site Production', true))
+      .toBe('Turn off previews for field-guide-site Production');
+    // Not read yet: the generic reading stays until the name lands.
+    expect(describeDeploymentEnvironmentUpdateDecision(approval, null, false)).toBeNull();
+  });
+
+  it('R21-D3: the previews note does not repeat what the request\'s own lead already says about reaching this Home', () => {
+    const approval = readDeploymentEnvironmentUpdateApproval({ actionId: 'deployments.environments.update', actionArgs: previewsArgs });
+    const { rows } = describeDeploymentEnvironmentUpdateFields(approval!,
+      { name: 'field-guide-site Production', services: null, previewsOn: false, previewMachine: 'NLDW3-5-36-33' }, {});
+    const note = rows[0]?.kind === 'value' ? rows[0].note : undefined;
+    expect(note).toBe('Each new pull request in hapier-qa/field-guide-site gets its own copy on NLDW3-5-36-33.');
+  });
+
+  it('R21-D3: a preview create leads with the Project and the pull request number', () => {
+    const create = (provenanceNumber: number | null) => readDeploymentPreviewCreateApproval({ actionId: 'deployments.environments.create',
+      actionArgs: { serverId: 'server-1', purpose: 'preview', preview: { templateEnvironmentId: 'env-fg', runtimeTargetLinkId: 'link-runtime',
+        ...(provenanceNumber === null ? {} : { provenance: { v: 1, templateEnvironmentId: 'env-fg', runtimeTargetLinkId: 'link-runtime',
+          repository: previewTemplate.repository, headRepository: previewTemplate.repository, pullRequestId: '1',
+          pullRequestNumber: provenanceNumber, author: { id: '1', login: 'octo' } } }) } } });
+    expect(describeDeploymentPreviewCreateDecision(create(4), 'field-guide-site')).toBe('Create a preview of field-guide-site for #4');
+    expect(describeDeploymentPreviewCreateDecision(create(null), 'field-guide-site')).toBe('Create a preview of field-guide-site');
+    expect(describeDeploymentPreviewCreateDecision(create(4), null)).toBeNull();
+  });
+
+  it('R21-D3: a previews switch keeps its folded mechanism steps one press away, not as the sheet\'s biggest block', async () => {
+    const preview = { hostReviewedChildren: { children: [
+      { action: 'workflow.trigger.list', role: 'list-triggers', input: {} },
+      { action: 'workflow.trigger.add', role: 'add-trigger', input: {} },
+    ] } };
+    const screen = await renderScreen(<ApprovalIncludedSteps preview={preview} serverId={null} placement="technical"
+      testID="included" />);
+    // One quiet disclosure row; the raw step names are not on the sheet until it opens.
+    expect(screen.findByTestId('included.technical')).not.toBeNull();
+    expect(screen.findByTestId('included.rows.row:step.0')).toBeNull();
+  });
+
+  it('R21-D3: reads the names the host reviewed with the request, and the pull request it previews', () => {
+    expect(readDeploymentReviewedNames({ hostReviewedContent: { previewsUpdate: {
+      projectName: 'field-guide-site', environmentName: 'Production' } } }))
+      .toEqual({ projectName: 'field-guide-site', environmentName: 'Production', pullRequestNumber: null, pullRequestTitle: null });
+    const create = readDeploymentReviewedNames({ deploymentReview: { previewCreate: { projectName: 'field-guide-site',
+      environmentName: 'Production', pullRequestNumber: 4, pullRequestTitle: 'Add ranger station hours' } } });
+    expect(create).toEqual({ projectName: 'field-guide-site', environmentName: 'Production', pullRequestNumber: 4,
+      pullRequestTitle: 'Add ranger station hours' });
+    // An older request carries none of it; the page then reads the Environment's own record.
+    expect(readDeploymentReviewedNames({ deploymentReview: {} })).toBeNull();
+    expect(readDeploymentReviewedNames(undefined)).toBeNull();
+    const approval = readDeploymentPreviewCreateApproval({ actionId: 'deployments.environments.create',
+      actionArgs: { serverId: 'server-1', purpose: 'preview', preview: { templateEnvironmentId: 'env-fg', runtimeTargetLinkId: 'link-runtime' } } });
+    expect(describeDeploymentPreviewCreateDecision(approval, 'field-guide-site', create))
+      .toBe('Create a preview of field-guide-site for #4 Add ranger station hours');
+    // A title-less pull request still reads by its number.
+    expect(describeDeploymentPreviewCreateDecision(approval, 'field-guide-site', { ...create!, pullRequestTitle: null }))
+      .toBe('Create a preview of field-guide-site for #4');
   });
 });

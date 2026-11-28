@@ -1973,7 +1973,8 @@ describe('Project deployments page', () => {
         environmentId={detail.environment.id} demand={shown} accountId={scope.accountId} serverId={scope.serverId}
         phone={false} deploy={null} review={noReview} onOpenReceipt={() => {}} lifetime={lifetime}
         destination={settingsRemoval ? { tab: 'settings', section: null } : undefined}
-        disposition={createDeploymentActions(lifetime, scope.projectSourceId)} onDeleted={done} />}
+        disposition={createDeploymentActions(lifetime, scope.projectSourceId)} onDeleted={done}
+        project={{ name: 'Team Wiki', onOpen: () => {} }} />}
       </ModalProvider>);
       if (detach) await act(async () => {
         screen.findByTestId('project-deployments.layout')?.props.onLayout({ nativeEvent: { layout: { width: 1200, height: 800 } } });
@@ -2050,8 +2051,10 @@ describe('Project deployments page', () => {
       expect(homes.requestsFor(`/v1/deployments/environments/${detail.environment.id}/targets/target-link/unlink`)).toHaveLength(0);
       // After a removal that deleted data, the person is told what went before the page leaves the Environment.
       if (removed && !neverDeployed && !inventoryFailure) {
+        // Named with its Project, so two Productions read apart (R21-D7).
         expect(vi.mocked(Modal.alertAsync).mock.calls.map(call => call[0]))
-          .toEqual([t('projects.deployments.removedOutcomeTitle', { name: detail.content.name })]);
+          .toEqual([t('projects.deployments.removedOutcomeTitle', { name: t('projects.deployments.environmentInProject',
+            { project: 'Team Wiki', environment: detail.content.name }) })]);
         expect(String(vi.mocked(Modal.alertAsync).mock.calls[0]?.[1]))
           .toContain(t('projects.deployments.removedOutcomeDeleted', { names: 'app_data', count: 1 }));
         // The kept volume is named too (R20-D4): its data is still on the Machine.

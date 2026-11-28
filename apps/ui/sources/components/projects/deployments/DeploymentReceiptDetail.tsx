@@ -56,7 +56,7 @@ import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveAc
 import { Modal } from '@/modal';
 import { CodeBlockView } from '@/components/ui/code/blocks/CodeBlockView';
 import { FactStrip, type FactStripFact } from '@/components/ui/lists/FactStrip';
-import { useMachineDisplayNamesById } from '@/sync/store/hooks';
+import { useMachineDisplayNamesById, useServerScopedMachine } from '@/sync/store/hooks';
 import { t } from '@/text';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { DeploymentVersionComparison } from './DeploymentVersionComparison';
@@ -81,7 +81,10 @@ import {
   keptForRollbackValue,
   readDeploymentRefusalRecovery,
   deploymentReceiptPageTitle,
+  deploymentEnvironmentSubject,
+  readDeploymentMachineOnline,
   deploymentRemovalVolumes,
+  deploymentRemovalSteps,
 } from './deploymentPresentation';
 import { useDeploymentActorPresentations } from './useDeploymentActorPresentations';
 import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -117,6 +120,8 @@ export const DeploymentReceiptDetail = React.memo(
       deploymentId: string;
       workspaceRef?: WorkspaceRefV1 | null;
       environmentName: string | null;
+      /** The Project's name, so a removal reads by what it removed ("Team Wiki Production removed"). */
+      projectName?: string | null;
       demand: DeploymentReadDemandV1;
       accountId: string;
       /** The viewer's Account lifetime: who acted is named through the shared actor display owner under it. */
@@ -249,6 +254,10 @@ export const DeploymentReceiptDetail = React.memo(
       healthServerId: props.serverId,
       health: receipt.environmentSnapshot.value,
     } : null, [persistedInvestigation, investigateSubject, value?.deployment, props.serverId, receipt.environmentSnapshot.value]);
+    // An uncertain outcome on one Machine names it when it is not answering, as the Overview does (R21-D7).
+    const unknownMachineId = opened?.deployment.state === 'outcome_unknown' && opened.content.machines.length === 1
+      ? opened.content.machines[0]! : null;
+    const unknownMachineOnline = useServerScopedMachine(props.serverId, unknownMachineId, readDeploymentMachineOnline);
     const { onOpenReceipt, onOpenPromotionReceipt } = props;
     // A remediation can land on another Environment of this Project; both open through this page's own receipt navigation.
     const openOutcomeReceipt = React.useMemo(() => ({ serverId: props.serverId,
@@ -496,9 +505,15 @@ export const DeploymentReceiptDetail = React.memo(
     ];
     // One Machine reads as one list of steps; several Machines each get their own section, in rollout order.
     const perMachine = content.machineResults.length > 1;
+    // A native removal records its settled steps as signed proofs, not deploy steps (R21-D4).
+    const removalSteps = deployment.operation === 'teardown' && content.steps.length === 0
+      ? deploymentRemovalSteps(content.teardown, machineName) : [];
     // A failure that put the previous version back needs no rollback from its header: an older release is History's.
     const restoredAfterFailure = deployment.state === 'failed' && restored;
-    const rollbackButton = retainedTarget && rollback && retainedTarget.deploymentId !== bannerRollbackId && !restoredAfterFailure ? (
+    // While the Machine is not answering a rollback could only wait for it, so it is not this page's lead.
+    const machineUnreachable = unknownMachineId !== null && unknownMachineOnline === false;
+    const rollbackButton = retainedTarget && rollback && retainedTarget.deploymentId !== bannerRollbackId && !restoredAfterFailure
+      && !machineUnreachable ? (
       <RoundButton
         testID="project-deployments.receipt.rollback"
         display="inverted"
@@ -613,7 +628,9 @@ export const DeploymentReceiptDetail = React.memo(
           <ItemList testID="project-deployments.receipt">
             <PageHeader
               testID="project-deployments.receipt.header"
-              title={deploymentReceiptPageTitle(deployment, sourceLabel, props.environmentName)}
+              // A removed Environment may have left the Project's list: its own record still names it.
+              title={deploymentReceiptPageTitle(deployment, sourceLabel,
+                deploymentEnvironmentSubject(props.projectName, props.environmentName ?? environmentValue?.content.name))}
               alwaysShowTitle
               // The commit's own subject says what this version is; a stored definition has none.
               description={facts.commitSubject ?? undefined}
@@ -726,7 +743,8 @@ export const DeploymentReceiptDetail = React.memo(
                 testID={`project-deployments.receipt.notice.${noticeState}`}
                 tone={notice.tone}
                 title={deploymentStateLabel(noticeState)}
-                description={notice.text}
+                description={machineUnreachable && unknownMachineId
+                  ? t('projects.deployments.machineOffline', { machine: machineName(unknownMachineId) }) : notice.text}
                 // An unknown outcome is settled by looking at what runs: the Machine's Services say it.
                 {...(deployment.state === 'outcome_unknown' && content.machines.length === 1 ? { action: {
                   label: t('projects.deployments.openMachineServices'),
@@ -789,8 +807,9 @@ export const DeploymentReceiptDetail = React.memo(
                 // The outcome above already says what this Machine was left with; the steps only name where they ran.
                 machineName={content.machineResults[0] ? machineName(content.machineResults[0].machineId) : firstMachine}
                 machineNames={machineNames}
-                machineId={content.steps.length > 0 ? undefined : content.machineResults[0]?.machineId}
-                steps={content.steps.length > 0 ? content.steps : (content.machineResults[0]?.steps ?? [])}
+                machineId={content.steps.length > 0 || removalSteps.length > 0 ? undefined : content.machineResults[0]?.machineId}
+                steps={content.steps.length > 0 ? content.steps : removalSteps.length > 0 ? removalSteps
+                  : (content.machineResults[0]?.steps ?? [])}
                 {...stepLogs}
               />
             )}

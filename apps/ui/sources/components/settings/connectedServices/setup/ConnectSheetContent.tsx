@@ -274,7 +274,7 @@ function ConnectAccountSheetLeaf(
     : '';
   useConnectSheetHeading(props, {
     title,
-    subtitle: target.kind === 'reconnect' ? repairLine : purpose,
+    subtitle: target.kind === 'reconnect' ? repairLine : props.request.reason ?? purpose,
     leading: selectedEntry ? (
       <ConnectedServiceMark
         legacyServiceId={selectedEntry.legacyServiceId}
@@ -349,6 +349,7 @@ function ConnectAccountSheetLeaf(
           onMachineRequirementChange={model.onMachineRequirementChange}
           registry={purposeSetup.registry}
           targetLocked={Boolean(purposeRequest)}
+          methodOrder={props.request.methodOrder}
         />
       ) : purposeRequest ? (
         <View style={styles.rows} testID="connect-sheet:purpose">

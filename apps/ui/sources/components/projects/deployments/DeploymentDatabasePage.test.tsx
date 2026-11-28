@@ -1304,6 +1304,9 @@ describe('Environment → Database → Move', () => {
       await view.settle(`${page}.menu.trigger`);
       await chooseMoveFromHeaderMenu(view);
       await view.settle('project-deployments.move.destination:database-dedicated');
+      // The sheet names the app it re-points, by its Compose service (R21-D7).
+      const { t } = await import('@/text');
+      expect(view.screen.getTextContent()).toContain(t('projects.deployments.databaseMoveLeadApp', { app: 'app' }));
       await view.screen.pressByTestIdAsync('project-deployments.move.destination:database-dedicated');
       await waitForHomeGovernance(() => expect(view.screen.findByTestId('project-deployments.move.copy')?.props.disabled).toBe(false));
       await view.screen.pressByTestIdAsync('project-deployments.move.copy');

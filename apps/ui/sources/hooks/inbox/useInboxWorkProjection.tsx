@@ -8,6 +8,7 @@ import { useActivityAttentionSource } from '@/activity/source/useActivityAttenti
 import { readActivitySourceAttentionMessages } from '@/activity/source/buildActivityOverviewFromSource';
 import { buildInboxSessionPresentation, type InboxSessionAttentionEntry } from '@/activity/presentation/buildInboxSessionPresentation';
 import { buildInboxWorkGroups, type InboxWorkGroup } from '@/activity/presentation/buildInboxWorkGroups';
+import { readWorkflowPublicationApprovalRunId } from '@/sync/domains/artifacts/approvalArtifactAdmission';
 import { readSessionWorkStalled } from '@/components/work/status/sessionWorkStatusFacts';
 import { storage } from '@/sync/domains/state/storageStore';
 import type { Session } from '@/sync/domains/state/storageTypes';
@@ -60,7 +61,7 @@ function useCreateInboxWorkProjection() {
     const profileScope = storage(state => state.profileScope);
     const pluginSessionInbox = useInboxPluginSessionRows();
     const executionRuns = useInboxExecutionRunSource();
-    const { workflowAttention, workflowRunIdsWithOccurrence } = useFullWorkflowAttentionSource();
+    const { workflowAttention, workflowRunIdsWithOccurrence, workflowRunIdsWithApproval } = useFullWorkflowAttentionSource();
     const occurrenceRunIds = useInboxWorkflowOccurrenceRunIds();
     const workflowRunOnceDeliveries = React.useMemo(() => new Map(executionRuns.workflowFollows.map(follow =>
         [follow.source.runId, follow.onceDeliveries ?? []] as const)), [executionRuns.workflowFollows]);
@@ -183,6 +184,12 @@ function useCreateInboxWorkProjection() {
             else if (item.kind === 'automation_run' && workflowRunIdsWithOccurrence.has(item.row.id)) {
                 refs.push({ kind: 'workflow_run', runId: item.row.id });
             }
+            // A Run listed as the open approval it waits on keeps its native Run membership too (R21-D2).
+            else if (item.kind === 'approval') {
+                const runId = readWorkflowPublicationApprovalRunId(item.artifact);
+                if (typeof runId === 'string' && workflowRunIdsWithApproval.has(runId)
+                    && !refs.some(ref => ref.kind === 'workflow_run' && ref.runId === runId)) refs.push({ kind: 'workflow_run', runId });
+            }
         }
         const previous = previousMembership.current;
         const retained = refs.map((ref, index) => {
@@ -197,7 +204,7 @@ function useCreateInboxWorkProjection() {
             ? previous : { refs: stableRefs, isLoading: membershipLoading };
         previousMembership.current = next;
         return next;
-    }, [workGroups, membershipLoading, workflowRunIdsWithOccurrence]);
+    }, [workGroups, membershipLoading, workflowRunIdsWithOccurrence, workflowRunIdsWithApproval]);
     return React.useMemo(() => ({ source, overview, openApprovalEntries, artifactSource, profileScope,
         pluginSessionInbox, executionRuns, workflowAttention, workflowRunOnceDeliveries, automationAttention,
         automationRuns, attentionStandings, sessionsById, sessionPresentation, workGroups, membership }),

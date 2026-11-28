@@ -101,6 +101,7 @@ export const previewEditorCopy = {
   addFact: 'Deployment value',
   configure: 'Configure previews',
   watcherConnect: 'Connect GitHub',
+  watcherConnectReason: 'Previews read this repository’s pull requests and add a webhook so this Home hears when one opens or changes.',
   watcherAccount: 'GitHub account',
   watcherUnavailable: 'Could not read the accounts for this repository. Turn on Previews to try again.',
   nativeTemplate: 'Database template',

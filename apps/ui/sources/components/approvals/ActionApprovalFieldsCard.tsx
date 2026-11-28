@@ -95,6 +95,26 @@ export function demoteSelfReferences(presentation: ApprovalFieldsPresentation, a
     return { ...presentation, rows: presentation.rows.map(row => isSelf(row) ? { ...row, technical: true as const } : row) };
 }
 
+/**
+ * Two values no person reads are mechanism, not facts to judge: a stored envelope (a contributed Action's declared
+ * field pointing at a versioned object, `{"v":1,"repositoryId":…}`) and a server-minted record id with no reference
+ * behind it (`Deployment cmx07muhg…`). Both keep their exact text in Technical details, so a review never leads with
+ * them (R21-D2). Ordinary structured values and ids a person compares (a client id, a host id) stay in view.
+ */
+const SERVER_RECORD_ID = /^c[a-z0-9]{24}$/;
+function isOpaqueValueRow(row: ApprovalFieldRow): boolean {
+    if (row.kind !== 'value' || row.technical || row.reference || row.entries || typeof row.value !== 'string') return false;
+    const value = row.value.trim();
+    if (value.startsWith('{"v":')) {
+        try { return typeof JSON.parse(value) === 'object'; } catch { return false; }
+    }
+    return /Id$/.test(row.path.split('.').at(-1) ?? '') && SERVER_RECORD_ID.test(value);
+}
+export function demoteOpaqueValues(presentation: ApprovalFieldsPresentation): ApprovalFieldsPresentation {
+    if (!presentation.rows.some(isOpaqueValueRow)) return presentation;
+    return { ...presentation, rows: presentation.rows.map(row => isOpaqueValueRow(row) ? { ...row, technical: true as const } : row) };
+}
+
 function readAskingSessionId(request: ApprovalFieldsRequest | undefined): string | null {
     return request?.executionOriginV1?.sessionId ?? request?.createdBy?.sessionId ?? null;
 }
@@ -180,8 +200,8 @@ export const ActionApprovalFieldsCard = React.memo(function ActionApprovalFields
     const [detailsOpen, setDetailsOpen] = React.useState(props.collapsed !== true);
     const askingSessionId = readAskingSessionId(props.request);
     const viewer = useAccountSettingsScope();
-    const presentation = React.useMemo(() => demoteSelfReferences(demoteAskingSessionTarget(props.presentation, askingSessionId),
-        props.serverId, viewer), [askingSessionId, props.presentation, props.serverId, viewer]);
+    const presentation = React.useMemo(() => demoteOpaqueValues(demoteSelfReferences(demoteAskingSessionTarget(props.presentation,
+        askingSessionId), props.serverId, viewer)), [askingSessionId, props.presentation, props.serverId, viewer]);
     const reading = { ...props, presentation, detailsOpen, setDetailsOpen };
     if ((props.anatomy === 'page' || detailsOpen) && props.request && props.serverId) {
         const automationId = readTriggerUpdateApprovalAutomationId(props.request);

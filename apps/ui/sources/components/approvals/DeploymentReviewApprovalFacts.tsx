@@ -13,7 +13,8 @@ import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { DeploymentVolumeRemovalFact } from '@/components/projects/deployments/DeploymentVolumeRemovalFact';
 import { deploymentBindingSourceTitle } from '@/components/projects/deployments/deploymentBindingSource';
 import { useEnvironmentName, useEnvironmentRecord } from '@/components/projects/deployments/useEnvironmentName';
-import { useProjectSourceName } from '@/components/projects/sources/useProjectSources';
+import { useProjectSourceName, useProjectSourceNameReading } from '@/components/projects/sources/useProjectSources';
+import { deploymentEnvironmentSubject } from '@/components/projects/deployments/deploymentPresentation';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import type { Machine } from '@/sync/domains/state/storageTypes';
@@ -426,7 +427,9 @@ function describeReviewFields(
       promotion.composeChanges ? t('projects.deployments.review.promotionCompose') : null,
     ].filter(Boolean).join(' ')) : []),
     ...(ownServer ? [
-      ...field('rollout', t('projects.deployments.review.rollout'), t(`projects.deployments.review.rollouts.${ownServer.rollout}`)),
+      // How the new version replaces the old one says nothing on a first deploy, where nothing serves yet (R21-D7).
+      ...field('rollout', t('projects.deployments.review.rollout'), replaces === null ? null
+        : t(`projects.deployments.review.rollouts.${ownServer.rollout}`)),
       // The migration leads; its backup and failure handling finish it beneath.
       ...field('beforeStart', t('projects.deployments.review.beforeStart'), ownServer.migration
         ? t('projects.deployments.review.migrationRuns', { service: ownServer.migration.service, command: ownServer.migration.argv.join(' ') })
@@ -618,7 +621,9 @@ export const DeploymentReviewApprovalFacts = React.memo(
     const machines = React.useMemo(() => readMachines(review), [review]);
     const removalProjectId = isRemoval(review) ? review.projectSourceId ?? null : null;
     const { binding } = useServerCredentialAccountScopeBinding(removalProjectId ? props.serverId : null);
-    const projectName = useProjectSourceName(binding, removalProjectId);
+    const project = useProjectSourceNameReading(binding, removalProjectId);
+    // A Project still being read holds its row with the loading word, so the card does not move when it lands (R21-D7).
+    const projectName = project.name ?? (project.resolving ? t('common.loading') : null);
     const collectorMachineId = machines.find(({ review }) => review.deferredTelemetryCollectorMachineId)
       ?.review.deferredTelemetryCollectorMachineId ?? null;
     const environment = !isRemoval(props.approval.review) && 'environment' in props.approval.review
@@ -742,6 +747,31 @@ export function readDeploymentPreviewCreateApproval(
     pullRequestNumber: provenance.success ? provenance.data.pullRequestNumber : null };
 }
 
+/**
+ * The names a host reviewed with a previews switch (`hostReviewedContent.previewsUpdate`) or a pull request's preview
+ * Create (`deploymentReview.previewCreate`, with the pull request's number and optional title): what the request
+ * names without another read (R21-D3). Null on an older request, which reads the Environment's own record instead.
+ * Read field by field until the Protocol review arm is in this build; every field is display data.
+ */
+export type DeploymentReviewedNames = Readonly<{
+  projectName: string | null;
+  environmentName: string | null;
+  pullRequestNumber: number | null;
+  pullRequestTitle: string | null;
+}>;
+export function readDeploymentReviewedNames(preview: unknown): DeploymentReviewedNames | null {
+  const record = readRecord(preview);
+  const create = readRecord(readRecord(record.deploymentReview).previewCreate);
+  const carried = Object.keys(create).length > 0 ? create : readRecord(readRecord(record.hostReviewedContent).previewsUpdate);
+  const text = (value: unknown) => typeof value === 'string' && value.trim() ? value.trim() : null;
+  const environmentName = text(carried.environmentName);
+  if (!environmentName) return null;
+  const number = carried.pullRequestNumber;
+  return { projectName: text(carried.projectName), environmentName,
+    pullRequestNumber: typeof number === 'number' && Number.isInteger(number) && number > 0 ? number : null,
+    pullRequestTitle: text(carried.pullRequestTitle) };
+}
+
 /** What a preview Create makes, in words: the copy of its Environment for one pull request, and where it runs. */
 export function describeDeploymentPreviewCreateFields(
   approval: DeploymentPreviewCreateApproval,
@@ -756,12 +786,50 @@ export function describeDeploymentPreviewCreateFields(
   ], unrepresentable: null };
 }
 
-/** The decision a preview Create leads with ("Create a preview of field-guide-site"), once its template has a name. */
+/**
+ * The decision a preview Create leads with ("Create a preview of field-guide-site for #4 Add ranger station hours"),
+ * once its template's Project (or, without one, its Environment) has a name. The pull request's number comes from its
+ * own provenance or the host's review; its title only from the review.
+ */
 export function describeDeploymentPreviewCreateDecision(
   approval: DeploymentPreviewCreateApproval | null,
-  templateName: string | null,
+  subject: string | null,
+  reviewed: DeploymentReviewedNames | null = null,
 ): string | null {
-  return approval && templateName ? t('projects.deployments.review.decisionPreviewCreate', { environment: templateName }) : null;
+  if (!approval || !subject) return null;
+  const number = approval.pullRequestNumber ?? reviewed?.pullRequestNumber ?? null;
+  if (number === null) return t('projects.deployments.review.decisionPreviewCreate', { environment: subject });
+  return reviewed?.pullRequestTitle
+    ? t('projects.deployments.review.decisionPreviewCreatePullRequest', { project: subject, number, title: reviewed.pullRequestTitle })
+    : t('projects.deployments.review.previewCreateValue', { environment: subject, number });
+}
+
+/**
+ * The decision an Environment update or a preview Create leads with, by the Project and Environment it names once
+ * both are read: the one reading the in-step confirmation card, the approval page, its Inbox row and its tab share.
+ * Null for any other request, and while the Environment's name is still being read.
+ */
+export function useDeploymentEnvironmentDecision(
+  request: Readonly<{ actionId?: string | null; actionArgs?: unknown; preview?: unknown }>,
+  serverId: string | null,
+): string | null {
+  const { actionId, actionArgs, preview } = request;
+  const update = React.useMemo(() => readDeploymentEnvironmentUpdateApproval({ actionId, actionArgs }), [actionId, actionArgs]);
+  const previewCreate = React.useMemo(() => update ? null : readDeploymentPreviewCreateApproval({ actionId, actionArgs }),
+    [update, actionId, actionArgs]);
+  const reviewed = React.useMemo(() => update || previewCreate ? readDeploymentReviewedNames(preview) : null,
+    [update, previewCreate, preview]);
+  const environmentId = update?.environmentId ?? previewCreate?.templateEnvironmentId ?? null;
+  const record = useEnvironmentRecord(serverId, environmentId);
+  const { binding } = useServerCredentialAccountScopeBinding(record.value && !reviewed?.projectName ? serverId : null);
+  const recordProjectName = useProjectSourceName(binding, reviewed?.projectName ? null : record.value?.environment.projectSourceId ?? null);
+  // The names the host reviewed lead; an older request reads them from the Environment's own record.
+  const projectName = reviewed?.projectName ?? recordProjectName;
+  const environmentName = reviewed?.environmentName ?? record.value?.content.name ?? null;
+  const previewsOn = record.value ? record.value.content.previewTemplate?.enabled === true : null;
+  if (update) return describeDeploymentEnvironmentUpdateDecision(update, deploymentEnvironmentSubject(projectName, environmentName), previewsOn);
+  // A preview copies the Project's app, so it is named by the Project the person knows ("a preview of field-guide-site").
+  return describeDeploymentPreviewCreateDecision(previewCreate, projectName ?? environmentName, reviewed);
 }
 
 /**
@@ -771,12 +839,15 @@ export function describeDeploymentPreviewCreateDecision(
 export const DeploymentPreviewCreateApprovalFacts = React.memo(function DeploymentPreviewCreateApprovalFacts(props: Readonly<{
   approval: DeploymentPreviewCreateApproval;
   serverId: string | null;
+  /** The request's carried review: the Project and Environment names its host reviewed, when it has them. */
+  preview?: unknown;
   testID: string;
   technicalRows?: ApprovalFieldsPresentation['rows'];
 }>) {
   const { approval } = props;
   const record = useEnvironmentRecord(props.serverId, approval.templateEnvironmentId);
-  const name = record.value?.content.name ?? null;
+  const reviewed = React.useMemo(() => readDeploymentReviewedNames(props.preview), [props.preview]);
+  const name = deploymentEnvironmentSubject(reviewed?.projectName, reviewed?.environmentName) ?? record.value?.content.name ?? null;
   const machineId = record.value?.targetLinks.find(row => row.targetLink.id === approval.runtimeTargetLinkId)
     ?.targetLink.machines[0] ?? null;
   const machine = useReviewMachineName(props.serverId, machineId);
@@ -868,13 +939,16 @@ export function describeDeploymentEnvironmentUpdateFields(
 export const DeploymentEnvironmentUpdateApprovalFacts = React.memo(function DeploymentEnvironmentUpdateApprovalFacts(props: Readonly<{
   approval: DeploymentEnvironmentUpdateApproval;
   serverId: string | null;
+  /** The request's carried review: the Project and Environment names its host reviewed, when it has them. */
+  preview?: unknown;
   testID: string;
   technicalRows?: ApprovalFieldsPresentation['rows'];
 }>) {
   const { approval } = props;
   const record = useEnvironmentRecord(props.serverId, approval.environmentId);
   const content = record.value?.content;
-  const name = content?.name ?? null;
+  const reviewed = React.useMemo(() => readDeploymentReviewedNames(props.preview), [props.preview]);
+  const name = deploymentEnvironmentSubject(reviewed?.projectName, reviewed?.environmentName) ?? content?.name ?? null;
   const services = content ? content.definition.kind === 'stored' ? content.definition.services : null : null;
   const previewsOn = content ? content.previewTemplate?.enabled === true : null;
   const previewLinkId = approval.previewTemplate?.runtimeTargetLinkId ?? null;
@@ -909,10 +983,22 @@ const EnvironmentUpdateFields = React.memo(function EnvironmentUpdateFields(prop
     title={t('projects.deployments.review.updateWhatTitle')} testID={`${props.testID}.fields`} />;
 });
 
-/** The decision an Environment update leads with, once its Environment has a name ("Update Harbor QA"). */
+/**
+ * The decision an Environment update leads with, once its Environment has a name: a previews switch says what it does
+ * to previews ("Turn on previews for field-guide-site Production"), anything else "Update Harbor QA". `subject` is
+ * `deploymentEnvironmentSubject`'s reading; `previewsOn` is the Environment's saved switch, null until read.
+ */
 export function describeDeploymentEnvironmentUpdateDecision(
   approval: DeploymentEnvironmentUpdateApproval | null,
-  environmentName: string | null,
+  subject: string | null,
+  previewsOn: boolean | null = null,
 ): string | null {
-  return approval && environmentName ? t('projects.deployments.review.decisionUpdateEnvironment', { environment: environmentName }) : null;
+  if (!approval || !subject) return null;
+  const next = approval.previewTemplate;
+  if (next !== undefined && !approval.definition && !approval.bindings) {
+    if (!next?.enabled) return t('projects.deployments.review.updatePreviewsOff', { environment: subject });
+    return previewsOn === true ? t('projects.deployments.review.decisionUpdatePreviews', { environment: subject })
+      : t('projects.deployments.review.updatePreviewsOn', { environment: subject });
+  }
+  return t('projects.deployments.review.decisionUpdateEnvironment', { environment: subject });
 }

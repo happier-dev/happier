@@ -227,6 +227,11 @@ export type ConnectedAccountSetupPanelIntent = Readonly<{
     intent: Readonly<{ kind: 'add' }> | Readonly<{ kind: 'reconnect'; accountId: string }>;
     onConnected: (account: QualifiedConnectedAccountRef, facts?: ConnectedAccountSetupFacts) => void;
     modeId?: string | null;
+    /**
+     * `declaredDefault`: a use no agent signs in for (a repository's previews) leads with the service's declared default
+     * method instead of the agent sign-in ranking.
+     */
+    methodOrder?: 'declaredDefault';
     onModeChange?: (modeId: string) => void;
     /** The registered selected mode, not its display kind, decides Machine demand. */
     onMachineRequirementChange?: (required: boolean, availability?: MachineAdministrationTargetSelectorProps['resolveCandidateAvailability']) => void;
@@ -359,7 +364,8 @@ const ConnectedAccountServiceController = React.memo(
     const [combinedDraftSubmitted, setCombinedDraftSubmitted] = React.useState(false);
     const [activeModeId, setActiveModeId] = React.useState<string | null>(controllerProps.panel?.modeId ?? null);
     const declaredAuthentication = service ? getConnectedAccountAuthentication(service, connectedServicesRegistry) : null;
-    const selectedSetupMode = resolveConnectedAccountSetupMode(declaredAuthentication?.modes ?? [], activeModeId);
+    const leadModeId = controllerProps.panel?.methodOrder === 'declaredDefault' ? declaredAuthentication?.defaultModeId ?? null : null;
+    const selectedSetupMode = resolveConnectedAccountSetupMode(declaredAuthentication?.modes ?? [], activeModeId, leadModeId);
     const panelIntent = controllerProps.panel?.intent ?? null;
     const installationScope = JSON.stringify([serverId, selectedSetupMode?.id, targetSelection.selectedTarget?.serverIdentityId,
         targetSelection.selectedTarget?.machineId]);
@@ -1978,7 +1984,7 @@ const ConnectedAccountServiceController = React.memo(
     if (controllerProps.panel) {
         const panelIntent = controllerProps.panel.intent;
         const ranked = panelIntent.kind === 'add'
-            ? rankConnectedAccountSetupModes(description?.descriptor.authentication.modes ?? declaredAuthentication?.modes ?? [])
+            ? rankConnectedAccountSetupModes(description?.descriptor.authentication.modes ?? declaredAuthentication?.modes ?? [], leadModeId)
             : [];
         // Declared methods can be chosen before an execution host is requested.
         // The initial Account-only description is not a native sign-in failure.

@@ -43,6 +43,7 @@ import { SetOtherAccountFollowRequestV1Schema, SESSION_FOLLOW_HTTP_PATHS_V1 } fr
 import { ACCOUNT_SESSION_FOLLOW_CHANGE_ENTITY_ID } from '@happier-dev/protocol/sessions/follow/changes';
 import { createArtifactStoreBoundary, createPlainArtifactHttpFixture, seedAdmittedArtifactRows } from '@/dev/testkit/harness/artifactStoreBoundary';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
+import { createWorkflowPublicationApprovalArtifact } from '@/dev/testkit/fixtures/workflowPublicationApprovalFixture';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -428,6 +429,41 @@ describe('useInboxSummary workflow source', () => {
         ]);
         expect(screen.findByTestId(`inbox.automation_run.${occurrence.id}`)).toBeTruthy();
         expect(membership).toMatchObject({ refs: [{ kind: 'workflow_run', runId: occurrence.id }] });
+    });
+
+    it('R21-D2: lists a Run held on an open approval once, as that approval, and counts it once', async () => {
+        const home = connection!.home.id;
+        // The approval names its Run; an unrelated held Run and a Run on another Home keep their own rows.
+        const approval = createWorkflowPublicationApprovalArtifact({ id: 'approval-held', runId: 'run-held',
+            scope: { serverId: home, accountId: 'account-a' } });
+        const foreign = createWorkflowPublicationApprovalArtifact({ id: 'approval-elsewhere', runId: 'run-interrupted',
+            scope: { serverId: 'another-home', accountId: 'account-a' } });
+        seedArtifacts({ [approval.id]: { ...approval, ownerAccountId: 'account-a', access: 'owner' },
+            [foreign.id]: { ...foreign, ownerAccountId: 'account-a', access: 'owner' } });
+        listRuns.mockResolvedValue(page(['run-held', 'run-interrupted']));
+
+        let inbox: InboxModel | null = null;
+        const { useInboxWorkMembershipWhen } = await import('./useInboxWorkProjection');
+        let membership: ReturnType<typeof useInboxWorkMembershipWhen> = null;
+        function MembershipProbe() {
+            membership = useInboxWorkMembershipWhen(true);
+            return null;
+        }
+        await renderScreen(<InboxSummaryProvider><Probe /><InboxModelProvider>
+            <MembershipProbe />
+            <DirectInboxRows view="needs_you" observe={model => { inbox = model; }} />
+        </InboxModelProvider></InboxSummaryProvider>);
+        await waitForHomeGovernance(() => {
+            expect(inbox?.workflowAttention.phase).toBe('loaded');
+            expect(latest?.count).not.toBeNull();
+        });
+        // Two approvals and one other held Run: the approval's own Run is not a second row or a second count.
+        await vi.waitFor(() => expect(latest).toEqual({ count: 3, needsYouCount: 3, hasContent: true }));
+        const rows = inbox!.workGroups.flatMap(group => group.items.map(item => item.key));
+        expect(rows).not.toContain('run:run-held');
+        expect(rows).toEqual(expect.arrayContaining(['run:run-interrupted', 'approval:approval-held', 'approval:approval-elsewhere']));
+        // Boards still know the held Run needs the person.
+        expect(membership?.refs).toEqual(expect.arrayContaining([{ kind: 'workflow_run', runId: 'run-held' }]));
     });
 
     it('does not read ordinary failures through the released alias when Workflows is disabled', async () => {

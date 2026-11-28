@@ -3,6 +3,8 @@ import * as React from 'react';
 import { useWorkflowsAvailability } from '@/components/workflows/gating/workflowsAvailability';
 import { useWorkflowRunWindow } from '@/components/workflows/library/workflowLibraryReads';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { storage } from '@/sync/domains/state/storageStore';
+import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import type { WorkflowRunListWindowId } from '@/sync/store/domains/workflowRuns';
 
 /**
@@ -69,23 +71,54 @@ const WorkflowAttentionSourceContext = React.createContext<Readonly<{
     occurrenceRunIds: ReadonlySet<string>;
 }> | null>(null);
 
+/** Whether an open approval's header names this Home (the header list fact the Inbox lists it by). */
+function approvalOnHome(artifact: DecryptedArtifact, serverId: string): boolean {
+    const header = artifact.header;
+    return [header?.serverIdentityId, header?.serverId].some(id => typeof id === 'string' && id.length > 0
+        && areServerProfileIdentifiersEquivalent(id, serverId));
+}
+
+/**
+ * The window's Runs the Inbox already lists as an open approval of this Account on the same Home: the store's
+ * Run → open-approval index (`artifactWorkflowPublicationArtifactsByRunId`, from each header's Workflow caller).
+ * The approval is the one row for that request (R21-D2); a Run with no matching open Artifact keeps its own row.
+ * A newline-joined key keeps the selection primitive, so unrelated Artifact changes render nothing.
+ */
+function useApprovalHeldRunIds(window: WorkflowAttentionSource): ReadonlySet<string> {
+    const { runIds, serverId } = window;
+    const select = React.useCallback((state: ReturnType<typeof storage.getState>) => {
+        if (!serverId || runIds.length === 0) return '';
+        const groups = state.artifactWorkflowPublicationArtifactsByRunId;
+        return runIds.filter(id => Object.values(groups[id] ?? {}).some(artifact => approvalOnHome(artifact, serverId))).join('\n');
+    }, [runIds, serverId]);
+    const key = storage(select);
+    return React.useMemo(() => key ? new Set(key.split('\n')) : EMPTY_OCCURRENCES, [key]);
+}
+
+/**
+ * The window without the Runs another Inbox row already presents: an Automation occurrence (which can open a failed
+ * trigger that never acquired an accepted Workflow snapshot) or an open approval the Run is held on.
+ */
 function useWorkflowAttentionWithoutOccurrences(window: WorkflowAttentionSource, occurrenceRunIds: ReadonlySet<string>) {
-    // The occurrence can open a failed trigger that never acquired an accepted Workflow snapshot.
+    const approvalRunIds = useApprovalHeldRunIds(window);
     const selection = React.useMemo(() => {
-        if (occurrenceRunIds.size === 0) return { runIds: window.runIds, workflowRunIdsWithOccurrence: EMPTY_OCCURRENCES };
+        if (occurrenceRunIds.size === 0 && approvalRunIds.size === 0) {
+            return { runIds: window.runIds, workflowRunIdsWithOccurrence: EMPTY_OCCURRENCES };
+        }
         const workflowRunIdsWithOccurrence = new Set<string>();
         const runIds = window.runIds.filter(id => {
-            if (!occurrenceRunIds.has(id)) return true;
-            workflowRunIdsWithOccurrence.add(id);
-            return false;
+            if (occurrenceRunIds.has(id)) workflowRunIdsWithOccurrence.add(id);
+            return !occurrenceRunIds.has(id) && !approvalRunIds.has(id);
         });
-        return workflowRunIdsWithOccurrence.size > 0 ? { runIds, workflowRunIdsWithOccurrence }
+        return runIds.length !== window.runIds.length
+            ? { runIds, workflowRunIdsWithOccurrence: workflowRunIdsWithOccurrence.size > 0 ? workflowRunIdsWithOccurrence : EMPTY_OCCURRENCES }
             : { runIds: window.runIds, workflowRunIdsWithOccurrence: EMPTY_OCCURRENCES };
-    }, [window.runIds, occurrenceRunIds]);
+    }, [window.runIds, occurrenceRunIds, approvalRunIds]);
     return React.useMemo(() => ({
         workflowAttention: selection.runIds === window.runIds ? window : { ...window, runIds: selection.runIds },
         workflowRunIdsWithOccurrence: selection.workflowRunIdsWithOccurrence,
-    }), [window, selection]);
+        workflowRunIdsWithApproval: approvalRunIds,
+    }), [window, selection, approvalRunIds]);
 }
 
 /** Mounted once by the app shell's Inbox summary owner. */

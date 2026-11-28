@@ -78,6 +78,8 @@ export type ConnectedServiceSetupPanelProps = Readonly<{
     onMachineRequirementChange?: (required: boolean, availability?: MachineAdministrationTargetSelectorProps['resolveCandidateAvailability']) => void;
     /** Consumer-scoped setup must finish on its captured controller. */
     targetLocked?: boolean;
+    /** A use no agent signs in for leads with the service's declared default method (see the controller's panel intent). */
+    methodOrder?: 'declaredDefault';
     /**
      * `frame` (default): the set-up block's frame is the paper (Connected services, Home).
      * `card`: the panel brings its own (the modal, where there is no block to grow from).
@@ -289,11 +291,12 @@ export const ConnectedServiceSetupPanel = React.memo(function ConnectedServiceSe
         intent: reconnectAccountId ? { kind: 'reconnect' as const, accountId: reconnectAccountId } : { kind: 'add' as const },
         onConnected: handleConnected,
         modeId: selectedModeId,
+        ...(props.methodOrder ? { methodOrder: props.methodOrder } : {}),
         onModeChange: selectMode,
         onMachineRequirementChange: reportMachineRequirement,
         // Cancel leaves the sign-in where it stands: back to the services, or closed.
         onCancel: back,
-    }), [back, handleConnected, reconnectAccountId, reportMachineRequirement, selectMode, selectedModeId]);
+    }), [back, handleConnected, props.methodOrder, reconnectAccountId, reportMachineRequirement, selectMode, selectedModeId]);
 
     const renderFlow = (entry: ConnectedServiceSetupCatalogEntry) => (
         <View style={styles.flow} testID="connected-service-setup:service-flow">

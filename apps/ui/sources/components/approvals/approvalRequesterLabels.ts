@@ -51,19 +51,22 @@ export function describeUnnamedApprovalSession(
  * The surface a request arrived through, read once for every approval surface: a current built-in
  * request records it on its immutable execution origin, an older one as its requested surface, and
  * any other family on its creator. The host stamps the agent surface on a Workflow Run's own Action,
- * so that caller reads as the Run, never as an agent that was not involved.
+ * so a Workflow Run caller reads as the Run in both families, never as an agent that was not involved.
  */
 export function readApprovalRequesterSurface(
-  request: ApprovalRequest | Readonly<{ createdBy: Readonly<{ surface?: string }> }> | null,
+  request: ApprovalRequest | Readonly<{
+    createdBy: Readonly<{ surface?: string }>;
+    executionOriginV1?: Readonly<{ caller?: Readonly<{ kind?: string }> }>;
+  }> | null,
   builtIn: boolean,
 ): string {
   if (!request) return '';
+  // The immutable caller decides first: a contributed Action a Workflow dispatched is the Run's (R21-D2).
+  if ('executionOriginV1' in request && request.executionOriginV1?.caller?.kind === 'workflowRun') return 'workflow_run';
   if (!builtIn) return request.createdBy.surface ?? '';
   const approval = request as ApprovalRequest;
   if (approval.v !== 2) return approval.requestedSurface ?? '';
-  return approval.executionOriginV1.caller.kind === 'workflowRun'
-    ? 'workflow_run'
-    : approval.executionOriginV1.surface;
+  return approval.executionOriginV1.surface;
 }
 
 /**

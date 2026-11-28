@@ -1,6 +1,6 @@
 import { ActionFailureCauseV1Schema, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { DeploymentReceiptHeaderV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import type { DeploymentTeardownContentV1 } from '@happier-dev/protocol/deployments/deploymentTeardownContentV1';
+import { DEPLOYMENT_TEARDOWN_STEPS_V1, type DeploymentTeardownContentV1 } from '@happier-dev/protocol/deployments/deploymentTeardownContentV1';
 import { isNativeDeploymentPromotionSourceV1 } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentEnvironmentContentV1, DeploymentMachineResultV1, DeploymentReceiptFailureV1, DeploymentReceiptDetailV1, DeploymentStepV1 } from '@happier-dev/deployments/contracts/v1';
 import { deploymentHealthSavedCheckCauseV1, isDeploymentServiceRunningWithoutCheckV1, type DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments';
@@ -15,6 +15,8 @@ import { readDeploymentFailureRecoveryV1, readDeploymentRefusalRecoveryV1, type 
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { getSettledMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
+import { isMachineOnline } from '@/utils/sessions/machineUtils';
+import type { Machine } from '@/sync/domains/state/storageTypes';
 import { DEPLOYMENT_TARGET_REQUIRES_REPOSITORY_DEFINITION, type PublishTargetRecommendationInput } from '@happier-dev/protocol/deployments/resolvePublishTargetRecommendation';
 import { deploymentRevisionLabelV1 as deploymentRevisionLabel } from '@happier-dev/deployments';
 import { deploymentReceiptTitleV1, deploymentSettledReceiptStateV1 as deploymentSettledReceiptState } from '@happier-dev/deployment-protocol/v1';
@@ -126,6 +128,10 @@ export function deploymentStateLabel(state: ReceiptState): string {
       return t('projects.deployments.stateUnknown');
   }
 }
+
+/** A Machine's reachability verdict for `useServerScopedMachine`'s selector: null while it is not known here. */
+export const readDeploymentMachineOnline = (machine: Machine | null): boolean | null =>
+  machine ? isMachineOnline(machine) : null;
 
 /** An operation by its name, for History's narrowing and anywhere a receipt's kind is said. */
 export function deploymentOperationLabel(operation: DeploymentReceiptHeaderV1['operation']): string {
@@ -247,15 +253,60 @@ export function deploymentRemovalVolumes(teardown: DeploymentTeardownContentV1 |
   return { deleted, kept };
 }
 
-/** A settled removal is titled by the Environment it removed when the page knows it ("Production removed"). */
+/**
+ * A removal's settled steps, read from its own signed proofs in their removal order ("Stopped and removed its
+ * services", "Checked what was removed and what was kept"): a native removal records no deploy steps of its own.
+ * Several Machines name theirs on each step. Empty when the removal carries no proofs.
+ */
+export function deploymentRemovalSteps(
+  teardown: DeploymentTeardownContentV1 | undefined,
+  machineName: (machineId: string) => string,
+): readonly DeploymentStepV1[] {
+  if (!teardown || teardown.proofs.length === 0) return [];
+  const several = new Set(teardown.proofs.map(proof => proof.machineId)).size > 1;
+  return teardown.machines.flatMap(member => DEPLOYMENT_TEARDOWN_STEPS_V1.flatMap(step => {
+    const proof = teardown.proofs.find(candidate => candidate.machineId === member.machineId && candidate.step === step);
+    if (!proof) return [];
+    const label = t(`projects.deployments.removalSteps.${step}`);
+    return [{ id: `teardown.${member.machineId}.${step}`, state: proof.state,
+      label: several ? [label, machineName(member.machineId)].join(' · ') : label }];
+  }));
+}
+
+/**
+ * An Environment by its Project and its own name ("Team Wiki Production"), so two Productions read apart. The
+ * Environment alone when the Project is unknown or already says it; null until either name is known.
+ */
+export function deploymentEnvironmentSubject(
+  projectName: string | null | undefined,
+  environmentName: string | null | undefined,
+): string | null {
+  const environment = environmentName?.trim() || null;
+  const project = projectName?.trim() || null;
+  if (!environment) return null;
+  if (!project || project.localeCompare(environment, undefined, { sensitivity: 'accent' }) === 0) return environment;
+  return t('projects.deployments.environmentInProject', { project, environment });
+}
+
+/**
+ * A settled removal is titled by what it removed ("Team Wiki Production removed"), never by the commit it last ran.
+ * `subject` is `deploymentEnvironmentSubject`'s reading; the page header, its tab and the History row all read here.
+ */
 export function deploymentReceiptPageTitle(
   receipt: Pick<DeploymentReceiptHeaderV1, 'state' | 'operation'>,
   revisionLabel: string | null,
-  environmentName: string | null | undefined,
+  subject: string | null | undefined,
 ): string {
-  return receipt.operation === 'teardown' && receipt.state === 'succeeded' && environmentName
-    ? t('projects.deployments.removedOutcomeTitle', { name: environmentName })
-    : deploymentReceiptTitle(receipt, revisionLabel);
+  return deploymentRemovalTitle(receipt, subject) ?? deploymentReceiptTitle(receipt, revisionLabel);
+}
+
+/** A settled removal's title by what it removed, or null for any other receipt or while nothing names it yet. */
+export function deploymentRemovalTitle(
+  receipt: Pick<DeploymentReceiptHeaderV1, 'state' | 'operation'>,
+  subject: string | null | undefined,
+): string | null {
+  return receipt.operation === 'teardown' && receipt.state === 'succeeded' && subject
+    ? t('projects.deployments.removedOutcomeTitle', { name: subject }) : null;
 }
 
 export function deploymentReceiptTitle(

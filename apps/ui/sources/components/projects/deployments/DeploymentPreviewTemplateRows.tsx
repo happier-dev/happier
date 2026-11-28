@@ -467,7 +467,10 @@ function PreviewWatcherChoice(props: Readonly<{
     title={t('projects.deployments.settingsSections.previewEditor.watcherConnect')}
     onPress={() => {
       if (!props.lifetime.isCurrent()) return;
-      void presentConnectSheet({ scope: props.lifetime.scope, service, intent: 'add' }).then(result => {
+      // Previews need the account for this repository's pull requests and webhook, not for an agent: the sheet says why and
+      // leads with GitHub's declared method rather than an agent's device sign-in (R21-D6).
+      void presentConnectSheet({ scope: props.lifetime.scope, service, intent: 'add', methodOrder: 'declaredDefault',
+        reason: t('projects.deployments.settingsSections.previewEditor.watcherConnectReason') }).then(result => {
         if (result.kind === 'connected' && props.lifetime.isCurrent()) return props.onConnected();
       });
     }} />;

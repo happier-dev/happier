@@ -61,8 +61,6 @@ import {
   useMachineDisplayNamesById,
   useServerScopedMachine,
 } from '@/sync/store/hooks';
-import { isMachineOnline } from '@/utils/sessions/machineUtils';
-import type { Machine } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
 import { keepNamesWhole } from '@/utils/text/keepNamesWhole';
 import { HappyError } from '@/utils/errors/errors';
@@ -89,6 +87,9 @@ import {
   deploymentReceiptAtMs,
   deploymentHistoryLead,
   deploymentReceiptTitle,
+  deploymentRemovalTitle,
+  readDeploymentMachineOnline,
+  deploymentEnvironmentSubject,
   deploymentRevisionLabel,
   deploymentOperationLabel,
   readDeploymentPromotionTarget,
@@ -203,8 +204,6 @@ import { pinProjectService } from '@/sync/ops/actions/projectWorkspaceActions';
 
 type EnvironmentTab = DeploymentEnvironmentTabV1;
 const noEnvironmentName = () => null;
-const readMachineOnline = (machine: Machine | null) =>
-  machine ? isMachineOnline(machine) : null;
 const RECENT_COUNT = 5;
 /** The Overview's Deploy opens no receipt by itself; its banner's Open receipt does (R17-D7). */
 const STAY_ON_OVERVIEW = () => {};
@@ -472,7 +471,7 @@ export const DeploymentEnvironmentDetail = React.memo(
     const machineOnline = useServerScopedMachine(
       props.serverId,
       machineIds.length === 1 ? machineIds[0] : null,
-      readMachineOnline,
+      readDeploymentMachineOnline,
     );
 
     const activeValue = active.snapshot.value;
@@ -536,6 +535,7 @@ export const DeploymentEnvironmentDetail = React.memo(
             <ItemGroup testID="project-deployments.environment.recent" title={t('projects.deployments.recent')}>
               {history.result.items.slice(0, RECENT_COUNT).map((receipt) => (
                 <DeploymentReceiptRow key={receipt.id} receipt={receipt} live={false}
+                  removalSubject={deploymentEnvironmentSubject(props.project?.name, detail.content.name)}
                   actor={deploymentActorIsViewer(receipt.actor, props.accountId) ? t('projects.deployments.byYou') : null}
                   phone={props.phone} onOpen={openReceipt} />
               ))}
@@ -723,8 +723,9 @@ export const DeploymentEnvironmentDetail = React.memo(
       showDeploymentDispositionSheet({
         subject: targetLinkId ? { kind: 'target', targetLinkId } : { kind: 'environment' },
         initialChoice,
-        // Stop and remove tears down first; then the target is unlinked or the Environment deleted.
-        name: detail.content.name,
+        // Stop and remove tears down first; then the target is unlinked or the Environment deleted. Named with its Project
+        // ("Delete Team Wiki Production"), so two Productions read apart (R21-D7).
+        name: deploymentEnvironmentSubject(props.project?.name, detail.content.name) ?? detail.content.name,
         machine: machines.length > 0 ? machines.map(machineName).join(', ') : null,
         provider,
         running,
@@ -1535,6 +1536,7 @@ export const DeploymentEnvironmentDetail = React.memo(
               accountId={props.accountId}
               lifetime={props.lifetime ?? null}
               activeId={activeId}
+              removalSubject={deploymentEnvironmentSubject(props.project?.name, detail.content.name)}
               phone={props.phone}
               onOpen={openReceipt}
             />
@@ -2000,6 +2002,8 @@ const DeploymentReceiptRow = React.memo(function DeploymentReceiptRow(
     receipt: DeploymentReceiptHeaderV1 & Readonly<{ title?: string; failure?: DeploymentReceiptFailureV1 | null;
       source?: DeploymentReviewRevisionV1 | null; steps?: readonly DeploymentStepV1[] }>;
     live: boolean;
+    /** What a settled removal removed ("Team Wiki Production"): its row reads "… removed", never "Removed <sha>". */
+    removalSubject?: string | null;
     /** Who acted, first on the facts line (dHist KEEP "by"): "by you", a name, an agent or a workflow; never guessed. */
     actor: string | null;
     phone: boolean;
@@ -2038,8 +2042,9 @@ const DeploymentReceiptRow = React.memo(function DeploymentReceiptRow(
       }
       // The receipt's own title names what was deployed; without one its state is the title.
       // What the operation did to which version ("Rolled back to 302cf72"), so same-revision rows read apart.
-      title={receipt.source ? deploymentReceiptTitle(receipt, deploymentRevisionLabel(receipt.source))
-        : receipt.title ?? (headerOnly ? deploymentOperationLabel(receipt.operation) : deploymentReceiptTitle(receipt, null))}
+      title={deploymentRemovalTitle(receipt, props.removalSubject)
+        ?? (receipt.source ? deploymentReceiptTitle(receipt, deploymentRevisionLabel(receipt.source))
+          : receipt.title ?? (headerOnly ? deploymentOperationLabel(receipt.operation) : deploymentReceiptTitle(receipt, null)))}
       accessibilityRole="button"
       titleAccessory={
         props.live ? (
@@ -2090,6 +2095,8 @@ function DeploymentHistoryPage(
     accountId: string;
     lifetime: ServerAccountScopeLifetime | null;
     activeId: string | null;
+    /** What a settled removal in this History removed ("Team Wiki Production"), for its row's title. */
+    removalSubject: string | null;
     phone: boolean;
     onOpen: (deploymentId: string) => void;
   }>,
@@ -2165,6 +2172,7 @@ function DeploymentHistoryPage(
               key={receipt.id}
               receipt={receipt}
               live={receipt.id === props.activeId}
+              removalSubject={props.removalSubject}
               actor={actorById.get(receipt.id) ?? null}
               historyAsOfMs={nowMs}
               phone={props.phone}

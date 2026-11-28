@@ -145,11 +145,18 @@ export function createProjectSourcesController(scope: ServerAccountScope, execut
     let creationCheckout: ProjectSourcesCreateActionInputV1['checkout'];
     let createdCheckout: ProjectSourceCheckoutLinkV1 | undefined;
     let disposed = false;
+    // A save or delete already admitted settles for whoever awaits it (the Save as a source sheet outlives the page that
+    // opened it, R21-D5); the owner's disposal completes when that write returns to idle.
+    let disposeAfterMutation = false;
+    const finishDispose = () => {
+        disposed = true; disposeAfterMutation = false; stopCatalog?.(); stopCatalog = null; listeners.clear();
+    };
     const publish = (patch: Partial<ProjectSourcesState>) => {
         if (disposed) return;
         if (Object.entries(patch).every(([key, value]) => Object.is(state[key as keyof ProjectSourcesState], value))) return;
         state = { ...state, ...patch };
         listeners.forEach((listener) => listener());
+        if (disposeAfterMutation && state.mutation === 'idle') finishDispose();
     };
     async function invoke(actionId: ActionId, input: unknown, signal?: AbortSignal, actionRequestId?: string) {
         const outcome = await execute(actionId, input, { surface: 'ui', serverId: scope.serverId, expectedAccountId: scope.accountId,
@@ -260,8 +267,12 @@ export function createProjectSourcesController(scope: ServerAccountScope, execut
                 if (listeners.size === 0) { stopCatalog?.(); stopCatalog = null; }
             };
         },
-        dispose() { disposed = true; stopCatalog?.(); stopCatalog = null; listRequest?.abort(); detailRequest?.abort(); addressRequest?.abort(); listeners.clear(); },
-        resume() { disposed = false; connectCatalog(); },
+        dispose() {
+            listRequest?.abort(); detailRequest?.abort(); addressRequest?.abort();
+            if (state.mutation !== 'idle' && !disposed) disposeAfterMutation = true;
+            else finishDispose();
+        },
+        resume() { disposed = false; disposeAfterMutation = false; connectCatalog(); },
         acknowledgeCatalog(source: ProjectSourceV1, created = false) { acknowledge(source, false, created); },
         removeCatalogSource(sourceId: string, issue: string) {
             const refresh = Boolean(listRequest);

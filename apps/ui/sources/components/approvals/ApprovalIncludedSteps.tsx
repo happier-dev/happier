@@ -9,6 +9,7 @@ import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import { getTranslationValue, t, tLoose } from '@/text';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { TechnicalDetailsDisclosure } from '@/components/ui/lists/TechnicalDetailsDisclosure';
 import { ActionApprovalFieldsCard, type ApprovalFieldsPresentation } from './ActionApprovalFieldsCard';
 import { readApprovalActionTitle } from './approvalRequestTitle';
 import { describeDeploymentRemovalStepTitle, NamedMachines, readDeploymentReviewApproval, readDeploymentReviewMachineIds } from './DeploymentReviewApprovalFacts';
@@ -92,6 +93,11 @@ export const ApprovalIncludedSteps = React.memo(function ApprovalIncludedSteps(p
   preview: unknown;
   serverId: string | null;
   testID: string;
+  /**
+   * `technical`: the steps are the mechanism of a change the request's own facts already say in words (a previews
+   * switch's webhook and trigger steps), so they fold into one disclosure row instead of leading the sheet (R21-D3).
+   */
+  placement?: 'section' | 'technical';
 }>) {
   const { steps, reviewedMachineIds } = React.useMemo(() => {
     const included = readApprovalIncludedSteps(props.preview);
@@ -106,7 +112,7 @@ export const ApprovalIncludedSteps = React.memo(function ApprovalIncludedSteps(p
   }, [props.preview]);
   return steps.length === 0 ? null
     : <IncludedStepFields steps={steps} managedAcquire={readObject(props.preview)?.actionId === 'machines.managed.acquire'}
-        reviewedMachineIds={reviewedMachineIds} serverId={props.serverId} testID={props.testID} />;
+        reviewedMachineIds={reviewedMachineIds} serverId={props.serverId} testID={props.testID} placement={props.placement ?? 'section'} />;
 });
 
 const IncludedStepFields = React.memo(function IncludedStepFields(props: Readonly<{
@@ -115,6 +121,7 @@ const IncludedStepFields = React.memo(function IncludedStepFields(props: Readonl
   reviewedMachineIds: readonly string[];
   serverId: string | null;
   testID: string;
+  placement: 'section' | 'technical';
 }>) {
   const projection = useAppShellPluginUiDeclarationProjection();
   const localize = usePluginLocalizedTextResolver({ projection });
@@ -142,6 +149,13 @@ const IncludedStepFields = React.memo(function IncludedStepFields(props: Readonl
         // Several Machines this Home does not know read once, not once each. Null: the request decides.
         const places = stepMachineIds.map((ids) => ids.length > 0
           ? [...new Set(ids.map((id) => names[id] ?? t('approvals.machineNotKnown')))].join(', ') : null);
+        if (props.placement === 'technical') return (
+          <ItemGroup header="none" testID={props.testID}>
+            <TechnicalDetailsDisclosure title={t('approvals.includedStepsTitle')} testID={`${props.testID}.technical`}
+              lines={titles.map((title, index) => ({ key: `step.${index}`, label: title,
+                value: places[index] ?? t('approvals.includedStepMachineFromRequest') }))} />
+          </ItemGroup>
+        );
         // Every step runs in one place (a Create's steps all run on the machine it makes): say it once, above the steps.
         if (places.every((place) => place === places[0])) return (
           <ItemGroup title={t('approvals.includedStepsTitle')} testID={props.testID}

@@ -930,6 +930,25 @@ it('keeps a declared contributed Action\'s raw input in Technical details withou
     expect(labels).not.toContain('V');
 });
 
+it('R21-D2: never leads a contributed Action\'s review with a serialized structure or an id nothing names', async () => {
+    const repository = { v: 1, repositoryId: '1474884453', owner: 'hapier-qa', name: 'field-guide-site' };
+    // The preview status Action's declared review fields, as its manifest lists them.
+    const presentation = describeApprovalRequestFields({ kind: 'plugin_target_action', status: 'open', secretInputPaths: [],
+        input: { deploymentId: 'cmx07muhg0001abcdefghijkl', expectedHeadSha: '3637d32', status: 'success',
+            sourceConfig: { repository } },
+        inputFields: [{ path: 'deploymentId', title: 'Deployment' }, { path: 'sourceConfig.repository', title: 'Repository' },
+            { path: 'status', title: 'Status' }] });
+    const screen = await renderScreen(<ActionApprovalFieldsCard anatomy="page" presentation={presentation} />);
+    const lead = screen.getTextContent();
+    expect(lead).toContain('success');
+    expect(lead).not.toContain('{"v":1');
+    expect(lead).not.toContain('cmx07muhg0001abcdefghijkl');
+    // Still present, one disclosure away.
+    await expandDisclosureAsync(screen.findAllByTestId('approvals.technical-details'));
+    expect(screen.getTextContent()).toContain('cmx07muhg0001abcdefghijkl');
+    expect(screen.getTextContent()).toContain('1474884453');
+});
+
 it('leads with the changed value: the Session that asked stays in Technical details on the card and the page alike', async () => {
     const home = await upsertServerProfile({ name: 'Personal', serverUrl: 'https://asking-session-target.test' });
     profiles.push(home.id);

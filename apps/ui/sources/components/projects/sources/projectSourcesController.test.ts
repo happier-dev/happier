@@ -490,6 +490,29 @@ describe('Project Sources controller through Source Actions', () => {
         expect(creates).toBe(1);
     });
 
+    it('settles a create in flight for its awaiting sheet when the page that opened it goes away (R21-D5)', async () => {
+        let finish!: (response: Response) => void;
+        let issued!: () => void;
+        const ready = new Promise<void>(done => { issued = done; });
+        const controller = harness(async (_path, init) => init?.method !== 'POST' ? answer({ ok: true, source: source() })
+            : new Promise<Response>(done => { finish = done; issued(); }));
+        const seen: string[] = [];
+        controller.subscribe(() => { seen.push(controller.getSnapshot().mutation); });
+        controller.beginCreate({ name: 'Repository', repository });
+        const pending = controller.save();
+        await ready;
+        // Saving gives the Project its Source, so the page that opened the sheet is replaced while the create is in flight.
+        controller.dispose();
+        finish(answer({ ok: true, source: source() }));
+        await pending;
+        expect(controller.getSnapshot()).toMatchObject({ mutation: 'idle', creationDraft: null, current: { id: 'source-a' } });
+        expect(seen.at(-1)).toBe('idle');
+        // Disposal completes once the admitted write settled: nothing later reaches the retired page.
+        seen.length = 0;
+        controller.beginCreate({ name: 'Later', repository });
+        expect(seen).toEqual([]);
+    });
+
     it('does not retry an uncertain create when inspection finds matching metadata, even with a retained request key', async () => {
         let creates = 0;
         const controller = harness(async (_path, init, options) => {

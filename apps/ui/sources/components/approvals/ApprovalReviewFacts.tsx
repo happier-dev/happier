@@ -136,9 +136,9 @@ export function ApprovalReviewFacts(props: ApprovalReviewFactsInput & Readonly<{
     {visual ? <ApprovalVisualPreview preview={visual} artifactId={props.artifactId ?? testID} serverId={serverId} testID={`${testID}.visual`} /> : null}
     {deployment ? <DeploymentReviewApprovalFacts approval={deployment} serverId={serverId} technicalRows={removalTechnicalRows}
       testID={`${testID}.deployment-review`} decided={props.decided} /> : null}
-    {previewCreate ? <DeploymentPreviewCreateApprovalFacts approval={previewCreate} serverId={serverId}
+    {previewCreate ? <DeploymentPreviewCreateApprovalFacts approval={previewCreate} serverId={serverId} preview={preview}
       technicalRows={removalTechnicalRows} testID={`${testID}.preview-create`} /> : null}
-    {environmentUpdate ? <DeploymentEnvironmentUpdateApprovalFacts approval={environmentUpdate} serverId={serverId}
+    {environmentUpdate ? <DeploymentEnvironmentUpdateApprovalFacts approval={environmentUpdate} serverId={serverId} preview={preview}
       technicalRows={removalTechnicalRows} testID={`${testID}.environment-update`} /> : null}
     {domainSetup?.length ? <ItemGroup title={t('projects.deployments.review.domainSetupTitle')}>
       {domainSetup.map(machine => <DomainSetupMachineRow key={machine.machineId} machine={machine}
@@ -161,7 +161,9 @@ export function ApprovalReviewFacts(props: ApprovalReviewFactsInput & Readonly<{
       ? <ActionApprovalFieldsCard presentation={fields} request={request} anatomy="page" serverId={serverId} presetSubject={props.presetSubject} />
       : props.fields ? <ActionApprovalFieldsCard {...props.fields} /> : null : null}
     {reboot.kind === 'machineReboot' ? <PreparedMachineRebootFacts review={reboot} serverId={serverId} testID={`${testID}.reboot`} /> : null}
-    <ApprovalIncludedSteps preview={preview} serverId={serverId} testID={`${testID}.included-steps`} />
+    {/* A previews switch's own facts say what it does; its webhook and trigger steps are mechanism, one press away. */}
+    <ApprovalIncludedSteps preview={preview} serverId={serverId} testID={`${testID}.included-steps`}
+      placement={environmentUpdate?.previewTemplate !== undefined ? 'technical' : 'section'} />
   </>;
 }
 

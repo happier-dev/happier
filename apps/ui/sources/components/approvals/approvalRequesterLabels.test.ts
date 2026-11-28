@@ -11,6 +11,8 @@ import {
     resolveApprovalHomeSentenceName,
 } from './approvalRequesterLabels';
 import { t } from '@/text';
+import { TargetActionApprovalRequestV1Schema } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
+import { createWorkflowPublicationApprovalArtifact } from '@/dev/testkit/fixtures/workflowPublicationApprovalFixture';
 
 const created: string[] = [];
 afterEach(async () => { for (const id of created.splice(0)) await removeServerProfile(id); });
@@ -64,6 +66,21 @@ describe('how a built-in request says who asked', () => {
         const surface = readApprovalRequesterSurface(
             requestFrom('session.title.set', titleChange, { surface: 'agent', sessionId }, 'agent', sessionCaller), true);
         expect(describeApprovalOrigin(surface)).toBe(t('detailPages.approval.origin.agent'));
+    });
+});
+
+describe('how a contributed Action request says who asked', () => {
+    // R21-D2: a Workflow dispatching a plugin Action records its Run as the caller; the creator surface says agent.
+    it('reads a Workflow Run caller as the Run, never as "Asked by an agent"', () => {
+        const approval = createWorkflowPublicationApprovalArtifact({ id: 'target', runId: 'run-1',
+            scope: { serverId: 'home', accountId: 'account' }, requestKind: 'external' });
+        const request = TargetActionApprovalRequestV1Schema.parse(JSON.parse(approval.body));
+        const surface = readApprovalRequesterSurface({ ...request, createdBy: { surface: 'agent' } }, false);
+        expect(describeApprovalOrigin(surface)).toBe(t('detailPages.approval.origin.workflowRun'));
+    });
+
+    it('keeps the creator surface when the request carries no Workflow caller', () => {
+        expect(readApprovalRequesterSurface({ createdBy: { surface: 'agent' } }, false)).toBe('agent');
     });
 });
 
