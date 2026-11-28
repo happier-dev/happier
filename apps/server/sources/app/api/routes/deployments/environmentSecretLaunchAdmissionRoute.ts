@@ -78,7 +78,7 @@ export function registerEnvironmentSecretLaunchAdmissionRoute(app: Fastify): voi
         // shape. Home already verified the exact signed preparation for this root.
         const managedController = 'kind' in request.body && binding && request.body.dataRoleTargetLinkIds?.length
             && (request.authTokenKind === 'terminal' && binding.actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
-                || readDeploymentDatabaseReadAccessBindingChildV1(binding.deploymentReadAdmission, request.externalActionReviewedChildAdmission))
+                || readDeploymentDatabaseReadAccessBindingChildV1(binding, request.externalActionReviewedChildAdmission))
             ? binding : undefined;
         if ('kind' in request.body && request.authTokenKind !== 'account' && !managedController) {
             return reply.code(403).send({ ok: false, error: 'deployment_access_denied' });

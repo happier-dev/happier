@@ -1,4 +1,5 @@
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
+import { selectDeploymentReviewedChildPlanV1 } from '@happier-dev/protocol/actions/specs/deploymentPreparationScope';
 import nacl from 'tweetnacl';
 import { vi } from 'vitest';
 import { DeploymentChildRpcV1Schema, projectDeploymentChildRoutingV1, deploymentOperationForRootActionV1,
@@ -78,10 +79,13 @@ export async function createDeploymentChildRequesterHarness(options: Readonly<{
     const requestEnvelopeDigest = computeExternalActionRequestEnvelopeDigestV1(envelope);
     const deploymentPreparationAdmission = projectDeploymentPreparationAdmissionV1(binding.actionId, rootInput);
     const nativeAdmission = projectDeploymentNativeAdmissionV1(binding.actionId, rootInput);
+    // Home binds the root's reviewed child plan at mint; this boundary mirrors that mint.
+    const reviewedChildPlan = selectDeploymentReviewedChildPlanV1({ actionId: binding.actionId, deploymentPreparationAdmission });
     const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'private-deployment-root', binding: {
         ...binding, custodianAccountId: 'controller-owner', accountEncryptionMode: encryptionMode, machineId: sourceMachineId,
         installationId: sourceInstallationId, requestEnvelopeDigest,
         ...(isDeploymentChildRootActionIdV1(binding.actionId, deploymentPreparationAdmission) ? { deploymentChildRoot: true } : {}),
+        ...(reviewedChildPlan ? { deploymentReviewedChildPlan: reviewedChildPlan } : {}),
         ...(isDeploymentDomainNativeAdmissionV1(nativeAdmission) || isDeploymentDomainDnsNativeAdmissionV1(nativeAdmission) || nativeAdmission?.kind === 'restore'
             ? { environmentId: nativeAdmission.environmentId, deploymentNativeAdmission: nativeAdmission } : {}),
         ...(deploymentPreparationAdmission ? { deploymentPreparationAdmission } : {}),

@@ -318,7 +318,8 @@ daemon ingress and private approval-origin capture. Mint decides child-dispatch
 eligibility once from the root and preparation admission and seals
 `deploymentChildRoot: true` on the execution binding. Ingress, approval origins
 and dispatch consume that fact; preview and apply without deploy intent do not
-acquire it. Native child transport still verifies the requester, reviewed child
+acquire it. Mint also seals the root's reviewed child plan from the declared
+table, and a reviewed child is admitted only on an exact entry of it. Native child transport still verifies the requester, reviewed child
 input and the root's Environment and exact request path. Once a receipt accepts
 the root, signed controller calls use its captured custody rather than repeating
 requester eligibility and Machine admission. Daemon work retains its local abort

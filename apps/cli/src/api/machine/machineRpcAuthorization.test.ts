@@ -1,3 +1,4 @@
+import { selectDeploymentReviewedChildPlanV1 } from '@happier-dev/protocol/actions/specs/deploymentPreparationScope';
 import { describe, expect, it, vi } from 'vitest';
 import axios, { AxiosHeaders } from 'axios';
 import tweetnacl from 'tweetnacl';
@@ -331,7 +332,9 @@ describe('authorizeMachineRpcRequest', () => {
       custodianAccountId: 'company', serverIdentityId: 'home', machineId: 'controller', installationId: 'controller-installation',
       actionId: rootActionId, requestId: originalActionEnvelope.requestId, target,
       deploymentChildRoot: true,
-      ...(rootKind === 'catalog create' ? { deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1(rootActionId, rootInput) } : {}),
+      ...(rootKind === 'catalog create' ? { deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1(rootActionId, rootInput),
+        // Home binds the catalog Create root's reviewed child plan at mint.
+        deploymentReviewedChildPlan: selectDeploymentReviewedChildPlanV1({ actionId: rootActionId, deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1(rootActionId, rootInput) }) } : {}),
       requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(originalActionEnvelope),
     } });
     const method = `${context.machineId}:${RPC_METHODS.DAEMON_DEPLOYMENT_CHILD}`;

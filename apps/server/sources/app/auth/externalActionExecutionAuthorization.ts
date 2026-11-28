@@ -1684,7 +1684,7 @@ function readSessionMessageChildHttpPurpose(binding: ExternalActionExecutionAuth
     effectActionId: string, target: ExternalActionTargetV1, proof: ExternalActionExecutionRequestProof):
     Readonly<{ machineId: string } | { sessionId: string }> | null {
     if ((!isReviewApplySessionMessageEffectV1(binding.actionId, effectActionId)
-            && readDeploymentReviewedChildV1(binding, proof.reviewedChild, effectActionId, proof)?.row.role
+            && readDeploymentReviewedChildV1(binding, proof.reviewedChild, effectActionId, proof)?.entry.role
                 !== DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1)
         || proof.method.toUpperCase() !== 'GET' || proof.body !== undefined) return null;
     // The ordinary birth owner binds the reviewed recipe and creates the Session.
@@ -1869,7 +1869,7 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
         readArtifactId: () => readArtifactGetHttpPurpose(proof),
     }, signerAccountId, referenceReceiverMachineId);
     const deploymentReferenceServices = deploymentReferenceRead === true
-        && readDeploymentReferenceServiceListEnvironmentIdV1(binding.actionId, effectActionId, proof.reviewedChild) !== undefined;
+        && readDeploymentReferenceServiceListEnvironmentIdV1(binding, effectActionId, proof.reviewedChild) !== undefined;
     const machineSetupEffect = isMachineSetupPlanOrApplyActionIdV1(effectActionId)
         || isMachineSetupCombinedActionIdV1(effectActionId) || isMachineSetupNativeCodecActionIdV1(effectActionId);
     const reviewedSessionAgentReadinessChild = readGrantedSessionAgentReadinessChild(binding, proof.reviewedChild) === effectActionId;
@@ -1932,7 +1932,7 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
         && isDeploymentTelemetryNativeAdmissionV1(binding.deploymentNativeAdmission);
     const managedExecWake = readManagedExecWakePurpose(binding, effectActionId, proof);
     const databaseReadAccessBindings = binding.actionId === ACTION_INVOKE_ACTION_ID_V1 && effectActionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
-        && readDeploymentDatabaseReadAccessBindingChildV1(binding.deploymentReadAdmission, proof.reviewedChild) !== undefined;
+        && readDeploymentDatabaseReadAccessBindingChildV1(binding, proof.reviewedChild) !== undefined;
     const crossesEffectFamily = managedExecWake !== undefined || deploymentReferenceServices || configureBindings || telemetryBindings || databaseReadAccessBindings
         || setupPreparationRead || createPreparationEffect || movePreparationEffect || Boolean(targetRetentionPurpose)
         || reviewedMachineSetupChild || reviewedSessionAgentReadinessChild || reviewedSetupRead || reviewedDomainEffect
@@ -2055,7 +2055,7 @@ async function verifyCommon(
         // Review and activation may forward the exact saved-reference read.
         if (proof.reviewedChild && ((routing?.kind !== 'member' && routing?.kind !== 'review')
             || readDeploymentReviewedChildV1(packet.externalActionExecution.authorization.binding, proof.reviewedChild,
-                effectActionId.data, proof)?.row.role !== DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1))
+                effectActionId.data, proof)?.entry.role !== DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1))
             return refuseChildHttp('reviewed_child_read');
         if (packet.externalActionExecution.authorization.token !== proof.authorizationToken) return refuseChildHttp('authorization_token');
         const referenceReview = routing?.kind === 'review' && proof.reviewedChild !== undefined;
@@ -2082,7 +2082,7 @@ async function verifyCommon(
         if (!verified) return refuseChildHttp('root_execution');
         if (!routing || !(verified.binding.deploymentChildRoot === true)) return refuseChildHttp('child_root');
         if (effectActionId.data !== routing.actionId && !isDeploymentReadPreparation(verified.binding, effectActionId.data)
-            && !readDeploymentReferenceServiceListEnvironmentIdV1(verified.binding.actionId, effectActionId.data, proof.reviewedChild))
+            && !readDeploymentReferenceServiceListEnvironmentIdV1(verified.binding, effectActionId.data, proof.reviewedChild))
             return refuseChildHttp('effect_action');
         if (!sameStrictJsonValue(target, verified.target)) return refuseChildHttp('resolved_target');
         const receiver = admittedReadReceiver ?? await db.machine.findUnique({ where: { id: routing.machineId }, select: {
@@ -6162,7 +6162,7 @@ export async function verifyExternalActionMachineRpcExecution(
         resolvedTarget: execution.target, selectedMachineId: binding.machineId })) return refuse('resolved_target');
 
     const separator = request.method.indexOf(':');
-    if (readDeploymentReferenceServiceListEnvironmentIdV1(binding.actionId, execution.effectActionId, execution.reviewedChild)) {
+    if (readDeploymentReferenceServiceListEnvironmentIdV1(binding, execution.effectActionId, execution.reviewedChild)) {
         if (separator < 1 || request.method.slice(separator + 1) !== RPC_METHODS.MACHINES_SERVICE_LIST
             || request.event !== undefined && request.event !== SOCKET_RPC_EVENTS.CALL
             || execution.authorization.requesterAccountContext !== undefined || execution.deploymentChildRouting || execution.managedAdmission
@@ -6294,6 +6294,7 @@ export async function verifyExternalActionMachineRpcExecution(
             && !doesDeploymentChildInputMatchRootV1({ rootInput: undefined, rootActionId: binding.actionId,
                 rootBinding: binding,
                 child: routing.data, rootPreparationAdmission: binding.deploymentPreparationAdmission,
+                rootReviewedChildPlan: binding.deploymentReviewedChildPlan,
                 reviewedChild: execution.reviewedChild })) return refuseExternalActionExecutionRequest('deployment_child_root_input', { rpc: RPC_METHODS.DAEMON_DEPLOYMENT_CHILD });
         if (!digestOnly && typeof request.params !== 'string') {
             const job = readDeploymentChildRpcV1({ deploymentChildRoot: binding.deploymentChildRoot, rootActionId: binding.actionId, effectActionId: execution.effectActionId,
@@ -6303,7 +6304,7 @@ export async function verifyExternalActionMachineRpcExecution(
             if (envelope.success && envelope.data.v === 1 && job.kind !== 'domainDiscover'
                 && (binding.actionId !== 'deployments.environments.create' || job.actionId === 'deployments.deploy')
                 && !doesDeploymentChildInputMatchRootV1({ rootInput: envelope.data.v === 1 ? envelope.data.input : undefined, rootActionId: binding.actionId, child: job,
-                    rootRequestId: binding.requestId,
+                    rootRequestId: binding.requestId, rootReviewedChildPlan: binding.deploymentReviewedChildPlan,
                     rootPreparationAdmission: binding.deploymentPreparationAdmission, reviewedChild: execution.reviewedChild })) return refuseExternalActionExecutionRequest('deployment_child_root_input', { rpc: RPC_METHODS.DAEMON_DEPLOYMENT_CHILD });
         }
         const machine = await db.machine.findUnique({ where: { id: binding.machineId } }).then(decodeMachineStoredContent);

@@ -297,7 +297,8 @@ export async function readReviewedDeploymentChildRoot(input: Readonly<{
   const matches = doesDeploymentChildInputMatchRootV1({ rootActionId: input.authorization.binding.actionId, rootInput, child,
     rootBinding: input.authorization.binding,
     rootRequestId: input.authorization.binding.requestId,
-    rootPreparationAdmission: input.authorization.binding.deploymentPreparationAdmission, reviewedChild: input.reviewedChild });
+    rootPreparationAdmission: input.authorization.binding.deploymentPreparationAdmission, reviewedChild: input.reviewedChild,
+    rootReviewedChildPlan: input.authorization.binding.deploymentReviewedChildPlan });
   if (!matches) { input.onRefused?.('child_input_mismatch'); return null; }
   const parentInput = projectNativeJsonValueForTransport(rootInput);
   const isParentInputRecord = (value: typeof parentInput): value is Readonly<Record<string, typeof parentInput>> =>
@@ -1820,7 +1821,7 @@ export function createExternalActionMachineRpcExecution(input: Readonly<{
   const effectActionId = ExternalActionActionIdV1Schema.parse(input.effectActionId);
   const admittedChild = readHostAdmittedReviewedChildHttpProofV1(input.context);
   const reviewedChild = admittedChild?.actionId === effectActionId
-    || readDeploymentReferenceServiceListEnvironmentIdV1(authorization.binding.actionId, effectActionId, admittedChild)
+    || readDeploymentReferenceServiceListEnvironmentIdV1(authorization.binding, effectActionId, admittedChild)
     ? admittedChild : undefined;
   return {
     v: 1,
@@ -2031,7 +2032,7 @@ function resolveContributedActionRequesterHttpHeaders(input: Readonly<{
     || !('authentication' in binding) || binding.telemetryCollectorCodec) return null;
   // A database read setup's reviewed bindings child spends the signed root with its review proof:
   // Home admits that exact purpose and its opaque-content writer needs the root binding.
-  if (readDeploymentDatabaseReadAccessBindingChildV1(binding.deploymentReadAdmission, input.reviewedChild)) return null;
+  if (readDeploymentDatabaseReadAccessBindingChildV1(binding, input.reviewedChild)) return null;
   // The outer proof cannot authorize this HTTP purpose. Both the Session
   // issuer and installed ingress already carry the requester's Account transport.
   const requester = readRequesterAccountActionTransportContext(input.authorization);
@@ -2190,7 +2191,7 @@ export async function projectExternalActionRequesterHttpAuthorization(input: Rea
         // Remote review and activation both render saved references. Home admits
         // the exact Environment read carried alongside the signed parent packet.
         const reference = request.reviewedChild?.role === DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1 ? request.reviewedChild : undefined;
-        const referenceServices = readDeploymentReferenceServiceListEnvironmentIdV1(authorization.binding.actionId, request.effectActionId, reference);
+        const referenceServices = readDeploymentReferenceServiceListEnvironmentIdV1(authorization.binding, request.effectActionId, reference);
         const referenceRead = reference !== undefined && (child.kind === 'review' || child.kind === 'member')
           && reference.actionId === DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1
           && (request.effectActionId === reference.actionId || Boolean(referenceServices));
@@ -2551,7 +2552,7 @@ export async function resolveExternalActionRequesterServerRequestHeaders(input: 
 }>): Promise<RequesterAccountAuthorizationHeaders | null> {
   const child = readHostAdmittedReviewedChildHttpProofV1(input.context);
   const carried = input.context.externalActionExecutionAuthorization;
-  const servicesRead = readDeploymentReferenceServiceListEnvironmentIdV1(carried?.binding.actionId, input.effectActionId, child);
+  const servicesRead = readDeploymentReferenceServiceListEnvironmentIdV1(carried?.binding, input.effectActionId, child);
   const authorization = servicesRead ? readHostReviewedChildOriginalAuthorizationV1(input.context) : carried;
   const projection = authorization?.requesterHttpProjection;
   if (!authorization || !projection || projection.accountId !== authorization.binding.accountId

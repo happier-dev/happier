@@ -21,15 +21,15 @@ export async function readDeploymentReviewedSetupHttpPurpose(
     readArtifactId: () => string | null,
 ): Promise<boolean> {
     const child = readDeploymentReviewedChildV1(binding, proof.reviewedChild, effectActionId, proof);
-    if (child?.row.action !== 'plugin') return false;
+    if (child?.entry.action !== 'plugin') return false;
 
-    if (child.row.role === DEPLOYMENT_PREVIEW_SETUP_CHILD_ROLE_V1) {
+    if (child.entry.role === DEPLOYMENT_PREVIEW_SETUP_CHILD_ROLE_V1) {
         // Receipt enrollment reads the template selected by this Update. The
         // existing preparation owner retains native admission and operand scope.
         return await readDeploymentEnvironmentContentPreparationHttpPurpose(tx, binding,
             DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, proof, isHttpOperation) === true;
     }
-    if (child.row.role !== PLATFORM_FAILURE_SETUP_ROLE) {
+    if (child.entry.role !== PLATFORM_FAILURE_SETUP_ROLE) {
         // A teardown preview reads only what its teardown root may read itself.
         const artifactId = readArtifactId();
         if (artifactId !== null) return await isTeardownPreviewContentArtifactInTx(tx, binding, artifactId);

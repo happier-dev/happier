@@ -10,6 +10,7 @@ import { ProjectReadinessReadInputV1Schema } from '../projects/readinessInputV1.
 import { PROJECT_READINESS_ACTION_IDS_V1 } from '../actions/projectReadinessActionIdsV1.js';
 import { ACTION_INVOKE_ACTION_ID_V1 } from '../actions/actionIds.js';
 import { readDeploymentReviewedChildV1 } from '../actions/specs/deploymentPreparationScope.js';
+import type { DeploymentReviewedChildPlanEntryV1 } from '../actions/externalActionApi.js';
 import { DeploymentDataSizeInputV1Schema } from './deploymentReadsV1.js';
 import { ActionInvokeInputSchema } from '../actions/actionInvokeInput.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
@@ -114,13 +115,15 @@ export function readDeploymentDatabaseReadAccessSetupV1(admission: DeploymentRea
   };
 }
 
-export function readDeploymentDatabaseReadAccessBindingChildV1(admission: DeploymentReadAdmissionV1 | undefined,
+export function readDeploymentDatabaseReadAccessBindingChildV1(root: Readonly<{
+  deploymentReadAdmission?: DeploymentReadAdmissionV1;
+  deploymentReviewedChildPlan?: readonly DeploymentReviewedChildPlanEntryV1[];
+}> | undefined,
   reviewedChild: Readonly<{ actionId: string; role: string }> | undefined,
 ) {
-  // A database read admission is the signed root of its own `action.invoke`.
-  if (!readDeploymentReviewedChildV1({ actionId: ACTION_INVOKE_ACTION_ID_V1 }, reviewedChild,
-    DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1)) return undefined;
-  const setup = readDeploymentDatabaseReadAccessSetupV1(admission);
+  // A database read admission is the signed root of its own `action.invoke`, whose plan names this child.
+  if (!readDeploymentReviewedChildV1(root, reviewedChild, DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1)) return undefined;
+  const setup = readDeploymentDatabaseReadAccessSetupV1(root?.deploymentReadAdmission);
   return setup?.allowsBindingWrite ? setup : undefined;
 }
 

@@ -9,6 +9,7 @@ import { projectDeploymentNativeAdmissionV1, isDeploymentDomainNativeAdmissionV1
 import { isDeploymentDomainAddActionIdV1, isDeploymentDomainRemoveActionIdV1, isDeploymentMembershipActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { EnvironmentSecretLaunchAdmissionInputV1Schema, type EnvironmentSecretLaunchAdmissionInputV1 } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { readDeploymentReviewedChildV1 } from '@happier-dev/protocol/actions/specs/deploymentPreparationScope';
 
 export type DomainHttpPurpose = Readonly<{ kind: 'transition'; input: DeploymentDomainTransitionInputV1 }>
     | Readonly<{ kind: 'secret-facts'; input: EnvironmentSecretLaunchAdmissionInputV1;
@@ -22,14 +23,15 @@ export function readExternalActionDeploymentDomainPurpose(binding: ExternalActio
     effectActionId: string, proof: Readonly<{ method: string; path: string; body: unknown; routeInput?: unknown; reviewedChild?: ReviewedActionChildHttpProofV1 }>,
     readArtifactId: () => string | null,
 ): DomainHttpPurpose | null {
+    // A reviewed Domain child is admitted only on an exact entry of its root's signed plan.
     const reviewedCreate = binding.actionId !== effectActionId && isDeploymentDomainAddActionIdV1(effectActionId)
-        && proof.reviewedChild?.actionId === effectActionId
-        && deploymentChildEffectActionIdForRootV1(binding.actionId, binding.deploymentPreparationAdmission, effectActionId) === effectActionId;
+        && readDeploymentReviewedChildV1(binding, proof.reviewedChild, effectActionId) !== undefined;
     const teardownRemoval = binding.actionId === 'deployments.teardown'
         && isDeploymentDomainRemoveActionIdV1(effectActionId)
         && deploymentChildEffectActionIdForRootV1(binding.actionId, binding.deploymentPreparationAdmission, effectActionId) === effectActionId;
+    // Membership reconciliation sends no reviewed child; a reviewed one must match the plan above.
     const membershipAdd = isDeploymentMembershipActionIdV1(binding.actionId, binding.deploymentPreparationAdmission)
-        && isDeploymentDomainAddActionIdV1(effectActionId);
+        && isDeploymentDomainAddActionIdV1(effectActionId) && proof.reviewedChild === undefined;
     // A Deploy's membership and a teardown's reviewed removal read back the
     // retained Domain content of their own admitted job, under that job's receipt.
     if ((membershipAdd || teardownRemoval) && proof.reviewedChild === undefined) {

@@ -107,7 +107,8 @@ import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { computeExternalActionRequestEnvelopeDigestV1, signExternalActionApprovalInputV1, signExternalActionMachineRpcRequestV1,
     signExternalActionMachineRequestV1, verifyExternalActionMachineRpcRequestV1, encodeExternalActionResolvedTargetV1 } from '@happier-dev/protocol/actions';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
-import { DEPLOYMENT_DATA_PROJECT_TEARDOWN_PREVIEW_CHILD_ROLE_V1, DEPLOYMENT_TEARDOWN_PREVIEW_CHILD_ROLE_V1 } from '@happier-dev/protocol/actions/specs/deploymentPreparationScope';
+import { DEPLOYMENT_DATA_PROJECT_TEARDOWN_PREVIEW_CHILD_ROLE_V1, DEPLOYMENT_TEARDOWN_PREVIEW_CHILD_ROLE_V1,
+    selectDeploymentReviewedChildPlanV1 } from '@happier-dev/protocol/actions/specs/deploymentPreparationScope';
 import { PLATFORM_FAILURE_SETUP_ROLE } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
@@ -150,6 +151,7 @@ import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeD
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { DIRECT_ROUTE_GRANT_TTL_MS } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantCachePolicyV1';
 import { auth } from '@/app/auth/auth';
+import { readExternalActionDeploymentDomainPurpose } from '@/app/auth/externalActionDeploymentDomainPurpose';
 import * as loginEligibility from '@/app/auth/enforceLoginEligibility';
 import { hasCurrentExternalActionWorkflowOriginInTx, verifyExternalActionMachineRpcExecution, verifyExternalActionDomainExecutionRequest,
     isDeploymentNativeHttpPurpose, isDeploymentReadPreparation, readAdmittedFiniteOperationPrincipal } from '@/app/auth/externalActionExecutionAuthorization';
@@ -265,6 +267,13 @@ describe('deployment children retain their controller Action authority', () => {
             const output = JSON.stringify(records);
             for (const secret of secrets) expect(output.includes(secret), 'refusal warning disclosed private request data').toBe(false);
         } finally { logger.level = level; write.mockRestore(); }
+    }
+
+    /** A root re-shaped by a test carries the reviewed child plan Home would mint for that root. */
+    function withMintedChildPlan<T extends ExternalActionExecutionAuthorizationV1['binding']>(binding: T): T {
+        const { deploymentReviewedChildPlan: _minted, ...root } = binding;
+        const plan = selectDeploymentReviewedChildPlanV1(root);
+        return { ...root, ...(plan ? { deploymentReviewedChildPlan: plan } : {}) } as T;
     }
 
     async function fixture(ownerKind: 'account' | 'team' = 'account', credential: 'account' | 'api' = 'account',
@@ -1560,6 +1569,66 @@ describe('deployment children retain their controller Action authority', () => {
                         headers: { ...currentAccountStoredContentCompatibilityHeaders, ...headers } })).statusCode;
                 } });
             expect(settled).toBe(401);
+        }, { authentication: 'real' });
+    });
+
+    it('binds the approved child plan into the root at mint and admits a child only on an exact entry while its job runs', async () => {
+        const f = await fixture('account', 'account', { readableEnvironment: true });
+        const foreign = await fixture('account', 'account', { readableEnvironment: true });
+        // Home chose the Deploy root's reviewed children once, at mint, from the declared table.
+        const plan = [
+            { role: 'deployment.reference', action: 'deployments.environments.get', access: 'read' },
+            { role: 'deployment.reference', action: 'deployments.environments.get', effect: 'machines.services.list', access: 'read' },
+        ];
+        expect(f.authorization.binding.deploymentReviewedChildPlan).toEqual(plan);
+        // A replay presents the stored root; Home returns the plan that root was admitted with.
+        expect((await auth.verifyExternalActionExecutionAuthorization(f.authorization.token))?.deploymentReviewedChildPlan).toEqual(plan);
+        const reference = await db.deploymentEnvironment.create({ data: {
+            projectSourceId: f.environment.projectSourceId, createdByAccountId: f.account.id,
+            protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers', controllerMachineId: f.controller.id,
+            ...await f.content('deployment-environment.v1'),
+        } });
+        // Test-only: Home's own signer issues the same root with another plan, as a root admitted with
+        // different children would carry. Child admission must read the signed plan, not re-derive it.
+        const signer = (auth as unknown as { externalActionExecutionAuthorizationTokens: {
+            generator: { new(input: Readonly<{ user: string; extras: unknown }>): Promise<string> } } }).externalActionExecutionAuthorizationTokens;
+        const resign = async (binding: ExternalActionExecutionAuthorizationV1['binding']) => ({ v: 1 as const, binding,
+            token: await signer.generator.new({ user: binding.accountId, extras: { externalActionExecutionAuthorizationV1: binding } }) });
+        const { deploymentReviewedChildPlan: _plan, ...planless } = f.authorization.binding;
+        const servicesOnly = { ...f.authorization.binding, deploymentReviewedChildPlan: [plan[1]!] };
+        const action = 'deployments.environments.get';
+        const input = { serverId, environmentId: reference.id };
+        const read = async (app: Parameters<Parameters<typeof withAuthenticatedTestApp>[1]>[0],
+            root: Readonly<{ authorization: ExternalActionExecutionAuthorizationV1; controller: typeof f.controller; input: unknown }>,
+            role = 'deployment.reference') => {
+            const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: root.authorization,
+                serverId, serverIdentityId: serverId, serverHttpBaseUrl: 'http://home.test', target: root.authorization.binding.target,
+                installationId: root.controller.installationId, privateKey: root.controller.keys.secretKey, rootAdmitted: true });
+            if (!authorization) throw new Error('Expected admitted root HTTP projection');
+            return await invokeHostReviewedChildV1({ parent: { actionId: 'deployments.deploy', input: root.input },
+                context: { runtimeAccountId: root.authorization.binding.accountId, externalActionTarget: root.authorization.binding.target,
+                    externalActionExecutionAuthorization: authorization, surface: 'cli' },
+                child: { action, role, input }, admittedReview: { action, role, surface: 'cli' }, environmentId: reference.id,
+                execute: async (_input, context) => {
+                    const path = `/v1/deployments/environments/${reference.id}?serverId=${serverId}`;
+                    const headers = await context.externalActionExecutionAuthorization!.requesterHttpProjection!.createRequestHeaders({
+                        effectActionId: action, method: 'GET', path });
+                    if (!headers) return 'unsigned';
+                    return (await app.inject({ method: 'GET', url: path,
+                        headers: { ...currentAccountStoredContentCompatibilityHeaders, ...headers } })).statusCode;
+                } });
+        };
+        await withAuthenticatedTestApp(app => { registerDeploymentRoutes(app); artifactsRoutes(app); machinesRoutes(app); registerAccountEncryptionRoutes(app); }, async app => {
+            const own = { authorization: f.authorization, controller: f.controller, input: f.input };
+            expect(await read(app, own), 'exact entry of the bound plan while the job runs').toBe(200);
+            expect(await read(app, { ...own, authorization: await resign(planless) }), 'root without a bound plan').toBe(401);
+            expect(await read(app, { ...own, authorization: await resign(servicesOnly) }), 'entry for another effect only').toBe(401);
+            expect(await read(app, own, 'teardownPreview'), 'role outside the bound plan').toBe(401);
+            // Another Account's admitted root, with the same plan, cannot read this Account's Environment.
+            expect([401, 403, 404], 'another Account').toContain(await read(app,
+                { authorization: foreign.authorization, controller: foreign.controller, input: foreign.input }));
+            await db.deployment.update({ where: { id: f.receipt.id }, data: { state: 'failed' } });
+            expect(await read(app, own), 'after the root job ended').toBe(401);
         }, { authentication: 'real' });
     });
 
@@ -3734,11 +3803,11 @@ describe('deployment children retain their controller Action authority', () => {
             runtimeTargetLinkId: null, ...await f.content('deployment-environment.v1') } });
         const preview = { templateEnvironmentId: parent.id, expectedTemplateRevision: parent.revision,
             pullRequestId: crypto.randomUUID(), runtimeTargetLinkId: f.link.id };
-        const binding = { ...f.authorization.binding, actionId: 'deployments.environments.create', environmentId: parent.id,
+        const binding = withMintedChildPlan({ ...f.authorization.binding, actionId: 'deployments.environments.create', environmentId: parent.id,
             deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1('deployments.environments.create', {
                 mode: 'apply', projectSourceId: f.environment.projectSourceId, requestKey: crypto.randomUUID(), preview,
                 protection: 'nonProduction', purpose: 'preview', deployerMode: 'managers',
-            }) };
+            }) });
         const bindingAction = 'deployments.bindings.set';
         const telemetry = projectDeploymentNativeAdmissionV1('deployments.environments.telemetry.set', { serverId,
             environmentId: f.environment.id, expectedRevision: f.environmentRevision });
@@ -6034,11 +6103,11 @@ describe('deployment children retain their controller Action authority', () => {
             intent: 'markNotNeeded' as const };
         const reviewedChild = { actionId, role: 'preview.backup', inputDigest: computeActionInputApprovalDigestV1(actionId, input),
             deploymentNativeAdmission: projectDeploymentNativeAdmissionV1(actionId, input) };
-        const binding = { ...f.authorization.binding, actionId: 'deployments.environments.create', environmentId: parent.id,
+        const binding = withMintedChildPlan({ ...f.authorization.binding, actionId: 'deployments.environments.create', environmentId: parent.id,
             deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1('deployments.environments.create', {
                 mode: 'apply', projectSourceId: f.environment.projectSourceId, requestKey: crypto.randomUUID(), preview,
                 protection: 'nonProduction', purpose: 'preview', deployerMode: 'managers',
-            }) };
+            }) });
         const read = (environmentId: string, home = serverId) => readDeploymentEnvironmentSetupHttpPurpose(db, binding, actionId,
             { method: 'GET', path: `/v1/deployments/environments/${environmentId}?serverId=${encodeURIComponent(home)}`,
                 routeInput: { serverId: home, environmentId }, reviewedChild }, f.environment.id);
@@ -7071,8 +7140,8 @@ describe('deployment children retain their controller Action authority', () => {
         const native = projectDeploymentNativeAdmissionV1(actionId, { serverId,
             environmentId: f.environment.id, expectedRevision: f.environmentRevision, intent: 'markNotNeeded' });
         if (!native || !('kind' in native) || native.kind !== 'backupConfigure') throw new Error('Expected configure admission');
-        const binding = { ...f.authorization.binding, actionId, environmentId: f.environment.id,
-            deploymentNativeAdmission: { ...native, intent } };
+        const binding = withMintedChildPlan({ ...f.authorization.binding, actionId, environmentId: f.environment.id,
+            deploymentNativeAdmission: { ...native, intent } });
         const bindingAction = 'deployments.bindings.set';
         const artifactId = createDeploymentEnvironmentContentArtifactIdV1({ ...binding,
             actionId: bindingAction, environmentId: f.environment.id });
@@ -7101,8 +7170,8 @@ describe('deployment children retain their controller Action authority', () => {
         const native = projectDeploymentNativeAdmissionV1(actionId, { serverId,
             environmentId: f.environment.id, expectedRevision: f.environmentRevision, intent: 'markNotNeeded' });
         if (!native || !('kind' in native) || native.kind !== 'backupConfigure') throw new Error('Expected configure admission');
-        const binding = { ...f.authorization.binding, actionId, environmentId: f.environment.id,
-            deploymentNativeAdmission: { ...native, intent: 'rekeyAndSave' as const } };
+        const binding = withMintedChildPlan({ ...f.authorization.binding, actionId, environmentId: f.environment.id,
+            deploymentNativeAdmission: { ...native, intent: 'rekeyAndSave' as const } });
         const bindingAction = 'deployments.bindings.set';
         const reviewedChild = { actionId: bindingAction, role: 'backup.bindings' as const,
             inputDigest: computeActionInputApprovalDigestV1(bindingAction, { serverId, environmentId: f.environment.id,
@@ -9167,6 +9236,19 @@ describe('deployment children retain their controller Action authority', () => {
                 payload: { version: 1, accountId: f.account.id, machineId: f.controller.id,
                     installationId: f.controller.installationId, deploymentSecretLaunch: {
                         requestBodyDigest: computeEnvironmentSecretLaunchAdmissionDigestV1(factsBody) } } }) };
+            // A reviewed Domain child continues only on an exact entry of the root's signed plan:
+            // a role the plan names for another Action, or names nowhere, is refused. The Domain
+            // purpose owner itself decides it, not only the later preparation reader.
+            const domainPurpose = (role: string) => readExternalActionDeploymentDomainPurpose(f.authorization.binding, actionId,
+                { method: 'POST', path: factsPath, body: facts, reviewedChild: { ...reviewedChild, role } }, () => null);
+            expect(domainPurpose(reviewedChild.role)).toMatchObject({ kind: 'secret-facts' });
+            expect(domainPurpose('template.deploy')).toBeNull();
+            expect(domainPurpose('domain.unreviewed')).toBeNull();
+            for (const role of ['template.deploy', 'domain.unreviewed']) {
+                const outside = await app.inject({ method: 'POST', url: factsPath, payload: facts,
+                    headers: headers('POST', factsPath, facts, { ...reviewedChild, role }) });
+                expect(outside.statusCode, `${role}: ${outside.body}`).toBe(401);
+            }
             const projected = await app.inject({ method: 'POST', url: factsPath, payload: facts,
                 headers: headers('POST', factsPath, facts) });
             expect(projected.statusCode, projected.body).toBe(200);
@@ -11638,7 +11720,7 @@ describe('deployment children retain their controller Action authority', () => {
                 sourceDeploymentId: sourceReceipt.id, artifact: 'image',
                 destinationContent: await f.content('deployment-environment.v1') } });
         const routing = projectDeploymentChildRoutingV1(job);
-        const binding = { ...f.authorization.binding, actionId: 'deployments.promote' };
+        const binding = withMintedChildPlan({ ...f.authorization.binding, actionId: 'deployments.promote' });
         const current = () => isCurrentDeploymentChildInTx(db, binding, routing);
         const get = getActionSpec('deployments.receipts.get');
         if (!get.serverTransport) throw new Error('Receipt needs canonical transport');

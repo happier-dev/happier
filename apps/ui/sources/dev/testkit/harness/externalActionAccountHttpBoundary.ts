@@ -1,4 +1,5 @@
 import { projectExternalActionMachineRuntimeDemandV1, readExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
+import { selectDeploymentReviewedChildPlanV1 } from '@happier-dev/protocol/actions/specs/deploymentPreparationScope';
 import sodium from '@/encryption/libsodium.lib';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
@@ -244,6 +245,8 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
                 const presetPreparationAdmission = projectExternalActionPresetPreparationEnvelopeAdmissionV1(admittedEnvelope);
                 const deploymentReadAdmission = projectExternalActionDeploymentReadEnvelopeAdmissionV1(admittedEnvelope);
                 const deploymentChildRoot = isDeploymentChildRootActionIdV1(params.actionId, deploymentPreparationAdmission);
+                const deploymentReviewedChildPlan = selectDeploymentReviewedChildPlanV1({ actionId: params.actionId,
+                    deploymentPreparationAdmission, deploymentReadAdmission });
                 const deploymentNativeAdmission = native && ('kind' in native || isDeploymentEnvironmentUpdateNativeAdmissionV1(native))
                     ? native : undefined;
                 const environmentId = projectExternalActionDeploymentMetadataEnvelopeEnvironmentIdV1(admittedEnvelope)
@@ -285,6 +288,7 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
                         ...(workspaceSyncAdmission ? { workspaceSyncAdmission } : {}),
                         ...(environmentId !== undefined ? { environmentId } : {}),
                         ...(deploymentChildRoot ? { deploymentChildRoot: true } : {}),
+                        ...(deploymentReviewedChildPlan ? { deploymentReviewedChildPlan } : {}),
                         ...(deploymentNativeAdmission ? { deploymentNativeAdmission } : {}),
                         ...(deploymentPreparationAdmission ? { deploymentPreparationAdmission } : {}),
                         ...(presetPreparationAdmission ? { presetPreparationAdmission } : {}),

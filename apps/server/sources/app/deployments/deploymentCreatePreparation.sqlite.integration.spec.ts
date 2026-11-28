@@ -1,3 +1,4 @@
+import { selectDeploymentReviewedChildPlanV1 } from '@happier-dev/protocol/actions/specs/deploymentPreparationScope';
 import { teamResourceGrantFixture } from '@/testkit/resourceGrant.testkit';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as privacyKit from 'privacy-kit';
@@ -699,9 +700,14 @@ describe('reviewed create preparation authority', () => {
             requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) }, { input: rootInput });
         expect(authorization.binding.custodianAccountId).toBe(f.owner.id);
         expect(authorization.binding.deploymentLinkAdmission).toEqual({ environmentId: environment.id, owner });
-        const mintInput = { ...authorization.binding, deploymentLinkAdmission: undefined };
+        // Home-derived facts are never mint input; the re-mint derives them again.
+        const { deploymentReviewedChildPlan: _plan, ...rootFacts } = authorization.binding;
+        const mintInput = { ...rootFacts, deploymentLinkAdmission: undefined };
         const projected = await auth.mintExternalActionExecutionAuthorization(mintInput, { deploymentLinkEnvironmentId: environment.id });
         expect(projected.binding.deploymentLinkAdmission).toEqual(authorization.binding.deploymentLinkAdmission);
+        // A relay of the same root is admitted with the same reviewed child plan.
+        expect(projected.binding.deploymentReviewedChildPlan).toEqual(authorization.binding.deploymentReviewedChildPlan);
+        expect(authorization.binding.deploymentReviewedChildPlan?.map(child => child.role)).toEqual(['target-retention:', 'platform-failure.setup']);
         await expect(auth.mintExternalActionExecutionAuthorization({ ...mintInput,
             deploymentLinkAdmission: { environmentId: environment.id, owner: otherOwner } }, { input }))
             .rejects.toMatchObject({ code: 'credential_scope_denied' });
@@ -1205,7 +1211,9 @@ describe('reviewed create preparation authority', () => {
             definition: { from: 'catalogApp', templateRef: { sourceId: 'apps', itemId: 'web', version: '1',
                 ref: { kind: 'content', digest: `sha256:${'c'.repeat(64)}` } } } });
         if (!admission || admission.operation !== 'create') throw new Error('Expected catalog admission');
-        const binding = { ...f.binding, deploymentPreparationAdmission: admission };
+        // The reviewed children Home binds into this catalog Create root at mint.
+        const binding = { ...f.binding, deploymentPreparationAdmission: admission,
+            deploymentReviewedChildPlan: selectDeploymentReviewedChildPlanV1({ actionId: f.binding.actionId, deploymentPreparationAdmission: admission }) };
         expect(await inTx(tx => isDeploymentPreparationAuthorizedInTx(tx, binding, admission))).toBe(true);
         const content = await f.artifact(f.actor.id);
         const domain = (environmentId: string) => {

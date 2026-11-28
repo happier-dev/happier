@@ -51,7 +51,7 @@ export function readDeploymentExecutionEffectFromRequest(request: FastifyRequest
         || (binding.actionId === DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1 || binding.actionId === DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1)
             && actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 && readDeploymentReviewedChildV1(binding, reviewed, actionId) !== undefined
         || actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
-            && readDeploymentDatabaseReadAccessBindingChildV1(binding.deploymentReadAdmission, reviewed) !== undefined
+            && readDeploymentDatabaseReadAccessBindingChildV1(binding, reviewed) !== undefined
         || reviewed !== undefined && isDeploymentDomainAddActionIdV1(reviewed.actionId) && actionId === reviewed.actionId
             && deploymentChildEffectActionIdForRootV1(binding.actionId, binding.deploymentPreparationAdmission, actionId) === actionId
         ? { binding, actionId } : null;

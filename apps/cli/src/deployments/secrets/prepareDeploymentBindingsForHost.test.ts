@@ -1,3 +1,4 @@
+import { selectDeploymentReviewedChildPlanV1 } from '@happier-dev/protocol/actions/specs/deploymentPreparationScope';
 import { readActionOutputDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import { logger } from '@/ui/logger';
 import axios from 'axios';
@@ -353,7 +354,10 @@ it.each([
                     machineId: installation.machineId, installationId: installation.installationId,
                     actionId: readAccessChild ? 'action.invoke' : templateChild ? 'deployments.templates.instantiate' : configureChild ? 'deployments.environments.create' : 'deployments.bindings.set',
                     ...(readAccessChild && readSetupParent ? {
-                        deploymentReadAdmission: projectDeploymentReadAdmissionV1('action.invoke', readSetupParent.input) } : {}),
+                        deploymentReadAdmission: projectDeploymentReadAdmissionV1('action.invoke', readSetupParent.input),
+                        // Home binds the database read root's reviewed child plan at mint.
+                        deploymentReviewedChildPlan: selectDeploymentReviewedChildPlanV1({ actionId: 'action.invoke',
+                            deploymentReadAdmission: projectDeploymentReadAdmissionV1('action.invoke', readSetupParent.input) }) } : {}),
                     requestId: 'copy-request', requestEnvelopeDigest: 'a'.repeat(43),
                     target: { kind: 'machine', machineId: installation.machineId }, authentication: { kind: 'account', tokenEpoch: 1 },
                     ...(templateChild ? { deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1('deployments.templates.instantiate', {

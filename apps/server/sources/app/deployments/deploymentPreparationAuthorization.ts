@@ -1065,7 +1065,7 @@ export async function readDeploymentDomainPreparationHttpPurpose(tx: Tx, binding
 export async function readDeploymentDatabaseReadAccessBindingHttpPurpose(tx: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
     proof: Readonly<{ method: string; path: string; body?: unknown; routeInput?: unknown; reviewedChild?: ReviewedActionChildHttpProofV1 }>,
 ): Promise<boolean> {
-    const setup = readDeploymentDatabaseReadAccessBindingChildV1(binding.deploymentReadAdmission, proof.reviewedChild);
+    const setup = readDeploymentDatabaseReadAccessBindingChildV1(binding, proof.reviewedChild);
     if (!setup) return false;
     const { environmentId, targetLinkId } = setup;
     const id = createDeploymentEnvironmentContentArtifactIdV1({ ...binding, environmentId, actionId: DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 });
@@ -1108,7 +1108,7 @@ export async function readDeploymentEnvironmentSetupHttpPurpose(tx: Tx, binding:
     if (reviewed && (createdEnvironmentId !== admission.environmentId || reviewed.actionId !== effectActionId)) return false;
     const bindings = effectActionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1;
     // The child's native admission kind selects its one declared bindings role.
-    if (bindings && readDeploymentReviewedChildV1(binding, proof.reviewedChild, effectActionId)?.row.role
+    if (bindings && readDeploymentReviewedChildV1(binding, proof.reviewedChild, effectActionId)?.entry.role
         !== (telemetry ? DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1 : DEPLOYMENT_BACKUP_BINDINGS_CHILD_ROLE_V1)) return false;
     const domainRead = telemetry && effectActionId === deploymentActionIds.DEPLOYMENT_DOMAIN_GET_ACTION_ID_V1;
     if (!bindings && !domainRead && effectActionId !== admission.actionId
@@ -1473,7 +1473,7 @@ export async function readDeploymentCreateHttpPurposeInTx(tx: Tx, binding: Exter
     const configureEffect = effectActionId === DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1;
     // The declared child plan names the one reviewed child this root runs for this effect.
     const child = readDeploymentReviewedChildV1(binding, proof.reviewedChild, effectActionId);
-    const backupBindings = child?.row.role === DEPLOYMENT_BACKUP_BINDINGS_CHILD_ROLE_V1;
+    const backupBindings = child?.entry.role === DEPLOYMENT_BACKUP_BINDINGS_CHILD_ROLE_V1;
     const adoptBindings = binding.actionId === MACHINE_SERVICE_ADOPT_ACTION_ID
         && effectActionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 && child !== undefined;
     // Duplicate's reviewed data Link names the source data Link it copies; nothing else links under Create.
@@ -1950,7 +1950,7 @@ async function readCurrentDeploymentReferenceInput(tx: Tx, binding: ExternalActi
 export async function readDeploymentReferenceServiceListInTx(tx: Tx,
     binding: ExternalActionExecutionAuthorizationBindingV1, effectActionId: string, child: ReviewedActionChildHttpProofV1 | undefined,
     signerAccountId: string, machineId: string) {
-    if (!readDeploymentReferenceServiceListEnvironmentIdV1(binding.actionId, effectActionId, child)) return null;
+    if (!readDeploymentReferenceServiceListEnvironmentIdV1(binding, effectActionId, child)) return null;
     const reference = await readCurrentDeploymentReferenceInput(tx, binding, child, signerAccountId);
     if (!reference) return null;
     const { environmentId, serverId } = reference.input;
@@ -1974,7 +1974,7 @@ export async function readDeploymentReferenceHttpPurpose(tx: Tx,
     const child = proof.reviewedChild;
     if (child?.role !== deploymentActionIds.DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1 && child?.environmentId === undefined) return null;
     if (proof.method.toUpperCase() !== 'GET' || proof.body !== undefined) return false;
-    if (readDeploymentReferenceServiceListEnvironmentIdV1(binding.actionId, effectActionId, child)) {
+    if (readDeploymentReferenceServiceListEnvironmentIdV1(binding, effectActionId, child)) {
         const match = /^\/v1\/machines\/([^/?#]+)$/u.exec(proof.path);
         if (!match) return false;
         let machineId: string;

@@ -1390,7 +1390,7 @@ export async function authorizeMachineRpcRequest(
     }
   }
   const referenceExecution = request.workspaceSyncSourceExecution?.externalActionExecution;
-  const referenceEnvironmentId = readDeploymentReferenceServiceListEnvironmentIdV1(referenceExecution?.authorization.binding.actionId,
+  const referenceEnvironmentId = readDeploymentReferenceServiceListEnvironmentIdV1(referenceExecution?.authorization.binding,
     referenceExecution?.effectActionId, referenceExecution?.reviewedChild);
   if (referenceEnvironmentId && referenceExecution && (source !== 'authenticated_home_socket' || !machine || !request.machineAdmission
     || request.method !== `${machine.machineId}:${RPC_METHODS.MACHINES_SERVICE_LIST}`

@@ -1549,6 +1549,23 @@ export const ExternalActionSessionPresetAcquisitionV1Schema = lazyZodSchema(() =
   { message: 'Admitted preset snapshot must match its selection and mode' })));
 export type ExternalActionSessionPresetAcquisitionV1 = z.infer<typeof ExternalActionSessionPresetAcquisitionV1Schema>;
 
+/**
+ * One reviewed child the root was admitted with: Home selects these entries once at
+ * mint from the declared table (`readDeploymentReviewedChildPlanV1`), and a child is
+ * admitted only on an exact entry of its root's signed plan.
+ */
+export const DeploymentReviewedChildPlanEntryV1Schema = lazyZodSchema(() => z.strictObject({
+  /** Exact role, or a role family ending in ':' whose operand the child carries. */
+  role: z.string().check(z.minLength(1)),
+  /** The child's own Action id; `plugin` is the target descriptor's qualified provider Action. */
+  action: ExternalActionActionIdV1Schema,
+  /** The Home effect the child spends, when it differs from its own Action. */
+  effect: z.optional(ExternalActionActionIdV1Schema),
+  /** A read child spends only GET requests without a body. */
+  access: z.enum(['read', 'write']),
+}));
+export type DeploymentReviewedChildPlanEntryV1 = z.infer<typeof DeploymentReviewedChildPlanEntryV1Schema>;
+
 /** Home-authenticated invocation facts. The selected daemon owns plaintext transformation. */
 const externalActionExecutionAuthorizationRoutingShapeV1 = () => ({
     serverIdentityId: ExternalActionServerPrincipalIdV1Schema,
@@ -1619,6 +1636,8 @@ const externalActionExecutionAuthorizationRoutingShapeV1 = () => ({
     deploymentPreparationAdmission: z.optional(DeploymentPreparationAdmissionV1Schema),
     /** Home decides child dispatch once at mint; only the signed binding carries this authority. */
     deploymentChildRoot: z.optional(z.literal(true)),
+    /** The reviewed children this root was approved with, chosen once by Home at mint. */
+    deploymentReviewedChildPlan: z.optional(z.array(DeploymentReviewedChildPlanEntryV1Schema).check(z.minLength(1))),
     deploymentCandidatePublication: z.optional(DeploymentCandidatePublicationV1Schema),
     /** Home-derived preparation operands; a controller cannot select another readable owner. */
     deploymentLinkAdmission: z.optional(z.strictObject({ environmentId: DeploymentIdentifierV1Schema, owner: ProjectSourceOwnerV1Schema,

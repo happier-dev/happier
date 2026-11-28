@@ -234,7 +234,7 @@ async function resolveMachineRpcContentCodec(params: Readonly<{
   const externalAuthorization = params.externalAction?.context.externalActionExecutionAuthorization;
   const externalTarget = params.externalAction?.context.externalActionTarget;
   const referenceServiceList = params.method === RPC_METHODS.MACHINES_SERVICE_LIST
-    && readDeploymentReferenceServiceListEnvironmentIdV1(externalAuthorization?.binding.actionId, params.externalAction?.effectActionId,
+    && readDeploymentReferenceServiceListEnvironmentIdV1(externalAuthorization?.binding, params.externalAction?.effectActionId,
       readHostAdmittedReviewedChildV1(params.externalAction?.context) ?? undefined);
   const childFamily = params.externalAction ? readReviewedMachineRpcChildFamilyV1({ binding: externalAuthorization?.binding,
     effectActionId: params.externalAction.effectActionId, method: params.method,
@@ -458,7 +458,7 @@ export async function callExactMachineRpc(params: Readonly<{
     const stopChildTarget = stopChild ? readSessionStopChildTargetV1(params.request) : null;
     const setupPlanChild = childFamily === 'setup_plan';
     const referenceServiceList = params.method === RPC_METHODS.MACHINES_SERVICE_LIST
-      && readDeploymentReferenceServiceListEnvironmentIdV1(moveAuthorization?.binding.actionId, params.externalAction?.effectActionId, reviewedChild);
+      && readDeploymentReferenceServiceListEnvironmentIdV1(moveAuthorization?.binding, params.externalAction?.effectActionId, reviewedChild);
     const referenceExecution = referenceServiceList ? readRequesterAccountActionContext(moveAuthorization)?.deploymentChildExecution : undefined;
     const creationChild = childFamily === 'creation';
     const readinessChild = childFamily === 'readiness';

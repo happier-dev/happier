@@ -3476,6 +3476,15 @@ custody. Mint rejects caller-supplied stamps. This changes the unreleased 0.3
 server/CLI contract together; no mixed-version child-dispatch guarantee is claimed.
 The 0.2 predecessor has no deployment-root counterpart.
 
+Mint also seals `deploymentReviewedChildPlan`: the reviewed children the root was
+approved with (role, child Action, Home effect, read or write), selected once from
+the declared table at the deployment preparation scope owner. Home and the daemon
+admit a reviewed child only on an exact entry of that signed plan, beside the
+existing check that the root's admitted job is still active; neither re-derives the
+plan per child. Mint rejects a caller-supplied plan. A root minted by an earlier 0.3
+build carries no plan, so its reviewed children are refused until the root is
+admitted again. This is an unreleased 0.3 server/CLI contract change.
+
 Deployment child HTTP proofs reference the authorization token already carried
 in the outer authorization header instead of repeating it inside the proof.
 The server reconstructs the full logical proof before the existing token,

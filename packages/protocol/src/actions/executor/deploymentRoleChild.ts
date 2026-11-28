@@ -25,7 +25,7 @@ import type { ExternalActionExecutionAuthorizationV1, ReviewedActionChildHttpPro
 import type { SocketRpcMachineAdmissionContextV1 } from '../../rpc/socket.js';
 import type { ApiTokenGrantV1 } from '../../auth/apiTokenGrant.js';
 import { readTeamCredentialActionHttpPurposeV1 } from '../../teams/credentials/actionHttpPurposeV1.js';
-import { DEPLOYMENT_DATA_PROJECT_TEARDOWN_PREVIEW_CHILD_ROLE_V1 } from '../specs/deploymentPreparationScope.js';
+import { DEPLOYMENT_DATA_PROJECT_TEARDOWN_PREVIEW_CHILD_ROLE_V1, selectDeploymentReviewedChildPlanV1 } from '../specs/deploymentPreparationScope.js';
 import type { ActionExecutorContext, ActionExecuteResult, ActionExecuteFailure,
   HostReviewedChildPortV1, HostReviewedChildInvocationV1, HostReviewedChildrenPlanV1 } from './types.js';
 
@@ -527,7 +527,12 @@ export async function invokeHostReviewedChildV1<T = ActionExecuteResult, TAction
   let environmentApprovalScope: EnvironmentApprovalScope | undefined;
   if (child.role === DEPLOYMENT_DATABASE_READ_ACCESS_BINDINGS_CHILD_ROLE_V1) {
     const admission = projectDeploymentReadAdmissionV1(parent.actionId, parentInput);
-    const setup = readDeploymentDatabaseReadAccessBindingChildV1(admission, { actionId: qualifiedActionId, role: child.role });
+    // The host issues only a child its parent declares. A local parent may have no signed
+    // root; Home admits the issued child on the signed root's bound plan.
+    const declared = selectDeploymentReviewedChildPlanV1({ actionId: parent.actionId,
+      ...(admission ? { deploymentReadAdmission: admission } : {}) });
+    const setup = readDeploymentDatabaseReadAccessBindingChildV1({ ...(admission ? { deploymentReadAdmission: admission } : {}),
+      ...(declared ? { deploymentReviewedChildPlan: declared } : {}) }, { actionId: qualifiedActionId, role: child.role });
     const patch = DeploymentBindingsPatchInputV1Schema.safeParse(proofInput);
     if (!reviewAdmitted || !setup || !admission || !('databaseTarget' in admission) || !patch.success
       || patch.data.serverId !== admission.databaseTarget.environment.serverId || patch.data.environmentId !== setup.environmentId

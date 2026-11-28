@@ -157,6 +157,8 @@ export function doesDeploymentChildInputMatchRootV1(input: Readonly<{
     rootInput: unknown; child: DeploymentChildRpcV1; rootActionId?: string; rootRequestId?: string;
     rootBinding?: ExternalActionExecutionAuthorizationBindingV1;
     rootPreparationAdmission?: DeploymentPreparationAdmissionV1; reviewedChild?: ReviewedActionChildHttpProofV1;
+    /** The reviewed children Home bound into the signed root at mint. */
+    rootReviewedChildPlan?: ExternalActionExecutionAuthorizationBindingV1['deploymentReviewedChildPlan'];
 }>): boolean {
     const child = input.child;
     if (child.kind === 'domainReview') {
@@ -248,7 +250,8 @@ export function doesDeploymentChildInputMatchRootV1(input: Readonly<{
     if (input.rootActionId === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1
         || input.rootActionId === DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 && isDeploymentDomainAddActionIdV1(child.actionId)) {
         if (deploymentChildEffectActionIdForRootV1(input.rootActionId, input.rootPreparationAdmission, child.actionId) !== child.actionId) return false;
-        const root = { actionId: input.rootActionId, deploymentPreparationAdmission: input.rootPreparationAdmission };
+        // A reviewed child is admitted only on an exact entry of the signed root's plan.
+        const root = { deploymentReviewedChildPlan: input.rootReviewedChildPlan };
         if (child.actionId === 'deployments.deploy') {
             if (input.reviewedChild) return readDeploymentReviewedChildV1(root, input.reviewedChild, child.actionId) !== undefined
                 && input.reviewedChild.inputDigest === computeActionInputApprovalDigestV1(child.actionId, child.input);

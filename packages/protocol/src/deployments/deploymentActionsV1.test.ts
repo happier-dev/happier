@@ -23,6 +23,7 @@ import { DeploymentEnvironmentCreateInputV1Schema, DeploymentEnvironmentCreateSt
 import { DeploymentChildRpcV1Schema, doesDeploymentChildInputMatchRootV1, readDeploymentChildRpcV1 } from './deploymentChildRpcV1.js';
 import { buildDeploymentPromoteInputV1 } from './promoteInput.js';
 import { projectDeploymentPreparationAdmissionV1 } from './deploymentPreparationAdmissionV1.js';
+import { selectDeploymentReviewedChildPlanV1 } from '../actions/specs/deploymentPreparationScope.js';
 import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, deploymentChildEffectActionIdForRootV1 } from './deploymentActionIdsV1.js';
 import { RPC_METHODS } from '../rpc/methods.js';
 import { DeploymentChildRoutingV1Schema, projectDeploymentChildRoutingV1 } from './deploymentChildRoutingV1.js';
@@ -342,7 +343,10 @@ describe('Create reviewed Deploy child transport', () => {
       machineId: 'receiver', installationId: 'installed' });
     const reviewedChild = { actionId: child.actionId, role: kind === 'catalog' ? 'template.deploy' : 'preview.deploy',
       inputDigest: computeActionInputApprovalDigestV1(child.actionId, input) };
+    // Home binds the Create root's reviewed child plan at mint.
+    const rootReviewedChildPlan = selectDeploymentReviewedChildPlanV1({ actionId: 'deployments.environments.create', deploymentPreparationAdmission: rootPreparationAdmission });
     const transport = { deploymentChildRoot: true as const, rootActionId: 'deployments.environments.create', rootPreparationAdmission, reviewedChild,
+      rootReviewedChildPlan,
       effectActionId: child.actionId, method: RPC_METHODS.DAEMON_DEPLOYMENT_CHILD, params: child };
     expect(readDeploymentChildRpcV1(transport)).toEqual(child);
     expect(doesDeploymentChildInputMatchRootV1({ ...transport, rootInput: createInput, child })).toBe(true);
@@ -514,7 +518,10 @@ describe('Domain admitted child transport', () => {
       machineId: 'receiver', installationId: 'installed' };
     const reviewedChild = { actionId: wire.actionId, role: 'template.domain:web',
       inputDigest: computeActionInputApprovalDigestV1('deployments.domains.add', root) };
+    // Home binds the Create root's reviewed child plan at mint.
+    const rootReviewedChildPlan = selectDeploymentReviewedChildPlanV1({ actionId: 'deployments.environments.create', deploymentPreparationAdmission: rootPreparationAdmission });
     const transport = { deploymentChildRoot: true as const, rootActionId: 'deployments.environments.create', rootPreparationAdmission, reviewedChild,
+      rootReviewedChildPlan,
       effectActionId: wire.actionId, method: RPC_METHODS.DAEMON_DEPLOYMENT_CHILD, params: wire };
     const job = readDeploymentChildRpcV1(transport);
     expect(job).toEqual(wire);

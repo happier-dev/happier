@@ -21,6 +21,7 @@ import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugin
 import { type AccountStatusV1 } from '@happier-dev/protocol/home/governance';
 import { ExternalActionExecutionAuthorizationBindingV1Schema, ExternalActionExecutionAuthorizationV1Schema, type ExternalActionExecutionAuthorizationBindingV1, type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { selectDeploymentReviewedChildPlanV1 } from '@happier-dev/protocol/actions/specs/deploymentPreparationScope';
 import {
     VerifiedEphemeralSessionRunnerPrincipalSchema,
     type VerifiedEphemeralSessionRunnerPrincipal,
@@ -884,6 +885,9 @@ class AuthModule {
         // A caller cannot grant itself child dispatch, even on an otherwise valid root.
         if (input.deploymentChildRoot !== undefined) throw refuse('deployment_child_root_supplied');
         const deploymentChildRoot = isDeploymentChildRootActionIdV1(input.actionId, input.deploymentPreparationAdmission);
+        // Home alone chooses the reviewed children this root is approved with, once, here.
+        if (input.deploymentReviewedChildPlan !== undefined) throw refuse('deployment_reviewed_child_plan_supplied');
+        const deploymentReviewedChildPlan = selectDeploymentReviewedChildPlanV1(input);
         const projectSessionDefaultsAdmission = context.input === undefined ? input.projectSessionDefaultsAdmission
             : projectExternalActionProjectSessionDefaultsAdmissionV1(input.actionId, context.input);
         if (input.projectSessionDefaultsAdmission !== undefined
@@ -901,6 +905,7 @@ class AuthModule {
             ...(projectSessionDefaultsAdmission ? { projectSessionDefaultsAdmission } : {}),
             ...(projectSourceCheckoutId === undefined ? {} : { projectSourceCheckoutId }),
             ...(deploymentChildRoot ? { deploymentChildRoot: true } : {}),
+            ...(deploymentReviewedChildPlan ? { deploymentReviewedChildPlan } : {}),
             ...(managedAdmission ? { managedAdmission } : {}),
             ...(managedAcquireDelegation ? { managedAcquireDelegation } : {}),
             ...(managedAccountExecutor ? { managedAccountExecutor } : {}),

@@ -349,7 +349,7 @@ function machineRpcRequestBytes(request: MachineRpcRequest, payloadProof?: Reado
     const referenceInventory = (routing?.kind === 'review' || routing?.kind === 'member' && routing.phase !== 'cleanup')
       && !controllerProof.archiveOrigin && !controllerProof.nativeIncumbentSource
       && separator > 0 && method === request.effectActionId
-      && readDeploymentReferenceServiceListEnvironmentIdV1(controllerProof.externalActionExecution.authorization.binding.actionId,
+      && readDeploymentReferenceServiceListEnvironmentIdV1(controllerProof.externalActionExecution.authorization.binding,
         request.effectActionId, request.reviewedChild) !== undefined;
     if (event !== SOCKET_RPC_EVENTS.CALL || !routing || (!archivePhase && !referenceInventory)
       || request.installationId !== routing.installationId

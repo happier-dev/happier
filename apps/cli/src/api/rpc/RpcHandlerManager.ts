@@ -728,7 +728,7 @@ export class RpcHandlerManager {
             && request.method === `${this.scopePrefix}:${targetMethod}` && machineAdmission.data.machineId === this.scopePrefix
             && referenceServiceExecution?.method === request.method
             && sameStrictJsonValue(referenceServiceExecution.params, request.params)
-            && readDeploymentReferenceServiceListEnvironmentIdV1(referenceServiceChild?.authorization.binding.actionId,
+            && readDeploymentReferenceServiceListEnvironmentIdV1(referenceServiceChild?.authorization.binding,
                 referenceServiceChild?.effectActionId, referenceServiceChild?.reviewedChild);
         if (workspaceSyncSourceExecution && ((!homeReferenceServiceRead && !serviceMoveChild && !deploymentArchiveChild
             && !isProjectSource && !isFiniteSource && !projectWriterTarget && !seedInputAuthorizationMatchesRequest) || !workspaceSyncSourceExecution.success)

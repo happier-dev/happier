@@ -20320,6 +20320,12 @@ export type WorkflowAcceptedAuthorizationV1 = {
                 };
             };
             deploymentChildRoot?: true | undefined;
+            deploymentReviewedChildPlan?: {
+                role: string;
+                action: string;
+                effect?: string | undefined;
+                access: "read" | "write";
+            }[] | undefined;
             deploymentCandidatePublication?: undefined | {
                 environmentId: string;
                 source: {
@@ -21784,6 +21790,12 @@ export type WorkflowAcceptedAuthorizationV1 = {
                 };
             };
             deploymentChildRoot?: true | undefined;
+            deploymentReviewedChildPlan?: {
+                role: string;
+                action: string;
+                effect?: string | undefined;
+                access: "read" | "write";
+            }[] | undefined;
             deploymentCandidatePublication?: undefined | {
                 environmentId: string;
                 source: {
@@ -23302,6 +23314,12 @@ export type WorkflowAcceptedAuthorizationV1 = {
                 };
             };
             deploymentChildRoot?: true | undefined;
+            deploymentReviewedChildPlan?: {
+                role: string;
+                action: string;
+                effect?: string | undefined;
+                access: "read" | "write";
+            }[] | undefined;
             deploymentCandidatePublication?: undefined | {
                 environmentId: string;
                 source: {

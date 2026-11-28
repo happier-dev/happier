@@ -179,6 +179,11 @@ describe('external Action mint availability classification', () => {
         expect(await refusal(auth.mintExternalActionExecutionAuthorization({ ...input, deploymentChildRoot: true })))
             .toEqual({ code: 'credential_scope_denied', phase: 'external_action.mint.deployment_child_root_supplied',
                 details: undefined, failureCause: undefined });
+        // Home alone binds a root's reviewed child plan; a caller cannot name its own children.
+        expect(await refusal(auth.mintExternalActionExecutionAuthorization({ ...input,
+            deploymentReviewedChildPlan: [{ role: 'deployment.reference', action: 'deployments.environments.get', access: 'read' }] })))
+            .toEqual({ code: 'credential_scope_denied', phase: 'external_action.mint.deployment_reviewed_child_plan_supplied',
+                details: undefined, failureCause: undefined });
         expect(await refusal(auth.mintExternalActionExecutionAuthorization({ ...input, managedAcquireDelegation: {} as never })))
             .toMatchObject({ code: 'credential_scope_denied', phase: 'external_action.mint.managed_acquire_delegation_supplied' });
         await db.machine.update({ where: { id: machine.id }, data: { installationId: null } });
