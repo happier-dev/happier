@@ -112,6 +112,8 @@ export type PageHeaderProps = Readonly<{
     leading?: React.ReactNode;
     /** `title`: only the mark and title form the icon row; the purpose and facts start on the content edge. */
     markSpan?: HappierPageHeaderProps['markSpan'];
+    /** Keeps this many fact lines in a narrow column while values open. */
+    reserveNarrowMetaLines?: HappierPageHeaderProps['reserveNarrowMetaLines'];
     /**
      * An identity mark on the title's own line, before the title, where the purpose line runs flush left under both
      * (a docked New bot's face). Like `leading`, an entity mark keeps the page title's size.
@@ -351,6 +353,7 @@ export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps)
             detailsPlacement={props.detailsPlacement}
             compactPresentation={props.compactPresentation}
             meta={meta}
+            {...(props.reserveNarrowMetaLines === undefined ? {} : { reserveNarrowMetaLines: props.reserveNarrowMetaLines })}
             leading={props.leading}
             markSpan={props.markSpan}
             actions={actions ? <RoundButtonSizeScope size="normal">{actions}</RoundButtonSizeScope> : actions}

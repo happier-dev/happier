@@ -4,7 +4,7 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 // The native host is the boundary; owner layout and text remain real.
-vi.mock('react-native', () => ({ View: 'View', Text: 'Text', Pressable: 'Pressable', Platform: { OS: 'ios' }, I18nManager: { isRTL: false } }));
+vi.mock('react-native', () => ({ View: 'View', Text: 'Text', Pressable: 'Pressable', Platform: { OS: 'ios' }, I18nManager: { isRTL: false }, Dimensions: { get: () => ({ width: 0 }) } }));
 
 import { HAPPIER_MENU_ROW_SHAPE } from '../interaction/Menu.js';
 import { HappierNoticeLine } from '../interaction/ApprovalPendingNotice.js';

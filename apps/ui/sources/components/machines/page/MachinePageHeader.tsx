@@ -382,8 +382,8 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
             testID="machine-detail-header"
             wrapPart={wrapPart}
             alwaysShowTitle
-            // The mark and the actions hang from the name's line; the sentence and facts run beneath both (lab `rm` R),
-            // starting on the mark's edge: only the name stands beside the mark (OWNER-UI-1115B B3).
+            // The sentence and facts start on the mark's edge. On a narrow page the actions
+            // follow them; on a wide page the actions hang from the name's line (lab `rm` R).
             actionsLayout="hang"
             markSpan="title"
             // Start session and the rest stay beside the Machine's identity, not folded into a phone's bar menu.
@@ -403,6 +403,7 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
                 </PageHeaderMarkSlot>
             )}
             meta={meta}
+            reserveNarrowMetaLines={2}
             details={shellUnavailableReason && shellFailure ? (
                 <SurfaceFreshnessLine testID="machine-detail-shell-unavailable" presentation="inline" glyph="terminal"
                     reason={shellUnavailableReason} action={{ label: t('approvals.technicalDetails'),

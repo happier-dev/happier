@@ -1,5 +1,5 @@
 import { createContext, isValidElement, useCallback, useContext, useRef, useState, type ReactNode } from 'react';
-import { Platform, Text, View } from 'react-native';
+import { Dimensions, Platform, Text, View } from 'react-native';
 
 import { useOptionalHappierUiPalette, useOptionalHappierUiTheme, useOptionalHappierUiTypography } from '../../environment/context.js';
 import { HAPPIER_SKELETON_BAR, HappierSkeletonBlock } from '../feedback/Skeleton.js';
@@ -8,7 +8,7 @@ import { HappierMiddleEllipsisText, HappierPageHeaderMetaId, HappierPageHeaderMe
 import { HappierText, useHappierTextPresentation } from '../text/Text.js';
 import { useHappierLayoutTextAlign } from '../text/layoutTextAlign.js';
 import { useHappierCollectionDetailWidth, useHappierCollectionLayout } from '../collection/collectionLayout.js';
-import { HAPPIER_PAGE_METRICS, resolveHappierPageBackMeasuringLine, resolveHappierPageBackPlacement } from './pageMetrics.js';
+import { HAPPIER_PAGE_METRICS, isHappierPageRowNarrow, resolveHappierPageBackMeasuringLine, resolveHappierPageBackPlacement } from './pageMetrics.js';
 import { HappierPageHeaderFlushTopContext, HappierShellTitleRowContext, resolveHappierTitleRowInsetPx } from './shellTitleRow.js';
 import { HAPPIER_PAGE_TEXT, resolveHappierPageTextStyle, type HappierPageTextRole } from './pageText.js';
 import { useHappierColumnEdgeRemainder } from './columnEdge.js';
@@ -81,6 +81,8 @@ export type HappierPageHeaderProps = Readonly<{
    * place while the facts load.
    */
   meta?: readonly HappierPageHeaderMetaFact[];
+  /** The minimum number of fact lines to keep in a narrow column while values open. */
+  reserveNarrowMetaLines?: number;
   /** A leading identity mark (entity logo, avatar). */
   leading?: ReactNode;
   /**
@@ -92,12 +94,14 @@ export type HappierPageHeaderProps = Readonly<{
   /** At most one primary page action plus context controls (e.g. a machine chip). */
   actions?: ReactNode;
   /**
-   * `wrap` (default): prefer the title row, but wrap controls beneath rather than squeeze the title.
+   * `wrap` (default): stack under the identity in a narrow column. In a wider column, prefer the
+   * title row and wrap controls beneath if they would squeeze the title.
    * `inline`: controls stay on the title row, pushed to its end, and the description sits under the
    * title beside them (an editor header with a status line under the actions).
    * `hang`: `inline`, with the mark and the controls hanging from the title's line, and the
    * description, details and facts running beneath both at the identity's full width (an entity page
-   * whose sentence is long).
+   * whose sentence is long). With a title-only mark, controls stack below the full-width identity
+   * on narrow columns.
    * `shrink`: `hang`'s geometry for a collection page whose controls are a chooser and a few icons (R8): the
    * title keeps its own width and the controls stay on its line at any width, giving up width themselves (a
    * chooser truncates its name) rather than wrapping beneath it.
@@ -134,7 +138,7 @@ export type HappierPageHeaderProps = Readonly<{
    * Absent, the column is the pane.
    */
   columnMaxWidthPx?: number;
-  /** The containing page frame's outer width, including its inset, for Back placement. */
+  /** The containing page frame's outer width, including its inset, for header and Back placement. */
   initialFrameWidthPx?: number;
   /**
    * How a string slot is drawn. Happier core supplies its own text owner (its
@@ -346,7 +350,18 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
   if (!showTitle && !props.description && !props.actions && !props.status && !props.details && !meta && !hasCount) return null;
 
   const columnMaxWidthPx = props.columnMaxWidthPx ?? Number.POSITIVE_INFINITY;
-  const centered = props.compactPresentation === 'centered' && measuredWidthPx !== null && measuredWidthPx < HAPPIER_PAGE_METRICS.rowStackBelowWidthPx;
+  const frameWidthPx = props.initialFrameWidthPx ?? detailWidthPx;
+  const centeredWidthPx = frameWidthPx ?? measuredWidthPx;
+  const centered = props.compactPresentation === 'centered' && centeredWidthPx !== null
+    && centeredWidthPx < HAPPIER_PAGE_METRICS.rowStackBelowWidthPx;
+  const knownContentWidthPx = Math.min(frameWidthPx ?? Dimensions.get('window').width, columnMaxWidthPx)
+    - textInsetPx * 2 - contentInsetPx;
+  const narrowColumn = isHappierPageRowNarrow(knownContentWidthPx);
+  const wrapActions = props.actionsLayout === undefined || props.actionsLayout === 'wrap';
+  // A hanging title-only mark has full-width supporting lines. On a narrow column its actions
+  // follow those lines from the start. Other hanging layouts keep their title-line controls.
+  const stackActions = showTitle && !centered && narrowColumn
+    && (wrapActions || (props.actionsLayout === 'hang' && props.markSpan === 'title'));
   // Hanging keeps the controls on the name's line only while the name keeps its column; past that they
   // take the wrap rule's place after the whole identity, because a controls-only line loses the page's name.
   const hangLeavesNoName = splitWidthPx !== null && actionsNaturalWidthPx > 0
@@ -354,7 +369,7 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
   const shrinkActions = !centered && props.actionsLayout === 'shrink';
   const hangIdentity = !centered && (props.actionsLayout === 'hang' || shrinkActions);
   // Shrinking controls never leave the name's line: they give up their own width instead.
-  const hangsFromTitle = hangIdentity && (shrinkActions || !hangLeavesNoName);
+  const hangsFromTitle = hangIdentity && !stackActions && (shrinkActions || !hangLeavesNoName);
   const inlineActions = hangsFromTitle || (!centered && props.actionsLayout === 'inline');
   // The mark keeps to the title's row; what supports the title runs under both, from the column's edge.
   const markOnTitleRow = props.markSpan === 'title' && Boolean(props.leading) && showTitle && !centered;
@@ -445,6 +460,9 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
           facts={meta}
           renderText={renderText}
           centered={centered}
+          minHeight={narrowColumn && props.reserveNarrowMetaLines !== undefined
+            ? HAPPIER_PAGE_TEXT.meta.lineHeight * metricScale * props.reserveNarrowMetaLines
+            : undefined}
           // An entity's facts directly under its name read as its subtitle (OWNER-UI round 2, item 4): only a line
           // already under a purpose keeps the line gap.
           spaced={!props.details && Boolean(props.description)}
@@ -464,9 +482,11 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
   // Hanging controls hang from that same line: the title is centred on their control-height line, so it sits on the
   // shell title row with them instead of at its own line's top (SHELL-ACCEPT-1117 #7).
   const titleOnControlLine = splitTitleLine || (showTitle && hangsFromTitle);
+  const measureSplit = splitTitleLine && !stackActions;
+  const stackInTitleColumn = stackActions && !markOnTitleRow;
   // Only actions still drawn wrap beneath: a remembered wrap never reserves room for actions that left
   // (a phone's navigation chrome takes Save and Cancel when the window narrows).
-  const actionsBelowIdentity = splitTitleLine && Boolean(props.actions)
+  const actionsBelowIdentity = measureSplit && Boolean(props.actions)
     && actionsWrapWidthPx !== null && splitWidthPx !== null && splitWidthPx <= actionsWrapWidthPx;
   const columnContentWidthPx = measuredWidthPx === null ? splitWidthPx
     : Math.max(0, Math.min(measuredWidthPx, columnMaxWidthPx) - textInsetPx * 2 - contentInsetPx);
@@ -481,9 +501,9 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
   const wrappedActionsWidthPx = splitWidthPx === null ? undefined : splitWidthPx + leadingInsetPx;
   const actionsContent = props.actions ? (
             <View
-              onLayout={splitTitleLine || hangsFromTitle ? (event: HappierLayoutChangeEvent) => {
+              onLayout={measureSplit || hangsFromTitle ? (event: HappierLayoutChangeEvent) => {
                 handleActionsNaturalLayout(event);
-                if (splitTitleLine && !actionsBelowIdentity) handleLineActionsLayout(event);
+                if (measureSplit && !actionsBelowIdentity) handleLineActionsLayout(event);
               } : undefined}
               style={{
                 flexShrink: inlineActions && !shrinkActions ? 0 : 1,
@@ -555,7 +575,7 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
             : null}
           {props.leading ? (
             <View
-              onLayout={handleLeadingLayout}
+              onLayout={stackActions ? undefined : handleLeadingLayout}
               // Hanging, the mark hangs from the title's line: centred on it, its overflow inside the header's padding.
               style={[{ flexShrink: 0, position: 'relative' }, hangIdentity && showTitle ? { height: hangsFromTitle ? Math.max(titleLineHeight, HAPPIER_PAGE_METRICS.controlHeightPx) : titleLineHeight, justifyContent: 'center' } : null]}
             >
@@ -564,37 +584,42 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
             </View>
           ) : null}
           <View
-            onLayout={splitTitleLine || hangsFromTitle ? handleSplitLayout : undefined}
+            onLayout={measureSplit || hangsFromTitle ? handleSplitLayout : undefined}
             style={{ flexGrow: centered ? 0 : 1, flexShrink: 1, flexBasis: centered ? 'auto' : HAPPIER_PAGE_METRICS.sectionTextMinWidthPx, minWidth: 0, ...(centered ? { width: '100%', alignItems: 'center' } : {}) }}
           >
               <View
-                onLayout={splitTitleLine && !actionsBelowIdentity ? handleTitleLineLayout : undefined}
+                onLayout={measureSplit && !actionsBelowIdentity ? handleTitleLineLayout : undefined}
                 // Hanging, the controls stay on the title's line at any width and the title wraps beside them, so
                 // they never land between the title and its facts (a narrow column beside a companion).
-                style={{ position: 'relative', flexDirection: centered ? 'column' : 'row', flexWrap: centered || hangsFromTitle ? 'nowrap' : 'wrap', alignItems: inlineActions && !shrinkActions ? 'flex-start' : 'center', columnGap: HAPPIER_PAGE_METRICS.pageHeaderColumnGapPx, rowGap: 12, ...(centered ? { width: '100%' } : {}) }}
+                style={{ position: 'relative', flexDirection: centered || stackInTitleColumn ? 'column' : 'row',
+                  flexWrap: centered || hangsFromTitle || stackInTitleColumn ? 'nowrap' : 'wrap',
+                  alignItems: stackInTitleColumn ? 'stretch' : inlineActions && !shrinkActions ? 'flex-start' : 'center',
+                  columnGap: HAPPIER_PAGE_METRICS.pageHeaderColumnGapPx, rowGap: stackInTitleColumn ? 0 : 12,
+                  ...(centered ? { width: '100%' } : {}) }}
               >
                 {/* The title's own measured width decides the line: when it and the actions don't fit
                     side by side, the actions wrap beneath it instead of squeezing a short name onto two
                     lines (DESIGN-14 D5). A title wider than the row still wraps within it. */}
                 <View
-                  onLayout={splitTitleLine && !actionsBelowIdentity ? handleTitleBoxLayout : undefined}
+                  onLayout={measureSplit && !actionsBelowIdentity ? handleTitleBoxLayout : undefined}
                   style={{ position: 'relative', flexGrow: centered ? 0 : 1, flexShrink: shrinkActions ? 0 : 1, flexBasis: splitTitleLine || centered || shrinkActions ? 'auto' : hangsFromTitle ? 0 : HAPPIER_PAGE_METRICS.sectionTextMinWidthPx, minWidth: 0, ...(centered ? { width: '100%', alignItems: 'center' } : {}), ...(titleOnControlLine ? { minHeight: HAPPIER_PAGE_METRICS.controlHeightPx, justifyContent: 'center' } : {}) }}
                 >
                   {props.leading ? null : gutterBack}
                   {/* One wrapper at every layout: switching between inline and wrapped controls (a phone
                       recomposing) keeps the title's element, so an editable name keeps focus and caret. */}
-                  <View onLayout={splitTitleLine ? handleTitleNaturalLayout : undefined}
+                  <View onLayout={measureSplit ? handleTitleNaturalLayout : undefined}
                     style={splitTitleLine ? { alignSelf: 'flex-start', maxWidth: '100%' } : undefined}>{titleLine}</View>
                   {splitTitleLine || hangsFromTitle || markOnTitleRow ? null : textBelowTitle}
                 </View>
-                {actionsBlock ? (
+                {stackInTitleColumn ? <View key="supporting">{textBelowTitle}</View> : null}
+                {actionsBlock && !(stackActions && markOnTitleRow) ? (
                   <View
                     key="actions"
-                    testID={actionsBelowIdentity && props.testID ? `${props.testID}-actions-below` : undefined}
+                    testID={(actionsBelowIdentity || stackActions) && props.testID ? `${props.testID}-actions-below` : undefined}
                     style={[
                       { flexShrink: inlineActions && !shrinkActions ? 0 : 1, maxWidth: '100%', ...(shrinkActions ? { minWidth: 0 } : null) },
                       // The title keeps the text edge; its controls end on the sheets' and fields' edge under them.
-                      centered || actionsBelowIdentity ? null : { marginRight: -Math.max(0, textInsetPx - HAPPIER_PAGE_METRICS.sheetInsetPx) },
+                      centered || actionsBelowIdentity || stackActions ? null : { marginRight: -Math.max(0, textInsetPx - HAPPIER_PAGE_METRICS.sheetInsetPx) },
                       actionsBelowIdentity ? {
                         position: 'absolute',
                         left: -leadingInsetPx,
@@ -602,18 +627,23 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
                         width: wrappedActionsWidthPx,
                         maxWidth: wrappedActionsWidthPx ?? '100%',
                         flexDirection: 'row',
-                      } : inlineActions ? { marginLeft: 'auto' } : null,
+                      } : stackInTitleColumn ? { marginTop: 12, alignSelf: 'flex-start' } : inlineActions ? { marginLeft: 'auto' } : null,
                     ]}
                   >
                     {actionsBlock}
                   </View>
                 ) : null}
               </View>
-              {(splitTitleLine || hangsFromTitle) && !markOnTitleRow ? textBelowTitle : null}
+              {(splitTitleLine || hangsFromTitle) && !markOnTitleRow && !stackInTitleColumn ? textBelowTitle : null}
           </View>
         </View>
         {markOnTitleRow ? (
-          <View testID={props.testID ? `${props.testID}-supporting` : undefined} onLayout={handleTextBelowRowLayout}>{textBelowTitle}</View>
+          <View testID={props.testID ? `${props.testID}-supporting` : undefined} onLayout={stackActions ? undefined : handleTextBelowRowLayout}>{textBelowTitle}</View>
+        ) : null}
+        {stackActions && markOnTitleRow && actionsBlock ? (
+          <View testID={props.testID ? `${props.testID}-actions-below` : undefined} style={{ marginTop: 12, alignSelf: 'flex-start', maxWidth: '100%' }}>
+            {actionsBlock}
+          </View>
         ) : null}
         {/* The controls keep their title-line parent even while drawn below the whole identity row.
             This empty row reserves exactly their measured height without mounting a second control. */}
@@ -640,6 +670,7 @@ function PageHeaderMetaLine(props: Readonly<{
   facts: readonly HappierPageHeaderMetaFact[];
   renderText: HappierPageHeaderTextRender;
   centered: boolean;
+  minHeight?: number;
   /** Directly under the description or title; an identifier row above is already padded by its button. */
   spaced: boolean;
 }>) {
@@ -673,7 +704,8 @@ function PageHeaderMetaLine(props: Readonly<{
         setLineWidth((current) => (current === width ? current : width));
       }}
       style={[
-        { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: props.centered ? 'center' : 'flex-start', columnGap: 6, minHeight: 18 },
+        { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: props.centered ? 'center' : 'flex-start', columnGap: 6, minHeight: props.minHeight ?? HAPPIER_PAGE_TEXT.meta.lineHeight,
+          ...(props.minHeight === undefined ? null : { alignContent: 'flex-start' }) },
         props.spaced ? { marginTop: HAPPIER_PAGE_METRICS.pageHeaderLineGapPx } : null,
       ]}
     >

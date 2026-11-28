@@ -5,6 +5,7 @@ import { resolveHappierTypeScale, type HappierTypeEmphasis, type HappierTypeRole
 
 import { useOptionalHappierUiLocalization, useOptionalHappierUiPalette } from '../../environment/context.js';
 import type { HappierUiTheme } from '../../environment/types.js';
+import { useHappierCollectionDetailWidth } from '../collection/collectionLayout.js';
 import { HappierItemGroup } from '../collection/ItemGroup.js';
 import { HappierListItem } from '../collection/List.js';
 import { HappierChevron } from '../collection/DisclosureChevron.js';
@@ -333,6 +334,8 @@ export type HappierActionSelectionTilesProps<T extends string, I extends string 
     testIdPrefix?: string;
     /** A core adapter supplies its list scope; plugin sections inherit the shared page-sheet scope. */
     listPresentation?: 'page' | 'grouped';
+    /** The enclosing page column, before section insets. */
+    columnWidthPx?: number;
     /** Core supplies these existing theme facts when no plugin environment is mounted. */
     theme?: HappierUiTheme;
     pageColors?: HappierPageSheetProps['colors'];
@@ -740,11 +743,17 @@ function ResponsiveActionTiles<T extends string, I extends string>(props: Happie
   const rtl = localization ? localization.direction === 'rtl' : I18nManager.isRTL;
   const palette = useOptionalHappierUiPalette(props.theme);
   const [width, setWidth] = useState(0);
+  const detailWidthPx = useHappierCollectionDetailWidth();
+  const { width: windowWidthPx } = useWindowDimensions();
+  const columnWidthPx = props.columnWidthPx ?? detailWidthPx ?? windowWidthPx;
+  // An already narrow column can only get narrower inside a section.
+  const narrowColumn = isHappierPageRowNarrow(columnWidthPx);
   const onLayout = useCallback((event: Readonly<{ nativeEvent: Readonly<{ layout: Readonly<{ width: number }> }> }>) => {
+    if (narrowColumn) return;
     const next = Math.floor(event.nativeEvent.layout.width);
     setWidth((current) => current === next ? current : next);
-  }, []);
-  const narrow = width > 0 && isHappierPageRowNarrow(width);
+  }, [narrowColumn]);
+  const narrow = narrowColumn || isHappierPageRowNarrow(width);
   const trackStyle = useActionTrackStyle(props.options.length, width);
   return (
     <View onLayout={onLayout}>

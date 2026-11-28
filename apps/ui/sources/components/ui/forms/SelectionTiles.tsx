@@ -16,7 +16,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
-import { useListPresentation } from '@/components/ui/lists/listPresentation';
+import { PageFrameWidthsContext, useListPresentation } from '@/components/ui/lists/listPresentation';
 import { renderThemeMaterialSurface } from '@/components/ui/glass/GlassSurface';
 import { projectPluginUiHostPalette, projectPluginUiTheme, readPluginUiHostTypography } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { useLocalSetting } from '@/sync/store/settingsReadHooks';
@@ -217,12 +217,13 @@ export function SelectionTiles<T extends string>(props: SelectionTilesProps<T>) 
 
 /** Bind app-owned preferences to the shared action owner without another layout decision. */
 function AppActionSelectionTiles<T extends string>(props: HappierActionSelectionTilesProps<T, IconName>) {
+    const columnWidthPx = React.useContext(PageFrameWidthsContext)?.column;
     const uiFontScale = useLocalSetting('uiFontScale');
     const density = useItemDensityInputs();
     const pageDensity = resolvePageRowDensityInput({ preferred: density.preferred, requested: density.resolved, requestedExplicitly: density.requested });
     const pageRowMetrics = resolvePageRowMetrics({ ...pageDensity });
     return (
-        <HappierSelectionTiles {...props} pageRowMetrics={pageRowMetrics} textScale={Platform.OS === 'web' ? 1 : uiFontScale} />
+        <HappierSelectionTiles {...props} {...(columnWidthPx === undefined ? {} : { columnWidthPx })} pageRowMetrics={pageRowMetrics} textScale={Platform.OS === 'web' ? 1 : uiFontScale} />
     );
 }
 

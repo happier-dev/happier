@@ -5,7 +5,7 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 // Native layout delivery is the platform boundary; the responsive header and control stay real.
 vi.mock('react-native', () => ({
-  View: 'View', Text: 'Text', Pressable: 'Pressable', Platform: { OS: 'ios' }, I18nManager: { isRTL: false },
+  View: 'View', Text: 'Text', Pressable: 'Pressable', Platform: { OS: 'ios' }, I18nManager: { isRTL: false }, Dimensions: { get: () => ({ width: 0 }) },
   // A pending fact's bar pulses through the platform's animation driver; the test only needs it to mount.
   Animated: {
     Value: class { constructor(readonly value: number) {} },

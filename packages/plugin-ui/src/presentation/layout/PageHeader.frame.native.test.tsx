@@ -3,7 +3,7 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 // Native layout delivery is the platform boundary; the header and its rule stay real.
-vi.mock('react-native', () => ({ View: 'View', Text: 'Text', Pressable: 'Pressable', Platform: { OS: 'ios' }, I18nManager: { isRTL: false } }));
+vi.mock('react-native', () => ({ View: 'View', Text: 'Text', Pressable: 'Pressable', Platform: { OS: 'ios' }, I18nManager: { isRTL: false }, Dimensions: { get: () => ({ width: 0 }) } }));
 
 import { HappierCollectionLayoutContext, type HappierCollectionLayoutState } from '../collection/collectionLayout.js';
 import { HappierPageHeader, type HappierPageHeaderProps, type HappierPageHeaderTextRender } from './PageHeader.js';
