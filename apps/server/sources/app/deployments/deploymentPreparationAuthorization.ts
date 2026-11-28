@@ -231,6 +231,7 @@ export async function readAdmittedDeploymentScopeInTx(tx: Tx,
             if (preparation.operation === 'create' && !preparationEffectRead) {
                 if (preparation.preview) seeds.environment.add(preparation.preview.templateEnvironmentId);
                 if (preparation.copyFrom) seeds.environment.add(preparation.copyFrom.environmentId);
+                if (preparation.previewCompanionOfEnvironmentId) seeds.environment.add(preparation.previewCompanionOfEnvironmentId);
             }
         }
         if (preparation?.operation === 'prepare') {
@@ -1743,6 +1744,14 @@ async function readPreparationSourceOwnerInTx(tx: Tx, admission: CreateAdmission
 
 async function readPreviewCreateEnvironmentIdInTx(tx: Tx, binding: Pick<ExternalActionExecutionAuthorizationBindingV1, 'accountId'>,
     admission: CreateAdmission): Promise<string | null> {
+    if (admission.previewCompanionOfEnvironmentId) {
+        if (!admission.source) return null;
+        const companion = await tx.deploymentEnvironment.findFirst({ where: {
+            previewCompanionOfEnvironmentId: admission.previewCompanionOfEnvironmentId,
+            deletedAt: null, projectSourceId: admission.source.id, purpose: 'standard',
+        }, select: { id: true } });
+        return companion?.id ?? null;
+    }
     if (!admission.preview || !admission.source) return readCreatedDeploymentEnvironmentIdInTx(tx, binding.accountId, admission.requestKey);
     const rows = await tx.deploymentEnvironment.findMany({ where: { projectSourceId: admission.source.id,
         previewTemplateEnvironmentId: admission.preview.templateEnvironmentId, previewRepositoryId: admission.source.id,

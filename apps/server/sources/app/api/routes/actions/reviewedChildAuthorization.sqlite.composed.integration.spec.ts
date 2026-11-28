@@ -832,14 +832,21 @@ describe('public roots through real reviewed-child packet producers', () => {
                     throw new Error(`Unexpected preview storage boundary ${actionId}`);
                 };
                 return { deploymentAction: storage, resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(storage),
-                    prepareHostReviewedChildren: request => request.actionId === 'deployments.environments.create'
-                        ? prepareForkPreviewCreateForHost({
-                        prepared: { ...input, buildMachineId: f.machine.id }, content, context: request.context,
-                        bindings: [{ purpose: 'variable', name: 'PREVIEW', phase: 'runtime', source: { kind: 'value', value: 'true' } }],
-                        domain: { domainId: 'preview', url: 'https://app.example.test', content: {
-                            hostname: 'app.example.test', target: { service: 'web', containerPort: 80 },
-                            healthCheck: { path: '/', expectStatus: 200 } } },
-                    }, { storage, readEnvironment: async () => { throw new Error('No retained preview in this Home inventory'); } }) : Promise.resolve(null),
+                    prepareHostReviewedChildren: async request => {
+                        if (request.actionId !== 'deployments.environments.create') return null;
+                        if (input.previewCompanionOfEnvironmentId) {
+                            // The template continuation supplies its declaration at the host boundary.
+                            return { children: [{ action: child.action, role: child.role }],
+                                executeAdmittedAction: ({ context }) => invoke(context) };
+                        }
+                        return prepareForkPreviewCreateForHost({
+                            prepared: { ...input, buildMachineId: f.machine.id }, content, context: request.context,
+                            bindings: [{ purpose: 'variable', name: 'PREVIEW', phase: 'runtime', source: { kind: 'value', value: 'true' } }],
+                            domain: { domainId: 'preview', url: 'https://app.example.test', content: {
+                                hostname: 'app.example.test', target: { service: 'web', containerPort: 80 },
+                                healthCheck: { path: '/', expectStatus: 200 } } },
+                        }, { storage, readEnvironment: async () => { throw new Error('No retained preview in this Home inventory'); } });
+                    },
                 };
             } });
         expect(prepared.parent, JSON.stringify(prepared.parentExecution)).not.toBeNull();
@@ -1172,9 +1179,44 @@ describe('public roots through real reviewed-child packet producers', () => {
             const created = await f.resourceApp.inject({ method: 'POST', url: path, payload: input,
                 headers: await f.headers(root, { effectActionId: 'deployments.environments.create', method: 'POST', path, body: input }) });
             expect(created.statusCode, created.body).toBe(200);
-            expect(await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: created.json().environmentId } }))
-                .toMatchObject({ purpose: 'standard', previewCompanionOfEnvironmentId: mainId,
-                    previewTemplateEnvironmentId: null, previewRepositoryId: null, previewPullRequestId: null, previewTargetLinkId: null });
+            const companionId: string = created.json().environmentId;
+            const companion = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: companionId } });
+            expect(companion).toMatchObject({ purpose: 'standard', previewCompanionOfEnvironmentId: mainId,
+                previewTemplateEnvironmentId: null, previewRepositoryId: null, previewPullRequestId: null, previewTargetLinkId: null });
+            const companionPath = `/v1/deployments/environments/${encodeURIComponent(companionId)}?serverId=${encodeURIComponent(f.serverId)}`;
+            const readCompanion = async (authorization: typeof root) => f.resourceApp.inject({ method: 'GET', url: companionPath,
+                headers: await f.headers(authorization, { effectActionId: 'deployments.environments.get', method: 'GET', path: companionPath }) });
+            const read = await readCompanion(root);
+            expect(read.statusCode, read.body).toBe(200);
+            expect(read.json().environment).toMatchObject({ id: companionId, previewCompanionOfEnvironmentId: mainId });
+            const otherRootRead = await readCompanion(mainRoot);
+            expect(otherRootRead.statusCode, otherRootRead.body).toBe(401);
+
+            const mainEnvironment = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: mainId } });
+            const action = 'deployments.bindings.set';
+            const role = 'preview.bindings';
+            for (const [environment, status] of [[mainEnvironment, 401], [companion, 200]] as const) {
+                const childInput = { serverId: f.serverId, environmentId: environment.id, expectedRevision: environment.revision,
+                    contentArtifactId: environment.contentArtifactId, contentHeaderVersion: environment.contentHeaderVersion,
+                    contentBodyVersion: environment.contentBodyVersion, referencedSavedSecretRevisions: [] };
+                const result = await preparedPreviewChild(f, root, input, { action, role, input: childInput },
+                    async context => {
+                        const authorization = context.externalActionExecutionAuthorization!;
+                        const bindingPath = `/v1/deployments/environments/${environment.id}/bindings`;
+                        const body = { ...childInput, grants: [] };
+                        const written = await f.resourceApp.inject({ method: 'POST', url: bindingPath, payload: body,
+                            headers: await f.headers(authorization, { effectActionId: action, method: 'POST', path: bindingPath, body }) });
+                        expect(written.statusCode, written.body).toBe(status);
+                        return written.statusCode === 200 ? { ok: true, result: written.json() }
+                            : { ok: false, errorCode: 'action_forbidden', error: 'action_forbidden' };
+                    });
+                expect(result, JSON.stringify(result)).toMatchObject(status === 200 ? { ok: true }
+                    : { ok: false, errorCode: 'action_forbidden' });
+            }
+
+            await db.deploymentEnvironment.update({ where: { id: companionId }, data: { deletedAt: new Date() } });
+            const deletedRead = await readCompanion(root);
+            expect(deletedRead.statusCode, deletedRead.body).toBe(401);
         } finally { await f.close(); }
     });
 
