@@ -306,6 +306,16 @@ async function crashLatestHost(harness: Awaited<ReturnType<typeof createHarness>
 
 const HOST_COMMAND = '/runtime/bin/happier session-host';
 
+afterEach(async () => {
+  for (const inProcess of [...liveInProcessHosts]) {
+    inProcess.process.emit('SIGTERM');
+    await inProcess.host.whenEnded;
+  }
+});
+afterAll(async () => {
+  await rm(testHome, { recursive: true, force: true });
+});
+
 describe('session host launch', () => {
   it.each([
     { scenario: 'admits Add when its prestart hold closes during admission', resetTransport: false },
@@ -460,16 +470,6 @@ describe('session host placement decision', () => {
 });
 
 describe.skipIf(process.platform === 'win32')('daemon session host placement', () => {
-  afterEach(async () => {
-    for (const inProcess of [...liveInProcessHosts]) {
-      inProcess.process.emit('SIGTERM');
-      await inProcess.host.whenEnded;
-    }
-  });
-  afterAll(async () => {
-    await rm(testHome, { recursive: true, force: true });
-  });
-
   it('starts no process for a second Session and ends only the Session whose host end it observed', { timeout: 120_000 }, async () => {
     const launchesBefore = census.hostLaunches;
     const harness = await createHarness();
