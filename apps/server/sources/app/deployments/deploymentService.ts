@@ -26,6 +26,7 @@ import type { ExternalActionExecutionAuthorizationBindingV1 } from '@happier-dev
 import { admitDeploymentAcceptedControllerInTx, createDeploymentAcceptedExecution,
     deploymentAcceptedExecutionColumns, deploymentInProgressStates, isOwnServerDeploymentTarget, readDeploymentAcceptedExecution } from './deploymentAcceptedExecution';
 import { readDeploymentTeardownSubjectsInTx } from './deploymentTeardownSubjects';
+import type { ForwardManagedPluginWebhookOperation } from '@/app/api/socket/managedPluginWebhookDispatcher';
 import { admitDeploymentTeardownEnvironmentRemovalInTx, removeAdmittedDeploymentEnvironmentInTx } from './deploymentDispositionService';
 import { projectDeploymentReceiptActivityV1 } from '@happier-dev/deployments/contracts/v1';
 import { resolveProjectSourceAudienceInTx } from '@/app/projects/sources/projectSourceService';
@@ -319,6 +320,7 @@ export async function transitionDeploymentInTx(tx: Tx, actorAccountId: string, i
     authentication: DeploymentAuthentication = {},
     executionBinding?: ExternalActionExecutionAuthorizationBindingV1,
     onStopAccepted?: () => void,
+    forwardManagedWebhook?: ForwardManagedPluginWebhookOperation,
 ) {
     if (input.kind === 'cancel') return requestCancelDeploymentInTx(tx, actorAccountId, input, authentication, onStopAccepted);
     await lockDeploymentEnvironmentInTx(tx, input.environmentId);
@@ -547,7 +549,7 @@ export async function transitionDeploymentInTx(tx: Tx, actorAccountId: string, i
             state: input.teardownProof.retainedProviderResource ? 'provisioned' : 'configured', revision: { increment: 1 } } });
         if (removeEnvironment) {
             environmentRevision = await removeAdmittedDeploymentEnvironmentInTx(tx, { environment: loaded.row,
-                source: loaded.source, now, knownAccountIds: accountIds, revokeAppMachines });
+                source: loaded.source, now, knownAccountIds: accountIds, revokeAppMachines, forwardManagedWebhook });
         } else {
             if (loaded.row.runtimeTargetLinkId === link.id) {
                 await disableDeploymentEnvironmentAutomationsInTx(tx, loaded.row.id, { observationOnly: true });

@@ -1,4 +1,8 @@
-import type { Tx } from '@/storage/inTx';
+import { afterTx, type Tx } from '@/storage/inTx';
+import { log } from '@/utils/logging/log';
+import type { ForwardManagedPluginWebhookOperation } from '@/app/api/socket/managedPluginWebhookDispatcher';
+import { removeUnusedManagedRepositoryWebhook } from '@/app/plugins/webhooks/removeUnusedManagedRepositoryWebhook';
+import { GITHUB_EVENT_SETUP_ACTIONS_V1, GITHUB_MANAGED_PREVIEW_EVENT_LOCAL_ID_V1 } from '@happier-dev/protocol/automations/event-setup-result';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import type { DeploymentEnvironmentDeleteInputV1, DeploymentTargetUnlinkInputV1,
     DeploymentEnvironmentDeleteResultV1, DeploymentTargetUnlinkResultV1 } from '@happier-dev/protocol';
@@ -211,6 +215,7 @@ export async function unlinkDeploymentTargetInTx(tx: Tx, actorAccountId: string,
 export async function deleteDeploymentEnvironmentInTx(tx: Tx, actorAccountId: string,
     input: DeploymentEnvironmentDeleteInputV1,
     authentication: DeploymentAuthentication = {},
+    forwardManagedWebhook?: ForwardManagedPluginWebhookOperation,
 ): Promise<DeploymentEnvironmentDeleteResultV1> {
     const loaded = await admitDispositionInTx(tx, actorAccountId, input, authentication);
     if (!loaded.ok) return loaded;
@@ -245,7 +250,7 @@ export async function deleteDeploymentEnvironmentInTx(tx: Tx, actorAccountId: st
         }
     }
     const revision = await removeAdmittedDeploymentEnvironmentInTx(tx, { environment: loaded.row,
-        source: loaded.admission.source, now, detachKeepRunning: input.detachKeepRunning, transferredLinkIds });
+        source: loaded.admission.source, now, detachKeepRunning: input.detachKeepRunning, transferredLinkIds, forwardManagedWebhook });
     await saveRepeatKey(tx, key, `${digest}:${revision}:0:${input.detachKeepRunning ? 1 : 0}`, defaultRepeatKeyExpiresAt(now));
     return { ok: true as const, environmentId: loaded.row.id, revision, detached: input.detachKeepRunning === true };
 }
@@ -256,6 +261,7 @@ export async function removeAdmittedDeploymentEnvironmentInTx(tx: Tx, input: Rea
     environment: DeploymentEnvironmentRow; source: AdmittedDeploymentEnvironment['admission']['source'];
     now: Date; detachKeepRunning?: boolean; knownAccountIds?: readonly string[];
     revokeAppMachines?: () => Promise<void>; transferredLinkIds?: readonly string[];
+    forwardManagedWebhook?: ForwardManagedPluginWebhookOperation;
 }>): Promise<number> {
     const { environment, now } = input;
     const revokeAppMachines = input.revokeAppMachines ?? await prepareDeploymentAppMachineRevocationInTx(tx, {
@@ -265,6 +271,27 @@ export async function removeAdmittedDeploymentEnvironmentInTx(tx: Tx, input: Rea
             savedSecretResourceIds: (readDeploymentBindingSavedSecretRevisionsV1(environment.referencedSavedSecretRevisions) ?? []).map(capture => capture.resourceId) },
     });
     await revokeAppMachines();
+    const forward = input.forwardManagedWebhook;
+    if (forward) {
+        const consumers = await tx.automationTrigger.findMany({
+            where: { deletedAt: null, webhookEndpointId: { not: null },
+                eventPluginId: GITHUB_EVENT_SETUP_ACTIONS_V1.pluginId, eventLocalId: GITHUB_MANAGED_PREVIEW_EVENT_LOCAL_ID_V1,
+                automation: { deploymentEnvironmentId: environment.id, deploymentPreviewRole: 'preview_admission', deletedAt: null } },
+            distinct: ['webhookEndpointId'],
+            select: { id: true, automationId: true, revision: true, kind: true, eventPluginId: true,
+                eventLocalId: true, sourceSelectorId: true, definitionEnvelope: true, webhookEndpointId: true,
+                automation: { select: { accountId: true } } },
+        });
+        if (consumers.length) afterTx(tx, () => {
+            for (const { automation, ...consumer } of consumers) {
+                void removeUnusedManagedRepositoryWebhook({ accountId: automation.accountId, consumer, forward }).then(result => {
+                    if (result.kind === 'unavailable') {
+                        log({ module: 'deployment', code: result.code }, 'Preview webhook cleanup was unconfirmed after Environment removal');
+                    }
+                });
+            }
+        });
+    }
     await disableDeploymentEnvironmentAutomationsInTx(tx, environment.id);
     await withdrawEnvironmentSecretGrantsInTx(tx, { environmentId: environment.id });
     if (!input.detachKeepRunning && environment.runtimeTargetLinkId) {

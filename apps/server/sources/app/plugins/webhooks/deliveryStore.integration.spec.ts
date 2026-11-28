@@ -3,6 +3,10 @@ import { sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '@happier-dev/pr
 import { managedGithubEndpointKey, revokePluginWebhookEndpointV1 } from './endpointStore';
 import { removeUnusedManagedRepositoryWebhook } from './removeUnusedManagedRepositoryWebhook';
 import { updateAutomationTrigger } from '@/app/automations/automationCrudService';
+import { removeAdmittedDeploymentEnvironmentInTx } from '@/app/deployments/deploymentDispositionService';
+import { sourceFromRow } from '@/app/projects/sources/projectSourceService';
+import type { ForwardManagedPluginWebhookOperation } from '@/app/api/socket/managedPluginWebhookDispatcher';
+import { GITHUB_EVENT_SETUP_ACTIONS_V1, GITHUB_MANAGED_PREVIEW_EVENT_LOCAL_ID_V1 } from '@happier-dev/protocol/automations/event-setup-result';
 import { createHmac } from "node:crypto";
 
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -119,6 +123,9 @@ describe("plugin webhook durable delivery admission", () => {
             () => db.automationTrigger.deleteMany(),
             () => db.automationEventCatalogState.deleteMany(),
             () => db.automation.deleteMany(),
+            () => db.deploymentEnvironment.deleteMany(),
+            () => db.projectSource.deleteMany(),
+            () => db.artifact.deleteMany(),
             () => db.pluginWebhookDelivery.deleteMany(),
             () => db.pluginWebhookEndpoint.deleteMany(),
             () => db.pluginWebhookRoute.deleteMany(),
@@ -366,6 +373,55 @@ describe("plugin webhook durable delivery admission", () => {
         expect(await db.pluginWebhookRoute.findUnique({ where: { id: route.id } })).toMatchObject({ enabled: false });
         await expect(remove(last)).resolves.toEqual({ kind: "retained" });
         expect(deleted).toBe(1);
+    });
+
+    it("removes the preview webhook after the Environment tombstone commits", async () => {
+        const { account, endpoint, triggers } = await seedManagedWebhook();
+        const project = await db.projectSource.create({ data: {
+            name: 'Preview app', createdByAccountId: account.id, audience: [], attachments: [],
+        } });
+        const artifact = await db.artifact.create({ data: { id: randomUUID(), accountId: account.id,
+            header: new Uint8Array(), body: new Uint8Array(), dataEncryptionKey: new Uint8Array() } });
+        const environment = await db.deploymentEnvironment.create({ data: { projectSourceId: project.id,
+            createdByAccountId: account.id, controllerMachineId: 'machine-1', protection: 'production',
+            purpose: 'standard', deployerMode: 'managers', contentArtifactId: artifact.id,
+            contentHeaderVersion: 1, contentBodyVersion: 1 } });
+        await db.automation.update({ where: { id: triggers[0].automationId }, data: {
+            deploymentEnvironmentId: environment.id, deploymentPreviewRole: 'preview_admission',
+        } });
+        const eventRef = { pluginId: GITHUB_EVENT_SETUP_ACTIONS_V1.pluginId, localId: GITHUB_MANAGED_PREVIEW_EVENT_LOCAL_ID_V1 };
+        const now = new Date();
+        for (const trigger of triggers) {
+            const definitionEnvelope = sealAutomationTriggerDefinitionStoredEnvelopeV1({
+                mode: 'plain', binding: { v: 1, automationId: trigger.automationId, triggerId: trigger.id,
+                    triggerRevision: trigger.revision, triggerKind: 'pluginEvent', eventRef, sourceSelectorId: trigger.sourceSelectorId! },
+                definition: { v: 1, sourceInstanceId: 'github:repository:42', sourceConfig: {}, displayLabel: 'example/app',
+                    filter: null, maximumObservationAgeMs: null },
+            });
+            await db.automationTrigger.update({ where: { id: trigger.id }, data: {
+                eventPluginId: eventRef.pluginId, eventLocalId: eventRef.localId, definitionEnvelope: JSON.stringify(definitionEnvelope),
+            } });
+        }
+        const source = sourceFromRow(project);
+        if (!source.success) throw source.error;
+        const operations: unknown[] = [];
+        const forwardManagedWebhook: ForwardManagedPluginWebhookOperation = async ({ operation, target }) => {
+            operations.push({ operation, target,
+                deleted: (await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: environment.id } })).deletedAt });
+            return { kind: 'removed' };
+        };
+        const revision = await inTx(tx => removeAdmittedDeploymentEnvironmentInTx(tx, {
+            environment, source: source.data, now, forwardManagedWebhook,
+        }));
+        expect(revision).toBe(environment.revision + 1);
+        await vi.waitFor(async () => {
+            expect(await db.pluginWebhookEndpoint.findUnique({ where: { id: endpoint.id } })).toMatchObject({ enabled: false });
+        });
+        expect(operations).toEqual([{
+            operation: expect.objectContaining({ kind: 'remove', hookId: '123', repositoryId: '42' }),
+            target: { accountId: account.id, machineId: 'machine-1', installationId: 'installation-1' },
+            deleted: now,
+        }]);
     });
 
     it("retires a managed route when editing its last polling trigger clears the attachment", async () => {

@@ -151,7 +151,7 @@ export function registerDeploymentRoutes(app: Fastify): void {
         // Disposition locks the exact Environment before admission and revision checks.
         // Terminal Account publication must see concurrent cursor updates, not an old snapshot.
         const result = await inTx(tx => deleteDeploymentEnvironmentInTx(tx, request.userId, request.body,
-            readTeamOperationAuthenticationFromRequest(request)), { isolationLevel: 'ReadCommitted' });
+            readTeamOperationAuthenticationFromRequest(request), app.forwardManagedPluginWebhookToMachine), { isolationLevel: 'ReadCommitted' });
         return reply.code(status(result)).send(result);
     });
     app.post('/v1/deployments/environments/:environmentId/targets/:targetLinkId/unlink', {
@@ -370,7 +370,7 @@ export function registerDeploymentRoutes(app: Fastify): void {
                     serverId: request.body.serverId, environmentId: request.body.environmentId,
                     expectedRevision: request.body.expectedRevision, requestKey: request.body.requestKey,
                     teardownDeploymentIds: [],
-                }, readTeamOperationAuthenticationFromRequest(request));
+                }, readTeamOperationAuthenticationFromRequest(request), app.forwardManagedPluginWebhookToMachine);
                 return removed.ok ? { ok: true as const, environmentId: removed.environmentId, revision: removed.revision,
                     nothingDeployed: true as const, environmentRemoved: true as const } : removed;
             }
@@ -416,7 +416,7 @@ export function registerDeploymentRoutes(app: Fastify): void {
             let stopAccepted = false;
             const result = await transitionDeploymentInTx(tx, request.userId, request.body,
                 readTeamOperationAuthenticationFromRequest(request), binding,
-                () => { stopAccepted = true; });
+                () => { stopAccepted = true; }, app.forwardManagedPluginWebhookToMachine);
             return { result, stopAccepted };
         }, { isolationLevel: 'ReadCommitted' }).catch(error => ({
             result: projectTelemetryAssignmentConflict(error), stopAccepted: false,

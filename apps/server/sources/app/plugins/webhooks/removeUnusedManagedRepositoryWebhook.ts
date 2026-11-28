@@ -36,7 +36,9 @@ export async function removeUnusedManagedRepositoryWebhook(params: Readonly<{
         });
         if (!endpoint || !isManagedGithubEndpointKey(endpoint.ensureIdempotencyKey)) return { kind: 'retained' };
         const remaining = { webhookEndpointId: endpoint.id, deletedAt: null,
-            automation: { accountId, deletedAt: null } };
+            automation: { accountId, deletedAt: null, OR: [
+                { deploymentEnvironmentId: null }, { deploymentEnvironment: { deletedAt: null } },
+            ] } };
         const otherConsumer = await db.automationTrigger.findFirst({ where: remaining, select: { id: true } });
         const event = consumer.eventPluginId && consumer.eventLocalId
             ? readManagedGithubRepositoryEventV1({ pluginId: consumer.eventPluginId, localId: consumer.eventLocalId }) : null;
