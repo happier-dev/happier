@@ -1665,7 +1665,7 @@ describe('createCliActionDeps workflow boundary', () => {
     }
   });
 
-  it('creates a Session trigger in the mapped Machine workspace', async () => {
+  it('saves a paused Session Automation in the mapped Machine workspace', async () => {
     const sessionId = 'c' + '2'.repeat(24);
     const project = { machineId: 'machine-1', directory: '/machine/repo' };
     let savedRow: ReturnType<typeof AutomationDefinitionDetailSchema.parse> | undefined;
@@ -1723,7 +1723,7 @@ describe('createCliActionDeps workflow boundary', () => {
       trigger: { kind: 'schedule', enabled: false,
         schedule: { kind: 'cron', scheduleExpr: '0 9 * * *', everyMs: null, timezone: 'UTC' } },
     }, { surface: 'cli', authority: 'present_user' });
-    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { set: { project } } });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { set: { project, triggers: [{ enabled: false }] } } });
     if (!savedRow) throw new Error('trigger_was_not_saved');
     const triggerId = savedRow.triggers[0]!.id;
     const scheduledFor = 1;

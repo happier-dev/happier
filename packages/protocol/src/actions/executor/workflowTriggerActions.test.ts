@@ -4048,8 +4048,8 @@ describe('workflow trigger Automation composition', () => {
 
 
 describe('Workflow trigger Action entry contracts', () => {
-  it.each(['ui', 'voice', 'cli', 'mcp', 'agent'] as const)(
-    'persists and reopens the same trigger through the %s Action boundary', async surface => {
+  it.each(['ui', 'voice', 'cli', 'mcp', 'agent', 'plugin'] as const)(
+    'saves a paused draft and changes its state through the %s Action boundary', async surface => {
       const f = fixture();
       const placements: string[] = [];
       const actions = createWorkflowTriggerActions({ ...f.deps,
@@ -4060,25 +4060,33 @@ describe('Workflow trigger Action entry contracts', () => {
         resolveMaterializer: async () => ({ effects: { resolveTargetAvailability: async () => true } }) });
       const boundary = f.executor(actions);
       const context: ActionExecutorContext = {
-        ...(surface === 'agent' ? ownCaller : { authority: 'present_user', actionCaller: { kind: 'host' } }),
+        ...(surface === 'agent' ? ownCaller : surface === 'plugin'
+          ? { authority: 'account_automation', actionCaller: { kind: 'plugin', pluginId: 'acme.automation' } }
+          : { authority: 'present_user', actionCaller: { kind: 'host' } }),
         surface,
         actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: {
           'workflow.trigger.add': [surface], 'workflow.trigger.update': [surface], 'workflow.trigger.remove': [surface],
           'workflow.trigger.run_now': [surface],
         } }),
       };
-      const created = await boundary.execute('workflow.trigger.add', { workflow, project, trigger }, context);
-      expect(created).toMatchObject({ ok: true });
+      const created = await boundary.execute('workflow.trigger.add', { workflow, project, trigger: { ...trigger, enabled: false } }, context);
+      expect(created, JSON.stringify(created)).toMatchObject({ ok: true, result: { set: { triggers: [{ enabled: false }] } } });
       if (!created.ok) throw new Error(created.errorCode);
       const { set, triggerId } = WorkflowTriggerWriteResultV1Schema.parse(created.result);
       expect(f.rows.get(set.automationId)?.assignments).toMatchObject([{ machineId: project.machineId }]);
+      const target = { automationId: set.automationId, triggerId: triggerId! };
+      const enabled = await boundary.execute('workflow.trigger.update', {
+        ...target, expectedRevision: set.revision, patch: { enabled: true },
+      }, context);
+      expect(enabled).toMatchObject({ ok: true, result: { set: { triggers: [{ id: triggerId, enabled: true }] } } });
+      if (!enabled.ok) throw new Error(enabled.errorCode);
+      const enabledRevision = WorkflowTriggerWriteResultV1Schema.parse(enabled.result).set.revision;
       expect(await boundary.execute('workflow.trigger.run_now', { automationId: set.automationId }, context)).toMatchObject({
         ok: true, result: manualReceipt(set.automationId),
       });
       expect(placements).toEqual([project.machineId]);
-      const target = { automationId: set.automationId, triggerId: triggerId! };
       const changed = await boundary.execute('workflow.trigger.update', {
-        ...target, expectedRevision: set.revision, patch: { enabled: false },
+        ...target, expectedRevision: enabledRevision, patch: { enabled: false },
       }, context);
       expect(changed).toMatchObject({ ok: true, result: { set: { triggers: [{ id: triggerId, enabled: false }] } } });
       expect(await boundary.execute('workflow.trigger.list', { automationId: set.automationId }, context)).toMatchObject({
