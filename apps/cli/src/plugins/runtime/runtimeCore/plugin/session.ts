@@ -16,7 +16,7 @@ import { resolveSessionModelSelectionFromMetadata } from '@happier-dev/agents/se
 import { SessionTeamCredentialLaunchUnavailableError } from '@/session/services/sessionTeamCredentialLaunchError';
 import { readRequiredStartupMachineId } from '@/agent/runtime/startup/readRequiredStartupMachineId';
 import { initialMachineMetadata } from '@/daemon/machine/metadata';
-import type { HostSessionRuntimePlan } from '@/agent/runtime/session/loop/lifecycle';
+import type { HostSessionRuntimePlan } from '@/agent/runtime/session/loop/plan';
 import type {
     RuntimeTurnCompletionOptions,
     RuntimeTurnConfigUpdate,

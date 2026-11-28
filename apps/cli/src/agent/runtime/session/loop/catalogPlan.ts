@@ -9,7 +9,7 @@ import type {
 import {
   HOST_SESSION_RUNTIME_PLAN_KIND,
   type HostSessionRuntimePlan,
-} from '@/agent/runtime/session/loop/lifecycle';
+} from '@/agent/runtime/session/loop/plan';
 import type { HostSessionRuntimeFactoryResult } from '@/agent/runtime/session/loop/factoryResult';
 import {
   resolveRuntimeActivityApplicability,

@@ -28,7 +28,7 @@ import type {
   CanonicalizedExternalSessionSourceResult,
 } from './externalSessionSourceCanonicalization';
 import type { ExternalSessionLinkIdentity } from '@/session/external/providerOps';
-import type { HostSessionRuntimePlan } from '@/agent/runtime/session/loop/lifecycle';
+import type { HostSessionRuntimePlan } from '@/agent/runtime/session/loop/plan';
 
 export type CurrentCatalogAgentExecutionSurfaces = Readonly<{
   agentId: string;

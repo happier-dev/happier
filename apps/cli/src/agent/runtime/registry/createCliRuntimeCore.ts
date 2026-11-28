@@ -1,5 +1,5 @@
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
-import type { HostSessionRuntimePlan } from '@/agent/runtime/session/loop/lifecycle';
+import type { HostSessionRuntimePlan } from '@/agent/runtime/session/loop/plan';
 import type { ResolvedAgentRuntimeContribution } from '@/plugins/projection/registry/types';
 
 import type {

@@ -8,7 +8,7 @@ import { ConnectedServiceTurnLifecycleResultSchema } from '@/daemon/connectedSer
 import { createAgentRuntimeDaemonServiceAuthorityPath, publishAgentRuntimeDaemonServiceAuthority } from '@/daemon/agentRuntime/sessionBridgeAuthorization';
 import { createRunnerAgentSessionRuntimeSource } from '@/agent/runtime/session/process/runnerAgentSessionRuntimeSource';
 import { resolveBackendEngineAdapterResolution } from '@/agent/runtime/registry/engineRegistry';
-import { isHostSessionRuntimePlan } from '@/agent/runtime/session/loop/lifecycle';
+import { isHostSessionRuntimePlan } from '@/agent/runtime/session/loop/plan';
 import { runHostSessionRuntime } from '@/agent/runtime/session/loop/runHostSessionRuntime';
 import { configuration } from '@/configuration';
 import { hashProcessCommand, writeSessionMarker } from '@/daemon/sessionRegistry';

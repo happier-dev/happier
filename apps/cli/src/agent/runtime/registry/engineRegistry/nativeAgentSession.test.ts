@@ -21,7 +21,7 @@ import { SessionStartupInputRefusalError } from '@/agent/runtime/session/input/s
 import { createSessionRoleContext } from '@/session/roles/sessionRoleContext';
 import { createWorkspaceWritesPolicyPreparation } from '@/session/roles/workspaceWritesPolicyPreparation';
 import { withHostSessionRuntimeIdentityPublication } from '@/agent/runtime/identity/publication/withHostSession';
-import { HOST_SESSION_RUNTIME_PLAN_KIND, type HostSessionRuntimePlan } from '@/agent/runtime/session/loop/lifecycle';
+import { HOST_SESSION_RUNTIME_PLAN_KIND, type HostSessionRuntimePlan } from '@/agent/runtime/session/loop/plan';
 import { createRoleActionExecutor } from '@/session/actions/roleActions';
 import { createCliPersonalSavedSecretActionExecute } from '@/settings/secrets/personalSavedSecretActionHost';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';

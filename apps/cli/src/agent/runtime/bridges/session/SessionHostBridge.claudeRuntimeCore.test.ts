@@ -10,7 +10,7 @@ const {
   runSessionRuntimePlanMock: vi.fn(),
 }));
 
-vi.mock('@/agent/runtime/session/loop/lifecycle', async (importOriginal) => {
+vi.mock('@/agent/runtime/session/loop/plan', async (importOriginal) => {
   const actual = await importOriginal<object>();
   return {
     ...actual,

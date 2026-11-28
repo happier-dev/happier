@@ -44,7 +44,8 @@ import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { getResolvedContributionRegistry } from '@/plugins/projection/registry/builtIn/snapshot';
 
-import { HOST_SESSION_RUNTIME_PLAN_KIND, runSessionLoopLifecycle, type SessionLoopLifecycleParams } from './lifecycle';
+import { runSessionLoopLifecycle, type SessionLoopLifecycleParams } from './lifecycle';
+import { HOST_SESSION_RUNTIME_PLAN_KIND } from './plan';
 
 vi.mock('@/api/session/sockets', async importOriginal => ({
   ...await importOriginal<typeof import('@/api/session/sockets')>(),

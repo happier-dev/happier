@@ -20,7 +20,7 @@ import { SessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBr
 import { createReadyNotificationDispatcher } from '@/agent/runtime/notifications/createReadyNotificationDispatcher';
 import { createSessionFollowSourceMaterialResolver } from '@/agent/runtime/session/follow/sessionFollowSourceMaterialResolver';
 import { publishSessionFollowWakeInvalidation } from '@/agent/runtime/session/follow/sessionFollowWakeSignal';
-import { runHostSessionRuntimePlan } from '@/agent/runtime/session/loop/lifecycle';
+import { runHostSessionRuntimePlan } from '@/agent/runtime/session/loop/plan';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externalActionExecutionAuthorization';
 import { prepareManagedAgentCliLaunch } from '@/packagedRuntime/managedTools/prepareManagedAgentCliLaunch';

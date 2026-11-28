@@ -25,8 +25,8 @@ vi.mock('@/agent/catalog/snapshot', () => ({
   readAgentCatalogSnapshot: () => readAgentCatalogSnapshotMock(),
 }));
 
-vi.mock('@/agent/runtime/session/loop/lifecycle', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/agent/runtime/session/loop/lifecycle')>();
+vi.mock('@/agent/runtime/session/loop/plan', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/agent/runtime/session/loop/plan')>();
   return {
     ...actual,
     runHostSessionRuntimePlan: (...args: unknown[]) => runHostSessionRuntimePlanMock(...args),

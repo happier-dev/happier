@@ -29,7 +29,7 @@ import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionR
 import type { ExecutionRunRetainedInteractionScope } from '@/agent/runtime/bridges/executionRun/retainedInteractionEligibility';
 import type { ExecutionRunSessionStateTarget } from '@/agent/runtime/bridges/executionRun/sessionStateDelivery';
 import type { ExecutionRunPermissionRequestStoreProvider } from '@/agent/runtime/bridges/executionRun/executionRunPermissionResponseTarget';
-import type { HostSessionRuntimePlan } from '@/agent/runtime/session/loop/lifecycle';
+import type { HostSessionRuntimePlan } from '@/agent/runtime/session/loop/plan';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
 import type { SessionFollowPreparedContext } from '@/agent/runtime/session/follow/sessionFollowContextReconciler';

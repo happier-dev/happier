@@ -1,5 +1,5 @@
 import { SessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
-import { runHostSessionRuntimePlan } from '@/agent/runtime/session/loop/lifecycle';
+import { runHostSessionRuntimePlan } from '@/agent/runtime/session/loop/plan';
 import type { HostSessionRuntimeConfig } from '@/agent/runtime/session/loop/runHostSessionRuntime';
 import {
     buildPluginHostSessionRuntimeOptions,

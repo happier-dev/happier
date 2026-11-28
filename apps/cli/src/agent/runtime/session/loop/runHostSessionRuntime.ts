@@ -193,7 +193,7 @@ import { subscribeSessionRuntimePublicationToMetadata } from '@/agent/runtime/id
 import { createCliRuntimeSessionStateBridge } from '@/agent/runtime/state/bridge';
 import { observeCanonicalSessionStateMetadata } from '@/agent/runtime/state/observeCanonicalSessionStateMetadata';
 import type { HostRuntimeLimitMeasurementRecorder } from '@/agent/runtime/state/runtimeLimitMeasurement';
-import { runSessionLoopLifecycle, type SessionLoopLifecycleDeps } from '@/agent/runtime/session/loop/lifecycle';
+import type { runSessionLoopLifecycle, SessionLoopLifecycleDeps } from '@/agent/runtime/session/loop/lifecycle';
 import { createModelIntentV2MetadataCasCandidate } from '@happier-dev/agents/session/state/metadataWriters';
 import {
   registerSessionRollbackRpcHandler,
@@ -1158,7 +1158,6 @@ async function runHostedSessionRuntime(
   const resolveRunnerMcpServersFn = deps.resolveRunnerMcpServersFn ?? resolveRunnerMcpServers;
   const createProviderEnforcedPermissionHandlerFn = deps.createProviderEnforcedPermissionHandlerFn ?? createProviderEnforcedPermissionHandler;
   const createPermissionModeQueueStateFn = deps.createPermissionModeQueueStateFn ?? createPermissionModeQueueState;
-  const runSessionLoopLifecycleFn = deps.runSessionLoopLifecycleFn ?? runSessionLoopLifecycle;
   const daemonTurnContributionsBridge =
     deps.sessionLoopLifecycleDeps?.daemonTurnContributionsBridge;
   const teamModelIntentCandidate = (() => {
@@ -4261,6 +4260,7 @@ async function runHostedSessionRuntime(
     },
   };
 
+  const runSessionLoopLifecycleFn = deps.runSessionLoopLifecycleFn ?? (await import('./lifecycle')).runSessionLoopLifecycle;
   lifecycleOwnsConstructionResources = true;
   recordStartupPhase('runtime_controls');
   try {

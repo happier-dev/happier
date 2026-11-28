@@ -9,7 +9,7 @@ import { createAgentRuntimeDaemonServiceAuthorityPath, publishAgentRuntimeDaemon
 import { AgentRuntimeDaemonServiceRequestV1Schema, AGENT_RUNTIME_DAEMON_SERVICES_PATH } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
 import { createRunnerAgentSessionRuntimeSource } from '@/agent/runtime/session/process/runnerAgentSessionRuntimeSource';
 import { resolveBackendEngineAdapterResolution } from '../engineRegistry';
-import { isHostSessionRuntimePlan } from '@/agent/runtime/session/loop/lifecycle';
+import { isHostSessionRuntimePlan } from '@/agent/runtime/session/loop/plan';
 import { configuration } from '@/configuration';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';

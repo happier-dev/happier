@@ -8680,8 +8680,9 @@ which ensures the host through the same single-flight launch as an add and opens
 Session command runs and builds the process-wide built-in contribution registry
 that Session's first Agent catalog readers use before its Agent starts
 (`preloadSessionRunner` in `agent/runtime/lifecycle/sessionRunnerPreload.ts`), so
-that work runs during think time rather than on the first word; it does not end
-while held. The hold lasts while the call is open: picking another
+that work runs during think time. Each Session loads its turn lifecycle after
+attaching to Home, when runtime controls start. The host stays alive while held.
+The hold lasts while the call is open: picking another
 Machine, closing New Session, the app disconnecting, daemon shutdown (the daemon
 work signal) or the daemon process ending closes it. The host then ends by its
 ordinary rule once it has no Session and no hold, so an idle Machine runs no host

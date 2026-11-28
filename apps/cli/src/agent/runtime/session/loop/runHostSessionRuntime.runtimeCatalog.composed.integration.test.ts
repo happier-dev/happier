@@ -4607,7 +4607,7 @@ describe('runHostSessionRuntime', () => {
     });
     setSessionRuntimeFactory(harness.config, () => ({ operations: runtime, nativeRuntime: runtime }));
     const { withHostSessionRuntimeIdentityPublication } = await import('@/agent/runtime/identity/publication/withHostSession');
-    const { HOST_SESSION_RUNTIME_PLAN_KIND } = await import('./lifecycle');
+    const { HOST_SESSION_RUNTIME_PLAN_KIND } = await import('./plan');
     const wrapped = withHostSessionRuntimeIdentityPublication({
       plan: { kind: HOST_SESSION_RUNTIME_PLAN_KIND, agentId: 'qwen', opts: harness.opts, config: harness.config },
       identity: { runtimeDescriptor: null, runtimeCapabilities: null, runtimeFacets: null },

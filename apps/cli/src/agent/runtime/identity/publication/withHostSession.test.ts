@@ -4,7 +4,7 @@ import type { RuntimeTurnOperations } from '@/agent/runtime/turns/runtimeTurnOpe
 import {
   HOST_SESSION_RUNTIME_PLAN_KIND,
   type HostSessionRuntimePlan,
-} from '@/agent/runtime/session/loop/lifecycle';
+} from '@/agent/runtime/session/loop/plan';
 import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol';
 import { resolveVendorResumeIdFromSessionMetadata } from '@happier-dev/agents';
 import { applySessionStateUpdatesToMetadata } from '@happier-dev/agents/session/state/metadataWriters';

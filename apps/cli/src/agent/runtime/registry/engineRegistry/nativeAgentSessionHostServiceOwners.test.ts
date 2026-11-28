@@ -11,7 +11,7 @@ import { runInHostedSessionScope } from '@/agent/runtime/lifecycle/hostedSession
 import type { CliServerFeaturesSnapshot } from '@/features/featureDecisionService';
 import { resolveBackendRuntimeCore } from './runtimeCore';
 import { createEmptyBackendExecutionSurfaces } from '../engineRegistryTypes';
-import { isHostSessionRuntimePlan } from '@/agent/runtime/session/loop/lifecycle';
+import { isHostSessionRuntimePlan } from '@/agent/runtime/session/loop/plan';
 import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';

@@ -21,7 +21,7 @@ import { createRunnerDaemonPluginServicesHost, projectRunnerDaemonPluginServices
 import { RunnerDaemonPluginServiceOperationV1Schema } from '@/agent/runtime/session/process/agentRuntimeDaemonPluginServicesProtocol';
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
 import { resolveCliEngineRegistry } from '@/agent/runtime/registry/engineRegistry';
-import { isHostSessionRuntimePlan } from '@/agent/runtime/session/loop/lifecycle';
+import { isHostSessionRuntimePlan } from '@/agent/runtime/session/loop/plan';
 import { resolveHostSessionRuntimeFactoryResult } from '@/agent/runtime/session/loop/factoryResult';
 import type { HostSessionRuntimeHookRuntime } from '@/agent/runtime/session/loop/runHostSessionRuntime';
 import { createCurrentSessionPresentationHost } from '@/session/presentation/currentSessionPresentationService';

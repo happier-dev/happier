@@ -151,7 +151,7 @@ import type {
     PluginRuntimePromptDeliveryOutcome,
 } from '@/plugins/runtime/runtimeCore/plugin/sessionRuntimeHooks';
 import type { PluginSessionBindingInput } from '@/plugins/runtime/runtimeCore/plugin/sessionLaunch';
-import type { HostSessionRuntimePlan } from '@/agent/runtime/session/loop/lifecycle';
+import type { HostSessionRuntimePlan } from '@/agent/runtime/session/loop/plan';
 import { normalizeStartingMode } from '@/agent/runtime/session/loop/resolveStartingMode';
 import { isHostProviderCliAttachSurface, type HostProviderCliAttachRequest } from '@/session/attach/providerCliAttach';
 import { createNativeAgentProviderAttachModeBinding } from '@/agent/runtime/session/terminal/providerCliAttachMode';

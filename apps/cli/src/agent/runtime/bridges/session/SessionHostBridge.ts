@@ -47,7 +47,7 @@ import type {
   SessionHostBridgeContract,
 } from './sessionBridgeContract';
 import type { ExternalSessionLinkIdentity } from '@/session/external/providerOps';
-import type { HostSessionRuntimePlan } from '@/agent/runtime/session/loop/lifecycle';
+import type { HostSessionRuntimePlan } from '@/agent/runtime/session/loop/plan';
 import { throwIfPluginRuntimeStartBlocked } from '@/agent/runtime/registry/throwIfPluginRuntimeStartBlocked';
 import { withHostSessionRuntimeIdentityPublication } from '@/agent/runtime/identity/publication/withHostSession';
 import {
@@ -96,7 +96,7 @@ type SessionHostRunOptions = Readonly<{
  */
 export class SessionHostBridge implements SessionHostBridgeContract {
   private async requireCanonicalSessionRuntime(runtime: unknown, backendId: string) {
-    const { isHostSessionRuntimePlan } = await import('@/agent/runtime/session/loop/lifecycle');
+    const { isHostSessionRuntimePlan } = await import('@/agent/runtime/session/loop/plan');
     if (isHostSessionRuntimePlan(runtime)) {
       return runtime;
     }
@@ -369,7 +369,7 @@ export class SessionHostBridge implements SessionHostBridgeContract {
       phase: 'runtime_plan', elapsedMs: Math.round(performance.now() - startedAt),
     });
     await hostOptions?.beforeRuntimePlanCommit?.();
-    const { runHostSessionRuntimePlan } = await import('@/agent/runtime/session/loop/lifecycle');
+    const { runHostSessionRuntimePlan } = await import('@/agent/runtime/session/loop/plan');
     logger.info('[session] Runtime bridge startup phase', {
       phase: 'plan_commit', elapsedMs: Math.round(performance.now() - startedAt),
     });

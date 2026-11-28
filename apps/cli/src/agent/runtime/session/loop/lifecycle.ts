@@ -112,12 +112,10 @@ import type {
 } from '@/agent/runtime/session/process/agentRuntimeDaemonTurnContributionsBridge';
 import type {
   HostSessionRuntimeConfig,
-  HostSessionRuntimeDeps,
   HostSessionKeepAliveMode,
   HostSessionRuntimeHookRuntime,
   HostSessionRuntimeLoopApi,
   CanonicalHostSessionRuntimeRunOptions,
-  HostSessionRuntimeRunOptions,
   HostSessionRuntimeSessionSwapStrategy,
 } from '@/agent/runtime/session/loop/runHostSessionRuntime';
 import type {
@@ -136,8 +134,6 @@ import { stampTurnFacts } from '@/agent/runtime/session/turn/stampTurnFacts';
 import type { HostedSessionModelTransitionResult, SessionModelTransitionRestart } from '@/providers/sessions/sessionModelTransitionCoordinator';
 import { createRuntimeFailureTranscriptProjector } from '@/agent/runtime/session/transcripts/runtimeFailureTranscript';
 
-export const HOST_SESSION_RUNTIME_PLAN_KIND = 'hostSessionRuntimePlan' as const;
-
 const KEEP_ALIVE_DUPLICATE_SUPPRESSION_MS = 100;
 
 function normalizeAcpProvider(value: string | null | undefined, fallback: string): ACPProvider {
@@ -145,28 +141,6 @@ function normalizeAcpProvider(value: string | null | undefined, fallback: string
   if (normalized.length > 0) return normalized as ACPProvider;
   const fallbackNormalized = fallback.trim();
   return (fallbackNormalized.length > 0 ? fallbackNormalized : 'agent') as ACPProvider;
-}
-
-export type HostSessionRuntimePlan = Readonly<{
-  kind: typeof HOST_SESSION_RUNTIME_PLAN_KIND;
-  agentId: string;
-  opts: HostSessionRuntimeRunOptions;
-  config: HostSessionRuntimeConfig;
-  deps?: HostSessionRuntimeDeps;
-}>;
-
-export function isHostSessionRuntimePlan(value: unknown): value is HostSessionRuntimePlan {
-  if (!value || typeof value !== 'object') return false;
-  const record = value as Readonly<Record<string, unknown>>;
-  return record.kind === HOST_SESSION_RUNTIME_PLAN_KIND
-    && typeof record.agentId === 'string'
-    && Boolean(record.opts)
-    && Boolean(record.config);
-}
-
-export async function runHostSessionRuntimePlan(plan: HostSessionRuntimePlan): Promise<void> {
-  const { runHostSessionRuntime } = await import('@/agent/runtime/session/loop/runHostSessionRuntime');
-  await runHostSessionRuntime(plan.opts, plan.config, plan.deps);
 }
 
 export type SessionLoopLifecycleDeps = Readonly<{

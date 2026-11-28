@@ -115,7 +115,7 @@ vi.mock('@/agent/runtime/bridges/session/SessionHostBridge', () => ({
   },
 }));
 
-vi.mock('@/agent/runtime/session/loop/lifecycle', () => ({
+vi.mock('@/agent/runtime/session/loop/plan', () => ({
   runHostSessionRuntimePlan: h.runHostSessionRuntimePlan,
 }));
 

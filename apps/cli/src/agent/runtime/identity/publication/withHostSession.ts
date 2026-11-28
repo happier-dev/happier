@@ -1,4 +1,4 @@
-import type { HostSessionRuntimePlan } from '@/agent/runtime/session/loop/lifecycle';
+import type { HostSessionRuntimePlan } from '@/agent/runtime/session/loop/plan';
 import type {
   RuntimeTurnMessage,
   RuntimeTurnOperations,
