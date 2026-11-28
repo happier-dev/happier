@@ -1,4 +1,4 @@
-import { SessionLifecycleStateReasonSchema, type SessionLifecycleStateReason } from '@happier-dev/protocol/sessions/metadata/sessionDisplaySchemasV1';
+import { SessionLifecycleStateReasonSchema, type SessionLifecycleStateReason } from '@happier-dev/protocol/sessions/control/sessionLifecycleStateReason';
 import { SessionRuntimeFailureCauseV1Schema, type SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { SessionSpawnLaunchErrorV1Schema, type SessionSpawnLaunchErrorV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnLaunchErrorV1';
 import { createHash, randomBytes } from 'node:crypto';
@@ -10,13 +10,9 @@ import { dirname, join } from 'node:path';
 import { readAuthTokenProvenance, type AuthTokenKind } from '@happier-dev/protocol/auth/authToken';
 import { resolveSocketRpcCallerAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
 import { EXTERNAL_ACTION_SOCKET_MIN_BUFFER_BYTES_V2 } from '@happier-dev/protocol/actions/externalActionLimits';
-import {
-  projectSocketRpcTargetAcknowledgementV1,
-  resolveSocketRpcSameAccountSessionAuthorizationV1,
-  SOCKET_RPC_EVENTS,
-  SocketRpcCancellationPayloadSchema,
-  type SocketRpcRequestPayload,
-} from '@happier-dev/protocol/socketRpc';
+import { projectSocketRpcTargetAcknowledgementV1, SOCKET_RPC_EVENTS, SocketRpcCancellationPayloadSchema } from '@happier-dev/protocol/rpc/socketTransport';
+import { resolveSocketRpcSameAccountSessionAuthorizationV1 } from '@happier-dev/protocol/rpc/socketSessionAuthorization';
+import type { SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
 import type { SocketRpcSocket } from '@happier-dev/sync-client';
 import { decodeJwtPayload, readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { configuration } from '@/configuration';

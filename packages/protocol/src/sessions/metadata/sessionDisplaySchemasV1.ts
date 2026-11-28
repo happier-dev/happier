@@ -1,5 +1,7 @@
 import { SessionForkDisplayV1Schema } from './sessionForkV1.js';
 import { z } from '../../zodRuntimePolicy.js';
+import { SessionLifecycleStateReasonSchema } from '../control/sessionLifecycleStateReason.js';
+export { SessionLifecycleStateReasonSchema, type SessionLifecycleStateReason } from '../control/sessionLifecycleStateReason.js';
 
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { getAccountScopedBlobKindByte, readAccountScopedCiphertextKindByte } from '../../crypto/accountScopedCipherEnvelope.js';
@@ -45,9 +47,6 @@ export function readSessionAuthoredDisplayV1(work: unknown) {
 export const MACHINE_DELETED_SESSION_LIFECYCLE_REASON = 'machine_deleted' as const;
 export const MachineDeletedSessionLifecycleReasonSchema = z.literal(MACHINE_DELETED_SESSION_LIFECYCLE_REASON);
 export type MachineDeletedSessionLifecycleReason = z.infer<typeof MachineDeletedSessionLifecycleReasonSchema>;
-
-export const SessionLifecycleStateReasonSchema = z.literal('machine_access_withdrawn');
-export type SessionLifecycleStateReason = z.infer<typeof SessionLifecycleStateReasonSchema>;
 
 /** Closed recipient-safe display facts. Request ledgers and private metadata never enter this leaf. */
 export const SessionSharedDisplayV1Schema = lazyZodSchema(() => z.strictObject({

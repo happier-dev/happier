@@ -1,7 +1,7 @@
 import type { SessionBroadcast, SocketRpcCallPayload, SocketRpcCallResponse, SocketRpcRequestPayload, Update } from '../types';
 import { SCM_DIFF_SUMMARY_RESULT_UPDATED_EVENT, type ScmDiffSummaryMachineResultUpdateSchema } from '@happier-dev/protocol/scm/diffSummaryResult';
 import type { z } from 'zod/mini';
-import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/rpc/socketTransport';
 import type { ExecutionRunMachineActivityV1 } from '@happier-dev/protocol/execution/runs/activityV1';
 import { TEAM_CREDENTIAL_EXTERNAL_PROVIDER_OPERATION_RETIRE_EVENT_V1 } from '@happier-dev/protocol/teams/credentials/externalProviderApiV1';
 import type { TeamCredentialExternalProviderOperationRetireV1, TeamCredentialExternalProviderOperationRetireResponseV1 } from '@happier-dev/protocol/teams';
