@@ -662,7 +662,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
         throw error;
       }
     },
-    reviewEnginesList: async ({ sessionId, machineId, includeDisabled, engineIds, scope, profileSelections }, context = {}) => {
+    reviewEnginesList: async ({ sessionId, machineId, includeDisabled, engineIds, scope, profileSelections, includeExecutionRunProfiles }, context = {}) => {
       const captured = await readAcpCatalogSnapshot(context.signal);
       const selectedMachineId = machineId ?? params.localMachineId;
       const authorization = context.externalActionExecutionAuthorization;
@@ -730,8 +730,12 @@ export function createCliActionInventoryDeps(params: Readonly<{
             targets.map(target => parseBackendTargetKeyV2(target)), context),
         } : {}),
       });
+      const executionRunProfiles = includeExecutionRunProfiles
+        ? (await import('@/agent/executionRuns/profiles/projectExecutionRunProfileDescriptors'))
+          .projectExecutionRunProfileDescriptors(profileCatalog, sessionId)
+        : undefined;
       await captured.assertCurrent();
-      return { sessionId, ...inventory };
+      return { sessionId, ...inventory, ...(executionRunProfiles ? { executionRunProfiles } : {}) };
     },
     agentsBackendsList: async (args) => {
       const captured = await readAcpCatalogSnapshot();

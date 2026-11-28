@@ -4019,7 +4019,7 @@ type VoiceActionExecutorBinding = Readonly<{
             && error.cause !== undefined ? { details: error.cause } : {}) };
       }
     },
-    reviewEnginesList: async ({ sessionId, machineId, includeDisabled, engineIds, scope, profileSelections }, context) => {
+    reviewEnginesList: async ({ sessionId, machineId, includeDisabled, engineIds, scope, profileSelections, includeExecutionRunProfiles }, context) => {
       if (!accountContext) return { ok: false, errorCode: 'not_authenticated', errorMessage: 'not_authenticated' };
       let targetMachineId = machineId;
       if (sessionId) {
@@ -4033,7 +4033,7 @@ type VoiceActionExecutorBinding = Readonly<{
           throw error;
         }
       }
-      const result = await listReviewEnginesForVoiceTool({ sessionId, machineId: targetMachineId ?? '', includeDisabled, engineIds, scope, profileSelections,
+      const result = await listReviewEnginesForVoiceTool({ sessionId, machineId: targetMachineId ?? '', includeDisabled, engineIds, scope, profileSelections, includeExecutionRunProfiles,
         serverId: accountContext.serverId }, accountContext);
       accountContext.assertCurrent();
       return result;

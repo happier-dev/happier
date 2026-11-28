@@ -4,6 +4,7 @@ import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 
 import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';
 import { ExecutionRunIntentSchema } from '../../execution/runs/runPrimitives.js';
+import { PluginSourceCustodyV1Schema } from '../runtime/sourceCustody.js';
 import { isRecursivelyClosedPluginJsonSchemaV2 } from './jsonSchema.js';
 import { createInputHintsSchemasWithStaticOptionsOnly, InputOptionValueSchema } from '../../inputs/inputFields.js';
 import {
@@ -54,3 +55,14 @@ export const PluginExecutionRunProfileContributionV2Schema = lazyZodSchema(() =>
   metadata: z.optional(z.record(z.string(), PluginJsonValueV2Schema)),
 }));
 export type PluginExecutionRunProfileContributionV2 = z.infer<typeof PluginExecutionRunProfileContributionV2Schema>;
+
+/** Machine inventory projection of the same contributor-owned profile declaration. */
+export const ExecutionRunProfileDescriptorSchema = lazyZodSchema(() => z.strictObject({
+  ...PluginExecutionRunProfileContributionV2Schema.shape,
+  id: z.string(),
+  compatibleAgents: z.array(z.string()).check(z.minLength(1)),
+  sourceCustody: z.nullable(PluginSourceCustodyV1Schema),
+  available: z.boolean(),
+  unavailableCode: z.optional(z.string()),
+}));
+export type ExecutionRunProfileDescriptor = z.infer<typeof ExecutionRunProfileDescriptorSchema>;

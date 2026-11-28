@@ -11630,6 +11630,11 @@ currentness after the awaited inventory read. Detached discovery does not enable
 detached walkthrough or explanation narration: those follow-ups remain
 Session-bound until the owning execution-run producer supports them.
 
+Set `includeExecutionRunProfiles: true` on `review.engines.list` to read
+`executionRunProfiles` from the same Machine profile catalog as the launcher.
+Each descriptor carries its full declared `optionsSchema` and any
+`optionsInputHints`. The hints identify the controls the launcher renders.
+
 Detached `review.start` uses `target:{kind:'detached'}` and omits `sessionId`;
 the discovery selector's explicit null is not a valid start input. Its declared
 `cwd` uses the existing Execution Run working-directory schema. The captured

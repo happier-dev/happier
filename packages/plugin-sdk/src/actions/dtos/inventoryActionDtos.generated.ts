@@ -423,6 +423,7 @@ export type InventoryActionInputById = {
                 installSource: 'archive' | 'git' | 'localPath' | 'npm';
             };
         }[];
+        includeExecutionRunProfiles?: boolean | undefined;
     };
     readonly "projects.setup.set": {
         projectRef: {

@@ -1,10 +1,8 @@
 import type { Capability } from '../service';
 import { resolveCliFeatureDecision } from '../../features/featureDecisionService';
 import { listAgentExecutionTargetsV1 } from '@happier-dev/protocol/agents/executionTargetV1';
-import {
-  listExecutionRunProfileContributionDescriptors,
-  listExecutionRunSupportedIntents,
-} from '../../agent/executionRuns/profiles/intentRegistry';
+import { listExecutionRunSupportedIntents } from '../../agent/executionRuns/profiles/intentRegistry';
+import { projectExecutionRunProfileDescriptors } from '../../agent/executionRuns/profiles/projectExecutionRunProfileDescriptors';
 import { resolveCliEngineRegistry } from '../../agent/runtime/registry/engineRegistry';
 import type { ResolvedAgentContribution } from '../../plugins/projection/registry/types';
 import { readAgentExecutionRunCapabilities } from '../../plugins/projection/registry/agentContributionDefinition';
@@ -12,10 +10,6 @@ import { readAgentSessionCapabilities } from '../../plugins/projection/registry/
 import { selectReviewEngineAgentIds } from '../../session/actions/inventory/buildReviewEngineInventoryItems';
 import { buildConfiguredAcpBackendInventoryItems } from '../../session/actions/inventory/buildAgentBackendInventoryItems';
 import { getActiveAccountSettingsSnapshot } from '../../settings/accountSettings/activeAccountSettingsSnapshot';
-import {
-  evaluateContributionAvailability,
-  resolveInvocationContributionPolicyFacts,
-} from '../../plugins/runtime/policy/evaluate';
 
 function resolveExecutionRunBackendAvailability(params: Readonly<{
   agentContribution?: ResolvedAgentContribution;
@@ -68,30 +62,7 @@ export const executionRunsCapability: Capability = {
     const cliEngineRegistry = await resolveCliEngineRegistry();
     const executionRunProfileCatalog = await cliEngineRegistry.resolveExecutionRunProfileCatalog();
     const sessionId = typeof request.params?.sessionId === 'string' ? request.params.sessionId.trim() : '';
-    const executionRunProfiles = listExecutionRunProfileContributionDescriptors(executionRunProfileCatalog)
-      .flatMap((profile) => {
-        const compatibleAgentIds = profile.compatibleAgents.map((reference) => (
-          typeof reference === 'string' ? reference : reference.localId
-        ));
-        const decision = profile.availability
-          ? evaluateContributionAvailability({
-              availability: profile.availability,
-              facts: resolveInvocationContributionPolicyFacts({
-                ...(sessionId ? { sessionId } : {}),
-                facts: {
-                  ...(compatibleAgentIds[0] ? { 'session.agentId': compatibleAgentIds[0] } : {}),
-                },
-              }),
-            })
-          : { outcome: 'visible' as const, code: 'plugin_contribution_visible' };
-        if (decision.outcome === 'hidden') return [];
-        return [{
-          ...profile,
-          compatibleAgents: compatibleAgentIds,
-          available: decision.outcome === 'visible',
-          ...(decision.outcome === 'visible' ? {} : { unavailableCode: decision.code }),
-        }];
-      });
+    const executionRunProfiles = projectExecutionRunProfileDescriptors(executionRunProfileCatalog, sessionId);
     const activatableIntents = listExecutionRunSupportedIntents();
     const intents = voiceAgentEnabled
       ? activatableIntents

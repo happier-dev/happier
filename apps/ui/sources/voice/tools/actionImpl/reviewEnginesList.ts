@@ -15,6 +15,7 @@ export async function listReviewEnginesForVoiceTool(params: Readonly<{
   sessionId: string | null; machineId: string; includeDisabled?: boolean; scope?: ReviewEngineScope; serverId?: string;
   engineIds?: readonly string[];
   profileSelections?: readonly ReviewEngineProfileSelection[];
+  includeExecutionRunProfiles?: boolean;
 }>, capturedAccount?: LazyActionAccountContext): Promise<unknown> {
   const detached = params.sessionId === null;
   const sessionId = normalizeId(params.sessionId) || null;
@@ -38,7 +39,8 @@ export async function listReviewEnginesForVoiceTool(params: Readonly<{
         ...(params.includeDisabled !== undefined ? { includeDisabled: params.includeDisabled } : {}),
         ...(params.engineIds ? { engineIds: params.engineIds } : {}),
         ...(params.scope ? { scope: params.scope } : {}),
-        ...(params.profileSelections ? { profileSelections: params.profileSelections } : {}) },
+        ...(params.profileSelections ? { profileSelections: params.profileSelections } : {}),
+        ...(params.includeExecutionRunProfiles ? { includeExecutionRunProfiles: true } : {}) },
       ...(account.invocationSignal ? { signal: account.invocationSignal } : {}),
     });
     account.assertCurrent();

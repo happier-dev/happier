@@ -29,6 +29,8 @@ import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/proto
 import { createCliMachineInventoryActionDeps } from './machineInventory';
 import { prepareSessionAgentReadiness } from '@/session/creation/prepareSessionAgentReadiness';
 import { createCapabilitiesService } from '@/capabilities/service';
+import { ReviewEngineInventorySchema } from '@happier-dev/protocol/reviews/reviewEngines';
+import { executionRunsCapability } from '@/capabilities/registry/toolExecutionRuns';
 import { createAcpAgentInventoryCapability } from '@/capabilities/registry/machineAgentsInventory';
 import type { CapabilitiesDetectRequest } from '@/capabilities/types';
 import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
@@ -155,7 +157,7 @@ async function createInventory(status: 'ready' | 'partial' | 'unavailable' = 're
 describe('ACP Action inventory row authority', () => {
   beforeAll(async () => {
     const runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
-      runtimeOptions: { pluginIds: ['happier.agent.claude', 'happier.agent.muse', CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1.pluginId] } });
+      runtimeOptions: { pluginIds: ['happier.agent.claude', 'happier.agent.muse', 'happier.review.deepsec', CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1.pluginId] } });
     return () => runtime.dispose();
   });
 
@@ -491,6 +493,32 @@ describe('ACP Action inventory row authority', () => {
     expect(requests).toContain(`GET ${ACP_CATALOG_ROWS_ROUTE_V1}`);
     expect(requests.some(request => request.startsWith('POST'))).toBe(false);
     expect(getActiveAccountSettingsSnapshot()).toBe(incumbent);
+  });
+
+  it('returns the launcher profile descriptors through the Agent and CLI Review inventory read', async () => {
+    const { deps } = await createInventory();
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps });
+    const capability = await executionRunsCapability.detect({
+      context: { cliSnapshot: { path: '', clis: {}, tmux: { available: false }, windowsTerminal: { available: false } } },
+      request: { id: 'tool.executionRuns', params: { sessionId: 'requester-session' } },
+    });
+    expect(capability).toMatchObject({ executionRunProfiles: expect.arrayContaining([
+      expect.objectContaining({ id: 'happier.review.deepsec/review', optionsSchema: expect.any(Object),
+        optionsInputHints: expect.any(Object) }),
+    ]) });
+    const input = { sessionId: 'requester-session' };
+    const launcherInventory = capability as { executionRunProfiles: unknown[] };
+    for (const surface of ['agent', 'cli'] as const) {
+      const context = { surface, authority: 'account_automation', defaultSessionId: input.sessionId } as const;
+      const control = await executor.execute('review.engines.list', input, context);
+      if (!control.ok) throw new Error(`${surface} control refused: ${control.errorCode}`);
+      const legacyInventory = ReviewEngineInventorySchema.parse(control.result);
+      expect(legacyInventory).not.toHaveProperty('executionRunProfiles');
+      const result = await executor.execute('review.engines.list', { ...input, includeExecutionRunProfiles: true }, context);
+      if (!result.ok) throw new Error(`${surface} profile read refused: ${result.errorCode}`);
+      expect(ReviewEngineInventorySchema.parse(result.result))
+        .toMatchObject({ items: legacyInventory.items, executionRunProfiles: launcherInventory.executionRunProfiles });
+    }
   });
 
   it('carries the catalog retirement reason through the Review inventory Action', async () => {

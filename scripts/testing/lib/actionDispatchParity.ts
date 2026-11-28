@@ -610,7 +610,11 @@ export function readActionDispatchGraph(root: string, sources: readonly Source[]
         && [ts.SyntaxKind.EqualsEqualsEqualsToken, ts.SyntaxKind.ExclamationEqualsEqualsToken].includes(node.operatorToken.kind)
         && ts.isStringLiteralLike(node.right) && node.right.text === 'client' && ts.isIdentifier(node.left)
         && symbol(node.left)?.declarations?.some(declaration => ts.isVariableDeclaration(declaration)
-          && callsOwned(declaration.initializer, 'resolveActionExecutionPlacementForInput', 'packages/protocol/src/actions/actionSpecs.ts')) === true));
+          && (callsOwned(declaration.initializer, 'resolveActionExecutionPlacementForInput', 'packages/protocol/src/actions/actionSpecs.ts')
+            || some(declaration.initializer, value => ts.isPropertyAccessExpression(value) && value.name.text === 'placement'
+              && ts.isIdentifier(value.expression) && symbol(value.expression)?.declarations?.some(owner =>
+                ts.isVariableDeclaration(owner) && callsOwned(owner.initializer, 'resolveOriginalAccountActionPlacement',
+                  'apps/cli/src/api/externalActionExecutionAuthorization.ts')) === true))) === true));
   }
   const daemonFactory = ownedFunction(daemon, 'createDaemonExternalActionExecution');
   const hostClientDispatch = daemonSource ? Boolean(hostMachineDispatch && clientPlacementRoute(cliIngress) && clientPlacementRoute(mcp)
@@ -650,6 +654,8 @@ export function readActionDispatchGraph(root: string, sources: readonly Source[]
   if (alias && ts.isTypeAliasDeclaration(alias)) allActionIds = new Set(strings(checker.getTypeFromTypeNode(alias.type)));
   const dependencyOwner = program.getSourceFiles().flatMap(source => source.statements)
     .find((statement): statement is ts.TypeAliasDeclaration => ts.isTypeAliasDeclaration(statement) && statement.name.text === 'ActionExecutorDeps');
+  const reviewedChildPort = program.getSourceFiles().flatMap(source => source.statements)
+    .find((statement): statement is ts.TypeAliasDeclaration => ts.isTypeAliasDeclaration(statement) && statement.name.text === 'HostReviewedChildPortV1');
   const dependencyPorts = new Set<string>();
   function readDependencyPorts(node: ts.Node): void {
     if (ts.isTypeLiteralNode(node)) {
@@ -789,6 +795,42 @@ export function readActionDispatchGraph(root: string, sources: readonly Source[]
     const port = dependency(node);
     return port ? [{ port, ids: allowed }] : [];
   }
+  function reviewedChildren(helper: ts.FunctionDeclaration): string[] {
+    if (!reviewedChildPort || !helper.body) return [];
+    const selected: string[] = [];
+    function visit(candidate: ts.Node): void {
+      if (ts.isFunctionLike(candidate)) return;
+      if (ts.isCallExpression(candidate) && ts.isPropertyAccessExpression(candidate.expression)
+        && candidate.expression.name.text === 'invoke'
+        && symbol(candidate.expression.name)?.declarations?.some(declaration =>
+          declaration.pos >= reviewedChildPort!.pos && declaration.end <= reviewedChildPort!.end
+          && declaration.getSourceFile() === reviewedChildPort!.getSourceFile())) {
+        const request = candidate.arguments[0] && unwrap(candidate.arguments[0]);
+        const action = request && ts.isObjectLiteralExpression(request) && request.properties.find(
+          property => property.name?.getText() === 'action');
+        if (action && ts.isPropertyAssignment(action)) selected.push(...strings(checker.getTypeAtLocation(unwrap(action.initializer))));
+      }
+      ts.forEachChild(candidate, visit);
+    }
+    visit(helper.body);
+    return selected.length && selected.every(id => allActionIds.has(id))
+      && new Set(selected).size < allActionIds.size ? selected : [];
+  }
+  function recordChildren(node: ts.ReturnStatement, selected: readonly string[]): void {
+    if (!selected.length) return;
+    for (let parent = node.parent; parent && !ts.isFunctionLike(parent); parent = parent.parent) {
+      if (!ts.isIfStatement(parent) || parent.thenStatement.pos > node.pos || parent.thenStatement.end < node.end) continue;
+      const boundary = selection(parent.expression);
+      if (!boundary.finite) continue;
+      for (const id of boundary.ids) {
+        const required = children.get(id) ?? new Set<string>();
+        for (const child of selected) required.add(child);
+        children.set(id, required);
+        if (!requirements.has(id)) requirements.set(id, new Set());
+      }
+      return;
+    }
+  }
   // Follow the executor's installed functions, including callbacks supplied to
   // its helpers. An unused dispatcher declaration or barrel export supplies no
   // reachability evidence merely because the compiler loaded its source file.
@@ -848,6 +890,7 @@ export function readActionDispatchGraph(root: string, sources: readonly Source[]
         if (ts.isCallExpression(expression) && ts.isIdentifier(expression.expression)) {
           const helper = symbol(expression.expression)?.valueDeclaration;
           if (helper && ts.isFunctionDeclaration(helper) && helper.body) {
+            recordChildren(node, reviewedChildren(helper));
             for (const [index, argument] of expression.arguments.entries()) {
               if (!ts.isArrowFunction(argument) || !ts.isCallExpression(argument.body)
                 || !ts.isIdentifier(argument.body.expression) || argument.body.expression.text !== 'executeHostChild') continue;
@@ -865,19 +908,7 @@ export function readActionDispatchGraph(root: string, sources: readonly Source[]
                 ts.forEachChild(candidate, calls);
               }
               calls(helper.body);
-              if (unknown || !selected.length) continue;
-              for (let parent = node.parent; parent && !ts.isFunctionLike(parent); parent = parent.parent) {
-                if (!ts.isIfStatement(parent) || parent.thenStatement.pos > node.pos || parent.thenStatement.end < node.end) continue;
-                const boundary = selection(parent.expression);
-                if (!boundary.finite) continue;
-                for (const id of boundary.ids) {
-                  const required = children.get(id) ?? new Set<string>();
-                  for (const child of selected) required.add(child);
-                  children.set(id, required);
-                  if (!requirements.has(id)) requirements.set(id, new Set());
-                }
-                break;
-              }
+              if (!unknown) recordChildren(node, selected);
             }
           }
         }

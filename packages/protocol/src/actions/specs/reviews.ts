@@ -375,6 +375,7 @@ export const ReviewEnginesListInputSchema = lazyZodSchema(() => z.looseObject({
   engineIds: z.optional(z.array(z.string().check(z.trim(), z.minLength(1)))),
   scope: z.optional(ReviewEngineScopeSchema),
   profileSelections: z.optional(z.array(ReviewEngineProfileSelectionSchema)),
+  includeExecutionRunProfiles: z.optional(z.boolean()),
 }));
 
 function createReviewEngineDiscoveryActionSpecs() {
@@ -408,6 +409,7 @@ function createReviewEngineDiscoveryActionSpecs() {
         { path: 'sessionId', title: 'Session id', prompt: 'Which session?', widget: 'text' },
         { path: 'machineId', title: 'Machine id', widget: 'text' },
         { path: 'includeDisabled', title: 'Include disabled', widget: 'boolean' },
+        { path: 'includeExecutionRunProfiles', title: 'Include execution-run profile options', widget: 'boolean' },
         { path: 'scope', title: 'Scope', widget: 'text' },
       ],
     },

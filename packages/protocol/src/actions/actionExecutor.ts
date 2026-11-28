@@ -7471,6 +7471,7 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
             ...(args.engineIds ? { engineIds: args.engineIds } : {}),
             ...(args.scope ? { scope: args.scope } : {}),
             ...(args.profileSelections ? { profileSelections: args.profileSelections } : {}),
+            ...(args.includeExecutionRunProfiles === true ? { includeExecutionRunProfiles: true } : {}),
           }, ctx);
           return completeActionResult(res);
         }

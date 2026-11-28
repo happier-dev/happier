@@ -9,7 +9,7 @@ import { readHostAdmittedReviewedParentV1 } from './deploymentRoleChild.js';
 import type { ActionExecutorContext, HostReviewedChildrenPlanV1 } from './types.js';
 
 /** The ordered child declarations are the effects covered by either front door's review. */
-export function describeTeamSetupBatch(input: TeamSetupBatchInputV1): HostReviewedChildrenPlanV1['children'] {
+export function describeTeamSetupBatch(input: TeamSetupBatchInputV1) {
   return [
     ...(input.machine ? [
       { action: CHILD.machine, role: 'machine', input: projectNativeJsonValueForTransport(input.machine) },
@@ -19,7 +19,7 @@ export function describeTeamSetupBatch(input: TeamSetupBatchInputV1): HostReview
     ] : []),
     ...input.repositories.map(({ id, input }) => ({ action: CHILD.repository, role: `repository:${id}`,
       input: projectNativeJsonValueForTransport(input) })),
-  ];
+  ] satisfies HostReviewedChildrenPlanV1['children'];
 }
 
 function decodeOwnerResult<T>(result: ActionExecuteResult, parse: (value: unknown) => T) {

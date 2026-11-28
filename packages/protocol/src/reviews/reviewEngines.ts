@@ -5,6 +5,7 @@ import { ExecutionRunRetentionPolicySchema } from '../execution/runs/runPrimitiv
 import { MachineAgentExecutionStateV1Schema } from '../capabilities/machineAgentInventory.js';
 import type { ReviewStartInput, ReviewReviewerSelectionV1 } from './reviewStart.js';
 import { PluginSourceCustodyV1Schema } from '../plugins/runtime/sourceCustody.js';
+import { ExecutionRunProfileDescriptorSchema } from '../plugins/contributions/executionRunProfiles.js';
 import { PluginAgentRunnerV1Schema, PluginAgentRunnerSelectionV1Schema } from '../plugins/contributions/agentContributionV2.js';
 
 export const ReviewEngineCapabilitiesSchema = lazyZodSchema(() => z.strictObject({
@@ -61,6 +62,7 @@ export type ReviewEngineProfileSelection = z.infer<typeof ReviewEngineProfileSel
 export const ReviewEngineInventorySchema = lazyZodSchema(() => z.object({
   items: z.array(ReviewEngineListItemSchema),
   selectionItems: z.optional(z.array(ReviewEngineListItemSchema)),
+  executionRunProfiles: z.optional(z.array(ExecutionRunProfileDescriptorSchema)),
 }));
 export type ReviewEngineInventory = z.infer<typeof ReviewEngineInventorySchema>;
 

@@ -20,8 +20,10 @@ test('declared surfaces require actual callable composition and receiver registr
   const root = mkdtempSync(join(tmpdir(), 'action-dispatch-parity-'));
   try {
     const files = [
-      { filePath: 'packages/protocol/src/actions/actionIds.ts', content: `export type ActionId = 'demo.edit' | 'demo.move' | 'demo.unrelated' | 'demo.organization' | 'demo.compose' | 'demo.unmapped' | 'demo.runtime' | 'demo.read';` },
+      { filePath: 'packages/protocol/src/actions/actionIds.ts', content: `export type ActionId = 'demo.edit' | 'demo.move' | 'demo.unrelated' | 'demo.organization' | 'demo.compose' | 'demo.unmapped' | 'demo.runtime' | 'demo.read' | 'demo.reviewed';` },
       { filePath: 'packages/protocol/src/actions/executor/types.ts', content: `export type RuntimeExecute = () => unknown;
+      export type HostReviewedChildPortV1 = { invoke(request: { action: string }): unknown };
+      export type ActionExecutorContext = { hostReviewedChild?: HostReviewedChildPortV1 };
       export type ActionExecutorDeps = {
         edit?: () => unknown; other?: () => unknown; move?: { run: () => unknown }; clientActionExecute?: () => unknown;
         runtimeActionExecute?: RuntimeExecute;
@@ -34,26 +36,32 @@ test('declared surfaces require actual callable composition and receiver registr
           return args.runtimeActionExecute();
         }` },
       { filePath: 'packages/protocol/src/actions/actionExecutor.ts', content: `
-        import type { ActionExecutorDeps } from './executor/types';
+        import type { ActionExecutorContext, ActionExecutorDeps } from './executor/types';
         import type { ActionId } from './actionIds';
         import { dispatchRuntime } from './executor/dispatch';
         function isMove(id: ActionId): id is 'demo.move' { return id === 'demo.move'; }
         function isOrganization(id: ActionId): id is 'demo.organization' { return id === 'demo.organization'; }
-        type Invocation = { actionId: ActionId; deps: ActionExecutorDeps; executeHostChild: (id: ActionId) => unknown };
+        type Invocation = { actionId: ActionId; context: ActionExecutorContext; deps: ActionExecutorDeps; executeHostChild: (id: ActionId) => unknown };
         function childWork(execute: (id: ActionId) => unknown) { return execute('demo.edit'); }
+        function reviewedWork(context: ActionExecutorContext) {
+          const review = context.hostReviewedChild;
+          if (!review) return { ok: false, errorCode: 'admission_unavailable' };
+          return review.invoke({ action: 'demo.edit' as const });
+        }
         function dispatchOrganization(inv: Pick<Invocation, 'actionId' | 'deps'>) {
           if (!isOrganization(inv.actionId)) return null;
           if (!inv.deps.edit) return { errorCode: 'unsupported_action', error: inv.actionId };
           return inv.deps.edit();
         }
         function dispatch(inv: Invocation) {
-            const { actionId, deps, executeHostChild } = inv;
+            const { actionId, deps, executeHostChild, context } = inv;
             if (actionId === 'demo.runtime') return dispatchRuntime({ actionId, runtimeActionExecute: deps.runtimeActionExecute });
             if (actionId === 'demo.read') {
               const result = deps.edit ? deps.edit() : { coverage: 'partial' };
               return { ok: true, result };
             }
             if (actionId === 'demo.compose') return childWork(childId => executeHostChild(childId));
+            if (actionId === 'demo.reviewed') return reviewedWork(context);
             const organization = dispatchOrganization(inv);
             if (organization) return organization;
             const moveActionId = isMove(actionId) ? actionId : null;
@@ -68,7 +76,8 @@ test('declared surfaces require actual callable composition and receiver registr
             }
         }
         export function createActionExecutor(deps: ActionExecutorDeps) {
-          function executeHostChild(actionId: ActionId) { return dispatch({ actionId, deps, executeHostChild }); }
+          const context: ActionExecutorContext = { hostReviewedChild: { invoke: request => executeHostChild(request.action as ActionId) } };
+          function executeHostChild(actionId: ActionId) { return dispatch({ actionId, deps, executeHostChild, context }); }
           return { execute: executeHostChild };
         }` },
       { filePath: 'apps/cli/src/session/actions/createCliActionDeps.ts', content: `
@@ -112,8 +121,11 @@ test('declared surfaces require actual callable composition and receiver registr
     // the complete installed roots are exercised below with the same sources.
     const graph = { requirements, children, hostPorts, uiPorts, daemonPorts: hostPorts };
     assert.deepEqual(graph.requirements, { 'demo.runtime': ['runtimeActionExecute'], 'demo.read': [], 'demo.organization': ['edit'], 'demo.compose': [],
-      'demo.move': ['move'], 'demo.edit': ['edit'], 'demo.unrelated': ['other'] });
-    assert.deepEqual(graph.children, { 'demo.compose': ['demo.edit'] });
+      'demo.move': ['move'], 'demo.edit': ['edit'], 'demo.unrelated': ['other'], 'demo.reviewed': [] });
+    assert.deepEqual(graph.children, { 'demo.compose': ['demo.edit'], 'demo.reviewed': ['demo.edit'] });
+    const reviewOnly = readActionDispatchGraph(root, files.map(file => file.filePath.endsWith('/actionExecutor.ts')
+      ? { ...file, content: file.content.replace("return review.invoke({ action: 'demo.edit' as const });", 'return review;') } : file));
+    assert.equal(reviewOnly.requirements['demo.reviewed'], undefined);
     const disconnected = readActionDispatchGraph(root, files.map(file => file.filePath.endsWith('/actionExecutor.ts')
       ? { ...file, content: file.content.replace('const organization = dispatchOrganization(inv);', 'const organization = null;') } : file));
     assert.equal(disconnected.requirements['demo.organization'], undefined);

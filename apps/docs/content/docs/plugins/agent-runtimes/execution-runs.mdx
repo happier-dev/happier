@@ -281,6 +281,11 @@ configuration out of this declaration. The launcher writes the selected value
 to that engine reviewer's `options`; `optionsSchema` remains the validation
 contract.
 
+In matching 0.3 development hosts, call `review.engines.list` with
+`includeExecutionRunProfiles: true` to read the Machine launcher’s profile
+descriptors in `executionRunProfiles`. Each descriptor includes the declared
+`optionsSchema` and `optionsInputHints` when the plugin supplies them.
+
 Findings can carry `extensions` keyed by your complete plugin ID, for example
 `{ 'com.example.runs': { evidence: ['slice-1'] } }`. Values must be strict JSON;
 unknown namespaces remain opaque content. Keep suggested fixes in the
