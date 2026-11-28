@@ -74,7 +74,26 @@ function PreviewFile(props: Readonly<{ file: SkillFile; skillKey: string; onDown
     </BotTemplateDisclosure>;
 }
 
-type Need = BotTemplateContentV1['needs'][keyof BotTemplateContentV1['needs']][number];
+type Need = NonNullable<BotTemplateContentV1['needs'][keyof BotTemplateContentV1['needs']]>[number];
+export function BotTemplateSuggestedAutomationRows({ workflows }: Readonly<{ workflows: BotTemplateContentV1['pausedWorkflows'] }>) {
+    if (!workflows?.length) return null;
+    return <ItemGroup title={t('botTemplateRecipient.suggestedAutomations')}>
+        {workflows.map(workflow => <Item key={workflow.key} testID={`bot-template-automation:${workflow.key}`} mode="info"
+            title={workflow.kind === 'memoryUpkeep' ? t('botTemplateRecipient.memoryUpkeep') : workflow.title}
+            subtitle={workflow.kind === 'sourceBound'
+                ? t('botTemplateRecipient.automationNeedsSource', { source: workflow.source.name })
+                : t(workflow.kind === 'memoryUpkeep' ? 'botTemplateRecipient.usesMemoryUpkeepDefault' : 'botTemplateRecipient.automationStartsOff')}
+            subtitleLines={0} showChevron={false} />)}
+    </ItemGroup>;
+}
+
+export function BotTemplateExampleRows({ example }: Readonly<{ example: BotTemplateContentV1['workedExample'] }>) {
+    return example ? <ItemGroup title={t('botTemplateRecipient.workedExample')}>
+        <Item testID="bot-template-example-request" title={t('botTemplateRecipient.exampleRequest')}
+            subtitle={example.request} subtitleLines={0} mode="info" showChevron={false} />
+        <Item title={t('botTemplateRecipient.exampleReply')} subtitle={example.reply} subtitleLines={0} mode="info" showChevron={false} />
+    </ItemGroup> : null;
+}
 const NEED_KINDS = [
     { kind: 'software', icon: 'terminal', label: 'botTemplates.kindSoftware' },
     { kind: 'connectedAccounts', icon: 'user-circle', label: 'botTemplates.kindAccount' },
@@ -95,7 +114,9 @@ export function botTemplateNeedLine(need: Need) {
  */
 export function BotTemplatePreview({ content, onDownloadFile, showNeeds = true }: BotTemplatePreviewProps) {
     const needs = NEED_KINDS.flatMap(({ kind, icon, label }) => content.needs[kind].map((need: Need) => ({ kind, icon, label, need })));
+    const channels = content.needs.channels ?? [];
     return <>
+        <BotTemplateExampleRows example={content.workedExample} />
         {/* Both sections keep their place when empty, so every template reads the same way (lab r2 install-preview). */}
         <ItemGroup title={t('botTemplates.tryItWith')}>
             {content.firstTask ? <Item testID="bot-template-first-task" title={content.firstTask} subtitle={t('botTemplates.firstTaskHint')}
@@ -104,7 +125,7 @@ export function BotTemplatePreview({ content, onDownloadFile, showNeeds = true }
                     subtitle={t('botTemplates.noFirstTaskHint')} icon={<Icon name="sparkle" />} showChevron={false} mode="info" />}
         </ItemGroup>
         {showNeeds ? <ItemGroup title={t('botTemplates.whatItNeeds')} description={needs.length > 0 ? t('botTemplates.needsChecked') : undefined}>
-            {needs.length > 0 ? needs.map(({ kind, icon, label, need }) => <React.Fragment key={`${kind}:${need.key}`}>
+            {needs.length > 0 || channels.length > 0 ? needs.map(({ kind, icon, label, need }) => <React.Fragment key={`${kind}:${need.key}`}>
                 <Item testID={`bot-template-need:${kind}:${need.key}`} title={need.name} subtitle={botTemplateNeedLine(need)}
                     icon={<Icon name={icon} />} detail={t(label)} showChevron={false} />
                 {'definition' in need ? <SectionContentRow>
@@ -112,7 +133,11 @@ export function BotTemplatePreview({ content, onDownloadFile, showNeeds = true }
                 </SectionContentRow> : null}
             </React.Fragment>) : <Item testID="bot-template-needs-empty" title={t('botTemplates.needsNothing')}
                 subtitle={t('botTemplates.needsNothingHint')} icon={<Icon name="check-circle" />} showChevron={false} mode="info" />}
+            {channels.map(need => <Item key={need.key} testID={`bot-template-need:channels:${need.key}`}
+                title={need.name} subtitle={botTemplateNeedLine(need)} detail={t('botTemplateRecipient.conversations')}
+                icon={<Icon name="send" />} mode="info" showChevron={false} />)}
         </ItemGroup> : null}
+        <BotTemplateSuggestedAutomationRows workflows={content.pausedWorkflows} />
         <BotTemplateInstructions>
             <SectionContentRow><MarkdownView testID="bot-template-instructions-document" markdown={content.instructions.markdown} selectable /></SectionContentRow>
         </BotTemplateInstructions>

@@ -45,7 +45,7 @@ import type { readSessionCreationTerminalSpawnErrorDetail } from '@/api/session/
 import type { readMachineOperationProtocolCapabilitiesV1 } from '@/api/machine/machineOperationProtocolCapabilities';
 import { SessionInitialAccessUpdateRequiredError } from '@/api/session/sessionCreationInitialAccess';
 import type { createCliWorkflowTriggerActions } from '../actions/workflowTriggers';
-import { getWorkflowStarterExamplesV1 } from '@happier-dev/protocol/workflows/builtins/examples';
+import { applyBotMemoryUpkeepDefaultV1 } from '@happier-dev/protocol/workflows/builtins/examples';
 import { type RoleSourceReader } from '@/session/roles/roleSources';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { hasStoredSessionCredentialProvenance, readStoredCredentials } from '@/persistence';
@@ -997,16 +997,11 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
       const prepareInitialTriggers: Parameters<typeof createSpawnedSession>[0]['prepareInitialTriggers'] =
         !discussionParticipant && (identity?.bot?.kind === 'bot' || (initialTriggers && initialTriggers.length > 0)) ? async (preparedFinalSessionId) => {
           try {
-            const preparedDrafts = [...(initialTriggers ?? [])];
+            let preparedDrafts = [...(initialTriggers ?? [])];
             if (identity?.bot?.kind === 'bot') {
               const settings = roleSettingsProvider.getAccountSettings?.();
               if (!settings) throw Object.assign(new Error('account_settings_content_unavailable'), { code: 'account_settings_content_unavailable' });
-              if (settings.memoryUpkeepInNewBots) {
-                const upkeep = getWorkflowStarterExamplesV1().find((example) => example.key === 'memory-upkeep-in-session');
-                if (upkeep?.triggerSeed?.kind !== 'schedule') throw Object.assign(new Error('source_unavailable'), { code: 'source_unavailable' });
-                preparedDrafts.push({ target: { kind: 'inline', definition: upkeep.definition },
-                  executionTarget: { kind: 'session' }, trigger: upkeep.triggerSeed });
-              }
+              preparedDrafts = applyBotMemoryUpkeepDefaultV1(preparedDrafts, settings.memoryUpkeepInNewBots);
             }
             if (preparedDrafts.length === 0) return [];
             if (!workflowTriggers) throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });

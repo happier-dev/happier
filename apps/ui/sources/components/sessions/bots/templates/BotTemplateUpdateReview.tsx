@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { StyleSheet } from 'react-native-unistyles';
 import { resolveThreeWayTextV1, BotTemplateUpdateFailureDetailsV1Schema, type BotTemplateUpdateApplyInputV1,
     type BotTemplateUpdateDiffResultV1, type BotTemplateSetupSelectionsV1 } from '@happier-dev/protocol/bots/templates/botTemplateActionsV1';
@@ -100,6 +101,23 @@ export function BotTemplateUpdateForm({ review, update, ready, setup, isCurrent 
     const firstTaskChanged = accepted.firstTask !== offered.firstTask;
     const agentChanged = accepted.suggestedAgent?.agentId !== offered.suggestedAgent?.agentId
         || accepted.suggestedAgent?.modelId !== offered.suggestedAgent?.modelId;
+    const templateFacts = React.useMemo(() => {
+        const workflowLine = (workflow: NonNullable<typeof offered.pausedWorkflows>[number]) => {
+            if (workflow.kind === 'memoryUpkeep') return t('botTemplateRecipient.memoryUpkeep');
+            if (workflow.kind === 'sourceBound') return `${workflow.title} · ${t('botTemplateRecipient.automationNeedsSource', { source: workflow.source.name })}`;
+            return workflow.title;
+        };
+        const changed = <T,>(title: string, previous: T, next: T, line: (value: T) => string | undefined) =>
+            sameStrictJsonValue(previous, next) ? [] : [{ title, previous: line(previous), next: line(next) }];
+        return [
+            ...changed(t('botTemplateRecipient.conversations'), accepted.channels, offered.needs.channels,
+                channels => channels?.map(need => `${need.name} · ${need.providerKinds.join(', ')}`).join('\n')),
+            ...changed(t('botTemplateRecipient.suggestedAutomations'), accepted.pausedWorkflows, offered.pausedWorkflows,
+                workflows => workflows?.map(workflowLine).join('\n')),
+            ...changed(t('botTemplateRecipient.workedExample'), accepted.workedExample, offered.workedExample,
+                example => example && `${example.request}\n\n${example.reply}`),
+        ];
+    }, [accepted, offered]);
     const busy = ['applying', 'skipping', 'stopping'].includes(update.mutation.kind);
     const finished = ['updated', 'skipped', 'stopped'].includes(update.mutation.kind);
     const latest = React.useRef({ instructions, skills: reviewedSkills, takeIdentity, setup, preview, busy, finished });
@@ -193,6 +211,13 @@ export function BotTemplateUpdateForm({ review, update, ready, setup, isCurrent 
                 <Item title={t('botTemplateRecipient.availableVersion', { version: review.upstream.release.version })}
                     subtitle={formatAgentSuggestion(offered.suggestedAgent)} subtitleLines={0} mode="info" showChevron={false} />
             </ItemGroup> : null}
+            {templateFacts.map(fact => <ItemGroup key={fact.title} title={fact.title}
+                description={t('botTemplateRecipient.updateSetupSuggestions')}>
+                <Item title={t('botTemplateRecipient.acceptedVersion', { version: review.instance.acceptedVersion })}
+                    subtitle={fact.previous || t('common.none')} subtitleLines={0} mode="info" showChevron={false} />
+                <Item title={t('botTemplateRecipient.availableVersion', { version: review.upstream.release.version })}
+                    subtitle={fact.next || t('common.none')} subtitleLines={0} mode="info" showChevron={false} />
+            </ItemGroup>)}
             {/* Only what changed: lines both sides edited ask for a choice, the author's other changes are taken and
                 fold into one row, and the whole resulting document waits behind its own disclosure. */}
             <ItemGroup title={t('botTemplates.instructions')} description={conflicts > 0 ? t('botTemplates.changedLinesYouEdited') : undefined}>

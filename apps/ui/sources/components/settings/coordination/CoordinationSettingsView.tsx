@@ -2,7 +2,7 @@ import * as React from 'react';
 import { ExchangeCheckInBannerPreview } from '@/components/sessions/pending/ExchangeCheckInBanner';
 import { View, type ScrollView } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { COORDINATOR_KEEP_DEFAULT_VALUES, type CoordinatorKeepDefault } from '@happier-dev/protocol/account/settings/accountSettings';
+import { COORDINATOR_KEEP_VALUES, resolveCoordinatorKeepDefault } from '@happier-dev/protocol/account/settings/accountSettings';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { showOnlyCoordinatorsInSessionList } from '@/components/sessions/shell/search/useSessionListViewFilters';
@@ -18,7 +18,6 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { Text } from '@/components/ui/text/Text';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { useSettingMutable } from '@/sync/domains/state/storage';
 import { t } from '@/text';
@@ -26,18 +25,15 @@ import { t } from '@/text';
 import { parseCheckInTurns, withNeverPause } from './coordinationCheckIn';
 import { COORDINATION_SETTINGS } from './coordinationSettings';
 import { CoordinationFollowPreferences } from './CoordinationFollowPreferences';
-import { CoordinatorKeepListPreview, CoordinatorKeepRailPreview } from './CoordinatorKeepPreviews';
+import { CoordinatorKeepListPreview } from './CoordinatorKeepPreviews';
 
 const SETTINGS = COORDINATION_SETTINGS.settings;
 const DEFAULT_CHECK_IN_TURNS = settingsDefaults.coordinationAutonomousCheckIn.afterTurns ?? 1;
 
-type FixedKeep = Exclude<CoordinatorKeepDefault, 'suggest'>;
-const FIXED_KEEP_VALUES = COORDINATOR_KEEP_DEFAULT_VALUES.filter((value): value is FixedKeep => value !== 'suggest');
 const FIXED_KEEP_TITLES = {
-    rail_bot: 'settingsCoordination.keepRail',
     list_pin: 'settingsCoordination.keepList',
     none: 'settingsCoordination.keepNone',
-} as const satisfies Record<FixedKeep, string>;
+} as const satisfies Record<(typeof COORDINATOR_KEEP_VALUES)[number], string>;
 
 export const CoordinationSettingsView = React.memo(function CoordinationSettingsView() {
     const popoverBoundaryRef = React.useRef<ScrollView>(null);
@@ -80,7 +76,6 @@ function NewCoordinatorsGroup(props: Readonly<{ popoverBoundaryRef: React.RefObj
     const [suggestProjectRule, setSuggestProjectRule] = useSettingMutable('coordinationCoordinatorSuggestProjectRule');
     const [suggestHomeRule, setSuggestHomeRule] = useSettingMutable('coordinationCoordinatorSuggestHomeRule');
     const [answersWorkerQuestions, setAnswersWorkerQuestions] = useSettingMutable('coordinationCoordinatorAnswersWorkerQuestions');
-    const fixedKeep = keep === 'suggest' ? null : keep;
     return (
         <SettingSection section={COORDINATION_SETTINGS.sectionRefs.newCoordinatorDefaults}>
             <ItemGroup
@@ -98,33 +93,16 @@ function NewCoordinatorsGroup(props: Readonly<{ popoverBoundaryRef: React.RefObj
                         showChevron={false}
                         rightElement={<View style={styles.keepControls}>
                             <SelectionTiles
-                                variant="card"
-                                accessibilityLabel={t(SETTINGS.newCoordinatorKeep.titleKey)}
-                                testIdPrefix="settings-coordination-keep-suggest"
-                                maximumColumns={1}
-                                value={keep === 'suggest' ? 'suggest' : null}
-                                onChange={(next) => { if (next) setKeep('suggest'); }}
-                                options={[{
-                                    id: 'suggest',
-                                    icon: 'sparkle',
-                                    title: t('settingsCoordination.keepSuggest'),
-                                    subtitle: t('settingsCoordination.keepSuggestDescription'),
-                                }]}
-                            />
-                            <Text variant="meta" style={styles.keepCaption}>{t('settingsCoordination.keepAlways')}</Text>
-                            <SelectionTiles
                                 variant="visual"
                                 tileSizing="fill"
-                                accessibilityLabel={t('settingsCoordination.keepAlways')}
+                                accessibilityLabel={t(SETTINGS.newCoordinatorKeep.titleKey)}
                                 testIdPrefix="settings-coordination-keep"
-                                value={fixedKeep}
+                                value={resolveCoordinatorKeepDefault(keep)}
                                 onChange={(next) => { if (next) setKeep(next); }}
-                                options={FIXED_KEEP_VALUES.map((value) => ({
+                                options={COORDINATOR_KEEP_VALUES.map((value) => ({
                                     id: value,
                                     title: t(FIXED_KEEP_TITLES[value]),
-                                    preview: value === 'rail_bot'
-                                        ? <CoordinatorKeepRailPreview />
-                                        : <CoordinatorKeepListPreview pinned={value === 'list_pin'} />,
+                                    preview: <CoordinatorKeepListPreview pinned={value === 'list_pin'} />,
                                 }))}
                             />
                         </View>}
@@ -279,5 +257,4 @@ function CheckInGroup() {
 
 const styles = StyleSheet.create((theme) => ({
     keepControls: { gap: theme.space.s12 },
-    keepCaption: { color: theme.colors.text.secondary },
 }));

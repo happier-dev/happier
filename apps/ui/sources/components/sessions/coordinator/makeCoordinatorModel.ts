@@ -8,7 +8,6 @@ import {
 import type { FollowRulePreviewResultV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowRulePreviewV1';
 import type { QualifiedProjectKeyV1, WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { resolveSessionProjectKeyV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
-import { resolveCoordinatorKeepDefault } from '@happier-dev/protocol/account/settings/accountSettings';
 import { workspaceRefResolutionContextV1 } from '@/sync/domains/workspaces/workspaceRefs';
 import { admitProjectWorkspaceCensusForSubject } from '@/sync/domains/workspaces/projectWorkspaceCensusAdmission';
 import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -33,7 +32,6 @@ export type MakeCoordinatorDraft = Readonly<{
     keep: MakeCoordinatorKeep;
     /** True while the place is still the one the Settings default resolved to (the dialog says "From your setting"). */
     keepFromSetting: boolean;
-    keepPreference: SessionCoordinatorCreationDefaultsV1['coordinationCoordinatorKeep'];
     managedBySessionId: string | null;
     answersWorkerQuestions: boolean;
     rules: readonly MakeCoordinatorRuleDraft[];
@@ -41,8 +39,7 @@ export type MakeCoordinatorDraft = Readonly<{
 
 /**
  * The dialog's starting choices (C1 §6, lab P3 M/M2/M1): the project rule first and on, the Home-wide rule
- * second and off (on when the session has no project); the place the Settings default resolves to for that
- * scope; Managed by only when exactly one other session follows Home-wide. Protocol owns every suggestion.
+ * second and off (on when the session has no project); the placement from Settings; Managed by only when exactly one other session follows Home-wide. Protocol owns every suggestion.
  */
 export function buildMakeCoordinatorDraft(
     input: Readonly<{
@@ -102,7 +99,6 @@ export function buildMakeCoordinatorDraft(
         roleId: setup.roleId,
         keep: setup.keep,
         keepFromSetting: true,
-        keepPreference: setup.keepPreference,
         managedBySessionId: setup.managedBySessionId,
         answersWorkerQuestions: setup.answersWorkerQuestions,
         rules,
@@ -131,14 +127,11 @@ export function reconcileMakeCoordinatorProjectDraft(
     if (current.project || !prepared.project) return current;
     const rules = rulesChosen ? prepared.rules.map(rule => ({ ...rule,
         enabled: current.rules.find(previous => previous.scope === rule.scope)?.enabled ?? false })) : prepared.rules;
-    const homeWide = rules.some(rule => rule.scope === 'home' && rule.enabled);
     return { ...current, project: prepared.project,
         projectInferenceScope: prepared.projectInferenceScope,
-        projectCensusScope: prepared.projectCensusScope, rules,
-        keep: current.keepFromSetting ? resolveCoordinatorKeepDefault(current.keepPreference, homeWide ? 'home' : 'project') : current.keep };
+        projectCensusScope: prepared.projectCensusScope, rules };
 }
 
-/** Turning a rule on or off re-resolves the place while it still follows the Settings default. */
 export function toggleMakeCoordinatorRule(
     draft: MakeCoordinatorDraft,
     scope: 'project' | 'home',
@@ -147,16 +140,7 @@ export function toggleMakeCoordinatorRule(
     const rules = draft.rules.map((rule) =>
         rule.scope === scope ? { ...rule, enabled } : rule,
     );
-    if (!draft.keepFromSetting) return { ...draft, rules };
-    const homeWide = rules.some((rule) => rule.scope === 'home' && rule.enabled);
-    return {
-        ...draft,
-        rules,
-        keep: resolveCoordinatorKeepDefault(
-            draft.keepPreference,
-            homeWide ? 'home' : 'project',
-        ),
-    };
+    return { ...draft, rules };
 }
 
 export function buildMakeCoordinatorEnableInput(

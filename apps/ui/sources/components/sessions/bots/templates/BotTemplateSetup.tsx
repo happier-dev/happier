@@ -63,10 +63,14 @@ export function BotTemplateConnectionsSetup(props: ConnectionProps) {
         const selected = latest.current.value.mcpServers.find(item => item.key === key)?.selection;
         setMcp(key, { action: 'bind', inputs: { ...(selected?.action === 'bind' ? selected.inputs : {}), [inputKey]: value } });
     };
-    const { connectedAccounts, mcpServers } = props.needs;
+    const { connectedAccounts, mcpServers, channels } = props.needs;
     // One section per kind, one row per need (lab r2 install-setupB): its name, why, and the one operation.
     // An optional need nobody connects is skipped; Create already reads it that way.
     return <>
+        {channels?.length ? <ItemGroup title={t('botTemplateRecipient.conversations')} description={t('botTemplateRecipient.connectAfterCreation')}>
+            {channels.map(need => <Item key={need.key} testID={`bot-template-channel-${need.key}`} title={need.name}
+                subtitle={botTemplateNeedLine(need)} icon={<Icon name="send" />} mode="info" showChevron={false} />)}
+        </ItemGroup> : null}
         {connectedAccounts.length ? <ItemGroup title={t('botTemplates.accounts')}>
             {connectedAccounts.map(need => {
                 const connected = props.value.accounts.find(item => item.key === need.key)?.selection.action === 'connect';

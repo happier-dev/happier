@@ -869,6 +869,12 @@ export type ActionDtoShape_0412ee76a1abb717 = [
 export type ActionDtoShape_0423db24792a437d = [
     undefined | ActionDtoShape_bf2a7cb5b4667f38 | ActionDtoShape_d57f3bdd153ca36e | ActionDtoShape_b1342fb916523615 | ActionDtoShape_a58e97f78d46925c | ActionDtoShape_9121a58d6234a098 | ActionDtoShape_a4835a116b190aac | ActionDtoShape_7e7f5fded570398d | ActionDtoShape_5d075b5a8c9f72c5 | ActionDtoShape_8ec4fe80a57208a0 | ActionDtoShape_f2dee41a2240dcf5
 ][0];
+export type ActionDtoShape_042b78abe707421f = [
+    {
+        kind: 'pluginEvent';
+        eventRef: ActionDtoShape_ced0351403049665;
+    }
+][0];
 export type ActionDtoShape_04320c101009f014 = [
     {
         projectRoot: string;
@@ -1619,6 +1625,12 @@ export type ActionDtoShape_07c7efa4c3a3640d = [
         changedBlockIds?: string[] | undefined;
     }
 ][0];
+export type ActionDtoShape_07cc9726df8ca435 = [
+    {
+        kind: 'schedule';
+        schedule: ActionDtoShape_304c1cfeaced2337;
+    }
+][0];
 export type ActionDtoShape_07cf7febdec961ca = [
     {
         kind: 'session';
@@ -2243,6 +2255,15 @@ export type ActionDtoShape_0a981353fdee8220 = [
         remedy?: string | undefined;
     }
 ][0];
+export type ActionDtoShape_0a98d04d65913a8a = [
+    {
+        kind: 'sourceBound';
+        key: string;
+        title: string;
+        definition: Readonly<ActionDtoShape_a5270a32d3c6b447>;
+        source: ActionDtoShape_637a9228af3577ea;
+    }
+][0];
 export type ActionDtoShape_0aabd026b2198ed8 = [
     ActionDtoShape_818b7bc000cc0f33 | ActionDtoShape_54057aff120c99be
 ][0];
@@ -2732,6 +2753,9 @@ export type ActionDtoShape_0d1367e6c191b8a1 = [
 ][0];
 export type ActionDtoShape_0d1b9be8f35f0e9e = [
     undefined | ActionDtoShape_32d5722f64af3b82[]
+][0];
+export type ActionDtoShape_0d2aa811fab16215 = [
+    undefined | ActionDtoShape_9deea83df42133c6[]
 ][0];
 export type ActionDtoShape_0d4ad5f5f974fb20 = [
     {
@@ -3569,6 +3593,15 @@ export type ActionDtoShape_1195dfc351c78f66 = [
         machineId: string;
     }
 ][0];
+export type ActionDtoShape_11a7276031491819 = [
+    {
+        kind: 'inline';
+        key: string;
+        title: string;
+        definition: Readonly<ActionDtoShape_2c857c00c40137fc>;
+        trigger: ActionDtoShape_daea5d5c0899e3a8;
+    }
+][0];
 export type ActionDtoShape_11a980d0c0823da6 = [
     {
         service: string;
@@ -4000,6 +4033,9 @@ export type ActionDtoShape_13af4272033bd2e5 = [
 ][0];
 export type ActionDtoShape_13af9b9b9d56159e = [
     ActionDtoShape_23208ee361f2e339 | ActionDtoShape_40f690892d2f1886
+][0];
+export type ActionDtoShape_13b2f202460caad1 = [
+    (ActionDtoShape_6c84be79ea37e890)[] | undefined
 ][0];
 export type ActionDtoShape_13bb4111702934d8 = [
     {
@@ -4650,15 +4686,6 @@ export type ActionDtoShape_16fb9acc9411fc89 = [
         ok: false;
         status: number;
         error: string;
-    }
-][0];
-export type ActionDtoShape_1709049bbefed199 = [
-    {
-        v: 1;
-        version: string;
-        releasedAtMs: number;
-        changelog: string;
-        content: ActionDtoShape_424424aa1ba1ee09;
     }
 ][0];
 export type ActionDtoShape_1711e626fece5148 = [
@@ -7418,6 +7445,12 @@ export type ActionDtoShape_25b0dda58cd44063 = [
 export type ActionDtoShape_25b1d8d117093f1c = [
     ActionDtoShape_5e1dd5b5b8cd0fea | ActionDtoShape_f3084f584d6800ef
 ][0];
+export type ActionDtoShape_25bb881c9fbbbf55 = [
+    {
+        request: string;
+        reply: string;
+    }
+][0];
 export type ActionDtoShape_25ca59f41ecd8bf8 = [
     {
         expectedRevision: number;
@@ -9429,6 +9462,20 @@ export type ActionDtoShape_30af6959e7df1432 = [
         input: ActionDtoShape_fbaf2f8e6b432148;
     }
 ][0];
+export type ActionDtoShape_30bf7565efa31c72 = [
+    {
+        v: 1;
+        source: ActionDtoShape_1ebacc174dc500a2;
+        acceptedVersion: string;
+        acceptedBase: ActionDtoShape_8d0d04e849ed4480;
+        skillIds: Record<string, string>;
+        mcpServerIds: Record<string, string>;
+        follow: boolean;
+        channelNeeds?: ActionDtoShape_71d5cb933c60a2c4;
+        sourceWorkflowNeeds?: ActionDtoShape_0d2aa811fab16215;
+        skippedVersion?: string | undefined;
+    }
+][0];
 export type ActionDtoShape_30c35dda551f0161 = [
     undefined | ActionDtoShape_35693e0100483c46
 ][0];
@@ -9481,6 +9528,9 @@ export type ActionDtoShape_30f889ef0c30718c = [
         kind: "in_place";
         workspace: ActionDtoShape_7a0e6f3cb8fa4079;
     }
+][0];
+export type ActionDtoShape_30fcab6e1758162e = [
+    undefined | ActionDtoShape_a9202cd2d40d3c35
 ][0];
 export type ActionDtoShape_30fd59b31927f721 = [
     {
@@ -12360,6 +12410,15 @@ export type ActionDtoShape_3fe64c47497afbd8 = [
 export type ActionDtoShape_3ff8d5a674479b21 = [
     undefined | ActionDtoShape_04dd8feb7d76b4e4
 ][0];
+export type ActionDtoShape_3ffa090c8d178fbd = [
+    {
+        kind: 'inline';
+        key: string;
+        title: string;
+        definition: Readonly<ActionDtoShape_a5270a32d3c6b447>;
+        trigger: ActionDtoShape_daea5d5c0899e3a8;
+    }
+][0];
 export type ActionDtoShape_3ffa7fb3833fc065 = [
     {
         kind: 'session';
@@ -12676,21 +12735,6 @@ export type ActionDtoShape_4233aa7b27ec701a = [
 export type ActionDtoShape_4239d1bee8611eeb = [
     undefined | ActionDtoShape_dedccf27116a473c
 ][0];
-export type ActionDtoShape_424424aa1ba1ee09 = [
-    {
-        v: 1;
-        instructions: {
-            markdown: string;
-        };
-        memoryRules: ActionDtoShape_fd8483a5e4799f8c[];
-        skills: ActionDtoShape_8ddd32b3c748ec59[];
-        needs: ActionDtoShape_b764e4d28471c7ec;
-        identity: ActionDtoShape_60326e5bf3632a70;
-        pet?: ActionDtoShape_f8c7184c04fb1d8b;
-        suggestedAgent?: ActionDtoShape_433bcd6e9005f6d0;
-        firstTask?: string | undefined;
-    }
-][0];
 export type ActionDtoShape_4245d41d49be30f1 = [
     {
         sessionName?: string | undefined;
@@ -12698,18 +12742,6 @@ export type ActionDtoShape_4245d41d49be30f1 = [
 ][0];
 export type ActionDtoShape_424c603f16788f98 = [
     (ActionDtoShape_7063bb63408c861a)[] | undefined
-][0];
-export type ActionDtoShape_4252be696607a617 = [
-    {
-        v: 1;
-        source: ActionDtoShape_1ebacc174dc500a2;
-        acceptedVersion: string;
-        acceptedBase: ActionDtoShape_8d0d04e849ed4480;
-        skillIds: Record<string, string>;
-        mcpServerIds: Record<string, string>;
-        follow: boolean;
-        skippedVersion?: string | undefined;
-    }
 ][0];
 export type ActionDtoShape_4257021976cb6868 = [
     {
@@ -13327,6 +13359,14 @@ export type ActionDtoShape_45922cb943da8234 = [
 ][0];
 export type ActionDtoShape_45aefa6141b6a9ef = [
     undefined | ActionDtoShape_292930ce58461303
+][0];
+export type ActionDtoShape_45b33076dc75596e = [
+    {
+        source: ActionDtoShape_1ebacc174dc500a2;
+        release: ActionDtoShape_62f1724bc0640b74;
+        revision?: ActionDtoShape_fd53b42ff78cf321;
+        presentation?: ActionDtoShape_ce7f2aeee7e5f77a;
+    }
 ][0];
 export type ActionDtoShape_45b3c7dfb4728722 = [
     {
@@ -16080,14 +16120,6 @@ export type ActionDtoShape_53a8e2eb9c0f0fae = [
 export type ActionDtoShape_53ad1039c2d62c59 = [
     undefined | ActionDtoShape_2ed82e17846b18e2
 ][0];
-export type ActionDtoShape_53c2e7ef59a8256f = [
-    {
-        source: ActionDtoShape_1ebacc174dc500a2;
-        release: ActionDtoShape_68967aa7a0381c86;
-        revision?: ActionDtoShape_fd53b42ff78cf321;
-        presentation?: ActionDtoShape_ce7f2aeee7e5f77a;
-    }
-][0];
 export type ActionDtoShape_53c70fa6bca0cf9e = [
     undefined | ActionDtoShape_0a3ec46f36370192[]
 ][0];
@@ -17114,6 +17146,23 @@ export type ActionDtoShape_5909b2daafb795e4 = [
         errorCode?: 'adapter_unavailable' | 'collector_degraded' | 'collector_denied' | 'collector_unavailable' | 'feature_disabled' | 'navigation_stale' | 'page_crashed' | 'policy_denied' | 'target_detached' | 'unsupported_fidelity' | undefined;
     }
 ][0];
+export type ActionDtoShape_591409b749bfa641 = [
+    {
+        v: 1;
+        instructions: {
+            markdown: string;
+        };
+        memoryRules: ActionDtoShape_fd8483a5e4799f8c[];
+        skills: ActionDtoShape_8ddd32b3c748ec59[];
+        needs: ActionDtoShape_eda692caa2e893c1;
+        identity: ActionDtoShape_60326e5bf3632a70;
+        pet?: ActionDtoShape_f8c7184c04fb1d8b;
+        pausedWorkflows?: ActionDtoShape_e0c45720be187bdd;
+        workedExample?: ActionDtoShape_fa2705f9cc36233f;
+        suggestedAgent?: ActionDtoShape_433bcd6e9005f6d0;
+        firstTask?: string | undefined;
+    }
+][0];
 export type ActionDtoShape_591651a5d84a0bb5 = [
     {
         kind: 'environment';
@@ -17897,6 +17946,15 @@ export type ActionDtoShape_5d13b6af2d9dbb8f = [
 ][0];
 export type ActionDtoShape_5d27ead466f209b4 = [
     undefined | ActionDtoShape_84c9f94eba9c5b68
+][0];
+export type ActionDtoShape_5d3bb026a39c5081 = [
+    {
+        v: 1;
+        version: string;
+        releasedAtMs: number;
+        changelog: string;
+        content: ActionDtoShape_591409b749bfa641;
+    }
 ][0];
 export type ActionDtoShape_5d3c4e9fbb7ef124 = [
     {
@@ -18878,21 +18936,6 @@ export type ActionDtoShape_61dcb47a9f8138e6 = [
         environmentIds: string[];
     }
 ][0];
-export type ActionDtoShape_61e188f1ad71f7b3 = [
-    {
-        v: 1;
-        identity: ActionDtoShape_882fb3a7fab1a7a3;
-        instructions: {
-            markdown: string;
-        };
-        memoryRules: ActionDtoShape_fd8483a5e4799f8c[];
-        skills: ActionDtoShape_8ddd32b3c748ec59[];
-        needs: ActionDtoShape_b764e4d28471c7ec;
-        pet?: ActionDtoShape_f8c7184c04fb1d8b;
-        suggestedAgent?: ActionDtoShape_433bcd6e9005f6d0;
-        firstTask?: string | undefined;
-    }
-][0];
 export type ActionDtoShape_61e616a9bcff69dc = [
     ActionDtoShape_e4710c2e865c34fd | ActionDtoShape_ba5f192fd11e343f | ActionDtoShape_3ee74bdd840cc7c8
 ][0];
@@ -19046,6 +19089,15 @@ export type ActionDtoShape_62eec2fdee4768c3 = [
 export type ActionDtoShape_62ef66ea8ab71b8d = [
     undefined | ActionDtoShape_09fef854d206a024[]
 ][0];
+export type ActionDtoShape_62f1724bc0640b74 = [
+    {
+        v: 1;
+        version: string;
+        releasedAtMs: number;
+        changelog: string;
+        content: ActionDtoShape_8cd9da0ba07c23e5;
+    }
+][0];
 export type ActionDtoShape_6307b5d4032d7cf3 = [
     {
         sizes: ('full' | 'large' | 'medium' | 'small' | 'tall' | 'wide')[];
@@ -19091,6 +19143,12 @@ export type ActionDtoShape_635e08a7e71846bc = [
         ref: ActionDtoShape_80182d3063ec7679;
         layout: 'horizon' | 'wallpaper';
         descriptor: ActionDtoShape_4fdd75f1e5aa4fa7;
+    }
+][0];
+export type ActionDtoShape_637a9228af3577ea = [
+    {
+        name: string;
+        trigger: ActionDtoShape_a7b369211e364a98;
     }
 ][0];
 export type ActionDtoShape_6395c5d8b9c5157b = [
@@ -20069,15 +20127,6 @@ export type ActionDtoShape_68844c0ccd5afcad = [
 export type ActionDtoShape_6886ee663cdc0f90 = [
     undefined | ActionDtoShape_09671abb4d2ca183[]
 ][0];
-export type ActionDtoShape_68967aa7a0381c86 = [
-    {
-        v: 1;
-        version: string;
-        releasedAtMs: number;
-        changelog: string;
-        content: ActionDtoShape_61e188f1ad71f7b3;
-    }
-][0];
 export type ActionDtoShape_689e6762d842bc86 = [
     {
         purpose: "preview" | "standard";
@@ -20747,6 +20796,9 @@ export type ActionDtoShape_6c7993864521f8a5 = [
         message: string;
     }
 ][0];
+export type ActionDtoShape_6c84be79ea37e890 = [
+    ActionDtoShape_11a7276031491819 | ActionDtoShape_71f21cc6a5b59fae | ActionDtoShape_9deea83df42133c6
+][0];
 export type ActionDtoShape_6c98158cf5781f5f = [
     undefined | ActionDtoShape_78206cbec58a7b60 | ActionDtoShape_8a8554aba671020e
 ][0];
@@ -20906,6 +20958,11 @@ export type ActionDtoShape_6d4b329374770703 = [
 export type ActionDtoShape_6d5bb14e2e3a6203 = [
     {
         kind: 'authored';
+    }
+][0];
+export type ActionDtoShape_6d9c1f12feb98769 = [
+    {
+        kind: 'ciFailed' | 'prComment';
     }
 ][0];
 export type ActionDtoShape_6da3b61d27743c80 = [
@@ -21566,6 +21623,9 @@ export type ActionDtoShape_71b6a218e30f02e1 = [
 export type ActionDtoShape_71c4559fc2f4f281 = [
     undefined | ActionDtoShape_4fee3a5cb5b58a8f
 ][0];
+export type ActionDtoShape_71d5cb933c60a2c4 = [
+    undefined | ActionDtoShape_e37a0426ef2f18fb[]
+][0];
 export type ActionDtoShape_71e14f3947d185b9 = [
     {
         skills?: number | undefined;
@@ -21601,6 +21661,12 @@ export type ActionDtoShape_71f1e042bb0d4527 = [
         addedAt: number;
         removable: false;
         origin: ActionDtoShape_981e3bc4926cc150;
+    }
+][0];
+export type ActionDtoShape_71f21cc6a5b59fae = [
+    {
+        kind: 'memoryUpkeep';
+        key: string;
     }
 ][0];
 export type ActionDtoShape_71f4426e408c127e = [
@@ -26539,6 +26605,12 @@ export type ActionDtoShape_8c0c603973fd3a78 = [
         approval?: ActionDtoShape_b02f0141a87c6379;
     }
 ][0];
+export type ActionDtoShape_8c103ad5799bc77e = [
+    {
+        instance: ActionDtoShape_30bf7565efa31c72;
+        changed: boolean;
+    }
+][0];
 export type ActionDtoShape_8c1335723e8e9c73 = [
     {
         operation: 'catalog';
@@ -26696,6 +26768,23 @@ export type ActionDtoShape_8cd567fae6694f21 = [
 ][0];
 export type ActionDtoShape_8cd57edc7896dbe8 = [
     undefined | ActionDtoShape_4f583d0566479d18 | ActionDtoShape_8f32e883af819650 | ActionDtoShape_9b32ed795a718c52
+][0];
+export type ActionDtoShape_8cd9da0ba07c23e5 = [
+    {
+        v: 1;
+        identity: ActionDtoShape_882fb3a7fab1a7a3;
+        instructions: {
+            markdown: string;
+        };
+        memoryRules: ActionDtoShape_fd8483a5e4799f8c[];
+        skills: ActionDtoShape_8ddd32b3c748ec59[];
+        needs: ActionDtoShape_eda692caa2e893c1;
+        pet?: ActionDtoShape_f8c7184c04fb1d8b;
+        pausedWorkflows?: ActionDtoShape_13b2f202460caad1;
+        workedExample?: ActionDtoShape_fa2705f9cc36233f;
+        suggestedAgent?: ActionDtoShape_433bcd6e9005f6d0;
+        firstTask?: string | undefined;
+    }
 ][0];
 export type ActionDtoShape_8cdb6e87305ab907 = [
     {
@@ -29685,6 +29774,15 @@ export type ActionDtoShape_9deaaf0b48dd542b = [
         generation?: string | undefined;
     }
 ][0];
+export type ActionDtoShape_9deea83df42133c6 = [
+    {
+        kind: 'sourceBound';
+        key: string;
+        title: string;
+        definition: Readonly<ActionDtoShape_2c857c00c40137fc>;
+        source: ActionDtoShape_637a9228af3577ea;
+    }
+][0];
 export type ActionDtoShape_9df28d9780eb31ac = [
     {
         phase: 'ownership_view' | 'tree_capture';
@@ -31566,6 +31664,9 @@ export type ActionDtoShape_a78e39f51028fd41 = [
 export type ActionDtoShape_a7adc49c3c46d868 = [
     undefined | ActionDtoShape_4245d41d49be30f1
 ][0];
+export type ActionDtoShape_a7b369211e364a98 = [
+    ActionDtoShape_6d9c1f12feb98769 | ActionDtoShape_042b78abe707421f
+][0];
 export type ActionDtoShape_a7b3fe2e9a46e9b8 = [
     {
         observedAtMs: number;
@@ -31754,6 +31855,13 @@ export type ActionDtoShape_a91fc83645fa7a1c = [
         description?: string | undefined;
         submitLabel?: string | undefined;
         fields?: ActionDtoShape_1219c63d0fe5be2a;
+    }
+][0];
+export type ActionDtoShape_a9202cd2d40d3c35 = [
+    {
+        draftArtifactId: string;
+        expectedRevision: ActionDtoShape_968a7793d24a089b;
+        release: ActionDtoShape_5d3bb026a39c5081;
     }
 ][0];
 export type ActionDtoShape_a92e995ed3da9c6e = [
@@ -34293,13 +34401,6 @@ export type ActionDtoShape_b75cd47a2047552b = [
         endMs: number;
     }
 ][0];
-export type ActionDtoShape_b764e4d28471c7ec = [
-    {
-        software: ActionDtoShape_2658bf0f06d4cdc2[];
-        connectedAccounts: ActionDtoShape_9303620011ada599[];
-        mcpServers: ActionDtoShape_3fbb7b7ecbcd8109[];
-    }
-][0];
 export type ActionDtoShape_b77dfc7a7aa4c329 = [
     undefined | ActionDtoShape_e0b670ee0260b1c6[]
 ][0];
@@ -35829,6 +35930,9 @@ export type ActionDtoShape_bf044a8b5d194d24 = [
         repository: string;
         s3?: ActionDtoShape_20402f118613b2bc;
     }
+][0];
+export type ActionDtoShape_bf10bfa96a734b33 = [
+    ActionDtoShape_3ffa090c8d178fbd | ActionDtoShape_71f21cc6a5b59fae | ActionDtoShape_0a98d04d65913a8a
 ][0];
 export type ActionDtoShape_bf12ba27d6f86dbb = [
     undefined | ActionDtoShape_0dbe19495668fa02[]
@@ -37423,9 +37527,6 @@ export type ActionDtoShape_c7ac0819f0d61112 = [
         loopBlockId: string;
     }
 ][0];
-export type ActionDtoShape_c7b824f8d0249c21 = [
-    undefined | ActionDtoShape_cf4a96c6f91e9895
-][0];
 export type ActionDtoShape_c7c2a98fcd35214f = [
     undefined | ActionDtoShape_01ccd529b3614ea9
 ][0];
@@ -38573,6 +38674,14 @@ export type ActionDtoShape_cd28672e7f58af5d = [
 export type ActionDtoShape_cd2966fd88862cf7 = [
     ActionDtoShape_ea2370db0781f2a2 | ActionDtoShape_cc15fc287481a101
 ][0];
+export type ActionDtoShape_cd354c3ce4dafe4a = [
+    {
+        policy: ActionDtoShape_b3b8ad02bf452bbd;
+        kind: 'sessionLifecycle';
+        events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'parentTurnStarted' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
+        filter?: ActionDtoShape_fed82f7a8bbc0d94;
+    }
+][0];
 export type ActionDtoShape_cd4d422748fd8438 = [
     {
         status: 'valid';
@@ -38792,12 +38901,6 @@ export type ActionDtoShape_ce257f299eb2eea1 = [
         installationId: string;
         projectKey: string;
         kind: 'manual';
-    }
-][0];
-export type ActionDtoShape_ce2802f971eb1bef = [
-    {
-        instance: ActionDtoShape_4252be696607a617;
-        changed: boolean;
     }
 ][0];
 export type ActionDtoShape_ce2c89a92d92ee8f = [
@@ -39066,13 +39169,6 @@ export type ActionDtoShape_cf489b7ab9063559 = [
     {
         command: string;
         args?: string[] | undefined;
-    }
-][0];
-export type ActionDtoShape_cf4a96c6f91e9895 = [
-    {
-        draftArtifactId: string;
-        expectedRevision: ActionDtoShape_968a7793d24a089b;
-        release: ActionDtoShape_1709049bbefed199;
     }
 ][0];
 export type ActionDtoShape_cf570336f73c0adc = [
@@ -40927,6 +41023,9 @@ export type ActionDtoShape_dae657725bbd3fb8 = [
         workspace?: ActionDtoShape_16f35371b69c1492;
     }
 ][0];
+export type ActionDtoShape_daea5d5c0899e3a8 = [
+    ActionDtoShape_07cc9726df8ca435 | ActionDtoShape_cd354c3ce4dafe4a
+][0];
 export type ActionDtoShape_dafb71c335fb25d5 = [
     {
         status: 'available' | 'error' | 'not_loaded' | 'partial' | 'pending' | 'stale' | 'unknown' | 'unsupported';
@@ -41971,6 +42070,9 @@ export type ActionDtoShape_e0b670ee0260b1c6 = [
 export type ActionDtoShape_e0c1e6572c18318c = [
     undefined | ActionDtoShape_bf8ad68e8a9aaa3d
 ][0];
+export type ActionDtoShape_e0c45720be187bdd = [
+    (ActionDtoShape_bf10bfa96a734b33)[] | undefined
+][0];
 export type ActionDtoShape_e0ddbfa14622ee96 = [
     {
         templateDataTargetLinkId: string;
@@ -42403,6 +42505,16 @@ export type ActionDtoShape_e3707571903af589 = [
     {
         teamGroupId: string;
         allowedRoutes: ('brokered' | 'direct' | 'vendor-native')[];
+    }
+][0];
+export type ActionDtoShape_e37a0426ef2f18fb = [
+    {
+        providerKinds: string[];
+        key: string;
+        name: string;
+        requirement: 'optional' | 'required';
+        purpose: string;
+        skipConsequence: string;
     }
 ][0];
 export type ActionDtoShape_e384fb5c6a17f996 = [
@@ -44223,6 +44335,14 @@ export type ActionDtoShape_ed91dcaaebfe74ca = [
 ][0];
 export type ActionDtoShape_ed9dd50ab67b1e61 = [
     undefined | ActionDtoShape_90e87d7b36902ed5 | ActionDtoShape_ecb7808c9463ba5e | ActionDtoShape_2f8014069d4d3f87 | ActionDtoShape_eaf7afb3bf0c02ec | ActionDtoShape_8028bdcb3e08d22d | ActionDtoShape_07cf7febdec961ca | ActionDtoShape_97dfefabd792e35d
+][0];
+export type ActionDtoShape_eda692caa2e893c1 = [
+    {
+        software: ActionDtoShape_2658bf0f06d4cdc2[];
+        connectedAccounts: ActionDtoShape_9303620011ada599[];
+        mcpServers: ActionDtoShape_3fbb7b7ecbcd8109[];
+        channels?: ActionDtoShape_71d5cb933c60a2c4;
+    }
 ][0];
 export type ActionDtoShape_edb52dacdf8a8673 = [
     {
@@ -46525,6 +46645,9 @@ export type ActionDtoShape_fa203adfbe2449df = [
         author: ActionDtoShape_c87fa2b174965556;
         text: string;
     }
+][0];
+export type ActionDtoShape_fa2705f9cc36233f = [
+    undefined | ActionDtoShape_25bb881c9fbbbf55
 ][0];
 export type ActionDtoShape_fa27eb91bae54b1b = [
     {

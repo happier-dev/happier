@@ -168,7 +168,7 @@ function createSessionStateActionSpecs() {
   {
     id: 'session.coordinator.enable', approvalPolicy: { uiConfirmation: 'direct' }, approval: { result: 'optional', flow: 'deferred' },
     title: 'Make coordinator',
-    description: 'Configure this session through existing role, Bot, pin, manager and Important Follow rule Actions; returns each effect separately.',
+    description: 'Configure this session through existing role, list pin, manager and Important Follow rule Actions; returns each effect separately.',
     sessionTarget: { field: 'sessionId', cardinality: 'one' },
     safety: 'danger', sideEffectClass: 'danger', executionPlacement: 'account', placements: [],
     bindings: { mcpToolName: 'session_coordinator_enable', voiceClientToolName: 'makeSessionCoordinator' },
@@ -178,7 +178,7 @@ function createSessionStateActionSpecs() {
       { path: 'sessionId', title: 'Session', widget: 'text', required: true },
       { path: 'roleId', title: 'Role', widget: 'text', required: true },
       { path: 'keep', title: 'Where to keep it', widget: 'select', required: true, options: [
-        { value: 'rail_bot', label: 'Left rail, as a Bot' }, { value: 'list_pin', label: 'Top of your list' }, { value: 'none', label: 'Just in the list' },
+        { value: 'list_pin', label: 'Top of your list' }, { value: 'none', label: 'Just in the list' },
       ] },
       { path: 'answersWorkerQuestions', title: 'Answers its workers’ questions', widget: 'boolean' },
       { path: 'managedBy', title: 'Manager and reviewed current manager', widget: 'json' },

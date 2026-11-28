@@ -11,6 +11,14 @@ import { RegistryItemPointerV1Schema } from '../../registries/registryContentRef
 import { PromptBundleActionEntryV1Schema, validatePromptBundleBodyV1AgainstSchemaId } from '../../prompts/library/promptBundleSchemas.js';
 import { BotTemplateMcpDefinitionV1Schema } from '../../mcp/servers/portableMcpDefinitionV1.js';
 
+import { WorkflowDefinitionV1Schema } from '../../workflows/workflowV1.js';
+import { AutomationScheduleTriggerInputSchema,
+  AutomationSessionLifecycleAuthoredTriggerInputSchema } from '../../automations/automationTriggerDefinition.js';
+import { AutomationPullRequestTriggerSchema } from '../../automations/pullRequestTrigger.js';
+import { AutomationQualifiedPluginContributionRefV1Schema } from '../../automations/automationEventDeclarationV1.js';
+import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
+import { AutomationSessionLifecyclePolicySchema } from '../../automations/automationSessionLifecycle.js';
+
 export const BOT_TEMPLATE_ARTIFACT_KIND_V1 = 'bot_template.v1' as const;
 const text = () => z.string().check(z.minLength(1));
 export const BotTemplateSourceSessionRefV1Schema = lazyZodSchema(() => z.strictObject({ serverId: text(), sessionId: text() }));
@@ -28,6 +36,40 @@ const needFields = () => ({ key: text(), name: text(), requirement: z.enum(['req
 export const BotTemplateSoftwareNeedV1Schema = lazyZodSchema(() => z.strictObject({ ...needFields(), recipe: MachineRecipeReferenceV1Schema }));
 export const BotTemplateAccountNeedV1Schema = lazyZodSchema(() => z.strictObject({ ...needFields(), serviceId: text() }));
 export const BotTemplateMcpNeedV1Schema = lazyZodSchema(() => z.strictObject({ ...needFields(), definition: BotTemplateMcpDefinitionV1Schema }));
+export const BotTemplateChannelNeedV1Schema = lazyZodSchema(() => z.strictObject({
+  ...needFields(), providerKinds: z.array(z.string().check(z.trim(), z.minLength(1))).check(z.minLength(1),
+    z.refine(kinds => new Set(kinds).size === kinds.length, 'Conversation kinds must be unique')),
+}));
+export type BotTemplateChannelNeedV1 = z.infer<typeof BotTemplateChannelNeedV1Schema>;
+
+// A recipient chooses the concrete PR or Event source in the Automations editor.
+export const BotTemplateSourceWorkflowV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('sourceBound'), key: text(), title: text(), definition: WorkflowDefinitionV1Schema,
+  source: z.strictObject({
+    name: text(),
+    trigger: z.union([
+      z.strictObject({ kind: AutomationPullRequestTriggerSchema.shape.kind }),
+      z.strictObject({ kind: z.literal('pluginEvent'), eventRef: asProtocolZod(AutomationQualifiedPluginContributionRefV1Schema) }),
+    ]),
+  }),
+}));
+export type BotTemplateSourceWorkflowV1 = z.infer<typeof BotTemplateSourceWorkflowV1Schema>;
+
+const pausedWorkflowStarter = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('inline'), key: text(), title: text(), definition: WorkflowDefinitionV1Schema,
+    trigger: z.discriminatedUnion('kind', [
+      z.omit(AutomationScheduleTriggerInputSchema, { enabled: true }),
+      z.strictObject({
+        ...z.omit(AutomationSessionLifecycleAuthoredTriggerInputSchema, { enabled: true, subject: true }).shape,
+        policy: z.union(AutomationSessionLifecyclePolicySchema._zod.def.options.filter(
+          policy => policy.shape.kind._zod.def.values[0] !== 'currentTurn')),
+      }),
+    ]) }),
+  z.strictObject({ kind: z.literal('memoryUpkeep'), key: text() }),
+  BotTemplateSourceWorkflowV1Schema,
+]));
+export type BotTemplatePausedWorkflowV1 = z.infer<typeof pausedWorkflowStarter>;
+
 export type BotTemplateSoftwareNeedV1 = z.infer<typeof BotTemplateSoftwareNeedV1Schema>;
 export type BotTemplateAccountNeedV1 = z.infer<typeof BotTemplateAccountNeedV1Schema>;
 export type BotTemplateMcpNeedV1 = z.infer<typeof BotTemplateMcpNeedV1Schema>;
@@ -39,10 +81,14 @@ export const BotTemplateContentV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1), identity, pet: z.optional(z.strictObject({ name: text(), source: PetPortableImportSourceV1Schema })), instructions: z.strictObject({ markdown: z.string() }),
   memoryRules: z.array(BotTemplateMemoryRuleV1Schema), skills: z.array(BotTemplateSkillV1Schema),
   needs: z.strictObject({ software: z.array(BotTemplateSoftwareNeedV1Schema),
-    connectedAccounts: z.array(BotTemplateAccountNeedV1Schema), mcpServers: z.array(BotTemplateMcpNeedV1Schema) }),
+    connectedAccounts: z.array(BotTemplateAccountNeedV1Schema), mcpServers: z.array(BotTemplateMcpNeedV1Schema),
+    channels: z.optional(z.array(BotTemplateChannelNeedV1Schema)) }),
+  pausedWorkflows: z.optional(z.array(pausedWorkflowStarter).check(z.refine(
+    workflows => workflows.filter(workflow => workflow.kind === 'memoryUpkeep').length <= 1, 'Memory upkeep may be suggested once'))),
+  workedExample: z.optional(z.strictObject({ request: text(), reply: text() })),
   suggestedAgent: z.optional(z.strictObject({ agentId: text(), modelId: z.optional(text()) })), firstTask: z.optional(z.string()),
 }).check(z.refine(value => [value.memoryRules, value.skills, value.needs.software,
-  value.needs.connectedAccounts, value.needs.mcpServers].every(uniqueKeys), 'Template item keys must be unique within their section')));
+  value.needs.connectedAccounts, value.needs.mcpServers, value.needs.channels ?? [], value.pausedWorkflows ?? []].every(uniqueKeys), 'Template item keys must be unique within their section')));
 export type BotTemplateContentV1 = z.infer<typeof BotTemplateContentV1Schema>;
 /** Admission for draft/release authors; Artifact and preview reads remain structural. */
 const BotTemplateFaceV1AuthoringSchema = lazyZodSchema(() => SessionBotFaceV1AuthoringSchema.check(z.refine(

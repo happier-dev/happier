@@ -1,3 +1,5 @@
+import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
+import { SessionInitialTriggerV1Schema, type SessionInitialTriggerV1 } from '../triggers/workflowTriggerActionsV1.js';
 import type { z } from '../../zodRuntimePolicy.js';
 import type { WorkflowDefinitionV1 } from '../workflowV1.js';
 import type { AutomationScheduleTriggerInput, AutomationSessionLifecycleAuthoredTriggerInputSchema } from '../../automations/automationTriggerDefinition.js';
@@ -295,6 +297,26 @@ export const WORKFLOW_STARTER_EXAMPLES_V1 = Object.freeze([
   example('work-a-labelled-queue', 'workALabelledQueue', WORK_A_LABELLED_QUEUE_EXAMPLE_V1, LABELLED_TASK_EVENT_SEED_V1),
   example('fix-an-incident', 'fixAnIncident', FIX_AN_INCIDENT_EXAMPLE_V1),
 ]);
+
+/** Both Bot birth paths use the same definition and schedule for weekly upkeep. */
+export function buildBotMemoryUpkeepInitialTriggerV1(enabled: boolean): SessionInitialTriggerV1 {
+  const upkeep = WORKFLOW_STARTER_EXAMPLES_V1.find(example => example.key === 'memory-upkeep-in-session');
+  if (upkeep?.triggerSeed?.kind !== 'schedule') throw Object.assign(new Error('source_unavailable'), { code: 'source_unavailable' });
+  return SessionInitialTriggerV1Schema.parse({ target: { kind: 'inline', definition: upkeep.definition },
+    executionTarget: { kind: 'session' }, trigger: { ...upkeep.triggerSeed, enabled } });
+}
+
+export function applyBotMemoryUpkeepDefaultV1(
+  initial: readonly SessionInitialTriggerV1[], enabledByDefault: boolean,
+): SessionInitialTriggerV1[] {
+  const upkeep = buildBotMemoryUpkeepInitialTriggerV1(enabledByDefault);
+  const authored = initial.filter(item => sameStrictJsonValue(item.target, upkeep.target)
+    && sameStrictJsonValue({ ...item.trigger, enabled: enabledByDefault }, upkeep.trigger));
+  if (authored.length === 0) return enabledByDefault ? [...initial, upkeep] : [...initial];
+  const existing = authored.find(item => item.trigger.enabled) ?? authored[0]!;
+  return initial.flatMap(item => !authored.includes(item) ? [item]
+    : item === authored[0] ? [enabledByDefault ? upkeep : existing] : []);
+}
 
 export function getWorkflowStarterExamplesV1() {
   return WORKFLOW_STARTER_EXAMPLES_V1;

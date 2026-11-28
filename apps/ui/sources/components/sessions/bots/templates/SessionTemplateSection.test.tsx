@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { createSessionAccessFixture, createSessionFixture, createPlainSessionCurrentProjectionRecordFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { WorkSectionPlacementProvider, WorkSectionSetupDisclosureProvider } from '@/components/sessions/work/WorkSection';
-import { SessionTemplateSection } from './SessionTemplateSection';
+import { BotTemplateSourceWorkflowNeeds, SessionTemplateSection } from './SessionTemplateSection';
 import { createPlainArtifactHomeFixture, createPlainArtifactHttpFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
@@ -13,7 +13,7 @@ import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessi
 import { act } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storage';
 import { BotTemplateRecipientInfo } from './BotTemplateRecipientInfo';
-import { BOT_TEMPLATE_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/bots/templates/botTemplateV1';
+import { BOT_TEMPLATE_ARTIFACT_KIND_V1, BotTemplateSourceWorkflowV1Schema } from '@happier-dev/protocol/bots/templates/botTemplateV1';
 import { SessionCurrentProjectionRecordV1Schema } from '@happier-dev/protocol/sessions/listing/response';
 import { createPlainPromptLibraryCatalogHomeFixture, createPromptLibraryCatalogBoundary } from '@/dev/testkit/harness/promptLibraryCatalogBoundary';
 import { createRegistryPluginCatalogFixture } from '@/dev/testkit/fixtures/registryPluginCatalog';
@@ -39,6 +39,33 @@ vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNati
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 
 describe('Template Info slot', () => {
+    it('opens the ordinary Automations editor with a paused draft for the linked PR', async () => {
+        const home = await createPlainArtifactHomeFixture('https://template-pr-prefill.test', { currentAccount: true });
+        const account = await captureLazyActionAccountContext(home.home.id);
+        try {
+            const workflow = BotTemplateSourceWorkflowV1Schema.parse({
+                kind: 'sourceBound', key: 'fix-ci', title: 'Fix failing CI',
+                source: { name: 'pull request', trigger: { kind: 'ciFailed' } },
+                definition: { version: 1, blocks: [{ kind: 'action', id: 'notify', actionId: 'notifications.notify_me',
+                    input: { message: { kind: 'literal', value: 'Look at the failed check' } } }] },
+            });
+            const subject = { kind: 'session' as const, serverId: 'template-pr-home', sessionId: 'copied-bot' };
+            const link = { repository: 'example/widgets', number: 7 };
+            const screen = await renderScreen(<BotTemplateSourceWorkflowNeeds subject={subject} workflows={[workflow]}
+                accountLifetime={account.accountLifetime} pullRequestLinks={[{ ...link, provider: 'github', url: 'https://github.com/example/widgets/pull/7' }]} />);
+            await screen.pressByTestIdAsync('bot-template-session-automation:fix-ci');
+            const entry = vi.mocked(router.push).mock.calls.at(-1)?.[0];
+            expect(entry).toMatchObject({ pathname: '/workflows/[id]', params: { id: 'new', serverId: home.home.id } });
+            if (typeof entry !== 'object' || entry === null || !('params' in entry)) throw new Error('Expected the editor draft route');
+            const { readWorkflowDefinitionDraftSeed } = await import('@/sync/domains/workflows/workflowDefinitionDraftSeed');
+            expect(readWorkflowDefinitionDraftSeed(String(entry.params?.definitionDraftSeedId), account.accountLifetime.scope)).toMatchObject({
+                definition: workflow.definition, lifetimeSession: { sessionId: subject.sessionId },
+                trigger: { kind: 'ciFailed', enabled: false, pullRequest: link },
+            });
+            await screen.unmount();
+        } finally { account.dispose(); await home.dispose(); }
+    });
+
     it.each([
         { version: '1.0.0', policy: 'allowed', offered: false, reads: 1 },
         { version: '1.1.0', policy: 'allowed', offered: false, reads: 1 },

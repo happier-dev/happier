@@ -67,10 +67,10 @@ describe('reviewed template release from the editor', () => {
         expect(home.requests.filter(request => request.path.includes('artifact-signed-in-links'))).toEqual([]);
         // Shared, the footer ends the sheet (lab give-share: Done), rather than a disabled "Shared" button.
         await vi.waitFor(() => expect(screen.getTextContent()).toContain(t('common.done')));
-        const done = sheet.find(button => button.type === buttonType && button.props.testID === 'document-share-submit');
-        expect(done.props.disabled).not.toBe(true);
-        await screen.pressByTestIdAsync('document-share-submit');
+        expect(screen.findByTestId('document-share-submit')).toBeNull();
+        await screen.pressByTestIdAsync('document-share-done');
         await vi.waitFor(() => expect(screen.tree.root.findAllByType(ReviewedDocumentShareSheet)).toHaveLength(0));
+        expect(home.requests.filter(request => request.path === '/v1/artifacts' && request.method === 'POST')).toHaveLength(1);
         await screen.unmount();
     });
 });

@@ -9,8 +9,8 @@ import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { applyRegisteredSessionStateFieldMutationToMetadata } from '@/api/session/client/transport/mutations/applyRegisteredSessionStateFieldMutation';
 import { createRoleActionExecutor } from './roleActions';
 
-function fixture(options: Readonly<{ botRefused?: boolean }> = {}) {
-  let metadata = createTestMetadata({ work: { memoryEnabled: false,
+function fixture(marked = false) {
+  let metadata = createTestMetadata({ ...(marked ? { bot: { kind: 'bot' } } : {}), work: { memoryEnabled: false,
     sessionRolesV1: { roleId: 'builder', overrides: {}, sessionRoles: {}, notes: 'Keep notes' } } });
   let version = 0;
   const pins: { surface: 'list' | 'rail'; pinned: boolean }[] = [];
@@ -35,7 +35,6 @@ function fixture(options: Readonly<{ botRefused?: boolean }> = {}) {
     }),
     sessionStateFieldSet: async write => {
       if (write.fieldId !== 'display.bot') throw new Error('Unexpected metadata field');
-      if (options.botRefused) return { ok: false, errorCode: 'permission_denied', error: 'permission_denied' };
       const result = await engine.writeHappierField({ sessionId: write.sessionId, fieldId: write.fieldId,
         value: write.value, reason: 'user-mutation', metadataReason: 'test-account-transport' });
       if (!result.ok) return { ok: false, errorCode: result.reason, error: result.reason };
@@ -62,16 +61,16 @@ function fixture(options: Readonly<{ botRefused?: boolean }> = {}) {
 const context = { authority: 'present_user', surface: 'ui', serverId: 'home' } as const;
 
 describe('Make coordinator through canonical Actions', () => {
-  it.each(['none', 'list_pin', 'rail_bot'] as const)('keeps %s through only its existing owners', async keep => {
+  it.each(['none', 'list_pin'] as const)('keeps %s through only its existing owners', async keep => {
     const state = fixture();
     const result = await state.executor.execute('session.coordinator.enable',
       { sessionId: 'coordinator', roleId: 'orchestrator', keep, answersWorkerQuestions: false, ruleSuggestions: [] }, context);
     expect(result).toMatchObject({ ok: true, result: { status: 'configured' } });
     expect(readSessionRolesV1(state.readMetadata())).toMatchObject({ roleId: 'orchestrator',
       answersWorkerQuestions: false, notes: 'Keep notes' });
-    expect(state.readMetadata().bot).toEqual(keep === 'rail_bot' ? { kind: 'bot' } : undefined);
+    expect(state.readMetadata().bot).toBeUndefined();
     expect(state.readMetadata().work?.memoryEnabled).toBe(false);
-    expect(state.pins).toEqual(keep === 'none' ? [] : [{ surface: keep === 'rail_bot' ? 'rail' : 'list', pinned: true }]);
+    expect(state.pins).toEqual(keep === 'none' ? [] : [{ surface: 'list', pinned: true }]);
     expect(state.rules).toEqual([]);
   });
 
@@ -99,7 +98,7 @@ describe('Make coordinator through canonical Actions', () => {
     const state = fixture();
     const before = state.readMetadata();
     const result = await state.executor.execute('session.coordinator.enable', {
-      sessionId: 'coordinator', roleId: 'orchestrator', keep: 'rail_bot',
+      sessionId: 'coordinator', roleId: 'orchestrator', keep: 'list_pin',
       ruleSuggestions: [{ source: { kind: 'rule', ruleId: 'foreign-rule' }, expectedVersion: -1,
         ruleDefinition: { v: 1, enabled: true, filter: normalizeSessionListFilterV1({ homeServerIds: ['other-home'] }) } }],
     }, context);
@@ -109,18 +108,17 @@ describe('Make coordinator through canonical Actions', () => {
     expect(state.rules).toEqual([]);
   });
 
-  it('does not rail-pin when the explicit Bot mutation is refused', async () => {
-    const state = fixture({ botRefused: true });
+  it('keeps an existing Bot marker while configuring the same Session as coordinator', async () => {
+    const state = fixture(true);
     const result = await state.executor.execute('session.coordinator.enable', {
-      sessionId: 'coordinator', roleId: 'orchestrator', keep: 'rail_bot', ruleSuggestions: [],
+      sessionId: 'coordinator', roleId: 'orchestrator', keep: 'list_pin', ruleSuggestions: [],
     }, context);
-    expect(result).toMatchObject({ ok: true, result: { status: 'partial', effects: [
+    expect(result).toMatchObject({ ok: true, result: { status: 'configured', effects: [
       { operation: 'role', status: 'accepted' },
-      { operation: 'bot', status: 'failed', errorCode: 'permission_denied' },
-      { operation: 'pin', status: 'not_attempted', errorCode: 'bot_not_set' },
+      { operation: 'pin', status: 'accepted' },
     ] } });
-    expect(state.readMetadata().bot).toBeUndefined();
-    expect(state.pins).toEqual([]);
+    expect(state.readMetadata().bot).toEqual({ kind: 'bot' });
+    expect(state.pins).toEqual([{ surface: 'list', pinned: true }]);
     expect(readSessionRolesV1(state.readMetadata())?.roleId).toBe('orchestrator');
   });
 });

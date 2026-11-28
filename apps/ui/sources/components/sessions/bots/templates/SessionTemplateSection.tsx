@@ -1,7 +1,14 @@
 import * as React from 'react';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import type { BotTemplateSourceWorkflowV1 } from '@happier-dev/protocol/bots/templates/botTemplateV1';
+import type { SessionWorkflowContextRead } from '@/components/workflows/triggers/useSessionWorkflowContext';
+import { buildTriggerDefinition, createDefaultWhen } from '@/components/workflows/triggers/sessionTriggerForm';
+import { createWorkflowTriggerClientId, type WorkflowTriggerStartContext } from '@/components/workflows/triggers/workflowTriggerStarts';
+import { prepareWorkflowSentenceEditorEntry } from '@/components/workflows/authoring/workflowSentenceAuthoring';
 import { readSessionBotV1 } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
 import { Item } from '@/components/ui/lists/Item';
 import { Icon } from '@/components/ui/icons/Icon';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
 import { readSessionTemplateDraftRef, useOpenBotTemplate } from './openBotTemplate';
@@ -37,6 +44,9 @@ export function SessionTemplateSection(props: Readonly<{ session: Session; serve
         onPress={() => { void open(); }} /> : null;
     return <ItemGroup testID="session-template-section" title={t('botTemplates.templateSection')}
         description={instance ? undefined : t('botTemplates.templateSectionDescription', { name })}>
+        {instance?.channelNeeds?.map(need => <Item key={need.key} title={need.name} mode="info" showChevron={false}
+            testID={`bot-template-session-channel:${need.key}`}
+            subtitle={t('botTemplateRecipient.linkInSession')} />)}
         {instance ? <BotTemplateRecipientInfo instance={instance} serverId={props.serverId}
             sessionRef={{ serverId: props.serverId, sessionId: props.session.id }} renderTemplate={facts =>
                 <ExpandableItem expanded={expanded} onExpandedChange={setExpanded}
@@ -52,4 +62,34 @@ export function SessionTemplateSection(props: Readonly<{ session: Session; serve
                     {expanded ? <>{facts.details}{authorRow}</> : null}
                 </ExpandableItem>} /> : authorRow}
     </ItemGroup>;
+}
+
+/** Project the existing Automations read into the regular Workflow editor's draft. */
+export function BotTemplateSourceWorkflowNeeds({ subject, workflows, pullRequestLinks, accountLifetime }: Readonly<{
+    subject: NonNullable<WorkflowTriggerStartContext['session']>['subject'];
+    workflows: readonly BotTemplateSourceWorkflowV1[];
+    pullRequestLinks: SessionWorkflowContextRead['pullRequestLinks'] | undefined;
+    accountLifetime: ServerAccountScopeLifetime | null | undefined;
+}>) {
+    const router = useRouter();
+    const links = Array.isArray(pullRequestLinks) ? pullRequestLinks : [];
+    return <>{workflows.map(workflow => {
+        const { trigger, name } = workflow.source;
+        const open = accountLifetime && links.length && trigger.kind !== 'pluginEvent' ? () => {
+            const when = createDefaultWhen(trigger.kind, links);
+            const complete = buildTriggerDefinition({ when, enabled: false, sessionId: subject.sessionId });
+            const route = prepareWorkflowSentenceEditorEntry({
+                name: workflow.title, definition: workflow.definition,
+                lifetimeSession: { sessionId: subject.sessionId }, startContext: { session: { subject, pullRequestLinks: links } },
+                ...(complete ? { trigger: complete } : {}),
+            }, accountLifetime, complete ? undefined : {
+                incompleteTriggers: { pending: [{ clientId: createWorkflowTriggerClientId(), when, enabled: false }], edits: {} },
+            });
+            if (route) router.push(route);
+        } : undefined;
+        return <Item key={workflow.key} title={workflow.title}
+            testID={`bot-template-session-automation:${workflow.key}`}
+            subtitle={t(open ? 'botTemplateRecipient.reviewSuggestedAutomation' : 'botTemplateRecipient.automationNeedsSource', { source: name })}
+            {...(open ? { onPress: open } : { mode: 'info' as const, showChevron: false })} />;
+    })}</>;
 }

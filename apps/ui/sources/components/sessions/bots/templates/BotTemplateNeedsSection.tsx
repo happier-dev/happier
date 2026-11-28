@@ -31,12 +31,12 @@ import type { BotTemplateEditorBuffer, BotTemplateSave } from './botTemplateEdit
 
 type Needs = BotTemplateContentV1['needs'];
 type NeedKind = keyof Needs;
-type Need = Needs[NeedKind][number];
+type Need = NonNullable<Needs[NeedKind]>[number];
 type Props = Readonly<{ buffer: BotTemplateEditorBuffer; save: BotTemplateSave; scope: ServerAccountScope }>;
 
 export function BotTemplateNeedsSection(props: Props) {
     const keyList = useBotTemplateEditorValue(props.buffer, state => JSON.stringify(Object.entries(state.draft.content.needs)
-        .flatMap(([kind, needs]) => needs.map(need => ({ kind, key: need.key })))));
+        .flatMap(([kind, needs]) => (needs ?? []).map(need => ({ kind, key: need.key })))));
     const keys = React.useMemo(() => JSON.parse(keyList) as { kind: NeedKind; key: string }[], [keyList]);
     const adding = useBotTemplateEditorValue(props.buffer, state => state.needAuthoring.open);
     return <ItemGroup title={t('botTemplateRecipient.needs')} description={t('botTemplates.needsDescription')}
@@ -50,11 +50,11 @@ export function BotTemplateNeedsSection(props: Props) {
 
 function changeNeed(draft: ReturnType<BotTemplateEditorBuffer['getSnapshot']>['draft'], kind: NeedKind, key: string, change: Partial<Pick<Need, 'name' | 'purpose' | 'skipConsequence' | 'requirement'>>) {
     return { ...draft, content: { ...draft.content, needs: { ...draft.content.needs,
-        [kind]: draft.content.needs[kind].map(item => item.key === key ? { ...item, ...change } : item) } } };
+        [kind]: (draft.content.needs[kind] ?? []).map(item => item.key === key ? { ...item, ...change } : item) } } };
 }
 
 function NeedEditor(props: Props & Readonly<{ kind: NeedKind; needKey: string }>) {
-    const need = useBotTemplateEditorValue(props.buffer, state => state.draft.content.needs[props.kind].find(item => item.key === props.needKey));
+    const need = useBotTemplateEditorValue(props.buffer, state => state.draft.content.needs[props.kind]?.find(item => item.key === props.needKey));
     const [expanded, setExpanded] = React.useState(false);
     if (!need) return null;
     const commit = () => { void props.buffer.commit(props.save); };
@@ -83,7 +83,7 @@ function NeedEditor(props: Props & Readonly<{ kind: NeedKind; needKey: string }>
             </> : null}
             <SectionActionButton title={t('common.remove')} icon="minus" testID={`bot-template-need-remove:${need.key}`} onPress={() => {
                 props.buffer.edit(draft => ({ ...draft, content: { ...draft.content, needs: { ...draft.content.needs,
-                    [props.kind]: draft.content.needs[props.kind].filter(item => item.key !== need.key) } } })); commit();
+                    [props.kind]: (draft.content.needs[props.kind] ?? []).filter(item => item.key !== need.key) } } })); commit();
             }} />
         </> : null}
     </ExpandableItem>;

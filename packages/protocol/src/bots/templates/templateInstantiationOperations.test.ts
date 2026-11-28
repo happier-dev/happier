@@ -1,6 +1,9 @@
 import { PET_IMPORT_ACTION_ID_V1 } from '../../actions/actionIdsPetsV1.js';
 import { PET_PACKAGE_FORMAT_CODEX_ATLAS_V1 } from '../../pets/constants.js';
 import { describe, expect, it } from 'vitest';
+import { createAccountWorkflowTriggerActions } from '../../actions/executor/workflowTriggerAccountHost.js';
+import { applyBotMemoryUpkeepDefaultV1 } from '../../workflows/builtins/examples.js';
+import type { SessionInitialTriggerAdmissionV1 } from '../../sessions/creation/sessionInitialTriggerAdmissionV1.js';
 import { createActionExecutor } from '../../actions/actionExecutor.js';
 import { createActionAutomationPortV1 } from '../../actions/executor/actionAutomationAdmission.js';
 import { createWorkBoardArtifactBoundary } from '../../boards/workBoardArtifactV1.testkit.js';
@@ -38,7 +41,7 @@ function fixture(carried = false, operations = false, observeCommit = false, fai
   executionContext: Partial<ActionExecutorContext> = {},
   copy?: { catalog: { value: McpServerCatalogV1; revision: number }; baseId: string; sessionId: string },
   softwareAuthorizationUnavailable = false,
-  softwareBoundary: Pick<ActionExecutorDeps, 'machineSetupApply' | 'actionOperationAction' | 'presentUserActionConfirmation' | 'clientActionExecute'> = {}) {
+  softwareBoundary: Pick<ActionExecutorDeps, 'machineSetupApply' | 'actionOperationAction' | 'presentUserActionConfirmation' | 'clientActionExecute'> = {}, authored?: { content: unknown; memoryUpkeepEnabled: boolean }) {
   const instanceBaseId = copy?.baseId ?? baseId;
   const instanceSessionId = copy?.sessionId ?? sessionId;
   let selectedRelease: BotTemplateReleaseV1 = carried ? { ...release, content: { ...release.content,
@@ -56,6 +59,7 @@ function fixture(carried = false, operations = false, observeCommit = false, fai
       inputs: [{ key: 'token', label: 'Token', purpose: 'Authenticate', secret: true, required: true }],
     } }],
   } } };
+  selectedRelease = { ...selectedRelease, content: { ...selectedRelease.content, ...readRecord(authored?.content) } };
   // Session and Artifact persistence, plus actual process launch, are the only boundaries here.
   const boundary = createWorkBoardArtifactBoundary();
   const envelope = { v: 1 as const, state: 'released' as const, release: selectedRelease };
@@ -67,6 +71,9 @@ function fixture(carried = false, operations = false, observeCommit = false, fai
   let births = 0;
   let launches = 0;
   let spawnContext: ActionExecutorContext | undefined;
+  let birthInput: unknown;
+  let admittedWorkflows: SessionInitialTriggerAdmissionV1[] = [];
+  let onboarding: unknown;
   const catalogState = copy?.catalog ?? { value: { v: 1 as const, servers: [], bindings: [] } satisfies McpServerCatalogV1, revision: 0 };
   const events: string[] = [];
   const confirmations: Parameters<NonNullable<ActionExecutorDeps['presentUserActionConfirmation']>>[0][] = [];
@@ -176,6 +183,8 @@ function fixture(carried = false, operations = false, observeCommit = false, fai
       metadata = writeSessionContextIntentV1ToMetadata(metadata, write.value); revision++; events.push('instructions-attached'); return { ok: true, version: revision }; },
     sessionSpawnNew: async (input, continuation) => {
       spawnContext = input.context;
+      birthInput = input;
+      onboarding = continuation?.hostOnboarding;
       if (setup) {
         expect(continuation?.machineSetup).toBeUndefined();
         expect(continuation?.machineSetupPlanInput).toBeUndefined();
@@ -185,6 +194,22 @@ function fixture(carried = false, operations = false, observeCommit = false, fai
       }
       const disposition = births ? 'rejoined' as const : 'created' as const;
       if (!births) {
+        if (authored && input.initialTriggers?.length) {
+          let nextId = 0;
+          const noEarlyWrite = async (): Promise<never> => { throw new Error('Workflow admission must commit with birth'); };
+          const workflows = createAccountWorkflowTriggerActions({
+            resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
+            randomBytes: length => new Uint8Array(length).fill(3), newId: () => `initial-${++nextId}`,
+            resolveWorkflow: noEarlyWrite,
+            automations: { list: noEarlyWrite, listDetails: noEarlyWrite, get: noEarlyWrite, create: noEarlyWrite,
+              reconcile: noEarlyWrite, delete: noEarlyWrite },
+          });
+          admittedWorkflows = await workflows.prepareSessionInitialTriggers({
+            initialTriggers: applyBotMemoryUpkeepDefaultV1(input.initialTriggers, authored.memoryUpkeepEnabled),
+            project: { machineId: 'machine', directory: '/repo' }, preparedFinalSessionId: instanceSessionId,
+            caller: { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home', serverIdentityId: 'portable-home' },
+          });
+        }
         births++;
         metadata = { bot: input.identity?.bot, createdAsBot: input.identity?.createdAsBot,
           ...(input.identity?.botFace ? { botFace: input.identity.botFace } : {}), summary: { text: input.title } };
@@ -236,7 +261,7 @@ function fixture(carried = false, operations = false, observeCommit = false, fai
       if (typeof child.action !== 'string') throw new Error('Unexpected contributed preparation');
       return executor.execute(child.action, child.input, executionContextFor());
     } }), reject: () => decide('reject'), approve: () => decide('approve'),
-    approval: () => approval, confirmations, selectedRelease, input: actionInput, events, docs, boundary, catalog: () => catalogState.value, metadata: () => metadata, counts: () => ({ births, launches }), spawnContext: () => spawnContext };
+    approval: () => approval, confirmations, selectedRelease, input: actionInput, events, docs, boundary, catalog: () => catalogState.value, metadata: () => metadata, counts: () => ({ births, launches }), spawnContext: () => spawnContext, birthInput: () => birthInput, onboarding: () => onboarding, admittedWorkflows: () => admittedWorkflows };
 }
 
 describe('template instantiation through ordinary creation', () => {
@@ -630,4 +655,38 @@ describe('template instantiation through ordinary creation', () => {
     expect(f.boundary.rows.has(baseId)).toBe(false);
     expect(f.boundary.reads).toEqual([releaseId]);
   });
+});
+
+it.each([false, true])('births a Bot with unresolved source needs, paused Workflows, and display-only example (memory upkeep setting %s)', async memoryUpkeepEnabled => {
+  const needs = { ...release.content.needs, channels: [{
+    key: 'support', name: 'Support conversation', providerKinds: ['discord', 'telegram'],
+    requirement: 'optional', purpose: 'Answer questions', skipConsequence: 'No external questions',
+  }] };
+  const workedExample = { request: 'Example request that must stay on the template page',
+    reply: 'Example reply that must stay on the template page' };
+  const pausedWorkflows = [{ key: 'weekly', title: 'Weekly review', kind: 'inline',
+    definition: { version: 1, defaults: {}, blocks: [{ kind: 'action', id: 'notice',
+      actionId: 'notifications.notify_me', input: { message: { kind: 'literal', value: 'Review the week' } } }] },
+    trigger: { kind: 'schedule', schedule: { kind: 'cron', scheduleExpr: '0 9 * * 1', everyMs: null, timezone: null } },
+  }, { key: 'memory-upkeep', kind: 'memoryUpkeep' }, {
+    key: 'fix-ci', kind: 'sourceBound', title: 'Fix a failed check',
+    source: { name: 'pull request', trigger: { kind: 'ciFailed' } },
+    definition: { version: 1, defaults: {}, blocks: [{ kind: 'action', id: 'notice',
+      actionId: 'notifications.notify_me', input: { message: { kind: 'literal', value: 'Review the failed check' } } }] },
+  }];
+  const f = fixture(false, false, false, false, false, false, false, {}, undefined, false, {}, { content: { needs, workedExample, pausedWorkflows }, memoryUpkeepEnabled });
+  const result = await f.run(false);
+  expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { type: 'success', sessionId } });
+  expect(f.metadata()).toMatchObject({ bot: { kind: 'bot' }, work: { templateInstance: { channelNeeds: needs.channels, sourceWorkflowNeeds: [pausedWorkflows[2]] } } });
+  expect(f.birthInput()).toMatchObject({ initialTriggers: [
+    { target: { kind: 'inline', definition: pausedWorkflows[0]?.definition }, trigger: { enabled: false } },
+    { target: { kind: 'inline' }, trigger: { kind: 'schedule', enabled: false } },
+  ] });
+  expect(f.birthInput()).not.toHaveProperty('initialInput');
+  expect(f.admittedWorkflows().map(automation => automation.triggers.map(trigger => trigger.trigger.enabled)))
+    .toEqual([[false], [memoryUpkeepEnabled]]);
+  expect(f.confirmations).toMatchObject([{ preview: { hostReviewedContent: { release: { content: { needs, workedExample, pausedWorkflows } } } } }]);
+  expect(f.birthInput()).toHaveProperty('initialTriggers.length', 2);
+  expect(f.onboarding()).toEqual({ templateName: 'Helper', templateVersion: '1.0.0', firstTask: 'Review my change' });
+  expect(JSON.parse(f.boundary.rows.get(baseId)!.body as string)).toMatchObject({ release: { content: { workedExample } } });
 });

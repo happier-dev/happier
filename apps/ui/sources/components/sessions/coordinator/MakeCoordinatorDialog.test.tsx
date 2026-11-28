@@ -160,25 +160,25 @@ it('withdraws private Project rules in the role-revocation commit while preservi
         return <MakeCoordinatorDialog serverId={serverId} sessionId="coordinator" onClose={() => {}} />;
     }
     const screen = await renderScreen(<Host />);
-    const projectRules = () => screen.findAll(node => node.props.testID === 'make-coordinator-rule-project' && node.props.title !== undefined);
-    readProjectRuleCount = () => projectRules().length;
-    expect(projectRules()).toHaveLength(1);
+    const projectRule = () => screen.findByTestId('make-coordinator-rule-project');
+    readProjectRuleCount = () => Number(projectRule() !== null);
+    expect(projectRule()).not.toBeNull();
     await act(async () => getStorage().setState({ projectAccountRows: { ...rows, status: 'loading', workspaceRefs: [] } }));
-    expect(projectRules()).toHaveLength(1);
+    expect(projectRule()).not.toBeNull();
     await act(async () => getStorage().setState({ projectAccountRows: rows }));
     await act(async () => getStorage().setState({ projectAccountRows: null }));
-    expect(projectRules()).toHaveLength(0);
+    expect(projectRule()).toBeNull();
     await act(async () => getStorage().setState({ projectAccountRows: rows }));
-    expect(projectRules()).toHaveLength(1);
+    expect(projectRule()).not.toBeNull();
     authorityCommitProjectRuleCounts.length = 0;
     await act(async () => getStorage().setState({ sessions: { coordinator: { ...session,
         access: normalizeSessionAccessProjection({ share: { accessLevel: 'view', canApprovePermissions: false } }, { allowLegacy: true }) } } }));
     expect(authorityCommitProjectRuleCounts.length).toBeGreaterThan(0);
     expect(authorityCommitProjectRuleCounts).not.toContain(1);
-    expect(projectRules()).toHaveLength(0);
+    expect(projectRule()).toBeNull();
     await act(async () => getStorage().setState({ sessions: { coordinator: { ...session, projectKey: 'payments',
         access: normalizeSessionAccessProjection({ share: { accessLevel: 'view', canApprovePermissions: false } }, { allowLegacy: true }) } } }));
-    expect(projectRules()).toHaveLength(1);
+    expect(projectRule()).not.toBeNull();
 });
 
 it.each([

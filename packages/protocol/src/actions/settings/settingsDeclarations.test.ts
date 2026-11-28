@@ -327,7 +327,7 @@ describe('portable built-in Settings declarations', () => {
       }
     }
     const keep = readBuiltInSettingDeclarationV1('coordination.newCoordinatorKeep')!;
-    for (const value of ['suggest', 'rail_bot', 'list_pin', 'none']) {
+    for (const value of ['suggest', 'list_pin', 'none']) {
       expect(buildBuiltInAccountSettingMutationV1(keep, baseline, value)).toEqual({ coordinationCoordinatorKeep: value });
     }
   });

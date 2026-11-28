@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { COORDINATOR_KEEP_VALUES } from '@happier-dev/protocol/account/settings/accountSettings';
 import { useShallow } from 'zustand/react/shallow';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -12,7 +13,7 @@ import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMe
 import { describeSessionRoleRefusal } from '@/components/roles/session/sessionRole';
 import { useRoleCatalog } from '@/components/roles/catalog/useRoleCatalog';
 import { useRoleMark } from '@/components/roles/catalog/useRoleMark';
-import { CoordinatorKeepListPreview, CoordinatorKeepRailPreview } from '@/components/settings/coordination/CoordinatorKeepPreviews';
+import { CoordinatorKeepListPreview } from '@/components/settings/coordination/CoordinatorKeepPreviews';
 import { useSessionMachineName } from '@/components/sessions/agents/presentation/useSessionMachineName';
 import { useSessionMachineReachability } from '@/components/sessions/model/useSessionMachineReachability';
 import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
@@ -64,14 +65,11 @@ type RuleScope = 'project' | 'home';
 type RuleCount = FollowRuleMatchCount;
 type Census = SessionCoordinatorRuleCensusV1 | null | 'loading';
 
-const KEEP_VALUES = ['rail_bot', 'list_pin', 'none'] as const satisfies readonly MakeCoordinatorKeep[];
 const KEEP_TITLES = {
-    rail_bot: 'settingsCoordination.keepRail',
     list_pin: 'settingsCoordination.keepList',
     none: 'settingsCoordination.keepNone',
 } as const satisfies Record<MakeCoordinatorKeep, string>;
 const KEEP_CAPTIONS = {
-    rail_bot: 'sessionCoordinator.make.keepRailCaption',
     list_pin: 'sessionCoordinator.make.keepListCaption',
     none: 'sessionCoordinator.make.keepNoneCaption',
 } as const satisfies Record<MakeCoordinatorKeep, string>;
@@ -427,10 +425,10 @@ function KeepSection(props: Readonly<{ draft: MakeCoordinatorDraft; onChange: (k
                     testIdPrefix="make-coordinator-keep"
                     value={props.draft.keep}
                     onChange={(next) => { if (next) props.onChange(next); }}
-                    options={KEEP_VALUES.map((value) => ({
+                    options={COORDINATOR_KEEP_VALUES.map((value) => ({
                         id: value,
                         title: t(KEEP_TITLES[value]),
-                        preview: value === 'rail_bot' ? <CoordinatorKeepRailPreview /> : <CoordinatorKeepListPreview pinned={value === 'list_pin'} />,
+                        preview: <CoordinatorKeepListPreview pinned={value === 'list_pin'} />,
                     }))}
                 />}
             />

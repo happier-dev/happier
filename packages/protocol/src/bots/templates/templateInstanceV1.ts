@@ -1,7 +1,7 @@
 import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
-import { BotTemplateDraftRefV1Schema, BotTemplateReleaseSourceV1Schema, BotTemplateVersionV1Schema } from './botTemplateV1.js';
+import { BotTemplateChannelNeedV1Schema, BotTemplateSourceWorkflowV1Schema, BotTemplateDraftRefV1Schema, BotTemplateReleaseSourceV1Schema, BotTemplateVersionV1Schema } from './botTemplateV1.js';
 
 /** Recipient-private lineage; release content remains in the accepted-base Artifact. */
 export const BotTemplateInstanceV1Schema = lazyZodSchema(() => z.strictObject({
@@ -11,6 +11,8 @@ export const BotTemplateInstanceV1Schema = lazyZodSchema(() => z.strictObject({
   acceptedBase: BotTemplateDraftRefV1Schema,
   skillIds: z.record(z.string().check(z.minLength(1)), z.string().check(z.minLength(1))),
   mcpServerIds: z.record(z.string().check(z.minLength(1)), z.string().check(z.minLength(1))),
+  channelNeeds: z.optional(z.array(BotTemplateChannelNeedV1Schema)),
+  sourceWorkflowNeeds: z.optional(z.array(BotTemplateSourceWorkflowV1Schema)),
   follow: z.boolean(),
   skippedVersion: z.optional(BotTemplateVersionV1Schema),
 }));

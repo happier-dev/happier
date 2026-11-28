@@ -147,7 +147,7 @@ async function fixture(options: Pick<ActionExecutorDeps, 'machineSetupPlan' | 'm
       revision++;
       return { ok: true };
     },
-    sessionConnectedServicesAuthSet: async input => { accountWrites.push(input); return { ok: true }; },
+    sessionConnectedServicesAuthSet: async input => { accountWrites.push(input); return { ok: true, action: 'metadata_updated' }; },
     ...options,
   });
   const context = { surface: 'ui' as const, authority: 'present_user' as const, serverId: 'home', serverIdentityId: 'home', runtimeAccountId: 'recipient',

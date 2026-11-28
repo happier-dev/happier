@@ -1,3 +1,5 @@
+import { buildBotMemoryUpkeepInitialTriggerV1 } from '../../workflows/builtins/examples.js';
+import type { SessionInitialTriggerV1 } from '../../workflows/triggers/workflowTriggerActionsV1.js';
 import { PET_IMPORT_ACTION_ID_V1 } from '../../actions/actionIdsPetsV1.js';
 import { readPetImportOutcomeV1 } from '../../pets/importActionV1.js';
 import { createAccountPetReferenceV1 } from '../../pets/selection.js';
@@ -17,7 +19,7 @@ import { readBotTemplateInstanceV1, type BotTemplateInstanceV1 } from './templat
 import { projectBotTemplateArtifactHeaderV1 } from './botTemplateV1.js';
 import { BotTemplateInstantiateInputV1Schema, type BotTemplatePreviewResultV1, type BotTemplatePetOutcomeV1 } from './botTemplateActionsV1.js';
 import type { BotTemplateOperationPortV1 } from './botTemplateOperations.js';
-import { prepareBotTemplateSetupV1, applyBotTemplateMcpSetupV1, buildBotTemplateMachineSetupPlanInputV1 } from './templateSetupV1.js';
+import { projectBotTemplatePostBirthNeedsV1, prepareBotTemplateSetupV1, applyBotTemplateMcpSetupV1, buildBotTemplateMachineSetupPlanInputV1 } from './templateSetupV1.js';
 import { bestEffortReportBotTemplateAcceptedVersionV1 } from './templateAcceptedVersionsV1.js';
 import type { BotTemplateAcceptedVersionReporterV1 } from './templateAcceptedVersionsV1.js';
 import { MachineSetupPlanResultV1Schema, MachineSetupApplyResultV1Schema, machineSetupApplyTargetFromPlanV1,
@@ -83,7 +85,18 @@ export async function prepareBotTemplateInstantiationV1(port: BotTemplateOperati
     const { observeSessionCommit: _observeSessionCommit, ...creationSelection } = creation;
     const selectedPet = content.pet && input.setup?.pet !== false ? content.pet : undefined;
     const selectedFace = input.face ?? (content.identity.face ? projectBotTemplateFaceV1(content.identity.face) : undefined);
+    const initialTriggers = (content.pausedWorkflows ?? []).flatMap((workflow): SessionInitialTriggerV1[] => {
+      if (workflow.kind === 'sourceBound') return [];
+      if (workflow.kind === 'memoryUpkeep') return [buildBotMemoryUpkeepInitialTriggerV1(false)];
+      return [{
+        target: { kind: 'inline', definition: workflow.definition },
+        executionTarget: { kind: 'session' },
+        trigger: { ...workflow.trigger, enabled: false },
+      }];
+    });
+    const postBirthNeeds = projectBotTemplatePostBirthNeedsV1(content.needs, content.pausedWorkflows);
     const spawnInput = SessionSpawnNewActionInputV2Schema.parse({ ...creationSelection,
+      ...(initialTriggers.length ? { initialTriggers } : {}),
       ...(setup.connectedServices ? { connectedServices: setup.connectedServices } : {}),
       title: input.name ?? content.identity.name,
       identity: { bot: { kind: 'bot' }, createdAsBot: true, ...(selectedFace ? { botFace: selectedFace } : {}) } });
@@ -214,7 +227,8 @@ export async function prepareBotTemplateInstantiationV1(port: BotTemplateOperati
                 body: JSON.stringify(envelope), savedBy: null, signal: context.signal });
               resourceIds.push(baseId);
               acceptedInstance = { v: 1, source: resolved.source, acceptedVersion: resolved.release.version,
-                acceptedBase: { serverId, artifactId: baseId }, skillIds, mcpServerIds, follow: true };
+                acceptedBase: { serverId, artifactId: baseId }, skillIds, mcpServerIds,
+                ...postBirthNeeds, follow: true };
               await recipient.writeInstance(ref, acceptedInstance, context);
               } catch (error) {
                 // Ordinary creation may project callback rejection to its spawn result; retain the content failure for this parent.

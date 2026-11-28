@@ -77,7 +77,7 @@ describe('Make coordinator draft', () => {
         expect(draft.rules.map((rule) => [rule.scope, rule.enabled])).toEqual([
             ['home', true],
         ]);
-        expect(draft.keep).toBe('rail_bot');
+        expect(draft.keep).toBe('list_pin');
     });
 
     it('pre-selects Managed by only when exactly one other session follows Home-wide', () => {

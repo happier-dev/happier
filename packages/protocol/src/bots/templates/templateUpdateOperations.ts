@@ -23,7 +23,7 @@ import { readBotTemplateInstanceV1, type BotTemplateInstanceV1 } from './templat
 import type { BotTemplatePreviewResultV1 } from './botTemplateActionsV1.js';
 import { readBotTemplateArtifactV1, projectBotTemplateArtifactHeaderV1, type BotTemplateReleaseV1 } from './botTemplateV1.js';
 import type { BotTemplateOperationPortV1 } from './botTemplateOperations.js';
-import { applyBotTemplateMcpSetupV1, prepareBotTemplateSetupV1, buildBotTemplateMachineSetupPlanInputV1 } from './templateSetupV1.js';
+import { projectBotTemplatePostBirthNeedsV1, applyBotTemplateMcpSetupV1, prepareBotTemplateSetupV1, buildBotTemplateMachineSetupPlanInputV1 } from './templateSetupV1.js';
 import { bestEffortReportBotTemplateAcceptedVersionV1 } from './templateAcceptedVersionsV1.js';
 import { BOT_TEMPLATE_SETUP_APPLY_ROLE_V1 } from './botTemplateActionIdsV1.js';
 import { SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1 } from '../../actions/actionIds.js';
@@ -47,7 +47,8 @@ function changedNeeds(base: BotTemplateReleaseV1, upstream: BotTemplateReleaseV1
   };
   return { software: changed(base.content.needs.software, upstream.content.needs.software),
     connectedAccounts: changed(base.content.needs.connectedAccounts, upstream.content.needs.connectedAccounts),
-    mcpServers: changed(base.content.needs.mcpServers, upstream.content.needs.mcpServers) };
+    mcpServers: changed(base.content.needs.mcpServers, upstream.content.needs.mcpServers),
+    ...(upstream.content.needs.channels ? { channels: changed(base.content.needs.channels ?? [], upstream.content.needs.channels) } : {}) };
 }
 
 /** A demanded review opens only the accepted release and bound recipient resources. Memory is never loaded. */
@@ -101,12 +102,16 @@ export async function readBotTemplateUpdateDiffV1(port: BotTemplateOperationPort
     const result = SKILL_ACTION_OUTPUT_SCHEMAS_V1['skills.updates.diff'].parse(diff);
     skills.push({ key, title, skillId, revision: result.revision, canTake: Boolean(next), status: next ? 'existing' : 'removed', files: result.files });
   }
+  const previousContent = accepted.release.content;
   return BotTemplateUpdateDiffResultV1Schema.parse({ sessionRef, metadataRevision: snapshot.revision, instance,
     ...(snapshot.executionTarget ? { executionTarget: snapshot.executionTarget } : {}),
     ...(snapshot.metadata.connectedServices ? { connectedServices: ConnectedServiceBindingsV2IngressSchema.parse(snapshot.metadata.connectedServices) } : {}),
     offer: readBotTemplateUpdateOfferV1(instance, upstream.release.version), upstream,
     acceptedSuggestions: { ...(accepted.release.content.firstTask === undefined ? {} : { firstTask: accepted.release.content.firstTask }),
-      ...(accepted.release.content.suggestedAgent === undefined ? {} : { suggestedAgent: accepted.release.content.suggestedAgent }) },
+      ...(previousContent.suggestedAgent === undefined ? {} : { suggestedAgent: previousContent.suggestedAgent }),
+      ...(previousContent.needs.channels === undefined ? {} : { channels: previousContent.needs.channels }),
+      ...(previousContent.pausedWorkflows === undefined ? {} : { pausedWorkflows: previousContent.pausedWorkflows }),
+      ...(previousContent.workedExample === undefined ? {} : { workedExample: previousContent.workedExample }) },
     instructions, skills,
     needs: changedNeeds(accepted.release, upstream.release) });
 }
@@ -311,8 +316,10 @@ export async function prepareBotTemplateUpdateV1(port: BotTemplateOperationPortV
             acceptedBaseId = baseId;
             resourceIds.push(baseId);
           }
-          const { skippedVersion: _skipped, ...previous } = review.instance;
+          const { skippedVersion: _skipped, channelNeeds: _previousChannelNeeds,
+            sourceWorkflowNeeds: _previousSourceWorkflowNeeds, ...previous } = review.instance;
           const nextInstance = { ...previous, source: review.upstream.source, acceptedVersion: release.version,
+            ...projectBotTemplatePostBirthNeedsV1(release.content.needs, release.content.pausedWorkflows),
             acceptedBase: { serverId: input.sessionRef.serverId, artifactId: acceptedBaseId }, skillIds, mcpServerIds };
           const recipient = port.recipient!; if (!recipient.updateInstance) return fail('unsupported_action');
           await recipient.updateInstance(input.sessionRef, nextInstance, review.instance, context);

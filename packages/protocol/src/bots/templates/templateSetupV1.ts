@@ -25,6 +25,18 @@ export function buildBotTemplateMachineSetupPlanInputV1(target: Readonly<{ homeI
   return { ...target, mode: 'effects', sources: [{ kind: 'direct', setup: machineSetup }] };
 }
 
+/** Setup intents that get their concrete sources on the recipient Session. */
+export function projectBotTemplatePostBirthNeedsV1(
+  needs: BotTemplateContentV1['needs'], workflows: BotTemplateContentV1['pausedWorkflows'],
+) {
+  const channels = needs.channels;
+  const sourceWorkflows = workflows?.filter(workflow => workflow.kind === 'sourceBound');
+  return {
+    ...(channels?.length ? { channelNeeds: channels } : {}),
+    ...(sourceWorkflows?.length ? { sourceWorkflowNeeds: sourceWorkflows } : {}),
+  };
+}
+
 /** One admission of recipient selections; carried declarations never supply source bindings. */
 export function prepareBotTemplateSetupV1(needs: BotTemplateContentV1['needs'], raw?: BotTemplateSetupSelectionsV1) {
   const selections = BotTemplateSetupSelectionsV1Schema.parse(raw ?? { software: [], accounts: [], mcpServers: [] });

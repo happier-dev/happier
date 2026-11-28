@@ -2,6 +2,9 @@ import * as React from 'react';
 import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { MachineDeploymentReferencesResultV1Schema } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
 import { MachineServicesListResultV1Schema } from '@happier-dev/protocol/actions/specs/machine/services';
+import { BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '@happier-dev/protocol/bots/templates/botTemplateActionIdsV1';
+import { BotTemplateReleaseV1Schema } from '@happier-dev/protocol/bots/templates/botTemplateV1';
+import { BotTemplatePreview } from '@/components/sessions/bots/templates/BotTemplatePreview';
 import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { HandoffTargetReplacementApprovalV1Schema, type HandoffTargetReplacementApprovalV1 } from '@happier-dev/protocol/sessions/control/handoff/handoffTargetReplacementApprovalV1';
 import { DeploymentEnvironmentCreationReviewV1Schema, type DeploymentEnvironmentCreationReviewV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
@@ -83,6 +86,11 @@ export function ApprovalReviewFacts(props: ApprovalReviewFactsInput & Readonly<{
   artifactId?: string;
 }>) {
   const { actionId, actionArgs, preview, serverId, testID } = props;
+  const botRelease = React.useMemo(() => {
+    if (actionId !== BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1) return null;
+    const parsed = BotTemplateReleaseV1Schema.safeParse(readRecord(readRecord(preview).hostReviewedContent).release);
+    return parsed.success ? parsed.data : null;
+  }, [actionId, preview]);
   const request = React.useMemo(() => ({ actionId, actionArgs, preview, status: props.status, execution: props.execution }),
     [actionId, actionArgs, preview, props.status, props.execution]);
   const deployment = React.useMemo(() => readDeploymentReviewApproval(request), [request]);
@@ -122,6 +130,7 @@ export function ApprovalReviewFacts(props: ApprovalReviewFactsInput & Readonly<{
     : undefined, [deployment, environmentUpdate, previewCreate, request]);
   const reboot = readRecord(readRecord(preview).machineRebootReview);
   return <>
+    {botRelease ? <BotTemplatePreview content={botRelease.content} /> : null}
     <ApprovalPreviewFacts request={request} preview={preview} serverId={serverId} />
     {props.summaryPlacement !== 'host' && !deployment && !environmentUpdate && !previewCreate && !template && !computer && readApprovalPreviewSummary(preview, request) ? (
       <ItemGroup><SectionContentRow testID={`${testID}.preview`}>

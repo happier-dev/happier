@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { SessionApprovalProfileSection } from './SessionApprovalProfileSection';
-import { SessionTemplateSection } from '@/components/sessions/bots/templates/SessionTemplateSection';
+import { BotTemplateSourceWorkflowNeeds, SessionTemplateSection } from '@/components/sessions/bots/templates/SessionTemplateSection';
 import { View } from 'react-native';
 import { readSessionBotV1 } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
 import { readSessionRolesV1 } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
@@ -17,6 +17,8 @@ import { SubjectTriggersSectionContent } from '@/components/workflows/triggers/S
 import { SessionWritesHereSection } from '@/components/workflows/triggers/SessionWritesHereSection';
 import { useResourceAutomationsSection } from '@/components/workflows/triggers/useResourceAutomationsSection';
 import { useReportSessionInfoSectionSummary } from '@/components/sessions/info/sessionInfoSectionSummaries';
+import { isSessionContentReadable, readSessionContentAvailability } from '@/sync/domains/session/encryptedContentAvailability';
+import { readSessionStateFieldFromMetadata } from '@happier-dev/agents';
 import { parseExactTurnAutomationPrefillRoute } from '@/components/automations/sessionLifecycle/exactTurnAutomationPrefill';
 import { useLocalSearchParams } from '@/components/appShell/workspace/destinationRoute';
 import { resolvePortableServerIdentityForRoutingId } from '@/sync/domains/server/resolvePortableServerIdentityForRoutingId';
@@ -176,6 +178,10 @@ const NO_RETRY = () => {};
 
 function SessionHabitsContent(props: SessionHabitsSectionProps & Readonly<{ homeId: string }>) {
   const { sessionId } = props;
+  const shell = useSessionViewShellSession(sessionId, props.serverId);
+  const templateWorkflowNeeds = shell && isSessionContentReadable(readSessionContentAvailability(shell))
+    ? readSessionStateFieldFromMetadata(readSessionOwnerMetadataView(shell), 'intent.templateInstance')?.sourceWorkflowNeeds
+    : undefined;
   const [title] = useSessionDisplayTitles([{ sessionId, serverId: props.serverId }]);
   const subject = React.useMemo(() => ({ kind: 'session' as const, serverId: props.homeId, sessionId }), [props.homeId, sessionId]);
   // One intake for the section and what writes here: the shared hook owns the Session watcher once.
@@ -226,7 +232,7 @@ function SessionHabitsContent(props: SessionHabitsSectionProps & Readonly<{ home
   useReportSessionInfoSectionSummary('habits.startsHere', summaryScope ? {
     scope: summaryScope, sessionId, coverage: 'complete',
     status: read.status === 'ready' ? 'ready' : read.status === 'failed' ? 'error' : 'loading',
-    count: automations.rows.length + automations.also.length,
+    count: automations.rows.length + automations.also.length + (templateWorkflowNeeds?.length ?? 0),
   } : null);
   // "When this turn finishes…" and `?trigger=` deep links arrive on the Info route (`/session/[id]/triggers`).
   const params = useLocalSearchParams();
@@ -244,8 +250,13 @@ function SessionHabitsContent(props: SessionHabitsSectionProps & Readonly<{ home
             {...(typeof params.addTrigger === 'string' ? { openNewToken: params.addTrigger } : {})}
             offlineStatedAbove={props.offlineStatedAbove}
             {...(typeof params.trigger === 'string' ? { revealAutomationId: params.trigger } : {})}
-            leading={habit}
-            hasRetainedContent={habitRow !== null || scheduledRows.length > 0 || destination.runIds.length > 0}>
+            leading={<>{habit}
+              {templateWorkflowNeeds?.length ? (
+                <BotTemplateSourceWorkflowNeeds subject={subject} workflows={templateWorkflowNeeds}
+                  pullRequestLinks={session?.pullRequestLinks} accountLifetime={automations.accountLifetime} />
+              ) : null}
+            </>}
+            hasRetainedContent={Boolean(templateWorkflowNeeds?.length) || habitRow !== null || scheduledRows.length > 0 || destination.runIds.length > 0}>
             {props.onOpenAllAutomations ? (
               <Item
                 testID="session-habits-all-automations"
