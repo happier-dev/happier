@@ -8,6 +8,7 @@ import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } f
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { createServedTerminalActionRelay, servedMachineActionRelayInstallationPublicKey } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { useMachinePresenceSummary } from '@/components/sessions/model/useMachinePresenceSummary';
 import type { EmbeddedTerminalRendererHandle } from '@/components/terminal/embedded/embeddedTerminalRendererHandle';
@@ -16,6 +17,7 @@ import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeature
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import type { CustomModalDismissGuard } from '@/modal/types';
 
 // Machine RPC and xterm are transport/platform boundaries; the sheet, controller,
 // request builder, Action admission and protocol parsing remain real.
@@ -41,30 +43,50 @@ afterEach(() => standardCleanup());
 
 it.each(['service', 'machine'] as const)('requests a %s shell through the existing sheet and real terminal Action', async kind => {
     const machine = createMachineFixture({ id: `sheet-${kind}`, active: true, activeAt: Date.now() });
-    const row = createPlainMachineRowFixture({ id: machine.id, accountId: 'sheet-owner', machine });
+    const row = { ...createPlainMachineRowFixture({ id: machine.id, accountId: 'sheet-owner', machine }),
+        installationPublicKey: await servedMachineActionRelayInstallationPublicKey() };
+    const serverUrl = `https://sheet-${kind}.test`;
+    const serverIdentityId = `srv_sheet_${kind}`;
+    let relay: Awaited<ReturnType<typeof createServedTerminalActionRelay>> | undefined;
     const home = await serveActionHomes({
-        homes: [{ key: 'owner', serverUrl: `https://sheet-${kind}.test`, serverIdentityId: `srv_sheet_${kind}`,
+        homes: [{ key: 'owner', serverUrl, serverIdentityId,
             accountId: 'sheet-owner', currentAccount: true,
             settings: { featureToggles: { 'terminal.embeddedPty': true },
-                actionsSettingsV1: { v: 1, actions: {}, approvalWaivedSurfaces: { 'machines.terminal.open': ['ui'] } } } }],
-        route: request => request.path === '/v1/machines' ? Response.json([row])
+                actionsSettingsV1: { v: 1, actions: {}, approvalWaivedSurfaces: {
+                    'machines.terminal.open': ['ui'], 'machines.terminal.close': ['ui'],
+                } } } }],
+        route: async request => (await relay?.handle(request)) ?? (request.path === '/v1/machines' ? Response.json([row])
             : request.path === '/v1/machines/read-batch'
             ? createMachineReadBatchResponseFixture(request.body, () => row)
             : request.path === '/v1/features' || request.path === '/v1/features/authenticated'
             ? Response.json(createRootLayoutFeaturesResponse({ features: { terminal: { embeddedPty: { enabled: true } } } }))
-            : createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined,
+            : createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined),
     });
     const serverId = home.homes.owner!.id;
+    relay = await createServedTerminalActionRelay({ machineIds: [machine.id],
+        homes: [{ serverId, serverUrl, serverIdentityId, accountId: 'sheet-owner' }],
+        machineRpc: request => rpc(request) });
     publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
     await getServerFeaturesSnapshot({ serverId, force: true });
     storage.getState().applyMachines([machine], true, { sourceServerId: serverId });
     await publishMachineInventoryForTest({ serverId, accountId: 'sheet-owner' }, [machine]);
     rpc.mockReset();
-    rpc.mockResolvedValue({ ok: false, errorCode: 'terminal_forbidden', error: 'fixture_refusal' });
+    const terminalId = 'owned-pty';
+    rpc.mockImplementation(async ({ method }) => {
+        if (method === RPC_METHODS.DAEMON_TERMINAL_ENSURE) return { ok: true, terminalId, reused: false };
+        if (method === RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES) {
+            return { ok: true, terminalId, frames: [], nextByteOffset: 0, availableByteOffset: 0, droppedBeforeByteOffset: 0, done: true };
+        }
+        return { ok: true };
+    });
     const launch = { kind: 'service_shell' as const, serviceId: 'environment-instance/app', expectedGeneration: 'generation-a' };
     showMachineTerminalSheet({ serverId, machineId: machine.id, machineName: 'Box',
         ...(kind === 'service' ? { launch } : { machineShell: { ok: true as const, cwd: '/owner/home' } }) });
-    const config = vi.mocked(Modal.show).mock.calls.at(-1)![0] as { component: React.ComponentType<Record<string, unknown>>; props: Record<string, unknown> };
+    const config = vi.mocked(Modal.show).mock.calls.at(-1)![0] as {
+        component: React.ComponentType<Record<string, unknown>>;
+        props: Record<string, unknown>;
+        onDismissRequest?: CustomModalDismissGuard;
+    };
     const Card = config.component;
     function SheetFixture() {
         const presence = useMachinePresenceSummary(serverId, machine.id);
@@ -95,7 +117,12 @@ it.each(['service', 'machine'] as const)('requests a %s shell through the existi
                 expect(request.payload.cwd).toBe('/owner/home');
                 expect(request.payload).not.toHaveProperty('launch');
             }
+            await vi.waitFor(() => expect(screen.findByType(EmbeddedTerminalPaneFrame).props.controller.terminalId).toBe(terminalId));
+            await act(async () => { expect(await config.onDismissRequest?.('shared')).toBe(true); });
+            expect(rpc.mock.calls.filter(([entry]) => entry.method === RPC_METHODS.DAEMON_TERMINAL_CLOSE))
+                .toMatchObject([[{ serverId, machineId: machine.id, payload: { terminalId } }]]);
         } finally { await screen.unmount(); }
+        expect(rpc.mock.calls.filter(([entry]) => entry.method === RPC_METHODS.DAEMON_TERMINAL_CLOSE)).toHaveLength(1);
     } finally { await home.dispose(); }
 });
 

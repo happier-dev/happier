@@ -1,7 +1,7 @@
 import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import * as React from 'react';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
-import { DaemonTerminalEnsureResponseSchema, DaemonTerminalListResponseV1Schema, type DaemonTerminalEnsureRequest, type DaemonTerminalEnsureResponse } from '@happier-dev/protocol/daemon/terminal';
+import { DaemonTerminalCloseResponseSchema, DaemonTerminalEnsureResponseSchema, DaemonTerminalListResponseV1Schema, type DaemonTerminalEnsureRequest, type DaemonTerminalEnsureResponse } from '@happier-dev/protocol/daemon/terminal';
 import { isManagedWorkspaceRefV2, type WorkspaceAddressV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { resolveWorkspaceSyncExecutionMachineIdV1 } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -12,6 +12,10 @@ import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntim
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { randomUUID } from '@/platform/randomUUID';
 import { captureLazyActionAccountContext, type LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { alertActionFailure, readSafeFailureDetails } from '@/utils/errors/alertActionFailure';
+import { Modal } from '@/modal';
+import { t } from '@/text';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { dispatchSessionTerminalWorkspaceCommand, readSessionTerminalWorkspaceForScope, setSessionTerminalPendingActionApproval } from '@/components/sessions/terminal/sessionTerminalWorkspaceRuntime';
 import { readSessionTerminalWorkspace } from '@/components/sessions/terminal/sessionTerminalWorkspace';
@@ -259,7 +263,33 @@ export function useMachineTerminalActionAdmission(input: Readonly<{ terminalKey:
             }, { serverId: capturedAuthority.serverId, accountId: capturedAuthority.accountId }),
         });
     }, [approval.requestApproval, capture, execute, workspace, lifetime, machineId, input.scopeId, input.memberId, readMember, router]);
-    return { admit, capture, workspace, approvalId: approval.approvalId, approvalPending: approval.approvalPending, approvalServerId: serverId,
+    const close = React.useCallback(async (terminalId: string, scope: ServerAccountScope): Promise<boolean> => {
+        if (!machineId) return false;
+        const { serverId, accountId } = scope;
+        const result = await execute('machines.terminal.close', { serverId, machineId, terminalId }, {
+            surface: 'ui', authority: 'present_user', serverId, expectedAccountId: accountId,
+        });
+        if (result.ok && ActionApprovalRequestCreatedResultSchema.safeParse(result.result).success) {
+            Modal.alert(t('toolView.approvalRequested.title'), t('toolView.approvalRequested.description'));
+            return false;
+        }
+        const parsed = result.ok ? DaemonTerminalCloseResponseSchema.safeParse(result.result) : null;
+        if (parsed?.success && parsed.data.ok) return true;
+        const failure = !result.ok ? result : parsed?.success && !parsed.data.ok ? parsed.data
+            : { errorCode: 'terminal_invalid_response', error: 'terminal_invalid_response' };
+        if (isActionApprovalDeclinedErrorCode(failure.errorCode)) return false;
+        alertActionFailure({
+            reason: presentActionExecutionFailure(failure).reason,
+            code: failure.errorCode,
+            ...(!result.ok ? {
+                requestId: result.requestId, failureCause: result.failureCause,
+                context: { ...readSafeFailureDetails(result.details),
+                    ...(result.effectAttempted === undefined ? {} : { effectAttempted: result.effectAttempted }) },
+            } : {}),
+        });
+        return false;
+    }, [execute, machineId]);
+    return { admit, close, capture, workspace, approvalId: approval.approvalId, approvalPending: approval.approvalPending, approvalServerId: serverId,
         get openCancelled() { return readMember()?.openCancelled === true; },
         get lifetime() { return lifetime ?? accountContext.current?.accountLifetime ?? null; } };
 }

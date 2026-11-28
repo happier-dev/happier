@@ -31,9 +31,11 @@ export type MachineTerminalSheetTarget = Readonly<{
 export function showMachineTerminalSheet(
   target: MachineTerminalSheetTarget,
 ): void {
+  const close = React.createRef<() => Promise<boolean>>();
   Modal.show({
     component: MachineTerminalModal,
-    props: target,
+    props: { ...target, close },
+    onDismissRequest: () => close.current?.() ?? true,
     chrome: {
       kind: 'card',
       phonePresentation: 'sheet',
@@ -48,7 +50,7 @@ export function showMachineTerminalSheet(
 }
 
 const MachineTerminalModal = React.memo(function MachineTerminalModal(
-  props: MachineTerminalSheetTarget,
+  props: MachineTerminalSheetTarget & { close: React.RefObject<(() => Promise<boolean>) | null> },
 ) {
   const presence = useMachinePresenceSummary(props.serverId, props.machineId);
   const terminalRef = React.useRef<EmbeddedTerminalRendererHandle | null>(null);
@@ -68,6 +70,7 @@ const MachineTerminalModal = React.memo(function MachineTerminalModal(
     terminalRef,
     closeOnUnmount: true,
   });
+  React.useImperativeHandle(props.close, () => controller.closeForDismissal, [controller.closeForDismissal]);
   const onOpenApproval = useTerminalApprovalOpener(controller);
   return (
     <View style={styles.frame}>

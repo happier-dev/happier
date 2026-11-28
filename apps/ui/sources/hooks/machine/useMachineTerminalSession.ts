@@ -1056,6 +1056,17 @@ export function useMachineTerminalSession(params: Readonly<{
         hydrateTerminalRendererIfNeeded();
     });
 
+    const closeForDismissal = React.useCallback(async (): Promise<boolean> => {
+        if (!params.closeOnUnmount || params.readOnly || params.attachedTerminalId !== undefined) return true;
+        const terminalId = terminalIdRef.current;
+        if (!terminalId) return true;
+        const scope = attachmentScopeRef.current;
+        if (!scope || !await admissionRef.current.close(terminalId, scope)) return false;
+        if (terminalIdRef.current !== terminalId) return false;
+        terminalIdRef.current = null;
+        return true;
+    }, [params.attachedTerminalId, params.closeOnUnmount, params.readOnly]);
+
     const dismissDetectedUrl = React.useCallback(() => {
         syncDetectedUrl(null);
     }, [syncDetectedUrl]);
@@ -1196,6 +1207,7 @@ export function useMachineTerminalSession(params: Readonly<{
         readOnly: params.readOnly === true,
         operationState,
         terminalId: terminalIdRef.current,
+        closeForDismissal,
         error,
         exitCode,
         exitSignal,
