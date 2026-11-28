@@ -133,6 +133,8 @@ import {
 import { CollectionToolbar, CollectionToolbarCompactContext } from './CollectionToolbar.js';
 import { DetailsPaneFooter, useDetailPageLead } from './DetailsPane.js';
 import { Button } from './Button.js';
+import { Select } from './Form.js';
+import { Text as PluginText } from './Text.js';
 import { Heading } from './Foundation.js';
 import { usePluginUiFocusTarget } from './Focus.js';
 import { PageHeader } from './PageHeader.js';
@@ -8392,6 +8394,134 @@ describe('the Collection toolbar', () => {
         expect(wide.textContent).toContain('7 sources need attention');
         expect(view.query('toolbar:lead')!.parentElement).toBe(wide.parentElement);
       }
+    } finally {
+      view.unmount();
+    }
+  });
+
+  // The cut 58 Triage table toolbar (shell/root.tsx). The table owns Order, and the Tasks scope has no icons.
+  function triageTableToolbar(tasks: boolean, attention?: string): CollectionProps<Entry>['header'] {
+    const press = () => undefined;
+    return (slots) => (
+      <CollectionToolbar
+        slots={{ ...slots, title: (
+          <Select label="Page" presentation="segmented" value={tasks ? 'tasks' : 'prs'}
+            options={[{ value: 'tasks', label: 'Tasks' }, { value: 'prs', label: 'PRs & Issues' }]} onChange={press} />
+        ) }}
+        scope={tasks ? <Select label="Show tasks" presentation="segmented" value="mine" onChange={press}
+          options={[{ value: 'mine', label: 'Mine' }, { value: 'agents', label: 'Agents' }, { value: 'everyone', label: 'Everyone' }]} /> : undefined}
+        lens={<Button title="Views" variant="plain" onPress={press} />}
+        refine={{ label: 'Filters', sheet: { header: 'none', render: () => null } }}
+        freshness={attention === undefined ? null : {
+          label: attention, tone: 'muted', indicator: true, foldedItemId: 'manage-sources',
+          action: <Button accessibilityLabel="Manage sources" variant="plain" size="small" onPress={press}>
+            <PluginText variant="meta" tone="secondary" value="Manage sources" />
+          </Button>,
+        }}
+        refresh={{ label: 'Refresh', busy: attention === undefined, onPress: press }}
+        more={{ label: 'More', items: [
+          { id: 'organize-list', label: 'Organize list' },
+          { id: 'configure-actions', label: 'Configure actions' },
+          { id: 'manage-sources', label: 'Manage sources' },
+        ], onSelect: press }}
+        views={{ label: 'View', value: 'list', options: [
+          { value: 'list', label: 'List', icon: 'list' },
+          { value: 'board', label: 'Board', icon: 'board' },
+        ], onChange: press }}
+        primary={tasks ? { label: 'New task', onPress: press } : undefined}
+        testID="toolbar"
+      />
+    );
+  }
+
+  function mountTriageTableToolbar(tasks: boolean, attention?: string) {
+    return mount({
+      search: { ...search, label: tasks ? 'Search tasks' : 'Search PRs & Issues' },
+      header: triageTableToolbar(tasks, attention),
+      renderPopover: openPopover,
+      pageChrome: {
+        showsTitle: false,
+        renderNavigationActions: (primary, _placement, more) => (
+          <>{more?.menu}<Button title="NLDW3-5-36-33 · 2463 Auto" onPress={() => undefined} />{primary}</>
+        ),
+      },
+    });
+  }
+
+  it('keeps the Tasks table and its labeled primary in place when source attention arrives at 1440', async () => {
+    const view = mountTriageTableToolbar(true);
+    try {
+      view.measure(1440);
+      const row = view.query('toolbar')!;
+      const lead = view.query('toolbar:lead')!;
+      const trail = view.query('toolbar:trail')!;
+      const attention = '8 sources need attention.';
+      const copy = attention.slice(0, -1);
+      const before = 32;
+      const boxes = new Map<Element, () => DOMRect>([
+        [row, () => DOMRect.fromRect({ width: 1300, height: before })],
+        [lead, () => DOMRect.fromRect({ width: 667, height: before })],
+        [trail, () => DOMRect.fromRect({ width: trail.textContent!.includes(copy) ? 815 : 625, height: before })],
+        [view.query('toolbar:views')!, () => DOMRect.fromRect({ width: 150, height: before })],
+      ]);
+      const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+        const known = boxes.get(this);
+        if (known !== undefined) return known();
+        if (this.textContent === copy) return DOMRect.fromRect({ width: 144, height: 16 });
+        return DOMRect.fromRect();
+      });
+      try {
+        expect(button(row, 'New task')!.textContent).toBe('New task');
+        expect(trail.textContent).toContain('Board');
+        await view.update({ header: triageTableToolbar(true, attention) });
+        expect(view.query('toolbar:trail'), 'first layout before a follow-up layout event').toBe(trail);
+        expect(trail.textContent).toContain(copy);
+        expect(trail.querySelector('[role="radio"][aria-label="Board"]')!.textContent).toBe('');
+        expect(lead.querySelector('[role="radio"][aria-label="Everyone"]')!.textContent).toBe('Everyone');
+        expect(button(row, 'New task')!.textContent).toBe('New task');
+      } finally {
+        rect.mockRestore();
+      }
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it.each([
+    '8 sources need attention.',
+    'Happier exceptions could not be read. Their entries may be missing or out of date.',
+  ])('draws one actionable freshness line at 1440 for %s', async (attention) => {
+    const view = mountTriageTableToolbar(false);
+    try {
+      view.measure(1440);
+      await view.update({ header: triageTableToolbar(false, attention) });
+      const trail = view.query('toolbar:trail')!;
+      const status = trail.querySelector(`[aria-label="${attention}"]`)!;
+      const action = button(trail, 'Manage sources')!;
+      expect(status).not.toBeNull();
+      const visible = attention.slice(0, -1);
+      const copy = [...status.querySelectorAll('div')].find((node) => node.textContent === visible && node.childElementCount === 0)!;
+      expect(getComputedStyle(copy).whiteSpace).toBe('nowrap');
+      expect(getComputedStyle(copy).textOverflow).toBe('ellipsis');
+      expect(action.textContent).toBe('Manage sources');
+      expect(status.parentElement!.parentElement!.textContent).toContain(`${visible}·Manage sources`);
+      expect(getComputedStyle(action.parentElement!).flexShrink).toBe('0');
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it('keeps Tasks at 390 with a round primary and the source warning under Manage sources in More', () => {
+    const attention = '8 sources need attention.';
+    const view = mountTriageTableToolbar(true, attention);
+    try {
+      view.measure(390);
+      const toolbar = view.query('toolbar')!;
+      expect(view.query('toolbar:trail')).toBeNull();
+      expect(button(toolbar, 'New task')!.textContent).toBe('');
+      expect(toolbar.textContent).not.toContain(attention);
+      act(() => button(toolbar, 'More')!.click());
+      expect(view.container.textContent).toContain(attention);
     } finally {
       view.unmount();
     }

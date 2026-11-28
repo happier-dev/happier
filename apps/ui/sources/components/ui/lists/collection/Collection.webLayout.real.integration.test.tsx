@@ -5,7 +5,7 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { View } from 'react-native';
 import { expect, it, vi } from 'vitest';
-import { Button, Collection, CollectionToolbar, Item as PluginItem, ItemGroup as PluginItemGroup, RowStatusLine, useHappierCollection, type CollectionAnatomy } from '@happier-dev/plugin-ui';
+import { Button, Collection, CollectionToolbar, Item as PluginItem, ItemGroup as PluginItemGroup, RowStatusLine, Select, Text as PluginText, useHappierCollection, type CollectionAnatomy } from '@happier-dev/plugin-ui';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
 
 import { installWebLayoutBridge, measureWebLayout } from '@/dev/testkit/render/measureWebLayout';
@@ -64,6 +64,65 @@ it.each([390, 1440])('keeps a source status together and aligns wrapped actions 
             expect.soft(fix.left).toBeGreaterThan(titleBox.left);
             expect.soft(fix.top).toBeLessThan(words.bottom);
         }
+    } finally {
+        await act(async () => root.unmount());
+        host.remove();
+    }
+});
+
+it.each([
+    { tasks: true, attention: '8 sources need attention.' },
+    { tasks: false, attention: '8 sources need attention.' },
+    { tasks: false, attention: 'Happier exceptions could not be read. Their entries may be missing or out of date.' },
+])('keeps the 1440 px toolbar height when freshness arrives (Tasks=$tasks, $attention)', async ({ tasks, attention }) => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const noop = () => {};
+    const render = (label?: string) => <View style={{ width: 1300 }}><CoreCollectionScope renderPageScroller={renderPageScroller}>
+        <CollectionToolbar testID="toolbar" slots={{
+            title: <Select label="Page" presentation="segmented" value={tasks ? 'tasks' : 'prs'} onChange={noop}
+                options={[{ value: 'tasks', label: 'Tasks' }, { value: 'prs', label: 'PRs & Issues' }]} />,
+            search: <View style={{ flexGrow: 1, flexBasis: HAPPIER_PAGE_METRICS.toolbarSearchMinWidthPx, height: 32, maxWidth: 380 }} />,
+            selection: null,
+            pageActions: <View style={{ width: 248, height: 32 }} />,
+        }}
+            scope={tasks ? <Select label="Show tasks" presentation="segmented" value="mine" onChange={noop}
+                options={[{ value: 'mine', label: 'Mine' }, { value: 'agents', label: 'Agents' }, { value: 'everyone', label: 'Everyone' }]} /> : undefined}
+            lens={<Button title="Views" variant="plain" onPress={noop} />}
+            freshness={label === undefined ? null : {
+                label, tone: 'muted', indicator: true, foldedItemId: 'manage-sources',
+                action: <Button variant="plain" size="small" testID="manage-sources" accessibilityLabel="Manage sources" onPress={noop}>
+                    <PluginText variant="meta" tone="secondary" value="Manage sources" />
+                </Button>,
+            }}
+            refresh={{ label: 'Refresh', busy: label === undefined, onPress: noop }}
+            more={{ label: 'More', items: [{ id: 'organize-list', label: 'Organize list' },
+                { id: 'configure-actions', label: 'Configure actions' }, { id: 'manage-sources', label: 'Manage sources' }], onSelect: noop }}
+            views={{ label: 'View', value: 'list', onChange: noop, options: [{ value: 'list', label: 'List', icon: 'list' },
+                { value: 'board', label: 'Board', icon: 'board' }] }}
+            primary={tasks ? { label: 'New task', testID: 'new-task', onPress: noop } : undefined}
+        />
+    </CoreCollectionScope></View>;
+    const visible = attention.slice(0, -1);
+    const layout = { viewport: { width: 1440, height: 900 }, texts: [visible, 'Manage sources'] };
+    try {
+        await act(async () => root.render(render()));
+        const before = await measureWebLayout(host, layout);
+        await act(async () => root.render(render(attention)));
+        const first = await measureWebLayout(host, layout);
+        const settled = await measureWebLayout(host, { ...layout, settle: replay => act(replay) });
+        expect(first.rect('toolbar').height).toBe(before.rect('toolbar').height);
+        expect(settled.rect('toolbar').height).toBe(first.rect('toolbar').height);
+        const action = settled.rect('manage-sources');
+        const copy = settled.textRects(visible)[0]!;
+        expect(action.right).toBeLessThanOrEqual(settled.rect('toolbar').right);
+        expect(action.clipped).toBe(false);
+        expect(copy.right).toBeLessThan(action.left);
+        expect(copy.top).toBeLessThan(action.bottom);
+        expect(copy.bottom).toBeGreaterThan(action.top);
+        if (attention.startsWith('Happier')) expect(copy.clipped).toBe(true);
+        if (tasks) expect(settled.rect('new-task').text).toBe('New task');
     } finally {
         await act(async () => root.unmount());
         host.remove();

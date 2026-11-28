@@ -17,6 +17,9 @@ import { HAPPIER_SEGMENTED_METRICS } from '../presentation/form/SegmentedChoice.
 import { useHappierPageChromeInternal } from '../presentation/layout/pageChrome.js';
 import { HAPPIER_PAGE_METRICS } from '../presentation/layout/pageMetrics.js';
 import type { HappierPortableStyle } from '../presentation/portableTypes.js';
+import { HappierStatus } from '../presentation/status/Status.js';
+import { HappierText } from '../presentation/text/Text.js';
+import { useHappierTypeRoleStyle } from '../presentation/text/typeRole.js';
 import { Button, IconButton } from './Button.js';
 import type { CollectionHeaderSlots } from './Collection.js';
 import { Select, type SelectOption } from './Form.js';
@@ -281,8 +284,10 @@ function useWideToolbar(props: CollectionToolbarProps, active: boolean): (search
   // actions (a Project's header) draws both and this row draws neither; unclaimed, the host draws them here.
   const hostActions = slots?.pageActions != null && chrome?.renderNavigationActions !== undefined;
   const fit = useContext(CollectionToolbarOverflowContext);
-  const { spacing } = usePluginTheme();
+  const theme = usePluginTheme();
+  const { spacing } = theme;
   const { textScale } = useHappierUiAccessibility();
+  const freshnessType = useHappierTypeRoleStyle('meta', theme);
   // A healthy freshness ("Updated just now") or a read in flight ("Refreshing") is the first thing the one row gives up:
   // its words go (Refresh still says them, and spins while it reads) before the toolbar folds, at the row width that needed it and
   // anything narrower, never cut to "R…". Words that warn are never given up.
@@ -294,6 +299,11 @@ function useWideToolbar(props: CollectionToolbarProps, active: boolean): (search
   const viewsKey = canDropViewLabels ? JSON.stringify([textScale, props.views?.value, viewOptions.map(({ label, icon }) => [label, icon])]) : null;
   const [viewLabelFit, setViewLabelFit] = useState<{ key: string; savings: number } | null>(null);
   const viewLabelSavings = viewsKey !== null && viewLabelFit?.key === viewsKey ? viewLabelFit.savings : 0;
+  const hasFreshnessAction = freshness != null && freshness.action != null;
+  const freshnessKey = hasFreshnessAction ? JSON.stringify([freshness.label, freshness.indicator, textScale, freshnessType]) : null;
+  const [freshnessFit, setFreshnessFit] = useState<{ key: string; naturalWidth: number; width: number } | null>(null);
+  const constrainedFreshness = freshnessKey !== null && freshnessFit?.key === freshnessKey ? freshnessFit : null;
+  const naturalRow = canDropViewLabels || hasFreshnessAction;
   const [quietBelowPx, setQuietBelowPx] = useState<number | null>(null);
   // Folded, the wide row is not drawn: what it learned about its width starts over when it is drawn again.
   useEffect(() => {
@@ -304,6 +314,7 @@ function useWideToolbar(props: CollectionToolbarProps, active: boolean): (search
   const leadRef = useRef<ComponentRef<typeof View>>(null);
   const trailRef = useRef<ComponentRef<typeof View>>(null);
   const viewsRef = useRef<ComponentRef<typeof View>>(null);
+  const freshnessRef = useRef<ComponentRef<typeof View>>(null);
   // A delivered layout event can describe a box before its siblings settled. Read all three current widths
   // together, including every control in both clusters, rather than mixing independently cached heights.
   // The leading cluster grows into its line's free room: when the trailing cluster wraps, the lead fills that
@@ -314,34 +325,48 @@ function useWideToolbar(props: CollectionToolbarProps, active: boolean): (search
     const trail = trailRef.current;
     if (row === null || lead === null || trail === null) return;
     const views = viewsKey !== null && viewLabelSavings === 0 ? viewsRef.current : null;
-    const widths: Partial<Record<'row' | 'lead' | 'trail' | 'views', number>> = {};
+    const freshnessBox = freshnessKey === null ? null : freshnessRef.current;
+    const widths: Partial<Record<'row' | 'lead' | 'trail' | 'views' | 'freshness', number>> = {};
     const heights: Partial<Record<'lead' | 'trail', number>> = {};
     // In-window measurement preserves fractional web widths; `measure` rounds each box independently.
     const record = (name: keyof typeof widths, width: number, height: number) => {
       widths[name] = width;
       if (name === 'lead' || name === 'trail') heights[name] = height;
-      const { row: rowWidth, lead: leadWidth, trail: trailWidth, views: viewsWidth } = widths;
+      const { row: rowWidth, lead: leadWidth, trail: trailWidth, views: viewsWidth, freshness: freshnessWidth } = widths;
       const { lead: leadHeight, trail: trailHeight } = heights;
       if (rowWidth === undefined || leadWidth === undefined || trailWidth === undefined || rowWidth <= 0
-        || leadHeight === undefined || trailHeight === undefined || (views !== null && viewsWidth === undefined)) return;
+        || leadHeight === undefined || trailHeight === undefined || (views !== null && viewsWidth === undefined)
+        || (freshnessBox !== null && freshnessWidth === undefined)) return;
       // A cluster can fit its share of the row by breaking onto a second line (a pane-narrowed page): twice the height
       // of the other cluster is a wrapped row just as a trailing group below the lead is, and it folds the same way.
       const wrapped = Math.min(leadHeight, trailHeight) > 0 && Math.max(leadHeight, trailHeight) >= Math.min(leadHeight, trailHeight) * 1.5;
       const need = leadWidth + trailWidth + spacing.small;
-      if (viewsKey !== null && viewOptions !== undefined) {
-        // Refresh already draws only a glyph. Use the segmented owner's icon geometry to try the remaining step
-        // against the same layout. There is no trial compact render before deciding whether to fold.
+      if (naturalRow) {
+        // Refresh is already a glyph. Try icon-backed arrangements before taking any width from the freshness
+        // words. The author's scope and primary keep their labels and the recovery action keeps its own width.
         const { trackPaddingPx, segmentMinWidthPx, labelSlotPx, segmentPaddingHorizontalPx } = HAPPIER_SEGMENTED_METRICS;
-        const iconTrackWidth = 2 * trackPaddingPx + viewOptions.length
+        const iconTrackWidth = 2 * trackPaddingPx + (viewOptions?.length ?? 0)
           * Math.max(segmentMinWidthPx, labelSlotPx.default + 2 * segmentPaddingHorizontalPx);
         const savings = viewsWidth === undefined ? viewLabelSavings : Math.max(0, viewsWidth - iconTrackWidth);
-        if (need - (viewsWidth === undefined ? 0 : savings) > rowWidth) {
+        const naturalFreshnessWidth = constrainedFreshness?.naturalWidth ?? freshnessWidth ?? 0;
+        const fullNeed = need + viewLabelSavings + naturalFreshnessWidth - (freshnessWidth ?? 0);
+        const compactViews = savings > 0 && fullNeed > rowWidth;
+        const excess = Math.max(0, fullNeed - (compactViews ? savings : 0) - rowWidth);
+        const labelWidth = naturalFreshnessWidth - excess;
+        // A truncated status still needs room for words alongside its dot, on the same line.
+        const readableWidth = Math.min(naturalFreshnessWidth, (Number(freshnessType.lineHeight) || 0) * textScale);
+        if (wrapped || labelWidth < readableWidth) {
           fit?.overflow(rowWidth);
-        } else {
-          if (need > rowWidth && viewsWidth !== undefined) setViewLabelFit({ key: viewsKey, savings });
-          if (viewLabelSavings > 0 && need + viewLabelSavings <= rowWidth) setViewLabelFit(null);
-          fit?.width(rowWidth);
+          return;
         }
+        if (viewsKey !== null && compactViews && viewLabelSavings === 0) setViewLabelFit({ key: viewsKey, savings });
+        if (!compactViews && viewLabelSavings > 0) setViewLabelFit(null);
+        if (freshnessKey !== null && excess > 0 && constrainedFreshness?.width !== labelWidth) {
+          setFreshnessFit({ key: freshnessKey, naturalWidth: naturalFreshnessWidth, width: labelWidth });
+        } else if (excess === 0 && constrainedFreshness !== null) {
+          setFreshnessFit(null);
+        }
+        fit?.width(rowWidth);
       } else if (wrapped || need > rowWidth) {
         if (quietable && !quiet) setQuietBelowPx(rowWidth);
         else fit?.overflow(rowWidth);
@@ -362,30 +387,31 @@ function useWideToolbar(props: CollectionToolbarProps, active: boolean): (search
     read('lead', lead);
     read('trail', trail);
     if (views !== null) read('views', views);
+    if (freshnessBox !== null) read('freshness', freshnessBox);
   };
   // Giving up the words can leave every box its size (a row wrapped over several lines still fills them), so no
   // layout event follows: the row measures itself again once they are gone, and folds if it still does not fit.
   const measureRef = useRef(measure);
   measureRef.current = measure;
-  const attentionLabel = viewsKey === null ? null : freshness?.label ?? null;
+  const attentionLabel = naturalRow ? freshness?.label ?? null : null;
   useLayoutEffect(() => {
     if (active && attentionLabel !== null) measureRef.current(true);
-  }, [active, attentionLabel, viewsKey]);
+  }, [active, attentionLabel, freshnessKey, viewsKey]);
   useEffect(() => {
     if (quiet) measureRef.current();
   }, [quiet]);
   // It leads with the add glyph the folded toolbar's round "+" shows, so the one primary reads the same at every width.
   const primary = props.primary === undefined ? null : <PrimaryControl primary={props.primary} folded={false} />;
   const onLayout = () => measure();
-  const clusterStyle = canDropViewLabels ? naturalClusterStyle : wideRowStyle;
+  const clusterStyle = naturalRow ? naturalClusterStyle : wideRowStyle;
   return (search) => (
     <View
       ref={rowRef}
-      style={[wideRowStyle, canDropViewLabels ? { flexWrap: 'nowrap' } : null, { gap: spacing.small, justifyContent: 'space-between' }]}
+      style={[wideRowStyle, naturalRow ? { flexWrap: 'nowrap' } : null, { gap: spacing.small, justifyContent: 'space-between' }]}
       onLayout={onLayout}
       testID={props.testID}
     >
-      <View key="lead" ref={leadRef} style={[clusterStyle, leadStyle, viewLabelSavings > 0 ? { flexGrow: 0 } : null, { gap: spacing.small }]}
+      <View key="lead" ref={leadRef} style={[clusterStyle, leadStyle, viewLabelSavings > 0 || constrainedFreshness !== null ? { flexGrow: 0 } : null, { gap: spacing.small }]}
         onLayout={onLayout}
         {...(props.testID === undefined ? {} : { testID: `${props.testID}:lead` })}>
         {slots?.title ?? null}
@@ -401,14 +427,25 @@ function useWideToolbar(props: CollectionToolbarProps, active: boolean): (search
       <View key="trail" ref={trailRef} style={[clusterStyle, trailStyle, { gap: spacing.xsmall }]}
         onLayout={onLayout}
         {...(props.testID === undefined ? {} : { testID: `${props.testID}:trail` })}>
-        {freshness == null || quiet ? null : (
-          <Status
-            tone={freshness.tone}
-            pulsing={freshness.pulsing}
-            indicator={freshness.indicator}
-            label={freshness.label}
-            action={freshness.action}
-          />
+        {freshness == null || quiet ? null : hasFreshnessAction ? (
+          <View style={[naturalClusterStyle, { gap: spacing.xsmall }]}>
+            <View ref={freshnessRef} style={{ maxWidth: constrainedFreshness?.width }}>
+              <HappierStatus
+                theme={theme}
+                tone={freshness.tone}
+                isPulsing={freshness.pulsing}
+                indicator={freshness.indicator}
+                label={<HappierText variant="meta" numberOfLines={1}>{freshness.label.replace(/\.$/u, '')}</HappierText>}
+                accessibilityLabel={freshness.label}
+              />
+            </View>
+            <View aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+              <HappierText variant="meta" tone="secondary">·</HappierText>
+            </View>
+            <View style={{ flexShrink: 0 }}>{freshness.action}</View>
+          </View>
+        ) : (
+          <Status tone={freshness.tone} pulsing={freshness.pulsing} indicator={freshness.indicator} label={freshness.label} />
         )}
         {refresh === undefined ? null : (
           <IconButton

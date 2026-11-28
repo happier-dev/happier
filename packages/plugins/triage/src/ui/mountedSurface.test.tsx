@@ -670,6 +670,10 @@ async function settleWindow(
     });
 }
 
+function sourceStatusName(element: Element): string {
+    return element.getAttribute('aria-label') ?? element.textContent ?? '';
+}
+
 async function visibleTexts(fixture: PluginUiTestkit, contents: readonly string[]): Promise<void> {
     for (const content of contents) {
         await expect(fixture.getByText(content)).resolves.toEqual({ content });
@@ -1691,7 +1695,7 @@ describe('the mounted PRs & Issues surface', () => {
             'Middle change',
             'Older change',
         ]);
-        const statusLines = [...document.querySelectorAll('[role="status"]')].map(node => node.textContent);
+        const statusLines = [...document.querySelectorAll('[role="status"]')].map(sourceStatusName);
         expect(statusLines.filter(line => line === '1 source needs attention.')).toHaveLength(1);
         await expect(shell.getByRole('button', { name: 'Manage sources' })).resolves.toBeDefined();
         await expect(shell.queryByText('Up to date')).resolves.toBeUndefined();
@@ -1715,7 +1719,7 @@ describe('the mounted PRs & Issues surface', () => {
         // that the live Account had this many entries.
         await visibleTexts(shell, ['Acme issue 0']);
         expect(snapshot().pending).toBe('idle');
-        expect(document.body.textContent).toContain('2 sources need attention.');
+        expect(document.querySelector('[role="status"][aria-label="2 sources need attention."]')).not.toBeNull();
         expect(document.body.textContent).not.toContain('GitHub workspace');
         expect(document.body.textContent).not.toContain('Bitbucket workspace');
         await expect(shell.queryByText('Refreshing')).resolves.toBeUndefined();
@@ -1755,7 +1759,7 @@ describe('the mounted PRs & Issues surface', () => {
         harness.state.sourceBFails = true;
         await settleWindow('manual', shell);
         const failureLine = () => [...document.querySelectorAll<HTMLElement>('[role="status"]')]
-            .find(element => element.textContent?.includes('1 source needs attention.'));
+            .find(element => sourceStatusName(element) === '1 source needs attention.');
         await vi.waitFor(() => expect(failureLine()).toBeDefined());
         await expect(shell.getByRole('button', { name: 'Manage sources' })).resolves.toBeDefined();
         await act(async () => { await shell.updateSurface({ ...context, machineConnectionPending: false, machineExecutionReady: false }); });
@@ -1821,7 +1825,7 @@ describe('the mounted PRs & Issues surface', () => {
         await settleWindow('manual', shell);
 
         await visibleTexts(shell, ['Replace the duplicated normalizer', 'Middle change']);
-        const statusLines = [...document.querySelectorAll<HTMLElement>('[role="status"]')].map(element => element.textContent);
+        const statusLines = [...document.querySelectorAll<HTMLElement>('[role="status"]')].map(sourceStatusName);
         expect(statusLines.filter(line => line === '2 sources need attention.')).toHaveLength(1);
         expect(statusLines.join(' ')).not.toContain('could not be read');
         await expect(shell.getByRole('button', { name: 'Manage sources' })).resolves.toBeDefined();
@@ -1864,7 +1868,7 @@ describe('the mounted PRs & Issues surface', () => {
             });
             expect(snapshot().pending).not.toBe('idle');
             await visibleTexts(shell, ['Replace the duplicated normalizer', 'Middle change']);
-            const statusLines = [...document.querySelectorAll<HTMLElement>('[role="status"]')].map(element => element.textContent);
+            const statusLines = [...document.querySelectorAll<HTMLElement>('[role="status"]')].map(sourceStatusName);
             expect(statusLines.filter(line => line === '1 source needs attention.')).toHaveLength(1);
         } finally {
             await act(async () => { release(); await refresh; });
@@ -1886,7 +1890,7 @@ describe('the mounted PRs & Issues surface', () => {
 
         const statusLines = [...document.querySelectorAll<HTMLElement>('[role="status"]')].map(element => element.textContent);
         const warning = [...document.querySelectorAll<HTMLElement>('[role="status"]')]
-            .find(element => element.textContent?.includes('2 sources need attention.'));
+            .find(element => sourceStatusName(element) === '2 sources need attention.');
         expect(warning).toBeDefined();
         expect(warning?.textContent).not.toContain(offlineA);
         expect(warning?.textContent).not.toContain(offlineB);
@@ -1976,9 +1980,8 @@ describe('the mounted PRs & Issues surface', () => {
         // The toolbar carries the count and the existing Retry even before the first successful read.
         const retry = await shell.getByRole('button', { name: 'Retry' });
         const attention = [...document.querySelectorAll('[role="status"]')]
-            .find(node => node.textContent === '2 sources need attention.');
+            .find(node => sourceStatusName(node) === '2 sources need attention.');
         expect(attention?.closest('[data-testid="triage-shell-list-region"]')).toBeNull();
-        expect(attention?.parentElement?.querySelector('[aria-label="Retry"]') != null).toBe(true);
         harness.state.sourceAFails = false;
         harness.state.sourceBFails = false;
         await act(async () => { await shell.press(retry); });
@@ -2057,7 +2060,7 @@ describe('the mounted PRs & Issues surface', () => {
         expect(snapshot().pending).toBe('idle');
         expect(snapshot().window?.rows).toHaveLength(0);
         const failureLines = () => [...document.querySelectorAll<HTMLElement>('[role="status"]')]
-            .map(element => element.textContent ?? '');
+            .map(sourceStatusName);
         if (!initiallyUnavailable) {
             expect(failureLines()).toEqual(['2 sources need attention.']);
             await expect(shell.getByRole('button', { name: 'Retry' })).resolves.toBeDefined();

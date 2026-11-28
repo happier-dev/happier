@@ -2592,12 +2592,11 @@ describe('opening a row into the source detail', () => {
         } finally {
             await act(async () => { release(); });
         }
-        await vi.waitFor(async () => {
-            await expect(shell.getByText('2 sources need attention.')).resolves.toBeDefined();
-        });
+        const attention = '[role="status"][aria-label="2 sources need attention."]';
+        await vi.waitFor(() => expect(document.querySelector(attention)).not.toBeNull());
         await expect(shell.getByRole('button', { name: 'Another source matching entry' })).resolves.toBeDefined();
         const refresh = document.querySelector('[aria-label="Refresh"]');
-        expect(refresh?.parentElement?.textContent).toContain('2 sources need attention.');
+        expect(refresh?.parentElement?.querySelector(attention)).toBeTruthy();
         expect(refresh?.parentElement?.querySelector('[aria-label="Retry"]')).toBeTruthy();
         expect(document.body.textContent).not.toMatch(/could not be (read|reached)|Reading your sources/);
 

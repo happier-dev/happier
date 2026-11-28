@@ -616,7 +616,10 @@ title, a phone's header), `search` (the field with its tokens at the toolbar's b
 and `pageActions` (what the host keeps beside the page title, such as the machine the page runs on; placed in the
 row, the host draws no separate band for it; while the plugin surface is an offline read-only snapshot the host
 takes these actions back into its own bar, so choosing another machine stays usable). Whatever the render receives, the list pane no longer draws; without
-a render the search and the selection control share one row in the pane. A table that scrolls with its page is a
+a render the search and the selection control share one row in the pane. When a wide toolbar's freshness has a recovery
+action, the status words and action share one line. The arrangement switch gives up its visible words first when
+its options have icons. Then the status text can truncate, preserving its complete accessible name and the
+recovery action's full width. A table that scrolls with its page is a
 sheet with an edge; a Collection that is the page's body lies flat under the page header. An empty table cell
 reads "—". A dense group band ends with its one trailing fact: its action when it has one, otherwise what its rows
 share. `Collection.collapsedGroups` (caller-owned keys) draws a list or table group as its band alone: title, the
