@@ -108,7 +108,8 @@ describe('a large cast', () => {
       const bottom = Math.max(...dots.map((dot) => Number(dot.getAttribute('cy'))));
       const other = dots.filter((dot) => Number(dot.getAttribute('cy')) === bottom);
       expect(other).toHaveLength(1);
-      expect(Number(other[0]!.getAttribute('fill-opacity'))).toBe(1);
+      // The combined 50 min draws at the strong tier's size, the same as a leader's 60-min hour.
+      expect(other[0]!.getAttribute('r')).toBe(dots[0]!.getAttribute('r'));
     } finally { chart.unmount(); }
   });
 

@@ -135,7 +135,9 @@ export function useUsageChartSvgText(theme: HappierUiTheme) {
 }
 
 export type UsageChartSwatch =
-  | Readonly<{ kind: 'dot' | 'ring' | 'speck' | 'hatch'; color: string }>
+  /** `scale` sizes the dot against the key's full dot, for marks that say a tier by size. */
+  | Readonly<{ kind: 'dot'; color: string; scale?: number }>
+  | Readonly<{ kind: 'ring' | 'speck' | 'hatch'; color: string }>
   | Readonly<{ kind: 'split'; colors: readonly [string, string] }>
   | Readonly<{ kind: 'line'; color: string; dashed?: boolean; dotted?: boolean }>
   | Readonly<{ kind: 'mark'; node: ReactNode }>;
@@ -171,7 +173,9 @@ function UsageChartSwatchMark(props: Readonly<{ swatch: UsageChartSwatch }>) {
   if (s.kind === 'ring') return <View style={{ width: 8, height: 8, borderRadius: 4, borderWidth: 1.2, borderColor: s.color }} />;
   if (s.kind === 'speck') return <View style={{ width: 3, height: 3, borderRadius: 1.5, backgroundColor: s.color, marginHorizontal: 2.5 }} />;
   if (s.kind === 'hatch') return <View style={{ width: 10, height: 8, borderRadius: 2, borderWidth: 1, borderColor: s.color, borderStyle: 'dashed' }} />;
-  return <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: s.color }} />;
+  // A smaller dot keeps the full dot's slot, so every label in the key starts at the same offset.
+  const size = 8 * (s.kind === 'dot' ? s.scale ?? 1 : 1);
+  return <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: s.color, marginHorizontal: (8 - size) / 2 }} />;
 }
 
 /** The sentence under a chart that says how to read it. */

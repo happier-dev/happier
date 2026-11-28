@@ -46,8 +46,14 @@ export type UsageScoreLabels = Readonly<{
 const SCORE_LEADERS = 6;
 type ScoreRow = Readonly<{ key: string; name: string; full: string; color: string; hours: readonly (readonly (number | null)[])[] }>;
 const busyTotal = (hours: readonly (readonly (number | null)[])[]) => hours.reduce((sum, day) => sum + day.reduce<number>((acc, minutes) => acc + (minutes ?? 0), 0), 0);
-const scoreOpacity = (encoding: UsageScoreModel['encoding'], minutes: number) => encoding === 'presence' ? (minutes ? 0.9 : 0)
-  : minutes > 40 ? 1 : minutes > 15 ? 0.66 : minutes ? 0.36 : 0;
+/**
+ * The Score's tiers, the one definition its marks and its key both draw. An hour's agent time sets the dot's size; the
+ * dot always keeps the Agent's full identity hue, so the lightest hour reads at the hue's own contrast on either paper
+ * (alpha tiers drew a 1–15 min hour at 1.5–1.7:1). Presence draws every busy hour at full size.
+ */
+const SCORE_TIERS = [{ id: 'light', scale: 0.6 }, { id: 'medium', scale: 0.8 }, { id: 'strong', scale: 1 }] as const;
+const scoreTier = (encoding: UsageScoreModel['encoding'], minutes: number) =>
+  SCORE_TIERS[encoding === 'presence' || minutes > 40 ? 2 : minutes > 15 ? 1 : 0];
 
 export function UsageScore(props: AgentsProps & Readonly<{ model: UsageScoreModel; labels: UsageScoreLabels }>) {
   const [width, onLayout] = useUsageChartWidth(props.width);
@@ -81,10 +87,9 @@ export function UsageScore(props: AgentsProps & Readonly<{ model: UsageScoreMode
     color: row.color,
   });
   const keyItems: UsageChartKeyItem[] = props.model.encoding === 'presence'
-    ? [{ id: 'p', label: props.labels.key.presence, swatch: { kind: 'dot', color: ink.text } }]
-    : [{ id: 'l', label: props.labels.key.light, swatch: { kind: 'dot', color: ink.neutral } },
-      { id: 'm', label: props.labels.key.medium, swatch: { kind: 'dot', color: props.theme.colors.secondaryText } },
-      { id: 's', label: props.labels.key.strong, swatch: { kind: 'dot', color: ink.text } }];
+    ? [{ id: 'p', label: props.labels.key.presence, swatch: { kind: 'dot', color: ink.secondary } }]
+    // One neutral sample at each tier's size: the key says what the size means, the row names whose hue it is.
+    : SCORE_TIERS.map((tier) => ({ id: tier.id, label: props.labels.key[tier.id], swatch: { kind: 'dot', color: ink.secondary, scale: tier.scale } }));
   const table = own.flatMap((row) => row.hours.map((hours, day) => [row.full, props.labels.day(day),
     props.labels.values.formatHours(hours)] as const)).filter((row) => row[2] !== '');
   let chart: ReactNode = <View style={{ height: rows.length * 26 + 26 }} />;
@@ -98,7 +103,8 @@ export function UsageScore(props: AgentsProps & Readonly<{ model: UsageScoreMode
           <Path d={`M${label},${y}H${width}`} stroke={ink.grid} strokeWidth={1} />
           {svgText.draw({ x: 0, y: y + 4, text: row.name, tone: 'secondary', size: 'body' })}
           {row.hours.flatMap((hours, day) => hours.map((minutes, hour) => minutes ? <Circle key={`${day}-${hour}`} cx={r1(label + (day * 24 + hour + 0.5) * step)} cy={y}
-            r={r1(radius)} fill={row.color} fillOpacity={scoreOpacity(props.model.encoding, minutes)} /> : null))}
+            // The tier scales the exact radius; rounding each tier on its own would break the sizes the key draws.
+            r={radius * scoreTier(props.model.encoding, minutes).scale} fill={row.color} /> : null))}
         </G>;
       })}
       {Array.from({ length: dayCount }, (_, day) => svgText.draw({ x: label + day * 24 * step + 3, y: height - 4, text: props.labels.day(day) }, `d${day}`))}
@@ -120,7 +126,8 @@ export function UsageScore(props: AgentsProps & Readonly<{ model: UsageScoreMode
       {days.map((day) => <View key={day} style={{ height: bandHeight }}><Svg width={width} height={bandHeight}>
           {svgText.draw({ x: 0, y: size - 2, text: props.labels.day(day), tone: 'secondary', size: 'body' })}
           {rows.map((row, index) => (row.hours[day] ?? []).map((minutes, hour) => minutes === null ? null : <Circle key={`${index}-${hour}`} cx={r1(gutter + (hour + 0.5) * step)} cy={3 + index * pitch}
-            r={1.9} fill={minutes ? row.color : ink.track} fillOpacity={minutes ? scoreOpacity(props.model.encoding, minutes) : 1} />))}
+            // An idle hour's track sits at the lightest tier's size, so no busy hour draws smaller than an idle one.
+            r={1.9 * (minutes ? scoreTier(props.model.encoding, minutes) : SCORE_TIERS[0]).scale} fill={minutes ? row.color : ink.track} />))}
         </Svg>{rows.flatMap((row, index) => (row.hours[day] ?? []).map((minutes, hour) => minutes === null || (props.model.encoding === 'presence' && !minutes) ? null : <ChartMark key={`${index}-${hour}`}
           datum={datum(row, day, hour, minutes)} testID={`${props.testID}.hour.${index}.${day}.${hour}`}
           bounds={{ x: gutter + hour * step, y: index * pitch, width: step, height: pitch }} />))}</View>)}
