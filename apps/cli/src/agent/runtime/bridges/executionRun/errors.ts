@@ -197,7 +197,7 @@ export function sanitizeExecutionRunError(
   const safeUxDiagnostic = uxDiagnostic
     ? normalizeConnectedServiceUxDiagnosticV1(redactPluginInvocationResultData(uxDiagnostic, sanitize)) : null;
   return Object.assign(sanitized, code ? { code: sanitize(code) } : {}, details ? { details } : {},
-    teamRefusal ? { reason: sanitize(teamRefusal.reason) } : {},
+    teamRefusal ? { reason: teamRefusal.reason } : {},
     safeRuntimeIssue ? { runtimeIssueV1: safeRuntimeIssue } : {},
     safeUxDiagnostic ? { uxDiagnostic: safeUxDiagnostic, details: { ...details, uxDiagnostic: safeUxDiagnostic } } : {});
 }

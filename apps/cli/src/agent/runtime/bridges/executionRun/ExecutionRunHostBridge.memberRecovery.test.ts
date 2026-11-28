@@ -192,7 +192,11 @@ vi.mock('node:fs', async original => {
   return createBundledPluginPublicationFsFixture(actual);
 });
 
-it.each([undefined, 'custodian'])('prepares a captured Review as its requester with ambient Account %s', async ambientAccountId => {
+it.each([
+  { ambientAccountId: undefined, detachedWorkflow: false },
+  { ambientAccountId: 'custodian', detachedWorkflow: false },
+  { ambientAccountId: undefined, detachedWorkflow: true },
+])('prepares a captured Review as its requester (ambient Account $ambientAccountId, detached Workflow $detachedWorkflow)', async ({ ambientAccountId, detachedWorkflow }) => {
   await withAdmittedSessionRun({ directOwner: true, run: async fixture => {
     const repository = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'happier-review-account-' });
     const registration = createGitScmBackendRuntimeRegistration();
@@ -212,10 +216,14 @@ it.each([undefined, 'custodian'])('prepares a captured Review as its requester w
       const role = resolveRoleSelectionV1({ roleId: 'reviewer' });
       if (!role.ok) throw new Error('Fixture reviewer role is unavailable');
       const start = () => fixture.start({ intent: 'review', cwd: repository.rootPath,
+        ...(detachedWorkflow ? { sessionId: null, workflowRunId: 'owner-workflow',
+          workflowOriginSessionId: fixture.session.sessionId } : {}),
         requesterWorkAttributionV1: requester, intentInput: { comparisonId }, resolvedRole: role.selection });
       const started = await (ambientAccountId ? runWithScmAccountScope(ambientAccountId, start) : start());
       expect(started.runId).toEqual(expect.any(String));
       expect(fixture.bridge!.get(started.runId)).toMatchObject({ requesterWorkAttributionV1: requester,
+        ...(detachedWorkflow ? { sessionId: null, originWorkflowRunId: 'owner-workflow',
+          workflowOriginSessionId: fixture.session.sessionId } : {}),
         intentInput: { comparisonId, comparison: { id: comparisonId } } });
       const saved = await runWithScmAccountScope(requester.accountId, () => readCapturedScmComparison({
         cwd: repository.rootPath, sessionId: fixture.session.sessionId, comparisonId: captured.comparison.id }));

@@ -489,7 +489,9 @@ describe('Account activation source assembly', () => {
             expect(exactReads).toBe(4);
         } finally { restore(); await app.close(); await rm(home, { recursive: true, force: true }); }
     });
-    it('shares a complete Account artifact across cold loads, refuses conflicting bytes, and reuses the held module', async () => {
+    it.each([undefined, 'EPERM', 'ENOTSUP'])(
+        'shares a complete Account artifact across cold loads, refuses conflicting bytes, and reuses the held module (link error: %s)',
+        async linkError => {
         const home = await mkdtemp(join(tmpdir(), 'account-held-source-'));
         // The released module imports the SDK; a real import needs this package's resolution root.
         await symlink(join(process.cwd(), 'node_modules'), join(home, 'node_modules'));
@@ -509,6 +511,9 @@ describe('Account activation source assembly', () => {
         const census = () => resolveAccountPluginActivationSources({ contributes: createResolvedContributionRegistry({}),
             paths, credentials: { token: 'fixture', encryption: null },
             serverUrl: 'http://account-held-source.test', isCurrent: () => true, resolveBundledActivationSource: () => null });
+        const link = linkError ? vi.spyOn(filesystem, 'link').mockRejectedValue(
+            Object.assign(new Error('Hard links unavailable'), { code: linkError }),
+        ) : undefined;
         try {
             const [first, second] = await Promise.all([census(), census()]);
             const resolveFirst = () => first.sourcesByPluginId.get(pluginId)?.resolveRelativeModule?.('account-runtime');
@@ -518,6 +523,17 @@ describe('Account activation source assembly', () => {
             await expect(resolveFirst()).rejects.toThrow('plugin_account_execution_cache_invalid');
             expect(await readFile(entry, 'utf8')).toBe('conflicting cache contents');
             await rm(entry);
+            if (linkError) {
+                const rename = vi.spyOn(filesystem, 'rename').mockRejectedValueOnce(
+                    Object.assign(new Error('Filesystem refused publication'), { code: 'EACCES' }),
+                );
+                try {
+                    await expect(resolveFirst()).rejects.toMatchObject({ code: 'plugin_account_execution_artifact_unavailable' });
+                    await expect(readFile(entry)).rejects.toMatchObject({ code: 'ENOENT' });
+                } finally {
+                    rename.mockRestore();
+                }
+            }
 
             const prefixWritten = createDeferred();
             const finishWrite = createDeferred();
@@ -558,7 +574,7 @@ describe('Account activation source assembly', () => {
             const disabled = await census();
             await expect(disabled.sourcesByPluginId.get(pluginId)?.resolveRelativeModule?.('account-runtime') ?? Promise.reject(new Error('unavailable')))
                 .rejects.toThrow();
-        } finally { restore(); await app.close(); await rm(home, { recursive: true, force: true }); }
+        } finally { link?.mockRestore(); restore(); await app.close(); await rm(home, { recursive: true, force: true }); }
     });
 
     it('refuses cold corrupt Account bytes through the CLI ingress without replaying on a Machine', async () => {
