@@ -521,9 +521,10 @@ function readScrolledComposerState(
   match: RegExpExecArray,
   context?: ClaudeScreenParseContext | undefined,
 ): ReturnType<typeof readComposerState> {
-  const content = (match[1] ?? '').split('\n').map((line) => line.trim()).join('\n').trim();
-  const headerLine = lineIndexAt(text, match.index + match[0].indexOf('─'));
-  const footerLine = headerLine + (match[1] ?? '').split('\n').length;
+  const rows = (match[1] ?? '').split('\n');
+  const content = rows.map((line) => line.trim()).join('\n').trim();
+  const headerLine = lineIndexAt(text, match.index + (match[0].startsWith('\n') ? 1 : 0));
+  const footerLine = headerLine + rows.length;
   const cursor = context?.cursor;
   const shellMode = /(?:^|\n)[^\S\n]*! for shell mode(?:\s|$)/.test(text.slice(match.index + match[0].length));
   return {

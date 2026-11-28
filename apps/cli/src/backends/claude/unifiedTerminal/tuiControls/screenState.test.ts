@@ -1466,8 +1466,8 @@ describe('parseClaudeScreenState — scrolled composer draft', () => {
     '  ⏵⏵ auto mode on (shift+tab to cycle)',
   ].join('\n');
 
-  it('reads the bordered viewport instead of an earlier prompt echo and keeps it a user draft', () => {
-    const state = parseClaudeScreenState(clipped, { cursor: { x: 35, y: 5 } });
+  it.each(['─', '━'])('reads the %s bordered viewport and keeps the last visible row in the user draft', (rule) => {
+    const state = parseClaudeScreenState(clipped.replaceAll('─', rule), { cursor: { x: 35, y: 5 } });
     expect(state.composerContent).toBe('The first visible draft paragraph.\n\nThe last visible draft paragraph.');
     expect(state.composerCursorRelation).toBe('inside_or_after_content');
     expect(state.userDraftPresent).toBe(true);
