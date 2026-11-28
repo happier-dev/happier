@@ -59,7 +59,6 @@ async function prepareUiSourceAssets(repoDir, env, signal, focusedTest = false) 
   // [module, export, options]: one producer list for both execution forms.
   const steps = [
     [resolve(repoDir, 'apps/ui/scripts/prepareUiBrowserBundles.mjs'), 'prepareUiBrowserBundles', { uiPackageDir }],
-    [resolve(repoDir, 'apps/ui/tools/atmosphere/buildAtmosphereRenderers.mjs'), 'buildAtmosphereRenderers', { web: false }],
     [resolve(repoDir, 'apps/ui/scripts/prepareSourceUiAssets.mjs'), 'prepareSourceUiAssets',
       { uiPackageDir, outputDir, recordPath: join(outputDir, SOURCE_UI_ASSET_RECORD_FILENAME) }],
   ].filter(([module]) => existsSync(module));

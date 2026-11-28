@@ -43,24 +43,24 @@ function readOutputPublicationIdentity(paths) {
 test('UI source preparation launches zero unadmitted esbuild producers', { skip: process.platform !== 'linux' }, async t => {
   const fixture = await createTempFixture(t, { prefix: 'hstack-source-prep-admission-' });
   const native = await installWorkspaceAdmissionProcessFixture(t, fixture.root);
-  const generator = fixture.path('apps/ui/tools/atmosphere/buildAtmosphereRenderers.mjs');
+  const generator = fixture.path('apps/ui/scripts/prepareSourceUiAssets.mjs');
   const result = fixture.path('source-build-admission.json');
   mkdirSync(join(generator, '..'), { recursive: true });
   // The generator module is the external source compiler boundary. Keep the
   // real preparation, admission, reservation and subprocess owners underneath.
   writeFileSync(generator, `import { writeFileSync } from 'node:fs';
-export async function buildAtmosphereRenderers(options) {
+export async function prepareSourceUiAssets(options) {
   if (process.env.HSTACK_SOURCE_PREPARATION_FIXTURE !== 'admitted'
     || process.env.HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT !== ${JSON.stringify(native.admissionRoot)}
     || !process.env.HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT) {
     throw Object.assign(new Error('Source compiler launched outside admission'), { code: 'UNADMITTED_SOURCE_COMPILATION' });
   }
-  writeFileSync(${JSON.stringify(result)}, JSON.stringify({ web: options.web, admitted: true }));
+  writeFileSync(${JSON.stringify(result)}, JSON.stringify({ uiPackageDir: options.uiPackageDir, admitted: true }));
 }
 `);
   await prepareRemoteValidationWorkspace({ repoDir: fixture.root, componentRelativeDir: 'apps/ui',
     validationKind: 'source-test', env: { ...native.env, HSTACK_SOURCE_PREPARATION_FIXTURE: 'admitted' } });
-  assert.deepEqual(JSON.parse(readFileSync(result, 'utf8')), { web: false, admitted: true });
+  assert.deepEqual(JSON.parse(readFileSync(result, 'utf8')), { uiPackageDir: fixture.path('apps/ui'), admitted: true });
   await assertNativeAdmissionIdle(native);
 });
 
@@ -1020,22 +1020,23 @@ writeFileSync(root + '/published-plugin', dist);`);
 
 test('UI source-test preparation materializes the replica-owned atmosphere core through the checkout generator', async (t) => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-ui-atmosphere-preparation-' });
-  const tools = join(root, 'apps/ui/tools/atmosphere');
-  mkdirSync(tools, { recursive: true });
+  const scripts = join(root, 'apps/ui/scripts');
+  mkdirSync(scripts, { recursive: true });
   writeFileSync(join(root, 'apps/ui/package.json'), JSON.stringify({ name: '@fixture/ui' }));
-  // The checkout's own generator is its process boundary (it needs the
-  // replica's installed esbuild); preparation must call it, natively only.
-  writeFileSync(join(tools, 'buildAtmosphereRenderers.mjs'), `import { mkdirSync, writeFileSync } from 'node:fs';
-export async function buildAtmosphereRenderers({ web = true } = {}) {
-  mkdirSync(new URL('../../sources/components/atmosphere/', import.meta.url), { recursive: true });
-  writeFileSync(new URL('../../sources/components/atmosphere/backdropWorkletCore.generated.js', import.meta.url), 'web=' + web);
+  // The checkout's asset producer needs the replica's installed esbuild.
+  writeFileSync(join(scripts, 'prepareSourceUiAssets.mjs'), `import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+export async function prepareSourceUiAssets({ uiPackageDir }) {
+  const directory = join(uiPackageDir, 'sources/components/atmosphere');
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(join(directory, 'backdropWorkletCore.generated.js'), 'worklet core');
 }
 `);
   const output = join(root, 'apps/ui/sources/components/atmosphere/backdropWorkletCore.generated.js');
   await prepareRemoteValidationWorkspace({ repoDir: root, componentRelativeDir: 'apps/cli', validationKind: 'source-test' });
   assert.equal(existsSync(output), false, 'only UI source tests consume the atmosphere core');
   await prepareRemoteValidationWorkspace({ repoDir: root, componentRelativeDir: 'apps/ui', validationKind: 'source-test' });
-  assert.equal(readFileSync(output, 'utf8'), 'web=false');
+  assert.equal(readFileSync(output, 'utf8'), 'worklet core');
 });
 
 // Measured 2026-11-11 (controller, n2): the generator bundles one file in about
@@ -1044,11 +1045,11 @@ export async function buildAtmosphereRenderers({ web = true } = {}) {
 test('UI atmosphere core preparation reserves the source-asset floor, not a source bundle', { skip: process.platform !== 'linux' }, async t => {
   const fixture = await createTempFixture(t, { prefix: 'hstack-ui-atmosphere-floor-' });
   const native = await installWorkspaceAdmissionProcessFixture(t, fixture.root);
-  const generator = fixture.path('apps/ui/tools/atmosphere/buildAtmosphereRenderers.mjs');
+  const generator = fixture.path('apps/ui/scripts/prepareSourceUiAssets.mjs');
   const observed = fixture.path('atmosphere-floor.json');
   mkdirSync(join(generator, '..'), { recursive: true });
   writeFileSync(generator, `import { writeFileSync } from 'node:fs';
-export async function buildAtmosphereRenderers() {
+export async function prepareSourceUiAssets() {
   writeFileSync(${JSON.stringify(observed)}, JSON.stringify({ floorKiB: Number(process.env.HAPPIER_HEAVYWEIGHT_ADMISSION_FLOOR_KIB) }));
 }
 `);
@@ -1063,18 +1064,18 @@ export async function buildAtmosphereRenderers() {
 test('focused UI source-test preparation runs the producers without an admission slot', { skip: process.platform !== 'linux' }, async t => {
   const fixture = await createTempFixture(t, { prefix: 'hstack-ui-atmosphere-focused-' });
   const native = await installWorkspaceAdmissionProcessFixture(t, fixture.root);
-  const generator = fixture.path('apps/ui/tools/atmosphere/buildAtmosphereRenderers.mjs');
+  const generator = fixture.path('apps/ui/scripts/prepareSourceUiAssets.mjs');
   const observed = fixture.path('atmosphere-focused.json');
   mkdirSync(join(generator, '..'), { recursive: true });
   writeFileSync(generator, `import { writeFileSync } from 'node:fs';
-export async function buildAtmosphereRenderers(options) {
-  writeFileSync(${JSON.stringify(observed)}, JSON.stringify({ options, pid: process.pid }));
+export async function prepareSourceUiAssets(options) {
+  writeFileSync(${JSON.stringify(observed)}, JSON.stringify({ uiPackageDir: options.uiPackageDir, pid: process.pid }));
 }
 `);
   await prepareRemoteValidationWorkspace({ repoDir: fixture.root, componentRelativeDir: 'apps/ui',
     validationKind: 'source-test', focusedTest: true, env: native.env });
   // No admitted child: the producer ran in the preparing process itself.
-  assert.deepEqual(JSON.parse(readFileSync(observed, 'utf8')), { options: { web: false }, pid: process.pid });
+  assert.deepEqual(JSON.parse(readFileSync(observed, 'utf8')), { uiPackageDir: fixture.path('apps/ui'), pid: process.pid });
   await assertNativeAdmissionIdle(native);
 });
 
@@ -1360,11 +1361,11 @@ test('remote validation preparation rejects paths outside the synchronized repos
 test('a component whose Vitest configs load UI source prepares the UI source assets', { skip: process.platform !== 'linux' }, async t => {
   const fixture = await createTempFixture(t, { prefix: 'hstack-ui-assets-consumer-' });
   const native = await installWorkspaceAdmissionProcessFixture(t, fixture.root);
-  const generator = fixture.path('apps/ui/tools/atmosphere/buildAtmosphereRenderers.mjs');
+  const generator = fixture.path('apps/ui/scripts/prepareSourceUiAssets.mjs');
   const observed = fixture.path('atmosphere-consumer.log');
   mkdirSync(join(generator, '..'), { recursive: true });
   writeFileSync(generator, `import { appendFileSync } from 'node:fs';
-export async function buildAtmosphereRenderers(options) { appendFileSync(${JSON.stringify(observed)}, JSON.stringify(options) + '\\n'); }
+export async function prepareSourceUiAssets(options) { appendFileSync(${JSON.stringify(observed)}, JSON.stringify(options.uiPackageDir) + '\\n'); }
 `);
   mkdirSync(fixture.path('packages/tests'), { recursive: true });
   writeFileSync(fixture.path('packages/tests/vitest.core.config.ts'),
@@ -1379,6 +1380,6 @@ export async function buildAtmosphereRenderers(options) { appendFileSync(${JSON.
     await prepareRemoteValidationWorkspace({ repoDir: fixture.root, componentRelativeDir: 'packages/other',
       validationKind, focusedTest: true, env: native.env, loadWorkspaceBuildOwner });
   }
-  assert.deepEqual(readFileSync(observed, 'utf8').trim().split('\n'), ['{"web":false}', '{"web":false}'],
+  assert.deepEqual(readFileSync(observed, 'utf8').trim().split('\n'), Array(2).fill(JSON.stringify(fixture.path('apps/ui'))),
     'packages/tests prepares once per validation kind; a component without UI source consumers does not');
 });
