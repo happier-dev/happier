@@ -302,6 +302,44 @@ describe('Database Insights surfaces', () => {
     }
   });
 
+  it('pushes an opened statement as the whole page on a phone, without the list’s summary above it', async () => {
+    const presentationHost: PluginUiPresentationHost = {
+      renderCodeBlock: () => null, renderIcon: () => null, renderMarkdown: () => null, renderPopover: () => null,
+      databaseWorkbench: {
+        activityResource: () => { throw new Error('Statements must not acquire Activity'); },
+        lastLook: () => ({
+          observe: () => ({ comparison: { status: 'available', fromMs: 0, toMs: 1, missingKeys: [], rows: [
+            { key: 'q-slow', calls: '420', totalTimeMs: 17_000, rows: '96600', meanTimeMs: 40.5 },
+          ] }, persistenceError: null }),
+        }),
+      },
+    };
+    const page = await createPluginUiTestkit({
+      identity: { instanceId: 'pushed-statement', mountNonce: 'pushed-statement' },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' },
+      surface: context => <PluginUiHostPresentationScope environment={projectHappierUiEnvironment(context.surface)}
+        presentationHost={presentationHost}>{renderPage(context)}</PluginUiHostPresentationScope>,
+      launchInput: projectNativeJsonValueForTransport({ scope, descriptor }),
+      subPath: 'insights',
+      surfaceContext: { ...pageContext(), accountScope: { serverId: scope.workspace.serverId, accountId: scope.accountId } },
+      // The app's phone host: a details pane host whose pane is not beside the page, so an opened item pushes.
+      adapter: createPluginUiRnwSemanticSurfaceAdapter({ detailsPane: { available: false } }),
+      handlers: {
+        ...resourceHandlers(), replacePageLocation: async ({ subPath }) => subPath,
+        executeAction: daemon(statements),
+      },
+    });
+    const summary = async () => (await page.queryAllByRole('group')).filter(group => group.name?.startsWith('Costliest statement: '));
+    try {
+      await settle();
+      expect(await summary()).toHaveLength(1);
+      await act(async () => { await page.press(await page.getByRole('button', { name: SLOW })); });
+      await settle();
+      expect(await page.getByRole('button', { name: 'Check for index suggestions' })).toBeTruthy();
+      expect(await summary()).toHaveLength(0);
+    } finally { await page.dispose(); }
+  });
+
   it('keeps current statements visible when Last Look cannot compare the samples', async () => {
     const presentationHost: PluginUiPresentationHost = {
       renderCodeBlock: () => null, renderIcon: () => null, renderMarkdown: () => null, renderPopover: () => null,
@@ -392,6 +430,67 @@ describe('Database Insights surfaces', () => {
       await settle();
       expect(activityReads).toHaveBeenCalledTimes(1);
       expect(await page.getByText(`as of ${formatMoment(activityReads.mock.results[0].value.observedAtMs)}`)).toBeTruthy();
+    } finally { await page.dispose(); }
+  });
+
+  it('names who an Activity session holds up in the row itself, not only on a phone’s second line', async () => {
+    const activity = (): DatabaseStatsObservationV1 => ({
+      v: 1, engineId: 'postgresql', observedAtMs: Date.parse('2026-11-17T14:05:00Z'),
+      scope: { database: 'billing_dev' }, intervalBasis: { ...basis, selectionKey: 'activity' },
+      status: 'available', group: 'activity', coverage: { status: 'complete' }, completeness: { complete: true },
+      data: [
+        { key: 'holder', state: 'idle in transaction', shape: 'UPDATE invoices SET status = $1 WHERE id = $2',
+          transactionStartedAt: '2026-11-17T13:58:48Z', blockingKeys: [] },
+        { key: 'waiter', state: 'active', shape: 'UPDATE invoices SET paid_at = now() WHERE id = $1', waitClass: 'Lock',
+          queryStartedAt: '2026-11-17T14:00:20Z', blockingKeys: ['holder'] },
+      ],
+    });
+    const nativeRead = daemon(statements);
+    const activityRead = daemon(activity);
+    const presentationHost: PluginUiPresentationHost = {
+      renderCodeBlock: () => null, renderIcon: () => null, renderMarkdown: () => null, renderPopover: () => null,
+      databaseWorkbench: {
+        useActivityRefreshIntervalMs: () => 0,
+        activityResource: source => {
+          let snapshot = { value: null as Awaited<ReturnType<typeof source.read>> | null, loading: true, error: null };
+          const listeners = new Set<() => void>();
+          return {
+            getSnapshot: () => snapshot,
+            subscribe: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+            refresh: async () => {
+              snapshot = { value: await source.read({ signal: new AbortController().signal }), loading: false, error: null };
+              for (const listener of listeners) listener();
+            },
+            retainAutoRefresh: () => () => {}, invalidate: () => {}, dispose: () => {},
+          };
+        },
+        lastLook: () => ({
+          observe: () => ({ comparison: { status: 'unavailable', reason: 'previous_sample_required' }, persistenceError: null }),
+        }),
+      },
+    };
+    const page = await createPluginUiTestkit({
+      identity: { instanceId: 'activity-holder', mountNonce: 'activity-holder' },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' },
+      surface: context => <PluginUiHostPresentationScope environment={projectHappierUiEnvironment(context.surface)}
+        presentationHost={presentationHost}>{renderPage(context)}</PluginUiHostPresentationScope>,
+      launchInput: projectNativeJsonValueForTransport({ scope, descriptor }),
+      subPath: 'insights',
+      surfaceContext: pageContext(), adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: {
+        ...resourceHandlers(), replacePageLocation: async ({ subPath }) => subPath,
+        executeAction: call => JSON.stringify(call.input).includes('"group":"activity"') ? activityRead(call) : nativeRead(call),
+      },
+    });
+    try {
+      await settle();
+      await page.press(await page.getByRole('tab', { name: 'Activity' }));
+      await settle();
+      await page.press(await page.getByRole('button', { name: 'Refresh' }));
+      await settle();
+      // The table's one-line row carries the statement and the hold; a row named only "Idle in a transaction" hides both.
+      const names = (await page.queryAllByRole('button')).map(target => target.name ?? '');
+      expect(names.some(name => name.startsWith('Idle in a transaction, ') && name.includes('Blocking 1 other'))).toBe(true);
     } finally { await page.dispose(); }
   });
 

@@ -311,26 +311,32 @@ export function ActivityView(props: Readonly<{
         ),
       },
     ];
-    return {
-      glyph: () => null,
-      loadingGlyph: false,
-      title: (view) => stateWord(view.session, translate),
-      byline: (view) =>
-        [
-          (view.session.shape === undefined ? undefined : displayDatabaseStatementShape(view.session.shape))
-            ?? view.session.omittedTextReason ?? null,
-          view.blocking > 0
+    // What the session runs, then who it holds up: the list row's second line, and the rest of the table row's
+    // title line, where a table draws no second line (a blocker never reads as a bare "Idle in a transaction").
+    const line = (view: SessionView): string | null =>
+      [
+        (view.session.shape === undefined ? undefined : displayDatabaseStatementShape(view.session.shape))
+          ?? view.session.omittedTextReason ?? null,
+        view.blocking === 1
+          ? translate('plugins.database.activity.blockingOne', 'Blocking 1 other')
+          : view.blocking > 1
             ? translate(
                 'plugins.database.activity.blocking',
                 'Blocking {n} others',
                 { n: String(view.blocking) },
               )
             : null,
-        ]
-          .filter(Boolean)
-          .join(' · ') || null,
+      ]
+        .filter(Boolean)
+        .join(' · ') || null;
+    return {
+      glyph: () => null,
+      loadingGlyph: false,
+      title: (view) => stateWord(view.session, translate),
+      titleSuffix: line,
+      byline: line,
       fields,
-      accessibilityLabel: (view) => stateWord(view.session, translate),
+      accessibilityLabel: (view) => [stateWord(view.session, translate), line(view)].filter(Boolean).join(', '),
       columnTitles: {
         title: translate('plugins.database.activity.session', 'Session'),
       },

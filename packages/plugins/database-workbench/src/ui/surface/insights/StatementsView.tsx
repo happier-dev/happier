@@ -4,6 +4,7 @@ import {
   CapacityBar,
   Collection,
   useHappierCollection,
+  useHappierCollectionLayout,
   type CollectionAnatomy,
   type CollectionField,
 } from '@happier-dev/plugin-ui/components';
@@ -96,6 +97,7 @@ function SinceLastLook(
     <Row gap="large" wrap>
       <Metric
         size="stat"
+        showLabel
         label={translate('plugins.database.insights.calls', 'Calls')}
         value={
           formatCount(summary.calls.toString()) ?? summary.calls.toString()
@@ -105,6 +107,7 @@ function SinceLastLook(
       {summary.meanMs !== null ? (
         <Metric
           size="stat"
+          showLabel
           label={translate('plugins.database.insights.meanTime', 'Mean time')}
           value={formatDuration(summary.meanMs) ?? ''}
           caption={scope}
@@ -112,6 +115,7 @@ function SinceLastLook(
       ) : null}
       <Metric
         size="stat"
+        showLabel
         label={translate(
           'plugins.database.insights.topShare',
           'Costliest statement',
@@ -131,6 +135,17 @@ function SinceLastLook(
       />
     </Row>
   );
+}
+
+/**
+ * The summary leads the list. Where an opened statement is the page (a phone's push), the statement stands alone:
+ * a list's lead above a pushed detail would stack the two (ui-craft "lists push details").
+ */
+function StatementsLead(
+  props: Readonly<{ views: readonly StatementView[]; complete: boolean }>,
+) {
+  if (useHappierCollectionLayout()?.composition === 'detail') return null;
+  return <SinceLastLook views={props.views} complete={props.complete} />;
 }
 
 /** Total time, then its share of the time shown, as the lab's two-line cell. */
@@ -246,8 +261,8 @@ export function StatementsView(
     : undefined;
   return (
     <Stack gap="large" grow>
-      <SinceLastLook views={props.views} complete={props.complete} />
       <Collection
+        header={<StatementsLead views={props.views} complete={props.complete} />}
         accessibilityLabel={translate(
           'plugins.database.insights.statements',
           'Statements',

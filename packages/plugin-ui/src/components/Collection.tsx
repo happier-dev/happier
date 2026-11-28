@@ -1651,7 +1651,8 @@ const IDENTIFIER_FALLBACK_FONT = Platform.select({ ios: 'Menlo', default: 'monos
 const whereWithControlsStyle: HappierPortableStyle = { flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0, flexShrink: 1 };
 /** A page row grows with its content: controls that don't fit beside the line move beneath it instead of erasing it. */
 const wrappingControlsLineStyle: HappierPortableStyle = { flexWrap: 'wrap', rowGap: 6 };
-const factsNodeFrameStyle: HappierPortableStyle = { flexShrink: 1, minWidth: 0 };
+// The frame takes the line's width, so a node line's own track (a share bar under the facts) spans the row, not its text.
+const factsNodeFrameStyle: HappierPortableStyle = { flexGrow: 1, flexShrink: 1, minWidth: 0 };
 
 /**
  * A row with `titleControls`, a `leadingControl` or a `control` field lies over its press target (`contentBesidePressable`): its content lets presses
@@ -3570,6 +3571,8 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
   // Where the detail is the page (a phone, no pane beside it) the page's toolbar gives way to it, and it leads with
   // the one way back and, given `detailHeader`, the hosted title band: the same header the app pane draws.
   const pushedPage = !pane && composition === 'detail' && detail !== 'none';
+  // The host's pane, pushed over the page (a phone), is the page too: the list's own toolbar gives way to it alike.
+  const panePushed = pane && openKey !== null && !panePlacement.beside;
   const headerHosted = (pane || pushedPage) && (props.detailHeader !== undefined || props.useDetailHeader !== undefined);
   const detailNode = openKey !== null && props.renderDetail !== undefined && detail !== 'none'
     ? <CollectionDetailHeadingFocusContext.Provider value={headerHosted ? null : headingFocus}>
@@ -3708,9 +3711,9 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
     <HappierCollectionLayoutContext.Provider value={layoutState}>
       <View ref={rootRef} testID={props.testID} style={rootStyle} onLayout={pageScroll ? onPageViewportLayout : undefined}>
         {/* A page-sized collection scrolls the page's own header and footer with its items. */}
-        {pageScroll || pushedPage || headerOverList ? null : toolbarHeader}
+        {pageScroll || pushedPage || panePushed || headerOverList ? null : toolbarHeader}
         <PageScroller enabled={pageScroll && !pageVirtualized} viewport={viewport} request={viewportScrollRequest}>
-        {pageScroll && !pushedPage ? toolbarHeader : null}
+        {pageScroll && !pushedPage && !panePushed ? toolbarHeader : null}
         {/* Page sections sit in the page's content column, on the edge of the page header and sections around them. */}
         <PageColumn maxWidthPx={pageColumnMaxWidthPx} fill={!pageScroll}>
         <View ref={stageRef} testID={props.testID === undefined ? undefined : `${props.testID}:stage`} onLayout={onLayout}

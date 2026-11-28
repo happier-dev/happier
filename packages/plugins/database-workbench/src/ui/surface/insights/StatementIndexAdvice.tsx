@@ -52,9 +52,10 @@ export function StatementIndexAdvice({ target, statementKey }: Readonly<{ target
   const checkLabel = t('plugins.database.insights.adviceCheck', 'Check for index suggestions');
   const retryLabel = t('plugins.database.insights.adviceRetry', 'Retry');
   if (execution.status === 'idle' || execution.status === 'pending') {
-    return <Button variant="secondary" size="small"
+    // A button at its own width, like the detail's other actions; the pane never stretches it across.
+    return <Row><Button variant="secondary" size="small"
       title={execution.status === 'pending' ? t('plugins.database.insights.adviceChecking', 'Checking for index suggestions…') : checkLabel}
-      disabled={execution.status === 'pending'} onPress={run} />;
+      disabled={execution.status === 'pending'} onPress={run} /></Row>;
   }
   if (execution.status === 'error' || execution.status === 'outcomeUnknown') {
     return <Action.Failure execution={execution} onRetry={run} retryLabel={retryLabel} />;

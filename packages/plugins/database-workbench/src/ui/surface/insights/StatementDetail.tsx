@@ -48,6 +48,8 @@ export function StatementDetail(
         <CodeBlock
           code={shape}
           language="sql"
+          // A statement is read whole before it is copied or explained, never scrolled sideways.
+          wrap
           copyLabel={translate(
             'plugins.database.insights.copyStatement',
             'Copy statement',
@@ -67,6 +69,7 @@ export function StatementDetail(
         {mean ? (
           <Metric
             size="stat"
+            showLabel
             label={translate('plugins.database.insights.mean', 'Mean')}
             value={mean}
             {...(changedMean
@@ -82,6 +85,7 @@ export function StatementDetail(
         ) : null}
         <Metric
           size="stat"
+          showLabel
           label={translate('plugins.database.insights.calls', 'Calls')}
           value={formatCount(row.calls) ?? row.calls}
           {...(change
@@ -104,6 +108,7 @@ export function StatementDetail(
         {props.view.rowsPerCall !== null ? (
           <Metric
             size="stat"
+            showLabel
             label={translate(
               'plugins.database.insights.rowsPerCall',
               'Rows per call',
@@ -114,6 +119,7 @@ export function StatementDetail(
         {hit !== null ? (
           <Metric
             size="stat"
+            showLabel
             label={translate(
               'plugins.database.insights.memory',
               'Read from memory',

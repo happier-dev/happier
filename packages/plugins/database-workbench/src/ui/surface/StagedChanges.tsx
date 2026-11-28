@@ -68,12 +68,16 @@ function outcomeLine(
         tone: 'success',
       };
     case 'conflict':
+      // Says what happened in words, never the producer's reason code, and how to go on (lab dbEdit/conflict).
       return {
-        text: translate(
-          'plugins.database.apply.conflict',
-          'A row changed since you loaded it: {why}. Your changes are kept.',
-          { why: outcome.why },
-        ),
+        text: outcome.why === 'row_missing'
+          ? translate('plugins.database.apply.conflictRemoved',
+            'Nothing was applied: someone removed a row after you loaded it. Your changes are kept. Take that change back, or reload the table to see it as it is now.')
+          : outcome.why === 'relation_changed'
+            ? translate('plugins.database.apply.conflictRelation',
+              'Nothing was applied: the table changed after you loaded it. Your changes are kept. Reload the table before you apply them.')
+            : translate('plugins.database.apply.conflictChanged',
+              'Nothing was applied: someone changed a row after you loaded it. Your changes are kept. Take that change back, or reload the table to see it as it is now.'),
         tone: 'attention',
       };
     case 'refused':

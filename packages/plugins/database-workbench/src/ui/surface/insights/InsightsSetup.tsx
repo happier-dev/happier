@@ -103,6 +103,8 @@ function EnableStatistics({ target, onRetry }: Readonly<{ target: DatabaseTarget
     <Action.Control
       action={databaseActionLocalIdV1(DATABASE_STATS_ENABLE_ACTION_ID_V1)}
       title={t('plugins.database.insights.setup.enable', 'Enable statistics')}
+      // The one action that resolves this state leads it (lab dbInsights/enable "Turn on").
+      variant="primary"
       disabled={notice?.pending === true}
       controller={{
         prepare: async () => ({ input }),
