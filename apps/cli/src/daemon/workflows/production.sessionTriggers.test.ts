@@ -117,7 +117,9 @@ function admissionHarness(prepareWorkspace: typeof prepareWorkflowAcceptedWorksp
 afterEach(() => vi.restoreAllMocks());
 
 describe('scoped workflow claim admission', () => {
-  it.each([true, false])('seals payload leaves only for the matching admitted plugin Event (%s)', async matching => {
+  it.each([
+    ['full', true], ['full', false], ['occurrence', true], ['occurrence', false],
+  ] as const)('seals %s payload leaves only for the matching admitted plugin Event (%s)', async (shape, matching) => {
     const occurrence = normalizeGithubWebhookDelivery({ rawBody: new TextEncoder().encode(JSON.stringify({
       ref: 'refs/heads/main', before: 'a'.repeat(40), after: 'b'.repeat(40), repository: { id: 77, full_name: 'acme/widgets' },
     })), eventType: 'push', providerDeliveryId: 'event-value-1', receivedAtMs: 1 }).automationEvent!;
@@ -133,7 +135,7 @@ describe('scoped workflow claim admission', () => {
       document: { text: 'Review this repository', references: [], attachments: [] }, result: { kind: 'text' },
       input: [{ kind: 'trigger_event', event: occurrence.eventRef, path: ['repository', 'nameWithOwner'] }] }] };
     const harness = admissionHarness();
-    await expect(harness.coordinate({ ...claim(source), automationEvidenceEnvelope: JSON.stringify({ t: 'plain', v: evidence }),
+    await expect(harness.coordinate({ ...claim(source), automationEvidenceEnvelope: JSON.stringify({ t: 'plain', v: shape === 'full' ? evidence : base }),
       automationCause: { kind: 'trigger', triggerKind: 'pluginEvent', triggerId, triggerRevision: 1,
         occurrenceKey: deriveAutomationOccurrenceKeyV1({ triggerId, evidence: base }), occurredAt: 1,
         evidence: { eventRef: matching ? occurrence.eventRef : { ...occurrence.eventRef, localId: 'another-event' },
@@ -143,6 +145,27 @@ describe('scoped workflow claim admission', () => {
       { event: occurrence.eventRef, path: ['repository', 'nameWithOwner'], value: 'acme/widgets' },
     ] } : {});
     if (!matching) expect(harness.snapshots[0]).toMatchObject({ triggerEventValues: [] });
+  });
+
+  it('carries the admitted exception fingerprint into a saved Workflow snapshot', async () => {
+    const event = { pluginId: 'happier.telemetry', localId: 'issue-transition' };
+    const evidence = { v: 1 as const, kind: 'pluginEvent' as const, eventRef: event,
+      sourceSelectorId: AutomationSourceSelectorIdV1Schema.parse('9d5af559-2c82-4c22-b6a0-ecabce38a631'),
+      occurrenceId: 'exception-transition-1', occurredAt: 42,
+      payload: { phase: 'open', issueFingerprint: 'selected-worktree-fingerprint' } };
+    const triggerId = AutomationTriggerIdSchema.parse('exception-trigger');
+    const source: WorkflowDefinitionV1 = { ...definition, blocks: [{ kind: 'step', id: 'work',
+      document: { text: 'Inspect the exception', references: [], attachments: [] }, result: { kind: 'text' },
+      input: [{ kind: 'trigger_event', event, path: ['issueFingerprint'] }] }] };
+    const harness = admissionHarness();
+    await expect(harness.coordinate({ ...claim(source), automationEvidenceEnvelope: JSON.stringify({ t: 'plain', v: evidence }),
+      automationCause: { kind: 'trigger', triggerKind: 'pluginEvent', triggerId, triggerRevision: 1,
+        occurrenceKey: deriveAutomationOccurrenceKeyV1({ triggerId, evidence }), occurredAt: 42,
+        evidence: { eventRef: event, sourceSelectorId: evidence.sourceSelectorId } },
+    })).rejects.toBe(captured);
+    expect(harness.snapshots[0]).toMatchObject({ triggerEventValues: [
+      { event, path: ['issueFingerprint'], value: 'selected-worktree-fingerprint' },
+    ] });
   });
 
   it('resolves the saved preview source before materializing the stored placeholder', async () => {

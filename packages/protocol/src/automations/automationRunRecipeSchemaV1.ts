@@ -11,6 +11,7 @@ import {
   AutomationConversationOccurrenceEvidenceV1Schema,
   AutomationPluginEventOccurrenceEvidenceV1Schema,
   deriveAutomationOccurrenceKeyV1,
+  type AutomationPluginEventOccurrenceEvidenceV1,
 } from './automationOccurrenceV1.js';
 import {
   AutomationRunCauseSchema,
@@ -830,7 +831,7 @@ function readRecipeContent(params: Readonly<{
 
 export function matchesCauseEvidence(
   cause: AutomationRunCause,
-  triggerEvidence: AutomationRunTriggerEvidenceV1 | null,
+  triggerEvidence: AutomationRunTriggerEvidenceV1 | AutomationPluginEventOccurrenceEvidenceV1 | null,
 ): boolean {
   switch (cause.kind) {
     case 'manual':

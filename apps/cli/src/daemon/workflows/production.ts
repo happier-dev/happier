@@ -15,6 +15,7 @@ import { AutomationStoredContentEnvelopeV1ReadSchema } from '@happier-dev/protoc
 import { AutomationStoredWorkflowDefinitionV2ReadSchema } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
 import { AutomationRunExecutionInputV1Schema, toAutomationRunExecutionInputV1Origin } from '@happier-dev/protocol/automations/automationApiV3';
 import { AutomationRunPluginEventTriggerEvidenceV1Schema, matchesCauseEvidence } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
+import { AutomationPluginEventOccurrenceEvidenceV1Schema } from '@happier-dev/protocol/automations/automationOccurrenceV1';
 import { openAutomationTemplateStoredV1 } from '@happier-dev/protocol/automations/automationTemplateStoredV1';
 import { convertLegacyAutomationRecipeToInlineWorkflowV1 } from '@happier-dev/protocol/automations/automationLegacyWorkflowV1';
 import { WorkflowAcceptedSnapshotV1Schema, WorkflowResolvedInputsV1Schema, type WorkflowDefinitionMetadataV1 } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
@@ -1602,11 +1603,13 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
       const evidenceContent = claim.automationEvidenceEnvelope == null ? null
         : openAutomationStoredContent({ serialized: claim.automationEvidenceEnvelope,
           kind: 'automation_trigger_evidence', encryption: accountEncryption });
-      const pluginEvent = claim.automationCause.kind === 'trigger' && claim.automationCause.triggerKind === 'pluginEvent'
-        ? AutomationRunPluginEventTriggerEvidenceV1Schema.safeParse(evidenceContent) : undefined;
-      const pluginEventOccurrence = pluginEvent?.success && matchesCauseEvidence(claim.automationCause, pluginEvent.data)
-        ? { event: pluginEvent.data.eventRef, payload: pluginEvent.data.payload } : undefined;
-      if (storedDefinition.data.postSummaryToSource === true && pluginEvent?.success && matchesCauseEvidence(claim.automationCause, pluginEvent.data)) {
+      const pluginEvent = AutomationRunPluginEventTriggerEvidenceV1Schema.safeParse(evidenceContent);
+      const occurrence = pluginEvent.success ? pluginEvent : AutomationPluginEventOccurrenceEvidenceV1Schema.safeParse(evidenceContent);
+      const matchesOccurrence = claim.automationCause.kind === 'trigger' && claim.automationCause.triggerKind === 'pluginEvent'
+        && occurrence.success && matchesCauseEvidence(claim.automationCause, occurrence.data);
+      const pluginEventOccurrence = matchesOccurrence && occurrence.success
+        ? { event: occurrence.data.eventRef, payload: occurrence.data.payload } : undefined;
+      if (storedDefinition.data.postSummaryToSource === true && pluginEvent.success && matchesOccurrence) {
         postSummaryRequest = {
           enabled: true,
           occurrence: {
