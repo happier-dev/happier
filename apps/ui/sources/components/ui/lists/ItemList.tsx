@@ -12,8 +12,9 @@ import { PageFrame } from '@/components/ui/layout/PageFrame';
 import { usePageScroller, type PageScrollTarget } from './pageScroller';
 
 
-export interface ItemListProps extends ScrollViewProps {
+export interface ItemListProps extends Omit<ScrollViewProps, 'innerViewRef'> {
     children: React.ReactNode;
+    innerViewRef?: React.RefObject<View | null>;
     style?: StyleProp<ViewStyle>;
     containerStyle?: StyleProp<ViewStyle>;
     /**
@@ -133,7 +134,8 @@ export const ItemList = React.memo(React.forwardRef<ScrollView, ItemListProps>((
             ? scrollViewProps.showsVerticalScrollIndicator
             : true,
         contentInsetAdjustmentBehavior: (isIOS && !isWeb) ? 'automatic' as const : undefined,
-        ...(!isWeb && innerViewRef ? { innerViewRef } : {}),
+        // The native implementation sets this ref to null on detach. Its TypeScript declaration excludes null.
+        ...(!isWeb && innerViewRef ? { innerViewRef: innerViewRef as ScrollViewProps['innerViewRef'] } : {}),
         ...restScrollViewProps,
         ...pageHandlers,
         ...(pageOnWheel ? ({ onWheel: pageOnWheel } as any) : {}),

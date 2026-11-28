@@ -1,7 +1,8 @@
 import axios from 'axios';
 import { describe, expect, it, vi } from 'vitest';
 import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
-import { ExternalActionExecutionAuthorizationV1Schema, projectDeploymentNativeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeV1Schema, projectDeploymentNativeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { readDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
@@ -255,7 +256,7 @@ it('publishes only the maintenance toggle and returns a refused Domain body as a
             async executeOrdinaryChildAction(actionId, raw, options) {
                 expect(actionId).toBe(DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1);
                 const input = DeploymentActionInputSchemasV1[DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1].parse(raw);
-                const envelope = { v: 1 as const, requestId: options?.actionRequestId!, target, input };
+                const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: options?.actionRequestId, target, input });
                 const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'fixture', binding: {
                     serverIdentityId: serverId, accountId, custodianAccountId: accountId,
                     authentication: { kind: 'account', tokenEpoch: 1 }, machineId, installationId: member.installationId,
@@ -267,7 +268,7 @@ it('publishes only the maintenance toggle and returns a refused Domain body as a
                 const output = await controller(DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1, input, {
                     externalActionExecutionAuthorization: authorization, originalActionEnvelope: envelope,
                 });
-                return 'errorCode' in output ? output : { ok: true, result: output };
+                return 'errorCode' in output ? ActionExecuteFailureSchema.parse(output) : { ok: true, result: output };
             },
         });
     expect(published).toEqual([{ ...content, maintenancePage: false }]);

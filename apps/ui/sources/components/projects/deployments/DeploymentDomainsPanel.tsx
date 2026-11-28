@@ -571,7 +571,8 @@ function DomainAddForm(
   const checkDraft = draft();
   const checkPlan = checkDraft && projectDeploymentDomainDraftCheckV1(checkDraft.target.kind,
     needsSelection ? 'cloudflareTunnel' : props.recordedIngress?.kind);
-  const dnsDraft = checkPlan?.kind === 'machineDns' ? checkDraft : null;
+  const dnsDraft = checkPlan?.kind === 'machineDns' && typeof checkDraft?.hostname === 'string'
+    ? { ...checkDraft, hostname: checkDraft.hostname } : null;
   return (
     <InlineAddExpander
       isOpen
@@ -857,7 +858,7 @@ type DnsCheck = Readonly<{ key: string }> & (
  * keystroke). An answer belongs to the exact draft it checked; editing the address shows the question again.
  */
 function DomainDnsCheck(props: Readonly<{
-  content: DeploymentDomainContentV1;
+  content: DeploymentDomainContentV1 & { hostname: string };
   machine: string;
   check: (content: DeploymentDomainContentV1) => Promise<DeploymentDomainDnsPreviewResultV1>;
 }>) {

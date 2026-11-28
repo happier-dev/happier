@@ -11,6 +11,7 @@ import { MachineServiceAccountingV1Schema } from '@happier-dev/protocol';
 import { MachineServiceNativeRuntimeFactsV1Schema } from '@happier-dev/protocol/local/services/nativeRuntimeFactsV1';
 import { projectNativeComposeReview } from '@/workspaces/projectSetup/nativeComposeReview';
 import { PluginError } from '@happier-dev/plugin-sdk';
+import { createDeferred } from '@/testkit/async/deferred';
 import { createNativeComposeLifecycle } from './nativeComposeLifecycle';
 import { openDockerEngineEvents } from './dockerEngineObservation';
 import { createProviderRedactionLease } from '@/providers/spawn/redaction';
@@ -951,7 +952,7 @@ describe('Compose exact native resource lifetime', () => {
     it('follows an admitted container with one push stream and settles when Docker exits', async () => {
         const h = fixture();
         await h.control.lifecycle.inspect();
-        const terminal = Promise.withResolvers<void>();
+        const terminal = createDeferred();
         const results: unknown[] = [];
         const watch = await h.control.lifecycle.logs!({ kind: 'watch', maxBytes: 8_192, emit(result) {
             results.push(result);

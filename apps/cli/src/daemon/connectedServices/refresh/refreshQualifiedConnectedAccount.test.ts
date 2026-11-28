@@ -203,7 +203,7 @@ describe('refreshQualifiedConnectedAccount', () => {
         return Response.json({ token_type: 'Bearer', access_token: 'access-new', refresh_token: 'refresh-new', expires_in: 3600,
           ...(provider === 'boat' ? { scope: 'account.read sandbox.read' } : {}) });
       }
-      const form = new URLSearchParams(await new Response(init?.body).text());
+      const form = new URLSearchParams(await new Request(url, init).text());
       if (provider === 'boat') {
         expect(url).toBe('https://boat.dev/api/boat/oauth2/revoke');
         expect(form.get('token')).toBe('refresh-new');

@@ -28,8 +28,8 @@ import {
 import type { useDeploymentReceipt } from './useDeploymentReads';
 import { GROUPED_SURFACE_RADIUS_PX, PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 
-export type DeploymentServingReceiptValue = NonNullable<
-  ReturnType<typeof useDeploymentReceipt>['snapshot']['value']
+type DeploymentServingReceiptValue = Exclude<
+  ReturnType<typeof useDeploymentReceipt>['snapshot']['value'], null | { content: null }
 >;
 
 /** A way forward the deploy card offers for the deploy it carries (its receipt, Deploy when finished, the cause's fix). */
@@ -212,7 +212,7 @@ function RunTitle(props: Readonly<{ run: DeploymentCardRun; variant: 'heading' |
   const failed = run.kind === 'failed';
   return (
     <View style={styles.runTitle}>
-      <Text variant={props.variant} emphasis={props.variant === 'label' ? 'strong' : undefined} numberOfLines={1}
+      <Text variant={props.variant} emphasis={props.variant === 'label' ? 'semiBold' : undefined} numberOfLines={1}
         style={failed ? styles.failed : styles.primary} testID="project-deployments.environment.run.title">
         {run.title}
       </Text>

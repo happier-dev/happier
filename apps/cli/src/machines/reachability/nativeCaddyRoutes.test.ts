@@ -305,7 +305,7 @@ describe('native Caddy Domain placement owner', () => {
         const hostname = offer.choices[1]!.hostname;
         const native = caddyBoundary();
         const generated: CaddyDomainRouteInput = { ...route, listener: 'public', peerOrigins: [],
-            domain: { ...route.domain, hostname, addressKind: 'generatedCaddy' }, publicTls: { kind: 'managed' } };
+            domain: { ...route.domain, hostname }, publicTls: { kind: 'managed' } };
         expect((await native.owner.activate({ placement, route: generated })).kind).toBe('active');
         expect(native.server.routes).toContainEqual(expect.objectContaining({ match: [expect.objectContaining({ host: [hostname] })] }));
         expect((await native.owner.remove({ placement, route: generated })).kind).toBe('removed');

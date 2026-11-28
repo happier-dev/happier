@@ -54,7 +54,7 @@ function HardeningSetup(props: Target & Readonly<{
     return <MachineArrivalHardeningOffer
         testID={testID}
         description={failure ? presentActionFailureOutcome(failure.failure ?? {
-            ok: false, errorCode: failure.code, error: failure.code,
+            errorCode: failure.code, error: failure.code,
         }).reason ?? t('common.requestFailed') : preset.description}
         failed={failure !== null}
         onReview={review}
