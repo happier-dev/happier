@@ -24,7 +24,7 @@ export type ManagedChildProcess = Readonly<{
   waitForTermination: () => Promise<TerminationEvent>;
 }>;
 
-export function createManagedChildProcess(child: ChildProcess): ManagedChildProcess {
+export function createManagedChildProcess(child: Pick<ChildProcess, 'pid' | 'on' | 'once'>): ManagedChildProcess {
   observeProcessLaunch(child);
   const pid = typeof child.pid === 'number' && Number.isFinite(child.pid) ? child.pid : null;
 

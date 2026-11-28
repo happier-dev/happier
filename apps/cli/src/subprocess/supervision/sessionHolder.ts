@@ -1,6 +1,7 @@
-import { ChildProcess, spawn, type SpawnOptions, type SpawnOptionsWithoutStdio } from 'node:child_process';
+import { spawn, type ChildProcess, type SpawnOptions, type SpawnOptionsWithoutStdio } from 'node:child_process';
 import { isPidPresent } from '@happier-dev/cli-common/process';
 import { createHash, randomBytes } from 'node:crypto';
+import { EventEmitter } from 'node:events';
 import { mkdirSync } from 'node:fs';
 import { connect, type Socket } from 'node:net';
 import { basename, dirname, join } from 'node:path';
@@ -31,7 +32,7 @@ import { setHolderReplayRange, type HolderReplayRange } from './sessionHolderRep
  * stdio pipes and process group, so the Session runner can crash or be replaced
  * without ending the Agent; a later runner attaches to the same holder.
  *
- * `SessionHolderChild` is a `ChildProcess` whose pipes are carried over the
+ * `SessionHolderChild` exposes the child lifecycle and pipes over the
  * holder socket, so the one process supervisor and every protocol client keep
  * their existing contract. `pid` is the Agent's pid (its own process-group
  * leader), so the existing tree terminator ends the Agent exactly as before.
@@ -282,12 +283,12 @@ export function resolveSessionProcessPtyTarget(): SessionProcessPtyTarget | null
 
 /** Native process adapters share Exec's placement decision; the OS spawn is only for unplaced work. */
 export function spawnSessionProcess(command: string, args: readonly string[], options: SpawnOptions & Readonly<{ requiredFiles?: readonly string[]; targetLaunchSignal?: AbortSignal }>,
-    localSpawn: (command: string, args: readonly string[], options: SpawnOptions) => ChildProcess = spawn): ChildProcess {
+    localSpawn: (command: string, args: readonly string[], options: SpawnOptions) => ChildProcess = spawn): ChildProcess | SessionHolderChild {
     return spawnPlacedSessionProcess(command, args, options) ?? localSpawn(command, args, options);
 }
 
 /** The deadline/output owner can retain its local execFile path when placement is absent. */
-export function spawnPlacedSessionProcess(command: string, args: readonly string[], options: SpawnOptions & Readonly<{ requiredFiles?: readonly string[]; targetLaunchSignal?: AbortSignal }>): ChildProcess | null {
+export function spawnPlacedSessionProcess(command: string, args: readonly string[], options: SpawnOptions & Readonly<{ requiredFiles?: readonly string[]; targetLaunchSignal?: AbortSignal }>): SessionHolderChild | null {
     const holder = resolveSessionProcessHolderLaunch();
     if (!holder || holder.kind !== 'spawn') return null;
     const child = spawnSessionHolderChild({ ...holder, command, args,
@@ -306,7 +307,7 @@ export function spawnPlacedSessionProcess(command: string, args: readonly string
 }
 
 /** Session Bash/workspace commands share the admitted holder source's cwd and environment policy. */
-export function spawnPlacedSessionWorkspaceProcess(command: string, args: readonly string[], options: SpawnOptions): ChildProcess | null {
+export function spawnPlacedSessionWorkspaceProcess(command: string, args: readonly string[], options: SpawnOptions): SessionHolderStreamProcess | null {
     const target = resolveSessionProcessPtyTarget();
     if (!target) return null;
     const request = resolveHolderWorkspaceCommand(target.rootPath, {
@@ -449,14 +450,23 @@ function spawnFailureError(ready: Readonly<{ code?: string; kind?: string; errno
  * channel as numbered `O`/`E`/`X` frames and replay under the same ack rule.
  * Shaped like a child process for the workspace source's consumers.
  */
-export class SessionHolderStreamProcess extends ChildProcess {
-    override readonly stdin: Writable;
-    override readonly stdout = new Readable({ read() {} });
-    override readonly stderr = new Readable({ read() {} });
+/**
+ * The holder owns the real OS process. A Node ChildProcess constructor would
+ * allocate a libuv handle that stays rooted because this proxy never spawns it.
+ */
+abstract class HolderProcess extends EventEmitter {
+    pid: number | undefined;
+    exitCode: number | null = null;
+    signalCode: NodeJS.Signals | null = null;
+    readonly killed = false;
+}
+
+export class SessionHolderStreamProcess extends HolderProcess {
+    readonly stdin: Writable;
+    readonly stdout = new Readable({ read() {} });
+    readonly stderr = new Readable({ read() {} });
     declare readonly stdio: [Writable, Readable, Readable, undefined, undefined];
     streamId: number | undefined;
-    override exitCode: number | null = null;
-    override signalCode: NodeJS.Signals | null = null;
     private exited = false;
     private stdoutSink?: Writable;
 
@@ -490,7 +500,7 @@ export class SessionHolderStreamProcess extends ChildProcess {
     }
 
     /** Signals the stream's process group in the target. */
-    override kill(signal: NodeJS.Signals | number = 'SIGTERM'): boolean {
+    kill(signal: NodeJS.Signals | number = 'SIGTERM'): boolean {
         if (this.streamId === undefined || this.exited) return false;
         void this.holder.request({ op: 'kill', stream: this.streamId, signal: holderSignalName(signal) });
         return true;
@@ -589,7 +599,7 @@ type HolderTranscriptCredit = {
     acceptAfterTurn: Array<() => void>;
 };
 
-export class SessionHolderChild extends ChildProcess {
+export class SessionHolderChild extends HolderProcess {
     declare stdin: Writable;
     declare stdout: Readable;
     declare stderr: Readable;
@@ -659,7 +669,7 @@ export class SessionHolderChild extends ChildProcess {
     }
 
     /** Asks the holder to signal the Agent's process group (Windows: the Agent root). */
-    override kill(signal?: NodeJS.Signals | number): boolean {
+    kill(signal?: NodeJS.Signals | number): boolean {
         if (this.exitSeen || !this.socket) return false;
         void this.request({ op: 'signal', signal: holderSignalName(signal) });
         return true;

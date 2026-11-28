@@ -109,9 +109,13 @@ export function bindHostedSessionId(sessionId: string): void {
 }
 
 /** Let the session host answer its daemon's one live-work read for this Session (after a daemon restart). */
-export function bindHostedSessionLiveWork(read: () => Promise<SessionInputLiveWork>): void {
+export function bindHostedSessionLiveWork(read: () => Promise<SessionInputLiveWork>): () => void {
   const scope = hostedSessionScope.getStore();
-  if (scope) scope.readLiveWork = read;
+  if (!scope) return () => {};
+  scope.readLiveWork = read;
+  return () => {
+    if (scope.readLiveWork === read) delete scope.readLiveWork;
+  };
 }
 
 /** Bind the Session's working directory once the runtime has resolved it. */

@@ -453,7 +453,7 @@ export interface AcpBackendOptions {
 export class AcpBackend implements CatalogAcpBackend {
   private listeners: AgentMessageHandler[] = [];
   private dispatchedPromptTurnGeneration: number | null = null;
-  private process: ChildProcess | null = null;
+  private process: ChildProcess | SessionHolderChild | null = null;
   /** The one process supervisor's handle for `process`; Stop goes through it. */
   private supervised: SupervisedPluginProcess | null = null;
   private stderrArtifactPath: string | null = null;

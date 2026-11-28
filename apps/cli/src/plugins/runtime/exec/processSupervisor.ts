@@ -72,8 +72,10 @@ export function readSupervisedPluginProcessIdForHost(
 /** Lease settlement is distinct from proof that every descendant was cleaned. */
 export type SupervisedProcessSettlement = Readonly<{ status: 'ended'; remainder?: 'unobserved' }>;
 
+type SupervisedPluginChild = ChildProcessWithoutNullStreams | SessionHolderChild;
+
 export type SupervisedPluginProcess = Readonly<{
-    child: ChildProcessWithoutNullStreams;
+    child: SupervisedPluginChild;
     handle: PluginProcessHandle;
     readBufferedStderr(): Uint8Array;
     requestTermination(request: Exclude<PluginProcessTerminationRequest, { kind: 'none' }>): Promise<void>;
@@ -148,7 +150,7 @@ type SpawnSupervisedPluginProcessInput = Readonly<{
     maxStdoutBytes?: number;
     maxStderrBytes?: number;
     terminationJoinTimeoutMs?: number;
-    terminateProcessTree?: (child: ChildProcessWithoutNullStreams) => Promise<void>;
+    terminateProcessTree?: (child: SupervisedPluginChild) => Promise<void>;
     /** Let an admitted native activation run its own cleanup before tree settlement. */
     waitForGracefulRootExitBeforeTreeStop?: true;
     /** Native containment facts; present only when the command is the custody helper. */
@@ -252,7 +254,7 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
     const recordRuntimeLimitMeasurement = input.recordRuntimeLimitMeasurement;
     const spawnStartedAt = performance.now();
     const holder = input.sessionHolder === undefined ? resolveSessionProcessHolderLaunch() : input.sessionHolder;
-    const child: ChildProcessWithoutNullStreams = holder?.kind === 'adopt'
+    const child: SupervisedPluginChild = holder?.kind === 'adopt'
         ? 'child' in holder ? holder.child : adoptSessionHolderChild({ socketPath: holder.socketPath, role: holder.role,
             ...('turnId' in holder && holder.turnId ? { turnId: holder.turnId } : {}),
             ...('target' in holder && holder.target ? { target: holder.target } : {}) })
@@ -523,7 +525,7 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
                 return { graceMs, ...(graceMs === 0 ? { firstSignal: 'SIGKILL' as const } : {}) };
             };
             const terminate = input.terminateProcessTree
-                ?? (async (target: ChildProcessWithoutNullStreams) => {
+                ?? (async (target: SupervisedPluginChild) => {
                     // A target-held Agent's pids belong to the target: Stop goes through its holder.
                     if (target instanceof SessionHolderChild && target.target) {
                         await target.terminateGroup(terminationOptions());

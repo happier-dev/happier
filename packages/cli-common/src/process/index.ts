@@ -8,6 +8,7 @@ export { commandExistsOnPath } from './commandExists.js';
 export {
   execFileWithDeadline,
   ExecFileTerminationError,
+  type ExecFileChild,
   type ExecFileWithDeadlineOptions,
   type ExecFileWithDeadlineResult,
 } from './execFileWithDeadline.js';

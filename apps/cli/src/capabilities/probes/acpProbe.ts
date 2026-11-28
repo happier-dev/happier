@@ -1,5 +1,5 @@
 import type { ChildProcess } from 'node:child_process';
-import { spawnSessionProcess } from '@/subprocess/supervision/sessionHolder';
+import { spawnSessionProcess, type SessionHolderChild } from '@/subprocess/supervision/sessionHolder';
 import type { InitializeRequest, InitializeResponse } from '@agentclientprotocol/sdk';
 
 import { logger } from '@/ui/logger';
@@ -71,7 +71,7 @@ export async function probeAcpAgentCapabilities(params: {
 
     const checkedAt = Date.now();
 
-    let child: ChildProcess | null = null;
+    let child: ChildProcess | SessionHolderChild | null = null;
     let connection: AcpClientConnection | null = null;
     let initializeTimeout: ReturnType<typeof setTimeout> | undefined;
     let onAbort: (() => void) | undefined;

@@ -1,9 +1,30 @@
+import { createHook } from 'node:async_hooks';
 import { Duplex, PassThrough } from 'node:stream';
 import { setImmediate } from 'node:timers/promises';
 import { expect, it } from 'vitest';
 
-import { SessionHolderChild } from './sessionHolder';
+import { SessionHolderChild, SessionHolderStreamProcess } from './sessionHolder';
 import { getHolderReplayRange, type HolderReplayRange } from './sessionHolderReplayPosition';
+
+it('creates holder proxies without allocating local process handles', () => {
+    // The holder owns the OS process. Allocating a never-spawned PROCESSWRAP in
+    // the warm host makes its owner and attached Session reachable from V8 roots.
+    let localProcessHandles = 0;
+    const hook = createHook({
+        init(_id, type) {
+            if (type === 'PROCESSWRAP') localProcessHandles += 1;
+        },
+    }).enable();
+    try {
+        const child = new SessionHolderChild('/unused-handle-fixture.sock', 'primary');
+        const stream = new SessionHolderStreamProcess(child);
+        child.detach();
+        stream.observeExit(0, null);
+    } finally {
+        hook.disable();
+    }
+    expect(localProcessHandles).toBe(0);
+});
 
 it('preserves exited stdout for a late transcript consumer and credits only committed bytes', async () => {
     const incoming = new PassThrough();

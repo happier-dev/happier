@@ -27,16 +27,18 @@ export function createCliActionAutomationPortV1(input: HomeBinding & Readonly<{
   const index = readCliActionAutomationIndex(input);
   if (!index) return notEvaluatedActionAutomationPortV1;
   const port = bindWorkflowActionAutomationChecksV1(index, input.checks);
+  const { token, isCredentialCurrent } = input;
+  const credential = { token, isCredentialCurrent };
   const { start, admitOccurrence, hasAfterActions } = port;
   return {
     ...port,
-    select: args => requestCredential.run(input, () => port.select(args)),
-    settle: args => requestCredential.run(input, () => port.settle(args)),
-    ...(start ? { start: (args: Parameters<typeof start>[0]) => requestCredential.run(input, () => start(args)) } : {}),
+    select: args => requestCredential.run(credential, () => port.select(args)),
+    settle: args => requestCredential.run(credential, () => port.settle(args)),
+    ...(start ? { start: (args: Parameters<typeof start>[0]) => requestCredential.run(credential, () => start(args)) } : {}),
     ...(admitOccurrence ? { admitOccurrence: (occurrence: Parameters<typeof admitOccurrence>[0],
-      context: Parameters<typeof admitOccurrence>[1]) => requestCredential.run(input, () => admitOccurrence(occurrence, context)) } : {}),
+      context: Parameters<typeof admitOccurrence>[1]) => requestCredential.run(credential, () => admitOccurrence(occurrence, context)) } : {}),
     ...(hasAfterActions ? { hasAfterActions: (actionIds: readonly string[]) =>
-      requestCredential.run(input, () => hasAfterActions(actionIds)) } : {}),
+      requestCredential.run(credential, () => hasAfterActions(actionIds)) } : {}),
   };
 }
 
@@ -59,15 +61,22 @@ function readCliActionAutomationIndex(input: HomeBinding): HostedIndex['port'] |
     }
     return current.port;
   }
-  const port = createActionAutomationHttpPortV1({ accountId, async readHomeFeatures(signal) {
-    const snapshot = await fetchServerFeaturesSnapshot({ serverUrl: input.serverHttpBaseUrl, signal });
+  const port = createHostedActionAutomationIndex(accountId, input.serverHttpBaseUrl);
+  indexes.set(key, { token: input.token, port });
+  return port;
+}
+
+/** The process-wide index owns Home identity. Caller checks and credentials belong to each request. */
+function createHostedActionAutomationIndex(accountId: string, serverHttpBaseUrl: string): HostedIndex['port'] {
+  return createActionAutomationHttpPortV1({ accountId, async readHomeFeatures(signal) {
+    const snapshot = await fetchServerFeaturesSnapshot({ serverUrl: serverHttpBaseUrl, signal });
     return snapshot.status === 'ready' ? snapshot.features : null;
   }, request: async (path, init) => {
     const credential = requestCredential.getStore();
     if (!credential) throw new Error('Missing Action automation credential binding');
     if (credential.isCredentialCurrent && !await credential.isCredentialCurrent()) throw Object.assign(
       new Error('action_account_scope_changed'), { code: 'action_account_scope_changed' });
-    const response = await axios.request<unknown>({ url: `${normalizeServerHttpBaseUrl(input.serverHttpBaseUrl)}${path}`,
+    const response = await axios.request<unknown>({ url: `${normalizeServerHttpBaseUrl(serverHttpBaseUrl)}${path}`,
       method: init.method, ...(init.body === undefined ? {} : { data: init.body }),
       headers: { Authorization: `Bearer ${credential.token}` }, signal: init.signal, validateStatus: () => true })
       .catch((error: unknown) => {
@@ -85,8 +94,6 @@ function readCliActionAutomationIndex(input: HomeBinding): HostedIndex['port'] |
     }
     return response.data;
   } });
-  indexes.set(key, { token: input.token, port });
-  return port;
 }
 
 /** Existing Account and Machine socket owners deliver structural rows without fetching. */

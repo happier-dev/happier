@@ -2,6 +2,10 @@ import { execFile, spawn, type ChildProcess, type ExecFileOptions, type SpawnOpt
 
 import { closeStdioWhenCommandExits } from './closeStdioWhenCommandExits.js';
 
+/** The process and pipe operations shared by native children and placement adapters. */
+export type ExecFileChild = Pick<ChildProcess,
+  'pid' | 'exitCode' | 'signalCode' | 'killed' | 'kill' | 'once' | 'stdin' | 'stdout' | 'stderr'>;
+
 export type ExecFileWithDeadlineOptions =
   & Readonly<Omit<ExecFileOptions, 'timeout' | 'killSignal'>>
   & Readonly<{
@@ -9,7 +13,7 @@ export type ExecFileWithDeadlineOptions =
     /** Optional wall-clock budget. Omit when caller cancellation owns the lifetime. This boundary owns it; `child_process` is never told about it. */
     timeout?: number;
     /** A containing host may own stronger process containment for cancellation and this boundary's deadline. */
-    terminateOnAbort?: (child: ChildProcess) => Promise<void>;
+    terminateOnAbort?: (child: ExecFileChild) => Promise<void>;
     /** Caller-owned resource ceiling for each UTF-8 output suffix; omitted preserves execFile capture. */
     outputTailMaxBytes?: number;
     /** Incremental stdout consumer; omitting a capture limit retains no output. */
@@ -17,7 +21,7 @@ export type ExecFileWithDeadlineOptions =
     /** Transient bytes delivered only through the child's stdin, followed by EOF. Caller owns clearing. */
     inputBytes?: Uint8Array;
     /** A host-owned placement adapter; null preserves the ordinary local execution path. */
-    spawnChild?: (command: string, args: readonly string[], options: SpawnOptions) => ChildProcess | null;
+    spawnChild?: (command: string, args: readonly string[], options: SpawnOptions) => ExecFileChild | null;
   }>;
 
 export class ExecFileTerminationError extends Error {

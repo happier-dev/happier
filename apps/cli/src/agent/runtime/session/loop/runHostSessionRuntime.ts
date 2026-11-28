@@ -2715,7 +2715,7 @@ async function runHostedSessionRuntime(
     onUnavailable: () => { logger.debug('[HOST RUNTIME] Session live work could not reach daemon'); },
   });
   // A restarted daemon holds no earlier push; its host answers one read with the same facts.
-  bindHostedSessionLiveWork(() => inputConsumer.readLiveWork());
+  const unbindLiveWork = bindHostedSessionLiveWork(() => inputConsumer.readLiveWork());
   let unsubscribeProviderInputReadiness: (() => void) | undefined;
   bindProviderInputReadiness = client => {
     unsubscribeProviderInputReadiness?.();
@@ -2731,6 +2731,7 @@ async function runHostedSessionRuntime(
     if (client.readRpcHandlerAvailability?.(SESSION_RPC_METHODS.SESSION_PROVIDER_INPUT_ADMISSION) === false) publish();
   };
   const unsubscribeSessionLiveWork = () => {
+    unbindLiveWork();
     unsubscribeLiveWork();
     unsubscribeProviderInputReadiness?.();
     bindProviderInputReadiness = null;

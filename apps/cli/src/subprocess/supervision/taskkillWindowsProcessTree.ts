@@ -1,13 +1,11 @@
 import { createRequire } from 'node:module';
-import type { ChildProcess } from 'node:child_process';
-
-import { execFileWithDeadline, windowsSystemToolCommand } from '@happier-dev/cli-common/process';
+import { execFileWithDeadline, windowsSystemToolCommand, type ExecFileChild } from '@happier-dev/cli-common/process';
 import { resolveCliRuntimeAssetPath } from '@/packagedRuntime/assets/resolveCliRuntimeAssetPath';
 
 /** Process-spawn boundary; injected in tests so no real `taskkill` is ever invoked. */
 export type TaskkillExecFile = (command: string, args: readonly string[], options: Readonly<{
   timeout?: number;
-  terminateOnAbort: (child: ChildProcess) => Promise<void>;
+  terminateOnAbort: (child: ExecFileChild) => Promise<void>;
 }>) => Promise<unknown>;
 
 type TaskkillInput = Readonly<{

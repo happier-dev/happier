@@ -237,7 +237,7 @@ function isAdoptState(value: unknown): value is SessionHolderAdoptStateV1 {
  * Session's primary Agent: nothing to keep, nothing to adopt.
  */
 export function createSessionHolderAdoption(input: Readonly<{
-    child: ChildProcess | null | undefined;
+    child: ChildProcess | SessionHolderChild | null | undefined;
     handshake: SessionHolderHandshake;
     /** Delivers an incoming frame the adoption produced (a handshake answer, released output). */
     deliver(frame: Frame): void;

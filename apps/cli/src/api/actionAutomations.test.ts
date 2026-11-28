@@ -1,4 +1,7 @@
 import { randomUUID } from 'node:crypto';
+import { setImmediate } from 'node:timers/promises';
+import { setFlagsFromString } from 'node:v8';
+import { runInNewContext } from 'node:vm';
 import { AxiosError } from 'axios';
 import { afterEach, expect, it, vi } from 'vitest';
 
@@ -122,6 +125,35 @@ it('keeps retained Action consumers on the same Account index when another crede
   expect(await original.select(args)).toMatchObject({ status: 'ready', before: [updated], notices: [] });
   expect(await other.select(args)).toMatchObject({ status: 'ready', before: [updated], notices: [] });
   expect(request).toHaveBeenCalledTimes(1);
+});
+
+it('keeps the Account index usable after the creator’s Session checks are collected', async () => {
+  serveHomeFeatures(false);
+  const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+  const home = { token, serverHttpBaseUrl: 'https://disposable-index-creator.test' };
+  const createSession = () => {
+    const checks = {
+      prepareMatching: createActionAutomationPrivateMatchingV1({ accountId: 'owner',
+        readDefinition: async () => null, openTrigger: async () => { throw new Error('No private rows served'); },
+      }),
+      resolveConsent: async () => ({ current: false as const }),
+      allowConsent: async () => { throw new Error('No shared rows served'); },
+    };
+    createCheckedPort({ ...home, checks });
+    return new WeakRef(checks);
+  };
+  const checks = createSession();
+  // Vitest's fork does not expose GC. Enable it in an isolated VM for this observation.
+  setFlagsFromString('--expose-gc');
+  const collect: () => void = (() => {
+    try { return runInNewContext('gc'); }
+    finally { setFlagsFromString('--no-expose-gc'); }
+  })();
+  await setImmediate();
+  collect();
+  collect();
+  expect(checks.deref()).toBeUndefined();
+  expect(await readCliHasAfterActionAutomationsV1(home, ['machines.command.run'])).toBe(false);
 });
 
 it('keeps each caller credential at the HTTP boundary while sharing ready selections and cursor updates', async () => {

@@ -32,9 +32,11 @@ import { finalizeSessionChildEnvironment } from '@/session/runtime/control/final
 import { buildScopedProcessEnv } from '@/utils/processEnv/buildScopedProcessEnv';
 import { withHostProcessOwnerEnvironment } from '@/processes/ownerTag';
 import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
-import { spawnSessionProcess } from '@/subprocess/supervision/sessionHolder';
+import { spawnSessionProcess, type SessionHolderChild } from '@/subprocess/supervision/sessionHolder';
 import { assertTerminalPreambleTransport } from '@/integrations/terminal/host/errors';
 import { createProcessStdinWriter } from '@/plugins/runtime/exec/processSupervisor';
+
+type TerminalChild = ChildProcess | SessionHolderChild;
 
 type SpawnLike = (
     command: string,
@@ -91,7 +93,7 @@ function assertHostGrantedExecutable(
     }
 }
 
-function bufferChildStderr(child: ChildProcess): () => string {
+function bufferChildStderr(child: TerminalChild): () => string {
     const chunks: string[] = [];
     const stderr = child.stderr;
     if (!stderr) {
@@ -157,8 +159,8 @@ function createAgentCliGrantId(params: Readonly<{
 
 export function createTerminalRuntimeProcessService(deps?: Readonly<{
     spawn?: SpawnLike;
-    createManagedChildProcess?: (child: ChildProcess) => ManagedChildProcess;
-    terminateProcessTree?: (child: ChildProcess, options?: Readonly<{ graceMs?: number }>) => Promise<void>;
+    createManagedChildProcess?: (child: TerminalChild) => ManagedChildProcess;
+    terminateProcessTree?: (child: TerminalChild, options?: Readonly<{ graceMs?: number }>) => Promise<void>;
     verifyExecutableGrant?: TerminalRuntimeExecutableGrantVerifier;
     registerExecutableGrant?: TerminalRuntimeExecutableGrantRegistrar;
     resolveAgentCliLaunch?: TerminalRuntimeAgentCliLaunchResolver;
@@ -236,7 +238,7 @@ export function createTerminalRuntimeProcessService(deps?: Readonly<{
                 cwd: request.cwd, env: childEnvironment,
                 ...(request.requiredFiles?.length ? { requiredFiles: request.requiredFiles } : {}),
             }, signal);
-            let child: ChildProcess;
+            let child: TerminalChild;
             try {
                 assertNotAborted(signal);
                 assertTerminalPreambleTransport(launch.stdinPreamble, request.stdio !== 'inherit');

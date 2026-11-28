@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, writeFile, lstat, symlink, rm } from 'node:fs/promises';
 import * as filesystem from 'node:fs/promises';
 import { createHash } from 'node:crypto';
-import type { ChildProcess } from 'node:child_process';
+import type { ExecFileChild } from '../process/execFileWithDeadline.js';
 import { tmpdir, userInfo } from 'node:os';
 import { dirname, join, sep } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -66,7 +66,7 @@ it.each(['prerequisite', 'command-impact'] as const)('keeps an unimplemented %s 
 it('preserves an unconfirmed native process stop instead of flattening it to cancellation', async () => {
     const controller = new AbortController();
     const refusal = Object.assign(new Error('Native tree termination is unconfirmed'), { code: 'plugin_exec_termination_incomplete' });
-    let child: ChildProcess | undefined;
+    let child: ExecFileChild | undefined;
     const pending = runMachineSetupNativeCommand({ executable: process.execPath,
         args: ['-e', 'setInterval(() => {}, 1000)'], signal: controller.signal }, {
         // Signal delivery/verification is the OS boundary. Keep the real runner.

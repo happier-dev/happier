@@ -104,7 +104,7 @@ describe('execFileWithDeadline', () => {
     let terminatorCalled = false;
     const pending = execFileWithDeadline('/bin/sh', ['-c', 'trap "exit 0" TERM; echo started; while :; do sleep 0.1; done'], {
       timeout: 250,
-      ...(suppliedTerminator ? { terminateOnAbort: async (child: import('node:child_process').ChildProcess) => { terminatorCalled = true; child.kill(); } } : {}),
+      ...(suppliedTerminator ? { terminateOnAbort: async (child) => { terminatorCalled = true; child.kill(); } } : {}),
     });
     await expect(pending).rejects.toMatchObject({ killed: true, stdout: expect.stringContaining('started') });
     expect(terminatorCalled).toBe(suppliedTerminator);
@@ -237,7 +237,7 @@ describe('execFileWithDeadline', () => {
     const pending = execFileWithDeadline(echoCommand, echoArgs, {
       timeout: 200,
       maxBuffer: 1024 * 1024,
-      ...(suppliedTerminator ? { terminateOnAbort: async (child: import('node:child_process').ChildProcess) => { child.kill(); } } : {}),
+      ...(suppliedTerminator ? { terminateOnAbort: async (child) => { child.kill(); } } : {}),
     });
 
     stallEventLoop(1_500);
