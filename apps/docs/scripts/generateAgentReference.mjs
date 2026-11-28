@@ -224,6 +224,19 @@ function resolveTranslationInRange(source, range, dottedKey) {
 
 const IDENTIFIER = /[A-Za-z0-9_$]/;
 
+function skipComment(source, at) {
+  if (source[at] !== '/') return at;
+  if (source[at + 1] === '/') {
+    const newline = source.indexOf('\n', at + 2);
+    return newline === -1 ? source.length : newline + 1;
+  }
+  if (source[at + 1] === '*') {
+    const close = source.indexOf('*/', at + 2);
+    return close === -1 ? source.length : close + 2;
+  }
+  return at;
+}
+
 function endOfString(source, at) {
   const quote = source[at];
   let i = at + 1;
@@ -247,6 +260,10 @@ function endOfBraces(source, at) {
   while (i < source.length) {
     const ch = source[i];
     if (ch === '"' || ch === "'" || ch === '`') { i = endOfString(source, i); continue; }
+    if (ch === '/') {
+      const next = skipComment(source, i);
+      if (next !== i) { i = next; continue; }
+    }
     if (ch === '{') { depth += 1; i += 1; continue; }
     if (ch === '}') { depth -= 1; i += 1; if (depth === 0) return i; continue; }
     i += 1;
@@ -266,15 +283,9 @@ function findPropertyValue(source, from, to, name) {
   let i = from;
   while (i < to) {
     const ch = source[i];
-    if (ch === '/' && source[i + 1] === '/') {
-      const newline = source.indexOf('\n', i);
-      i = newline === -1 ? to : newline + 1;
-      continue;
-    }
-    if (ch === '/' && source[i + 1] === '*') {
-      const close = source.indexOf('*/', i);
-      i = close === -1 ? to : close + 2;
-      continue;
+    if (ch === '/') {
+      const next = skipComment(source, i);
+      if (next !== i) { i = next; continue; }
     }
     if (ch === '"' || ch === "'" || ch === '`') { i = endOfString(source, i); continue; }
     if (ch === '{' || ch === '(' || ch === '[') { depth += 1; i += 1; continue; }
