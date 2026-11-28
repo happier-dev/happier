@@ -681,7 +681,7 @@ const deploymentSettingsTranslations = {
     rolloutRecreateShort: '原地重新啟動',
     rolloutStartFirstShort: '先啟動新副本',
     previewsTitle: '預覽',
-    previewsOn: '為新的拉取請求開啟',
+    previewsOn: "為新的拉取請求開啟。開啟時會略過已開啟的拉取請求。",
     previewsOff: '關閉',
     previewsEnrollmentUnavailable: "已儲存，但新的拉取請求暫時不會取得預覽",
     previewsRunsOn: '執行於',

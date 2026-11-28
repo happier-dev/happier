@@ -19319,6 +19319,8 @@ settingsSession: {
         domainApprovalBody: "在批准之前不会有任何更改。",
         domainChangeFailedTitle: "无法更改域名",
         settingChangeFailedTitle: "无法更改此设置",
+        settingChangeUnconfirmed: "Happier 无法确认是否已保存。请重新加载设置并检查此设置，再次保存。",
+        createOutcomeUnknownDetails: "请求已结束，但 Happier 还未收到 Home 的确认。",
       columnName: "名称",
       columnUsedAt: "使用阶段",
       columnValueFrom: "值来源",

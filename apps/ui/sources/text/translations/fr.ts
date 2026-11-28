@@ -19573,6 +19573,8 @@ settingsSession: {
         domainApprovalBody: "Rien ne change tant que ce n’est pas approuvé.",
         domainChangeFailedTitle: "Impossible de modifier le domaine",
         settingChangeFailedTitle: "Impossible de modifier ce réglage",
+        settingChangeUnconfirmed: "Happier n’a pas pu confirmer l’enregistrement. Recharge les réglages et vérifie ce réglage avant de l’enregistrer à nouveau.",
+        createOutcomeUnknownDetails: "La demande s’est terminée avant que Happier reçoive la confirmation de Home.",
       columnName: "Nom",
       columnUsedAt: "Utilisée à",
       columnValueFrom: "Valeur depuis",

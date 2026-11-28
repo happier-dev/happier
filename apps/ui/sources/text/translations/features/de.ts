@@ -690,7 +690,7 @@ const deploymentSettingsTranslations = {
     rolloutRecreateShort: 'Vor Ort neu starten',
     rolloutStartFirstShort: 'Neue zuerst',
     previewsTitle: 'Vorschauen',
-    previewsOn: 'Für neue Pull Requests an',
+    previewsOn: "Für neue Pull Requests an. Beim Einschalten werden bereits offene Pull Requests übersprungen.",
     previewsOff: 'Aus',
     previewsEnrollmentUnavailable: "Gespeichert, aber neue Pull Requests bekommen noch keine Vorschauen",
     previewsRunsOn: 'Läuft auf',

@@ -694,7 +694,7 @@ const deploymentSettingsTranslations = {
     rolloutRecreateShort: 'Reinicia al lloc',
     rolloutStartFirstShort: 'Primer les noves',
     previewsTitle: 'Previsualitzacions',
-    previewsOn: 'Activades per a noves pull requests',
+    previewsOn: "Activades per a noves pull requests. En activar-les, s’ometen les pull requests que ja estan obertes.",
     previewsOff: 'Desactivades',
     previewsEnrollmentUnavailable: "Desat, però les noves pull requests encara no tindran previsualitzacions",
     previewsRunsOn: 'S’executa a',

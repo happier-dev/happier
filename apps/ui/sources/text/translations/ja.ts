@@ -19613,6 +19613,8 @@ settingsSession: {
         domainApprovalBody: "承認されるまで何も変わりません。",
         domainChangeFailedTitle: "ドメインを変更できませんでした",
         settingChangeFailedTitle: "この設定を変更できませんでした",
+        settingChangeUnconfirmed: "Happier は保存を確認できませんでした。もう一度保存する前に設定を再読み込みし、この項目の状態を確認してください。",
+        createOutcomeUnknownDetails: "Happier が Home から確認を受け取る前に、リクエストが終了しました。",
       columnName: "名前",
       columnUsedAt: "使用時",
       columnValueFrom: "値の取得元",

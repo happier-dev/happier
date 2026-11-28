@@ -690,7 +690,7 @@ const deploymentSettingsTranslations = {
     rolloutRecreateShort: 'Перезапуск на месте',
     rolloutStartFirstShort: 'Сначала новые',
     previewsTitle: 'Превью',
-    previewsOn: 'Включено для новых pull request',
+    previewsOn: "Включено для новых pull request. При включении уже открытые pull request пропускаются.",
     previewsOff: 'Выключено',
     previewsEnrollmentUnavailable: "Сохранено, но новые pull request пока не получат предпросмотры",
     previewsRunsOn: 'Работает на',

@@ -19524,6 +19524,8 @@ settingsSession: {
         domainApprovalBody: "Nic się nie zmieni, dopóki nie zostanie zatwierdzone.",
         domainChangeFailedTitle: "Nie udało się zmienić domeny",
         settingChangeFailedTitle: "Nie udało się zmienić tego ustawienia",
+        settingChangeUnconfirmed: "Happier nie mógł potwierdzić zapisu. Odśwież ustawienia i sprawdź tę opcję przed ponownym zapisaniem.",
+        createOutcomeUnknownDetails: "Żądanie zakończyło się, zanim Happier otrzymał potwierdzenie od Home.",
       columnName: "Nazwa",
       columnUsedAt: "Używana w",
       columnValueFrom: "Wartość z",

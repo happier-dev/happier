@@ -687,7 +687,7 @@ const deploymentSettingsTranslations = {
     rolloutRecreateShort: 'その場で再起動',
     rolloutStartFirstShort: '新しいものを先に',
     previewsTitle: 'プレビュー',
-    previewsOn: '新しいプルリクエストでオン',
+    previewsOn: "新しいプルリクエストでオン。オンにした時点で開いているプルリクエストは対象外です。",
     previewsOff: 'オフ',
     previewsEnrollmentUnavailable: "保存しましたが、新しいプルリクエストにはまだプレビューが作成されません",
     previewsRunsOn: '実行先',

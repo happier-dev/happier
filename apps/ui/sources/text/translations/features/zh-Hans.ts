@@ -680,7 +680,7 @@ const deploymentSettingsTranslations = {
     rolloutRecreateShort: '原地重启',
     rolloutStartFirstShort: '先启动新副本',
     previewsTitle: '预览',
-    previewsOn: '为新的拉取请求开启',
+    previewsOn: "为新的拉取请求开启。开启时会跳过已经打开的拉取请求。",
     previewsOff: '关闭',
     previewsEnrollmentUnavailable: "已保存，但新的拉取请求暂时不会获得预览",
     previewsRunsOn: '运行于',

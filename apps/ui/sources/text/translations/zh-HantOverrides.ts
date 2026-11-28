@@ -14329,6 +14329,8 @@ settingsSession: {
   projects: {
       title: "專案",
         deployments: {
+            settingChangeUnconfirmed: "Happier 無法確認是否已儲存。請重新載入設定並檢查此設定，再次儲存。",
+            createOutcomeUnknownDetails: "要求已結束，但 Happier 尚未收到 Home 的確認。",
             receipt: {
                 homeStorageUnavailable: "此 Home 暫時無法使用。",
                 restoreAmcheckCreateDenied: "備份包含 PostgreSQL 擴充套件 amcheck，而此資料庫的角色無權建立這個擴充套件。請還原到管理員可以安裝 amcheck 的 PostgreSQL 資料庫，或請管理員授予所需權限。",

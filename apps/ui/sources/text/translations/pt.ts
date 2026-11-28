@@ -19805,6 +19805,8 @@ settingsSession: {
         domainApprovalBody: "Nada muda até ser aprovado.",
         domainChangeFailedTitle: "Não foi possível alterar o domínio",
         settingChangeFailedTitle: "Não foi possível alterar esta definição",
+        settingChangeUnconfirmed: "O Happier não conseguiu confirmar a gravação. Recarrega as definições e verifica esta opção antes de voltar a guardá-la.",
+        createOutcomeUnknownDetails: "O pedido terminou antes de o Happier receber a confirmação do Home.",
       columnName: "Nome",
       columnUsedAt: "Usada em",
       columnValueFrom: "Valor de",

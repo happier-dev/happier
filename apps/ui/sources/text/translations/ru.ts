@@ -19653,6 +19653,8 @@ settingsSession: {
         domainApprovalBody: "Ничего не изменится, пока это не одобрят.",
         domainChangeFailedTitle: "Не удалось изменить домен",
         settingChangeFailedTitle: "Не удалось изменить этот параметр",
+        settingChangeUnconfirmed: "Happier не смог подтвердить сохранение. Обновите настройки и проверьте этот параметр, прежде чем сохранять его снова.",
+        createOutcomeUnknownDetails: "Запрос завершился до того, как Happier получил подтверждение от Home.",
       columnName: "Имя",
       columnUsedAt: "Где используется",
       columnValueFrom: "Значение из",

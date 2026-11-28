@@ -692,7 +692,7 @@ const deploymentSettingsTranslations = {
     rolloutRecreateShort: 'Reiniciar en sitio',
     rolloutStartFirstShort: 'Primero las nuevas',
     previewsTitle: 'Vistas previas',
-    previewsOn: 'Activadas para nuevas pull requests',
+    previewsOn: "Activadas para nuevas pull requests. Al activarlas, se omiten las pull requests que ya están abiertas.",
     previewsOff: 'Desactivadas',
     previewsEnrollmentUnavailable: "Guardado, pero las nuevas pull requests aún no tendrán vistas previas",
     previewsRunsOn: 'Se ejecuta en',
