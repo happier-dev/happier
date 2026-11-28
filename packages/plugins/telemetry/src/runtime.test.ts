@@ -4,10 +4,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import protobuf from 'protobufjs';
 import { createPostgresqlObservationNormalizer } from '@happier-dev/databases/postgresql';
+import { createCanonicalJsonSigningInput, type PluginWorktreeDatabaseMemberV1 } from '@happier-dev/plugin-sdk';
+import { projectAutomationDatabaseFindingSubjectV1 } from '@happier-dev/plugin-sdk/events';
 import { otlpSchema } from './otlp/schema.js';
 import { createCaptureRuntime } from './runtime.js';
 import { captureMigrations } from './store/capture.js';
 import { createCaptureSqliteFixture } from './testing/sqlite.js';
+import { createDatabaseFindingPublisher, selectWorktreeFindingSubjects } from './telemetry/databaseFindings.js';
 
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -15,6 +18,15 @@ const partition = 'account/machine/project/worktree';
 const traceId = '1234567890abcdef1234567890abcdef';
 const spanId = '1234567890abcdef';
 const sql = "SELECT name FROM users WHERE password = 'private-password'";
+const worktreeSourceScope = { serverId: 'home', machineId: 'machine' };
+const worktreeSource = { kind: 'worktree', ...worktreeSourceScope, projectId: 'project', workspaceId: 'worktree' } as const;
+const worktreeDatabaseMember = { kind: 'worktree', accountId: 'account', installationId: 'install', projectKey: 'project',
+    workspace: { ...worktreeSourceScope, workspaceId: 'worktree', rootPath: '/worktree' },
+    source: { kind: 'service', serviceId: 'api', variable: 'DATABASE_URL' },
+} satisfies PluginWorktreeDatabaseMemberV1;
+const worktreeDatabaseMemberKey = createCanonicalJsonSigningInput(worktreeDatabaseMember);
+const worktreeFindingSubjects = new Map([[worktreeDatabaseMemberKey,
+    projectAutomationDatabaseFindingSubjectV1(worktreeSource.serverId, worktreeDatabaseMember)]]);
 function traceRequest(id = spanId) {
     return { resourceSpans: [{ resource: { attributes: [
         { key: 'service.version', value: { stringValue: 'build-123' } },
@@ -275,6 +287,76 @@ describe('capture runtime through real HTTP and SQLite', () => {
             ]);
         } finally {
             await receiver.release();
+            await f.runtime.ingest.settled();
+            f.close();
+        }
+    });
+
+    it('keeps a wire observation while projecting an unrelated Worktree trace', async () => {
+        const f = await fixture();
+        const publisher = createDatabaseFindingPublisher(f.runtime, {
+            signal: new AbortController().signal,
+            services: { events: { plugin: {
+                async emit() { throw new Error('A single request without SQL is not a database finding'); },
+                subscribe() { throw new Error('Finding publication does not subscribe'); },
+            } } },
+        });
+        try {
+            await f.runtime.ingest.exclusive(() => f.runtime.ingest.write([{
+                kind: 'span', id: 'checkout', source: 'otlp', at: 1,
+                worktree: partition, traceId, spanId, spanKind: 2, endpointRoute: '/checkout',
+            }]));
+            const projection = publisher({ source: worktreeSource, sourceScope: worktreeSourceScope, partition, traceIds: [traceId],
+                selectSubjects: trace => selectWorktreeFindingSubjects(trace, worktreeFindingSubjects),
+            });
+            f.runtime.observeWire({ id: 'wire-transaction', kind: 'transaction', connectionId: 'wire', startedAt: 2,
+                durationMs: 1, outcome: 'commit', executionIds: [],
+            }, { partition });
+            await projection;
+            await f.runtime.ingest.settled();
+            expect(await f.runtime.store.list({ worktree: partition, kind: 'transaction', limit: 10 }))
+                .toEqual([expect.objectContaining({ id: 'wire-transaction', source: 'wire' })]);
+        } finally {
+            await f.runtime.ingest.settled();
+            f.close();
+        }
+    });
+
+    it.each([false, true])('admits a projected Worktree finding only from retained evidence (cleared = %s)', async cleared => {
+        const f = await fixture();
+        const events: unknown[] = [];
+        const publisher = createDatabaseFindingPublisher(f.runtime, {
+            signal: new AbortController().signal,
+            services: { events: { plugin: {
+                async emit(_localId, payload) {
+                    events.push(payload);
+                    return { status: 'admitted', sequence: events.length, subscriberCount: 1 };
+                },
+                subscribe() { throw new Error('Finding publication does not subscribe'); },
+            } } },
+        });
+        try {
+            await f.runtime.ingest.exclusive(() => f.runtime.ingest.write([{
+                kind: 'span', id: 'orders', source: 'otlp', at: 1,
+                worktree: partition, traceId, spanId, spanKind: 2, endpointRoute: '/orders',
+            }, ...[1, 2].map(index => ({
+                kind: 'query' as const, id: `wire-${index}`, source: 'wire' as const, at: index + 1,
+                worktree: partition, traceId, spanId: `1234567890abcde${index}`, parentSpanId: spanId,
+                executionIdentity: `execution-${index}`, databaseMemberKey: worktreeDatabaseMemberKey,
+                shape: 'SELECT ?', statementKind: 'select' as const, parameterIdentity: `parameter-${index}`,
+            }))]));
+            await publisher({ source: worktreeSource, sourceScope: worktreeSourceScope, partition, traceIds: [traceId],
+                async selectSubjects(trace) {
+                    const selected = selectWorktreeFindingSubjects(trace, worktreeFindingSubjects);
+                    expect(selected.size).toBe(1);
+                    if (cleared) await f.runtime.clear(partition);
+                    return selected;
+                },
+            });
+            expect(events).toEqual(cleared ? [] : [
+                expect.objectContaining({ observation: expect.objectContaining({ kind: 'suspected_n_plus_one' }) }),
+            ]);
+        } finally {
             await f.runtime.ingest.settled();
             f.close();
         }

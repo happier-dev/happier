@@ -34,27 +34,40 @@ export function createDatabaseFindingPublisher(runtime: CaptureRuntime, context:
     }>): Promise<void> => {
         const { source, sourceScope, partition, isCurrent } = input;
         const observationReceivedAt = Date.now();
+        const stillActive = () => !context.signal.aborted && isCurrent?.() !== false;
+        async function project(traceId: string) {
+            const result: { finding: CapturedDatabaseFindingV1; evidenceIds: readonly string[] }[] = [];
+            if (!stillActive()) return result;
+            const pageSize = PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1.maximumResultRows;
+            const trace = await reader.trace({ worktree: partition, traceId, pageSize,
+                includeWorktreeRepetitions: source.kind === 'worktree' });
+            const selected = await input.selectSubjects(trace);
+            if (!selected.size) return result;
+            projectCaptureFindings({ source, sourceScope, pageSize, coverage: runtime.ingest.coverage(partition) },
+                trace.summaries, [...selected.keys()], (finding, repetition) => {
+                    const subject = selected.get(repetition);
+                    if (!subject) return;
+                    const { v, sourceRef, evidenceIdentity, observedWindow, coverage, summary } = finding;
+                    result.push({ evidenceIds: repetition.observationIds,
+                        finding: { subject, observationReceivedAt, observedDelta: 1,
+                            observation: { v, sourceRef, sourceScope, evidenceIdentity, kind: repetition.kind, observedWindow, coverage, summary } } });
+                });
+            return result;
+        }
         for (const traceId of input.traceIds) {
+            // Wire capture drops observations while the writer is busy. Worktree analysis
+            // only needs that writer to order genuine findings with Capture Clear.
+            const worktreeFindings = source.kind === 'worktree' ? await project(traceId) : undefined;
+            if (worktreeFindings?.length === 0) continue;
             await runtime.ingest.exclusive(async () => {
-                if (context.signal.aborted || isCurrent?.() === false) return;
-                const pageSize = PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1.maximumResultRows;
-                const trace = await reader.trace({ worktree: partition, traceId, pageSize,
-                    includeWorktreeRepetitions: source.kind === 'worktree' });
-                const selected = await input.selectSubjects(trace);
-                if (!selected.size) return;
-                const result: CapturedDatabaseFindingV1[] = [];
-                projectCaptureFindings({ source, sourceScope, pageSize, coverage: runtime.ingest.coverage(partition) },
-                    trace.summaries, [...selected.keys()], (finding, repetition) => {
-                        const subject = selected.get(repetition);
-                        if (!subject) return;
-                        const { v, sourceRef, evidenceIdentity, observedWindow, coverage, summary } = finding;
-                        result.push({ subject, observationReceivedAt, observedDelta: 1,
-                            observation: { v, sourceRef, sourceScope, evidenceIdentity, kind: repetition.kind, observedWindow, coverage, summary } });
-                    });
-                if (context.signal.aborted || isCurrent?.() === false) return;
-                // Local broker admission is ordered with Capture Clear. The broker delivers to its subscribers independently.
-                for (const observation of result) {
-                    await context.services.events.plugin.emit(CAPTURED_DATABASE_FINDING_EVENT_REF_V1.localId, observation);
+                const projected = worktreeFindings ?? await project(traceId);
+                if (!projected.length || !stillActive()) return;
+                // Clear may have run during the Worktree scan. Only the exact wire evidence can admit the Event.
+                const retained = worktreeFindings && await runtime.store.traceWorktreeMemberKeys(partition, traceId);
+                if (!stillActive()) return;
+                for (const { finding, evidenceIds } of projected) {
+                    if (retained && !evidenceIds.every(id => retained.has(id))) continue;
+                    await context.services.events.plugin.emit(CAPTURED_DATABASE_FINDING_EVENT_REF_V1.localId, finding);
                 }
             });
         }

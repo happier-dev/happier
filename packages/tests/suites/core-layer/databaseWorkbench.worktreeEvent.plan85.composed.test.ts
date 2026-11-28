@@ -263,6 +263,7 @@ it('publishes one owner Worktree finding and keeps guest findings in Capture', a
         return traces.ok && traces.items.some(row => row.endpointRoute === '/checkout');
       }, { context: 'F7 baseline SDK request committed before the paired control' });
       const requesting = fetch(new URL('/orders?paceCapture=1', endpoint));
+      void requesting.catch(() => {});
       for (const expected of [1, 2, 3]) {
         await waitFor(async () => {
           const queries = DatabaseCaptureQueriesListResultV1Schema.parse(await capture(DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1,
@@ -358,6 +359,7 @@ it('publishes one owner Worktree finding and keeps guest findings in Capture', a
         const baseline = await fetch(new URL('/flush', appEndpoint));
         expect(baseline.ok).toBe(true);
         const collecting = fetch(new URL('/orders?paceCapture=1', appEndpoint));
+        void collecting.catch(() => {});
         for (const count of [1, 2, 3]) {
           await waitFor(async () => {
             const result = DatabaseCaptureQueriesListResultV1Schema.parse(await capture(DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1,
