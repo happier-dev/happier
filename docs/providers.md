@@ -2658,10 +2658,14 @@ For a brokered Team model, pass the current entitled catalog row's
 `team_resource` ref to this operand. This applies to both detached and
 Session-owned Runs.
 
-In 0.3 development, a detached Workflow Run on a shared Machine uses the
-Account that started the Workflow to read the Team Provider catalog, open the
-broker, or acquire Direct material from its Home. A guest Session uses its own
-admitted Account and Home for the same requests.
+In 0.3 development, signed Action admission allows a person with Machine Use
+to start their own detached Run on a shared Machine. Direct Run starts and
+Workflow starts use the requester's Account and Home to read the Team Provider
+catalog, open the broker, or acquire Direct material. A guest Session uses its
+own admitted Account and Home for the same requests.
+
+For a detached Workflow step using a Team model, put the Team in the step's
+`modelSelection.ref.teamId`. Use `primaryTeamId` only for Session launch placement.
 If the recipient catalog returns no row for an exact Team Provider offer, the
 Session or Run reports `access_removed` before opening credential material.
 A detached Workflow's failed invocation carries that same reason in

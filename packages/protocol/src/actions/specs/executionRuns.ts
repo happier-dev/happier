@@ -350,6 +350,7 @@ function createExecutionRunActionSpecs(): ExecutionRunActionSpecs {
   return Object.freeze([
   {
     id: 'execution.run.start', executionPlacement: 'machine', approval: {result: 'optional',flow: 'deferred'},
+    originalExecution: { machineAdmission: 'requester_own_work' },
     approvalPresentation: { teamCredentialSources: selectTeamCredentialSourcesForApproval },
     machineRuntimeDemandForInput: resolveExecutionRunMachineRuntimeDemand,
     title: 'Start execution run',

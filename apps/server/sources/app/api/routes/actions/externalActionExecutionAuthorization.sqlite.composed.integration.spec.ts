@@ -2326,6 +2326,74 @@ describe("external Action execution authorization", () => {
         };
     }
 
+    it.each(['execution.run.start', 'workflow.run.start'] as const)(
+        'issues a signed %s root for a Team Machine Use guest selecting a brokered model', async actionId => {
+            const fixture = await createFixture({ qualifiedPat: false });
+            const guest = await db.account.create({ data: { encryptionMode: 'plain' } });
+            const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
+            await db.teamMembership.create({ data: { teamId: fixture.team.id, accountId: guest.id, role: 'member' } });
+            await db.machine.update({ where: { id: fixture.machine.id }, data: {
+                active: true, operationProtocolCapabilitiesRevision: 1,
+                operationProtocolCapabilities: { requesterExecutionIsolation: { protocolVersions: [1] } },
+            } });
+            expect(await inTx(tx => setEligibleMachineAccessGrantInTx(tx, {
+                actorAccountId: fixture.account.id, machineId: fixture.machine.id,
+                principal: { kind: 'team', teamId: fixture.team.id }, level: 'view',
+            }))).toMatchObject({ kind: 'saved' });
+
+            // Cut 58's detached Start selects the exact brokered offer, with no Session or modelSelection.
+            // Home issues Machine custody here. The broker authorizes this reference at credential open.
+            const start = getActionSpec('execution.run.start').inputSchema.parse({
+                sessionId: null, intent: 'delegate', backendTarget: { kind: 'backend', backendId: 'claude' },
+                cwd: '/workspace', instructions: 'Return the fixture marker.', permissionMode: 'default',
+                retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response',
+                primaryTeamId: fixture.team.id, teamCredentialModel: {
+                    kind: 'team_credential_provider_model', teamId: fixture.team.id, resourceId: crypto.randomUUID(),
+                    expectedResourceRevision: 0, agentTargetKey: 'agent:happier.agent.claude/claude',
+                    modelId: 'fixture-brokered-model', deliveryMode: 'brokered',
+                },
+            });
+            const input = actionId === 'execution.run.start' ? start : getActionSpec('workflow.run.start').inputSchema.parse({
+                runId: crypto.randomUUID(), source: { kind: 'inline', definition: { version: 1, defaults: {}, inputs: [],
+                    blocks: [{ kind: 'action', id: 'start-detached', actionId: 'execution.run.start',
+                        input: Object.fromEntries(Object.entries(start).map(([key, value]) => [key, { kind: 'literal', value }])) }],
+                } },
+            });
+            const { app } = await createApp(fixture.team.id);
+            const post = async (accountId: string, action: string, args: unknown) => {
+                const token = await auth.createToken(accountId, undefined, { kind: 'account', authority: 'present_user' });
+                return app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(action),
+                    headers: { authorization: `Bearer ${token}` },
+                    payload: { v: 1, machineId: fixture.machine.id, envelope: {
+                        ...fixture.envelope, requestId: crypto.randomUUID(), input: args,
+                    } } });
+            };
+            try {
+                const owner = await post(fixture.account.id, actionId, input);
+                expect(owner.statusCode, 'custodian control').toBe(200);
+                const session = await post(guest.id, 'session.spawn_new', {
+                    directory: { kind: 'path', path: '/workspace' },
+                    agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+                });
+                expect(session.statusCode, 'guest Session admission control').toBe(200);
+
+                const denied = await post(outsider.id, actionId, input);
+                expect(denied.statusCode).toBe(409);
+                expect(denied.json()).toMatchObject({ code: 'target_unavailable' });
+
+                const admitted = await post(guest.id, actionId, input);
+                expect(admitted.statusCode, admitted.statusCode === 200 ? undefined : admitted.body).toBe(200);
+                expect(ExternalActionExecutionAuthorizationV1Schema.parse(admitted.json()).binding).toMatchObject({
+                    actionId, accountId: guest.id, custodianAccountId: fixture.account.id, admittedMachineRole: 'use',
+                    machineId: fixture.machine.id, installationId: fixture.machine.installationId,
+                });
+                if (actionId === 'execution.run.start') {
+                    expect(await resolveMachineAdmission({ actorAccountId: guest.id, machineId: fixture.machine.id,
+                        rpcMethod: SESSION_RPC_METHODS.EXECUTION_RUN_START })).toMatchObject({ kind: 'denied', code: 'custodian_only' });
+                }
+            } finally { await app.close(); }
+        });
+
     it('admits Review start for a Team member with Machine Use and refuses an ungranted Account', async () => {
         const { ReviewStartInputSchema } = await import('@happier-dev/protocol/reviews/reviewStart');
         const fixture = await createFixture({ qualifiedPat: false });
