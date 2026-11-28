@@ -4,6 +4,7 @@ import {
   resolvePlaywrightUiHtmlReportDir,
   resolvePlaywrightUiTestResultsDir,
 } from './scripts/playwrightUiArtifacts.shared.mjs';
+import { fileURLToPath } from 'node:url';
 
 const outputDir = resolvePlaywrightUiTestResultsDir(process.env);
 const htmlReportDir = resolvePlaywrightUiHtmlReportDir(process.env);
@@ -54,7 +55,13 @@ export default defineConfig({
   retries: process.env.CI ? 1 : 0,
   workers: 1,
   reporter: process.env.CI
-    ? [['list'], ['html', { open: 'never', outputFolder: htmlReportDir }]]
+    ? [
+        ['list'],
+        ['html', { open: 'never', outputFolder: htmlReportDir }],
+        ...(process.env.GITHUB_STEP_SUMMARY
+          ? [[fileURLToPath(new URL('./scripts/playwrightCiFlakeSummary.mjs', import.meta.url))]]
+          : []),
+      ]
     : [['list'], ['html', { outputFolder: htmlReportDir }]],
   outputDir,
   use: {
