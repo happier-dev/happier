@@ -1458,8 +1458,6 @@ const enSettingsKeyboard = {
   entrySubtitle: 'Change the keys that run app commands, or turn them off.',
   generalGroupTitle: 'Shortcuts',
   generalGroupFooter: 'Your shortcuts follow your account to every device.',
-  enableShortcutsTitle: 'Unified shortcuts',
-  enableShortcutsSubtitle: 'Composer send keys follow the commands below.',
   singleKeyTitle: 'Single-key shortcuts',
   singleKeySubtitle: 'Keys such as ? work when you are not typing.',
   conflictsTitle: ({ count }: { count: number }) =>
@@ -8788,8 +8786,6 @@ const enSettingsFeatures = {
   historyScopePerSessionOption: 'Per session',
   historyScopeGlobalOption: 'Global',
   commandPalette: 'Search',
-  commandPaletteEnabled: 'Use shortcut to open',
-  commandPaletteDisabled: 'Quick command access disabled',
   hideInactiveSessions: 'Hide inactive sessions',
   hideInactiveSessionsSubtitle: 'Show only active chats in your list',
   hiddenInactiveSessionsEmptyStateTitle: 'No active sessions right now',

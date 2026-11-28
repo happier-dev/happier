@@ -10,7 +10,7 @@ export async function openCatalogAction(params: Readonly<{
     spec: ActionSpec;
     context: SessionBoundActionToolContext;
     pickerContext?: InputTypePickerHostContext;
-    execute: (input: Readonly<Record<string, unknown>>) => Promise<ActionExecuteResult>;
+    execute: (input: unknown) => Promise<ActionExecuteResult>;
 }>): Promise<void> {
     const input = buildActionDraftInput({ actionId: params.spec.id, context: params.context });
     const parsed = params.spec.inputSchema.safeParse(input);
