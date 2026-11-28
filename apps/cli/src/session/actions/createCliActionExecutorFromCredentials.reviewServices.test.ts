@@ -14,8 +14,84 @@ import { createPluginActionCallerMaterializationFixture } from '@/plugins/runtim
 import { createManagedPluginSourceCustody } from '@/plugins/runtime/lifecycle/contributions/runtimeIdentity.testkit';
 import { ApiTokenGrantV1Schema } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { resolveSessionRoleRpcOrigin } from './sessionRoleRpcOrigin';
+import { ReviewCommentV1Schema } from '@happier-dev/protocol/reviews/comments/v1';
+import { sealReviewCommentSensitiveEnvelopeV1, splitReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/content';
+import { REVIEW_COMMENT_PRINCIPAL_HEADER_V1, ReviewCommentPrincipalHeaderV1Schema } from '@happier-dev/protocol/reviews/comments/actions';
+import { buildWorkflowActionContext } from '@/daemon/workflows/workflowActionContext';
+import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+it('lets an own-requester detached Workflow verifier read and dismiss a durable finding while refusing a guest', () =>
+  withConfiguredDaemonTestHome({ prefix: 'detached-verifier-custody-', machineId: 'machine' }, async () => {
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+    const executor = createCliActionExecutor({ token, credentials: { token, encryption: null },
+        sessionId: '', mode: 'plain', ctx: null, serverId: 'home', serverHttpBaseUrl: 'https://home.example.test',
+        pluginActionExecutionOwner: 'current_process', actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({
+            v: 1, approvalWaivedSurfaces: { 'reviews.comments.transition': ['agent'] },
+        }) } });
+    const runId = '8efb5a70-5620-4ba4-982c-165e54f52dc1';
+    const requestId = `${runId}/b6ce47df-7e70-4d23-9b66-7c6af1c1e810/0`;
+    const verifier = (accountId: string) => {
+        const callerInputAuthorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-verified-review', binding: {
+            accountId, custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 },
+            serverIdentityId: 'srv_home', machineId: 'machine', installationId: 'installation', actionId: 'review.start',
+            requestId, workflowActionOrigin: { runId, requestId }, target: { kind: 'machine', machineId: 'machine' },
+            accountEncryptionMode: 'plain', admittedMachineRole: 'manage', requestEnvelopeDigest: 'a'.repeat(43),
+        } });
+        return { ...buildWorkflowActionContext({ runId, authorization: { principal: { kind: 'host' },
+            admittedPermissionCeiling: 'read-only' } }, { accountId, serverId: 'home', machineId: 'machine', installationId: 'installation' }),
+            callerInputAuthorization };
+    };
+    let finding = ReviewCommentV1Schema.parse({ v: 1, id: 'finding', accountId: 'owner', projectId: 'project',
+        anchor: { kind: 'file', filePath: 'example.ts' }, snapshot: { kind: 'none', capturedAt: 1 }, body: 'Verify this finding.',
+        bodyVersion: 1, edits: [], author: { kind: 'workflow', runId }, state: 'proposed', flags: {}, dispositions: {},
+        threadId: 'finding', transitions: [], createdAt: 1, updatedAt: 1, serverRevision: 1 });
+    const expectWorkflowPrincipal = (header: unknown, method: 'GET' | 'POST', path: string) => {
+        expect(typeof header).toBe('string');
+        const principal = ReviewCommentPrincipalHeaderV1Schema.parse(JSON.parse(Buffer.from(String(header), 'base64url').toString()));
+        expect(principal).toMatchObject({ actor: { kind: 'workflow', runId }, proof: { machineId: 'machine', method, path } });
+    };
+    const get = vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
+        expect(config?.headers?.Authorization).toBe(`Bearer ${token}`);
+        if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+        expect(url).toBe('https://home.example.test/v1/reviews/comments');
+        const principal = config?.headers?.[REVIEW_COMMENT_PRINCIPAL_HEADER_V1];
+        if (principal) expectWorkflowPrincipal(principal, 'GET', '/v1/reviews/comments');
+        const { structural, sensitive } = splitReviewCommentV1(finding);
+        return { status: 200, data: { items: [{ v: 1, structural,
+            sensitiveEnvelope: sealReviewCommentSensitiveEnvelopeV1({ structural, sensitive, mode: 'plain' }) }], cursor: null } };
+    });
+    const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body, config) => {
+        expect(config?.headers?.Authorization).toBe(`Bearer ${token}`);
+        expect(url).toBe('https://home.example.test/v1/reviews/comments/finding/transition');
+        expectWorkflowPrincipal(config?.headers?.[REVIEW_COMMENT_PRINCIPAL_HEADER_V1], 'POST', '/v1/reviews/comments/finding/transition');
+        expect(body).toMatchObject({ projectId: finding.projectId, expectedState: finding.state,
+            expectedServerRevision: finding.serverRevision, toState: 'dismissed', clientMutationId: 'verify-finding' });
+        finding = { ...finding, state: 'dismissed', serverRevision: 2 };
+        return { status: 200, data: { comment: finding } };
+    });
+    const scope = { projectId: 'project' };
+    const installedControl = { surface: 'cli' as const, authority: 'present_user' as const };
+    await expect(executor.execute('reviews.comments.list', scope, installedControl))
+        .resolves.toMatchObject({ ok: true, result: { items: [{ id: 'finding', state: 'proposed' }] } });
+    const guest = verifier('guest');
+    get.mockClear();
+    const verdict = { ...scope, commentId: 'finding', expectedState: 'proposed', expectedServerRevision: 1,
+        toState: 'dismissed', reason: 'The finding does not apply to the captured change.', clientMutationId: 'verify-finding' };
+    for (const [actionId, input] of [['reviews.comments.list', scope], ['reviews.comments.transition', verdict]] as const) {
+        await expect(executor.execute(actionId, input, guest)).resolves.toMatchObject({ ok: false, errorCode: 'review_comment_account_custody_denied' });
+    }
+    expect(get).not.toHaveBeenCalled();
+    expect(post).not.toHaveBeenCalled();
+    const own = verifier('owner');
+    const before = await executor.execute('reviews.comments.list', scope, own);
+    expect(before, JSON.stringify(before)).toMatchObject({ ok: true, result: { items: [{ id: 'finding', state: 'proposed' }] } });
+    const after = await executor.execute('reviews.comments.transition', verdict, own);
+    expect(after, JSON.stringify(after)).toMatchObject({ ok: true, result: { comment: { id: 'finding', state: 'dismissed', serverRevision: 2 } } });
+    await expect(executor.execute('reviews.comments.list', { ...scope, includeHistory: true }, installedControl))
+        .resolves.toMatchObject({ ok: true, result: { items: [{ id: 'finding', state: 'dismissed', serverRevision: 2 }] } });
+  }));
 
 it.each([
     { name: 'original own Account', accountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 }, allowed: true },

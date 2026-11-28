@@ -21,13 +21,15 @@ it('retains independent API credential and caller scope alongside original own A
   const workflowAuthorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'verified-home-workflow',
     binding: { ...binding, authentication: { kind: 'account', tokenEpoch: 1 },
       workflowActionOrigin: { runId: 'workflow', requestId: 'request' } } });
+  const workflowContext = { ...context, externalActionExecutionAuthorization: workflowAuthorization };
   for (const canUseAccount of [canUseLocalRuntimeAccount, canUseLocalRuntimeReviewAccount]) {
     expect(await canUseAccount(context, 'owner', 'home')).toBe(true);
     expect(await canUseAccount({ ...context, externalActionCredential: credential }, 'owner', 'home')).toBe(false);
     expect(await canUseAccount({ ...context, callerInputAuthorization:
       ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'verified-home-caller', binding: { ...binding, ...credential } }),
     }, 'owner', 'home')).toBe(false);
-    expect(await canUseAccount({ ...context, externalActionExecutionAuthorization: workflowAuthorization }, 'owner', 'home')).toBe(false);
+    expect(await canUseAccount(workflowContext, 'owner', 'home')).toBe(true);
+    expect(await canUseAccount({ ...workflowContext, externalActionCredential: credential }, 'owner', 'home')).toBe(false);
   }
 });
 

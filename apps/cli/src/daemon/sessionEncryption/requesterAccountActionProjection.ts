@@ -637,11 +637,12 @@ export async function admitRequesterAccountActionContext(input: RequesterAccount
   finally { if (!admitted) { live = false; settingsPublication?.dispose(); await observation?.dispose(); } }
 }
 
-/** Original Account custody excludes delegated Session/Workflow requests. */
+/** A Workflow child can reuse the Account's custody when Home admitted that Account as the requester. */
 export function isOriginalAccountActionCustody(binding: ExternalActionExecutionAuthorizationBindingV1): boolean {
   return 'authentication' in binding
     && (binding.authentication.kind === 'account' || binding.authentication.kind === 'terminal')
-    && !binding.sessionActionOrigin && !binding.workflowActionOrigin;
+    && !binding.sessionActionOrigin
+    && (!binding.workflowActionOrigin || binding.accountId === binding.custodianAccountId);
 }
 
 /** Original own custody additionally requires the Machine's Account. */

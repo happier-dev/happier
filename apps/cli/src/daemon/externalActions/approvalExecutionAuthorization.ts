@@ -73,10 +73,9 @@ export function createDaemonApprovalExecutionAuthorizationPreparer(input: Readon
           installationId: installation.installationId, serverIdentityId: authorization.binding.serverIdentityId,
           installationPrivateKey: decodeBase64(installation.privateKey, 'base64url') })) return { authorization };
     }
-    // Match first admission's custody classification. Session/Workflow
-    // carriers retain their existing owners rather than borrowing this
-    // installation's ordinary Account credentials. A Session-origin enrollment
-    // policy child is guest-own custody at ingress, so its replay is too.
+    // Replay consumes first admission's custody, including an own-Account
+    // Workflow child. A Session-origin enrollment policy child carries the
+    // guest's own custody from ingress into replay.
     if (!authorization.requesterAccountContext && !isOriginalOwnAccountActionCustody(authorization.binding)
       && !isManagedEnrollmentPolicyChildAccountCustody(authorization.binding)
       && readOriginalRequesterSessionCustodyId(authorization.binding) === null) {

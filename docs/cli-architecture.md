@@ -5823,6 +5823,11 @@ round settlement, including cancellation when the Session exits. On a shared
 Machine, Home verifies the finding signature against the installation in that
 Account's committed Session placement before applying ordinary Review access.
 
+In 0.3 development, a detached Workflow verifier can read durable findings and
+write verdicts through the installed Account's Review ports when Home admitted
+that Account as the Workflow requester. Its child Action carries that admission.
+A guest Workflow needs its own requester-scoped Review access on a shared Machine.
+
 In unreleased 0.3, `readReviewFindingDecisionV1` projects a dismissed comment as Ignore even when a transition retained an older acceptance. UI decisions and Apply selection consume this projection without rewriting the saved status or hiding the finding. Choosing Implement again uses the existing transition to reopen the comment; a pending choice keeps its optimistic presentation. Resolved comments retain their existing status mapping. This correction changes no wire or persisted format; matching development Protocol and UI readers consume the shared projection.
 
 Review human Actions use `createReviewHumanActionExecutorV1` in both CLI and UI. Home HTTP responses retain stored verdict envelopes; the transport opens every historical verdict through the admitted Review Artifact codec before the strict Action output schema accepts opened prose. CLI prose submission uses that same resource codec and identity binding. Prose-free submissions need no Artifact material unless the response contains retained prose. This unreleased 0.3 adapter correction changes no server or persisted schema, permission, or plain/E2EE mode rule.
