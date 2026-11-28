@@ -1,6 +1,6 @@
 import { projectExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
-import { MACHINE_CAPABILITIES_DETECT_ACTION_ID, MACHINE_RUN_MARKERS_LIST_ACTION_ID } from '@happier-dev/protocol/actions/specs/machineConnectionActionIdsV1';
+import { MACHINE_CAPABILITIES_DETECT_ACTION_ID, MACHINE_DOCTOR_SNAPSHOT_ACTION_ID, MACHINE_RUN_MARKERS_LIST_ACTION_ID } from '@happier-dev/protocol/actions/specs/machineConnectionActionIdsV1';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { readRpcRequestDisposition } from '@happier-dev/sync-client';
 import { startPairingForHome, type StartedHomePairing, type StartPairingForHomeResult } from '@/auth/pairing/startPairingForHome';
@@ -63,7 +63,7 @@ export function createMachineConnectionActionDeps(options: Readonly<{ runner?: S
         ...(options.account ? { personalHomeCreate: createPersonalHomeCreateAction(options.account, options.runner, options.personalHomeSshDraftSecrets) } : {}),
         machinePageAction: async ({ actionId, input, context }) => {
             const serverId = input.serverId ?? context.serverId ?? getActiveServerId();
-            if (actionId === RPC_METHODS.MACHINES_DOCTOR_SNAPSHOT) {
+            if (actionId === MACHINE_DOCTOR_SNAPSHOT_ACTION_ID) {
                 return readMachineActionRpcResult(await machineRpcWithServerScope({ machineId: input.machineId,
                     serverId, accountId: options.account?.accountId ?? context.runtimeAccountId,
                     method: RPC_METHODS.MACHINES_DOCTOR_SNAPSHOT,
