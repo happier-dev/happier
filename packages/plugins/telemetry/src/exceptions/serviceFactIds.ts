@@ -4,3 +4,4 @@ export const TELEMETRY_OPEN_ISSUES_FIELD = {
 } as const;
 
 export const TELEMETRY_LAST_ISSUE_SEEN_FACT_ID = 'last-issue-seen';
+export const TELEMETRY_LATEST_ISSUE_ENTRY_FACT_ID = 'latest-issue-entry';

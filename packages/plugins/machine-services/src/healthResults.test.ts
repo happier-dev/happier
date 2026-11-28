@@ -53,6 +53,24 @@ it('reads retained health history through the public Account Action without prob
     } finally { await kit.dispose(); }
 });
 
+it('projects legacy unknown-only daily buckets without treating them as downtime', async () => {
+    const now = Date.UTC(2026, 10, 28, 10);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(now);
+    const saved = retainHealthResult(undefined, 'checkout', { status: 'unknown', observedAt: now, evidence: {
+        v: 1, items: [{ source: { kind: 'alert', label: 'Checkout' }, author: { kind: 'process' }, text: 'No requests' }],
+    } });
+    const day = saved.history!.days[0]!;
+    const page = await readHealthResultProjections({ async list() {
+        return { items: [{ key: 'health:checkout', version: 1, value: { current: { v: 1, members: [],
+            checks: [{ ...saved, history: { ...saved.history!, uptimePercent: 0, days: [{ ...day, uptimePercent: 0 }] } }],
+        } } }] };
+    } }, { signal: new AbortController().signal });
+    expect(page.items[0]?.projection.checks[0]?.history).toMatchObject({
+        uptimePercent: null, days: [{ unknown: 1, uptimePercent: null }],
+    });
+});
+
 it('does not disclose a retained page after cancellation and keeps Account read failures typed', async () => {
     const controller = new AbortController();
     const canceled = readHealthResultProjections({ async list({ signal } = {}) {

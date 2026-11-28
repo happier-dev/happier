@@ -23,8 +23,6 @@ import { resetSessionDraftRepositoryForTests } from '@/sync/ops/sessionDrafts/se
 import { discardSessionDraftPersistenceWrites, prepareSessionDraftPersistenceStorage } from '@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage';
 import { clearBrowserRecords } from '@/sync/domains/state/browserRecordStorage';
 import { readWorkflowDefinitionDraftSeed } from '@/sync/domains/workflows/workflowDefinitionDraftSeed';
-import { TRIAGE_APP_PAGE_DESTINATION_V1 } from '@happier-dev/triage-protocol/v1';
-import { buildPluginAppPageRoutePath } from '@/components/plugins/pages/pluginPageRoute';
 
 vi.mock('react-native', async () =>
   (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock(),
@@ -1144,7 +1142,8 @@ describe('Environment Telemetry capability views', () => {
             reportedCost: null, firstSeenMs: now - 3_000_000, lastSeenMs: now - 180_000 }],
           coverage: { lostObservations: 0, reason: null, callCount: 3, tokenCategoryCallCount: 3, reportedCostCallCount: 2 } };
       if (call_.actionId.endsWith('/capture/traces/list') && (call_.input as { appLlmCalls?: unknown }).appLlmCalls)
-        return { ok: true, source, items: [call] };
+        return { ok: true, source, items: [call, { ...call, id: 'call-unpriced',
+          genAi: { ...call.genAi, modelId: 'custom-unpriced-model', reportedCost: null } }] };
       if (call_.actionId.endsWith('/capture/metrics/read')) {
         const input = call_.input as { view?: string; serviceName?: string; serviceVersion?: string };
         const http = httpRead(412);
@@ -1189,14 +1188,44 @@ describe('Environment Telemetry capability views', () => {
     } finally { await screen.unmount(); }
   });
 
-  it('opens the native PRs and Issues page from the Environment exception summary', async () => {
+  it('does not offer a generic PRs and Issues link when only a retained timestamp is known', async () => {
     const { invoke } = collector(capabilityAnswers({ metrics: null, appLlmCost: null, exceptions: now }));
     const screen = await renderScreen(panel(invoke, detailWith({ metrics: false, appLlmCost: false, exceptions: true }),
       { active: true, telemetryApplied: true }));
     try {
       await settle();
-      await screen.pressByTestIdAsync('project-deployments.telemetry.exceptions.open-triage');
-      expect(router.spies.push).toHaveBeenCalledWith(buildPluginAppPageRoutePath(TRIAGE_APP_PAGE_DESTINATION_V1));
+      expect(screen.findByTestId('project-deployments.telemetry.exceptions.summary')).not.toBeNull();
+      expect(screen.findByTestId('project-deployments.telemetry.exceptions.open-triage')).toBeNull();
+    } finally { await screen.unmount(); }
+  });
+
+  it('plots the reported money when there is no catalog price and presents coverage once', async () => {
+    const base = capabilityAnswers({ metrics: null, appLlmCost: now, exceptions: null });
+    const { invoke } = collector(request => {
+      if (!request.actionId.endsWith('/capture/costs/read')) return base(request);
+      return { ok: true, source, since: now - 86_400_000, until: now,
+        items: [{ bucketStartMs: now - 3_600_000, route: null, provider: 'openai',
+          modelId: 'unlisted-for-axis-fixture', requestedModel: null, operation: 'chat', callCount: 1,
+          tokens: { input: 900, output: 340, total: null, reasoning: null, cacheRead: null, cacheWrite: null },
+          tokenCategories: null, reportedCost: { amount: 0.06, currency: 'USD' }, firstSeenMs: now - 3_000_000, lastSeenMs: now - 180_000 }],
+        coverage: { lostObservations: 1, reason: 'daemon_database_quota_exceeded', callCount: 1,
+          tokenCategoryCallCount: 0, reportedCostCallCount: 1 } };
+    });
+    const screen = await renderScreen(panel(invoke, detailWith({ metrics: false, appLlmCost: true, exceptions: false }),
+      { active: true, telemetryApplied: true }));
+    try {
+      await settle();
+      await screen.pressByTestIdAsync('project-deployments.telemetry.tab:llmCalls');
+      await settle();
+      const { StackedSeriesChart } = await import('@happier-dev/plugin-ui/presentation');
+      const chart = screen.tree.root.findByType(StackedSeriesChart);
+      expect(chart.props.series.flatMap((series: { points: { y: number | null }[] }) => series.points.map(point => point.y))).toContain(0.06);
+      const text = screen.getTextContent();
+      expect(text.match(/Partial history/g)).toHaveLength(1);
+      const routeCard = screen.findByTestId('project-deployments.telemetry.llm.routes.frame')!;
+      const routeText = routeCard.findAll(node => typeof node.type === 'string')
+        .flatMap(node => [node.props.children].flat().filter((child): child is string => typeof child === 'string')).join(' ');
+      expect(routeText).toContain('not reported');
     } finally { await screen.unmount(); }
   });
 
@@ -1312,6 +1341,9 @@ describe('Environment Telemetry capability views', () => {
       await reportCollectionLayout(screen, 'telemetry.capture.llmCalls');
       // The retained calls are a titled card of their own.
       expect(textIn('project-deployments.telemetry.llm.calls.frame')).toContain('Model calls');
+      expect(textIn('telemetry.capture.llmCall.call-1')).toContain('OpenAI');
+      expect(textIn('telemetry.capture.llmCall.call-1')).toContain('$0.0021');
+      expect(textIn('telemetry.capture.llmCall.call-unpriced')).toContain('Cost not reported');
       await screen.pressByTestIdAsync('telemetry.capture.llmCall.call-1');
       await settle();
       expect(calls.at(-1)).toEqual(expect.objectContaining({ input: expect.objectContaining({ source, traceId: 'trace-1' }) }));

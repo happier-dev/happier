@@ -30,6 +30,7 @@ export const ServiceCheckCollectorTrendReaderContext = React.createContext<Servi
 export function serviceCheckCollectorLatency(config: TelemetryKeyFlowConfigV1,
   interval: TelemetryMetricsReadResultV1['trend'][number]): number | null {
   if (config.measure.kind !== 'route') return interval.value ?? null;
+  if (interval.count === 0) return null;
   if (config.measure.statistic === 'p50') return interval.p50 ?? interval.value ?? null;
   return interval.p95 ?? (config.measure.statistic === 'p95' ? interval.value ?? null : null);
 }

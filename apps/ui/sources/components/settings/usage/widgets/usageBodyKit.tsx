@@ -109,6 +109,7 @@ export type UsageBodyProps = Readonly<{
   testID: string;
   /** The placed widget's own presentation inputs (Style, Colour by, day); descriptor-owned, never query scope. */
   presentation?: UsageWidgetPresentationInputs;
+  coveragePresentation?: 'summary' | 'elsewhere';
 }>;
 
 export type UsageWidgetPresentationInputs = Readonly<{ style?: string; colourBy?: string; day?: string }>;

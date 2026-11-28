@@ -68,7 +68,7 @@ describe('App calls Usage projection', () => {
         expect(result.routeBreakdown?.map(entry => ({ label: entry.label, calls: entry.eventCount,
             amount: resolveUsageCostBasis(entry.cost, 'api_equivalent')?.amountUsd ?? null }))).toEqual([
             { label: 'GET /orders/:id', calls: 4, amount: 53 },
-            { label: 'unknown', calls: 1, amount: null },
+            { label: undefined, calls: 1, amount: null },
         ]);
         expect(result.accounting.costFacts).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'unpriced', eventCount: 1 })]));
     });

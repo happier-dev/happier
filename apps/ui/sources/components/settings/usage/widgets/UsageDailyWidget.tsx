@@ -320,7 +320,7 @@ export function UsageDailyWidget(props: UsageBodyProps) {
                 .map((entry) => entry.id),
             }
           : {}),
-      }} footer={<UsageCoverageLine
+      }} footer={props.coveragePresentation === 'elsewhere' ? undefined : <UsageCoverageLine
         slice={props.slice}
         sources={['accounting']}
         onRetry={props.model.refresh}

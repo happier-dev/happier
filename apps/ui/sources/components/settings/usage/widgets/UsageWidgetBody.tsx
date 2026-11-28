@@ -109,6 +109,7 @@ export type UsageWidgetBodyInput = Readonly<{
   testID: string;
   /** The host supplies the facts; the body reads no Usage query Resource of its own. */
   facts?: UsageWidgetSuppliedFacts;
+  coveragePresentation?: UsageBodyProps['coveragePresentation'];
 }>;
 
 /**
@@ -214,7 +215,8 @@ function UsageQueryWidgetContent(props: UsageWidgetBodyInput & Readonly<{
     serverId={props.serverId}
     testID={props.testID}
     presentation={ownInputs}
-  /> : null, [Body, props.id, model.refresh, slice, props.serverId, props.testID, ownInputs]);
+    coveragePresentation={props.coveragePresentation}
+  /> : null, [Body, props.id, model.refresh, slice, props.serverId, props.testID, props.coveragePresentation, ownInputs]);
   // A first read holds the room of the shape that lands (Period summary's figures, the Coach's strip), so the
   // widgets below it do not move when the facts arrive; every other body holds three list rows.
   const presentation = useWidgetPresentation();

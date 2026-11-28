@@ -351,6 +351,7 @@ function checkStateSpeaks(
     stale ||
     serviceCheckStatusTone(facts.status) !== null ||
     facts.status === 'notChecked' ||
+    facts.status === 'unknown' ||
     facts.observationDisclosure !== null
   );
 }
@@ -436,8 +437,7 @@ function CheckResponse(props: Readonly<{ facts: ServiceCheckListFacts; scope: Ma
 /** The 30-day uptime stays ink: the State column and the bars say a failure; the figure is history, not an alarm. */
 function CheckUptime(props: Readonly<{ facts: ServiceCheckListFacts }>) {
   const { theme } = useUnistyles();
-  const text = serviceCheckUptimeText(props.facts.uptimePercent);
-  if (text === null) return null;
+  const text = serviceCheckUptimeText(props.facts.uptimePercent) ?? '—';
   return (
     <Text
       style={{
@@ -531,6 +531,7 @@ const CheckState = React.memo(function CheckState(
       />
     );
   if (props.facts.status === 'notChecked') return quiet(t(`${m}.waiting`));
+  if (props.facts.status === 'unknown') return quiet(serviceCheckStatusWord(props.facts.status));
   return null;
 });
 

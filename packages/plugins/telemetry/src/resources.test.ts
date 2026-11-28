@@ -3,6 +3,7 @@ import { definePlugin, PluginError, type PluginServices } from '@happier-dev/plu
 import { createPluginTestkit, createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
 import type { PluginDynamicResourceInvocationOptionsV1 } from '@happier-dev/plugin-sdk/resources';
 import { PluginServiceListFieldResourceResultV1Schema } from '@happier-dev/plugin-sdk/ui';
+import { readTriageEntryRouteSegmentV1 } from '@happier-dev/triage-protocol/v1';
 import * as database from '@happier-dev/database-protocol';
 import { createCaptureActions, createCaptureSelectedSourceReaders } from './actions.js';
 import { createCaptureResourceRuntime } from './resources.js';
@@ -54,10 +55,13 @@ it('follows the issue count and last occurrence across the bounded own and Team 
         const observation = await resource.observe(notify, options);
         const value = await resource.read(options);
         const snapshot = PluginServiceListFieldResourceResultV1Schema.parse(JSON.parse(String(value)));
-        expect(snapshot.items).toEqual([
-            { environmentId: 'app', value: null, facts: { 'open-issues': { value: 2 }, 'last-issue-seen': { value: 7 } } },
-            { environmentId: 'empty', value: null, facts: { 'last-issue-seen': { value: null } } },
-        ]);
+        expect(snapshot.items[0]?.facts).toMatchObject({ 'open-issues': { value: 2 }, 'last-issue-seen': { value: 7 } });
+        const entry = snapshot.items[0]?.facts?.['latest-issue-entry']?.value;
+        expect(typeof entry === 'string' && readTriageEntryRouteSegmentV1(entry)).toEqual({
+            source: { pluginId: 'happier.telemetry', localId: 'exceptions' },
+            kindId: 'exception', collisionScope: 'account:other', entryId: 'same-id',
+        });
+        expect(snapshot.items[1]).toEqual({ environmentId: 'empty', value: null, facts: { 'last-issue-seen': { value: null } } });
         const index = { index: 'by-environment', prefixes: [['app'], ['empty']], order: 'asc' };
         expect(own.mock.calls.map(([query]) => query)).toEqual([index, { ...index, cursor: 'own-next' }]);
         expect(shared.mock.calls.map(([request]) => request)).toEqual([{ query: index }, { query: { ...index, cursor: 'team-next' } }]);

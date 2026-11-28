@@ -2,9 +2,10 @@ import { DATABASE_CAPTURE_RESOURCE_REF_V1 } from '@happier-dev/database-protocol
 import { PluginServiceListFieldResourceResultV1Schema } from '@happier-dev/plugin-sdk/ui';
 import {
   TELEMETRY_LAST_ISSUE_SEEN_FACT_ID,
+  TELEMETRY_LATEST_ISSUE_ENTRY_FACT_ID,
   TELEMETRY_OPEN_ISSUES_FIELD,
 } from '@happier-dev/plugins-telemetry/capture-views';
-import { TRIAGE_APP_PAGE_DESTINATION_V1 } from '@happier-dev/triage-protocol/v1';
+import { buildTriageEntryPageV1, readTriageEntryRouteSegmentV1 } from '@happier-dev/triage-protocol/v1';
 import type { PluginUiResourceSnapshot } from '@happier-dev/plugin-ui/hostApi';
 
 import { useAppShellPluginUiDeclarationSources } from '@/components/appShell/plugins/AppShellPluginUiProjection';
@@ -55,11 +56,12 @@ export function TelemetryExceptionSummary(props: Readonly<{
       launchInput: { entity: 'service', serverId, environmentIds: [props.environmentId], includeTrend: false },
     })
     : null;
-  const open = () => router.push(buildPluginAppPageRoutePath(TRIAGE_APP_PAGE_DESTINATION_V1) as never);
   const render = (snapshot: PluginUiResourceSnapshot | null, refresh?: () => unknown) => {
     const facts = readExceptionFacts(snapshot);
     const count = facts?.[TELEMETRY_OPEN_ISSUES_FIELD.id]?.value;
     const savedLastSeen = facts?.[TELEMETRY_LAST_ISSUE_SEEN_FACT_ID]?.value;
+    const entrySegment = facts?.[TELEMETRY_LATEST_ISSUE_ENTRY_FACT_ID]?.value;
+    const entry = typeof entrySegment === 'string' ? readTriageEntryRouteSegmentV1(entrySegment) : null;
     const { retainedLastSeen } = props;
     const lastSeen = retainedLastSeen == null ? savedLastSeen
       : typeof savedLastSeen === 'number' ? Math.max(savedLastSeen, retainedLastSeen) : retainedLastSeen;
@@ -74,8 +76,9 @@ export function TelemetryExceptionSummary(props: Readonly<{
         // The action is wider than a value: on a phone it moves beneath the summary (DESIGN "Phones recompose").
         accessoryLayout="adaptive"
         rightElementOutsidePressable
-        rightElement={<TextLinkButton testID="project-deployments.telemetry.exceptions.open-triage"
-          label={t('deploymentTelemetry.exceptionSummary.openTriage')} onPress={open} />}
+        rightElement={entry ? <TextLinkButton testID="project-deployments.telemetry.exceptions.open-triage"
+          label={t('deploymentTelemetry.exceptionSummary.openTriage')}
+          onPress={() => router.push(buildPluginAppPageRoutePath(buildTriageEntryPageV1(entry)) as never)} /> : undefined}
       />
       {snapshot?.error || snapshot?.freshness === 'stale' ? <SurfaceFreshnessLine
         reason={snapshot.error?.message ?? t('common.unavailable')}

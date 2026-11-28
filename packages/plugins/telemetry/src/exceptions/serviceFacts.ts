@@ -1,9 +1,11 @@
+import { buildTriageEntryRouteSegmentV1 } from '@happier-dev/triage-protocol/v1';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { PluginDynamicResourceInvocationOptionsV1, PluginDynamicResourceRuntime } from '@happier-dev/plugin-sdk/resources';
 import { PluginServiceListFieldResourceInputV1Schema, type PluginServiceListFieldResourceResultV1 } from '@happier-dev/plugin-sdk/ui';
 
 import { TELEMETRY_EXCEPTION_ISSUES_COLLECTION_V1, TELEMETRY_EXCEPTION_ENVIRONMENT_INDEX, type ExceptionIssueRecord } from './issueRecord.js';
-import { TELEMETRY_LAST_ISSUE_SEEN_FACT_ID, TELEMETRY_OPEN_ISSUES_FIELD } from './serviceFactIds.js';
+import { exceptionLocalRefV1, TELEMETRY_EXCEPTION_SOURCE_V1 } from './source.js';
+import { TELEMETRY_LAST_ISSUE_SEEN_FACT_ID, TELEMETRY_LATEST_ISSUE_ENTRY_FACT_ID, TELEMETRY_OPEN_ISSUES_FIELD } from './serviceFactIds.js';
 import { TELEMETRY_ACCOUNT_EXECUTION, TELEMETRY_EXCEPTION_SOURCE_ACTIONS } from './sourceActions.js';
 
 function environmentIssueDemand(options: PluginDynamicResourceInvocationOptionsV1) {
@@ -21,13 +23,15 @@ const issueResource: PluginDynamicResourceRuntime = {
         const { issues, environmentIds } = environmentIssueDemand(options);
         if (!environmentIds.length) return JSON.stringify({ items: [] });
         const query = { index: TELEMETRY_EXCEPTION_ENVIRONMENT_INDEX, order: 'asc', prefixes: environmentIds.map(id => [id]) } as const;
-        const perEnvironment = new Map(environmentIds.map(id => [id, { open: new Set<string>(), lastSeenAtMs: null as number | null }]));
+        const perEnvironment = new Map(environmentIds.map(id => [id, { open: new Set<string>(), latest: null as { at: number; rowId: string; ownerAccountId: string | null } | null }]));
         const cancellation = { signal: options.signal };
         const include = (row: ExceptionIssueRecord, ownerAccountId: string | null, rowId: string) => {
             const summary = perEnvironment.get(row.environmentId);
             if (!summary) return;
             if (row.status === 'open') summary.open.add(JSON.stringify([ownerAccountId, rowId]));
-            if (summary.lastSeenAtMs === null || row.lastSeenAtMs > summary.lastSeenAtMs) summary.lastSeenAtMs = row.lastSeenAtMs;
+            if (summary.latest === null || row.lastSeenAtMs > summary.latest.at) {
+                summary.latest = { at: row.lastSeenAtMs, rowId, ownerAccountId };
+            }
         };
 
         const readOwn = async () => {
@@ -53,7 +57,10 @@ const issueResource: PluginDynamicResourceRuntime = {
             environmentId, value: null, facts: {
                 // No open issue is the healthy state: it says nothing rather than "Open issues 0" under every row (R20-D8).
                 ...(summary.open.size > 0 ? { [TELEMETRY_OPEN_ISSUES_FIELD.id]: { value: summary.open.size } } : {}),
-                [TELEMETRY_LAST_ISSUE_SEEN_FACT_ID]: { value: summary.lastSeenAtMs },
+                [TELEMETRY_LAST_ISSUE_SEEN_FACT_ID]: { value: summary.latest?.at ?? null },
+                ...(summary.latest ? { [TELEMETRY_LATEST_ISSUE_ENTRY_FACT_ID]: { value: buildTriageEntryRouteSegmentV1({
+                    source: TELEMETRY_EXCEPTION_SOURCE_V1, ...exceptionLocalRefV1(summary.latest.rowId, summary.latest.ownerAccountId ?? undefined),
+                }) } } : {}),
             },
         })) } satisfies PluginServiceListFieldResourceResultV1);
     },

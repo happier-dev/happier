@@ -384,8 +384,8 @@ Exercise a controlled error and an unhandled rejection in a test deployment.
 The Environment's **Telemetry** tab shows the open exception count. While it is
 open, the collector updates the latest exception time. If the collector is
 unavailable, the summary can show the last time recorded on the Account issue.
-Choose **Open in PRs & Issues**, select the Happier source, and inspect the
-issue's occurrence. The stack and raw occurrence stay on the collector.
+Choose **Open in PRs & Issues** to inspect the latest exception issue recorded
+on the Account. The stack and raw occurrence stay on the collector.
 Investigation of a minified stack needs the source map from the matching build.
 After deploying a fix, repeat the failing interaction and
 record which build and route you exercised.
@@ -404,15 +404,18 @@ window and threshold, then review **Check every** and **Alert after** before
 saving.
 
 Open the saved check in **Monitoring** to see its latest result. No recorded
-traffic in the check's window means **Unknown**. A separate trend on the check
-page reads measurements retained by the collector.
+traffic in the check's window means **Unknown**. Uptime needs at least one
+up, down or degraded result. The response trend plots measurements retained by the collector
+when traffic was observed.
 
 ### View model usage from your apps
 
 Enable **App LLM cost**, redeploy, and emit OpenTelemetry GenAI model and token
 usage attributes from your app. In 0.3 development builds, open **Telemetry →
 LLM calls** in the Environment to narrow the call list and totals by service,
-version and time window. In **Usage**, open **Sources** and choose
+version and time window. Each call shows the cost reported by your app when
+available. The chart uses reported costs when it has no API-equivalent prices.
+In **Usage**, open **Sources** and choose
 **Your apps**, then narrow by app or **Environments**. This view shows app
 activity separately from agent activity. Estimated cost uses the model prices
 available to the signed-in viewer. Viewers sharing an Environment can see

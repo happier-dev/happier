@@ -44,7 +44,7 @@ const result = (minutesAgo: number, status: 'up' | 'down', latencyMs: number) =>
   ({ status, observedAt: NOW - minutesAgo * 60_000, latencyMs, evidence: { kind: 'none' } });
 
 function row(kind: 'keyFlow' | 'http', config: TelemetryKeyFlowConfigV1 = keyFlow,
-  latest: Readonly<{ status: 'down' | 'degraded'; observedAt: number; latencyMs?: number; evidence: { kind: string } }> = {
+  latest: Readonly<{ status: 'down' | 'degraded' | 'unknown'; observedAt: number; latencyMs?: number; evidence: { kind: string } }> = {
     status: 'down', observedAt: NOW, latencyMs: 1420, evidence: { kind: 'none' },
   }) {
   return {
@@ -100,6 +100,25 @@ it('opens a Key flow check and reads its trend and routes from its collector onc
   expect(screen.findHostByTestId('services.check.keyFlow.route.POST /checkout')).toBeTruthy();
   // The retained check timings no longer draw a second response chart for a Key flow.
   expect(screen.findHostByTestId('services.check.response')).toBeFalsy();
+});
+
+it('shows Unknown and no response line when the collector recorded no requests', async () => {
+  const check = row('keyFlow', keyFlow, { status: 'unknown', observedAt: NOW, evidence });
+  const scope = { serverId: 'server-1', accountId: 'account-1' };
+  const reader = async () => ({
+    ...read,
+    result: { status: 'unknown' as const, observedAt: NOW, evidence },
+    trend: read.trend.map(interval => ({ ...interval, value: 0, p95: 0, count: 0 })),
+  });
+  const screen = await renderScreen(
+    <ServiceCheckCollectorTrendReaderContext.Provider value={reader}>
+      <ItemList><ServiceCheckList rows={[check]} scope={scope} grouping="attention"
+        selection={{ selectedKey: null, onSelect() {}, onSelectedRow() {} }}
+        accessibilityLabel="Checks" testID="monitoring.checks" /></ItemList>
+    </ServiceCheckCollectorTrendReaderContext.Provider>,
+  );
+  expect(screen.getTextContent()).toMatch(/health unknown/i);
+  expect(screen.tree.root.findAllByType(StackedSeriesChart)).toHaveLength(0);
 });
 
 it('Monitoring plots collector p95 intervals when the saved check reports only error rate', async () => {

@@ -191,7 +191,7 @@ export function UsageCostFactsWidget(props: UsageBodyProps) {
       {/* The figures count overlapping populations, so they never present as parts of one sum. */}
       {facts.length > 1 || fromPartsNote ? (
         <UsageBodyNote testID={`${props.testID}.partial`}>
-          {[partialOnce ? usagePartialHistoryLabel() : null, fromPartsNote,
+          {[partialOnce && props.coveragePresentation !== 'summary' ? usagePartialHistoryLabel() : null, fromPartsNote,
             facts.length > 1 ? t('usage.board.page.factsOverlap') : null].filter(Boolean).join(' · ')}
         </UsageBodyNote>
       ) : null}

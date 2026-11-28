@@ -26,29 +26,38 @@ export function CaptureAppLlmCalls(
     locale: string;
     onOpen: (call: CaptureAppLlmCallV1) => void;
     more?: CapturePageMore | null;
+    modelLabel?: (id: string) => string;
+    providerLabel?: (id: string) => string;
+    formatCost: (amount: number, currency: string) => string;
   }>,
 ) {
   const text = usePluginTranslation();
-  const { locale } = props;
+  const { locale, modelLabel, providerLabel, formatCost } = props;
   const anatomy = React.useMemo<CollectionAnatomy<CaptureAppLlmCallV1>>(() => {
-    const model = (item: CaptureAppLlmCallV1) =>
-      item.genAi?.modelId ?? item.genAi?.requestedModel ?? requestLabelOf(item);
+    const model = (item: CaptureAppLlmCallV1) => {
+      const id = item.genAi?.modelId ?? item.genAi?.requestedModel;
+      return id ? modelLabel?.(id) ?? id : requestLabelOf(item);
+    };
     const time = new Intl.DateTimeFormat(locale, { hour: 'numeric', minute: '2-digit', second: '2-digit' });
     // Line 2 says which request made the call and when, so two calls to one model read as two calls.
     const facts = (item: CaptureAppLlmCallV1) => {
       const tokens = item.genAi?.tokens.total ?? null;
+      const provider = item.genAi?.provider;
+      const cost = item.genAi?.reportedCost;
       const route = item.endpointMethod && item.endpointRoute ? `${item.endpointMethod} ${item.endpointRoute}` : null;
       return [
         route,
         time.format(item.at),
         item.serviceName || null,
         item.serviceVersion ?? null,
-        item.genAi?.provider ?? null,
+        provider ? providerLabel?.(provider) ?? provider : null,
         tokens === null
           ? null
           : text('plugins.telemetry.capture.tokens', '{count} tokens', {
               count: formatHappierDataValue(tokens, locale),
             }),
+        cost ? formatCost(cost.amount, cost.currency)
+          : text('plugins.telemetry.capture.costNotReported', 'Cost not reported'),
       ]
         .filter((part): part is string => part !== null && part.length > 0)
         .join(' · ');
@@ -69,7 +78,7 @@ export function CaptureAppLlmCalls(
         title: text('plugins.telemetry.capture.model', 'Model'),
       },
     };
-  }, [locale, text]);
+  }, [formatCost, locale, modelLabel, providerLabel, text]);
   return (
     <CaptureList
       testID="telemetry.capture.llmCalls"

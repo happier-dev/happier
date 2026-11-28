@@ -24,4 +24,4 @@ export {
 } from '../widgets/telemetryWidgetModel.js';
 /** The regression check Workflow an Environment's Telemetry setup opens prefilled (P7 J3). */
 export { TELEMETRY_REGRESSION_WORKFLOW_ID_V1 } from '../../regressionWorkflowId.js';
-export { TELEMETRY_LAST_ISSUE_SEEN_FACT_ID, TELEMETRY_OPEN_ISSUES_FIELD } from '../../exceptions/serviceFactIds.js';
+export { TELEMETRY_LAST_ISSUE_SEEN_FACT_ID, TELEMETRY_LATEST_ISSUE_ENTRY_FACT_ID, TELEMETRY_OPEN_ISSUES_FIELD } from '../../exceptions/serviceFactIds.js';

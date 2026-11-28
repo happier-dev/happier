@@ -32,6 +32,8 @@ import { readUsageAppCallsPriceOverrides } from '@/sync/api/account/usageAppCall
 import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { appCallsUsageSlice, usageAppCallsSourceId } from '@/sync/domains/usage/usageAppCallsSource';
 import { t } from '@/text';
+import { readAccountProviderDeclarations } from '@/providers/catalog/accountProviderDeclarations';
+import { usageModelLabel } from '@/sync/domains/usage/usageLabels';
 import { formatTokenCount, formatUsageCost } from '@/utils/format/usageNumbers';
 
 import { TelemetryCard } from './TelemetryCard';
@@ -58,6 +60,11 @@ const CALLS_PROJECTION: PluginUiResourceProjection<readonly CaptureAppLlmCallV1[
   },
 };
 const NO_INPUT = Object.freeze({});
+const providerDeclarations = readAccountProviderDeclarations({ kind: 'account' });
+const appCallProviderLabel = (id: string) => providerDeclarations.find(
+  declaration => declaration.definition.id === id,
+)?.definition.name ?? id;
+const appCallModelLabel = (id: string) => usageModelLabel(id).label;
 type Pricing = Readonly<{ catalog: UsageModelPriceCatalog; viewerOverrides: UsageModelPriceOverridesV1 }>;
 
 /**
@@ -112,6 +119,7 @@ export function TelemetryAppLlmCalls(
   const { reads, environmentId, lifetime, active, windowMs, locale, selection, onSelect, onOpenCall } = props;
   const { theme } = useUnistyles();
   const chartTheme = usePluginUiTheme(theme);
+  const formatCallCost = React.useCallback((amount: number, currency: string) => formatUsageCost(amount, currency, locale), [locale]);
   const router = useRouter();
   const { createResourceClient } = React.useContext(TelemetryCaptureTransportContext);
   const costsReference = React.useMemo(() => reads.costsReference(selection, windowMs), [reads, selection, windowMs]);
@@ -124,14 +132,17 @@ export function TelemetryAppLlmCalls(
   const { pricing, failure: pricingFailure, retry: retryPricing } = useAppCallsPricing(scope, totals);
   const granularity = telemetryCostsGranularity(windowMs);
 
-  // The window as Usage's App calls subject: this Environment, priced at API prices with the viewer's overrides.
   const priced = React.useMemo(() => {
     if (!totals || !pricing) return null;
+    const usage = projectAppCallsUsageV1(totals, pricing.catalog, pricing.viewerOverrides, { granularity, costMode: 'api_equivalent' });
+    const facts = usage.accounting.costFacts ?? [];
+    const hasApiPrice = facts.some(fact => fact.kind === 'api_equivalent' && fact.source !== 'no_tokens' && fact.amountUsd !== null);
+    const hasReportedCost = facts.some(fact => fact.kind === 'reported' && fact.amountUsd !== null);
     const query: UsageQuery = normalizeUsageQuery({
-      period: { startMs: totals.since, endMs: totals.until }, metric: 'cost', costBasis: 'api_equivalent', granularity,
+      period: { startMs: totals.since, endMs: totals.until }, metric: 'cost',
+      costBasis: !hasApiPrice && hasReportedCost ? 'reported' : 'api_equivalent', granularity,
       breakdown: ['model'], sources: [usageAppCallsSourceId(environmentId)], includeComparison: false,
     });
-    const usage = projectAppCallsUsageV1(totals, pricing.catalog, pricing.viewerOverrides, { granularity, costMode: 'api_equivalent' });
     return { query, usage, slice: appCallsUsageSlice({ key: `environment-llm:${environmentId}`, query, usage,
       catalog: pricing.catalog, viewerOverrides: pricing.viewerOverrides, readAtMs: totals.until }) };
   }, [environmentId, granularity, pricing, totals]);
@@ -188,20 +199,20 @@ export function TelemetryAppLlmCalls(
     );
   }
   const reading = !facts || !calls?.value;
-  const coverage = totals?.coverage ?? null;
   const routes = priced?.usage.routeBreakdown ?? [];
   // Ranked by the cost they draw, as every Usage breakdown body ranks its rows.
-  const routeSelection = resolveUsagePageCostSelection(routes.map(entry => entry.cost), 'api_equivalent');
+  const routeSelection = resolveUsagePageCostSelection(routes.map(entry => entry.cost), priced?.query.costBasis ?? 'api_equivalent');
   const routeRows = rankUsageBreakdownEntries(routes, 'cost', routeSelection).map(({ entry, tokens, value }, index) => ({
     id: entry.key,
-    label: entry.label ?? entry.key,
+    label: entry.label ?? t('usage.board.plans.cellUnknown'),
     value,
     annotation: t('deploymentTelemetry.llm.tokens', { count: formatTokenCount(tokens.total, locale) }),
     color: usageMeterFill(theme, index === 0),
   }));
   const usageCard = (id: 'usage_cost_facts' | 'usage_daily', testID: string, title: string | null) => (
     <TelemetryCard testID={`${testID}.frame`} title={title}>
-      {facts ? <UsageWidgetBody id={id} input={NO_INPUT} serverId={facts.authority.serverId} testID={testID} facts={facts} /> : (
+      {facts ? <UsageWidgetBody id={id} input={NO_INPUT} serverId={facts.authority.serverId} testID={testID} facts={facts}
+        coveragePresentation={id === 'usage_cost_facts' ? 'summary' : 'elsewhere'} /> : (
         <SurfaceStateCard testID={`${testID}.reading`} kind="loading" size="line" title={t('deploymentTelemetry.llm.reading')} />
       )}
     </TelemetryCard>
@@ -221,17 +232,15 @@ export function TelemetryAppLlmCalls(
             valueFormatter: value => formatUsageCost(value, 'USD', locale),
           }],
         }} /></TelemetryCard> : null}
-      {coverage && (coverage.lostObservations > 0 || coverage.reason !== null) ? (
-        <Text variant="meta" style={[styles.quiet, styles.partial]} testID="project-deployments.telemetry.llm.partial">
-          {t('deploymentTelemetry.measurement.partial')}
-        </Text>
-      ) : null}
       {/* The retained calls are a card of their own, titled like the cards above them (design review D5). */}
       <TelemetryCard testID="project-deployments.telemetry.llm.calls.frame" title={t('deploymentTelemetry.llm.calls')}>
         <CaptureAppLlmCalls
           items={calls?.value ?? []}
           loading={reading}
           locale={locale}
+          modelLabel={appCallModelLabel}
+          providerLabel={appCallProviderLabel}
+          formatCost={formatCallCost}
           onOpen={onOpenCall}
         />
       </TelemetryCard>
@@ -257,7 +266,6 @@ const styles = StyleSheet.create((theme) => ({
   chips: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: theme.space.s8,
     paddingHorizontal: PAGE_LIST_METRICS.sheetInsetPx },
   quiet: { color: theme.colors.text.secondary },
-  partial: { paddingHorizontal: PAGE_LIST_METRICS.sheetInsetPx },
   // The note stands on the cards' text edge, as the lab's footnote does.
   note: { flexDirection: 'row', alignItems: 'baseline', gap: theme.space.s16, paddingHorizontal: PAGE_LIST_METRICS.sheetInsetPx },
   noteText: { flex: 1, minWidth: 0 },

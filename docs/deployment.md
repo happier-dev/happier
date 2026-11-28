@@ -3433,8 +3433,11 @@ currency and coverage. The Environment's LLM calls view applies the selected
 service, version and time window to both the cost Action and the individual
 calls. Day buckets can include the normalized HTTP route of the nearest retained
 request in the same trace. Calls with no retained route remain in the window's
-totals. Account-placed Usage reads price those operands using
-`usage.prices.get` and the invoking Account's model price overrides. A saved
+totals. Each retained call shows its reported cost or marks it as unavailable.
+The Environment chart uses API-equivalent prices when available and otherwise
+plots reported costs when the app supplies them. Account-placed Usage reads
+price those operands using `usage.prices.get` and the invoking Account's model
+price overrides. A saved
 spend check uses the Account operating its observer daemon. The retained
 result identifies that Account and the API-equivalent USD catalog revision.
 An incompletely priced population leaves the threshold inconclusive.
@@ -3454,8 +3457,9 @@ summary follows the Account's entitled native issue records for this Environment
 While the summary is open, the selected collector also pushes the latest retained
 exception time without writing the Account issue on every repeat. When the collector
 is unavailable, the summary can show the last time recorded on the Account issue.
-Open in PRs & Issues opens the native Triage page, where you can select the Happier
-source. Raw occurrence details require the selected collector.
+Open in PRs & Issues opens the latest issue recorded on the Account. The link
+becomes available once the Account has a recorded issue. Raw occurrence details
+require the selected collector.
 
 For a retained failing request, the selected request can seed a Workflow with
 the Telemetry Event and its exact group filter. The

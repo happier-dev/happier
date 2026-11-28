@@ -133,7 +133,11 @@ function uptime(up: number, down: number, degraded: number) {
 
 function windowHistory(history: NonNullable<HealthResultProjection['checks'][number]['history']>, at: number) {
     const dayStartAt = Math.floor(at / DAY_MS) * DAY_MS;
-    const days = history.days.filter(day => day.dayStartAt >= dayStartAt - (HISTORY_DAYS - 1) * DAY_MS && day.dayStartAt <= dayStartAt);
+    const days = history.days.filter(day => day.dayStartAt >= dayStartAt - (HISTORY_DAYS - 1) * DAY_MS && day.dayStartAt <= dayStartAt)
+        .map(day => {
+            const uptimePercent = uptime(day.up, day.down, day.degraded);
+            return uptimePercent === day.uptimePercent ? day : { ...day, uptimePercent };
+        });
     const totals = days.reduce((sum, value) => ({ up: sum.up + value.up, down: sum.down + value.down,
         degraded: sum.degraded + value.degraded }), { up: 0, down: 0, degraded: 0 });
     return { ...history, days, uptimePercent: uptime(totals.up, totals.down, totals.degraded) };

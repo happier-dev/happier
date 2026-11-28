@@ -81,10 +81,7 @@ export function projectAppCallsUsageV1(read: AppCallsUsageWindowV1, catalog: Usa
         return { ...row, source, eventCount: item.callCount };
     });
     const routeBreakdown = buildUsageBreakdownList(routeRows, 'source', routeRows.length, options.costMode ?? 'api_equivalent')
-        .map(entry => {
-            const label = labels.get(entry.key);
-            return label ? { ...entry, label } : entry;
-        });
+        .map(entry => ({ ...entry, label: labels.get(entry.key) }));
     return { ...usage, routeBreakdown };
 }
 
