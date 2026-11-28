@@ -126,6 +126,9 @@ export function createWorkflowRunMachineTransport(input: Readonly<{
           && options.executionRunWorkflowRunId !== input.runId;
         if (!local && !differentRun) return await input.transport.invoke(method, request, options);
         const prepared = differentRun || !local ? null : await prepare(local);
+        if (!prepared && method === RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE) {
+          return { ok: false, code: 'project_requester_credentials_unavailable', actionHandlerInvocation: 'notStarted' };
+        }
         if (!prepared) return { ok: false, errorCode: 'project_requester_credentials_unavailable',
           error: 'Workflow requester authority unavailable',
           ...(method === SESSION_RPC_METHODS.EXECUTION_RUN_START

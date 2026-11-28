@@ -478,7 +478,8 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
         execution: {
           action: {
             executor: actionExecutor,
-            buildContext: resolveWorkflowActionContext,
+            buildContext: async execution => ({ ...await resolveWorkflowActionContext(execution),
+              workflowActionMachineTransport: input.machineActionDirectTargetTransport }),
             prepareResultCapture: async actionId => {
               const native = prepareWorkflowDeploymentResultCapture(actionId);
               if (native) return native;

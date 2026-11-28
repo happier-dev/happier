@@ -19,6 +19,7 @@ import { registerAccountHomeHttp } from '@/session/actions/widgetApproval.testki
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
 import { executeAccountPluginAction } from '@/session/actions/executeAccountPluginAction';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
+import type { MachineActionDirectTargetTransport } from '@/session/actions/createCliActionDeps';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { registerAuthoredAccountActionRelease } from './accountPluginActions.testkit';
 import { manifest as admittedSourceManifest } from './accountMachineActionIntent.fixture';
@@ -59,6 +60,7 @@ it.each([
     { outcome: 'acknowledged', placement: 'selected' },
     { outcome: 'ui', placement: 'selected' },
     { outcome: 'uiAutomation', placement: 'selected' },
+    { outcome: 'workflow', placement: 'selected' },
     { outcome: 'lostAck', placement: 'selected' },
     { outcome: 'authoredRefusal', placement: 'selected' },
     { outcome: 'notSent', placement: 'selected' },
@@ -131,8 +133,32 @@ it.each([
         const cli = createCliActionExecutorFromCredentials({ credentials, serverId: 'account-machine',
             serverIdentityId: 'account-machine', serverApiUrl: endpoint,
             ...(placement === 'selected' ? { machineId: 'selected-machine' } : {}) });
-        const context: ActionExecutorContext = {
-            surface: presentUi || outcome === 'uiAutomation' ? 'ui' : 'cli',
+        const workflowRunId = 'admitted-run';
+        const workflowActionMachineTransport: MachineActionDirectTargetTransport = {
+            machineId: 'selected-machine', workflowRunId,
+            invoke: async (method, request, options) => {
+                expect(method).toBe(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE);
+                expect(DaemonPluginStructuredMessageActionExecuteRequestSchema.parse(request)).toMatchObject({
+                    executionSurface: 'agent', expectedContributorOccurrenceId: source.occurrenceId,
+                    invocation: { kind: 'clientPluginAction', clientActionBinding: { pluginId } },
+                });
+                expect(options?.localActionContext).toMatchObject({
+                    actionCaller: { kind: 'workflowRun', runId: workflowRunId },
+                    authority: 'account_automation', executionRunWorkflowRunId: workflowRunId,
+                    runtimeAccountId: 'owner',
+                });
+                providerEffects++;
+                return { ok: true, result: { key: 'provider-with-workflow-custody', machine: true } };
+            },
+        };
+        const context: ActionExecutorContext & { workflowActionMachineTransport?: MachineActionDirectTargetTransport } = {
+            surface: outcome === 'workflow' ? 'agent' : presentUi || outcome === 'uiAutomation' ? 'ui' : 'cli',
+            ...(outcome === 'workflow' ? {
+                actionCaller: { kind: 'workflowRun' as const, runId: workflowRunId,
+                    authorization: { principal: { kind: 'host' as const }, admittedPermissionCeiling: 'default' as const } },
+                executionRunWorkflowRunId: workflowRunId, executionRunTargetMachineId: 'selected-machine',
+                workflowActionMachineTransport,
+            } : {}),
             ...(presentUi ? { authority: 'present_user' as const } : outcome === 'uiAutomation' ? { authority: 'account_automation' as const } : {}),
             actionRequestId: '4d13dc15-d859-4c0e-9abe-d561a12894d5',
             runtimeAccountId: 'owner', serverId: 'account-machine', serverIdentityId: 'account-machine',
@@ -140,7 +166,7 @@ it.each([
             ...(placement === 'session' ? { defaultSessionMachineId: 'selected-machine' } : {}),
         };
         const input = { action: { pluginId, localId: 'source' }, input: { key: 'provider' } };
-        const result = presentUi || outcome === 'uiAutomation'
+        const result = presentUi || outcome === 'uiAutomation' || outcome === 'workflow'
             ? await (async () => {
                 const host = { token: credentials.token, credentials, sessionId: 'cli-global', mode: 'plain' as const, ctx: null,
                     serverHttpBaseUrl: endpoint, runtimeActionMachineId: 'selected-machine',
@@ -160,7 +186,7 @@ it.each([
             : outcome === 'lostAck' ? { ok: false, errorCode: 'plugin_action_outcome_unknown' }
             : outcome === 'authoredRefusal' ? { ok: false, errorCode: 'credential_unavailable',
                 details: { name: 'PluginError', remediation: { kind: 'retry' } } }
-            : { ok: true, result: { key: 'provider', machine: true } });
+            : { ok: true, result: { key: outcome === 'workflow' ? 'provider-with-workflow-custody' : 'provider', machine: true } });
         for (const request of requests) {
             expect(request.machineId).toBe('selected-machine');
             expect(request.requireCurrentMachine).toBe(true);

@@ -16,6 +16,7 @@ import { resolveSessionTransportContext } from '@/session/services/resolveSessio
 import { resolveSessionInputTargetMachineId } from '@/session/services/sessionInputAdmissionIdentity';
 import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import type { WorkflowActionApprovalContext } from '@/daemon/workflows/actionApproval';
 import type { StoredCredentials } from '@/persistence';
 import type { InvokeContributedAction } from '../services/actions';
 import type { CanonicalPluginManifest } from '@/plugins/manifest/types';
@@ -97,10 +98,29 @@ export async function invokeAccountMachineSourceAction(input: AccountMachineTran
     if (input.request.readObservation) return await observeAccountMachineActionRead({ credentials: input.credentials,
         serverUrl: input.serverUrl, machineId: input.machineId, targetPluginId: input.request.action.pluginId,
         request, signal: input.request.signal, observation: input.request.readObservation });
+    const method = RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE;
+    const actionContext: WorkflowActionApprovalContext | undefined = input.request.approvalContext;
+    const workflowCaller = actionContext?.actionCaller;
+    const workflowTransport = actionContext?.workflowActionMachineTransport;
     try {
-        const result = DaemonPluginStructuredMessageActionExecuteResponseSchema.parse(await callExactMachineRpc({
+        // The claimed Run can enter its installed Machine with its admitted requester and approval origin.
+        const response = workflowCaller?.kind === 'workflowRun' && workflowTransport?.workflowRunId === workflowCaller.runId
+            && workflowTransport.machineId === input.machineId ? await workflowTransport.invoke(method, request, {
+            signal: input.request.signal,
+            localActionContext: {
+                surface: 'agent', authority: 'account_automation', actionCaller: workflowCaller,
+                actionRequestId: request.requestId,
+                actionRequestAttributionV1: actionContext?.actionRequestAttributionV1,
+                executionRunWorkflowRunId: workflowCaller.runId, executionRunTargetMachineId: input.machineId,
+                requesterWorkAttributionV1: actionContext?.requesterWorkAttributionV1,
+                runtimeAccountId: actionContext?.runtimeAccountId, serverId: actionContext?.serverId,
+                ...(actionContext?.callerPermissionMode !== undefined ? { callerPermissionMode: actionContext.callerPermissionMode } : {}),
+                ...(actionContext?.causalPermissionAuthority !== undefined ? { causalPermissionAuthority: actionContext.causalPermissionAuthority } : {}),
+                ...(actionContext?.workspaceWrites !== undefined ? { workspaceWrites: actionContext.workspaceWrites } : {}),
+            },
+        }) : await callExactMachineRpc({
             credentials: input.credentials, serverUrl: input.serverUrl, machineId: input.machineId,
-            method: RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE, request,
+            method, request,
             // Preserve the authenticated person's authority for the host-stamped
             // press. Automation still lowers its credential at this boundary;
             // Home remains the authority producer for the receiving daemon.
@@ -108,7 +128,8 @@ export async function invokeAccountMachineSourceAction(input: AccountMachineTran
             // The daemon owns the eventual effect; this caller owns only its
             // observation. Cancellation must release the per-call RPC socket.
             requireCurrentMachine: true, timeoutMs: null, signal: input.request.signal,
-        }));
+        });
+        const result = DaemonPluginStructuredMessageActionExecuteResponseSchema.parse(response);
         return result.ok ? { status: 'executed', value: result.result }
             : { status: 'failed', code: result.code, message: result.message ?? result.code, data: new PluginError(result).data,
                 ...(result.retryable === undefined ? {} : { retryable: result.retryable }),

@@ -13,11 +13,13 @@ import { isApprovalRequestExecutionApproved } from '@happier-dev/protocol/approv
 import { resolveApprovalRequestExecutionInput } from '@happier-dev/protocol/approvals/approvalRequestTransition';
 import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import type { MachineActionDirectTargetTransport } from '@/session/actions/createCliActionDeps';
 
 type ActionExecution = Extract<NonNullable<WorkflowProgressEnvelopeV1['execution']>, { kind: 'action' }>;
 
-/** In-process notification for the exact invocation whose approval waiter is already live. */
+/** In-process custody for approval and Machine execution within a Workflow Run. */
 export type WorkflowActionApprovalContext = ActionExecutorContext & Readonly<{
+  workflowActionMachineTransport?: MachineActionDirectTargetTransport;
   workflowActionApprovalHold?: Readonly<{
     actionRequestId: string;
     onRequested(artifactId: string): Promise<void>;
