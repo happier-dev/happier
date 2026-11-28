@@ -56,12 +56,13 @@ async function deriveRuntimeConvergence(params: Readonly<{
   serviceInstalled: boolean;
 }>): Promise<DaemonRuntimeConvergence> {
   const evaluation: DaemonOwnerEvaluation = await evaluateCurrentDaemonOwner();
-  const runningOwner = evaluation.kind !== 'none' && evaluation.owner.source === 'state' && evaluation.owner.status === 'running'
+  const runningOwner = evaluation.kind !== 'none' && evaluation.owner.source === 'state' && (evaluation.owner.status === 'running' || evaluation.owner.status === 'starting')
     ? evaluation.owner
     : null;
   if (!runningOwner) {
     return {
       controlReachable: false,
+      daemonStarting: false,
       serviceOwnsRunningDaemon: false,
       machineIdMatches: false,
       cliVersionMatches: false,
@@ -70,8 +71,10 @@ async function deriveRuntimeConvergence(params: Readonly<{
 
   const runningMachineId = typeof runningOwner.state.machineId === 'string' ? runningOwner.state.machineId.trim() : '';
   const runningServiceLabel = typeof runningOwner.state.serviceLabel === 'string' ? runningOwner.state.serviceLabel.trim() : '';
+  const isStarting = runningOwner.status === 'starting';
   return {
-    controlReachable: true,
+    controlReachable: runningOwner.status === 'running',
+    daemonStarting: isStarting,
     serviceOwnsRunningDaemon: evaluation.kind === 'compatible'
       && runningOwner.serviceManaged === true
       && params.serviceInstalled
@@ -123,7 +126,7 @@ export async function readDaemonStatusSnapshot(): Promise<DaemonStatusSnapshot> 
     expectedServiceLabel: serviceSnapshot.label,
     serviceInstalled: serviceSnapshot.installed,
   });
-  const daemonRunning = runtimeConvergence.controlReachable;
+  const daemonRunning = runtimeConvergence.controlReachable || runtimeConvergence.daemonStarting;
 
   return {
     server: {
