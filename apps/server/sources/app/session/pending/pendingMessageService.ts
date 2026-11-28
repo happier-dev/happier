@@ -24,9 +24,12 @@ import {
     normalizePendingDeliveryBlockedReason,
     normalizePendingDeliveryStatusV1,
     pendingDeliveryStatusV1ToPersistedFields,
+    PendingProviderActionSchema,
     PendingRequestedActionV1Schema,
     readPendingLocalId,
     SessionMessageDeliveryResolutionV1Schema,
+    type AcceptedPendingSettlementRequestV2,
+    type PendingProviderAction,
     type PendingRequestedActionV1,
     type PendingDeliveryBlockedReason,
     type SessionStoredContentKind,
@@ -1135,6 +1138,40 @@ async function markPendingDeliveryRowsBlocked(
     };
 }
 
+async function retirePendingDelivery(
+    tx: PendingServiceTx,
+    params: Readonly<{
+        sessionId: string;
+        localId: string;
+        existing: Pick<PendingDeliveryResolutionInput, "status" | "deliveryState">;
+        providerClaim?: PendingProviderAction;
+    }>,
+) {
+    const { sessionId, localId, existing, providerClaim } = params;
+    await tx.sessionPendingMessage.delete({
+        where: {
+            sessionId_localId: { sessionId, localId },
+            ...(providerClaim ? {
+                status: "queued" as const,
+                deliveryState: existing.deliveryState,
+                providerAction: providerClaim,
+            } : {}),
+        },
+    });
+    const activationTarget = await reconcilePendingActivationAuthorizationForRemovedRequestInTx({
+        tx,
+        sessionId,
+        requestId: localId,
+    });
+    return await applyPendingSessionStateChange({
+        tx,
+        sessionId,
+        pendingCountDelta: existing.status === "queued" ? -1 : 0,
+        pendingBlockedCountDelta: existing.status === "queued" && existing.deliveryState === "blocked" ? -1 : 0,
+        activationTarget,
+    });
+}
+
 async function commitResolvedPendingDelivery(
     tx: PendingServiceTx,
     params: Readonly<{
@@ -1252,23 +1289,7 @@ async function commitResolvedPendingDelivery(
         })
         : undefined;
 
-    await tx.sessionPendingMessage.delete({
-        where: { sessionId_localId: { sessionId: params.sessionId, localId: params.localId } },
-    });
-
-    const activationTarget = await reconcilePendingActivationAuthorizationForRemovedRequestInTx({
-        tx,
-        sessionId: params.sessionId,
-        requestId: params.localId,
-    });
-
-    const { pendingVersion, pendingCount, pendingBlockedCount, participantCursors, badgeAttentionChanged } = await applyPendingSessionStateChange({
-        tx,
-        sessionId: params.sessionId,
-        pendingCountDelta: params.existing.status === "queued" ? -1 : 0,
-        pendingBlockedCountDelta: params.existing.status === "queued" && params.existing.deliveryState === "blocked" ? -1 : 0,
-        activationTarget,
-    });
+    const state = await retirePendingDelivery(tx, params);
     const participantCursorsMessage = committed.didWrite || committed.didUpdate
         ? await markSessionParticipantsChanged({
             tx,
@@ -1278,13 +1299,9 @@ async function commitResolvedPendingDelivery(
         : [];
     return {
         ok: true,
-        pendingVersion,
-        pendingCount,
-        pendingBlockedCount,
-        participantCursors,
-        participantCursorsPending: participantCursors,
+        ...state,
+        participantCursorsPending: state.participantCursors,
         participantCursorsMessage,
-        badgeAttentionChanged,
         didWrite: committed.didWrite,
         didUpdate: committed.didUpdate,
         message: committedMessage,
@@ -1297,6 +1314,7 @@ export async function resolveAcceptedPendingDelivery(params: {
     sessionId: string;
     localId: string;
     trustedPublisherFence: TrustedPendingPublisherFence;
+    outcome?: AcceptedPendingSettlementRequestV2["outcome"];
     diagnosticCorrelationId?: string;
 }): Promise<ResolveAcceptedPendingDeliveryResult> {
     const actorUserId = typeof params.actorUserId === "string" ? params.actorUserId : "";
@@ -1319,8 +1337,22 @@ export async function resolveAcceptedPendingDelivery(params: {
             }
             const existing = await tx.sessionPendingMessage.findUnique({
                 where: { sessionId_localId: { sessionId, localId } },
-                select: { status: true, deliveryState: true, deliveryBlockedReason: true, discardedReason: true, messageRole: true, content: true, requestedAction: true, position: true },
+                select: { status: true, deliveryState: true, deliveryBlockedReason: true, discardedReason: true, messageRole: true, content: true, requestedAction: true, position: true, providerAction: true },
             });
+
+            if (params.outcome === "handed_off") {
+                if (!existing) {
+                    return { ok: true, didResolve: false, ...(await readCurrentPendingMutationState(tx, sessionId)) } as const;
+                }
+                const providerClaim = PendingProviderActionSchema.safeParse(existing.providerAction);
+                if (!providerClaim.success || normalizePendingDeliveryStatusV1(existing).status !== "delivering") {
+                    return { ok: false, error: "not-materialized" } as const;
+                }
+                // Materialization already admitted this exact delivery claim, including an explicit
+                // action that can bypass a held predecessor. Pi publishes its own conversation.
+                const state = await retirePendingDelivery(tx, { sessionId, localId, existing, providerClaim: providerClaim.data });
+                return { ok: true, didResolve: true, ...state } as const;
+            }
 
             if (!existing) {
                 const committed = await tx.sessionMessage.findFirst({

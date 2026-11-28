@@ -418,7 +418,8 @@ function isSessionProviderInputRejectedBeforeEffectReason(
 export type SessionProviderInputOutcome =
     | (SessionProviderInputOutcomeIdentity & Readonly<{
         kind: 'accepted';
-        delivery?: Readonly<{ kind: 'primary_turn' | 'command' }>;
+        /** Terminal handoff confirms invocation and leaves the provider to publish its own turns. */
+        delivery?: Readonly<{ kind: 'primary_turn' | 'command' | 'terminal_handoff' }>;
         providerRequestId?: string;
         providerTurnId?: string;
         /** Model captured for this new provider prompt before dispatch. Omitted for in-flight steer. */
@@ -649,7 +650,7 @@ export class ApiSessionClient extends EventEmitter {
         state: PendingMaterializationDeliveryState;
         requestedAction?: PendingRequestedActionV1;
         providerAction?: import('@happier-dev/protocol').PendingProviderAction;
-        acceptedDeliveryKind?: 'primary_turn' | 'command';
+        acceptedDeliveryKind?: NonNullable<Extract<SessionProviderInputOutcome, { kind: 'accepted' }>['delivery']>['kind'];
         turnPublication?: {
             turnId: string | null;
             published: boolean;
@@ -1758,6 +1759,7 @@ export class ApiSessionClient extends EventEmitter {
         try {
             const claim = this.canonicalPendingDeliveryByLocalId.get(localId);
             if (!claim) return;
+            const terminalHandoff = claim.acceptedDeliveryKind === 'terminal_handoff';
             if (claim.acceptedDeliveryKind === 'primary_turn') {
                 const publication = this.ensureCanonicalPendingTurnPublication(localId);
                 if (!publication) return;
@@ -1787,6 +1789,7 @@ export class ApiSessionClient extends EventEmitter {
                     socket: authority.socket,
                     sessionId: this.sessionId,
                     localId,
+                    ...(terminalHandoff ? { delivery: 'terminal_handoff' } : {}),
                 });
                 if (!this.isAcceptedCanonicalPendingDeliveryOperationCurrent(authority)) return;
                 if (!this.canonicalPendingDeliveryByLocalId.has(localId)) continue;
@@ -1800,7 +1803,7 @@ export class ApiSessionClient extends EventEmitter {
                 const hasExactCommittedReplay = result.didResolve === false
                     && result.message?.localId === localId
                     && typeof result.message.seq === 'number';
-                if (result.didResolve !== true && !hasExactCommittedReplay) {
+                if (!terminalHandoff && result.didResolve !== true && !hasExactCommittedReplay) {
                     // A live no-op cannot prove that this exact accepted row committed. Keep its
                     // claim visible for reconciliation; unrelated wakes must not become retry authority.
                     logger.infoFile('[pendingQueue] accepted provider delivery remains unresolved', {
@@ -1819,7 +1822,7 @@ export class ApiSessionClient extends EventEmitter {
                 const resolvedSeq = typeof result.message?.seq === 'number' ? result.message.seq : null;
                 this.acceptedProviderInputLocalIds.add(localId);
                 this.clearCanonicalPendingDeliveryLocalState(localId);
-                this.recordCommittedUserMessageSeq(localId, resolvedSeq);
+                if (!terminalHandoff) this.recordCommittedUserMessageSeq(localId, resolvedSeq);
                 return;
             } catch (error) {
                 const serializedError = serializeAcceptedPendingSettlementErrorForLog(error);

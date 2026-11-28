@@ -1314,6 +1314,26 @@ describe('pendingQueueV2Transport', () => {
         expect(mockPost).not.toHaveBeenCalled();
     });
 
+    it.each([true, false])('settles native handoff with no transcript row (didResolve=%s)', async (didResolve) => {
+        const socket = {
+            connected: true,
+            emitWithAck: vi.fn().mockResolvedValue({
+                ok: true, didResolve, pendingCount: 0, pendingBlockedCount: 0, pendingVersion: 10,
+            }),
+            timeout: vi.fn().mockReturnThis(),
+        };
+
+        await expect(resolveAcceptedPendingQueueV2Delivery({
+            socket: socket as any,
+            sessionId: 'session-1',
+            localId: 'handed-off',
+            delivery: 'terminal_handoff',
+        })).resolves.toMatchObject({ didResolve, message: null });
+        expect(socket.emitWithAck).toHaveBeenCalledWith('pending-delivery-accepted-v1', {
+            v: 2, sessionId: 'session-1', localId: 'handed-off', outcome: 'handed_off',
+        });
+    });
+
     it('preserves didResolve false for a successful no-op accepted delivery', async () => {
         const socket = {
             connected: true,

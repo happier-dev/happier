@@ -74,10 +74,11 @@ import { isGenericSubAgentToolName, readPendingLocalId } from '@happier-dev/prot
 import { canonicalizeToolNameV2 } from '@/agent/tools/normalization';
 import type {
   ProviderPromptSubmissionCallbacks,
+  ProviderPromptTurnOwner,
   ProviderPromptWithMeta,
   ProviderTurnCompletionResult,
 } from '@/agent/runtime/providerPromptSubmission';
-import { ProviderPromptSubmissionRejectedBeforeEffectError } from '@/agent/runtime/providerPromptSubmission';
+import { ProviderPromptSubmissionRejectedBeforeEffectError, ProviderPromptSubmissionUnconfirmedError } from '@/agent/runtime/providerPromptSubmission';
 import {
   computePendingModelOverrideApplication,
   computePendingSessionModeOverrideApplication,
@@ -274,6 +275,7 @@ function stringifySessionConfigOptionValue(value: string | number | boolean | nu
 }
 
 export type AcpRuntime = Readonly<{
+  promptTurnOwner?: ProviderPromptTurnOwner;
   getSessionId: () => string | null;
   /**
    * Whether this runtime can "steer" additional user input into an already running turn now; false while
@@ -499,6 +501,10 @@ export function createAcpRuntime(params: {
   mcpServers: Record<string, McpServerConfig>;
   permissionHandler: AcpPermissionHandler;
   onThinkingChange: (thinking: boolean) => void;
+  /** Hosts that publish presence from onThinkingChange own both its mode and delivery. */
+  keepAliveOwner?: 'host' | 'runtime';
+  promptTurnOwner?: ProviderPromptTurnOwner;
+  onProviderTurnCompleted?: (result: ProviderTurnCompletionResult) => void;
   ensureBackend: () => Promise<AcpRuntimeBackend>;
   /** Provider opt-in for binding backend session open to the enclosing runner cancellation. */
   getSessionOpenAbortSignal?: () => AbortSignal | undefined;
@@ -524,7 +530,7 @@ export function createAcpRuntime(params: {
    * session id that a successful load must return. The provider still receives
    * the original reference; the generic identity binder remains strict.
    */
-  resolveExpectedVendorSessionIdForResume?: (resumeReference: string) => string | null;
+  resolveExpectedVendorSessionIdForResume?: (resumeReference: string) => string | null | Promise<string | null>;
   /**
    * Optional in-flight steer support.
    *
@@ -617,6 +623,10 @@ export function createAcpRuntime(params: {
   };
   turnAssistantPreviewTracker?: TurnAssistantPreviewTracker;
 }): AcpRuntime {
+  const setThinking = (thinking: boolean): void => {
+    params.onThinkingChange(thinking);
+    if (params.keepAliveOwner !== 'host') params.session.keepAlive(thinking, 'remote');
+  };
   let backend: AcpRuntimeBackend | null = null;
   let backendPromise: Promise<AcpRuntimeBackend> | null = null;
   let messageForwarder: ReturnType<typeof createAcpAgentMessageForwarder> | null = null;
@@ -921,8 +931,7 @@ export function createAcpRuntime(params: {
     stopPendingPump();
     publishInFlightSteerCapabilities(false);
     resetTurnState();
-    params.onThinkingChange(false);
-    params.session.keepAlive(false, 'remote');
+    setThinking(false);
     return turn;
   };
 
@@ -986,7 +995,14 @@ export function createAcpRuntime(params: {
       error instanceof AcpPromptSubmissionPhaseError
       && error.phase === 'rejected_before_effect'
     ) {
-      throw createRejectedBeforeProviderEffectError(error, 'provider_rejected_before_acceptance');
+      // A backend that knows why it refused (e.g. temporarily unavailable) keeps that reason.
+      throw createRejectedBeforeProviderEffectError(
+        error.cause instanceof ProviderPromptSubmissionRejectedBeforeEffectError ? error.cause : error,
+        'provider_rejected_before_acceptance',
+      );
+    }
+    if (error instanceof AcpPromptSubmissionPhaseError && error.phase === 'effect_may_have_occurred') {
+      throw new ProviderPromptSubmissionUnconfirmedError();
     }
     return rethrowPromptError(error, turn);
   };
@@ -1396,8 +1412,7 @@ export function createAcpRuntime(params: {
     if (turn.turnAborted) return true;
     turn.turnAborted = true;
     if (turn === turnState) {
-      params.onThinkingChange(false);
-      params.session.keepAlive(false, 'remote');
+      setThinking(false);
     }
     return enqueueTurnSettlement(() => settlePromptFailure(detailRaw, turn));
   };
@@ -1413,6 +1428,7 @@ export function createAcpRuntime(params: {
     }
     const terminalTurn = captureTerminalTurn(turn);
     if (turn === turnState) retireCurrentTurn();
+    const nextTurnState = turnState;
     const permissionSettlement = abortPendingAcpPermissionRequests(
       params.permissionHandler,
       turn.turnAborted ? 'ACP runtime turn aborted' : 'ACP runtime turn ended',
@@ -1511,6 +1527,17 @@ export function createAcpRuntime(params: {
         clearToolCallCache();
         reportTurnMediaOverflow(turn);
         params.turnAssistantPreviewTracker?.reset();
+      }
+
+      if (
+        params.promptTurnOwner === 'provider'
+        && terminalTurn.providerTurnId
+        && turnState === nextTurnState
+        && turnState.currentTurnId === null
+        && !turn.turnAborted
+        && (!turn.pendingTurnOutcome || turn.pendingTurnOutcome.kind === 'completed')
+      ) {
+        params.onProviderTurnCompleted?.({ assistantText: turn.modelOutputState.turnText || null });
       }
     });
     return turn.settlement;
@@ -1669,8 +1696,7 @@ export function createAcpRuntime(params: {
       if (msg.type === 'status') {
         if (msg.status === 'running' && !turnState.turnInFlight && !turnState.currentTurnId) {
           ensureCurrentTurnId();
-          params.onThinkingChange(true);
-          params.session.keepAlive(true, 'remote');
+          setThinking(true);
         }
         if (isModelOutputSegmentBoundary(msg) && !readMessageSidechainId(msg)) {
           const turn = turnState;
@@ -1718,12 +1744,14 @@ export function createAcpRuntime(params: {
           void abortPendingAcpPermissionRequests(params.permissionHandler, 'ACP runtime status:error', (error) => {
             logger.debug(`[${params.provider}] Failed to abort pending permission requests after status:error`, error);
           });
-          params.onThinkingChange(false);
-          params.session.keepAlive(false, 'remote');
+          setThinking(false);
         }
-        if (msg.status === 'idle' && (!turnState.turnInFlight || msg.turnFinished)) {
+        if (msg.status === 'idle' && (!turnState.turnInFlight || msg.turnFinished || msg.turnCancelled)) {
           const turn = turnState;
-          const completion = msg.turnFinished ? waitForTurnResponse(b, turn) : undefined;
+          if (msg.turnCancelled && !turn.turnAborted && (turn.currentTurnId || turn.turnInFlight)) {
+            rememberTurnOutcome({ kind: 'aborted', stopReason: 'cancelled' }, turn);
+          }
+          const completion = msg.turnFinished && !msg.turnCancelled ? waitForTurnResponse(b, turn) : undefined;
           void flushCapturedTurn(turn, completion).catch((error) => {
             logger.infoFile(`[${params.provider}] Failed to settle provider turn`, error);
           });
@@ -2512,6 +2540,10 @@ export function createAcpRuntime(params: {
       rethrowAcpPromptSubmissionError(error, turn);
     }
     await callbacks.onProviderPromptSubmitted?.();
+    if (submissionEvidence?.kind === 'terminal_handoff') {
+      callbacks.onProviderPromptHandedOff?.();
+      return;
+    }
 
     let responseCompletion: Promise<AcpTurnOutcome | void> | null = null;
     try {
@@ -2555,6 +2587,7 @@ export function createAcpRuntime(params: {
 
   return {
     getSessionId: () => sessionId,
+    promptTurnOwner: params.promptTurnOwner ?? 'host',
     supportsInFlightSteer: () => inFlightSteerEnabled && backend?.isInFlightSteerWindowOpen?.() !== false,
     isTurnInFlight: () => turnState.turnInFlight,
 
@@ -2576,8 +2609,7 @@ export function createAcpRuntime(params: {
       publishInFlightSteerCapabilities(true);
       ensureCurrentTurnId();
       startPendingPumpIfNeeded();
-      params.onThinkingChange(true);
-      params.session.keepAlive(true, 'remote');
+      setThinking(true);
       try {
         params.hooks?.onBeginTurn?.();
       } catch (e) {
@@ -2589,12 +2621,27 @@ export function createAcpRuntime(params: {
       if (!sessionId) return;
       const providerSessionId = sessionId;
       const turn = turnState;
+      if (params.promptTurnOwner === 'provider') {
+        const requestedTurnId = turn.currentTurnId;
+        // The loaded provider owns this Stop. Do not reopen the backend or wait on Session I/O
+        // before dispatching, since a replacement terminal connection could own another turn.
+        const cancellation = backend?.cancel(providerSessionId);
+        const permissionSettlement = abortPendingAcpPermissionRequests(params.permissionHandler, 'Aborted by user');
+        try {
+          await cancellation;
+          if (requestedTurnId && turnState === turn && turn.currentTurnId === requestedTurnId && !turn.settlement) {
+            rememberTurnOutcome({ kind: 'aborted', stopReason: 'cancelled' }, turn);
+          }
+        } finally {
+          await permissionSettlement;
+        }
+        return;
+      }
       turn.turnAborted = true;
       turn.pendingTurnOutcome = { kind: 'aborted', stopReason: 'cancelled' };
       stopPendingPump();
       publishInFlightSteerCapabilities(false);
-      params.onThinkingChange(false);
-      params.session.keepAlive(false, 'remote');
+      setThinking(false);
       try {
         const b = await ensureBackend();
         await b.cancel(providerSessionId, options);
@@ -2626,8 +2673,7 @@ export function createAcpRuntime(params: {
         resetTurnState();
         clearToolCallCache();
         stopPendingPump();
-        params.onThinkingChange(false);
-        params.session.keepAlive(false, 'remote');
+        setThinking(false);
         messageForwarder?.dispose();
         messageForwarder = null;
         stopObservingProviderTurnEvents?.();
@@ -2693,10 +2739,11 @@ export function createAcpRuntime(params: {
           ? {
               kind: 'resume',
               expectedVendorSessionId: params.resolveExpectedVendorSessionIdForResume
-                ? params.resolveExpectedVendorSessionIdForResume(resumeReference) ?? ''
+                ? (await params.resolveExpectedVendorSessionIdForResume(resumeReference)) ?? ''
                 : resumeReference,
             }
           : { kind: 'create' };
+        assertRuntimeGeneration(operationGeneration);
         const opened = await identityBinding.open({
           intent,
           openSession: async (identityContext) => {

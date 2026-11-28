@@ -288,7 +288,7 @@ describe('PiRpcBackend auth reload restart deferral', () => {
     const fixture = setup({ sessionFileExists: true });
     const started = await backend!.startSession();
     const firstBoot = parseJsonLines<{ pid: number }>(await readFile(fixture.bootLogPath, 'utf8'))[0]!;
-    const oldChild = (backend as any).process as NodeJS.EventEmitter;
+    const oldChild = (backend as any).channel.child as NodeJS.EventEmitter;
     await changeAuth(fixture.authPath);
 
     await backend!.sendPrompt(started.sessionId, 'replacement prompt');

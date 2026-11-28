@@ -22,11 +22,13 @@ import { readPendingLocalId } from '@happier-dev/protocol';
 import { readNewestSessionModelsMetadataStateV1 } from '@happier-dev/agents';
 import {
   resolveProviderPromptFailureDeliveryReason,
+  type ProviderPromptTurnOwner,
   type ProviderPromptWithMeta,
   type ProviderTurnCompletionResult,
 } from '@/agent/runtime/providerPromptSubmission';
 
 type PromptRuntime = {
+  promptTurnOwner?: ProviderPromptTurnOwner;
   beginTurn: () => void;
   startOrLoad: (opts: { resumeId?: string; importHistory?: boolean; deferPendingDrain?: boolean }) => Promise<unknown>;
   drainPendingAfterStartOrLoad?: () => Promise<void>;
@@ -110,6 +112,8 @@ async function waitForCommittedUserPromptBoundary(
   }));
 }
 
+export type DescribeUnavailableRuntimeReset = (cause: 'clear' | 'permission_change' | 'settings_change') => string;
+
 export async function runPermissionModePromptLoop(opts: {
   providerName: string;
   providerId?: string;
@@ -130,7 +134,9 @@ export async function runPermissionModePromptLoop(opts: {
   setThinking: (value: boolean) => void;
   sendReady: (context?: ReadyNotificationTurnContext) => void;
   currentPermissionModeUpdatedAt: number;
+  getCurrentPermissionMode?: () => PermissionMode;
   setCurrentPermissionMode: (mode: PermissionMode) => void;
+  guardPermissionModeRequests?: (accept: (mode: PermissionMode) => boolean) => void;
   setCurrentPermissionModeUpdatedAt: (updatedAt: number) => void;
   initialResumeId?: string;
   strictInitialResume?: boolean;
@@ -150,10 +156,17 @@ export async function runPermissionModePromptLoop(opts: {
     baseOverride?: string | null;
   }) => Promise<string | null | undefined>;
   formatPromptErrorMessage: (error: unknown) => string;
+  /**
+   * Present when this runtime cannot be reset (its provider process is the user's own terminal):
+   * returns the notice shown instead of `/clear` or of a restart for changed queue settings.
+   */
+  describeUnavailableRuntimeReset?: DescribeUnavailableRuntimeReset | null;
 }): Promise<void> {
   let wasStarted = false;
   let currentModeHash: string | null = null;
-  let currentAppendSystemPromptKey: ReturnType<typeof resolveAppendSystemPromptQueueKeyValue> | null = null;
+  let launchPermissionMode: PermissionMode | null = null;
+  let lastRequestedPermissionMode: PermissionMode | null = null;
+  let previousAppendSystemPrompt: ReturnType<typeof resolveAppendSystemPromptQueueKeyValue> | undefined;
   let pending: QueuedPermissionModeMessage | null = null;
   let storedSessionIdForResume: { value: string; origin: 'initial' | 'restart' } | null = null;
   let didReplaySeedBootstrap = false;
@@ -181,6 +194,10 @@ export async function runPermissionModePromptLoop(opts: {
     currentPermissionModeUpdatedAt: opts.currentPermissionModeUpdatedAt,
     take: 50,
     applyMode: ({ mode, updatedAt }) => {
+      if (launchPermissionMode !== null) {
+        acceptPermissionMode(mode);
+        return;
+      }
       opts.setCurrentPermissionMode(mode);
       opts.setCurrentPermissionModeUpdatedAt(updatedAt);
       opts.permissionHandler.setPermissionMode(mode);
@@ -216,7 +233,7 @@ export async function runPermissionModePromptLoop(opts: {
   const confirmQueuedUserMessageDeliveredToProvider = (
     message: QueuedPermissionModeMessage,
     appliedModelId?: string | null,
-    delivery?: Readonly<{ kind: 'command' }>,
+    delivery?: Readonly<{ kind: 'command' | 'terminal_handoff' }>,
   ): void => {
     const localIds = normalizePendingDeliveryLocalIds(message.userMessageLocalIds);
     if (localIds.length !== 1) return;
@@ -251,6 +268,11 @@ export async function runPermissionModePromptLoop(opts: {
     });
   };
 
+  const postNotice = (message: string): void => {
+    opts.messageBuffer.addMessage(message, 'status');
+    opts.session.sendAgentMessage(opts.agentMessageType, { type: 'message', message });
+  };
+
   const ensureFreshSessionSnapshotBeforeTurnBestEffort = async (): Promise<void> => {
     if (snapshotFreshForNextPromptBoundary) {
       return;
@@ -265,6 +287,17 @@ export async function runPermissionModePromptLoop(opts: {
     overrideSync.syncFromMetadata();
     return await overrideSync.flushPendingAfterStart() === true && !opts.shouldExit();
   };
+
+  function acceptPermissionMode(mode: PermissionMode): boolean {
+    if (launchPermissionMode === null) return true;
+    const accepted = mode === launchPermissionMode;
+    if (!accepted && mode !== lastRequestedPermissionMode) {
+      const notice = opts.describeUnavailableRuntimeReset?.('permission_change');
+      if (notice) postNotice(notice);
+    }
+    lastRequestedPermissionMode = mode;
+    return accepted;
+  }
 
   const ensureRuntimeStarted = async (): Promise<{ startedFreshSessionForTurn: boolean }> => {
     if (wasStarted) return { startedFreshSessionForTurn: false };
@@ -349,6 +382,12 @@ export async function runPermissionModePromptLoop(opts: {
   if (opts.startRuntimeBeforeFirstPrompt === true && !wasStarted) {
     await ensureFreshSessionSnapshotBeforeTurnBestEffort();
     if (opts.shouldExit()) return;
+    if (opts.describeUnavailableRuntimeReset && opts.getCurrentPermissionMode) {
+      syncPermissionModeFromMetadata();
+      launchPermissionMode = opts.getCurrentPermissionMode();
+      opts.guardPermissionModeRequests?.(acceptPermissionMode);
+      opts.permissionHandler.setPermissionMode(launchPermissionMode);
+    }
     overrideSync.syncFromMetadata();
     const eagerStart = await ensureRuntimeStarted();
     if (opts.shouldExit()) return;
@@ -393,16 +432,27 @@ export async function runPermissionModePromptLoop(opts: {
     }
     if (!message) continue;
 
-    opts.permissionHandler.setPermissionMode(message.mode.permissionMode);
-
     const appendSystemPromptKey = resolveAppendSystemPromptQueueKeyValue(message.mode);
-    // A permission-only change applies in place when the running session can take it, keeping its background work
-    // and session approvals; anything else restarts the provider session.
-    if (wasStarted && currentModeHash && message.hash !== currentModeHash
-      && appendSystemPromptKey === currentAppendSystemPromptKey
-      && await opts.runtime.applyPermissionModeInPlace?.() === true) {
-      if (opts.shouldExit()) break;
+    if (launchPermissionMode !== null) {
+      // Messages queued before the startup lock can still carry an older request.
+      if (message.mode.permissionMode !== launchPermissionMode) acceptPermissionMode(message.mode.permissionMode);
+      if (previousAppendSystemPrompt !== undefined && appendSystemPromptKey !== previousAppendSystemPrompt) {
+        const notice = opts.describeUnavailableRuntimeReset?.('settings_change');
+        if (notice) postNotice(notice);
+      }
       currentModeHash = message.hash;
+    } else {
+      opts.permissionHandler.setPermissionMode(message.mode.permissionMode);
+      if (wasStarted && currentModeHash && message.hash !== currentModeHash) {
+        if (opts.describeUnavailableRuntimeReset) {
+          currentModeHash = message.hash;
+          postNotice(opts.describeUnavailableRuntimeReset('settings_change'));
+        } else if (appendSystemPromptKey === previousAppendSystemPrompt
+          && await opts.runtime.applyPermissionModeInPlace?.() === true) {
+          if (opts.shouldExit()) break;
+          currentModeHash = message.hash;
+        }
+      }
     }
     if (wasStarted && currentModeHash && message.hash !== currentModeHash) {
       const resumeId = opts.runtime.getSessionId();
@@ -433,14 +483,21 @@ export async function runPermissionModePromptLoop(opts: {
     }
 
     currentModeHash = message.hash;
-    currentAppendSystemPromptKey = appendSystemPromptKey;
+    previousAppendSystemPrompt = appendSystemPromptKey;
     await ensureFreshSessionSnapshotBeforeTurnBestEffort();
     syncPermissionModeFromMetadata();
     overrideSync.syncFromMetadata();
     await overrideSync.flushPendingAfterStart();
     opts.messageBuffer.addMessage(message.message.text, 'user');
 
+    const providerOwnsPromptTurn = opts.runtime.promptTurnOwner === 'provider';
     const special = parseSpecialCommand(message.message.text);
+    if (special.type === 'clear' && opts.describeUnavailableRuntimeReset) {
+      postNotice(opts.describeUnavailableRuntimeReset('clear'));
+      confirmQueuedUserMessageDeliveredToProvider(message, undefined, { kind: 'command' });
+      if (!providerOwnsPromptTurn) opts.sendReady();
+      continue;
+    }
     if (special.type === 'clear') {
       opts.messageBuffer.addMessage(`Resetting ${opts.providerName} session…`, 'status');
       await opts.runtime.reset();
@@ -470,7 +527,7 @@ export async function runPermissionModePromptLoop(opts: {
     // entire carry-over context onto the next message.
     let pendingReplaySeedSettlement: (() => Promise<unknown>) | null = null;
     let replaySeedSettlement: Promise<unknown> | null = null;
-    const confirmProviderAccepted = (): void => {
+    const confirmProviderDelivery = (delivery?: Readonly<{ kind: 'terminal_handoff' }>): void => {
       if (didConfirmProviderAccepted) return;
       didConfirmProviderAccepted = true;
       const settle = pendingReplaySeedSettlement;
@@ -478,7 +535,7 @@ export async function runPermissionModePromptLoop(opts: {
       // The seed owner reports its own failures and never rejects; the promise is
       // awaited below so retirement is durable before the next prompt resolves.
       if (settle) replaySeedSettlement = settle();
-      confirmQueuedUserMessageDeliveredToProvider(message, appliedModelIdForPrompt);
+      confirmQueuedUserMessageDeliveredToProvider(message, delivery ? undefined : appliedModelIdForPrompt, delivery);
     };
     const awaitReplaySeedSettlement = async (): Promise<void> => {
       const settlement = replaySeedSettlement;
@@ -490,7 +547,9 @@ export async function runPermissionModePromptLoop(opts: {
       turnInFlight = true;
       let shouldApplyFreshSessionSystemPrompt = pendingFreshSessionSystemPrompt;
       const localId = typeof message.message.localId === 'string' && message.message.localId ? message.message.localId : null;
-      const committedUserMessageSeq = await waitForCommittedUserPromptBoundary(opts.session, localId);
+      const committedUserMessageSeq = providerOwnsPromptTurn
+        ? null
+        : await waitForCommittedUserPromptBoundary(opts.session, localId);
       if (opts.shouldExit()) {
         shouldSendReady = false;
         break;
@@ -501,14 +560,16 @@ export async function runPermissionModePromptLoop(opts: {
       const startSeqExclusive = committedUserMessageSeq !== null && lastObservedMessageSeq !== null
         ? Math.max(committedUserMessageSeq, lastObservedMessageSeq)
         : committedUserMessageSeq ?? lastObservedMessageSeq;
-      if (typeof opts.session.beginTurnAssistantTextSnapshot === 'function') {
+      if (!providerOwnsPromptTurn && typeof opts.session.beginTurnAssistantTextSnapshot === 'function') {
         const turnToken = opts.session.beginTurnAssistantTextSnapshot({
           startSeqExclusive,
         });
         readyTurnContext = { turnToken, startSeqExclusive };
       }
-      opts.runtime.beginTurn();
-      didBeginRuntimeTurn = true;
+      if (!providerOwnsPromptTurn) {
+        opts.runtime.beginTurn();
+        didBeginRuntimeTurn = true;
+      }
       if (!wasStarted) {
         const runtimeStart = await ensureRuntimeStarted();
         if (opts.shouldExit()) {
@@ -610,15 +671,18 @@ export async function runPermissionModePromptLoop(opts: {
             text: providerPrompt,
             localId,
             ...(dispatchMeta ? { meta: dispatchMeta as Record<string, unknown> } : {}),
-            onProviderPromptAccepted: confirmProviderAccepted,
+            onProviderPromptAccepted: () => confirmProviderDelivery(),
+            ...(providerOwnsPromptTurn
+              ? { onProviderPromptHandedOff: () => confirmProviderDelivery({ kind: 'terminal_handoff' }) }
+              : {}),
           });
-          confirmProviderAccepted();
+          if (!providerOwnsPromptTurn) confirmProviderDelivery();
         } else {
           didAttemptProviderSend = true;
           await opts.runtime.sendPrompt(providerPrompt);
-          confirmProviderAccepted();
+          if (!providerOwnsPromptTurn) confirmProviderDelivery();
         }
-        // Retirement was already started by `confirmProviderAccepted`; awaiting it here
+        // Retirement was already started by the delivery callback. Awaiting it here
         // keeps an ordinary turn's ordering unchanged. An accepted prompt whose turn
         // then fails skips this line, so the `finally` below awaits it instead.
         await awaitReplaySeedSettlement();
@@ -647,7 +711,7 @@ export async function runPermissionModePromptLoop(opts: {
       }
       if (!isAbortLikeError(error)) {
         let surfacedStructuredFailure = false;
-        if (typeof opts.runtime.failTurn === 'function') {
+        if (!providerOwnsPromptTurn && typeof opts.runtime.failTurn === 'function') {
           try {
             const result = await opts.runtime.failTurn(error);
             surfacedStructuredFailure = result !== false;
@@ -685,9 +749,9 @@ export async function runPermissionModePromptLoop(opts: {
       overrideSync.syncFromMetadata();
       // Once a turn began, the runtime flush owns provider activity, including native work
       // that outlives command callback completion. Setup/exit paths have no runtime flush.
-      if (!didBeginRuntimeTurn || opts.shouldExit()) opts.setThinking(false);
+      if (!providerOwnsPromptTurn && (!didBeginRuntimeTurn || opts.shouldExit())) opts.setThinking(false);
       opts.keepAlive();
-      if (shouldSendReady && !opts.shouldExit()) {
+      if (shouldSendReady && !providerOwnsPromptTurn && !opts.shouldExit()) {
         opts.sendReady(readyTurnContext);
       }
     }

@@ -10,13 +10,16 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { resolveEffectiveCodingPromptText } from '@/agent/prompting/coding/resolveEffectiveCodingPrompt';
 import { resolveSessionCodingPromptSettings } from '@/agent/prompting/coding/resolveSessionCodingPromptSettings';
+import { reportSessionToDaemonIfRunning } from '@/agent/runtime/startupSideEffects';
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 import { logger } from '@/ui/logger';
 
 import type { PiBackendOptions } from '@/backends/pi/acp/backend';
 import { resolveHappyToolsBridgeBackendOptions } from '@/backends/pi/bridgeExtension';
+import type { PiSharedTerminalHost } from '@/backends/pi/sharedControl/piSharedTerminalHost';
+import type { PiOpenedSessionIdentity } from '@/backends/pi/rpc/PiRpcBackend';
 import { publishPiSessionIdMetadata } from '@/backends/pi/utils/piSessionIdMetadata';
-import { resolvePiSessionIdFromResumeReference } from '@/backends/pi/utils/piSessionFiles';
+import { resolveExpectedPiSessionIdForResume } from '@/backends/pi/utils/piSessionFiles';
 
 export function createPiAcpRuntime(params: {
   directory: string;
@@ -40,9 +43,18 @@ export function createPiAcpRuntime(params: {
    */
   credentials: Credentials;
   accountSettings?: Record<string, unknown> | null;
+  /**
+   * Shared local control: run Pi's native TUI in this terminal and attach through the bridge
+   * instead of spawning the headless RPC child.
+   */
+  sharedTerminal?: PiSharedTerminalHost;
+  onProviderTurnCompleted?: Parameters<typeof createCatalogProviderAcpRuntime>[0]['onProviderTurnCompleted'];
+  continueRecentSession?: boolean;
 }) {
+  const sharedTerminal = params.sharedTerminal ?? null;
   const lastPublishedPiSessionId: { value: string | null; sessionFile?: string | null } = { value: null };
   let lastPiIdentityGeneration: number | null = null;
+  let openedSession: PiOpenedSessionIdentity | null = null;
 
   return createCatalogProviderAcpRuntime<PiBackendOptions>({
     provider: 'pi',
@@ -60,18 +72,31 @@ export function createPiAcpRuntime(params: {
           lastPublishedPiSessionId.sessionFile = null;
           lastPiIdentityGeneration = event.generation;
         }
+        const opened = openedSession?.sessionId === event.vendorSessionId ? openedSession : null;
         await publishPiSessionIdMetadata({
-          operation: event.operation,
+          operation: opened?.operation ?? event.operation,
           session: params.session,
           getPiSessionId: () => event.vendorSessionId,
+          reportedSessionFile: opened?.sessionFile,
           cwd: params.directory,
           processEnv: process.env,
           lastPublished: lastPublishedPiSessionId,
         });
+        // Startup reported metadata before Pi bound its session. Re-report so the daemon's session
+        // marker names this live owner, which direct-session takeover must stop before resuming
+        // the same Pi session file in a second process.
+        const metadata = params.session.getMetadataSnapshot();
+        if (metadata) {
+          void reportSessionToDaemonIfRunning({ sessionId: params.session.sessionId, metadata }).catch((error: unknown) => {
+            logger.debug('[pi] Failed to report the bound Pi session to the daemon (non-fatal)', error);
+          });
+        }
       },
     },
-    resolveExpectedVendorSessionIdForResume: resolvePiSessionIdFromResumeReference,
+    resolveExpectedVendorSessionIdForResume: resolveExpectedPiSessionIdForResume,
     onThinkingChange: params.onThinkingChange,
+    keepAliveOwner: 'host',
+    ...(sharedTerminal ? { promptTurnOwner: 'provider', onProviderTurnCompleted: params.onProviderTurnCompleted } : {}),
     getSessionOpenAbortSignal: params.getSessionOpenAbortSignal,
     memoryRecallGuidance: {
       enabled: params.memoryRecallGuidanceEnabled === true,
@@ -81,7 +106,12 @@ export function createPiAcpRuntime(params: {
     processEnv: params.processEnv ?? process.env,
     pendingQueueDrainMaxPopPerWake: params.pendingQueueDrainMaxPopPerWake,
     providerInputConsumer: params.providerInputConsumer,
-    inFlightSteer: { enabled: true },
+    // The terminal user owns in-flight input; web prompts are delivered only while Pi is idle.
+    inFlightSteer: { enabled: sharedTerminal === null },
+    backendOptions: {
+      ...(params.continueRecentSession ? { continueRecentSession: { pending: true } } : {}),
+      onSessionOpened: (identity) => { openedSession = identity; },
+    },
     resolveBackendOptionsBeforeSpawn: async ({ session }) => {
       const memoryRecallGuidanceEnabled = params.memoryRecallGuidanceEnabled === true;
       const sessionProfileId = session.getMetadataSnapshot()?.profileId ?? null;
@@ -117,6 +147,7 @@ export function createPiAcpRuntime(params: {
         sessionMetadata: session.getMetadataSnapshot(),
         memoryRecallGuidanceEnabled,
         memoryMachineId: params.machineId,
+        ...(sharedTerminal ? { materializeExtension: sharedTerminal.ensureBridgeExtension } : {}),
       });
       if (!happyToolsBridge) throw new Error('Pi session input bridge could not bind');
 
@@ -139,6 +170,8 @@ export function createPiAcpRuntime(params: {
 
       const promptFragments = [happyToolsBridge.sessionConfig.promptAddition, resolvedPromptText]
         .filter((fragment): fragment is string => typeof fragment === 'string' && fragment.trim().length > 0);
+      // The endpoint and token travel only in the protected bridge config, never in env or argv.
+      const sharedControl = sharedTerminal ? await sharedTerminal.ensureListening() : null;
       return {
         happyToolsBridge: {
           ...happyToolsBridge,
@@ -147,8 +180,10 @@ export function createPiAcpRuntime(params: {
             // Pi applies --append-system-prompt before extension hooks. Keep the entire
             // Happier addition here so the host-resolved base precedes supplements.
             promptAddition: promptFragments.join('\n\n'),
+            ...(sharedControl ? { sharedControl } : {}),
           },
         },
+        ...(sharedTerminal ? { launchMode: 'interactive' as const, channelHost: sharedTerminal.channelHost } : {}),
       };
      },
    });

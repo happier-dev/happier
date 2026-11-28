@@ -15,7 +15,7 @@ function createRuntime(params: Readonly<{
     vendorSessionId: string;
   }>) => Promise<void>;
   drainPending?: () => Promise<void>;
-  resolveExpectedVendorSessionIdForResume?: (resumeReference: string) => string | null;
+  resolveExpectedVendorSessionIdForResume?: (resumeReference: string) => Promise<string | null>;
 }>) {
   return createAcpRuntime({
     provider: 'qwen',
@@ -114,7 +114,7 @@ describe('createAcpRuntime session identity', () => {
     const runtime = createRuntime({
       backend,
       persistBound,
-      resolveExpectedVendorSessionIdForResume: (reference) =>
+      resolveExpectedVendorSessionIdForResume: async (reference) =>
         reference === resumeReference ? 'pi-session-1' : null,
     });
 

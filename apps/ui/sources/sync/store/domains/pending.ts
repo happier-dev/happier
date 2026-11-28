@@ -17,6 +17,7 @@ export type PendingDomain = {
     applyPendingSnapshot: (sessionId: string, snapshot: Readonly<{
         messages: PendingMessage[];
         discarded: DiscardedPendingMessage[];
+        retiredRuntimeAdmissions?: ReadonlySet<PendingMessage>;
     }>) => void;
     applyPendingMessages: (sessionId: string, messages: PendingMessage[]) => void;
     applyDiscardedPendingMessages: (sessionId: string, messages: DiscardedPendingMessage[]) => void;
@@ -146,6 +147,7 @@ function retainLocallyOwnedOutboundProjections<S extends PendingDomain & Pending
     sessionId: string,
     nextMessages: PendingMessage[],
     nextDiscarded: readonly DiscardedPendingMessage[],
+    retiredRuntimeAdmissions: ReadonlySet<PendingMessage> | undefined,
 ): PendingMessage[] {
     const existing = state.sessionPending[sessionId]?.messages;
     if (!existing || existing.length === 0) return nextMessages;
@@ -157,7 +159,8 @@ function retainLocallyOwnedOutboundProjections<S extends PendingDomain & Pending
         serverKnownLocalIds.add(message.localId ?? message.id);
     }
     const retained = existing.filter((message) => (
-        !serverKnownIds.has(message.id)
+        !retiredRuntimeAdmissions?.has(message)
+        && !serverKnownIds.has(message.id)
         && !serverKnownLocalIds.has(message.localId ?? message.id)
         && isLocallyOwnedUncommittedOutboundProjection(state, sessionId, message)
     ));
@@ -224,13 +227,19 @@ function replacePendingBucket<S extends PendingDomain & PendingDomainDependencie
         messages: PendingMessage[];
         discarded: DiscardedPendingMessage[];
         isLoaded: boolean;
+        retiredRuntimeAdmissions?: ReadonlySet<PendingMessage>;
     }>,
 ): S {
+    const { retiredRuntimeAdmissions } = snapshot;
+    const messages = retiredRuntimeAdmissions?.size
+        ? snapshot.messages.filter((message) => !retiredRuntimeAdmissions.has(message))
+        : snapshot.messages;
     const filteredMessages = retainLocallyOwnedOutboundProjections(
         state,
         sessionId,
-        filterUncommittedPendingMessages(state, sessionId, snapshot.messages),
+        filterUncommittedPendingMessages(state, sessionId, messages),
         snapshot.discarded,
+        retiredRuntimeAdmissions,
     );
     const existing = state.sessionPending[sessionId];
     const nextMessages = existing && arePendingMessageListsEqual(existing.messages, filteredMessages)

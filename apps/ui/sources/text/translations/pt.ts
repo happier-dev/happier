@@ -4893,7 +4893,11 @@ export const pt: TranslationStructure = {
                 title: "Grok Build"
             },
             pi: {
-                title: "Pi"
+                title: "Pi",
+                nativeTerminal: {
+                    title: "Usar o terminal nativo do Pi",
+                    subtitle: "Aplica-se a novas sessões do Pi iniciadas no terminal. A leitura automática no modo nativo requer uma versão atualizada do Happier.",
+                },
             },
             qwen: {
                 title: "Qwen Code"

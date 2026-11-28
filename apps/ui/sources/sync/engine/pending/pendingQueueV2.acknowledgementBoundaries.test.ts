@@ -119,6 +119,11 @@ async function enqueueWithoutClientAcknowledgement(context: AcknowledgementBound
 }
 
 const PENDING_EXPORT_CONTRACT: Readonly<Record<string, PendingExportContract>> = {
+    recordRuntimePendingAdmission: {
+        kind: 'acknowledges-new-custody-outside-the-shared-driver',
+        why: 'ApiSessionClient.enqueueSessionUserMessage awaits the canonical server enqueue before the RPC ACK. '
+            + 'Sync.sendMessage supersedes the pre-ACK read and refreshes the admitted projection through Pending.',
+    },
     enqueuePendingMessageV2: {
         kind: 'acknowledges-new-custody',
         drive: async (context) => {

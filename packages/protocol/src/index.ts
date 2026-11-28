@@ -56,11 +56,21 @@ export {
 } from './sessionMessages/pendingLocalId.js';
 
 export {
+  SessionMessagePresenceRequestSchema,
+  SessionMessagePresenceResponseSchema,
+} from './sessionMessages/sessionMessagePresence.js';
+
+export {
   ACCEPTED_PENDING_SETTLEMENT_EVENT_V1,
+  AcceptedPendingSettlementRequestSchema,
   AcceptedPendingSettlementRequestV1Schema,
   AcceptedPendingSettlementResponseV1Schema,
   type AcceptedPendingSettlementRequestV1,
   type AcceptedPendingSettlementResponseV1,
+  AcceptedPendingSettlementRequestV2Schema,
+  AcceptedPendingSettlementResponseV2Schema,
+  type AcceptedPendingSettlementRequestV2,
+  type AcceptedPendingSettlementResponseV2,
 } from './sessionMessages/acceptedPendingSettlementV1.js';
 
 export {

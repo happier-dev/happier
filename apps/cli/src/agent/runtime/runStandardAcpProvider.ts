@@ -30,8 +30,9 @@ import { createSessionMetadata, type CreateSessionMetadataOptions } from '@/agen
 import { createStartupMetadataOverrides } from '@/agent/runtime/createStartupMetadataOverrides';
 import { initializeBackendApiContext } from '@/agent/runtime/initializeBackendApiContext';
 import { initializeBackendRunSession, type InitializeBackendRunSessionOptions } from '@/agent/runtime/initializeBackendRunSession';
-import { registerRunnerTerminationHandlers } from '@/agent/runtime/runnerTerminationHandlers';
-import { runPermissionModePromptLoop, type ProviderStartupControls, type ReadyNotificationTurnContext } from '@/agent/runtime/runPermissionModePromptLoop';
+import { registerRunnerTerminationHandlers, type RunnerTerminationHandlerRegistration } from '@/agent/runtime/runnerTerminationHandlers';
+import type { RunnerTerminationEvent } from '@/agent/runtime/runnerTerminationOutcome';
+import { runPermissionModePromptLoop, type DescribeUnavailableRuntimeReset, type ProviderStartupControls, type ReadyNotificationTurnContext } from '@/agent/runtime/runPermissionModePromptLoop';
 import { getSessionNotificationTitle } from '@/agent/runtime/readyNotificationContext';
 import { resolveReadyNotificationAssistantText } from '@/agent/runtime/readyNotificationAssistantText';
 import { sendReadyWithPushNotification } from '@/agent/runtime/sendReadyWithPushNotification';
@@ -57,9 +58,10 @@ import {
   prepareAgentNativeReturnStrictResume,
 } from '@/session/agentTransition/agentNativeReturn';
 import { withCurrentHappierSessionId } from '@/agent/runtime/session/currentSessionIdEnv';
-import type { ProviderTurnCompletionResult } from './providerPromptSubmission';
+import type { ProviderPromptTurnOwner, ProviderTurnCompletionResult } from './providerPromptSubmission';
 
 type RuntimeForLoop = {
+  promptTurnOwner?: ProviderPromptTurnOwner;
   beginTurn: () => void;
   startOrLoad: (opts: { resumeId?: string }) => Promise<unknown>;
   drainPendingAfterStartOrLoad?: () => Promise<void>;
@@ -159,6 +161,13 @@ export type StandardAcpProviderConfig = {
     pendingQueueDrainMaxPopPerWake?: number;
     providerInputConsumer: SessionProviderInputConsumer<unknown, unknown>;
     turnAssistantPreviewTracker: TurnAssistantPreviewTracker;
+    onProviderTurnCompleted?: (result: ProviderTurnCompletionResult) => void;
+    /**
+     * Ends this runner through its canonical termination path (cleanup, session close, exit
+     * code). For providers whose own process owns the user's terminal and therefore defines
+     * the runner's lifetime, e.g. Pi's native TUI exiting.
+     */
+    requestRunnerTermination: (event: RunnerTerminationEvent) => void;
     startupOverrides?: {
       mode?: { modeId: string; updatedAt?: number } | null;
       model?: { modelId: string; updatedAt?: number } | null;
@@ -169,10 +178,16 @@ export type StandardAcpProviderConfig = {
   beforeInitializeSession?: (params: { metadata: Metadata; opts: StandardAcpProviderRunOptions }) => void;
   onAttachMetadataSnapshotMissing?: (error: unknown | null) => void;
   onAttachMetadataSnapshotError?: (error: unknown) => void;
+  prepareAttachedAgentState?: InitializeBackendRunSessionOptions['prepareAttachedAgentState'];
   onSessionSwap?: (params: { session: ApiSessionClient }) => void | Promise<void>;
   onAfterStart?: (params: { session: ApiSessionClient; runtime: RuntimeForLoop } & ProviderStartupControls) => void | Promise<void>;
   onAfterReset?: (params: { session: ApiSessionClient; runtime: RuntimeForLoop }) => void | Promise<void>;
   onDispose?: (params: { session: ApiSessionClient; runtime: RuntimeForLoop }) => void | Promise<void>;
+  /**
+   * For providers whose runtime is the user's own terminal process and cannot be reset: the notice
+   * shown instead of resetting for `/clear` or for queue settings that would need a restart.
+   */
+  describeUnavailableRuntimeReset?: DescribeUnavailableRuntimeReset;
   startRuntimeBeforeFirstPrompt?: boolean;
   /**
    * The provider/catalog declaration that this backend owns ACP `session/load` — the same
@@ -311,6 +326,7 @@ export async function runStandardAcpProvider(
     metadata,
     state,
     existingSessionId: opts.existingSessionId,
+    prepareAttachedAgentState: config.prepareAttachedAgentState,
     uiLogPrefix: config.uiLogPrefix,
     terminalAgentLabel: policyAgentId,
     terminalHostOwner: config.terminalHostOwner,
@@ -592,6 +608,9 @@ export async function runStandardAcpProvider(
       });
     },
   });
+  // Late-bound: termination handlers register after the runtime exists, and a runtime can
+  // only observe its provider ending after it has started.
+  let terminationHandlers: RunnerTerminationHandlerRegistration | null = null;
   const runtime = config.createRuntime({
     directory: runtimeDirectory,
     metadata: runtimeMetadata,
@@ -609,6 +628,10 @@ export async function runStandardAcpProvider(
     pendingQueueDrainMaxPopPerWake,
     providerInputConsumer: providerInputConsumer as SessionProviderInputConsumer<unknown, unknown>,
     turnAssistantPreviewTracker,
+    onProviderTurnCompleted: (turnResult) => {
+      if (!shouldExit) sendReady({ turnToken: null, startSeqExclusive: null, turnResult });
+    },
+    requestRunnerTermination: (event) => terminationHandlers?.requestTermination(event),
   });
   runtime.drainPendingAfterStartOrLoad = async () => {
     await providerInputConsumer.drainPending({ reason: 'standard-acp-start-or-load' });
@@ -665,13 +688,24 @@ export async function runStandardAcpProvider(
     if (explicitAbortPromise) return explicitAbortPromise;
     const operation = (async () => {
       logger.debug(`${config.uiLogPrefix} Abort requested`);
-      await permissionHandler.abortPendingRequestsAndFlush('Aborted by user');
-      session.sendAgentMessage(config.agentMessageType, { type: 'turn_aborted', id: randomUUID() });
-      abortController.abort();
+      const providerOwnsPromptTurn = runtime.promptTurnOwner === 'provider';
+      if (!providerOwnsPromptTurn) {
+        await permissionHandler.abortPendingRequestsAndFlush('Aborted by user');
+        session.sendAgentMessage(config.agentMessageType, { type: 'turn_aborted', id: randomUUID() });
+        abortController.abort();
+      }
       try {
-        await (options ? runtime.cancel(options) : runtime.cancel());
+        const cancellation = options ? runtime.cancel(options) : runtime.cancel();
+        if (providerOwnsPromptTurn) abortController.abort();
+        await cancellation;
       } catch (error) {
         logger.debug(`${config.uiLogPrefix} Failed to cancel current operation (non-fatal)`, error);
+        if (providerOwnsPromptTurn) {
+          session.sendAgentMessage(config.agentMessageType, {
+            type: 'message',
+            message: config.formatPromptErrorMessage(error),
+          });
+        }
       } finally {
         abortController = new AbortController();
       }
@@ -685,7 +719,7 @@ export async function runStandardAcpProvider(
   };
   abortRequestedCallback = handleAbort;
 
-  const terminationHandlers = registerRunnerTerminationHandlers({
+  const registeredTerminationHandlers = registerRunnerTerminationHandlers({
     process,
     exit: (code) => process.exit(code),
     sessionExitReport: { sessionId: session.sessionId },
@@ -702,11 +736,12 @@ export async function runStandardAcpProvider(
       await cleanupOnce();
     },
   });
+  terminationHandlers = registeredTerminationHandlers;
 
   const handleKillSession = async () => {
     logger.debug(`${config.uiLogPrefix} Kill session requested`);
-    terminationHandlers.requestTermination({ kind: 'killSession' });
-    await terminationHandlers.whenTerminated;
+    registeredTerminationHandlers.requestTermination({ kind: 'killSession' });
+    await registeredTerminationHandlers.whenTerminated;
   };
 
   session.rpcHandlerManager.registerHandler('abort', () => handleAbort());
@@ -789,7 +824,9 @@ export async function runStandardAcpProvider(
       setThinking: setThinkingState,
       sendReady,
       currentPermissionModeUpdatedAt: permissionModeState.getCurrentPermissionModeUpdatedAt(),
+      getCurrentPermissionMode: () => permissionModeState.getCurrentPermissionMode() ?? 'default',
       setCurrentPermissionMode: permissionModeState.setCurrentPermissionMode,
+      guardPermissionModeRequests: permissionModeState.guardPermissionModeRequests,
       setCurrentPermissionModeUpdatedAt: permissionModeState.setCurrentPermissionModeUpdatedAt,
       initialResumeId: initialResumeId || undefined,
       strictInitialResume: initialResumeId.length > 0,
@@ -833,9 +870,10 @@ export async function runStandardAcpProvider(
       onAfterStart: config.onAfterStart ? (controls) => config.onAfterStart?.({ session, runtime, ...controls }) : undefined,
       onAfterReset: config.onAfterReset ? () => config.onAfterReset?.({ session, runtime }) : undefined,
       formatPromptErrorMessage: config.formatPromptErrorMessage,
+      describeUnavailableRuntimeReset: config.describeUnavailableRuntimeReset ?? null,
     });
   } finally {
-    terminationHandlers.dispose();
+    registeredTerminationHandlers.dispose();
     await cleanupOnce();
   }
 }

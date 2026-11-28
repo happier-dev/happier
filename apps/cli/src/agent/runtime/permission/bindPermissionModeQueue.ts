@@ -88,6 +88,7 @@ export function registerPermissionModeMessageQueueBinding(opts: {
   queue: SpecialCommandQueue<{ permissionMode: PermissionMode; appendSystemPrompt?: string | null }, PermissionModeQueuedPrompt>;
   getCurrentPermissionMode: () => PermissionMode | undefined;
   setCurrentPermissionMode: (mode: PermissionMode | undefined) => void;
+  acceptPermissionMode?: (mode: PermissionMode) => boolean;
   inFlightSteer?: InFlightSteerController | null;
 }): { bindSession: (session: PermissionModeQueueSessionBinding) => void } {
   let steerSequence: Promise<void> = Promise.resolve();
@@ -113,6 +114,7 @@ export function registerPermissionModeMessageQueueBinding(opts: {
     const resolvedMode = resolvePermissionModeForQueueingUserMessage({
       currentPermissionMode: previousPermissionMode,
       messagePermissionModeRaw: message.meta?.permissionMode,
+      acceptPermissionMode: opts.acceptPermissionMode,
       updateMetadata: (updater) => {
         if (!isCurrentBinding(session, messageBindingGeneration)) return;
         updateMetadataBestEffort(

@@ -4499,7 +4499,11 @@ export const en = {
                 title: "Grok Build"
             },
             pi: {
-                title: "Pi"
+                title: "Pi",
+                nativeTerminal: {
+                    title: "Use Pi's native terminal",
+                    subtitle: "Applies to new Pi sessions started in your terminal. Auto-read in native mode requires an updated Happier app.",
+                },
             },
             qwen: {
                 title: "Qwen Code"

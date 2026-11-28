@@ -4727,7 +4727,11 @@ export const ru: TranslationStructure = {
                 title: "Grok Build"
             },
             pi: {
-                title: "Pi"
+                title: "Pi",
+                nativeTerminal: {
+                    title: "Использовать встроенный терминал Pi",
+                    subtitle: "Применяется к новым сеансам Pi, запущенным из терминала. Для автоматического озвучивания во встроенном режиме требуется актуальная версия Happier.",
+                },
             },
             qwen: {
                 title: "Qwen Code"

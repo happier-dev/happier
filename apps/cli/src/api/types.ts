@@ -7,6 +7,8 @@ import type {
   AcpConfigOptionOverridesV1,
   AcceptedPendingSettlementRequestV1,
   AcceptedPendingSettlementResponseV1,
+  AcceptedPendingSettlementRequestV2,
+  AcceptedPendingSettlementResponseV2,
   AcpSessionModeOverrideV1,
   ConnectedServiceBindingsV1,
   ConnectedServiceId,
@@ -178,8 +180,8 @@ export interface ServerToClientEvents {
  */
 export interface ClientToServerEvents {
   'pending-delivery-accepted-v1': (
-    data: AcceptedPendingSettlementRequestV1,
-    cb?: (answer: AcceptedPendingSettlementResponseV1) => void,
+    data: AcceptedPendingSettlementRequestV1 | AcceptedPendingSettlementRequestV2,
+    cb?: (answer: AcceptedPendingSettlementResponseV1 | AcceptedPendingSettlementResponseV2) => void,
   ) => void
   'transcript-observation-capability-v1': (
     data: { v: 1; sessionId: string },

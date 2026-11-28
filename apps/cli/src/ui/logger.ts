@@ -353,6 +353,9 @@ class Logger {
   private readonly infoFileEnabled: boolean
   private readonly warnFileEnabled: boolean
   private readonly fileAppender: BufferedFileAppender
+  // Holders that currently own the terminal screen (a provider TUI). While any is held, console
+  // output is suppressed; file logging is unaffected.
+  private readonly consoleMuteHolders = new Set<symbol>()
 
   constructor(
     public readonly logFilePath = getSessionLogPath()
@@ -526,6 +529,21 @@ class Logger {
   }
 
   /**
+   * Suppresses console output while another program (a provider's native TUI) owns this
+   * terminal; a stray line would corrupt its screen. File logging continues. Returns an
+   * idempotent release; the console resumes once every holder released.
+   */
+  muteConsole(owner: string): () => void {
+    const holder = Symbol(owner)
+    this.consoleMuteHolders.add(holder)
+    this.infoFile(`[logger] Console output muted while ${owner} owns the terminal`)
+    return () => {
+      if (!this.consoleMuteHolders.delete(holder)) return
+      this.infoFile(`[logger] Console output restored after ${owner} released the terminal`)
+    }
+  }
+
+  /**
    * Synchronously drain buffered log lines to disk. Wired to exit/fatal handlers;
    * also useful in tests and right before intentional hard exits. Never throws.
    */
@@ -534,6 +552,7 @@ class Logger {
   }
 
   private logToConsole(level: 'debug' | 'error' | 'info' | 'warn', prefix: string, message: string, ...args: unknown[]): void {
+    if (this.consoleMuteHolders.size > 0) return
     switch (level) {
       case 'debug': {
         writeConsoleLogBestEffort(chalk.gray(prefix), message, ...args)
@@ -624,7 +643,7 @@ class Logger {
   private handleFileWriteError(error: unknown): void {
     // Never throw from logging: log files are best-effort and should not break the CLI.
     // When DEBUG is set, surface the first write failure for easier debugging.
-    if (process.env.DEBUG && !this.hasLoggedFileWriteError) {
+    if (process.env.DEBUG && !this.hasLoggedFileWriteError && this.consoleMuteHolders.size === 0) {
       writeConsoleErrorBestEffort('[DEV MODE ONLY] Failed to append to log file:', error)
       this.hasLoggedFileWriteError = true
     }

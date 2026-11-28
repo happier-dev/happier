@@ -1,7 +1,8 @@
-import type { SessionMessageRole } from '@happier-dev/protocol';
+import { SessionMessagePresenceResponseSchema, type SessionMessageRole } from '@happier-dev/protocol';
 
 import type { ApiSessionMessagesResponse } from '@/sync/api/types/apiTypes';
 import { ApiSessionMessagesResponseSchema } from '@/sync/api/types/apiTypes';
+import { isTerminalAuthError, throwAuthenticationResponseErrorIfNeeded } from '@/sync/runtime/connectivity/authErrors';
 
 export type SessionMessagesPageScope = 'main' | 'sidechain' | 'all';
 
@@ -75,6 +76,31 @@ export async function fetchSessionMessagesPage(params: Readonly<{
 }>): Promise<ApiSessionMessagesResponse> {
     const response = await params.request(params.path);
     return parseSessionMessagesResponseJson(await response.json());
+}
+
+/** Only the server's explicit exact-message misses establish absence. */
+export async function fetchAbsentSessionTranscriptLocalIds(params: Readonly<{
+    request: (path: string, init?: RequestInit) => Promise<Response>;
+    sessionId: string;
+    localIds: readonly string[];
+}>): Promise<ReadonlySet<string>> {
+    const path = `/v2/sessions/${encodeURIComponent(params.sessionId)}/messages/by-local-id`;
+    let response: Response;
+    try {
+        response = await params.request(path, {
+            method: 'POST',
+            cache: 'no-store',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ localIds: params.localIds }),
+        });
+    } catch (error) {
+        if (isTerminalAuthError(error)) throw error;
+        return new Set();
+    }
+    throwAuthenticationResponseErrorIfNeeded(response.status);
+    if (!response.ok) return new Set();
+    const parsed = SessionMessagePresenceResponseSchema.safeParse(await response.json().catch(() => null));
+    return new Set(parsed.success ? parsed.data.absentLocalIds : []);
 }
 
 export { serializeTranscript, type TranscriptExportFormat } from './serializeTranscript';

@@ -5070,7 +5070,11 @@ localTailscale: {
                 title: "Grok Build"
             },
             pi: {
-                title: "Pi"
+                title: "Pi",
+                nativeTerminal: {
+                    title: "Pi のネイティブターミナルを使用",
+                    subtitle: "ターミナルから開始する新しい Pi セッションに適用されます。ネイティブモードで自動読み上げを使うには、Happier アプリの更新が必要です。",
+                },
             },
             qwen: {
                 title: "Qwen Code"

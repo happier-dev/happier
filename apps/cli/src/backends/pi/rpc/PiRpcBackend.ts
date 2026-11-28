@@ -1,9 +1,8 @@
-import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { open, readdir, stat } from 'node:fs/promises';
-import { dirname, isAbsolute, join } from 'node:path';
+import { readdir, stat } from 'node:fs/promises';
 
-import spawn from 'cross-spawn';
+import { readPiSessionHeader } from '@/backends/pi/directSessions/readPiSessionHeader';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 
 import type {
   AgentBackend,
@@ -19,7 +18,8 @@ import {
   type AcpPermissionHandler,
 } from '@/agent/acp/AcpBackend';
 import { abortPendingAcpPermissionRequests } from '@/agent/acp/backend/permissions/acpPermissionFinalization';
-import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
+import { ProviderPromptSubmissionRejectedBeforeEffectError } from '@/agent/runtime/providerPromptSubmission';
+import { TERMINAL_INPUT_BUSY_TURN_FALLBACK_WAKE_MS } from '@/agent/runtime/terminal/injection/arbiter';
 import { materializeProtectedTempTextArtifact, type ProtectedTempTextArtifact } from '@/utils/fs/protectedTempTextArtifact';
 import { PI_BRIDGE_CONFIG_PATH_FLAG } from '@/backends/pi/bridgeExtension/piBridgeExtensionEnv';
 import { logger } from '@/ui/logger';
@@ -51,9 +51,24 @@ import {
   doesPiSessionFileNameMatchSessionId,
   formatPiSessionDirectoryForCwd,
   isBarePiSessionId,
-  resolvePiSessionIdFromResumeReference,
+  matchesPiSessionFileIdentity,
+  pathExistsAsFile,
+  resolveExpectedPiSessionIdForResume,
 } from '../utils/piSessionFiles';
-import { attachPiRpcJsonlLineReader, type PiRpcJsonlLineReader } from './attachPiRpcJsonlLineReader';
+import {
+  PiSharedTerminalSessionMismatchError,
+  PiSharedTerminalUnavailableError,
+  spawnedPiRpcChannelHost,
+  type PiRpcChannel,
+  type PiRpcChannelHost,
+  type PiRpcChannelOpenOptions,
+} from './piRpcChannel';
+import {
+  PI_SHARED_CONTROL_BUSY_ERROR,
+  PI_SHARED_CONTROL_INDETERMINATE_OUTCOME,
+  PI_SHARED_CONTROL_PROMPT_HANDED_OFF,
+  PI_SHARED_CONTROL_RESPONSE_TIMEOUT_MS,
+} from '../sharedControl/piSharedControlProtocol';
 import {
   buildPiContextTelemetryKeySuffix,
   mergePiContextTelemetryIntoTokens,
@@ -101,6 +116,12 @@ type PiRpcCommandOptions = Readonly<{
   signal?: AbortSignal;
   createCancellationError?: () => Error;
 }>;
+
+type PiPromptAdmission =
+  | { status: 'accepted' }
+  | { status: 'terminal_handoff' }
+  | { status: 'rejected_before_effect'; error: Error }
+  | { status: 'effect_may_have_occurred'; error: Error };
 
 type PendingTurn = {
   promise: Promise<void>;
@@ -211,6 +232,21 @@ class PiRpcPromptRejectedBeforeEffectError extends Error {
     super(message);
     this.name = 'PiRpcPromptRejectedBeforeEffectError';
   }
+}
+
+/** The shared-terminal bridge refused a web prompt because Pi is busy; nothing reached Pi. */
+class PiSharedTerminalBusyError extends Error {
+  constructor() {
+    super(PI_SHARED_CONTROL_BUSY_ERROR);
+    this.name = 'PiSharedTerminalBusyError';
+  }
+}
+
+/** Shared-terminal "not now" refusals are reversible; every other pre-effect refusal keeps its own class. */
+function classifyPromptRejectedBeforeEffect(error: Error): Error {
+  return error instanceof PiSharedTerminalUnavailableError
+    ? new ProviderPromptSubmissionRejectedBeforeEffectError('provider_unavailable_before_acceptance', error)
+    : error;
 }
 
 function isPromptResponseTimeoutError(error: Error): boolean {
@@ -604,33 +640,6 @@ function readNonNegativeIntegerEnv(env: Record<string, string>, key: string, fal
   return Number.isInteger(value) && value >= 0 ? value : fallback;
 }
 
-async function pathIsFile(path: string): Promise<boolean> {
-  try {
-    return (await stat(path)).isFile();
-  } catch {
-    return false;
-  }
-}
-
-async function readPiSessionHeaderId(path: string): Promise<string | null> {
-  let handle: Awaited<ReturnType<typeof open>> | null = null;
-  try {
-    handle = await open(path, 'r');
-    const buffer = Buffer.alloc(64 * 1024);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-    const firstLineEnd = buffer.subarray(0, bytesRead).indexOf(0x0a);
-    const firstLine = buffer.subarray(0, firstLineEnd >= 0 ? firstLineEnd : bytesRead).toString('utf8').trim();
-    if (!firstLine) return null;
-    const header = asRecord(JSON.parse(firstLine));
-    if (header?.type !== 'session') return null;
-    return asNonEmptyString(header.id);
-  } catch {
-    return null;
-  } finally {
-    await handle?.close().catch(() => undefined);
-  }
-}
-
 async function delay(ms: number): Promise<void> {
   await new Promise<void>((resolve) => {
     const timeout = setTimeout(resolve, ms);
@@ -638,15 +647,11 @@ async function delay(ms: number): Promise<void> {
   });
 }
 
-async function stopPiRpcProcess(child: ChildProcessWithoutNullStreams): Promise<void> {
-  // Register before signaling so a fast Windows exit cannot race the close listener. `close` is
-  // later than `exit` and proves the child's stdio/OS handles have been released as well as its PID.
-  const closed = new Promise<void>((resolve) => {
-    child.once('close', () => resolve());
-  });
-  await killProcessTree(child, { graceMs: 2_000 });
-  await closed;
-}
+export type PiOpenedSessionIdentity = Readonly<{
+  sessionId: string;
+  sessionFile: string | null;
+  operation: 'create' | 'resume';
+}>;
 
 export type PiRpcSpawnOptions = {
   cwd: string;
@@ -664,6 +669,14 @@ export type PiRpcSpawnOptions = {
   appendSystemPromptText?: string | null;
   toolsBridgeConfigText?: string | null;
   permissionHandler?: AcpPermissionHandler;
+  /**
+   * Transport to Pi. Defaults to the headless RPC child; the native-terminal (shared local
+   * control) launch attaches to an interactive Pi through the bridge extension instead.
+   */
+  channelHost?: PiRpcChannelHost;
+  /** One launch intent shared across backends created by the same runner. */
+  continueRecentSession?: { pending: boolean };
+  onSessionOpened?: (identity: PiOpenedSessionIdentity) => void;
 };
 
 export class PiRpcBackend implements AgentBackend {
@@ -677,15 +690,16 @@ export class PiRpcBackend implements AgentBackend {
     toolsBridgeConfigText: string | null;
   }>;
 
-  private process: ChildProcessWithoutNullStreams | null = null;
+  private channel: PiRpcChannel | null = null;
+  private readonly channelHost: PiRpcChannelHost;
+  private readonly continueRecentSession: PiRpcSpawnOptions['continueRecentSession'];
+  private readonly onSessionOpened: PiRpcSpawnOptions['onSessionOpened'];
   private appendSystemPromptArtifact: ProtectedTempTextArtifact | null = null;
   private toolsBridgeConfigArtifact: ProtectedTempTextArtifact | null = null;
   private readonly availableCommandNames = new Set<string>();
   private readonly availableExtensionCommandNames = new Set<string>();
   private availableCommandsRefresh: Promise<void> | null = null;
   private availableCommandsKnownForCurrentPublication = false;
-  private stdoutLineReader: PiRpcJsonlLineReader | null = null;
-  private stderrLineReader: PiRpcJsonlLineReader | null = null;
   private readonly messageHandlers = new Set<AgentMessageHandler>();
   private readonly providerTurnEventHandlers = new Set<() => void>();
   private readonly pendingRequests = new Map<string, PendingRpcRequest>();
@@ -721,6 +735,25 @@ export class PiRpcBackend implements AgentBackend {
   private readonly connectedServiceRuntimeAuthAdapter = createPiConnectedServiceRuntimeAuthAdapter();
   private disposed = false;
   private disposePromise: Promise<void> | null = null;
+  /** Aborted on dispose so a pending attach to an interactive Pi never outlives this backend. */
+  private readonly lifetime = new AbortController();
+  /**
+   * Bumped whenever Pi settles a run or a compaction: the push signal that an interactive Pi which
+   * refused a web prompt as busy is free again. Waiters are woken by it, by a channel change, by
+   * Stop (`cancelGeneration`) and by dispose.
+   */
+  private providerIdleEpoch = 0;
+  private readonly providerIdleWaiters = new Set<() => void>();
+  private cancelGeneration = 0;
+  /** A web prompt is waiting for a busy terminal: runs seen meanwhile are not its own. */
+  private sharedPromptHeld = false;
+  /** Pi can retry within one native run. Its last assistant failure only settles at agent_settled. */
+  private nativeTurnFailure: {
+    diagnostic: PiProviderFailureDiagnostic;
+    classification: ConnectedServiceRuntimeFailureClassification | null;
+    record: Record<string, unknown>;
+  } | null = null;
+  private stopObservingSessionAvailability: (() => void) | null = null;
   /**
    * Memoized once-per-session broker preflight (fail-closed). Broker readiness is a launch-time fact
    * (extension asset on disk + daemon bridge reachable + extension actually loaded), so verify once and
@@ -735,6 +768,9 @@ export class PiRpcBackend implements AgentBackend {
 
   constructor(options: PiRpcSpawnOptions) {
     this.permissionHandler = options.permissionHandler ?? null;
+    this.channelHost = options.channelHost ?? spawnedPiRpcChannelHost;
+    this.continueRecentSession = options.continueRecentSession;
+    this.onSessionOpened = options.onSessionOpened;
     this.options = {
       cwd: options.cwd,
       command: options.command,
@@ -747,6 +783,11 @@ export class PiRpcBackend implements AgentBackend {
           : null,
       toolsBridgeConfigText: asNonEmptyString(options.toolsBridgeConfigText) ?? null,
     };
+    // The terminal came back to this session after a fence: re-attach so its turns mirror again.
+    this.stopObservingSessionAvailability = this.channelHost.onSessionAvailable?.(() => {
+      if (this.disposed || this.channel || !this.sessionId) return;
+      this.reattachSharedTerminal();
+    }) ?? null;
   }
 
   onMessage(handler: AgentMessageHandler): void {
@@ -779,7 +820,8 @@ export class PiRpcBackend implements AgentBackend {
   ): Promise<StartSessionResult> {
     const lifecycle = this.createSessionOpenLifecycle(options?.signal);
     try {
-      await this.ensureProcess(lifecycle);
+      const continuingRecent = this.continueRecentSession?.pending === true && !this.sessionId;
+      await this.ensureProcess(lifecycle, continuingRecent);
       await this.ensureConnectedBrokerReady(lifecycle);
       this.emitMessage({ type: 'status', status: 'starting' });
 
@@ -790,11 +832,25 @@ export class PiRpcBackend implements AgentBackend {
       const existingSessionId = asNonEmptyString(stateBefore.sessionId);
       const existingSessionFile = asNonEmptyString(stateBefore.sessionFile);
       if (existingSessionId) {
-        this.sessionId = existingSessionId;
-        this.sessionFile = existingSessionFile;
-        await this.captureAuthJsonSnapshot();
-        this.publishRuntimeState(stateBefore);
-        return { sessionId: existingSessionId };
+        const continuedExistingSession = continuingRecent && existingSessionFile !== null
+          && await this.waitForSessionOpenPhase(
+            matchesPiSessionFileIdentity(existingSessionFile, existingSessionId, { requireHeader: true }),
+            lifecycle,
+            'continued session identity',
+          );
+        const opened = await this.confirmStartedSession({
+          sessionId: existingSessionId,
+          sessionFile: existingSessionFile,
+          operation: continuedExistingSession ? 'resume' : 'create',
+        }, stateBefore, lifecycle);
+        if (continuingRecent && !continuedExistingSession) {
+          logger.infoFile('[pi] No previous Pi session was opened by --continue; starting a new session');
+        }
+        return opened;
+      }
+      if (this.channelHost.kind === 'attached') {
+        // The user's terminal owns session creation and replacement; the runner only adopts.
+        throw new Error('Pi shared terminal did not report a session id');
       }
 
       const created = await this.sendProviderAffectingCommand(
@@ -816,11 +872,11 @@ export class PiRpcBackend implements AgentBackend {
         throw new Error('Pi did not return a session id');
       }
 
-      this.sessionId = nextSessionId;
-      this.sessionFile = nextSessionFile;
-      await this.captureAuthJsonSnapshot();
-      this.publishRuntimeState(stateAfter);
-      return { sessionId: nextSessionId };
+      return await this.confirmStartedSession({
+        sessionId: nextSessionId,
+        sessionFile: nextSessionFile,
+        operation: 'create',
+      }, stateAfter, lifecycle);
     } catch (error) {
       if (Date.now() >= lifecycle.deadlineMs) {
         await this.stopRpcProcessForRestart();
@@ -829,11 +885,32 @@ export class PiRpcBackend implements AgentBackend {
     }
   }
 
+  private async confirmStartedSession(
+    identity: PiOpenedSessionIdentity,
+    state: PiRpcStateData,
+    lifecycle: PiRpcSessionOpenLifecycle,
+  ): Promise<StartSessionResult> {
+    await this.captureAuthJsonSnapshot();
+    this.assertSessionOpenLifecycleActive(lifecycle, 'session identity');
+    if (this.disposed) throw new Error('Pi backend is disposed');
+    this.sessionId = identity.sessionId;
+    this.sessionFile = identity.sessionFile;
+    this.publishRuntimeState(state);
+    if (this.continueRecentSession) this.continueRecentSession.pending = false;
+    this.onSessionOpened?.(identity);
+    return { sessionId: identity.sessionId };
+  }
+
   private async resolveSessionFileForSessionId(
     expectedSessionId: string,
     preferredAbsolutePath: string | null = null,
     requireMatchingHeader = false,
   ): Promise<string | null> {
+    if (preferredAbsolutePath && await matchesPiSessionFileIdentity(preferredAbsolutePath, expectedSessionId, {
+      requireHeader: requireMatchingHeader,
+    })) {
+      return preferredAbsolutePath;
+    }
     const candidateDirs = new Set<string>();
     const fromSessionEnv = asNonEmptyString(this.options.env.PI_CODING_AGENT_SESSION_DIR);
     if (fromSessionEnv) {
@@ -884,7 +961,8 @@ export class PiRpcBackend implements AgentBackend {
           try {
             const s = await stat(path);
             if (!s.isFile()) continue;
-            if (requireMatchingHeader && await readPiSessionHeaderId(path) !== expectedSessionId) continue;
+            const header = await readPiSessionHeader(path);
+            if (header ? header.id !== expectedSessionId : requireMatchingHeader) continue;
             matches.push({ path, mtimeMs: typeof s.mtimeMs === 'number' ? s.mtimeMs : 0 });
           } catch {
             // ignore
@@ -916,7 +994,14 @@ export class PiRpcBackend implements AgentBackend {
       throw new Error('Pi loadSession requires a bare Pi session id or absolute session file path');
     }
 
-    const expectedSessionId = resolvePiSessionIdFromResumeReference(requestedResumeReference);
+    // An explicit load supersedes recent-session selection, including when the load fails.
+    if (this.continueRecentSession) this.continueRecentSession.pending = false;
+    const lifecycle = this.createSessionOpenLifecycle(options?.signal);
+    const expectedSessionId = await this.waitForSessionOpenPhase(
+      resolveExpectedPiSessionIdForResume(requestedResumeReference),
+      lifecycle,
+      'session file discovery',
+    );
     if (!expectedSessionId) {
       throw new Error('Pi loadSession requires a bare Pi session id or absolute session file path');
     }
@@ -925,6 +1010,12 @@ export class PiRpcBackend implements AgentBackend {
     if (this.sessionId) {
       if (this.sessionId !== expectedSessionId) {
         throw new Error(`Pi session mismatch (expected ${expectedSessionId}, got ${this.sessionId})`);
+      }
+      if (requestedAbsoluteSessionFile && (
+        !this.sessionFile || !isAbsolute(this.sessionFile)
+        || resolve(this.sessionFile) !== resolve(requestedAbsoluteSessionFile)
+      )) {
+        throw new Error(`Pi session file mismatch (requested ${requestedAbsoluteSessionFile})`);
       }
       return { sessionId: this.sessionId };
     }
@@ -937,10 +1028,9 @@ export class PiRpcBackend implements AgentBackend {
     // We intentionally avoid `--continue` here because it resumes "most recent", which can be the wrong
     // session when multiple sessions exist in PI_CODING_AGENT_DIR.
     this.emitMessage({ type: 'status', status: 'starting' });
-    const lifecycle = this.createSessionOpenLifecycle(options?.signal);
     try {
       const sessionFileDiscovery = (async () => {
-        const preferredSessionFile = requestedAbsoluteSessionFile && await pathIsFile(requestedAbsoluteSessionFile)
+        const preferredSessionFile = requestedAbsoluteSessionFile && await pathExistsAsFile(requestedAbsoluteSessionFile)
           ? requestedAbsoluteSessionFile
           : null;
         return preferredSessionFile
@@ -963,6 +1053,7 @@ export class PiRpcBackend implements AgentBackend {
       this.sessionFile = asNonEmptyString(state.sessionFile) ?? sessionFile;
       await this.captureAuthJsonSnapshot();
       this.publishRuntimeState(state);
+      this.onSessionOpened?.({ sessionId: expectedSessionId, sessionFile: this.sessionFile, operation: 'resume' });
       return { sessionId: expectedSessionId };
     } catch (error) {
       this.sessionId = null;
@@ -1081,12 +1172,12 @@ export class PiRpcBackend implements AgentBackend {
   private async ensureConnectedBrokerReady(
     lifecycle: PiRpcSessionOpenLifecycle = this.createSessionOpenLifecycle(),
   ): Promise<void> {
-    const owningProcess = this.process;
+    const owningChannel = this.channel;
     this.connectedBrokerPreflight ??= verifyPiBrokerReadyForConnectedSession(this.options.env, {
       deadlineMs: lifecycle.deadlineMs,
       signal: lifecycle.signal,
-      isProcessActive: owningProcess
-        ? () => this.disposed === false && this.process === owningProcess
+      isProcessActive: owningChannel
+        ? () => this.disposed === false && this.channel === owningChannel
         : undefined,
     });
     const readiness = await this.connectedBrokerPreflight;
@@ -1169,7 +1260,8 @@ export class PiRpcBackend implements AgentBackend {
     if (outcome.status === 'accepted') {
       return { kind: 'accepted_without_exact_final_response' };
     }
-    if (outcome.status === 'effect_may_have_occurred') {
+    if (outcome.status === 'terminal_handoff') return { kind: 'terminal_handoff' };
+    if (outcome.status === 'effect_may_have_occurred' && this.channelHost.kind !== 'attached') {
       return {
         kind: 'effect_may_have_occurred',
         finalResponseEvidence: submission.completion.then(() => ({
@@ -1181,18 +1273,10 @@ export class PiRpcBackend implements AgentBackend {
   }
 
   sendPromptWithAdmission(sessionId: SessionId, prompt: string): Readonly<{
-    admission: Promise<
-      | { status: 'accepted' }
-      | { status: 'rejected_before_effect'; error: Error }
-      | { status: 'effect_may_have_occurred'; error: Error }
-    >;
+    admission: Promise<PiPromptAdmission>;
     completion: Promise<void>;
   }> {
-    const admission = createDeferred<
-      | { status: 'accepted' }
-      | { status: 'rejected_before_effect'; error: Error }
-      | { status: 'effect_may_have_occurred'; error: Error }
-    >();
+    const admission = createDeferred<PiPromptAdmission>();
     let admissionSettled = false;
     const settleAdmission = (outcome: Awaited<typeof admission.promise>): void => {
       if (admissionSettled) return;
@@ -1209,13 +1293,10 @@ export class PiRpcBackend implements AgentBackend {
   private async sendPromptAndObserveCompletion(
     sessionId: SessionId,
     prompt: string,
-    settleAdmission: (outcome:
-      | { status: 'accepted' }
-      | { status: 'rejected_before_effect'; error: Error }
-      | { status: 'effect_may_have_occurred'; error: Error }
-    ) => void,
+    settleAdmission: (outcome: PiPromptAdmission) => void,
   ): Promise<void> {
     this.assertSession(sessionId);
+    const cancelGenerationAtStart = this.cancelGeneration;
     await this.ensureConnectedBrokerReady();
     let providerSendAttempted = false;
 
@@ -1265,31 +1346,61 @@ export class PiRpcBackend implements AgentBackend {
       }
 
       await this.ensureConnectedBrokerReadyForProviderCommand();
-      const providerExtensionCommand = this.isProviderExtensionCommand(message);
-      const pendingTurn = this.createPendingTurn(this.getPendingTurnStallTimeoutMs());
-      const turn = pendingTurn.promise;
-      providerSendAttempted = true;
-      try {
-        await this.sendCommand({ type: 'prompt', message }, 30_000, { processAlreadyEnsured: true });
-      } catch (error) {
-        const promptError = asError(error);
-        const rejectedBeforeEffect = promptError instanceof PiRpcPromptRejectedBeforeEffectError;
-        settleAdmission(rejectedBeforeEffect
-          ? { status: 'rejected_before_effect', error: promptError }
-          : { status: 'effect_may_have_occurred', error: promptError });
-        if (isPromptResponseTimeoutError(promptError)) {
-          // The prompt bytes reached Pi, but threshold/overflow compaction can delay the RPC
-          // acknowledgement beyond the transport deadline. Keep the provider-owned pending turn
-          // authoritative: its later lifecycle either proves acceptance by completing or rejects
-          // with the real provider failure. The shared ACP evidence path keeps durable delivery
-          // blocked as uncertain until that proof arrives, without publishing a false turn failure.
-          await turn;
-          return;
+      const attached = this.channelHost.kind === 'attached';
+      const providerExtensionCommand = attached ? null : this.isProviderExtensionCommand(message);
+      let pendingTurn: PendingTurn | null;
+      for (;;) {
+        if (attached) this.assertSharedPromptNotWithdrawn(cancelGenerationAtStart);
+        const idleEpochBeforeSend = this.providerIdleEpoch;
+        // Native Pi publishes its own turns, including turns that did not originate here.
+        pendingTurn = attached ? null : this.createPendingTurn(this.getPendingTurnStallTimeoutMs());
+        providerSendAttempted = true;
+        try {
+          const responseTimeoutMs = attached ? PI_SHARED_CONTROL_RESPONSE_TIMEOUT_MS : 30_000;
+          const response = await this.sendCommand({ type: 'prompt', message }, responseTimeoutMs, { processAlreadyEnsured: true });
+          if (attached) {
+            if (asRecord(response.data)?.disposition !== PI_SHARED_CONTROL_PROMPT_HANDED_OFF) {
+              throw new Error('Pi terminal did not confirm prompt handoff');
+            }
+            settleAdmission({ status: 'terminal_handoff' });
+            return;
+          }
+          break;
+        } catch (error) {
+          const promptError = asError(error);
+          if (promptError instanceof PiSharedTerminalBusyError) {
+            // A native busy reply means nothing was sent. Keep the existing Pending dispatch
+            // waiting for Pi to settle so Stop can withdraw it without a second queue.
+            providerSendAttempted = false;
+            this.sharedPromptHeld = true;
+            try {
+              await this.waitForSharedTerminalIdle(idleEpochBeforeSend, cancelGenerationAtStart);
+              await this.ensureProcess();
+              await this.ensureConnectedBrokerReadyForProviderCommand();
+            } finally {
+              this.sharedPromptHeld = false;
+            }
+            continue;
+          }
+          const rejectedBeforeEffect = promptError instanceof PiRpcPromptRejectedBeforeEffectError;
+          settleAdmission(rejectedBeforeEffect
+            ? { status: 'rejected_before_effect', error: promptError }
+            : { status: 'effect_may_have_occurred', error: promptError });
+          if (pendingTurn) {
+            if (isPromptResponseTimeoutError(promptError)) {
+              // Pi RPC can acknowledge late during compaction. Its own turn still carries
+              // response evidence, unlike an unconfirmed write to the shared terminal.
+              await pendingTurn.promise;
+              return;
+            }
+            this.rejectPendingTurn(promptError);
+            await pendingTurn.promise.catch(() => undefined);
+          }
+          throw promptError;
         }
-        this.rejectPendingTurn(promptError);
-        await turn.catch(() => undefined);
-        throw promptError;
       }
+      if (!pendingTurn) return;
+      const turn = pendingTurn.promise;
       settleAdmission({ status: 'accepted' });
       const providerExtensionCommandKnownBeforeTurnSettled = await Promise.race([
         providerExtensionCommand,
@@ -1325,7 +1436,7 @@ export class PiRpcBackend implements AgentBackend {
       const promptError = asError(error);
       settleAdmission(providerSendAttempted
         ? { status: 'effect_may_have_occurred', error: promptError }
-        : { status: 'rejected_before_effect', error: promptError });
+        : { status: 'rejected_before_effect', error: classifyPromptRejectedBeforeEffect(promptError) });
       settleBarrier(asError(error));
       throw error;
     }
@@ -1337,7 +1448,7 @@ export class PiRpcBackend implements AgentBackend {
     if (maybeRestart) await maybeRestart;
     const message = prompt.trim();
     if (!message) return;
-    if (!this.process) {
+    if (!this.channel) {
       throw new Error('Pi process is not running');
     }
     await this.ensureConnectedBrokerReady();
@@ -1346,6 +1457,12 @@ export class PiRpcBackend implements AgentBackend {
 
   async compactContext(sessionId: SessionId, command: string): Promise<void> {
     this.assertSession(sessionId);
+    if (this.channelHost.kind === 'attached') {
+      throw new ProviderPromptSubmissionRejectedBeforeEffectError(
+        'provider_rejected_before_acceptance',
+        new Error('Run /compact in the Pi terminal to compact this session.'),
+      );
+    }
     const maybeRestart = this.maybeRestartForUpdatedAuthJson();
     if (maybeRestart) await maybeRestart;
     const customInstructions = parseCompactInstructions(command);
@@ -1388,6 +1505,20 @@ export class PiRpcBackend implements AgentBackend {
 
   async cancel(sessionId: SessionId): Promise<void> {
     this.assertSession(sessionId);
+    // A web prompt still waiting for a busy terminal never reached Pi: Stop withdraws it.
+    const withdrewHeldPrompt = this.sharedPromptHeld;
+    this.cancelGeneration += 1;
+    this.wakeProviderIdleWaiters();
+    if (this.channelHost.kind === 'attached') {
+      // A successor channel may already have a different terminal turn running.
+      const response = this.channel && this.processTransitionInFlight === null
+        ? await this.sendCommand({ type: 'abort' }, PI_SHARED_CONTROL_RESPONSE_TIMEOUT_MS, { processAlreadyEnsured: true })
+        : undefined;
+      if (asRecord(response?.data)?.didRequestAbort !== true && !withdrewHeldPrompt) {
+        throw new Error('Could not confirm cancellation in Pi. A message still in preparation may start in the terminal.');
+      }
+      return;
+    }
     await abortPendingAcpPermissionRequests(this.permissionHandler, 'Pi turn cancelled');
     const pendingTurn = this.pendingTurn;
     await this.sendCommand({ type: 'abort' });
@@ -1395,6 +1526,87 @@ export class PiRpcBackend implements AgentBackend {
     // waitForIdle() before acknowledging. Settle the same local turn from that authoritative
     // boundary even if its preceding uncorrelated agent_end event was lost or misattributed.
     if (pendingTurn && this.pendingTurn === pendingTurn) this.resolvePendingTurn();
+  }
+
+  /**
+   * Resolves once the interactive Pi may be free again after refusing a web prompt as busy: a run
+   * or compaction settled since `idleEpochBeforeSend`, or the channel changed (the caller then
+   * re-attaches). Push-driven: every busy reason the bridge reports ends with one of those events.
+   * Throws when Stop withdrew the prompt or the backend was disposed meanwhile.
+   */
+  private async waitForSharedTerminalIdle(idleEpochBeforeSend: number, cancelGenerationAtStart: number): Promise<void> {
+    const channel = this.channel;
+    const settled = () => (
+      this.disposed
+      || this.cancelGeneration !== cancelGenerationAtStart
+      || this.providerIdleEpoch !== idleEpochBeforeSend
+      || channel === null
+      || this.channel !== channel
+    );
+    if (!settled()) logger.infoFile('[pi] Holding a web prompt until the Pi terminal finishes its run');
+    let consecutiveSilentProbes = 0;
+    while (!settled()) {
+      const woken = await new Promise<boolean>((resolve) => {
+        const wake = (): void => {
+          clearTimeout(fallback);
+          resolve(true);
+        };
+        // A busy reason can end without a settle frame if Pi's preparation fails, so ask Pi.
+        const fallback = setTimeout(() => {
+          this.providerIdleWaiters.delete(wake);
+          resolve(false);
+        }, TERMINAL_INPUT_BUSY_TURN_FALLBACK_WAKE_MS);
+        fallback.unref?.();
+        this.providerIdleWaiters.add(wake);
+      });
+      if (woken || settled()) continue;
+      const state = await this.getState(this.getLivenessProbeTimeoutMs(), { processAlreadyEnsured: true }).catch(() => null);
+      if (settled()) break;
+      if (state === null) {
+        consecutiveSilentProbes += 1;
+        if (consecutiveSilentProbes >= this.getMaxSilentProbes()) {
+          throw new PiSharedTerminalUnavailableError('Pi stopped responding while the message was waiting for the terminal');
+        }
+      } else {
+        consecutiveSilentProbes = 0;
+        if (state.isStreaming !== true && state.isCompacting !== true) break;
+      }
+    }
+    if (this.disposed) throw new Error('Pi backend is disposed');
+    this.assertSharedPromptNotWithdrawn(cancelGenerationAtStart);
+  }
+
+  private assertSharedPromptNotWithdrawn(cancelGenerationAtStart: number): void {
+    if (this.cancelGeneration !== cancelGenerationAtStart) {
+      throw new PiSharedTerminalUnavailableError('Stopped before the Pi terminal was free to take this message');
+    }
+  }
+
+  private wakeProviderIdleWaiters(): void {
+    const waiters = [...this.providerIdleWaiters];
+    this.providerIdleWaiters.clear();
+    for (const wake of waiters) wake();
+  }
+
+  /** Re-attach to the interactive Pi in the background and report a failure the user can see. */
+  private reattachSharedTerminal(): void {
+    void this.ensureProcess().catch((error: unknown) => {
+      if (this.disposed) return;
+      if (error instanceof PiSharedTerminalSessionMismatchError) {
+        // The terminal is on another session; the host already posted the fence notice.
+        logger.debug('[pi] Shared terminal re-attach refused: the terminal is on another session');
+        return;
+      }
+      const detail = asError(error).message;
+      logger.infoFile('[pi] Shared terminal re-attach failed', error);
+      this.emitMessage({
+        type: 'event',
+        name: 'message',
+        payload: {
+          message: `Happier lost its link to the Pi terminal (${detail}). Terminal activity is not shown here until it reconnects; sending a message retries.`,
+        },
+      });
+    });
   }
 
   async waitForResponseComplete(timeoutMs?: number | null): Promise<void> {
@@ -1433,6 +1645,10 @@ export class PiRpcBackend implements AgentBackend {
   async dispose(): Promise<void> {
     if (this.disposePromise) return await this.disposePromise;
     this.disposed = true;
+    this.lifetime.abort(new Error('Pi backend disposed'));
+    this.stopObservingSessionAvailability?.();
+    this.stopObservingSessionAvailability = null;
+    this.wakeProviderIdleWaiters();
     this.disposePromise = Promise.resolve().then(() => this.disposeResources());
     return await this.disposePromise;
   }
@@ -1447,41 +1663,36 @@ export class PiRpcBackend implements AgentBackend {
     this.rejectAllPending(new Error('Pi backend disposed'));
     this.rejectPendingTurn(new Error('Pi backend disposed'));
 
-    if (this.stdoutLineReader) {
-      this.stdoutLineReader.close();
-      this.stdoutLineReader = null;
-    }
-    if (this.stderrLineReader) {
-      this.stderrLineReader.close();
-      this.stderrLineReader = null;
-    }
-
-    const child = this.process;
-    this.process = null;
+    const channel = this.channel;
+    this.channel = null;
 
     // Terminal path: remove the protected append-system-prompt artifact with the backend.
-    if (!child) {
+    // Artifacts already handed to an attached host are no longer the backend's to remove.
+    if (!channel) {
       await this.cleanupProtectedSpawnArtifacts();
       return;
     }
 
     try {
-      await stopPiRpcProcess(child);
+      await channel.close();
     } finally {
       await this.cleanupProtectedSpawnArtifacts();
     }
   }
 
-  private async ensureProcess(lifecycle?: PiRpcSessionOpenLifecycle): Promise<void> {
+  private async ensureProcess(lifecycle?: PiRpcSessionOpenLifecycle, continueRecentSession = false): Promise<void> {
     if (this.disposed) {
       throw new Error('Pi backend is disposed');
     }
     if (lifecycle) this.assertSessionOpenLifecycleActive(lifecycle, 'process startup');
-    if (this.process) return;
+    // A channel opened by an in-flight transition is usable only once that transition has checked
+    // its session identity: a shared-terminal re-attach can land on a session the user switched to.
+    if (this.channel && !this.processTransitionInFlight && !continueRecentSession) return;
     if (this.sessionId) {
       // Best-effort recovery: if we have an established session id but the process is gone, attempt to
-      // restart and reattach to the same session via `--session`.
-      const restart = this.restartAndContinue({ lifecycle });
+      // restart and reattach to the same session via `--session`. Join a transition already in flight
+      // (e.g. a shared-terminal re-attach) first: replacing its fresh channel again would only churn.
+      const restart = this.restartAndContinue({ lifecycle, reuseLiveChannel: true });
       if (lifecycle) {
         await this.waitForSessionOpenPhase(restart, lifecycle, 'process startup');
       } else {
@@ -1493,9 +1704,13 @@ export class PiRpcBackend implements AgentBackend {
     const transition = this.runProcessTransition(async () => {
       if (this.disposed) throw new Error('Pi backend is disposed');
       if (lifecycle) this.assertSessionOpenLifecycleActive(lifecycle, 'process startup');
-      if (this.process) return;
+      if (this.channel) {
+        if (!continueRecentSession) return;
+        await this.stopRpcProcessForRestart();
+      }
       await this.spawnRpcProcessWithProtectedArtifacts({
         argsBeforeProtected: this.options.args,
+        ...(continueRecentSession ? { argsAfterProtected: ['--continue'] } : {}),
       }, lifecycle);
     });
     if (lifecycle) {
@@ -1506,17 +1721,24 @@ export class PiRpcBackend implements AgentBackend {
   }
 
   private async cleanupProtectedSpawnArtifacts(): Promise<void> {
+    await this.releaseProtectedSpawnArtifacts()();
+  }
+
+  /** Forgets the current protected artifacts and returns their cleanup for the next owner. */
+  private releaseProtectedSpawnArtifacts(): () => Promise<void> {
     const modelDiscoveryArtifact = this.modelDiscoveryArtifact;
     this.modelDiscoveryArtifact = null;
     const appendSystemPromptArtifact = this.appendSystemPromptArtifact;
     this.appendSystemPromptArtifact = null;
     const toolsBridgeConfigArtifact = this.toolsBridgeConfigArtifact;
     this.toolsBridgeConfigArtifact = null;
-    await Promise.all([
-      modelDiscoveryArtifact?.cleanup(),
-      appendSystemPromptArtifact?.cleanup(),
-      toolsBridgeConfigArtifact?.cleanup(),
-    ]);
+    return async () => {
+      await Promise.all([
+        modelDiscoveryArtifact?.cleanup(),
+        appendSystemPromptArtifact?.cleanup(),
+        toolsBridgeConfigArtifact?.cleanup(),
+      ]);
+    };
   }
 
   /**
@@ -1561,121 +1783,158 @@ export class PiRpcBackend implements AgentBackend {
   private async spawnRpcProcessWithProtectedArtifacts(params: Readonly<{
     argsBeforeProtected: ReadonlyArray<string>;
     argsAfterProtected?: ReadonlyArray<string>;
+    expectedSession?: PiRpcChannelOpenOptions['expectedSession'];
   }>, lifecycle?: PiRpcSessionOpenLifecycle): Promise<void> {
     try {
       if (lifecycle) this.assertSessionOpenLifecycleActive(lifecycle, 'process startup');
       const protectedArgs = await this.resolveProtectedSpawnArtifactArgs();
       if (this.disposed) throw new Error('Pi backend is disposed');
       if (lifecycle) this.assertSessionOpenLifecycleActive(lifecycle, 'process startup');
-      this.spawnRpcProcess({
+      await this.spawnRpcProcess({
+        expectedSession: params.expectedSession,
         args: [
           ...params.argsBeforeProtected,
           ...protectedArgs,
           ...(params.argsAfterProtected ?? []),
         ],
-      });
+      }, lifecycle);
     } catch (error) {
       await this.cleanupProtectedSpawnArtifacts();
       throw error;
     }
   }
 
-  private spawnRpcProcess(params: Readonly<{ args: string[] }>): void {
+  private async spawnRpcProcess(
+    params: Readonly<{ args: string[]; expectedSession?: PiRpcChannelOpenOptions['expectedSession'] }>,
+    lifecycle: PiRpcSessionOpenLifecycle = this.createSessionOpenLifecycle(),
+  ): Promise<void> {
     this.refreshPiBrokerLoadNonceForNextSpawn();
-    const child = spawn(this.options.command, params.args, {
+    const channel = await this.openRpcChannelWithinLifecycle({
+      command: this.options.command,
+      args: params.args,
       cwd: this.options.cwd,
       env: {
         ...process.env,
         ...this.options.env,
       },
-      stdio: 'pipe',
-      windowsHide: true,
-    });
-
-    if (!child.stdin || !child.stdout || !child.stderr) {
-      throw new Error('Failed to start Pi RPC process with piped stdio');
+    }, lifecycle, params.expectedSession);
+    if (this.disposed) {
+      await channel.close();
+      throw new Error('Pi backend is disposed');
     }
 
-    const spawnedChild = child as ChildProcessWithoutNullStreams;
     this.settleModelDiscovery(false);
     this.sessionModelsRefresh = createDeferred<boolean>();
     this.pendingModelObservation = null;
     this.modelRuntimeStateReady = false;
-    this.process = spawnedChild;
-    const stdoutLineReader = attachPiRpcJsonlLineReader(child.stdout, (line) => {
-      if (this.process === spawnedChild) this.handleStdoutLine(line);
-    });
-    const stderrLineReader = attachPiRpcJsonlLineReader(child.stderr, (line) => {
-      if (this.process === spawnedChild) this.handleStderrLine(line);
-    });
-    this.stdoutLineReader = stdoutLineReader;
-    this.stderrLineReader = stderrLineReader;
+    this.nativeTurnFailure = null;
+    this.channel = channel;
 
-    const detachSpawnedChild = () => {
-      if (this.process !== spawnedChild) return;
-      this.process = null;
+    const detachChannel = () => {
+      if (this.channel !== channel) return;
+      this.channel = null;
+      this.nativeTurnFailure = null;
       this.settleModelDiscovery(false);
-      stdoutLineReader.close();
-      stderrLineReader.close();
-      if (this.stdoutLineReader === stdoutLineReader) this.stdoutLineReader = null;
-      if (this.stderrLineReader === stderrLineReader) this.stderrLineReader = null;
       void this.cleanupProtectedSpawnArtifacts();
+      // A web prompt waiting for the terminal re-checks against the next channel.
+      this.wakeProviderIdleWaiters();
     };
 
-    const handleIoError = (error: unknown) => {
-      if (this.process !== spawnedChild) return;
-      const resolved = asError(error);
-      this.settleModelDiscovery(false);
-      if (!this.disposed) {
-        this.emitMessage({
-          type: 'status',
-          status: 'error',
-          detail: `Pi IO error: ${resolved.message}`,
-        });
-      }
-      this.rejectAllPending(new Error(`Pi IO error: ${resolved.message}`));
-      this.rejectPendingTurn(new Error('Pi process terminated'));
+    channel.listen({
+      onStdoutLine: (line) => {
+        if (this.channel === channel) this.handleStdoutLine(line);
+      },
+      onStderrLine: (line) => {
+        if (this.channel === channel) this.handleStderrLine(line);
+      },
+      onIoError: (resolved) => {
+        if (this.channel !== channel) return;
+        this.settleModelDiscovery(false);
+        if (!this.disposed) {
+          this.emitMessage({
+            type: 'status',
+            status: 'error',
+            detail: `Pi IO error: ${resolved.message}`,
+          });
+        }
+        this.rejectAllPending(new Error(`Pi IO error: ${resolved.message}`));
+        this.rejectPendingTurn(new Error('Pi process terminated'));
+      },
+      onClosed: (closure) => {
+        if (this.channel !== channel) return;
+        if (closure.kind === 'failed') {
+          const detail = `Pi process error: ${closure.error.message}`;
+          this.emitMessage({ type: 'status', status: 'error', detail });
+          this.rejectAllPending(new Error(detail));
+          this.rejectPendingTurn(new Error('Pi process terminated'));
+          detachChannel();
+          return;
+        }
+        if (closure.kind === 'detached') {
+          this.rejectAllPending(new Error('Pi bridge detached'));
+          this.rejectPendingTurn(new Error('Pi bridge detached'));
+          detachChannel();
+          // The interactive Pi is reloading or replacing its session. Re-attach now, not at the
+          // next web command, so terminal turns keep reaching Happier; the restart path's identity
+          // check refuses a replaced session.
+          if (closure.reattachable && !this.disposed) this.reattachSharedTerminal();
+          return;
+        }
+        const { code, signal } = closure;
+        if (!this.disposed) {
+          const detail = code === 0
+            ? `Pi process exited (code=0, signal=${signal ?? 'null'})`
+            : this.buildProcessExitContextDetail(code, signal);
+          this.emitMessage({
+            type: 'status',
+            status: code === 0 ? 'stopped' : 'error',
+            detail,
+          });
+        }
+        this.rejectAllPending(new Error('Pi process exited'));
+        if (code === 0 && this.pendingTurn?.agentEndSettleTimeout) {
+          this.resolvePendingTurn();
+        } else if (code === 0 && this.pendingTurn?.compactionResumeTimeout) {
+          this.resolvePendingTurnAsCompactionPaused(this.pendingTurn);
+        } else {
+          this.rejectPendingTurn(new Error('Pi process exited'));
+        }
+        detachChannel();
+      },
+    });
+  }
+
+  /**
+   * Opens the transport while honoring the session-open lifecycle: an attached Pi may still be
+   * starting (trust or login dialogs) when the budget ends. Protected launch artifacts that an
+   * attached host now holds in a live Pi's argv are handed to it; this backend forgets them.
+   */
+  private async openRpcChannelWithinLifecycle(
+    spec: Parameters<PiRpcChannelHost['open']>[0],
+    lifecycle: PiRpcSessionOpenLifecycle,
+    expectedSession: PiRpcChannelOpenOptions['expectedSession'],
+  ): Promise<PiRpcChannel> {
+    const controller = new AbortController();
+    const abort = () => controller.abort(this.createSessionOpenLifecycleError(lifecycle, 'process startup'));
+    const deadline = setTimeout(abort, Math.max(0, lifecycle.deadlineMs - Date.now()));
+    deadline.unref?.();
+    lifecycle.signal?.addEventListener('abort', abort, { once: true });
+    this.lifetime.signal.addEventListener('abort', abort, { once: true });
+    if (lifecycle.signal?.aborted === true || this.lifetime.signal.aborted) abort();
+    const options: PiRpcChannelOpenOptions = {
+      signal: controller.signal,
+      ...(this.channelHost.kind === 'attached' ? {
+        retainArtifacts: this.releaseProtectedSpawnArtifacts(),
+        expectedSession,
+      } : {}),
     };
-
-    // Defensive: avoid unhandled EPIPE on stdio streams when the subprocess exits between turns.
-    child.stdin.on('error', handleIoError);
-    child.stdout.on('error', handleIoError);
-    child.stderr.on('error', handleIoError);
-
-    child.on('error', (error) => {
-      if (this.process !== spawnedChild) return;
-      this.emitMessage({
-        type: 'status',
-        status: 'error',
-        detail: `Pi process error: ${error instanceof Error ? error.message : String(error)}`,
-      });
-      this.rejectAllPending(new Error(`Pi process error: ${error instanceof Error ? error.message : String(error)}`));
-      this.rejectPendingTurn(new Error('Pi process terminated'));
-      detachSpawnedChild();
-    });
-
-    child.on('exit', (code, signal) => {
-      if (this.process !== spawnedChild) return;
-      if (!this.disposed) {
-        const detail = code === 0
-          ? `Pi process exited (code=0, signal=${signal ?? 'null'})`
-          : this.buildProcessExitContextDetail(code, signal);
-        this.emitMessage({
-          type: 'status',
-          status: code === 0 ? 'stopped' : 'error',
-          detail,
-        });
-      }
-      this.rejectAllPending(new Error('Pi process exited'));
-      if (code === 0 && this.pendingTurn?.agentEndSettleTimeout) {
-        this.resolvePendingTurn();
-      } else if (code === 0 && this.pendingTurn?.compactionResumeTimeout) {
-        this.resolvePendingTurnAsCompactionPaused(this.pendingTurn);
-      } else {
-        this.rejectPendingTurn(new Error('Pi process exited'));
-      }
-      detachSpawnedChild();
-    });
+    try {
+      return await this.channelHost.open(spec, options);
+    } finally {
+      clearTimeout(deadline);
+      lifecycle.signal?.removeEventListener('abort', abort);
+      this.lifetime.signal.removeEventListener('abort', abort);
+    }
   }
 
   private resolveAuthJsonPath(): string | null {
@@ -1732,7 +1991,9 @@ export class PiRpcBackend implements AgentBackend {
   private maybeRestartForUpdatedAuthJson(): Promise<void> | void {
     if (this.disposed) return;
     if (!this.sessionId) return;
-    if (!this.process) return;
+    if (!this.channel) return;
+    // An interactive Pi owns its own `/login`; restarting it would end the user's terminal.
+    if (this.channelHost.kind === 'attached') return;
     // Brokered credentials are refreshed by the daemon bridge and re-fed by the Pi extension. The
     // catalog declares these selected provider shapes as no-restart, so the local auth.json mtime
     // watcher must not compete with that lifecycle owner.
@@ -1802,31 +2063,31 @@ export class PiRpcBackend implements AgentBackend {
     options: Readonly<{
       requireDurableSessionFile?: boolean;
       lifecycle?: PiRpcSessionOpenLifecycle;
+      reuseLiveChannel?: boolean;
     }> = {},
   ): Promise<boolean> {
-    const expectedSessionId = this.sessionId;
-    if (!expectedSessionId) return false;
-    if (this.pendingTurn) {
-      throw new Error('Cannot restart Pi while a turn is in-flight');
-    }
+    return await this.runProcessTransition(async () => {
+      if (this.disposed) throw new Error('Pi backend is disposed');
+      if (options.reuseLiveChannel && this.channel) return true;
+      const expectedSessionId = this.sessionId;
+      if (!expectedSessionId) return false;
+      if (this.pendingTurn) throw new Error('Cannot restart Pi while a turn is in-flight');
 
-    const sessionFile = await this.resolveSessionFileForSessionId(
-      expectedSessionId,
-      this.sessionFile,
-      options.requireDurableSessionFile === true,
-    );
-    if (options.requireDurableSessionFile === true && !sessionFile) {
-      return false;
-    }
-    const sessionArg = sessionFile ?? expectedSessionId;
-    const state = await this.runProcessTransition(async () => await this.replaceRpcProcessForSession({
-      expectedSessionId,
-      sessionArg,
-      lifecycle: options.lifecycle,
-    }));
-    this.sessionFile = asNonEmptyString(state.sessionFile) ?? sessionFile;
-    this.publishRuntimeState(state);
-    return true;
+      const sessionFile = await this.resolveSessionFileForSessionId(
+        expectedSessionId,
+        this.sessionFile,
+        options.requireDurableSessionFile === true,
+      );
+      if (options.requireDurableSessionFile === true && !sessionFile) return false;
+      const state = await this.replaceRpcProcessForSession({
+        expectedSessionId,
+        sessionArg: sessionFile ?? expectedSessionId,
+        lifecycle: options.lifecycle,
+      });
+      this.sessionFile = asNonEmptyString(state.sessionFile) ?? sessionFile;
+      this.publishRuntimeState(state);
+      return true;
+    });
   }
 
   private async runProcessTransition<T>(operation: () => Promise<T>): Promise<T> {
@@ -1850,14 +2111,18 @@ export class PiRpcBackend implements AgentBackend {
     sessionArg: string;
     lifecycle?: PiRpcSessionOpenLifecycle;
   }>): Promise<PiRpcStateData> {
+    const lifecycle = params.lifecycle ?? this.createSessionOpenLifecycle();
     await this.stopRpcProcessForRestart();
     await this.spawnRpcProcessWithProtectedArtifacts({
       argsBeforeProtected: this.options.args,
       argsAfterProtected: ['--session', params.sessionArg],
-    }, params.lifecycle);
+      expectedSession: {
+        sessionId: params.expectedSessionId,
+        ...(isAbsolute(params.sessionArg) ? { sessionFile: resolve(params.sessionArg) } : {}),
+      },
+    }, lifecycle);
 
     try {
-      const lifecycle = params.lifecycle ?? this.createSessionOpenLifecycle();
       await this.ensureConnectedBrokerReady(lifecycle);
       const state = await this.getState(
         this.resolveSessionOpenRemainingMs(lifecycle),
@@ -1868,9 +2133,11 @@ export class PiRpcBackend implements AgentBackend {
         throw new Error('Pi did not return a session id after --session');
       }
       if (nextSessionId !== params.expectedSessionId) {
-        throw new Error(
-          `Pi session mismatch after --session (expected ${params.expectedSessionId}, got ${nextSessionId})`,
-        );
+        const detail = `Pi session mismatch after --session (expected ${params.expectedSessionId}, got ${nextSessionId})`;
+        // The user's terminal switched sessions (`/new`, `/resume`, `/fork`); it may come back.
+        throw this.channelHost.kind === 'attached'
+          ? new PiSharedTerminalSessionMismatchError(`The Pi terminal is on another session; ${detail}`)
+          : new Error(detail);
       }
       return state;
     } catch (error) {
@@ -1886,21 +2153,13 @@ export class PiRpcBackend implements AgentBackend {
     this.rejectAllPending(new Error('Pi restarting'));
     this.rejectPendingTurn(new Error('Pi restarting'));
 
-    if (this.stdoutLineReader) {
-      this.stdoutLineReader.close();
-      this.stdoutLineReader = null;
-    }
-    if (this.stderrLineReader) {
-      this.stderrLineReader.close();
-      this.stderrLineReader = null;
-    }
-
     this.settleModelDiscovery(false);
-    const child = this.process;
-    this.process = null;
-    if (!child) return;
+    const channel = this.channel;
+    this.channel = null;
+    if (!channel) return;
 
-    await stopPiRpcProcess(child);
+    // Stops a spawned child; only detaches from an attached interactive Pi.
+    await channel.close();
   }
 
   private isPiRpcFailureTraceEnabled(): boolean {
@@ -1993,6 +2252,18 @@ export class PiRpcBackend implements AgentBackend {
     if (!response.success) {
       this.openPromptRequestIds.delete(id);
       const rawDetail = asNonEmptyString(response.error) ?? `Pi RPC command failed: ${response.command}`;
+      if (this.channelHost.kind === 'attached' && pending.commandType === 'prompt' && rawDetail === PI_SHARED_CONTROL_BUSY_ERROR) {
+        // Not a provider failure: the bridge sent nothing because Pi is running something else.
+        this.tracePiRpcFailureBoundary('shared_terminal_busy_prompt_response', response);
+        pending.reject(new PiSharedTerminalBusyError());
+        return;
+      }
+      if (pending.commandType === 'prompt' && asRecord(response.data)?.outcome === PI_SHARED_CONTROL_INDETERMINATE_OUTCOME) {
+        // A failed native handoff acknowledgement does not authorize replay.
+        this.tracePiRpcFailureBoundary('indeterminate_prompt_response', response, { detail: rawDetail });
+        pending.reject(new Error(rawDetail));
+        return;
+      }
       if (pending.commandType === 'prompt') {
         this.tracePiRpcFailureBoundary('pending_prompt_failure_response', response, { detail: rawDetail });
         const failure = normalizePiProviderFailure('prompt_rejected', { error: rawDetail });
@@ -2007,7 +2278,7 @@ export class PiRpcBackend implements AgentBackend {
       pending.reject(new Error(rawDetail));
       return;
     }
-    if (pending.commandType === 'prompt') {
+    if (pending.commandType === 'prompt' && this.channelHost.kind !== 'attached') {
       this.openPromptRequestIds.add(id);
     }
     pending.resolve(response);
@@ -2095,7 +2366,16 @@ export class PiRpcBackend implements AgentBackend {
   private handlePiAssistantFailureEvent(event: Record<string, unknown>): void {
     const detail = this.readPiAssistantErrorMessage(event);
     const isTerminalFailure = isPiFailedAssistantTerminalEvent(event);
-    if (!detail && !isTerminalFailure) return;
+    if (!detail && !isTerminalFailure) {
+      if (this.nativeTurnFailure && event.type === 'message_end') {
+        const message = asRecord(event.message);
+        const stopReason = message?.stopReason ?? message?.stop_reason;
+        if (message?.role === 'assistant' && (stopReason === 'stop' || stopReason === 'toolUse' || stopReason === 'length')) {
+          this.nativeTurnFailure = null;
+        }
+      }
+      return;
+    }
     if (detail) {
       this.tracePiRpcFailureBoundary('assistant_failure_event_detail_present', event);
     }
@@ -2126,12 +2406,15 @@ export class PiRpcBackend implements AgentBackend {
     // account recovery can proceed, but it must not race Pi's already-running retry by ending the
     // Happier turn. The recoverable error carries no surfaceable assistant text, so suppressing the
     // status here does not hide anything from the transcript.
-    if (detail && this.isRecoverablePiAssistantError(event)) {
-      if (classification) {
-        void this.reportPiRuntimeAuthFailureToDaemon(classification);
-      }
+    const recoverable = detail !== null && this.isRecoverablePiAssistantError(event);
+    if (recoverable && classification) {
+      void this.reportPiRuntimeAuthFailureToDaemon(classification);
+    }
+    if (this.channelHost.kind === 'attached') {
+      this.nativeTurnFailure = { diagnostic: failure, classification, record: event };
       return;
     }
+    if (recoverable) return;
     if (isTerminalFailure) {
       this.tracePiRpcFailureBoundary('failed_assistant_terminal_event_matched', event);
     }
@@ -2182,7 +2465,7 @@ export class PiRpcBackend implements AgentBackend {
     const extensionRequest = parsePiBlockingExtensionUiRequest(event);
     if (extensionRequest) {
       this.notePendingTurnActivity(event);
-      void this.handleBlockingExtensionUiRequest(extensionRequest, this.process);
+      void this.handleBlockingExtensionUiRequest(extensionRequest, this.channel);
       return;
     }
     const normalizedEvent = this.normalizeCompactionLifecycleEvent(event);
@@ -2192,6 +2475,13 @@ export class PiRpcBackend implements AgentBackend {
       this.assistantMessageEndAwaitingContextTelemetry = false;
     }
     this.notePendingTurnActivity(normalizedEvent);
+    if (
+      (normalizedEvent.type === 'agent_end' || normalizedEvent.type === 'compaction_end')
+      && normalizedEvent.willRetry !== true
+    ) {
+      this.providerIdleEpoch += 1;
+      this.wakeProviderIdleWaiters();
+    }
 
     const mappedMessages = mapPiRpcEventToAgentMessages(normalizedEvent);
     this.tracePiRpcFailureBoundary('event_mapped', normalizedEvent, {
@@ -2232,7 +2522,18 @@ export class PiRpcBackend implements AgentBackend {
     }
 
     if (normalizedEvent.type === 'agent_end') {
-      if (this.pendingTurn) {
+      if (this.channelHost.kind === 'attached') {
+        const failure = this.nativeTurnFailure;
+        this.nativeTurnFailure = null;
+        if (normalizedEvent.aborted === true) {
+          this.emitMessage({ type: 'status', status: 'idle', turnCancelled: true });
+        } else if (failure) {
+          this.surfacePiProviderFailure(failure.diagnostic, failure.classification, failure.record);
+        } else {
+          this.emitMessage({ type: 'status', status: 'idle' });
+        }
+        this.scheduleUsageStatsPublish();
+      } else if (this.pendingTurn) {
         if (!this.pendingTurn.agentStartObserved && this.pendingTurn.preStartTerminalFailure) {
           const failure = this.pendingTurn.preStartTerminalFailure;
           this.emitPiProviderFailureDiagnostic(failure.message);
@@ -2280,9 +2581,9 @@ export class PiRpcBackend implements AgentBackend {
 
   private async handleBlockingExtensionUiRequest(
     request: NonNullable<ReturnType<typeof parsePiBlockingExtensionUiRequest>>,
-    child: ChildProcessWithoutNullStreams | null,
+    channel: PiRpcChannel | null,
   ): Promise<void> {
-    if (!child || this.activeExtensionUiRequestIds.has(request.id)) return;
+    if (!channel || this.activeExtensionUiRequestIds.has(request.id)) return;
     this.activeExtensionUiRequestIds.add(request.id);
     let providerTimedOut = false;
     const timeout = typeof request.timeout === 'number'
@@ -2301,10 +2602,10 @@ export class PiRpcBackend implements AgentBackend {
         )
         : { decision: 'denied' as const };
       if (providerTimedOut) return;
-      await this.writeExtensionUiResponse(child, buildPiExtensionUiResponse(request, result));
+      await this.writeExtensionUiResponse(channel, buildPiExtensionUiResponse(request, result));
     } catch {
       if (providerTimedOut) return;
-      await this.writeExtensionUiResponse(child, {
+      await this.writeExtensionUiResponse(channel, {
         type: 'extension_ui_response',
         id: request.id,
         cancelled: true,
@@ -2316,18 +2617,13 @@ export class PiRpcBackend implements AgentBackend {
   }
 
   private async writeExtensionUiResponse(
-    child: ChildProcessWithoutNullStreams,
+    channel: PiRpcChannel,
     response: PiExtensionUiResponse,
   ): Promise<void> {
-    if (this.process !== child || !child.stdin) {
+    if (this.channel !== channel) {
       throw new Error('Pi process changed before extension UI response');
     }
-    await new Promise<void>((resolve, reject) => {
-      child.stdin.write(`${JSON.stringify(response)}\n`, (error) => {
-        if (error) reject(error);
-        else resolve();
-      });
-    });
+    await channel.write(JSON.stringify(response));
   }
 
   /** Schedule a serialized usage-stats publish; safe to call from any event path. */
@@ -2345,7 +2641,7 @@ export class PiRpcBackend implements AgentBackend {
 
   private async publishUsageStatsBestEffort(contextTelemetryOverride: PiContextTelemetry | null = null): Promise<void> {
       if (this.disposed) return;
-      if (!this.process) return;
+      if (!this.channel) return;
 
     try {
       const stats = await this.getSessionStats();
@@ -2479,8 +2775,8 @@ export class PiRpcBackend implements AgentBackend {
     if (options.processAlreadyEnsured !== true) {
       await this.ensureProcess();
     }
-    const child = this.process;
-    if (!child?.stdin) {
+    const channel = this.channel;
+    if (!channel) {
       throw new Error('Pi process stdin is unavailable');
     }
 
@@ -2492,7 +2788,7 @@ export class PiRpcBackend implements AgentBackend {
       const timeout = setTimeout(() => {
         const pending = this.pendingRequests.get(id);
         if (!pending || !this.clearPendingRpcRequest(id, pending)) return;
-        if (command.type === 'prompt') {
+        if (command.type === 'prompt' && this.channelHost.kind !== 'attached') {
           this.openPromptRequestIds.add(id);
         } else {
           this.openPromptRequestIds.delete(id);
@@ -2522,11 +2818,10 @@ export class PiRpcBackend implements AgentBackend {
       }
 
       if (!this.pendingRequests.has(id)) return;
-      child.stdin.write(`${encoded}\n`, (error) => {
-        if (!error) return;
+      channel.write(encoded).catch((error: unknown) => {
         if (!this.clearPendingRpcRequest(id, pending)) return;
         this.openPromptRequestIds.delete(id);
-        pending.reject(new Error(`Failed to write Pi RPC command (${command.type}): ${error.message}`));
+        pending.reject(new Error(`Failed to write Pi RPC command (${command.type}): ${asError(error).message}`));
       });
     });
 
@@ -2645,7 +2940,8 @@ export class PiRpcBackend implements AgentBackend {
     failure: PiProviderFailureDiagnostic,
     failureRecord: Record<string, unknown> | null = null,
   ): void {
-    logger.warn('[pi] Provider turn failed', {
+    // File only: a terminal-started runner shares the screen with Pi's TUI (or Ink).
+    logger.warnFile('[pi] Provider turn failed', {
       classification: failure.classification,
       providerCode: failure.code,
       runtimeProvider: this.currentModelProvider,
@@ -3194,7 +3490,12 @@ export class PiRpcBackend implements AgentBackend {
     } catch (error) {
       if (this.pendingTurn !== pending) return;
       const message = asError(error).message.toLowerCase();
-      if (message.includes('already processing') || message.includes('streamingbehavior')) {
+      // Pi (RPC) and the shared-terminal bridge each refuse a prompt while busy; retry at the next probe.
+      if (
+        error instanceof PiSharedTerminalBusyError
+        || message.includes('already processing')
+        || message.includes('streamingbehavior')
+      ) {
         this.armPendingTurnInactivityTimer(pending);
         return;
       }
@@ -3362,12 +3663,12 @@ export class PiRpcBackend implements AgentBackend {
     });
 
     const generation = ++this.runtimeStatePublicationGeneration;
-    const process = this.process;
+    const channel = this.channel;
     const sessionId = this.sessionId;
     const isCurrentPublication = (): boolean => (
       !this.disposed
       && this.runtimeStatePublicationGeneration === generation
-      && this.process === process
+      && this.channel === channel
       && this.sessionId === sessionId
     );
 

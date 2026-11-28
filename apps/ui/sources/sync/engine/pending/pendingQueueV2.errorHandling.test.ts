@@ -5,6 +5,7 @@ import { storage } from '@/sync/domains/state/storage';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { DiscardedPendingMessage } from '@/sync/domains/state/storageTypes';
 import { loadPendingOutboxForSession, savePendingOutboxMessage } from '@/sync/domains/state/pendingOutboxPersistence';
+import { createNotAuthenticatedError } from '@/sync/runtime/connectivity/authErrors';
 
 import {
     blockPendingDeliveryV2 as blockPendingDeliveryV2Impl,
@@ -14,6 +15,7 @@ import {
     enqueuePendingMessageV2 as enqueuePendingMessageV2Impl,
     fetchAndApplyPendingMessagesV2 as fetchAndApplyPendingMessagesV2Impl,
     markPendingDeliveryHandledV2 as markPendingDeliveryHandledV2Impl,
+    recordRuntimePendingAdmission,
     reorderPendingMessagesV2 as reorderPendingMessagesV2Impl,
     replayPersistedPendingOutboxForSession,
     retryPendingOutboxOperationV2 as retryPendingOutboxOperationV2Impl,
@@ -115,6 +117,19 @@ function insertEditablePendingMessage(sessionId: string): void {
             meta: {},
         },
     });
+}
+
+function insertAdmittedRuntimePendingMessage(sessionId: string, localId: string): void {
+    storage.getState().upsertPendingMessage(sessionId, {
+        id: localId,
+        localId,
+        createdAt: 1,
+        updatedAt: 1,
+        source: 'local_outbound',
+        text: localId,
+        rawRecord: { role: 'user', content: { type: 'text', text: localId } },
+    });
+    expect(recordRuntimePendingAdmission(sessionId, localId, outboxScope)).toBe(true);
 }
 
 describe('pendingQueueV2 error handling', () => {
@@ -355,6 +370,83 @@ describe('pendingQueueV2 error handling', () => {
         const pendingState = storage.getState().sessionPending[sessionId];
         expect(pendingState?.discarded ?? []).toEqual([discarded]);
         expect(pendingState?.isLoaded ?? false).toBe(false);
+    });
+
+    it('reconciles two missing admissions in one exact transcript lookup', async () => {
+        const sessionId = 's_test_runtime_admission_bulk_lookup';
+        storage.getState().applySessions([buildSession({ sessionId, overrides: { encryptionMode: 'plain' } })]);
+        insertAdmittedRuntimePendingMessage(sessionId, 'present');
+        insertAdmittedRuntimePendingMessage(sessionId, 'absent');
+        const requests: Array<{ path: string; method?: string; body?: BodyInit | null }> = [];
+
+        await fetchAndApplyPendingMessagesV2({
+            sessionId,
+            encryption: await createPendingQueueEncryption({ sessionId }),
+            request: async (path, init) => {
+                if (path === `/v2/sessions/${sessionId}/pending?includeDiscarded=1`) {
+                    return Response.json({ pending: [] });
+                }
+                requests.push({ path, method: init?.method, body: init?.body });
+                return Response.json({ absentLocalIds: ['absent'] });
+            },
+        });
+
+        expect(requests).toEqual([{
+            path: `/v2/sessions/${sessionId}/messages/by-local-id`,
+            method: 'POST',
+            body: JSON.stringify({ localIds: ['present', 'absent'] }),
+        }]);
+        expect(storage.getState().sessionPending[sessionId]?.messages.map((message) => message.localId)).toEqual(['present']);
+    });
+
+    it.each([
+        { name: 'the request fails', lookup: async () => { throw new TypeError('Failed to fetch'); } },
+        { name: 'the response is invalid', lookup: async () => Response.json({ absentLocalIds: ['unknown', 1] }) },
+    ])('applies the Pending snapshot while retaining admissions when $name', async ({ lookup }) => {
+        const sessionId = 's_test_runtime_admission_lookup_failure';
+        storage.getState().applySessions([buildSession({ sessionId, overrides: { encryptionMode: 'plain' } })]);
+        insertAdmittedRuntimePendingMessage(sessionId, 'unknown');
+        insertAdmittedRuntimePendingMessage(sessionId, 'also-unknown');
+
+        await fetchAndApplyPendingMessagesV2({
+            sessionId,
+            encryption: await createPendingQueueEncryption({ sessionId }),
+            request: async (path) => {
+                if (path.endsWith('/messages/by-local-id')) return lookup();
+                if (path === `/v2/sessions/${sessionId}/pending?includeDiscarded=1`) {
+                    return Response.json({ pending: [{
+                        localId: 'queued',
+                        content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'queued' } } },
+                        requestedAction: { v: 1, kind: 'enqueue' },
+                        status: 'queued',
+                        position: 0,
+                        createdAt: 2,
+                        updatedAt: 2,
+                    }] });
+                }
+                throw new Error(`Unexpected request ${path}`);
+            },
+        });
+
+        const localIds = storage.getState().sessionPending[sessionId]?.messages.map((message) => message.localId);
+        expect(new Set(localIds)).toEqual(new Set(['unknown', 'also-unknown', 'queued']));
+    });
+
+    it.each([
+        { name: 'an HTTP response', request: async () => new Response(null, { status: 401 }) },
+        { name: 'a rejected request', request: async () => { throw createNotAuthenticatedError({ status: 401 }); } },
+    ])('surfaces exact lookup authentication errors from $name', async ({ request }) => {
+        const sessionId = 's_test_runtime_admission_lookup_auth';
+        storage.getState().applySessions([buildSession({ sessionId, overrides: { encryptionMode: 'plain' } })]);
+        insertAdmittedRuntimePendingMessage(sessionId, 'unknown');
+
+        await expectNotAuthenticated(fetchAndApplyPendingMessagesV2({
+            sessionId,
+            encryption: await createPendingQueueEncryption({ sessionId }),
+            request: (path) => path.endsWith('/messages/by-local-id')
+                ? request()
+                : Promise.resolve(Response.json({ pending: [] })),
+        }), 401);
     });
 
     it('keeps the local pending row when pending enqueue fails from transient connectivity', async () => {

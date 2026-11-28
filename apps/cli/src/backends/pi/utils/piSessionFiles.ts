@@ -2,6 +2,8 @@ import { readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 
+import { readPiSessionHeader } from '../directSessions/readPiSessionHeader';
+
 const LEGACY_PI_WORKDIR_SEGMENT = '--workdir--';
 
 export function doesPiSessionFileNameMatchSessionId(fileName: string, sessionId: string): boolean {
@@ -66,6 +68,15 @@ export function resolvePiSessionIdFromResumeReference(value: string): string | n
   return stem || null;
 }
 
+/** Validate native resume against the file's own identity when a header is available. */
+export async function resolveExpectedPiSessionIdForResume(reference: string): Promise<string | null> {
+  if (isAbsolute(reference) && await pathExistsAsFile(reference)) {
+    const header = await readPiSessionHeader(reference);
+    if (header) return header.id;
+  }
+  return resolvePiSessionIdFromResumeReference(reference);
+}
+
 function nonEmptyString(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
@@ -78,6 +89,17 @@ export async function pathExistsAsFile(path: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+export async function matchesPiSessionFileIdentity(
+  path: string,
+  sessionId: string,
+  options: { requireHeader?: boolean } = {},
+): Promise<boolean> {
+  if (!isAbsolute(path) || !await pathExistsAsFile(path)) return false;
+  const header = await readPiSessionHeader(path);
+  if (header) return header.id === sessionId;
+  return options.requireHeader !== true && doesPiSessionFileNameMatchSessionId(basename(path), sessionId);
 }
 
 export async function findNewestPiSessionFileInDir(params: Readonly<{
@@ -99,6 +121,8 @@ export async function findNewestPiSessionFileInDir(params: Readonly<{
     try {
       const metadata = await stat(path);
       if (!metadata.isFile()) continue;
+      const header = await readPiSessionHeader(path);
+      if (header && header.id !== params.sessionId) continue;
       matches.push({
         path,
         mtimeMs: typeof metadata.mtimeMs === 'number' && Number.isFinite(metadata.mtimeMs)

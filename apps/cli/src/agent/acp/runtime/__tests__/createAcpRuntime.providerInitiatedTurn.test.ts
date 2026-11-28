@@ -20,6 +20,84 @@ import { SessionMutationJournalAdmissionBlockedError } from '@/api/session/mutat
  * as working in Happier clients, mirroring the claude session hook lifecycle.
  */
 describe('createAcpRuntime (provider-initiated turns)', () => {
+  it('reports the completed provider reply after its transcript is published', async () => {
+    const backend = createFakeAcpRuntimeBackend();
+    const published: string[] = [];
+    const runtime = createAcpRuntime({
+      provider: 'pi',
+      directory: '/tmp',
+      promptTurnOwner: 'provider',
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createApprovedPermissionHandler(),
+      onThinkingChange: () => {},
+      ensureBackend: async () => backend,
+      session: createBasicSessionClientWithOverrides({
+        sendAgentMessage: (_provider, body) => { published.push(body.type); },
+        sendAgentMessageCommitted: async (_provider, body) => {
+          if (body.type === 'message') published.push(`committed ${body.message}`);
+        },
+      }),
+      onProviderTurnCompleted: ({ assistantText }: { assistantText: string | null }) => {
+        published.push(`ready ${assistantText}`);
+      },
+    });
+
+    await runtime.startOrLoad({});
+    backend.emit({ type: 'status', status: 'idle' });
+    backend.emit({ type: 'status', status: 'running' });
+    backend.emit({ type: 'model-output', fullText: 'native reply', fullTextScope: 'segment' });
+    expect(published).not.toContain('ready native reply');
+    backend.emit({ type: 'status', status: 'idle' });
+    backend.emit({ type: 'status', status: 'idle' });
+
+    await expect.poll(() => published.filter((item) => item.startsWith('ready '))).toEqual(['ready native reply']);
+    expect(published).toContain('committed native reply');
+    expect(published).toContain('task_complete');
+    const readyAt = published.indexOf('ready native reply');
+    expect(readyAt).toBeGreaterThan(published.lastIndexOf('committed native reply'));
+    expect(readyAt).toBeGreaterThan(published.indexOf('task_complete'));
+  });
+
+  it('reports readiness for the latest native turn when an earlier transcript is still settling', async () => {
+    const backend = createFakeAcpRuntimeBackend();
+    const firstCommit = createDeferred<void>();
+    const firstCommitStarted = createDeferred<void>();
+    const ready: Array<string | null> = [];
+    const runtime = createAcpRuntime({
+      provider: 'pi',
+      directory: '/tmp',
+      promptTurnOwner: 'provider',
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createApprovedPermissionHandler(),
+      onThinkingChange: () => {},
+      ensureBackend: async () => backend,
+      session: createBasicSessionClientWithOverrides({
+        sendAgentMessageCommitted: async (_provider, body) => {
+          if (body.type === 'message' && body.message === 'first reply') {
+            firstCommitStarted.resolve();
+            await firstCommit.promise;
+          }
+        },
+      }),
+      onProviderTurnCompleted: ({ assistantText }) => { ready.push(assistantText); },
+    });
+
+    await runtime.startOrLoad({});
+    backend.emit({ type: 'status', status: 'running' });
+    backend.emit({ type: 'model-output', fullText: 'first reply', fullTextScope: 'segment' });
+    backend.emit({ type: 'status', status: 'idle' });
+    await firstCommitStarted.promise;
+    backend.emit({ type: 'status', status: 'running' });
+    backend.emit({ type: 'model-output', fullText: 'second reply', fullTextScope: 'segment' });
+    backend.emit({ type: 'status', status: 'idle' });
+    firstCommit.resolve();
+    await runtime.flushTurn();
+
+    expect(ready).toEqual(['second reply']);
+  });
+
   it.each([
     { output: 'user', beforeStart: false, cancelWhileIdle: false },
     { output: 'user', beforeStart: true, cancelWhileIdle: false },

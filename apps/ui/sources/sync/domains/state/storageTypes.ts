@@ -535,6 +535,8 @@ export interface PendingMessage {
     updatedAt: number;
     source?: 'local_outbound' | 'server_pending';
     deliveryStatus?: 'queued' | 'accepted';
+    /** Runtime RPC confirmed this direct projection was durably admitted to server Pending. */
+    runtimePendingAdmissionScope?: import('@/sync/domains/scope/serverAccountScope').ServerAccountScope;
     /** Exact durable-outbox authority for local outbound rows; never inferred from the active server. */
     pendingOutboxScope?: import('@/sync/domains/scope/serverAccountScope').ServerAccountScope;
     /** Durable local outbox operation; `cancel` must never be presented or retried as a send. */

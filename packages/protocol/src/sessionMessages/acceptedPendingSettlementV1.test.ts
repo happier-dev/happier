@@ -4,6 +4,8 @@ import {
   ACCEPTED_PENDING_SETTLEMENT_EVENT_V1,
   AcceptedPendingSettlementRequestV1Schema,
   AcceptedPendingSettlementResponseV1Schema,
+  AcceptedPendingSettlementRequestV2Schema,
+  AcceptedPendingSettlementResponseV2Schema,
 } from './acceptedPendingSettlementV1.js';
 
 describe('AcceptedPendingSettlementRequestV1Schema', () => {
@@ -138,5 +140,20 @@ describe('AcceptedPendingSettlementRequestV1Schema', () => {
         updatedAt: 1,
       },
     }).success).toBe(false);
+  });
+});
+
+describe('terminal handoff on the accepted Pending settlement socket', () => {
+  it('requires the new outcome and returns only Pending state', () => {
+    const request = { v: 2, sessionId: 'session-1', localId: 'pending-1', outcome: 'handed_off' };
+    const response = { ok: true, didResolve: true, pendingCount: 1, pendingBlockedCount: 0, pendingVersion: 5 };
+
+    expect(AcceptedPendingSettlementRequestV1Schema.safeParse(request).success).toBe(false);
+    expect(AcceptedPendingSettlementRequestV2Schema.parse(request)).toEqual(request);
+    expect(AcceptedPendingSettlementRequestV2Schema.safeParse({ ...request, outcome: undefined }).success).toBe(false);
+    expect(AcceptedPendingSettlementRequestV2Schema.safeParse({ ...request, extra: 'untrusted' }).success).toBe(false);
+    expect(AcceptedPendingSettlementResponseV1Schema.safeParse(response).success).toBe(false);
+    expect(AcceptedPendingSettlementResponseV2Schema.parse(response)).toEqual(response);
+    expect(AcceptedPendingSettlementResponseV2Schema.safeParse({ ...response, message: {} }).success).toBe(false);
   });
 });

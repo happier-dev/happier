@@ -10,6 +10,7 @@ import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { reloadConfiguration } from '@/configuration';
 import * as daemonControlClient from '@/daemon/controlClient';
+import { HAPPIER_DAEMON_PENDING_FIRST_INPUT_ENV_KEY } from '@/daemon/spawn/pendingFirstInput';
 import { runPermissionModePromptLoop } from './runPermissionModePromptLoop';
 import { createPermissionModeQueueState } from './createPermissionModeQueueState';
 
@@ -266,8 +267,8 @@ describe('runStandardAcpProvider', () => {
   it.each(['runtime', 'startup'] as const)('respects %s ownership when reporting tmux startup fallback', async (terminalHostOwner) => {
     const harness = createHarness();
     const home = await createTempDir('happier-provider-terminal-owner-');
-    const env = createEnvKeyScope(['HAPPIER_HOME_DIR']);
-    env.patch({ HAPPIER_HOME_DIR: home });
+    const env = createEnvKeyScope(['HAPPIER_HOME_DIR', HAPPIER_DAEMON_PENDING_FIRST_INPUT_ENV_KEY]);
+    env.patch({ HAPPIER_HOME_DIR: home, [HAPPIER_DAEMON_PENDING_FIRST_INPUT_ENV_KEY]: undefined });
     reloadConfiguration();
     const daemonReport = vi.spyOn(daemonControlClient, 'notifyDaemonSessionStarted').mockResolvedValue({});
     harness.opts.startedBy = 'daemon';
@@ -1312,6 +1313,70 @@ describe('runStandardAcpProvider', () => {
     expect(sessionWasArchived(harness.session)).toBe(false);
     expect(harness.session.close).toHaveBeenCalled();
     expect(harness.metrics.cleanupCalls).toBe(1);
+  });
+
+  // A provider whose process owns the user's terminal (Pi native TUI) ends the runner when that
+  // process exits; the runner then cleans up exactly as for any other termination.
+  it('lets the provider runtime end the runner with the provider exit code', async () => {
+    const harness = createHarness();
+    harness.opts.startedBy = 'terminal';
+    let requestRunnerTermination: Parameters<StandardAcpProviderConfig['createRuntime']>[0]['requestRunnerTermination'] | null = null;
+    harness.config.createRuntime = (params) => {
+      requestRunnerTermination = params.requestRunnerTermination;
+      return harness.runtime;
+    };
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    harness.deps.runPermissionModePromptLoopFn = async () => {
+      requestRunnerTermination?.({ kind: 'exit', code: 7 });
+    };
+
+    try {
+      await runStandardAcpProvider(harness.opts, harness.config, harness.deps);
+      await vi.waitFor(() => expect(exitSpy).toHaveBeenCalledWith(7));
+    } finally {
+      exitSpy.mockRestore();
+    }
+
+    expect(harness.runtime.cancel).toHaveBeenCalled();
+    expect(harness.session.close).toHaveBeenCalledTimes(1);
+    expect(harness.metrics.cleanupCalls).toBe(1);
+    expect(sessionWasArchived(harness.session)).toBe(false);
+  });
+
+  it('dispatches provider-owned Stop while the Session flush is blocked', async () => {
+    const harness = createHarness();
+    let releaseFlush!: () => void;
+    const flush = new Promise<void>((resolve) => { releaseFlush = resolve; });
+    harness.session.flush.mockImplementation(() => flush);
+    delete harness.deps.createProviderEnforcedPermissionHandlerFn;
+    let cancelled = false;
+    const backend = createFakeAcpRuntimeBackend({
+      cancel: async () => { cancelled = true; },
+    });
+    harness.config.createRuntime = (params) => createTestAcpRuntime({
+      provider: 'pi',
+      directory: params.directory,
+      session: params.session,
+      messageBuffer: params.messageBuffer,
+      mcpServers: {},
+      permissionHandler: params.permissionHandler,
+      onThinkingChange: params.setThinking,
+      promptTurnOwner: 'provider',
+      ensureBackend: async () => backend,
+    });
+    harness.deps.runPermissionModePromptLoopFn = async (params: Parameters<typeof runPermissionModePromptLoop>[0]) => {
+      await params.runtime.startOrLoad({});
+      const stop = Promise.resolve(harness.handlers.get('abort')?.());
+      try {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(cancelled).toBe(true);
+      } finally {
+        releaseFlush();
+        await stop;
+      }
+    };
+
+    await runStandardAcpProvider(harness.opts, harness.config, harness.deps);
   });
 
   it.each(['completed', 'failed', 'flush-failed'] as const)(

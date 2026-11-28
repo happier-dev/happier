@@ -5,6 +5,12 @@ import type { TerminalInputInjectionResult, TerminalTurnState } from '../_types'
 
 export const TERMINAL_INPUT_QUIET_PERIOD_MS = 800;
 export const TERMINAL_INPUT_MAX_WAIT_MS = 15_000;
+/**
+ * Input held because the provider's terminal turn is running is normally released by that turn's
+ * end signal. This bounded fallback re-checks the provider even if the signal never arrives, so
+ * held input cannot starve; it keeps waiting while the provider still reports a running turn.
+ */
+export const TERMINAL_INPUT_BUSY_TURN_FALLBACK_WAKE_MS = 15_000;
 
 export type TerminalInjectionReadinessState = Readonly<{
   nowMs: number;

@@ -41,6 +41,7 @@ export const SessionCapabilitiesSchema = lazySchema(() => z
     messages: SessionMessagesCapabilitiesSchema,
     runtimeActivity: SessionRuntimeActivityCapabilitiesSchema.optional(),
     pendingInput: SessionPendingInputCapabilitiesSchema.optional(),
+    pendingTerminalHandoff: z.boolean().optional(),
   })
   .optional()
   .default(DEFAULT_SESSION_CAPABILITIES));

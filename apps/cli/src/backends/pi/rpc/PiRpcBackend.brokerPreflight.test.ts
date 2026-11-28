@@ -1,3 +1,4 @@
+import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -16,6 +17,7 @@ import {
 import { isPidAlive, spawnInlineNodeParentWithChild, waitForProcessExit } from '@/testkit/process/spawn';
 
 import { PiRpcBackend } from './PiRpcBackend';
+import { createSpawnedPiRpcChannel, type PiRpcChannel } from './piRpcChannel';
 
 /**
  * Integration of the fail-closed broker preflight into the Pi prompt path (Option A: daemon is the sole
@@ -28,11 +30,11 @@ import { PiRpcBackend } from './PiRpcBackend';
 type PrivateBrokerGateBackend = {
   connectedBrokerPreflight: Promise<unknown> | null;
   options: { env: Record<string, string> };
-  process: { kill: (signal?: NodeJS.Signals | number) => boolean } | null;
+  channel: PiRpcChannel | null;
   sessionId: string | null;
   ensureProcess: () => Promise<void>;
   sendCommand: (command: { type: string; message?: string }) => Promise<unknown>;
-  spawnRpcProcess: (params: { args: string[] }) => void;
+  spawnRpcProcess: (params: { args: string[] }) => Promise<void>;
   stopRpcProcessForRestart: () => Promise<void>;
   restartAndContinue: () => Promise<void>;
   maybeRestartForUpdatedAuthJson: () => Promise<void> | null;
@@ -192,30 +194,28 @@ describe('PiRpcBackend connected-service broker preflight (fail-closed)', () => 
       const priv = backend as unknown as {
         connectedBrokerPreflight: Promise<unknown> | null;
         ensureProcess: () => Promise<void>;
-        process: { stdin: { write: (chunk: string, callback?: (error?: Error | null) => void) => boolean } } | null;
+        channel: PiRpcChannel | null;
         pendingRequests: Map<string, unknown>;
         handleResponse: (response: Record<string, unknown>) => void;
       };
 
       priv.connectedBrokerPreflight = Promise.resolve({ ready: true });
       priv.ensureProcess = async () => undefined;
-      priv.process = {
-        stdin: {
-          write: (chunk, callback) => {
-            callback?.(null);
-            const command = JSON.parse(chunk) as { id: string; type: string };
-            observedCommands.push(command.type);
-            if (answerInitialState && command.type === 'get_state') {
-              priv.handleResponse({
-                id: command.id,
-                type: 'response',
-                command: 'get_state',
-                success: true,
-                data: {},
-              });
-            }
-            return true;
-          },
+      priv.channel = {
+        listen: () => undefined,
+        close: async () => undefined,
+        write: async (line) => {
+          const command = JSON.parse(line) as { id: string; type: string };
+          observedCommands.push(command.type);
+          if (answerInitialState && command.type === 'get_state') {
+            priv.handleResponse({
+              id: command.id,
+              type: 'response',
+              command: 'get_state',
+              success: true,
+              data: {},
+            });
+          }
         },
       };
 
@@ -360,7 +360,7 @@ describe('PiRpcBackend connected-service broker preflight (fail-closed)', () => 
         anthropic: { serviceId: 'claude-subscription', profileId: 'claude-pro', accountId: null, planType: null },
       }),
     });
-    priv.process = { kill: () => true };
+    priv.channel = { listen: () => undefined, write: async () => undefined, close: async () => undefined };
     priv.connectedBrokerPreflight = Promise.resolve({ ready: true });
     priv.maybeRestartForUpdatedAuthJson = async () => {
       priv.connectedBrokerPreflight = Promise.resolve({ ready: false, reason: 'broker_load_nonce_not_observed' });
@@ -379,14 +379,14 @@ describe('PiRpcBackend connected-service broker preflight (fail-closed)', () => 
       [PI_BROKER_STATE_PATH_ENV]: join(tmpdir(), 'happier-pi-broker-gate-no-daemon-state.json'),
     });
     priv.connectedBrokerPreflight = Promise.resolve({ ready: true });
-    priv.spawnRpcProcess({ args: ['-e', 'setTimeout(() => {}, 10000)'] });
+    await priv.spawnRpcProcess({ args: ['-e', 'setTimeout(() => {}, 10000)'] });
     const firstNonce = priv.options.env[PI_BROKER_LOAD_NONCE_ENV];
     expect(firstNonce).toMatch(/[0-9a-f-]{36}/);
     expect(priv.connectedBrokerPreflight).toBeNull();
 
     await priv.stopRpcProcessForRestart();
     priv.connectedBrokerPreflight = Promise.resolve({ ready: true });
-    priv.spawnRpcProcess({ args: ['-e', 'setTimeout(() => {}, 10000)'] });
+    await priv.spawnRpcProcess({ args: ['-e', 'setTimeout(() => {}, 10000)'] });
     const secondNonce = priv.options.env[PI_BROKER_LOAD_NONCE_ENV];
     expect(secondNonce).toMatch(/[0-9a-f-]{36}/);
     expect(secondNonce).not.toBe(firstNonce);
@@ -397,10 +397,10 @@ describe('PiRpcBackend connected-service broker preflight (fail-closed)', () => 
 
   it('stops the complete Pi RPC process tree before a failed replacement can continue', async () => {
     const { priv } = createGatedBackend({});
-    const { parent, childPid } = await spawnInlineNodeParentWithChild();
+    const { parent, childPid } = await spawnInlineNodeParentWithChild(undefined, { stdio: 'pipe' });
 
     try {
-      priv.process = parent;
+      priv.channel = createSpawnedPiRpcChannel(parent as ChildProcessWithoutNullStreams);
       expect(parent.pid).toBeTruthy();
       expect(isPidAlive(childPid)).toBe(true);
 

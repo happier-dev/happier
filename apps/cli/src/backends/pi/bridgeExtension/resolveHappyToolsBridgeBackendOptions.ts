@@ -38,8 +38,8 @@ function resolveActionsSettings(settings: Record<string, unknown> | null | undef
 }
 
 /**
- * Resolve the tools-bridge backend options for a Pi session, materializing the
- * extension asset when Happier controls the Pi agent dir.
+ * Resolve the session bridge and its optional Happier tools. The session bridge
+ * also observes Pi input and lifecycle events, including when tools are disabled.
  *
  * Returns `null` when `agentDir` is absent (native Pi sessions without a
  * Happier-managed agent dir): those sessions keep the shell-bridge prompt delivery and
@@ -52,8 +52,13 @@ export async function resolveHappyToolsBridgeBackendOptions(params: Readonly<{
   sessionMetadata?: unknown;
   memoryRecallGuidanceEnabled: boolean;
   memoryMachineId?: string | null;
+  /**
+   * Materializes the extension file Pi loads. Defaults to the shared asset under `agentDir`; the
+   * native terminal passes its own per-launch copy instead.
+   */
+  materializeExtension?: () => Promise<string>;
 }>): Promise<HappyToolsBridgeBackendOptions | null> {
-  if (!params.agentDir || !isSessionHappierToolsEnabled(params.sessionMetadata)) return null;
+  if (!params.agentDir) return null;
 
   const sessionRenameMode = resolveCodingPromptSessionTitleUpdatesModeV1(params.settings ?? null);
   const defaultSessionMachineId = params.memoryRecallGuidanceEnabled === true
@@ -80,14 +85,15 @@ export async function resolveHappyToolsBridgeBackendOptions(params: Readonly<{
   const requiredDirectActionIds = defaultSessionMachineId
     ? MEMORY_RECALL_GUIDANCE_REQUIRED_ACTION_IDS
     : [];
-  const resolvedTools = resolveSessionAgentToolPresentation({
-    actionsSettings,
-    isActionEnabled,
-    defaultSessionId: params.sessionId,
-    defaultSessionMachineId,
-    requiredDirectActionIds,
-  });
-  const directTools = resolvedTools;
+  const directTools = isSessionHappierToolsEnabled(params.sessionMetadata)
+    ? resolveSessionAgentToolPresentation({
+        actionsSettings,
+        isActionEnabled,
+        defaultSessionId: params.sessionId,
+        defaultSessionMachineId,
+        requiredDirectActionIds,
+      })
+    : [];
   const directToolNames = new Set(directTools.map((tool) => tool.name));
   const memoryGuidanceEnabled = params.memoryRecallGuidanceEnabled === true
     && directToolNames.has('memory_search')
@@ -115,7 +121,8 @@ export async function resolveHappyToolsBridgeBackendOptions(params: Readonly<{
       },
     },
   });
-  const extensionPath = await ensurePiBridgeExtensionAsset(params.agentDir);
+  const agentDir = params.agentDir;
+  const extensionPath = await (params.materializeExtension ?? (() => ensurePiBridgeExtensionAsset(agentDir)))();
 
   return { extensionPath, sessionConfig };
 }

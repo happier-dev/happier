@@ -7,6 +7,9 @@ import {
 } from '@/agent/runtime/permission/permissionModeQueuedPrompt';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import type { PermissionMode } from '@/api/types';
+import { ProviderEnforcedPermissionHandler } from '@/agent/permissions/ProviderEnforcedPermissionHandler';
+import { createApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 
 import { ProviderPromptSubmissionRejectedBeforeEffectError } from './providerPromptSubmission';
 import { runPermissionModePromptLoop } from './runPermissionModePromptLoop';
@@ -21,6 +24,60 @@ function createModeQueue() {
 }
 
 describe('runPermissionModePromptLoop provider submission phase ownership', () => {
+  it('settles a terminal handoff and refuses /clear without emitting readiness for the active provider turn', async () => {
+    const queue = createModeQueue();
+    const mode = { permissionMode: 'default' } as const;
+    queue.push({ text: 'hello', localId: 'terminal-input' }, mode, { userMessageLocalId: 'terminal-input' });
+    const events: string[] = [];
+    const stop = new AbortController();
+    const session = Object.assign(createApiSessionClientFixture({ metadata: createTestMetadata() }), {
+      sendAgentMessage: vi.fn(),
+      waitForPendingEligibilityUpdate: () => new Promise<void>(() => {}),
+    });
+    await runPermissionModePromptLoop({
+      providerName: 'Pi',
+      providerId: 'pi',
+      agentMessageType: 'pi',
+      explicitPermissionMode: 'default',
+      session,
+      providerInputOutcomeObserver: (outcome) => {
+        if (outcome.kind !== 'accepted') return;
+        events.push(outcome.delivery?.kind ?? 'accepted');
+        if (outcome.localId === 'clear-input') queueMicrotask(() => stop.abort());
+      },
+      messageQueue: queue,
+      permissionHandler: new ProviderEnforcedPermissionHandler(session, { logPrefix: '[Test]' }),
+      runtime: {
+        promptTurnOwner: 'provider',
+        beginTurn: () => {},
+        startOrLoad: async () => {},
+        sendPrompt: async () => {},
+        sendPromptWithMeta: async (prompt) => {
+          prompt.onProviderPromptHandedOff?.();
+          queue.push({ text: '/clear', localId: 'clear-input' }, mode, { userMessageLocalId: 'clear-input' });
+        },
+        flushTurn: async () => {},
+        reset: async () => {},
+        getSessionId: () => 'native-pi',
+      },
+      describeUnavailableRuntimeReset: () => 'Pi is open in the terminal',
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer: new MessageBuffer(),
+      shouldExit: () => stop.signal.aborted,
+      getAbortSignal: () => stop.signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: () => { events.push('ready'); },
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      formatPromptErrorMessage: String,
+    });
+
+    expect(events).toEqual(['terminal_handoff', 'command']);
+    expect(session.sendAgentMessage).toHaveBeenCalledWith('pi', { type: 'message', message: 'Pi is open in the terminal' });
+  });
+
   it('delivers advertised provider commands unchanged and applies deferred fresh-session prompt composition to the next prompt', async () => {
     const queue = createModeQueue();
     queue.push(

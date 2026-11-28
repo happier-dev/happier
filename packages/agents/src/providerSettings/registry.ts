@@ -5,6 +5,7 @@ import { CODEX_PROVIDER_SETTINGS_DEFINITION } from './definitions/codex.js';
 import { CURSOR_PROVIDER_SETTINGS_DEFINITION } from './definitions/cursor.js';
 import { KIMI_PROVIDER_SETTINGS_DEFINITION } from './definitions/kimi.js';
 import { OPENCODE_PROVIDER_SETTINGS_DEFINITION } from './definitions/opencode.js';
+import { PI_PROVIDER_SETTINGS_DEFINITION } from './definitions/pi.js';
 import type { ProviderSettingsDefinition } from './types.js';
 
 const ALL_DEFINITIONS: readonly ProviderSettingsDefinition[] = Object.freeze([
@@ -12,6 +13,7 @@ const ALL_DEFINITIONS: readonly ProviderSettingsDefinition[] = Object.freeze([
   OPENCODE_PROVIDER_SETTINGS_DEFINITION,
   CURSOR_PROVIDER_SETTINGS_DEFINITION,
   KIMI_PROVIDER_SETTINGS_DEFINITION,
+  PI_PROVIDER_SETTINGS_DEFINITION,
   CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFINITION,
 ]);
 

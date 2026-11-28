@@ -4446,7 +4446,11 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                 title: "Grok Build"
             },
             pi: {
-                title: "Pi"
+                title: "Pi",
+                nativeTerminal: {
+                    title: "使用 Pi 的原生終端機",
+                    subtitle: "適用於從終端機啟動的新 Pi 工作階段。在原生模式下使用自動朗讀需要更新 Happier 應用程式。",
+                },
             },
             qwen: {
                 title: "Qwen Code"

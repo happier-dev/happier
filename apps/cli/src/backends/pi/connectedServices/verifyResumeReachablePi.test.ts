@@ -76,6 +76,27 @@ describe('verifyResumeReachablePi', () => {
     }
   });
 
+  it.each([
+    ['renamed.jsonl', 'pi-session-A', true],
+    ['2026-05-27T00-00-00-000Z_pi-session-A.jsonl', 'pi-session-B', false],
+  ] as const)('checks the persisted path %s against its header', async (name, id, ok) => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-pi-reachable-header-'));
+    try {
+      const cwd = join(root, 'project');
+      const sessionFile = join(root, name);
+      await writeFile(sessionFile, `${JSON.stringify({ type: 'session', id, cwd })}\n`);
+      await expect(verifyResumeReachablePi({
+        targetMaterializedRoot: root,
+        targetMaterializedEnv: {},
+        candidatePersistedSessionFile: sessionFile,
+        cwd,
+        vendorResumeId: 'pi-session-A',
+      })).resolves.toMatchObject(ok ? { ok, resolvedPath: sessionFile } : { ok });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('does not accept a persisted candidate file whose name does not match the vendor resume id', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-pi-reachable-stale-candidate-'));
     try {
@@ -120,6 +141,34 @@ describe('verifyResumeReachablePi', () => {
         cwd: '/tmp/project',
         targetStrict: true,
       })).resolves.toEqual({ ok: true, resolvedPath: sessionFile });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('targetStrict: uses a renamed candidate only after its matching header is in the final layout', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-pi-reachable-strict-renamed-'));
+    try {
+      const cwd = join(root, 'project');
+      const piAgentDir = join(root, 'pi-agent-dir');
+      const targetDir = join(piAgentDir, 'sessions', formatPiSessionDirectoryForCwd(cwd));
+      const fileName = 'renamed.jsonl';
+      const candidatePersistedSessionFile = join(root, fileName);
+      const resolvedPath = join(targetDir, fileName);
+      const contents = `${JSON.stringify({ type: 'session', id: 'pi-session-1', cwd })}\n`;
+      await mkdir(targetDir, { recursive: true });
+      await writeFile(candidatePersistedSessionFile, contents);
+      const input = {
+        targetMaterializedRoot: root,
+        targetMaterializedEnv: { PI_CODING_AGENT_DIR: piAgentDir },
+        vendorResumeId: 'pi-session-1',
+        cwd,
+        candidatePersistedSessionFile,
+        targetStrict: true,
+      };
+      await expect(verifyResumeReachablePi(input)).resolves.toMatchObject({ ok: false });
+      await writeFile(resolvedPath, contents);
+      await expect(verifyResumeReachablePi(input)).resolves.toEqual({ ok: true, resolvedPath });
     } finally {
       await rm(root, { recursive: true, force: true });
     }

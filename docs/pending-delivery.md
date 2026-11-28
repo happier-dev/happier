@@ -228,6 +228,39 @@ not-found responses without exact committed proof, and unexpected resolution
 crashes. The diagnostic is present at the default session file log level and
 does not write to the provider's interactive terminal.
 
+## Pi terminal handoff (development)
+
+The native Pi bridge confirms when it invokes the stock Pi submission API. Pi
+can still transform, consume or reject the input during preparation. Happier
+projects the actual user turn from Pi's events. An error after confirmed handoff
+is visible in the terminal. When the bridge reply is lost, the original Pending
+item follows the existing uncertain-delivery path. The existing turn lifecycle
+publishes readiness after the Pi transcript is committed and the turn settles.
+
+The exact settlement socket event `pending-delivery-accepted-v1` also accepts
+`{ v: 2, sessionId, localId, outcome: 'handed_off' }`. The current authenticated
+session publisher can retire an active provider claim for that exact `localId`.
+The server updates the existing Pending counts, version, activation and
+participant projections in one transaction. The successful response carries
+`didResolve`, `pendingCount`, `pendingBlockedCount` and `pendingVersion`.
+An already absent row returns current state with `didResolve: false`. Removing
+a row publishes the existing Pending update. Settlement retries contact the
+server only. V1 keeps its transcript-writing acceptance contract.
+
+Eligible CLI launches require `capabilities.session.pendingTerminalHandoff`
+to be `true` in `GET /v1/features`. Servers that omit it use the existing RPC
+launch path. The capability is separate from the Pending input protocol version,
+which describes the broader queue contract.
+
+When a Pending snapshot drops several locally admitted sends before their
+transcript rows arrive, the app checks their local IDs in one authenticated
+request to `POST /v2/sessions/:sessionId/messages/by-local-id`. The request
+carries `localIds` and the response lists only `absentLocalIds`. A confirmed
+absence clears that local Pending projection. A matching transcript row replaces
+it after the row reaches the app. An unavailable lookup preserves the projection
+and the app still applies the rest of the Pending snapshot. Older servers
+continue to materialize ordinary sends in the transcript.
+
 ## Live runner wake-up recovery (development)
 
 Pending counts and versions come from the server's projection. A materialization

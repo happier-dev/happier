@@ -5,7 +5,8 @@ import type { PiBridgeSessionConfig } from '@/backends/pi/bridgeExtension';
 import {
   resolvePiBrokerExtensionArgs,
 } from '@/backends/pi/brokerExtension';
-import { PiRpcBackend } from '@/backends/pi/rpc/PiRpcBackend';
+import { PiRpcBackend, type PiRpcSpawnOptions } from '@/backends/pi/rpc/PiRpcBackend';
+import type { PiRpcChannelHost } from '@/backends/pi/rpc/piRpcChannel';
 import { readConnectedServiceChildSelectionsFromEnv } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
 import { requireProviderCliLaunchSpec } from '@/runtime/managedTools/requireProviderCliLaunchSpec';
 import { parsePermissionIntentAlias, providers } from '@happier-dev/agents';
@@ -34,6 +35,15 @@ export interface PiBackendOptions extends AgentFactoryOptions {
     extensionPath: string;
     sessionConfig: PiBridgeSessionConfig;
   }>;
+  /**
+   * `interactive` launches Pi's native TUI (the user's terminal) instead of the headless RPC
+   * child. Omitting it keeps today's RPC launch.
+   */
+  launchMode?: 'rpc' | 'interactive';
+  /** Transport to the interactive Pi (shared local control); omitted for the RPC child. */
+  channelHost?: PiRpcChannelHost;
+  continueRecentSession?: PiRpcSpawnOptions['continueRecentSession'];
+  onSessionOpened?: PiRpcSpawnOptions['onSessionOpened'];
 }
 
 // `null` means Happier must not override Pi's native tool catalog. Passing
@@ -55,21 +65,28 @@ export function buildPiToolsForPermissionMode(permissionMode?: string): string[]
   return ['read', 'grep', 'find', 'ls'];
 }
 
-export function buildPiRpcArgs(opts?: Readonly<{
+type PiLaunchPolicyArgsOptions = Readonly<{
   permissionMode?: PermissionMode;
   thinkingLevel?: string | null;
   extensionToolNames?: readonly string[];
-}>): string[] {
+}>;
+
+/** Tool and thinking policy shared by the RPC child and the native interactive terminal. */
+function buildPiLaunchPolicyArgs(opts?: PiLaunchPolicyArgsOptions): string[] {
   const permissionMode = opts?.permissionMode;
   const restrictedTools = buildPiToolsForPermissionMode(permissionMode);
   const tools = restrictedTools
     ? [...new Set([...restrictedTools, ...(opts?.extensionToolNames ?? [])])]
     : null;
-  const args: string[] = ['--mode', 'rpc'];
+  const args: string[] = [];
   if (tools) args.push('--tools', tools.join(','));
   const thinking = providers.pi.normalizePiThinkingLevel(opts?.thinkingLevel);
   if (thinking) args.push('--thinking', thinking);
   return args;
+}
+
+export function buildPiRpcArgs(opts?: PiLaunchPolicyArgsOptions): string[] {
+  return ['--mode', 'rpc', ...buildPiLaunchPolicyArgs(opts)];
 }
 
 type PiConnectedServiceLaunchSelection = Readonly<{
@@ -92,8 +109,8 @@ function resolvePiLaunchSelectionForConnectedService(serviceId: string): PiConne
   }
 }
 
-function resolvePiLaunchSelectionFromConnectedServiceSelection(
-  env: Readonly<Record<string, string>>,
+export function resolvePiLaunchSelectionFromConnectedServiceSelection(
+  env: Readonly<NodeJS.ProcessEnv>,
 ): PiConnectedServiceLaunchSelection | null {
   for (const selection of readConnectedServiceChildSelectionsFromEnv(env)) {
     const launchSelection = resolvePiLaunchSelectionForConnectedService(selection.serviceId);
@@ -126,6 +143,7 @@ export function createPiBackend(options: PiBackendOptions): AgentBackend {
   const thinkingLevel = providers.pi.resolvePiThinkingLevelFromEnv(env);
   const launchSelection = resolvePiLaunchSelectionFromConnectedServiceSelection(env);
   const launch = requireProviderCliLaunchSpec('pi', { processEnv });
+  const interactive = options.launchMode === 'interactive';
   return new PiRpcBackend({
     cwd: options.cwd,
     command: launch.command,
@@ -145,7 +163,7 @@ export function createPiBackend(options: PiBackendOptions): AgentBackend {
           launchSelection.modelScope,
         ]
         : []),
-      ...buildPiRpcArgs({
+      ...(interactive ? buildPiLaunchPolicyArgs : buildPiRpcArgs)({
         permissionMode: options.permissionMode,
         thinkingLevel,
         extensionToolNames: options.happyToolsBridge?.sessionConfig.directTools.map((tool) => tool.name),
@@ -159,11 +177,15 @@ export function createPiBackend(options: PiBackendOptions): AgentBackend {
     // args above must never carry the literal prompt content.
     appendSystemPromptText: options.appendSystemPromptText ?? null,
     permissionHandler: options.permissionHandler,
+    continueRecentSession: options.continueRecentSession,
+    onSessionOpened: options.onSessionOpened,
+    ...(options.channelHost ? { channelHost: options.channelHost } : {}),
     env: {
       ...env,
       NODE_ENV: 'production',
       DEBUG: '',
-      CI: '1',
+      // CI tells Pi it has no interactive user; it must never reach the native TUI.
+      ...(interactive ? {} : { CI: '1' }),
     },
   });
 }

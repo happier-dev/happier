@@ -9,29 +9,41 @@ import { lazySchema } from '../lazySchema.js';
 
 export const ACCEPTED_PENDING_SETTLEMENT_EVENT_V1 = 'pending-delivery-accepted-v1' as const;
 
-const AcceptedPendingSettlementIdentityV1Schema = lazySchema(() => z.string().refine(
+const AcceptedPendingSettlementIdentitySchema = lazySchema(() => z.string().refine(
   (value) => value.trim().length > 0,
   { message: 'Settlement identity must not be blank' },
 ));
 
 export const AcceptedPendingSettlementRequestV1Schema = lazySchema(() => z.object({
   v: z.literal(1),
-  sessionId: AcceptedPendingSettlementIdentityV1Schema,
+  sessionId: AcceptedPendingSettlementIdentitySchema,
   localId: PendingLocalIdSchema,
 }).strict());
 
 export type AcceptedPendingSettlementRequestV1 = z.infer<typeof AcceptedPendingSettlementRequestV1Schema>;
 
-const AcceptedPendingSettlementPendingCountV1Schema = lazySchema(() => z.number().int().nonnegative());
+export const AcceptedPendingSettlementRequestV2Schema = lazySchema(() => AcceptedPendingSettlementRequestV1Schema.extend({
+  v: z.literal(2),
+  outcome: z.literal('handed_off'),
+}));
 
-const AcceptedPendingSettlementStateV1Schema = {
-  pendingCount: AcceptedPendingSettlementPendingCountV1Schema,
-  pendingBlockedCount: AcceptedPendingSettlementPendingCountV1Schema,
-  pendingVersion: AcceptedPendingSettlementPendingCountV1Schema,
+export type AcceptedPendingSettlementRequestV2 = z.infer<typeof AcceptedPendingSettlementRequestV2Schema>;
+
+export const AcceptedPendingSettlementRequestSchema = lazySchema(() => z.discriminatedUnion('v', [
+  AcceptedPendingSettlementRequestV1Schema,
+  AcceptedPendingSettlementRequestV2Schema,
+]));
+
+const AcceptedPendingSettlementPendingCountSchema = lazySchema(() => z.number().int().nonnegative());
+
+const AcceptedPendingSettlementStateSchema = {
+  pendingCount: AcceptedPendingSettlementPendingCountSchema,
+  pendingBlockedCount: AcceptedPendingSettlementPendingCountSchema,
+  pendingVersion: AcceptedPendingSettlementPendingCountSchema,
 } as const;
 
 const AcceptedPendingSettlementMessageV1Schema = lazySchema(() => z.object({
-  id: AcceptedPendingSettlementIdentityV1Schema,
+  id: AcceptedPendingSettlementIdentitySchema,
   seq: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   localId: PendingLocalIdSchema,
   messageRole: SessionMessageRoleSchema.optional(),
@@ -47,18 +59,18 @@ const AcceptedPendingSettlementSuccessV1Schema = lazySchema(() => z.discriminate
   z.object({
     ok: z.literal(true),
     didResolve: z.literal(false),
-    ...AcceptedPendingSettlementStateV1Schema,
+    ...AcceptedPendingSettlementStateSchema,
     message: AcceptedPendingSettlementMessageV1Schema.optional(),
   }).strict(),
   z.object({
     ok: z.literal(true),
     didResolve: z.literal(true),
-    ...AcceptedPendingSettlementStateV1Schema,
+    ...AcceptedPendingSettlementStateSchema,
     message: AcceptedPendingSettlementMessageV1Schema,
   }).strict(),
 ]));
 
-const AcceptedPendingSettlementFailureErrorV1Schema = lazySchema(() => z.enum([
+const AcceptedPendingSettlementFailureErrorSchema = lazySchema(() => z.enum([
   'session-not-found',
   'forbidden',
   'invalid-params',
@@ -69,10 +81,10 @@ const AcceptedPendingSettlementFailureErrorV1Schema = lazySchema(() => z.enum([
   'internal',
 ]));
 
-const AcceptedPendingSettlementFailureV1Schema = lazySchema(() => z.discriminatedUnion('error', [
+const AcceptedPendingSettlementFailureSchema = lazySchema(() => z.discriminatedUnion('error', [
   z.object({
     ok: z.literal(false),
-    error: AcceptedPendingSettlementFailureErrorV1Schema,
+    error: AcceptedPendingSettlementFailureErrorSchema,
   }).strict(),
   z.object({
     ok: z.literal(false),
@@ -84,7 +96,19 @@ const AcceptedPendingSettlementFailureV1Schema = lazySchema(() => z.discriminate
 
 export const AcceptedPendingSettlementResponseV1Schema = lazySchema(() => z.union([
   AcceptedPendingSettlementSuccessV1Schema,
-  AcceptedPendingSettlementFailureV1Schema,
+  AcceptedPendingSettlementFailureSchema,
 ]));
 
 export type AcceptedPendingSettlementResponseV1 = z.infer<typeof AcceptedPendingSettlementResponseV1Schema>;
+
+
+export const AcceptedPendingSettlementResponseV2Schema = lazySchema(() => z.union([
+  z.object({
+    ok: z.literal(true),
+    didResolve: z.boolean(),
+    ...AcceptedPendingSettlementStateSchema,
+  }).strict(),
+  AcceptedPendingSettlementFailureSchema,
+]));
+
+export type AcceptedPendingSettlementResponseV2 = z.infer<typeof AcceptedPendingSettlementResponseV2Schema>;

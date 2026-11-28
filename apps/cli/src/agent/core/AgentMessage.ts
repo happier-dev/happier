@@ -48,6 +48,8 @@ export interface StatusMessage {
   error?: unknown;
   /** The provider conclusively settled its response; an unqualified idle may be transient. */
   turnFinished?: true;
+  /** On final idle, the provider reports that its active turn was cancelled. */
+  turnCancelled?: true;
   /** For `running`: the tool call whose start this reports. */
   toolCallId?: string;
 }

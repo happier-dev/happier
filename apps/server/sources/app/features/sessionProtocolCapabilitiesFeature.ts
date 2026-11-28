@@ -15,6 +15,7 @@ export function resolveSessionProtocolCapabilitiesFeature(): FeaturesPayloadDelt
                 pendingInput: {
                     protocolVersion: CURRENT_PENDING_INPUT_PROTOCOL_VERSION,
                 },
+                pendingTerminalHandoff: true,
             },
         },
     };

@@ -31,8 +31,9 @@ import { normalizeIncomingSessionMessageContent } from "@/app/session/messageCon
 import { parseSessionMessageSidechainId } from "@/app/session/parseSessionMessageSidechainId";
 import {
     ACCEPTED_PENDING_SETTLEMENT_EVENT_V1,
-    AcceptedPendingSettlementRequestV1Schema,
+    AcceptedPendingSettlementRequestSchema,
     AcceptedPendingSettlementResponseV1Schema,
+    AcceptedPendingSettlementResponseV2Schema,
     readPendingLocalId,
     ExecutionRunPublicStateSchema,
     SESSION_MESSAGE_NO_USER_ATTENTION_IMPACT,
@@ -891,17 +892,19 @@ export function sessionUpdateHandler(
     });
 
     socket.on(ACCEPTED_PENDING_SETTLEMENT_EVENT_V1, async (data: unknown, callback?: (response: unknown) => void) => {
-        const respond = (response: unknown) => {
-            callback?.(AcceptedPendingSettlementResponseV1Schema.parse(response));
+        const respond = (response: unknown, version: 1 | 2 = 1) => {
+            const schema = version === 2 ? AcceptedPendingSettlementResponseV2Schema : AcceptedPendingSettlementResponseV1Schema;
+            callback?.(schema.parse(response));
         };
         try {
             await receiveMessageLock.inLock(async () => {
-                const parsed = AcceptedPendingSettlementRequestV1Schema.safeParse(data);
+                const parsed = AcceptedPendingSettlementRequestSchema.safeParse(data);
                 if (!parsed.success || !canMutateSocketSession(connection, parsed.data.sessionId)) {
                     respond({ ok: false, error: "invalid-params" });
                     return;
                 }
-                const { sessionId, localId } = parsed.data;
+                const request = parsed.data;
+                const { v, sessionId, localId } = request;
                 const trusted = trustedTranscriptObservationPublisher;
                 if (
                     connection.connectionType !== "session-scoped"
@@ -921,6 +924,7 @@ export function sessionUpdateHandler(
                         actorUserId: userId,
                         sessionId,
                         localId,
+                        ...(request.v === 2 ? { outcome: request.outcome } : {}),
                         trustedPublisherFence: {
                             ...trusted.binding,
                             committedFence: publisher.committedFence,
@@ -950,7 +954,7 @@ export function sessionUpdateHandler(
                     pendingBlockedCount: result.pendingBlockedCount,
                     pendingVersion: result.pendingVersion,
                     ...(result.message ? { message: serializePendingMaterializedMessage(result.message) } : {}),
-                });
+                }, v);
             });
         } catch (error) {
             if (isTransactionAcquisitionUnavailableError(error)) {

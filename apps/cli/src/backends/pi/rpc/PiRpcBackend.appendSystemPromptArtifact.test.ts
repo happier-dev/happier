@@ -76,18 +76,18 @@ describe('PiRpcBackend append-system-prompt artifact delivery', () => {
     });
     backend = candidate;
     const priv = candidate as unknown as {
-      process: unknown;
+      channel: unknown;
       ensureProcess(): Promise<void>;
       spawnRpcProcess(params: Readonly<{ args: string[] }>): void;
     };
     const spawnSpy = vi.spyOn(priv, 'spawnRpcProcess').mockImplementation(() => {
-      priv.process = { pid: 1 };
+      priv.channel = { pid: 1 };
     });
 
     await Promise.all([priv.ensureProcess(), priv.ensureProcess()]);
 
     expect(spawnSpy).toHaveBeenCalledTimes(1);
-    priv.process = null;
+    priv.channel = null;
   });
 
   it('does not spawn when disposal wins during asynchronous artifact preparation', async () => {

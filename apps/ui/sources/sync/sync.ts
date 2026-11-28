@@ -481,6 +481,7 @@ import {
     resolveNextForkedTranscriptLoadOlderRequest,
 } from './domains/sessionFork/forkedTranscriptPaging';
 import {
+    recordRuntimePendingAdmission,
     blockPendingDeliveryV2,
     deleteDiscardedPendingMessageV2,
     deletePendingMessageV2,
@@ -2705,8 +2706,8 @@ class Sync {
         });
 
         try {
-            const permissionPublicationScope = getActiveServerAccountScope();
-            const isPermissionPublicationScopeCurrent = this.createServerScopeGuard();
+            const sendScope = getActiveServerAccountScope();
+            const isSendScopeCurrent = this.createServerScopeGuard();
 
             // Read permission mode from session state
             const permissionMode = session.permissionMode || 'default';
@@ -2748,8 +2749,8 @@ class Sync {
             const publishNextPromptPermissionModeIfNeeded = () => this.publishNextPromptPermissionModeAfterAdmission({
                 sessionId,
                 admittedPermissionMode: content.meta?.permissionMode,
-                expectedAccountScope: permissionPublicationScope,
-                isCurrent: isPermissionPublicationScopeCurrent,
+                expectedAccountScope: sendScope,
+                isCurrent: isSendScopeCurrent,
             });
 
             const messagePayload =
@@ -2799,24 +2800,34 @@ class Sync {
                         },
                         { timeoutMs: this.syncTuning.sessionRpcTimeoutMs },
                     );
-                    storage.getState().upsertPendingMessage(sessionId, {
-                        id: localId,
-                        localId,
-                        createdAt,
-                        updatedAt: nowServerMs(),
-                        source: 'local_outbound',
-                        deliveryStatus: 'accepted',
-                        text,
-                        displayText,
-                        rawRecord: content,
-                    });
+                    const providerAcceptancePending = rpcAck.ok === true && rpcAck.providerAcceptancePending === true;
+                    if (providerAcceptancePending) {
+                        if (sendScope && isSendScopeCurrent()
+                            && areServerAccountScopesEqual(sendScope, getActiveServerAccountScope())
+                            && recordRuntimePendingAdmission(sessionId, localId, sendScope)) {
+                            // The server may have already published retirement while RPC was in flight.
+                            fireAndForget(this.fetchPendingMessages(sessionId, sendScope), {
+                                tag: 'Sync.sendMessage.admittedPendingRefresh',
+                            });
+                        }
+                    } else {
+                        storage.getState().upsertPendingMessage(sessionId, {
+                            id: localId,
+                            localId,
+                            createdAt,
+                            updatedAt: nowServerMs(),
+                            source: 'local_outbound',
+                            deliveryStatus: 'accepted',
+                            text,
+                            displayText,
+                            rawRecord: content,
+                        });
+                    }
                     await publishNextPromptPermissionModeIfNeeded();
                     return {
                         localId,
                         persistence: 'provider_direct' as const,
-                        ...(rpcAck.ok === true && rpcAck.providerAcceptancePending === true
-                            ? { providerAcceptancePending: true }
-                            : {}),
+                        ...(providerAcceptancePending ? { providerAcceptancePending: true } : {}),
                     };
                 } catch (error) {
                     if (isSocketIoAckTimeoutError(error)) {

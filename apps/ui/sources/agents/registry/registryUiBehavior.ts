@@ -82,6 +82,7 @@ export type AgentSessionHandoffProviderPatch = Readonly<{
 }>;
 
 export type AgentUiBehavior = Readonly<{
+    usesSessionLevelVoiceReplies?: (session: Session) => boolean;
     connectedServices?: Readonly<{
         renderPoolSettings?: (ctx: {
             serviceId: ConnectedServiceId;
@@ -295,6 +296,7 @@ export type NewSessionPreflightIssue = Readonly<{
 
 function mergeAgentUiBehavior(a: AgentUiBehavior, b: AgentUiBehavior): AgentUiBehavior {
     return {
+        usesSessionLevelVoiceReplies: b.usesSessionLevelVoiceReplies ?? a.usesSessionLevelVoiceReplies,
         ...(a.connectedServices || b.connectedServices
             ? { connectedServices: { ...(a.connectedServices ?? {}), ...(b.connectedServices ?? {}) } }
             : {}),
@@ -415,6 +417,12 @@ export function isAttachedSessionTerminalAvailableForSession(session: Session): 
     if (!agentId) return false;
     const isAvailable = AGENTS_UI_BEHAVIOR[agentId].attachedSessionTerminal?.isAvailable;
     return isAvailable?.({ agentId, session }) === true;
+}
+
+export function usesSessionLevelVoiceReplies(session: Session | null): boolean {
+    if (!session) return false;
+    const agentId = resolveAgentIdFromSessionMetadata(session.metadata);
+    return agentId !== null && AGENTS_UI_BEHAVIOR[agentId].usesSessionLevelVoiceReplies?.(session) === true;
 }
 
 export function resolvePendingDeliveryTransientActionForSession(ctx: {

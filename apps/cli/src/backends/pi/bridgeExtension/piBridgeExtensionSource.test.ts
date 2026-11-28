@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { createRequire, syncBuiltinESMExports } from 'node:module';
+import { createServer, type AddressInfo } from 'node:net';
 
 import { describe, expect, it, vi } from 'vitest';
 
@@ -362,6 +363,60 @@ if (args.input.value === 'fail') {
         systemPrompt: 'PI_BASE\n\nHOST_RESOLVED_GUIDANCE',
       });
     } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('requires native TUI mode for a session config carrying a shared-control endpoint', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'happier-pi-bridge-modes-'));
+    const runner = createServer();
+    const connections: unknown[] = [];
+    runner.on('connection', (socket) => { connections.push(socket); socket.destroy(); });
+    await new Promise<void>((resolve) => runner.listen(0, '127.0.0.1', resolve));
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    try {
+      const configPath = join(dir, 'config.json');
+      writeFileSync(configPath, JSON.stringify({
+        v: 1,
+        sessionId: 'sess-modes',
+        directTools: [],
+        promptAddition: 'GUIDANCE',
+        launch: { filePath: process.execPath, argPrefix: [], env: {} },
+        sharedControl: { host: '127.0.0.1', port: (runner.address() as AddressInfo).port, token: 'token' },
+      }));
+      const factory = await loadExtensionFactory();
+      const observe = async (mode: string | undefined) => {
+        const notify = vi.fn<(message: string) => void>();
+        const ctx = {
+          ...(mode ? { mode } : {}),
+          ui: { notify },
+          getContextUsage: () => ({ tokens: 10, contextWindow: 100 }),
+        };
+        const harness = createFakePi({ [PI_BRIDGE_CONFIG_PATH_FLAG]: configPath });
+        factory(harness.pi);
+        stderr.mockClear();
+        await harness.emit('session_start', {}, ctx);
+        await harness.emit('input', { source: 'extension', text: 'observed' }, ctx);
+        await harness.emit('message_end', { message: { role: 'assistant', content: [] } }, ctx);
+        const prompt = await harness.emit('before_agent_start', { systemPrompt: 'BASE' }, ctx);
+        return {
+          notified: notify.mock.calls.map(([message]) => JSON.parse(String(message))),
+          stderrMarkers: stderr.mock.calls.map(([chunk]) => String(chunk)).filter((chunk) => chunk.includes(PI_BRIDGE_TOKEN_COUNT_MARKER_TYPE)),
+          prompt,
+        };
+      };
+
+      for (const mode of ['rpc', undefined, 'json', 'print']) {
+        const observed = await observe(mode);
+        expect(observed.notified, String(mode)).toEqual([]);
+        expect(observed.stderrMarkers, String(mode)).toEqual([]);
+        expect(observed.prompt, String(mode)).toBeUndefined();
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(connections).toEqual([]);
+    } finally {
+      stderr.mockRestore();
+      await new Promise((resolve) => runner.close(resolve));
       rmSync(dir, { recursive: true, force: true });
     }
   });

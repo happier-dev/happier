@@ -42,7 +42,7 @@ export const patchSession = vi.fn();
 export const applySessionReadCursorOperation = vi.fn();
 export const applySessionTurnMutation = vi.fn();
 export const applySessionTurnMutationInTx = vi.fn();
-export const checkSessionAccess = vi.fn(async () => ({ level: "owner" }));
+export const checkSessionAccess = vi.fn(async (): Promise<{ level: string } | null> => ({ level: "owner" }));
 export const requireAccessLevel = vi.fn((access: any, required: any) => {
     const levels = ["view", "edit", "admin", "owner"];
     const userLevel = levels.indexOf(access?.level);

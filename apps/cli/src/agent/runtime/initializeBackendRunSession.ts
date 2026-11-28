@@ -64,6 +64,7 @@ export interface InitializeBackendRunSessionOptions {
   onAttachMetadataSnapshotError?: (error: unknown) => void
   onAttachMetadataSnapshotMissing?: (error: unknown | null) => void
   onAttachMetadataSnapshotReady?: (snapshot: unknown, session: ApiSessionClient) => void | Promise<void>
+  prepareAttachedAgentState?: (state: AgentState) => AgentState
   onDaemonSessionReported?: (opts: { sessionId: string }) => void | Promise<void>
   startupSideEffectsOrder?: 'report-first' | 'persist-first'
   /** Runtime-owned hosts publish their own attachment, binding, and startup failures. */
@@ -362,7 +363,7 @@ export async function initializeBackendRunSession(
       opts.onAttachMetadataSnapshotMissing?.(snapshotError)
     }
 
-    primeAgentStateForUiFn(session, opts.uiLogPrefix)
+    primeAgentStateForUiFn(session, opts.uiLogPrefix, opts.prepareAttachedAgentState)
     await deferOrCommitPendingFirstInput(session)
     await runStartupSideEffects(session, existingSessionId, daemonReportMetadata, 'background')
 

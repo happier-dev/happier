@@ -1,13 +1,17 @@
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 
+import { updateSessionMetadataWithAck } from '@/api/session/stateUpdates';
 import type { Metadata } from '@/api/types';
 import { buildPiAgentRuntimeDescriptorV1 } from '@happier-dev/protocol';
+import { createDeferred } from '@/testkit/async/deferred';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
+import { withTempDir } from '@/testkit/fs/tempDir';
 import { formatPiSessionDirectoryForCwd } from '@/backends/pi/utils/piSessionFiles';
+import { AsyncLock } from '@/utils/lock';
 
 import {
   maybeUpdatePiSessionIdMetadata,
@@ -191,6 +195,24 @@ describe('maybeUpdatePiSessionIdMetadata', () => {
     expect(resolved).toBe(sessionFile);
   });
 
+  it('validates a reported session file against the header of an absolute resume reference', async () => {
+    await withTempDir('pi-session-reported-file-', async (cwd) => {
+      const sessionFile = join(cwd, 'renamed.jsonl');
+      await writeFile(sessionFile, `${JSON.stringify({ type: 'session', id: 'actual-session-id', cwd })}\n`);
+
+      await expect(resolvePiSessionFileForRuntimeSession({
+        vendorSessionReference: sessionFile,
+        cwd,
+        reportedSessionFile: sessionFile,
+      })).resolves.toBe(sessionFile);
+      await expect(resolvePiSessionFileForRuntimeSession({
+        vendorSessionReference: 'other-session-id',
+        cwd,
+        reportedSessionFile: sessionFile,
+      })).resolves.toBeNull();
+    });
+  });
+
   it('publishes piSessionFile via runtime session discovery when available', async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), 'pi-session-publish-'));
     const cwd = join(tempRoot, 'repo');
@@ -234,6 +256,41 @@ describe('maybeUpdatePiSessionIdMetadata', () => {
     });
   });
 
+  it('waits for the exact Pi-reported path instead of publishing a matching file elsewhere', async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), 'pi-reported-session-file-'));
+    try {
+      const cwd = join(tempRoot, 'repo');
+      const agentDir = join(tempRoot, 'pi-agent');
+      const sessionsDir = join(agentDir, 'sessions', formatPiSessionDirectoryForCwd(cwd));
+      const reportedSessionFile = join(tempRoot, 'renamed.jsonl');
+      await mkdir(sessionsDir, { recursive: true });
+      await writeFile(join(sessionsDir, 'session-pi-session-1.jsonl'), '{}\n');
+      const lastPublished = { value: null as string | null, sessionFile: null as string | null };
+      let metadata = createTestMetadata({ flavor: 'pi' });
+      const publishedFiles: unknown[] = [];
+      await publishPiSessionIdMetadata({
+        operation: 'create',
+        session: {
+          updateMetadata: (updater) => {
+            metadata = updater(metadata);
+            publishedFiles.push(metadata.piSessionFile);
+          },
+          getMetadataSnapshot: () => metadata,
+        },
+        getPiSessionId: () => 'pi-session-1',
+        reportedSessionFile,
+        cwd,
+        processEnv: { PI_CODING_AGENT_DIR: agentDir },
+        lastPublished,
+      });
+      await writeFile(reportedSessionFile, `${JSON.stringify({ type: 'session', id: 'pi-session-1', cwd })}\n`);
+      await vi.waitFor(() => expect(metadata.piSessionFile).toBe(reportedSessionFile));
+      expect(publishedFiles.filter(Boolean)).toEqual([reportedSessionFile]);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it('retries session-file discovery and publishes piSessionFile when the file appears shortly after startup', async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), 'pi-session-retry-'));
     const cwd = join(tempRoot, 'repo');
@@ -270,6 +327,138 @@ describe('maybeUpdatePiSessionIdMetadata', () => {
       expect((metadata as Metadata & { piSessionFile?: string }).piSessionFile).toBe(sessionFile);
     }, { timeout: 4_000 });
   });
+
+  it('does not let a queued retry replace a newer file for the same Pi session ID', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'pi-session-superseded-file-'));
+    const oldFile = join(cwd, 'original.jsonl');
+    const currentFile = join(cwd, 'replacement.jsonl');
+    const sessionId = 'pi-session-1';
+    const header = `${JSON.stringify({ type: 'session', id: sessionId, cwd })}\n`;
+    const lastPublished = { value: null as string | null, sessionFile: null as string | null };
+    const retryQueued = createDeferred<void>();
+    const releaseRetry = createDeferred<void>();
+    let metadata = createTestMetadata({ flavor: 'pi' });
+    let delayNextWrite = false;
+    let writeQueue = Promise.resolve();
+    const writtenFiles: Array<string | undefined> = [];
+    const session = {
+      updateMetadata: (updater: (value: Metadata) => Metadata) => {
+        writeQueue = writeQueue.then(async () => {
+          if (delayNextWrite) {
+            delayNextWrite = false;
+            retryQueued.resolve();
+            await releaseRetry.promise;
+          }
+          const updated = updater(metadata);
+          if (updated !== metadata) writtenFiles.push(updated.piSessionFile);
+          metadata = updated;
+        });
+        return writeQueue;
+      },
+    };
+    const publish = (reportedSessionFile: string) => publishPiSessionIdMetadata({
+      operation: 'create',
+      session,
+      getPiSessionId: () => sessionId,
+      reportedSessionFile,
+      cwd,
+      lastPublished,
+    });
+    try {
+      await publish(oldFile);
+      delayNextWrite = true;
+      await Promise.all([writeFile(oldFile, header), writeFile(currentFile, header)]);
+      await retryQueued.promise;
+
+      const replacement = publish(currentFile);
+      releaseRetry.resolve();
+      await replacement;
+
+      expect(writtenFiles).toEqual([undefined, currentFile]);
+      expect(metadata.piSessionFile).toBe(currentFile);
+      expect(metadata.agentRuntimeDescriptorV1).toEqual(buildPiAgentRuntimeDescriptorV1({
+        resumeStrategy: 'sessionFileAbsolutePreferred',
+        vendorSessionId: sessionId,
+        sessionFile: currentFile,
+      }));
+    } finally {
+      releaseRetry.resolve();
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it.each(['create', 'resume'] as const)(
+    'reconciles the current %s with an older file write already awaiting acknowledgement',
+    async (operation) => {
+      const cwd = await mkdtemp(join(tmpdir(), 'pi-session-in-flight-file-'));
+      const currentFile = join(cwd, 'current.jsonl');
+      const supersededFile = join(cwd, 'superseded.jsonl');
+      const sessionId = 'pi-session-1';
+      const header = `${JSON.stringify({ type: 'session', id: sessionId, cwd })}\n`;
+      const lastPublished = { value: null as string | null, sessionFile: null as string | null };
+      const olderWriteSent = createDeferred<void>();
+      const releaseOlderWrite = createDeferred<void>();
+      const lock = new AsyncLock();
+      let metadata = createTestMetadata({ flavor: 'pi' });
+      let metadataVersion = 0;
+      const session = {
+        getMetadataSnapshot: () => metadata,
+        updateMetadata: (handler: (current: Metadata) => Metadata) => lock.inLock(() =>
+          updateSessionMetadataWithAck({
+            socket: {
+              emitWithAck: async (_event, rawPayload) => {
+                const payload = rawPayload as { metadata: string; expectedVersion: number };
+                const sent = JSON.parse(payload.metadata) as Metadata;
+                if (sent.piSessionFile === supersededFile) {
+                  olderWriteSent.resolve();
+                  await releaseOlderWrite.promise;
+                }
+                return { result: 'success', metadata: payload.metadata, version: payload.expectedVersion + 1 };
+              },
+            },
+            sessionId: 'happier-pi-session',
+            sessionEncryptionMode: 'plain',
+            encryptionKey: new Uint8Array(),
+            encryptionVariant: 'legacy',
+            getMetadata: () => metadata,
+            setMetadata: (updated) => { if (updated) metadata = updated; },
+            getMetadataVersion: () => metadataVersion,
+            setMetadataVersion: (version) => { metadataVersion = version; },
+            syncSessionSnapshotFromServer: async () => {},
+            handler,
+          })),
+      };
+      const publish = (reportedSessionFile: string, kind: 'create' | 'resume' = 'create') =>
+        publishPiSessionIdMetadata({
+          operation: kind,
+          session,
+          getPiSessionId: () => sessionId,
+          reportedSessionFile,
+          cwd,
+          lastPublished,
+        });
+      try {
+        await Promise.all([writeFile(currentFile, header), writeFile(supersededFile, header)]);
+        await publish(currentFile);
+        const older = publish(supersededFile);
+        await olderWriteSent.promise;
+
+        const current = publish(currentFile, operation);
+        releaseOlderWrite.resolve();
+        await Promise.all([older, current]);
+
+        expect(metadata.piSessionFile).toBe(currentFile);
+        expect(metadata.agentRuntimeDescriptorV1).toEqual(buildPiAgentRuntimeDescriptorV1({
+          resumeStrategy: 'sessionFileAbsolutePreferred',
+          vendorSessionId: sessionId,
+          sessionFile: currentFile,
+        }));
+      } finally {
+        releaseOlderWrite.resolve();
+        await rm(cwd, { recursive: true, force: true });
+      }
+    },
+  );
 
   it('reverts lastPublished when the metadata update fails', async () => {
     const lastPublished = { value: null as string | null, sessionFile: null as string | null };
@@ -319,7 +508,7 @@ describe('maybeUpdatePiSessionIdMetadata', () => {
 
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(updateMetadata).not.toHaveBeenCalled();
-    expect(lastPublished).toEqual({ value: 'pi-resume-1', sessionFile });
+    expect(lastPublished).toMatchObject({ value: 'pi-resume-1', sessionFile });
     expect(metadata.piSessionFile).toBe(sessionFile);
   });
 

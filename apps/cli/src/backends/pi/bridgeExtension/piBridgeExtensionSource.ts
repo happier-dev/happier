@@ -1,6 +1,7 @@
 import { PI_BRIDGE_CONFIG_PATH_FLAG, PI_BRIDGE_TOKEN_COUNT_MARKER_TYPE, PI_BRIDGE_USER_INPUT_MARKER_TYPE } from './piBridgeExtensionEnv';
+import { buildPiSharedControlBridgeSource, PI_SHARED_CONTROL_BRIDGE_IMPORTS } from './piSharedControlBridgeSource';
 
-export const PI_BRIDGE_EXTENSION_VERSION = '5';
+export const PI_BRIDGE_EXTENSION_VERSION = '6';
 
 function jsString(value: string): string {
   return JSON.stringify(value);
@@ -11,6 +12,7 @@ export function buildPiBridgeExtensionSource(): string {
 // Generic adapter: the host-owned protected session manifest owns tool policy and prompt guidance.
 import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
+${PI_SHARED_CONTROL_BRIDGE_IMPORTS}
 
 const CONFIG_PATH_FLAG = ${jsString(PI_BRIDGE_CONFIG_PATH_FLAG)};
 const TOKEN_COUNT_MARKER_TYPE = ${jsString(PI_BRIDGE_TOKEN_COUNT_MARKER_TYPE)};
@@ -42,6 +44,7 @@ function readSessionConfig(pi) {
     if (!Array.isArray(parsed.launch.argPrefix) || !parsed.launch.argPrefix.every((value) => typeof value === "string")) return null;
     if (!parsed.launch.env || typeof parsed.launch.env !== "object" || Array.isArray(parsed.launch.env)) return null;
     if (!Object.values(parsed.launch.env).every((value) => typeof value === "string")) return null;
+    if (parsed.sharedControl !== undefined && !isSharedControlEndpoint(parsed.sharedControl)) return null;
     const directTools = [];
     for (const tool of parsed.directTools) {
       if (!tool || typeof tool !== "object") return null;
@@ -231,45 +234,68 @@ async function callHappierTool(config, toolName, args, toolCallId, signal, cwd) 
   return parseEnvelope(result.stdout);
 }
 
-function emitContextTelemetryMarker(ctx) {
+function emitContextTelemetryMarker(ctx, writeLine) {
   let usage = null;
   try { usage = typeof ctx?.getContextUsage === "function" ? ctx.getContextUsage() : null; } catch {}
   if (!usage || typeof usage !== "object") return;
   const used = typeof usage.tokens === "number" && Number.isFinite(usage.tokens) && usage.tokens >= 0 ? Math.trunc(usage.tokens) : null;
   const size = typeof usage.contextWindow === "number" && Number.isFinite(usage.contextWindow) && usage.contextWindow > 0 ? Math.trunc(usage.contextWindow) : null;
   if (used === null || used <= 0 || size === null) return;
-  try { process.stderr.write(JSON.stringify({ type: TOKEN_COUNT_MARKER_TYPE, used, size }) + "\\n"); } catch {}
+  writeLine(JSON.stringify({ type: TOKEN_COUNT_MARKER_TYPE, used, size }));
 }
+
+function writeStderrLine(line) {
+  try { process.stderr.write(line + "\\n"); } catch {}
+}
+
+${buildPiSharedControlBridgeSource()}
 
 export default function HappierPiToolsBridgeExtension(pi) {
   pi.registerFlag(CONFIG_PATH_FLAG, {
     description: "Protected Happier session tools-bridge configuration path",
     type: "string",
   });
+  // Subscribe at load: model discovery may publish before this runtime's session_start.
+  const sideChannel = createSharedControlSideChannel(pi);
 
   let registered = false;
-  pi.on("session_start", () => {
+  pi.on("session_start", (_event, ctx) => {
     if (registered) return;
     const config = readSessionConfig(pi);
     if (!config) return;
     registered = true;
 
-    // Observe submitted extension input at Pi's public input boundary, as the host does
-    // for its own submissions. Later input handlers may transform or handle it; a handler
-    // that already handled the input prevents this observer from running.
-    pi.on("input", (event, ctx) => {
-      if (event.source !== "extension" || typeof event.text !== "string" || !event.text.length) return;
-      // The native notification API shares Pi's RPC output stream with lifecycle events.
-      // User message_end echoes have no origin and must never infer this observation.
-      ctx.ui.notify(JSON.stringify({ type: USER_INPUT_MARKER_TYPE, text: event.text }));
-    });
+    const mode = ctx && typeof ctx === "object" ? ctx.mode : undefined;
+    const shared = config.sharedControl && mode === "tui"
+      ? startSharedControl(pi, ctx, config.sharedControl, sideChannel)
+      : null;
+    const hasSessionAccess = () => !config.sharedControl || shared?.isAdmitted() === true;
+    if (!config.sharedControl && (mode === undefined || mode === "rpc")) {
+      // Observe submitted extension input at Pi's public input boundary, as the host does
+      // for its own submissions. Later input handlers may transform or handle it; a handler
+      // that already handled the input prevents this observer from running.
+      pi.on("input", (event, ctx) => {
+        if (event.source !== "extension" || typeof event.text !== "string" || !event.text.length) return;
+        // The native notification API shares Pi's RPC output stream with lifecycle events.
+        // User message_end echoes have no origin and must never infer this observation.
+        ctx.ui.notify(JSON.stringify({ type: USER_INPUT_MARKER_TYPE, text: event.text }));
+      });
 
-    pi.on("message_end", (event, ctx) => {
-      const message = event && typeof event === "object" ? event.message : null;
-      if (message && typeof message === "object" && message.role === "assistant") emitContextTelemetryMarker(ctx);
-    });
+      pi.on("message_end", (event, ctx) => {
+        const message = event && typeof event === "object" ? event.message : null;
+        if (message && typeof message === "object" && message.role === "assistant") emitContextTelemetryMarker(ctx, writeStderrLine);
+      });
+    } else if (shared) {
+      // Native TUI: the terminal belongs to Pi, so every runner-bound record travels over the
+      // shared-control connection and nothing is written to stdout, stderr or the notifier.
+      pi.on("message_end", (event, ctx) => {
+        const message = event && typeof event === "object" ? event.message : null;
+        if (message && typeof message === "object" && message.role === "assistant") emitContextTelemetryMarker(ctx, shared.sendErr);
+      });
+    }
 
     pi.on("before_agent_start", async (event) => {
+      if (!hasSessionAccess()) return undefined;
       const addition = config.promptAddition.trim();
       if (!addition) return undefined;
       const base = event && typeof event.systemPrompt === "string" ? event.systemPrompt.trim() : "";
@@ -283,6 +309,15 @@ export default function HappierPiToolsBridgeExtension(pi) {
         description: tool.description,
         parameters: tool.inputSchema,
         async execute(toolCallId, args, signal, _onUpdate, ctx) {
+          if (!hasSessionAccess()) {
+            return envelopeToToolResult({
+              ok: false,
+              error: {
+                code: SHARED_CONTROL_BRIDGE_UNAVAILABLE_ERROR,
+                message: "The Pi terminal is not attached to this Happier session",
+              },
+            });
+          }
           const cwd = typeof ctx?.cwd === "string" && ctx.cwd.trim() ? ctx.cwd : process.cwd();
           const callArgs = tool.call.actionId === null
             ? args

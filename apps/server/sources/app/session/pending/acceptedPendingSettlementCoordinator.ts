@@ -1,3 +1,4 @@
+import type { AcceptedPendingSettlementRequestV2 } from "@happier-dev/protocol";
 import { log } from "@/utils/logging/log";
 import {
     resolveAcceptedPendingDelivery,
@@ -71,6 +72,7 @@ export async function coordinateAcceptedPendingSettlement(params: Readonly<{
     sessionId: string;
     localId: string;
     trustedPublisherFence: TrustedPendingPublisherFence;
+    outcome?: AcceptedPendingSettlementRequestV2["outcome"];
     diagnosticCorrelationId?: string;
     publish?: PublishAcceptedPendingSettlement;
 }>): Promise<ResolveAcceptedPendingDeliveryResult> {
@@ -79,6 +81,7 @@ export async function coordinateAcceptedPendingSettlement(params: Readonly<{
         sessionId: params.sessionId,
         localId: params.localId,
         trustedPublisherFence: params.trustedPublisherFence,
+        ...(params.outcome ? { outcome: params.outcome } : {}),
         ...(params.diagnosticCorrelationId ? { diagnosticCorrelationId: params.diagnosticCorrelationId } : {}),
     });
     try {

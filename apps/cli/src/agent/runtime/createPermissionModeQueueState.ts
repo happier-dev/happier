@@ -26,6 +26,7 @@ export function createPermissionModeQueueState(opts: {
   rebindSession: (session: ApiSessionClient) => void;
   getCurrentPermissionMode: () => PermissionMode | undefined;
   setCurrentPermissionMode: (mode: PermissionMode | undefined) => void;
+  guardPermissionModeRequests: (accept: (mode: PermissionMode) => boolean) => void;
   getCurrentPermissionModeUpdatedAt: () => number;
   setCurrentPermissionModeUpdatedAt: (updatedAt: number) => void;
 } {
@@ -46,6 +47,7 @@ export function createPermissionModeQueueState(opts: {
     opts.session.getMetadataSnapshot(),
   );
 
+  let acceptPermissionMode: ((mode: PermissionMode) => boolean) | undefined;
   const binding = registerPermissionModeMessageQueueBinding({
     session: opts.session,
     queue: messageQueue,
@@ -53,6 +55,7 @@ export function createPermissionModeQueueState(opts: {
     setCurrentPermissionMode: (mode) => {
       currentPermissionMode = mode;
     },
+    acceptPermissionMode: (mode) => acceptPermissionMode?.(mode) ?? true,
     inFlightSteer: opts.inFlightSteer ?? null,
   });
 
@@ -65,6 +68,7 @@ export function createPermissionModeQueueState(opts: {
     setCurrentPermissionMode: (mode) => {
       currentPermissionMode = mode;
     },
+    guardPermissionModeRequests: (accept) => { acceptPermissionMode = accept; },
     getCurrentPermissionModeUpdatedAt: () => currentPermissionModeUpdatedAt,
     setCurrentPermissionModeUpdatedAt: (updatedAt) => {
       currentPermissionModeUpdatedAt = updatedAt;
