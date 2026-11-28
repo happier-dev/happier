@@ -746,7 +746,9 @@ function AppBoot(props: {
     );
     if (tracking) {
         providers = (
-            <PostHogProvider client={tracking}>
+            // autocapture off: its default navigation tracker sends a second, unsanitized $screen
+            // for every route change; useTrackScreens is the one screen producer.
+            <PostHogProvider client={tracking} autocapture={false}>
                 <SettingsAnalyticsRuntime />
                 {providers}
             </PostHogProvider>

@@ -71,7 +71,7 @@
   },
   "/agents/kilo": {
     "title": "Kilo CLI en tu teléfono, tu portátil y tu navegador",
-    "description": "Una app de código abierto para Kilo CLI y otros 12 agentes de terminal, en tus propios ordenadores y con tus cuentas. Sin asientos y sin funciones de pago.",
+    "description": "Una app de código abierto para Kilo CLI y otros 12 agentes de terminal, en tus propios ordenadores y con tus cuentas. Todas las funciones son gratuitas.",
     "ogTitle": "Kilo CLI en tu teléfono, tu portátil y tu navegador",
     "ogDescription": "Una app de código abierto para Kilo y los otros 12 agentes de programación de línea de comandos que puedas tener instalados.",
     "ogImageAlt": "El logotipo de Happier sobre las palabras: Un cliente para cada agente de programación con IA."
@@ -152,5 +152,19 @@
     "ogTitle": "Descarga Happier para todos tus dispositivos",
     "ogDescription": "Apps de escritorio y móvil, APK directo y la CLI que ejecuta los agentes en tu ordenador. Una página con todas las versiones.",
     "ogImageAlt": "El logotipo de Happier sobre las palabras: Un cliente para cada agente de programación con IA."
+  },
+  "/open": {
+    "title": "Cómo sigue siendo gratis Happier",
+    "description": "Conoce los compromisos de Happier, qué cobra y cómo financia su desarrollo. Consulta sus gastos e ingresos de cada mes.",
+    "ogTitle": "Los compromisos de Happier y cómo se financia",
+    "ogDescription": "Happier publica sus gastos e ingresos cada mes. Descubre cómo se sostiene el proyecto y cómo mantiene todas sus funciones gratis.",
+    "ogImageAlt": "Los compromisos de Happier con el código abierto y el acceso gratuito"
+  },
+  "/plans": {
+    "title": "Planes y colaboración",
+    "description": "Compara el alojamiento propio gratuito, los límites de historial de Happier Cloud, los planes mensuales Lite y Plus y el Pack de Colaborador.",
+    "ogTitle": "Planes de Happier Cloud y Pack de Colaborador",
+    "ogDescription": "Aloja Happier gratis o compara cuánto historial guarda Happier Cloud. Descubre los planes mensuales Lite y Plus y el Pack de Colaborador.",
+    "ogImageAlt": "Comparativa de los planes de Happier y el Pack de Colaborador"
   }
 }

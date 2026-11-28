@@ -10,10 +10,9 @@ WORKDIR /repo
 # and will fall back to node-gyp. Install the minimal toolchain + Python for reliable builds.
 RUN apk add --no-cache libc6-compat python3 build-base
 ENV REDISMS_DISABLE_POSTINSTALL=1
-ENV ONNXRUNTIME_NODE_INSTALL_CUDA=skip
 ENV YARN_CACHE_FOLDER=/tmp/.yarn-cache
 
- COPY package.json yarn.lock ./
+ COPY package.json yarn.lock .npmrc ./
 RUN mkdir -p apps/ui apps/server apps/cli apps/website apps/docs packages/agents packages/cli-common packages/connection-supervisor packages/privacy-kit packages/protocol packages/release-runtime packages/transfers packages/audio-stream-native packages/sherpa-native scripts/pipeline/expo
  COPY apps/ui/package.json apps/ui/
  COPY apps/server/package.json apps/server/
@@ -49,10 +48,9 @@ FROM --platform=$BUILDPLATFORM node:${NODE_VERSION}-alpine AS deps-alpine-build
 WORKDIR /repo
 RUN apk add --no-cache libc6-compat python3 build-base
 ENV REDISMS_DISABLE_POSTINSTALL=1
-ENV ONNXRUNTIME_NODE_INSTALL_CUDA=skip
 ENV YARN_CACHE_FOLDER=/tmp/.yarn-cache
 
- COPY package.json yarn.lock ./
+ COPY package.json yarn.lock .npmrc ./
 RUN mkdir -p apps/ui apps/server apps/cli apps/website apps/docs packages/agents packages/cli-common packages/connection-supervisor packages/privacy-kit packages/protocol packages/release-runtime packages/transfers packages/audio-stream-native packages/sherpa-native scripts/pipeline/expo
  COPY apps/ui/package.json apps/ui/
  COPY apps/server/package.json apps/server/
@@ -86,10 +84,9 @@ FROM node:${NODE_VERSION} AS deps-debian
 RUN apt-get update && apt-get install -y python3 ffmpeg make g++ build-essential && rm -rf /var/lib/apt/lists/*
 WORKDIR /repo
 ENV REDISMS_DISABLE_POSTINSTALL=1
-ENV ONNXRUNTIME_NODE_INSTALL_CUDA=skip
 ENV YARN_CACHE_FOLDER=/tmp/.yarn-cache
 
- COPY package.json yarn.lock ./
+ COPY package.json yarn.lock .npmrc ./
 RUN mkdir -p apps/server packages/agents packages/cli-common packages/privacy-kit packages/protocol packages/release-runtime scripts/pipeline/expo
  COPY apps/server/package.json apps/server/
  COPY packages/agents/package.json packages/agents/
@@ -156,7 +153,6 @@ ARG POSTHOG_API_KEY=""
 ARG POSTHOG_HOST=""
 ARG SENTRY_DSN=""
 ARG SENTRY_RELEASE=""
-ARG REVENUE_CAT_STRIPE=""
 ARG EXPO_PUBLIC_HAPPIER_SERVER_URL=""
 ARG EXPO_PUBLIC_HAPPY_SERVER_URL=""
 ARG EXPO_PUBLIC_SERVER_URL=""
@@ -171,7 +167,6 @@ ENV EXPO_PUBLIC_POSTHOG_HOST=$POSTHOG_HOST
 ENV EXPO_PUBLIC_SENTRY_DSN=$SENTRY_DSN
 ENV EXPO_PUBLIC_SENTRY_RELEASE=$SENTRY_RELEASE
 ENV EXPO_UNSTABLE_WEB_MODAL=1
-ENV EXPO_PUBLIC_REVENUE_CAT_STRIPE=$REVENUE_CAT_STRIPE
 ENV HAPPIER_EMBEDDED_POLICY_ENV=$HAPPIER_EMBEDDED_POLICY_ENV
 
 COPY .github/feature-policy ./.github/feature-policy

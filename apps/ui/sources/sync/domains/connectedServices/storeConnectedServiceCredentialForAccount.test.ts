@@ -105,7 +105,7 @@ describe('storeConnectedServiceCredentialForAccount', () => {
       if (url.endsWith('/v1/auth/ping') && method === 'GET') {
         return new Response('', { status: 200 });
       }
-      if (url.endsWith('/v1/features') && method === 'GET') {
+      if (url.split('?')[0]?.endsWith('/v1/features') && method === 'GET') {
         return new Response(JSON.stringify(buildServerFeaturesResponse()), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
@@ -194,7 +194,7 @@ describe('storeConnectedServiceCredentialForAccount', () => {
       if (url.endsWith('/v1/auth/ping') && method === 'GET') {
         return new Response('', { status: 200 });
       }
-      if (url.endsWith('/v1/features') && method === 'GET') {
+      if (url.split('?')[0]?.endsWith('/v1/features') && method === 'GET') {
         return new Response(JSON.stringify(parseReleasedServerV021Features()), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
@@ -264,7 +264,7 @@ describe('storeConnectedServiceCredentialForAccount', () => {
       if (url.endsWith('/v1/auth/ping') && method === 'GET') {
         return new Response('', { status: 200 });
       }
-      if (url.endsWith('/v1/features') && method === 'GET') {
+      if (url.split('?')[0]?.endsWith('/v1/features') && method === 'GET') {
         featuresReadCount += 1;
         return new Response(JSON.stringify(
           activeContract === 'released'

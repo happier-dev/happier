@@ -272,9 +272,9 @@ To set environment variables for Claude:
 
 Remote Agent SDK mode uses a filtered environment by default, but **explicit** GUI/profile env vars (and connected-services auth env vars) are forwarded to the Claude subprocess so workflows like GitHub integration can work without leaking the full parent `process.env`.
 
-In development builds, Claude sessions inherit `PLAYWRIGHT_BROWSERS_PATH` when it is set in [the daemon's environment](/apps/daemon#forward-machine-environment-variables).
+Starting with CLI 0.2.22, Claude sessions inherit `PLAYWRIGHT_BROWSERS_PATH` when it is set in [the daemon's environment](/apps/daemon#forward-machine-environment-variables).
 
-In the development source, remote Agent SDK and unified-terminal sessions also inherit
+Remote Agent SDK and unified-terminal sessions also inherit
 `DBUS_SESSION_BUS_ADDRESS` when it is set in the session runner's environment. On Linux,
 this lets Claude and its tools reach the existing user session bus when the daemon
 was launched with its address.
@@ -285,6 +285,23 @@ same static-catalog result as turning off **Discover available models**, and the
 cannot be overridden back on by the environment variable.
 
 ## Local session retention (development source)
+
+To keep Claude transcripts on one machine, open **Settings → Sessions → Local history**,
+select the machine, and choose **Never**. The app sets Claude's local cleanup
+period to 36,500 days in that machine's configured `settings.json`. The 100-year
+period also applies to Claude's local tool results and snapshots and can use
+more disk space. The control requires an updated daemon.
+
+If the account-wide Claude retention preference below is active, first choose
+**Keep existing settings** in Claude settings. Organization policy makes the
+machine control read-only when Happier detects a managed retention setting.
+
+The development daemon also exposes Local History Actions to the machine's
+owner. **Keep** extends a transcript's local lifetime by the current cleanup
+period. **Let go** removes the keep record and leaves Claude to remove the
+transcript on its normal schedule. Agent and MCP requests ask by default before
+letting a transcript go or shortening retention. A shortening request includes
+the number of transcripts newly eligible for cleanup.
 
 In the development source, open **Settings → AI & Agents → AI backends → Claude**
 and choose a local session retention period. You can keep existing settings,
@@ -312,7 +329,9 @@ daemons must be updated to apply and report this setting. File errors are shown
 without replacing malformed settings.
 
 Explicit launch settings, project settings and organization policy can override
-these user-level settings.
+these user-level settings. When a Connected Services profile uses its own settings
+file and shares native Claude's transcript directory, Happier keeps the longer
+configured retention period for that launch.
 Happier warns when it detects a local managed retention declaration, but it does
 not evaluate Claude's remote or MDM policy precedence. For the effective source,
 check `/status` inside Claude Code. The setting also affects standalone Claude
@@ -321,9 +340,11 @@ Happier's stored transcript.
 
 ## Claude Code session history (development source)
 
-The development source adds **Show sessions in Claude Code** under Claude settings. It is off by default. Turn it on before starting a new session to set `CLAUDE_CODE_ENTRYPOINT=happier` on Happier Claude launches, including Agent SDK, legacy remote, local terminal, unified terminal, and execution runs. Off leaves the provider runtime’s default attribution in place.
+**Show sessions in Claude Code** is on by default in the development source. New Agent SDK, legacy remote, local terminal, unified terminal, and execution-run launches use `CLAUDE_CODE_ENTRYPOINT=happier`. Turn the switch off before launching Claude to use Claude’s default attribution.
 
-Claude Code’s VS Code extension 2.1.296 excludes sessions attributed to `sdk-ts`, `sdk-py`, or `sdk-cli`. Happier attribution avoids that exclusion; it does not turn an SDK session into an interactive terminal session. Claude Code 2.1.283 and 2.1.296 rewrite `cli` to `sdk-cli` on noninteractive launches, so the setting uses `happier` instead. This is an internal Anthropic environment variable: changing it also affects SDK client attribution, some question formatting and built-in agent availability. Future Claude Code versions may behave differently. It is not a billing or usage-limit setting.
+Claude Code’s VS Code extension 2.1.296 excludes sessions attributed to `sdk-ts`, `sdk-py`, or `sdk-cli`. Happier uses the `happier` label to avoid that filter and retains the original session mode. Claude Code 2.1.283 and 2.1.296 rewrite `cli` to `sdk-cli` on noninteractive launches. The entrypoint is an internal Anthropic environment variable that also affects SDK client attribution, some question formatting, and built-in agent availability. Behavior can vary by Claude Code version.
+
+Anthropic controls subscription metering. The effect of custom entrypoint labels on quota consumption is undocumented. [Anthropic’s Claude Agent SDK subscription guidance](https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan)
 
 Claude Code must still use the same configuration directory and project directory as Happier. The setting does not rewrite existing transcripts or remove other history filters, such as Claude-native daemon session kinds. Existing hidden sessions can still be resumed by ID with `claude --resume <session-id>`. Availability in a released Happier build depends on that build including this setting.
 

@@ -71,7 +71,7 @@
   },
   "/agents/kilo": {
     "title": "Kilo CLI no telemóvel, no portátil e no navegador",
-    "description": "Uma app open-source para a Kilo CLI e outros doze agentes de linha de comandos, nos seus computadores e contas. Sem lugares nem funcionalidades bloqueadas.",
+    "description": "Uma app open-source para a Kilo CLI e outros doze agentes de linha de comandos, nos seus computadores e contas. Todas as funcionalidades são gratuitas.",
     "ogTitle": "A Kilo CLI no seu telemóvel, portátil e navegador",
     "ogDescription": "Uma app open-source para o Kilo e para os outros doze agentes de programação de linha de comandos que possa ter instalados.",
     "ogImageAlt": "A marca nominativa do Happier sobre as palavras: Um cliente para todos os agentes de programação com IA."
@@ -152,5 +152,19 @@
     "ogTitle": "Baixe o Happier para todos os seus dispositivos",
     "ogDescription": "Aplicações desktop e móveis, APK direto e a CLI que executa os agentes no seu computador. Uma página com todas as versões.",
     "ogImageAlt": "A marca nominativa do Happier sobre as palavras: Um cliente para todos os agentes de programação com IA."
+  },
+  "/open": {
+    "title": "Como o Happier continua gratuito",
+    "description": "Veja o que o Happier promete, o que é pago e como financiamos o desenvolvimento, com os custos e as receitas de cada mês.",
+    "ogTitle": "Como o Happier continua gratuito",
+    "ogDescription": "Conheça os compromissos do Happier, suas fontes de financiamento e o balanço mensal de custos e receitas.",
+    "ogImageAlt": "Como o Happier continua gratuito"
+  },
+  "/plans": {
+    "title": "Planos e Apoiador",
+    "description": "Compare a hospedagem gratuita no seu servidor, os limites de histórico do Happier Cloud, os planos mensais Lite e Plus e o pacote de Apoiador.",
+    "ogTitle": "Planos e Apoiador",
+    "ogDescription": "Use o Happier de graça no seu servidor ou na nuvem, compare Lite e Plus e conheça o pacote de Apoiador.",
+    "ogImageAlt": "Planos do Happier e pacote de Apoiador"
   }
 }

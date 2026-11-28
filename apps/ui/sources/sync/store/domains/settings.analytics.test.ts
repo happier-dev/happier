@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
     saveLocalSettings: vi.fn(),
-    savePurchases: vi.fn(),
     saveSettings: vi.fn(),
     tracking: {
         capture: vi.fn(),
@@ -12,7 +11,6 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/sync/domains/state/persistence', async (importOriginal) => {
     const { installPersistenceModuleMock } = await import('@/dev/testkit');
     const { localSettingsDefaults } = await import('@/sync/domains/settings/localSettings');
-    const { purchasesDefaults } = await import('@/sync/domains/purchases/purchases');
     return installPersistenceModuleMock({
         loadSettings: () => ({
             settings: {
@@ -24,7 +22,6 @@ vi.mock('@/sync/domains/state/persistence', async (importOriginal) => {
             version: 1,
         }),
         loadLocalSettings: () => ({ ...localSettingsDefaults }),
-        loadPurchases: () => ({ ...purchasesDefaults }),
         loadProfile: () => ({
             id: '',
             timestamp: 0,
@@ -38,7 +35,6 @@ vi.mock('@/sync/domains/state/persistence', async (importOriginal) => {
             connectedServiceCredentialRevisionsV1: [],
         }),
         saveLocalSettings: mocks.saveLocalSettings,
-        savePurchases: mocks.savePurchases,
         saveSettings: mocks.saveSettings,
         saveProfile: vi.fn(),
         loadSessionDrafts: () => ({}),
@@ -87,7 +83,6 @@ import { createSettingsDomain } from './settings';
 describe('createSettingsDomain local settings analytics', () => {
     beforeEach(() => {
         mocks.saveLocalSettings.mockReset();
-        mocks.savePurchases.mockReset();
         mocks.saveSettings.mockReset();
         mocks.tracking.capture.mockReset();
     });
@@ -140,28 +135,7 @@ describe('createSettingsDomain local settings analytics', () => {
                 next_value: 'dark',
             }),
         );
-        expect(mocks.tracking.capture).toHaveBeenCalledWith(
-            'setting_changed',
-            expect.objectContaining({
-                setting_key: 'sidebarWidthPx',
-                scope: 'local_setting',
-                identity_scope: 'device_user',
-                source: 'ui',
-                prev_value: 'medium',
-                next_value: 'small',
-            }),
-        );
-        expect(mocks.tracking.capture).toHaveBeenCalledWith(
-            'setting_changed',
-            expect.objectContaining({
-                setting_key: 'acknowledgedCliVersions',
-                scope: 'local_setting',
-                identity_scope: 'device_user',
-                source: 'ui',
-                prev_value: 0,
-                next_value: 1,
-            }),
-        );
-        expect(mocks.tracking.capture).toHaveBeenCalledTimes(3);
+        // Layout and acknowledgement state (sidebar width, acknowledged CLI versions) is not a tracked setting.
+        expect(mocks.tracking.capture.mock.calls.map(([, props]: any) => props.setting_key)).toEqual(['themePreference']);
     });
 });

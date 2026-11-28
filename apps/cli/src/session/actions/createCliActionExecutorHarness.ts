@@ -65,9 +65,9 @@ export function createCliActionExecutorHarness(
       surface: ctx.surface ?? 'cli',
       placement: ctx.placement ?? null,
     }),
-    isActionApprovalRequired: (id, ctx) => isActionApprovalRequiredByEnv(id, {
+    isActionApprovalRequired: (id, ctx, defaultRequired) => isActionApprovalRequiredByEnv(id, {
       surface: ctx.surface ?? null,
-    }),
+    }, defaultRequired),
     ...(overrides ?? {}),
     ...(approvalsUpdate ? { approvalsUpdate } : {}),
     approvalsWaitForDecision,

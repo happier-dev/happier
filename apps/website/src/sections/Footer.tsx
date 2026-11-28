@@ -1,6 +1,6 @@
 import { AnalyticsNotice } from '../components/AnalyticsNotice';
 import { HappierMark } from '../components/HappierMark';
-import { useLocalePath } from '../i18n';
+import { LOCALES, useLocalePath, type Locale } from '../i18n';
 import { rich } from '../i18n/rich';
 import { useSiteData } from '../i18n/siteData';
 import { LocaleSwitcher } from '../components/LocaleSwitcher';
@@ -31,12 +31,15 @@ function hrefFor(href: string, isHome: boolean, localeHref: (href: string) => st
     return localeHref(!isHome && href.startsWith('#') ? `/${href}` : href);
 }
 
-export function Footer({ isHome = true }: { isHome?: boolean } = {}) {
+export function Footer({
+    isHome = true,
+    availableLocales = LOCALES,
+}: { isHome?: boolean; availableLocales?: readonly Locale[] } = {}) {
     // FOOTER_COLUMNS comes from the hook, not from an import. The link set moved
     // to src/data/navigation.ts precisely so the overlay could translate it, and
     // `import { FOOTER_COLUMNS }` would reach the English module directly and
     // undo that — silently, since the labels would still render.
-    const { pageProse: { PAGE_PROSE }, navigation: { FOOTER_COLUMNS } } = useSiteData();
+    const { pageProse: { PAGE_PROSE }, navigation: { FOOTER_COLUMNS, FOOTER_LEGAL_LINKS } } = useSiteData();
     const localeHref = useLocalePath();
 
     return (
@@ -67,7 +70,9 @@ export function Footer({ isHome = true }: { isHome?: boolean } = {}) {
                                 {col.links.map((link) => (
                                     <li key={link.id}>
                                         <a
-                                            href={hrefFor(link.href, isHome, localeHref)}
+                                            {...('hrefLang' in link
+                                                ? { href: link.href, hrefLang: link.hrefLang }
+                                                : { href: hrefFor(link.href, isHome, localeHref) })}
                                             {...('external' in link && link.external
                                                 ? { target: '_blank', rel: 'noreferrer' }
                                                 : {})}
@@ -101,6 +106,11 @@ export function Footer({ isHome = true }: { isHome?: boolean } = {}) {
                         */}
                         <AnalyticsNotice />
                     </span>
+                    <ul className="flex flex-wrap gap-x-4 gap-y-2">
+                        {FOOTER_LEGAL_LINKS.map(({ id, href, label }) => (
+                            <li key={id}><a className="hover:underline" href={href}>{label}</a></li>
+                        ))}
+                    </ul>
                     {/*
                         The switcher lives in the bottom bar rather than as a
                         fifth column: it is one control with ten settings, not
@@ -109,7 +119,7 @@ export function Footer({ isHome = true }: { isHome?: boolean } = {}) {
                         reason — there is nothing below it but the page edge.
                     */}
                     <div className="flex items-center gap-5">
-                        <LocaleSwitcher />
+                        {availableLocales.length > 1 && <LocaleSwitcher availableLocales={availableLocales} />}
                         <span className="font-mono text-[12px]">happier.dev</span>
                     </div>
                 </div>

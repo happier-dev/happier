@@ -105,6 +105,11 @@ export {
   type ActionExecutorDeps,
   type ActionPreparedInvocation,
   type ActionPrepareResult,
+  PLAN_ACTION_REFUSAL_CODES,
+  type PlanActionRefusal,
+  type PlanActionRefusalCode,
+  type AppIconActionRefusal,
+  type AppIconListResult,
   type SessionForkActionExecutionInput,
   type SessionSpawnNewActionExecutionInput,
 } from './actionExecutor.js';

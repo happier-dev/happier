@@ -878,4 +878,40 @@ describe('reconcileConnectedServiceAuthGroupGenerations', () => {
     expect(applyCommittedGeneration).not.toHaveBeenCalled();
     expect(notifyCurrentGroupTruth).toHaveBeenCalledOnce();
   });
+
+  it('does not re-apply a same-account credential rotation to a live runtime that consumes it without a restart', async () => {
+    // Live incident 2026-11-27 14:19: the active Antigravity profile's token was refreshed (same
+    // profile, same generation). Re-applying it as an account switch restarted four mid-turn agy runners.
+    const agyGroup = { ...group({ activeProfileId: 'lbservers', generation: 4 }), serviceId: 'antigravity' as const, groupId: 'agy' };
+    const agyTarget = (sessionId: string, profileId: string, generation: number): ConnectedServiceGenerationRuntimeTarget => ({
+      sessionId,
+      agentId: 'agy',
+      activeBindings: [{
+        serviceId: 'antigravity', profileId, groupId: 'agy', generation,
+        credentialRevision: 'csr_oldoldoldoldoldoldoldold',
+      }],
+      connectedServicesBindingsRaw: {
+        v: 1,
+        bindingsByServiceId: { antigravity: { source: 'connected', selection: 'group', groupId: 'agy' } },
+      },
+    });
+    const notifyCurrentGroupTruth = vi.fn(async () => ({ ok: true as const }));
+    const { consumer, applyCommittedGeneration } = createConsumer(undefined, { notifyCurrentGroupTruth });
+
+    const result = await reconcileConnectedServiceAuthGroupGenerations({
+      consumer,
+      listCurrentGroups: async () => [agyGroup],
+      resolveCredentialRevision: () => credentialRevision,
+      listRuntimeTargets: () => [agyTarget('same-account', 'lbservers', 4), agyTarget('other-account', 'leeroybrun', 3)],
+      executionAuthority: 'runtime_recovery',
+    });
+
+    expect(applyCommittedGeneration).toHaveBeenCalledOnce();
+    expect(applyCommittedGeneration).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'other-account' }));
+    expect(notifyCurrentGroupTruth).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'same-account',
+      currentTruth: { kind: 'current_auth_group_available', groupId: 'agy', generation: 4, credentialRevision },
+    }));
+    expect(result.acknowledgeable).toBe(true);
+  });
 });

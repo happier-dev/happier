@@ -8,7 +8,10 @@ import {
   SessionUsageLimitWaitResumeCancelRequestV1Schema,
   SessionUsageLimitWaitResumeEnableRequestV1Schema,
 } from '../sessionWorkState/sessionWorkStateRpc.js';
+import { DEFAULT_ACTIONS_SETTINGS_V1 } from '../account/settings/accountSettings.js';
 import { serializeActionSpec } from './actionCatalog.js';
+import { isApprovalRequiredByActionsSettings } from './actionApprovalPolicy.js';
+import { ActionIdSchema, type ActionId } from './actionIds.js';
 import { ActionApprovalSchema, ActionOperationDeclarationV1Schema, ActionSpecSchema, ActionSurfaceSchema, getActionSpec, isActionSpecSurfacedOn, listActionSpecs, listActionSpecsForSurface, listVoicePromptHotPathSpecs, resolveActionApprovalFlow } from './actionSpecs.js';
 
 it('accepts the existing empty mode id to clear a native override', () => {
@@ -48,11 +51,21 @@ const RESULT_REQUIRED_BLOCKING_ACTION_IDS = [
   'sessions.spawn.mcp_servers.preview',
   'paths.list_recent',
   'machines.list',
+  'machines.localHistory.status.get',
+  'machines.localHistory.due.list',
   'servers.list',
   'review.engines.list',
   'memory.search',
   'memory.get_window',
   'memory.ensure_up_to_date',
+  'account.plan.get',
+  'supporter.profile.get',
+  'supporter.credits.list',
+  'github.star.status',
+  'app.icon.list',
+  'session.retention.leaving.list',
+  'session.retention.summary.get',
+  'session.export',
 ] as const;
 
 const RESULT_NONE_DEFERRED_ACTION_IDS = [
@@ -73,6 +86,20 @@ const RESULT_NONE_DEFERRED_ACTION_IDS = [
   'ui.pet.choose',
   'approval.request.create',
   'approval.request.decide',
+  'billing.checkout.open',
+  'billing.manage.open',
+  'billing.restore',
+  'billing.refresh',
+  'supporter.code.apply',
+  'supporter.profile.update',
+  'supporter.ring.set',
+  'supporter.discord.link',
+  'supporter.github.link',
+  'supporter.ask.close',
+  'github.star',
+  'app.icon.set',
+  'session.organization.pin.set',
+  'session.retention.leaving.dismiss',
 ] as const;
 
 const RESULT_OPTIONAL_DEFERRED_ACTION_IDS = [
@@ -98,6 +125,9 @@ const RESULT_OPTIONAL_DEFERRED_ACTION_IDS = [
   'session.target.primary.set',
   'session.target.tracked.set',
   'ui.voice_agent.teleport',
+  'machines.localHistory.retention.set',
+  'machines.localHistory.keep',
+  'machines.localHistory.letGo',
 ] as const;
 
 const EXTERNALLY_CONTROLLABLE_SESSION_AGENT_UNSUPPORTED_ACTIONS = {
@@ -110,6 +140,42 @@ const EXTERNALLY_CONTROLLABLE_SESSION_AGENT_UNSUPPORTED_ACTIONS = {
   'session.target.tracked.set': 'target-state mutation changes tracked workspace state and stays external by default.',
   'approval.request.decide': 'agents must not approve or reject approval requests on their own behalf.',
 } as const satisfies Record<string, string>;
+
+type PlansAndSupporterActionRow = Readonly<{
+  placement: 'account' | 'client' | 'machine';
+  agent: 'ask' | 'direct' | 'ui_only';
+  reach: readonly ('session_agent' | 'mcp' | 'cli')[];
+}>;
+
+const AGENT_MCP_CLI = ['session_agent', 'mcp', 'cli'] as const;
+
+// Plans & Supporter program, "Actions and approval": agent default is Ask only for money, public
+// exposure and third-party writes. 0.2 has no client-routed Action path, so a `client` row is UI only.
+const PLANS_AND_SUPPORTER_ACTIONS = {
+  'account.plan.get': { placement: 'account', agent: 'direct', reach: AGENT_MCP_CLI },
+  'billing.checkout.open': { placement: 'client', agent: 'ask', reach: AGENT_MCP_CLI },
+  'billing.manage.open': { placement: 'client', agent: 'direct', reach: AGENT_MCP_CLI },
+  'billing.restore': { placement: 'client', agent: 'direct', reach: AGENT_MCP_CLI },
+  'billing.refresh': { placement: 'account', agent: 'direct', reach: AGENT_MCP_CLI },
+  'supporter.code.apply': { placement: 'client', agent: 'direct', reach: [] },
+  'supporter.profile.get': { placement: 'account', agent: 'direct', reach: AGENT_MCP_CLI },
+  'supporter.profile.update': { placement: 'account', agent: 'ask', reach: AGENT_MCP_CLI },
+  'supporter.credits.list': { placement: 'account', agent: 'direct', reach: AGENT_MCP_CLI },
+  'supporter.ring.set': { placement: 'account', agent: 'ask', reach: AGENT_MCP_CLI },
+  'supporter.discord.link': { placement: 'client', agent: 'ui_only', reach: [] },
+  'supporter.github.link': { placement: 'client', agent: 'ui_only', reach: [] },
+  'github.star.status': { placement: 'machine', agent: 'direct', reach: AGENT_MCP_CLI },
+  'github.star': { placement: 'machine', agent: 'ui_only', reach: [] },
+  'supporter.ask.close': { placement: 'account', agent: 'direct', reach: ['session_agent'] },
+  'app.icon.list': { placement: 'client', agent: 'direct', reach: AGENT_MCP_CLI },
+  'app.icon.set': { placement: 'client', agent: 'direct', reach: AGENT_MCP_CLI },
+  // 0.2 pins live in the client-written account settings blob, so the pin write is client-placed here.
+  'session.organization.pin.set': { placement: 'client', agent: 'direct', reach: AGENT_MCP_CLI },
+  'session.retention.leaving.list': { placement: 'client', agent: 'direct', reach: AGENT_MCP_CLI },
+  'session.retention.leaving.dismiss': { placement: 'client', agent: 'direct', reach: AGENT_MCP_CLI },
+  'session.retention.summary.get': { placement: 'account', agent: 'direct', reach: AGENT_MCP_CLI },
+  'session.export': { placement: 'client', agent: 'direct', reach: ['cli'] },
+} as const satisfies Partial<Record<ActionId, PlansAndSupporterActionRow>>;
 
 function sorted(values: readonly string[]): string[] {
   return [...values].sort();
@@ -239,6 +305,34 @@ describe('Action Spec Registry', () => {
 
     expect(getActionSpec('session.rollback').operation).toBeUndefined();
     expect(serializeActionSpec(getActionSpec('session.rollback')).operation).toBeNull();
+  });
+
+  it('registers every Plans & Supporter action with its 0.2 reach and user-changeable agent approval default', () => {
+    for (const [id, row] of Object.entries(PLANS_AND_SUPPORTER_ACTIONS) as [ActionId, PlansAndSupporterActionRow][]) {
+      expect(ActionIdSchema.safeParse(id).success, id).toBe(true);
+      const spec = listActionSpecs().find((entry) => entry.id === id);
+      expect(spec, id).toBeDefined();
+      if (!spec) continue;
+
+      const reachableOn02 = row.agent === 'ui_only' || row.placement === 'client' ? [] : row.reach;
+      expect({ id, ui: spec.surfaces.ui_button, voice: spec.surfaces.voice_tool }).toEqual({ id, ui: true, voice: false });
+      for (const surface of AGENT_MCP_CLI) {
+        expect({ id, surface, exposed: spec.surfaces[surface] }).toEqual({
+          id,
+          surface,
+          exposed: (reachableOn02 as readonly string[]).includes(surface),
+        });
+      }
+
+      for (const surface of ['session_agent', 'mcp'] as const) {
+        expect({
+          id,
+          surface,
+          asks: isApprovalRequiredByActionsSettings(id, DEFAULT_ACTIONS_SETTINGS_V1, { surface }),
+        }).toEqual({ id, surface, asks: row.agent === 'ask' });
+      }
+      expect(isApprovalRequiredByActionsSettings(id, DEFAULT_ACTIONS_SETTINGS_V1, { surface: 'ui_button' }), id).toBe(false);
+    }
   });
 
   it('declares approval result metadata for every action spec', () => {

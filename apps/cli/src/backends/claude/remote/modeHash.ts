@@ -1,3 +1,4 @@
+import { resolveClaudeCodeIncludeInNativeHistory } from '@happier-dev/agents';
 import { resolveClaudeSettingSources } from '@/backends/claude/utils/resolveClaudeSettingSources';
 import { hashObject } from '@/utils/deterministicJson';
 
@@ -71,7 +72,7 @@ function buildClaudeUnifiedTerminalLaunchOptionsHashInput(mode: EnhancedMode): R
         customSystemPrompt: mode.customSystemPrompt,
         appendSystemPrompt: mode.appendSystemPrompt,
         claudeRemoteSettingSourcesOverride: resolveClaudeRemoteSettingSourcesOverrideForAgentSdk(mode),
-        claudeCodeIncludeInNativeHistory: mode.claudeCodeIncludeInNativeHistory === true,
+        claudeCodeIncludeInNativeHistory: resolveClaudeCodeIncludeInNativeHistory(mode.claudeCodeIncludeInNativeHistory),
         claudeRemoteDisableTodos: mode.claudeRemoteDisableTodos,
         claudeRemoteStrictMcpServerConfig: mode.claudeRemoteStrictMcpServerConfig,
         claudeRemoteMaxThinkingTokens: mode.claudeRemoteMaxThinkingTokens,
@@ -128,7 +129,7 @@ export function hashClaudeEnhancedModeForLaunch(mode: EnhancedMode): string {
             fallbackModel: mode.fallbackModel,
             customSystemPrompt: mode.customSystemPrompt,
             appendSystemPrompt: mode.appendSystemPrompt,
-            claudeCodeIncludeInNativeHistory: mode.claudeCodeIncludeInNativeHistory === true,
+            claudeCodeIncludeInNativeHistory: resolveClaudeCodeIncludeInNativeHistory(mode.claudeCodeIncludeInNativeHistory),
             claudeRemoteDisableTodos: mode.claudeRemoteDisableTodos,
             claudeRemoteDebugEnabled: mode.claudeRemoteDebugEnabled === true,
             claudeRemoteVerboseEnabled: mode.claudeRemoteVerboseEnabled === true,
@@ -145,7 +146,7 @@ export function hashClaudeEnhancedModeForLaunch(mode: EnhancedMode): string {
         replaySeedAllowed: mode.replaySeedAllowed !== false,
         claudeRemoteSettingSourcesOverride: settingSourcesOverride,
         claudeRemoteEnableFileCheckpointing: mode.claudeRemoteEnableFileCheckpointing,
-        claudeCodeIncludeInNativeHistory: mode.claudeCodeIncludeInNativeHistory === true,
+        claudeCodeIncludeInNativeHistory: resolveClaudeCodeIncludeInNativeHistory(mode.claudeCodeIncludeInNativeHistory),
         claudeRemoteDisableTodos: mode.claudeRemoteDisableTodos,
         claudeRemoteStrictMcpServerConfig: mode.claudeRemoteStrictMcpServerConfig,
         claudeRemoteDebugEnabled: mode.claudeRemoteDebugEnabled === true,

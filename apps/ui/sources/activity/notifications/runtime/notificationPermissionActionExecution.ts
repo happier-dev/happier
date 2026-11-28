@@ -1,7 +1,7 @@
 import { isNotificationExecutionAction, parseNotificationTap, type ParsedNotificationTap } from '../notificationRouting';
-import { createNotificationPermissionCoordinator, type NotificationPermissionOutcome } from './notificationPermissionCoordinator';
+import { createNotificationPermissionCoordinator } from './notificationPermissionCoordinator';
 import { markNotificationResponseHandled } from './notificationResponseConsumption';
-import type { NotificationPermissionActionContext, NotificationPermissionActionOptions } from './notificationPermissionActions';
+import type { NotificationPermissionActionContext, NotificationPermissionActionOptions, NotificationPermissionExecutionOutcome } from './notificationPermissionActions';
 import { isNotificationQuestionAnswerAction } from '@happier-dev/protocol';
 
 const coordinate = createNotificationPermissionCoordinator();
@@ -11,7 +11,7 @@ export async function executeNotificationPermissionAction(
     parsed: ParsedNotificationTap,
     options: NotificationPermissionActionOptions,
     context: NotificationPermissionActionContext,
-): Promise<NotificationPermissionOutcome> {
+): Promise<NotificationPermissionExecutionOutcome> {
     if (!isNotificationExecutionAction(parsed)) return { status: 'ignored' };
     // Cached notification delivery is observation, never authorization to send.
     if (options.allowExecution === false) return { status: 'not_sent' };
@@ -29,7 +29,7 @@ export async function executeNotificationPermissionAction(
     const scope = await resolveNotificationPermissionTarget(serverUrl, parsed.accountId, { onTargetIdentified: context.onTargetResolved });
     if (!scope || context.signal.aborted) return { status: 'not_sent' };
     context.onTargetResolved(scope);
-    return coordinate({ ...scope, sessionId, requestId, occurrenceId, action }, async (onIssued, signal) => {
+    const outcome = await coordinate({ ...scope, sessionId, requestId, occurrenceId, action }, async (onIssued, signal) => {
         const issued = () => { onIssued(); context.onIssued(); };
         if (typeof action !== 'string') {
             const { sessionRespondToStructuredQuestion } = await import('@/sync/ops/sessionStructuredQuestion');
@@ -46,13 +46,16 @@ export async function executeNotificationPermissionAction(
             onIssued: issued,
         });
     }, { signal: context.signal });
+    if (outcome.status !== 'confirmed') return outcome;
+    return { ...outcome, settlement: { ...scope, sessionId, requestId, occurrenceId,
+        kind: parsed.questionAction ? 'user_action' : 'permission' } };
 }
 
 export async function handleNotificationBackgroundTask(
     body: unknown,
     options: NotificationPermissionActionOptions,
     context: NotificationPermissionActionContext,
-): Promise<NotificationPermissionOutcome> {
+): Promise<NotificationPermissionExecutionOutcome> {
     if (typeof body !== 'object' || body === null || !('data' in body)) return { status: 'ignored' };
     if ('error' in body && body.error) return { status: 'not_sent' };
     const data = body.data;

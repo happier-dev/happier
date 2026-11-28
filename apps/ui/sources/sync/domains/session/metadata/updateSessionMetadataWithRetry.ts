@@ -30,6 +30,7 @@ export async function updateSessionMetadataWithRetry<M>(params: {
     applySessionMetadata: (next: SessionMetadataSnapshot<M>) => void;
     updater: (base: M) => M;
     maxAttempts?: number;
+    skipUnchanged?: boolean;
     /** A caller's existing account lifetime; retired writes leave its intent pending. */
     shouldContinue?: () => boolean;
 }): Promise<void> {
@@ -43,6 +44,7 @@ export async function updateSessionMetadataWithRetry<M>(params: {
         applySessionMetadata,
         updater,
         maxAttempts = 6,
+        skipUnchanged = false,
         shouldContinue = () => true,
     } = params;
 
@@ -60,6 +62,7 @@ export async function updateSessionMetadataWithRetry<M>(params: {
 
         const expectedVersion = current.metadataVersion;
         const updatedMetadata = updater(current.metadata);
+        if (skipUnchanged && updatedMetadata === current.metadata) return;
         const encryptedMetadata = await encryptMetadata(updatedMetadata);
         if (!shouldContinue()) return;
 

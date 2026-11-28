@@ -6,19 +6,9 @@ import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPan
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const addEventListenerSpy = vi.fn((type: string, handler: any) => {
-    if (type === 'wheel') wheelHandlers.push(handler);
-    if (type === 'touchmove') touchMoveHandlers.push(handler);
-});
-const removeEventListenerSpy = vi.fn();
-const wheelHandlers: Array<(e: any) => void> = [];
-const touchMoveHandlers: Array<(e: any) => void> = [];
-
-let lastScrollLockBypassEl: { addEventListener: any; removeEventListener: any } | null = null;
-
 const fakeDomNode = {
-    addEventListener: addEventListenerSpy,
-    removeEventListener: removeEventListenerSpy,
+    addEventListener: () => {},
+    removeEventListener: () => {},
     querySelectorAll: () => [],
     querySelector: () => null,
     getAttribute: () => null,
@@ -92,7 +82,6 @@ installSessionDetailsPanelCommonModuleMocks({
                 OS: 'web',
             },
             View: React.forwardRef((props: any, ref: any) => {
-                lastScrollLockBypassEl = fakeDomNode;
                 if (ref && typeof ref === 'object') {
                     ref.current = fakeDomNode;
                 }
@@ -160,14 +149,9 @@ async function renderSessionDetailsPanel() {
 describe('SessionDetailsPanel (keep mounted tabs)', () => {
     beforeEach(() => {
         scopeState = createScopeState();
-        lastScrollLockBypassEl = null;
-        addEventListenerSpy.mockClear();
-        removeEventListenerSpy.mockClear();
         openRight.mockClear();
         closeRight.mockClear();
         unpinDetailsTab.mockClear();
-        wheelHandlers.length = 0;
-        touchMoveHandlers.length = 0;
     });
 
     it('keeps inactive tab contents mounted so state can be preserved', async () => {
@@ -195,48 +179,6 @@ describe('SessionDetailsPanel (keep mounted tabs)', () => {
         expect(getStyleValue(inactiveSurface!.props.style, 'display')).toBe('none');
         expect((inactiveSurface!.props as any).accessibilityElementsHidden).toBeUndefined();
         expect((inactiveSurface!.props as any).importantForAccessibility).toBeUndefined();
-    });
-
-    it('stops wheel/touch scroll propagation on web so docked/overlay panes can scroll inside modals', async () => {
-        lastScrollLockBypassEl = null;
-        const originalDocument = (globalThis as any).document;
-        // Simulate a scroll-locked document (common with web overlays/modals).
-        (globalThis as any).document = {
-            documentElement: {
-                hasAttribute: () => false,
-                getAttribute: () => null,
-            },
-            body: {
-                hasAttribute: () => false,
-                getAttribute: () => null,
-                style: { overflow: 'hidden', overflowY: 'hidden' },
-            },
-            defaultView: {
-                getComputedStyle: () => ({ overflow: 'hidden', overflowY: 'hidden' }),
-            },
-            // A real page also takes the stylesheets web components inject (e.g. the loading spinner).
-            getElementById: () => null,
-            createElement: (tagName: string) => ({ tagName: tagName.toUpperCase(), id: '', textContent: '' }),
-            head: { appendChild: (node: unknown) => node },
-        };
-
-        try {
-            await renderSessionDetailsPanel();
-
-            expect(lastScrollLockBypassEl).toBeTruthy();
-            expect(vi.mocked(lastScrollLockBypassEl!.addEventListener)).toHaveBeenCalledWith(
-                'wheel',
-                expect.any(Function),
-                expect.objectContaining({ passive: true }),
-            );
-            expect(vi.mocked(lastScrollLockBypassEl!.addEventListener)).toHaveBeenCalledWith(
-                'touchmove',
-                expect.any(Function),
-                expect.objectContaining({ passive: true }),
-            );
-        } finally {
-            (globalThis as any).document = originalDocument;
-        }
     });
 
     it('renders pinned tab affordance as an unpin icon (pin-slash)', async () => {

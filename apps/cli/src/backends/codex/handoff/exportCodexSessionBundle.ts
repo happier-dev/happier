@@ -11,8 +11,9 @@ import {
 
 import { collectCodexSessionRolloutFiles, type CodexRolloutFile } from '../directSessions/collectCodexSessionRolloutFiles';
 import { resolveCodexHomesForDirectSessionsSource } from '../directSessions/resolveCodexHomesForDirectSessionsSource';
+import { readCodexRolloutHistoryLineage } from '../localControl/readCodexRolloutHistoryLineage';
 import { readCodexSessionMetaFromRollout } from '../localControl/rolloutDiscovery';
-import { isMatchingCodexRolloutIdentity, normalizeCodexVendorResumeId, parseCodexRolloutFilename } from '../utils/codexSessionFiles';
+import { isMatchingCodexRolloutIdentity, parseCodexRolloutFilename } from '../utils/codexSessionFiles';
 import { resolveConfiguredCodexHome } from '../utils/resolveConfiguredCodexHome';
 import type { CodexSessionBundle } from '../../../session/handoff/types';
 
@@ -26,8 +27,8 @@ async function collectHandoffFiles(codexHome: string, rollouts: readonly CodexRo
   const visiting = new Set<string>();
   const visit = async (rollout: CodexRolloutFile, prefixBytes?: number): Promise<void> => {
     if (visiting.has(rollout.filePath)) throw new Error(`Cyclic Codex history base: ${rollout.fileRelPath}`);
-    const metadata = await readCodexSessionMetaFromRollout(rollout.filePath);
-    if (prefixBytes !== undefined && metadata?.history_mode !== 'paginated') {
+    const lineage = readCodexRolloutHistoryLineage(await readCodexSessionMetaFromRollout(rollout.filePath));
+    if (prefixBytes !== undefined && (lineage.kind === 'legacy' || lineage.kind === 'unverified')) {
       throw new Error(`Codex history base is not paginated: ${rollout.fileRelPath}`);
     }
     const fileSize = (await stat(rollout.filePath)).size;
@@ -36,20 +37,13 @@ async function collectHandoffFiles(codexHome: string, rollouts: readonly CodexRo
     const existing = files.get(rollout.filePath);
     if (existing?.contentFile && existing.contentFile.sizeBytes >= sizeBytes) return;
     visiting.add(rollout.filePath);
-    if (metadata?.history_mode === 'paginated' && metadata.history_base != null) {
-      // Codex 0.159.2 HistoryPosition names an immutable rollout prefix, not the logical fork parent.
-      const base = asRecord(metadata.history_base);
-      const baseId = normalizeCodexVendorResumeId(base?.thread_id);
-      const endBytes = base?.end_byte_offset;
-      const endOrdinal = base?.end_ordinal_exclusive;
-      if (!baseId || typeof endBytes !== 'number' || !Number.isSafeInteger(endBytes) || endBytes <= 0
-        || typeof endOrdinal !== 'number' || !Number.isSafeInteger(endOrdinal) || endOrdinal < 0) {
-        throw new Error(`Invalid Codex history base: ${rollout.fileRelPath}`);
-      }
-      const candidates = (await collectCodexSessionRolloutFiles({ codexHome, remoteSessionId: baseId })).filter((file) =>
-        isMatchingCodexRolloutIdentity(parseCodexRolloutFilename(file.filePath)?.sessionId, baseId));
-      if (candidates.length !== 1) throw new Error(`Missing or ambiguous Codex history base rollout: ${baseId}`);
-      await visit(candidates[0], endBytes);
+    if (lineage.kind === 'invalid-base') throw new Error(`Invalid Codex history base: ${rollout.fileRelPath}`);
+    if (lineage.kind === 'inherited') {
+      const { baseRolloutId, endByteOffset } = lineage;
+      const candidates = (await collectCodexSessionRolloutFiles({ codexHome, remoteSessionId: baseRolloutId })).filter((file) =>
+        isMatchingCodexRolloutIdentity(parseCodexRolloutFilename(file.filePath)?.sessionId, baseRolloutId));
+      if (candidates.length !== 1) throw new Error(`Missing or ambiguous Codex history base rollout: ${baseRolloutId}`);
+      await visit(candidates[0], endByteOffset);
     }
     files.set(rollout.filePath, {
       relativePath: rollout.fileRelPath,

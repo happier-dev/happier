@@ -202,7 +202,7 @@ async function getServerFeaturesSnapshotWithRetry(
                         ? await runtimeFetchWithServerReachability({
                             serverUrl: explicitServerUrl!,
                             token: null,
-                            url: joinBaseAndPath(explicitServerUrl!, '/v1/features'),
+                            url: joinBaseAndPath(explicitServerUrl!, '/v1/features?retentionNotice=1'),
                             init: {
                                 method: 'GET',
                                 signal: controller.signal,
@@ -210,7 +210,7 @@ async function getServerFeaturesSnapshotWithRetry(
                             timeoutMs: requestTimeoutMs,
                         })
                         : await serverFetch(
-                            '/v1/features',
+                            '/v1/features?retentionNotice=1',
                             {
                                 method: 'GET',
                                 signal: controller.signal,

@@ -589,6 +589,12 @@ that the saved Session is inactive. An active Session or an unavailable read
 leaves termination unconfirmed; cached UI activity and transport errors do not
 prove that a process stopped.
 
+After a daemon restart, explicit Stop and the Resume repair path can retire
+a legacy plain or Windows terminal attachment using persisted runner markers
+from the current daemon scope. A Windows attachment must name the same runner
+PID. Stop requires positive evidence that the runner exited and removes the
+captured attachment only if it still matches the record on disk.
+
 ### Confirmed daemon stop outcomes (development)
 
 Current 0.2 development source reports `not_running` separately from a confirmed `stopped`
@@ -1839,7 +1845,10 @@ local custody still refuses a changed target; transport failures remain retryabl
 
 On Linux, new daemon-spawned runners use a systemd user scope when the provisioned
 `happier-jobs.slice` policy is available. Otherwise the runner launches directly
-and inherits the launching process's cgroup. The installed daemon service uses
+and inherits the launching process's cgroup. The scope sets `OOMPolicy=continue`:
+when the kernel OOM-kills one process inside it, such as a tool command, only that
+process fails and the runner and its agent keep running. With systemd's default
+`stop`, one such kill stopped the whole Session. The installed daemon service uses
 `KillMode=process` so direct children can survive a daemon restart. Reattachment
 tracks existing sessions in their current cgroups.
 
@@ -2034,6 +2043,13 @@ not authorize marker deletion. Failed terminal-exit staging retains tracking and
 marker evidence. Visible-console startup reports the early exit immediately;
 the tracked exit owner completes retirement separately and logs cleanup failure
 without discarding the remaining custody evidence.
+
+In current development, routine `writeSessionMarker` refreshes preserve the existing
+marker’s `activeTurnId` for the same Session under the marker mutation lock.
+`updateSessionMarkerActiveTurn` owns lifecycle changes to that field. A delayed
+metadata webhook therefore cannot resurrect a completed turn or erase an active
+one before daemon reattachment; the webhook does not copy volatile turn state.
+The marker format and restart-admission rules are unchanged.
 
 Development startup recovery uses `daemonProcessScopeIdentity.ts` to keep runners
 within their owning Happier home and daemon lifecycle. Markerless recovery requires

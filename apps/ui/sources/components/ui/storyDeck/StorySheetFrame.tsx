@@ -19,8 +19,8 @@ import { resolveStoryDeckPresentation } from './storyDeckPresentation';
 const PHONE_SHEET_MAX_RATIO = 0.85;
 const PHONE_BREAKPOINT = 480;
 
-const DRAG_DISMISS_FRACTION = 0.3;
-const DRAG_VELOCITY_THRESHOLD = 800;
+export const DRAG_DISMISS_FRACTION = 0.3;
+export const DRAG_VELOCITY_THRESHOLD = 800;
 const SHEET_SLIDE_IN_DURATION_MS = 280;
 const SHEET_SLIDE_OUT_DURATION_MS = 240;
 

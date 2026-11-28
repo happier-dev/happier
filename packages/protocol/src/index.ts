@@ -46,6 +46,7 @@ export {
   type ServerRetentionDomainV2,
   type ServerRetentionPolicyV2,
 } from './retention/serverRetentionPolicyV2.js';
+export { computeSessionLeavesAt, type SessionRetentionRule } from './retention/computeSessionLeavesAt.js';
 
 export {
   isPendingLocalId,
@@ -1607,8 +1608,6 @@ export {
   GH_BINARY_NAME,
   GH_DEP_ID,
   GH_GITHUB_REPO,
-  AGY_ACP_SERVER_DEP_ID,
-  AGY_ACP_SERVER_VERSION,
   type InstallableAutoUpdateMode,
   type InstallableCatalogEntry,
   type InstallableDefaultPolicy,
@@ -2447,7 +2446,9 @@ export {
   SessionUserMessageSendRequestSchema,
   SessionUserMessageSendResponseSchema,
   admitStructuredInputMentionsForText,
+  normalizeSessionAttachmentUploadPath,
   readAttachmentEnvelopeLocalImagePaths,
+  readAttachmentEnvelopeUploads,
   readHappierStructuredInputV1FromMeta,
   readStructuredInputMentionSourcesV1,
   sanitizeHappierStructuredInputV1,
@@ -2626,6 +2627,12 @@ export {
 export {
   DirectSessionsProviderIdSchema,
   DirectSessionsSourceSchema,
+  DirectSessionRetentionDaysSchema,
+  DirectSessionRetentionRequestSchema,
+  DirectSessionRetentionResponseSchema,
+  type DirectSessionRetentionRequest,
+  type DirectSessionRetentionResponse,
+  type DirectSessionRetentionState,
   DirectSessionsAcpSessionListCapabilityRequestSchema,
   DirectSessionsAcpSessionListCapabilityResponseSchema,
   DirectSessionCandidateV1Schema,
@@ -2690,6 +2697,7 @@ export {
   type DirectSessionTakeoverPersistStartResponse,
     DIRECT_SESSION_LINK_TAG_PREFIX,
 } from './directSessions/daemonRpcV1.js';
+export { LocalHistoryItemsSchema, LocalHistoryRpcRequestSchema, LocalHistoryRpcResponseSchema, type LocalHistoryRpcRequest, type LocalHistoryRpcResponse } from './directSessions/localHistoryRpc.js';
 
 export {
   AGENT_PROVIDER_IDS_V1,
@@ -2809,6 +2817,8 @@ export {
 export {
   canonicalizeServerUrlForIdentity,
   createServerUrlComparableKey,
+  HAPPIER_CLOUD_SERVER_URL,
+  isHappierCloudServerUrl,
   isLoopbackHostname,
   normalizeHostnameForLoopbackCheck,
   SERVER_URL_COMPARABLE_KEY_ERROR_CODE,
@@ -3772,3 +3782,32 @@ export {
   type ClaudeSessionRetentionPolicyV1,
   type ClaudeSessionRetentionReportV1,
 } from './providers/claude/sessionRetention.js';
+export {
+  AccountLimitsV1Schema,
+  AccountPlanResponseV1Schema,
+  AccountPlanViaV1Schema,
+  PlanDefinitionV1Schema,
+  PlanPriceV1Schema,
+  PlansConfigV1Schema,
+  SupporterOfferV1Schema,
+  type AccountLimitsV1,
+  type AccountPlanResponseV1,
+  type PlanDefinitionV1,
+  type PlanPriceV1,
+  type PlansConfigV1,
+  type SupporterOfferV1,
+} from './plans/accountPlanV1.js';
+export {
+  AccountSupporterPutRequestV1Schema,
+  AccountSupporterResponseV1Schema,
+  SupporterCodeV1Schema,
+  SupporterKindV1Schema,
+  SupporterLookupRequestV1Schema,
+  SupporterLookupResponseV1Schema,
+  SupporterRecordFactsV1Schema,
+  countSupporterMonths,
+  type AccountSupporterPutRequestV1,
+  type AccountSupporterResponseV1,
+  type SupporterKindV1,
+  type SupporterRecordFactsV1,
+} from './plans/supporterV1.js';

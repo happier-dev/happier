@@ -507,6 +507,7 @@ async function main() {
       'build-dev-box': { type: 'string', default: 'true' },
       'hosted-services': { type: 'string', default: '' },
       'dry-run': { type: 'boolean', default: false },
+      'no-push': { type: 'boolean', default: false },
     },
     allowPositionals: false,
   });
@@ -521,6 +522,7 @@ async function main() {
   let buildRelay = parseBool(values['build-relay'], '--build-relay');
   const buildDevBox = parseBool(values['build-dev-box'], '--build-dev-box');
   const dryRun = values['dry-run'] === true;
+  const noPush = values['no-push'] === true;
 
   const shaRaw = String(values.sha ?? '').trim();
   const sha = shaRaw || run('git', ['rev-parse', 'HEAD'], { dryRun: false, stdio: 'pipe' }).trim();
@@ -552,8 +554,8 @@ async function main() {
   }
 
   dockerPreflight({ dryRun });
-  if (registries.has('dockerhub')) dockerLogin({ dryRun });
-  if (registries.has('ghcr')) dockerLoginGhcr({ dryRun });
+  if (!noPush && registries.has('dockerhub')) dockerLogin({ dryRun });
+  if (!noPush && registries.has('ghcr')) dockerLoginGhcr({ dryRun });
 
   const builder = ensureMultiarchBuilder({ dryRun });
 
@@ -597,7 +599,7 @@ async function main() {
    */
   const runBuildxForTags = async (tags, params) => {
     if (tags.length === 0) return;
-    const metadataDir = params.captureDigest && !dryRun ? mkdtempSync(join(tmpdir(), 'published-image-')) : null;
+    const metadataDir = params.captureDigest && !dryRun && !noPush ? mkdtempSync(join(tmpdir(), 'published-image-')) : null;
     const metadataFile = metadataDir ? join(metadataDir, 'metadata.json') : null;
     const args = [
       'buildx',
@@ -609,7 +611,7 @@ async function main() {
       builder,
       '--platform',
       'linux/amd64,linux/arm64',
-      '--push',
+      ...(noPush ? ['--output', 'type=cacheonly'] : ['--push']),
       ...(useGhaCache ? ['--cache-from', `type=gha,scope=${params.cacheScope}`] : []),
       ...(useGhaCache ? ['--cache-to', `type=gha,mode=max,scope=${params.cacheScope}`] : []),
       ...(params.extraArgs ?? []),
@@ -685,7 +687,7 @@ async function main() {
         env: process.env,
         release: defaultSentryRelease,
         channel,
-        dryRun,
+        dryRun: dryRun || noPush,
         run: (cmd, cmdArgs, opts) => runWithEnv(cmd, cmdArgs, opts),
       });
       if (tracked.status === 'tracked') {

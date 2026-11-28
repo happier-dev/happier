@@ -1,3 +1,6 @@
+import { isDeepStrictEqual } from 'node:util';
+
+import { runFirstTransitionLaunch } from './failedFirstLaunch';
 import {
   projectSessionMetadataForWire,
   buildBackendTargetKey,
@@ -65,7 +68,7 @@ import {
   captureDepartingAgentNativeResumeRecord,
   createLocalAgentNativeResumeRecordStore,
   readAgentNativeReturnAccountSettings,
-  resolveAgentNativeReturnIdentity,
+  resolveAgentNativeReturnPlan,
   type LocalAgentNativeResumeRecordStore,
 } from './agentNativeReturn';
 import { buildSessionAgentTransitionActivationBrief } from './buildSessionAgentTransitionActivationBrief';
@@ -320,6 +323,7 @@ async function admitInputAndActivateTarget(params: Readonly<{
   sanitizedMeta: ReturnType<typeof sanitizeSessionUserMessageSendMeta>;
   /** The committed target current view — the permission fallback and resume basis. */
   targetMetadata: Record<string, unknown>;
+  firstLaunchAgentId?: AgentId;
   /** Proof that the target current view is committed; the source of every arm here. */
   committed: SessionAgentTransitionCurrentViewCommitted;
 }>): Promise<SessionAgentTransitionResultV1> {
@@ -383,13 +387,34 @@ async function admitInputAndActivateTarget(params: Readonly<{
   // a lifecycle action against a live runtime and, if the daemon refuses, would
   // report a completed transition as `target_start_failed`.
   if (committedSession.active !== true) {
-    const resumed = await requestInactiveSessionResume({
+    const launch = (transitionLaunchNonce?: string) => requestInactiveSessionResume({
+      ...(transitionLaunchNonce ? { transitionLaunchNonce } : {}),
       credentials: params.credentials,
       sessionId: request.sessionId,
       localId,
       rawSession: committedSession,
       metadata: params.targetMetadata,
     });
+    const committedMetadata = params.firstLaunchAgentId
+      ? asRecord(tryDecryptSessionMetadata({ credentials: params.credentials, rawSession: committedSession }))
+      : null;
+    const committedTarget = committedMetadata
+      ? resolveSessionPersistedRuntimeIdentity(committedMetadata)?.backendTarget
+      : null;
+    // The original cutover's exact target and seed still own this metadata version.
+    const resumed = params.firstLaunchAgentId && committedSession.active === false && committedMetadata
+      && typeof committedSession.pendingVersion === 'number'
+      && isDeepStrictEqual(committedMetadata.replaySeedV1, params.targetMetadata.replaySeedV1)
+      && committedTarget?.kind === 'builtInAgent'
+      && buildBackendTargetKey(committedTarget) === buildBackendTargetKey({ kind: 'builtInAgent', agentId: params.firstLaunchAgentId })
+      ? await runFirstTransitionLaunch({
+          sessionId: request.sessionId,
+          agentId: params.firstLaunchAgentId,
+          localId,
+          metadataVersion: committedSession.metadataVersion,
+          pendingVersion: committedSession.pendingVersion,
+        }, launch)
+      : await launch();
     if (!resumed.ok) {
       logger.debug('[AGENT TRANSITION] Target activation failed', { code: resumed.code, message: resumed.message });
       return committed.committed('target_start_failed');
@@ -813,19 +838,15 @@ export async function runSessionAgentTransition(params: Readonly<{
   // inversion is a stated risk spot — choosing a narrower context bound and only
   // then discovering that native return is unavailable omits history the fresh
   // target needs, and nothing in the result would say so.
-  // A record names a conversation but not the connected account that produced it, and each
-  // connected account keeps its own provider home. When the owner chose the account explicitly
-  // the record cannot be confirmed to belong to it, so it is ignored: the target starts fresh and
-  // receives the full replay rather than resuming a conversation it may not be able to see.
-  const nativeReturn = targetBackendTarget.kind === 'configuredAcpBackend' || request.selection.connectedServices
-    ? null
-    : await resolveAgentNativeReturnIdentity({
-      store: localAgentNativeResumeRecordStore,
-      sessionId: request.sessionId,
-      targetAgentId,
-      sourceMetadata: stoppedMetadata,
-      accountSettings: readAccountSettings(),
-    });
+  const returnPlan = targetBackendTarget.kind === 'configuredAcpBackend' || request.selection.connectedServices ? null : await resolveAgentNativeReturnPlan({
+    store: localAgentNativeResumeRecordStore,
+    sessionId: request.sessionId,
+    targetAgentId,
+    sourceMetadata: stoppedMetadata,
+    accountSettings: readAccountSettings(),
+  });
+
+  const nativeReturn = returnPlan?.record;
 
   // Bounded context through the existing Replay owner. The transcript head is
   // read AFTER the confirmed stop, so a late source row remains canonical
@@ -1023,5 +1044,6 @@ export async function runSessionAgentTransition(params: Readonly<{
     sanitizedMeta,
     targetMetadata,
     committed: stopped.cutoverCommitted(),
+    ...(returnPlan?.noNativeReturnRecord ? { firstLaunchAgentId: targetAgentId } : {}),
   });
 }

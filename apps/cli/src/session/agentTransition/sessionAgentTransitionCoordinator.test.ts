@@ -1854,7 +1854,7 @@ describe('runSessionAgentTransition', () => {
       expect(mocks.readAgentNativeResumeRecord).toHaveBeenCalledWith({
         happierSessionId: SESSION_ID,
         agentId: 'codex',
-      });
+      }, { requireConclusiveAbsence: true });
       expect(readSeedSource()).not.toHaveProperty('returningAgentLastSeenSeq');
       // And the boundary records no bound either: this one genuinely had none,
       // so a later rebuild of it IS the full replay.

@@ -85,6 +85,8 @@ test('startDevServer normalizes providers independently of the full preset', asy
       );
     assert.equal(sqliteOut.serverEnv.HAPPIER_DB_PROVIDER, 'sqlite');
     assert.equal(sqliteOut.serverEnv.HAPPIER_SERVER_FLAVOR, 'full');
+    // Local dev servers must not report to the self-hosted instance count.
+    assert.equal(sqliteOut.serverEnv.HAPPIER_INSTANCE_PING, '0');
     assert.equal(sqliteOut.serverEnv.HAPPIER_SERVER_LIGHT_DATA_DIR, join(serverDir, 'server-light'));
     assert.deepEqual(sideEffects, ['deps']);
 

@@ -1,4 +1,5 @@
 import { View, Platform, Linking } from 'react-native';
+import { usePlanSurfaceVisibility } from '@/components/settings/plans/usePlanSurfaceVisibility';
 import * as React from 'react';
 import { useRouter } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
@@ -379,6 +380,7 @@ const SettingsAboutSection = React.memo(function SettingsAboutSection({
     showRateUs,
     theme,
 }: SettingsAboutSectionProps) {
+    const supporterSurface = usePlanSurfaceVisibility().supporter;
     return (
         <ItemGroup title={t('settings.about')} footer={t('settings.aboutFooter')}>
             {showChangelog ? (
@@ -400,6 +402,15 @@ const SettingsAboutSection = React.memo(function SettingsAboutSection({
                     onPress={() => {
                         void requestReview();
                     }}
+                />
+            ) : null}
+            {supporterSurface ? (
+                <Item
+                    testID="settings-credits-row"
+                    title={t('planSurface.creditsTitle')}
+                    subtitle={t('planSurface.creditsSubtitle')}
+                    icon={<Icon name="heart" size={29} color={theme.colors.supporter.accent} />}
+                    onPress={() => router.push('/settings/credits')}
                 />
             ) : null}
             <Item

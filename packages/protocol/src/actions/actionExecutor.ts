@@ -1,3 +1,4 @@
+import { LocalHistoryRpcRequestSchema, type LocalHistoryRpcRequest, type LocalHistoryRpcResponse } from '../directSessions/localHistoryRpc.js';
 import {
   findActionInputFieldHint,
   filterResolvedActionOptions,
@@ -13,12 +14,19 @@ import {
   getActionSpec,
   type ActionSpec,
   type ActionSurfaces,
+  type BillingCheckoutOpenInput,
+  type BillingManageOpenInput,
+  type SessionExportInput,
   type SessionForkActionInput,
+  type SessionOrganizationPinSetInput,
+  type SessionRetentionLeavingDismissInput,
   type SessionSpawnNewInput,
+  type SupporterCodeApplyInput,
 } from './actionSpecs.js';
 import { resolveActionSurfaceAvailability, type ActionSurfaceAvailability } from './actionSurfaceAvailability.js';
 import { resolveActionApprovalFlow } from './actionApprovalMetadata.js';
 import type { ActionId } from './actionIds.js';
+import { AccountPlanResponseV1Schema, type AccountPlanResponseV1 } from '../plans/accountPlanV1.js';
 import type { ActionUiPlacement } from './actionUiPlacements.js';
 import type { MemorySearchQueryV1, MemorySearchResultV1 } from '../memory/memorySearch.js';
 import type { MemoryWindowV1 } from '../memory/memoryWindow.js';
@@ -57,6 +65,7 @@ import {
 } from './sessionSpawnConfigOptions.js';
 import { EXECUTION_RUN_ACTION_PERMISSION_MODES } from './executionRunActionPermissionMode.js';
 import { isRpcError, readRpcErrorCode } from '../rpcErrors.js';
+import type { GithubStarResult } from '../rpc.js';
 import { lazySchema } from '../lazySchema.js';
 
 /**
@@ -200,7 +209,30 @@ type SessionStopActionDependencyResult = Readonly<{
   [key: string]: unknown;
 }>;
 
+/**
+ * Typed refusals the Plans & Supporter account routes document. A runtime adapter maps the route's
+ * status to one of these instead of throwing, so callers can tell a refusal from a failure.
+ */
+export const PLAN_ACTION_REFUSAL_CODES = ['plans_unavailable', 'billing_refresh_cloud_only', 'not_a_supporter'] as const;
+export type PlanActionRefusalCode = (typeof PLAN_ACTION_REFUSAL_CODES)[number];
+export type PlanActionRefusal = Readonly<{ ok: false; errorCode: PlanActionRefusalCode }>;
+
+/** `app.icon.*` refusals (PROGRAM, Error codes): the Supporter perk, a host without icon support, an unknown icon. */
+export type AppIconActionRefusal = Readonly<{ ok: false; errorCode: 'supporter_required' | 'host_unsupported' | 'invalid_parameters' }>;
+export type AppIconListResult = Readonly<{
+  /** False on hosts that cannot change their icon (web, an older native binary); `icons` still lists the set. */
+  supported: boolean;
+  currentIconId: string | null;
+  icons: readonly Readonly<{ id: string; access: 'everyone' | 'supporter'; locked: boolean }>[];
+}>;
+
+function isPlanActionRefusal(value: unknown): value is PlanActionRefusal {
+  return Boolean(value) && typeof value === 'object' && (value as { ok?: unknown }).ok === false
+    && (PLAN_ACTION_REFUSAL_CODES as readonly unknown[]).includes((value as { errorCode?: unknown }).errorCode);
+}
+
 export type ActionExecutorDeps = Readonly<{
+  localHistory?: (args: Readonly<{ machineId: string; serverId: string | null; request: LocalHistoryRpcRequest }>) => Promise<LocalHistoryRpcResponse>;
   // Execution runs (session-scoped RPC)
   executionRunStart: (sessionId: string, request: any, opts?: Readonly<{ serverId?: string | null }>) => Promise<unknown>;
   executionRunList: (sessionId: string, request: any, opts?: Readonly<{ serverId?: string | null }>) => Promise<unknown>;
@@ -458,6 +490,29 @@ export type ActionExecutorDeps = Readonly<{
   }>) => Promise<MemoryWindowV1>;
   daemonMemoryEnsureUpToDate: (args: Readonly<{ machineId: string; sessionId?: string; serverId?: string | null }>) => Promise<unknown>;
 
+  // Plans & Supporter (optional per runtime)
+  accountPlanGet?: (args: Readonly<{ signal?: AbortSignal }>) => Promise<AccountPlanResponseV1 | PlanActionRefusal>;
+  billingCheckoutOpen?: (args: BillingCheckoutOpenInput) => Promise<'opened' | 'unavailable' | 'failed'>;
+  billingManageOpen?: (args: BillingManageOpenInput) => Promise<boolean>;
+  billingRefresh?: () => Promise<Readonly<{ ok: true }> | PlanActionRefusal>;
+  supporterCodeApply?: (args: SupporterCodeApplyInput) => Promise<'applied' | 'invalid' | 'not_found' | 'conflict' | 'failed'>;
+  supporterCreditsList?: (args: Readonly<{ signal?: AbortSignal }>) => Promise<unknown>;
+  supporterRingSet?: (args: Readonly<{ visible: boolean }>) => Promise<Readonly<{ visible: boolean }> | PlanActionRefusal>;
+  supporterAskClose?: (ask: 'star' | 'supporter_prompt') => Promise<void>;
+  appIconList?: () => Promise<AppIconListResult>;
+  appIconSet?: (args: Readonly<{ iconId: string }>) => Promise<Readonly<{ iconId: string }> | AppIconActionRefusal>;
+  supporterDiscordLink?: () => Promise<boolean>;
+  supporterGithubLink?: () => Promise<boolean>;
+  githubStarStatus?: (target: Readonly<{ machineId: string; serverId: string | null }>) => Promise<GithubStarResult>;
+  githubStar?: (target: Readonly<{ machineId: string; serverId: string | null }>) => Promise<GithubStarResult>;
+  sessionOrganizationPinSet?: (args: SessionOrganizationPinSetInput & Readonly<{ serverId: string | null }>) => Promise<
+    Readonly<{ ok: true }> | Readonly<{ ok: false; errorCode: 'server_unavailable' | 'session-pin-limit-exceeded' }>
+  >;
+  sessionRetentionLeavingDismiss?: (args: SessionRetentionLeavingDismissInput & Readonly<{ serverId: string | null }>) => Promise<Readonly<{ dismissed: true }>>;
+  sessionRetentionLeavingList?: (args: Readonly<{ serverId: string | null; signal?: AbortSignal }>) => Promise<unknown>;
+  sessionRetentionSummaryGet?: (args: Readonly<{ signal?: AbortSignal }>) => Promise<unknown>;
+  sessionExport?: (args: SessionExportInput & Readonly<{ serverId: string | null; signal?: AbortSignal }>) => Promise<unknown>;
+
   // Approval queue (optional)
   approvalsCreate?: (args: Readonly<{ request: ApprovalRequestV1; serverId?: string | null }>) => Promise<{ artifactId: string }>;
   approvalsGet?: (args: Readonly<{ artifactId: string; serverId?: string | null }>) => Promise<ApprovalRequestV1 | null>;
@@ -531,7 +586,7 @@ export type ActionExecutorDeps = Readonly<{
    *
    * When true, the executor will create an approval request instead of executing the action.
    */
-  isActionApprovalRequired?: (actionId: ActionId, ctx: ActionExecutorContext) => boolean;
+  isActionApprovalRequired?: (actionId: ActionId, ctx: ActionExecutorContext, defaultRequired?: boolean) => boolean;
 
   // Server routing resolver (optional)
   resolveServerIdForSessionId?: (sessionId: string) => string | null;
@@ -1428,14 +1483,6 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       const availability = resolveAvailability(spec, ctx);
       if (!availability.available) return actionDisabled(availability);
     }
-    const approvalRouting = existingAdmission
-      ? null
-      : resolveActionApprovalRouting({
-          actionId,
-          spec,
-          context: ctx,
-          requiredByPolicy: ctx.bypassApprovals ? false : deps.isActionApprovalRequired?.(actionId, ctx) === true,
-        });
     const isApprovalAction = isApprovalActionId(actionId);
     const parsed = existingAdmission
       ? { success: true as const, data: existingAdmission.input }
@@ -1470,6 +1517,27 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     });
 
     try {
+      const localHistoryOperation = actionId.startsWith('machines.localHistory.') ? actionId.slice('machines.localHistory.'.length) : null;
+      let approvedArgs = parsed.data;
+      let affectedCount: number | undefined;
+      if (localHistoryOperation === 'retention.set' && !existingAdmission && !ctx.bypassApprovals) {
+        if (!deps.localHistory) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
+        const { machineId, providerId, source, days } = parsed.data;
+        const preview = await deps.localHistory({
+          machineId, serverId: normalizeId(ctx.serverId) || null,
+          request: { operation: 'retention.preview', providerId, source, days },
+        });
+        if (!preview.ok) return { ok: false, errorCode: preview.errorCode, error: preview.errorCode };
+        if (!preview.preview) return { ok: false, errorCode: 'internal_error', error: 'internal_error' };
+        approvedArgs = { ...parsed.data, expectedCurrentDays: preview.preview.currentDays };
+        if (preview.preview.shortening) affectedCount = preview.preview.affectedCount;
+      }
+      const localHistoryAsk = (ctx.surface === 'session_agent' || ctx.surface === 'mcp')
+        && (localHistoryOperation === 'letGo' || affectedCount !== undefined);
+      const approvalRouting = existingAdmission ? null : resolveActionApprovalRouting({
+        actionId, spec, context: ctx,
+        requiredByPolicy: !ctx.bypassApprovals && ((deps.isActionApprovalRequired?.(actionId, ctx, localHistoryAsk) ?? localHistoryAsk)),
+      });
       const messageSource = ctx.messageSource ? SessionMessageProvenanceV1Schema.parse({
         v: 1, kind: 'happierSession', ...ctx.messageSource,
       }) : undefined;
@@ -1503,14 +1571,16 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           ...(messageSource ? { messageSource } : {}),
           ...(requestedSurface ? { requestedSurface } : {}),
           actionId,
-          actionArgs: parsed.data,
+          actionArgs: approvedArgs,
           approval: {
             flow: approvalFlow,
             result: approvalRouting.result,
           },
           ...(approvalOrigin ? { origin: approvalOrigin } : {}),
-          summary: buildApprovalSummary(spec, targetSessionId),
-          preview: { actionId, actionArgs: parsed.data },
+          summary: affectedCount === undefined
+            ? buildApprovalSummary(spec, targetSessionId)
+            : `Shorten local history retention (${affectedCount} sessions affected)`,
+          preview: { actionId, actionArgs: approvedArgs },
           ...(normalizeId(ctx.serverId) ? { serverId: normalizeId(ctx.serverId) } : {}),
         };
 
@@ -1570,7 +1640,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
                 ?? resolveApprovalRequestExecutionSurface(approvedRequest.createdBy.surface);
               const approvedAdmission: PreparedAdmission = {
                 spec,
-                input: parsed.data,
+                input: approvedArgs,
                 context: buildApprovedActionContext({
                   ctx, request: approvedRequest, serverId: effectiveServerId, surface: requestSurface,
                 }),
@@ -1614,7 +1684,17 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         };
       }
 
-      if (options?.prepareOnly) return ready(admission);
+      if (options?.prepareOnly) return ready(approvedArgs === parsed.data ? admission : { ...admission, input: approvedArgs });
+
+      if (localHistoryOperation) {
+        if (!deps.localHistory) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
+        const { machineId, ...args } = approvedArgs;
+        const request = LocalHistoryRpcRequestSchema.safeParse({ ...args, operation: localHistoryOperation });
+        if (!request.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+        const result = await deps.localHistory({ machineId, serverId: normalizeId(ctx.serverId) || null, request: request.data });
+        if (!result.ok) return { ok: false, errorCode: result.errorCode, error: result.errorCode };
+        return { ok: true, result };
+      }
 
       // Switch by actionId; keep substrate generic.
       if (actionId === 'review.start') {
@@ -3046,6 +3126,122 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             };
           }
           return { ok: true, result: res };
+        }
+
+        if (actionId === 'account.plan.get') {
+          if (!deps.accountPlanGet) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+          const res = await deps.accountPlanGet({ ...(ctx.signal ? { signal: ctx.signal } : {}) });
+          if (isPlanActionRefusal(res)) return { ok: false, errorCode: res.errorCode, error: res.errorCode };
+          return { ok: true, result: AccountPlanResponseV1Schema.parse(res) };
+        }
+
+        if (actionId === 'billing.checkout.open') {
+          if (!deps.billingCheckoutOpen) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+          const result = await deps.billingCheckoutOpen(parsed.data as BillingCheckoutOpenInput);
+          if (result === 'opened') return { ok: true, result: { opened: true } };
+          const code = result === 'unavailable' ? 'checkout_unavailable' : 'checkout_open_failed';
+          return { ok: false, errorCode: code, error: code };
+        }
+
+        if (actionId === 'billing.manage.open') {
+          if (!deps.billingManageOpen) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+          if (await deps.billingManageOpen(parsed.data as BillingManageOpenInput)) return { ok: true, result: { opened: true } };
+          return { ok: false, errorCode: 'billing_manage_open_failed', error: 'billing_manage_open_failed' };
+        }
+
+        if (actionId === 'billing.refresh') {
+          if (!deps.billingRefresh) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+          const res = await deps.billingRefresh();
+          if (isPlanActionRefusal(res)) return { ok: false, errorCode: res.errorCode, error: res.errorCode };
+          return { ok: true, result: { ok: true } };
+        }
+
+        if (actionId === 'supporter.code.apply') {
+          if (!deps.supporterCodeApply) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+          const result = await deps.supporterCodeApply(parsed.data as SupporterCodeApplyInput);
+          if (result === 'applied') return { ok: true, result: { applied: true } };
+          const code = `supporter_code_${result}`;
+          return { ok: false, errorCode: code, error: code };
+        }
+
+        if (actionId === 'github.star' || actionId === 'github.star.status') {
+          if (actionId === 'github.star' && ctx.surface !== 'ui_button') {
+            return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+          }
+          const run = actionId === 'github.star' ? deps.githubStar : deps.githubStarStatus;
+          if (!run) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+          const machineId = normalizeId(ctx.defaultSessionMachineId);
+          if (!machineId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          return { ok: true, result: await run({ machineId, serverId: normalizeId(ctx.serverId) || null }) };
+        }
+
+        if (actionId === 'supporter.ask.close') {
+          if (!deps.supporterAskClose) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+          await deps.supporterAskClose((parsed.data as { ask: 'star' | 'supporter_prompt' }).ask);
+          return { ok: true, result: { ok: true } };
+        }
+
+        if (actionId === 'supporter.discord.link' || actionId === 'supporter.github.link') {
+          const link = actionId === 'supporter.discord.link' ? deps.supporterDiscordLink : deps.supporterGithubLink;
+          if (ctx.surface !== 'ui_button' || !link) {
+            return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+          }
+          if (await link()) return { ok: true, result: { opened: true } };
+          const errorCode = actionId === 'supporter.discord.link' ? 'discord_link_unavailable' : 'github_link_unavailable';
+          return { ok: false, errorCode, error: errorCode };
+        }
+
+        if (actionId === 'supporter.ring.set') {
+          if (!deps.supporterRingSet) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+          const res = await deps.supporterRingSet({ visible: (parsed.data as { visible: boolean }).visible });
+          if (isPlanActionRefusal(res)) return { ok: false, errorCode: res.errorCode, error: res.errorCode };
+          return { ok: true, result: { visible: res.visible === true } };
+        }
+
+        if (actionId === 'app.icon.list') {
+          if (!deps.appIconList) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+          return { ok: true, result: await deps.appIconList() };
+        }
+
+        if (actionId === 'app.icon.set') {
+          if (!deps.appIconSet) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+          const res = await deps.appIconSet({ iconId: (parsed.data as { iconId: string }).iconId });
+          if ('ok' in res && res.ok === false) return { ok: false, errorCode: res.errorCode, error: res.errorCode };
+          return { ok: true, result: { iconId: (res as { iconId: string }).iconId } };
+        }
+
+        if (actionId === 'supporter.credits.list' || actionId === 'session.retention.summary.get') {
+          const read = actionId === 'supporter.credits.list' ? deps.supporterCreditsList : deps.sessionRetentionSummaryGet;
+          if (!read) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+          return { ok: true, result: await read({ ...(ctx.signal ? { signal: ctx.signal } : {}) }) };
+        }
+
+        if (actionId === 'session.organization.pin.set') {
+          if (!deps.sessionOrganizationPinSet) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+          const input = parsed.data as SessionOrganizationPinSetInput;
+          const res = await deps.sessionOrganizationPinSet({ ...input, serverId: resolveServerIdForSession(deps, ctx, input.sessionId) });
+          if (!res.ok) return { ok: false, errorCode: res.errorCode, error: res.errorCode };
+          return { ok: true, result: { pinned: input.pinned } };
+        }
+
+        if (actionId === 'session.retention.leaving.dismiss') {
+          if (!deps.sessionRetentionLeavingDismiss) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+          const input = parsed.data as SessionRetentionLeavingDismissInput;
+          return { ok: true, result: await deps.sessionRetentionLeavingDismiss({ ...input, serverId: normalizeId(ctx.serverId) || null }) };
+        }
+
+        if (actionId === 'session.retention.leaving.list') {
+          if (!deps.sessionRetentionLeavingList) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+          return { ok: true, result: await deps.sessionRetentionLeavingList({ serverId: normalizeId(ctx.serverId) || null, signal: ctx.signal }) };
+        }
+
+        if (actionId === 'session.export') {
+          if (!deps.sessionExport) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+          const input = parsed.data as SessionExportInput;
+          const serverId = input.sessionId
+            ? resolveServerIdForSession(deps, ctx, input.sessionId)
+            : normalizeId(ctx.serverId) || null;
+          return { ok: true, result: await deps.sessionExport({ ...input, serverId, signal: ctx.signal }) };
         }
 
       if (actionId === 'approval.request.create') {

@@ -61,7 +61,7 @@ describe('oauth/[provider] return (provisioning choice)', () => {
     const originalFetch = globalThis.fetch;
     const fetchMock = vi.fn(async (url: any, init?: any) => {
       const rawUrl = String(url);
-      if (rawUrl.endsWith('/v1/features')) {
+      if (new URL(rawUrl).pathname === '/v1/features') {
         return new Response(JSON.stringify(serverFeatures), {
           status: 200, headers: { 'Content-Type': 'application/json' },
         });
@@ -133,7 +133,7 @@ describe('oauth/[provider] return (provisioning choice)', () => {
     const originalFetch = globalThis.fetch;
     const fetchMock = vi.fn(async (url: any, init?: any) => {
       const rawUrl = String(url);
-      if (rawUrl.endsWith('/v1/features')) {
+      if (new URL(rawUrl).pathname === '/v1/features') {
         return new Response(JSON.stringify(serverFeatures), {
           status: 200, headers: { 'Content-Type': 'application/json' },
         });

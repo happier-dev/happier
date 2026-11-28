@@ -1,3 +1,4 @@
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
@@ -30,6 +31,10 @@ export type ConfiguredSessionMediaTransferTargetResult =
         target: SessionMediaTransferTarget;
         error: string;
     }>;
+
+export function resolveSessionMediaTempUploadBasePath(temporaryDirectory = tmpdir()): string {
+    return join(temporaryDirectory, 'happier', 'uploads');
+}
 
 export function resolveSessionMediaTransferTarget(input: Readonly<{
     config: SessionMediaTransferConfig;

@@ -29,6 +29,15 @@ describe('planSyncActionsFromChanges', () => {
         ]);
         expect(planned).toMatchObject({ reconcileSessionList: kind !== 'session' });
     });
+    it('routes a plan change to the plan read alone, never to settings or profile', () => {
+        const planned = planSyncActionsFromChanges([
+            buildChange({ cursor: 1, kind: 'account', entityId: 'plan', hint: { plan: true } }),
+        ]);
+        expect(planned.invalidate).toMatchObject({ accountPlan: true, settings: false, profile: false });
+
+        const profileChange = planSyncActionsFromChanges([buildChange({ cursor: 2, kind: 'account', entityId: 'self' })]);
+        expect(profileChange.invalidate).toMatchObject({ accountPlan: false, settings: true, profile: true });
+    });
     it('refreshes appearance organization data without fetching unchanged session records', () => {
         const planned = planSyncActionsFromChanges([buildChange({ cursor: 1, kind: 'session', entityId: 's1', hint: { sessionOrganization: true, scope: 'sessionAppearances', sessionIds: ['s1'] } })]);
         expect(planned.sessionOrganization).toMatchObject({ mode: 'snapshot', assignmentSessionIds: ['s1'] });
@@ -58,6 +67,7 @@ describe('planSyncActionsFromChanges', () => {
             feed: true,
             automations: false,
             pets: false,
+            accountPlan: false,
         });
         expect(planned.kv).toEqual({ type: 'none' });
     });

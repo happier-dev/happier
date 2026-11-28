@@ -87,5 +87,13 @@
  "usageLimits.SERVICE_SUPPORT.claude-subscription.meter": "有",
  "usageLimits.SERVICE_SUPPORT.openai-codex.meter": "有",
  "usageLimits.SERVICE_SUPPORT.gemini.autoSwitch": "无",
- "usageLimits.SERVICE_SUPPORT.gemini.meter": "有"
+ "usageLimits.SERVICE_SUPPORT.gemini.meter": "有",
+ "navigation.FOOTER_COLUMNS.product.links.plans.label": "方案",
+ "navigation.FOOTER_COLUMNS.open-source.links.how-happier-stays-free.label": "Happier 如何保持免费",
+ "navigation.FOOTER_COLUMNS.open-source.links.supporters.label": "支持者",
+ "navigation.FOOTER_LEGAL_LINKS.privacy.label": "隐私",
+ "navigation.FOOTER_LEGAL_LINKS.terms.label": "使用条款",
+ "navigation.FOOTER_LEGAL_LINKS.terms-of-sale.label": "销售条款",
+ "navigation.FOOTER_LEGAL_LINKS.refunds.label": "退款",
+ "navigation.FOOTER_LEGAL_LINKS.imprint.label": "经营者信息"
 }

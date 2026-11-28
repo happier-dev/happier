@@ -34,7 +34,7 @@ describe('collectCodexSessionRolloutFiles', () => {
       'utf8',
     );
     await writeFile(
-      join(dayDir, `rollout-2026-02-14T12-45-10-${remoteSessionId}.jsonl`),
+      join(dayDir, `rollout-2026-02-14T12-45-10-${remoteSessionId}.jsonl.zst`),
       '{"event":"two"}\n',
       'utf8',
     );
@@ -48,11 +48,11 @@ describe('collectCodexSessionRolloutFiles', () => {
       return actual.readdir(dir, options as any);
     });
 
-    const files = await collectCodexSessionRolloutFiles({ codexHome, remoteSessionId });
+    const files = await collectCodexSessionRolloutFiles({ codexHome, remoteSessionId, includeCompressed: true });
 
     expect(files.map((file) => file.fileRelPath)).toEqual([
       `sessions/2026/02/14/rollout-2026-02-14T08-28-05-${remoteSessionId}.jsonl`,
-      `sessions/2026/02/14/rollout-2026-02-14T12-45-10-${remoteSessionId}.jsonl`,
+      `sessions/2026/02/14/rollout-2026-02-14T12-45-10-${remoteSessionId}.jsonl.zst`,
     ]);
   });
 

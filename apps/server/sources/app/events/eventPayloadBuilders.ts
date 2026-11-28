@@ -152,6 +152,7 @@ export function buildNewMessageUpdate(
         body: {
             t: 'new-message',
             sid: sessionId,
+            cloudCopyLeftAt: null,
             // Compatibility: some clients use `id` for sessionId.
             id: sessionId,
             message: serializeUpdateMessage(message, options),
@@ -207,6 +208,7 @@ export function buildUpdateSessionUpdate(
         runtimeActivityObservedAt?: number | null;
         meaningfulActivityAt?: number;
         archivedAt?: number | null;
+        cloudCopyLeftAt?: number | null;
     },
 ): UpdatePayload {
     const hasRuntimeActivityProjection = projection && [
@@ -229,6 +231,7 @@ export function buildUpdateSessionUpdate(
             sid: sessionId,
             metadata,
             agentState,
+            ...(projection && 'cloudCopyLeftAt' in projection ? { cloudCopyLeftAt: projection.cloudCopyLeftAt } : {}),
             ...(projection && "active" in projection ? { active: projection.active } : {}),
             ...(typeof projection?.activeAt === "number" ? { activeAt: projection.activeAt } : {}),
             ...(typeof projection?.lastViewedSessionSeq === 'number' ? { lastViewedSessionSeq: projection.lastViewedSessionSeq } : {}),

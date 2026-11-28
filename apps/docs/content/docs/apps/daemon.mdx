@@ -223,7 +223,7 @@ On Windows, `happier daemon service paths` prints the Scheduled Task name and wr
 
 ## Forward machine environment variables
 
-In development builds, new sessions use `PLAYWRIGHT_BROWSERS_PATH` from the
+Starting with CLI 0.2.22, new sessions use `PLAYWRIGHT_BROWSERS_PATH` from the
 daemon's environment when it is set. To share a custom cache, configure the
 same path when installing the browsers and starting the daemon. Use an
 absolute path writable by the account running Playwright.

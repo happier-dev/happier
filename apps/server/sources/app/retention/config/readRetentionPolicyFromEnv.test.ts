@@ -10,7 +10,7 @@ describe('retention/readRetentionPolicyFromEnv', () => {
             enabled: false,
             intervalMs: 60 * 60 * 1000,
             batchSize: 500,
-            dryRun: false,
+            dryRun: true,
             maxDeletesPerRulePerRun: 100_000,
             sweepTimeBudgetMs: 10_000,
             maxCandidatesPerRulePerRun: 10_000,
@@ -32,7 +32,7 @@ describe('retention/readRetentionPolicyFromEnv', () => {
             enabled: false,
             intervalMs: 60 * 60 * 1000,
             batchSize: 500,
-            dryRun: false,
+            dryRun: true,
             maxDeletesPerRulePerRun: 100_000,
             sweepTimeBudgetMs: 10_000,
             maxCandidatesPerRulePerRun: 10_000,
@@ -45,6 +45,16 @@ describe('retention/readRetentionPolicyFromEnv', () => {
                 userFeedItems: { mode: 'keep_forever' },
             },
         });
+    });
+
+    it('requires an explicit false and a valid start timestamp before enforcement can be configured', () => {
+        const startsAt = '2026-12-31T00:00:00.000Z';
+        expect(readRetentionPolicyFromEnv({
+            HAPPIER_SERVER_RETENTION__DRY_RUN: 'false',
+            HAPPIER_SERVER_RETENTION__STARTS_AT: startsAt,
+        })).toMatchObject({ dryRun: false, startsAt: Date.parse(startsAt), noticeDays: 7 });
+        expect(() => readRetentionPolicyFromEnv({ HAPPIER_SERVER_RETENTION__STARTS_AT: 'tomorrow' }))
+            .toThrow('HAPPIER_SERVER_RETENTION__STARTS_AT');
     });
 
     it('parses finite retention policies from env', () => {

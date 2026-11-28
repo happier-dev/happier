@@ -41,6 +41,27 @@ describe('catalog-defined FX and Factory Droid ACP backends', () => {
     });
   });
 
+  it('reaches FX full access only through Happier YOLO and resolves persisted mode overrides through permissions', async () => {
+    await withTempDir('happier-fx-yolo-', async (dir) => {
+      let permissionMode: 'yolo' | 'read-only' = 'yolo';
+      const backend = createCatalogDefinedAcpBackend('fx', {
+        cwd: dir, getPermissionMode: () => permissionMode,
+        launch: { command: process.execPath, args: [writeFx014AcpAgentScript({ dir })] },
+      });
+      if (!(backend instanceof AcpBackend)) throw new Error('Expected the real ACP backend');
+      try {
+        const { sessionId } = await backend.startSession();
+        expect(backend.getSessionModeState()?.currentModeId).toBe('full-access');
+        // A raw FX preset persisted as a Mode override by older builds is not an agent mode.
+        permissionMode = 'read-only';
+        await backend.setSessionMode(sessionId, 'full-access');
+        expect(backend.getSessionModeState()?.currentModeId).toBe('ask');
+      } finally {
+        await backend.dispose();
+      }
+    });
+  });
+
   it.each([
     ['fx', '/resolved/fx', ['acp']],
     ['droid', '/resolved/droid', ['exec', '--output-format', 'acp']],

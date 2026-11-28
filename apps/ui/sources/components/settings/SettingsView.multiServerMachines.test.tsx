@@ -101,7 +101,6 @@ installSettingsViewCommonModuleMocks({
         return createStorageModuleStub({
             useSetting: () => settingsViewMultiServerMachinesState.sharedDeviceInventorySettings,
             useSettings: () => settingsViewMultiServerMachinesState.sharedDeviceInventorySettings,
-            useEntitlement: () => false,
             useProfile: () => settingsViewMultiServerMachinesState.profile,
             useLocalSettingMutable: () => settingsViewMultiServerMachinesState.localSettingMutable,
             useSettingMutable: () => settingsViewMultiServerMachinesState.settingMutable,
@@ -178,7 +177,6 @@ vi.mock('@/auth/context/AuthContext', () => ({
 }));
 
 vi.mock('@/track', () => ({
-    trackPaywallButtonClicked: vi.fn(),
     trackWhatsNewClicked: vi.fn(),
 }));
 
@@ -217,10 +215,6 @@ vi.mock('@/agents/catalog/catalog', () => ({
     getAgentIconSource: () => null,
     getAgentIconTintColor: () => null,
     resolveAgentIdFromConnectedServiceId: () => null,
-}));
-
-vi.mock('@/components/settings/supportUsBehavior', () => ({
-    resolveSupportUsAction: () => 'github',
 }));
 
 vi.mock('@/utils/system/bugReportActionTrail', () => ({

@@ -125,7 +125,6 @@ function appendOptionalWelcomeToContext(baseContext: string | null | undefined, 
 export async function startRealtimeSession(
     sessionId: string,
     initialContext?: string,
-    retryAfterPaywall = false,
     options?: Readonly<{ textOnly?: boolean }>,
 ) {
     const session = voiceSession;
@@ -247,67 +246,49 @@ export async function startRealtimeSession(
                 return;
             }
 
-            let hasRetriedAfterPaywall = retryAfterPaywall;
-            for (;;) {
-                const response = await fetchHappierVoiceToken(credentials, {
-                    sessionId: requestedTargetSessionId,
-                    signal: abortController.signal,
+            const response = await fetchHappierVoiceToken(credentials, {
+                sessionId: requestedTargetSessionId,
+                signal: abortController.signal,
+            });
+            if (abortController.signal.aborted) return;
+            if (response.allowed) {
+                await enableVoiceBackgroundCallAudioMode();
+                const conversationId = await session.startSession({
+                    sessionId: controlSessionId,
+                    initialContext: effectiveInitialContext,
+                    token: response.token,
+                    textOnly: options?.textOnly === true,
                 });
-                if (abortController.signal.aborted) return;
-                if (response.allowed) {
-                    await enableVoiceBackgroundCallAudioMode();
-                    const conversationId = await session.startSession({
-                        sessionId: controlSessionId,
-                        initialContext: effectiveInitialContext,
-                        token: response.token,
-                        textOnly: options?.textOnly === true,
+                if (typeof conversationId !== 'string' || conversationId.trim().length === 0) {
+                    await disableVoiceBackgroundCallAudioMode();
+                    return;
+                }
+                if (abortController.signal.aborted) {
+                    try {
+                        await session.endSession();
+                    } catch {
+                        // best-effort cleanup
+                    }
+                    await disableVoiceBackgroundCallAudioMode();
+                    return;
+                }
+                currentProviderConversationId = conversationId;
+                currentLeaseId = response.leaseId;
+                currentBilledMode = 'happier';
+                currentControlSessionId = controlSessionId;
+                voiceSessionStarted = true;
+                if (latestRequestedTargetSessionId && latestRequestedTargetSessionId !== requestedTargetSessionId) {
+                    applyVoiceSessionTargetSelection({
+                        controlSessionId,
+                        targetSessionId: latestRequestedTargetSessionId,
+                        updateLastFocused: false,
                     });
-                    if (typeof conversationId !== 'string' || conversationId.trim().length === 0) {
-                        await disableVoiceBackgroundCallAudioMode();
-                        return;
-                    }
-                    if (abortController.signal.aborted) {
-                        try {
-                            await session.endSession();
-                        } catch {
-                            // best-effort cleanup
-                        }
-                        await disableVoiceBackgroundCallAudioMode();
-                        return;
-                    }
-                    currentProviderConversationId = conversationId;
-                    currentLeaseId = response.leaseId;
-                    currentBilledMode = 'happier';
-                    currentControlSessionId = controlSessionId;
-                    voiceSessionStarted = true;
-                    if (latestRequestedTargetSessionId && latestRequestedTargetSessionId !== requestedTargetSessionId) {
-                        applyVoiceSessionTargetSelection({
-                            controlSessionId,
-                            targetSessionId: latestRequestedTargetSessionId,
-                            updateLastFocused: false,
-                        });
-                    }
-                    scheduleRealtimeLeaseAnnouncements(response.expiresAtMs);
-                    return;
                 }
-
-                // Subscription/quota: show paywall.
-                if (response.reason === 'subscription_required' || response.reason === 'quota_exceeded') {
-                    if (hasRetriedAfterPaywall) {
-                        Modal.alert(t('common.error'), t('errors.voiceServiceUnavailable'));
-                        return;
-                    }
-                    const result = await sync.presentPaywall();
-                    if (result.purchased) {
-                        hasRetriedAfterPaywall = true;
-                        continue;
-                    }
-                    return;
-                }
-
-                Modal.alert(t('common.error'), t('errors.voiceServiceUnavailable'));
+                scheduleRealtimeLeaseAnnouncements(response.expiresAtMs);
                 return;
             }
+
+            Modal.alert(t('common.error'), t('errors.voiceServiceUnavailable'));
         } catch (error) {
             if (abortController.signal.aborted) {
                 // If stop requested while start is in-flight, don't surface a spurious error.

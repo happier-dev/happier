@@ -18,8 +18,17 @@ export type BuiltInAcpConfig = Readonly<{
   promptImageSupport: BuiltInAcpYesNoAuto;
   /** Whether Happier's MCP server list is passed to the ACP session/new request. */
   mcpServers?: 'pass' | 'drop';
+  /** Advertise ACP form elicitation (`elicitation/create`) and answer it as structured questions. */
+  formElicitation?: boolean;
   /** A mode id, or ordered candidates resolved against advertised modes. Null means no override. */
   permissionModeMapping?: Readonly<Partial<Record<PermissionMode, string | readonly string[] | null>>>;
+  /**
+   * Native modes that change what kind of turn runs (for example `plan`), declared when every other
+   * advertised mode is an approval level owned by `permissionModeMapping`. Mode then offers Build
+   * (the mapped permission mode) plus these, and is hidden when the list is empty; without it, Mode
+   * lists every advertised mode. Every agent with a permission mapping declares it.
+   */
+  agentModeIds?: readonly string[];
 }>;
 
 function providerLauncherCommand(agentId: AgentId): string {
@@ -73,18 +82,33 @@ export const BUILT_IN_ACP_CONFIG: Readonly<Partial<Record<AgentId, BuiltInAcpCon
       // Devin has no read-only planning mode; do not send an invalid ACP mode id.
       plan: null,
     },
+    // Its normal/accept-edits/dangerous modes are all approval levels: Mode is hidden.
+    agentModeIds: [],
   },
   agy: {
     agentId: 'agy',
-    // The interactive CLI remains `agy`; the CLI catalog replaces this launch
-    // command with the ensured managed registry artifact for ACP sessions.
-    launcher: { command: providerLauncherCommand('agy'), args: [] },
+    // The CLI provider adds the profile (`--gemini-dir`) and, for connected accounts, file token storage.
+    launcher: { command: providerLauncherCommand('agy'), args: ['acp'] },
     transportProfile: 'generic',
     supportsLoadSession: true,
     supportsModes: 'auto',
     supportsModels: 'auto',
     promptImageSupport: 'auto',
     mcpServers: 'pass',
+    // agy 1.5.18 `ask_question` sends form elicitations; without the capability it prints the options as text.
+    formElicitation: true,
+    // agy 1.5.18 always advertises default, accept-edits and plan; auto only on eligible accounts.
+    // It has no read-only or bypass mode: read-only keeps its asking mode, and yolo takes the most
+    // permissive advertised mode while the provider-enforced handler approves the remaining prompts.
+    permissionModeMapping: {
+      default: null,
+      'read-only': 'default',
+      'safe-yolo': ['auto', 'accept-edits'],
+      yolo: ['auto', 'accept-edits'],
+      plan: 'plan',
+    },
+    // Its default/accept-edits/auto modes are approval levels; Plan is the one agent mode.
+    agentModeIds: ['plan'],
   },
   fx: {
     agentId: 'fx',
@@ -98,9 +122,13 @@ export const BUILT_IN_ACP_CONFIG: Readonly<Partial<Record<AgentId, BuiltInAcpCon
     permissionModeMapping: {
       default: null,
       'read-only': 'ask',
-      // FX 0.0.14 renamed 0.0.13's automatic-review mode from code to auto.
+      // FX 0.0.14 renamed 0.0.13's automatic-review mode from code to auto. It never falls back to full-access.
       'safe-yolo': ['auto', 'code'],
+      // Full access runs every action unprompted outside FX's sandbox; it is reachable only as YOLO.
+      yolo: 'full-access',
     },
+    // Its ask/auto/code/full-access modes are all approval levels: Mode is hidden.
+    agentModeIds: [],
   },
   droid: {
     agentId: 'droid',
@@ -142,6 +170,9 @@ export const BUILT_IN_ACP_CONFIG: Readonly<Partial<Record<AgentId, BuiltInAcpCon
       yolo: 'bypassPermissions',
       plan: 'plan',
     },
+    // Its default/acceptEdits/auto/dontAsk/bypassPermissions modes are approval levels (acceptEdits has
+    // no Happier permission mode, as for Claude); Plan is the one agent mode.
+    agentModeIds: ['plan'],
   },
 });
 
@@ -160,6 +191,41 @@ export function resolveAcpPermissionModeId(
 ): string | null {
   if (typeof mapping === 'string') return mapping;
   return mapping?.find((id) => availableModes.some((mode) => mode.id === id)) ?? null;
+}
+
+/**
+ * Happier's agent mode for a catalog ACP agent. An agent that declares `agentModeIds` keeps only
+ * those native ids as agent modes; any other id (a persisted approval-level override from older
+ * builds, or a clear) is Build, the mode the permission mapping chooses. Agents without the
+ * declaration keep raw native ids, which Mode offers alongside the permission mapping.
+ */
+export function resolveAcpAgentModeId(agentId: AgentId, modeId: string | null | undefined): string | null {
+  const id = typeof modeId === 'string' ? modeId.trim() : '';
+  if (!id) return null;
+  const agentModeIds = BUILT_IN_ACP_CONFIG[agentId]?.agentModeIds;
+  return !agentModeIds || agentModeIds.includes(id) ? id : null;
+}
+
+export type AcpSessionModeResolution =
+  | Readonly<{ kind: 'mode'; modeId: string }>
+  /** Leave the provider's own policy in place; a null mapping is not a native reset token. */
+  | Readonly<{ kind: 'provider-policy' }>
+  /** The permission mapping names candidates the session does not advertise. */
+  | Readonly<{ kind: 'unavailable' }>;
+
+/** The one rule deriving a catalog ACP agent's native mode from its agent mode and permission mode. */
+export function resolveAcpSessionMode(params: Readonly<{
+  agentId: AgentId;
+  agentModeId: string | null | undefined;
+  permissionMode: PermissionMode;
+  availableModes: ReadonlyArray<Readonly<{ id: string }>>;
+}>): AcpSessionModeResolution {
+  const agentModeId = resolveAcpAgentModeId(params.agentId, params.agentModeId);
+  if (agentModeId) return { kind: 'mode', modeId: agentModeId };
+  const mapping = BUILT_IN_ACP_CONFIG[params.agentId]?.permissionModeMapping?.[params.permissionMode] ?? null;
+  if (mapping === null) return { kind: 'provider-policy' };
+  const modeId = resolveAcpPermissionModeId(mapping, params.availableModes);
+  return modeId ? { kind: 'mode', modeId } : { kind: 'unavailable' };
 }
 
 /**

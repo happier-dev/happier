@@ -204,7 +204,7 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
                     title={t('memorySearchSettings.machine.title')}
                     subtitle={selectedMachineTitle}
                     icon={<Icon name="desktop" size={29} color={theme.colors.accent.blue} />}
-                    rightElement={loading ? <Text>{t('common.loading')}</Text> : null}
+                    rightElement={loading ? <Text style={{ color: theme.colors.text.secondary }}>{t('common.loading')}</Text> : null}
                     showChevron={false}
                 />
                 <View style={{ paddingHorizontal: 16, paddingBottom: 8 }}>

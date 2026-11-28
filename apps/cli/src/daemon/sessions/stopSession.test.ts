@@ -1,9 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { reloadConfiguration } from '@/configuration';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { withTempDir } from '@/testkit/fs/tempDir';
 import type {
   BoundTerminalAttachmentInfo,
   TerminalAttachmentInfo,
 } from '@/terminal/attachment/terminalAttachmentInfo';
+import { writeSessionMarker } from '../sessionRegistry';
 
 const { spawnSyncMock } = vi.hoisted(() => ({
   spawnSyncMock: vi.fn(() => ({ status: 0, stdout: '', stderr: '' })),
@@ -1422,6 +1426,70 @@ describe('createStopSession', () => {
     } else {
       expect(removeAttachmentInfo).not.toHaveBeenCalled();
     }
+  });
+
+  it.each([
+    { mode: 'plain', runner: 'exited', matchingPid: true, retired: true },
+    { mode: 'windows_console', runner: 'exited', matchingPid: true, retired: true },
+    { mode: 'windows_terminal', runner: 'exited', matchingPid: true, retired: true },
+    { mode: 'windows_console', runner: 'exited', matchingPid: false, retired: false },
+    { mode: 'plain', runner: 'access_denied', matchingPid: true, retired: false },
+    { mode: 'plain', runner: 'live_replacement', matchingPid: true, retired: false },
+    { mode: 'plain', runner: 'no_marker', matchingPid: true, retired: false },
+  ] as const)('repairs persisted $mode topology after daemon restart ($runner, matching PID $matchingPid)', async ({
+    mode, runner, matchingPid, retired,
+  }) => {
+    await withTempDir('happier-legacy-stop-', async (happyHomeDir) => {
+      const env = createEnvKeyScope(['HAPPIER_HOME_DIR']);
+      env.patch({ HAPPIER_HOME_DIR: happyHomeDir });
+      reloadConfiguration();
+      const pid = 44_401;
+      const originalKill = process.kill;
+      const probe = vi.spyOn(process, 'kill').mockImplementation((target, signal) => {
+        if (target !== pid || signal !== 0) return originalKill(target, signal);
+        const code = runner === 'access_denied' ? 'EPERM' : 'ESRCH';
+        throw Object.assign(new Error(code), { code });
+      });
+      try {
+        const attachments = await vi.importActual<typeof import('@/terminal/attachment/terminalAttachmentInfo')>(
+          '@/terminal/attachment/terminalAttachmentInfo',
+        );
+        const sessionId = 'sess-stranded-runner';
+        const terminal: TerminalAttachmentInfo['terminal'] = mode === 'plain'
+          ? { mode }
+          : {
+              mode,
+              windows: {
+                host: mode === 'windows_console' ? 'console' : 'windows_terminal',
+                pid: matchingPid ? pid : pid + 1,
+              },
+            };
+        await attachments.writeTerminalAttachmentInfo({ happyHomeDir, sessionId, terminal });
+        if (runner !== 'no_marker') {
+          await writeSessionMarker({ pid, happySessionId: sessionId, startedBy: 'daemon' });
+        }
+        if (runner === 'live_replacement') {
+          await writeSessionMarker({ pid: process.pid, happySessionId: sessionId, startedBy: 'daemon' });
+        }
+        const stop = createStopSession({
+          pidToTrackedSession: new Map(),
+          readAttachmentState: attachments.readTerminalAttachmentState,
+          readAttachmentInfo: attachments.readTerminalAttachmentInfo,
+          removeAttachmentInfo: attachments.removeTerminalAttachmentInfo,
+        });
+
+        await expect(stop(sessionId)).resolves.toEqual(retired
+          ? { status: 'stopped' }
+          : { status: 'incomplete', reason: 'legacy_attachment' });
+        await expect(attachments.readTerminalAttachmentInfo({ happyHomeDir, sessionId })).resolves.toEqual(retired
+          ? null
+          : expect.objectContaining({ version: 1, terminal }));
+      } finally {
+        probe.mockRestore();
+        env.restore();
+        reloadConfiguration();
+      }
+    });
   });
 
   it('retires a stranded legacy attachment when its exact terminal host is already dead', async () => {

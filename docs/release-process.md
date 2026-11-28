@@ -822,7 +822,16 @@ variable in their selected GitHub environment; an absent production URL fails
 deployment instead of selecting the preview API.
 The API key needs application read, service update and deployment permissions.
 Public UI build variables belong in the publisher's `release-shared` environment:
-`POSTHOG_API_KEY`, `POSTHOG_HOST`, `SENTRY_DSN` and `REVENUE_CAT_STRIPE`.
+`POSTHOG_API_KEY`, `POSTHOG_HOST` and `SENTRY_DSN`.
+Store builds use the platform public keys `EXPO_PUBLIC_REVENUE_CAT_APPLE` and
+`EXPO_PUBLIC_REVENUE_CAT_GOOGLE` from the EAS environment. The store observer
+starts after the signed-in server offers store purchases. Server reconciliation
+uses `REVENUECAT_SECRET_KEY` and authenticates webhook requests against
+`REVENUECAT_WEBHOOK_AUTH`.
+`POSTHOG_API_KEY` reaches production (store) app builds only; a dev or preview
+build identity (`internaldev`, `internalpreview`, `publicdev`, `preview`) sends no
+analytics unless `EXPO_PUBLIC_POSTHOG_KEY_<IDENTITY>` (for example
+`EXPO_PUBLIC_POSTHOG_KEY_PREVIEW`) is set for its build (`apps/ui/app.config.js`).
 `HAPPIER_PRODUCTION_SERVER_URL` / `HAPPIER_PREVIEW_SERVER_URL` configure the UI
 at runtime through `DOKPLOY_UI_SERVER_URL`, which the adapter writes as
 `HAPPIER_WEBAPP_SERVER_URL`. Self-hosters set that container env directly.
@@ -902,3 +911,31 @@ For the server, database migrations should be automated as part of the deploymen
 - When an application platform cannot run and await a blocking pre-deploy operation, designate exactly one API service as the migration owner and set `RUN_MIGRATIONS=0` on workers and all other replicas. Protect that owner with start-first rollout, rollback on failure, and sufficient health-check startup grace; webhook acceptance alone does not prove migration or deployment completion.
 - Do not rely on API and worker startup races as migration ownership. Prisma's database lock serializes contenders, but it cannot preserve the winning migration when an orchestrator terminates that container for missing its startup-health window.
 - Avoid running migrations at image build-time (Dockerfile), since migrations require a live DB connection.
+
+### Weekly non-publishing build validation
+
+`release-build-dry-run.yml` runs every Monday at 04:17 UTC and supports manual
+dispatch from `dev`. It resolves the current `dev` SHA once and uses it for all
+builds. The schedule must also be installed on the repository default branch.
+
+The Docker publisher's reusable `build_only` input runs actual multi-platform
+builds with `--no-push`, without registry authentication or Sentry mutation.
+Relay and dev-box images consume the existing verified dev release artifacts;
+the webapp image builds current source and exercises dependency acquisition.
+Weekly builds do not restore the GHA Docker layer cache. `--dry-run` remains a
+command preview and is not build validation.
+
+Desktop reuses `build-tauri.yml` with `preparation_only: true` and
+`publish_release: false`; it stops before signing and publication. The workflow
+passes no secrets. CLI archives and runtime smoke use the same native build
+recipe as source CI, covering Linux x64/arm64, macOS Intel/Apple Silicon and
+Windows x64. Desktop retains its existing hosted runner matrix. The mobile workflow uses
+the self-hosted `xcode-27` label for iOS; this weekly workflow does not reserve
+that runner. Build jobs do not deploy or create releases.
+
+EAS Android and iOS are not covered yet. The existing reusable mobile workflow
+requires Expo authentication, uses `release-shared`, and supplies signing/store
+credentials even for `build_only`. A credential-isolated, non-incrementing EAS
+build path is required before adding it to this secret-free weekly workflow.
+The existing source-CI native compile checks continue to cover unsigned native
+compilation; they are not a substitute for an EAS local build.

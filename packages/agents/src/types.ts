@@ -205,6 +205,14 @@ export type AgentCore = Readonly<{
       providerStateSharing?: ConnectedServicesProviderStateSharingCapability;
       sessionAuthSwitch?: Readonly<{
         continuityMode: 'hot_apply' | 'restart_same_home' | 'restart_shared_state_required';
+        /**
+         * When an automatic account switch (a pool's preventive soft-threshold switch) reaches a
+         * running session: `mid_turn` applies it to the next request of the current turn;
+         * `turn_end` (default when absent) waits until the current turn ends. The CLI's
+         * `runtimeAuthApply` lifecycle fact decides this at runtime; the backend catalog test keeps
+         * this declaration equal to it.
+         */
+        accountSwitchTiming?: 'mid_turn' | 'turn_end';
         supportedTransitions?: ReadonlyArray<AgentSessionAuthSwitchTransition>;
         providerStateSharingRequired?: Readonly<{
           serviceIds?: ReadonlyArray<ConnectedServiceId>;

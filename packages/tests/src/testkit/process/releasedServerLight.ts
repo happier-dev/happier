@@ -503,6 +503,7 @@ export async function startReleasedServerLight(params: Readonly<{
       CI: '1',
       PORT: String(port),
       PUBLIC_URL: baseUrl,
+      HAPPIER_INSTANCE_PING: '0',
       HAPPIER_SERVER_HOST: '127.0.0.1',
       HAPPY_SERVER_HOST: '127.0.0.1',
       METRICS_ENABLED: 'false',
