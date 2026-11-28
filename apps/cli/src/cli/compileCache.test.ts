@@ -8,17 +8,20 @@ import { describe, expect, it } from 'vitest';
 const cliRoot = fileURLToPath(new URL('../..', import.meta.url));
 const owner = new URL('./compileCache.ts', import.meta.url).href;
 
-type CompileCacheRun = Readonly<{ dir: string | null; stderr: string }>;
+type CompileCacheRun = Readonly<{ dir: string | null; mode: number | null; stderr: string }>;
 
 // Runs the owner in a fresh Node process: the compile cache is per process and cannot be undone.
 function runCompileCacheOwner(
   args: readonly string[],
   prepare: (paths: { temp: string; home: string; env: NodeJS.ProcessEnv }) => void = () => {},
 ): CompileCacheRun {
-  const code = `const { enableShortLivedCliCompileCache } = await import(${JSON.stringify(owner)});
-    enableShortLivedCliCompileCache(${JSON.stringify(args)});
+  const code = `const { enableCliCompileCache } = await import(${JSON.stringify(owner)});
+    enableCliCompileCache();
     const { getCompileCacheDir } = await import('node:module');
-    console.log(JSON.stringify(getCompileCacheDir() ?? null));`;
+    const { statSync } = await import('node:fs');
+    const { dirname } = await import('node:path');
+    const directory = getCompileCacheDir();
+    console.log(JSON.stringify({ dir: directory ?? null, mode: directory ? statSync(dirname(directory)).mode & 0o777 : null }));`;
   // Node's default cache directory lives under the OS temp directory; a private one keeps the
   // result independent of whatever another user left in the shared one.
   const temp = mkdtempSync(join(tmpdir(), 'happier-compile-cache-test-'));
@@ -29,11 +32,11 @@ function runCompileCacheOwner(
   delete env.HAPPIER_STACK_QA_CLI_COMPILE_CACHE_DIR;
   try {
     prepare({ temp, home, env });
-    const child = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', code], {
+    const child = spawnSync(process.execPath, ['--no-warnings', '--import', 'tsx', '--input-type=module', '-e', code, '--', ...args], {
       cwd: cliRoot, env, encoding: 'utf8',
     });
     expect(child.status).toBe(0);
-    return { dir: JSON.parse(child.stdout.trim().split('\n').pop()!), stderr: child.stderr };
+    return { ...JSON.parse(child.stdout.trim().split('\n').pop()!), stderr: child.stderr };
   } finally {
     rmSync(temp, { recursive: true, force: true });
   }
@@ -44,8 +47,6 @@ function readCompileCacheDirAfter(args: readonly string[]): string | null {
 }
 
 describe('CLI compile cache', () => {
-  // Measured on Node 24 (`happier daemon status`, bundled graph, n=4): user CPU 4.24–4.57 → 3.24–3.55 s,
-  // peak RSS +15 MiB. Daemon-hosted roles gain no start CPU and keep ~25–30 MiB more resident.
   it('reuses V8 code for short-lived commands on Node', () => {
     expect(readCompileCacheDirAfter(['daemon', 'status'])).toEqual(expect.any(String));
   });
@@ -62,7 +63,7 @@ describe('CLI compile cache', () => {
     });
 
   it('reports an unusable cache directory instead of swallowing it', () => {
-    const run = runCompileCacheOwner(['daemon', 'status'], ({ home }) => {
+    const run = runCompileCacheOwner(['daemon', 'start-sync'], ({ home }) => {
       mkdirSync(home, { recursive: true });
       writeFileSync(join(home, 'cache'), 'not a directory');
     });
@@ -85,10 +86,24 @@ describe('CLI compile cache', () => {
     ['daemon', 'start-sync'],
     ['daemon', 'background-service-worker'],
     ['codex', '--started-by', 'daemon'],
-  ])('leaves daemon-hosted long-lived roles uncached (%s %s)', (...args) => {
-    const run = runCompileCacheOwner(args, ({ temp, env }) => {
-      env.HAPPIER_STACK_QA_CLI_COMPILE_CACHE_DIR = join(temp, 'shared');
+    ['session-host'],
+  ])('uses the private identity cache by default (%s)', (...args) => {
+    const run = runCompileCacheOwner(args);
+    expect(run.dir).toMatch(/happier-home[\\/]cache[\\/]node-compile-cache/);
+    if (process.platform !== 'win32') expect(run.mode).toBe(0o700);
+  });
+
+  it('keeps the Node cache override and opt-out for daemon startup', () => {
+    const args = ['daemon', 'start-sync'];
+    const override = ({ temp, env }: { temp: string; env: NodeJS.ProcessEnv }) => {
+      env.NODE_COMPILE_CACHE = join(temp, 'operator-cache');
+    };
+    expect(runCompileCacheOwner(args, override).dir).toMatch(/operator-cache/);
+    const disabled = runCompileCacheOwner(args, (paths) => {
+      override(paths);
+      paths.env.NODE_DISABLE_COMPILE_CACHE = '1';
     });
-    expect(run.dir).toBeNull();
+    expect(disabled.dir).toBeNull();
+    expect(disabled.stderr).not.toContain('HAPPIER_COMPILE_CACHE_UNAVAILABLE');
   });
 });

@@ -1204,6 +1204,15 @@ target; `buildCliBinaryArtifactCodePayload` calls it in place of the former Bun 
   `happier [--no-warnings] [--no-deprecation] <absolute .js|.cjs|.mjs> ...args` runs that
   script (CLI children, Claude hook forwarders, relays), and `happier ...args` runs the CLI
   from `package-dist/` beside the executable. Its `execArgv` already applies the two flags.
+
+Packaged and source Node CLI invocations that load the command graph enable the
+V8 compile cache by default, including daemon startup and the Session host.
+The default directory is `cache/node-compile-cache` under the active Happier
+Home. On POSIX the CLI gives the identity cache directory owner-only permissions.
+Windows uses the Home directory's inherited access controls. Operators can set
+`NODE_COMPILE_CACHE` to choose a directory or `NODE_DISABLE_COMPILE_CACHE=1` to
+disable caching. If cache initialization fails, the CLI reports
+`HAPPIER_COMPILE_CACHE_UNAVAILABLE` on stderr and continues startup.
 - Runtime selection: `resolveHappierScriptRuntimeCommand` in
   `packages/cli-common/src/agents/managedJavaScriptRuntime.ts` returns the running Node
   executable, including the single executable, for Happier-owned scripts; apps/cli reaches

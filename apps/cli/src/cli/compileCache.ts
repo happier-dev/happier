@@ -1,8 +1,7 @@
-import { lstatSync, mkdirSync } from 'node:fs';
+import { accessSync, chmodSync, constants as fsConstants, lstatSync, mkdirSync } from 'node:fs';
 import { constants, enableCompileCache } from 'node:module';
 import { isAbsolute } from 'node:path';
 
-import { isDaemonHostedCliInvocation } from './readStartedByArg';
 import { isNode } from '../utils/runtime';
 import { resolveCliHappyHomeDir } from '../configuration/resolveCliHappyHomeDir';
 import { resolveCliHomeStoragePaths } from '../configuration/homeStoragePaths';
@@ -20,30 +19,42 @@ function resolvePrivateQaCompileCache(): string | undefined {
     }
     return directory;
   } catch (error) {
-    process.emitWarning(`Stack QA compile cache unavailable at ${directory}: ${String(error)}`,
-      { code: 'HAPPIER_COMPILE_CACHE_UNAVAILABLE' });
+    reportUnavailable(`Stack QA directory ${directory}: ${String(error)}`);
     return undefined;
   }
 }
 
-/**
- * Node-hosted short-lived commands reuse V8 code compiled by earlier runs (Node validates entries
- * against the source). The cache lives in this user's Happier home, never Node's shared OS-temp
- * default, and an unusable directory is reported, not swallowed. Daemon-hosted roles stay
- * uncached: the daemon, its background worker and daemon-started runners gain no start CPU
- * from it and would keep ~25–30 MiB more resident. Shipped binaries run on Bun and skip this.
- * Named QA identities may use a private cache shared by their host UID.
- * An operator's `NODE_COMPILE_CACHE` keeps precedence.
- */
-export function enableShortLivedCliCompileCache(args: readonly string[]): void {
-  if (!isNode()) return;
-  if (isDaemonHostedCliInvocation(args)) return;
-  const directory = process.env.NODE_COMPILE_CACHE?.trim()
-    || resolvePrivateQaCompileCache()
-    || resolveCliHomeStoragePaths(resolveCliHappyHomeDir(process.env)).compileCacheDir;
-  const result = enableCompileCache(directory);
-  if (result.status === constants.compileCacheStatus.FAILED) {
-    process.emitWarning(`Node compile cache unavailable at ${result.directory ?? directory}: ${result.message ?? 'unknown failure'}`,
-      { code: 'HAPPIER_COMPILE_CACHE_UNAVAILABLE' });
+function reportUnavailable(reason: string): void {
+  // The packaged Node launcher disables Node warnings. Keep this startup diagnostic visible.
+  console.error(`HAPPIER_COMPILE_CACHE_UNAVAILABLE: ${reason}`);
+}
+
+function resolveIdentityCompileCache(): string {
+  const directory = resolveCliHomeStoragePaths(resolveCliHappyHomeDir(process.env)).compileCacheDir;
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const entry = lstatSync(directory);
+  const uid = process.getuid?.();
+  if (!entry.isDirectory() || (uid !== undefined && entry.uid !== uid)) {
+    throw new Error(`Expected an owned compile cache directory at ${directory}`);
+  }
+  // Earlier releases let Node create this directory with the process umask.
+  if (uid !== undefined && (entry.mode & 0o077) !== 0) chmodSync(directory, 0o700);
+  accessSync(directory, fsConstants.R_OK | fsConstants.W_OK | fsConstants.X_OK);
+  return directory;
+}
+
+/** Enable Node's cache before loading the CLI command graph, including daemon-hosted roles. */
+export function enableCliCompileCache(): void {
+  if (!isNode() || process.env.NODE_DISABLE_COMPILE_CACHE === '1') return;
+  try {
+    const directory = process.env.NODE_COMPILE_CACHE?.trim()
+      || resolvePrivateQaCompileCache()
+      || resolveIdentityCompileCache();
+    const result = enableCompileCache(directory);
+    if (result.status === constants.compileCacheStatus.FAILED) {
+      reportUnavailable(`${result.directory ?? directory}: ${result.message ?? 'unknown failure'}`);
+    }
+  } catch (error) {
+    reportUnavailable(String(error));
   }
 }

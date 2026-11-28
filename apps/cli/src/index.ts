@@ -83,8 +83,8 @@ if (!isCliDistIntegrityProbe && isTopLevelVersionRequest(readCliProcessArgs())) 
   // session host) every minute; it is cleared when dispatch settles.
   const cliLifetimeKeepAlive = isCliDistIntegrityProbe ? null : setTimeout(() => undefined, 2_147_483_647);
   // Enabled before the command graph compiles; `--version`/help stay on their tiny graph.
-  const runBootstrap = () => import('./cli/compileCache').then(({ enableShortLivedCliCompileCache }) => {
-    if (!isCliDistIntegrityProbe) enableShortLivedCliCompileCache(readCliProcessArgs());
+  const runBootstrap = () => import('./cli/compileCache').then(({ enableCliCompileCache }) => {
+    if (!isCliDistIntegrityProbe) enableCliCompileCache();
     return import('./cli/bootstrap');
   }).then(async ({ runCliBootstrap }) => {
     if (!isCliDistIntegrityProbe) await runCliBootstrap(import.meta.url);
