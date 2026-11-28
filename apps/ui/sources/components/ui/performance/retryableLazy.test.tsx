@@ -94,4 +94,32 @@ describe('retryable lazy demand', () => {
             await screen.unmount();
         }
     });
+
+    it('starts the chunk on preload and lets the first render consume that same load', async () => {
+        // A route preloads while it issues its first read; the later mount must not load again.
+        let resolveChunk!: (module: { default: React.ComponentType }) => void;
+        const load = vi.fn(() => new Promise<{ default: React.ComponentType }>(resolve => { resolveChunk = resolve; }));
+        const LazyContent = retryableLazy(load);
+        LazyContent.preload();
+        expect(load).toHaveBeenCalledTimes(1);
+        const screen = await renderScreen(<React.Suspense fallback={<span data-testid="loading" />}><LazyContent /></React.Suspense>);
+        expect(load).toHaveBeenCalledTimes(1);
+        await act(async () => { resolveChunk({ default: () => <span data-testid="content" /> }); });
+        expect(screen.findHostByTestId('content')).not.toBeNull();
+        expect(load).toHaveBeenCalledTimes(1);
+        await screen.unmount();
+    });
+
+    it('lets the first render load again after a rejected preload, without surfacing the preload failure', async () => {
+        const load = vi.fn()
+            .mockImplementationOnce(() => Promise.reject(new Error('chunk unavailable')))
+            .mockImplementation(() => Promise.resolve({ default: () => <span data-testid="content" /> }));
+        const LazyContent = retryableLazy(load);
+        LazyContent.preload();
+        await act(async () => { await Promise.resolve(); });
+        const screen = await renderScreen(<React.Suspense fallback={null}><LazyContent /></React.Suspense>);
+        expect(screen.findHostByTestId('content')).not.toBeNull();
+        expect(load).toHaveBeenCalledTimes(2);
+        await screen.unmount();
+    });
 });

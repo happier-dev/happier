@@ -11,6 +11,7 @@ import { SessionInvalidLinkFallback } from '@/components/sessions/shell/SessionI
 import { TranscriptSameSessionHandoffProvider } from '@/components/sessions/transcript/viewport/lifecycle/transcriptSameSessionHandoff';
 import type { AttachmentDraft } from '@/components/sessions/attachments/attachmentDraftModel';
 import { SessionCockpitShell } from '@/components/workspaceCockpit/session/SessionCockpitShell';
+import { preloadSessionView } from '@/components/sessions/shell/SessionViewHost';
 import {
     isSessionDetailsWorkspacePath,
     resolveSessionMobileSurfaceIntent,
@@ -176,6 +177,8 @@ export function SessionDestinationBody(props: Readonly<{
 
     React.useLayoutEffect(() => {
         markSessionRouteEnteredForSessionUiTelemetry({ sessionId });
+        // The view's chunk loads beside the route's first read rather than after the destination mounts.
+        if (sessionId) preloadSessionView();
     }, [sessionId]);
 
     const routeHydrationState = useHydrateSessionForRoute(

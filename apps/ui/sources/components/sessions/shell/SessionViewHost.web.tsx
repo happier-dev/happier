@@ -11,6 +11,11 @@ const SessionViewContent = retryableLazy(async () => ({
     default: (await import('./SessionView')).SessionView,
 }));
 
+/** A Session route starts this chunk with its first read instead of after the destination mounts. */
+export function preloadSessionView(): void {
+    SessionViewContent.preload();
+}
+
 export const SessionView = React.memo((props: React.ComponentProps<typeof SessionViewContent>) => (
     <React.Suspense fallback={props.presentation?.kind === 'embedded' ? <PaneLoadingFallback /> : (
         <SessionViewRouteLoading initialLoading serverId={props.routeHydrationState?.serverId ?? props.routeServerId ?? null} />
