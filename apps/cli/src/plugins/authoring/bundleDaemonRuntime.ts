@@ -421,6 +421,7 @@ export class PluginAuthorBundlerUnavailableError extends Error {
 
 function resolvePluginAuthorBundlerNativeBinary(params: Readonly<{
   packageRoot: string;
+  isSourceRuntime: boolean;
   packageJson: Readonly<{
     version?: unknown;
     optionalDependencies?: unknown;
@@ -450,9 +451,12 @@ function resolvePluginAuthorBundlerNativeBinary(params: Readonly<{
     ]) {
       try {
         const nativePackageRoot = realpathSync(nativePackageCandidate);
-        const isNestedDependency = isPathInsideRoot(params.packageRoot, nativePackageRoot);
-        const isSiblingDependency = isPathInsideRoot(dependencyRoot, nativePackageRoot);
-        if (!isNestedDependency && !isSiblingDependency) continue;
+        // Captured source installations put each package in a separate store
+        // directory. Their declared nested and sibling edges are links between
+        // those directories, while packaged installs keep physical custody here.
+        if (!params.isSourceRuntime && !isPathInsideRoot(dependencyRoot, nativePackageRoot)) {
+          continue;
+        }
         const nativePackageJsonPath = realpathSync(join(nativePackageRoot, 'package.json'));
         if (!isPathInsideRoot(nativePackageRoot, nativePackageJsonPath)) {
           continue;
@@ -599,6 +603,7 @@ function resolvePluginAuthorBundlerRuntime(params: Readonly<{
             mainPath,
             nativeBinaryPath: resolvePluginAuthorBundlerNativeBinary({
               packageRoot,
+              isSourceRuntime,
               packageJson,
             }),
           };

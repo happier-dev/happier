@@ -205,6 +205,35 @@ describe('bundlePluginDaemonRuntime', () => {
     }
   });
 
+  it('resolves the declared esbuild native executable across a captured source dependency link', async () => {
+    const capture = await mkdtemp(join(tmpdir(), 'happier-plugin-bundler-captured-'));
+    const runtimeRoot = join(capture, 'apps', 'cli');
+    const esbuildStore = join(capture, 'runtime-dependencies', '0');
+    const nativeStore = join(capture, 'runtime-dependencies', '1');
+    try {
+      const esbuildMainPath = await writeFixtureEsbuildPackage({
+        runtimeRoot,
+        packageNodeModulesRoot: esbuildStore,
+        nativePackageRoot: nativeStore,
+      });
+      await mkdir(runtimeRoot, { recursive: true });
+      await mkdir(join(capture, 'node_modules'));
+      await mkdir(join(esbuildStore, 'node_modules', '@esbuild'));
+      const linkType = process.platform === 'win32' ? 'junction' : 'dir';
+      await symlink(join(esbuildStore, 'node_modules', 'esbuild'), join(capture, 'node_modules', 'esbuild'), linkType);
+      await symlink(
+        join(nativeStore, 'node_modules', fixtureNativePackageName),
+        join(esbuildStore, 'node_modules', fixtureNativePackageName),
+        linkType,
+      );
+      expect(resolvePluginAuthorBundlerMainPath({
+        runtimeAuthority: { root: runtimeRoot, provenance: 'source-module' },
+      })).toBe(await realpath(esbuildMainPath));
+    } finally {
+      await rm(capture, { recursive: true, force: true });
+    }
+  });
+
   it('resolves a declared physical dependency from the same scoped npm install tree', async () => {
     const installRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-bundler-npm-install-'));
     const runtimeRoot = join(installRoot, 'node_modules', '@happier-dev', 'cli');
