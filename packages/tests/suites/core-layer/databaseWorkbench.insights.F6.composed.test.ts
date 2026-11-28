@@ -4,10 +4,15 @@ import { ActionOperationAcceptedResultSchema, type ActionExecuteResult } from '@
 import { ACTION_OPERATION_GET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
 import { ActionOperationGetV1ResponseSchema, readActionOperationTerminalResultV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { DATABASE_ACCESS_SET_ACTION_ID_V1, DATABASE_ACTIVITY_CANCEL_ACTION_ID_V1,
-    DATABASE_STATEMENT_EXPLAIN_ACTION_ID_V1, DATABASE_STATS_ENABLE_ACTION_ID_V1,
-    DATABASE_STATS_READ_ACTION_ID_V1 } from '../../../database-protocol/src/actionIdsDatabaseV1';
+    DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1, DATABASE_INSIGHTS_FINDINGS_LIST_ACTION_ID_V1,
+    DATABASE_INSIGHTS_FINDINGS_READ_ACTION_ID_V1, DATABASE_STATEMENT_EXPLAIN_ACTION_ID_V1,
+    DATABASE_STATS_ENABLE_ACTION_ID_V1, DATABASE_STATS_READ_ACTION_ID_V1,
+    DATABASE_TARGETS_LIST_ACTION_ID_V1 } from '../../../database-protocol/src/actionIdsDatabaseV1';
 import {
     DatabaseActivityCancelInputV1Schema,
+    DatabaseFindingBaselineV1Schema,
+    DatabaseFindingReadResultV1Schema,
+    DatabaseFindingsListResultV1Schema,
     DatabaseOperationResultV1Schema,
     DatabaseStatementExplainInputV1Schema,
     DatabaseStatsOperationInputV1Schema,
@@ -234,6 +239,8 @@ it('P4-F6-known-good-stats', async () => {
     if (!allowed.ok) throw new Error(`F6 Agent Cancel policy setup refused (${allowed.errorCode})`);
     const agent = await startDatabaseWorkbenchAgent(fixture, testDir);
     try {
+      expect(await agent.execute(DATABASE_TARGETS_LIST_ACTION_ID_V1, { scope: fixture.scope }))
+        .toMatchObject({ ok: true, result: { targets: expect.arrayContaining([expect.objectContaining({ target: targets.selected })]) } });
       const statsInput = DatabaseStatsOperationInputV1Schema.parse({
         operation: 'stats.read', target: targets.selected, request,
       });
@@ -254,6 +261,28 @@ it('P4-F6-known-good-stats', async () => {
           group: 'indexAdvice', status: 'unavailable', reason: 'hypopg_missing',
         },
       });
+      const findingsInput = { target: targets.selected, request: {
+        ...request, selection: { ...request.selection, statementKey: workload.key },
+      } };
+      const listResult = await agent.execute(DATABASE_INSIGHTS_FINDINGS_LIST_ACTION_ID_V1, findingsInput);
+      if (!listResult.ok) throw new Error(`F6 Agent findings list refused (${listResult.errorCode})`);
+      const findings = DatabaseFindingsListResultV1Schema.parse(listResult.result);
+      if (!findings.ok) throw new Error(`F6 Agent findings list unavailable (${findings.code})`);
+      const selected = findings.findings.find(row => row.recordKey === workload.key);
+      if (!selected) throw new Error('F6 Agent findings list lost the native workload');
+      const detailInput = { ...findingsInput, recordKey: selected.recordKey };
+      const detailResult = await agent.execute(DATABASE_INSIGHTS_FINDINGS_READ_ACTION_ID_V1, detailInput);
+      if (!detailResult.ok) throw new Error(`F6 Agent finding detail refused (${detailResult.errorCode})`);
+      const detail = DatabaseFindingReadResultV1Schema.parse(detailResult.result);
+      if (!detail.ok) throw new Error(`F6 Agent finding detail unavailable (${detail.code})`);
+      expect(detail.finding.normalizedShape).toContain('dbw_f6_selected');
+      const baseline = DatabaseFindingBaselineV1Schema.parse({ ...findings.observation,
+        summary: selected.summary, basis: detail.finding.verification.basis });
+      const briefInput = { ...detailInput, baseline };
+      expect(await agent.execute(DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1, briefInput))
+        .toMatchObject({ ok: true, result: { ok: true, brief: { evidence: { items: expect.arrayContaining([
+          expect.objectContaining({ text: expect.stringContaining(baseline.evidenceIdentity) }),
+        ]) } } } });
       expect(await observeOperation(await agent.execute(DATABASE_ACTIVITY_CANCEL_ACTION_ID_V1, cancelInput)))
         .toMatchObject({ ok: false, errorCode: 'database_agent_access_read_only' });
       expect(await fixture.executeDatabase(DATABASE_ACCESS_SET_ACTION_ID_V1, {
@@ -268,6 +297,13 @@ it('P4-F6-known-good-stats', async () => {
         .toMatchObject({ ok: true, result: { ok: true, agentAccess: 'none' } });
       expect(await agent.execute(DATABASE_STATS_READ_ACTION_ID_V1, statsInput))
         .toMatchObject({ ok: false, errorCode: 'database_agent_access_none' });
+      for (const [action, input] of [
+        [DATABASE_INSIGHTS_FINDINGS_LIST_ACTION_ID_V1, findingsInput],
+        [DATABASE_INSIGHTS_FINDINGS_READ_ACTION_ID_V1, detailInput],
+        [DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1, briefInput],
+      ] as const) {
+        expect(await agent.execute(action, input), action).toMatchObject({ ok: false, errorCode: 'database_agent_access_none' });
+      }
       expect(await fixture.executeDatabase(DATABASE_ACCESS_SET_ACTION_ID_V1, { target: targets.selected, agentAccess: 'read' }))
         .toMatchObject({ ok: true, result: { ok: true, agentAccess: 'read' } });
       console.info('P4-F6-external-blocker-and-vanished-cancel passed', fixture.runtime);
