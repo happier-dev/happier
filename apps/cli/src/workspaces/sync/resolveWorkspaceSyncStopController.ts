@@ -6,6 +6,7 @@ import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/action
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { WorkspaceSyncRelationshipTerminateActionInputV1Schema, type WorkspaceSyncRelationshipTerminateActionInputV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { readRequesterHomeWithinActionLifetime } from '@/daemon/sessionEncryption/requesterCurrentness';
 import type { StoredCredentials } from '@/persistence';
 import { readProjectAccountRows } from '@/workspaces/projectAccountRows';
 
@@ -29,21 +30,27 @@ export async function prepareWorkspaceSyncStopPlacement(input: Readonly<{
   machineId?: string;
   target?: ExternalActionTargetV1;
   signal?: AbortSignal;
+  readWithinActionLifetime?: boolean;
 }>): Promise<WorkspaceSyncStopPlacement | null> {
   const parsed = WorkspaceSyncRelationshipTerminateActionInputV1Schema.safeParse(input.rawInput);
   if (!parsed.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
   const nominatedMachineId = parsed.data.controllerMachineId;
   try {
-    const controllerMachineId = await resolveWorkspaceSyncStopController({
+    const readController = () => resolveWorkspaceSyncStopController({
       credentials: input.credentials, serverId: input.serverId, serverHttpBaseUrl: input.serverHttpBaseUrl,
       relationshipId: parsed.data.relationshipId, nominatedMachineId, signal: input.signal,
     });
-    if (controllerMachineId === nominatedMachineId) return null;
+    const controllerMachineId = input.readWithinActionLifetime
+      ? await readRequesterHomeWithinActionLifetime(readController, input.signal)
+      : await readController();
+    const rebound = controllerMachineId !== nominatedMachineId;
     const canAddressController = (id: string) => id === nominatedMachineId || id === controllerMachineId;
-    if (input.machineId && !canAddressController(input.machineId)
-      || input.target && (input.target.kind !== 'machine' || !canAddressController(input.target.machineId))) {
+    // An explicit target binds every Stop. The local Machine hint only constrains rebinding.
+    if ((input.target && (input.target.kind !== 'machine' || !canAddressController(input.target.machineId)))
+      || (rebound && input.machineId && !canAddressController(input.machineId))) {
       return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
     }
+    if (!rebound) return null;
     return { ok: true, input: { ...parsed.data, controllerMachineId },
       target: { kind: 'machine', machineId: controllerMachineId } };
   } catch (error) {
@@ -53,7 +60,7 @@ export async function prepareWorkspaceSyncStopPlacement(input: Readonly<{
 }
 
 /** An installed endpoint can initiate Stop. The admitted request runs on the link's controller. */
-export async function resolveWorkspaceSyncStopController(input: Readonly<{
+async function resolveWorkspaceSyncStopController(input: Readonly<{
   credentials: StoredCredentials;
   serverId: string;
   serverHttpBaseUrl: string;

@@ -2183,7 +2183,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         // Native reads keep their existing read receiver and transport.
         && !isDeploymentReadActionIdV1(actionId);
       let selectedOriginalMachine = (environmentPlacement || requireDaemonIngress || params.externalActionClient || managedMachineDaemonIngress
-        || requiresOriginalAccountMachineActionProof(spec.id, admittedInput, context)
+        || requiresOriginalAccountMachineActionProof(spec.id, admittedInput, context, executionPlacement)
         || declaredDaemonIngress)
         && (environmentPlacement || executionPlacement === 'machine' || controlControllerTarget !== null) && originalCliCaller
         ? resolveSelectedExternalActionMachineTarget({ actionId: spec.id, rawInput: admittedInput,
@@ -2394,7 +2394,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         }
         const daemonControlTarget = originalDaemonTarget;
         const needsMachineProof = !target && !ownManagedNativeIngress
-          && requiresOriginalAccountMachineActionProof(parsedActionId.data, admittedInput, context);
+          && requiresOriginalAccountMachineActionProof(parsedActionId.data, admittedInput, context, executionPlacement);
         if (needsMachineProof && ownDaemon && daemonControlTarget?.machineId) {
           target = { kind: 'machine', machineId: daemonControlTarget.machineId };
         }
@@ -2423,9 +2423,10 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
             const localPublication = daemonControlTarget ?? localEndpoint;
             const ownLocal = (ordinary || pairedTerminal) && accountId && localPublication?.machineId === target.machineId
               && localPublication.accountId === accountId;
-            if (!ownLocal || requiresOriginalAccountMachineActionProof(parsedActionId.data, admittedInput, context)) {
+            const machineProofRequired = requiresOriginalAccountMachineActionProof(parsedActionId.data, admittedInput, context, executionPlacement);
+            if (!ownLocal || machineProofRequired) {
               try {
-                if (requiresOriginalAccountMachineActionProof(parsedActionId.data, admittedInput, context)) {
+                if (machineProofRequired) {
                   if (!params.actionsSettingsProvider) await ensureCliActionPolicySettings(credentials, resolveActionServerApiUrl());
                   const policy = params.actionsSettingsProvider ?? createActionSettingsProvider({
                     scopeKey: resolveAccountSettingsScopeKeyForToken(credentials.token),

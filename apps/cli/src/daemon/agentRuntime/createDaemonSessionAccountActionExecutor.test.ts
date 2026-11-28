@@ -187,7 +187,12 @@ function createHarness(prepareExternalActionAuthorization?: Parameters<typeof cr
 
 describe('daemon Session Account authority', () => {
 
-  it('asks Home to sign Agent Stop on the original source from its linked Worker', async () => {
+  it.each([
+    { nominatedMachineId: 'worker', targetMachineId: undefined },
+    { nominatedMachineId: 'source', targetMachineId: undefined },
+    { nominatedMachineId: 'worker', targetMachineId: 'foreign' },
+    { nominatedMachineId: 'source', targetMachineId: 'foreign' },
+  ])('places Agent Stop nominated on $nominatedMachineId with target $targetMachineId', async ({ nominatedMachineId, targetMachineId }) => {
     const serverId = 'srv_agent_sync';
     const serverHttpBaseUrl = 'https://agent-sync.test';
     const machineId = 'worker';
@@ -236,7 +241,13 @@ describe('daemon Session Account authority', () => {
       createExecutor: () => { throw new Error('Home declined to sign the Stop'); },
     });
     const requested = await execute({ ...operation, surface: 'agent', actionId: 'workspace.sync.relationship.terminate',
-      input: { relationshipId, controllerMachineId: machineId } }, { sessionId: 'bob-session', isCurrent: async () => true });
+      input: { relationshipId, controllerMachineId: nominatedMachineId } },
+    { sessionId: 'bob-session', isCurrent: async () => true }, undefined, targetMachineId);
+    if (targetMachineId) {
+      expect(mint).toBeUndefined();
+      expect(requested).toEqual({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' });
+      return;
+    }
     expect(requested).toMatchObject({ ok: false });
     expect(mint).toMatchObject({ machineId: 'source', sessionActionSource: { machineId }, envelope: {
       target: { kind: 'machine', machineId: 'source' }, input: { relationshipId, controllerMachineId: 'source' },
