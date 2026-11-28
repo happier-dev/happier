@@ -47,7 +47,8 @@ export function useSessionRowPluginActions(params: Readonly<{
             actionsById: admittedProjection.actionsById, resourcesById: admittedProjection.resourcesById }) : null,
     [admittedProjection]);
     const localize = usePluginLocalizedTextResolver({ projection: admittedProjection });
-    const clientRevision = usePluginUiClientExecutableRegistrationRevision();
+    // A closed row menu presents no Action, so an index commit redraws no row.
+    const clientRevision = usePluginUiClientExecutableRegistrationRevision(undefined, demanded);
     const navigation = usePluginSurfaceDestinationNavigationBinding();
     const contextReader = useOptionalCurrentUiContextReader();
     const snapshotRef = React.useRef<PluginContributedActionCurrentSnapshot | null>(null);
