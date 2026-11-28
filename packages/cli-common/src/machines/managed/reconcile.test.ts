@@ -531,9 +531,14 @@ describe('portable managed reconciliation', () => {
     it.each([false, true])('acknowledges a foreground bootstrap failure only after Home retains it (report fails: %s)', async reportFails => {
         const run = boundary({ ...machine, allocation: 'bound', resource });
         const failure = new SystemTaskExecutionError('remote_command_failed', 'private guest output');
-        const reportFailure = new ManagedMachineControllerError('database_transaction_timeout');
+        const reportFailure = new ManagedMachineControllerError('action_forbidden', 401, undefined, {
+            phase: 'home.authorization.effect_family',
+            errorClass: 'HttpStatusError', errorCode: 'action_forbidden', httpStatus: 401,
+        });
+        const reportFailures: unknown[] = [];
         const work = reconcileManagedMachine({ ...run.input,
             bootstrap: { ...run.input.bootstrap, enroll: async () => { throw failure; } },
+            onReportFailure: error => reportFailures.push(error),
             home: { ...run.input.home, row: async (...args: Parameters<typeof run.input.home.row>) => {
                 const report = args[0] === 'report' ? ManagedControllerReportV1Schema.parse(args[1]) : null;
                 if (reportFails && report?.observation?.availability === 'unavailable' && 'reason' in report.observation
