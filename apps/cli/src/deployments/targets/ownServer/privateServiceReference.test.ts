@@ -1,4 +1,6 @@
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
+import axios from 'axios';
+import { ApiClient } from '@/api/api';
 import nacl from 'tweetnacl';
 import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import { withOwnServerBuildFixture, withOwnServerRemoteReferenceFixture } from './buildReceipt.testkit';
@@ -165,10 +167,30 @@ it.each([
     }, { buildReference: true, referenceDualPublication: iroh, referenceNetworkObserved: shared });
 });
 
-it('uses Iroh for a cross-Machine export', async () => {
+it('reads a four-member fleet in one metadata wave and uses only the exact Iroh installation', async () => {
     await withOwnServerRemoteReferenceFixture(async ({ host, request, environment, referenceEnvironment, custody }) => {
         const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
         if (!lease) throw new Error('Source service owner required');
+        const link = referenceEnvironment.targetLinks[0]!.targetLink;
+        const replaced = ['machine-e', 'machine-f', 'machine-g'];
+        const valid = link.members[0]!;
+        link.members.push(...replaced.map(machineId => ({ machineId, installationId: 'prior-installation', state: 'active' as const })));
+        link.machines.push(...replaced);
+        const previousGet = vi.mocked(axios.get).getMockImplementation()!;
+        const create = vi.spyOn(ApiClient, 'create');
+        let inFlight = 0;
+        let peak = 0;
+        vi.mocked(axios.get).mockImplementation(async (url, options) => {
+            const machineId = new URL(String(url)).pathname.split('/').at(-1)!;
+            if (!String(url).includes('/v1/machines/')) return previousGet(url, options);
+            peak = Math.max(peak, ++inFlight);
+            try {
+                await new Promise<void>(resolve => setImmediate(resolve));
+                if (!replaced.includes(machineId)) return previousGet(url, options);
+                const original = await previousGet(String(url).replace(machineId, valid.machineId), options);
+                return { ...original, data: { machine: { ...original.data.machine, id: machineId } } };
+            } finally { inFlight--; }
+        });
         try {
             const material = await resolvePrivateServiceReferenceMaterialForHost({
                 source: { kind: 'reference', environmentId: 'source-database', export: 'database', via: 'auto' },
@@ -182,7 +204,13 @@ it('uses Iroh for a cross-Machine export', async () => {
                 },
             });
             expect(material).toEqual({ value: 'postgres://127.0.0.1:32567', route: { kind: 'iroh', observedPath: 'relay' } });
-        } finally { await lease.release(); }
+            expect.soft(create).toHaveBeenCalledTimes(1);
+            expect(peak).toBe(5);
+        } finally {
+            create.mockRestore();
+            vi.mocked(axios.get).mockImplementation(previousGet);
+            await lease.release();
+        }
     }, { referenceIroh: true, referenceBindAddress: '127.0.0.1' });
 });
 

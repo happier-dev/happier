@@ -123,16 +123,22 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
                 return { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), ...authorized };
             };
             const storageServerId = context.externalActionExecutionAuthorization?.binding.serverIdentityId ?? host.serverId;
-            const transport = getActionSpec('deployments.environments.get').serverTransport;
-            if (!transport) return refuse('unsupported_action');
-            const { path } = bindHomeDomainHttpRequestV1({ transport, inputSchema: DeploymentEnvironmentGetInputV1Schema,
-                input: { serverId: storageServerId, environmentId: input.environmentId } });
-            const response = await axios.request<unknown>({ method: 'GET', url: `${host.serverHttpBaseUrl}${path}`,
-                headers: await headers({ method: 'GET', path }, 'deployments.environments.get'), signal: context.signal, maxRedirects: 0, validateStatus: () => true });
-            await assertAuthority();
-            const loaded = DeploymentEnvironmentGetResultV1Schema.parse(response.data);
-            if (!loaded.ok) return refuse(loaded.error);
-            if (response.status !== 200 || !loaded.environment.capabilities.manageBindings) return refuse('deployment_access_denied');
+            const readMetadata = async () => {
+                const transport = getActionSpec('deployments.environments.get').serverTransport;
+                if (!transport) return refuse('unsupported_action');
+                const { path } = bindHomeDomainHttpRequestV1({ transport, inputSchema: DeploymentEnvironmentGetInputV1Schema,
+                    input: { serverId: storageServerId, environmentId: input.environmentId } });
+                const response = await axios.request<unknown>({ method: 'GET', url: `${host.serverHttpBaseUrl}${path}`,
+                    headers: await headers({ method: 'GET', path }, 'deployments.environments.get'), signal: context.signal, maxRedirects: 0, validateStatus: () => true });
+                await assertAuthority();
+                const loaded = DeploymentEnvironmentGetResultV1Schema.parse(response.data);
+                if (!loaded.ok) return refuse(loaded.error);
+                if (response.status !== 200) return refuse('deployment_access_denied');
+                return loaded;
+            };
+            const loaded = request.bindingContent?.loaded ?? await readMetadata();
+            if (request.bindingContent) await assertAuthority();
+            if (!loaded.environment.capabilities.manageBindings) return refuse('deployment_access_denied');
             if (loaded.environment.revision !== input.expectedRevision) return refuse('deployment_conflict');
             const targetLinkId = loaded.environment.runtimeTargetLinkId;
             const runtimeLink = loaded.targetLinks.find(link => link.id === targetLinkId);
@@ -192,18 +198,22 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
                     referencedSavedSecretRevisions: captureDeploymentBindingSavedSecretRevisionsV1(opened.content.bindings),
                     copyRestoreSeal: input.copyRestoreSeal, grants: prepared.grants };
             }
-            const [currentArtifact, candidateArtifact] = await Promise.all([
-                open(loaded.environment.contentArtifactId), 'contentArtifactId' in input ? open(input.contentArtifactId) : null,
-            ]);
-            const current = readDeploymentEnvironmentArtifactV1(loaded.environment, currentArtifact);
+            const currentArtifact = request.bindingContent ? null : open(loaded.environment.contentArtifactId);
+            const candidateArtifact = !request.bindingContent && 'contentArtifactId' in input
+                ? input.contentArtifactId === loaded.environment.contentArtifactId ? currentArtifact : open(input.contentArtifactId)
+                : null;
+            const [currentDocument, candidateDocument] = await Promise.all([currentArtifact, candidateArtifact]);
+            const current = request.bindingContent ? { ok: true as const, content: request.bindingContent.currentContent }
+                : readDeploymentEnvironmentArtifactV1(loaded.environment, currentDocument);
             if (!current.ok) return refuseDeploymentArtifactRead(current);
             const { telemetryCollector: _previousPin, ...unpinned } = current.content;
-            const candidate = 'set' in input ? { ok: true as const, content: { ...(input.telemetryCollector === undefined ? current.content
+            const candidate = request.bindingContent ? { ok: true as const, content: request.bindingContent.nextContent }
+                : 'set' in input ? { ok: true as const, content: { ...(input.telemetryCollector === undefined ? current.content
                 : input.telemetryCollector === null ? unpinned : { ...current.content, telemetryCollector: input.telemetryCollector }),
                 ...(input.telemetry === undefined ? {} : { telemetry: input.telemetry }),
                 bindings: applyEnvironmentSecretBindingsPatchV1(current.content.bindings,
                     { set: input.set, remove: input.remove }, randomUUID, { upgradeRetainedVariableRefs: !managedPlatformBindings }) } }
-                : readDeploymentEnvironmentArtifactV1(input, candidateArtifact);
+                : readDeploymentEnvironmentArtifactV1(input, candidateDocument);
             if (!candidate.ok) return refuseDeploymentArtifactRead(candidate);
             if (request.environmentUpdate ? false : request.buildMachineId ? !isDeepStrictEqual(current.content.bindings, candidate.content.bindings)
                 : !isDeploymentEnvironmentBindingsOnlyUpdateV1(current.content, candidate.content, telemetryChild ? 'telemetry' : 'bindings')) return refuse('deployment_invalid');

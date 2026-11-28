@@ -1,4 +1,5 @@
 import type { Tx } from '@/storage/inTx';
+import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { readTransactionDatabaseTime } from '@/storage/transactionDatabaseTime';
 import { disableAutomationInTx } from '@/app/automations/automationCrudService';
 import { admitAutomationRunsTx } from '@/app/automations/automationRunAdmissionService';
@@ -23,17 +24,30 @@ export async function retireDeploymentPreviewsForSourceReplacementInTx(tx: Tx, i
     for (const template of templates) await lockDeploymentEnvironmentInTx(tx, template.id);
     const admissionJobs: { id: string; accountId: string }[] = [];
     const cleanupJobs: { id: string; accountId: string }[] = [];
-    for (const template of templates) {
-        const jobs = await tx.automation.findMany({ where: { deploymentEnvironmentId: template.id,
-            deploymentPreviewRole: { in: ['preview_admission', 'preview_cleanup'] }, deletedAt: null },
-        select: { id: true, accountId: true, deploymentPreviewRole: true, enabled: true }, orderBy: { id: 'asc' } });
-        admissionJobs.push(...jobs.filter(job => job.deploymentPreviewRole === 'preview_admission' && job.enabled));
-        const child = await tx.deploymentEnvironment.findFirst({ where: { previewTemplateEnvironmentId: template.id,
-            deletedAt: null }, select: { id: true } });
-        if (!child) continue;
-        const cleanup = jobs.filter(job => job.deploymentPreviewRole === 'preview_cleanup' && job.enabled);
-        if (cleanup.length === 0) throw new AutomationValidationError('Live previews require an enabled cleanup Workflow');
-        cleanupJobs.push(...cleanup);
+    const templateIds = templates.map(template => template.id);
+    for (const ids of portableQueryChunks({ values: templateIds, bindingsPerValue: 1, fixedBindings: 3 })) {
+        const jobs = await tx.automation.findMany({ where: { deploymentEnvironmentId: { in: [...ids] },
+            deploymentPreviewRole: { in: ['preview_admission', 'preview_cleanup'] }, deletedAt: null, enabled: true },
+        select: { id: true, accountId: true, deploymentEnvironmentId: true, deploymentPreviewRole: true }, orderBy: { id: 'asc' } });
+        const live = await tx.deploymentEnvironment.groupBy({ by: ['previewTemplateEnvironmentId'],
+            where: { previewTemplateEnvironmentId: { in: [...ids] }, deletedAt: null } });
+        const liveTemplates = new Set(live.map(child => child.previewTemplateEnvironmentId));
+        const cleanupByTemplate = new Map<string, typeof cleanupJobs>();
+        const admissionByTemplate = new Map<string, typeof admissionJobs>();
+        for (const job of jobs) {
+            if (job.deploymentEnvironmentId === null) continue;
+            const byTemplate = job.deploymentPreviewRole === 'preview_admission' ? admissionByTemplate : cleanupByTemplate;
+            const forTemplate = byTemplate.get(job.deploymentEnvironmentId) ?? [];
+            forTemplate.push({ id: job.id, accountId: job.accountId });
+            byTemplate.set(job.deploymentEnvironmentId, forTemplate);
+        }
+        for (const id of ids) {
+            admissionJobs.push(...admissionByTemplate.get(id) ?? []);
+            if (!liveTemplates.has(id)) continue;
+            const cleanup = cleanupByTemplate.get(id);
+            if (!cleanup?.length) throw new AutomationValidationError('Live previews require an enabled cleanup Workflow');
+            cleanupJobs.push(...cleanup);
+        }
     }
     const changed = [...admissionJobs, ...cleanupJobs];
     if (changed.length === 0) return;

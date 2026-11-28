@@ -111,7 +111,6 @@ export async function syncEnvironmentSecretGrantsInTx(tx: Tx, input: Readonly<{
     /** The public semantic writer admits an actual seal mutation, not equal-seal maintenance. */
     admitMutation?: () => Promise<DeploymentFailure | null>;
 }>): Promise<boolean | null | DeploymentFailure> {
-    let changed = false;
     const desired = new Map<string, z.infer<typeof MachineSecretGrantV1Schema>>();
     for (const grant of input.grants) {
         const parsed = MachineSecretGrantV1Schema.safeParse(grant);
@@ -133,36 +132,37 @@ export async function syncEnvironmentSecretGrantsInTx(tx: Tx, input: Readonly<{
     const retainedBuild = (grant: MachineSecretGrantV1) => grant.kind !== 'connectorToken'
         && (grant.kind === 'secret' || grant.binding.phase === 'build')
         && acceptedBuilders.has(JSON.stringify([grant.machineId, grant.installationId]));
-    // One subject has one live seal. Refuse all conflicts before any write;
-    // accepted custody has no historical ciphertext fallback.
-    if ([...desired].some(([key, grant]) => {
-        const previous = existing.get(key);
-        return previous && retainedBuild(previous) && previous.sealedContent !== grant.sealedContent;
-    })) return null;
-    const willChange = [...desired].some(([key, grant]) => existing.get(key)?.sealedContent !== grant.sealedContent)
-        || [...existing].some(([key, grant]) => !desired.has(key) && !retainedBuild(grant));
-    if (willChange && input.admitMutation) {
+    const toCreate: ReturnType<typeof grantRow>[] = [];
+    const toUpdate: { subjectKey: string; contentEnvelope: string }[] = [];
+    const toDelete: string[] = [];
+    // Accepted custody has no historical ciphertext fallback. Partition and
+    // refuse every same-subject conflict before admission or any write.
+    for (const [subjectKey, grant] of desired) {
+        const previous = existing.get(subjectKey);
+        if (!previous) toCreate.push(grantRow(grant));
+        else if (previous.sealedContent !== grant.sealedContent) {
+            if (retainedBuild(previous)) return null;
+            toUpdate.push({ subjectKey, contentEnvelope: grant.sealedContent });
+        }
+    }
+    for (const [subjectKey, grant] of existing) {
+        if (!desired.has(subjectKey) && !retainedBuild(grant)) toDelete.push(subjectKey);
+    }
+    if (!toCreate.length && !toUpdate.length && !toDelete.length) return false;
+    if (input.admitMutation) {
         const denied = await input.admitMutation();
         if (denied) return denied;
     }
-    for (const [key, grant] of desired) {
-        const previous = existing.get(key);
-        if (!previous) {
-            await tx.machineSecretGrant.create({ data: grantRow(grant) });
-            changed = true;
-        }
-        else if (previous.sealedContent !== grant.sealedContent) {
-            await tx.machineSecretGrant.update({ where: { subjectKey: key }, data: { contentEnvelope: grant.sealedContent } });
-            changed = true;
-        }
+    for (const rows of portableQueryChunks({ values: toCreate, bindingsPerValue: Object.keys(toCreate[0] ?? {}).length || 1 })) {
+        await tx.machineSecretGrant.createMany({ data: [...rows] });
     }
-    for (const [key, grant] of existing) {
-        if (!desired.has(key) && !retainedBuild(grant)) {
-            await tx.machineSecretGrant.delete({ where: { subjectKey: key } });
-            changed = true;
-        }
+    for (const { subjectKey, contentEnvelope } of toUpdate) {
+        await tx.machineSecretGrant.update({ where: { subjectKey }, data: { contentEnvelope } });
     }
-    return changed;
+    for (const keys of portableQueryChunks({ values: toDelete, bindingsPerValue: 1 })) {
+        await tx.machineSecretGrant.deleteMany({ where: { subjectKey: { in: [...keys] } } });
+    }
+    return true;
 }
 
 /** The source backup uses one installation opens to read a copy. The copy read and the copy seal writer share it;

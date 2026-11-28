@@ -11,6 +11,7 @@ import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/te
 import { createDeploymentReceiptHeaderV1, createDeploymentSecretVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createCliDeploymentActionDeps } from './createCliDeploymentActionDeps';
 import { createPrepareEnvironmentContentForHost } from './prepareEnvironmentContentForHost';
+import { createPrepareDeploymentBindingsForHost } from './secrets/prepareDeploymentBindingsForHost';
 import { DeploymentPrepareInputV1Schema, DeploymentEnvironmentCreationReviewV1Schema, DeploymentReceiptListResultV1Schema, DeploymentActionOutputSchemasV1,
     ArtifactJsonCreateHttpInputV1Schema } from '@happier-dev/protocol';
 import { resolveDeploymentCreationDefaultsV1 } from '@happier-dev/deployments';
@@ -581,6 +582,61 @@ it.each(['plain', 'e2ee'] as const)('admits an ingress-only update against its r
     expect(acknowledged).toMatchObject({ ok: true, revision: detail.environment.revision + 1, preparedArtifact: {
         contentArtifactId: written.contentArtifactId, contentHeaderVersion: 1, contentBodyVersion: 1,
     } });
+});
+
+it.each(['plain', 'e2ee'] as const)('shares the admitted %s Environment and content with binding preparation', async mode => {
+    const detail = createDeploymentEnvironmentDetailV1();
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+    const credentials: StoredCredentials = { token, encryption: mode === 'plain' ? null
+        : { type: 'legacy', secret: new Uint8Array(32).fill(23) } };
+    const key = await createResourceDataKey({ credentials, mode });
+    const encode = (value: unknown) => key.mode === 'plain' ? encodePlainArtifactStoredContent(value)
+        : encodeBase64(encryptWithDataKey(value, key.dataKey));
+    const candidateArtifacts = new Map<string, ReturnType<typeof ArtifactJsonCreateHttpInputV1Schema.parse>>();
+    const artifactReads: string[] = [];
+    vi.spyOn(axios, 'get').mockImplementation(async url => {
+        if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200,
+            data: createAccountEncryptionCurrentnessFixture({ mode }) };
+        if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode, updatedAt: 0 } };
+        const artifactId = new URL(url).pathname.split('/').at(-1)!;
+        artifactReads.push(artifactId);
+        const candidate = candidateArtifacts.get(artifactId);
+        if (candidate) return { status: 200, data: { ...candidate, ownerAccountId: 'owner', access: 'owner',
+            publicAudience: 'none', encryptionMode: mode, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 } };
+        return { status: 200, data: { id: detail.environment.contentArtifactId, ownerAccountId: 'owner', access: 'owner',
+            publicAudience: 'none', encryptionMode: mode,
+            dataEncryptionKey: key.mode === 'plain' ? ARTIFACT_PLAIN_DATA_KEY_MARKER : key.dataEncryptionKey,
+            header: encode({ kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: detail.content.name }),
+            body: encode({ body: JSON.stringify({ ...detail.content, bindings: [] }) }),
+            headerVersion: detail.environment.contentHeaderVersion, bodyVersion: detail.environment.contentBodyVersion,
+            seq: 1, createdAt: 1, updatedAt: 1 } };
+    });
+    const requests = vi.spyOn(axios, 'request').mockImplementation(async request => request.method === 'GET'
+        ? { status: 200, data: { ok: true, environment: detail.environment,
+            targetLinks: detail.targetLinks.map(item => item.targetLink) } }
+        : { status: 200, data: { ok: true, environmentId: detail.environment.id, revision: detail.environment.revision + 1 } });
+    const privateWrites = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+        expect(new URL(url).pathname).toBe('/v1/artifacts');
+        const input = ArtifactJsonCreateHttpInputV1Schema.parse(body);
+        candidateArtifacts.set(input.id, input);
+        return { status: 200, data: { id: input.id, headerVersion: 1, bodyVersion: 1 } };
+    });
+    const resolveRequestHeaders = async () => ({ Authorization: `Bearer ${credentials.token}` });
+    const deps = createCliDeploymentActionDeps({ serverHttpBaseUrl: 'https://home.test', admitAccount: async () => null,
+        resolveRequestHeaders, prepareEnvironment: createPrepareEnvironmentContentForHost({ credentials,
+            serverHttpBaseUrl: 'https://home.test', resolveRequestHeaders }),
+        prepareBindings: createPrepareDeploymentBindingsForHost({ credentials, serverId: detail.environment.serverId,
+            serverHttpBaseUrl: 'https://home.test', machineId: null, resolveRequestHeaders }),
+        async dispatchReceipt() { throw new Error('An ingress edit cannot dispatch a deployment receipt'); } });
+    const updated = await deps.deploymentAction!('deployments.environments.update', { serverId: detail.environment.serverId,
+        environmentId: detail.environment.id, expectedRevision: detail.environment.revision,
+        contentArtifactId: detail.environment.contentArtifactId, contentHeaderVersion: detail.environment.contentHeaderVersion,
+        contentBodyVersion: detail.environment.contentBodyVersion, patch: { bindings: { set: [], remove: [] } } }, {});
+    const acknowledged = DeploymentActionOutputSchemasV1['deployments.environments.update'].parse(updated);
+    expect(privateWrites).toHaveBeenCalledTimes(1);
+    expect(acknowledged).toMatchObject({ ok: true, revision: detail.environment.revision + 1 });
+    expect.soft(requests.mock.calls.filter(([request]) => request.method === 'GET')).toHaveLength(1);
+    expect(artifactReads).toEqual([detail.environment.contentArtifactId]);
 });
 
 

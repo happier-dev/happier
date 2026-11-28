@@ -110,17 +110,16 @@ async function readPrivateServiceExportAdmissionForHost(input: PrivateServiceRef
     const link = environment.targetLinks.find(item => item.targetLink.id === environment.environment.runtimeTargetLinkId)?.targetLink;
     if (!link) return unavailable();
     const authorization = input.context.externalActionExecutionAuthorization;
+    const api = authorization ? undefined : await runWithServerHttpBaseUrl(host.serverHttpBaseUrl, () => ApiClient.create(host.credentials));
     const readMachine = (machineId: string) => runWithServerHttpBaseUrl(host.serverHttpBaseUrl, () => authorization
         ? ApiClient.getRequesterMachine(machineId, { authorization, signal, effectActionId: input.actionId })
-        : ApiClient.create(host.credentials).then(api => api.getMachine(machineId, { signal })));
-    const consumer = await readMachine(host.machineId);
-    const observerNetworks = consumer?.daemonState?.reachability?.privateNetworks ?? [];
-    const networkAdmissions = new Map<string, Extract<PrivateServiceExportAdmissionForHost, { kind: 'local' | 'privateNetwork' }>>();
-    const forwards: Extract<PrivateServiceExportAdmissionForHost, { kind: 'iroh' | 'local' }>[] = [];
-    for (const member of link.members) {
-        if (member.state !== 'active' || input.targetMachineId && member.machineId !== input.targetMachineId) continue;
-        const machine = member.machineId === host.machineId ? consumer : await readMachine(member.machineId);
-        if (machine?.installationId !== member.installationId) continue;
+        : api!.getMachine(machineId, { signal }));
+    const consumer = readMachine(host.machineId);
+    const selectedMembers = link.members.filter(member => member.state === 'active'
+        && (!input.targetMachineId || member.machineId === input.targetMachineId));
+    const [observer, memberRows] = await Promise.all([consumer, Promise.all(selectedMembers.map(async member => {
+        const machine = await (member.machineId === host.machineId ? consumer : readMachine(member.machineId));
+        if (machine?.installationId !== member.installationId) return null;
         const networks = machine.daemonState?.reachability?.privateNetworks ?? [];
         let rows: readonly MachineServiceRowV1[];
         if (member.machineId === host.machineId) {
@@ -145,6 +144,14 @@ async function readPrivateServiceExportAdmissionForHost(input: PrivateServiceRef
             const result = MachineServicesListResultV1Schema.parse(reply);
             rows = result.kind === 'snapshot' ? result.services : [];
         }
+        return { member, networks, rows };
+    }))]);
+    const observerNetworks = observer?.daemonState?.reachability?.privateNetworks ?? [];
+    const networkAdmissions = new Map<string, Extract<PrivateServiceExportAdmissionForHost, { kind: 'local' | 'privateNetwork' }>>();
+    const forwards: Extract<PrivateServiceExportAdmissionForHost, { kind: 'iroh' | 'local' }>[] = [];
+    for (const result of memberRows) {
+        if (!result) continue;
+        const { member, networks, rows } = result;
         for (const row of rows) {
             if (iroh) {
                 const admitted = selectIrohExport(exported, row, { environmentId: source.environmentId,

@@ -14,7 +14,7 @@ import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/action
 import { projectConfirmedActionHttpRefusal } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import axios from '@/api/client/credentialAxios';
 import { readHttpStatus } from '@/api/client/httpStatusError';
-import { DEPLOYMENT_STOP_ACCEPTED_HEADER_V1, DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, type DeploymentCancelInputV1, DeploymentTargetLinkInputV1Schema, DeploymentEnvironmentCreateResultV1Schema, type DeploymentActionInputV1, type DeploymentActionOutputV1, type DeploymentReceiptResultV1, type DeploymentEnvironmentCreationReviewV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DEPLOYMENT_STOP_ACCEPTED_HEADER_V1, DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, type DeploymentCancelInputV1, DeploymentTargetLinkInputV1Schema, DeploymentEnvironmentCreateResultV1Schema, type DeploymentActionInputV1, type DeploymentActionOutputV1, type DeploymentEnvironmentGetResultV1, type DeploymentReceiptResultV1, type DeploymentEnvironmentCreationReviewV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentDeployInputV1Schema, DeploymentRollbackInputV1Schema } from '@happier-dev/protocol/deployments/deploymentDeployIntentV1';
 import { DeploymentTeardownInputV1Schema, type DeploymentTeardownInputV1 } from '@happier-dev/protocol/deployments/deploymentTeardownRequestV1';
 import { DeploymentPromoteInputV1Schema } from '@happier-dev/protocol/deployments/deploymentPromoteIntentV1';
@@ -38,7 +38,7 @@ import {
 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { bindHomeDomainHttpRequestV1, classifyHomeDomainHttpMutationFailureV1, readHomeDomainConfirmedRollbackV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
-import type { DeploymentEnvironmentContentPreparation, DeploymentEnvironmentContentPreparationResult } from './prepareEnvironmentContentForHost';
+import type { DeploymentEnvironmentContentPreparation, DeploymentEnvironmentContentPreparationResult, PreparedEnvironmentBindingContent } from './prepareEnvironmentContentForHost';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { normalizeServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { acquireRequesterAccountEncryptionCurrentness, type RequesterEnvironmentAccessObservation } from '@/api/client/accountEncryptionCurrentnessObservation';
@@ -79,6 +79,7 @@ export type DeploymentBindingPreparationRequestV1 = Readonly<{
   buildMachineId?: string;
   /** Full candidate already admitted by the Environment content owner, before the same storage CAS. */
   environmentUpdate?: true;
+  bindingContent?: PreparedEnvironmentBindingContent;
 }>;
 export type CliDeploymentEnvironmentAccessRead = (input: Omit<DeploymentEnvironmentAccessInputV1, 'environmentIds'>
   & Readonly<{ environmentIds: readonly string[] }>, context: ActionExecutorContext, effectActionId: string
@@ -233,6 +234,8 @@ export function createCliDeploymentActionDeps(params: Readonly<{
         : transportRefusal(thrown) ?? localAdmissionFailure(thrown) ?? homeRequestFailure(error, context);
     }
   };
+  function request(actionId: 'deployments.environments.get', input: DeploymentActionInputV1,
+    context: ActionExecutorContext, authorizationActionId: 'deployments.environments.update'): Promise<DeploymentEnvironmentGetResultV1 | ActionExecuteFailure>;
   function request(actionId: DeploymentTransportActionIdV1, input: DeploymentActionInputV1,
     context: ActionExecutorContext, authorizationActionId?: DeploymentTransportActionIdV1,
     creationReview?: DeploymentStoragePreparation, approvalMetadata?: false, observers?: DeploymentRequestObservers): Promise<DeploymentActionOutputV1 | ActionExecuteFailure>;
@@ -277,6 +280,8 @@ export function createCliDeploymentActionDeps(params: Readonly<{
       if (actionId === 'deployments.environments.create' || actionId === 'deployments.environments.update') {
         const preparedInput = actionId === 'deployments.environments.create'
           ? DeploymentEnvironmentCreateInputV1Schema.parse(input) : DeploymentActionInputSchemasV1[actionId].parse(input);
+        let loaded: PreparedEnvironmentBindingContent['loaded'] | undefined;
+        let prepareBuildPlacement = false;
         // Core retains this host-private review with its exact prepared input.
         // Direct prepared references still enter content admission below.
         let needsContentAdmission = actionId !== 'deployments.environments.create' || creationReview === undefined
@@ -296,42 +301,37 @@ export function createCliDeploymentActionDeps(params: Readonly<{
             || current.environment.contentArtifactId !== preparedInput.contentArtifactId
             || current.environment.contentHeaderVersion !== preparedInput.contentHeaderVersion
             || current.environment.contentBodyVersion !== preparedInput.contentBodyVersion;
-          if (preparedInput.patch.buildMachineId !== undefined && preparedInput.patch.buildMachineId !== current.environment.buildMachineId
-            && preparedInput.patch.bindings === undefined
-            && params.prepareBindings && (current.environment.runtimeTargetLinkId !== undefined || needsContentAdmission)) {
-            const prepared = await params.prepareBindings({ input: {
-              serverId: preparedInput.serverId, environmentId: preparedInput.environmentId,
-              expectedRevision: preparedInput.expectedRevision, contentArtifactId: preparedInput.contentArtifactId,
-              contentHeaderVersion: preparedInput.contentHeaderVersion, contentBodyVersion: preparedInput.contentBodyVersion,
-              referencedSavedSecretRevisions: [],
-            }, context, buildMachineId: preparedInput.patch.buildMachineId });
-            if ('errorCode' in prepared) return prepared;
-            preparedUpdateBindings = { grants: prepared.grants,
-              referencedSavedSecretRevisions: prepared.referencedSavedSecretRevisions };
-          }
+          loaded = current;
+          prepareBuildPlacement = preparedInput.patch.buildMachineId !== undefined
+            && preparedInput.patch.buildMachineId !== current.environment.buildMachineId
+            && preparedInput.patch.bindings === undefined && params.prepareBindings !== undefined;
         }
         if (needsContentAdmission) {
           if (!params.prepareEnvironment) return failure('client_required');
-          const preparedContent = await params.prepareEnvironment({ actionId, input: preparedInput, context });
+          const preparedContent = await params.prepareEnvironment({ actionId, input: preparedInput, context, loaded });
           if (preparedContent && 'errorCode' in preparedContent) return preparedContent;
+          const candidate = preparedContent?.input ?? preparedInput;
           if (preparedContent) {
             input = preparedContent.input;
             authoredEnvironmentInputDigest = preparedContent.authoredInputDigest;
-            if (actionId === 'deployments.environments.update') preparedUpdateArtifact = {
+            if (actionId === 'deployments.environments.update' && ('patch' in preparedInput
+              && hasDeploymentEnvironmentContentPatchV1(preparedInput.patch ?? {})
+              || preparedContent.input.contentArtifactId !== preparedInput.contentArtifactId)) preparedUpdateArtifact = {
               contentArtifactId: preparedContent.input.contentArtifactId,
               contentHeaderVersion: preparedContent.input.contentHeaderVersion,
               contentBodyVersion: preparedContent.input.contentBodyVersion,
             };
           }
-          if ('patch' in preparedInput && preparedInput.patch?.bindings) {
+          if ('patch' in preparedInput && 'environmentId' in candidate
+            && (preparedInput.patch?.bindings || prepareBuildPlacement)) {
             if (!params.prepareBindings) return failure('client_required');
-            const candidate = DeploymentActionInputSchemasV1['deployments.environments.update'].parse(input);
             const prepared = await params.prepareBindings({ input: {
               serverId: candidate.serverId, environmentId: candidate.environmentId, expectedRevision: candidate.expectedRevision,
               contentArtifactId: candidate.contentArtifactId, contentHeaderVersion: candidate.contentHeaderVersion,
               contentBodyVersion: candidate.contentBodyVersion, referencedSavedSecretRevisions: [],
-            }, context, environmentUpdate: true,
-              ...(preparedInput.patch.buildMachineId ? { buildMachineId: preparedInput.patch.buildMachineId } : {}) });
+            }, context, bindingContent: preparedContent?.bindingContent,
+              ...(preparedInput.patch?.bindings ? { environmentUpdate: true as const } : {}),
+              ...(preparedInput.patch?.buildMachineId ? { buildMachineId: preparedInput.patch.buildMachineId } : {}) });
             if ('errorCode' in prepared) return prepared;
             preparedUpdateBindings = { grants: prepared.grants,
               referencedSavedSecretRevisions: prepared.referencedSavedSecretRevisions };
@@ -435,6 +435,8 @@ export function createCliDeploymentActionDeps(params: Readonly<{
       }
       if (!parsed.success) return failure(response.status === 404 || response.status === 405 || response.status === 501
         ? 'unsupported_action' : method === 'GET' ? 'invalid_action_output' : 'outcome_unknown');
+      if (actionId === 'deployments.environments.get' && authorizationActionId === 'deployments.environments.update'
+        && response.status !== 200 && 'ok' in parsed.data && parsed.data.ok) return failure('deployment_access_denied');
       if (method === 'GET') {
         context.signal?.throwIfAborted();
         const changed = await params.admitAccount(input.serverId, context);

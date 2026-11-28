@@ -12,7 +12,7 @@ import { readNativeComposeDeploymentImageReferences, removeNativeComposeDeployme
     resolveNativeComposeDeploymentImageReferences } from '@/daemon/local/services/launch/nativeComposeImageIdentity';
 import { removeNativeComposeExitedDeploymentContainers,
     resolveNativeComposeCandidateProjectName } from '@/daemon/local/services/launch/nativeComposeLifecycle';
-import { computeWorkspaceSyncRootFingerprint } from '@/workspaces/sync/workspaceSyncRootIdentity';
+import { computeWorkspaceSyncRootFingerprint, readWorkspaceSyncRootObjectIdentity, workspaceSyncRootObjectIdentitiesEqual } from '@/workspaces/sync/workspaceSyncRootIdentity';
 import { removeStoragePath, readStoragePathIdentity } from '@/storage/trash/removeStoragePath';
 import { filesystemPathComparisonKey, isFilesystemPathAbsolute } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import { readOwnServerImageArchiveOriginHint, retireOwnServerImageArchiveForHost } from './releaseProvenance';
@@ -212,7 +212,7 @@ async function pruneOperationLog(input: Readonly<{ physicalRoot: string; log: Ow
 export async function pruneOwnServerDeploymentSource(input: Readonly<{
     deploymentRoot: string; environmentInstanceId: string; source: OwnServerDeploymentSourceV1;
     nativeBindSources: readonly string[]; assertCurrent(): Promise<void>;
-    operationLog?: OwnServerStageLogProvenance;
+    operationLog?: OwnServerStageLogProvenance; signal?: AbortSignal;
 }>): Promise<Readonly<{ removed: readonly string[]; kept: readonly string[] }>> {
     const { source } = input;
     const placement = { deploymentRoot: input.deploymentRoot, environmentInstanceId: input.environmentInstanceId,
@@ -221,14 +221,21 @@ export async function pruneOwnServerDeploymentSource(input: Readonly<{
     const path = resolveDeploymentSourcePathForHost(placement);
     try { await lstat(path); } catch (error) { if (absent(error)) return { removed: [], kept: [] }; throw error; }
     const physical = resolveDeploymentSourcePathForHost({ ...placement, deploymentRoot: await realpath(input.deploymentRoot) });
-    const assertRoot = async () => {
-        await input.assertCurrent();
-        if (await realpath(path) !== physical || await computeWorkspaceSyncRootFingerprint(physical) !== source.rootFingerprint) refuse('deployment_source_unavailable');
+    input.signal?.throwIfAborted();
+    await input.assertCurrent();
+    const admittedRoot = await readWorkspaceSyncRootObjectIdentity(physical);
+    if (await realpath(path) !== physical || await computeWorkspaceSyncRootFingerprint(physical) !== source.rootFingerprint)
+        refuse('deployment_source_unavailable');
+    const assertLocalRoot = async () => {
+        input.signal?.throwIfAborted();
+        if (await realpath(path) !== physical
+            || !workspaceSyncRootObjectIdentitiesEqual(admittedRoot, await readWorkspaceSyncRootObjectIdentity(physical)))
+            refuse('deployment_source_unavailable');
     };
-    await assertRoot();
     const unchanged = await createDeploymentManifestInputReader({ rootPath: physical, manifest: source.manifestEntries, followSourceSymlinks: false });
     const removed: string[] = [], kept: string[] = [], directories: string[] = [];
     for (const entry of source.manifestEntries) {
+        input.signal?.throwIfAborted();
         const selected = resolveContainedWorkspaceMaterializationPath({ workspaceRoot: physical, candidatePath: entry.relativePath,
             errorMessage: 'Deployment source entry escaped its owner' });
         if (entry.kind === 'directory') {
@@ -242,12 +249,15 @@ export async function pruneOwnServerDeploymentSource(input: Readonly<{
             // Changed ancestors cannot redirect an admitted entry, even to a
             // different unchanged file within the same source root.
             const unchangedLeaf = async () => await realpath(dirname(selected)) === dirname(selected) && await unchanged(selected);
-            if (!await unchangedLeaf()) { kept.push(entry.relativePath); continue; }
+            if (await realpath(dirname(selected)) !== dirname(selected)) { kept.push(entry.relativePath); continue; }
             const identity = await readStoragePathIdentity(selected);
             if (identity.kind !== 'file' && identity.kind !== 'symlink') { kept.push(entry.relativePath); continue; }
             await removeStoragePath(selected, { allowedRoot: physical, expectedIdentity: identity, async beforeEffect() {
-                await assertRoot();
+                await assertLocalRoot();
+                // In-place edits retain the inode. Verify the manifest bytes
+                // once, at the effect boundary after selecting that inode.
                 if (!await unchangedLeaf()) refuse('changed_since_review');
+                input.signal?.throwIfAborted();
             } });
             removed.push(entry.relativePath);
         } catch (error) {
@@ -261,14 +271,14 @@ export async function pruneOwnServerDeploymentSource(input: Readonly<{
     const log = input.operationLog;
     if (log && source.role === 'runtime' && !source.restorationForDeploymentId
         && log.machineId === source.machineId && log.installationId === source.installationId) {
-        const result = await pruneOperationLog({ physicalRoot: physical, log, nativeBindSources: input.nativeBindSources, assertRoot });
+        const result = await pruneOperationLog({ physicalRoot: physical, log, nativeBindSources: input.nativeBindSources, assertRoot: assertLocalRoot });
         if (result === 'removed') removed.push(log.relativePath);
         if (result === 'kept') kept.push(log.relativePath);
     }
     for (const directory of directories.sort((a, b) => b.length - a.length)) {
-        await pruneEmptySourceDirectory(directory, input.nativeBindSources, assertRoot);
+        await pruneEmptySourceDirectory(directory, input.nativeBindSources, assertLocalRoot);
     }
-    await pruneEmptySourceDirectory(physical, input.nativeBindSources, assertRoot);
+    await pruneEmptySourceDirectory(physical, input.nativeBindSources, assertLocalRoot);
     return { removed, kept };
 }
 
@@ -362,7 +372,7 @@ export function createOwnServerSourceRetention(host: OwnServerDeploymentTargetHo
                     for (const source of sources) {
                         const result = await pruneOwnServerDeploymentSource({ deploymentRoot: runtime.deploymentRoot,
                             environmentInstanceId, source, nativeBindSources,
-                            assertCurrent: runtime.assertCurrent });
+                            assertCurrent: runtime.assertCurrent, signal: input.request.context.signal });
                         if (result.kept.length) logger.infoFile('[Deployment] Runtime data was kept during source retention', {
                             code: 'deployment_source_data_kept', entries: result.kept.length, remedy: 'use_named_volume' });
                     }

@@ -9,6 +9,7 @@ import { createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protoco
 import { configuration } from '@/configuration';
 import { addServerProfile, adoptServerProfileHomeConnectionDescriptor } from '@/server/serverProfiles';
 import * as installationStore from '@/daemon/identity/store';
+import * as rootIdentity from '@/workspaces/sync/workspaceSyncRootIdentity';
 import { computeWorkspaceSyncRootFingerprint } from '@/workspaces/sync/workspaceSyncRootIdentity';
 import { machineNativeEffectAdmission } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import { resolveNativeComposeDeploymentImageReferences } from '@/daemon/local/services/launch/nativeComposeImageIdentity';
@@ -460,12 +461,9 @@ it('rechecks source bytes and root custody while retiring the pinned operation-l
             sharedBinds: [], manifestEntries: [file('compose.yaml', 'source')] };
         await rename(join(sourceRoot, '.happier/deploy.log'), join(root, 'old-log'));
         await writeFile(join(sourceRoot, '.happier/deploy.log'), 'replacement');
-        let admitted = false;
+        await writeFile(join(sourceRoot, 'compose.yaml'), 'new application bytes');
         const result = await pruneOwnServerDeploymentSource({ ...placement, source, nativeBindSources: [], operationLog,
-            async assertCurrent() {
-                if (admitted) await writeFile(join(sourceRoot, 'compose.yaml'), 'new application bytes');
-                admitted = true;
-            } });
+            async assertCurrent() {} });
         expect(result.removed).toEqual(['.happier/deploy.log']);
         expect(result.kept).toEqual(['compose.yaml']);
         expect(await readFile(join(sourceRoot, 'compose.yaml'), 'utf8')).toBe('new application bytes');
@@ -477,5 +475,26 @@ it('rechecks source bytes and root custody while retiring the pinned operation-l
         await expect(pruneOwnServerDeploymentSource({ ...placement, source, nativeBindSources: [], async assertCurrent() {} }))
             .rejects.toMatchObject({ code: 'deployment_source_unavailable' });
         expect(await readFile(join(sourceRoot, 'compose.yaml'), 'utf8')).toBe('foreign occupant');
+    } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+it('admits the root once while pruning 50 manifest leaves', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-retention-count-'));
+    try {
+        const placement = { deploymentRoot: root, environmentInstanceId: 'environment', deploymentId: 'old' };
+        const sourceRoot = resolveDeploymentSourcePathForHost(placement);
+        await mkdir(sourceRoot, { recursive: true });
+        const manifestEntries = Array.from({ length: 50 }, (_, index) => file(`input-${index}`, 'source'));
+        await Promise.all(manifestEntries.map(entry => writeFile(join(sourceRoot, entry.relativePath), 'source')));
+        const source: OwnServerDeploymentSourceV1 = { machineId: 'machine', installationId: 'installation',
+            deploymentId: 'old', role: 'runtime', rootFingerprint: await computeWorkspaceSyncRootFingerprint(await realpath(sourceRoot)),
+            manifestFingerprint: 'manifest', sharedBinds: [], manifestEntries };
+        const fingerprint = vi.spyOn(rootIdentity, 'computeWorkspaceSyncRootFingerprint');
+        const assertCurrent = vi.fn(async () => {});
+        try {
+            expect((await pruneOwnServerDeploymentSource({ ...placement, source, nativeBindSources: [], assertCurrent })).removed).toHaveLength(50);
+            expect.soft(assertCurrent).toHaveBeenCalledTimes(1);
+            expect(fingerprint).toHaveBeenCalledTimes(1);
+        } finally { fingerprint.mockRestore(); }
     } finally { await rm(root, { recursive: true, force: true }); }
 });

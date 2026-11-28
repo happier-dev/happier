@@ -180,3 +180,44 @@ it.each(['disabled', 'missing'] as const)('Source PATCH refuses %s cleanup with 
     expect((await db.automation.findUniqueOrThrow({ where: { id: admission.id } })).enabled).toBe(true);
     expect((await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: child.environmentId } })).deletedAt).toBeNull();
 }, 60_000);
+
+it('reads preview jobs and live child presence in two set queries for five locked templates', async () => {
+    const { owner, source, machine, artifact, placement, parent } = await createPreviewTemplateFixture();
+    const templateIds = [parent.environmentId];
+    for (let index = 1; index < 5; index++) {
+        const content = await artifact('deployment-environment.v1');
+        const environment = await inTx(tx => createDeploymentEnvironmentInTx(tx, owner.id, {
+            ...placement, ...content, purpose: 'standard', requestKey: crypto.randomUUID(),
+        }));
+        if (!environment.ok) throw new Error(environment.error);
+        templateIds.push(environment.environmentId);
+    }
+    const jobs = [];
+    for (const environmentId of templateIds) {
+        const recipe = createAutomationWorkflowRecipeFixture({ templateVersion: 1, directory: '/workspace/app', prompt: 'Private saved workflow' });
+        jobs.push(await createAutomation({ accountId: owner.id, input: AutomationDefinitionCreateRequestSchema.parse({
+            automationId: crypto.randomUUID(), name: 'Preview admission', enabled: true, triggers: [],
+            assignments: [{ machineId: machine.id }], executionRecipe: { ...recipe, deploymentEnvironment: {
+                serverId, projectSourceId: source.source.id, environmentId, previewRole: 'preview_admission',
+            } },
+        }) }));
+    }
+    const reads: string[] = [];
+    await inTx(tx => retireDeploymentPreviewsForSourceReplacementInTx(new Proxy(tx, { get(target, property, receiver) {
+        if (property !== 'automation' && property !== 'deploymentEnvironment') return Reflect.get(target, property, receiver);
+        const delegate = target[property];
+        return new Proxy(delegate, { get(target, method, receiver) {
+            const call = Reflect.get(target, method, receiver);
+            if (method !== 'findMany' && method !== 'findFirst' && method !== 'groupBy') return call;
+            return (query: { where?: Record<string, unknown> }) => {
+                if (property === 'automation' && query.where?.deploymentPreviewRole !== undefined
+                    || property === 'deploymentEnvironment' && query.where?.previewTemplateEnvironmentId !== undefined) {
+                    reads.push(property);
+                }
+                return Reflect.apply(call, delegate, [query]);
+            };
+        } });
+    } }), { projectSourceId: source.source.id }));
+    expect(await db.automation.count({ where: { id: { in: jobs.map(job => job.id) }, enabled: false } })).toBe(5);
+    expect(reads.sort()).toEqual(['automation', 'deploymentEnvironment']);
+}, 60_000);

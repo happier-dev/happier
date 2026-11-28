@@ -34,6 +34,8 @@ import { readDeploymentEnvironmentInTx } from './deploymentReadService';
 import { createDeploymentAcceptedExecution, deploymentAcceptedExecutionColumns } from './deploymentAcceptedExecution';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 
+import { syncEnvironmentSecretGrantsInTx } from './environmentSecretGrantRepository';
+
 const publishedMachine = { metadata: encodePlainMachineStoredContent({ host: 'Binding custody', platform: 'linux',
     happyCliVersion: 'test', homeDir: '/home/test', happyHomeDir: '/home/test/.happier' }),
     dataEncryptionKey: privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER) };
@@ -59,7 +61,8 @@ describe('Environment installation grants and complete resource captures', () =>
     it('distinguishes a repeated Create allocation before a host can repeat later provider effects', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const machineId = crypto.randomUUID();
-        await db.machine.create({ data: { id: machineId, installationId: crypto.randomUUID(),
+        const installationId = crypto.randomUUID();
+        await db.machine.create({ data: { id: machineId, installationId,
             installationPublicKey: new Uint8Array(nacl.box.keyPair().publicKey), accountId: owner.id, ...publishedMachine } });
         const source = await inTx(tx => createProjectSourceInTx(tx, owner.id, { serverId,
             requestKey: crypto.randomUUID(), name: 'Repeated allocation', audience: [] }));
@@ -78,6 +81,29 @@ describe('Environment installation grants and complete resource captures', () =>
         expect(created).toMatchObject({ ok: true });
         expect(created).not.toHaveProperty('replayed');
         if (!created.ok) throw new Error(created.error);
+        const grants = Array.from({ length: 20 }, (_, index): MachineSecretGrantV1 => ({
+            v: 1, kind: 'environmentValues', environmentId: created.environmentId, machineId,
+            installationId, binding: { purpose: 'variable', phase: 'runtime', grantRef: crypto.randomUUID() },
+            sealedContent: `test-seal-${index}`,
+        }));
+        const writes: string[] = [];
+        const sync = (next: readonly MachineSecretGrantV1[]) => inTx(tx => syncEnvironmentSecretGrantsInTx(new Proxy(tx, { get(target, property, receiver) {
+            if (property !== 'machineSecretGrant') return Reflect.get(target, property, receiver);
+            const delegate = target.machineSecretGrant;
+            return new Proxy(delegate, { get(target, method, receiver) {
+                const call = Reflect.get(target, method, receiver);
+                if (method !== 'create' && method !== 'createMany' && method !== 'delete' && method !== 'deleteMany') return call;
+                return (...args: unknown[]) => {
+                    writes.push(method);
+                    return Reflect.apply(call, delegate, args);
+                };
+            } });
+        } }), { environmentId: created.environmentId, grants: next }));
+        expect(await sync(grants)).toBe(true);
+        expect(await db.machineSecretGrant.count({ where: { environmentId: created.environmentId } })).toBe(20);
+        expect(await sync([])).toBe(true);
+        expect(await db.machineSecretGrant.count({ where: { environmentId: created.environmentId } })).toBe(0);
+        expect(writes).toEqual(['createMany', 'deleteMany']);
         const copyArtifact = await createArtifact({ actorUserId: owner.id, artifactId: crypto.randomUUID(),
             header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: 'deployment-environment.v1', title: content.name })),
             body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: JSON.stringify(content) })),

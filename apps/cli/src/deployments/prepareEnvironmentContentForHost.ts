@@ -8,7 +8,7 @@ import { applyEnvironmentSecretBindingsPatchV1 } from '@happier-dev/protocol/dep
 import type { ActionExecutorContext, DeploymentActionIdV1, DeploymentEnvironmentCreateInputV1,
     DeploymentEnvironmentUpdateInputV1 } from '@happier-dev/protocol';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { resolveDeploymentStoredDefinitionRevisionV1, applyOwnServerEnvironmentConfigurationPatchV1, reconcileDeploymentRemovedDataServicesV1, type DeploymentEnvironmentDefinitionV1 } from '@happier-dev/deployments/contracts/v1';
+import { resolveDeploymentStoredDefinitionRevisionV1, applyOwnServerEnvironmentConfigurationPatchV1, reconcileDeploymentRemovedDataServicesV1, type DeploymentEnvironmentDefinitionV1, type DeploymentEnvironmentContentV1 } from '@happier-dev/deployments/contracts/v1';
 import { readDeploymentEnvironmentArtifactV1 } from '@happier-dev/deployments';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -26,14 +26,23 @@ import { createDeploymentEnvironmentContentArtifactIdV1,
     isDeploymentEnvironmentUpdateNativeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { readHostAdmittedReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
 
+type LoadedEnvironment = Extract<import('zod/mini').infer<typeof DeploymentEnvironmentGetResultV1Schema>, { ok: true }>;
+export type PreparedEnvironmentBindingContent = Readonly<{
+    loaded: LoadedEnvironment;
+    currentContent: DeploymentEnvironmentContentV1;
+    nextContent: DeploymentEnvironmentContentV1;
+}>;
+
 export type DeploymentEnvironmentContentPreparation = Readonly<{
     actionId: 'deployments.environments.create' | 'deployments.environments.update';
     input: DeploymentEnvironmentCreateInputV1 | DeploymentEnvironmentUpdateInputV1;
     context: ActionExecutorContext;
+    loaded?: LoadedEnvironment;
 }>;
 export type DeploymentEnvironmentContentPreparationResult = ActionExecuteFailure | Readonly<{
     input: DeploymentEnvironmentUpdateInputV1;
     authoredInputDigest?: string;
+    bindingContent?: PreparedEnvironmentBindingContent;
 }> | null;
 
 /** Create/edit and deploy share P41's source policy; storage never parses Compose. */
@@ -102,20 +111,25 @@ export function createPrepareEnvironmentContentForHost(host: Readonly<{
                 ? request.input : undefined;
             const storagePatch = updateInput ? omitDeploymentEnvironmentPrivateContentPatchV1(updateInput.patch ?? {}) : undefined;
             const hasPrivatePatch = updateInput !== undefined && !isDeepStrictEqual(updateInput.patch ?? {}, storagePatch);
+            let currentContent: DeploymentEnvironmentContentV1 | undefined;
+            let loadedUpdate: LoadedEnvironment | undefined;
             let previousDefinition: DeploymentEnvironmentDefinitionV1 | undefined;
             const definitionInput = updateInput?.patch?.definition;
             let preparedContent: Readonly<{ input: DeploymentEnvironmentUpdateInputV1;
                 owner: Awaited<ReturnType<typeof readMetadata>>['environment']['owner'] }> | undefined;
             if (request.actionId === 'deployments.environments.update' && 'environmentId' in request.input) {
-                const loaded = await readMetadata(request.input.environmentId);
+                const loaded = request.loaded ?? await readMetadata(request.input.environmentId);
+                loadedUpdate = loaded;
                 if (loaded.environment.id !== request.input.environmentId || loaded.environment.revision !== request.input.expectedRevision)
                     return { ok: false, errorCode: 'deployment_conflict', error: 'deployment_conflict' };
                 const currentReference = request.input.contentArtifactId === loaded.environment.contentArtifactId
                     && request.input.contentHeaderVersion === loaded.environment.contentHeaderVersion
                     && request.input.contentBodyVersion === loaded.environment.contentBodyVersion;
                 const previous = currentReference ? candidate
-                    : readDeploymentEnvironmentArtifactV1(loaded.environment, await open(loaded.environment.contentArtifactId));
+                    : readDeploymentEnvironmentArtifactV1(loaded.environment, loaded.environment.contentArtifactId === request.input.contentArtifactId
+                        ? artifact : await open(loaded.environment.contentArtifactId));
                 if (!previous.ok) return projectDeploymentFailure(previous.error, previous);
+                currentContent = previous.content;
                 previousDefinition = previous.content.definition;
                 let desiredTemplate = previous.content.template;
                 let desiredOwnServer = previous.content.ownServer;
@@ -235,9 +249,11 @@ export function createPrepareEnvironmentContentForHost(host: Readonly<{
                 preparedInput = { ...prepared.input, contentArtifactId: created.artifactId,
                     contentHeaderVersion: created.revision.headerVersion, contentBodyVersion: created.revision.bodyVersion };
             }
+            if (request.loaded && loadedUpdate && currentContent) preparedInput ??= updateInput;
             if (preparedInput) {
                 const { previewWatcher: _watcher, ...storageInput } = preparedInput;
                 return { input: { ...storageInput, patch: storagePatch ?? {} },
+                    ...(loadedUpdate && currentContent ? { bindingContent: { loaded: loadedUpdate, currentContent, nextContent: candidate.content } } : {}),
                     ...(isDeploymentEnvironmentUpdateNativeAdmissionV1(native) ? { authoredInputDigest: native.inputDigest } : {}) };
             }
             return null;
