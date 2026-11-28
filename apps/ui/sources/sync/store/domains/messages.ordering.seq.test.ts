@@ -105,6 +105,33 @@ describe('messages domain: ordering', () => {
         expect(get()).toBe(previous);
     });
 
+    it('does not reapply a permission-free AgentState on streamed text updates', () => {
+        const session = createSessionFixture({ id: 's1', agentStateVersion: 1, agentState: { controlledByUser: true } });
+        const { get, domain } = createHarness({ sessions: { s1: session } });
+        domain.applyMessages('s1', []);
+        const stream = (text: string, sourceUpdatedAt: number) => ({
+            id: 'assistant-segment-1', localId: 'assistant-segment-1', createdAt: 1_000,
+            sourceUpdatedAt, isSidechain: false, role: 'agent' as const,
+            content: [{ type: 'text' as const, text, uuid: 'assistant-segment-1', parentUUID: null }],
+            meta: buildStreamSegmentMeta(sourceUpdatedAt),
+        });
+        domain.applyMessages('s1', [stream('first', 1_000)]);
+        const transcript = get().sessionMessages.s1;
+        expect(transcript.lastAppliedAgentStateVersion).toBe(1);
+        const messageId = transcript.messageIdsOldestFirst[0]!;
+
+        syncPerformanceTelemetry.configure({ enabled: true });
+        syncPerformanceTelemetry.reset();
+        domain.applyMessages('s1', [stream('first chunk', 1_001)]);
+
+        const next = get().sessionMessages.s1;
+        expect(next.messageIdsOldestFirst).toBe(transcript.messageIdsOldestFirst);
+        expect(next.transcriptStructureVersion).toBe(transcript.transcriptStructureVersion);
+        expect(next.messagesById[messageId]).toMatchObject({ kind: 'agent-text', text: 'first chunk' });
+        expect(syncPerformanceTelemetry.snapshot().events.find(event => event.name === 'sync.store.messages.reducer')
+            ?.fields.agentStateApplied).toBe(0);
+    });
+
     it('keeps an already-loaded transcript entry referentially stable when marked loaded again', () => {
         const { get, domain } = createHarness({});
 

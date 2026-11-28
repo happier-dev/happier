@@ -645,9 +645,10 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                         ? Math.trunc(session.agentStateVersion)
                         : null;
                 const shouldApplyAgentState = agentState != null && !(messages.length === 0 && options?.metadataUpdates) && (
-                    messages.length > 0
-                    || agentStateVersion === null
+                    agentStateVersion === null
                     || existingSession.lastAppliedAgentStateVersion !== agentStateVersion
+                    // Incoming tool history can change how existing permission records resolve.
+                    || (messages.length > 0 && (agentState.requests != null || agentState.completedRequests != null))
                 );
                 telemetryFields.agentStateApplied = shouldApplyAgentState ? 1 : 0;
                 if (messages.length === 0 && !options?.metadataUpdates?.length && !shouldApplyAgentState
@@ -683,7 +684,7 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                         options?.metadataUpdates,
                         {
                             mainHistoryStartLoaded: state.sessionMessagesHistoryStartLoaded?.[sessionId] === true,
-                            requestCoverage: readSessionRequestCoverage(session ?? {}),
+                            requestCoverage: shouldApplyAgentState ? readSessionRequestCoverage(session ?? {}) : undefined,
                         },
                     ),
                 );

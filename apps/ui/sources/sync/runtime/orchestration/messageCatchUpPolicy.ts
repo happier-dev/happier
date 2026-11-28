@@ -55,10 +55,13 @@ export function decideMessageCatchUpPolicy(input: Readonly<{
         return { kind: 'do_nothing' };
     }
 
-    const isLongOffline = input.offlineForMs >= thresholds.forceSnapshotOfflineMs;
+    const needsSnapshotAfterLongOffline = materializedMaxSeq === 0
+        && input.offlineForMs >= thresholds.forceSnapshotOfflineMs;
     const isLargeGap = gapSeq >= thresholds.largeGapSeq;
 
-    if (isLongOffline || isLargeGap) {
+    // Even after a long disconnect, an applied cursor and a small known gap
+    // can use bounded forward pages. An exhausted budget still falls back.
+    if (needsSnapshotAfterLongOffline || isLargeGap) {
         if (input.isPinned) {
             return { kind: 'tail_reset_latest_page' };
         }

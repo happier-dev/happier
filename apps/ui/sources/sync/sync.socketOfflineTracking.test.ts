@@ -1316,7 +1316,7 @@ describe('sync socket offline tracking', () => {
       .toEqual({ phase: 'offline', lastSuccessAt: 1_000 });
   });
 
-  it('uses captured offline duration for loaded transcript catch-up after connected status clears the disconnect timestamp', async () => {
+  it.each([false, true])('reconnects a loaded transcript through its applied cursor (known delta after long offline=%s)', async (longOffline) => {
     // Admit the already-loaded transcript before simulating transport loss.
     // Awaiting HTTP fixture admission after reconnect permits unrelated pending
     // dial failure/recovery to replace the downtime this case is exercising.
@@ -1326,7 +1326,7 @@ describe('sync socket offline tracking', () => {
         ...state.sessions,
         s_reconnect_gap: {
           id: 's_reconnect_gap',
-          seq: 20,
+          seq: longOffline ? 21 : 20,
           encryptionMode: 'plain',
           metadata: {},
           agentState: null,
@@ -1337,14 +1337,32 @@ describe('sync socket offline tracking', () => {
     markSessionSurfaceVisible('s_reconnect_gap');
     (sync as any).sessionMaterializedMaxSeqById = { s_reconnect_gap: 20 };
     (sync as any).isForeground = true;
+    if (longOffline) {
+      const responder = apiSocketRequestMock.getMockImplementation()!;
+      apiSocketRequestMock.mockImplementation(async (path, init) => {
+        const request = new URL(path, 'http://localhost');
+        if (request.pathname !== '/v1/sessions/s_reconnect_gap/messages') return responder(path, init);
+        return Response.json({ messages: [{
+          id: 'newer-on-reconnect', seq: 21, localId: null, createdAt: 21,
+          content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'applied after reconnect' } } },
+        }], nextAfterSeq: null, nextBeforeSeq: null, hasMore: false });
+      });
+      onTestFinished(() => { apiSocketRequestMock.mockImplementation(responder); });
+    }
 
     emitSocketStatus('disconnected');
     expect(typeof (sync as any).lastSocketDisconnectedAtMs).toBe('number');
-    (sync as any).lastSocketDisconnectedAtMs = Date.now() - 1000;
+    const offlineMs = longOffline ? loadSyncTuning().messageForceSnapshotOfflineMs + 1_000 : 1_000;
+    (sync as any).lastSocketDisconnectedAtMs = Date.now() - offlineMs;
     emitSocketStatus('connected');
     expect((sync as any).lastSocketDisconnectedAtMs ?? null).toBeNull();
     await (sync as any).fetchMessages('s_reconnect_gap');
     expectApiSocketMessageRequest({ sessionId: 's_reconnect_gap', afterSeq: '20', limit: '150' });
+    if (longOffline) {
+      const { messagesById, messageIdsOldestFirst } = storage.getState().sessionMessages.s_reconnect_gap!;
+      expect(messageIdsOldestFirst.map(id => messagesById[id]?.seq)).toEqual([20, 21]);
+      expect((sync as any).sessionMaterializedMaxSeqById.s_reconnect_gap).toBe(21);
+    }
   }, 60_000);
 
   it('uses the native history-page size for the first viewport without shrinking catch-up pages', async () => {

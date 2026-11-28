@@ -134,9 +134,13 @@ describe('app transcript source', () => {
         }
     });
     it.each([
-        { forked: false, thinking: false }, { forked: true, thinking: false },
-        { forked: false, thinking: true }, { forked: true, thinking: true },
-    ])('publishes stream text to message and navigation leaves without rebuilding history (fork=$forked, thinking=$thinking)', async ({ forked, thinking }) => {
+        { forked: false, thinking: false, historySize: 10 },
+        { forked: false, thinking: false, historySize: 1_000 },
+        { forked: false, thinking: false, historySize: 2_000 },
+        { forked: true, thinking: false, historySize: 100 },
+        { forked: false, thinking: true, historySize: 100 },
+        { forked: true, thinking: true, historySize: 100 },
+    ])('publishes stream text to message and navigation leaves without rebuilding history (N=$historySize, fork=$forked, thinking=$thinking)', async ({ forked, thinking, historySize }) => {
         const previous = storage.getState();
         const parent = createSessionFixture({ id: 'root-stream-parent' });
         const session = createSessionFixture({ id: 'root-stream-locality', active: true, thinking, agentState: {}, ...(forked ? {
@@ -144,8 +148,8 @@ describe('app transcript source', () => {
                 parentCutoffSeqInclusive: 0, createdAtMs: 1, strategy: 'replay' } },
         } : {}) });
         const stream = (text: string, tick: number, segmentState: 'streaming' | 'interrupted' | 'complete' = 'streaming'): NormalizedMessage => ({
-            id: 'stream-row', seq: 102, localId: 'stream-row', createdAt: 102,
-            sourceCreatedAt: 102, sourceUpdatedAt: tick,
+            id: 'stream-row', localId: 'stream-row', createdAt: historySize + 2,
+            sourceCreatedAt: historySize + 2, sourceUpdatedAt: tick,
             role: 'agent', isSidechain: false,
             content: [thinking ? { type: 'thinking', thinking: text, uuid: 'stream-row', parentUUID: null }
                 : { type: 'text', text, uuid: 'stream-row', parentUUID: null }],
@@ -183,17 +187,17 @@ describe('app transcript source', () => {
         try {
             syncPerformanceTelemetry.configure({ enabled: true });
             storage.getState().applySessions([parent, session]);
-            storage.getState().applyMessages(session.id, [...Array.from({ length: 100 }, (_, index): NormalizedMessage => ({
+            storage.getState().applyMessages(session.id, [...Array.from({ length: historySize }, (_, index): NormalizedMessage => ({
                 id: `historical-${index}`, seq: index + 1, localId: null, createdAt: index + 1,
                 role: 'user', isSidechain: false, content: { type: 'text', text: `Earlier question ${index}` },
-            })), { id: 'prompt', seq: 101, localId: null, createdAt: 101,
+            })), { id: 'prompt', seq: historySize + 1, localId: null, createdAt: historySize + 1,
                 role: 'user', isSidechain: false, content: { type: 'text', text: 'Check the project' } }, stream('', 2)]);
             storage.getState().applyMessagesLoaded(session.id);
             const transcript = storage.getState().sessionMessages[session.id]!;
             streamingId = transcript.messageIdsOldestFirst.at(-1)!;
             // Read-only instrumentation: retain every real row/reference and count
             // work against historical fields, not merely selected-result equality.
-            for (const id of transcript.messageIdsOldestFirst.slice(0, 100)) {
+            for (const id of transcript.messageIdsOldestFirst.slice(0, historySize)) {
                 const message = transcript.messagesById[id]!;
                 const { kind, meta } = message;
                 Object.defineProperties(message, {
@@ -206,9 +210,13 @@ describe('app transcript source', () => {
             const before = { rootRenders, derivations: derivations(), rowRenders, historyReads };
             expect(before.derivations).toBeGreaterThan(0);
             const order = screen.findByTestId('root-order')!.props.children;
-            for (let tick = 3; tick <= 7; tick += 1) {
+            const timings: number[] = [];
+            const chunkCount = historySize === 100 ? 5 : 50;
+            for (let tick = 3; tick < 3 + chunkCount; tick += 1) {
                 now = initialNow + tick * 10;
+                const started = performance.now();
                 await act(async () => { storage.getState().applyMessages(session.id, [stream(`Progress ${tick}`, tick)]); });
+                timings.push(performance.now() - started);
                 expect(screen.findByTestId('stream-text')!.props.children).toBe(`Progress ${tick}`);
                 expect(screen.findByTestId('stream-updated')!.props.children).toBe(tick);
                 if (thinking) expect(screen.findByTestId('transcript-navigation-rail.preview.body')).toBeNull();
@@ -216,10 +224,15 @@ describe('app transcript source', () => {
                 expect(screen.findByTestId('root-order')!.props.children).toBe(order);
             }
             // Thinking deltas keep the root's freshness selector true; text belongs to the live row.
-            expect({ rootRenders: rootRenders - before.rootRenders, derivations: derivations() - before.derivations,
-                rowRenders: rowRenders - before.rowRenders, historyReads: historyReads - before.historyReads })
-                .toEqual({ rootRenders: 0, derivations: 0, rowRenders: 5, historyReads: 0 });
-            await act(async () => { storage.getState().applyMessages(session.id, [stream('Finished', 8, 'complete')]); });
+            const work = { rootRenders: rootRenders - before.rootRenders, derivations: derivations() - before.derivations,
+                rowRenders: rowRenders - before.rowRenders, historyReads: historyReads - before.historyReads };
+            if (process.env.HAPPIER_TRANSCRIPT_STREAM_PROFILE === '1') {
+                timings.sort((a, b) => a - b);
+                console.info('transcript-stream-profile', { historySize, forked, thinking, chunkCount, ...work,
+                    medianMs: timings[Math.floor(timings.length / 2)] });
+            }
+            expect(work).toEqual({ rootRenders: 0, derivations: 0, rowRenders: chunkCount, historyReads: 0 });
+            await act(async () => { storage.getState().applyMessages(session.id, [stream('Finished', 3 + chunkCount, 'complete')]); });
             expect(rootRenders).toBeGreaterThan(before.rootRenders);
             expect(screen.findByTestId('stream-text')!.props.children).toBe('Finished');
             if (thinking) expect(screen.findByTestId('transcript-navigation-rail.preview.body')).toBeNull();
