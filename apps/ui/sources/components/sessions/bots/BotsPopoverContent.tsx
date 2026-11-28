@@ -69,6 +69,8 @@ import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { ActionListSection } from '@/components/ui/lists/ActionListSection';
 import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { openNewBotDraft } from './newBotDraft';
+import { openNewBotChooser } from './newBot/openNewBotChooser';
+import { useCurrentUiContextCommandBridge } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { requestBotFaceWear } from './botFaceWearIntent';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
@@ -349,12 +351,20 @@ export function BotsPopoverContent(
     fireAndForget(openStoreBots(), { tag: 'BotsRoster.fromTemplate' });
   }, [openStoreBots]);
   const wearPet = props.wearPet?.pet;
+  const Bridge = useCurrentUiContextCommandBridge();
   const newBot = React.useCallback(() => {
+    // New bot is one card for every way in (lab session-orchestration N1). A pet chosen to wear already decided
+    // what the Bot is, so it goes straight to the Bot draft that wears it.
+    if (!wearPet) {
+      close();
+      openNewBotChooser(Bridge);
+      return;
+    }
     const lifetime = captureActiveServerAccountScopeLifetime();
     if (lifetime)
-      fireAndForget(openNewBotDraft(lifetime, executeAuthoring, wearPet ? { pet: wearPet } : undefined)
+      fireAndForget(openNewBotDraft(lifetime, executeAuthoring, { pet: wearPet })
         .then(result => { if (result.kind === 'opened') close(); }), { tag: 'BotsRoster.newBot' });
-  }, [close, executeAuthoring, wearPet]);
+  }, [Bridge, close, executeAuthoring, wearPet]);
   const askHappier = React.useCallback(() => {
     fireAndForget(openAskHappier().then(result => { if (result.kind === 'opened' || result.kind === 'authenticationRequired') close(); }), { tag: 'BotsRoster.askHappier' });
   }, [close, openAskHappier]);

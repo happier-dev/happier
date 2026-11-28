@@ -4,7 +4,6 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { useStoreDirectoryState } from '@/components/settings/plugins/model/usePluginsOpenItem';
 import { useRegistryItems } from '@/registries/useRegistryItems';
-import { useRegistryItem } from '@/registries/useRegistryItem';
 import { HappierBrandMark } from '@/components/ui/media/HappierBrandMark';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -18,11 +17,11 @@ import { t } from '@/text';
 import { Directory, StoreKindFrame, useSourceTitle, type DirectoryRow } from './StoreKindPage';
 import type { StoreKindSurfaceInput } from './StoreKindSurface';
 import { useReceivedBotTemplates } from './catalog/useReceivedBotTemplates';
+import { useStoreBotTemplateItem, type StoreBotTemplateItemRef } from './catalog/useStoreBotTemplateItem';
 import { StoreDirectoryUnavailable } from './StoreDirectoryUnavailable';
 import { useStoreDirectorySources } from './StoreSearch';
 import { BundledBotTemplateSection } from './BundledBotTemplateSection';
 
-const NO_TEMPLATES: readonly { id: string; path: string }[] = [];
 const NO_FILTERS = {};
 /** Each source is its own titled section, so neither section's rows wait on, or are hidden by, the other's read. */
 const NO_GROUPS: readonly [] = [];
@@ -46,21 +45,18 @@ export default function StoreBotsKindSurface(props: Readonly<{ kind: string; inp
     const sourceTitle = useSourceTitle();
     const router = useRouter();
     const scope = useAccountSettingsScope();
-    const [selected, setSelected] = React.useState<Omit<Parameters<typeof useRegistryItem>[0], 'kind'> | null>(null);
-    const read = useRegistryItem({ kind: 'plugin', sourceId: selected?.sourceId ?? '', itemId: selected?.itemId ?? '',
-        ...(selected?.version ? { version: selected.version } : {}) }, presented && selected !== null);
-    const payload = selected && !read.stale && read.item?.payload.kind === 'plugin' ? read.item.payload : null;
-    const templates = payload?.listing.summary.botTemplates ?? NO_TEMPLATES;
+    const [selected, setSelected] = React.useState<StoreBotTemplateItemRef | null>(null);
+    const { read, payload, templates, sourceOf, onlySource } = useStoreBotTemplateItem(selected, presented);
     const open = React.useCallback((template: BotTemplateReleaseSourceV1) => {
         if (scope) router.push(buildBotTemplateRecipientRoute(template, scope.serverId));
     }, [router, scope]);
     const openTemplate = React.useCallback((contributionId: string) => {
-        if (!selected || read.stale || !read.item?.summary.version) return;
-        open({ kind: 'plugin', registryItem: { ...selected, version: read.item.summary.version }, contributionId });
-    }, [open, selected, read.stale, read.item?.summary.version]);
+        const source = sourceOf(contributionId);
+        if (source) open(source);
+    }, [open, sourceOf]);
     React.useEffect(() => {
-        if (presented && templates.length === 1) openTemplate(templates[0]!.id);
-    }, [presented, templates, openTemplate]);
+        if (presented && onlySource) open(onlySource);
+    }, [presented, onlySource, open]);
     const storeRows = React.useMemo((): readonly DirectoryRow[] => list.items.map(item => {
         const select = () => setSelected({ sourceId: item.sourceId, itemId: item.itemId,
             ...(item.version ? { version: item.version } : {}) });
