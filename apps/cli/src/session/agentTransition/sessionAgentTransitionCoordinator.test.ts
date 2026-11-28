@@ -1000,7 +1000,7 @@ describe('runSessionAgentTransition', () => {
           });
           vi.spyOn(api, 'getConnectedServiceAuthGroup').mockImplementation(getGroup);
           vi.spyOn(api, 'getAccountEncryptionMode').mockResolvedValue('plain');
-          vi.spyOn(api, 'getConnectedServiceCredentialPlain').mockImplementation(async ({ profileId }) => ({
+          const readCredential = vi.spyOn(api, 'getConnectedServiceCredentialPlain').mockImplementation(async ({ profileId }) => ({
             revisionSemantics: 'legacy_unfenced', credentialRevision: null,
             content: { t: 'plain', v: buildConnectedServiceCredentialRecord({
               now: 0, serviceId, profileId, kind: 'oauth', expiresAt: profileId === 'expired' ? 1 : null,
@@ -1027,6 +1027,7 @@ describe('runSessionAgentTransition', () => {
           });
           expect(result.type).toBe('accepted');
           expect(activeProfileId).toBe('healthy');
+          expect(readCredential).toHaveBeenLastCalledWith(expect.objectContaining({ serviceId, profileId: 'healthy' }));
         });
 
         it('honors an explicit native choice even when the account has a connected default', async () => {
