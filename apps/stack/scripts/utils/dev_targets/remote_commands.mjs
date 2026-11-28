@@ -193,8 +193,9 @@ const COMMAND_RULES = [
     'packages/cli-common/scripts/build.mjs',
     'apps/cli/scripts/build.mjs',
   ] }, set: { selfPublisher: '1' } },
-  // Baselines are controller-local; only this dispatcher's compiler child travels.
-  { when: { command: ['node', 'nodejs'], entryRepositoryPath: ['scripts/workspaces/typecheckTouched.mjs'] },
+  // Resolve Git baselines on the controller before dispatching the validation work.
+  { when: { command: ['node', 'nodejs'],
+    entryRepositoryPath: ['scripts/workspaces/typecheckTouched.mjs', 'scripts/testing/dispatchAffectedTests.mjs'] },
     set: { controllerDispatcher: '1' } },
   // Source typecheck runners admit their compiler leaves directly. They do not
   // publish first-party dependency outputs or acquire publication custody.

@@ -1,4 +1,3 @@
-import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
@@ -6,6 +5,7 @@ import { pathToFileURL } from 'node:url';
 
 import { STUB_PROVIDER_PRESET_IDS, resolveProviderRunPreset } from '../../packages/tests/src/testkit/providers/presets/presets.mjs';
 
+import { AFFECTED_TEST_USAGE, allowsEmptyAffectedFileSelection, readAffectedFileSelection, readOption } from './affectedFileSelection.mjs';
 import { runCommandSuite, type CommandSuiteEntry } from './lib/runCommandSuite.ts';
 import { runPnpmCommand } from './lib/runPnpmCommand.ts';
 import { discoverWorkspaceManifests, resolveOwningWorkspaceDirectory } from './lib/workspaceManifests.ts';
@@ -65,27 +65,6 @@ export function planAffectedTestCommands(selection: Readonly<{
   });
   if (selection.unitFiles.length) commands.push({ id: 'owner unit', rootUnitFiles: [...selection.unitFiles].sort(), args: [] });
   return commands;
-}
-
-const OPTIONS_WITH_VALUES = new Set(['--commit', '--base', '--owners']);
-
-function readOption(args: readonly string[], name: string): string | null {
-  const index = args.indexOf(name);
-  if (index < 0) return null;
-  const value = args[index + 1];
-  if (!value || value.startsWith('--')) throw new Error(`${name} requires a value`);
-  return value;
-}
-
-/** Explicit files (a lane's own edits in a shared tree), one commit, or every commit since a base. */
-function readChangedFiles(rootDir: string, args: readonly string[]): string[] {
-  const git = (gitArgs: string[]) => execFileSync('git', gitArgs, { cwd: rootDir, encoding: 'utf8', maxBuffer: 64 << 20 })
-    .split('\n').filter(Boolean);
-  const commit = readOption(args, '--commit');
-  if (commit) return git(['diff-tree', '--no-commit-id', '--no-renames', '--name-only', '-r', '--root', commit]);
-  const base = readOption(args, '--base');
-  if (base) return git(['diff', '--no-renames', '--name-only', base, 'HEAD']);
-  return args.filter((arg, index) => !arg.startsWith('--') && !OPTIONS_WITH_VALUES.has(args[index - 1] ?? ''));
 }
 
 /** Vitest's related mode over one config; returns repo-relative test files. */
@@ -359,10 +338,8 @@ export async function selectAffectedTests(rootDir: string, changedFiles: readonl
 }
 
 export async function runAffectedTests(args: readonly string[], rootDir = process.cwd()): Promise<void> {
-  const changedFiles = readChangedFiles(rootDir, args);
-  if (changedFiles.length === 0 && !args.includes('--base')) {
-    throw new Error('Usage: pnpm test:affected -- <changed file>... | --commit <sha> | --base <ref> [--journeys | --units] [--list | --plan]');
-  }
+  const { files: changedFiles } = readAffectedFileSelection(rootDir, args);
+  if (changedFiles.length === 0 && !allowsEmptyAffectedFileSelection(args)) throw new Error(AFFECTED_TEST_USAGE);
   if (args.includes('--units')) {
     // CI unit gate: one JSON line, per unit owner either its selected files or the whole package.
     const requested = readOption(args, '--owners');
