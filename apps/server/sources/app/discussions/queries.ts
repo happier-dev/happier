@@ -16,9 +16,10 @@ import { prismaRuntime as sql } from '@/storage/prisma';
 import { discussionJsonText, discussionSqlName as name, discussionSqlTimestamp } from './readSql';
 import { isServerFeatureEnabledForHome } from '@/app/features/catalog/serverFeatureGate';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
+import { EXTERNAL_TASK_DISCUSSION_ID_PREFIX, isExternalTaskDiscussionId } from '@happier-dev/protocol/discussions/references';
 import { isInternalTaskReferenceV1, type TriageEntryRefV1 } from '@happier-dev/protocol/tasks/entryRefV1';
 import { resolveTaskAnchorInTx, type TaskAnchorAdmission } from '@/app/todos/taskGrantStorageAdapter';
-import { isManagedTaskDiscussionId, personalExternalTaskDiscussionId, taskDiscussionId } from './taskDiscussionIdentity';
+import { isManagedTaskDiscussionId, matchesExternalTaskAnchor, readTaskDiscussionIdForAnchorInTx, taskDiscussionId } from './taskDiscussionIdentity';
 import type { DiscussionFailureCode } from './serviceTypes';
 
 /** Only the authenticated runtime/original supplies an executable destination. */
@@ -340,24 +341,113 @@ export async function countDiscussionsInTx(tx: Tx, input: Parameters<typeof read
     return { ok: true as const, count };
 }
 
+/** Candidate prefilter for external Internal threads anchored on one exact TriageEntryRefV1. */
+async function findExternalTaskDiscussionCandidateIdsInTx(tx: Tx, input: Readonly<{
+    accountId: string; ref: TriageEntryRefV1; state?: 'active' | 'archived';
+}>): Promise<string[]> {
+    const anchor = sql.sql`d.${name('anchorV1')}`;
+    const statePredicate = input.state === undefined ? sql.empty
+        : sql.sql`AND d.${name('archivedAt')} ${input.state === 'archived' ? sql.sql`IS NOT NULL` : sql.sql`IS NULL`}`;
+    const rows = await tx.$queryRaw<{ id: string }[]>(sql.sql`
+        SELECT d.${name('id')} AS id FROM ${name('Discussion')} d
+        WHERE ${discussionCandidateSql(input.accountId)}
+            AND d.${name('id')} LIKE ${`${EXTERNAL_TASK_DISCUSSION_ID_PREFIX}%`}
+            ${statePredicate}
+            AND ${discussionJsonText(anchor, ['kind'])} = 'task'
+            AND ${discussionJsonText(anchor, ['entry', 'source', 'pluginId'])} = ${input.ref.source.pluginId}
+            AND ${discussionJsonText(anchor, ['entry', 'source', 'localId'])} = ${input.ref.source.localId}
+            AND ${discussionJsonText(anchor, ['entry', 'kindId'])} = ${input.ref.kindId}
+            AND ${discussionJsonText(anchor, ['entry', 'collisionScope'])} = ${input.ref.collisionScope}
+            AND ${discussionJsonText(anchor, ['entry', 'entryId'])} = ${input.ref.entryId}
+        ORDER BY d.${name('lastMessageAt')} DESC, d.${name('id')} DESC`);
+    return rows.map(row => row.id);
+}
+
+/** Admitted external Internal thread ids on one exact external ref (owned or shared via DiscussionGrant). */
+export async function findAdmittedExternalTaskDiscussionIdsInTx(tx: Tx, input: Reader & Readonly<{
+    ref: TriageEntryRefV1; state?: 'active' | 'archived';
+}>): Promise<string[]> {
+    if (!await isDiscussionCredentialCurrentInTx(tx, { accountId: input.actorAccountId, authentication: input.authentication })) return [];
+    const candidateIds = await findExternalTaskDiscussionCandidateIdsInTx(tx, {
+        accountId: input.actorAccountId, ref: input.ref, state: input.state,
+    });
+    if (candidateIds.length === 0) return [];
+    const rows = await tx.discussion.findMany({
+        where: { id: { in: candidateIds } },
+        select: { id: true, anchorV1: true },
+        orderBy: [{ lastMessageAt: 'desc' }, { id: 'desc' }],
+    });
+    const matchingIds = rows.filter(row => matchesExternalTaskAnchor(row.anchorV1, input.ref)).map(row => row.id);
+    if (matchingIds.length === 0) return [];
+    const contexts = await resolveDiscussionContextsInTx(tx, {
+        discussionIds: matchingIds, accountId: input.actorAccountId, authentication: input.authentication,
+    });
+    return matchingIds.filter(id => contexts.has(id));
+}
+
+/** Verify that a requested Discussion id is admitted for the given Task or external anchor ref. */
+export async function readAdmittedTaskDiscussionIdForAnchorInTx(tx: Tx, input: Reader & Readonly<{
+    ref: TriageEntryRefV1; requestedDiscussionId?: string;
+}>): Promise<string | null> {
+    if (isInternalTaskReferenceV1(input.ref)) {
+        return readTaskDiscussionIdForAnchorInTx(tx, input.actorAccountId, input.ref);
+    }
+    const requestedId = input.requestedDiscussionId;
+    if (!requestedId || !isExternalTaskDiscussionId(requestedId)) return null;
+    const row = await tx.discussion.findUnique({ where: { id: requestedId }, select: { id: true, anchorV1: true } });
+    if (!row || !matchesExternalTaskAnchor(row.anchorV1, input.ref)) return null;
+    const context = await resolveDiscussionContextInTx(tx, {
+        discussionId: row.id, accountId: input.actorAccountId, authentication: input.authentication,
+    });
+    return context ? row.id : null;
+}
+
 /** Candidate grants narrow before paging; current admission still decides every returned row. */
 async function listExactTaskDiscussionInTx(tx: Tx, input: Reader & Readonly<{ anchorTask: TriageEntryRefV1; state?: 'active' | 'archived' }>):
     Promise<DiscussionResult<DiscussionListResponseV1>> {
     const empty = discussionSuccess({ discussions: [], nextCursor: null });
     if (!await isDiscussionCredentialCurrentInTx(tx, { accountId: input.actorAccountId, authentication: input.authentication })) return empty;
     const ref = input.anchorTask;
-    const admitted = isInternalTaskReferenceV1(ref) ? await resolveTaskAnchorInTx(tx, { ...input, ref, includeKey: true, includeAudience: true }) : undefined;
-    if (admitted && !admitted.ok) return admitted.error === 'team_authentication_required' ? discussionFailure(admitted.error) : empty;
-    const discussionId = admitted?.ok ? taskDiscussionId(admitted.value.row.id) : personalExternalTaskDiscussionId(input.actorAccountId, ref);
-    const discussion = await readDiscussionRowInTx(tx, { discussionId });
-    if (!discussion || (input.state !== undefined && (discussion.archivedAt !== null) !== (input.state === 'archived'))) return empty;
-    const taskAdmissions = admitted?.ok ? new Map<string, TaskAnchorAdmission>([[discussionId, admitted]]) : undefined;
-    const context = await resolveDiscussionContextInTx(tx, { discussionId, accountId: input.actorAccountId, authentication: input.authentication,
-        includeActorAudience: true, taskAdmissions });
-    if (!context) return empty;
-    const projected = await projectDiscussionForViewerInTx(tx, { context, discussion, viewerAccountId: input.actorAccountId,
-        authentication: input.authentication });
-    return projected.ok ? discussionSuccess({ discussions: [projected.value], nextCursor: null }) : projected;
+    if (isInternalTaskReferenceV1(ref)) {
+        const admitted = await resolveTaskAnchorInTx(tx, { ...input, ref, includeKey: true, includeAudience: true });
+        if (!admitted.ok) return admitted.error === 'team_authentication_required' ? discussionFailure(admitted.error) : empty;
+        const discussionId = taskDiscussionId(admitted.value.row.id);
+        const discussion = await readDiscussionRowInTx(tx, { discussionId });
+        if (!discussion || (input.state !== undefined && (discussion.archivedAt !== null) !== (input.state === 'archived'))) return empty;
+        const taskAdmissions = new Map<string, TaskAnchorAdmission>([[discussionId, admitted]]);
+        const context = await resolveDiscussionContextInTx(tx, { discussionId, accountId: input.actorAccountId, authentication: input.authentication,
+            includeActorAudience: true, taskAdmissions });
+        if (!context) return empty;
+        const projected = await projectDiscussionForViewerInTx(tx, { context, discussion, viewerAccountId: input.actorAccountId,
+            authentication: input.authentication });
+        return projected.ok ? discussionSuccess({ discussions: [projected.value], nextCursor: null }) : projected;
+    }
+    const candidateIds = await findExternalTaskDiscussionCandidateIdsInTx(tx, {
+        accountId: input.actorAccountId, ref, state: input.state,
+    });
+    if (candidateIds.length === 0) return empty;
+    const rows = await tx.discussion.findMany({
+        where: { id: { in: candidateIds } },
+        select: DISCUSSION_SELECT,
+        orderBy: [{ lastMessageAt: 'desc' }, { id: 'desc' }],
+    });
+    const matching = rows.filter(row => matchesExternalTaskAnchor(row.anchorV1, ref));
+    if (matching.length === 0) return empty;
+    const contexts = await resolveDiscussionContextsInTx(tx, {
+        discussionIds: matching.map(row => row.id),
+        accountId: input.actorAccountId,
+        authentication: input.authentication,
+        includeActorAudience: true,
+    });
+    const admitted = matching.filter(row => contexts.has(row.id));
+    if (admitted.length === 0) return empty;
+    const projected = await projectDiscussionsForViewerInTx(tx, {
+        contexts,
+        discussions: admitted,
+        viewerAccountId: input.actorAccountId,
+        authentication: input.authentication,
+    });
+    return projected.ok ? discussionSuccess({ discussions: projected.value, nextCursor: null }) : projected;
 }
 
 export async function listDiscussions(input: Reader & Readonly<DiscussionListQueryV1>): Promise<DiscussionResult<DiscussionListResponseV1>> {

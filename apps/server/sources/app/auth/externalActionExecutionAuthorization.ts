@@ -249,7 +249,7 @@ import { bindDiscussionActionHttpRequestV1, isDiscussionActionIdV1, discussionAc
 import { DISCUSSION_HTTP_PATHS_V1, DiscussionCreateRequestV1Schema, DiscussionListQueryV1Schema, DiscussionRouteDiscussionParamsV1Schema } from '@happier-dev/protocol/discussions/api';
 import { internalTaskAddressFromRefV1 } from '@happier-dev/protocol/tasks/entryRefV1';
 import { bindTaskResourcePathV1 } from '@happier-dev/protocol/todos/taskResourceClientV1';
-import { readTaskDiscussionIdForAnchorInTx } from '@/app/discussions/taskDiscussionIdentity';
+import { readAdmittedTaskDiscussionIdForAnchorInTx } from '@/app/discussions/queries';
 import { DiscussionListInputV1Schema, DiscussionReadInputV1Schema } from '@happier-dev/protocol/discussions/actions';
 import { DiscussionRecipientKeyEnvelopeCommitInputV1Schema } from '@happier-dev/protocol/discussions/access';
 import { isSessionFollowActionIdV1 } from '@happier-dev/protocol/sessions/follow/actions';
@@ -3413,8 +3413,26 @@ async function isTaskDiscussionActionHttpPurpose(verified: VerifiedSignedChildRe
     }
     const prefix = DISCUSSION_HTTP_PATHS_V1.discussion.split(':discussionId')[0];
     if (!url.pathname.startsWith(prefix)) return false;
-    const discussionId = await readTaskDiscussionIdForAnchorInTx(db, accountId, ref);
-    if (!discussionId || url.pathname.slice(prefix.length).split('/')[0] !== encodeURIComponent(discussionId)) return false;
+    const segment = url.pathname.slice(prefix.length).split('/')[0] ?? '';
+    let requestedDiscussionId: string | undefined;
+    try {
+        const decoded = decodeURIComponent(segment);
+        if (decoded.length > 0 && encodeURIComponent(decoded) === segment) requestedDiscussionId = decoded;
+    } catch {
+        return false;
+    }
+    if (!requestedDiscussionId) return false;
+    const discussionId = await inReadSnapshot(tx => readAdmittedTaskDiscussionIdForAnchorInTx(tx, {
+        actorAccountId: accountId,
+        authentication: {
+            authority: verified.effectiveAuthority,
+            authenticationEvidence: verified.principal.authenticationEvidence,
+            env: process.env,
+        },
+        ref,
+        requestedDiscussionId,
+    }));
+    if (!discussionId || segment !== encodeURIComponent(discussionId)) return false;
     const resolved = { ...verified, binding: { ...verified.binding, discussionId } };
     return isAccountActionHttpOperation(actionId, proof) || isDiscussionActionHttpPreparation(resolved, proof);
 }

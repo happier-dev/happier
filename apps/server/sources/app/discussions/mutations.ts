@@ -24,7 +24,7 @@ import { detachDiscussionFollowSourceInTx, attachDiscussionFollowSourceInTx } fr
 import { invalidateSessionRelationProjectionsInTx } from '@/app/session/relations/sessionRelationChanges';
 import { withdrawDiscussionInputRepliesInTx } from '@/app/session/messages/sessionMessageReply';
 import { DISCUSSION_MESSAGE_SELECT, projectDiscussionAccountActorsInTx, projectDiscussionMessageV1, validateDiscussionStoredContent, admitDiscussionStoredMessage, type AdmittedDiscussionMessageRow, type DiscussionMessageRow } from './projection';
-import { projectDiscussionForViewerInTx, readDiscussionRowInTx } from './queries';
+import { findAdmittedExternalTaskDiscussionIdsInTx, projectDiscussionForViewerInTx, readDiscussionRowInTx } from './queries';
 import { projectDiscussionMessageDeliveriesInTx } from './deliveryProjection';
 import { initializeDiscussionReadBaselinesInTx } from './readState';
 import { DiscussionCreationRejectedError, reconcileDiscussionCreationIdentityRace } from './createIdentityReconciliation';
@@ -255,8 +255,8 @@ export async function createDiscussionInTx(tx: Tx, input: DiscussionCreationInpu
     let task: TaskAnchorContext | undefined;
     if (anchor?.kind === 'task') {
         if (request.firstMessage.replyTarget?.kind === 'doc_passage') return discussionFailure('discussion_invalid_reply_target');
-        if (request.participants?.some(participant => participant.kind === 'account')) return discussionFailure('discussion_task_share_required');
         if (isInternalTaskReferenceV1(anchor.entry)) {
+            if (request.participants?.some(participant => participant.kind === 'account')) return discussionFailure('discussion_task_share_required');
             const taskInput = { actorAccountId: input.actorAccountId, authentication: creatorAuthentication, ref: anchor.entry };
             const admitted = creationAdmission.task ?? await resolveTaskAnchorInTx(tx, taskInput);
             if (!admitted.ok) return discussionFailure(admitted.error === 'team_authentication_required' ? admitted.error : 'discussion_not_found');
@@ -272,6 +272,12 @@ export async function createDiscussionInTx(tx: Tx, input: DiscussionCreationInpu
             anchor = { kind: 'task', entry: { source: INTERNAL_TASK_SOURCE_V1, ...internalTaskLocalRefV1(task.address.taskId, ownerAccountId) } };
         } else {
             if (request.taskKey) return discussionFailure('discussion_invalid_content');
+            const existingExternal = await findAdmittedExternalTaskDiscussionIdsInTx(tx, {
+                actorAccountId: input.actorAccountId,
+                authentication: creatorAuthentication,
+                ref: anchor.entry,
+            });
+            if (existingExternal.length > 0) return discussionFailure('discussion_task_thread_exists');
             anchorId = personalExternalTaskDiscussionId(input.actorAccountId, anchor.entry);
         }
         if (await tx.discussion.findUnique({ where: { id: anchorId }, select: { id: true } })) {
@@ -299,7 +305,7 @@ export async function createDiscussionInTx(tx: Tx, input: DiscussionCreationInpu
     const mentionAdmission = task && intent.mentionedAccountIds.length ? (await resolveTaskGrantAccessForAccountsInTx(tx, {
         resourceIds: [task.row.id], accountIds: intent.mentionedAccountIds, authentication: backgroundDeliveryAuthentication(),
     })).get(task.row.id) : undefined;
-    if (intent.mentionedAccountIds.some(id => task ? mentionAdmission?.get(id)?.ok !== true : !readers.has(id))) return discussionFailure(anchorId
+    if (intent.mentionedAccountIds.some(id => task ? mentionAdmission?.get(id)?.ok !== true : !readers.has(id))) return discussionFailure(task
         ? 'discussion_task_share_required' : 'discussion_invalid_mention');
     const source = intent.replyTarget?.kind === 'doc_passage' ? intent.replyTarget.doc : null;
     if (!validateDiscussionDocContentSource({ content: intent.content, source, root: source !== null })) {

@@ -295,13 +295,24 @@ describe('ItemDiscussionThread', () => {
     expect(screen.findByTestId(`${ID}.timeline`)).not.toBeNull();
   });
 
-  it('tells an Internal thread’s writer that an addressed agent answers only here, and stays quiet otherwise', async () => {
+  it('tells an Internal thread’s writer that an addressed agent answers only here, and shows personal-only audience only before the thread exists', async () => {
+    discussionApi.list.mockImplementation(() => listed([]));
+    const uncreated = await mount({
+      audience: 'internal',
+      sourceName: 'Linear',
+    });
+    expect(uncreated.screen.findByTestId(`${ID}.audience`)).not.toBeNull();
+    expect(uncreated.screen.findByTestId(`${ID}.agentGuard`)).toBeNull();
+    await uncreated.screen.unmount();
+
     discussionApi.list.mockImplementation(() => listed([thread('thread-1')]));
     const { screen, scope } = await mount({
       audience: 'internal',
       sourceName: 'Linear',
     });
-    expect(screen.findByTestId(`${ID}.audience`)).not.toBeNull();
+    // Once mounted in DiscussionDetailsView, real Discussion sharing/audience state owns the audience display.
+    expect(screen.findByTestId(`${ID}.audience`)).toBeNull();
+    expect(screen.findByTestId(`${ID}.timeline`)).not.toBeNull();
     expect(screen.findByTestId(`${ID}.agentGuard`)).toBeNull();
     const ref = 'session:reviewer-session';
     const token = formatInlineReferenceTokenV1({ ref, label: 'Reviewer' });

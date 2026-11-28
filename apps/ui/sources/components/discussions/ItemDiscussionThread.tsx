@@ -140,7 +140,7 @@ function ItemDiscussionThreadContent(
   const testID = props.testID ?? 'item-discussion-thread';
   return (
     <View testID={testID} style={styles.root}>
-      {internal ? (
+      {internal && lookup.kind === 'none' ? (
         <Text
           testID={`${testID}.audience`}
           variant="meta"

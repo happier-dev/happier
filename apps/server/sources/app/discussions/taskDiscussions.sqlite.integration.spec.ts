@@ -3,7 +3,8 @@ import { buildDiscussionMutationRequestBodyV1 } from '@happier-dev/protocol/disc
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/storage/artifactStoredContent';
-import { INTERNAL_TASK_SOURCE_V1, internalTaskLocalRefV1 } from '@happier-dev/protocol/tasks/entryRefV1';
+import { isExternalTaskDiscussionId } from '@happier-dev/protocol/discussions/references';
+import { INTERNAL_TASK_SOURCE_V1, internalTaskLocalRefV1, type TriageEntryRefV1 } from '@happier-dev/protocol/tasks/entryRefV1';
 import tweetnacl from 'tweetnacl';
 import { registerDiscussionRoutes } from '@/app/api/routes/discussions/registerDiscussionRoutes';
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
@@ -13,14 +14,16 @@ import { deleteTaskResource } from '@/app/todos/taskResourceService';
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
 import { createAccountTokenForTests, createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
+import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { migrateDiscussionAccountEncryptionInTx, readDiscussionAccountEncryptionInventoryInTx } from './accountEncryptionMigration';
-import { createDiscussion } from './mutations';
-import { getDiscussion, listDiscussions } from './queries';
-import { setDiscussionGrant } from './accessService';
+import { createDiscussion, postDiscussionMessage } from './mutations';
+import { getDiscussion, listDiscussions, readAdmittedTaskDiscussionIdForAnchorInTx, readDiscussionMessages } from './queries';
+import { commitDiscussionRecipientKeyEnvelopes, readDiscussionRecipientCensus, setDiscussionGrant } from './accessService';
+import { createHash } from 'node:crypto';
 
 const authentication = createPresentUserSessionAccessAuthentication();
 
-function requestFor(anchor?: { kind: 'task'; entry: ReturnType<typeof internalTaskLocalRefV1> & { source: typeof INTERNAL_TASK_SOURCE_V1 } },
+function requestFor(anchor?: { kind: 'task'; entry: TriageEntryRefV1 },
     mentionedAccountId?: string) {
     const content = { v: 1 as const, parts: [{ t: 'text' as const, text: 'Private comment' },
         ...(mentionedAccountId ? [{ t: 'mention' as const, participant: { kind: 'account' as const, accountId: mentionedAccountId } }] : [])] };
@@ -213,5 +216,200 @@ describe('Task Discussion first comment', () => {
         expect(await deleteTaskResource({ ownerAccountId: owner.id, taskId: withoutDiscussionTaskId, actorAccountId: owner.id, authentication })).toEqual({
             ok: true, value: { deleted: true },
         });
+    });
+
+    it('shares an external Internal thread with a Team via canonical DiscussionGrant and DiscussionKeyEnvelope while isolating outsiders', async () => {
+        const tagFor = (label: string) => createHash('sha256').update(label).digest('base64url');
+        const keyPairFor = () => {
+            const pair = tweetnacl.box.keyPair();
+            const binding = createSignedAccountContentBinding(pair.publicKey);
+            const fingerprint = `content-public-key-sha256:${createHash('sha256').update(pair.publicKey).digest('hex')}`;
+            return { pair, binding, fingerprint };
+        };
+        const ownerKeys = keyPairFor();
+        const teammateKeys = keyPairFor();
+        const outsiderKeys = keyPairFor();
+
+        const owner = await db.account.create({ data: {
+            encryptionMode: 'e2ee',
+            ...ownerKeys.binding,
+        } });
+        const teammate = await db.account.create({ data: {
+            encryptionMode: 'e2ee',
+            ...teammateKeys.binding,
+        } });
+        const outsider = await db.account.create({ data: {
+            encryptionMode: 'e2ee',
+            ...outsiderKeys.binding,
+        } });
+
+        const team = await db.team.create({ data: { name: 'External Internal Team' } });
+        await inTx(async tx => {
+            for (const [accountId, role] of [[owner.id, 'owner'], [teammate.id, 'member']] as const) {
+                const admission = await admitTeamMemberInTx(tx, { teamId: team.id, accountId, role, historyAccess: 'all_existing' });
+                if (!admission.ok) throw new Error('Team fixture admission failed');
+            }
+        });
+
+        const entry: TriageEntryRefV1 = {
+            source: { pluginId: 'happier.github', localId: 'issues' },
+            kindId: 'issue',
+            collisionScope: 'github:org/repo',
+            entryId: '987',
+        };
+        const anchor = { kind: 'task' as const, entry };
+        const dek = tweetnacl.randomBytes(32);
+        const ownerEnvelope = encodeBase64(sealEncryptedDataKeyEnvelopeV1({
+            dataKey: dek, recipientPublicKey: ownerKeys.pair.publicKey, randomBytes: tweetnacl.randomBytes,
+        }));
+        const createRequest = buildDiscussionMutationRequestBodyV1({
+            kind: 'create',
+            creationLocalId: crypto.randomUUID(),
+            titleContent: { t: 'encrypted', c: 'opaque-title' },
+            anchor,
+            dataEncryptionKey: ownerEnvelope,
+            expectedOwnerContentPublicKeyFingerprint: ownerKeys.fingerprint,
+            creationEqualityEvidenceV1: { kind: 'e2eeTag', tag: tagFor('create-tag-1') },
+            firstMessage: {
+                localId: crypto.randomUUID(),
+                content: { t: 'encrypted', c: 'opaque-first-comment' },
+                authoredContent: { v: 1, parts: [{ t: 'text', text: 'First internal comment' }] },
+                mentionedAccountIds: [],
+                requestEqualityEvidenceV1: { kind: 'e2eeTag', tag: tagFor('msg-tag-1') },
+            },
+        });
+
+        const created = await createDiscussion({ actorAccountId: owner.id, authentication, request: createRequest });
+        expect(created).toMatchObject({
+            ok: true,
+            value: {
+                discussion: {
+                    ownerAccountId: owner.id,
+                    encryptionMode: 'e2ee',
+                    capabilities: { manageAccess: true, leave: false },
+                },
+            },
+        });
+        if (!created.ok) throw new Error(created.error);
+        const discussionId = created.value.discussion.id;
+        expect(isExternalTaskDiscussionId(discussionId)).toBe(true);
+
+        // Before sharing, neither teammate nor outsider sees the thread.
+        expect(await listDiscussions({ anchorTask: entry, actorAccountId: teammate.id, authentication })).toEqual({
+            ok: true, value: { discussions: [], nextCursor: null },
+        });
+        expect(await listDiscussions({ anchorTask: entry, actorAccountId: outsider.id, authentication })).toEqual({
+            ok: true, value: { discussions: [], nextCursor: null },
+        });
+
+        // Owner shares the external Internal thread with the Team via canonical DiscussionGrant.
+        const granted = await setDiscussionGrant({
+            discussionId,
+            actorAccountId: owner.id,
+            authentication,
+            request: { accessLevel: 'edit', principal: { kind: 'team', teamId: team.id } },
+        });
+        expect(granted).toMatchObject({ ok: true, value: { changed: true } });
+
+        // Owner delivers the E2EE Discussion DEK via canonical DiscussionKeyEnvelope.
+        const census = await readDiscussionRecipientCensus({ discussionId, actorAccountId: owner.id, authentication });
+        expect(census).toMatchObject({ ok: true });
+        if (!census.ok) throw new Error(census.error);
+        const teammateEnvelope = encodeBase64(sealEncryptedDataKeyEnvelopeV1({
+            dataKey: dek, recipientPublicKey: teammateKeys.pair.publicKey, randomBytes: tweetnacl.randomBytes,
+        }));
+        const committed = await commitDiscussionRecipientKeyEnvelopes({
+            discussionId,
+            actorAccountId: owner.id,
+            authentication,
+            request: {
+                expectedDataEncryptionKey: census.value.dataEncryptionKey!,
+                recipientKeyEnvelopes: [{
+                    recipientAccountId: teammate.id,
+                    encryptedDataKey: teammateEnvelope,
+                    recipientContentPublicKeyFingerprint: teammateKeys.fingerprint,
+                }],
+            },
+        });
+        expect(committed).toMatchObject({ ok: true });
+
+        // Teammate discovers the thread via listDiscussions({ anchorTask }), receives the DEK, reads, and replies.
+        const teammateList = await listDiscussions({ anchorTask: entry, actorAccountId: teammate.id, authentication });
+        expect(teammateList).toMatchObject({
+            ok: true,
+            value: {
+                discussions: [{
+                    id: discussionId,
+                    ownerAccountId: owner.id,
+                    keyReadiness: true,
+                    dataEncryptionKey: teammateEnvelope,
+                    capabilities: { postMessages: true, manageAccess: false, leave: true },
+                }],
+                nextCursor: null,
+            },
+        });
+
+        const teammateRead = await readDiscussionMessages({ discussionId, actorAccountId: teammate.id, authentication });
+        expect(teammateRead).toMatchObject({ ok: true, value: { messages: [{ seq: 1 }] } });
+
+        const reply = await postDiscussionMessage({
+            discussionId,
+            actorAccountId: teammate.id,
+            authentication,
+            request: {
+                localId: crypto.randomUUID(),
+                content: { t: 'encrypted', c: 'opaque-teammate-reply' },
+                mentionedAccountIds: [],
+                requestEqualityEvidenceV1: { kind: 'e2eeTag', tag: tagFor('reply-tag-1') },
+            },
+        });
+        expect(reply).toMatchObject({ ok: true, value: { messageSeq: 2 } });
+
+        // Teammate attempting to create a duplicate thread on the same external ref gets discussion_task_thread_exists.
+        const duplicateCreate = await createDiscussion({
+            actorAccountId: teammate.id,
+            authentication,
+            request: buildDiscussionMutationRequestBodyV1({
+                kind: 'create',
+                creationLocalId: crypto.randomUUID(),
+                titleContent: { t: 'encrypted', c: 'dup-title' },
+                anchor,
+                dataEncryptionKey: encodeBase64(sealEncryptedDataKeyEnvelopeV1({
+                    dataKey: tweetnacl.randomBytes(32), recipientPublicKey: teammateKeys.pair.publicKey, randomBytes: tweetnacl.randomBytes,
+                })),
+                expectedOwnerContentPublicKeyFingerprint: teammateKeys.fingerprint,
+                creationEqualityEvidenceV1: { kind: 'e2eeTag', tag: tagFor('dup-create-tag') },
+                firstMessage: {
+                    localId: crypto.randomUUID(),
+                    content: { t: 'encrypted', c: 'dup-msg' },
+                    authoredContent: { v: 1, parts: [{ t: 'text', text: 'Duplicate comment' }] },
+                    mentionedAccountIds: [],
+                    requestEqualityEvidenceV1: { kind: 'e2eeTag', tag: tagFor('dup-msg-tag') },
+                },
+            }),
+        });
+        expect(duplicateCreate).toEqual({ ok: false, error: 'discussion_task_thread_exists' });
+
+        // Ungranted outsider still sees empty list and cannot read the Team's thread.
+        expect(await listDiscussions({ anchorTask: entry, actorAccountId: outsider.id, authentication })).toEqual({
+            ok: true, value: { discussions: [], nextCursor: null },
+        });
+        expect(await getDiscussion({ discussionId, actorAccountId: outsider.id, authentication })).toEqual({
+            ok: false, error: 'discussion_not_found',
+        });
+
+        // Signed discussionTask anchor proof admits owner & teammate on the exact ref, never outsider or wrong ref.
+        expect(await inTx(tx => readAdmittedTaskDiscussionIdForAnchorInTx(tx, {
+            actorAccountId: owner.id, authentication, ref: entry, requestedDiscussionId: discussionId,
+        }))).toBe(discussionId);
+        expect(await inTx(tx => readAdmittedTaskDiscussionIdForAnchorInTx(tx, {
+            actorAccountId: teammate.id, authentication, ref: entry, requestedDiscussionId: discussionId,
+        }))).toBe(discussionId);
+        expect(await inTx(tx => readAdmittedTaskDiscussionIdForAnchorInTx(tx, {
+            actorAccountId: outsider.id, authentication, ref: entry, requestedDiscussionId: discussionId,
+        }))).toBeNull();
+        expect(await inTx(tx => readAdmittedTaskDiscussionIdForAnchorInTx(tx, {
+            actorAccountId: teammate.id, authentication, ref: { ...entry, entryId: 'different-issue' }, requestedDiscussionId: discussionId,
+        }))).toBeNull();
     });
 });
