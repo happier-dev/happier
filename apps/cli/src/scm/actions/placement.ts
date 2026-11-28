@@ -1,7 +1,14 @@
+import { isScmLocalRepositoryReadRpcMethod } from '@happier-dev/protocol/actions/scmGitActionSpecs';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { isStoredScmReviewEvidenceAction } from '@happier-dev/protocol/actions/scmActionIdsV1';
 export { isStoredScmReviewEvidenceAction } from '@happier-dev/protocol/actions/scmActionIdsV1';
+
+/** Comparison capture stores evidence and can use custody from the authenticated local Machine owner. */
+export function canUseAuthenticatedLocalRequesterForScmRpc(method: string): boolean {
+    return isScmLocalRepositoryReadRpcMethod(method) || method === RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE;
+}
 
 /** Retained evidence/revisions keep their existing local access/currentness owner. */
 export function isRetainedScmReviewAction(actionId: string, input: Readonly<Record<string, unknown>>): boolean {

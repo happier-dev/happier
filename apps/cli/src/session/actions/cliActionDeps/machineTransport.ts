@@ -29,7 +29,7 @@ import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { readContextRetainedVerifiedExternalActionRequester, readRetainedVerifiedExternalActionRequester } from '@/daemon/agentIsolation/verifiedExternalActionRequester';
 import { areServerProfileIdentifiersEquivalent } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
-import { isScmLocalRepositoryReadRpcMethod } from '@happier-dev/protocol/actions/scmGitActionSpecs';
+import { canUseAuthenticatedLocalRequesterForScmRpc } from '@/scm/actions/placement';
 
 export { executionRunAuthorityCeiling } from '@/session/transport/rpc/machineRpc';
 
@@ -421,9 +421,9 @@ export function createCliMachineActionTransport(
       // A host child keeps the receiving hop's admission. Local Action authority
       // alone cannot stand in for that fact (interactive terminals require both).
       const host = input.context;
-      const localRepositoryRequester = host?.authenticatedLocalRootCustody?.machineId === input.machineId
-        && !externalRequest && isScmLocalRepositoryReadRpcMethod(input.method);
-      const rpcContext = host && (host.machineAdmission || retainedLocalRequester || localRepositoryRequester) ? {
+      const authenticatedLocalRequester = host?.authenticatedLocalRootCustody?.machineId === input.machineId
+        && !externalRequest && canUseAuthenticatedLocalRequesterForScmRpc(input.method);
+      const rpcContext = host && (host.machineAdmission || retainedLocalRequester || authenticatedLocalRequester) ? {
         machineAdmission: host.machineAdmission,
         verifyMachineAdmissionCurrent: host.verifyMachineAdmissionCurrent,
         callerAuthority: input.authority ?? host.authority,

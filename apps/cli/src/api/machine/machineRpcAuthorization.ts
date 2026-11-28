@@ -23,6 +23,7 @@ import {
   selectHostRequesterExecutionIdentity,
   type HostRequesterExecutionIdentity,
 } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { canUseAuthenticatedLocalRequesterForScmRpc } from '@/scm/actions/placement';
 import { readRetainedVerifiedExternalActionRequester } from '@/daemon/agentIsolation/verifiedExternalActionRequester';
 import { isProjectWorkspaceSyncPreparationActionV1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import { DaemonLocalServiceLauncherStartRequestV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
@@ -1796,7 +1797,7 @@ export async function authorizeMachineRpcRequest(
       ? request.method.slice(machine.machineId.length + 1) : undefined;
     if (!method) return forbidden('machine_target');
     const localRepositoryRead = isScmLocalRepositoryReadRpcMethod(method);
-    if ((retainedRequester || localRootCustody && localRepositoryRead)
+    if ((retainedRequester || localRootCustody && canUseAuthenticatedLocalRequesterForScmRpc(method))
       && resolveMachineRpcRoutePolicy(method).requesterExecutionIsolationRequired === true) {
       try {
         const installationId = machine.resolveInstallationId();

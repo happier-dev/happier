@@ -1,12 +1,18 @@
 import { rm } from 'node:fs/promises';
 import axios from 'axios';
 import { expect, it, vi } from 'vitest';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import { createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import { ScmComparisonCaptureOutputSchema } from '@happier-dev/protocol/scm/diffSummary';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
+import { reloadConfiguration } from '@/configuration';
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { authorizeMachineRpcRequest } from '@/api/machine/machineRpcAuthorization';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { registerScmHandlers } from '@/rpc/handlers/scm';
 import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import { createTestGitScmBackendRegistry } from '@/scm/rpc/__tests__/testRpcHarness';
@@ -24,10 +30,20 @@ const credentials = { token, encryption: null };
 // deliberately present even when the invocation has no admitted requester.
 vi.mock('@/persistence', async original => ({ ...await original<typeof import('@/persistence')>(), readStoredCredentials: async () => credentials }));
 
-it.each(['admitted', 'absent', 'foreign-installation'] as const)(
-    'runs a reviewed contributed Action with %s requester custody through the installed SCM receiver',
-    async source => runWithRealGitScmRuntime(async () => {
+it.each([
+    { source: 'admitted', comparison: false },
+    { source: 'absent', comparison: false },
+    { source: 'foreign-installation', comparison: false },
+    { source: 'admitted', comparison: true },
+    { source: 'absent', comparison: true },
+    { source: 'foreign-account', comparison: true },
+] as const)(
+    'runs a reviewed contributed Action with $source requester custody through the installed SCM receiver (comparison: $comparison)',
+    async ({ source, comparison }) => runWithRealGitScmRuntime(async () => {
         const repository = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'happier-contributed-scm-' });
+        const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID']);
+        env.patch({ HAPPIER_HOME_DIR: repository.rootPath, HAPPIER_ACTIVE_SERVER_ID: 'home' });
+        reloadConfiguration();
         const homeAdmission = vi.fn(async () => false);
         const rpc = new RpcHandlerManager({ scopePrefix: 'machine', encryptionMode: 'plain', logger: () => {},
             authorizeRequest: request => authorizeMachineRpcRequest(request, {
@@ -47,13 +63,36 @@ it.each(['admitted', 'absent', 'foreign-installation'] as const)(
             actions: { prepare: {
                 title: 'Prepare review', surfaces: ['cli'], dangerLevel: 'safe',
                 inputSchema: { type: 'object', additionalProperties: false }, resultSchema: { type: 'object' },
-                run: async (_input, context) => context.services.actions.execute('scm.file.read', {
-                    cwd: repository.rootPath, path: repository.trackedPath, selector: { commit: repository.headCommit },
-                }),
+                run: async (_input, context) => comparison
+                    ? context.services.actions.execute('scm.diffSummary.capture', {
+                        cwd: repository.rootPath, projection: { kind: 'index' }, source: { kind: 'pullRequest', locator: {
+                            providerId: 'example-forge', repository: 'example/reviews-fixture', number: 1,
+                            baseOid: repository.headCommit, headOid: repository.headCommit,
+                        } },
+                    })
+                    : context.services.actions.execute('scm.file.read', {
+                        cwd: repository.rootPath, path: repository.trackedPath, selector: { commit: repository.headCommit },
+                    }),
             } },
         });
         const action = { pluginId: plugin.manifest.id, localId: 'prepare' };
-        vi.spyOn(axios, 'get').mockRejectedValue(new Error('Unexpected Home read'));
+        // Home HTTP owns Account currentness and the Machine observed by SCM.
+        vi.spyOn(axios, 'get').mockImplementation(async url => {
+            const path = new URL(String(url)).pathname;
+            if (path === '/v1/account/encryption/currentness') return { status: 200, data: {
+                mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+            } };
+            if (path === '/v1/account/profile') return { status: 200, data: { id: 'owner' } };
+            if (path === '/v1/machines/machine') return { status: 200, data: { machine: {
+                id: 'machine', kind: 'persistent', active: true, installationId: 'installation',
+                managedMachineRef: null, revokedAt: null, replacedByMachineId: null,
+                metadata: null, metadataVersion: 1, daemonState: null, daemonStateVersion: 0,
+                storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+                access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'manage',
+                    resourceMode: 'plain', accessState: 'ready' },
+            } } };
+            throw new Error(`Unexpected Home read: ${path}`);
+        });
         vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
             const availability = absentAccountPluginAvailabilityHttpResponse(String(url), body);
             if (availability) return availability;
@@ -61,7 +100,10 @@ it.each(['admitted', 'absent', 'foreign-installation'] as const)(
         });
         let fixture: Awaited<ReturnType<typeof createAuthoredAdmittedPluginRuntimeFixture>> | undefined;
         try {
+            await updateMachineRegistration(() => ({ machineId: 'machine' }));
             fixture = await createAuthoredAdmittedPluginRuntimeFixture({
+                happyHomeDir: repository.rootPath,
+                controller: pluginReloadController,
                 runtimeOptions: { resolveCurrentMachineId: () => 'machine',
                     scopedActionRuntime: { credentials, actionsSettingsProvider: createActionSettingsProvider() },
                     machineActionDirectTargetTransport: { machineId: 'machine', invoke: rpc.invokeLocal.bind(rpc) },
@@ -71,10 +113,11 @@ it.each(['admitted', 'absent', 'foreign-installation'] as const)(
             });
             const target = { kind: 'machine', machineId: 'machine' } as const;
             const installationId = source === 'foreign-installation' ? 'another-installation' : 'installation';
+            const requesterAccountId = source === 'foreign-account' ? 'other-account' : 'owner';
             const context: RpcActionExecutorContext = { surface: 'cli', authority: 'account_automation', externalActionTarget: target,
                 ...(source !== 'absent' ? {
-                    authenticatedLocalRootCustody: { serverIdentityId: 'home', accountId: 'owner', machineId: target.machineId, installationId },
-                    requesterWorkAttributionV1: { serverId: 'home', accountId: 'owner', machineId: target.machineId, installationId },
+                    authenticatedLocalRootCustody: { serverIdentityId: 'home', accountId: requesterAccountId, machineId: target.machineId, installationId },
+                    requesterWorkAttributionV1: { serverId: 'home', accountId: requesterAccountId, machineId: target.machineId, installationId },
                 } : {}),
             };
             const result = await executeContributedAction({ runtimeRegistry: fixture.registry,
@@ -85,9 +128,13 @@ it.each(['admitted', 'absent', 'foreign-installation'] as const)(
                 context: { surface: 'cli', invocationSurface: 'cli' },
             });
             if (source === 'admitted') {
-                expect(result, JSON.stringify(result)).toMatchObject({ matched: true, result: { ok: true, result: {
-                    success: true, contentBase64: Buffer.from('base\n').toString('base64'),
-                } } });
+                expect(result, JSON.stringify(result)).toMatchObject({ matched: true, result: { ok: true, result: comparison
+                    ? { success: true, comparison: { source: { kind: 'pullRequest' }, repository: { rootPath: repository.rootPath } } }
+                    : { success: true, contentBase64: Buffer.from('base\n').toString('base64') },
+                } });
+                if (comparison && result.matched && result.result.ok) {
+                    expect(ScmComparisonCaptureOutputSchema.safeParse(result.result.result).success).toBe(true);
+                }
             } else if (source === 'absent') {
                 expect(result).toMatchObject({ matched: true, result: { ok: false, errorCode: 'agent_isolation_unavailable',
                     data: { failureCause: { phase: 'rpc.admission.local_requester_unavailable' } },
@@ -98,6 +145,8 @@ it.each(['admitted', 'absent', 'foreign-installation'] as const)(
             expect(homeAdmission).not.toHaveBeenCalled();
         } finally {
             await fixture?.dispose();
+            env.restore();
+            reloadConfiguration();
             await rm(repository.rootPath, { recursive: true, force: true });
             vi.restoreAllMocks();
         }
