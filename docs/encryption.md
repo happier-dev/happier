@@ -1964,6 +1964,13 @@ value-free statement shapes or relation and column identities with affected
 row counts. SQL parameters, row values, and result bodies stay out of the
 audit log.
 
+In 0.3 development, a pending Database Workbench approval shows the SQL in
+the Account's existing approval Artifact. E2EE Accounts seal that review
+and Plain Accounts use the authenticated plaintext envelope. The review
+masks bound parameters and staged cell values. Settlement removes the live
+operands and earlier approval body revisions. Console history keeps SQL
+on the answering device.
+
 Group names and descriptions bind ciphertext to the immutable Group id with
 `entity: 'team_group'` and their respective `field: 'name'` or `field: 'description'`.
 Both use the human author's persisted Account mode and the same current Team

@@ -33,13 +33,15 @@ describe('resolveEffectiveActionInputFields', () => {
     { action: DATABASE_STATEMENT_RUN_ACTION_ID_V1, input: { mode: 'read', statement }, path: 'statement' },
     { action: DATABASE_STATEMENT_RUN_ACTION_ID_V1, input: { mode: 'write', statements: [statement] }, path: 'statements.0' },
     { action: DATABASE_STATEMENT_EXPLAIN_ACTION_ID_V1, input: { mode: 'analyze', statement }, path: 'statement' },
-  ])('withholds SQL and parameters from the durable $action $input.mode preview', ({ action, input, path }) => {
+  ])('keeps SQL visible and masks parameters in the pending $action $input.mode review', ({ action, input, path }) => {
     const metadata = databaseActionMetadata[action];
     expect(readActionSecretInputAdmission(metadata, input).missingPaths).toEqual([]);
     const projection = projectTargetActionApprovalInput(input, metadata.secretInputPaths);
-    expect(projection?.confidentialPaths).toEqual([`${path}.sql`, `${path}.parameters.0.value`]);
+    expect(projection?.confidentialPaths).toEqual([`${path}.parameters.0.value`]);
     expect(projection?.input).toMatchObject({ mode: input.mode });
-    expect(JSON.stringify(projection?.input)).not.toContain('private_');
+    const review = JSON.stringify(projection?.input);
+    expect(review).toContain(sql);
+    expect(review).not.toContain('private_parameter');
     expect(readActionSecretInputAdmission(metadata, {
       mode: input.mode,
       ...(path === 'statement' ? { statement: { sql } } : { statements: [{ sql }] }),

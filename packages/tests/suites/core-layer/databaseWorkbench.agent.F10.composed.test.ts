@@ -4,6 +4,7 @@ import { createCredentialedAccountArtifactStore } from '../../../../apps/cli/src
 import { runWithServerHttpBaseUrl } from '../../../../apps/cli/src/api/client/serverHttpBaseUrl';
 import { PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/account/settings/personalSavedSecretActionsV1';
 import { ApprovalQueueListResultV1Schema } from '@happier-dev/protocol/approvals/approvalRequestPublicRead';
+import { StoredTargetActionApprovalRequestV1Schema } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 import { ActionApprovalRequestCreatedResultSchema, ActionOperationAcceptedResultSchema, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ACTION_OPERATION_GET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
 import { ActionOperationGetV1ResponseSchema, readActionOperationTerminalResultV1 } from '@happier-dev/protocol/actions/operations/v1';
@@ -280,7 +281,7 @@ describe.sequential('F10 real agent database access', () => {
   }, 0);
 
 
-  it('asks once without storing protected SQL and rolls back an allowed batch when its second statement fails', async () => {
+  it('shows SQL in one pending review, clears it on settlement, and rolls back a failed ordered batch', async () => {
     const { fixture, agent } = prepared;
     const target = fixture.targets.selected;
     const sqlMarker = 'dbw_f10_private_sql';
@@ -301,13 +302,12 @@ describe.sequential('F10 real agent database access', () => {
     const newApprovals = async () => (await listSessionApprovals(fixture, agent.sessionId))
       .filter(item => !existing.has(item.artifactId));
     const artifacts = createCredentialedAccountArtifactStore(fixture.owner.credentials);
-    const expectProtectedApproval = async (artifactId: string) => {
+    const readApproval = async (artifactId: string) => {
       const artifact = await runWithServerHttpBaseUrl(fixture.server.baseUrl, () => artifacts.read(artifactId));
-      expect(typeof artifact?.body).toBe('string');
-      const stored = JSON.stringify(artifact);
-      for (const marker of [sqlMarker, parameterMarker, resultMarker]) {
-        expect(stored.includes(marker), `Home approval contains ${marker}`).toBe(false);
-      }
+      if (typeof artifact?.body !== 'string') throw new Error('F10 approval Artifact omitted its body');
+      expect(artifact.body).not.toContain(parameterMarker);
+      expect(artifact.body).not.toContain(resultMarker);
+      return StoredTargetActionApprovalRequestV1Schema.parse(JSON.parse(artifact.body));
     };
     const executeBatch = (statements: ReturnType<typeof DatabaseWriteStatementInputV1Schema.parse>['statements']) => agent.execute(
       DATABASE_STATEMENT_RUN_ACTION_ID_V1,
@@ -332,7 +332,12 @@ describe.sequential('F10 real agent database access', () => {
     expect(opened).toMatchObject([{ status: 'open' }]);
     expect(await read()).toBe('');
     const { artifactId } = opened[0]!;
-    await expectProtectedApproval(artifactId);
+    expect(await readApproval(artifactId)).toMatchObject({ status: 'open', input: { statements: [
+      { sql: "INSERT INTO dbw_f10_ordered VALUES (1, 'first')" },
+      { sql: `UPDATE dbw_f10_ordered SET note = $1 WHERE id = 1 /* ${sqlMarker} */`,
+        parameters: [{ type: 'text', value: '[REDACTED]' }] },
+      { sql: 'SELECT note FROM dbw_f10_output' },
+    ] } });
     expect(await fixture.owner.executeAsPerson('approval.request.decide', { artifactId, decision: 'approve' }))
       .toMatchObject({ ok: true });
     const applied = await settleDatabaseAction(fixture, pending);
@@ -344,7 +349,12 @@ describe.sequential('F10 real agent database access', () => {
     ] });
     expect(await read()).toBe(parameterMarker);
     expect(await newApprovals()).toMatchObject([{ artifactId }]);
-    await expectProtectedApproval(artifactId);
+    const settled = await readApproval(artifactId);
+    expect(settled).toMatchObject({ status: 'executed', input: null });
+    expect(JSON.stringify(settled)).not.toContain(sqlMarker);
+    const { revisions } = await runWithServerHttpBaseUrl(fixture.server.baseUrl,
+      () => artifacts.revisions.list({ artifactId }));
+    expect(revisions).toEqual([]);
 
     expect(await fixture.executeDatabase(DATABASE_ACCESS_SET_ACTION_ID_V1, { target, agentAccess: 'readWriteNoApproval' }))
       .toMatchObject({ ok: true, result: { ok: true, agentAccess: 'readWriteNoApproval' } });
