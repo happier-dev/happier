@@ -15,7 +15,12 @@ import { activate as activateGitlabAccount } from '../../../scm-gitlab/src/accou
 import gitlabMergeRequests from '../../../scm-gitlab/src/triage/__fixtures__/mergeRequestList.json' with { type: 'json' };
 import type { JsonValue, PluginInvocationContext, PluginServices } from '@happier-dev/plugin-sdk';
 import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
-import { REVIEW_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { createActionExecutor, type ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
+import { ReviewReviewersSetInputV1Schema } from '@happier-dev/protocol/reviews/reviewHumanV1';
+import { ScmComparisonCaptureInputSchema } from '@happier-dev/protocol/scm/diffSummary';
+import { createInMemoryReviewRecordPortV1 } from '../../../../protocol/src/reviews/reviewArtifactV1.testkit.js';
+import { REVIEW_HUMAN_ACTION_IDS_V1, REVIEW_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
 import { expect, it } from 'vitest';
 import { TRIAGE_PLUGIN } from '../definition.js';
@@ -35,7 +40,7 @@ const bitbucketWorkspace = '{12345678-abcd-4000-8000-123456789abc}';
 const azureBase = 'https://dev.azure.com/exampleorg';
 const azureRequest = azurePullRequests.value[0]!;
 
-it.each([
+const forges = [
     {
         manifest: github, activate: activateGithub, activateAccount: activateGithubAccount,
         providerId: 'github', repository: 'octo/repo', number: 17, url: 'https://github.com/octo/repo/pull/17',
@@ -69,9 +74,21 @@ it.each([
         response: azureRequest,
         collisionScope: `azure-devops:${Buffer.from(azureBase).toString('base64url')}:${azureRequest.repository.id}`,
     },
-])('links, replaces, and ignores stale $providerId Review receipts', async ({
+] as const;
+
+const startPaths = [
+    { name: 'direct', context: { surface: 'cli' } },
+    { name: 'Agent', context: { surface: 'agent', actionCaller: { kind: 'session', sessionId: 'review-session' } } },
+    { name: 'Workflow', context: { surface: 'agent', authority: 'account_automation', actionCaller: {
+        kind: 'workflowRun', runId: 'review-workflow',
+        authorization: { admittedPermissionCeiling: 'read-only', principal: { kind: 'host' } },
+    } } },
+] as const satisfies readonly { name: string; context: ActionExecutorContext }[];
+
+it.each(forges.flatMap(forge => startPaths.map(path => ({ ...forge, path }))))(
+    'links, replaces, and rejects stale $providerId Review receipts with $path.name caller context', async ({
     manifest, activate, activateAccount, providerId, repository, number, url, base, apiOrigin, apiPath,
-    localInstanceKey, configuration, response, collisionScope,
+    localInstanceKey, configuration, response, collisionScope, path,
 }) => {
     const fixture = createTriageSourceV1Fixture();
     const source = manifest.contributes.targetedPluginContributions.find(
@@ -170,45 +187,87 @@ it.each([
         const read = () => createTriageReadEntryDetailActionHandler()({
             v: 1, entryRef, sourceInstanceId: configured.instance.sourceInstanceId,
         }, context);
-        const observe = async (reviewId: string, headOid: string | undefined, actionId: string = REVIEW_START_ACTION_ID_V1) => {
-            for (const declaration of TRIAGE_PLUGIN.manifest.contributes.hooks ?? []) {
-                if (declaration.on !== 'action.execute.after') continue;
-                await plugin.registration('hooks', declaration.id)?.({
-                    actionId, input: {},
-                    invocation: { surface: 'agent', caller: { kind: 'host' } },
-                    timestampMs: 1,
-                    outcome: { status: 'succeeded', result: {
-                        ...(headOid === undefined ? {} : { reviewTarget: { locator: { providerId, repository, number }, url, headOid } }),
-                        reviewRound: { reviewId, roundOrdinal: 1 },
-                    } },
-                }, context);
-            }
+        const hook = plugin.registration('hooks', 'associate-pr-review');
+        if (!hook) throw new Error('Expected the PR Review hook');
+        let observed: Promise<unknown> | undefined;
+        const observe = (actionId: string, result: JsonValue) => hook({
+            actionId, input: {}, invocation: { surface: path.context.surface, caller: { kind: 'host' } },
+            timestampMs: 1, outcome: { status: 'succeeded', result },
+        }, context);
+        const records = createInMemoryReviewRecordPortV1();
+        const person = { kind: 'person', principal: { kind: 'account', accountId: 'reviewer' }, required: true } as const;
+        const executor = createActionExecutor({
+            reviewRecords: () => records,
+            observeActionExecution: ({ actionId, result }) => {
+                if (actionId === REVIEW_START_ACTION_ID_V1 && result.ok) {
+                    observed = Promise.resolve(observe(actionId, StrictJsonValueSchema.parse(result.result)));
+                    return observed.then(() => undefined);
+                }
+            },
+            homeDomainAction: async ({ actionId, input }) => {
+                expect(actionId).toBe(REVIEW_HUMAN_ACTION_IDS_V1.setReviewers);
+                const { reviewId, roundOrdinal } = ReviewReviewersSetInputV1Schema.parse(input);
+                return { reviewId, roundOrdinal, requests: [], verdicts: [], needsYou: {
+                    reviewId, roundOrdinal, reason: 'review_needs_you', needsYou: true,
+                    requestedVerdict: true, pendingDecisions: false, canSubmitVerdict: true,
+                } };
+            },
+            scmActionExecute: async ({ input }) => {
+                const { source } = ScmComparisonCaptureInputSchema.parse(input);
+                if (source?.kind !== 'pullRequest') throw new Error('Expected a PR capture');
+                return { success: true, comparison: {
+                    id: 'a'.repeat(64), source, repository: { rootPath: '/review-repo' },
+                    endpoints: { before: 'base', after: source.locator.headOid },
+                    pullRequest: { baseOid: 'base', url },
+                    inventory: { state: 'complete', files: [], reasons: [] },
+                }, metadata: { source, sourceKey: 'selected-pr' } };
+            },
+        });
+        const start = async (headOid: string) => {
+            observed = undefined;
+            const result = await executor.execute(REVIEW_START_ACTION_ID_V1, {
+                target: { kind: 'detached' }, cwd: '/review-repo', instructions: 'Review this PR.',
+                source: { kind: 'pullRequest', locator: { providerId, repository, number, headOid } },
+                reviewers: [person],
+            }, { authority: 'present_user', ...path.context,
+                runtimeAccountId: 'd71dfd69-e2d9-4f92-8453-d4fd74f8f2b1',
+                externalActionTarget: { kind: 'machine', machineId: 'review-machine' },
+                executionRunTargetMachineId: 'review-machine',
+            });
+            if (!result.ok) throw new Error(JSON.stringify(result));
+            expect(result).toMatchObject({ ok: true, result: {
+                reviewTarget: { url, headOid }, reviewRound: { reviewId: expect.any(String), roundOrdinal: 1 },
+            } });
+            if (!observed) throw new Error('Review settlement did not emit an observer receipt');
+            await observed;
+            return (result.result as { reviewRound: { reviewId: string; roundOrdinal: number } }).reviewRound;
         };
         expect(await read()).toMatchObject({ kind: 'read' });
         expect(await read()).not.toHaveProperty('admittedReview');
         const cost = () => ({ providerReads, exactReads, relationWrites });
         const before = cost();
-        await observe('unrelated-action', head, getDeclaration.id);
-        await observe('non-pr-review', undefined);
+        await observe(getDeclaration.id, {});
+        await observe(REVIEW_START_ACTION_ID_V1, { reviewRound: { reviewId: 'non-pr-review', roundOrdinal: 1 } });
         expect(cost()).toEqual(before);
 
-        await observe('first-review', head);
+        const first = await start(head);
         expect(cost()).toEqual({
             providerReads: before.providerReads + 1,
             exactReads: before.exactReads + 1,
             relationWrites: before.relationWrites + 1,
         });
-        expect(await read()).toMatchObject({ kind: 'read', admittedReview: { reviewId: 'first-review', roundOrdinal: 1 } });
-        await observe('second-review', head);
-        expect(await read()).toMatchObject({ kind: 'read', admittedReview: { reviewId: 'second-review', roundOrdinal: 1 } });
+        expect(await read()).toMatchObject({ kind: 'read', admittedReview: first });
+        const second = await start(head);
+        expect(second.reviewId).not.toBe(first.reviewId);
+        expect(await read()).toMatchObject({ kind: 'read', admittedReview: second });
         const beforeStale = cost();
-        await observe('stale-review', 'older-head');
+        await start('older-head');
         expect(cost()).toEqual({
             providerReads: beforeStale.providerReads + 1,
             exactReads: beforeStale.exactReads + 1,
             relationWrites: beforeStale.relationWrites,
         });
-        expect(await read()).toMatchObject({ kind: 'read', admittedReview: { reviewId: 'second-review', roundOrdinal: 1 } });
+        expect(await read()).toMatchObject({ kind: 'read', admittedReview: second });
     } finally {
         await plugin.dispose();
         await provider.dispose();
