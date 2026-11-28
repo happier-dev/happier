@@ -240,13 +240,28 @@ function endOfString(source, at) {
   return source.length;
 }
 
-/** Index just past the `}` that closes the `{` at `at`, strings and nesting aware. */
+function skipCommentOrString(source, at) {
+  const ch = source[at];
+  if (ch === '"' || ch === "'" || ch === '`') return endOfString(source, at);
+  if (ch === '/' && source[at + 1] === '/') {
+    const newline = source.indexOf('\n', at + 2);
+    return newline === -1 ? source.length : newline + 1;
+  }
+  if (ch === '/' && source[at + 1] === '*') {
+    const close = source.indexOf('*/', at + 2);
+    return close === -1 ? source.length : close + 2;
+  }
+  return at;
+}
+
+/** Index just past the `}` that closes the `{` at `at`. */
 function endOfBraces(source, at) {
   let depth = 0;
   let i = at;
   while (i < source.length) {
+    const next = skipCommentOrString(source, i);
+    if (next !== i) { i = next; continue; }
     const ch = source[i];
-    if (ch === '"' || ch === "'" || ch === '`') { i = endOfString(source, i); continue; }
     if (ch === '{') { depth += 1; i += 1; continue; }
     if (ch === '}') { depth -= 1; i += 1; if (depth === 0) return i; continue; }
     i += 1;
@@ -265,18 +280,9 @@ function findPropertyValue(source, from, to, name) {
   let depth = 0;
   let i = from;
   while (i < to) {
+    const next = skipCommentOrString(source, i);
+    if (next !== i) { i = next; continue; }
     const ch = source[i];
-    if (ch === '/' && source[i + 1] === '/') {
-      const newline = source.indexOf('\n', i);
-      i = newline === -1 ? to : newline + 1;
-      continue;
-    }
-    if (ch === '/' && source[i + 1] === '*') {
-      const close = source.indexOf('*/', i);
-      i = close === -1 ? to : close + 2;
-      continue;
-    }
-    if (ch === '"' || ch === "'" || ch === '`') { i = endOfString(source, i); continue; }
     if (ch === '{' || ch === '(' || ch === '[') { depth += 1; i += 1; continue; }
     if (ch === '}' || ch === ')' || ch === ']') {
       depth -= 1;
