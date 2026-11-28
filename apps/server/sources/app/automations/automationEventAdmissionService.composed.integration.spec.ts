@@ -3822,6 +3822,23 @@ describe("Automation Event admission", () => {
         expect(await db.automationRun.count({ where: { accountId: ACCOUNT_ID } })).toBe(0);
     });
 
+    it("admits a Plain Event after the Account retains public verification keys", async () => {
+        await seed();
+        await configureE2eeAccount();
+        // Switching to Plain preserves the public verification binding.
+        await db.account.update({ where: { id: ACCOUNT_ID }, data: { encryptionMode: "plain" } });
+
+        await expect(admitAutomationEventV1Raw({
+            accountId: ACCOUNT_ID,
+            caller,
+            input: input(),
+        })).resolves.toMatchObject({
+            results: [{ kind: "admitted", checkpointSafe: true }],
+            continuation: { kind: "ready" },
+        });
+        expect(await db.automationRun.count({ where: { accountId: ACCOUNT_ID } })).toBe(1);
+    });
+
     it("rejects a plain private witness after the Account changes to E2EE", async () => {
         await seed();
         await configureE2eeAccount();

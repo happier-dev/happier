@@ -23,6 +23,7 @@ import {
 import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
 import { inTx, type Tx } from "@/storage/inTx";
 
+import { matchesAutomationAccountContentIdentityAtFence } from "./automationAccountCurrentness";
 import {
     assertCurrentAutomationEventCallerMaterializationTx,
     readCurrentAutomationEventDurablePushEndpointTargetTxV1,
@@ -395,20 +396,6 @@ function encryptedExistingEvidenceDisposition(params: Readonly<{
         : "unavailable";
 }
 
-function hostEvidenceMatchesAccountModeAndKey(params: Readonly<{
-    hostEvidence: AutomationEventAdmitHostEvidenceV1;
-    account: Readonly<{
-        contentKeyFingerprint: string | null;
-        currentness: Readonly<{ encryptionMode: "plain" | "e2ee" }>;
-    }>;
-}>): boolean {
-    return params.hostEvidence.t
-        === (params.account.currentness.encryptionMode === "plain" ? "plain" : "encrypted")
-        && params.hostEvidence.accountCurrentness.mode === params.account.currentness.encryptionMode
-        && params.hostEvidence.accountCurrentness.contentKeyFingerprint
-            === params.account.contentKeyFingerprint;
-}
-
 function selectedWatcherTargetMatchesCaller(
     trigger: Readonly<{
         observationTransport: string | null;
@@ -497,13 +484,7 @@ async function admitEncryptedAutomationEventV1(params: Readonly<{
             tx,
             params.accountId, "content",
         );
-        if (
-            accountFence.status !== "ready"
-            || !hostEvidenceMatchesAccountModeAndKey({
-                hostEvidence: params.hostEvidence,
-                account: accountFence.account,
-            })
-        ) {
+        if (!matchesAutomationAccountContentIdentityAtFence(accountFence, params.hostEvidence.accountCurrentness)) {
             return AutomationEventAdmitHttpResultV1Schema.parse({
                 results: params.hostEvidence.definitions.map(() => blocked("temporarilyUnavailable")),
                 continuation: stoppedContinuation("accountUnavailable"),
@@ -869,13 +850,7 @@ export async function admitAutomationEventV1(params: Readonly<{
             tx,
             params.accountId, "content",
         );
-        if (
-            accountFence.status !== "ready"
-            || !hostEvidenceMatchesAccountModeAndKey({
-                hostEvidence,
-                account: accountFence.account,
-            })
-        ) {
+        if (!matchesAutomationAccountContentIdentityAtFence(accountFence, hostEvidence.accountCurrentness)) {
             return resultForEveryDefinition(
                 input,
                 blocked("temporarilyUnavailable"),

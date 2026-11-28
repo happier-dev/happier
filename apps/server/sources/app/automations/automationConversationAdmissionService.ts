@@ -12,6 +12,7 @@ import { acquireWorkflowPublicationLocksInTx } from "@/app/workflows/acquireWork
 import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
 import { inTx, type Tx } from "@/storage/inTx";
 
+import { matchesAutomationAccountContentIdentityAtFence } from "./automationAccountCurrentness";
 import { classifyAutomationConversationTargetEligibilityV1, matchesScopedAutomationConversationTriggerTx } from "./automationConversationTargetVerificationService";
 import {
     assertCurrentAutomationEventCallerMaterializationTx,
@@ -455,19 +456,6 @@ function encryptedOccurrenceMatchesAdmission(params: Readonly<{
     return isAutomationTriggerEvidenceCiphertextV1(outer.envelope.c) ? "match" : "unavailable";
 }
 
-function hostEvidenceMatchesAccountModeAndKey(params: Readonly<{
-    hostEvidence: AutomationConversationAdmitEncryptedHostEvidenceV1;
-    account: Readonly<{
-        contentKeyFingerprint: string | null;
-        currentness: Readonly<{ encryptionMode: "plain" | "e2ee" }>;
-    }>;
-}>): boolean {
-    return params.account.currentness.encryptionMode === "e2ee"
-        && params.hostEvidence.accountCurrentness.mode === "e2ee"
-        && params.hostEvidence.accountCurrentness.contentKeyFingerprint
-            === params.account.contentKeyFingerprint;
-}
-
 /**
  * The mode-resolved facts one Conversation Run row is created from. Both
  * Account modes converge here so capacity, Automation currentness, recipe
@@ -606,13 +594,7 @@ export async function admitEncryptedAutomationConversationV1(params: Readonly<{
         const accountFence = await acquireAccountEncryptionTransitionFenceInTx(tx, params.accountId, "content");
         // The sealed arm is only meaningful for an Account whose persisted mode
         // is E2EE under the exact content key the host sealed with.
-        if (
-            accountFence.status !== "ready"
-            || !hostEvidenceMatchesAccountModeAndKey({
-                hostEvidence,
-                account: accountFence.account,
-            })
-        ) {
+        if (!matchesAutomationAccountContentIdentityAtFence(accountFence, hostEvidence.accountCurrentness)) {
             return blocked("temporarilyUnavailable");
         }
         const replyHandoff = resolveEncryptedReplyHandoffAdmissionPlan(hostEvidence.replyHandoff);

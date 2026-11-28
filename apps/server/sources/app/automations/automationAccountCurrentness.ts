@@ -1,8 +1,8 @@
-import { projectAutomationAccountCurrentnessWitnessV1, type AutomationAccountCurrentnessWitnessV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
+import { projectAutomationAccountCurrentnessWitnessV1, sameAutomationAccountContentIdentityV1, type AutomationAccountCurrentnessWitnessV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
 import type { Prisma } from "@prisma/client";
 
 import { deriveAccountEncryptionCurrentnessFromRow } from "@/app/encryption/accountContentKeyAdmission";
-import { deriveAccountEncryptionMigrationKeyFingerprints } from "@/app/encryption/accountEncryptionTransition";
+import { deriveAccountEncryptionMigrationKeyFingerprints, type AccountEncryptionTransitionFenceResult } from "@/app/encryption/accountEncryptionTransition";
 import type { Tx } from "@/storage/inTx";
 
 /**
@@ -38,6 +38,21 @@ export function deriveAutomationAccountCurrentnessWitness(
         version: account.seq,
         contentKeyFingerprint: fingerprints.contentKeyFingerprint,
     });
+}
+
+export function matchesAutomationAccountContentIdentityAtFence(
+    fence: AccountEncryptionTransitionFenceResult,
+    witness: AutomationAccountCurrentnessWitnessV1,
+): boolean {
+    if (fence.status !== "ready") return false;
+
+    const { account } = fence;
+    const current = projectAutomationAccountCurrentnessWitnessV1({
+        mode: account.currentness.encryptionMode,
+        version: account.version,
+        contentKeyFingerprint: account.contentKeyFingerprint,
+    });
+    return current !== null && sameAutomationAccountContentIdentityV1(current, witness);
 }
 
 export async function fetchAutomationAccountCurrentnessWitnessTx(
