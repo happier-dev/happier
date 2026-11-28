@@ -29,6 +29,9 @@ export function createLocalSessionRpcAgent(endpointPath: string, platform: NodeJ
       void observeLocalIpcPeerIdentity({ socket, executablePath, peer: 'server' }).then(identity => {
         if (!identity) { refuse(); return; }
         finish(null);
+        // The native witness borrows the pipe as stdio and pauses its read side.
+        // HTTP has installed its parser now, so it can receive the response.
+        socket.resume();
       }, refuse);
     });
     // Returning the unverified socket would let ClientRequest write immediately.

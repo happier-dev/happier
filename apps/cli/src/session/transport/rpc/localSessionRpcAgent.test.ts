@@ -3,6 +3,7 @@ import { createServer, request } from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import type { Socket } from 'node:net';
 import { createLocalSessionRpcAgent } from './localSessionRpcAgent';
 
 // The native helper is the OS identity boundary. HTTP and socket delivery stay real.
@@ -28,13 +29,18 @@ describe('Windows Session RPC connection admission', () => {
     });
     await new Promise<void>(resolve => server.listen(endpoint, resolve));
     let release!: (identity: { pid: number; uid: null } | null) => void;
-    boundary.observe.mockImplementation(() => new Promise(resolve => { release = resolve; }));
+    boundary.observe.mockImplementation(({ socket }: { socket: Socket }) => {
+      // On Windows, passing the connected socket to the helper pauses reads.
+      socket.pause();
+      return new Promise(resolve => { release = resolve; });
+    });
     const agent = createLocalSessionRpcAgent(endpoint, 'win32');
     const outcome = new Promise<string>(resolve => {
       const outgoing = request({ socketPath: endpoint, method: 'POST', agent }, incoming => {
         incoming.resume(); incoming.once('end', () => resolve('delivered'));
       });
       outgoing.once('error', () => resolve('refused'));
+      outgoing.setTimeout(1_000, () => { resolve('no response'); outgoing.destroy(); });
       outgoing.end('private transcript evidence');
     });
     try {
