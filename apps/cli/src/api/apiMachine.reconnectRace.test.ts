@@ -182,6 +182,19 @@ describe('ApiMachineClient reconnect race handling', () => {
         expect(effect).toHaveBeenCalledTimes(1);
     });
 
+    it.each([
+        ['transport close', { description: 'websocket connection closed', context: { code: 1006, reason: 'private peer text' } }, { closeCode: 1006 }],
+        ['transport error', Object.assign(new Error('websocket error'), {
+            context: { error: Object.assign(new Error('private transport details'), { code: 'ECONNRESET' }) },
+        }), { errorCode: 'ECONNRESET' }],
+    ])('records the native %s cause without logging raw network details', async (reason, description, cause) => {
+        const pair = await connectPair();
+        pair.first.trigger('disconnect', reason, description);
+        expect(logger.debug).toHaveBeenCalledWith('[API MACHINE] Disconnected from server', {
+            reason, transportGeneration: expect.any(Number), ...cause,
+        });
+    });
+
     it('clears the active send route immediately when the current transport disconnects', async () => {
         const pair = await connectPair();
         pair.first.emit.mockClear();

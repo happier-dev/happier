@@ -1677,10 +1677,18 @@ export class ApiMachineClient {
         return generation === this.activeTransportGeneration;
     }
 
-    private handleTransportSocketDisconnect(socket: Socket<ServerToDaemonEvents, DaemonToServerEvents>, generation: number, reason: string): void {
-        // Socket.IO supplies its disconnect reason; omit the optional transport
-        // description, which may contain request details.
-        logger.debug('[API MACHINE] Disconnected from server', { reason, transportGeneration: generation });
+    private handleTransportSocketDisconnect(socket: Socket<ServerToDaemonEvents, DaemonToServerEvents>, generation: number, reason: string, description?: unknown): void {
+        const detail = asRecord(description);
+        const context = asRecord(detail?.context);
+        const closeCode = reason === 'transport close' ? context?.code : undefined;
+        const errorCode = asRecord(context?.error)?.code ?? context?.code ?? detail?.code;
+        // Native codes identify the departure without logging peer text, request details, or errors wholesale.
+        logger.debug('[API MACHINE] Disconnected from server', {
+            reason,
+            transportGeneration: generation,
+            ...(typeof closeCode === 'number' && Number.isInteger(closeCode) ? { closeCode } : {}),
+            ...(typeof errorCode === 'string' && /^[A-Z][A-Z0-9_]*$/.test(errorCode) ? { errorCode } : {}),
+        });
         if (!this.isActiveTransportGeneration(generation) || this.socket !== socket) {
             return;
         }
@@ -6307,8 +6315,8 @@ export class ApiMachineClient {
                         transportGeneration,
                         params,
                     );
-                    socket.on('disconnect', (reason) => {
-                        this.handleTransportSocketDisconnect(socket, transportGeneration, reason);
+                    socket.on('disconnect', (reason, description) => {
+                        this.handleTransportSocketDisconnect(socket, transportGeneration, reason, description);
                     });
                     return transport;
                 },
