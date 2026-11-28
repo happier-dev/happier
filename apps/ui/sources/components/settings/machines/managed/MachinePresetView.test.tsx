@@ -1198,7 +1198,7 @@ describe('reachable preset detail', () => {
     expect(harness.requestsFor('/v1/machines/managed/actions/get')).toHaveLength(1);
   });
 
-  it.each(['detail', 'editor'] as const)('reads no private creation data for an unknown Preset (%s)', async surface => {
+  it.each(['detail', 'editor', 'use'] as const)('reads no private creation data for an unknown Preset (%s)', async surface => {
     const serverId = await seed();
     await seedConfiguration(serverId);
     harness.answer(serverId, '/v1/machines/presets/get', {
@@ -1207,7 +1207,8 @@ describe('reachable preset detail', () => {
     const screen = await renderSettingsView(surface === 'detail'
       ? <MachinePresetView serverId={serverId} presetId="missing-preset" />
       : <ManagedMachineConfigurationView serverId={serverId} presetId="missing-preset"
-          provisioner={buildQualifiedPluginContributionKey(preset.launch.provider)} presetOnly />);
+          provisioner={buildQualifiedPluginContributionKey(preset.launch.provider)}
+          presetOnly={surface === 'editor'} onUse={surface === 'use' ? vi.fn() : undefined} />);
     try {
       await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/machines/presets/get')).toHaveLength(1));
       await flushHookEffects({ cycles: 30 });
@@ -1216,6 +1217,10 @@ describe('reachable preset detail', () => {
       if (surface === 'detail') {
         expect(screen.getTextContent()).toContain(t('machinePresets.accessLost'));
         expect(screen.findByTestId('machine-preset.read-state-action')).toBeNull();
+      }
+      if (surface === 'use') {
+        expect(screen.findByTestId('managed-config.error')).toBeTruthy();
+        expect(screen.findByTestId('managed-config.use')).toBeNull();
       }
     } finally { await screen.unmount(); }
   });

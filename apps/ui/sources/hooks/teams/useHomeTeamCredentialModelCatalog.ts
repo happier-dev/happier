@@ -8,7 +8,7 @@ import type { OptionPickerProbeState } from '@/components/sessions/pickers/Optio
 import { observeTeamCredentialResourceCatalog, refreshTeamCredentialResourceCatalog } from '@/sync/engine/teams/teamsDirectoryEngine';
 import { getTeamCredentialResourceCatalogSnapshot, getTeamCredentialResourceCatalogsSelectionKey, subscribeTeamsSnapshots } from '@/sync/store/teams/teamsSnapshots';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
-import { PROVIDER_DECLARATION_CONTEXT_SECTIONS, providerDeclarationContext, resolveAccountAgentTeamCredentialDemand } from '@/providers/catalog/accountProviderDeclarations';
+import { PROVIDER_DECLARATION_CONTEXT_SECTIONS, providerDeclarationContext, resolveAccountAgentTeamCredentialDemand, type ProviderDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
 import { projectHomeCatalogSnapshots } from './homeTeamCredentialModelCatalog';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { useProviderModelProjection } from '@/providers/hooks/useProviderModelProjection';
@@ -19,6 +19,7 @@ import { useOpenedTeamCredentialDisplayNames } from '@/components/settings/teams
 
 export type HomeTeamCredentialModelCatalog = Readonly<{
     resources: readonly TeamCredentialResourceCatalogEntryV1[];
+    declarationContext: ProviderDeclarationContext;
     /** Locally opened recipient labels; wire rows remain intact for model projection. */
     displayNames: Readonly<Record<string, string | null>>;
     teamNameById: Readonly<Record<string, string>>;
@@ -47,20 +48,24 @@ export function useHomeTeamCredentialModelCatalog(input: Readonly<{
     agentTargetKey?: string | null;
     /** The exact Session/Agent execution target; declarations never borrow another Machine. */
     machineId?: string | null;
-    /** A mounted caller's current projection for this exact Machine; null means not admitted. */
+    /** The selected preset's controller supplies catalog compatibility before the guest exists. */
+    managedPresetCatalogControllerId?: string | null;
+    /** A mounted caller's current projection for the catalog Machine; null means not admitted. */
     declarationProjection?: PluginProjectionV2 | null;
 }>): HomeTeamCredentialModelCatalog {
     // Embed model choices come from the admitted grant/options projection, never Account Team discovery.
     const enabled = input.enabled && !isEmbedWindowContext();
     const serverId = input.serverId?.trim() ?? '';
-    const loadDeclarations = input.declarationProjection === undefined && enabled && Boolean(input.agentTargetKey && input.machineId);
+    const executionMachineId = input.machineId?.trim() || undefined;
+    const catalogMachineId = executionMachineId ?? input.managedPresetCatalogControllerId;
+    const loadDeclarations = input.declarationProjection === undefined && enabled && Boolean(input.agentTargetKey && catalogMachineId);
     const [declarationRefreshKey, setDeclarationRefreshKey] = React.useState(0);
-    const declarationState = useDaemonMergedProjectionInputs({ machineId: input.machineId, serverId,
+    const declarationState = useDaemonMergedProjectionInputs({ machineId: catalogMachineId, serverId,
         enabled: loadDeclarations, refreshKey: declarationRefreshKey,
         sections: PROVIDER_DECLARATION_CONTEXT_SECTIONS });
     const projection = input.declarationProjection !== undefined ? input.declarationProjection
         : declarationState.phase === 'ready' ? declarationState.inputs?.pluginProjectionV2 ?? null : null;
-    const declarationContext = React.useMemo(() => providerDeclarationContext(input.machineId, projection), [input.machineId, projection]);
+    const declarationContext = React.useMemo(() => providerDeclarationContext(catalogMachineId, projection), [catalogMachineId, projection]);
     // One derivation (protocol owner) of the applications and services this Agent can use here.
     const demand = React.useMemo(() => input.agentTargetKey
         ? resolveAccountAgentTeamCredentialDemand(input.agentTargetKey, declarationContext) : null,
@@ -81,7 +86,6 @@ export function useHomeTeamCredentialModelCatalog(input: Readonly<{
         if (!demand || demand.requirements === null) return [undefined];
         return [undefined, ...demand.applications];
     }, [demand]);
-    const executionMachineId = input.machineId?.trim() || undefined;
     const { demands, demandsKey } = React.useMemo(() => ({
         demands: rows.flatMap(row => applications.map(application => ({ row, application }))),
         demandsKey: JSON.stringify([rowsKey, applications, executionMachineId]),
@@ -164,13 +168,13 @@ export function useHomeTeamCredentialModelCatalog(input: Readonly<{
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [directory.kind, directory.partial, directory.unavailableHomes, declarationState.phase, declarationState.failureReason, enabled, demand, reloadHomeCatalog, demandsKey, scope?.accountId, scope?.serverId, serverId, snapshotVersion]);
 
-    const needsMachineProjection = Boolean(input.agentTargetKey && executionMachineId
+    const needsMachineProjection = Boolean(input.agentTargetKey && catalogMachineId
         && discovered.resources.some(resource => resource.providerModels.length > 0));
     const modelProjection = useProviderModelProjection({
         enabled: enabled && needsMachineProjection,
         active: discovered.current,
         serverId: serverId || null,
-        machineId: executionMachineId ?? null,
+        machineId: catalogMachineId ?? null,
         agentTargetKey: input.agentTargetKey ?? null,
         teamCredentialResources: discovered.resources,
         teamCredentialCatalogSources: catalogSelections.map(demand =>
@@ -231,5 +235,5 @@ export function useHomeTeamCredentialModelCatalog(input: Readonly<{
             ...(!condition || condition.retryable ? { onRefresh: () => { void reload(); } } : {}),
         };
     }, [catalog.condition, enabled, reload]);
-    return React.useMemo(() => ({ ...catalog, displayNames, probe }), [catalog, displayNames, probe]);
+    return React.useMemo(() => ({ ...catalog, declarationContext, displayNames, probe }), [catalog, declarationContext, displayNames, probe]);
 }

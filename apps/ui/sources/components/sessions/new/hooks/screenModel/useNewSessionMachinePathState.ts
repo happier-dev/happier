@@ -20,7 +20,7 @@ import { useServerScopedLaunchMachine } from '@/sync/store/hooks';
 import { isMachineVisibleForSelection } from '@/sync/domains/machines/identity/filterVisibleMachines';
 import { getMachineDisplayName, getMachineSentenceName } from '@/utils/sessions/machineDisplayNames';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
-import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { areServerProfileIdentifiersEquivalent, getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { resolveDefaultDirectoryForMachine, resolveMachineHomeDirectory } from '@/utils/sessions/machineDefaultDirectory';
 import { useMachineOwnIsolationStatus } from '@/hooks/machine/useMachineOwnIsolationStatus';
 import { useNewSessionDirectoryPreflight, type NewSessionDirectoryPreflight } from './useNewSessionDirectoryPreflight';
@@ -200,6 +200,8 @@ export function useNewSessionMachinePathState(params: Readonly<{
      * owner the screen already uses for its default target.
      */
     agentCatalogMachineId: string | null;
+    /** The selected preset's catalog controller before a guest is enrolled. */
+    managedPresetCatalogControllerId: string | null;
     setSelectedMachineId: React.Dispatch<React.SetStateAction<string | null>>;
     setSelectedMachineTarget: (target: Readonly<{
         machineId: string | null;
@@ -435,8 +437,14 @@ export function useNewSessionMachinePathState(params: Readonly<{
     // Observe the destination decision, through the existing Home-scoped presence
     // lifecycle. An authored target needs no automatic placement observation;
     // its admission owner keeps observing that exact Machine's availability.
-    const needsCatalogFallback = managedPlacementPreset !== null || (managedMachineSelection !== null && selectedMachineId === null)
-        || executionTarget?.kind === 'temporary_computer';
+    const managedPresetCatalogControllerId = executionTarget === null && managedMachineSelection?.selection.kind === 'preset'
+        && params.serverId && getServerProfileById(params.serverId)?.serverIdentityId === managedMachineSelection.selection.homeId
+        ? (isDeferredManagedMachineAuthorPresetDraft(managedMachineSelection)
+            ? managedMachineSelection.presetOrigin.controller : managedMachineSelection.receipt.controller)?.machineId ?? null
+        : null;
+    const needsCatalogFallback = managedPresetCatalogControllerId === null
+        && (managedPlacementPreset !== null || (managedMachineSelection !== null && selectedMachineId === null)
+            || executionTarget?.kind === 'temporary_computer');
     const observesPreferredMachine = needsCatalogFallback
         || (!effectivePlacement && !hasCommittedExactTargetRef.current && !hasUserSelectedMachineRef.current);
     const readPlacementMachines = React.useCallback(() => observesPreferredMachine ? readMachines() : [],
@@ -448,7 +456,7 @@ export function useNewSessionMachinePathState(params: Readonly<{
     const placementPresenceTargets = React.useMemo(() => observesPreferredMachine ? [{ serverId: params.serverId }] : [],
         [observesPreferredMachine, params.serverId]);
     const preferredMachineId = useMachinePresenceSnapshot(readPlacementMachines, readPreferredMachine, placementPresenceTargets);
-    const agentCatalogMachineId = needsCatalogFallback ? preferredMachineId : scopedSelectedMachineId;
+    const agentCatalogMachineId = managedPresetCatalogControllerId ?? (needsCatalogFallback ? preferredMachineId : scopedSelectedMachineId);
     const lastAppliedPersistedMachineIdRef = React.useRef<string>('');
     const lastAppliedExecutionTargetRequestKeyRef = React.useRef<string | null>(
         params.executionTargetRequestKey ?? null,
@@ -988,6 +996,7 @@ export function useNewSessionMachinePathState(params: Readonly<{
         directoryPreflight,
         managedWake,
         agentCatalogMachineId,
+        managedPresetCatalogControllerId,
         setSelectedMachineId,
         setSelectedMachineTarget,
         setTemporaryComputerTarget,

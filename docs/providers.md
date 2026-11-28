@@ -997,6 +997,10 @@ registry projection for installed Agent requirements and Provider declarations.
 Team application discovery feeds these declarations into the same broker application
 projector used by the CLI. The picker applies the shared model-capability check
 to Account and Team rows, including an installed Agent's tool-roundtrip requirements.
+Before a guest is enrolled, a reviewed managed Machine preset with an identified
+controller uses that controller's declarations and model compatibility projection.
+Team resource eligibility comes from the selected Home, which receives the
+execution Machine ID once the guest is enrolled.
 An absent Agent declaration or requirements remain explicitly unknown and admit no
 source-backed model rows; another Machine or a matching local Agent name cannot
 fill that gap. Missing

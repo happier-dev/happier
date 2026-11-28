@@ -527,29 +527,31 @@ describe('multi-Home Session creation composition', () => {
         draftId?: string;
         mountTemporaryController?: boolean;
         authoringOriginAtBirth?: boolean;
+        hydratePlainMachine?: boolean;
     }>) {
-        const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+        const { createHydratedPlainMachineFixture, createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
         const { storage } = await import('@/sync/domains/state/storageStore');
         storage.getState().activateProfileScope({ serverId: params.activeServerId, accountId: params.accountId ?? 'account-a' });
         await storage.getState().activateSettingsScope({ serverId: params.activeServerId, accountId: params.accountId ?? 'account-a' });
         storage.getState().applySettings(storage.getState().settings, 1);
         if (params.targetServerId) {
-            const machines = [
-                createMachineFixture({
-                    id: 'machine-b',
-                    ...(params.authoringOriginAtBirth ? { operationProtocolCapabilities: {
-                        sessionSpawnAuthoringOrigin: { protocolVersions: [1] },
-                    }, operationProtocolCapabilitiesRevision: 1 } : {}),
-                    activeAt: Date.now(),
-                    metadata: {
-                        host: 'home-b-machine',
-                        platform: 'linux',
-                        happyCliVersion: '0.0.0-test',
-                        happyHomeDir: '/workspace/.happy',
-                        homeDir: '/workspace',
-                    },
-                }),
-            ];
+            const machine = createMachineFixture({
+                id: 'machine-b',
+                ...(params.authoringOriginAtBirth ? { operationProtocolCapabilities: {
+                    sessionSpawnAuthoringOrigin: { protocolVersions: [1] },
+                }, operationProtocolCapabilitiesRevision: 1 } : {}),
+                activeAt: Date.now(),
+                metadata: {
+                    host: 'home-b-machine',
+                    platform: 'linux',
+                    happyCliVersion: '0.0.0-test',
+                    happyHomeDir: '/workspace/.happy',
+                    homeDir: '/workspace',
+                },
+            });
+            const machines = [params.hydratePlainMachine
+                ? createHydratedPlainMachineFixture({ id: machine.id, accountId: params.accountId ?? 'account-a', machine })
+                : machine];
             const targetProfile = profiles.getServerProfileById(params.targetServerId);
             if (!targetProfile) throw new Error('Creation fixture has no target Home profile');
             machineHttpSnapshots.set(new URL(targetProfile.serverUrl).origin, machines);
@@ -2232,18 +2234,19 @@ describe('multi-Home Session creation composition', () => {
         } finally { await hook.unmount(); }
     });
 
-    async function runTemporaryTeamModelJourney(journey: 'acquisition' | 'switch-agent' | 'remembered-control' | 'launch' | 'reopen' | 'resume' | 'refresh-selection' | 'run-refresh-selection' | 'empty-team-models' | 'incompatible-team-models') {
-        const noSelectableTeamModels = journey === 'empty-team-models' || journey === 'incompatible-team-models';
+    async function runTemporaryTeamModelJourney(journey: 'acquisition' | 'switch-agent' | 'remembered-control' | 'launch' | 'reopen' | 'resume' | 'refresh-selection' | 'run-refresh-selection' | 'empty-team-models' | 'incompatible-team-models' | 'managed-preset' | 'managed-preset-empty') {
+        const managedPresetCase = journey === 'managed-preset' || journey === 'managed-preset-empty';
+        const noSelectableTeamModels = journey === 'empty-team-models' || journey === 'incompatible-team-models' || journey === 'managed-preset-empty';
         const sourceCase = journey !== 'acquisition';
         const launchCase = journey === 'launch' || journey === 'reopen' || noSelectableTeamModels;
-        const retainedTeamSelection = journey === 'reopen' || !sourceCase;
+        const retainedTeamSelection = journey === 'reopen' || !sourceCase || managedPresetCase;
         const resourceRevision = journey === 'resume' ? 0 : 7;
         if (launchCase || journey === 'resume') socketBoundary.nativeSignInStatus = 'signedOut';
         // The first genuine Home baseline owns this preference. Re-publishing
         // changed bytes at the same Settings revision would correctly be ignored.
         accountHttpSettings = { useEnhancedSessionWizard: true };
         ({ homeA, homeAScopeId, homeAToken } = await arrangeFocusedHomeA(
-            launchCase ? 'team-launch-signed-out' : 'temporary-account-capture', { applyConnectionManager: true }));
+            managedPresetCase ? journey : launchCase ? 'team-launch-signed-out' : 'temporary-account-capture', { applyConnectionManager: true }));
         // Account replacement during first-use acquisition is independent of
         // cross-Home selection. Keep this journey on its initiating Home; the
         // borrowed-Home material preparation contract is covered separately.
@@ -2261,6 +2264,7 @@ describe('multi-Home Session creation composition', () => {
             = await import('@happier-dev/protocol/providers/connections/connectionRowsV1');
         const { DEFAULT_PROVIDER_SETTINGS_V1 } = await import('@happier-dev/protocol/providers/settings/v1');
         const { projectProviderModelSourceStateV1 } = await import('@happier-dev/protocol/providers/binding-compatibility');
+        const { teamCredentialDisplayNameFixture } = await import('@/dev/testkit/fixtures/teamFixtures');
         const { TeamsPageV1Schema, TeamCredentialResourceEntitledPageV1Schema, TeamCredentialResourceDiscoveryPageV1Schema,
             TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1, TEAM_DIRECTORY_PAGE_LIMIT_DEFAULT_V1,
             NO_TEAM_CAPABILITIES_V1, resolveTeamAdmissionProjectionV1 } = await import('@happier-dev/protocol/teams');
@@ -2279,7 +2283,10 @@ describe('multi-Home Session creation composition', () => {
                     'happier.agent.codex/openai-codex': { source: 'team_resource' as const,
                         resourceId: 'runner-resource', deliveryMode: 'brokered' as const },
                 } } } : {}),
-                ...(retainedTeamSelection ? { modelSelection: { v: 1, updatedAt: 1, ref: {
+                ...(managedPresetCase ? { modelSelection: { v: 2, updatedAt: 1, ref: {
+                    source: 'team_resource', agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'gpt-5',
+                    teamId: 'runner-team', resourceId: 'runner-resource', expectedResourceRevision: resourceRevision, deliveryMode: 'brokered',
+                } } } : retainedTeamSelection ? { modelSelection: { v: 1, updatedAt: 1, ref: {
                     agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'gpt-5',
                 } } } : {}),
                 executionTarget: sourceCase
@@ -2306,7 +2313,7 @@ describe('multi-Home Session creation composition', () => {
             policy: { v: 1, sessionCreationPolicy: 'private_default', externalSharingPolicy: 'allowed',
                 defaultSessionHistoryAccess: 'from_membership', admissionMode: 'invite_only', authenticationPolicy: null } }], nextCursor: null });
         const entitled = TeamCredentialResourceEntitledPageV1Schema.parse({ resources: [{ id: 'runner-resource', teamId: 'runner-team',
-            displayName: 'Runner model', resourceRevision, readiness: { kind: 'available' }, recoveryAction: null,
+            displayName: teamCredentialDisplayNameFixture('Runner model'), resourceRevision, readiness: { kind: 'available' }, recoveryAction: null,
             mayBroker: true, mayReceiveDirect: false, directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed',
             providerModels: [{ selection: { kind: 'team_credential_provider_model', resourceId: 'runner-resource', teamId: 'runner-team',
                 expectedResourceRevision: resourceRevision, agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'gpt-5', deliveryMode: 'brokered' },
@@ -2320,7 +2327,7 @@ describe('multi-Home Session creation composition', () => {
                 sourceRevision: 'runner-source-7', availability: 'available' }], sourcePresentation: { kind: 'provider',
                 provider: { identity: { pluginId: 'happier.provider.openai', localId: 'openai' }, definitionRevision: 1 } } }] });
         if (noSelectableTeamModels) {
-            if (journey === 'empty-team-models') entitled.resources[0]!.providerModels = [];
+            if (journey === 'empty-team-models' || journey === 'managed-preset-empty') entitled.resources[0]!.providerModels = [];
             else {
                 const row = entitled.resources[0]!.providerModels[0]!;
                 row.availability = 'policy_denied';
@@ -2419,9 +2426,28 @@ describe('multi-Home Session creation composition', () => {
             return new Response('Unavailable publication', { status: 503 });
         });
         const hook = await renderProductionCreateCaller({ activeServerId: homeAScopeId, targetServerId: homeBScopeId,
-            draftId, mountTemporaryController: !sourceCase });
+            draftId, mountTemporaryController: !sourceCase, hydratePlainMachine: managedPresetCase });
         let hookMounted = true;
         let sending: Promise<void> | undefined;
+        const useLimaPreset = async () => {
+            const { createManagedMachineSelectionDraft } = await import('@/sync/domains/state/newSessionManagedMachineDraft');
+            const { storeTempData } = await import('@/utils/sessions/tempDataStore');
+            const machine = machineHttpSnapshots.get(new URL(homeA.serverUrl).origin)?.[0];
+            if (!machine?.installationId || !homeA.serverIdentityId) throw new Error('Expected preset Home and controller installation');
+            const selection = createManagedMachineSelectionDraft({
+                selection: { kind: 'preset', homeId: homeA.serverIdentityId, id: 'lima-preset', revision: 1 },
+                receipt: {
+                    launch: { provider: { pluginId: 'happier.machine.lima', localId: 'lima' }, schemaVersion: 1, name: 'Lima', choices: {} },
+                    controller: { machineId: machine.id, installationId: machine.installationId },
+                    optionStatus: 'current', prerequisites: [], billing: { location: 'local', stoppedBilling: 'not-billed' },
+                    retentionCapabilities: { supportedIntents: ['stop', 'delete'] },
+                    retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+                },
+            });
+            routeBoundary.params = { ...routeBoundary.params, dataId: storeTempData({ managedMachineSelection: selection }) };
+            await hook.rerender();
+            await vi.waitFor(() => expect(hook.getCurrent().managedMachineDraft?.selection).toEqual(selection));
+        };
         try {
             await vi.waitFor(() => {
                 const model = hook.getCurrent();
@@ -2436,13 +2462,19 @@ describe('multi-Home Session creation composition', () => {
                 expect(model.wizardProps.agent.agentPickerSelectedOptionId).toBe('agent:happier.agent.codex/codex');
             });
             if (noSelectableTeamModels) {
+                if (managedPresetCase) await useLimaPreset();
                 await vi.waitFor(() => {
                     const model = hook.getCurrent();
                     if (model.variant !== 'wizard') throw new Error('Expected the production composer');
                     expect(model.wizardProps.agent.teamCredentialResourceStatusByKey?.get('runner-team:runner-resource')?.kind).toBe('current');
                     expect(model.wizardProps.agent.selectedTeamCredentialModel).toBeNull();
                     expect(model.wizardProps.footer.canCreate).toBe(false);
-                    expect(JSON.stringify(model.wizardProps.footer.connectionStatus)).toContain('settingsProviders.models.empty');
+                    if (managedPresetCase) {
+                        expect(model.wizardProps.agent.teamCredentialResources?.[0]?.providerModels).toEqual([]);
+                        expect(model.wizardProps.footer.connectionStatus?.text).toBeTruthy();
+                    } else {
+                        expect(JSON.stringify(model.wizardProps.footer.connectionStatus)).toContain('settingsProviders.models.empty');
+                    }
                 });
                 expect(sessionSpawnCalls()).toHaveLength(0);
                 return;
@@ -2494,7 +2526,7 @@ describe('multi-Home Session creation composition', () => {
                         type EngineDetailProps = React.ComponentProps<typeof import('@/components/sessions/new/components/NewSessionEngineOptionDetail').NewSessionEngineOptionDetail>;
                         if (!React.isValidElement<EngineDetailProps>(detail)) throw new Error('Expected production engine detail');
                         const readsBeforeRefresh = catalogReads;
-                        entitled.resources[0]!.displayName = 'Refreshed Runner model';
+                        entitled.resources[0]!.displayName = teamCredentialDisplayNameFixture('Refreshed Runner model');
                         await act(async () => { detail.props.refreshProbe?.onRefresh?.(); });
                         await vi.waitFor(() => expect(catalogReads).toBeGreaterThan(readsBeforeRefresh));
                     }
@@ -2513,7 +2545,8 @@ describe('multi-Home Session creation composition', () => {
                         const refreshed = hook.getCurrent();
                         if (refreshed.variant !== 'wizard') throw new Error('Expected the production model selector');
                         expect((refreshed.wizardProps.agent.teamCredentialResourceStatusByKey?.get('runner-team:runner-resource')?.kind === 'current')).toBe(true);
-                        if (!run) expect(refreshed.wizardProps.agent.teamCredentialResources?.[0]?.displayName).toBe('Refreshed Runner model');
+                        if (!run) expect(refreshed.wizardProps.agent.teamCredentialResources?.[0]?.displayName)
+                            .toEqual(teamCredentialDisplayNameFixture('Refreshed Runner model'));
                     });
                 } finally { await run?.unmount(); }
                 if (!run) {
@@ -2542,11 +2575,24 @@ describe('multi-Home Session creation composition', () => {
                     const retained = readNewSessionDraftFromRepository({ scope, draftId });
                     expect(selected.wizardProps.agent.selectedTeamCredentialModel, JSON.stringify({
                         modelSelection: retained?.modelSelection, teamCredentialBindings: retained?.teamCredentialBindings,
-                        rows: selected.wizardProps.agent.teamCredentialResources?.flatMap(resource => resource.providerModels.map(row => row.selection)),
+                        status: selected.wizardProps.agent.teamCredentialResourceStatusByKey?.get('runner-team:runner-resource'),
+                        connectionStatus: selected.wizardProps.footer.connectionStatus,
                     })).toEqual(entitled.resources[0]!.providerModels[0]!.selection);
                 });
                 const selected = hook.getCurrent();
                 if (selected.variant !== 'wizard') throw new Error('Expected the production Agent selector');
+                if (managedPresetCase) {
+                    await useLimaPreset();
+                    await vi.waitFor(() => {
+                        const presetModel = hook.getCurrent();
+                        if (presetModel.variant !== 'wizard') throw new Error('Expected the production Agent selector');
+                        expect(presetModel.wizardProps.agent.selectedTeamCredentialModel).toEqual(entitled.resources[0]!.providerModels[0]!.selection);
+                        expect(presetModel.wizardProps.agent.teamCredentialResources?.flatMap(resource => resource.providerModels.map(row => row.selection)))
+                            .toContainEqual(entitled.resources[0]!.providerModels[0]!.selection);
+                    });
+                    expect(sessionSpawnCalls()).toHaveLength(0);
+                    return;
+                }
                 if (journey === 'resume') return;
                 if (launchCase) {
                     const { machineAgentInventoryStore } = await import('@/agents/machineAgents/machineAgentInventoryStore');
@@ -2679,6 +2725,14 @@ describe('multi-Home Session creation composition', () => {
 
     it('submits a worker-confirmed Team model from New Session without native Agent sign-in', async () => {
         await runTemporaryTeamModelJourney('launch');
+    });
+
+    it('keeps the selected Team brokered model when the picker returns a pre-allocation Lima preset', async () => {
+        await runTemporaryTeamModelJourney('managed-preset');
+    });
+
+    it('keeps Send disabled for a Lima preset when the Team offers no eligible model', async () => {
+        await runTemporaryTeamModelJourney('managed-preset-empty');
     });
 
     it('disables Send with a reason when the selected Team credential has no selectable models', async () => {

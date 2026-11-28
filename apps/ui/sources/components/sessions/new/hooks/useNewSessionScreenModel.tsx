@@ -8,7 +8,6 @@ import type { ConnectedServiceBindingsV2 } from '@happier-dev/protocol/connect/c
 import { CONNECTED_SERVICES_BINDINGS_KEY, parseConnectedServicesBindingsByServiceIdFromAgentOptionState } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
 import { createApprovalProfileComposerChip } from '@/components/approvals/createApprovalProfileComposerChip';
 import { resolveApprovalProfileMachineDefault, useApprovalProfiles } from '@/hooks/approvals/useApprovalProfiles';
-import { providerDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
 import { RuntimeDescriptorV1Schema } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
 import { readMachineIsolationV1 } from '@happier-dev/protocol/machines/machineIsolationV1';
 import { readSessionPathName } from '@/utils/sessions/formatPathRelativeToHome';
@@ -1257,6 +1256,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         managedWake,
         selectedMachineSentenceName,
         agentCatalogMachineId,
+        managedPresetCatalogControllerId,
         setSelectedMachineId,
         setSelectedMachineTarget,
         setTemporaryComputerTarget,
@@ -1475,7 +1475,9 @@ export function useNewSessionScreenModel(input?: Readonly<{
     const teamCredentialCatalog = useHomeTeamCredentialModelCatalog({
         serverId: targetServerId,
         machineId: selectedMachineId,
-        declarationProjection: selectedMachineId === agentCatalogMachineId ? currentProjectionInputs?.pluginProjectionV2 ?? null : null,
+        managedPresetCatalogControllerId,
+        declarationProjection: (selectedMachineId ?? managedPresetCatalogControllerId) === agentCatalogMachineId
+            ? currentProjectionInputs?.pluginProjectionV2 ?? null : null,
         enabled: credentialResourcesEnabled,
         agentTargetKey: selectedBackendTargetKey,
     });
@@ -2439,7 +2441,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         const projection = hostCatalog ? hostCatalog.providerProjection : providerModelProjection.data;
         return {
             agentTargetKey: selectedBackendTargetKey,
-            declarationContext: providerDeclarationContext(selectedMachineId, selectedMachineId === agentCatalogMachineId ? currentProjectionInputs?.pluginProjectionV2 : null),
+            declarationContext: teamCredentialCatalog.declarationContext,
             connectedServices: modelCatalogConnectedServices,
             includeProviderConnectedAccounts: true,
             sourceBrowse: !hostCatalog && providersFeatureEnabled ? { machineId: selectedMachineId, serverId: capabilityServerId } : undefined,
@@ -2458,10 +2460,10 @@ export function useNewSessionScreenModel(input?: Readonly<{
             canEnterCustomNativeValue: supportsFreeformModelSelectionForSession(selectedUiAgentType, null),
             onSelect: selectCreationModel,
         };
-    }, [modelCatalogConnectedServices, providersFeatureEnabled, capabilityServerId, agentCatalogMachineId, currentProjectionInputs?.pluginProjectionV2, selectedMachineId, creationProfile, confirmExperimentalProviderModel, hiddenNativeModelKeys, hostBoundMachineId, modelOptions,
+    }, [modelCatalogConnectedServices, providersFeatureEnabled, capabilityServerId, selectedMachineId, creationProfile, confirmExperimentalProviderModel, hiddenNativeModelKeys, hostBoundMachineId, modelOptions,
         modelOptionsProbeState, pickerModelSelection, providerModelProjection.data, providerModelProjection.error,
         providerModelProjection.pendingApproval, providerModelProjection.refresh, providerModelProjection.refreshFailures, providerModelProjection.status,
-        selectCreationModel, selectedBackendTargetKey, selectedUiAgentType]);
+        selectCreationModel, selectedBackendTargetKey, selectedUiAgentType, teamCredentialCatalog.declarationContext]);
     const modelPickerPresentation = React.useMemo<React.ComponentProps<typeof AgentInput>['modelPickerPresentation']>(() => {
         if (!pickerModelSelection) return undefined;
         const isTeamModel = isTeamCredentialProviderModelPickerValue(pickerModelSelection);
@@ -2471,7 +2473,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         const picker = creationModelPickerProps;
         return {
             agentTargetKey: selectedBackendTargetKey,
-            declarationContext: providerDeclarationContext(selectedMachineId, selectedMachineId === agentCatalogMachineId ? currentProjectionInputs?.pluginProjectionV2 : null),
+            declarationContext: teamCredentialCatalog.declarationContext,
             nativeModels: picker?.nativeModels ?? modelOptions,
             providerGroups: selectedConnectedAccount ? selectedRouteProviderSources ?? [] : picker?.providerGroups ?? providerModelProjection.data?.groups ?? [],
             hiddenNativeModelKeys,
@@ -2491,9 +2493,9 @@ export function useNewSessionScreenModel(input?: Readonly<{
             fallbackLabel: t('agentInput.model.unavailable'),
             fieldLabel: t('newSession.selectModelTitle'),
         };
-    }, [agentCatalogMachineId, currentProjectionInputs?.pluginProjectionV2, selectedMachineId, creationModelPickerProps, hiddenNativeModelKeys,
+    }, [creationModelPickerProps, hiddenNativeModelKeys,
         modelOptions, pickerModelSelection, providerModelProjection.data, providerModelProjection.status, selectedAccountProjection.status,
-        selectedBackendTargetKey, selectedConnectedAccount, selectedRouteProviderSources, teamCredentialCatalog.displayNames,
+        selectedBackendTargetKey, selectedConnectedAccount, selectedRouteProviderSources, teamCredentialCatalog.declarationContext, teamCredentialCatalog.displayNames,
         teamCredentialCatalog.homeNameByTeamId, teamCredentialCatalog.resourceStatusByKey, teamCredentialCatalog.resources,
         teamCredentialCatalog.teamNameById]);
 
@@ -4709,7 +4711,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
             providerModelGroups: providersFeatureEnabled
                 ? (providerModelProjection.data?.groups ?? [])
                 : [],
-            declarationContext: providerDeclarationContext(selectedMachineId, selectedMachineId === agentCatalogMachineId ? currentProjectionInputs?.pluginProjectionV2 : null),
+            declarationContext: teamCredentialCatalog.declarationContext,
             providerModelProjectionAuthoritative: providerModelProjection.status === 'success',
             providerModelProjectionResolving: providerModelProjection.status === 'pending',
             providerModelProjectionError: providersFeatureEnabled ? providerModelProjection.error : null,
