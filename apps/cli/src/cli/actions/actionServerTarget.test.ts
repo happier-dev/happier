@@ -8,6 +8,29 @@ import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { admitWidgetActionSurfaceV1 } from '@happier-dev/protocol/widgets';
 import { seedTestServerProfile } from '@/testkit/serverProfiles';
 
+it('uses the authenticated Home application carrier for an explicitly selected Action profile', async () => {
+  await withTempDir('happier-action-home-carrier-', async homeDir => {
+    envScope.patch({ HAPPIER_HOME_DIR: homeDir, HAPPIER_ACTIVE_SERVER_ID: undefined,
+      HAPPIER_SERVER_URL: undefined, HAPPIER_WEBAPP_URL: undefined });
+    reloadConfiguration();
+    const { addServerProfile, adoptServerProfileHomeConnectionDescriptor, getServerProfile } = await import('@/server/serverProfiles');
+    const { resolveActionCliCredentialTarget } = await import('./actionServerTarget');
+    const canonicalServerUrl = 'http://happier-home.localhost:3033';
+    const applicationUrl = 'https://carrier.example.test';
+    const profile = await addServerProfile({ name: 'carrier', serverUrl: canonicalServerUrl, webappUrl: applicationUrl });
+    await adoptServerProfileHomeConnectionDescriptor({ expectedProfileId: profile.id, observation: 'exact',
+      descriptor: { v: 1, homeServerIdentityId: 'srv_carrier', revision: 1, canonicalServerUrl,
+        endpoints: [{ kind: 'https', url: applicationUrl }] } });
+    await writeCredentialsTokenOnlyForServerId(profile.id, { token: 'fixture-carrier-token' });
+
+    const target = await resolveActionCliCredentialTarget({ requestedServerId: profile.id, requireServerIdentityId: true,
+      deps: { readCredentialsFn: readStoredCredentials, readCredentialsForServerIdFn: readStoredCredentialsForServerId,
+        getServerProfileFn: getServerProfile } });
+    expect(target).toMatchObject({ credentials: { token: 'fixture-carrier-token' }, canonicalServerUrl,
+      fixedServer: { serverId: profile.id, serverIdentityId: 'srv_carrier', serverApiUrl: applicationUrl } });
+  });
+});
+
 it('keeps the selected saved Home credential and daemon transport scope when observation rejoins an existing Home', async () => {
   await withTempDir('happier-action-selected-profile-', async homeDir => {
     envScope.patch({ HAPPIER_HOME_DIR: homeDir, HAPPIER_ACTIVE_SERVER_ID: undefined,

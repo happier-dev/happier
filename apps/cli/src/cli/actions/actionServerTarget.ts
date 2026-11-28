@@ -2,6 +2,7 @@ import type { StoredCredentials } from '@/persistence';
 import { resolveServerProfileHomeIdentityId, type ServerProfile } from '@/server/serverProfiles';
 import { observeServerProfileHomeConnection } from '@/server/profileObservation';
 import { configuration } from '@/configuration';
+import { resolveServerProfileApiUrl } from '@/configuration/serverSelection';
 import { ACTION_CLI_SERVER_ID_FLAG } from './parseCommandInput';
 
 export { ACTION_CLI_SERVER_ID_FLAG } from './parseCommandInput';
@@ -104,7 +105,13 @@ export async function resolveActionCliCredentialTarget(params: Readonly<{
       // credentials and daemon transport paired with the selected local scope.
       serverId: selectedProfile.id,
       ...(serverIdentityId ? { serverIdentityId } : {}),
-      serverApiUrl: selectedProfile.localServerUrl ?? selectedProfile.serverUrl,
+      serverApiUrl: resolveServerProfileApiUrl({
+        serverUrl: selectedProfile.serverUrl,
+        localServerUrl: selectedProfile.localServerUrl,
+        homeConnectionDescriptor: selectedProfile.homeConnectionDescriptorAuthority === 'exact'
+          ? selectedProfile.homeConnectionDescriptor
+          : undefined,
+      }),
     },
   };
 }
