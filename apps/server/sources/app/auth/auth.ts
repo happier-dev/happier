@@ -888,13 +888,21 @@ class AuthModule {
         // Home alone chooses the reviewed children this root is approved with, once, here.
         if (input.deploymentReviewedChildPlan !== undefined) throw refuse('deployment_reviewed_child_plan_supplied');
         const deploymentReviewedChildPlan = selectDeploymentReviewedChildPlanV1(input);
-        const projectSessionDefaultsAdmission = context.input === undefined ? input.projectSessionDefaultsAdmission
+        // V2 encrypted `session.spawn_new` envelopes carry only the stripped
+        // `sessionSpawnAdmission` projection as `context.input` (`canonical_admission`),
+        // not the full plaintext input; retain the envelope-bound defaults/checkout
+        // projections already parsed from the sealed V2 envelope.
+        const strippedCanonicalSpawnInput = input.actionId === 'session.spawn_new'
+            && context.sessionSpawnInputKind === 'canonical_admission';
+        const projectSessionDefaultsAdmission = context.input === undefined || strippedCanonicalSpawnInput
+            ? input.projectSessionDefaultsAdmission
             : projectExternalActionProjectSessionDefaultsAdmissionV1(input.actionId, context.input);
         if (input.projectSessionDefaultsAdmission !== undefined
             && !sameStrictJsonValue(input.projectSessionDefaultsAdmission, projectSessionDefaultsAdmission)) {
             throw refuse('project_session_defaults');
         }
-        const projectSourceCheckoutId = context.input === undefined ? input.projectSourceCheckoutId
+        const projectSourceCheckoutId = context.input === undefined || strippedCanonicalSpawnInput
+            ? input.projectSourceCheckoutId
             : projectExternalActionProjectSourceCheckoutIdV1(input.actionId, context.input);
         if (input.projectSourceCheckoutId !== undefined && projectSourceCheckoutId !== input.projectSourceCheckoutId) {
             throw refuse('project_source_checkout');

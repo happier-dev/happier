@@ -1443,6 +1443,26 @@ describe('composed CLI managed Action origination', () => {
             expect(authorization.binding).toMatchObject({ accountId: requester.account.id, custodianAccountId: selected.account.id,
                 machineId: selected.controller.machineId, installationId: selected.controller.installationId,
                 sessionPresetAcquisition: acquisition });
+            // E2EE V2 (and plain V1) delegated preset spawns carrying primaryTeamId must preserve
+            // both sessionPresetAcquisition and projectSessionDefaultsAdmission (F3 regression).
+            const spawnWithTeam = { ...spawn, primaryTeamId: team.id } as const;
+            const issuedWithTeam = await issue(spawnWithTeam, projectApiTokenSessionSpawnAdmissionV1(spawnWithTeam, {
+                managedPresetAcquisition: acquisition,
+            }));
+            expect(issuedWithTeam.response.statusCode, issuedWithTeam.response.body).toBe(200);
+            expect(ExternalActionExecutionAuthorizationV1Schema.parse(issuedWithTeam.response.json()).binding).toMatchObject({
+                accountId: requester.account.id,
+                custodianAccountId: selected.account.id,
+                sessionPresetAcquisition: acquisition,
+                projectSessionDefaultsAdmission: { primaryTeamId: team.id },
+            });
+            if (mode === 'plain') {
+                // Full plaintext V1 mint still refuses a mismatched projectSessionDefaultsAdmission.
+                await expect(auth.mintExternalActionExecutionAuthorization(
+                    { ...authorization.binding, projectSessionDefaultsAdmission: { primaryTeamId: 'other-team' } },
+                    { input: spawnWithTeam, sessionSpawnInputKind: 'public_api' },
+                )).rejects.toMatchObject({ code: 'credential_scope_denied' });
+            }
             if (mutation !== 'none') expect(authorization.binding.sessionPresetAcquisition?.admission?.presetContent).toEqual(content);
             if (mutation !== 'none') {
                 const verifyBinding = async (binding?: typeof authorization.binding) => {
