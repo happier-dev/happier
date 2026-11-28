@@ -11147,6 +11147,13 @@ schema. No predecessor data or published SDK epoch changes.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 Team credential broker placement responses can carry a typed
+`reason` when a Machine or Pool reports `not_verified`. The fields are optional
+so the matching readers still accept earlier replies. Earlier strict readers
+need matching server, Protocol, app, CLI and Plugin SDK source for the new
+projection. The reasons describe observation only and carry no authority,
+persistence change or wire epoch.
+
 In 0.3 development, the strict `account.sessions.signOutEverywhere` Action
 and its HTTP route accept optional `revokeApiTokens`. Requests and stored
 approvals with the original empty input continue to end signed sessions

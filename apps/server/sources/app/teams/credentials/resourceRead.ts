@@ -256,11 +256,13 @@ type BrokerPresentationChoices = Readonly<{
         machineId: string;
         displayName: null;
         availability: "not_verified" | "update_required";
+        reason?: "broker_presence_not_checked";
     }>[];
     eligiblePools: readonly Readonly<{
         poolId: string;
         displayName: MachinePoolPrivateLabelProjectionV1 | null;
         availability: "not_verified";
+        reason: "source_eligibility_not_checked";
         availableMachineCount: null;
     }>[];
 }>;
@@ -288,8 +290,8 @@ async function projectTeamCredentialBrokerPresentationsInTx(tx: Tx, accountIds: 
         }),
     ]);
     const result = new Map<string, {
-        eligibleTargets: { machineId: string; displayName: null; availability: "not_verified" | "update_required" }[];
-        eligiblePools: { poolId: string; displayName: MachinePoolPrivateLabelProjectionV1 | null; availability: "not_verified"; availableMachineCount: null }[];
+        eligibleTargets: BrokerPresentationChoices["eligibleTargets"][number][];
+        eligiblePools: BrokerPresentationChoices["eligiblePools"][number][];
     }>();
     for (const accountId of uniqueAccountIds) {
         result.set(accountId, { eligibleTargets: [], eligiblePools: [] });
@@ -302,7 +304,9 @@ async function projectTeamCredentialBrokerPresentationsInTx(tx: Tx, accountIds: 
             return eligibility === 'ineligible' ? null : {
                 machineId: machine.id,
                 displayName: null,
-                availability: eligibility === 'eligible' ? 'not_verified' as const : 'update_required' as const,
+                ...(eligibility === 'eligible'
+                    ? { availability: 'not_verified' as const, reason: 'broker_presence_not_checked' as const }
+                    : { availability: 'update_required' as const }),
             };
         })();
         if (projected) presentation.eligibleTargets.push(projected);
@@ -315,6 +319,7 @@ async function projectTeamCredentialBrokerPresentationsInTx(tx: Tx, accountIds: 
                 recipientAccountId: pool.accountId,
             }),
             availability: 'not_verified',
+            reason: 'source_eligibility_not_checked',
             availableMachineCount: null,
         });
     }
@@ -508,6 +513,7 @@ async function projectSummary(
                     recipientAccountId: row.custodianAccountId,
                 }),
                 availability: 'not_verified' as const,
+                reason: 'source_eligibility_not_checked' as const,
                 availableMachineCount: null,
             } : null);
     const result = TeamCredentialResourceSummaryV1Schema.safeParse({

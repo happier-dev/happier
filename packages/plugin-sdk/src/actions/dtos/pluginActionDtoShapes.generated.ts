@@ -6520,6 +6520,15 @@ export type ActionDtoShape_20e9e2000a0513d2 = [
         destroy: string;
     }
 ][0];
+export type ActionDtoShape_20ee33022933a4a5 = [
+    {
+        poolId: string;
+        displayName: ActionDtoShape_21088a43e65c289c;
+        availability: 'available' | 'not_verified' | 'unavailable';
+        availableMachineCount: null | number;
+        reason?: 'broker_presence_unknown' | 'pool_not_found' | 'source_eligibility_not_checked' | 'source_eligibility_unknown' | undefined;
+    }
+][0];
 export type ActionDtoShape_21088a43e65c289c = [
     null | ActionDtoShape_80aaadea6c2555f1 | ActionDtoShape_e5d26b6239545f2d
 ][0];
@@ -7453,6 +7462,9 @@ export type ActionDtoShape_259a0f551f9e2908 = [
         dataBase64: string;
         contentType: 'image/png';
     }
+][0];
+export type ActionDtoShape_259ae6cfc3f48199 = [
+    null | ActionDtoShape_20ee33022933a4a5
 ][0];
 export type ActionDtoShape_25a42d6ee7153864 = [
     {
@@ -16807,6 +16819,14 @@ export type ActionDtoShape_572c1f5a19e20082 = [
         expectedTemplateTargetLinkRevision: number;
     }
 ][0];
+export type ActionDtoShape_5752e1b1d1be0e0f = [
+    {
+        selectedTarget: ActionDtoShape_72b3d7add6150368;
+        eligibleTargets: ActionDtoShape_94ac20c1cfcdba54[];
+        selectedPool: ActionDtoShape_259ae6cfc3f48199;
+        eligiblePools: ActionDtoShape_20ee33022933a4a5[];
+    }
+][0];
 export type ActionDtoShape_5759f9cc496cc7a0 = [
     {
         kind: 'deploymentFact';
@@ -21917,6 +21937,9 @@ export type ActionDtoShape_72af93de93675c3d = [
 export type ActionDtoShape_72afdf872ef45f13 = [
     ActionDtoShape_5203d9273b49653c | ActionDtoShape_76e4ea9f10bed9cf | ActionDtoShape_186085fffa50fa7e | ActionDtoShape_faebfc30775d7c8f | ActionDtoShape_427731cc7c25989f | ActionDtoShape_0b5b255718de064d
 ][0];
+export type ActionDtoShape_72b3d7add6150368 = [
+    null | ActionDtoShape_94ac20c1cfcdba54
+][0];
 export type ActionDtoShape_72bb27608376c92b = [
     {
         purpose: 'setup';
@@ -22796,36 +22819,6 @@ export type ActionDtoShape_77b46e0891e349d5 = [
 export type ActionDtoShape_77be42f831cbd6ca = [
     undefined | ActionDtoShape_04b91aeae7b6c17f | ActionDtoShape_a8ac2af893e94771
 ][0];
-export type ActionDtoShape_77c33d6ee1ae8aa9 = [
-    {
-        id: string;
-        teamId: string;
-        custodianAccountId: string;
-        sourceOwnerDisplayName: null | string;
-        displayName: ActionDtoShape_98f3482cd560c75b;
-        enabled: boolean;
-        revision: number;
-        deliveryPolicy: ActionDtoShape_94c22682381f4450;
-        sessionUsePolicy: 'personal_allowed' | 'team_context_required' | 'team_visibility_required';
-        source: ActionDtoShape_c4a96886d1cafe79;
-        sourcePresentation: ActionDtoShape_baac135a833649a1;
-        directExportSupport: 'mixed' | 'supported' | 'unsupported';
-        activeUsageLimitCount: number;
-        requestPolicy: ActionDtoShape_4b346f585ede5349;
-        brokerPlacement: ActionDtoShape_852543c1eae89aab;
-        allMembersAllowedRoutes: ('brokered' | 'direct' | 'vendor-native')[] | null;
-        groupGrants: ActionDtoShape_e3707571903af589[];
-        memberGrants: ActionDtoShape_cb40412cfa03c520[];
-        readiness: ActionDtoShape_2b9ada079c4b01dc;
-        recoveryAction: 'choose_another_resource' | 'retry' | 'select_broker' | 'source_owner_action' | 'update_required' | null;
-        brokerPresentation: ActionDtoShape_ff94ae6fcc99c554;
-        capabilities: ActionDtoShape_3e4256192ad2a3a4;
-        createdAt: string;
-        updatedAt: string;
-        directExportFailure?: ActionDtoShape_ec8f06a0cc4fc247;
-        usageCapabilities?: ActionDtoShape_8a67f28a381523a8;
-    }
-][0];
 export type ActionDtoShape_77c5b3931fe9c183 = [
     undefined | ActionDtoShape_1870341dda672c6a
 ][0];
@@ -23366,13 +23359,6 @@ export type ActionDtoShape_7a84ae35be3b41e0 = [
         triggerId: string;
         dueAt: number;
         lastRunAt: null | number;
-    }
-][0];
-export type ActionDtoShape_7a85f23f12cf7aa1 = [
-    {
-        machineId: string;
-        displayName: null | string;
-        availability: 'available' | 'not_verified' | 'offline' | 'update_required';
     }
 ][0];
 export type ActionDtoShape_7a8943d5fcf9a25e = [
@@ -27161,6 +27147,36 @@ export type ActionDtoShape_8e2dfe6719b5e0a0 = [
         definition: ActionDtoShape_3e37e75917ca630a;
     }
 ][0];
+export type ActionDtoShape_8e2e7aaa725aa751 = [
+    {
+        id: string;
+        teamId: string;
+        custodianAccountId: string;
+        sourceOwnerDisplayName: null | string;
+        displayName: ActionDtoShape_98f3482cd560c75b;
+        enabled: boolean;
+        revision: number;
+        deliveryPolicy: ActionDtoShape_94c22682381f4450;
+        sessionUsePolicy: 'personal_allowed' | 'team_context_required' | 'team_visibility_required';
+        source: ActionDtoShape_c4a96886d1cafe79;
+        sourcePresentation: ActionDtoShape_baac135a833649a1;
+        directExportSupport: 'mixed' | 'supported' | 'unsupported';
+        activeUsageLimitCount: number;
+        requestPolicy: ActionDtoShape_4b346f585ede5349;
+        brokerPlacement: ActionDtoShape_852543c1eae89aab;
+        allMembersAllowedRoutes: ('brokered' | 'direct' | 'vendor-native')[] | null;
+        groupGrants: ActionDtoShape_e3707571903af589[];
+        memberGrants: ActionDtoShape_cb40412cfa03c520[];
+        readiness: ActionDtoShape_2b9ada079c4b01dc;
+        recoveryAction: 'choose_another_resource' | 'retry' | 'select_broker' | 'source_owner_action' | 'update_required' | null;
+        brokerPresentation: ActionDtoShape_5752e1b1d1be0e0f;
+        capabilities: ActionDtoShape_3e4256192ad2a3a4;
+        createdAt: string;
+        updatedAt: string;
+        directExportFailure?: ActionDtoShape_ec8f06a0cc4fc247;
+        usageCapabilities?: ActionDtoShape_8a67f28a381523a8;
+    }
+][0];
 export type ActionDtoShape_8e301f53e9cad9f3 = [
     {
         from: 'admin' | 'member' | 'owner';
@@ -28185,6 +28201,14 @@ export type ActionDtoShape_947a5c1b7c6e5d6c = [
         cpuCores: ActionDtoShape_c5430d7196d7feb5;
         memoryBytes: ActionDtoShape_c5430d7196d7feb5;
         diskBytes: ActionDtoShape_c5430d7196d7feb5;
+    }
+][0];
+export type ActionDtoShape_94ac20c1cfcdba54 = [
+    {
+        machineId: string;
+        displayName: null | string;
+        availability: 'available' | 'not_verified' | 'offline' | 'update_required';
+        reason?: 'broker_presence_not_checked' | 'broker_presence_unknown' | undefined;
     }
 ][0];
 export type ActionDtoShape_94ae3d61cb932a68 = [
@@ -39978,9 +40002,6 @@ export type ActionDtoShape_d30cc280d0e159ca = [
         groupId: string;
     }
 ][0];
-export type ActionDtoShape_d30d109d0cc303fb = [
-    null | ActionDtoShape_f789b326f120e0e9
-][0];
 export type ActionDtoShape_d30d3e35812da5a0 = [
     {
         kind: 'upload';
@@ -46356,17 +46377,6 @@ export type ActionDtoShape_f74879e73d2bf980 = [
         configurationFromInputs: Record<string, string>;
     }
 ][0];
-export type ActionDtoShape_f75dd5b9580378a8 = [
-    null | ActionDtoShape_7a85f23f12cf7aa1
-][0];
-export type ActionDtoShape_f789b326f120e0e9 = [
-    {
-        poolId: string;
-        displayName: ActionDtoShape_21088a43e65c289c;
-        availability: 'available' | 'not_verified' | 'unavailable';
-        availableMachineCount: null | number;
-    }
-][0];
 export type ActionDtoShape_f7961537ab4e89ee = [
     {
         localCause: 'native_configure_refused' | 'native_delete_refused';
@@ -47910,14 +47920,6 @@ export type ActionDtoShape_ff94abf3e5abe5ca = [
         status: 'cancelled' | 'failed' | 'running' | 'succeeded' | 'timeout';
         disposition: 'snapshot';
         result: ActionDtoShape_1306c10c68208990;
-    }
-][0];
-export type ActionDtoShape_ff94ae6fcc99c554 = [
-    {
-        selectedTarget: ActionDtoShape_f75dd5b9580378a8;
-        eligibleTargets: ActionDtoShape_7a85f23f12cf7aa1[];
-        selectedPool: ActionDtoShape_d30d109d0cc303fb;
-        eligiblePools: ActionDtoShape_f789b326f120e0e9[];
     }
 ][0];
 export type ActionDtoShape_ffa9bddd678c3c81 = [

@@ -3481,10 +3481,20 @@ Request-policy support, administration and saved-resource Test share one
 broker-refusal interpreter. A Pool-wide application or model refusal requires
 every candidate to agree; mixed, missing or malformed observations remain
 `broker_unavailable`.
-Administration reports a broker target as `not_verified` until presence has
-actually been observed. None of these presentation facts grants access or
-replaces the existing recovery action. Diagnostics carry no model, account or
-credential details.
+The Team source list reads live presence once for the eligible broker Machines.
+An observed Machine can be `available` or `offline`. A missing observation
+carries `not_verified` with `broker_presence_unknown`. A Pool in the create
+picker carries `source_eligibility_not_checked` until there is a source to check.
+Saved resource administration uses the same Machine projection and reports
+the reason when a Pool's presence or source eligibility cannot be verified.
+Placement presentation alone grants no access and carries no credential details.
+
+`teams.credentials.sources.list` enumerates Connected Accounts and Connected
+Service Pools from Home. It advertises support for external Provider connections,
+which the authenticated custodian's app adds from the daemon's Provider source
+offers. Managed Gateway connections are for personal Provider use. To share
+Muse through the Team broker, select the custodian's Muse Connected Account
+(or a qualified Connected Service Pool) and choose a live broker Machine.
 
 Saved-resource Test connection failures also leave content-free `stage` and
 `code` records in the server logger: `team-credential-resource-test` identifies

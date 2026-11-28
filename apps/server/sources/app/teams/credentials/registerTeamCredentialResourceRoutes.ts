@@ -28,7 +28,7 @@ import { readTeamOperationAuthenticationFromRequest } from "../actorContext";
 import { readTeamCredentialCustodianResourcePageInTx } from './resourceCustodianRead';
 import { publishTeamCredentialMaterialChangedInTx } from "../teamChanges";
 import { acquireTeamMutationAccountAdmissionInTx } from "../memberships/sessionAccessEffects";
-import { classifyMachineDaemonPresence, getMachineDaemonPresenceInventory } from "@/app/machines/machineDaemonPresence";
+import { classifyMachineDaemonPresence, getMachineDaemonPresenceInventory, type MachineDaemonPresenceInventory } from "@/app/machines/machineDaemonPresence";
 import {
     getMachinePoolCandidateSnapshot,
     getMachinePoolCandidateSnapshots,
@@ -114,6 +114,23 @@ class TeamCredentialCreateProjectionFailure extends Error {
 }
 
 type TeamCredentialResourceSummary = z.infer<typeof TeamCredentialResourceSummaryV1Schema>;
+type BrokerPresentation = TeamCredentialResourceSummary['brokerPresentation'];
+type BrokerPoolAvailability = Pick<BrokerPresentation['eligiblePools'][number], 'availability' | 'availableMachineCount' | 'reason'>;
+
+function projectTeamCredentialBrokerTargets(
+    targets: readonly BrokerPresentation['eligibleTargets'][number][],
+    presence: MachineDaemonPresenceInventory,
+): BrokerPresentation['eligibleTargets'] {
+    return targets.map(({ machineId, displayName, availability }) => {
+        const target = { machineId, displayName };
+        if (availability === 'update_required') return { ...target, availability };
+        switch (classifyMachineDaemonPresence(presence, machineId)) {
+            case 'connected': return { ...target, availability: 'available' };
+            case 'disconnected': return { ...target, availability: 'offline' };
+            case 'unknown': return { ...target, availability: 'not_verified', reason: 'broker_presence_unknown' };
+        }
+    });
+}
 type TeamCredentialResourceTestCandidate = z.infer<typeof DaemonProviderTeamCredentialResourceTestCandidateResponseV1Schema>
     | Readonly<{ status: 'unavailable'; reason: 'response_invalid' }>;
 
@@ -300,28 +317,13 @@ async function projectTeamCredentialBrokerAdministrationReadiness(
         if (source === null) return;
         const presence = presenceByAccountId.get(resource.custodianAccountId);
         if (!presence) return;
-        const onlineMachineIds = resource.brokerPresentation.eligibleTargets.flatMap(target => (
-            target.availability !== 'update_required'
-            && classifyMachineDaemonPresence(presence, target.machineId) === 'connected'
-                ? [target.machineId]
-                : []
-        ));
-        const eligibleTargets = resource.brokerPresentation.eligibleTargets.map(target => ({
-            ...target,
-            availability: target.availability === 'update_required'
-                ? 'update_required' as const
-                : onlineMachineIds.includes(target.machineId)
-                    ? 'available' as const
-                    : presence.state === 'known' ? 'offline' as const : 'not_verified' as const,
-        }));
+        const eligibleTargets = projectTeamCredentialBrokerTargets(resource.brokerPresentation.eligibleTargets, presence);
+        const onlineMachineIds = eligibleTargets.flatMap(target => target.availability === 'available' ? [target.machineId] : []);
         const selectedTarget = resource.brokerPresentation.selectedTarget === null
             ? null
             : eligibleTargets.find(target => target.machineId === resource.brokerPresentation.selectedTarget?.machineId)
                 ?? resource.brokerPresentation.selectedTarget;
-        const availability = new Map<string, Readonly<{
-            availability: 'available' | 'unavailable' | 'not_verified';
-            availableMachineCount: number | null;
-        }>>();
+        const availability = new Map<string, BrokerPoolAvailability>();
         const eligibilityByPoolId = new Map<string, readonly Readonly<{
             machineId: string;
             eligibility: TeamCredentialBrokerEligibility | null;
@@ -331,6 +333,7 @@ async function projectTeamCredentialBrokerAdministrationReadiness(
             if (!snapshot.ok || snapshot.value.presenceState === 'unavailable') {
                 availability.set(pool.poolId, {
                     availability: 'not_verified',
+                    reason: snapshot.ok ? 'broker_presence_unknown' : snapshot.error.code,
                     availableMachineCount: null,
                 });
                 return;
@@ -345,31 +348,28 @@ async function projectTeamCredentialBrokerAdministrationReadiness(
             if (candidates.some(result => result.eligibility === null)) {
                 availability.set(pool.poolId, {
                     availability: 'not_verified',
+                    reason: 'source_eligibility_unknown',
                     availableMachineCount: null,
                 });
                 return;
             }
             const availableMachineCount = candidates.filter(result => result.eligibility?.status === 'eligible').length;
+            const presenceKnown = snapshot.value.presenceState === 'known';
             availability.set(pool.poolId, {
-                availability: availableMachineCount > 0 ? 'available'
-                    : snapshot.value.presenceState === 'known' ? 'unavailable' : 'not_verified',
-                availableMachineCount: snapshot.value.presenceState === 'known' ? availableMachineCount : null,
+                ...(availableMachineCount > 0 ? { availability: 'available' }
+                    : presenceKnown ? { availability: 'unavailable' }
+                    : { availability: 'not_verified', reason: 'broker_presence_unknown' }),
+                availableMachineCount: presenceKnown ? availableMachineCount : null,
             });
         }));
-        const eligiblePools = resource.brokerPresentation.eligiblePools.map(pool => ({
-            ...pool,
-            ...(availability.get(pool.poolId) ?? {
-                availability: 'not_verified' as const,
-                availableMachineCount: null,
-            }),
-        }));
+        const eligiblePools = resource.brokerPresentation.eligiblePools.map(pool => {
+            const observed = availability.get(pool.poolId);
+            return observed ? { poolId: pool.poolId, displayName: pool.displayName, ...observed } : pool;
+        });
         const selectedPool = resource.brokerPresentation.selectedPool === null
             ? null
-            : eligiblePools.find(pool => pool.poolId === resource.brokerPresentation.selectedPool?.poolId) ?? {
-                ...resource.brokerPresentation.selectedPool,
-                availability: 'not_verified' as const,
-                availableMachineCount: null,
-            };
+            : eligiblePools.find(pool => pool.poolId === resource.brokerPresentation.selectedPool?.poolId)
+                ?? resource.brokerPresentation.selectedPool;
         let candidateMachineIds = resource.brokerPlacement?.kind === 'machine'
             ? selectedTarget?.availability === 'available' ? [resource.brokerPlacement.machineId] : []
             : [];
@@ -881,10 +881,21 @@ export function registerTeamCredentialResourceRoutes(
             return { ...sources, brokerPresentation: await projectTeamCredentialBrokerPresentationInTx(tx, request.userId) };
         });
         if (!result.ok) return fail(reply, result.error);
+        const { eligibleTargets, eligiblePools } = result.brokerPresentation;
+        const presence = await getMachineDaemonPresenceInventory({
+            accountId: request.userId,
+            io: app.machineDaemonPresence,
+            machineIds: eligibleTargets.flatMap(target => target.availability === 'update_required' ? [] : [target.machineId]),
+        });
         return reply.send(TeamCredentialSourceCandidateListOutputV1Schema.parse({
             candidates: result.candidates,
             supportedKinds: result.supportedKinds,
-            brokerPresentation: { selectedTarget: null, selectedPool: null, ...result.brokerPresentation },
+            brokerPresentation: {
+                selectedTarget: null,
+                selectedPool: null,
+                eligibleTargets: projectTeamCredentialBrokerTargets(eligibleTargets, presence),
+                eligiblePools,
+            },
         }));
     });
 

@@ -412,11 +412,32 @@ export const TeamCredentialResourceSourcePresentationV1Schema = lazyZodSchema(()
   }),
 ]));
 
+function teamCredentialBrokerTargetPresentationSchema() {
+  return z.strictObject({
+    machineId: z.string().check(z.minLength(1)),
+    displayName: z.nullable(z.string().check(z.trim(), z.minLength(1), z.maxLength(120))),
+    availability: z.enum(['available', 'offline', 'update_required', 'not_verified']),
+    reason: z.optional(z.enum(['broker_presence_not_checked', 'broker_presence_unknown'])),
+  });
+}
+
+function teamCredentialBrokerPoolPresentationSchema() {
+  return z.strictObject({
+    poolId: z.string().check(z.minLength(1), z.maxLength(256)),
+    displayName: z.nullable(MachinePoolPrivateLabelProjectionV1Schema),
+    availability: z.enum(['available', 'unavailable', 'not_verified']),
+    availableMachineCount: z.nullable(z.number().check(z.int(), z.nonnegative())),
+    reason: z.optional(z.enum([
+      'source_eligibility_not_checked', 'source_eligibility_unknown', 'broker_presence_unknown', 'pool_not_found',
+    ])),
+  });
+}
+
 export const TeamCredentialBrokerPresentationV1Schema = lazyZodSchema(() => z.strictObject({
-  selectedTarget: z.nullable(z.strictObject({ machineId: z.string().check(z.minLength(1)), displayName: z.nullable(z.string().check(z.trim(), z.minLength(1), z.maxLength(120))), availability: z.enum(['available', 'offline', 'update_required', 'not_verified']) })),
-  eligibleTargets: z.array(z.strictObject({ machineId: z.string().check(z.minLength(1)), displayName: z.nullable(z.string().check(z.trim(), z.minLength(1), z.maxLength(120))), availability: z.enum(['available', 'offline', 'update_required', 'not_verified']) })),
-  selectedPool: z.nullable(z.strictObject({ poolId: z.string().check(z.minLength(1), z.maxLength(256)), displayName: z.nullable(MachinePoolPrivateLabelProjectionV1Schema), availability: z.enum(['available', 'unavailable', 'not_verified']), availableMachineCount: z.nullable(z.number().check(z.int(), z.nonnegative())) })),
-  eligiblePools: z.array(z.strictObject({ poolId: z.string().check(z.minLength(1), z.maxLength(256)), displayName: z.nullable(MachinePoolPrivateLabelProjectionV1Schema), availability: z.enum(['available', 'unavailable', 'not_verified']), availableMachineCount: z.nullable(z.number().check(z.int(), z.nonnegative())) })),
+  selectedTarget: z.nullable(teamCredentialBrokerTargetPresentationSchema()),
+  eligibleTargets: z.array(teamCredentialBrokerTargetPresentationSchema()),
+  selectedPool: z.nullable(teamCredentialBrokerPoolPresentationSchema()),
+  eligiblePools: z.array(teamCredentialBrokerPoolPresentationSchema()),
 }));
 
 /**

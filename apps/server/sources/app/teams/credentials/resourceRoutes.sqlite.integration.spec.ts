@@ -2,6 +2,7 @@ import { plainPrivateLabel, prepareE2eePrivateLabelForAccount, storedPlainPrivat
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { projectTeamCredentialResourceDisplayNameForRecipient } from "./privateLabels";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { TeamCredentialSourceCandidateListOutputV1Schema } from "@happier-dev/protocol/teams";
 import tweetnacl from 'tweetnacl';
 import type { FastifyInstance, RouteOptions } from "fastify";
 import { ClusterAdapter, MessageType, type ClusterMessage } from "socket.io-adapter";
@@ -2624,6 +2625,10 @@ describe("Team credential resource routes (SQLite integration)", () => {
             operationProtocolCapabilitiesRevision: null,
         });
         const ephemeral = await createMachine("ephemeral", { kind: "ephemeral_session_runner" });
+        const pool = await db.machinePool.create({ data: {
+            id: crypto.randomUUID(), accountId: custodian.id, name: storedPlainPrivateLabel("Exact broker Pool"),
+            members: { create: [{ machineId: online.id, priorityTier: 0, enabled: true }] },
+        } });
         const fingerprint = `connection-security:v1:${"c".repeat(43)}`;
         const source = {
             v: 1 as const,
@@ -2746,6 +2751,22 @@ describe("Team credential resource routes (SQLite integration)", () => {
         expect(managerList.body).not.toContain(source.connectionId);
         expect(managerList.body).not.toContain(source.connectionSecurityFingerprint);
 
+        const listSources = () => post("/v1/teams/credential-resources/sources/list", custodian.id, { teamId: team.id });
+        const sources = await listSources();
+        expect(sources.statusCode, sources.body).toBe(200);
+        expect(TeamCredentialSourceCandidateListOutputV1Schema.parse(sources.json())).toMatchObject({
+            supportedKinds: expect.arrayContaining(["provider_connection"]),
+            candidates: [],
+            brokerPresentation: {
+                eligiblePools: [{ poolId: pool.id, availability: "not_verified", reason: "source_eligibility_not_checked", availableMachineCount: null }],
+                eligibleTargets: expect.arrayContaining([
+                    { machineId: online.id, displayName: null, availability: "available" },
+                    { machineId: offline.id, displayName: null, availability: "offline" },
+                    { machineId: updateRequired.id, displayName: null, availability: "update_required" },
+                ]),
+            },
+        });
+
         const got = await post("/v1/teams/credential-resources/get", custodian.id, { resourceId: resource.id });
         expect(got.statusCode, got.body).toBe(200);
         expect(got.json()).toMatchObject({
@@ -2756,11 +2777,25 @@ describe("Team credential resource routes (SQLite integration)", () => {
         const observedPresence = app.machineDaemonPresence;
         app.machineDaemonPresence = { in: () => ({ fetchSockets: async () => { throw new Error("presence unavailable"); } }) };
         try {
+            const unknownSources = await listSources();
+            expect(unknownSources.statusCode, unknownSources.body).toBe(200);
+            expect(TeamCredentialSourceCandidateListOutputV1Schema.parse(unknownSources.json())).toMatchObject({
+                brokerPresentation: {
+                    eligibleTargets: expect.arrayContaining([
+                        { machineId: online.id, displayName: null, availability: "not_verified", reason: "broker_presence_unknown" },
+                        { machineId: offline.id, displayName: null, availability: "not_verified", reason: "broker_presence_unknown" },
+                        { machineId: updateRequired.id, displayName: null, availability: "update_required" },
+                    ]),
+                },
+            });
             const unknown = await post("/v1/teams/credential-resources/get", custodian.id, { resourceId: resource.id });
             expect(unknown.statusCode, unknown.body).toBe(200);
             expect(unknown.json()).toMatchObject({
                 readiness: { kind: "broker_unavailable", reason: "projection_unavailable" },
-                brokerPresentation: { selectedTarget: { machineId: online.id, availability: "not_verified" } },
+                brokerPresentation: {
+                    selectedTarget: { machineId: online.id, availability: "not_verified", reason: "broker_presence_unknown" },
+                    eligiblePools: [{ poolId: pool.id, availability: "not_verified", reason: "broker_presence_unknown", availableMachineCount: null }],
+                },
             });
         } finally {
             app.machineDaemonPresence = observedPresence;
