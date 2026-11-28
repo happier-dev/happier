@@ -484,6 +484,11 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
   const titleOnControlLine = splitTitleLine || (showTitle && hangsFromTitle);
   const measureSplit = splitTitleLine && !stackActions;
   const stackInTitleColumn = stackActions && !markOnTitleRow;
+  // Hanging controls hang from the name's line; where the column is too narrow for that, they take the line right under
+  // it, and the purpose and facts run beneath them as they run beneath both on a wide column. Those lines are the ones
+  // whose words arrive late (a Machine's health and roles), so nothing that lands later ever sits above the controls.
+  const actionsLeadSupporting = stackActions && props.actionsLayout === 'hang';
+  const hasSupporting = Boolean(props.description) || Boolean(props.details && props.detailsPlacement !== 'column') || meta !== undefined;
   // Only actions still drawn wrap beneath: a remembered wrap never reserves room for actions that left
   // (a phone's navigation chrome takes Save and Cancel when the window narrows).
   const actionsBelowIdentity = measureSplit && Boolean(props.actions)
@@ -611,7 +616,7 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
                     style={splitTitleLine ? { alignSelf: 'flex-start', maxWidth: '100%' } : undefined}>{titleLine}</View>
                   {splitTitleLine || hangsFromTitle || markOnTitleRow ? null : textBelowTitle}
                 </View>
-                {stackInTitleColumn ? <View key="supporting">{textBelowTitle}</View> : null}
+                {stackInTitleColumn && !actionsLeadSupporting ? <View key="supporting">{textBelowTitle}</View> : null}
                 {actionsBlock && !(stackActions && markOnTitleRow) ? (
                   <View
                     key="actions"
@@ -633,15 +638,22 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
                     {actionsBlock}
                   </View>
                 ) : null}
+                {stackInTitleColumn && actionsLeadSupporting ? <View key="supporting" style={actionsBlock && hasSupporting ? { marginTop: 12 } : null}>{textBelowTitle}</View> : null}
               </View>
               {(splitTitleLine || hangsFromTitle) && !markOnTitleRow && !stackInTitleColumn ? textBelowTitle : null}
           </View>
         </View>
-        {markOnTitleRow ? (
-          <View testID={props.testID ? `${props.testID}-supporting` : undefined} onLayout={stackActions ? undefined : handleTextBelowRowLayout}>{textBelowTitle}</View>
+        {stackActions && markOnTitleRow && actionsBlock && actionsLeadSupporting ? (
+          <View key="actions-below" testID={props.testID ? `${props.testID}-actions-below` : undefined} style={{ marginTop: 12, alignSelf: 'flex-start', maxWidth: '100%' }}>
+            {actionsBlock}
+          </View>
         ) : null}
-        {stackActions && markOnTitleRow && actionsBlock ? (
-          <View testID={props.testID ? `${props.testID}-actions-below` : undefined} style={{ marginTop: 12, alignSelf: 'flex-start', maxWidth: '100%' }}>
+        {markOnTitleRow ? (
+          <View key="supporting" testID={props.testID ? `${props.testID}-supporting` : undefined} onLayout={stackActions ? undefined : handleTextBelowRowLayout}
+            style={actionsLeadSupporting && actionsBlock && hasSupporting ? { marginTop: 12 } : undefined}>{textBelowTitle}</View>
+        ) : null}
+        {stackActions && markOnTitleRow && actionsBlock && !actionsLeadSupporting ? (
+          <View key="actions-below" testID={props.testID ? `${props.testID}-actions-below` : undefined} style={{ marginTop: 12, alignSelf: 'flex-start', maxWidth: '100%' }}>
             {actionsBlock}
           </View>
         ) : null}

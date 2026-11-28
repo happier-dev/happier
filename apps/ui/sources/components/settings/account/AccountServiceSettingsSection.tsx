@@ -1139,7 +1139,8 @@ export function AccountServiceSettingsSection(): React.ReactElement {
                             {...headerProps}
                             icon={<Icon name="sliders-horizontal" />}
                             title={t('settingsSession.handoff.advanced.title')}
-                            detail={t('settingsAccount.accountServiceAdvancedSummary')}
+                            // What it opens, under its name at every width (see the Security section's More security).
+                            subtitle={t('settingsAccount.accountServiceAdvancedSummary')}
                         />
                     )}
                 >

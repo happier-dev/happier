@@ -114,7 +114,9 @@ export const AccountSignInSecuritySection = React.memo(function AccountSignInSec
                         {...headerProps}
                         icon={<Icon name="shield-check" />}
                         title={t('settingsAccount.moreSecurity')}
-                        detail={t('settingsAccount.moreSecuritySummary')}
+                        // What it opens is a description, not a value: it reads under the name at every width, so a
+                        // phone never draws it beside the name first and moves it beneath once the row has measured it.
+                        subtitle={t('settingsAccount.moreSecuritySummary')}
                     />
                 )}
             >
