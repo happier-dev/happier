@@ -101,11 +101,12 @@ export function useSettingReveal(
         if (!active || !focused) return;
         const timer = setTimeout(() => {
             const node = hostRef.current as unknown as {
-                scrollIntoView?: (options: Readonly<{ block: 'center' | 'start'; behavior: 'auto' | 'smooth' }>) => void;
+                scrollIntoView?: (options: Readonly<{ block: 'center' | 'start'; behavior: 'instant' }>) => void;
                 measureLayout?: (relativeTo: unknown, onSuccess: (x: number, y: number) => void, onFail: () => void) => void;
             } | null;
             if (Platform.OS === 'web') {
-                node?.scrollIntoView?.({ block: revealWebBlock(hostRef.current), behavior: reducedMotion ? 'auto' : 'smooth' });
+                // Land before pulsing: a long smooth scroll can outlast the entire highlight.
+                node?.scrollIntoView?.({ block: revealWebBlock(hostRef.current), behavior: 'instant' });
             } else {
                 const scroll = scrollSourceRef?.current as { scrollTo?: (options: Readonly<{ y: number; animated: boolean }>) => void; getInnerViewNode?: () => unknown } | null | undefined;
                 node?.measureLayout?.(scroll?.getInnerViewNode?.() ?? scroll, (_x, y) => {

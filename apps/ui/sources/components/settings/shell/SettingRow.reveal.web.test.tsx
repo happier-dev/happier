@@ -57,11 +57,9 @@ function mountInScroller(hostHeight: number, visibleHeight: number) {
     y: 0,
     toJSON: () => null,
   });
-  const landings: string[] = [];
+  const landings: ScrollIntoViewOptions[] = [];
   host.scrollIntoView = (options?: boolean | ScrollIntoViewOptions) => {
-    landings.push(
-      typeof options === 'object' ? (options.block ?? 'start') : 'start',
-    );
+    landings.push(typeof options === 'object' ? options : { block: 'start' });
   };
   scroller.appendChild(host);
   document.body.appendChild(scroller);
@@ -92,10 +90,10 @@ describe('useSettingReveal on the web', () => {
   });
 
   it('lands a section taller than the visible page at its top, so its heading stays below the page header', async () => {
-    expect(await reveal(1318, 671)).toEqual(['start']);
+    expect(await reveal(1318, 671)).toEqual([{ block: 'start', behavior: 'instant' }]);
   });
 
-  it('still centres a row that fits', async () => {
-    expect(await reveal(64, 671)).toEqual(['center']);
+  it('lands a distant row immediately before pulsing, rather than spending the highlight on a smooth scroll', async () => {
+    expect(await reveal(64, 671)).toEqual([{ block: 'center', behavior: 'instant' }]);
   });
 });
