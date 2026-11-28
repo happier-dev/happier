@@ -5,7 +5,7 @@ import { ACCOUNT_TERMINALS_APPROVE_ACTION_ID_V1 } from '../../actionIds.js';
 import { AccountHistoricalEncryptionKeyForgetInputV1Schema, AccountHistoricalEncryptionKeyForgetResultV1Schema, AccountEncryptionAutomationTemplatesRecoverInputV1Schema, AccountEncryptionAutomationTemplatesRecoverResultV1Schema } from '../../../auth/accountSecurity.js';
 import { ACCOUNT_EMAIL_CHANGE_REQUEST_PATH_V1, ACCOUNT_PASSWORD_CHANGE_PATH_V1, ACCOUNT_PASSWORD_ENROLL_PATH_V1, ACCOUNT_PASSWORD_REMOVE_PATH_V1, ACCOUNT_SECURITY_PATH_V1 } from '../../../auth/accountSecurity.js';
 import { PluginAccountDataEraseActionInputV1Schema, PluginAccountDataEraseActionOutputV1Schema } from '../../../plugins/data/accountEraseV1.js';
-import { AccountSessionsSignOutEverywhereActionInputV1Schema, AccountSessionsSignOutEverywhereActionOutputV1Schema } from '../../../auth/accountSessions.js';
+import { ACCOUNT_SESSIONS_SIGN_OUT_EVERYWHERE_HTTP_PATH_V1, AccountSessionsSignOutEverywhereActionInputV1Schema, AccountSessionsSignOutEverywhereActionOutputV1Schema } from '../../../auth/accountSessions.js';
 import { AccountEmailChangeRequestResponseV1Schema, AccountEmailChangeRequestV1Schema, AccountPasswordChangeRequestV1Schema, AccountPasswordEnrollRequestV1Schema, AccountPasswordMutationResponseV1Schema, AccountPasswordRemoveRequestV1Schema, AccountSecurityGetRequestV1Schema, AccountSecurityGetResponseV1Schema } from '../../../auth/accountSecurity.js';
 import { ACCOUNT_API_TOKENS_CREATE_HTTP_PATH_V1, ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1, ACCOUNT_API_TOKENS_REVOKE_ALL_HTTP_PATH_V1, ACCOUNT_API_TOKENS_REVOKE_HTTP_PATH_V1, ACCOUNT_API_TOKENS_UPDATE_HTTP_PATH_V1, AccountApiTokensCreateHttpInputV1Schema, AccountApiTokensUpdateHttpInputV1Schema, AccountApiTokensUpdateActionInputV1Schema, AccountApiTokensUpdateActionOutputV1Schema, AccountApiTokensCreateActionInputV1Schema, AccountApiTokensCreateActionOutputV1Schema, projectAccountApiTokenCreationObservation, AccountApiTokensListActionInputV1Schema, AccountApiTokensListActionOutputV1Schema, AccountApiTokensRevokeActionInputV1Schema, AccountApiTokensRevokeActionOutputV1Schema, AccountApiTokensRevokeAllActionInputV1Schema, AccountApiTokensRevokeAllActionOutputV1Schema } from '../../../auth/accountApiTokens.js';
 import type { PreNormalizedActionSpec } from '../definition.js';
@@ -85,6 +85,7 @@ function createAccountSecurityActionSpecs() {
       rpc: false,
     },
     sideEffectClass: 'danger',
+    serverTransport: { method: 'POST', path: ACCOUNT_SESSIONS_SIGN_OUT_EVERYWHERE_HTTP_PATH_V1 },
     outputSchema: AccountSessionsSignOutEverywhereActionOutputV1Schema,
     inputSchema: AccountSessionsSignOutEverywhereActionInputV1Schema,
     approvalPresentation: { summary: (input: unknown) =>

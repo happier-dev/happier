@@ -9650,6 +9650,9 @@ and `account.security.get` are ordinary Agent/MCP-exposed reads. Agents and MCP
 clients can request `account.apiTokens.revokeAll` and
 `account.sessions.signOutEverywhere` through the normal approval flow. The
 sign-out approval shows whether the request also revokes all API tokens.
+When these Actions run directly from an installed Session, Home binds the
+signed request to the Action's declared HTTP transport and applies it to the
+Session requester's Account.
 The decision owner refuses an API token's approval of a person-class Action. A
 host agent with a waived decide may approve it, never its own request. Replay of a
 stored approval of a person-class Action still requires authenticated present-user

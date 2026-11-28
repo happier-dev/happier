@@ -1,5 +1,7 @@
 import { PRIVATE_LABEL_RECIPIENT_CENSUS_PATH } from '@happier-dev/protocol/crypto/privateLabelRecipientCensusV1';
 import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import { ACCOUNT_API_TOKENS_REVOKE_ALL_HTTP_PATH_V1 } from '@happier-dev/protocol/auth/accountApiTokens';
+import { ACCOUNT_SESSIONS_SIGN_OUT_EVERYWHERE_HTTP_PATH_V1 } from '@happier-dev/protocol/auth/accountSessions';
 import Fastify from 'fastify';
 import {
   serializerCompiler,
@@ -45,6 +47,11 @@ import { registerExternalActionRoutes } from '@/app/api/routes/actions/registerE
 import { registerProjectAccountRowRoutes } from '@/app/api/routes/projects/registerProjectAccountRowRoutes';
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { mutateProjectAccountRows } from '@/app/projects/projectAccountRowService';
+import { registerAccountApiTokenManagementRoutes } from '@/app/api/routes/auth/registerAccountApiTokenManagementRoutes';
+import { registerAccountSessionsSignOutEverywhereRoute } from '@/app/api/routes/auth/registerAccountSessionsSignOutEverywhereRoute';
+import { inTx } from '@/storage/inTx';
+import { setEligibleMachineAccessGrantInTx } from '@/testkit/machineAccessGrant.testkit';
+import { plainPrivateLabel } from '@/testkit/privateLabelFixture';
 
 // An installed Machine executes an admitted Account-placement root over that
 // Action's declared server transport. The signed proof must spend exactly that
@@ -67,6 +74,75 @@ afterAll(async () => {
 });
 
 describe('signed Account Action transport purpose', () => {
+  it('applies signed security mutations to the Session requester on a foreign Machine', async () => {
+    const createAccount = () => db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
+    const owner = await createAccount();
+    const guest = await createAccount();
+    const keys = tweetnacl.sign.keyPair();
+    const machine = await db.machine.create({ data: {
+      id: crypto.randomUUID(), accountId: owner.id,
+      metadata: encodePlainMachineStoredContent({ host: 'controller', platform: 'linux', happyCliVersion: 'test',
+        homeDir: '/home/controller', happyHomeDir: '/home/controller/.happier' }), metadataVersion: 1,
+      dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64'),
+      installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(keys.publicKey),
+    } });
+    const grant = await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: owner.id, machineId: machine.id,
+      principal: { kind: 'account', accountId: guest.id }, level: 'view' }));
+    expect(grant).toMatchObject({ kind: 'saved' });
+    const session = await db.session.create({ data: {
+      accountId: guest.id, tag: crypto.randomUUID(), metadata: '{}', encryptionMode: 'plain',
+    } });
+    await db.accessKey.create({ data: { accountId: guest.id, machineId: machine.id, sessionId: session.id, data: 'source' } });
+    const makeToken = (accountId: string) => auth.createApiToken({
+      accountId, tokenId: crypto.randomUUID(), label: plainPrivateLabel('test credential'),
+    });
+    await makeToken(owner.id);
+    const homeId = await getOrCreateServerIdentityId();
+    const resolveCurrentSessionMachine = async () => machine.id;
+    const app = Fastify().withTypeProvider<ZodTypeProvider>() as AppFastify;
+    app.setValidatorCompiler(validatorCompiler);
+    app.setSerializerCompiler(serializerCompiler);
+    app.decorate('resolveCurrentSessionMachine', resolveCurrentSessionMachine);
+    app.decorate('disconnectAccountSockets', () => {});
+    enableAuthentication(app);
+    registerAccountApiTokenManagementRoutes(app);
+    registerAccountSessionsSignOutEverywhereRoute(app);
+    try {
+      for (const { actionId, path, body, output } of [
+        { actionId: 'account.apiTokens.revokeAll', path: ACCOUNT_API_TOKENS_REVOKE_ALL_HTTP_PATH_V1,
+          body: {}, output: { revokedCount: 1 } },
+        { actionId: 'account.sessions.signOutEverywhere', path: ACCOUNT_SESSIONS_SIGN_OUT_EVERYWHERE_HTTP_PATH_V1,
+          body: { revokeApiTokens: true }, output: { status: 'signed_out' } },
+      ] as const) {
+        await makeToken(guest.id);
+        const requestId = crypto.randomUUID();
+        const installationId = machine.installationId!;
+        const target = { kind: 'machine', machineId: machine.id } as const;
+        const root = await auth.mintExternalActionExecutionAuthorization({ accountId: guest.id, serverIdentityId: homeId,
+          authentication: { kind: 'terminal', tokenEpoch: guest.tokenEpoch }, actionId,
+          machineId: machine.id, target, requestId, requestEnvelopeDigest: 'a'.repeat(43),
+          sessionActionOrigin: { v: 1, caller: { kind: 'session', sessionId: session.id, starterDepth: 0, turnDepth: 0 },
+            sourceTurnId: 'turn', callerPermissionMode: null, requestId },
+          sessionActionSource: { machineId: machine.id, installationId },
+        }, { resolveCurrentSessionMachine });
+        const response = await app.inject({ method: 'POST', url: path, payload: body, headers: {
+          [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: root.token,
+          [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: actionId,
+          [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+          [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: root.token,
+            effectActionId: actionId, target, installationId, requestId, method: 'POST', path, body, privateKey: keys.secretKey }),
+        } });
+        expect(response.statusCode, `${actionId}: ${response.body}`).toBe(200);
+        expect(response.json()).toEqual(output);
+        expect(await db.accountApiToken.count({ where: { accountId: guest.id } })).toBe(0);
+        expect(await db.accountApiToken.count({ where: { accountId: owner.id } })).toBe(1);
+      }
+      const readEpoch = async (id: string) => (await db.account.findUniqueOrThrow({ where: { id }, select: { tokenEpoch: true } })).tokenEpoch;
+      expect(await readEpoch(guest.id)).toBe(guest.tokenEpoch + 1);
+      expect(await readEpoch(owner.id)).toBe(owner.tokenEpoch);
+    } finally { await app.close(); }
+  });
+
   it('confines Source creation and checkout linking to the requester’s existing checkout row', async () => {
     const homeId = await getOrCreateServerIdentityId();
     const actionId = 'projects.sources.create';
