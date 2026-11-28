@@ -245,7 +245,6 @@ export async function annotateExternalSessionCandidates(
     }> = {
         decryptMetadata: tryDecryptSessionOwnerMetadataView,
         getAccountEncryptionCurrentness: fetchAccountEncryptionCurrentness,
-        lookupByTags: lookupSessionsByTags,
     },
 ): Promise<CandidateAnnotationResult> {
     if (params.candidates.length === 0) {
