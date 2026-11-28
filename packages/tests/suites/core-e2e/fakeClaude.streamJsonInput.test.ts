@@ -23,6 +23,27 @@ function parseJsonLines(raw: string): any[] {
 }
 
 describe('fake Claude CLI fixture', () => {
+  it('answers the legacy Claude launch-control probes without opening a conversation', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-fake-claude-probes-'));
+    try {
+      const fixture = await createIsolatedFakeClaudeControlShim({ testDir: dir,
+        captureEnvironmentKeys: [], logFullStdin: false });
+      const probe = (args: string[]) => spawnSync(process.execPath, [fixture.executablePath, ...args], {
+        cwd: dir, env: process.env, input: '', encoding: 'utf8', timeout: 3_000,
+      });
+
+      const instructions = probe(['--append-system-prompt-file']);
+      expect(instructions.status, instructions.stderr).toBe(1);
+      expect(instructions.stderr).toContain("unknown option '--append-system-prompt-file'");
+      expect(instructions.stdout).toBe('');
+
+      const snapshot = probe(['--system-prompt-snapshot', 'happier-probe', '--version']);
+      expect(snapshot.status, snapshot.stderr).toBe(0);
+      expect(snapshot.stdout.trim()).toMatch(/^2\.\d+\.\d+ \(Claude Code\)$/);
+      await expect(readFile(fixture.logPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
   it('emits the current native Review model contract from the review scenario', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-fake-claude-review-'));
     try {

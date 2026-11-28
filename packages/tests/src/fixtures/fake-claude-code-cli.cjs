@@ -36,9 +36,16 @@ const argv = process.argv.slice(2);
 // `{"loggedIn":…}` and exits 1 when signed out. HAPPIER_E2E_FAKE_CLAUDE_NATIVE_SIGNED_OUT=1
 // models an installed-but-signed-out native CLI independently of the connected profile
 // Happier selects for a particular launch.
-if (argv.length === 1 && (argv[0] === '-v' || argv[0] === '--version')) {
+const versionOnly = argv.length === 1 && (argv[0] === '-v' || argv[0] === '--version');
+const snapshotProbe = argv.length === 3 && argv[0] === '--system-prompt-snapshot' && argv[2] === '--version';
+if (versionOnly || snapshotProbe) {
   process.stdout.write('2.1.292 (Claude Code)\n');
   process.exit(0);
+}
+// Model the legacy parser. Scenarios that support hidden launch flags use their own installed vendor shim.
+if (argv.length === 1 && argv[0] === '--append-system-prompt-file') {
+  process.stderr.write("error: unknown option '--append-system-prompt-file'\n");
+  process.exit(1);
 }
 if (argv[0] === 'auth' && argv[1] === 'status') {
   const loggedIn = process.env.HAPPIER_E2E_FAKE_CLAUDE_NATIVE_SIGNED_OUT !== '1';
