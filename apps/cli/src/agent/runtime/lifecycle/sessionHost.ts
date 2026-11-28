@@ -96,6 +96,8 @@ export async function startSessionHost(params: Readonly<{
       httpTransport.retire();
       sessions.delete(request.trackingKey);
       const failureCause = session.scope?.failureCause;
+      // Process-wide async resources can outlive the Session that first used them.
+      if (session.scope) session.scope.termination = null;
       resolveEnded({ exitCode, ...(failureCause ? { failureCause } : {}) });
     };
     const launch = request.launch ?? {};

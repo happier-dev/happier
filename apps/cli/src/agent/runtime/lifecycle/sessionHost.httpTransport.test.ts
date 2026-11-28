@@ -9,7 +9,8 @@ import axios from '@/api/client/credentialAxios';
 import { createDeferred } from '@/testkit/async/deferred';
 import { installAxiosProxySupport } from '@/utils/proxy/axiosProxy';
 
-import { endSessionCommand } from './runnerTerminationHandlers';
+import { readHostedSessionScope, type HostedSessionScope } from './hostedSessionScope';
+import { bindHostedSessionStop, endSessionCommand, requestHostedSessionTermination } from './runnerTerminationHandlers';
 import { startSessionHost } from './sessionHost';
 
 it('reuses HTTP connections within a Session and closes only its connections at Session end', async () => {
@@ -100,6 +101,33 @@ it('reuses HTTP connections within a Session and closes only its connections at 
     resumeB.resolve();
     server.closeAllConnections();
     server.close();
+    processEvents.emit('SIGTERM');
+    await host.whenEnded;
+  }
+});
+
+it('releases its Stop handler even when an async resource keeps the ended Session scope alive', async () => {
+  const processEvents = new EventEmitter();
+  const retainedScope = createDeferred<HostedSessionScope>();
+  let stops = 0;
+  const host = await startSessionHost({
+    readTrustedCaller: async () => null,
+    process: processEvents,
+    exit: () => undefined,
+    runSessionCommand: async () => {
+      const scope = readHostedSessionScope();
+      if (!scope) throw new Error('Expected a hosted Session scope');
+      bindHostedSessionStop(async () => { stops += 1; });
+      retainedScope.resolve(scope);
+      endSessionCommand(0);
+    },
+  });
+  try {
+    await expect(host.addSession({ trackingKey: 'ended', argv: ['ended'], env: {}, cwd: process.cwd() }))
+      .resolves.toEqual({ exitCode: 0 });
+    expect(requestHostedSessionTermination(await retainedScope.promise, { kind: 'signal', signal: 'SIGTERM' })).toBe(false);
+    expect(stops).toBe(0);
+  } finally {
     processEvents.emit('SIGTERM');
     await host.whenEnded;
   }
