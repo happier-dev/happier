@@ -465,7 +465,9 @@ export type SessionSystemRecordDeleteRequest = Readonly<{
 
 export type SessionSummary = Readonly<{
     id: string;
-    /** Exact captured Home destination; absent when the host cannot route it. */
+    /** Verified Home identity for host operations, even when the device link is unavailable. */
+    serverId?: string;
+    /** Exact device destination; absent when the host cannot publish a routable URL. */
     address?: Readonly<{ sessionId: string; serverId: string; serverUrl: string }>;
     title?: string;
     machineId?: string;

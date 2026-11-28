@@ -320,7 +320,8 @@ async function prepareManualPullRequestReview(
 
     const session = await context.services.sessions.get(input.sessionId, options);
     const summary = await session?.summary(options);
-    if (!summary?.address || !summary.machineId) throw reviewSessionRepositoryMismatch(repository);
+    const serverId = summary?.serverId ?? summary?.address?.serverId;
+    if (!serverId || !summary?.machineId) throw reviewSessionRepositoryMismatch(repository);
     const checkout = await readReviewSessionRepository(input.sessionId, context);
     if (!checkout || !reviewSessionHasRepository(checkout, repository)) throw reviewSessionRepositoryMismatch(repository);
     const url = preparation.lastKnownLocator.webUrl;
@@ -331,7 +332,7 @@ async function prepareManualPullRequestReview(
     const outcome = await settlePreparedPullRequestReview({
         context, sessionId: input.sessionId,
         request: { ...preparation, instance: admitted.instance, lastKnownLocator: admitted.locator, workflowSubject: 'pullRequest',
-            workspace: { serverId: summary.address.serverId, machineId: summary.machineId, rootPath: checkout.rootPath } },
+            workspace: { serverId, machineId: summary.machineId, rootPath: checkout.rootPath } },
         deps: { operation: admitted.operation, execute: (selected, sourceInput, cancellation) =>
             context.services.actions.executeAdmittedTargetedOperation(selected, sourceInput, cancellation ?? options), ...options },
         targetSource: source,

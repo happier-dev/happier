@@ -35,7 +35,7 @@ import { readAccountEncryptionCurrentnessForRead } from '@/api/client/accountEnc
 import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol';
 import { hasPluginSessionAccess, projectPluginSessionAccessIdentity } from '@happier-dev/protocol/sessions/pluginAccess';
 import type { PluginSessionAccess, PluginSessionAccessScope } from '@happier-dev/protocol';
-import { readPluginSessionDestination } from './pluginSessionDestination';
+import { projectPluginSessionPlacement } from './pluginSessionDestination';
 import { readSessionProjectedTurnStatus } from '@/session/query/detectSessionTurnInFlight';
 import { observePluginSessionInventory, pluginSessionRuntimeAvailability as runtimeAvailability,
   type ObservedPluginSession } from './pluginSessionsInventoryObservation';
@@ -447,7 +447,6 @@ export function createPluginSessionsInventory(
     ]);
     assertNotAborted(signal);
     assertGenerationCurrent();
-    const address = raw ? readPluginSessionDestination({ sessionId: raw.id, serverUrl: params.serverUrl, serverFeaturesSnapshot }) : null;
     return Object.freeze({
       credentials,
       raw,
@@ -457,7 +456,7 @@ export function createPluginSessionsInventory(
           raw,
           storagePolicy,
           accountEncryptionMode: accountEncryptionCurrentness.mode,
-        }), ...(address ? { address } : {}) })
+        }), ...projectPluginSessionPlacement({ sessionId: raw.id, serverUrl: params.serverUrl, serverFeaturesSnapshot }) })
         : null,
     });
   };

@@ -596,11 +596,12 @@ describe('plugin sessions inventory public service boundary', () => {
     const unavailable = await inventory.current!.summary();
     expect(unavailable).toMatchObject({ id: 'session-bound', state: 'active' });
     expect(unavailable).not.toHaveProperty('address');
+    expect(unavailable).not.toHaveProperty('serverId');
     const localOnly = createTestPluginSessionsInventory({ credentials, currentSessionId: 'session-bound',
       isCurrent: () => true, readStoragePolicy: async () => 'optional', fetchById, fetchPage,
       resolveServerFeaturesSnapshot: () => features, serverUrl: 'http://127.0.0.1:43123' });
     const localSummary = await localOnly.current!.summary();
-    expect(localSummary).toMatchObject({ id: 'session-bound', state: 'active' });
+    expect(localSummary).toMatchObject({ id: 'session-bound', state: 'active', serverId: 'srv_bound_home' });
     expect(localSummary).not.toHaveProperty('address');
     expect(fetchPage).not.toHaveBeenCalled();
   });

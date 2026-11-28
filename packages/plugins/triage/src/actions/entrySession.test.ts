@@ -1056,6 +1056,18 @@ describe('the registered formal Review transition', () => {
         expect(h.prepareInputs).toHaveLength(1);
     });
 
+    it.each(['example/repository', 'other/repository'] as const)('checks the checkout of a Session on a local-only Home (%s)', async repository => {
+        const h = await createTriagePullRequestReviewActionTestkit({ manualCheckout: { repository, localHome: true } });
+        const input = await h.resolveManualInput('https://github.com/example/repository/pull/17');
+        const result = h.invoke('entries/prepare-pull-request-review-v1', input);
+        if (repository === 'example/repository') {
+            await expect(result).resolves.toMatchObject({ status: 'prepared', review: { workspace: TESTKIT_SELECTED_WORKSPACE } });
+        } else {
+            await expect(result).rejects.toMatchObject({ code: 'repositoryMismatch' });
+            expect(h.prepareInputs).toEqual([]);
+        }
+    });
+
     it('prepares an upstream PR from a fork checkout with the upstream remote configured', async () => {
         const h = await createTriagePullRequestReviewActionTestkit({ manualCheckout: {
             repository: 'contributor/fork', remotes: [

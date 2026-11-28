@@ -399,7 +399,7 @@ export async function createTriagePullRequestReviewActionTestkit(options: Readon
     observationFailure?: TriageSourceFailureV1;
     repositoryConnected?: () => boolean;
     resolveManualResourceNumber?: (resource: Readonly<{ kind: string; url: string }>) => string | undefined;
-    manualCheckout?: Readonly<{ repository?: string; prState?: 'closed' | 'merged'; remotes?: ScmWorkingSnapshot['repo']['remotes'] }>;
+    manualCheckout?: Readonly<{ repository?: string; localHome?: boolean; prState?: 'closed' | 'merged'; remotes?: ScmWorkingSnapshot['repo']['remotes'] }>;
     /** The host-stamped caller, as a workflow run's Action invocation carries it. */
     caller?: Readonly<{ kind: 'automationRun'; runId: string; automationId: string; cause: unknown }>;
 }> = {}) {
@@ -439,9 +439,12 @@ export async function createTriagePullRequestReviewActionTestkit(options: Readon
     const signal = options.signal ?? new AbortController().signal;
     const context = { surface: 'cli', signal, ...(options.caller === undefined ? {} : { caller: options.caller }), services: {
         sessions: { get: async (id: string) => id === 'session-a' && options.manualCheckout ? {
-            summary: async () => ({ machineId: TESTKIT_SELECTED_WORKSPACE.machineId, address: {
-                sessionId: id, serverId: TESTKIT_SELECTED_WORKSPACE.serverId, serverUrl: 'https://home.example.test',
-            } }),
+            summary: async () => ({
+                machineId: TESTKIT_SELECTED_WORKSPACE.machineId,
+                ...(options.manualCheckout?.localHome
+                    ? { serverId: TESTKIT_SELECTED_WORKSPACE.serverId }
+                    : { address: { sessionId: id, serverId: TESTKIT_SELECTED_WORKSPACE.serverId, serverUrl: 'https://home.example.test' } }),
+            }),
         } : null },
         storage: { account: { collection: (definition: { id: string }) => definition.id === CORPUS_SOURCE_INSTANCES_COLLECTION_ID
             ? collections.sourceInstances : definition.id === CORPUS_SESSION_LINKS_COLLECTION_ID
