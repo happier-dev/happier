@@ -2553,6 +2553,19 @@ function isAccountEncryptionCurrentnessHttpRead(proof: Readonly<{ method: string
         && proof.path === '/v1/account/encryption/currentness';
 }
 
+/** The transcript reader prepares only its source detail and committed messages. */
+function isSessionTranscriptSourceHttpRead(proof: ExternalActionExecutionRequestProof): boolean {
+    if (proof.method.toUpperCase() !== 'GET' || proof.body !== undefined
+        || proof.sessionRouteTarget?.actionId !== 'session.transcript.get') return false;
+    const sourcePath = encodeURIComponent(proof.sessionRouteTarget.sessionId);
+    const url = new URL(proof.path, 'http://home.invalid');
+    if (url.hash !== '') return false;
+    // Query filters retain the transcript route's canonical parser and Session access.
+    return url.pathname === `/v1/sessions/${sourcePath}/messages`
+        || url.pathname === `/v2/sessions/${sourcePath}`
+            && (url.search === '' || url.search === '?accessProjectionVersion=1');
+}
+
 /** Machines a reviewed Setup reads: the root Machine and the Setup targets its own review admitted
  * (Deployment preparation targets, a Backup's receiver). Derived from the root, never a purpose list. */
 function readReviewedSetupMachineIds(binding: ExternalActionExecutionAuthorizationBindingV1): readonly string[] {
@@ -4328,6 +4341,12 @@ async function isAccountActionHttpPurpose(verified: VerifiedSignedChildRequest,
             if (isArtifactJsonUpdateHttpPurpose(proof)) return true;
         }
     }
+    if (root === 'review.start' && verified.effectActionId === root
+        && proof.sessionRouteTarget?.actionId === 'session.transcript.get') {
+        // Source reads spend the original Review admission; Session routes keep
+        // requester access. The Review grants no sibling reply/metadata purpose.
+        return isSessionTranscriptSourceHttpRead(proof);
+    }
     if (root === 'discussion.second_opinion.start') {
         if (verified.effectActionId === root) {
             if (proof.method.toUpperCase() === 'POST' && proof.path === DISCUSSION_SECOND_OPINION_PREVIEW_HTTP_PATH_V1) {
@@ -4337,16 +4356,7 @@ async function isAccountActionHttpPurpose(verified: VerifiedSignedChildRequest,
             // The canonical transcript reader uses the original root while the
             // authenticated route retains its actual Session read admission.
             if (isAccountEncryptionCurrentnessHttpRead(proof)) return true;
-            if (proof.method.toUpperCase() !== 'GET' || proof.body !== undefined) return false;
-            if (proof.sessionRouteTarget?.actionId !== 'session.transcript.get') return false;
-            const sourcePath = encodeURIComponent(proof.sessionRouteTarget.sessionId);
-            const url = new URL(proof.path, 'http://home.invalid');
-            if (url.hash !== '') return false;
-            // Query filters still pass the transcript route's canonical parser;
-            // a source read grants no sibling Session metadata/reply purpose.
-            return url.pathname === `/v1/sessions/${sourcePath}/messages`
-                || url.pathname === `/v2/sessions/${sourcePath}`
-                    && (url.search === '' || url.search === '?accessProjectionVersion=1');
+            return isSessionTranscriptSourceHttpRead(proof);
         }
         if (!verified.signedChildPurpose.sibling.secondOpinion) return false;
         if (verified.effectActionId === 'artifact.get' || verified.effectActionId === 'artifact.access.grants.set') {

@@ -68,9 +68,11 @@ describe('installed Session signed lifecycle scope', () => {
                     session: { serverId: 'home-1', sessionId: root.id }, messageId: 'answer-1' } },
                 title: 'Review', question: 'Please check', reviewers: [],
                 retry: { creationLocalId: 'create-opinion', quoteLocalId: 'quote-opinion', questionLocalId: 'ask-opinion' },
-            } : actionId === 'review.start' ? { sessionId: root.id, cwd: '/repo',
-                reviewers: [{ kind: 'session', session: { serverId: 'home-1', sessionId: root.id } }],
-                instructions: 'Review source claims.' }
+            } : actionId === 'review.start' ? { sessionId: sessionTarget ? root.id : grandchild.id,
+                ...(sessionTarget ? { cwd: '/repo' } : {}),
+                reviewers: sessionTarget ? [{ kind: 'session', session: { serverId: 'home-1', sessionId: root.id } }]
+                    : [{ kind: 'engine', engineId: 'codex', includeSessionTranscript: true }], instructions: 'Review source claims.',
+                sourceSession: { serverId: 'home-1', sessionId: otherRoot.id } }
                 : { sessionId: grandchild.id, ...(actionId === 'session.open' ? { intent: 'resume' } : {}) } });
         // The production issuer and strict signed consumer use a disposable real
         // database. Only live publisher discovery is a process boundary fixture.
@@ -194,6 +196,49 @@ describe('installed Session signed lifecycle scope', () => {
             f.root.id, 'discussion.second_opinion.start', 'session.transcript.get')).not.toBeNull();
         expect(await f.verifyRequest('GET', `/v2/sessions/${f.root.id}/messages/replies/pending`, undefined,
             f.root.id, 'discussion.second_opinion.start', 'session.transcript.get')).toBeNull();
+    });
+
+    it.each([true, false] as const)(
+        'admits Review source transcript preparation without granting sibling Session reads (installed=%s)', async installed => {
+        const f = await fixture('review.start', installed);
+        expect(await f.verifyRequest('GET', '/v1/account/encryption/currentness')).not.toBeNull();
+        expect(await f.verifyRequest('GET', `/v2/sessions/${f.root.id}`, undefined,
+            f.root.id, 'review.start', 'session.transcript.get')).toMatchObject({
+            principal: { accountId: f.account.id },
+        });
+        expect(await f.verifyRequest('GET', `/v1/sessions/${f.root.id}/messages`, undefined,
+            f.root.id, 'review.start', 'session.transcript.get')).not.toBeNull();
+        expect(await f.verifyRequest('GET', `/v2/sessions/${f.root.id}?accessProjectionVersion=1`, undefined,
+            f.root.id, 'review.start', 'session.transcript.get')).not.toBeNull();
+        expect(await f.verifyRequest('GET', `/v1/sessions/${f.otherRoot.id}/messages`, undefined,
+            f.otherRoot.id, 'review.start', 'session.transcript.get')).not.toBeNull();
+        // Wrong-purpose negatives: sibling metadata/pending route, mutation, or mismatched effectActionId.
+        expect(await f.verifyRequest('GET', `/v2/sessions/${f.root.id}/messages/replies/pending`, undefined,
+            f.root.id, 'review.start', 'session.transcript.get')).toBeNull();
+        expect(await f.verifyRequest('POST', `/v1/sessions/${f.root.id}/messages`, { text: 'nope' },
+            f.root.id, 'review.start', 'session.transcript.get')).toBeNull();
+        expect(await f.verifyRequest('GET', `/v2/sessions/${f.root.id}`, undefined,
+            f.root.id, 'session.transcript.get', 'session.transcript.get')).toBeNull();
+        // Cross-person negative: another Account's installation key cannot sign under the requester's Review token.
+        const foreignKeys = nacl.sign.keyPair();
+        expect(await verifyExternalActionDomainExecutionRequest({
+            authorizationToken: f.authorization.token,
+            effectActionId: 'review.start',
+            encodedTarget: encodeExternalActionResolvedTargetV1(f.authorization.binding.target),
+            method: 'GET',
+            path: `/v2/sessions/${f.root.id}`,
+            sessionRouteTarget: { kind: 'session', sessionId: f.root.id, actionId: 'session.transcript.get' },
+            machineSignature: signExternalActionMachineRequestV1({
+                authorizationToken: f.authorization.token,
+                effectActionId: 'review.start',
+                target: f.authorization.binding.target,
+                installationId: f.machine.installationId!,
+                requestId: f.authorization.binding.requestId,
+                method: 'GET',
+                path: `/v2/sessions/${f.root.id}`,
+                privateKey: foreignKeys.secretKey,
+            }),
+        })).toBeNull();
     });
 
     it.each(['review.start', 'review.new_round', 'review.prepare_round', 'review.settle_round'] as const)(
