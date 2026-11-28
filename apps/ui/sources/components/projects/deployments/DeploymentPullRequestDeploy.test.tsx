@@ -2,6 +2,7 @@ import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { act, renderScreen, standardCleanup } from '@/dev/testkit';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 const router = vi.hoisted(() => ({ push: vi.fn() }));
 // The Machine's SCM read is the RPC transport boundary; its typed failure is what the section answers.
@@ -24,9 +25,9 @@ vi.mock('expo-router', async () => {
   const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
   return createExpoRouterMock({ router }).module;
 });
-vi.mock('@/sync/ops/scm/machineScm', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@/sync/ops/scm/machineScm')>()),
-  machineScmPullRequestGet: scm.get,
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc')>()),
+  machineRpcWithServerScope: scm.get,
 }));
 
 afterEach(() => {
@@ -80,6 +81,13 @@ describe('Deploy a pull request head without a GitHub connection (COR4B ui-61)',
       screen.changeTextByTestId('project-deployments.pr.number', '109');
     });
     await screen.pressByTestIdAsync('project-deployments.pr.load');
+    expect(scm.get).toHaveBeenCalledWith(expect.objectContaining({
+      method: RPC_METHODS.SCM_PULL_REQUEST_GET,
+      machineId: 'machine-1',
+      serverId: 'home-a',
+      accountId: 'account-1',
+      payload: expect.objectContaining({ cwd: '/srv/app', prReference: { number: 109 } }),
+    }));
     expect(
       screen.findByTestId('project-deployments.pr.connect'),
     ).not.toBeNull();

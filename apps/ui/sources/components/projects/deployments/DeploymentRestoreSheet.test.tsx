@@ -11,7 +11,7 @@ import { DeploymentOwnServerContentV1Schema, type DeploymentEnvironmentContentV1
 import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, readDeploymentActionOperationRequestIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { ACTION_OPERATION_RPC_METHODS_V2, readActionOperationTerminalResultV1 } from '@happier-dev/protocol/actions/operations/v1';
-import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionExecuteFailureSchema, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createTransferRecipientKeyPair, decryptEncryptedTransferChunkEnvelope } from '@/sync/domains/transfers/runtime/transferRuntime/plumbing/transferChunkEncryption';
 import {
@@ -20,11 +20,8 @@ import {
   standardCleanup,
   waitForTestEvent,
 } from '@/dev/testkit';
-import {
-  createAccountTokenForTests,
-  createHomeGovernanceHarness,
-  installHomeGovernanceBoundaries,
-} from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 
 vi.mock('react-native', async () =>
   (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock(),
@@ -52,8 +49,8 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/guardedMachineRpc', () => 
   callGuardedMachineRpcWithPolicy: uploadBoundary.rpc,
 }));
 const { DeploymentDatabasePage } = await import('./DeploymentDatabasePage');
+const { createDeploymentActions } = await import('./deploymentActions');
 const { createDeploymentReadTransport } = await import('./deploymentReadTransport');
-const { HappyError } = await import('@/utils/errors/errors');
 const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
 
 const snapshotId = 'c'.repeat(64);
@@ -83,8 +80,12 @@ function manifest(environmentId: string, id: string, time: string) {
   };
 }
 
+const restoreInputSchema = DeploymentActionInputSchemasV1[DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1];
+const restoreOutputSchema = DeploymentActionOutputSchemasV1[DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1];
+type RestoreInput = ReturnType<typeof restoreInputSchema.parse>;
+
 type Answer = (
-  input: Record<string, unknown>,
+  input: RestoreInput,
 ) =>
   | Readonly<{ ok: true; result: unknown }>
   | Readonly<{ ok: false; errorCode: string; details?: unknown; failureCause?: ActionFailureCauseV1 }>;
@@ -192,37 +193,25 @@ async function renderRestore(answer: Answer) {
     header: { kind: DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, title: 'Serving database', steps: content.steps },
     body: JSON.stringify(content),
   });
-  const { listDataServicePage } = createDeploymentReadTransport(account.accountLifetime);
   const controller = createDeploymentReadControllerV1({
     scope: { ...scope, serverId: homeId },
-    transport: {
-      listDataServicePage,
-      listEnvironments: async () => ({
-        ok: true,
-        value: { items: [], nextCursor: null },
-      }),
-      readEnvironment: async () => ({
-        ok: true,
-        value: withBackup,
-      }),
-      listHistory: async () => ({
-        ok: true,
-        value: { ok: true, items: [receipt.deployment], nextCursor: null },
-      }),
-      readReceipt: async () => ({ ok: true, value: receipt }),
-    },
+    transport: createDeploymentReadTransport(account.accountLifetime),
   });
-  const observed: Record<string, unknown>[] = [];
-  // The Action transport is the boundary: published schemas parse both directions; native composition
-  // and retained-operation behavior are exercised by the CLI public restore tests.
-  const restore = async (input: unknown) => {
-    const parsed = DeploymentActionInputSchemasV1['deployments.backups.restore'].parse({ ...(input as object), serverId: 'home' });
-    observed.push(parsed as Record<string, unknown>);
-    const outcome = answer(parsed as Record<string, unknown>);
-    if (!outcome.ok) throw new HappyError(outcome.errorCode, false, { code: outcome.errorCode, details: outcome.details,
-      failureCause: outcome.failureCause });
-    return DeploymentActionOutputSchemasV1['deployments.backups.restore'].parse(outcome.result);
-  };
+  const observed: RestoreInput[] = [];
+  await answerExternalActionAccountForHome(homes, serverId, {
+    actionId: DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1,
+    machineId: targetLink.members[0]!.machineId,
+    installationId: targetLink.members[0]!.installationId,
+    tokenEpoch: 0,
+    execute(raw) {
+      const input = restoreInputSchema.parse(raw);
+      observed.push(input);
+      const outcome = answer(input);
+      return outcome.ok ? restoreOutputSchema.parse(outcome.result) : { ...outcome, error: outcome.errorCode };
+    },
+    failure: result => ActionExecuteFailureSchema.safeParse(result).data ?? null,
+  });
+  const { restore } = createDeploymentActions(account.accountLifetime, scope.projectSourceId);
   const { ModalProvider } = await import('@/modal');
   const screen = await renderScreen(
     <ModalProvider>
@@ -475,7 +464,7 @@ describe('Environment → Database → Restore: restore a backup (L3B)', () => {
         const result = prepared(String(input.environmentId), true);
         return { ok: true, result: { ...result, evidence: { ...result.evidence, snapshot: offer } } };
       }
-      return input.snapshot === false
+      return input.mode === 'confirm' && input.snapshot === false
         ? continueFails
           ? { ok: false, errorCode: 'restore_failed', details: { snapshot: { kind, code: 'provider_unconfirmed' } } }
           : { ok: true, result: { kind: 'restored', verified: true, nextAction: 'none', evidence: {} } }
@@ -494,7 +483,7 @@ describe('Environment → Database → Restore: restore a backup (L3B)', () => {
       await view.screen.pressByTestIdAsync('project-deployments.restore.confirm');
       await view.until('project-deployments.restore.snapshotStopped');
       expect(view.observed).toHaveLength(2);
-      expect(view.observed[1]!.snapshot).not.toBe(false);
+      expect(view.observed[1]).toMatchObject({ mode: 'confirm', snapshot: true });
       expect(view.screen.findByTestId('project-deployments.restore.result.restored')).toBeNull();
       await view.screen.pressByTestIdAsync('project-deployments.restore.continueWithoutSnapshot');
       await view.until(continueFails ? 'project-deployments.restore.refused' : 'project-deployments.restore.result.restored');
@@ -768,8 +757,8 @@ describe('Environment → Database → Restore: restore a backup (L3B)', () => {
       await view.screen.pressByTestIdAsync('project-deployments.restore.confirm');
       await view.until('project-deployments.restore.result.restored');
       expect(view.observed.map((input) => input.mode)).toEqual(['prepare', 'confirm', 'prepare', 'confirm']);
-      expect(view.observed[1]?.prepareOperationId).toBe('prepare-op-1');
-      expect(view.observed[3]?.prepareOperationId).toBe('prepare-op-2');
+      expect(view.observed[1]).toMatchObject({ prepareOperationId: 'prepare-op-1' });
+      expect(view.observed[3]).toMatchObject({ prepareOperationId: 'prepare-op-2' });
     } finally {
       view.dispose();
     }

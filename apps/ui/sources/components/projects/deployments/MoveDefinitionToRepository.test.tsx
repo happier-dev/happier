@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { act, standardCleanup, waitForTestEvent } from '@/dev/testkit';
 import { renderAccountScreen } from '@/dev/testkit/render/renderAccountScreen';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { createDeploymentReadControllerV1, selectDeploymentRuntimeTargetLinkV1 } from '@happier-dev/deployments';
+import { createDeploymentReadControllerV1 } from '@happier-dev/deployments';
 import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
@@ -14,7 +14,6 @@ import { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/pr
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import type { SessionDraftRecordV2 } from '@happier-dev/protocol/drafts/sessionDraftsV2';
 import { OpenProjectInputV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
-import { ItemList } from '@/components/ui/lists/ItemList';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 
@@ -30,39 +29,65 @@ vi.mock('@/modal', () => modal.module);
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
 const { createDeploymentActions } = await import('./deploymentActions');
-const { DeploymentEnvironmentSettingsPanel } = await import('./DeploymentEnvironmentSettingsPanel');
+const { DeploymentEnvironmentDetail } = await import('./DeploymentEnvironmentDetail');
+const { createDeploymentReadTransport } = await import('./deploymentReadTransport');
+const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
 const { ProjectSourceWorkspaceChoice } = await import('../sources/ProjectSourceWorkspaceChoice');
 const { ProjectOpenScreen } = await import('../activation/ProjectOpenScreen');
 const { storage } = await import('@/sync/domains/state/storage');
 afterEach(async () => { await standardCleanup(); await homes.reset(); modal.spies.show.mockClear(); });
 
-it('offers Move for a stored definition through Environment Settings without reading repository detail before it opens', async () => {
+async function renderStoredEnvironment(serverId: string, detail: ReturnType<typeof createDeploymentEnvironmentDetailV1>) {
+    const account = await captureLazyActionAccountContext(serverId);
+    const { accountLifetime } = account;
+    const { environment } = detail;
+    const scope = { ...accountLifetime.scope, serverId: environment.serverId, projectSourceId: environment.projectSourceId };
+    const path = `/v1/deployments/environments/${environment.id}`;
+    await account.createArtifactDocument({ artifactId: environment.contentArtifactId,
+        header: { kind: 'deployment-environment.v1', title: detail.content.name }, body: JSON.stringify(detail.content) });
+    for (const { targetLink, content } of detail.targetLinks) {
+        await account.createArtifactDocument({ artifactId: targetLink.contentArtifactId,
+            header: { kind: 'deployment-target-link.v1', title: 'Native runtime' }, body: JSON.stringify(content) });
+    }
+    homes.answer(serverId, `GET ${path}`, { body: { ok: true, environment,
+        targetLinks: detail.targetLinks.map(({ targetLink }) => targetLink) } });
+    homes.answer(serverId, `GET ${path}/deployments`, { body: { ok: true, items: [], nextCursor: null } });
+    homes.answer(serverId, `GET ${path}/domains`, { body: { ok: true, environmentId: environment.id,
+        revision: environment.revision, domains: [], nextCursor: null } });
+    const controller = createDeploymentReadControllerV1({ scope, transport: createDeploymentReadTransport(accountLifetime) });
+    const actions = createDeploymentActions(accountLifetime, scope.projectSourceId);
+    const screen = await renderAccountScreen(<DeploymentEnvironmentDetail controller={controller} environmentId={environment.id}
+        demand={{ mounted: true, visible: true, focused: true }} lifetime={accountLifetime} accountId={scope.accountId} serverId={serverId}
+        destination={{ tab: 'settings', section: null }} phone={false} deploy={actions.deploy} environmentActions={actions}
+        review={{ pendingId: null, request() {}, open() {} }} onOpenReceipt={() => {}} />);
+    return {
+        screen,
+        async waitForMove() {
+            await waitForHomeGovernance(async () => {
+                await act(async () => {});
+                expect(screen.findByTestId('project-deployments.environment.moveRepository.open'), screen.getTextContent()).not.toBeNull();
+            });
+        },
+        async dispose() { await screen.unmount(); controller.retire(); account.dispose(); },
+    };
+}
+
+it('offers Move for a stored definition read from Home through Environment Settings', async () => {
+    const serverIdentityId = `srv_${'d'.repeat(32)}`;
     const serverId = await homes.addHome({ name: 'Deployments', serverUrl: 'https://move-repository.test',
-        serverIdentityId: `srv_${'d'.repeat(32)}`, accountId: 'account-owner', currentAccount: true });
+        serverIdentityId, accountId: 'account-owner', currentAccount: true });
     const base = createDeploymentEnvironmentDetailV1();
-    const stored = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId }),
+    const document = 'services:\n  app:\n    image: app:1\n';
+    const stored = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId: serverIdentityId }),
         content: { ...base.content, definition: { kind: 'stored', contentRevision: 1,
-            composeDigest: `sha256:${'a'.repeat(64)}`, document: 'services:\n  app:\n    image: app:1\n',
+            composeDigest: `sha256:${'a'.repeat(64)}`, document,
             publicFiles: [], services: [], profiles: [] } } });
-    const detail = { ...stored, runtimeTargetLink: selectDeploymentRuntimeTargetLinkV1(stored), memberVersions: {}, secretRevisions: [], builtInUrls: [] };
-    const scope = { serverId, accountId: 'account-owner', projectSourceId: detail.environment.projectSourceId };
-    const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
-    const controller = createDeploymentReadControllerV1({ scope, transport: {
-        listEnvironments: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
-        readEnvironment: async () => ({ ok: true, value: detail }),
-        listHistory: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
-        readReceipt: async () => ({ ok: false, failure: { code: 'not_found', retryable: false } }),
-    } });
-    const screen = await renderAccountScreen(<ItemList><DeploymentEnvironmentSettingsPanel detail={detail} controller={controller}
-        definitionDocument={{ document: detail.content.definition.kind === 'stored' ? detail.content.definition.document : '', change: () => {} }}
-        demand={{ mounted: false, visible: false, focused: false }} machineName={id => id} environmentTitle={() => null}
-        lifetime={lifetime} editing={{ actions: createDeploymentActions(lifetime, scope.projectSourceId), serverId,
-            review: { pendingId: null, request() {}, open() {} }, onChanged() {} }} /></ItemList>);
-    // Settings already owns the editor and exposes its Move action.
-    expect(screen.findByTestId('project-deployments.environment.moveRepository.open')).not.toBeNull();
-    expect(homes.requestsFor(`/v1/projects/sources/${detail.environment.projectSourceId}`)).toHaveLength(0);
-    expect(screen.findByTestId('project-deployments.environment.moveRepository.path.input')).toBeNull();
-    await act(async () => { controller.retire(); });
+    const view = await renderStoredEnvironment(serverId, stored);
+    try {
+        await view.waitForMove();
+        expect(view.screen.findByTestId('project-deployments.definition.document')?.props.value).toBe(document);
+        expect(view.screen.findByTestId('project-deployments.environment.moveRepository.path.input')).toBeNull();
+    } finally { await view.dispose(); }
 });
 
 it.each(['existing', 'attach', 'create', 'create-new', 'resume'] as const)('reviews every file from %s repository selection and switches only after explicit merged acceptance', async repositoryChoice => {
@@ -73,11 +98,11 @@ it.each(['existing', 'attach', 'create', 'create-new', 'resume'] as const)('revi
     const base = createDeploymentEnvironmentDetailV1();
     const definition = { kind: 'stored' as const, contentRevision: 3, composeDigest: `sha256:${'a'.repeat(64)}`,
         document: 'services:\n  app:\n    image: app:3\n', publicFiles: [{ path: 'app.conf', content: 'version=3' }], services: [], profiles: [] };
-    const stored = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId }),
+    const detail = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId: serverIdentityId }),
         content: { ...base.content, name: 'Production App', definition } });
-    const detail = { ...stored, runtimeTargetLink: selectDeploymentRuntimeTargetLinkV1(stored), memberVersions: {}, secretRevisions: [], builtInUrls: [] };
-    const scope = { serverId, accountId: 'account-owner', projectSourceId: detail.environment.projectSourceId };
-    const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+    const account = await captureLazyActionAccountContext(serverId);
+    const scope = { ...account.accountLifetime.scope, projectSourceId: detail.environment.projectSourceId };
+    account.dispose();
     const repository = { kind: 'github' as const, deployment: 'https://github.com', repository: 'acme/app' };
     const workspace = { kind: 'workspace-ref' as const, serverId, id: 'checkout' };
     const path = 'deploy/production-app/compose.yaml';
@@ -150,7 +175,6 @@ it.each(['existing', 'attach', 'create', 'create-new', 'resume'] as const)('revi
                 const rows = sync?.projectAccountRowsOwnerFor(scope);
                 if (rows) await (await rows).refresh();
                 else {
-                    const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
                     const { createUiProjectAccountRowsClient } = await import('@/sync/api/projects/projectAccountRowsClient');
                     const account = await captureLazyActionAccountContext(serverId);
                     try { await createUiProjectAccountRowsClient(account).read(); }
@@ -197,7 +221,6 @@ it.each(['existing', 'attach', 'create', 'create-new', 'resume'] as const)('revi
             return { kind: 'pullRequest', continuation, repository: { repository, workspace, baseCommit: 'a'.repeat(40), baseBranch: 'main' } };
         } });
     if (repositoryChoice === 'existing') {
-        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
         const { createUiDeploymentActionDeps } = await import('@/sync/api/deployments/deploymentActions');
         const account = await captureLazyActionAccountContext(serverId);
         try {
@@ -213,100 +236,94 @@ it.each(['existing', 'attach', 'create', 'create-new', 'resume'] as const)('revi
         } finally { account.dispose(); }
         inputs.length = 0;
     }
-    const controller = createDeploymentReadControllerV1({ scope, transport: {
-        listEnvironments: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
-        readEnvironment: async () => ({ ok: true, value: detail }), listHistory: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
-        readReceipt: async () => ({ ok: false, failure: { code: 'not_found', retryable: false } }),
-    } });
-    const changed = vi.fn();
-    const screen = await renderAccountScreen(<ItemList><DeploymentEnvironmentSettingsPanel detail={detail} controller={controller}
-        definitionDocument={{ document: detail.content.definition.kind === 'stored' ? detail.content.definition.document : '', change: () => {} }}
-        demand={{ mounted: false, visible: false, focused: false }} machineName={id => id} environmentTitle={() => null}
-        lifetime={lifetime} editing={{ actions: createDeploymentActions(lifetime, source.id), serverId,
-            review: { pendingId: null, request() {}, open() {} }, onChanged: changed }} /></ItemList>);
-    const id = 'project-deployments.environment.moveRepository';
-    await screen.pressByTestIdAsync(`${id}.open`);
-    if (creating) {
-        await act(async () => { await waitForTestEvent(screen.subscribe, () => screen.findByTestId(`${id}.createRepository`), node => node !== null); });
-        await screen.pressByTestIdAsync(`${id}.createRepository`);
-        // The platform modal is the boundary. Its real form stages the native input from the person's choices.
-        const form: ActionInputForm = modal.spies.show.mock.calls.at(-1)![0].props?.form;
-        await act(async () => { form.replaceInput({ providerKind: 'github', owner: 'acme', repositoryName: 'app', visibility: 'private' });
-            await form.submit(); });
-    }
-    await act(async () => { await waitForTestEvent(screen.subscribe, () => screen.root.findAllByType(ProjectSourceWorkspaceChoice)[0], node => node !== undefined); });
-    if (repositoryChoice === 'existing') {
-        await waitForHomeGovernance(() => expect(screen.root.findAllByType(ProjectSourceWorkspaceChoice)[0]?.props.model.status).toBe('ready'));
-        expect(screen.root.findAllByType(ProjectSourceWorkspaceChoice)[0]!.props.model.candidates).toEqual([checkout]);
-        expect(screen.findByTestId(`${id}.workspace.captureUnavailable`)).not.toBeNull();
-        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
-        const { createUiDeploymentActionDeps } = await import('@/sync/api/deployments/deploymentActions');
-        const account = await captureLazyActionAccountContext(serverId);
-        try {
-            const result = await createUiDeploymentActionDeps(account).deploymentMoveToRepository!({
-                mode: 'preview', serverId, environmentId: detail.environment.id, definition: pin, path, repository,
-                workspace: { ...workspace, id: managedCheckout.id }, baseCommit: 'a'.repeat(40), baseBranch: 'main',
-            }, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId },
-            async () => ({ ok: false, errorCode: 'unexpected_child', error: 'unexpected_child' }));
-            expect(result).toMatchObject({ ok: false, errorCode: 'deployment_repository_capture_requires_machine_checkout' });
-            expect(inputs).toEqual([]);
-        } finally { account.dispose(); }
-    }
-    if (repositoryChoice === 'create-new') {
-        expect(screen.findByTestId(`${id}.preview`)?.props.disabled).toBe(true);
-        await screen.pressByTestIdAsync(`${id}.chooseDestination`);
-        const onResolve: (path: string, machineId: string) => void = modal.spies.show.mock.calls.at(-1)![0].props?.onResolve;
-        await act(async () => onResolve(checkout.rootPath, checkout.machineId));
-        await waitForHomeGovernance(() => expect(modal.spies.show.mock.calls.length, screen.getTextContent()).toBeGreaterThanOrEqual(3));
-        const dialog = modal.spies.show.mock.calls.at(-1)![0] as { props: React.ComponentProps<typeof ProjectOpenScreen> };
-        const chooser = await renderAccountScreen(<ProjectOpenScreen {...dialog.props} onClose={() => {}} />);
-        await waitForHomeGovernance(() => expect(chooser.findByTestId('projects.open.submit')?.props.disabled, chooser.getTextContent()).toBe(false));
-        await chooser.pressByTestIdAsync('projects.open.submit');
-        await waitForHomeGovernance(() => expect(!screen.findByTestId(`${id}.preview`)?.props.disabled
-            || chooser.findByTestId('projects.open.failed.details') !== null, chooser.getTextContent()).toBe(true));
-        if (chooser.findByTestId('projects.open.failed.details')) await chooser.pressByTestIdAsync('projects.open.failed.details');
-        expect(chooser.findByTestId('projects.open.failed.details') === null,
-            `${chooser.getTextContent()}\nadmitted:${admitted}, issued:${homes.requestsFor('/v1/actions/projects.open').length}`).toBe(true);
-        expect(screen.findByTestId(`${id}.preview`)?.props.disabled, screen.getTextContent()).toBe(false);
-        await chooser.unmount();
-    } else await act(async () => screen.root.findByType(ProjectSourceWorkspaceChoice).props.onChange(workspace));
-    if (repositoryChoice === 'attach') {
-        expect(screen.findByTestId(`${id}.preview`)?.props.disabled).toBe(true);
-        await act(async () => screen.findByTestId(`${id}.repositoryAddress`)!.props.onChangeText('https://github.com/acme/app'));
-        await screen.pressByTestIdAsync(`${id}.chooseRepository`);
-        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('MACHINE_RPC_UNREACHABLE'));
-        expect(screen.findByTestId(`${id}.preview`)?.props.disabled).toBe(true);
-        addressResolved = true;
-        await screen.pressByTestIdAsync(`${id}.chooseRepository`);
-        await waitForHomeGovernance(() => expect(screen.findByTestId(`${id}.preview`)?.props.disabled,
-            `${screen.getTextContent()}\nRPC methods:${JSON.stringify(rpcMethods)}`).toBe(false));
-    }
-    if (repositoryChoice === 'resume') {
-        await act(async () => screen.findByTestId(`${id}.pullRequestUrl`)!.props.onChangeText(continuation.pullRequest.url));
-        await screen.pressByTestIdAsync(`${id}.continueExisting`);
-    } else {
-        await screen.pressByTestIdAsync(`${id}.preview`);
-        await act(async () => { await waitForTestEvent(screen.subscribe, () => screen.findByTestId(`${id}.apply`), node => node !== null); });
-        expect(screen.findByTestId(`${id}.diff.deploy/production-app/app.conf`)).not.toBeNull();
-        expect(screen.findByTestId(`${id}.apply`)?.props.disabled).toBe(!creating);
-        if (!creating) await act(async () => screen.findByTestId(`${id}.confirmPath`)!.props.onValueChange(true));
-        await screen.pressByTestIdAsync(`${id}.apply`);
-    }
-    await act(async () => { await waitForTestEvent(screen.subscribe, () => screen.findByTestId(`${id}.continue`), node => node !== null); });
-    expect(screen.getTextContent()).toContain('Move deployment');
-    expect(screen.getTextContent()).toContain(continuation.pullRequest.url);
-    expect(changed).not.toHaveBeenCalled();
-    await screen.pressByTestIdAsync(`${id}.continue`);
-    await act(async () => { await waitForTestEvent(screen.subscribe, () => screen.findByTestId(`${id}.useMerged`), node => node !== null); });
-    expect(screen.findByTestId(`${id}.mergedDiff.app.conf`)).not.toBeNull();
-    expect(inputs.at(-1)?.useMergedVersion).toBeUndefined();
-    await screen.pressByTestIdAsync(`${id}.useMerged`);
-    await act(async () => { await waitForTestEvent(screen.subscribe, () => changed.mock.calls.length, count => count === 1); });
-    expect(inputs[0], JSON.stringify(inputs[0])).toMatchObject({ mode: 'preview', definition: pin, path,
-        ...(creating ? { workspace: { ...workspace, serverId: serverIdentityId }, createRepository: { providerKind: 'github', owner: 'acme', repositoryName: 'app', visibility: 'private' } }
-            : { repository, workspace: { ...workspace, serverId: serverIdentityId }, baseCommit: 'a'.repeat(40), baseBranch: 'main' }) });
-    expect(inputs.at(-1)).toMatchObject({ mode: 'apply', definition: pin,
-        ...(repositoryChoice === 'resume' ? { pullRequestReference: { url: continuation.pullRequest.url } } : { continuation }), useMergedVersion: merged });
-    if (repositoryChoice === 'attach') expect(inputs[0]?.sourceRepository).toEqual(selector);
-    await act(async () => controller.retire());
+    const view = await renderStoredEnvironment(serverId, detail);
+    const { screen } = view;
+    try {
+        await view.waitForMove();
+        const id = 'project-deployments.environment.moveRepository';
+        await screen.pressByTestIdAsync(`${id}.open`);
+        if (creating) {
+            await act(async () => { await waitForTestEvent(screen.subscribe, () => screen.findByTestId(`${id}.createRepository`), node => node !== null); });
+            await screen.pressByTestIdAsync(`${id}.createRepository`);
+            // The platform modal is the boundary. Its real form stages the native input from the person's choices.
+            const form: ActionInputForm = modal.spies.show.mock.calls.at(-1)![0].props?.form;
+            await act(async () => { form.replaceInput({ providerKind: 'github', owner: 'acme', repositoryName: 'app', visibility: 'private' });
+                await form.submit(); });
+        }
+        await act(async () => { await waitForTestEvent(screen.subscribe, () => screen.root.findAllByType(ProjectSourceWorkspaceChoice)[0], node => node !== undefined); });
+        if (repositoryChoice === 'existing') {
+            await waitForHomeGovernance(() => expect(screen.root.findAllByType(ProjectSourceWorkspaceChoice)[0]?.props.model.status).toBe('ready'));
+            expect(screen.root.findAllByType(ProjectSourceWorkspaceChoice)[0]!.props.model.candidates).toEqual([checkout]);
+            expect(screen.findByTestId(`${id}.workspace.captureUnavailable`)).not.toBeNull();
+            const { createUiDeploymentActionDeps } = await import('@/sync/api/deployments/deploymentActions');
+            const account = await captureLazyActionAccountContext(serverId);
+            try {
+                const result = await createUiDeploymentActionDeps(account).deploymentMoveToRepository!({
+                    mode: 'preview', serverId, environmentId: detail.environment.id, definition: pin, path, repository,
+                    workspace: { ...workspace, id: managedCheckout.id }, baseCommit: 'a'.repeat(40), baseBranch: 'main',
+                }, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId },
+                async () => ({ ok: false, errorCode: 'unexpected_child', error: 'unexpected_child' }));
+                expect(result).toMatchObject({ ok: false, errorCode: 'deployment_repository_capture_requires_machine_checkout' });
+                expect(inputs).toEqual([]);
+            } finally { account.dispose(); }
+        }
+        if (repositoryChoice === 'create-new') {
+            expect(screen.findByTestId(`${id}.preview`)?.props.disabled).toBe(true);
+            await screen.pressByTestIdAsync(`${id}.chooseDestination`);
+            const onResolve: (path: string, machineId: string) => void = modal.spies.show.mock.calls.at(-1)![0].props?.onResolve;
+            await act(async () => onResolve(checkout.rootPath, checkout.machineId));
+            await waitForHomeGovernance(() => expect(modal.spies.show.mock.calls.length, screen.getTextContent()).toBeGreaterThanOrEqual(3));
+            const dialog = modal.spies.show.mock.calls.at(-1)![0] as { props: React.ComponentProps<typeof ProjectOpenScreen> };
+            const chooser = await renderAccountScreen(<ProjectOpenScreen {...dialog.props} onClose={() => {}} />);
+            await waitForHomeGovernance(() => expect(chooser.findByTestId('projects.open.submit')?.props.disabled, chooser.getTextContent()).toBe(false));
+            await chooser.pressByTestIdAsync('projects.open.submit');
+            await waitForHomeGovernance(() => expect(!screen.findByTestId(`${id}.preview`)?.props.disabled
+                || chooser.findByTestId('projects.open.failed.details') !== null, chooser.getTextContent()).toBe(true));
+            if (chooser.findByTestId('projects.open.failed.details')) await chooser.pressByTestIdAsync('projects.open.failed.details');
+            expect(chooser.findByTestId('projects.open.failed.details') === null,
+                `${chooser.getTextContent()}\nadmitted:${admitted}, issued:${homes.requestsFor('/v1/actions/projects.open').length}`).toBe(true);
+            expect(screen.findByTestId(`${id}.preview`)?.props.disabled, screen.getTextContent()).toBe(false);
+            await chooser.unmount();
+        } else await act(async () => screen.root.findByType(ProjectSourceWorkspaceChoice).props.onChange(workspace));
+        if (repositoryChoice === 'attach') {
+            expect(screen.findByTestId(`${id}.preview`)?.props.disabled).toBe(true);
+            await act(async () => screen.findByTestId(`${id}.repositoryAddress`)!.props.onChangeText('https://github.com/acme/app'));
+            await screen.pressByTestIdAsync(`${id}.chooseRepository`);
+            await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('MACHINE_RPC_UNREACHABLE'));
+            expect(screen.findByTestId(`${id}.preview`)?.props.disabled).toBe(true);
+            addressResolved = true;
+            await screen.pressByTestIdAsync(`${id}.chooseRepository`);
+            await waitForHomeGovernance(() => expect(screen.findByTestId(`${id}.preview`)?.props.disabled,
+                `${screen.getTextContent()}\nRPC methods:${JSON.stringify(rpcMethods)}`).toBe(false));
+        }
+        if (repositoryChoice === 'resume') {
+            await act(async () => screen.findByTestId(`${id}.pullRequestUrl`)!.props.onChangeText(continuation.pullRequest.url));
+            await screen.pressByTestIdAsync(`${id}.continueExisting`);
+        } else {
+            await screen.pressByTestIdAsync(`${id}.preview`);
+            await act(async () => { await waitForTestEvent(screen.subscribe, () => screen.findByTestId(`${id}.apply`), node => node !== null); });
+            expect(screen.findByTestId(`${id}.diff.deploy/production-app/app.conf`)).not.toBeNull();
+            expect(screen.findByTestId(`${id}.apply`)?.props.disabled).toBe(!creating);
+            if (!creating) await act(async () => screen.findByTestId(`${id}.confirmPath`)!.props.onValueChange(true));
+            await screen.pressByTestIdAsync(`${id}.apply`);
+        }
+        await act(async () => { await waitForTestEvent(screen.subscribe, () => screen.findByTestId(`${id}.continue`), node => node !== null); });
+        expect(screen.getTextContent()).toContain('Move deployment');
+        expect(screen.getTextContent()).toContain(continuation.pullRequest.url);
+        expect(inputs.some(input => input.useMergedVersion)).toBe(false);
+        await screen.pressByTestIdAsync(`${id}.continue`);
+        await act(async () => { await waitForTestEvent(screen.subscribe, () => screen.findByTestId(`${id}.useMerged`), node => node !== null); });
+        expect(screen.findByTestId(`${id}.mergedDiff.app.conf`)).not.toBeNull();
+        expect(inputs.at(-1)?.useMergedVersion).toBeUndefined();
+        await screen.pressByTestIdAsync(`${id}.useMerged`);
+        await act(async () => {
+            await waitForTestEvent(screen.subscribe, () => screen.getTextContent(), content => content.includes('Definition moved to repository'));
+        });
+        expect(inputs[0], JSON.stringify(inputs[0])).toMatchObject({ mode: 'preview', definition: pin, path,
+            ...(creating ? { workspace: { ...workspace, serverId: serverIdentityId }, createRepository: { providerKind: 'github', owner: 'acme', repositoryName: 'app', visibility: 'private' } }
+                : { repository, workspace: { ...workspace, serverId: serverIdentityId }, baseCommit: 'a'.repeat(40), baseBranch: 'main' }) });
+        expect(inputs.at(-1)).toMatchObject({ mode: 'apply', definition: pin,
+            ...(repositoryChoice === 'resume' ? { pullRequestReference: { url: continuation.pullRequest.url } } : { continuation }), useMergedVersion: merged });
+        if (repositoryChoice === 'attach') expect(inputs[0]?.sourceRepository).toEqual(selector);
+    } finally { await view.dispose(); }
 });

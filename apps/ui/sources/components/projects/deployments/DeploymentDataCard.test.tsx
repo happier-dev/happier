@@ -1,6 +1,9 @@
 import * as React from 'react';
+import { createDeploymentReadControllerV1 } from '@happier-dev/deployments';
+import { createDeploymentEnvironmentHeaderV1, createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { renderAccountScreen } from '@/dev/testkit/render/renderAccountScreen';
 import { afterEach, expect, it, vi } from 'vitest';
-import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
 import { act, createDeferred, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
@@ -8,6 +11,8 @@ vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
 const { DeploymentDataCard } = await import('./DeploymentDataCard');
+const { DeploymentEnvironmentDetail } = await import('./DeploymentEnvironmentDetail');
+const { createDeploymentReadTransport } = await import('./deploymentReadTransport');
 const { Item } = await import('@/components/ui/lists/Item');
 const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
 afterEach(async () => { standardCleanup(); await homes.reset(); });
@@ -117,12 +122,7 @@ it('keeps a header-only database navigable while its body is pending and exposes
 });
 
 it('keeps the native Database address unless a known roster excludes it', async () => {
-  const base = createDeploymentEnvironmentDetailV1();
-  const detail = readDetail({ content: { ...base.content, template: {
-    templateRef: { sourceId: 'catalog', itemId: 'postgres', version: '17', ref: { kind: 'version', version: '17' } },
-    definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'b'.repeat(64)}` },
-    services: ['postgres'], data: [{ engine: 'postgres', service: 'postgres' }],
-  } } });
+  const detail = readDetail({ content: nativeDatabaseContent() });
   const onOpen = vi.fn();
   const page = (deployedServices?: readonly string[]) => <DeploymentDataCard scope={{ serverId: 'home', accountId: 'owner' }}
     detail={detail} place="Database Machine" onAdd={() => {}} onBackups={() => {}} onOpen={onOpen} deployedServices={deployedServices} />;
@@ -137,4 +137,61 @@ it('keeps the native Database address unless a known roster excludes it', async 
     await screen.pressByTestIdAsync(database);
     expect(onOpen).toHaveBeenCalledWith('postgres');
   } finally { await screen.unmount(); }
+});
+
+function nativeDatabaseContent() {
+  const { content } = createDeploymentEnvironmentDetailV1();
+  return { ...content, template: {
+    templateRef: { sourceId: 'catalog', itemId: 'postgres', version: '17', ref: { kind: 'version' as const, version: '17' } },
+    definition: { kind: 'stored' as const, contentRevision: 1, composeDigest: `sha256:${'b'.repeat(64)}` },
+    services: ['postgres'], data: [{ engine: 'postgres' as const, service: 'postgres' }],
+  } };
+}
+
+it('opens an existing native Database from Overview with a retained attempt and no serving deployment', async () => {
+  const serverIdentityId = `srv_${'a'.repeat(32)}`;
+  const serverId = await homes.addHome({ name: 'Existing native Database', serverUrl: 'https://native-database.test',
+    serverIdentityId, accountId: 'account-owner', currentAccount: true });
+  const account = await captureLazyActionAccountContext(serverId);
+  const { accountLifetime } = account;
+  const environment = createDeploymentEnvironmentHeaderV1({ serverId: serverIdentityId });
+  const targetLink = createDeploymentTargetLinkHeaderV1({ activeDeploymentId: undefined });
+  const prior = createDeploymentReceiptDetailV1({
+    deployment: createDeploymentReceiptHeaderV1({ environmentId: environment.id, targetLinkId: targetLink.id }),
+  });
+  const path = `/v1/deployments/environments/${environment.id}`;
+  await account.createArtifactDocument({ artifactId: environment.contentArtifactId,
+    header: { kind: 'deployment-environment.v1', title: 'Staging' }, body: JSON.stringify(nativeDatabaseContent()) });
+  await account.createArtifactDocument({ artifactId: targetLink.contentArtifactId,
+    header: { kind: 'deployment-target-link.v1', title: 'Native runtime' }, body: '{}' });
+  await account.createArtifactDocument({ artifactId: prior.deployment.contentArtifactId,
+    header: { kind: 'deployment-receipt.v1', title: 'Previous deployment' }, body: JSON.stringify(prior.content) });
+  homes.answer(serverId, `GET ${path}`, { body: { ok: true, environment, targetLinks: [targetLink] } });
+  homes.answer(serverId, `GET ${path}/deployments`, { body: { ok: true, items: [prior.deployment], nextCursor: null } });
+  homes.answer(serverId, `GET ${path}/domains`, { body: { ok: true, environmentId: environment.id,
+    revision: environment.revision, domains: [], nextCursor: null } });
+  const scope = { ...accountLifetime.scope, projectSourceId: environment.projectSourceId };
+  const controller = createDeploymentReadControllerV1({ scope, transport: createDeploymentReadTransport(accountLifetime) });
+  const demand = { mounted: true, visible: true, focused: true };
+  const history = controller.acquireHistory(environment.id, { attemptsOnly: true }, demand);
+  const onOpenDatabase = vi.fn();
+  const screen = await renderAccountScreen(<DeploymentEnvironmentDetail controller={controller} environmentId={environment.id}
+    demand={demand} lifetime={accountLifetime} accountId={scope.accountId} serverId={serverId}
+    phone={false} deploy={null} destination={{ tab: 'overview', section: null }}
+    review={{ pendingId: null, request() {}, open() {} }} onOpenReceipt={() => {}} onOpenDatabase={onOpenDatabase} />);
+  const database = 'project-deployments.environment.data.database.postgres';
+  try {
+    await waitForHomeGovernance(async () => {
+      await act(async () => {});
+      expect(history.getSnapshot()).toMatchObject({ status: 'ready', value: { items: [{ id: prior.deployment.id }] } });
+      expect(screen.findByTestId(database)).not.toBeNull();
+    });
+    await screen.pressByTestIdAsync(database);
+    expect(onOpenDatabase).toHaveBeenCalledWith('postgres');
+  } finally {
+    await screen.unmount();
+    history.release();
+    controller.retire();
+    account.dispose();
+  }
 });
