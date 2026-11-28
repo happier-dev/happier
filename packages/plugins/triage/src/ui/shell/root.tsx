@@ -3013,16 +3013,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
             />
           )}
 
-          {/*
-            Only beside rows. With none, the empty slot below takes this same
-            line in the list's place, and a second one here would say it twice.
-
-            The notice names the connection, not "a source": `REQ-01` asks for
-            per-source health, and a reader with several connections configured
-            cannot act on health that will not say whose it is.
-          */}
-          {/* Rows are still listed, so one unread connection is a status line with its fix beside it, not a card that
-              leads every page: the name and why, then its recovery (lab c7: the page's name and rows lead). */}
+          {/* Detailed failure lines such as source pacing sit beside the rows or in the empty-list slot. */}
           {rowCount === 0 || emptyBelowPins?.kind === 'sourceFailure' ? null : listFailureStatus}
           {outsideSourcesNotice}
 

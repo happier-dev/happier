@@ -273,7 +273,8 @@ describe('resolveTriageListShellState', () => {
       { sourceInstanceId: 'a', displayName: 'GitHub', reason: 'Could not be reached just now.' },
     ] } as const;
     expect(readTriageListFailureLine(transient)).toEqual({
-      label: 'GitHub could not be reached. Their entries may be missing or out of date.', recovery: 'retry',
+      label: 'GitHub could not be reached. Their entries may be missing or out of date.',
+      attention: 'GitHub could not be reached', recovery: 'retry',
     });
     // Several sources share one count and leave the connection names to Manage sources.
     expect(readTriageListFailureLine({ kind: 'sources', sources: [

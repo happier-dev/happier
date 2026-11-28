@@ -441,7 +441,7 @@ export function readTriageSourceFailureRowV1(
  */
 export type TriageListFailureLineV1 = Readonly<{
   label: string;
-  /** Short aggregate fact for the toolbar when the list has rows. */
+  /** Short source status for the toolbar. */
   attention?: string;
   recovery: 'retry' | 'manageSources' | null;
 }>;
@@ -513,6 +513,7 @@ function readUnpacedListFailureLine(
     : text('plugins.triage.surface.failure.suffix', 'could not be read')}`;
   return Object.freeze({
     label: `${title}. ${text('plugins.triage.surface.failure.retained', 'Their entries may be missing or out of date.')}${oneReason && !unreachable ? ` ${resolveSourceFailureReason(text, lineReason(first!))}` : ''}`,
+    attention: title,
     recovery: needsConnectionChange ? 'manageSources' : 'retry',
   });
 }

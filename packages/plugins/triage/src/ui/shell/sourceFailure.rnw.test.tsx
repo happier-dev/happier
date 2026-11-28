@@ -11,6 +11,8 @@ import { Button } from '@happier-dev/plugin-ui';
 import { TriageListFailureStatus, TriageOutsideSourcesNotice } from './sourceFailure.js';
 import { readTriageListFailureLine, readTriageListFailureNotice, readTriageSourceFailureRowV1 } from './windowState.js';
 import { renderSurface as renderShellSurface } from '../surface.js';
+import { TRIAGE_SHELL_FILL_TEST_ID_V1 } from './root.js';
+import { testkitLocator, testkitSnapshot, testkitViewer } from '../../corpus/testkit/observations.test-support.js';
 import { TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1, TriageListEntriesResultV1Schema } from '../../actions/listEntriesProtocol.js';
 import { TRIAGE_READ_SAVED_VIEWS_ACTION_LOCAL_ID_V1 } from '../../actions/savedViewsProtocol.js';
 import { TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1 } from '../../actions/userMarksProtocol.js';
@@ -77,15 +79,36 @@ describe('source failure presentation', () => {
     await expect(fixture.queryByRole('button', { name: 'Manage sources' })).resolves.toBeUndefined();
   });
 
-  it('opens source management for an admitted connection that requires sign-in', async () => {
+  it.each([0, 1, 2])('shows recovery with %i failed sources beside visible rows (zero exercises the empty list)', async failedWithRows => {
     const source = { pluginId: 'happier.example.source', localId: 'example-forge' };
+    const entryRef = { source, kindId: 'pull-request', collisionScope: 'example/repository', entryId: '17' };
     const sourceInstanceId = '11111111-1111-4111-8111-111111111111';
+    const healthyId = '22222222-2222-4222-8222-222222222222';
+    const secondFailureId = '33333333-3333-4333-8333-333333333333';
+    const assembledAtMs = 1_760_000_100_000;
+    const failed = (id: string, displayLabel: string) => ({
+      configured: { sourceInstanceId: id, configurationRowId: id, source, displayLabel, available: true },
+      lane: { sourceInstanceId: id, source, exhausted: false,
+        health: { kind: 'failed', failure: { class: 'authentication', code: 'sign_in_required' } } },
+    });
+    const failures = [failed(sourceInstanceId, 'Example account'),
+      ...(failedWithRows === 2 ? [failed(secondFailureId, 'Second failing account')] : [])];
+    const rowTitle = 'Keep this pull request visible';
     const result = TriageListEntriesResultV1Schema.parse({ v: 1, configuredSourcesStatus: 'complete',
-      configuredSources: [{ sourceInstanceId, configurationRowId: sourceInstanceId, source,
-        displayLabel: 'Example account', available: true }],
-      window: { v: 1, rows: [], lanes: [{ sourceInstanceId, source, exhausted: false,
-        health: { kind: 'failed', failure: { class: 'authentication', code: 'sign_in_required' } } }],
-        coverage: 'partial', assembledAtMs: 1_760_000_100_000 },
+      configuredSources: [...failures.map(({ configured }) => configured),
+        ...(failedWithRows ? [{ sourceInstanceId: healthyId, configurationRowId: healthyId, source,
+          displayLabel: 'Healthy account', available: true }] : [])],
+      window: { v: 1, rows: failedWithRows ? [{
+        entryRef, lane: '1-open', sortAtMs: assembledAtMs,
+        presence: { kind: 'present', observedAtMs: assembledAtMs },
+        selected: { kind: 'selected', sourceInstanceId: healthyId, reason: 'onlyPresent' },
+        observation: { sourceInstanceId: healthyId, observedAtMs: assembledAtMs, outcome: {
+          kind: 'present', locator: testkitLocator(), snapshot: testkitSnapshot({ title: rowTitle }), viewer: testkitViewer(),
+        } },
+        otherObservations: [], observedByCount: 1,
+      }] : [], lanes: [...failures.map(({ lane }) => lane),
+        ...(failedWithRows ? [{ sourceInstanceId: healthyId, source, exhausted: true,
+          health: { kind: 'walkFinished' } }] : [])], coverage: 'partial', assembledAtMs },
     });
     const ephemeralSharedScope = createTriageEphemeralSharedScopeFixture();
     let fixture!: PluginUiTestkit;
@@ -117,6 +140,17 @@ describe('source failure presentation', () => {
     });
     mounted.push(fixture);
     await act(async () => { await refreshTriageListWindow('view', fixture.context.hostApi, ephemeralSharedScope); });
+    if (failedWithRows) {
+      await expect(fixture.getByRole('button', { name: rowTitle })).resolves.toBeDefined();
+      const stage = document.querySelector(`[data-testid="${TRIAGE_SHELL_FILL_TEST_ID_V1}:stage"]`)!;
+      const label = failedWithRows === 1 ? /Example account could not be read/ : /2 sources need attention/;
+      const notices = [...document.querySelectorAll('[role="status"]')].filter(node => label.test(node.textContent ?? ''));
+      expect(notices).toHaveLength(1);
+      const refresh = document.querySelector('[aria-label="Refresh"]');
+      expect(refresh).not.toBeNull();
+      expect(refresh?.parentElement?.contains(notices[0]!)).toBe(true);
+      expect(stage.contains(notices[0]!)).toBe(false);
+    }
     const manage = await fixture.getByRole('button', { name: 'Manage sources' });
     await expect(fixture.queryByRole('button', { name: 'Try again' })).resolves.toBeUndefined();
     await act(async () => { await fixture.press(manage); });
