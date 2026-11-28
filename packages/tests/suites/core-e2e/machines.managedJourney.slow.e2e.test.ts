@@ -95,9 +95,12 @@ it.skipIf(!enabled)('J1/J2 Create, Trust, Online, Stop, Start and both asleep Se
 // daemon, native power and both public Send paths remain real. Unlike placed
 // sandbox Sessions, this calls ordinary acquire and requires enrolledMachineId.
 const cancelLateEnrollment = process.env.HAPPIER_E2E_MANAGED_CANCEL_LATE_ENROLLMENT === '1';
+const removeEnrolledGuest = process.env.HAPPIER_E2E_MANAGED_REMOVE_ENROLLED_GUEST === '1';
 const nativeDockerTest = cancelLateEnrollment
   ? 'J2 native Docker guest refuses registration after cancellation and confirms approved Delete'
-  : 'J2 native Docker guest wakes for UI and CLI Send and processes each input once';
+  : removeEnrolledGuest
+    ? 'ADS.F1 removing an enrolled Docker child keeps its paired parent signed in'
+    : 'J2 native Docker guest wakes for UI and CLI Send and processes each input once';
 it(nativeDockerTest, async () => {
   // Source-server preparation supplies the canonical guest CLI archive.
   // Immutable multi-platform index; DockerLibrary revision d0ecd4b7313e9bc6b00d9a4fe62ad5787bc197ae.
@@ -188,7 +191,7 @@ it(nativeDockerTest, async () => {
       ...(cancelLateEnrollment ? { async assertLateEnrollmentRefused() {
         await waitFor(() => lateRegistrationStatus !== undefined, { context: 'late native Machine registration response' });
         assert.equal(lateRegistrationStatus, 409);
-      } } : { async verifyBeforeNativeCleanup(guestMachineId: string) {
+      } } : removeEnrolledGuest ? { async removeEnrolledGuest(guestMachineId: string) {
         assert.notEqual(guestMachineId, controller.target.machineId);
         const invokeFromParent = (actionId: string, actionInput: unknown) => runCliJson({
           testDir, cliHomeDir: controller.homeDir, serverUrl: home.actionServerApiUrl, webappUrl: home.server.baseUrl,
@@ -201,7 +204,7 @@ it(nativeDockerTest, async () => {
         assert.equal(removed.ok, true, `Remove child: ${JSON.stringify(removed)}`);
         const parent = await invokeFromParent(MACHINE_LIST_ACTION_ID_V1, { serverId: homeId });
         assert.equal(parent.ok, true, `Parent CLI stays signed in: ${JSON.stringify(parent)}`);
-      } }) });
+      } } : {}) });
     if (cancelLateEnrollment) {
       assert.ok(result.managedId);
       assert.deepEqual(nativeContainers(result.managedId), [], 'Approved Delete must also leave the native resource absent');

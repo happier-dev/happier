@@ -24,6 +24,7 @@ import {
 import { waitFor } from '../../src/testkit/timing';
 import { startTeamSetupFFixture } from '../../src/testkit/teamSetupF';
 import { startTestDaemon } from '../../src/testkit/daemon/daemon';
+import { enrollProjectDaemonHome } from '../../src/testkit/daemon/projectDaemon';
 import { fetchJson } from '../../src/testkit/http';
 import { createIsolatedFakeClaudeControlShim, waitForFakeClaudeUserText } from '../../src/testkit/fakeClaude';
 import { startDatabaseWorkbenchPostgres } from '../../src/testkit/process/databaseWorkbenchPostgres';
@@ -226,6 +227,7 @@ describe('core e2e: machine installation identity replacement', () => {
         },
       });
       const account = await fixture.createAccount('registration-owner');
+      const homeDir = join(testDir, account.name, 'home');
       verifyProposedKey = envelope => {
         if (typeof winningEnvelope !== 'string') throw new Error('Competing registrar did not publish its envelope');
         const open = (value: string) => openEncryptedDataKeyEnvelopeV1({
@@ -241,7 +243,6 @@ describe('core e2e: machine installation identity replacement', () => {
       // read. Another registrar for the same installation then wins with a
       // different random key; neither registrar's crypto is mocked.
       publishCompetingRegistration = async () => {
-        const homeDir = join(testDir, account.name, 'home');
         const settings = JSON.parse(await readFile(join(homeDir, 'settings.json'), 'utf8')) as Settings;
         if (!settings.activeServerId) throw new Error('First registrar did not persist its active Home');
         const registration = await readStoredMachineRegistration(resolveMachineRegistrationPath(join(homeDir, 'servers'), settings.activeServerId));
@@ -269,7 +270,15 @@ describe('core e2e: machine installation identity replacement', () => {
         winningEnvelope = MachinePublishedRowV1Schema.parse(published.data.machine).dataEncryptionKey;
         expect(typeof winningEnvelope).toBe('string');
       };
-      const enrolled = await fixture.enrollDaemon(account);
+      const pairedHome = await enrollProjectDaemonHome({
+        homeDir,
+        testDir: join(testDir, account.name),
+        serverUrl: fixture.actionServerApiUrl,
+        serverId: fixture.serverId,
+        sourceOptions: fixture.sourceOptions,
+        account,
+      });
+      const enrolled = await fixture.enrollDaemon(account, { pairedHome });
       expect(competingProposalObserved).toBe(true);
       ui = await connectUiActionClient({ serverUrl: fixture.actionServerApiUrl, addressAnchorUrl: fixture.server.baseUrl,
         credentials: account.uiCredentials });

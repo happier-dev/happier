@@ -1,8 +1,10 @@
 import axios from '@/api/client/credentialAxios';
-import { createHttpStatusError } from '@/api/client/httpStatusError';
+import { createHttpStatusError, readHttpStatus } from '@/api/client/httpStatusError';
+import { projectUnsignedHomeAuthorizationHttpFailure, SignedHomeAuthorizationHttpError } from '@/api/client/homeAuthorizationHttpFailure';
 import { z } from 'zod/mini';
 import { ExternalActionMachineBootstrapV1Schema, type ExternalActionMachineBootstrapV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { parseActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { AccessibleMachineAccessV1Schema, type AccessibleMachineAccessV1, type MachineAccessRoleV1, type MachineAvailabilityDiagnosticV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { resolveMachineSpawnReadinessV1 } from '@happier-dev/protocol/machines/machineSpawnReadinessV1';
 import { DevcontainerChildProjectionV1Schema, type DevcontainerChildProjectionV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
@@ -136,6 +138,11 @@ export async function listCurrentAccountMachines(params: Readonly<{
       exactId === undefined ? data : readCurrentAccountMachinePublicationRows(response), demandedIds);
   } catch (error) {
     params.signal?.throwIfAborted();
+    if (error instanceof SignedHomeAuthorizationHttpError) throw error;
+    if (!params.authorization && readHttpStatus(error) === 401) {
+      const failure = projectUnsignedHomeAuthorizationHttpFailure(401);
+      throw Object.assign(createHttpStatusError(401, failure.error, failure.errorCode), failure);
+    }
     throw machineInventoryUnavailable(error);
   }
 }
@@ -354,8 +361,10 @@ export async function resolveCurrentAccountMachineTarget(params: Readonly<{
     }
     if (candidates.length > 1) return { kind: 'selection_required', candidates };
     return { kind: 'selected', target: candidates[0]! };
-  } catch {
+  } catch (error) {
     params.signal?.throwIfAborted();
+    const failure = parseActionExecuteFailure(error);
+    if (failure) return unavailable(failure.errorCode, failure.error);
     return unavailable('machine_inventory_unavailable', 'The current machine inventory is unavailable.');
   }
 }

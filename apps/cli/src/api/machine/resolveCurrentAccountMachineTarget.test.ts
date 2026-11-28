@@ -83,6 +83,19 @@ describe('plugin-aware Account administration Machine selection', () => {
 });
 
 describe('resolveCurrentAccountMachineTarget', () => {
+  it('retains a Home sign-out through inventory reads and automatic target selection', async () => {
+    boundaries.axiosGet.mockRejectedValue(Object.assign(new Error('Unauthorized'), {
+      response: { status: 401, data: { error: 'invalid_token' } },
+    }));
+
+    await expect(listCurrentAccountMachines({ token: 'revoked' })).rejects.toMatchObject({
+      ok: false, errorCode: 'action_home_signed_out', response: { status: 401 },
+    });
+    await expect(resolveCurrentAccountMachineTarget({ token: 'revoked' })).resolves.toMatchObject({
+      kind: 'unavailable', code: 'action_home_signed_out',
+    });
+  });
+
   it('transfers only demanded Machine rows as unrelated fleet inventory grows', async () => {
     for (const unrelatedCount of [128, 1024]) {
       let delivered = 0;

@@ -38,7 +38,8 @@ export async function runManagedMachineJourney(input: Readonly<{
   installAgentFixture?: (machine: ReturnType<typeof unwrapManagedMachineReadV1>) => Promise<void>;
   /** The guest ingress holds real Machine registration until the person cancels creation. */
   assertLateEnrollmentRefused?: () => Promise<void>;
-  verifyBeforeNativeCleanup?: (guestMachineId: string) => Promise<void>;
+  /** Exercise access revocation on the freshly enrolled guest, then delete the native allocation. */
+  removeEnrolledGuest?: (guestMachineId: string) => Promise<void>;
   /** Share an explicit caller budget when the containing run supplies one. */
   deadlineAt?: number;
 }>) {
@@ -141,75 +142,17 @@ export async function runManagedMachineJourney(input: Readonly<{
     await until(`reply-${token}`, async () => (await transcript(sessionId))
       .some(item => item.role === 'assistant' && item.text?.includes(token)));
   }
-  try {
-    const listed = MachineProvisionersListResultV1Schema.parse(await action('machines.provisioners.list', {
-      homeId, controller: controllerRef, contribution: input.provider,
-    }));
-    const entry = listed.provisioners.find(row => row.contribution.pluginId === input.provider.pluginId
-      && row.contribution.localId === input.provider.localId);
-    assert.ok(entry, 'The selected real provider must be published by the controller');
-    const check = MachineProvisionerCheckResultV1Schema.parse(await action('machines.provisioners.check', {
-      homeId, controller: controllerRef, contribution: input.provider,
-    }));
-    assert.equal(check.available, true, JSON.stringify(check));
-    const options = MachineProvisionerOptionsResultV1Schema.parse(await action('machines.provisioners.options', {
-      homeId, controller: controllerRef, contribution: input.provider, selectors: input.selectors,
-    }));
-    const selected = projectMachineProvisionerSelectionV1({ options, selection: input.selection, launchSchema: entry.descriptor.launchSchema });
-    assert.equal(selected.kind, 'ready', JSON.stringify(selected));
-    if (selected.kind !== 'ready') throw new Error('Real provider options did not produce a launch');
-    const launch = { provider: input.provider, schemaVersion: entry.descriptor.schemaVersion,
-      name: `managed-journey-${randomUUID()}`, choices: selected.launch };
-    const reviewedFacts = buildManagedConfigurationFactsV1({ choicesSchema: createPluginJsonSchemaZodValueAdapter(entry.descriptor.launchSchema),
-      launch, controller: controllerRef, optionStatus: 'current', provisioner: entry.descriptor,
-      prerequisites: readMachineProvisionerPrerequisitesV1(check, options), billing: entry.descriptor.billing,
-      retentionCapabilities: entry.descriptor.retention, optionProjection: selected,
-      machineOverride: { retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true } });
-    const created = ManagedAcceptedV1Schema.parse(await action('machines.managed.acquire', {
-      selection: { kind: 'one-off', homeId, controller: controllerRef, launch,
-        retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true },
-      enrollmentIdentity: input.enrollmentIdentity,
-      reviewedFacts,
-    }));
-    managedId = created.managedId;
-    creationOperationId = created.operation?.operationId;
-    assert.ok(creationOperationId, 'Creation must expose its real installation operation');
-    await settle(creationOperationId, 'create-trust');
-    if (input.assertLateEnrollmentRefused) {
-      await input.assertLateEnrollmentRefused();
-      const canceled = await readMachine();
-      assert.equal(canceled.creationState, 'canceled');
-      assert.equal(Boolean(canceled.enrolledMachineId), false);
-      const deleted = ManagedDeleteOutputV1Schema.parse(await action('machines.managed.delete', {
-        homeId, managedId, when: 'now', expectedRevision: canceled.intentRevision,
-        intent: 'delete', reviewedDependencies: true,
-      }));
-      assert.equal(deleted.kind, 'accepted', JSON.stringify(deleted));
-      if (deleted.kind === 'accepted' && deleted.operation) await settle(deleted.operation.operationId, 'cancelled-delete');
-      await until('cancelled-confirmed-absent', async () => (await readMachine()).allocation === 'confirmed-absent');
-      return { managedId, guestMachineId: undefined, phaseTimes };
-    }
-    if (input.requireSshTrust) assert.equal(trustedHost, true, 'J1 requires a fresh SSH guest whose first-use Trust prompt was approved');
-    const createdMachine = await readMachine();
-    assert.equal(createdMachine.allocation, 'bound');
-    assert.equal(createdMachine.bootstrapInstalled, true);
-    guestMachineId = createdMachine.enrolledMachineId;
-    assert.ok(guestMachineId, 'Installation success must enroll a real guest');
-    await until('guest-online', () => ui.isMachineControlReady(guestMachineId!));
-    const workspace = await ui.executeConfirmed('daemon.filesystem.listDirectory', { rootPath: input.guestDirectory, path: '.' }, {
-      ...context, serverIdentityId: homeId, actionRequestId: randomUUID(),
-      externalActionTarget: { kind: 'machine', machineId: guestMachineId },
-    });
-    assert.equal(workspace.ok, true, 'The enrolled guest must accept workspace RPC');
-    if (!workspace.ok) throw new Error(`Guest workspace RPC refused (${workspace.errorCode})`);
-    assert.ok(workspace.result && typeof workspace.result === 'object' && 'success' in workspace.result && workspace.result.success === true,
-      'The selected workspace must be readable before power and Send exercise it');
-    console.info('MR-R2 native allocation, bootstrap, enrollment, connection and workspace readiness observed');
+  async function exerciseGuestControl(
+    guestMachineId: string,
+    createdMachine: ReturnType<typeof unwrapManagedMachineReadV1>,
+    actions: ReturnType<typeof MachineProvisionersListResultV1Schema.parse>['provisioners'][number]['descriptor']['actions'],
+    reviewedEffectDigest: ReturnType<typeof buildManagedConfigurationFactsV1>['reviewedEffectDigest'],
+  ) {
     await input.installAgentFixture?.(createdMachine);
     // Exercise the selected provider's offered CPU resize through the same
     // reviewed UI Action as its power operations, then read native inspection.
     await power('stop');
-    if (entry.descriptor.actions.resize) {
+    if (actions.resize) {
       const resized = ManagedResizeOutputV1Schema.parse(await action('machines.managed.resize', {
         homeId, managedId, size: { cpuCores: 2 },
       }));
@@ -327,12 +270,12 @@ export async function runManagedMachineJourney(input: Readonly<{
       'UI composer: initial input must persist exactly once');
     assert.equal(initialRows.filter(row => row.role === 'assistant' && row.text?.includes(initialToken)).length, 1,
       'UI composer: the awakened Agent must process initial input exactly once');
-    if (entry.descriptor.actions.rebuild) {
+    if (actions.rebuild) {
       const previous = await readMachine();
-      assert.ok(reviewedFacts.reviewedEffectDigest, 'An offered rebuild must consume the actual native effect review');
+      assert.ok(reviewedEffectDigest, 'An offered rebuild must consume the actual native effect review');
       const rebuilt = ManagedIntentResultSchema.parse(await action('machines.managed.rebuild', {
         homeId, managedMachineId: managedId, expectedRevision: previous.intentRevision,
-        kind: 'rebuild', reviewedEffectDigest: reviewedFacts.reviewedEffectDigest,
+        kind: 'rebuild', reviewedEffectDigest: reviewedEffectDigest,
       }));
       assert.equal(rebuilt.kind, 'accepted', JSON.stringify(rebuilt));
       if (rebuilt.kind !== 'accepted' || !rebuilt.operation) throw new Error('Rebuild did not expose its installation operation');
@@ -356,6 +299,75 @@ export async function runManagedMachineJourney(input: Readonly<{
         message: `Reply with exactly ${token}. Do not use tools.` });
       await reply(rebuiltSession.sessionId, token);
     }
+    return guestMachineId;
+  }
+  try {
+    const listed = MachineProvisionersListResultV1Schema.parse(await action('machines.provisioners.list', {
+      homeId, controller: controllerRef, contribution: input.provider,
+    }));
+    const entry = listed.provisioners.find(row => row.contribution.pluginId === input.provider.pluginId
+      && row.contribution.localId === input.provider.localId);
+    assert.ok(entry, 'The selected real provider must be published by the controller');
+    const check = MachineProvisionerCheckResultV1Schema.parse(await action('machines.provisioners.check', {
+      homeId, controller: controllerRef, contribution: input.provider,
+    }));
+    assert.equal(check.available, true, JSON.stringify(check));
+    const options = MachineProvisionerOptionsResultV1Schema.parse(await action('machines.provisioners.options', {
+      homeId, controller: controllerRef, contribution: input.provider, selectors: input.selectors,
+    }));
+    const selected = projectMachineProvisionerSelectionV1({ options, selection: input.selection, launchSchema: entry.descriptor.launchSchema });
+    assert.equal(selected.kind, 'ready', JSON.stringify(selected));
+    if (selected.kind !== 'ready') throw new Error('Real provider options did not produce a launch');
+    const launch = { provider: input.provider, schemaVersion: entry.descriptor.schemaVersion,
+      name: `managed-journey-${randomUUID()}`, choices: selected.launch };
+    const reviewedFacts = buildManagedConfigurationFactsV1({ choicesSchema: createPluginJsonSchemaZodValueAdapter(entry.descriptor.launchSchema),
+      launch, controller: controllerRef, optionStatus: 'current', provisioner: entry.descriptor,
+      prerequisites: readMachineProvisionerPrerequisitesV1(check, options), billing: entry.descriptor.billing,
+      retentionCapabilities: entry.descriptor.retention, optionProjection: selected,
+      machineOverride: { retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true } });
+    const created = ManagedAcceptedV1Schema.parse(await action('machines.managed.acquire', {
+      selection: { kind: 'one-off', homeId, controller: controllerRef, launch,
+        retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true },
+      enrollmentIdentity: input.enrollmentIdentity,
+      reviewedFacts,
+    }));
+    managedId = created.managedId;
+    creationOperationId = created.operation?.operationId;
+    assert.ok(creationOperationId, 'Creation must expose its real installation operation');
+    await settle(creationOperationId, 'create-trust');
+    if (input.assertLateEnrollmentRefused) {
+      await input.assertLateEnrollmentRefused();
+      const canceled = await readMachine();
+      assert.equal(canceled.creationState, 'canceled');
+      assert.equal(Boolean(canceled.enrolledMachineId), false);
+      const deleted = ManagedDeleteOutputV1Schema.parse(await action('machines.managed.delete', {
+        homeId, managedId, when: 'now', expectedRevision: canceled.intentRevision,
+        intent: 'delete', reviewedDependencies: true,
+      }));
+      assert.equal(deleted.kind, 'accepted', JSON.stringify(deleted));
+      if (deleted.kind === 'accepted' && deleted.operation) await settle(deleted.operation.operationId, 'cancelled-delete');
+      await until('cancelled-confirmed-absent', async () => (await readMachine()).allocation === 'confirmed-absent');
+      return { managedId, guestMachineId: undefined, phaseTimes };
+    }
+    if (input.requireSshTrust) assert.equal(trustedHost, true, 'J1 requires a fresh SSH guest whose first-use Trust prompt was approved');
+    const createdMachine = await readMachine();
+    assert.equal(createdMachine.allocation, 'bound');
+    assert.equal(createdMachine.bootstrapInstalled, true);
+    guestMachineId = createdMachine.enrolledMachineId;
+    assert.ok(guestMachineId, 'Installation success must enroll a real guest');
+    await until('guest-online', () => ui.isMachineControlReady(guestMachineId!));
+    const workspace = await ui.executeConfirmed('daemon.filesystem.listDirectory', { rootPath: input.guestDirectory, path: '.' }, {
+      ...context, serverIdentityId: homeId, actionRequestId: randomUUID(),
+      externalActionTarget: { kind: 'machine', machineId: guestMachineId },
+    });
+    assert.equal(workspace.ok, true, 'The enrolled guest must accept workspace RPC');
+    if (!workspace.ok) throw new Error(`Guest workspace RPC refused (${workspace.errorCode})`);
+    assert.ok(workspace.result && typeof workspace.result === 'object' && 'success' in workspace.result && workspace.result.success === true,
+      'The selected workspace must be readable before power and Send exercise it');
+    console.info('MR-R2 native allocation, bootstrap, enrollment, connection and workspace readiness observed');
+    if (!input.removeEnrolledGuest) {
+      guestMachineId = await exerciseGuestControl(guestMachineId, createdMachine, entry.descriptor.actions, reviewedFacts.reviewedEffectDigest);
+    }
   } catch (error) { failure = error; }
   // Capture both native guest diagnostics and the controller's retained cause BEFORE Delete.
   if (managedId) {
@@ -364,8 +376,8 @@ export async function runManagedMachineJourney(input: Readonly<{
       await writeFile(join(input.testDir, 'before-delete.inspect.json'), JSON.stringify(inspect, null, 2));
       const controllerOperation = creationOperationId ? await operation(creationOperationId) : null;
       await writeFile(join(input.testDir, 'before-delete.controller.json'), JSON.stringify(controllerOperation, null, 2));
-      if (!failure && guestMachineId && input.verifyBeforeNativeCleanup) {
-        try { await input.verifyBeforeNativeCleanup(guestMachineId); }
+      if (!failure && guestMachineId && input.removeEnrolledGuest) {
+        try { await input.removeEnrolledGuest(guestMachineId); }
         catch (error) { failure = error; }
       }
       const current = await readMachine();
