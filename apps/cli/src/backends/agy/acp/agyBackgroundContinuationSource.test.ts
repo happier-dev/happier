@@ -371,6 +371,29 @@ describe('createAgyBackgroundContinuationSource', () => {
     }, () => mode);
   });
 
+  it('keeps full access for unattributed work when the background command and the successor prompt were both admitted in YOLO', async () => {
+    await fixture(async ({ backend, events, permissionSession }) => {
+      await backend.sendPrompt(SESSION_ID, 'build in the background');
+      await backend.waitForResponseComplete();
+
+      const successor = backend.sendPrompt(SESSION_ID, 'hold the foreground prompt');
+      await expect.poll(() => events).toContainEqual(expect.objectContaining({
+        type: 'model-output', textDelta: 'The foreground prompt started.',
+      }));
+      const late = backend.requestExtension('test/late-work', {});
+      try {
+        await expect.poll(() => events).toContainEqual(expect.objectContaining({
+          type: 'model-output', textDelta: 'The deferred hook finished.',
+        }));
+        expect(await late).toEqual({ resumed: true });
+        expect(pendingPermissionIds(permissionSession)).toEqual([]);
+      } finally {
+        await backend.requestExtension('test/finish-foreground', {});
+        await successor;
+      }
+    }, () => 'yolo');
+  });
+
   it('keeps a finishing continuation open for a background command that settles while its output drains', async () => {
     await fixture(async ({ backend, events, permissionSession }) => {
       await promptBuild(backend, permissionSession);

@@ -367,6 +367,15 @@ const EXPLICIT_PROVIDER_PERMISSION_CONTEXT = { permissionMode: 'default', requir
 
 export type AcpPermissionCallContext = Readonly<{ permissionMode?: PermissionMode; requiresExplicitDecision?: boolean }>;
 
+/** Policies that may own the same provider request: identical admitted policies stand, anything else needs an explicit decision. */
+function mergeAdmittedPermissionContexts(
+  first: AcpPermissionCallContext | undefined,
+  second: AcpPermissionCallContext | undefined,
+): AcpPermissionCallContext {
+  if (!first || !second || first.requiresExplicitDecision || second.requiresExplicitDecision) return EXPLICIT_PROVIDER_PERMISSION_CONTEXT;
+  return first.permissionMode === second.permissionMode ? first : EXPLICIT_PROVIDER_PERMISSION_CONTEXT;
+}
+
 /**
  * Permission handler interface for ACP backends
  */
@@ -1034,6 +1043,8 @@ export class AcpBackend implements AgentBackend {
   private providerSourceLifetime: AbortController | null = null;
   private readonly providerToolContexts = new Map<string, AcpPermissionCallContext>();
   private readonly providerContinuations = new Map<string, AcpPermissionCallContext | null>();
+  /** The one policy every background command of this provider source was admitted under, or the explicit-decision policy when they differ. */
+  private providerBackgroundPermissionContext: AcpPermissionCallContext | null = null;
   private providerTurn: Readonly<{ generation: number; turnId: string; lifetime: AbortController }> | null = null;
   private activePermissionContext: AcpPermissionCallContext | undefined;
   private turnGeneration = 0;
@@ -1102,6 +1113,7 @@ export class AcpBackend implements AgentBackend {
     this.activePermissionContext = undefined;
     this.providerToolContexts.clear();
     this.providerContinuations.clear();
+    this.providerBackgroundPermissionContext = null;
     try {
       const outcome = await withGracefulTeardownBound(Promise.resolve().then(() => source?.dispose()));
       if (outcome === 'timed_out') {
@@ -1187,10 +1199,13 @@ export class AcpBackend implements AgentBackend {
     this.providerToolContexts.set(toolCallId, this.activePermissionContext);
   }
 
+  /**
+   * Unattributed provider work may belong to the foreground turn or to resumed background work, so it keeps
+   * a policy only when both were admitted under it; any difference requires an explicit decision.
+   */
   private getLivePermissionContext(): AcpPermissionCallContext | undefined {
-    return this.providerSource?.hasUnattributedWork?.() === true
-      ? EXPLICIT_PROVIDER_PERMISSION_CONTEXT
-      : this.activePermissionContext;
+    if (this.providerSource?.hasUnattributedWork?.() !== true) return this.activePermissionContext;
+    return mergeAdmittedPermissionContexts(this.activePermissionContext, this.providerBackgroundPermissionContext ?? undefined);
   }
 
   /**
@@ -1212,6 +1227,9 @@ export class AcpBackend implements AgentBackend {
         const context = this.providerToolContexts.get(parentToolCallId);
         if (!current() || !readNonBlankOpaqueIdentifier(id) || !context || this.providerContinuations.has(id)) return false;
         this.providerContinuations.set(id, context);
+        this.providerBackgroundPermissionContext = mergeAdmittedPermissionContexts(
+          this.providerBackgroundPermissionContext ?? context, context,
+        );
         if (keepToolCallOpen) this.toolCalls.detachFromTurn(parentToolCallId);
         return true;
       },
