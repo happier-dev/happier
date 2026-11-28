@@ -490,4 +490,21 @@ describe('Codex provider credits', () => {
       credits: { has_credits: true, unlimited: false, overage_limit_reached: true, balance: '0' },
     })).toEqual({ status: 'ready' });
   });
+
+  // observed: upstream app-server-protocol/src/protocol/v2/account.rs:370-373 (`ordinaryUsageAllowed`:
+  // "clients must not infer recovery from percentages or reset times") and wham/usage `rate_limit.allowed`
+  // (codex-backend-openapi-models rate_limit_status_details.rs:17-18).
+  it('takes the backend usage permission over window percentages', () => {
+    expect(readCodexRateLimitReadiness({
+      ordinaryUsageAllowed: false,
+      rateLimits: { primary: { usedPercent: 20 } },
+    })).toEqual({ status: 'waiting', resetAtMs: null });
+    expect(readCodexRateLimitReadiness({
+      ordinaryUsageAllowed: true,
+      rateLimits: { primary: spentWindow },
+    })).toEqual({ status: 'ready' });
+    expect(readCodexRateLimitReadiness({
+      rate_limit: { allowed: false, limit_reached: true, primary_window: { used_percent: 20 } },
+    })).toEqual({ status: 'waiting', resetAtMs: null });
+  });
 });

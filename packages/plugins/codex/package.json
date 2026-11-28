@@ -369,11 +369,6 @@
       "types": "./dist/agent/auth/services/quota/runtimeRateLimits.d.ts",
       "default": "./dist/agent/auth/services/quota/runtimeRateLimits.js"
     },
-    "./agent/auth/services/quota/probe": {
-      "happier-source": "./src/agent/auth/services/quota/probe.ts",
-      "types": "./dist/agent/auth/services/quota/probe.d.ts",
-      "default": "./dist/agent/auth/services/quota/probe.js"
-    },
     "./agent/auth/services/quota/openaiFetcher": {
       "happier-source": "./src/agent/auth/services/quota/openaiFetcher.ts",
       "types": "./dist/agent/auth/services/quota/openaiFetcher.d.ts",

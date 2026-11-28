@@ -310,16 +310,34 @@ export function mapCodexRateLimitSnapshotToUsageMeters(
 }
 
 /**
- * Usage-limit recovery readiness after the provider itself reported a limit: included windows
- * only, because that provider verdict stays authoritative over credit headroom.
+ * The backend's own permission for ordinary included usage. The app-server's `ordinaryUsageAllowed`
+ * is authoritative both ways ("clients must not infer recovery from percentages or reset times";
+ * upstream app-server-protocol/src/protocol/v2/account.rs:370-373). `wham/usage` `rate_limit.allowed`
+ * counts only as a block, because whether it stays true while credits pay is unverified. Null when
+ * the snapshot carries neither, as older app-servers do.
+ */
+function readCodexOrdinaryUsageAllowed(rawSnapshot: unknown): boolean | null {
+  const root = isRecord(rawSnapshot) ? rawSnapshot : {};
+  const explicit = readBoolean(root.ordinaryUsageAllowed ?? root.ordinary_usage_allowed);
+  if (explicit !== null) return explicit;
+  const rateLimit = isRecord(root.rate_limit) ? root.rate_limit : null;
+  return readBoolean(rateLimit?.allowed) === false || readBoolean(rateLimit?.limit_reached) === true ? false : null;
+}
+
+/**
+ * Usage-limit recovery readiness after the provider itself reported a limit: the backend's usage
+ * permission when present, otherwise included windows only, because that provider verdict stays
+ * authoritative over credit headroom.
  */
 export function readCodexRateLimitReadiness(rawSnapshot: unknown):
   | Readonly<{ status: 'ready' }>
   | Readonly<{ status: 'waiting'; resetAtMs: number | null }> {
+  const allowed = readCodexOrdinaryUsageAllowed(rawSnapshot);
+  if (allowed === true) return { status: 'ready' };
   const exhausted = mapCodexRateLimitSnapshotToUsageMeters(rawSnapshot).filter((meter) => meter.unit !== 'credits' && (
     meter.isExhausted === true || (meter.utilizationPct !== null && meter.utilizationPct >= 100)
   ));
-  if (exhausted.length === 0) return { status: 'ready' };
+  if (exhausted.length === 0) return allowed === false ? { status: 'waiting', resetAtMs: null } : { status: 'ready' };
   let resetAtMs = 0;
   for (const meter of exhausted) {
     if (meter.resetsAt === null) return { status: 'waiting', resetAtMs: null };
