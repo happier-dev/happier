@@ -121,6 +121,7 @@ describe('runPi', () => {
         agentState = updater(agentState);
       }),
       sendAgentMessage: vi.fn(),
+      subscribeToSessionConnectionState: () => () => undefined,
     };
     await config.onAfterStart({ session, runtime: {}, initialControlsApplied: true, prepareLocalAttachment: async () => false });
     expect(agentState.localControl).toEqual({
