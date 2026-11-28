@@ -17,7 +17,7 @@ installHomeGovernanceBoundaries(home);
 installDisconnectedServerSocketBoundary();
 // Resolve the real runtime graph during collection, outside behavioral hook timeouts.
 await loadSyncSingletonForTests();
-const { createWorkflowDefinition, getWorkflowDefinition, listWorkflowDefinitions,
+const { createWorkflowDefinition, getWorkflowDefinition, readWorkflowDefinitionRevision, listWorkflowDefinitions,
     updateWorkflowDefinition, deleteWorkflowDefinition, exportSavedWorkflowDocument, isWorkflowDefinitionConflictError } = await import('./workflowDefinitionActions');
 const { storage } = await import('@/sync/domains/state/storageStore');
 const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
@@ -84,6 +84,18 @@ describe('workflow definition Action client through Account Artifact storage', (
         const created = await createWorkflowDefinition({ definitionId, definition, metadata });
         const read = await getWorkflowDefinition({ definitionId });
         expect(read).toMatchObject({ definitionId, definition, metadata, access: 'owner', revision: created.revision });
+    });
+
+    it('retains the exact-read fallback when a native signal lacks throwIfAborted', async () => {
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const accountLifetime = captureActiveServerAccountScopeLifetime();
+        if (!accountLifetime) throw new Error('Expected the signed-in Account scope');
+        const controller = new AbortController();
+        Object.defineProperty(controller.signal, 'throwIfAborted', { value: undefined });
+        home.answer(serverId, 'POST /v1/artifacts/read', { status: 400, body: { error: 'invalid-params' } });
+
+        await expect(readWorkflowDefinitionRevision({ definitionId, accountLifetime, signal: controller.signal })).resolves.toBeNull();
+        expect(home.requestsFor('/v1/artifacts/read')).toHaveLength(1);
     });
 
     it('exports the saved definition with its title, exact revision and portable document', async () => {

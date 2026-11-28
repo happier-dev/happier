@@ -4,6 +4,7 @@ import type { WorkflowIntendedTriggerV1 } from '@happier-dev/protocol/workflows/
 import { WorkflowDefinitionArtifactHeaderV1ReadSchema, type WorkflowArtifactRevisionV1, type WorkflowDefinitionMetadataV1 } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 
 import { HappyError } from '@/utils/errors/errors';
+import { throwIfAborted } from '@/utils/runtime/abortSignals';
 import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
 import { callWorkflowAction, type WorkflowActionCallerContext, type WorkflowActionOperation } from './callWorkflowAction';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -144,7 +145,7 @@ export async function readWorkflowDefinitionRevision(params: Readonly<{
             || header.data.revision.bodyVersion !== artifact.bodyVersion) return null;
         return { definitionId, revision: header.data.revision, access: artifact.access };
     } catch (error) {
-        signal.throwIfAborted();
+        throwIfAborted(signal);
         // Older Homes without the header projection retain the exact read.
         if (error instanceof HappyError && (error.status === 400 || error.status === 404 || error.status === 405)) return null;
         throw error;
