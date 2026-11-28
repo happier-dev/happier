@@ -17,6 +17,8 @@ import { PI_BRIDGE_CONFIG_PATH_FLAG, PI_BRIDGE_USER_INPUT_MARKER_TYPE } from '@/
 import {
   PI_SHARED_CONTROL_BUSY_ERROR,
   PI_SHARED_CONTROL_INDETERMINATE_OUTCOME,
+  PI_SHARED_CONTROL_PROMPT_HANDED_OFF,
+  PI_SHARED_CONTROL_RESPONSE_TIMEOUT_MS,
 } from '@/backends/pi/sharedControl/piSharedControlProtocol';
 
 import { PiRpcBackend } from './PiRpcBackend';
@@ -49,7 +51,7 @@ function createFakeAttachedPi(initialSessionId: string, beforeStateReply?: () =>
   let sessionId = initialSessionId;
   // What the bridge's get_state reports as `isStreaming` (a run, including one still preparing).
   let streaming = false;
-  let promptReply: BridgeReply = { success: true };
+  let promptReply: BridgeReply = { success: true, data: { disposition: PI_SHARED_CONTROL_PROMPT_HANDED_OFF } };
   let promptScripts: PromptScript[] = [RPC_ORDER_PROMPT];
   const opens: Array<{ spec: PiRpcChannelOpenSpec; options: PiRpcChannelOpenOptions | undefined }> = [];
   const commands: BridgeCommand[][] = [];
@@ -58,7 +60,11 @@ function createFakeAttachedPi(initialSessionId: string, beforeStateReply?: () =>
   let nextOpenFailure: Error | null = null;
   const availabilityListeners = new Set<() => void>();
 
-  const emitOut = (record: Record<string, unknown>): void => listener?.onStdoutLine(JSON.stringify(record));
+  const emitOut = (record: Record<string, unknown>): void => {
+    if (record.type === 'agent_start') streaming = true;
+    if (record.type === 'agent_end') streaming = false;
+    listener?.onStdoutLine(JSON.stringify(record));
+  };
   const reply = (command: BridgeCommand, result: BridgeReply): void => {
     queueMicrotask(() => emitOut({ id: command.id, type: 'response', command: command.type, ...result }));
   };
@@ -102,7 +108,7 @@ function createFakeAttachedPi(initialSessionId: string, beforeStateReply?: () =>
               reply(command, { success: true, data: { sessionId } });
               return;
             case 'abort':
-              reply(command, { success: true });
+              reply(command, { success: true, data: { didRequestAbort: streaming } });
               return;
             case 'prompt': {
               if (!promptReply.success) {
@@ -314,6 +320,7 @@ describe('PiRpcBackend over an attached shared-terminal channel', () => {
     const { backend } = createAttachedBackend(fake);
     const { sessionId } = await backend.startSession();
     fake.detach(false);
+    fake.setStreaming(true);
     await Promise.all([backend.cancel(sessionId), backend.cancel(sessionId)]);
     expect(fake.opens).toHaveLength(2);
   });
@@ -370,8 +377,8 @@ describe('PiRpcBackend over an attached shared-terminal channel', () => {
     const admission = await submission.admission;
     expect(admission.status).toBe('rejected_before_effect');
     // "Not now", not "never": the row stays retryable once the terminal is back on the session.
-    expect(admission.status !== 'accepted' && admission.error).toBeInstanceOf(ProviderPromptSubmissionRejectedBeforeEffectError);
-    expect(admission.status !== 'accepted' && admission.error).toMatchObject({ reason: 'provider_unavailable_before_acceptance' });
+    expect(admission.status === 'rejected_before_effect' && admission.error).toBeInstanceOf(ProviderPromptSubmissionRejectedBeforeEffectError);
+    expect(admission).toMatchObject({ error: { reason: 'provider_unavailable_before_acceptance' } });
     expect(fake.commands.flat().map((command) => command.type)).not.toContain('prompt');
     // The host already posted the fence notice; the refused re-attach adds none.
     await flushIo();
@@ -466,45 +473,33 @@ describe('PiRpcBackend over an attached shared-terminal channel', () => {
     const { sessionId } = await backend.startSession();
     fake.setPromptReply({
       success: false,
-      error: 'pi_shared_prompt_contested',
+      error: 'Unable to confirm delivery to the Pi terminal',
       data: { outcome: PI_SHARED_CONTROL_INDETERMINATE_OUTCOME },
     });
 
-    const evidence = await backend.sendPromptWithEvidence(sessionId, 'hi');
-
-    expect(evidence.kind).toBe('effect_may_have_occurred');
-    if (evidence.kind === 'effect_may_have_occurred') await evidence.finalResponseEvidence.catch(() => undefined);
+    const submission = backend.sendPromptWithAdmission(sessionId, 'hi');
+    const completion = expect(submission.completion).rejects.toThrow();
+    expect(await submission.admission).toMatchObject({ status: 'effect_may_have_occurred' });
+    await completion;
   });
 
-  // A web turn paused by compaction is continued with a follow-up prompt. In shared mode a busy
-  // terminal answers it with pi_shared_busy, which must wait like Pi's own busy refusal.
-  it('keeps a compaction-paused web turn alive when the terminal is busy for its continuation', async () => {
+  it('leaves native compaction and continuation to Pi after handoff', async () => {
     const fake = createFakeAttachedPi('pi-terminal-session');
-    const { backend } = createAttachedBackend(fake, {
-      HAPPIER_PI_RPC_AGENT_END_SETTLE_MS: '15',
-      HAPPIER_PI_RPC_COMPACTION_RESUME_GRACE_MS: '25',
-      HAPPIER_PI_RPC_TURN_STALL_TIMEOUT_MS: '100',
-    });
+    const { backend } = createAttachedBackend(fake);
     const { sessionId } = await backend.startSession();
-    fake.setPromptScript(
-      [
-        'response',
-        { type: 'agent_start' },
-        { type: 'agent_end', willRetry: false },
-        { type: 'compaction_start', reason: 'threshold', compactionId: 'compact-1' },
-        { type: 'compaction_end', reason: 'threshold', compactionId: 'compact-1', willRetry: false, result: { tokensBefore: 1800 } },
-      ],
-      [{ respond: { success: false, error: PI_SHARED_CONTROL_BUSY_ERROR } }],
-      [
-        'response',
-        { type: 'agent_start' },
-        { type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'continued' } },
-        { type: 'agent_end', willRetry: false },
-      ],
-    );
+    fake.setPromptScript([
+      'response',
+      { type: 'agent_start' },
+      { type: 'agent_end', willRetry: false },
+      { type: 'compaction_start', reason: 'threshold', compactionId: 'compact-1' },
+      { type: 'compaction_end', reason: 'threshold', compactionId: 'compact-1', willRetry: false, result: { tokensBefore: 1800 } },
+    ]);
 
-    await expect(backend.sendPrompt(sessionId, 'compact and continue')).resolves.toBeUndefined();
-    expect(fake.commands.flat().filter((command) => command.type === 'prompt')).toHaveLength(3);
+    const submission = backend.sendPromptWithAdmission(sessionId, 'compact and continue');
+    expect(await submission.admission).toEqual({ status: 'terminal_handoff' });
+    await submission.completion;
+    await flushIo();
+    expect(promptCommands(fake)).toHaveLength(1);
   });
 
   // The terminal can start a run after the web row was handed to the runner but before the bridge
@@ -530,7 +525,7 @@ describe('PiRpcBackend over an attached shared-terminal channel', () => {
     fake.emitOut({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'terminal answer' } });
     fake.emitOut({ type: 'agent_end', willRetry: false });
 
-    expect((await submission.admission).status).toBe('accepted');
+    expect((await submission.admission).status).toBe('terminal_handoff');
     await submission.completion;
     expect(promptCommands(fake)).toHaveLength(2);
     // A wait is not a provider failure: no error chip in the transcript.
@@ -553,7 +548,7 @@ describe('PiRpcBackend over an attached shared-terminal channel', () => {
     await flushIo();
 
     expect(admission.status).toBe('rejected_before_effect');
-    expect(admission.status !== 'accepted' && admission.error).toMatchObject({ reason: 'provider_unavailable_before_acceptance' });
+    expect(admission).toMatchObject({ error: { reason: 'provider_unavailable_before_acceptance' } });
     expect(promptCommands(fake)).toHaveLength(1);
     expect(fake.commands.flat().map((command) => command.type)).toContain('abort');
   });
@@ -612,56 +607,26 @@ describe('PiRpcBackend over an attached shared-terminal channel', () => {
     }
   });
 
-  // Pi swallows a failed prompt preflight (no model or auth, an input handler took it) without a
-  // run or a response, and the bridge would keep refusing every later web prompt as busy.
-  it('releases a web prompt Pi never started once its response deadline passes', async () => {
+  it.each([false, true])('keeps a lost handoff response uncertain without aborting or resending (Pi busy: %s)', async (isStreaming) => {
     const fake = createFakeAttachedPi('pi-terminal-session');
     const { backend } = createAttachedBackend(fake);
     const { sessionId } = await backend.startSession();
     fake.setPromptScript([]);
+    fake.setStreaming(isStreaming);
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
-      const submission = backend.sendPromptWithAdmission(sessionId, 'needs a model');
-      let settled = false;
-      void submission.completion.then(() => { settled = true; }, () => { settled = true; });
+      const submission = backend.sendPromptWithAdmission(sessionId, 'may have reached Pi');
+      const completion = expect(submission.completion).rejects.toThrow(/timed out/i);
       await flushIo();
+      await vi.advanceTimersByTimeAsync(PI_SHARED_CONTROL_RESPONSE_TIMEOUT_MS);
+      await flushIo();
+
+      expect((await submission.admission).status).toBe('effect_may_have_occurred');
+      await completion;
       expect(promptCommands(fake)).toHaveLength(1);
-
-      await vi.advanceTimersByTimeAsync(30_000);
-      await flushIo();
-
-      expect((await submission.admission).status).toBe('effect_may_have_occurred');
-      expect(fake.commands.flat().map((command) => command.type)).toContain('abort');
-      expect(settled).toBe(true);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  // A run in `_prepareRun` (slow before_agent_start handlers) is past preflight: Pi reports it as
-  // streaming and would cancel it on abort. The deadline releases only a Pi that is idle.
-  it('never aborts a slow-starting web run when the response deadline passes', async () => {
-    const fake = createFakeAttachedPi('pi-terminal-session');
-    const { backend } = createAttachedBackend(fake);
-    const { sessionId } = await backend.startSession();
-    fake.setPromptScript([]);
-    fake.setStreaming(true);
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-    try {
-      const submission = backend.sendPromptWithAdmission(sessionId, 'slow to start');
-      let settled = false;
-      void submission.completion.then(() => { settled = true; }, () => { settled = true; });
-      await flushIo();
-
-      await vi.advanceTimersByTimeAsync(30_000);
-      await flushIo();
-
-      expect((await submission.admission).status).toBe('effect_may_have_occurred');
       expect(fake.commands.flat().map((command) => command.type)).not.toContain('abort');
-      expect(settled).toBe(false);
     } finally {
       vi.useRealTimers();
-      await backend.dispose();
     }
   });
 
@@ -690,7 +655,7 @@ describe('PiRpcBackend over an attached shared-terminal channel', () => {
       await flushIo();
 
       expect(promptCommands(fake)).toHaveLength(2);
-      expect((await submission.admission).status).toBe('accepted');
+    expect((await submission.admission).status).toBe('terminal_handoff');
     } finally {
       vi.useRealTimers();
     }
@@ -705,9 +670,8 @@ const userInputMarker = (text: string): BridgeRecord => ({
 });
 
 /**
- * Event orders observed live from the v6 bridge in a real Pi 1.5.2 TUI (Lane A R1 probe). Unlike
- * Pi RPC mode, `agent_start` (and a first-turn system message) precede the web prompt's response,
- * and the terminal-input marker follows `agent_start`.
+ * An attached bridge acknowledges handoff and projects Pi's user markers and turns.
+ * The runtime leaves native turn ownership with Pi for both terminal and Happier input.
  */
 describe('ACP runtime over the attached channel with shared-mode event order', () => {
   async function startRuntime(hostOwnsKeepAlive = false) {
@@ -730,6 +694,7 @@ describe('ACP runtime over the attached channel with shared-mode event order', (
       permissionHandler: createApprovedPermissionHandler(),
       onThinkingChange: (thinking) => { if (hostOwnsKeepAlive) keepAlive(thinking, 'local'); },
       keepAliveOwner: hostOwnsKeepAlive ? 'host' : 'runtime',
+      promptTurnOwner: 'provider',
       ensureBackend: async () => backend,
     });
     await runtime.startOrLoad({ resumeId: null });
@@ -747,37 +712,30 @@ describe('ACP runtime over the attached channel with shared-mode event order', (
     expect(keepAlive.mock.calls).toEqual([[true, 'local'], [false, 'local']]);
   });
 
-  it('keeps a web prompt one Happier turn when agent_start precedes its acceptance', async () => {
+  it('projects a prompt handed off by Happier once, using the same native input marker as terminal prompts', async () => {
     const { fake, runtime, committedUserRows, count } = await startRuntime();
     const webMessage = { role: 'user', content: [{ type: 'text', text: 'hi' }] };
-    fake.setPromptReply({ success: true, data: { disposition: 'started' } });
     fake.setPromptScript([
-      { type: 'agent_start' },
-      { type: 'message_start', message: { role: 'system', content: [] } },
-      { type: 'message_end', message: { role: 'system', content: [] } },
       'response',
+      { type: 'agent_start' },
       { type: 'message_start', message: webMessage },
+      userInputMarker('hi'),
       { type: 'message_end', message: webMessage },
       { type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'hello back' } },
       { type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: 'hello back' }], stopReason: 'stop' } },
       { type: 'agent_end', willRetry: false },
     ]);
 
-    runtime.beginTurn();
     await runtime.sendPrompt('hi');
     await vi.waitFor(() => expect(count('task_complete')).toBe(1));
 
     expect(count('task_started')).toBe(1);
-    // The web row is committed by pending-queue settlement; the runtime observes no user input.
-    expect(committedUserRows).toEqual([]);
+    expect(committedUserRows).toEqual(['hi']);
   });
 
-  it('fails the web turn when its run errors after agent_start preceded acceptance', async () => {
-    const fake = createFakeAttachedPi('pi-terminal-session');
-    const { backend } = createAttachedBackend(fake);
-    const { sessionId } = await backend.startSession();
+  it('reports a native model failure after successful handoff in the session', async () => {
+    const { fake, runtime, sent } = await startRuntime();
     const webMessage = { role: 'user', content: [{ type: 'text', text: 'hi' }] };
-    fake.setPromptReply({ success: true, data: { disposition: 'started' } });
     fake.setPromptScript([
       { type: 'agent_start' },
       'response',
@@ -787,7 +745,8 @@ describe('ACP runtime over the attached channel with shared-mode event order', (
       { type: 'agent_end', willRetry: false },
     ]);
 
-    await expect(backend.sendPrompt(sessionId, 'hi')).rejects.toThrow(/model exploded/);
+    await expect(runtime.sendPrompt('hi')).resolves.toBeUndefined();
+    await vi.waitFor(() => expect(JSON.stringify(sent)).toContain('model exploded'));
   });
 
   it('lets a web prompt wait behind an adopted terminal run without failing it, then runs the prompt', async () => {
@@ -804,17 +763,16 @@ describe('ACP runtime over the attached channel with shared-mode event order', (
       ],
     );
 
-    runtime.beginTurn();
     const web = runtime.sendPrompt('from the web');
     await vi.waitFor(() => expect(promptCommands(fake)).toHaveLength(1));
     await flushIo();
     fake.emitOut({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'terminal answer' } });
     fake.emitOut({ type: 'agent_end', willRetry: false });
     await web;
-    await vi.waitFor(() => expect(count('task_complete')).toBe(1));
+    await vi.waitFor(() => expect(count('task_complete')).toBe(2));
 
     expect(promptCommands(fake)).toHaveLength(2);
-    expect(count('task_started')).toBe(1);
+    expect(count('task_started')).toBe(2);
     expect(sent.filter((message) => message?.type === 'turn_failed' || message?.type === 'turn_aborted')).toEqual([]);
   });
 
@@ -831,14 +789,13 @@ describe('ACP runtime over the attached channel with shared-mode event order', (
         { type: 'agent_end', willRetry: false },
       ],
     );
-    runtime.beginTurn();
     const web = runtime.sendPrompt('from the web');
     await vi.waitFor(() => expect(promptCommands(fake)).toHaveLength(1));
     await flushIo();
     fake.emitOut({ type: 'message_end', message: { role: 'assistant', content: [], stopReason: 'error', errorMessage: 'terminal model exploded' } });
     fake.emitOut({ type: 'agent_end', willRetry: false });
     await web;
-    await vi.waitFor(() => expect(count('task_complete')).toBe(1));
+    await vi.waitFor(() => expect(count('task_complete')).toBe(2));
 
     expect(promptCommands(fake)).toHaveLength(2);
     expect(sent.filter((message) => message?.type === 'turn_failed' || message?.type === 'turn_aborted')).toEqual([]);

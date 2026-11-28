@@ -22,11 +22,13 @@ import { readPendingLocalId } from '@happier-dev/protocol';
 import { readNewestSessionModelsMetadataStateV1 } from '@happier-dev/agents';
 import {
   resolveProviderPromptFailureDeliveryReason,
+  type ProviderPromptTurnOwner,
   type ProviderPromptWithMeta,
   type ProviderTurnCompletionResult,
 } from '@/agent/runtime/providerPromptSubmission';
 
 type PromptRuntime = {
+  promptTurnOwner?: ProviderPromptTurnOwner;
   beginTurn: () => void;
   startOrLoad: (opts: { resumeId?: string; importHistory?: boolean; deferPendingDrain?: boolean }) => Promise<unknown>;
   drainPendingAfterStartOrLoad?: () => Promise<void>;
@@ -229,7 +231,7 @@ export async function runPermissionModePromptLoop(opts: {
   const confirmQueuedUserMessageDeliveredToProvider = (
     message: QueuedPermissionModeMessage,
     appliedModelId?: string | null,
-    delivery?: Readonly<{ kind: 'command' }>,
+    delivery?: Readonly<{ kind: 'command' | 'terminal_handoff' }>,
   ): void => {
     const localIds = normalizePendingDeliveryLocalIds(message.userMessageLocalIds);
     if (localIds.length !== 1) return;
@@ -516,7 +518,8 @@ export async function runPermissionModePromptLoop(opts: {
     // entire carry-over context onto the next message.
     let pendingReplaySeedSettlement: (() => Promise<unknown>) | null = null;
     let replaySeedSettlement: Promise<unknown> | null = null;
-    const confirmProviderAccepted = (): void => {
+    const providerOwnsPromptTurn = opts.runtime.promptTurnOwner === 'provider';
+    const confirmProviderDelivery = (delivery?: Readonly<{ kind: 'terminal_handoff' }>): void => {
       if (didConfirmProviderAccepted) return;
       didConfirmProviderAccepted = true;
       const settle = pendingReplaySeedSettlement;
@@ -524,7 +527,7 @@ export async function runPermissionModePromptLoop(opts: {
       // The seed owner reports its own failures and never rejects; the promise is
       // awaited below so retirement is durable before the next prompt resolves.
       if (settle) replaySeedSettlement = settle();
-      confirmQueuedUserMessageDeliveredToProvider(message, appliedModelIdForPrompt);
+      confirmQueuedUserMessageDeliveredToProvider(message, delivery ? undefined : appliedModelIdForPrompt, delivery);
     };
     const awaitReplaySeedSettlement = async (): Promise<void> => {
       const settlement = replaySeedSettlement;
@@ -536,7 +539,9 @@ export async function runPermissionModePromptLoop(opts: {
       turnInFlight = true;
       let shouldApplyFreshSessionSystemPrompt = pendingFreshSessionSystemPrompt;
       const localId = typeof message.message.localId === 'string' && message.message.localId ? message.message.localId : null;
-      const committedUserMessageSeq = await waitForCommittedUserPromptBoundary(opts.session, localId);
+      const committedUserMessageSeq = providerOwnsPromptTurn
+        ? null
+        : await waitForCommittedUserPromptBoundary(opts.session, localId);
       if (opts.shouldExit()) {
         shouldSendReady = false;
         break;
@@ -547,14 +552,16 @@ export async function runPermissionModePromptLoop(opts: {
       const startSeqExclusive = committedUserMessageSeq !== null && lastObservedMessageSeq !== null
         ? Math.max(committedUserMessageSeq, lastObservedMessageSeq)
         : committedUserMessageSeq ?? lastObservedMessageSeq;
-      if (typeof opts.session.beginTurnAssistantTextSnapshot === 'function') {
+      if (!providerOwnsPromptTurn && typeof opts.session.beginTurnAssistantTextSnapshot === 'function') {
         const turnToken = opts.session.beginTurnAssistantTextSnapshot({
           startSeqExclusive,
         });
         readyTurnContext = { turnToken, startSeqExclusive };
       }
-      opts.runtime.beginTurn();
-      didBeginRuntimeTurn = true;
+      if (!providerOwnsPromptTurn) {
+        opts.runtime.beginTurn();
+        didBeginRuntimeTurn = true;
+      }
       if (!wasStarted) {
         const runtimeStart = await ensureRuntimeStarted();
         if (opts.shouldExit()) {
@@ -656,15 +663,18 @@ export async function runPermissionModePromptLoop(opts: {
             text: providerPrompt,
             localId,
             ...(dispatchMeta ? { meta: dispatchMeta as Record<string, unknown> } : {}),
-            onProviderPromptAccepted: confirmProviderAccepted,
+            onProviderPromptAccepted: () => confirmProviderDelivery(),
+            ...(providerOwnsPromptTurn
+              ? { onProviderPromptHandedOff: () => confirmProviderDelivery({ kind: 'terminal_handoff' }) }
+              : {}),
           });
-          confirmProviderAccepted();
+          if (!providerOwnsPromptTurn) confirmProviderDelivery();
         } else {
           didAttemptProviderSend = true;
           await opts.runtime.sendPrompt(providerPrompt);
-          confirmProviderAccepted();
+          if (!providerOwnsPromptTurn) confirmProviderDelivery();
         }
-        // Retirement was already started by `confirmProviderAccepted`; awaiting it here
+        // Retirement was already started by the delivery callback. Awaiting it here
         // keeps an ordinary turn's ordering unchanged. An accepted prompt whose turn
         // then fails skips this line, so the `finally` below awaits it instead.
         await awaitReplaySeedSettlement();
@@ -693,7 +703,7 @@ export async function runPermissionModePromptLoop(opts: {
       }
       if (!isAbortLikeError(error)) {
         let surfacedStructuredFailure = false;
-        if (typeof opts.runtime.failTurn === 'function') {
+        if (!providerOwnsPromptTurn && typeof opts.runtime.failTurn === 'function') {
           try {
             const result = await opts.runtime.failTurn(error);
             surfacedStructuredFailure = result !== false;
@@ -731,7 +741,7 @@ export async function runPermissionModePromptLoop(opts: {
       overrideSync.syncFromMetadata();
       // Once a turn began, the runtime flush owns provider activity, including native work
       // that outlives command callback completion. Setup/exit paths have no runtime flush.
-      if (!didBeginRuntimeTurn || opts.shouldExit()) opts.setThinking(false);
+      if (!providerOwnsPromptTurn && (!didBeginRuntimeTurn || opts.shouldExit())) opts.setThinking(false);
       opts.keepAlive();
       if (shouldSendReady && !opts.shouldExit()) {
         opts.sendReady(readyTurnContext);

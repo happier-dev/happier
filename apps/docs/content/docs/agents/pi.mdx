@@ -53,10 +53,15 @@ matches, Pi starts a new one.
   Development builds only. Released versions still show the Happier terminal view for Pi.
 </Callout>
 
-In development builds, `happier pi` started in your own terminal opens Pi's native
-interface, and Happier joins the same Pi session through its bridge extension. You keep
-typing in Pi as usual, and the session also appears in Happier:
+Turn on **Use Pi's native terminal** in Pi's provider settings, then run `happier pi`
+in your own terminal. Pi opens its native interface and the same session appears in
+Happier. The setting is off by default and takes effect the next time you start Pi.
 
+- Typing in Happier and talking to the session by voice both send to the open Pi
+  process. Automatic voice playback in this mode requires an updated Happier app.
+  It reads the next completed reply in the session, which may be a reply to a
+  message someone typed in the terminal. Keep the setting off for the existing
+  voice experience with Happier 0.2.23.
 - Prompts you type in the terminal, and Pi's replies, show up in the Happier conversation.
   The session shows as working while a terminal run is in progress.
 - A message sent from Happier runs in the same Pi process and session file, so the terminal
@@ -65,8 +70,8 @@ typing in Pi as usual, and the session also appears in Happier:
   ends.
 - **Stop** in Happier stops the current run, including one you started in the terminal. Like
   pressing Esc, it moves messages you had queued in Pi back into the editor. A Happier message
-  that was still waiting is not sent; it shows as temporarily unavailable, and you can send it
-  again.
+  still waiting in Happier is withdrawn. If Pi is preparing a message and cannot confirm
+  cancellation, it may start afterward. You can stop the active run once it appears.
 - You can switch Pi's model from Happier.
 
 Pi owns the session here, so some controls stay in the terminal:

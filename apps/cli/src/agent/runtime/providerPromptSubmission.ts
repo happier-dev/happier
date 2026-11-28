@@ -43,11 +43,13 @@ export function resolveProviderPromptFailureDeliveryReason(
 export type ProviderPromptSubmissionCallbacks =
   | Readonly<{
       onProviderPromptAccepted?: () => void;
+      onProviderPromptHandedOff?: () => void;
       onProviderPromptSubmitted?: never;
     }>
   | Readonly<{
       onProviderPromptSubmitted: () => Promise<void>;
       onProviderPromptAccepted?: never;
+      onProviderPromptHandedOff?: never;
     }>;
 
 export type ProviderPromptWithMeta = Readonly<{
@@ -55,6 +57,8 @@ export type ProviderPromptWithMeta = Readonly<{
   localId?: string | null;
   meta?: Record<string, unknown>;
 }> & ProviderPromptSubmissionCallbacks;
+
+export type ProviderPromptTurnOwner = 'host' | 'provider';
 
 /** Final output captured by the turn owner, independent of subsequent provider activity. */
 export type ProviderTurnCompletionResult = Readonly<{

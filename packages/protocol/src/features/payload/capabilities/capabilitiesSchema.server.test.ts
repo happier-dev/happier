@@ -24,6 +24,15 @@ describe('CapabilitiesSchema (server capabilities)', () => {
     }).success).toBe(false);
   });
 
+  it('advertises terminal handoff independently from existing Pending protocol versions', () => {
+    const legacySession = { pendingInput: { protocolVersion: 2 } };
+
+    expect(CapabilitiesSchema.parse({ session: legacySession }).session.pendingTerminalHandoff).toBeUndefined();
+    expect(CapabilitiesSchema.parse({
+      session: { ...legacySession, pendingTerminalHandoff: true },
+    }).session.pendingTerminalHandoff).toBe(true);
+  });
+
   it('parses server identity capabilities outside the strict server capability object', () => {
     const parsed = CapabilitiesSchema.parse({
       server: {

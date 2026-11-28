@@ -8,8 +8,9 @@ import { resolveServerHttpBaseUrl } from '@/session/transport/http/serverHttpBas
 import { emitSocketWithAck } from '@/session/transport/shared/socketAck';
 import {
     ACCEPTED_PENDING_SETTLEMENT_EVENT_V1,
-    AcceptedPendingSettlementRequestV1Schema,
+    AcceptedPendingSettlementRequestSchema,
     AcceptedPendingSettlementResponseV1Schema,
+    AcceptedPendingSettlementResponseV2Schema,
     normalizePendingDeliveryStatusV1,
     parsePendingDeliveryStatusV1,
     PendingProviderActionSchema,
@@ -572,7 +573,7 @@ function createAcceptedPendingSettlementAckSocket(
             }
             return await target.emitWithAck(
                 ACCEPTED_PENDING_SETTLEMENT_EVENT_V1,
-                AcceptedPendingSettlementRequestV1Schema.parse(payload),
+                AcceptedPendingSettlementRequestSchema.parse(payload),
             );
         },
         timeout: (ms) => build(target.timeout(ms)),
@@ -873,18 +874,21 @@ export async function resolveAcceptedPendingQueueV2Delivery(params: {
     socket: Socket<ServerToClientEvents, ClientToServerEvents>;
     sessionId: string;
     localId: string;
+    delivery?: 'terminal_handoff';
 }): Promise<{ didResolve: boolean; pendingQueueState?: KnownPendingQueueState; message?: PendingQueueMaterializedMessage | null }> {
     const localId = requirePendingLocalId(params.localId);
+    const handedOff = params.delivery === 'terminal_handoff';
     const raw = await emitSocketWithAck<Record<string, unknown>>({
         socket: createAcceptedPendingSettlementAckSocket(params.socket),
         event: ACCEPTED_PENDING_SETTLEMENT_EVENT_V1,
         payload: {
-            v: 1,
+            ...(handedOff ? { v: 2, outcome: 'handed_off' } : { v: 1 }),
             sessionId: params.sessionId,
             localId,
         },
     });
-    const parsedAck = AcceptedPendingSettlementResponseV1Schema.safeParse(raw);
+    const responseSchema = handedOff ? AcceptedPendingSettlementResponseV2Schema : AcceptedPendingSettlementResponseV1Schema;
+    const parsedAck = responseSchema.safeParse(raw);
     if (!parsedAck.success) {
         throw new Error('Invalid pending delivery accepted settlement acknowledgement');
     }
@@ -899,7 +903,7 @@ export async function resolveAcceptedPendingQueueV2Delivery(params: {
     const pendingQueueState = readKnownPendingQueueState(ack);
     const didResolve = ack.didResolve;
     const message = 'message' in ack ? readMaterializedMessageFromAck(ack) : null;
-    if ((didResolve || 'message' in ack) && message?.localId !== localId) {
+    if (!handedOff && (didResolve || 'message' in ack) && message?.localId !== localId) {
         throw new Error('Invalid pending delivery accepted settlement acknowledgement');
     }
     return {

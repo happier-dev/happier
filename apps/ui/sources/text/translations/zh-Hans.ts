@@ -4392,7 +4392,11 @@ export const zhHans: TranslationStructure = {
                 title: "Grok Build"
             },
             pi: {
-                title: "Pi"
+                title: "Pi",
+                nativeTerminal: {
+                    title: "使用 Pi 的原生终端",
+                    subtitle: "适用于在终端启动的新 Pi 会话。在原生模式下使用自动朗读需要更新 Happier 应用。",
+                },
             },
             qwen: {
                 title: "Qwen Code"

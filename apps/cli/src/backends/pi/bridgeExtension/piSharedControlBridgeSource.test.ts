@@ -1,4 +1,3 @@
-import { AsyncResource } from 'node:async_hooks';
 import { EventEmitter } from 'node:events';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type AddressInfo, type Server, type Socket } from 'node:net';
@@ -8,16 +7,12 @@ import { pathToFileURL } from 'node:url';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createDeferred } from '@/testkit/async/deferred';
-
 import { mapPiRpcEventToAgentMessages } from '../rpc/eventMapping';
 import { attachPiRpcJsonlLineReader } from '../rpc/attachPiRpcJsonlLineReader';
 import { parsePiExtensionUserInput } from '../rpc/piExtensionUiRequest';
 import {
   PI_SHARED_CONTROL_ADMISSION_FRAME,
   PI_SHARED_CONTROL_BUSY_ERROR,
-  PI_SHARED_CONTROL_INDETERMINATE_OUTCOME,
-  PI_SHARED_CONTROL_RESPONSE_TIMEOUT_MS,
   PI_SHARED_CONTROL_SIDE_CHANNEL_EVENT,
   PI_SHARED_CONTROL_UNSUPPORTED_COMMAND_ERROR,
   PiSharedControlBridgeFrameSchema,
@@ -192,16 +187,6 @@ describe('Pi shared-control bridge (TUI mode)', () => {
       .toBeGreaterThan(calls);
   }
 
-  async function dispatchWebPrompt(bridge: Awaited<ReturnType<typeof startBridge>>, id: string, text: string) {
-    // Pi awaits input and before_agent_start within the native sendUserMessage call chain.
-    const dispatch = createDeferred<typeof bridge.emit>();
-    bridge.api.sendUserMessage.mockImplementationOnce(() => {
-      dispatch.resolve(AsyncResource.bind(bridge.emit));
-    });
-    await sendPrompt(bridge, id, text);
-    return dispatch.promise;
-  }
-
   async function roundTrip(bridge: Awaited<ReturnType<typeof startBridge>>, id: string) {
     bridge.runner.send({ id, type: 'get_state' });
     await expect.poll(() => bridge.runner.responses(id).length).toBe(1);
@@ -224,10 +209,8 @@ describe('Pi shared-control bridge (TUI mode)', () => {
       type: 'hello', v: 1, token: TOKEN, sessionId: 'pi-session-1', sessionFile: '/sessions/pi-session-1.jsonl',
     });
 
-    const emitWeb = await dispatchWebPrompt(bridge, 'p1', 'hello');
+    await sendPrompt(bridge, 'p1', 'hello');
     expect(bridge.api.sendUserMessage).toHaveBeenCalledExactlyOnceWith('hello', { expandPromptTemplates: true });
-    await emitWeb('input', { source: 'extension', text: 'hello' });
-    await emitWeb('before_agent_start', { messageType: 'user' });
     await bridge.emit('agent_start');
     const webMessage = user('hello');
     await bridge.emit('message_start', { message: webMessage });
@@ -317,137 +300,42 @@ describe('Pi shared-control bridge (TUI mode)', () => {
     ]);
   });
 
-  it('A5: refuses busy web prompts without sending, and accepts an idle one only at its own user message start', async () => {
+  it('refuses busy prompts before calling Pi and confirms the call once idle', async () => {
     const bridge = await startBridge();
     bridge.state.idle = false;
-    bridge.runner.send({ id: 'busy-1', type: 'prompt', message: 'web' });
-    await expect.poll(() => bridge.runner.responses('busy-1')).toEqual([
-      { id: 'busy-1', type: 'response', command: 'prompt', success: false, error: PI_SHARED_CONTROL_BUSY_ERROR },
-    ]);
-    bridge.state.idle = true;
-    bridge.state.pendingMessages = true;
-    bridge.runner.send({ id: 'busy-2', type: 'prompt', message: 'web' });
-    await expect.poll(() => bridge.runner.responses('busy-2')[0]?.error).toBe(PI_SHARED_CONTROL_BUSY_ERROR);
-    bridge.state.pendingMessages = false;
+    await sendPrompt(bridge, 'busy', 'app input');
+    expect(bridge.runner.responses('busy')[0]?.error).toBe(PI_SHARED_CONTROL_BUSY_ERROR);
     expect(bridge.api.sendUserMessage).not.toHaveBeenCalled();
 
-    const emitWeb = await dispatchWebPrompt(bridge, 'web-1', 'web');
-    expect(bridge.api.sendUserMessage.mock.calls).toEqual([['web', { expandPromptTemplates: true }]]);
-    bridge.runner.send({ id: 'busy-3', type: 'prompt', message: 'second' });
-    await expect.poll(() => bridge.runner.responses('busy-3')[0]?.error).toBe(PI_SHARED_CONTROL_BUSY_ERROR);
-    expect(bridge.api.sendUserMessage).toHaveBeenCalledTimes(1);
-
-    await emitWeb('input', { source: 'extension', text: 'web' });
-    await emitWeb('before_agent_start', { messageType: 'user' });
-    bridge.state.idle = false;
-    await bridge.emit('agent_start');
-    await roundTrip(bridge, 'before-start');
-    expect(bridge.runner.responses('web-1')).toEqual([]);
-
-    const webMessage = user('web');
-    await bridge.emit('message_start', { message: webMessage });
-    await expect.poll(() => bridge.runner.responses('web-1')).toEqual([
-      { id: 'web-1', type: 'response', command: 'prompt', success: true, data: { disposition: 'started' } },
-    ]);
-    await bridge.emit('message_end', { message: webMessage });
     bridge.state.idle = true;
-    await bridge.emit('agent_settled', { aborted: false });
-    await roundTrip(bridge, 'after');
-    expect(userInputMarkers(bridge)).toEqual([]);
-    expect(bridge.runner.responses('web-1')).toHaveLength(1);
-  });
+    bridge.state.pendingMessages = true;
+    await sendPrompt(bridge, 'queued', 'app input');
+    expect(bridge.runner.responses('queued')[0]?.error).toBe(PI_SHARED_CONTROL_BUSY_ERROR);
+    expect(bridge.api.sendUserMessage).not.toHaveBeenCalled();
 
-  it('A5: acknowledges an extension command immediately, as Pi RPC reports a handled prompt', async () => {
-    const bridge = await startBridge();
-    await sendPrompt(bridge, 'cmd-1', '/ext-cmd now');
-    await expect.poll(() => bridge.runner.responses('cmd-1')).toEqual([
-      { id: 'cmd-1', type: 'response', command: 'prompt', success: true, data: { disposition: 'handled' } },
+    bridge.state.pendingMessages = false;
+    await sendPrompt(bridge, 'idle', 'app input');
+    await expect.poll(() => bridge.runner.responses('idle')).toEqual([
+      { id: 'idle', type: 'response', command: 'prompt', success: true, data: { disposition: 'handed_off' } },
     ]);
-    expect(bridge.api.sendUserMessage.mock.calls).toEqual([['/ext-cmd now', { expandPromptTemplates: true }]]);
-    await sendPrompt(bridge, 'after-cmd', 'plain');
-    expect(bridge.api.sendUserMessage).toHaveBeenCalledTimes(2);
+    expect(bridge.api.sendUserMessage).toHaveBeenCalledExactlyOnceWith('app input', { expandPromptTemplates: true });
   });
 
-  it('A6: a contested start with identical text is indeterminate and mirrors the terminal message once', async () => {
+  it('projects actual Pi turns and emits no transcript marker for an input Pi consumed', async () => {
     const bridge = await startBridge();
-    const emitWeb = await dispatchWebPrompt(bridge, 'web-hi', 'hi');
-    await emitWeb('input', { source: 'extension', text: 'hi' });
-    await bridge.emit('input', { source: 'interactive', text: 'hi' });
-    await bridge.emit('agent_start');
-    const started = user('hi');
-    await bridge.emit('message_start', { message: started });
-    await expect.poll(() => bridge.runner.responses('web-hi')).toEqual([{
-      id: 'web-hi', type: 'response', command: 'prompt', success: false,
-      error: expect.any(String),
-      data: { outcome: PI_SHARED_CONTROL_INDETERMINATE_OUTCOME },
-    }]);
-    await bridge.emit('message_end', { message: started });
-    await bridge.emit('agent_settled', { aborted: false });
-    await roundTrip(bridge, 'sync');
-    expect(userInputMarkers(bridge)).toEqual(['hi']);
-  });
+    await sendPrompt(bridge, 'cmd', '/ext-cmd now');
+    await roundTrip(bridge, 'handled-by-pi');
+    expect(bridge.runner.responses('cmd')[0]?.data).toEqual({ disposition: 'handed_off' });
+    expect(userInputMarkers(bridge)).toEqual([]);
 
-  it('keeps an unrelated extension input visible when it starts before the web input hook', async () => {
-    const bridge = await startBridge();
-    await sendPrompt(bridge, 'web-race-extension', 'hi');
-    await bridge.emit('input', { source: 'extension', text: 'hi' });
-    await bridge.emit('before_agent_start', { messageType: 'user' });
-    await bridge.emit('agent_start');
-    const other = user('hi');
-    await bridge.emit('message_start', { message: other });
-    await bridge.emit('message_end', { message: other });
-    await bridge.emit('agent_settled', { aborted: false });
-    await roundTrip(bridge, 'sync');
-    expect(bridge.runner.responses('web-race-extension')[0]).toMatchObject({
-      success: false,
-      data: { outcome: PI_SHARED_CONTROL_INDETERMINATE_OUTCOME },
-    });
-    expect(userInputMarkers(bridge)).toEqual(['hi']);
-  });
-
-  it('A6: a terminal idle start already in preflight contests the next web prompt', async () => {
-    const bridge = await startBridge();
-    await bridge.emit('input', { source: 'interactive', text: 'hi' });
-    const emitWeb = await dispatchWebPrompt(bridge, 'web-race', 'hi');
-    await emitWeb('input', { source: 'extension', text: 'hi' });
-    await bridge.emit('agent_start');
-    const terminal = user('hi');
-    await bridge.emit('message_start', { message: terminal });
-    await expect.poll(() => bridge.runner.responses('web-race')[0]?.data)
-      .toEqual({ outcome: PI_SHARED_CONTROL_INDETERMINATE_OUTCOME });
-    await bridge.emit('message_end', { message: terminal });
-    await roundTrip(bridge, 'sync');
-    expect(userInputMarkers(bridge)).toEqual(['hi']);
-  });
-
-  it('A6: a web prompt accepted first, then terminal "hi", mirrors only the terminal message once', async () => {
-    const bridge = await startBridge();
-    const emitWeb = await dispatchWebPrompt(bridge, 'web-first', 'hi');
-    await emitWeb('input', { source: 'extension', text: 'hi' });
-    await emitWeb('before_agent_start', { messageType: 'user' });
-    await bridge.emit('agent_start');
-    const web = user('hi');
-    await bridge.emit('message_start', { message: web });
-    await bridge.emit('message_end', { message: web });
-    await bridge.emit('input', { source: 'interactive', text: 'hi', streamingBehavior: 'steer' });
-    const terminal = user('hi');
-    await bridge.emit('message_start', { message: terminal });
-    await bridge.emit('message_end', { message: terminal });
-    await bridge.emit('agent_settled', { aborted: false });
-    await roundTrip(bridge, 'sync');
-    expect(bridge.runner.responses('web-first')[0]).toMatchObject({ success: true });
-    expect(userInputMarkers(bridge)).toEqual(['hi']);
-  });
-
-  it('A6: a web prompt still unresolved when the run settles is indeterminate', async () => {
-    const bridge = await startBridge();
-    const emitWeb = await dispatchWebPrompt(bridge, 'web-lost', 'hi');
-    await emitWeb('input', { source: 'extension', text: 'hi' });
-    await bridge.emit('agent_settled', { aborted: true });
-    await expect.poll(() => bridge.runner.responses('web-lost')[0]?.data)
-      .toEqual({ outcome: PI_SHARED_CONTROL_INDETERMINATE_OUTCOME });
-    await sendPrompt(bridge, 'web-next', 'next');
-    expect(bridge.api.sendUserMessage).toHaveBeenCalledTimes(2);
+    await sendPrompt(bridge, 'app', 'text before extension rewrite');
+    for (const text of ['identical committed input', 'identical committed input']) {
+      const message = user(text);
+      await bridge.emit('message_start', { message });
+      await bridge.emit('message_end', { message });
+    }
+    await roundTrip(bridge, 'two-turns');
+    expect(userInputMarkers(bridge)).toEqual(['identical committed input', 'identical committed input']);
   });
 
   it('A7: terminal user messages reach the runner as the existing observed-input marker', async () => {
@@ -464,109 +352,27 @@ describe('Pi shared-control bridge (TUI mode)', () => {
     expect(userInputMarkers(bridge)).toEqual(['line 1\nline 2', 'string content']);
   });
 
-  it('A8: abort responds once Pi is idle, or immediately when already idle', async () => {
+  it('requests active Stop and does not arm a future abort while Pi is idle', async () => {
     const bridge = await startBridge();
-    bridge.runner.send({ id: 'abort-idle', type: 'abort' });
-    await expect.poll(() => bridge.runner.responses('abort-idle')).toEqual([
-      { id: 'abort-idle', type: 'response', command: 'abort', success: true },
-    ]);
+    await sendPrompt(bridge, 'preparing', 'paused inside Pi input preparation');
+    await roundTrip(bridge, 'preparation');
+    bridge.runner.send({ id: 'stop-preparation', type: 'abort' });
+    await roundTrip(bridge, 'idle-stop');
+    expect(bridge.runner.responses('stop-preparation')[0]).toMatchObject({ success: true });
+    expect(bridge.api.abort).not.toHaveBeenCalled();
+    expect(bridge.runner.responses('preparing')[0]?.data).toEqual({ disposition: 'handed_off' });
 
     bridge.state.idle = false;
     await bridge.emit('agent_start');
-    bridge.runner.send({ id: 'abort-busy', type: 'abort' });
-    await expect.poll(() => bridge.api.abort.mock.calls.length).toBe(2);
-    await roundTrip(bridge, 'while-busy');
-    expect(bridge.runner.responses('abort-busy')).toEqual([]);
+    bridge.runner.send({ id: 'stop-run', type: 'abort' });
+    await roundTrip(bridge, 'busy-stop');
+    expect(bridge.runner.responses('stop-run')[0]).toMatchObject({ success: true });
+    expect(bridge.api.abort).toHaveBeenCalledOnce();
+
     bridge.state.idle = true;
     await bridge.emit('agent_settled', { aborted: true });
-    await expect.poll(() => bridge.runner.responses('abort-busy')).toHaveLength(1);
-    const types = bridge.runner.outRecords().map((record) => (record.type === 'response' ? `response:${String(record.id)}` : record.type));
-    expect(types.indexOf('agent_end')).toBeLessThan(types.indexOf('response:abort-busy'));
-  });
-
-  it.each(['before-input', 'after-input'] as const)('holds Stop for a web prompt paused %s', async (phase) => {
-    const bridge = await startBridge();
-    const release = createDeferred();
-    const waiting = createDeferred();
-    const finished = createDeferred();
-    const message = user('hi');
-    bridge.api.sendUserMessage.mockImplementationOnce(() => {
-      void (async () => {
-        if (phase === 'before-input') { waiting.resolve(); await release.promise; }
-        const disposition = await bridge.emit('input', { source: 'extension', text: 'hi' });
-        if ((disposition as { action?: string } | undefined)?.action === 'handled') return;
-        if (phase === 'after-input') { waiting.resolve(); await release.promise; }
-        bridge.state.idle = false;
-        await bridge.emit('before_agent_start', { messageType: 'user' });
-        await bridge.emit('agent_start');
-        await bridge.emit('message_start', { message });
-        await bridge.emit('message_end', { message });
-      })().then(finished.resolve, finished.reject);
-    });
-    await sendPrompt(bridge, 'web-paused', 'hi');
-    await waiting.promise;
-    bridge.runner.send({ id: 'stop', type: 'abort' });
-    await roundTrip(bridge, 'preflight-paused');
-    expect(bridge.runner.responses('stop')).toEqual([]);
-    expect(bridge.runner.responses('web-paused')).toEqual([]);
-
-    release.resolve();
-    await finished.promise;
-    if (phase === 'before-input') {
-      expect(bridge.state.idle).toBe(true);
-      await expect.poll(() => bridge.runner.responses('web-paused')[0]).toMatchObject({ success: false, error: expect.any(String) });
-      expect(bridge.runner.responses('web-paused')[0]).not.toHaveProperty('data');
-    } else {
-      expect(bridge.api.abort).toHaveBeenCalledTimes(2);
-      await roundTrip(bridge, 'run-started');
-      expect(bridge.runner.responses('web-paused')[0]).toMatchObject({ success: true, data: { disposition: 'started' } });
-      expect(bridge.runner.responses('stop')).toEqual([]);
-      bridge.state.idle = true;
-      await bridge.emit('agent_settled', { aborted: true });
-    }
-    await expect.poll(() => bridge.runner.responses('stop')[0]).toMatchObject({ success: true });
-    expect(userInputMarkers(bridge)).toEqual([]);
-  });
-
-  it('fails Stop if Pi never confirms withdrawal and accepts a new web prompt', async () => {
-    const bridge = await startBridge();
-    await sendPrompt(bridge, 'failed-preflight', 'hi');
-    const realNow = Date.now.bind(Date);
-    vi.spyOn(Date, 'now').mockImplementation(() => realNow() + PI_SHARED_CONTROL_RESPONSE_TIMEOUT_MS);
-    bridge.runner.send({ id: 'stop', type: 'abort' });
-    await expect.poll(() => bridge.runner.responses('stop')[0]).toMatchObject({ success: false });
-    expect(bridge.runner.responses('failed-preflight')[0]).toMatchObject({
-      success: false,
-      data: { outcome: PI_SHARED_CONTROL_INDETERMINATE_OUTCOME },
-    });
-    const emitWeb = await dispatchWebPrompt(bridge, 'web-next', 'next');
-    await emitWeb('input', { source: 'extension', text: 'next' });
-    await emitWeb('before_agent_start', { messageType: 'user' });
-    await bridge.emit('agent_start');
-    await bridge.emit('message_start', { message: user('next') });
-    await expect.poll(() => bridge.runner.responses('web-next')[0]).toMatchObject({
-      success: true,
-      data: { disposition: 'started' },
-    });
-  });
-
-  it.each(['session_compact_failed', 'session_compact'] as const)('completes Stop after manual %s without agent_settled', async (event) => {
-    const bridge = await startBridge();
-    bridge.state.idle = false;
-    await bridge.emit('session_before_compact', { reason: 'manual' });
-    bridge.runner.send({ id: 'stop', type: 'abort' });
-    await roundTrip(bridge, 'compacting');
-    expect(bridge.runner.responses('stop')).toEqual([]);
-
-    if (event === 'session_compact_failed') bridge.state.idle = true;
-    await bridge.emit(event, { reason: 'manual', aborted: event === 'session_compact_failed' });
-    if (event === 'session_compact') {
-      // Pi keeps the compaction controller active until all success handlers have returned.
-      await roundTrip(bridge, 'inside-completion-hook');
-      expect(bridge.runner.responses('stop')).toEqual([]);
-      bridge.state.idle = true;
-    }
-    await expect.poll(() => bridge.runner.responses('stop')[0]).toMatchObject({ success: true });
+    await roundTrip(bridge, 'settled');
+    expect(bridge.runner.outRecords()).toContainEqual({ type: 'agent_end', willRetry: false });
   });
 
   it('A9: sets the model and thinking level through Pi, failing when Pi refuses the model', async () => {

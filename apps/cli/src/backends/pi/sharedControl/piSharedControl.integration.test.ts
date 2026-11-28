@@ -452,18 +452,19 @@ describe('Pi shared local control (bridge in a Pi TUI child, shared-terminal hos
     expect(foreign).toMatchObject({ guidance: null, output: null, error: expect.stringContaining('pi_shared_bridge_unavailable') });
   });
 
-  it('accepts a web prompt at its own start, streams the reply, and never mirrors the web row back', async () => {
+  it('confirms handoff and projects the actual Pi input and response', async () => {
     const pi = await startSharedTerminal();
     const mark = pi.mark();
 
-    await pi.backend.sendPrompt(pi.sessionId, 'hello from the web');
+    await expect(pi.backend.sendPromptWithEvidence(pi.sessionId, 'hello from the web'))
+      .resolves.toEqual({ kind: 'terminal_handoff' });
+    await vi.waitFor(() => expect(pi.statuses(mark)).toEqual(['running', 'idle']), WAIT);
 
     await pi.waitForReport('sendUserMessage', (report) => report.content === 'hello from the web');
     expect(pi.webPrompts()).toEqual([{ content: 'hello from the web', sessionId: BOUND_SESSION_ID }]);
     expect(pi.reported('sendUserMessage')[0]).toMatchObject({ options: { expandPromptTemplates: true } });
     expect(pi.deltas(mark)).toEqual(['echo: ', 'hello from the web']);
-    // The web row is committed by Happier's pending queue; Pi's echo of it is not observed input.
-    expect(pi.userRows(mark)).toEqual([]);
+    expect(pi.userRows(mark)).toEqual(['hello from the web']);
     expect(pi.statuses(mark)).toEqual(['running', 'idle']);
   });
 
@@ -497,61 +498,44 @@ describe('Pi shared local control (bridge in a Pi TUI child, shared-terminal hos
     expect(pi.webPrompts()).toEqual([]);
 
     pi.tell({ kind: 'release' });
-    expect((await held.admission).status).toBe('accepted');
+    expect((await held.admission).status).toBe('terminal_handoff');
     await held.completion;
 
     await pi.waitForReport('sendUserMessage', (report) => report.content === 'web prompt while the terminal works');
     expect(pi.webPrompts()).toEqual([{ content: 'web prompt while the terminal works', sessionId: BOUND_SESSION_ID }]);
-    expect(pi.userRows(mark)).toEqual(['long terminal task']);
+    await vi.waitFor(() => expect(pi.statuses(mark)).toEqual(['running', 'idle', 'running', 'idle']), WAIT);
+    expect(pi.userRows(mark)).toEqual(['long terminal task', 'web prompt while the terminal works']);
     expect(pi.deltas(mark)).toEqual(['echo: ', 'long terminal task', 'echo: ', 'web prompt while the terminal works']);
     expect(pi.statuses(mark)).toEqual(['running', 'idle', 'running', 'idle']);
   });
 
-  it('keeps Stop pending through web input preflight and aborts the run as it starts', async () => {
+  it('reports an unconfirmed Stop during Pi preparation without arming a future abort', async () => {
     const pi = await startSharedTerminal();
-    const mark = pi.mark();
     await pi.arm({ kind: 'gate-preflight' });
     const prompt = pi.backend.sendPromptWithAdmission(pi.sessionId, 'web prompt in preflight');
     await pi.waitForReport('preflight_waiting');
-
-    let stopped = false;
-    const stop = pi.backend.cancel(pi.sessionId).then(() => { stopped = true; });
-    await pi.waitForReport('abort');
-    await pi.roundTrip();
-    expect(stopped).toBe(false);
+    await expect(prompt.admission).resolves.toEqual({ status: 'terminal_handoff' });
+    await expect(pi.backend.cancel(pi.sessionId)).rejects.toThrow(/confirm/i);
 
     pi.tell({ kind: 'finish-preflight' });
-    await expect(prompt.admission).resolves.toMatchObject({ status: 'accepted' });
-    await stop;
-    expect(await pi.waitForReport('settled')).toMatchObject({ text: 'web prompt in preflight', aborted: true });
-    expect(pi.reported('abort')).toHaveLength(2);
-    expect(pi.userRows(mark)).toEqual([]);
+    expect(await pi.waitForReport('settled')).toMatchObject({ text: 'web prompt in preflight', aborted: false });
+    expect(pi.reported('abort')).toEqual([]);
   });
 
-  it('stops a web run on abort and resolves the abort only once Pi has settled', async () => {
+  it('stops an active Pi turn and observes its separate settlement', async () => {
     const pi = await startSharedTerminal();
     await pi.arm({ kind: 'hold-next-run' });
     await pi.arm({ kind: 'gate-abort-settle' });
     const mark = pi.mark();
-    const promptOutcome = pi.backend.sendPrompt(pi.sessionId, 'long web task')
-      .then(() => 'completed', (error: unknown) => error);
+    await pi.backend.sendPrompt(pi.sessionId, 'long web task');
     await pi.waitForReport('holding');
 
-    let abortResolved = false;
-    const abort = pi.backend.cancel(pi.sessionId).then(() => { abortResolved = true; });
+    await pi.backend.cancel(pi.sessionId);
     await pi.waitForReport('abort_settle_waiting');
-    // Every frame Pi sent before it settled has reached the runner.
-    await pi.roundTrip();
     expect(pi.reported('abort')).toHaveLength(1);
-    expect(abortResolved).toBe(false);
-
     pi.tell({ kind: 'settle' });
-    await abort;
 
-    expect(await promptOutcome).toBe('completed');
-    // The child reports over IPC, which is not ordered with the bridge socket.
     expect(await pi.waitForReport('settled')).toEqual({ kind: 'settled', text: 'long web task', aborted: true });
-    // The run stopped before the rest of its reply.
     expect(pi.deltas(mark)).toEqual(['echo: ']);
 
     await pi.backend.sendPrompt(pi.sessionId, 'after the abort');
@@ -567,7 +551,9 @@ describe('Pi shared local control (bridge in a Pi TUI child, shared-terminal hos
     // terminal user acts once the runner has queried the reloaded Pi.
     await pi.waitForReport('state_read', (report) => report.load === 2);
 
+    const webMark = pi.mark();
     await pi.backend.sendPrompt(pi.sessionId, 'web prompt after reload');
+    await vi.waitFor(() => expect(pi.statuses(webMark)).toEqual(['running', 'idle']), WAIT);
     await pi.waitForReport('sendUserMessage', (report) => report.content === 'web prompt after reload');
     expect(pi.webPrompts()).toEqual([{ content: 'web prompt after reload', sessionId: BOUND_SESSION_ID }]);
 
@@ -601,7 +587,7 @@ describe('Pi shared local control (bridge in a Pi TUI child, shared-terminal hos
 
     expect(admission.status).toBe('rejected_before_effect');
     // Retryable once the terminal is back, not refused for good.
-    expect(admission.status !== 'accepted' && admission.error).toMatchObject({ reason: 'provider_unavailable_before_acceptance' });
+    expect(admission).toMatchObject({ error: { reason: 'provider_unavailable_before_acceptance' } });
     expect(pi.webPrompts()).toEqual([]);
     expect(pi.reported('state_read').map((report) => report.sessionId)).not.toContain('pi-session-2');
     expect(pi.userRows(switchMark)).toEqual([]);

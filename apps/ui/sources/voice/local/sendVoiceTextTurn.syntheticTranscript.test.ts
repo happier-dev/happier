@@ -146,13 +146,20 @@ describe('sendVoiceTextTurn synthetic transcript mirroring', () => {
     voiceSessionBindingStore.setState({ bindingsByConversationSessionId: initialBindings });
   });
 
-  it('submits direct-session voice input durably before immediate provider dispatch', async () => {
+  it.each([
+    { mode: 'RPC', nativeTerminal: false },
+    { mode: 'native terminal', nativeTerminal: true },
+  ])('submits direct voice durably and reads the $mode reply', async ({ nativeTerminal }) => {
     conversationMode = 'direct_session';
     const serverId = getActiveServerSnapshot().serverId;
     storage.getState().activateProfileScope({ serverId, accountId });
     const now = Date.now();
     const session = createSessionFixture({
       id: 's1', active: true, activeAt: now, encryptionMode: 'plain',
+      metadata: { ...createSessionFixture().metadata!, flavor: 'pi' },
+      ...(nativeTerminal ? { agentState: { localControl: {
+        attached: true, topology: 'shared', remoteWritable: true, canAttach: false, canDetach: false,
+      } } } : {}),
       pendingCount: 0, pendingVersion: 0,
       latestTurnId: 'old-turn', latestTurnStatus: 'completed', latestTurnStatusObservedAt: now,
       sessionTurns: { v: 1, sessionId: 's1', latestTurnId: 'old-turn', updatedAt: now, turns: [{
@@ -184,12 +191,14 @@ describe('sendVoiceTextTurn synthetic transcript mirroring', () => {
       const submittedLocalId = submission.localId;
       expect(submittedLocalId).toEqual(expect.any(String));
       await expect(enqueuePendingMessage.mock.results[0]!.value).resolves.toMatchObject({ accepted: true });
-      const user: Message = { id: 'voice-user', kind: 'user-text', text: 'send this durably',
-        seq: 12, localId: submittedLocalId!, createdAt: 2 };
+      const user: Message = { id: 'voice-user', kind: 'user-text',
+        text: nativeTerminal ? 'A message from the terminal.' : 'send this durably',
+        seq: nativeTerminal ? 10 : 12, localId: nativeTerminal ? null : submittedLocalId!, createdAt: 2 };
       const foreign: Message = { id: 'foreign-reply', kind: 'agent-text', text: 'Unrelated reply.',
         seq: 11, localId: null, createdAt: 2 };
       storage.setState({ sessionMessages: { s1: createSessionMessagesFixture({
-        messageIdsOldestFirst: [foreign.id, user.id], messagesById: { [foreign.id]: foreign, [user.id]: user },
+        messageIdsOldestFirst: nativeTerminal ? [user.id, foreign.id] : [foreign.id, user.id],
+        messagesById: { [foreign.id]: foreign, [user.id]: user },
       }) }, sessions: { s1: { ...session, latestTurnId: 'foreign-turn', sessionTurns: {
         v: 1, sessionId: 's1', latestTurnId: 'foreign-turn', updatedAt: now, turns: [{
           turnId: 'foreign-turn', status: 'completed', startedAt: 1, updatedAt: now,
@@ -197,6 +206,11 @@ describe('sendVoiceTextTurn synthetic transcript mirroring', () => {
         }],
       } } } });
       await new Promise<void>(resolve => setImmediate(resolve));
+      if (nativeTerminal) {
+        expect(speech).toHaveBeenCalledWith(foreign.text, expect.anything());
+        await sending;
+        return;
+      }
       expect(speech).not.toHaveBeenCalled();
       const reply: Message = { id: 'voice-reply', kind: 'agent-text', text: 'The bound answer.',
         seq: 13, localId: null, createdAt: 3 };

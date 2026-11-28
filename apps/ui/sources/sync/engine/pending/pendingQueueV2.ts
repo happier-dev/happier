@@ -475,6 +475,29 @@ export async function setPendingMessageSendState(
     storage.getState().upsertPendingMessage(sessionId, { ...existing, sendState });
 }
 
+/** Runtime RPC proved server Pending custody for this direct send's transient projection. */
+export function adoptRuntimeAdmittedPendingProjection(
+    sessionId: string,
+    localId: string,
+    scope: ServerAccountScope,
+): boolean {
+    const state = storage.getState();
+    const projection = state.sessionPending[sessionId]?.messages.find((message) =>
+        message.localId === localId && message.source === 'local_outbound' && !message.pendingOutboxScope
+    );
+    if (!projection) return false;
+
+    supersedePendingSnapshotRefreshForLocalWrite(scope, sessionId);
+    state.upsertPendingMessage(sessionId, {
+        ...projection,
+        updatedAt: nowServerMs(),
+        source: 'server_pending',
+        deliveryStatus: 'accepted',
+        sendState: undefined,
+    });
+    return true;
+}
+
 function findPendingOutboxProjection(
     sessionId: string,
     localId: string,

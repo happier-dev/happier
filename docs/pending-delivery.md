@@ -228,6 +228,29 @@ not-found responses without exact committed proof, and unexpected resolution
 crashes. The diagnostic is present at the default session file log level and
 does not write to the provider's interactive terminal.
 
+## Pi terminal handoff (development)
+
+The native Pi bridge confirms when it invokes the stock Pi submission API. Pi
+can still transform, consume or reject the input during preparation. Happier
+projects the actual user turn from Pi's events. An error after confirmed handoff
+is visible in the terminal. When the bridge reply is lost, the original Pending
+item follows the existing uncertain-delivery path.
+
+The exact settlement socket event `pending-delivery-accepted-v1` also accepts
+`{ v: 2, sessionId, localId, outcome: 'handed_off' }`. The current authenticated
+session publisher can retire an active provider claim for that exact `localId`.
+The server updates the existing Pending counts, version, activation and
+participant projections in one transaction. The successful response carries
+`didResolve`, `pendingCount`, `pendingBlockedCount` and `pendingVersion`.
+An already absent row returns current state with `didResolve: false`. Removing
+a row publishes the existing Pending update. Settlement retries contact the
+server only. V1 keeps its transcript-writing acceptance contract.
+
+Eligible CLI launches require `capabilities.session.pendingTerminalHandoff`
+to be `true` in `GET /v1/features`. Servers that omit it use the existing RPC
+launch path. The capability is separate from the Pending input protocol version,
+which describes the broader queue contract.
+
 ## Live runner wake-up recovery (development)
 
 Pending counts and versions come from the server's projection. A materialization

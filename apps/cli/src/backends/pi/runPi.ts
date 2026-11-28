@@ -11,6 +11,8 @@ import {
 import { createPiAcpRuntime } from '@/backends/pi/acp/runtime';
 import { buildPiToolsForPermissionMode } from '@/backends/pi/acp/backend';
 import { createPiSharedTerminalHost, type PiSharedTerminalHost } from '@/backends/pi/sharedControl/piSharedTerminalHost';
+import { supportsPendingTerminalHandoffOnServer } from '@/api/clientCompatibility/sessionSyncPendingInputServerContract';
+import { resolveServerHttpBaseUrl } from '@/session/transport/http/serverHttpBaseUrl';
 import { resolvePiSharedTerminalLaunch } from '@/backends/pi/sharedControl/resolvePiSharedTerminalLaunch';
 import { resolvePiToolsDeliveryAvailability } from '@/backends/pi/shellBridge/resolvePiShellBridgeAvailability';
 
@@ -23,6 +25,7 @@ type PiRunOptions = StandardAcpProviderRunOptions & {
 
 export async function runPi(opts: PiRunOptions): Promise<void> {
   const launch = resolvePiSharedTerminalLaunch({
+    nativeTerminalEnabled: opts.accountSettingsContext?.settings.piNativeTerminalEnabled,
     startedBy: opts.startedBy,
     hasTTY: process.stdin.isTTY === true && process.stdout.isTTY === true,
     terminalRuntime: opts.terminalRuntime,
@@ -35,7 +38,15 @@ export async function runPi(opts: PiRunOptions): Promise<void> {
   }
   const continueRecentSession = opts.continueRecentSession === true && !opts.resume?.trim();
   const runOptions = { ...opts, continueRecentSession };
-  const config = launch.kind === 'shared' ? createSharedTerminalConfig(runOptions) : createRpcConfig(runOptions);
+  const shared = launch.kind === 'shared' && await supportsPendingTerminalHandoffOnServer({
+    serverUrl: resolveServerHttpBaseUrl(),
+    token: opts.credentials.token,
+  });
+  if (launch.kind === 'shared' && !shared) {
+    logger.infoFile('[pi] Session server does not advertise native terminal handoff; using Pi RPC');
+    process.stderr.write('Pi native terminal sharing is unavailable on this Happier server; using the Happier Pi view.\n');
+  }
+  const config = shared ? createSharedTerminalConfig(runOptions) : createRpcConfig(runOptions);
   await runStandardAcpProvider(runOptions, config);
 }
 

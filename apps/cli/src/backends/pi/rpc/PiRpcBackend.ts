@@ -65,6 +65,7 @@ import {
 import {
   PI_SHARED_CONTROL_BUSY_ERROR,
   PI_SHARED_CONTROL_INDETERMINATE_OUTCOME,
+  PI_SHARED_CONTROL_PROMPT_HANDED_OFF,
   PI_SHARED_CONTROL_RESPONSE_TIMEOUT_MS,
 } from '../sharedControl/piSharedControlProtocol';
 import {
@@ -114,6 +115,12 @@ type PiRpcCommandOptions = Readonly<{
   signal?: AbortSignal;
   createCancellationError?: () => Error;
 }>;
+
+type PiPromptAdmission =
+  | { status: 'accepted' }
+  | { status: 'terminal_handoff' }
+  | { status: 'rejected_before_effect'; error: Error }
+  | { status: 'effect_may_have_occurred'; error: Error };
 
 type PendingTurn = {
   promise: Promise<void>;
@@ -1240,7 +1247,8 @@ export class PiRpcBackend implements AgentBackend {
     if (outcome.status === 'accepted') {
       return { kind: 'accepted_without_exact_final_response' };
     }
-    if (outcome.status === 'effect_may_have_occurred') {
+    if (outcome.status === 'terminal_handoff') return { kind: 'terminal_handoff' };
+    if (outcome.status === 'effect_may_have_occurred' && this.channelHost.kind !== 'attached') {
       return {
         kind: 'effect_may_have_occurred',
         finalResponseEvidence: submission.completion.then(() => ({
@@ -1252,18 +1260,10 @@ export class PiRpcBackend implements AgentBackend {
   }
 
   sendPromptWithAdmission(sessionId: SessionId, prompt: string): Readonly<{
-    admission: Promise<
-      | { status: 'accepted' }
-      | { status: 'rejected_before_effect'; error: Error }
-      | { status: 'effect_may_have_occurred'; error: Error }
-    >;
+    admission: Promise<PiPromptAdmission>;
     completion: Promise<void>;
   }> {
-    const admission = createDeferred<
-      | { status: 'accepted' }
-      | { status: 'rejected_before_effect'; error: Error }
-      | { status: 'effect_may_have_occurred'; error: Error }
-    >();
+    const admission = createDeferred<PiPromptAdmission>();
     let admissionSettled = false;
     const settleAdmission = (outcome: Awaited<typeof admission.promise>): void => {
       if (admissionSettled) return;
@@ -1280,16 +1280,12 @@ export class PiRpcBackend implements AgentBackend {
   private async sendPromptAndObserveCompletion(
     sessionId: SessionId,
     prompt: string,
-    settleAdmission: (outcome:
-      | { status: 'accepted' }
-      | { status: 'rejected_before_effect'; error: Error }
-      | { status: 'effect_may_have_occurred'; error: Error }
-    ) => void,
+    settleAdmission: (outcome: PiPromptAdmission) => void,
   ): Promise<void> {
     this.assertSession(sessionId);
+    const cancelGenerationAtStart = this.cancelGeneration;
     await this.ensureConnectedBrokerReady();
     let providerSendAttempted = false;
-    const cancelGenerationAtStart = this.cancelGeneration;
 
     const barrier = createDeferred<void>();
     // The barrier is observed only by concurrent waitForResponseComplete callers. Attach a handler
@@ -1337,51 +1333,61 @@ export class PiRpcBackend implements AgentBackend {
       }
 
       await this.ensureConnectedBrokerReadyForProviderCommand();
-      const providerExtensionCommand = this.isProviderExtensionCommand(message);
-      let pendingTurn: PendingTurn;
-      let turn: Promise<void>;
+      const attached = this.channelHost.kind === 'attached';
+      const providerExtensionCommand = attached ? null : this.isProviderExtensionCommand(message);
+      let pendingTurn: PendingTurn | null;
       for (;;) {
+        if (attached) this.assertSharedPromptNotWithdrawn(cancelGenerationAtStart);
         const idleEpochBeforeSend = this.providerIdleEpoch;
-        pendingTurn = this.createPendingTurn(this.getPendingTurnStallTimeoutMs());
-        turn = pendingTurn.promise;
+        // Native Pi publishes its own turns, including turns that did not originate here.
+        pendingTurn = attached ? null : this.createPendingTurn(this.getPendingTurnStallTimeoutMs());
         providerSendAttempted = true;
         try {
-          const responseTimeoutMs = this.channelHost.kind === 'attached' ? PI_SHARED_CONTROL_RESPONSE_TIMEOUT_MS : 30_000;
-          await this.sendCommand({ type: 'prompt', message }, responseTimeoutMs, { processAlreadyEnsured: true });
+          const responseTimeoutMs = attached ? PI_SHARED_CONTROL_RESPONSE_TIMEOUT_MS : 30_000;
+          const response = await this.sendCommand({ type: 'prompt', message }, responseTimeoutMs, { processAlreadyEnsured: true });
+          if (attached) {
+            if (asRecord(response.data)?.disposition !== PI_SHARED_CONTROL_PROMPT_HANDED_OFF) {
+              throw new Error('Pi terminal did not confirm prompt handoff');
+            }
+            settleAdmission({ status: 'terminal_handoff' });
+            return;
+          }
           break;
         } catch (error) {
           const promptError = asError(error);
           if (promptError instanceof PiSharedTerminalBusyError) {
-            // The terminal owns Pi right now and nothing reached it. The row keeps waiting here
-            // (no new queue) until Pi settles that run, then goes out once; Stop withdraws it.
+            // A native busy reply means nothing was sent. Keep the existing Pending dispatch
+            // waiting for Pi to settle so Stop can withdraw it without a second queue.
             providerSendAttempted = false;
-            if (this.pendingTurn === pendingTurn) this.rejectPendingTurn(promptError);
-            await turn.catch(() => undefined);
-            await this.waitForSharedTerminalIdle(idleEpochBeforeSend, cancelGenerationAtStart);
-            await this.ensureProcess();
-            await this.ensureConnectedBrokerReadyForProviderCommand();
-            this.assertSharedPromptNotWithdrawn(cancelGenerationAtStart);
+            this.sharedPromptHeld = true;
+            try {
+              await this.waitForSharedTerminalIdle(idleEpochBeforeSend, cancelGenerationAtStart);
+              await this.ensureProcess();
+              await this.ensureConnectedBrokerReadyForProviderCommand();
+            } finally {
+              this.sharedPromptHeld = false;
+            }
             continue;
           }
           const rejectedBeforeEffect = promptError instanceof PiRpcPromptRejectedBeforeEffectError;
           settleAdmission(rejectedBeforeEffect
             ? { status: 'rejected_before_effect', error: promptError }
             : { status: 'effect_may_have_occurred', error: promptError });
-          if (isPromptResponseTimeoutError(promptError)) {
-            if (this.channelHost.kind === 'attached') await this.releaseUnstartedSharedPrompt(pendingTurn);
-            // The prompt bytes reached Pi, but threshold/overflow compaction can delay the RPC
-            // acknowledgement beyond the transport deadline. Keep the provider-owned pending turn
-            // authoritative: its later lifecycle either proves acceptance by completing or rejects
-            // with the real provider failure. The shared ACP evidence path keeps durable delivery
-            // blocked as uncertain until that proof arrives, without publishing a false turn failure.
-            await turn;
-            return;
+          if (pendingTurn) {
+            if (isPromptResponseTimeoutError(promptError)) {
+              // Pi RPC can acknowledge late during compaction. Its own turn still carries
+              // response evidence, unlike an unconfirmed write to the shared terminal.
+              await pendingTurn.promise;
+              return;
+            }
+            this.rejectPendingTurn(promptError);
+            await pendingTurn.promise.catch(() => undefined);
           }
-          this.rejectPendingTurn(promptError);
-          await turn.catch(() => undefined);
           throw promptError;
         }
       }
+      if (!pendingTurn) return;
+      const turn = pendingTurn.promise;
       settleAdmission({ status: 'accepted' });
       const providerExtensionCommandKnownBeforeTurnSettled = await Promise.race([
         providerExtensionCommand,
@@ -1481,11 +1487,19 @@ export class PiRpcBackend implements AgentBackend {
   async cancel(sessionId: SessionId): Promise<void> {
     this.assertSession(sessionId);
     // A web prompt still waiting for a busy terminal never reached Pi: Stop withdraws it.
+    const withdrewHeldPrompt = this.sharedPromptHeld;
     this.cancelGeneration += 1;
     this.wakeProviderIdleWaiters();
     await abortPendingAcpPermissionRequests(this.permissionHandler, 'Pi turn cancelled');
     const pendingTurn = this.pendingTurn;
-    await this.sendCommand({ type: 'abort' }, this.channelHost.kind === 'attached' ? PI_SHARED_CONTROL_RESPONSE_TIMEOUT_MS : undefined);
+    if (this.channelHost.kind === 'attached') {
+      const response = await this.sendCommand({ type: 'abort' }, PI_SHARED_CONTROL_RESPONSE_TIMEOUT_MS);
+      if (asRecord(response.data)?.didRequestAbort !== true && !withdrewHeldPrompt) {
+        throw new Error('Could not confirm cancellation in Pi. A message still in preparation may start in the terminal.');
+      }
+      return;
+    }
+    await this.sendCommand({ type: 'abort' });
     // Pi's successful abort response is an idle barrier: its RPC handler awaits the provider's
     // waitForIdle() before acknowledging. Settle the same local turn from that authoritative
     // boundary even if its preceding uncorrelated agent_end event was lost or misattributed.
@@ -1507,42 +1521,33 @@ export class PiRpcBackend implements AgentBackend {
       || channel === null
       || this.channel !== channel
     );
-    let probedIdle = false;
-    if (!settled()) {
-      logger.infoFile('[pi] Holding a web prompt until the Pi terminal finishes its run');
-      this.sharedPromptHeld = true;
-      let consecutiveSilentProbes = 0;
-      try {
-        while (!settled() && !probedIdle) {
-          const woken = await new Promise<boolean>((resolve) => {
-            const wake = (): void => {
-              clearTimeout(fallback);
-              resolve(true);
-            };
-            // Same bounded fallback as Claude's unified terminal: a busy reason can end without a
-            // settle frame (Pi's `_prepareRun` failing after it marked the run active), so ask Pi.
-            const fallback = setTimeout(() => {
-              this.providerIdleWaiters.delete(wake);
-              resolve(false);
-            }, TERMINAL_INPUT_BUSY_TURN_FALLBACK_WAKE_MS);
-            fallback.unref?.();
-            this.providerIdleWaiters.add(wake);
-          });
-          if (woken || settled()) continue;
-          const state = await this.getState(this.getLivenessProbeTimeoutMs(), { processAlreadyEnsured: true }).catch(() => null);
-          if (settled()) break;
-          if (state === null) {
-            consecutiveSilentProbes += 1;
-            if (consecutiveSilentProbes >= this.getMaxSilentProbes()) {
-              throw new PiSharedTerminalUnavailableError('Pi stopped responding while the message was waiting for the terminal');
-            }
-          } else {
-            consecutiveSilentProbes = 0;
-            probedIdle = state.isStreaming !== true && state.isCompacting !== true;
-          }
+    if (!settled()) logger.infoFile('[pi] Holding a web prompt until the Pi terminal finishes its run');
+    let consecutiveSilentProbes = 0;
+    while (!settled()) {
+      const woken = await new Promise<boolean>((resolve) => {
+        const wake = (): void => {
+          clearTimeout(fallback);
+          resolve(true);
+        };
+        // A busy reason can end without a settle frame if Pi's preparation fails, so ask Pi.
+        const fallback = setTimeout(() => {
+          this.providerIdleWaiters.delete(wake);
+          resolve(false);
+        }, TERMINAL_INPUT_BUSY_TURN_FALLBACK_WAKE_MS);
+        fallback.unref?.();
+        this.providerIdleWaiters.add(wake);
+      });
+      if (woken || settled()) continue;
+      const state = await this.getState(this.getLivenessProbeTimeoutMs(), { processAlreadyEnsured: true }).catch(() => null);
+      if (settled()) break;
+      if (state === null) {
+        consecutiveSilentProbes += 1;
+        if (consecutiveSilentProbes >= this.getMaxSilentProbes()) {
+          throw new PiSharedTerminalUnavailableError('Pi stopped responding while the message was waiting for the terminal');
         }
-      } finally {
-        this.sharedPromptHeld = false;
+      } else {
+        consecutiveSilentProbes = 0;
+        if (state.isStreaming !== true && state.isCompacting !== true) break;
       }
     }
     if (this.disposed) throw new Error('Pi backend is disposed');
@@ -1559,35 +1564,6 @@ export class PiRpcBackend implements AgentBackend {
     const waiters = [...this.providerIdleWaiters];
     this.providerIdleWaiters.clear();
     for (const wake of waiters) wake();
-  }
-
-  /**
-   * The bridge holds a web prompt until its run starts or settles. When Pi refuses the prompt in
-   * preflight (no model or auth, or an input handler took it), neither happens, no response comes,
-   * and every later web prompt would be refused as busy. Once the response deadline has passed with
-   * no sign of a run, `abort` (a no-op on an idle Pi) makes the bridge drop it as indeterminate.
-   */
-  private async releaseUnstartedSharedPrompt(pending: PendingTurn): Promise<void> {
-    const showsNoRun = () => (
-      this.pendingTurn === pending && !pending.agentStartObserved && !pending.compactionInProgress && !pending.lastCompactionEnd
-    );
-    if (!showsNoRun()) return;
-    // Deliberate contract: in attached mode the 30 s prompt response deadline may abort, but only an
-    // idle Pi. A run still preparing (`_prepareRun`: compaction, slow before_agent_start handlers)
-    // reports as streaming and would be cancelled by abort, so it is left to the turn lifecycle.
-    const state = await this.getState(this.getLivenessProbeTimeoutMs()).catch(() => null);
-    if (!showsNoRun() || state === null || state.isStreaming === true || state.isCompacting === true) return;
-    logger.infoFile('[pi] Pi did not start a web prompt before its response deadline; releasing it');
-    // Its indeterminate answer is expected now, not a late provider failure.
-    this.openPromptRequestIds.clear();
-    try {
-      await this.sendCommand({ type: 'abort' }, this.getLivenessProbeTimeoutMs(), { processAlreadyEnsured: true });
-    } catch (error) {
-      logger.infoFile('[pi] Could not release the unstarted web prompt in the Pi terminal', error);
-    }
-    if (this.pendingTurn === pending && !pending.agentStartObserved) {
-      this.rejectPendingTurn(new Error('Pi did not start this message; the Pi terminal shows why'));
-    }
   }
 
   /** Re-attach to the interactive Pi in the background and report a failure the user can see. */
@@ -2252,15 +2228,14 @@ export class PiRpcBackend implements AgentBackend {
     if (!response.success) {
       this.openPromptRequestIds.delete(id);
       const rawDetail = asNonEmptyString(response.error) ?? `Pi RPC command failed: ${response.command}`;
-      if (pending.commandType === 'prompt' && rawDetail === PI_SHARED_CONTROL_BUSY_ERROR) {
+      if (this.channelHost.kind === 'attached' && pending.commandType === 'prompt' && rawDetail === PI_SHARED_CONTROL_BUSY_ERROR) {
         // Not a provider failure: the bridge sent nothing because Pi is running something else.
         this.tracePiRpcFailureBoundary('shared_terminal_busy_prompt_response', response);
         pending.reject(new PiSharedTerminalBusyError());
         return;
       }
       if (pending.commandType === 'prompt' && asRecord(response.data)?.outcome === PI_SHARED_CONTROL_INDETERMINATE_OUTCOME) {
-        // The prompt was sent, but its start could not be attributed to it (another input started
-        // the same run). It may have taken effect, so it is neither failed-before-effect nor replayed.
+        // A failed native handoff acknowledgement does not authorize replay.
         this.tracePiRpcFailureBoundary('indeterminate_prompt_response', response, { detail: rawDetail });
         pending.reject(new Error(rawDetail));
         return;
@@ -2279,7 +2254,7 @@ export class PiRpcBackend implements AgentBackend {
       pending.reject(new Error(rawDetail));
       return;
     }
-    if (pending.commandType === 'prompt') {
+    if (pending.commandType === 'prompt' && this.channelHost.kind !== 'attached') {
       this.openPromptRequestIds.add(id);
     }
     pending.resolve(response);
@@ -2766,7 +2741,7 @@ export class PiRpcBackend implements AgentBackend {
       const timeout = setTimeout(() => {
         const pending = this.pendingRequests.get(id);
         if (!pending || !this.clearPendingRpcRequest(id, pending)) return;
-        if (command.type === 'prompt') {
+        if (command.type === 'prompt' && this.channelHost.kind !== 'attached') {
           this.openPromptRequestIds.add(id);
         } else {
           this.openPromptRequestIds.delete(id);

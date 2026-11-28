@@ -9,15 +9,17 @@ export type PiSharedTerminalLaunch =
   | Readonly<{ kind: 'rpc'; fallback: 'connected_service' | null }>;
 
 /**
- * `happier pi` from a user's own terminal runs Pi's native TUI with the Happier bridge. Every
- * other start (daemon, no TTY, a hosted tmux/herdr/zellij pane) keeps the RPC child.
+ * With native terminal enabled, `happier pi` can run Pi's TUI in the user's own terminal.
+ * Other starts keep the RPC child.
  */
 export function resolvePiSharedTerminalLaunch(params: Readonly<{
+  nativeTerminalEnabled?: unknown;
   startedBy: 'daemon' | 'terminal' | undefined;
   hasTTY: boolean;
   terminalRuntime: TerminalRuntimeFlags | null | undefined;
   env: Readonly<NodeJS.ProcessEnv>;
 }>): PiSharedTerminalLaunch {
+  if (params.nativeTerminalEnabled !== true) return { kind: 'rpc', fallback: null };
   if (params.startedBy !== 'terminal' || !params.hasTTY) return { kind: 'rpc', fallback: null };
   if (hasHostedAttachedTerminalPresentation(params.terminalRuntime)) return { kind: 'rpc', fallback: null };
   const brokerSelections = params.env[PI_BROKER_SELECTIONS_ENV];

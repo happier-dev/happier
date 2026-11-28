@@ -72,10 +72,11 @@ import { isGenericSubAgentToolName, readPendingLocalId } from '@happier-dev/prot
 import { canonicalizeToolNameV2 } from '@/agent/tools/normalization';
 import type {
   ProviderPromptSubmissionCallbacks,
+  ProviderPromptTurnOwner,
   ProviderPromptWithMeta,
   ProviderTurnCompletionResult,
 } from '@/agent/runtime/providerPromptSubmission';
-import { ProviderPromptSubmissionRejectedBeforeEffectError } from '@/agent/runtime/providerPromptSubmission';
+import { ProviderPromptSubmissionRejectedBeforeEffectError, ProviderPromptSubmissionUnconfirmedError } from '@/agent/runtime/providerPromptSubmission';
 import {
   computePendingModelOverrideApplication,
   computePendingSessionModeOverrideApplication,
@@ -262,6 +263,7 @@ function stringifySessionConfigOptionValue(value: string | number | boolean | nu
 }
 
 export type AcpRuntime = Readonly<{
+  promptTurnOwner?: ProviderPromptTurnOwner;
   getSessionId: () => string | null;
   /**
    * Whether this runtime supports "steering" additional user input into an already running turn.
@@ -480,6 +482,7 @@ export function createAcpRuntime(params: {
   onThinkingChange: (thinking: boolean) => void;
   /** Hosts that publish presence from onThinkingChange own both its mode and delivery. */
   keepAliveOwner?: 'host' | 'runtime';
+  promptTurnOwner?: ProviderPromptTurnOwner;
   ensureBackend: () => Promise<AcpRuntimeBackend>;
   /** Provider opt-in for binding backend session open to the enclosing runner cancellation. */
   getSessionOpenAbortSignal?: () => AbortSignal | undefined;
@@ -967,6 +970,9 @@ export function createAcpRuntime(params: {
         error.cause instanceof ProviderPromptSubmissionRejectedBeforeEffectError ? error.cause : error,
         'provider_rejected_before_acceptance',
       );
+    }
+    if (error instanceof AcpPromptSubmissionPhaseError && error.phase === 'effect_may_have_occurred') {
+      throw new ProviderPromptSubmissionUnconfirmedError();
     }
     return rethrowPromptError(error, turn);
   };
@@ -2435,6 +2441,10 @@ export function createAcpRuntime(params: {
       rethrowAcpPromptSubmissionError(error, turn);
     }
     await callbacks.onProviderPromptSubmitted?.();
+    if (submissionEvidence?.kind === 'terminal_handoff') {
+      callbacks.onProviderPromptHandedOff?.();
+      return;
+    }
 
     let responseCompletion: Promise<AcpTurnOutcome | void> | null = null;
     try {
@@ -2478,6 +2488,7 @@ export function createAcpRuntime(params: {
 
   return {
     getSessionId: () => sessionId,
+    promptTurnOwner: params.promptTurnOwner ?? 'host',
     supportsInFlightSteer: () => inFlightSteerEnabled,
     isTurnInFlight: () => turnState.turnInFlight,
 
@@ -2511,6 +2522,14 @@ export function createAcpRuntime(params: {
       if (!sessionId) return;
       const providerSessionId = sessionId;
       const turn = turnState;
+      if (params.promptTurnOwner === 'provider') {
+        const b = await ensureBackend();
+        await b.cancel(providerSessionId);
+        if (turnState === turn && turn.currentTurnId !== null && !turn.settlement) {
+          rememberTurnOutcome({ kind: 'aborted', stopReason: 'cancelled' }, turn);
+        }
+        return;
+      }
       turn.turnAborted = true;
       turn.pendingTurnOutcome = { kind: 'aborted', stopReason: 'cancelled' };
       stopPendingPump();

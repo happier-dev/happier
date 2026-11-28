@@ -20,6 +20,13 @@ export type SessionSyncPendingInputServerContractMode =
     | 'indeterminate'
     | 'auth_failed';
 
+const SESSION_SERVER_CAPABILITY_REQUEST_TIMEOUT_MS = 6_000;
+
+export async function supportsPendingTerminalHandoffOnServer(params: { serverUrl: string; token: string }): Promise<boolean> {
+    const snapshot = await observeServerFeaturesSnapshot({ ...params, timeoutMs: SESSION_SERVER_CAPABILITY_REQUEST_TIMEOUT_MS });
+    return snapshot.status === 'ready' && snapshot.features.capabilities.session.pendingTerminalHandoff === true;
+}
+
 type ProbeSocket = Readonly<{ connected?: boolean }>;
 
 export type SessionSyncPendingInputServerContractResult = Readonly<{
@@ -118,7 +125,7 @@ export function createSessionSyncPendingInputServerContractController(options: R
     timeoutMs?: number;
     fetchImpl?: typeof fetch;
 }>) {
-    const timeoutMs = options.timeoutMs ?? 6_000;
+    const timeoutMs = options.timeoutMs ?? SESSION_SERVER_CAPABILITY_REQUEST_TIMEOUT_MS;
     const fetchImpl = options.fetchImpl ?? fetch;
     let active: {
         readonly sessionConnectionEpoch: number;

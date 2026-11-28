@@ -5,7 +5,7 @@ import { PI_BROKER_SELECTIONS_ENV, serializePiBrokerSelections } from '@/backend
 
 import { resolvePiSharedTerminalLaunch } from './resolvePiSharedTerminalLaunch';
 
-const terminalTty = { startedBy: 'terminal', hasTTY: true, terminalRuntime: null, env: {} } as const;
+const terminalTty = { nativeTerminalEnabled: true, startedBy: 'terminal', hasTTY: true, terminalRuntime: null, env: {} } as const;
 
 describe('resolvePiSharedTerminalLaunch', () => {
   it('launches the native Pi terminal for a terminal-started run that owns a TTY', () => {

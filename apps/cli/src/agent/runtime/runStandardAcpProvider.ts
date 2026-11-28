@@ -57,9 +57,10 @@ import {
   prepareAgentNativeReturnStrictResume,
 } from '@/session/agentTransition/agentNativeReturn';
 import { withCurrentHappierSessionId } from '@/agent/runtime/session/currentSessionIdEnv';
-import type { ProviderTurnCompletionResult } from './providerPromptSubmission';
+import type { ProviderPromptTurnOwner, ProviderTurnCompletionResult } from './providerPromptSubmission';
 
 type RuntimeForLoop = {
+  promptTurnOwner?: ProviderPromptTurnOwner;
   beginTurn: () => void;
   startOrLoad: (opts: { resumeId?: string }) => Promise<unknown>;
   drainPendingAfterStartOrLoad?: () => Promise<void>;
@@ -667,12 +668,21 @@ export async function runStandardAcpProvider(
     const operation = (async () => {
       logger.debug(`${config.uiLogPrefix} Abort requested`);
       await permissionHandler.abortPendingRequestsAndFlush('Aborted by user');
-      session.sendAgentMessage(config.agentMessageType, { type: 'turn_aborted', id: randomUUID() });
+      const providerOwnsPromptTurn = runtime.promptTurnOwner === 'provider';
+      if (!providerOwnsPromptTurn) {
+        session.sendAgentMessage(config.agentMessageType, { type: 'turn_aborted', id: randomUUID() });
+      }
       abortController.abort();
       try {
         await runtime.cancel();
       } catch (error) {
         logger.debug(`${config.uiLogPrefix} Failed to cancel current operation (non-fatal)`, error);
+        if (providerOwnsPromptTurn) {
+          session.sendAgentMessage(config.agentMessageType, {
+            type: 'message',
+            message: config.formatPromptErrorMessage(error),
+          });
+        }
       } finally {
         abortController = new AbortController();
       }

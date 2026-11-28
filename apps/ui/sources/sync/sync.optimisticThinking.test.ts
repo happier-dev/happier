@@ -821,6 +821,84 @@ describe('sync.sendMessage optimistic thinking', () => {
         sessionRpcSpy.mockRestore();
     });
 
+    it('retires a direct send’s optimistic row when its first Pending snapshot is already empty', async () => {
+        const sessionId = 's_runtime_rpc_pending_retired_before_snapshot';
+        const localId = 'original-request';
+        storage.getState().applySessions([{ ...createSession({ sessionId }), encryptionMode: 'plain' }]);
+        const { sync } = await import('./sync');
+        sync.encryption = await Encryption.create(new Uint8Array(32).fill(9));
+        let acknowledgeAdmission!: () => void;
+        const admission = new Promise<void>((resolve) => { acknowledgeAdmission = resolve; });
+        vi.spyOn(apiSocket, 'sessionRPC').mockImplementation(async () => {
+            await admission;
+            return { ok: true, providerAcceptancePending: true };
+        });
+        vi.spyOn(apiSocket, 'request').mockImplementation(async () => Response.json({ pending: [] }));
+
+        const sending = sync.sendMessage(sessionId, 'original input', undefined, undefined, { localId });
+        try {
+            storage.getState().applyMessages(sessionId, [{
+                id: 'native-user-turn',
+                seq: 1,
+                localId: 'native-user-turn-local-id',
+                createdAt: Date.now(),
+                isSidechain: false,
+                role: 'user',
+                content: { type: 'text', text: 'input after Pi hooks' },
+            }]);
+            await sync.fetchPendingMessages(sessionId);
+            // The queue may already have retired this request. The app still owns the optimistic
+            // row until the runtime acknowledges that the original id was admitted to Pending.
+            expect(storage.getState().sessionPending[sessionId]?.messages.map((message) => message.localId)).toEqual([localId]);
+        } finally {
+            acknowledgeAdmission();
+            await sending;
+        }
+        await expect(sending).resolves.toEqual({ localId, persistence: 'provider_direct', providerAcceptancePending: true });
+        await vi.waitFor(() => expect(storage.getState().sessionPending[sessionId]?.messages).toEqual([]));
+        const transcript = storage.getState().sessionMessages[sessionId];
+        expect(transcript.messageIdsOldestFirst.map((id) => transcript.messagesById[id]?.localId)).toEqual([
+            'native-user-turn-local-id',
+        ]);
+    });
+
+    it('keeps an authoritative blocked Pending row that arrives before the direct send acknowledgement', async () => {
+        const sessionId = 's_runtime_rpc_pending_blocked_before_ack';
+        const localId = 'blocked-request';
+        const text = 'original input';
+        storage.getState().applySessions([{ ...createSession({ sessionId }), encryptionMode: 'plain' }]);
+        const { sync } = await import('./sync');
+        sync.encryption = await Encryption.create(new Uint8Array(32).fill(9));
+        vi.spyOn(apiSocket, 'request').mockImplementation(async () => Response.json({
+            pending: [{
+                localId,
+                content: { t: 'plain', v: { role: 'user', content: { type: 'text', text } } },
+                requestedAction: { v: 1, kind: 'enqueue' },
+                status: 'queued',
+                deliveryStatus: { status: 'blocked', reason: 'delivery_outcome_uncertain' },
+                position: 0,
+                createdAt: 1,
+                updatedAt: 2,
+            }],
+        }));
+        vi.spyOn(apiSocket, 'sessionRPC').mockImplementation(async () => {
+            await sync.fetchPendingMessages(sessionId);
+            return { ok: true, providerAcceptancePending: true };
+        });
+
+        await sync.sendMessage(sessionId, text, undefined, undefined, { localId });
+
+        expect(storage.getState().sessionPending[sessionId]?.messages).toEqual([
+            expect.objectContaining({
+                localId,
+                text,
+                pendingDeliveryStatus: 'blocked',
+                pendingDeliveryBlockedReason: 'delivery_outcome_uncertain',
+                requestedAction: { v: 1, kind: 'enqueue' },
+            }),
+        ]);
+    });
+
     it('wakes an apparently active session with fresh user-request provenance when runtime RPC falls back to a durable commit', async () => {
         const sessionId = 's_active_runtime_rpc_post_boot_fallback';
         storage.getState().applySessions([createSession({

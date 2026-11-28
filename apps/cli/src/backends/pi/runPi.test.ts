@@ -1,4 +1,6 @@
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { accountSettingsParse } from '@happier-dev/protocol';
 
 import type { Credentials } from '@/persistence';
 import { PI_BROKER_SELECTIONS_ENV, serializePiBrokerSelections } from '@/backends/pi/brokerExtension';
@@ -100,8 +102,50 @@ describe('runPi', () => {
     } as never;
   }
 
+  function advertiseServerPendingHandoff(pendingTerminalHandoff?: unknown) {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      features: {},
+      capabilities: { session: { pendingTerminalHandoff } },
+    }))));
+  }
+
+  function accountSettingsContext(piNativeTerminalEnabled?: unknown) {
+    return {
+      source: 'network' as const,
+      settings: accountSettingsParse({ piNativeTerminalEnabled }),
+      settingsVersion: 1,
+      loadedAtMs: 0,
+      settingsSecretsReadKeys: [],
+      whenRefreshed: null,
+    };
+  }
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it.each([undefined, false, 'true'])('keeps the existing terminal view without a native-terminal opt-in (%s)', async (setting) => {
+    advertiseServerPendingHandoff(true);
+    await withTty(true, () => runPi({
+      credentials,
+      startedBy: 'terminal',
+      accountSettingsContext: accountSettingsContext(setting),
+    }));
+
+    const config = runStandardAcpProviderMock.mock.calls[0]?.[1];
+    config.createRuntime(createRuntimeParams());
+    expect(createPiAcpRuntimeMock.mock.calls[0]?.[0].sharedTerminal).toBeUndefined();
+  });
+
+  it.each([undefined, false, 'true'])('keeps RPC when the session server lacks terminal handoff (%s)', async (capability) => {
+    advertiseServerPendingHandoff(capability);
+    await withTty(true, () => runPi({ credentials, startedBy: 'terminal', accountSettingsContext: accountSettingsContext(true) }));
+    const config = runStandardAcpProviderMock.mock.calls[0]?.[1];
+    config.createRuntime(createRuntimeParams());
+    expect(createPiAcpRuntimeMock.mock.calls[0]?.[0].sharedTerminal).toBeUndefined();
+  });
+
   it('runs the native Pi terminal with shared local control when started from a terminal TTY', async () => {
-    await withTty(true, () => runPi({ credentials, startedBy: 'terminal' }));
+    advertiseServerPendingHandoff(true);
+    await withTty(true, () => runPi({ credentials, startedBy: 'terminal', accountSettingsContext: accountSettingsContext(true) }));
 
     const config = runStandardAcpProviderMock.mock.calls[0]?.[1];
     expect(config.startRuntimeBeforeFirstPrompt).toBe(true);
@@ -138,7 +182,7 @@ describe('runPi', () => {
     ['daemon-started', { startedBy: 'daemon' as const }, true],
     ['terminal without a TTY', { startedBy: 'terminal' as const }, false],
   ])('keeps the Pi RPC runtime when %s', async (_label, start, hasTTY) => {
-    await withTty(hasTTY, () => runPi({ credentials, ...start }));
+    await withTty(hasTTY, () => runPi({ credentials, ...start, accountSettingsContext: accountSettingsContext(true) }));
 
     const config = runStandardAcpProviderMock.mock.calls[0]?.[1];
     expect(config.startRuntimeBeforeFirstPrompt).toBeUndefined();
@@ -156,7 +200,7 @@ describe('runPi', () => {
     });
     let stderrWrites = 0;
     try {
-      await withTty(true, () => runPi({ credentials, startedBy: 'terminal' }));
+      await withTty(true, () => runPi({ credentials, startedBy: 'terminal', accountSettingsContext: accountSettingsContext(true) }));
       stderrWrites = stderr.mock.calls.length;
     } finally {
       if (previous === undefined) delete process.env[PI_BROKER_SELECTIONS_ENV];

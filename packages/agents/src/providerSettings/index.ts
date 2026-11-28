@@ -52,6 +52,8 @@ export {
   buildKimiProviderSettingsShape,
 } from './definitions/kimi.js';
 
+export { PI_PROVIDER_FIELDS } from './definitions/pi.js';
+
 export {
   type ClaudeUnifiedTerminalHost,
   type ClaudeUnifiedTerminalResumeChoice,

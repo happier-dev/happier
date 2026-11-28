@@ -190,6 +190,7 @@ export type AcpPromptFinalResponseEvidence =
 
 export type AcpPromptSubmissionEvidence =
   | AcpPromptFinalResponseEvidence
+  | Readonly<{ kind: 'terminal_handoff' }>
   | Readonly<{
       kind: 'effect_may_have_occurred';
       finalResponseEvidence: Promise<AcpPromptFinalResponseEvidence>;

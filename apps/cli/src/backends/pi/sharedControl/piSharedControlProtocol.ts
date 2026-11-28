@@ -24,7 +24,7 @@ import type { PiRpcCommandWithoutId } from '../rpc/types';
 export const PI_SHARED_CONTROL_PROTOCOL_VERSION = 1;
 export const PI_SHARED_CONTROL_ADMISSION_FRAME = 'happier_session_admitted';
 
-/** Response budget shared by prompt admission and the bridge's Stop barrier. */
+/** Timeout for a command response from the native terminal bridge. */
 export const PI_SHARED_CONTROL_RESPONSE_TIMEOUT_MS = 30_000;
 
 /**
@@ -48,19 +48,16 @@ export const PI_SHARED_CONTROL_SUPPORTED_COMMANDS = [
 
 export type PiSharedControlSupportedCommand = (typeof PI_SHARED_CONTROL_SUPPORTED_COMMANDS)[number];
 
-/** A web prompt was refused without being sent: Pi is busy or another web prompt is pending. */
+/** A web prompt was refused without being sent: Pi is busy or has native queued input. */
 export const PI_SHARED_CONTROL_BUSY_ERROR = 'pi_shared_busy';
 /** The command is not supported in shared mode; no Pi API was called. */
 export const PI_SHARED_CONTROL_UNSUPPORTED_COMMAND_ERROR = 'pi_shared_unsupported_command';
 /** The bridge connection is gone (closed without `bye`, or Pi exited). */
 export const PI_SHARED_CONTROL_BRIDGE_UNAVAILABLE_ERROR = 'pi_shared_bridge_unavailable';
 
-/**
- * `data.outcome` of a failed `prompt` response whose effect may have occurred: the web prompt was
- * sent but its start was contested by another idle-start input, or it was still unresolved when the
- * run settled. The runner maps it to `effect_may_have_occurred` and never replays it.
- */
+/** Failed prompt response when the bridge could not confirm its call to Pi. */
 export const PI_SHARED_CONTROL_INDETERMINATE_OUTCOME = 'indeterminate';
+export const PI_SHARED_CONTROL_PROMPT_HANDED_OFF = 'handed_off';
 
 /** Pi inter-extension bus channel (`pi.events`) carrying stderr-style side-channel lines in TUI mode. */
 export const PI_SHARED_CONTROL_SIDE_CHANNEL_EVENT = 'happier:pi-side-channel';

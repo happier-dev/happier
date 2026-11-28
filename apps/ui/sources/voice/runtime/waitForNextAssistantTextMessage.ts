@@ -1,3 +1,4 @@
+import { usesSessionLevelVoiceReplies } from '@/agents/registry/registryUiBehavior';
 import { storage } from '@/sync/domains/state/storage';
 import { readStoredSessionMessages } from '@/sync/domains/messages/readStoredSessionMessages';
 import type { Message } from '@/sync/domains/messages/messageTypes';
@@ -227,7 +228,8 @@ function hasTurnProjection(marker: SessionTurnMarker | null): boolean {
  *
  * Input transcript anchors bind the submitted message to its actual turn, including steering into
  * a turn already running at baseline. A different client's latest turn never supplies this binding.
- * Producers without input anchors retain the historical latest-turn/working compatibility path.
+ * Producers that only publish session-level replies use the latest-turn/working path without a submission anchor.
+ * Producers without turn anchors can also use this path after the submitted input is observed.
  * With that legacy session turn projection, the turn has ended when a terminal `latestTurnStatus` is
  * reported for a turn other than the one current at baseline. Sessions from producers without the
  * projection fall back to the canonical runtime `working` signal (observed working, then idle).
@@ -247,7 +249,7 @@ export async function waitForTurnFinalAssistantText(params: Readonly<{
   let submittedReply: SubmittedReplyBoundary | undefined;
   const ended = await waitForStorageCondition(() => {
     const session = getSession(sessionId);
-    if (submittedUserLocalId) {
+    if (submittedUserLocalId && !usesSessionLevelVoiceReplies(session)) {
       const submitted = getSessionMessages(sessionId).find((message) => message.kind === 'user-text' && message.localId === submittedUserLocalId);
       // Submission acknowledgement and transcript materialization are independent. Do not speak
       // another client's reply while our admitted input is still pending or being materialized.
