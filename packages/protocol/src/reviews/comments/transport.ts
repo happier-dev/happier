@@ -115,7 +115,11 @@ export async function executeReviewCommentTransportV1(params: Readonly<{
     context: ReviewCommentTransportContextV1;
     actor: ReviewCommentActorRefV1;
 }> | Readonly<{
-    actionId: 'reviews.comments.get' | 'reviews.comments.list';
+    actionId: 'reviews.comments.get';
+    /** Resolve an ID-only read from its authorized stored binding, before opening private content. */
+    resolveContext: (reviewId: string | undefined) => Promise<ReviewCommentTransportContextV1>;
+}> | Readonly<{
+    actionId: 'reviews.comments.list';
     /** Resolve an ID-only read from its authorized stored binding, before opening private content. */
     resolveContext: (reviewId: string | undefined) => Promise<ReviewCommentTransportContextV1>;
 }>)): Promise<unknown> {
