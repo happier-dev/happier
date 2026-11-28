@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { Metadata } from '@/api/types';
 import { buildPiAgentRuntimeDescriptorV1 } from '@happier-dev/protocol';
+import { createDeferred } from '@/testkit/async/deferred';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { formatPiSessionDirectoryForCwd } from '@/backends/pi/utils/piSessionFiles';
 
@@ -306,6 +307,65 @@ describe('maybeUpdatePiSessionIdMetadata', () => {
     }, { timeout: 4_000 });
   });
 
+  it('does not let a queued retry replace a newer file for the same Pi session ID', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'pi-session-superseded-file-'));
+    const oldFile = join(cwd, 'original.jsonl');
+    const currentFile = join(cwd, 'replacement.jsonl');
+    const sessionId = 'pi-session-1';
+    const header = `${JSON.stringify({ type: 'session', id: sessionId, cwd })}\n`;
+    const lastPublished = { value: null as string | null, sessionFile: null as string | null };
+    const retryQueued = createDeferred<void>();
+    const releaseRetry = createDeferred<void>();
+    let metadata = createTestMetadata({ flavor: 'pi' });
+    let delayNextWrite = false;
+    let writeQueue = Promise.resolve();
+    const writtenFiles: Array<string | undefined> = [];
+    const session = {
+      updateMetadata: (updater: (value: Metadata) => Metadata) => {
+        writeQueue = writeQueue.then(async () => {
+          if (delayNextWrite) {
+            delayNextWrite = false;
+            retryQueued.resolve();
+            await releaseRetry.promise;
+          }
+          const updated = updater(metadata);
+          if (updated !== metadata) writtenFiles.push(updated.piSessionFile);
+          metadata = updated;
+        });
+        return writeQueue;
+      },
+    };
+    const publish = (reportedSessionFile: string) => publishPiSessionIdMetadata({
+      operation: 'create',
+      session,
+      getPiSessionId: () => sessionId,
+      reportedSessionFile,
+      cwd,
+      lastPublished,
+    });
+    try {
+      await publish(oldFile);
+      delayNextWrite = true;
+      await Promise.all([writeFile(oldFile, header), writeFile(currentFile, header)]);
+      await retryQueued.promise;
+
+      const replacement = publish(currentFile);
+      releaseRetry.resolve();
+      await replacement;
+
+      expect(writtenFiles).toEqual([undefined, currentFile]);
+      expect(metadata.piSessionFile).toBe(currentFile);
+      expect(metadata.agentRuntimeDescriptorV1).toEqual(buildPiAgentRuntimeDescriptorV1({
+        resumeStrategy: 'sessionFileAbsolutePreferred',
+        vendorSessionId: sessionId,
+        sessionFile: currentFile,
+      }));
+    } finally {
+      releaseRetry.resolve();
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it('reverts lastPublished when the metadata update fails', async () => {
     const lastPublished = { value: null as string | null, sessionFile: null as string | null };
     let calls = 0;
@@ -354,7 +414,7 @@ describe('maybeUpdatePiSessionIdMetadata', () => {
 
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(updateMetadata).not.toHaveBeenCalled();
-    expect(lastPublished).toEqual({ value: 'pi-resume-1', sessionFile });
+    expect(lastPublished).toMatchObject({ value: 'pi-resume-1', sessionFile });
     expect(metadata.piSessionFile).toBe(sessionFile);
   });
 
