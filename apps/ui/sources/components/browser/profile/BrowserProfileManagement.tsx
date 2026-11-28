@@ -29,6 +29,7 @@ export type BrowserProfileManagementModel = Readonly<{
         scope: ServerAccountScope;
         machineId: string;
         selection?: Readonly<{
+            actionId?: 'browser.view.open' | 'browser.profile.select';
             command: Omit<Extract<BrowserCommandV1, { kind: 'openView' }>, 'profileId' | 'commandId'>;
             onSelected(profile: BrowserProfileV1, events: readonly BrowserEventV1[]): void;
         }>;
@@ -111,7 +112,8 @@ export function BrowserProfileManagement(props: Readonly<{
             t('browserShell.profile.management.selectWarning'))) return;
         setBusy(true);
         try {
-            const result = PUBLIC_ACTION_OUTPUT_SCHEMAS['browser.profile.select'].parse(await executeValue('browser.profile.select', {
+            const actionId = selection.actionId ?? 'browser.profile.select';
+            const result = PUBLIC_ACTION_OUTPUT_SCHEMAS[actionId].parse(await executeValue(actionId, {
                 ...selection.command, commandId: randomUUID(), machineId: source.machineId, profileId: profile.profileId,
             }, operation));
             if (result.status === 'unavailable') throw new HappyError(result.code, false, { code: result.code });

@@ -28,6 +28,7 @@ import type { BrowserLaunchpadOpenTargetOptions } from '@/components/browser/lau
 import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
 import { applyBrowserControlEvent, refreshBrowserNativeViewCaptureCapabilities } from '@/sync/domains/browser/control/reducer';
 import { browserViewLifecycleEvent } from '@/sync/domains/browser/control/lifecycle';
+import { isDaemonAuthoritativeBrowserView } from '@/sync/domains/browser/control/commands';
 import type { BrowserControlCommandDispatchResult, BrowserControlCommandEffect, BrowserControlState, BrowserControlViewState, BrowserViewLifecycleSignal, BrowserViewLifecycleTarget } from '@/sync/domains/browser/control';
 import { registerBrowserRuntimeControlAdapter } from '@/sync/domains/browser/actions/runtimeControlRegistry';
 import { closeBrowserAnnotationView } from '@/sync/domains/browser/context/annotationDraft';
@@ -561,15 +562,19 @@ function BrowserSurfaceRuntime(props: BrowserSurfaceHostProps): React.ReactEleme
     const activeProfileId = focusedView ? surfaceState.browserState.sessionsById[focusedView.browserSessionId]?.profileId : undefined;
     const browserProfile = resolveLocalBrowserProfile(profileMetadata && profileMetadata.profileId === activeProfileId
         ? profileMetadata : mergedProductModels?.browserProfile?.profile ?? null);
+    const hasManagedView = isDaemonAuthoritativeBrowserView(focusedView);
     const profileManagement = React.useMemo(() => browserOperationScope && browserMachineId ? { source: {
         scope: browserOperationScope, machineId: browserMachineId,
-        ...(focusedView ? { selection: {
-            command: { kind: 'openView' as const, browserSessionId: focusedView.browserSessionId, viewId: focusedView.viewId,
+        ...(focusedView && (hasManagedView || presenceSessionId) ? { selection: {
+            actionId: hasManagedView ? 'browser.profile.select' as const : 'browser.view.open' as const,
+            command: { kind: 'openView' as const,
+                browserSessionId: hasManagedView ? focusedView.browserSessionId : presenceSessionId!, viewId: focusedView.viewId,
                 platform: focusedView.platform, target: focusedView.target,
+                ...(!hasManagedView ? { engineOverride: 'managed' as const } : {}),
                 ...(focusedView.currentUrl ? { currentUrl: focusedView.currentUrl } : {}), focus: true },
             onSelected: (profile: BrowserProfileV1, events: readonly BrowserEventV1[]) => applyDaemonEvents(events, profile),
         } } : {}),
-    } } : undefined, [applyDaemonEvents, browserMachineId, browserOperationScope, focusedView]);
+    } } : undefined, [applyDaemonEvents, browserMachineId, browserOperationScope, focusedView, hasManagedView, presenceSessionId]);
     const productModels = {
             ...(mergedProductModels ?? {}),
             browserProfile: {
@@ -894,7 +899,10 @@ function BrowserSurfaceRuntime(props: BrowserSurfaceHostProps): React.ReactEleme
     // launchpad/new-tab URL entry uses; it NEVER spawns a sibling workspace tab. Only EXTERNAL
     // surfaces (Services rows, session-header button) create a new tab via `props.onOpenTarget`.
     const navigateCurrentTabInPlace = React.useCallback((target: BrowserViewTargetV1, options?: BrowserLaunchpadOpenTargetOptions) => {
-        const identity = resolveBrowserViewIdentityForTarget(target, { browserSessionId: props.browserSessionId });
+        const identity = resolveBrowserViewIdentityForTarget(target, {
+            browserSessionId: props.browserSessionId,
+            ...(options?.engineOverride && focusedView ? { viewId: focusedView.viewId } : {}),
+        });
         return onCommand({
             kind: 'openView',
             commandId: `browser_command:${identity.viewId}:open:${Date.now()}`,
@@ -910,6 +918,7 @@ function BrowserSurfaceRuntime(props: BrowserSurfaceHostProps): React.ReactEleme
         onCommand,
         props.browserSessionId,
         props.platform,
+        focusedView?.viewId,
     ]);
 
     const onOpenTarget = props.onOpenTarget ?? navigateCurrentTabInPlace;

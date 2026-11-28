@@ -736,7 +736,28 @@ describe('BrowserSurfaceHost', () => {
             sourceLocation: { file: 'fixture.js', line: 42, column: 7 } });
     });
 
-    it('switches an embedded page through the menu and real open Action with its current URL', async () => {
+    it('offers a managed open for a saved profile on a client-only Browser page', async () => {
+        const { BrowserShell } = await import('../BrowserShell');
+        const scope = getActiveServerAccountScope();
+        if (!scope) throw new Error('Expected Browser Account');
+        const initialBrowserState = openBrowserTarget(createBrowserViewState(), externalTarget, {
+            browserSessionId: 'presentation-only', viewId: 'shown-page', platform: 'web',
+            currentUrl: 'https://docs.happier.test/guide', targetPolicyDecision: allowedExternalPolicy,
+        });
+        const screen = await renderScreen(<BrowserSurfaceHost browserSessionId="presentation-only" platform="web"
+            initialBrowserState={initialBrowserState} policy={{ browserEnabled: true, viewTargetsEnabled: true,
+                diagnosticsEnabled: false, contextEnabled: false }} localServicePreviewState={createLocalServicePreviewState()}
+            pluginBrowserActionContext={{ sessionId: 'session_1', machineId: 'machine_1', serverId: scope.serverId }} />);
+        try {
+            const selection = screen.findByType(BrowserShell).props.browserProfile.management.source.selection;
+            expect(selection).toMatchObject({ actionId: 'browser.view.open', command: {
+                browserSessionId: 'session_1', viewId: 'shown-page', engineOverride: 'managed',
+                target: externalTarget, currentUrl: 'https://docs.happier.test/guide',
+            } });
+        } finally { await screen.unmount(); }
+    });
+
+    it.each(['ios', 'web'] as const)('switches the shown embedded page through the real open Action on %s', async platform => {
         const { BrowserShell } = await import('../BrowserShell');
         const scope = getActiveServerAccountScope();
         if (!scope) throw new Error('Expected Browser Account');
@@ -760,13 +781,13 @@ describe('BrowserSurfaceHost', () => {
             opens.push(command);
             return Response.json({ v: 1, actionId: 'browser.view.open', requestId: envelope.requestId,
                 execution: { ok: true, result: { v: 1, commandId: command.commandId, status: 'dispatched',
-                    adapterKind: 'chromiumSidecar', events: [{ ...managedDiscoveryOpening({ browserSessionId: command.browserSessionId, viewId: command.viewId }, 'ios'),
+                    adapterKind: 'chromiumSidecar', events: [{ ...managedDiscoveryOpening({ browserSessionId: command.browserSessionId, viewId: command.viewId }, platform),
                         target: command.target, currentUrl }] } } });
         };
         const initialBrowserState = openBrowserTarget(createBrowserViewState(), externalTarget, {
-            platform: 'ios', currentUrl, targetPolicyDecision: allowedExternalPolicy,
+            platform, currentUrl, targetPolicyDecision: allowedExternalPolicy,
         });
-        const screen = await renderScreen(<BrowserSurfaceHost browserSessionId="browser_session_default" platform="ios"
+        const screen = await renderScreen(<BrowserSurfaceHost browserSessionId="browser_session_default" platform={platform}
             initialBrowserState={initialBrowserState} policy={{ browserEnabled: true, viewTargetsEnabled: true,
                 diagnosticsEnabled: false, contextEnabled: false }} localServicePreviewState={createLocalServicePreviewState()}
             pluginBrowserActionContext={{ sessionId: 'session_1', machineId: 'machine_1', serverId: scope.serverId }}
@@ -778,6 +799,12 @@ describe('BrowserSurfaceHost', () => {
             target: { kind: 'externalUrl', url: currentUrl }, currentUrl }]));
         await vi.waitFor(() => expect(Object.values(screen.findByType(BrowserShell).props.state.viewsById))
             .toEqual(expect.arrayContaining([expect.objectContaining({ engineKind: 'streamedSurface', currentUrl })])));
+        await vi.waitFor(() => {
+            const shell = screen.findByType(BrowserShell);
+            expect(shell.props.state.viewsById[shell.props.viewId]).toMatchObject({
+                engineKind: 'streamedSurface', currentUrl,
+            });
+        });
     });
 
     it('adopts a discovered root view without opening a second workspace presentation', async () => {
