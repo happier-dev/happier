@@ -68,7 +68,7 @@ describe('Triage plugin manifest', () => {
 
   it.each([
     { mode: 'start', choice: { kind: 'configured' }, launch: { kind: 'configured', launchMode: 'start' }, destination: 'single', expected: 'Start a new Session' },
-    { mode: 'send', choice: { kind: 'existing', session: { selector: 'self' } }, destination: 'single', expected: 'Send now' },
+    { mode: 'send', choice: { kind: 'existing', session: { selector: 'sessions', addresses: [{ serverId: 'home-a', sessionId: 'bound-session' }] } }, destination: 'single', expected: 'Send now' },
     { mode: 'compose for existing', choice: { kind: 'existing', session: { selector: 'self' } }, destination: 'single', expected: 'Open a draft' },
     { mode: 'Add instructions', choice: { kind: 'configured' }, launch: { kind: 'configured', launchMode: 'review' }, destination: 'single', expected: 'Open a draft to add instructions' },
     { mode: 'bulk start', choice: { kind: 'configured' }, destination: 'oneSessionPerEntry', expected: 'One new Session per entry' },
@@ -94,7 +94,9 @@ describe('Triage plugin manifest', () => {
       expect(rows.filter(row => row.title === 'Action' || row.title === 'Configured action'))
         .toEqual([expect.objectContaining({ title: 'Action', value: 'Fix' })]);
       expect(rows.map(row => row.value)).not.toContain('Resolve production alert');
-      expect(rows.map(row => row.value)).toEqual(expect.arrayContaining(['Existing Session', 'Production investigation']));
+      expect(rows.map(row => row.value)).toContain('Existing Session');
+      expect(rows.find(row => row.title === 'Session')?.value).toContain('bound-session');
+      expect(rows.map(row => row.value)).not.toContain('Production investigation');
     } else {
       expect(rows.map(row => row.value)).toContain('Fix');
     }

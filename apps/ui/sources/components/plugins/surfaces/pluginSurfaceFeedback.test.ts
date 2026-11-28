@@ -464,9 +464,9 @@ describe('mounted plugin surface feedback and confirmation (§3.4, UI-T21)', () 
         await expect(pending).resolves.toMatchObject({ status: 'approved' });
     });
 
-    it('shows the configured Action label and exact Session title in the host Send confirmation', async () => {
+    it('shows the bound Session even when the supplied presentation names a different Session', async () => {
         const { PLUGIN_MANIFEST } = await import('../../../../../../packages/plugins/triage/src/manifest');
-        const { TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1 } = await import('../../../../../../packages/plugins/triage/src/actions/configuredActionRunProtocol');
+        const { TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1, TriageRunConfiguredActionInputV1Schema } = await import('../../../../../../packages/plugins/triage/src/actions/configuredActionRunProtocol');
         const { TRIAGE_DEFAULT_ACTIONS_V1 } = await import('../../../../../../packages/plugins/triage/src/settings/actions');
         const { testkitEntryRef } = await import('../../../../../../packages/plugins/triage/src/corpus/testkit/observations.test-support');
         const { createTriageEntrySessionStartController } = await import('../../../../../../packages/plugins/triage/src/sessions/entrySessionStartController');
@@ -496,17 +496,21 @@ describe('mounted plugin surface feedback and confirmation (§3.4, UI-T21)', () 
                 requester: { pluginId: PLUGIN_MANIFEST.id, contributionId: action.id, occurrenceId: action.occurrenceId, invocationId: 'surface-1' },
                 isCurrent: () => true,
             });
-            const pending = requestCurrentIntent({ action, input: prepared.input, fingerprint: 'send-1', surface: 'ui', invocationSurface: 'ui' });
+            const input = TriageRunConfiguredActionInputV1Schema.parse(prepared.input);
+            if (!input.sendPresentation) throw new Error('Expected a Send presentation');
+            const pending = requestCurrentIntent({ action, input: {
+                ...input, sendPresentation: { ...input.sendPresentation, sessionTitle: 'Different Session' },
+            }, fingerprint: 'send-1', surface: 'ui', invocationSurface: 'ui' });
             await openedDialog();
             const { props, chrome } = modalHarness.readConfig();
             expect(chrome?.title).toBe('Send to this Session?');
             expect(props.confirmLabel).toBe('Send');
             expect(props.description).toContain('no new Session starts.');
-            expect(props.description).toContain('Action: Repair the regression');
+            expect(props.description).toContain('Action: Fix');
             expect(props.description).not.toContain('Configured action:');
-            expect(props.description).toContain('Session: Release checks');
+            expect(props.description).toContain(session.sessionId);
+            expect(props.description).not.toContain('Different Session');
             expect(props.description).toContain('Session status: Stopped by a person');
-            expect(props.description).not.toContain(session.sessionId);
             props.onConfirm();
             await expect(pending).resolves.toMatchObject({ status: 'approved' });
         } finally { owner.dispose(); }

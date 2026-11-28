@@ -189,7 +189,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
               configuredDestinationField,
               configuredDeliveryField,
               { ...configuredActionField, title: { key: 'plugins.triage.surface.bulk.action', fallback: 'Action' } },
-              { path: 'sendPresentation.sessionTitle', title: { key: 'plugins.triage.surface.detail.session', fallback: 'Session' } },
+              { path: 'handoff.sessionChoice.session', title: { key: 'plugins.triage.surface.detail.session', fallback: 'Session' } },
               configuredRecipientStatusField,
             ],
           },
