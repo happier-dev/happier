@@ -7,6 +7,7 @@ import * as strictJsonProjection from '@happier-dev/protocol/json/strictJsonValu
 import { PluginUiSurfaceBindingV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { widgetProjectionEntry } from '@/dev/testkit/fixtures/pluginWidgetProjectionFixtures';
 import { createPluginDeclarativeModelFixture } from '@/dev/testkit/fixtures/pluginDeclarativeModelFixture';
+import * as actionPresentation from '@/sync/domains/plugins/ui/actionPresentation';
 import * as projectionNormalizer from '@/sync/domains/plugins/ui/projection';
 import * as descriptorProjection from '@/sync/domains/connectedServices/connectedAccountDescriptorProjection';
 
@@ -219,6 +220,42 @@ describe('daemon contribution registry projection adapters', () => {
         }
     });
 
+    });
+
+    it('does not normalize held Action presentations when adjacent catalogue sections arrive', () => {
+        const pluginId = 'acme.review';
+        const actionKey = 'acme.review/refresh';
+        const action = {
+            id: 'refresh', pluginId, occurrenceId: 'review-current', title: 'Refresh',
+            scopes: ['session'], surfaces: ['plugin'], execution: { target: 'daemon' }, dangerLevel: 'safe',
+            inputHints: { title: 'Refresh', submitLabel: 'Refresh', fields: [{ path: 'reason', title: 'Reason', widget: 'textarea' }] },
+        };
+        const base = { v: 2, generation: 23,
+            installedPackagesById: { [pluginId]: { id: pluginId, displayName: 'Review', enabled: true,
+                source: { kind: 'local', locator: '/plugins/review' } } },
+            actionsById: { [actionKey]: action },
+        };
+        const resolve = vi.spyOn(actionPresentation, 'resolvePluginProjectedActionPresentation');
+        try {
+            const first = publishDaemonMergedProjectionInputs({ projection: PluginProjectionV2Schema.parse(base) });
+            expect(resolve).toHaveBeenCalledTimes(1);
+            expect(first.pluginProjectionById[pluginId]?.actions[0]?.inputHints?.fields[0]?.title).toBe('Reason');
+            resolve.mockClear();
+            const expanded = { ...base, agentsById: { review: {
+                id: 'review', title: 'Review', identity: { pluginId, localId: 'review' },
+            } } };
+            const second = publishDaemonMergedProjectionInputs({ projection: PluginProjectionV2Schema.parse(expanded) }, first);
+            expect(second.mergedProviderProjectionById.review?.title).toBe('Review');
+            expect(second.pluginProjectionById[pluginId]?.actions).toBe(first.pluginProjectionById[pluginId]?.actions);
+            expect(resolve).not.toHaveBeenCalled();
+
+            const modified = { ...expanded, actionsById: { [actionKey]: { ...action, title: 'Refresh Review' } } };
+            const third = publishDaemonMergedProjectionInputs({ projection: PluginProjectionV2Schema.parse(modified) }, second);
+            expect(third.pluginProjectionById[pluginId]?.actions[0]?.title).toBe('Refresh Review');
+            expect(resolve).toHaveBeenCalledTimes(1);
+        } finally {
+            resolve.mockRestore();
+        }
     it('owns immutable adapted rows without freezing or retaining aliases to the raw V2 input', () => {
         const projection = PluginProjectionV2Schema.parse({ v: 2, generation: 19,
             agentsById: { review: { id: 'review', title: 'Review', identity: { pluginId: 'acme.review', localId: 'review' },

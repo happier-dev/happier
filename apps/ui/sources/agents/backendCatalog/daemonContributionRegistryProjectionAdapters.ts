@@ -184,7 +184,9 @@ export function publishDaemonMergedProjectionInputs(params: Readonly<{
         && prior?.resourceDeclarations === params.resourceDeclarations
         && prior?.projection === projection && prior?.composerSurfaceCatalog === composerSurfaceCatalog
         && prior?.automationEligibleEvents === automationEligibleEvents) return ownedPrevious;
-    const rawAdapted = adaptDaemonContributionRegistryProjectionToMergedProjectionInputs(projection);
+    const unchangedActions = prior?.projection.actionsById === projection.actionsById
+        ? ownedPrevious?.pluginProjectionById : undefined;
+    const rawAdapted = adaptDaemonContributionRegistryProjectionToMergedProjectionInputs(projection, unchangedActions);
     const adapted = projectNativeJsonValueForTransport({
         ...rawAdapted,
         pluginProjectionById: publishPluginProjectionEntries(rawAdapted.pluginProjectionById, ownedPrevious?.pluginProjectionById),
@@ -606,9 +608,11 @@ export function resolvePluginProjectionEditableSettingsGroup(
 export function buildV2PluginProjectionById(
     projection: Pick<PluginUiProjectionModel, 'generation' | 'installedPackagesById' | 'actionsById' | 'resourcesById' | 'diagnostics'>
         & Partial<Pick<PluginProjectionV2, 'agentsById' | 'settingsById' | 'familiesById'>>,
+    unchangedActions?: Readonly<Record<string, PluginProjectionEntry>>,
 ): Readonly<Record<string, PluginProjectionEntry>> {
     const actionsByPluginId = new Map<string, PluginProjectionAction[]>();
     for (const action of Object.values(projection.actionsById)) {
+        if (unchangedActions?.[action.pluginId]) continue;
         const actions = actionsByPluginId.get(action.pluginId) ?? [];
         actions.push(mapV2Action(action));
         actionsByPluginId.set(action.pluginId, actions);
@@ -685,7 +689,7 @@ export function buildV2PluginProjectionById(
                 trustPolicy: null,
             },
             diagnostics: diagnosticsByPluginId.get(pluginId) ?? [],
-            actions: actionsByPluginId.get(pluginId) ?? [],
+            actions: unchangedActions?.[pluginId]?.actions ?? actionsByPluginId.get(pluginId) ?? [],
             resources: resourcesByPluginId.get(pluginId) ?? [],
             editableSettingsGroups: editableSettingsByPluginId.get(pluginId) ?? [],
             iconAgentId: iconAgentIdByPluginId.get(pluginId) ?? null,
@@ -728,6 +732,7 @@ export function readProjectedAgentUiBehaviorDescriptors(
 
 export function adaptDaemonContributionRegistryProjectionToMergedProjectionInputs(
     projection: DaemonContributionRegistryProjection,
+    unchangedActions?: Readonly<Record<string, PluginProjectionEntry>>,
 ): Readonly<{
     mergedProviderProjectionById: Readonly<Record<string, MergedProviderProjectionEntry>>;
     mergedBackendProjectionById: Readonly<Record<string, MergedBackendProjectionEntry>>;
@@ -774,7 +779,7 @@ export function adaptDaemonContributionRegistryProjectionToMergedProjectionInput
     return {
         mergedProviderProjectionById,
         mergedBackendProjectionById,
-        pluginProjectionById: buildV2PluginProjectionById(projection),
+        pluginProjectionById: buildV2PluginProjectionById(projection, unchangedActions),
         registryDiagnostics: [],
     };
 }
