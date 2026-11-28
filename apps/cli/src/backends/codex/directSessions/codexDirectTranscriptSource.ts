@@ -2,7 +2,6 @@ import type { DirectSessionsSource } from '@happier-dev/protocol';
 import { DirectSessionsProviderUnavailableError, type DirectSessionTranscriptPage } from '@/backends/directSessions/providerOps';
 import { withCodexAppServerClient } from '../appServer/client/withCodexAppServerClient';
 import { resolveCodexAppServerProcessEnv } from '../appServer/resolveCodexAppServerProcessEnv';
-import { resolveConfiguredCodexSqliteHome } from '../connectedServices/codexStateFileNames';
 import { readCodexRolloutHistoryLineage } from '../localControl/readCodexRolloutHistoryLineage';
 import { readCodexRolloutHead } from '../localControl/rolloutDiscovery';
 import {
@@ -105,11 +104,15 @@ export async function readCodexDirectTranscript(params: Readonly<{
     try {
       const processEnv = await resolveCodexAppServerProcessEnv({ processEnv: { ...process.env, ...env },
         affinity: { home: params.source.kind === 'codexHome' ? params.source.home : 'user', homePath: home } });
+      const cwd = process.cwd();
       const reset = Boolean(params.cursor && params.cursor !== 'tail' && !nativeCursor);
-      const page = await withCodexAppServerClient({ processEnv, run: client => pageCodexNativeTranscript({
-        ...params, client, home, sqliteHome: resolveConfiguredCodexSqliteHome(processEnv), hasLocalRollout: selectedNativeHome !== undefined, cursor: nativeCursor ? params.cursor : undefined,
-        tailOnly: params.follow && (!nativeCursor || params.cursor === 'tail'),
-      }) });
+      const page = await withCodexAppServerClient({ processEnv, cwd, run: async client => {
+        const sqliteHome = await client.readRuntimeSqliteHome?.() ?? null;
+        return pageCodexNativeTranscript({
+          ...params, client, home, sqliteHome, hasLocalRollout: selectedNativeHome !== undefined, cursor: nativeCursor ? params.cursor : undefined,
+          tailOnly: params.follow && (!nativeCursor || params.cursor === 'tail'),
+        });
+      } });
       return reset ? { ...page, items: [], truncated: true, truncationReason: 'source_discontinuity' } : page;
     } catch (error) { failure = error; }
   }

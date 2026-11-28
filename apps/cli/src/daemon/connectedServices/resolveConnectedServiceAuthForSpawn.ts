@@ -1141,6 +1141,7 @@ async function materializeAndVerifyConnectedServiceAuthForSpawn(params: Readonly
       await assertSpawnResumeReachable({
         agentId: params.agentId,
         materializedEnv: env,
+        processEnv: params.processEnv,
         vendorResumeId: params.vendorResumeId,
         cwd: params.sessionDirectory,
         // Existing-state handoff verifies the final composed launch environment for both native
@@ -1387,6 +1388,7 @@ export async function resolveConnectedServiceAuthForSpawn(params: ConnectedServi
 async function assertSpawnResumeReachable(params: Readonly<{
   agentId: CatalogAgentId;
   materializedEnv: Readonly<Record<string, string>>;
+  processEnv?: NodeJS.ProcessEnv;
   vendorResumeId: string | null;
   cwd: string | null;
   resumeReachabilityRequired: boolean;
@@ -1418,6 +1420,7 @@ async function assertSpawnResumeReachable(params: Readonly<{
 
   const reachability = await verifySpawnResumeReachability({
     agentId: params.agentId,
+    processEnv: params.processEnv,
     vendorResumeId,
     cwd,
     materializedEnv: params.materializedEnv,

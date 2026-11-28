@@ -45,7 +45,7 @@ function fingerprint(entry: Entry): string { return createHash('sha256').update(
 export async function pageCodexNativeTranscript(params: Readonly<{
   client: Pick<CodexAppServerClient, 'request'>;
   home: string;
-  sqliteHome: string;
+  sqliteHome: string | null;
   remoteSessionId: string;
   direction: 'older' | 'newer';
   cursor?: string;
@@ -106,7 +106,7 @@ export async function pageCodexNativeTranscript(params: Readonly<{
       const messages = mapCodexProjectedEventsToDirectMessages({ projected,
         createdAtMs: entry.startedAtMs ?? entry.completedAtMs ?? 0,
         idForIndex: action => `codex:native:${params.remoteSessionId}:${key}:${action}` });
-      if (messages.length > 0 && entry.startedAtMs === null && entry.completedAtMs === null) {
+      if (params.sqliteHome && messages.length > 0 && entry.startedAtMs === null && entry.completedAtMs === null) {
         indexedDates ??= readCodexNativeHistoryTimestamps({ sqliteHome: params.sqliteHome,
           threadId: params.remoteSessionId, items: page.data
             .filter(candidate => candidate.startedAtMs === null && candidate.completedAtMs === null)

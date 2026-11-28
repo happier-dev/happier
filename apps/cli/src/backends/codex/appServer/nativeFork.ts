@@ -1,4 +1,5 @@
 import { logger as defaultLogger } from '@/utils/logger';
+import { reconcileCodexResumeRolloutPath } from '../connectedServices/reconcileCodexResumeRolloutPath';
 
 import { isCodexAppServerDefinitiveMethodNotFoundError } from './appServerCompatibility';
 import { createCodexAppServerClient, type DisposableCodexAppServerClient } from './client/createCodexAppServerClient';
@@ -150,6 +151,11 @@ export async function forkCodexAppServerConversationNative(
       };
     }
 
+    await reconcileCodexResumeRolloutPath({
+      env: params.processEnv ?? process.env, vendorResumeId: parentCodexSessionId, cwd: params.directory,
+      sqliteHome: await client.readRuntimeSqliteHome?.(params.signal ? { signal: params.signal } : undefined) ?? null,
+    });
+    params.signal?.throwIfAborted();
     for (const method of ['thread/fork', 'conversation/fork'] as const) {
       logNativeForkDiagnostic(diagnosticsLogger, '[CodexAppServerNativeFork] attempting method', {
         ...baseDiagnostic,
