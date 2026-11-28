@@ -68,6 +68,8 @@ export function createCaptureReader(store: ReturnType<typeof createCaptureStore>
         }) {
             const { worktree, traceId, databaseMember, pageSize } = input;
             const summaries = await pages({ worktree, traceId, ...(databaseMember && { databaseMember, kind: 'query' }) }, pageSize);
+            // Database scope restricts visible SQL. Retention belongs to the whole trace in this source partition.
+            const retained = summaries.length > 0 || (databaseMember !== undefined && await store.hasRetainedTrace(worktree, traceId));
             const { spans: visibleSpans, queries } = evidence(summaries);
             // Unattributed request ancestry can correlate the selected queries. It never enters the result.
             const spans = databaseMember && queries.length ? await store.requestSpans(worktree, traceId, pageSize) : visibleSpans;
@@ -87,7 +89,7 @@ export function createCaptureReader(store: ReturnType<typeof createCaptureStore>
             }));
             const worktreeRepetitions = input.includeWorktreeRepetitions
                 ? await worktreeQueryRepetitions(worktree, traceId, pageSize, queries) : undefined;
-            return { worktree: input.worktree, traceId: input.traceId, summaries, repeatedQueries: analyzeRequestQueries(spans, queries),
+            return { worktree: input.worktree, traceId: input.traceId, retained, summaries, repeatedQueries: analyzeRequestQueries(spans, queries),
                 slowChildSpans, logCorrelations, worktreeRepetitions };
         },
         async endpoints(input: CaptureEndpointListInput & { pageSize: number }): Promise<readonly CaptureEndpointSummary[]> {

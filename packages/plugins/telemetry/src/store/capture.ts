@@ -261,6 +261,10 @@ SELECT ${summaryFields.join(',')},hasOlder,bodyPrefix,
    }
    return rows;
   },
+  async hasRetainedTrace(worktree: string, traceId: string): Promise<boolean> {
+   const rows = await db.query('SELECT 1 FROM captureSummaries WHERE worktree = ? AND traceId = ? LIMIT 1', [worktree, traceId]);
+   return rows.length > 0;
+  },
   async endpoints(input: CaptureEndpointListInput): Promise<readonly CaptureEndpointSummary[]> {
    const result: CaptureEndpointSummary[] = [];
    let cursor = input.before;

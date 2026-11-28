@@ -261,7 +261,7 @@ export function createCaptureSelectedSourceReaders(selected: AdmittedCaptureSour
             const trace = await createCaptureReader(runtime.store).trace({ worktree: partition,
                 databaseMember: selected.databaseMember, traceId: input.traceId, pageSize: input.page.limit,
                 includeWorktreeRepetitions: source.kind === 'worktree' && selected.databaseMember === undefined && machineId !== undefined });
-            if (trace.summaries.length === 0) {
+            if (!trace.retained) {
                 return { ok: false, status: 'unavailable', code: 'capture_read_expired', reason: 'trace_expired' };
             }
             const findings = machineId === undefined || selected.databaseMember !== undefined ? undefined : [...projectCaptureFindings({

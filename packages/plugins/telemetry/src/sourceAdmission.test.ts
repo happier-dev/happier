@@ -171,8 +171,15 @@ describe('R2-A3 local capture Source/project admission through the real manifest
       if (!selected || !neighbor) throw new Error('Expected attributed database members');
       const selectedKey = createCanonicalJsonSigningInput(selected);
       const neighborKey = createCanonicalJsonSigningInput(neighbor);
+      const otherDatabaseTrace = 'other-database-trace';
       await f.lease.runtime.store.write([
         { id: 'request', worktree, traceId, kind: 'span', source: 'otlp', at: 1, spanId: 'request', spanKind: 2 },
+        { id: 'other-request', worktree, traceId: otherDatabaseTrace, kind: 'span', source: 'otlp', at: 1,
+          spanId: 'other-request', spanKind: 2 },
+        { id: 'other-query', worktree, traceId: otherDatabaseTrace, kind: 'query', source: 'wire', at: 2,
+          databaseMemberKey: neighborKey, detail: { sql: 'neighbor' } },
+        { id: 'foreign-request', worktree: captureSourcePartition(source, 'bob'), traceId: otherDatabaseTrace,
+          kind: 'span', source: 'otlp', at: 1, spanId: 'foreign-request', spanKind: 2 },
         ...[1, 2, 3].flatMap(n => [
           { id: `selected-${n}`, worktree, traceId, kind: 'query' as const, source: 'wire' as const, at: 2,
             spanId: `db-${n}`, executionIdentity: `exec-${n}`, databaseMemberKey: selectedKey,
@@ -217,6 +224,13 @@ describe('R2-A3 local capture Source/project admission through the real manifest
         expect(await invoke(detail, { ...scoped, id }, person)).toMatchObject({ ok: true, detail: null });
       }
       await workbench.invokeAction(local(database.DATABASE_ACCESS_SET_ACTION_ID_V1), { target: databaseTarget, agentAccess: 'read' }, person);
+      const requests = database.DatabaseCaptureTracesListResultV1Schema.parse(
+        await invoke(local(database.DATABASE_CAPTURE_TRACES_LIST_ACTION_ID_V1), { source, page }, person));
+      expect(requests.ok && requests.items.map(row => row.traceId)).toContain(otherDatabaseTrace);
+      const otherDatabaseInput = { ...scoped, traceId: otherDatabaseTrace, page };
+      const scopedTrace = database.DatabaseCaptureTraceGetResultV1Schema.parse(await invoke(trace, otherDatabaseInput, agent));
+      expect(scopedTrace).toEqual({ ok: true, source, traceId: otherDatabaseTrace, summaries: [],
+        repeatedQueries: [], slowChildSpans: [], logCorrelations: [] });
       const retainedTrace = database.DatabaseCaptureTraceGetResultV1Schema.parse(
         await invoke(trace, { source, traceId, page: { limit: 2 } }, person));
       const finding = retainedTrace.ok && retainedTrace.findings?.find(value => value.kind === 'suspected_n_plus_one');
@@ -260,6 +274,9 @@ describe('R2-A3 local capture Source/project admission through the real manifest
       }
       await workbench.invokeAction(local(database.DATABASE_ACCESS_SET_ACTION_ID_V1), { target: databaseTarget, agentAccess: 'read' }, person);
       await invoke(local(database.DATABASE_CAPTURE_CLEAR_ACTION_ID_V1), { source }, person);
+      await expect(invoke(trace, otherDatabaseInput, agent)).resolves.toEqual({
+        ok: false, status: 'unavailable', code: 'capture_read_expired', reason: 'trace_expired',
+      });
       await expect(invoke(trace, verification, agent)).resolves.toEqual({
         ok: false, status: 'unavailable', code: 'capture_read_expired', reason: 'trace_expired',
       });
