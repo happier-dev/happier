@@ -1576,6 +1576,25 @@ async function deletePendingOutboxMessageAtServer(params: {
     invalidatePendingSnapshotRefresh(params.outboxScope, params.sessionId);
 }
 
+async function settleAcknowledgedPendingEnqueue(params: {
+    sessionId: string;
+    localId: string;
+    outboxScope: ServerAccountScope;
+    request: (path: string, init?: RequestInit) => Promise<Response>;
+}): Promise<'accepted' | 'cancelled' | 'already_settled'> {
+    const { sessionId, localId, outboxScope } = params;
+    if (isPendingCancellationRequested(outboxScope, sessionId, localId)) {
+        await markPendingOutboxMessageCancelRequested(sessionId, localId, outboxScope);
+    }
+    const operation = await removePendingOutboxMessage(sessionId, localId, outboxScope, 'enqueue');
+    if (operation === 'quarantined') throw new Error('Persisted pending outbox row is quarantined');
+    if (operation === 'cancel' || (operation === null && isPendingCancellationRequested(outboxScope, sessionId, localId))) {
+        const cancelled = await completePendingOutboxCancellationIfRequested(params);
+        if (cancelled || operation === 'cancel') return 'cancelled';
+    }
+    return operation === 'enqueue' ? 'accepted' : 'already_settled';
+}
+
 async function completePendingOutboxCancellationIfRequested(params: {
     sessionId: string;
     localId: string;
@@ -2703,24 +2722,10 @@ async function enqueuePendingMessageV2Owned(params: {
                 }
                 markPendingOutboxProjectionExternalHandoffIfOwned(sessionId, localId, outboxScope);
             }
-            if (isPendingCancellationRequested(outboxScope, sessionId, localId)) {
-                (await markPendingOutboxMessageCancelRequested(sessionId, localId, outboxScope));
+            const settlement = await settleAcknowledgedPendingEnqueue({ sessionId, localId, outboxScope, request });
+            if (settlement !== 'accepted') {
+                return { committed: true, cancelled: settlement === 'cancelled', alreadySettled: settlement === 'already_settled', didWrite };
             }
-            if (await completePendingOutboxCancellationIfRequested({ sessionId, localId, outboxScope, request })) {
-                return { committed: true, cancelled: true, didWrite };
-            }
-            const postCancellationRow = (await findPendingOutboxMessage(sessionId, localId, outboxScope));
-            if (!postCancellationRow) {
-                return { committed: true, cancelled: false, alreadySettled: true, didWrite };
-            }
-            if (isPendingOutboxMessageQuarantined(postCancellationRow)) {
-                throw new Error('Persisted pending outbox row is quarantined');
-            }
-            if (postCancellationRow.operation === 'cancel') {
-                await completePendingOutboxCancellationIfRequested({ sessionId, localId, outboxScope, request });
-                return { committed: true, cancelled: true, didWrite };
-            }
-            (await removePendingOutboxMessage(sessionId, localId, outboxScope, 'enqueue'));
             if (effectiveDeliveryMode === 'external_handoff') {
                 markPendingOutboxProjectionExternalHandoffIfOwned(sessionId, localId, outboxScope);
             } else if (rawRecord) {
@@ -2961,37 +2966,10 @@ export async function retryPendingOutboxOperationV2(params: {
                     outboxScope,
                 );
             }
-            if (!(await findPendingOutboxMessage(sessionId, pendingLocalId, outboxScope))) {
-                return { committed: true, cancelled: false, alreadySettled: true };
+            const settlement = await settleAcknowledgedPendingEnqueue({ sessionId, localId: pendingLocalId, outboxScope, request });
+            if (settlement !== 'accepted') {
+                return { committed: true, cancelled: settlement === 'cancelled', alreadySettled: settlement === 'already_settled' };
             }
-            if (isPendingCancellationRequested(outboxScope, sessionId, pendingLocalId)) {
-                (await markPendingOutboxMessageCancelRequested(sessionId, pendingLocalId, outboxScope));
-            }
-            if (await completePendingOutboxCancellationIfRequested({
-                sessionId,
-                localId: pendingLocalId,
-                outboxScope,
-                request,
-            })) {
-                return { committed: true, cancelled: true };
-            }
-            const postCancellationRow = (await findPendingOutboxMessage(sessionId, pendingLocalId, outboxScope));
-            if (!postCancellationRow) {
-                return { committed: true, cancelled: false, alreadySettled: true };
-            }
-            if (isPendingOutboxMessageQuarantined(postCancellationRow)) {
-                throw new Error('Persisted pending outbox row is quarantined');
-            }
-            if (postCancellationRow.operation === 'cancel') {
-                await completePendingOutboxCancellationIfRequested({
-                    sessionId,
-                    localId: pendingLocalId,
-                    outboxScope,
-                    request,
-                });
-                return { committed: true, cancelled: true };
-            }
-            (await removePendingOutboxMessage(sessionId, pendingLocalId, outboxScope, 'enqueue'));
             const acknowledgedExternalHandoff = (storage.getState().sessionPending[sessionId]?.messages ?? []).some(
                 (message) =>
                     message.source === 'server_pending'

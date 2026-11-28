@@ -7,7 +7,6 @@ import { Encryption } from '@/sync/encryption/encryption';
 import { storage } from '@/sync/domains/state/storage';
 import {
     loadPendingOutboxForSession,
-    removePendingOutboxMessage,
     savePendingOutboxMessage,
 } from '@/sync/domains/state/pendingOutboxPersistence';
 import { getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
@@ -1208,230 +1207,80 @@ describe('pendingQueueV2 scoped refresh reconciliation', () => {
         expect(canonical?.sendState).not.toBe(forbiddenSendState);
     });
 
-    it('does not overwrite an authoritative ordinary row when refresh retires custody during the cancellation-helper await', async () => {
-        const sessionId = 'ordinary-retry-success-after-refresh-retirement';
-        const localId = 'ordinary-retry-success-after-refresh-retirement-local';
-        const scope = { serverId: 'ordinary-retry-refresh-server', accountId: 'ordinary-retry-refresh-account' } as const;
-        (await persist({ sessionId, localId, text: 'stale retry content', scope, operation: 'enqueue' }));
-        let retryStarted!: () => void;
-        const retryStartedGate = new Promise<void>((resolve) => { retryStarted = resolve; });
-        let releaseRetry!: () => void;
-        const retryGate = new Promise<void>((resolve) => { releaseRetry = resolve; });
-        const authoritativeRawRecord = {
-            role: 'user' as const,
-            content: { type: 'text' as const, text: 'authoritative ordinary content' },
-            meta: { owner: 'server' },
-        };
-        const persistence = getPersistenceStorage();
-        const outboxKey = scopedSessionLocalStateKey('session-pending-outbox-v1', scope);
-        const originalGetString = persistence.getString.bind(persistence);
-        let outboxReadCount = 0;
-        let retirementQueued = false;
-        const getStringSpy = vi.spyOn(persistence, 'getString').mockImplementation((key) => {
-            const value = originalGetString(key);
-            if (key === outboxKey) {
-                outboxReadCount += 1;
-                if (outboxReadCount === 4 && !retirementQueued) {
-                    retirementQueued = true;
-                    // Read #3 is retry's post-response fence; read #4 is the helper's
-                    // false-path lookup. Queue the canonical refresh application before
-                    // the helper's resolved Promise resumes its caller.
-                    queueMicrotask(async () => {
-                        (await removePendingOutboxMessage(sessionId, localId, scope));
-                        storage.getState().applyPendingSnapshot(sessionId, {
-                            messages: [{
-                                id: localId,
-                                localId,
-                                createdAt: 222,
-                                updatedAt: 223,
-                                source: 'server_pending',
-                                deliveryStatus: 'accepted',
-                                pendingOutboxScope: scope,
-                                text: 'authoritative ordinary content',
-                                rawRecord: authoritativeRawRecord,
-                            }],
-                            discarded: [],
-                        });
-                    });
-                }
-            }
-            return value;
-        });
-        const retry = retryPendingOutboxOperationV2({
-            sessionId,
-            localId,
-            outboxScope: scope,
-            serverWireMode: 'pending_input_v1',
-            request: async (_path, init) => {
-                retryStarted();
-                await retryGate;
-                return currentPendingEnqueueAck(init);
-            },
-        });
-        await retryStartedGate;
-
-        releaseRetry();
-        await retry;
-        getStringSpy.mockRestore();
-
-        expect((await loadPendingOutboxForSession(sessionId, scope))).toEqual([]);
-
-        expect(storage.getState().sessionPending[sessionId]?.messages).toEqual([
-            expect.objectContaining({
-                localId,
-                source: 'server_pending',
-                text: 'authoritative ordinary content',
-                rawRecord: authoritativeRawRecord,
-            }),
-        ]);
-    });
-
-    it('does not overwrite an authoritative ordinary row when refresh retires initial enqueue custody during the cancellation-helper await', async () => {
-        const sessionId = 'ordinary-initial-enqueue-after-refresh-retirement';
-        const localId = 'ordinary-initial-enqueue-after-refresh-retirement-local';
-        const scope = { serverId: 'ordinary-initial-enqueue-server', accountId: 'ordinary-initial-enqueue-account' } as const;
+    it.each(['initial', 'retry'] as const)('preserves an authoritative ordinary row installed before the %s ACK settles', async attempt => {
+        const sessionId = 'ordinary-refresh-retirement';
+        const localId = 'ordinary-refresh-retirement-local';
+        const scope = { serverId: 'ordinary-refresh-server', accountId: 'ordinary-refresh-account' };
         await resetPendingQueueState(scope);
         storage.getState().applySessions([{ ...buildSession({ sessionId }), encryptionMode: 'plain' }]);
-        const authoritativeRawRecord = {
-            role: 'user' as const,
-            content: { type: 'text' as const, text: 'authoritative initial enqueue content' },
-            meta: { owner: 'server' },
+        if (attempt === 'retry') await persist({ sessionId, localId, text: 'stale input', scope, operation: 'enqueue' });
+        const postStarted = createDeferred<void>();
+        const releasePost = createDeferred<void>();
+        const request = async (_path: string, init?: RequestInit) => {
+            postStarted.resolve(undefined);
+            await releasePost.promise;
+            return currentPendingEnqueueAck(init);
         };
-        const persistence = getPersistenceStorage();
-        const outboxKey = scopedSessionLocalStateKey('session-pending-outbox-v1', scope);
-        const originalGetString = persistence.getString.bind(persistence);
-        let outboxReadCount = 0;
-        let retirementQueued = false;
-        const getStringSpy = vi.spyOn(persistence, 'getString').mockImplementation((key) => {
-            const value = originalGetString(key);
-            if (key === outboxKey) {
-                outboxReadCount += 1;
-                if (outboxReadCount === 4 && !retirementQueued) {
-                    retirementQueued = true;
-                    // Read #3 selects the saved enqueue row; read #4 is the helper's
-                    // false-path lookup. Apply refresh before its Promise resumes the caller.
-                    queueMicrotask(async () => {
-                        (await removePendingOutboxMessage(sessionId, localId, scope));
-                        storage.getState().applyPendingSnapshot(sessionId, {
-                            messages: [{
-                                id: localId,
-                                localId,
-                                createdAt: 222,
-                                updatedAt: 223,
-                                source: 'server_pending',
-                                deliveryStatus: 'accepted',
-                                pendingOutboxScope: scope,
-                                text: 'authoritative initial enqueue content',
-                                rawRecord: authoritativeRawRecord,
-                            }],
-                            discarded: [],
-                        });
-                    });
-                }
-            }
-            return value;
-        });
+        const args = { sessionId, localId, outboxScope: scope, serverWireMode: 'pending_input_v1' as const, request };
+        const submit = attempt === 'retry'
+            ? retryPendingOutboxOperationV2(args)
+            : enqueuePendingMessageV2({ ...args, text: 'stale input', encryption: null });
+        await postStarted.promise;
 
-        const result = await enqueuePendingMessageV2({
+        await fetchAndApplyPendingMessagesV2({
             sessionId,
-            localId,
-            text: 'stale initial enqueue content',
-            encryption: await Encryption.create(new Uint8Array(32).fill(19)),
+            encryption: null,
             outboxScope: scope,
-            serverWireMode: 'pending_input_v1',
-            request: async (_path, init) => currentPendingEnqueueAck(init),
+            isOutboxScopeCurrent: () => true,
+            request: async () => response(localId, 'queued', { text: 'authoritative ordinary content' }),
         });
-        getStringSpy.mockRestore();
-
-        expect(result).toMatchObject({ localId, accepted: true });
-        expect((await loadPendingOutboxForSession(sessionId, scope))).toEqual([]);
+        expect(await loadPendingOutboxForSession(sessionId, scope)).toEqual([]);
+        releasePost.resolve(undefined);
+        await expect(submit).resolves.toMatchObject({ accepted: true });
         expect(storage.getState().sessionPending[sessionId]?.messages).toEqual([
-            expect.objectContaining({
-                localId,
-                source: 'server_pending',
-                text: 'authoritative initial enqueue content',
-                rawRecord: authoritativeRawRecord,
-            }),
+            expect.objectContaining({ localId, source: 'server_pending', text: 'authoritative ordinary content' }),
         ]);
     });
 
-    it.each(['initial', 'retry'] as const)(
-        'preserves an enqueue-to-cancel transition during the cancellation-helper await (%s)',
-        async (attempt) => {
-            const sessionId = `enqueue-to-cancel-helper-await-${attempt}`;
-            const localId = `enqueue-to-cancel-helper-await-${attempt}-local`;
-            const scope = { serverId: `enqueue-to-cancel-${attempt}-server`, accountId: 'account' } as const;
-            await resetPendingQueueState(scope);
-            storage.getState().applySessions([{ ...buildSession({ sessionId }), encryptionMode: 'plain' }]);
-            if (attempt === 'retry') {
-                (await persist({ sessionId, localId, text: 'retry then cancel', scope, operation: 'enqueue' }));
-            }
-
-            const requestCalls: Array<{ path: string; method: string | undefined }> = [];
-            const request = async (path: string, init?: RequestInit) => {
-                requestCalls.push({ path, method: init?.method });
-                return init?.method === 'DELETE'
-                    ? new Response(null, { status: 204 })
-                    : currentPendingEnqueueAck(init);
-            };
-            const persistence = getPersistenceStorage();
-            const outboxKey = scopedSessionLocalStateKey('session-pending-outbox-v1', scope);
-            const originalGetString = persistence.getString.bind(persistence);
-            let outboxReadCount = 0;
-            let cancellation: Promise<void> | null = null;
-            const getStringSpy = vi.spyOn(persistence, 'getString').mockImplementation((key) => {
-                const value = originalGetString(key);
-                if (key === outboxKey) {
-                    outboxReadCount += 1;
-                    if (outboxReadCount === 4 && cancellation === null) {
-                        // The helper has observed enqueue custody and is about to yield its
-                        // false result. Transition through the real cancellation owner first.
-                        queueMicrotask(async () => {
-                            cancellation = deletePendingMessageV2({
-                                sessionId,
-                                pendingId: localId,
-                                outboxScope: scope,
-                                request,
-                            });
-                        });
-                    }
-                }
-                return value;
-            });
-
-            const submitResult = attempt === 'initial'
-                ? await enqueuePendingMessageV2({
-                    sessionId,
-                    localId,
-                    text: 'initial then cancel',
-                    encryption: await Encryption.create(new Uint8Array(32).fill(20)),
-                    outboxScope: scope,
-                    serverWireMode: 'pending_input_v1',
-                    request,
-                })
-                : await retryPendingOutboxOperationV2({
-                    sessionId,
-                    localId,
-                    outboxScope: scope,
-                    serverWireMode: 'pending_input_v1',
-                    request,
-                });
-            await cancellation;
-            getStringSpy.mockRestore();
-
-            if (attempt === 'initial') {
-                expect(submitResult).toMatchObject({ localId, accepted: true });
-            } else {
-                expect(submitResult).toEqual({ accepted: true });
-            }
-            expect(requestCalls).toEqual([
-                { path: `/v2/sessions/${sessionId}/pending`, method: 'POST' },
-                { path: `/v2/sessions/${sessionId}/pending/${localId}`, method: 'DELETE' },
-            ]);
-            expect((await loadPendingOutboxForSession(sessionId, scope))).toEqual([]);
-            expect(storage.getState().sessionPending[sessionId]?.messages ?? []).toEqual([]);
-        },
-    );
+    it.each(['initial', 'retry'] as const)('settles a cancellation persisted while the %s ACK is in flight', async attempt => {
+        const sessionId = 'accept-cancel-overlap';
+        const localId = 'accept-cancel-overlap-local';
+        const scope = { serverId: 'accept-cancel-server', accountId: 'accept-cancel-account' };
+        await resetPendingQueueState(scope);
+        storage.getState().applySessions([{ ...buildSession({ sessionId }), encryptionMode: 'plain' }]);
+        if (attempt === 'retry') {
+            await persist({ sessionId, localId, text: 'input to cancel', scope, operation: 'enqueue' });
+            await replayPersistedPendingOutboxForSession(sessionId, scope);
+        }
+        const postStarted = createDeferred<void>();
+        const releasePost = createDeferred<void>();
+        const requestCalls: Array<string | undefined> = [];
+        const request = async (_path: string, init?: RequestInit) => {
+            requestCalls.push(init?.method);
+            if (init?.method === 'DELETE') return new Response(null, { status: 204 });
+            postStarted.resolve(undefined);
+            await releasePost.promise;
+            return currentPendingEnqueueAck(init);
+        };
+        const args = { sessionId, localId, outboxScope: scope, serverWireMode: 'pending_input_v1' as const, request };
+        const submit = attempt === 'retry'
+            ? retryPendingOutboxOperationV2(args)
+            : enqueuePendingMessageV2({ ...args, text: 'input to cancel', encryption: null });
+        await postStarted.promise;
+        const cancellation = deletePendingMessageV2({ sessionId, pendingId: localId, outboxScope: scope, request });
+        try {
+            await vi.waitFor(async () => expect(await loadPendingOutboxForSession(sessionId, scope)).toMatchObject([
+                { localId, operation: 'cancel' },
+            ]));
+        } finally {
+            releasePost.resolve(undefined);
+        }
+        await expect(submit).resolves.toMatchObject({ accepted: true });
+        await cancellation;
+        expect(requestCalls).toEqual(['POST', 'DELETE']);
+        expect(await loadPendingOutboxForSession(sessionId, scope)).toEqual([]);
+        expect(storage.getState().sessionPending[sessionId]?.messages ?? []).toEqual([]);
+    });
 
     it.each(['initial', 'retry'] as const)(
         'retires accepted enqueue custody before a promise-resolution cancellation gap (%s)',
@@ -1454,27 +1303,18 @@ describe('pendingQueueV2 scoped refresh reconciliation', () => {
             };
             const persistence = getPersistenceStorage();
             const outboxKey = scopedSessionLocalStateKey('session-pending-outbox-v1', scope);
-            const originalGetString = persistence.getString.bind(persistence);
-            let outboxReadCount = 0;
+            if (attempt === 'retry') await replayPersistedPendingOutboxForSession(sessionId, scope);
+            const originalDelete = persistence.delete.bind(persistence);
             let cancellation: Promise<void> | null = null;
-            const getStringSpy = vi.spyOn(persistence, 'getString').mockImplementation((key) => {
-                const value = originalGetString(key);
-                if (key === outboxKey) {
-                    outboxReadCount += 1;
-                    if (outboxReadCount === 5 && cancellation === null) {
-                        // The serialized callback selected final enqueue custody. Queue
-                        // cancellation before its resolved result resumes any outer owner.
-                        queueMicrotask(async () => {
-                            cancellation = deletePendingMessageV2({
-                                sessionId,
-                                pendingId: localId,
-                                outboxScope: scope,
-                                request,
-                            });
+            const deleteSpy = vi.spyOn(persistence, 'delete').mockImplementation((key) => {
+                originalDelete(key);
+                if (key === outboxKey && cancellation === null) {
+                    queueMicrotask(() => {
+                        cancellation = deletePendingMessageV2({
+                            sessionId, pendingId: localId, outboxScope: scope, request,
                         });
-                    }
+                    });
                 }
-                return value;
             });
 
             const submitResult = attempt === 'initial'
@@ -1495,7 +1335,7 @@ describe('pendingQueueV2 scoped refresh reconciliation', () => {
                     request,
                 });
             await cancellation;
-            getStringSpy.mockRestore();
+            deleteSpy.mockRestore();
 
             expect(submitResult).toEqual(attempt === 'initial'
                 ? { localId, accepted: true, didWrite: true }

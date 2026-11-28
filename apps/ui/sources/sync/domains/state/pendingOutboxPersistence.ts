@@ -309,21 +309,25 @@ export function isPendingOutboxMessageQuarantined(
     return message.operation === 'quarantined' && message.quarantineReason !== undefined;
 }
 
+/** Returns the observed operation even when the expected operation prevents removal. */
 export async function removePendingOutboxMessage(
     sessionId: string,
     localId: string,
     scope: ServerAccountScope,
     expectedOperation?: 'enqueue' | 'cancel',
-): Promise<void> {
+): Promise<PersistedPendingOutboxMessage['operation'] | null> {
     const normalizedSessionId = sessionId.trim();
-    if (!normalizedSessionId || readPendingLocalId(localId) === null) return;
+    if (!normalizedSessionId || readPendingLocalId(localId) === null) return null;
     return updatePendingOutbox(scope, (outbox) => {
         const rows = outbox[normalizedSessionId];
-        if (!rows) return;
+        if (!rows) return null;
+        const operation = rows.find((row) => row.localId === localId)?.operation ?? null;
+        if (operation === null) return null;
         const nextRows = rows.filter((row) => row.localId !== localId
             || (expectedOperation !== undefined && row.operation !== expectedOperation));
-        if (nextRows.length === rows.length) return;
+        if (nextRows.length === rows.length) return operation;
         if (nextRows.length === 0) delete outbox[normalizedSessionId];
         else outbox[normalizedSessionId] = nextRows;
+        return operation;
     });
 }

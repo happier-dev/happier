@@ -2,7 +2,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
 beforeAll(loadSyncSingletonForTests);
-import { IDBFactory, IDBObjectStore } from 'fake-indexeddb';
+import { IDBDatabase, IDBFactory, IDBObjectStore } from 'fake-indexeddb';
 import { Platform } from 'react-native';
 import { pendingDeliveryStatusV1ToPersistedFields, type PendingDeliveryStatusV1 } from '@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1';
 import { PendingRequestedActionV1Schema } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
@@ -157,6 +157,34 @@ describe('pendingQueueV2 requested-action replay', () => {
       expect(storage.getState().sessions[sessionId]?.optimisticThinkingAt).toBeNull();
     } finally {
       put.mockRestore();
+      Object.defineProperty(Platform, 'OS', { configurable: true, value: platform });
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('settles an acknowledged browser enqueue in one IndexedDB transaction', async () => {
+    const sessionId = 'browser-ack-settlement';
+    const localId = 'browser-ack';
+    storage.getState().applySessions([buildSession({ sessionId, overrides: { encryptionMode: 'plain' } })]);
+    const platform = Platform.OS;
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' });
+    vi.stubGlobal('indexedDB', new IDBFactory());
+    const transaction = vi.spyOn(IDBDatabase.prototype, 'transaction');
+    let transactionsBeforeAck = 0;
+    try {
+      const result = await enqueuePendingMessageV2({
+        sessionId, localId, text: 'hello', encryption: null, outboxScope, serverWireMode: 'pending_input_v1',
+        request: async () => {
+          transactionsBeforeAck = transaction.mock.calls.length;
+          return currentPendingAck('enqueue', { localId });
+        },
+      });
+      expect(result).toMatchObject({ localId, accepted: true });
+      expect(transactionsBeforeAck).toBeGreaterThan(0);
+      expect(transaction.mock.calls.length - transactionsBeforeAck).toBe(1);
+      expect(await loadPendingOutboxForSession(sessionId, outboxScope)).toEqual([]);
+    } finally {
+      transaction.mockRestore();
       Object.defineProperty(Platform, 'OS', { configurable: true, value: platform });
       vi.unstubAllGlobals();
     }

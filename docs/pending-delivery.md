@@ -767,6 +767,11 @@ prompt; other indentation and content differences remain distinct.
 
 ## UI settlement convergence (development)
 
+The UI writes its exact enqueue request to durable outbox custody before POST.
+After an exact Home acknowledgement, enqueue and retry inspect the current row
+and retire an enqueue in one transaction. A persisted cancellation keeps custody
+until Home confirms removal. Quarantine retains its diagnostic row.
+
 Pending provider acceptance carries the exact `localId` through `SessionClient`
 to server settlement. The server transaction
 commits or updates the transcript message and removes that Pending row.
