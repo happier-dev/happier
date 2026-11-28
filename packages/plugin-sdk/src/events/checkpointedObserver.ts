@@ -46,6 +46,8 @@ export type PluginCheckpointedEventSourceAdapterV1<TSource, TCheckpoint> = Reado
     observe(input: PluginCheckpointedEventAttemptContextV1<TSource>): Promise<PluginCheckpointedEventAttemptResultV1<TCheckpoint>>;
     /** Continue advancing provider deadlines during admission; observe must preserve the retained candidate until save. */
     observeWhileAdmissionPending?: boolean;
+    /** Set only when a recurring observation intentionally shares the first occurrence's ID after local history is cleared. */
+    checkpointOnOccurrenceConflict?: true;
     save(input: PluginCheckpointedEventAttemptContextV1<TSource> & Readonly<{
         checkpoint: TCheckpoint;
         /** Supplied after all observations are safe and this admitted cycle was not cancelled. */
@@ -89,6 +91,7 @@ export async function processCheckpointedPluginEventAttemptV1(
 async function processCheckpointedAttempt(
     input: PluginCheckpointedEventAttemptProcessingV1,
     pendingObservations?: Set<string>,
+    checkpointOnOccurrenceConflict?: true,
 ): Promise<PluginEventDispositionV1> {
     const admissions: NonNullable<PluginEventDispositionV1['admissions']>[number][] = [];
     input.context.signal.throwIfAborted();
@@ -116,7 +119,9 @@ async function processCheckpointedAttempt(
         }
         for (const scope of scopes.values()) {
             pendingObservations?.add(occurrenceKey);
-            const disposition = await admitPluginEventObservationUnderScopeV1(accountedObservation, input.context, scope, matching, false);
+            const disposition = await admitPluginEventObservationUnderScopeV1(accountedObservation, input.context, scope, matching, {
+                reportCatalogCurrent: false, checkpointOnOccurrenceConflict,
+            });
             if (disposition.admissions !== undefined) admissions.push(...disposition.admissions);
             if (disposition.kind !== 'checkpointSafe') return { ...disposition, admissions };
         }
@@ -442,7 +447,7 @@ export async function runCheckpointedPluginEventObserverV1<TSource, TCheckpoint>
                         const processing = processCheckpointedAttempt({ context: cycleContext, definitions: group, observations: result.observations, complete: result.complete,
                             isCurrent, save: async disposition => {
                                 if (!detached && result.checkpoint !== undefined) await source.save({ ...attemptContext, checkpoint: result.checkpoint, disposition });
-                            } }, pending);
+                            } }, pending, source.checkpointOnOccurrenceConflict);
                         if (detached) {
                             const attempt: NonNullable<ReturnType<typeof admitting.get>> = { context: attemptContext, result,
                                 nextEligibleAt: eligibility(result.nextEligibleAt) };

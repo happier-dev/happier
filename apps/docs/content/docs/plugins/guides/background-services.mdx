@@ -124,6 +124,12 @@ checkpoint before the next observation cycle. Buffered immediate work waits for 
 authenticated wake when its deadline cannot advance. Finite `once` mode awaits
 admission and save.
 
+Set `checkpointOnOccurrenceConflict: true` only if clearing local history can
+produce new observations that intentionally reuse the same occurrence ID.
+Telemetry uses this for grouped findings so the watcher can move on to the next
+finding after Home refuses a recurrence. Home preserves its original admission
+and the adapter receives the blocked result.
+
 The runner uses its own host-stamped `context.materialization` to admit the
 source assignment once for each finite cycle. An absent or mismatched value leaves observation
 unavailable. Caller materialization describes a different invocation and cannot

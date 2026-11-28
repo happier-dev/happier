@@ -118,7 +118,7 @@ describe('registered production collector runner', () => {
     });
 });
 
-it('groups armed production findings and parks a refused recurrence until the next wake', async () => {
+it('groups armed production findings and consumes a recurrence after Clear before admitting the next group', async () => {
     const fixture = createCaptureSqliteFixture();
     const lifetime = new AbortController();
     const materialization = { pluginId: 'happier.telemetry', machineId: 'collector', materializationId: 'installed' };
@@ -303,6 +303,11 @@ it('groups armed production findings and parks a refused recurrence until the ne
         await store.clear(partition);
         await sendTrace(token);
         await vi.waitFor(() => expect(conflicts).toContain(admissions[0].occurrenceId));
+        await sendTrace(token, 'after-clear');
+        await vi.waitFor(() => expect(admitted.size).toBe(4));
+        expect(admissions.at(-1)?.payload).toMatchObject({ observation: {
+            environmentObservation: { reportedService: { name: 'after-clear' } },
+        } });
         expect(conflicts).toEqual([admissions[0].occurrenceId]);
     } finally {
         lifetime.abort();

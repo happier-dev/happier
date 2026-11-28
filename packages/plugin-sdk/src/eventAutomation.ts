@@ -350,7 +350,7 @@ export async function admitPluginEventObservationUnderScopeV1(
     context: PluginInvocationContext,
     scope: PluginEventAdmissionScope,
     selectedDefinitions?: readonly SourceDefinition[],
-    reportCatalogCurrent = true,
+    options: Readonly<{ reportCatalogCurrent?: boolean; checkpointOnOccurrenceConflict?: true }> = {},
 ): Promise<PluginEventDispositionV1> {
     let definitions = selectedDefinitions;
     if (definitions === undefined) {
@@ -365,7 +365,7 @@ export async function admitPluginEventObservationUnderScopeV1(
         if (catalog === null) return { kind: 'unsettled' };
         // A one-shot pull only observes its exact source. A retained watcher
         // publishes its own catalog reconciliation across the whole scope.
-        if (reportCatalogCurrent && (scope.kind !== 'checkpointedPull' || catalog.definitions.length > 0)) {
+        if (options.reportCatalogCurrent !== false && (scope.kind !== 'checkpointedPull' || catalog.definitions.length > 0)) {
             await reportCurrentSourceCatalog(context, catalog.revision, scope);
         }
         definitions = catalog.definitions;
@@ -442,7 +442,9 @@ export async function admitPluginEventObservationUnderScopeV1(
         }];
     });
     return {
-        kind: admitted.results.length === matchingDefinitions.length && admitted.results.every((result) => result.checkpointSafe)
+        kind: admitted.results.length === matchingDefinitions.length && admitted.results.every(result => result.checkpointSafe || (
+            options.checkpointOnOccurrenceConflict && result.kind === 'blocked' && result.reason === 'occurrenceConflict'
+        ))
             ? 'checkpointSafe' : 'unsettled',
         admissions,
     };

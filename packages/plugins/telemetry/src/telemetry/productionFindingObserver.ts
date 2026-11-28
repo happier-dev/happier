@@ -21,6 +21,7 @@ export function startProductionFindingObserver(
     const armed = new Map<string, ArmedSource>();
     let wake: ((sourceInstanceId?: string) => Promise<void>) | undefined;
     const source: PluginCheckpointedEventSourceAdapterV1<SourceConfig, string> = {
+        checkpointOnOccurrenceConflict: true,
         decode(definition) {
             if (definition.eventRef.localId !== productionFindingEventParts.eventRef.localId) return null;
             const parsed = productionFindingEventParts.configSchema.safeParse(definition.sourceConfig);

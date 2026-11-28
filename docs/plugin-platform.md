@@ -6905,6 +6905,10 @@ processor/save path. Checkpoint-safe skipped Events may persist notice or cursor
 facts, but only a matching actual `admitted` or `rejoined` result authorizes
 admitted-only work. Missing metadata and unsettled attempts fail closed; the SDK
 does not create a second launcher or infer admission from checkpoint safety.
+An adapter can set `checkpointOnOccurrenceConflict: true` when clearing its
+local history can produce a new observation under the same intentional group ID.
+This lets the runner advance its cursor on `occurrenceConflict` while preserving
+the exact blocked result and the original Home admission.
 
 A plugin module runtime failure while decoding provider content surfaces as
 that provider's retryable failure, never as a fabricated anonymous observation;

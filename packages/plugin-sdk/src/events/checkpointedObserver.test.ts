@@ -371,6 +371,25 @@ describe('checkpointed observer ownership', () => {
         expect(f.runCount()).toBe(0);
     });
 
+    it('checkpoints a blocked occurrence conflict only when the adapter opts in', async () => {
+        const f = fixture();
+        const conflict = { kind: 'blocked', reason: 'occurrenceConflict', checkpointSafe: false };
+        f.setAdmissionResult({ results: [conflict] });
+        const input = { context: f.context, mode: 'once' as const, now: () => 1000 };
+        await runCheckpointedPluginEventObserverV1({ ...input, source: f.source });
+        expect(f.save).not.toHaveBeenCalled();
+
+        const source = { ...f.source, checkpointOnOccurrenceConflict: true as const };
+        await runCheckpointedPluginEventObserverV1({ ...input, source });
+        expect(f.save).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ checkpoint: 'cursor-1',
+            disposition: { kind: 'checkpointSafe', admissions: [expect.objectContaining({ result: conflict })] } }));
+
+        f.setAdmissionResult({ results: [{ kind: 'blocked', reason: 'temporarilyUnavailable', checkpointSafe: false }] });
+        await runCheckpointedPluginEventObserverV1({ ...input, source });
+        expect(f.save).toHaveBeenCalledOnce();
+        expect(f.runCount()).toBe(0);
+    });
+
     it('keeps malformed admission unavailable when the provider reports observing without a retry deadline', async () => {
         const f = fixture();
         f.setAdmissionResult({ results: 'invalid' });
