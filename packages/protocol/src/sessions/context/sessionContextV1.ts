@@ -46,11 +46,14 @@ export async function admitSessionContextIntentV1(input: unknown,
   return intent;
 }
 
+// Every Session metadata decode runs this migration; build its schema once.
+const RetainedSessionWorkRecordSchema = lazyZodSchema(() => z.record(z.string(), z.unknown()));
+
 /** Retained development data only: move the obsolete role pointer into its
  * owning Session layer. This preserves a Markdown reference; it does not
  * create or reinterpret the document as a memory artifact. */
 export function migrateRetainedSessionWorkContextV1(value: unknown): Record<string, unknown> {
-  const work = value === undefined ? {} : z.record(z.string(), z.unknown()).parse(value);
+  const work = value === undefined ? {} : RetainedSessionWorkRecordSchema.parse(value);
   const roles: unknown = 'sessionRolesV1' in work ? work.sessionRolesV1 : undefined;
   if (!roles || typeof roles !== 'object' || Array.isArray(roles) || !('memoryDocRef' in roles)) return { ...work };
   const ref = createStoredReadSchema(PromptDocArtifactRefV1Schema).parse(roles.memoryDocRef);
