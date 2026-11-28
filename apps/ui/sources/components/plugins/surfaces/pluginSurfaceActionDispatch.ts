@@ -121,7 +121,7 @@ import { randomUUID } from '@/platform/randomUUID';
 import { getCurrentAuth } from '@/auth/context/currentAuth';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { createUiActionAutomationPortV1 } from '@/sync/ops/actions/actionAutomations';
-import { readUiSessionStatus } from '@/sync/ops/actions/sessionStatusAction';
+import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 
 import {
     createPluginActionCurrentIntentHandler,
@@ -1637,18 +1637,13 @@ async function executeClientContributedAction(
         const exactId = input.hostAction?.context?.sessionTargetsV1?.targets[0]?.sessionId
             ?? (typeof target === 'string' ? target : undefined);
         if (!exactId) throw new PluginError({ code: 'session_target_unavailable' });
-        const account = await captureLazyActionAccountContext(accountLifetime.scope.serverId, input.signal);
-        try {
-            const result = SessionStatusActionResultV1Schema.parse(await readUiSessionStatus(account, { sessionId: exactId,
-                serverId: accountLifetime.scope.serverId, ...(input.signal ? { signal: input.signal } : {}) }));
-            if (result.ok === false) throw new PluginError({ code: result.code });
-            const contributedAction = result.session.machineId ? {
-                machineId: result.session.machineId, serverId: accountLifetime.scope.serverId,
-                accountLifetime, sessionId: result.session.id,
-            } : undefined;
-            input = { ...input, contributedAction };
-            return contributedAction;
-        } finally { account.dispose(); }
+        const rpcTarget = readMachineTargetForSession({ ...accountLifetime.scope, sessionId: exactId });
+        const contributedAction = rpcTarget ? {
+            machineId: rpcTarget.machineId, serverId: accountLifetime.scope.serverId,
+            accountLifetime, sessionId: exactId,
+        } : undefined;
+        input = { ...input, contributedAction };
+        return contributedAction;
     })();
     const invocationSurface = input.invocationSurface ?? 'ui';
     const originSurface = readActionOriginSurface(input);

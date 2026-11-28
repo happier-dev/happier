@@ -459,7 +459,8 @@ describe('portable Account PR Watch Action', () => {
             const second = sessionPullRequestBindingFixture('pr-2', 'session-b', 13);
             await f.state.put(withChannelStateSessionIdentity(second, second.payload.target), { expectedRevision: 'absent' });
             f.execute.mockImplementation(async (id, input) => {
-                if (id !== 'session.targets.resolve' || input === null || typeof input !== 'object' || !('target' in input)) {
+                if (id !== 'session.targets.resolve' || input === null || typeof input !== 'object'
+                    || !('target' in input) || typeof input.target !== 'string') {
                     throw new Error('Watch metadata only resolves exact Session addresses');
                 }
                 return { coverage: 'complete', addresses: [{ sessionId: input.target, serverId: 'srv_example' }], error: null };
