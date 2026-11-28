@@ -46,7 +46,7 @@ afterEach(async () => {
   }));
 });
 
-async function createHarness(idToken = 'id-old', accountMode: 'plain' | 'e2ee' = 'plain', randomBytes?: (length: number) => Uint8Array, provider?: 'railway' | 'digitalocean') {
+async function createHarness(idToken = 'id-old', accountMode: 'plain' | 'e2ee' = 'plain', randomBytes?: (length: number) => Uint8Array, provider?: 'railway' | 'digitalocean' | 'boat') {
   const activeAccount = provider
     ? { service: { pluginId: `happier.machine.${provider}`, localId: `${provider}-account` }, accountId: account.accountId }
     : account;
@@ -190,6 +190,7 @@ describe('refreshQualifiedConnectedAccount', () => {
   it.each([
     { provider: 'railway', tokenUrl: 'https://backboard.railway.com/oauth/token', remoteStatus: 'remoteUnsupported' },
     { provider: 'digitalocean', tokenUrl: 'https://cloud.digitalocean.com/v1/oauth/token', remoteStatus: 'remoteRevoked' },
+    { provider: 'boat', tokenUrl: 'https://boat.dev/api/boat/oauth2/token', remoteStatus: 'remoteRevoked' },
   ] as const)('settles $provider rotation and Disconnect with the admitted bundled runtime', async ({ provider, tokenUrl, remoteStatus }) => {
     const harness = await createHarness(undefined, undefined, undefined, provider);
     const ref = harness.credentialSnapshot.ref;
@@ -199,11 +200,18 @@ describe('refreshQualifiedConnectedAccount', () => {
         const fields = new URLSearchParams(await new Response(init?.body).text());
         expect(fields.get('refresh_token')).toBe('refresh-old');
         expect(fields.has('client_secret')).toBe(false);
-        return Response.json({ token_type: 'Bearer', access_token: 'access-new', refresh_token: 'refresh-new', expires_in: 3600 });
+        return Response.json({ token_type: 'Bearer', access_token: 'access-new', refresh_token: 'refresh-new', expires_in: 3600,
+          ...(provider === 'boat' ? { scope: 'account.read sandbox.read' } : {}) });
       }
-      expect(url).toBe('https://cloud.digitalocean.com/v1/oauth/revoke');
-      expect(new Headers(init?.headers).get('authorization')).toBe('Bearer access-new');
-      expect(new URLSearchParams(await new Response(init?.body).text()).get('token')).toBe('access-new');
+      const form = new URLSearchParams(await new Response(init?.body).text());
+      if (provider === 'boat') {
+        expect(url).toBe('https://boat.dev/api/boat/oauth2/revoke');
+        expect(form.get('token')).toBe('refresh-new');
+      } else {
+        expect(url).toBe('https://cloud.digitalocean.com/v1/oauth/revoke');
+        expect(new Headers(init?.headers).get('authorization')).toBe('Bearer access-new');
+        expect(form.get('token')).toBe('access-new');
+      }
       return Response.json({});
     });
     vi.stubGlobal('fetch', request);

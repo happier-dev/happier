@@ -1,6 +1,8 @@
 import { createMachineProvisionerApiKeyAccount } from '@happier-dev/plugin-sdk/machine-provisioners';
+import type { ConnectedAccountPortableRuntime, ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
 import { BoatLimitsResponseSchema } from './machine/nativeClient.js';
 import { boatSetupMessage } from './machine/schemas.js';
+import { boatOAuthMode, boatOAuthStatus, refreshBoatOAuth, revokeBoatOAuth } from './oauth.js';
 
 export const ACCOUNT_ID = 'boat-account';
 export const ACCOUNT_PURPOSE = 'cloud-api';
@@ -29,6 +31,17 @@ const account = createMachineProvisionerApiKeyAccount({
     },
   },
 });
-export const connectedAccountRuntime = account.runtime;
-export const connectedAccountPortableRuntime = account.portableRuntime;
+export const connectedAccountRuntime: ConnectedAccountRuntime = {
+  ...account.runtime,
+  authentication: { modes: { ...account.runtime.authentication.modes, oauth: boatOAuthMode } },
+  status: (context, options) => context.configuration.target.modeId === 'oauth'
+    ? boatOAuthStatus(context, options) : account.runtime.status(context, options),
+  refresh: (context, options) => context.configuration.target.modeId === 'oauth'
+    ? refreshBoatOAuth(context, options) : account.runtime.refresh(context, options),
+  revoke: (context, options) => context.configuration.target.modeId === 'oauth'
+    ? revokeBoatOAuth(context, options) : account.runtime.revoke(context, options),
+};
+export const connectedAccountPortableRuntime: ConnectedAccountPortableRuntime = {
+  authentication: connectedAccountRuntime.authentication, materialize: connectedAccountRuntime.materialize,
+};
 export const nativeFetch = account.nativeFetch;

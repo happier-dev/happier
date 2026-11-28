@@ -22,6 +22,7 @@ import { projectMachineProvisionerActionFailure,
 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type { resolveMachineProvisionerSshBootstrap } from '@happier-dev/plugin-sdk/machine-provisioners/ssh';
 import { ACCOUNT_ID, ACCOUNT_PURPOSE, BOAT_NATIVE_HTTP_METHODS, connectedAccountRuntime, connectedAccountPortableRuntime, nativeFetch } from './account.js';
+import { boatOAuthScopes } from './oauth.js';
 import { BOAT_STOPPED_STORAGE_NOTICE, createBoatNativeClient, type BoatSize } from './machine/nativeClient.js';
 import {
   BoatLaunchV1Schema,
@@ -166,6 +167,9 @@ export function createBoatPlugin(resolveSshBootstrap?: typeof resolveMachineProv
       credentialOrigin: 'authentication',
       directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 },
       fields: [{ id: 'token', title: 'API key', schema: { type: 'string', minLength: 1 }, secret: true }],
+    }, {
+      id: 'oauth', kind: 'oauthAuthorizationCode', title: 'Sign in with Boat', pkce: 'required',
+      outcomeReconciliation: 'none', credentialKind: 'oauth', scopes: [...boatOAuthScopes],
     }] } },
     runtime: connectedAccountRuntime,
     accountRuntime: connectedAccountPortableRuntime,

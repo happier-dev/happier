@@ -491,18 +491,23 @@ it('routes real bundled native-import declarations before acquiring Account arti
 });
 
 it.each([
-    { advertised: true, expected: { status: 'awaitingOAuth' } },
-    { advertised: false, expected: { status: 'unavailable', code: 'railway_oauth_public_client_unavailable' } },
-])('begins bundled Railway OAuth from the CLI Account host with its own Home public client (advertised: $advertised)', async ({ advertised, expected }) => {
-    const origin = 'http://railway-public-client.test';
-    const webappUrl = 'https://railway-public-client-webapp.test';
-    const service = { pluginId: 'happier.machine.railway', localId: 'railway-account' };
+    { provider: 'railway', advertised: true },
+    { provider: 'railway', advertised: false },
+    { provider: 'boat', advertised: true },
+    { provider: 'boat', advertised: false },
+])('begins bundled $provider OAuth from the CLI Account host with its own Home public client (advertised: $advertised)', async ({ provider, advertised }) => {
+    const origin = `http://${provider}-public-client.test`;
+    const webappUrl = `https://${provider}-public-client-webapp.test`;
+    const clientId = `${provider}-public-client`;
+    const service = { pluginId: `happier.machine.${provider}`, localId: `${provider}-account` };
+    const expected = advertised ? { status: 'awaitingOAuth' }
+        : { status: 'unavailable', code: `${provider}_oauth_public_client_unavailable` };
     const fixture = await createPortableConnectedAccountAuthenticationHttpFixture(origin, { includeBundledPluginIds: [service.pluginId] });
     // The Home's authenticated features read is a genuine network boundary (fetch).
     const features = { ...fixture.features, capabilities: { ...fixture.features.capabilities,
         server: { webappUrl },
         connectedServices: { ...fixture.features.capabilities.connectedServices,
-            publicOAuthClients: advertised ? [{ service, clientId: 'railway-public-client', scopesByMode: { oauth: null } }] : [] } } };
+            publicOAuthClients: advertised ? [{ service, clientId, scopesByMode: { oauth: null } }] : [] } } };
     const fetch = globalThis.fetch;
     const homeFeatures = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
         if (String(input) === `${origin}/v1/features/authenticated`) {
@@ -523,7 +528,7 @@ it.each([
             if (!advertised) return;
             const result = (begun as { result: { authorizationUrl: string; callbackUrl: string } }).result;
             const authorization = new URL(result.authorizationUrl);
-            expect(authorization.searchParams.get('client_id')).toBe('railway-public-client');
+            expect(authorization.searchParams.get('client_id')).toBe(clientId);
             expect(result.callbackUrl).toBe(`${webappUrl}/oauth/connected-account/callback`);
             expect(authorization.searchParams.get('redirect_uri')).toBe(result.callbackUrl);
         });

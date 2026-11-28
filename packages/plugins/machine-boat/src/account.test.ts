@@ -7,7 +7,7 @@ function context(status: number, code: string): ConnectedAccountReadContext {
   const value = status === 200
     ? { ok: true, type: 'limits.info', sandboxPlanDollars: 20, canStart: true, activeSandboxes: 0, maxActiveSandboxes: 100, billingStatus: 'active' }
     : { ok: false, type: 'sandbox.error', status, code, message: code, error: { code, message: code, status }, requestId: 'req_test' };
-  return { signal: new AbortController().signal, configuration: { values: {} }, credentials: { get: async () => 'private-token' },
+  return { signal: new AbortController().signal, configuration: { target: { modeId: 'token' }, values: {} }, credentials: { get: async () => 'private-token' },
     services: { http: { request: async (request: { url: string }) => ({ status, finalUrl: request.url, headers: {}, body: new TextEncoder().encode(JSON.stringify(value)) }) } },
   } as unknown as ConnectedAccountReadContext;
 }

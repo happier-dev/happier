@@ -231,7 +231,7 @@ describe('Boat documented contract gaps', () => {
         const result = MachineProvisionerCheckResultV1Schema.parse(await host.invokeAction('check', {}));
         expect(result).toMatchObject({ available: false, code: 'credential_unavailable',
           status: { key: `machineBoat.errors.native_${code}`, fallback: expect.stringMatching(/key/i) } });
-        const context = { signal: new AbortController().signal, configuration: { values: {} }, credentials: { get: async () => 'fixture-key' },
+        const context = { signal: new AbortController().signal, configuration: { target: { modeId: 'token' }, values: {} }, credentials: { get: async () => 'fixture-key' },
           services: { http } } as unknown as ConnectedAccountReadContext;
         expect(await connectedAccountRuntime.status(context)).toMatchObject({ diagnostic: { code: `native_${code}`, message: expect.stringMatching(/key/i) } });
         expect(JSON.stringify(result)).not.toContain('private vendor');
