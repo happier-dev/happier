@@ -68,7 +68,8 @@ function fixture(options: Options = {}) {
         }
         if (options.failAt !== phase) return undefined;
         failureInjected = true;
-        return { ok: false as const, errorCode: 'native_failed', error: 'native_failed' };
+        const errorCode = phase === 'prepareRestore' || phase === 'restore' ? 'backup_failed' : 'native_failed';
+        return { ok: false as const, errorCode, error: errorCode };
     };
     const record = (phase: FailurePhase, id: string, raw: unknown) => {
         const input = raw as Record<string, unknown>;
@@ -296,8 +297,22 @@ describe('Data Move through the existing Workflow and Action owners', () => {
         expect(f.calls.some(call => call.input.operation === 'start')).toBe(false);
     });
 
-    it.each<FailurePhase>(['quiesce', 'stopped', 'backup', 'verify', 'prepareRestore', 'restore',
-        'destinationServices', 'destinationHealth', 'cutover', 'deploy', 'appServices', 'appHealth', 'teardown'])(
+    it.each(['verify', 'prepareRestore', 'restore', 'destinationServices', 'destinationHealth'] as const)(
+        'offers Resume source after a definitive %s refusal and never cuts over', async phase => {
+            const f = fixture({ failAt: phase });
+            expect((await f.run()).state, f.diagnostics()).toBe('waiting_for_review');
+            expect(f.store.list().find(row => row.blockId === phase)).toMatchObject({
+                lifecycle: 'failed', reason: phase === 'prepareRestore' || phase === 'restore' ? 'backup_failed' : 'native_failed',
+            });
+            expect(f.store.list().find(row => row.lifecycle === 'waiting_for_review')?.blockId).toContain('Recovery');
+            expect(f.serving.size).toBe(0);
+            expect(await f.completeReview(), f.diagnostics()).toMatchObject({ state: 'succeeded', completedWithFailures: true });
+            expect(f.serving).toEqual(new Set(reviewed.writers.map(writer => writer.serviceId)));
+            expect(f.calls.filter(call => call.phase === phase)).toHaveLength(1);
+            expect(f.calls.some(call => call.phase === 'cutover' || call.phase === 'deploy')).toBe(false);
+        });
+
+    it.each<FailurePhase>(['quiesce', 'stopped', 'backup', 'cutover', 'deploy', 'appServices', 'appHealth', 'teardown'])(
         'retains source and the failed child without replay after a %s transport failure', async phase => {
             const f = fixture({ failAt: phase, teardown: phase === 'teardown' });
             const result = await f.run();

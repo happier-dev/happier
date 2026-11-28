@@ -3,6 +3,8 @@ import { View } from 'react-native';
 import { useRouter } from 'expo-router';
 import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployments/contracts/v1';
 import { deploymentBackupTargetOperands, deploymentDataTargetOperands, isDeploymentDatabaseMoveCandidateV1, type DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { usePluginUiProjectionCurrentness } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { CodeBlockView } from '@/components/ui/code/blocks/CodeBlockView';
 import { Item } from '@/components/ui/lists/Item';
@@ -33,6 +35,8 @@ import { prepareDatabaseMoveWriters } from './databaseMoveWriters';
 import { useDeploymentMoveWorkflow } from './useDeploymentMoveWorkflow';
 import { WorkflowStartRefusal } from '@/components/workflows/run/WorkflowStartRefusal';
 import { storedComposeDocumentText } from './storedComposeDocumentText';
+
+const BACKUP_DESTINATION_SECTIONS = Object.freeze(['familiesById.backupDestinations']);
 
 type MoveInput = Extract<Parameters<ReturnType<typeof useDeploymentMoveWorkflow>['run']>[0], { kind: 'stateful' }>;
 type Writers = Extract<ReturnType<typeof prepareDatabaseMoveWriters>, { kind: 'ready' }>;
@@ -78,8 +82,17 @@ function DeploymentDatabaseMoveSheet(props: Input & CustomModalInjectedProps) {
     return () => { active = false; };
   }, [destination]);
   const checked = candidate && candidate.detail === destination ? candidate.supported : undefined;
+  const backup = props.source.content.backup;
+  const backupRef = backup && 'configRevision' in backup ? backup.destinationRef : undefined;
+  const backupProjection = usePluginUiProjectionCurrentness({ serverId: props.source.environment.serverId,
+    machineId: props.source.environment.controllerMachineId, enabled: Boolean(backupRef && selectedId),
+    sections: BACKUP_DESTINATION_SECTIONS });
+  const backupDestination = backupRef && backupProjection.pluginUiProjection?.backupDestinationsById[
+    buildQualifiedPluginContributionKey(backupRef)];
   const destinationDecision = destination && checked !== undefined
-    ? deploymentDatabaseMoveDestination({ ...destination, databaseMoveCandidate: checked }) : null;
+    ? deploymentDatabaseMoveDestination({ ...destination, databaseMoveCandidate: checked }, props.backupTarget
+      ? { machineId: props.backupTarget.machineId, resticTransport: backupDestination?.definition.resticTransport }
+      : undefined) : null;
   const selection = destinationDecision?.kind === 'ready' ? destinationDecision.selection : null;
   const destinationRefusal = destinationDecision?.kind === 'unavailable' ? destinationDecision.reason : undefined;
   const prerequisite = destinationRefusal === 'backup_required'
@@ -95,7 +108,8 @@ function DeploymentDatabaseMoveSheet(props: Input & CustomModalInjectedProps) {
   // A managed destination is refused by the same Move destination owner before it is chosen, so its row says why
   // where it is listed; the chosen row shows its own read working instead of a line that resizes the sheet.
   const providerTitle = useDeploymentPlatformTargetTitles(props.lifetime, true);
-  const selectedReading = selectedId !== null && selected.snapshot.status !== 'unavailable' && checked === undefined;
+  const selectedReading = selectedId !== null && selected.snapshot.status !== 'unavailable'
+    && (checked === undefined || (destinationRefusal === 'backup_destination_unavailable' && backupProjection.phase === 'establishing'));
   const rowStatus = (row: DeploymentEnvironmentCollectionV1['items'][number]) => {
     const managed = row.managedDataTargetLink;
     if (managed && deploymentDatabaseMoveManagedRefusal([managed])) {
@@ -173,7 +187,10 @@ function DeploymentDatabaseMoveSheet(props: Input & CustomModalInjectedProps) {
     diagnosticCode={destinationRefusal ?? selected.snapshot.failure?.code}
     reason={selected.snapshot.status === 'unavailable'
       ? deploymentActionRefusalRemedy(selected.snapshot.failure?.code ?? 'deployment_unavailable')
-      : destinationRefusal === 'unsupported' ? t('projects.deployments.databaseMoveUnsupportedRemedy') : undefined}
+      : destinationRefusal === 'unsupported' ? t('projects.deployments.databaseMoveUnsupportedRemedy')
+      : destinationRefusal === 'local_backup_cross_machine' ? t('projects.deployments.databaseMoveLocalBackup')
+      : destinationRefusal === 'backup_destination_unavailable' ? t('projects.deployments.databaseMoveBackupDestinationUnavailable')
+      : undefined}
     // A prerequisite leads to where it is met in the destination's own Settings: Backups (PAGE-ACCEPT-176 D23), or
     // Sharing for a database not yet on a private network.
     {...(prerequisite && destination ? { action: {

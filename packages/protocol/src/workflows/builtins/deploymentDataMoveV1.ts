@@ -44,7 +44,9 @@ type References = (id: string, path?: (string | number)[]) => WorkflowValueRefer
 type Phase = Readonly<{ id: string; name: string; actionId: string;
   fields(ref: References): Bindings; success(ref: References): WorkflowCondition; afterCutover?: boolean;
   /** Replaces the writer recovery for a phase that runs before any writer is stopped. */
-  failed?: WorkflowBlock[]; onlyWhen?: WorkflowCondition }>;
+  failed?: WorkflowBlock[]; onlyWhen?: WorkflowCondition;
+  /** Collect a definitive Action refusal before cutover so the source can be resumed. */
+  recoverRefusal?: boolean }>;
 const equal = (left: WorkflowValueReference, value: string | boolean): WorkflowCondition =>
   ({ kind: 'compare', operator: 'eq', left, right: literal(value) });
 const all = (...conditions: WorkflowCondition[]): WorkflowCondition => ({ kind: 'all', conditions });
@@ -77,7 +79,7 @@ export function createDeploymentDataMoveWorkflowV1(reviewed?: StatefulDeployment
     return [{ kind: 'action', id: `${id}Resume${index}`, name: 'Resume this source writer',
       actionId: MACHINE_SERVICE_CONTROL_ACTION_ID, input: writer(index, 'start') },
     { kind: 'action', id: observedId, name: 'Observe source writer running', actionId: 'machines.services.detail', input: target },
-    { kind: 'if', id: `${observedId}Observed`, when: next.length ? running : { kind: 'not', condition: running },
+    { kind: 'if', id: `${observedId}Observed`, name: 'Check source recovery', when: next.length ? running : { kind: 'not', condition: running },
       then: next.length ? next : decision, otherwise: next.length ? decision : [] }];
   };
   const recovery = (id: string, afterCutover: boolean): WorkflowBlock[] => [{ kind: 'wait', id: `${id}Recovery`,
@@ -119,16 +121,16 @@ export function createDeploymentDataMoveWorkflowV1(reviewed?: StatefulDeployment
         service: ref(`${id}Services`, ['services', 0, 'deployment', 'service']) }),
       success: ref => all(equal(ref(`${id}Health`, ['health']), 'healthy'), equal(ref(`${id}Health`, ['freshness']), 'current')) },
     ];
-    return phases.map(phase => ({ ...phase, ...(id === 'app' ? { afterCutover: true } : {}) }));
+    return phases.map(phase => ({ ...phase, ...(id === 'app' ? { afterCutover: true } : { recoverRefusal: true }) }));
   };
   const prepareCutover: Phase[] = [
-    { id: 'verify', name: 'Verify the exact final snapshot', actionId: DEPLOYMENT_BACKUP_VERIFY_ACTION_ID_V1,
+    { id: 'verify', recoverRefusal: true, name: 'Verify the exact final snapshot', actionId: DEPLOYMENT_BACKUP_VERIFY_ACTION_ID_V1,
       fields: ref => ({ ...backup(), backupOperationId: ref('backup', ['operationId']),
         snapshotId: { kind: 'item', field: 'value', path: ['snapshot', 'snapshotId'] }, level: literal('manifestReadBack') }),
       success: ref => all(equal(ref('verify', ['kind']), 'verified'), equal(ref('verify', ['verified']), true)) },
-    { id: 'prepareRestore', name: 'Prepare the destination restore', actionId: DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1,
+    { id: 'prepareRestore', recoverRefusal: true, name: 'Prepare the destination restore', actionId: DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1,
       fields: ref => ({ ...restore(ref), mode: literal('prepare') }), success: ref => equal(ref('prepareRestore', ['kind']), 'prepared') },
-    { id: 'restore', name: 'Restore the verified final snapshot', actionId: DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1,
+    { id: 'restore', recoverRefusal: true, name: 'Restore the verified final snapshot', actionId: DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1,
       fields: ref => ({ ...restore(ref), mode: literal('confirm'), prepareOperationId: ref('prepareRestore', ['operationId']) }),
       success: ref => all(equal(ref('restore', ['kind']), 'restored'), { kind: 'any', conditions: [
         equal(ref('restore', ['verified']), true),
@@ -159,10 +161,19 @@ export function createDeploymentDataMoveWorkflowV1(reviewed?: StatefulDeployment
       ? { kind: 'current' } : { kind: 'outer', levels: depth - current[id]! });
     const next = sequence(phases.slice(1), depth + 1, current, tail);
     const failed = phase.failed ?? recovery(phase.id, phase.afterCutover === true);
+    const hasResult: WorkflowCondition = { kind: 'exists', value: ref(phase.id) };
+    const successful = phase.recoverRefusal ? all(hasResult, phase.success(ref)) : phase.success(ref);
     return [{ kind: 'action', id: phase.id, name: phase.name, actionId: phase.actionId, input: phase.fields(ref),
       ...(phase.onlyWhen ? { onlyWhen: phase.onlyWhen } : {}) },
-      { kind: 'if', id: `${phase.id}Succeeded`, when: next.length ? phase.success(ref) : { kind: 'not', condition: phase.success(ref) },
-        then: next.length ? next : failed, otherwise: next.length ? failed : [] }];
+      ...(phase.recoverRefusal ? [{ kind: 'if' as const, id: `${phase.id}Refused`, name: 'Recover the source after a refused Action',
+        runWhen: 'failure' as const, when: { kind: 'not' as const, condition: hasResult },
+        then: recovery(`${phase.id}Refused`, false), otherwise: [] }] : []),
+      { kind: 'if', id: `${phase.id}Succeeded`, name: `Check the result: ${phase.name}`,
+        when: next.length ? successful : { kind: 'not', condition: successful },
+        then: next.length ? next : failed, otherwise: next.length ? (phase.recoverRefusal
+          ? [{ kind: 'if', id: `${phase.id}ReturnedResult`, name: 'Check whether the Action returned a result',
+            when: { kind: 'exists', value: result(phase.id, [], { kind: 'outer', levels: 1 }) }, then: failed, otherwise: [] }]
+          : failed) : [] }];
   };
   const reviewCutover = (depth: number, producers: Readonly<Record<string, number>>): WorkflowBlock[] => [
     // The integrity decision for an unverified restore; the cutover's own approval follows as a separate step.

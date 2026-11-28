@@ -14331,6 +14331,8 @@ settingsSession: {
   projects: {
       title: "專案",
         deployments: {
+            databaseMoveLocalBackup: "其他機器無法讀取本機備份儲存庫。請選擇來源機器上的目的地，或設定兩台機器都能存取的備份儲存庫。",
+            databaseMoveBackupDestinationUnavailable: "無法讀取來源端的備份目的地。請檢查備份設定後重試。",
             settingChangeUnconfirmed: "Happier 無法確認是否已儲存。請重新載入設定並檢查此設定，再次儲存。",
             createOutcomeUnknownDetails: "要求已結束，但 Happier 尚未收到 Home 的確認。",
             receipt: {
@@ -14421,6 +14423,7 @@ settingsSession: {
                 railwayVolumeUnchecked: "只有在沒有其他環境使用此儲存磁碟區時，Railway 才會刪除它，否則會保留它。",
                 railwayVolumeRemoved: "Railway 已刪除儲存磁碟區及其資料。",
                 removalDeletesProviderScope: ({ scope }: { scope: string }) => `刪除 ${scope}`,
+                namedVolumeWillRemove: ({ name, provider }: { name: string; provider: string }) => `${provider} 將刪除 ${name} 及其中的資料。`,
                 namedVolumeRemoved: ({ name, provider }: { name: string; provider: string }) => `${provider} 正在刪除 ${name} 及其中的資料。`,
                 railwayVolumeKept: ({ count }: { count: number }) => `還有 ${count} 個環境在使用此儲存磁碟區，Railway 已保留它。`,
                 railwayVolumeKeptUnchecked: "Happier 無法確認儲存磁碟區是否已刪除。請在 Railway 中查看。",

@@ -4814,7 +4814,12 @@ incomplete routing returns `secret_missing` for binding preparation. The existin
 backup materializer opens only the source capture's declared bindings. Nothing is relabeled
 or re-bound. Copy executes on a source member that already holds those grants, or
 on the person's own Machine that holds a copy seal of the source backup credential.
-A cross-Machine Data Move writes that copy seal as its first step through
+In current development source, the Data Move sheet checks the source backup
+destination before offering the Move for review. A local restic repository can
+be used when the source and destination are on the same Machine. A cross-Machine
+Move needs a repository both Machines can reach.
+
+A reviewed cross-Machine Data Move writes that copy seal as its first step through
 `deployments.bindings.set` with `copyRestoreSeal: { machineId, installationId }`.
 The daemon running the step opens the source's backup Saved Secrets with the
 requester's custody and seals them to the destination installation's key with the
@@ -4853,6 +4858,10 @@ and repository; the source purpose never writes a safety backup into the source
 repository. A missing destination database needs no safety write. Copy creates
 and verifies staging through the ordinary restore lifecycle; it does not change
 either Environment's serving deployment pointer or the source database.
+The current Data Move starter retains definitive refusals from snapshot
+verification, restore preparation or confirmation, and destination health checks.
+Before cutover, it offers **Resume source**. Completing the review restarts the
+reviewed source writers and ends the Move without applying cutover.
 
 Private export references can select `component: 'host'` or `'port'`; omitting
 it retains the complete endpoint. These are projections of the same admitted

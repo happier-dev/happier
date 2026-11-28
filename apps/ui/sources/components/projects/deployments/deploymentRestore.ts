@@ -5,6 +5,7 @@ import type { DeploymentBackupRestoreResultV1 } from '@happier-dev/protocol';
 import type { DeploymentBackupInventoryResultV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 import type { DeploymentPreviewDataSelectionV1 } from '@happier-dev/protocol/deployments/deploymentPreviewTemplateV1';
 import type { DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments';
+import type { BackupDestinationContributionV1 } from '@happier-dev/protocol/plugins/contributions/backupDestinations';
 import { deploymentDataTargetOperands } from '@happier-dev/deployments';
 import { isPrivateServiceExport } from './privateServiceExport';
 
@@ -47,7 +48,7 @@ export function retainedBackupFromSummary(
 }
 
 type DatabaseMoveDestination = Readonly<{ kind: 'ready'; selection: DatabaseMoveCutoverSelection }>
-  | Readonly<{ kind: 'unavailable'; reason: 'unsupported' | 'backup_required' }>;
+  | Readonly<{ kind: 'unavailable'; reason: 'unsupported' | 'backup_required' | 'local_backup_cross_machine' | 'backup_destination_unavailable' }>;
 
 /** A live provider data link: Move offers it, and the destination decision below explains its import. */
 export function hasDeploymentManagedDataLink(links: readonly DeploymentTargetLinkHeaderV1[]): boolean {
@@ -66,6 +67,7 @@ export function deploymentDatabaseMoveManagedRefusal(links: readonly DeploymentT
 /** Copy admission owns destination support; Create/Link and saved connections are not an import. */
 export function deploymentDatabaseMoveDestination(detail: Pick<DeploymentEnvironmentReadDetailV1,
   'environment' | 'runtimeTargetLink' | 'content' | 'targetLinks' | 'databaseMoveCandidate'> | null,
+  sourceBackup?: Readonly<{ machineId: string; resticTransport?: BackupDestinationContributionV1['resticTransport'] }>,
 ): DatabaseMoveDestination | null {
   if (!detail) return null;
   // Never substitute an empty provider database or the App's native service for its managed data.
@@ -76,6 +78,10 @@ export function deploymentDatabaseMoveDestination(detail: Pick<DeploymentEnviron
   if (detail.databaseMoveCandidate !== true) return { kind: 'unavailable', reason: 'unsupported' };
   if (!detail.content.backup || !('configRevision' in detail.content.backup))
     return { kind: 'unavailable', reason: 'backup_required' };
+  if (sourceBackup && sourceBackup.machineId !== target.machineId) {
+    if (sourceBackup.resticTransport === 'local') return { kind: 'unavailable', reason: 'local_backup_cross_machine' };
+    if (sourceBackup.resticTransport === undefined) return { kind: 'unavailable', reason: 'backup_destination_unavailable' };
+  }
   const database = detail.content.template!.data![0]!;
   const shared = detail.content.ownServer?.serviceExports?.find(entry => entry.service === database.service && isPrivateServiceExport(entry));
   const publicValue = (name: string | undefined) => detail.content.bindings.find(binding => binding.purpose === 'variable'

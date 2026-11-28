@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
 import { deploymentBackupCaptureChoices, deploymentDatabaseMoveDestination, deploymentRestoreOperands, readDeploymentRestorePreparation } from './deploymentRestore';
+import { createDeploymentSecretVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { DeploymentRestorePreparationV1Schema } from '@happier-dev/deployments/contracts/v1';
 import { DeploymentBackupInventoryResultV1Schema, type DeploymentBackupInventoryResultV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 import { deploymentDataTargetOperands } from '@happier-dev/deployments';
@@ -34,15 +35,43 @@ describe('database copy restore operands', () => {
       { detail: destination, service: 'database', database: 'shop', backupOperationId: 'verified-source-backup' })).toBeNull();
   });
 
-  it('offers a destination on another Machine: the Move seals the source backup credential for it before anything stops', () => {
+  it('requires a shared backup transport only for a cross-Machine Move', () => {
     const source = { ...createDeploymentEnvironmentDetailV1(), runtimeTargetLink: createDeploymentTargetLinkHeaderV1() };
     const member = source.runtimeTargetLink.members[0]!;
-    const base = { ...createDeploymentEnvironmentDetailV1(), databaseMoveCandidate: true };
+    const detail = createDeploymentEnvironmentDetailV1();
+    const base = { ...detail, databaseMoveCandidate: true, content: { ...detail.content, backup: {
+      configRevision: 1, destinationRef: { pluginId: 'example.storage', localId: 'remote' },
+      occurrenceId: 'repository', config: {}, credentialBindings: [],
+      ownership: { environmentId: detail.environment.id, prefix: 'database/' },
+      sources: [{ kind: 'dump' as const, sourceId: 'database', service: 'postgres', consistency: 'logical' as const }],
+      retention: { kind: 'keepEverything' as const },
+    },
+      bindings: [
+        { purpose: 'variable' as const, phase: 'runtime' as const, name: 'POSTGRES_USER', source: { kind: 'value' as const, value: 'shop' } },
+        { purpose: 'variable' as const, phase: 'runtime' as const, name: 'POSTGRES_DB', source: { kind: 'value' as const, value: 'shop' } },
+        createDeploymentSecretVariableBindingV1({ name: 'POSTGRES_PASSWORD', phase: 'runtime', resourceId: 'database-password', resourceRevision: 1 }),
+      ],
+      ownServer: { rollout: 'recreate' as const, autoRestorePreviousRelease: true, serviceExports: [
+        { key: 'database', service: 'postgres', containerPort: 5432, scheme: 'postgres',
+          exposure: 'privateNetwork' as const, privateNetwork: 'operations' },
+      ] },
+      template: { templateRef: { sourceId: 'apps', itemId: 'postgres', version: '17',
+        ref: { kind: 'content' as const, digest: `sha256:${'a'.repeat(64)}` } },
+        definition: { kind: 'stored' as const, contentRevision: 1, composeDigest: `sha256:${'b'.repeat(64)}` },
+        services: ['postgres'], data: [{ engine: 'postgres' as const, service: 'postgres',
+          variables: { username: 'POSTGRES_USER', database: 'POSTGRES_DB', password: 'POSTGRES_PASSWORD' } }] },
+    } };
     const on = (machineId: string, installationId: string) => ({ ...base, runtimeTargetLink: createDeploymentTargetLinkHeaderV1({
       id: 'destination-link', machines: [machineId], members: [{ ...member, machineId, installationId }] }) });
     const sameMachine = { ...base, runtimeTargetLink: createDeploymentTargetLinkHeaderV1({ id: 'destination-link' }) };
-    expect(deploymentDatabaseMoveDestination(on('other-machine', 'other-installation')))
-      .toEqual(deploymentDatabaseMoveDestination(sameMachine));
+    const crossMachine = on('other-machine', 'other-installation');
+    const backup = (resticTransport: 'local' | 'sftp') => ({ machineId: member.machineId, resticTransport });
+    expect(deploymentDatabaseMoveDestination(crossMachine, backup('local')))
+      .toEqual({ kind: 'unavailable', reason: 'local_backup_cross_machine' });
+    expect(deploymentDatabaseMoveDestination(sameMachine, backup('local'))?.kind).toBe('ready');
+    expect(deploymentDatabaseMoveDestination(crossMachine, { machineId: member.machineId }))
+      .toEqual({ kind: 'unavailable', reason: 'backup_destination_unavailable' });
+    expect(deploymentDatabaseMoveDestination(crossMachine, backup('sftp'))?.kind).toBe('ready');
   });
 
   it('addresses the destination while retaining the source capture identity', () => {

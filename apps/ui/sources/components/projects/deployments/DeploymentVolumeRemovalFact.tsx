@@ -22,9 +22,9 @@ export function DeploymentVolumeRemovalFact({ phase, volumeRemoval, serverId, ac
   let title: string;
   switch (volumeRemoval.kind) {
     case 'removed':
-      title = review ? t('projects.deployments.review.railwayVolumeWillRemove')
-        : volumeRemoval.volume ? t('projects.deployments.review.namedVolumeRemoved', volumeRemoval.volume)
-          : t('projects.deployments.review.railwayVolumeRemoved');
+      title = volumeRemoval.volume
+        ? t(review ? 'projects.deployments.review.namedVolumeWillRemove' : 'projects.deployments.review.namedVolumeRemoved', volumeRemoval.volume)
+        : t(review ? 'projects.deployments.review.railwayVolumeWillRemove' : 'projects.deployments.review.railwayVolumeRemoved');
       break;
     case 'kept':
       title = t(review ? 'projects.deployments.review.railwayVolumeWillKeep' : 'projects.deployments.review.railwayVolumeKept',
