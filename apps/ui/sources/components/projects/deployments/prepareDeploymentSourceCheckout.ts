@@ -78,6 +78,9 @@ async function openThroughProjectOpen(lifetime: ServerAccountScopeLifetime, inpu
   }
   requireActionSuccess(executed, 'projects.open');
   const result = OpenProjectResultV1Schema.parse(executed.result);
-  if (result.kind !== 'opened') throw new HappyError('outcome_unknown', false, { code: 'outcome_unknown', details: result });
+  if (result.kind !== 'opened') {
+    const code = result.kind === 'ambiguous' ? 'ambiguous' : 'outcome_unknown';
+    throw new HappyError(code, false, { code, details: result });
+  }
   return result;
 }

@@ -20,6 +20,25 @@ import { observeDeploymentSavedChecks } from './observeDeploymentSavedChecks';
 import { DeploymentDomainHeaderV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import type { DeploymentDomainReadItemV1 } from '@happier-dev/deployments';
 
+import { domainHealthObserver } from './observeEnvironmentHealth';
+
+it('publishes the metadata read refusal to the domain health row', async () => {
+    const domain = DeploymentDomainHeaderV1Schema.parse({
+        v: 1, id: 'domain', environmentId: 'environment', targetLinkId: 'target', revision: 1,
+        state: 'active', contentArtifactId: 'domain-content', contentHeaderVersion: 1,
+        contentBodyVersion: 1, createdByAccountId: 'account', createdAtMs: 1, updatedAtMs: 1,
+    });
+    const lifetime = { scope: { serverId, accountId: 'account' }, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+    const unavailable = Object.assign(new Error('Machine unavailable'), { code: 'machine_unavailable' });
+    const publish = vi.fn();
+    const close = domainHealthObserver(lifetime, async () => { throw unavailable; })(
+        lifetime.scope, 'environment', [{ domain, title: 'Application' }], publish, { signal: new AbortController().signal },
+    );
+    try {
+        await vi.waitFor(() => expect(publish).toHaveBeenCalledWith([{ domain, title: 'Application', healthUnavailableReason: 'machine_unavailable' }]));
+    } finally { close(); }
+});
+
 // Replace only Home HTTP/credentials; keep Action admission, Resource and P40 real.
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);

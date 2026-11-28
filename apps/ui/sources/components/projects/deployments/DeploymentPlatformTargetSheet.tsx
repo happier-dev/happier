@@ -67,6 +67,7 @@ import { readProjectRepositoryIdentityV1 } from '@/sync/domains/widgets/projectW
 import { t } from '@/text';
 
 import { readDeploymentActionError, readDeploymentRefusal } from './deploymentActionOutcome';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { deploymentActionRefusalRemedy, readDeploymentConnectionPermissionRemedy } from './deploymentPresentation';
 import type { createDeploymentActions } from './deploymentActions';
 import { isJsonObject, projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
@@ -349,7 +350,7 @@ export function DeploymentPlatformTargetEditor(
     null,
   );
   const [busy, setBusy] = React.useState<'check' | 'link' | null>(null);
-  const [linkRefused, setLinkRefused] = React.useState<Readonly<{ code: string; details?: unknown }> | null>(null);
+  const [linkRefused, setLinkRefused] = React.useState<Readonly<{ code: string; details?: unknown; failureCause?: ActionExecuteFailure['failureCause'] }> | null>(null);
   // Add a token runs the one shared connect flow for this service; its account becomes this link's account,
   // and the platform's own choices and Check (what the token can do) follow in place.
   const firstConnection = useFirstConnection(props.lifetime, form?.service ?? null, (connected) => {
@@ -583,7 +584,8 @@ export function DeploymentPlatformTargetEditor(
     } catch (error) {
       if (!shouldContinue() || !props.lifetime.isCurrent()) return;
       const refusal = readDeploymentActionError(error);
-      setOutcome(refusal.kind === 'refused' ? refusal : readDeploymentRefusal('deployment_content_unavailable'));
+      if (refusal.kind === 'approval') { onClose(); onApproval(refusal.artifactId); return; }
+      if (refusal.kind === 'refused') setOutcome(refusal);
     } finally {
       if (shouldContinue() && props.lifetime.isCurrent()) setBusy(null);
     }
@@ -612,7 +614,8 @@ export function DeploymentPlatformTargetEditor(
         return;
       }
       if (result.error === 'provider_scope_already_linked') setLinkSettlement(result);
-      else setLinkRefused({ code: result.error });
+      else setLinkRefused({ code: result.error, details: 'details' in result ? result.details : result,
+        failureCause: 'failureCause' in result ? result.failureCause : undefined });
     } catch (error) {
       const read = readDeploymentActionError(error);
       if (read.kind === 'approval') {
@@ -620,7 +623,7 @@ export function DeploymentPlatformTargetEditor(
         onApproval(read.artifactId);
         return;
       }
-      setLinkRefused(read.kind === 'refused' ? { code: read.code, details: read.failure?.details } : { code: 'unknown_error' });
+      setLinkRefused(read.kind === 'refused' ? { code: read.code, details: read.failure?.details, failureCause: read.failure?.failureCause } : { code: 'unknown_error' });
     } finally {
       setBusy(null);
     }
@@ -652,9 +655,10 @@ export function DeploymentPlatformTargetEditor(
       }
       if (result.error === 'deployment_link_incomplete') {
         setLinkSettlement(result);
-        if (result.failure) setLinkRefused({ code: result.failure.errorCode, details: result.failure.details });
+        if (result.failure) setLinkRefused({ code: result.failure.errorCode, details: result.failure.details, failureCause: result.failure.failureCause });
       } else if (result.error === 'provider_scope_already_linked') setLinkSettlement(result);
-      else setLinkRefused({ code: result.error });
+      else setLinkRefused({ code: result.error, details: 'details' in result ? result.details : result,
+        failureCause: 'failureCause' in result ? result.failureCause : undefined });
     } catch (error) {
       const read = readDeploymentActionError(error);
       if (read.kind === 'approval') { onClose(); onApproval(read.artifactId); return; }
@@ -665,12 +669,12 @@ export function DeploymentPlatformTargetEditor(
         if (partial.success) {
           setLinkSettlement(partial.data);
           const cause = partial.data.failure;
-          if (cause) setLinkRefused({ code: cause.errorCode, details: cause.details });
+          if (cause) setLinkRefused({ code: cause.errorCode, details: cause.details, failureCause: cause.failureCause });
           return;
         }
       }
       if (read.kind === 'refused' && isActionOutcomeUnknownErrorCodeV1(read.code) && !provisioned) setLinkSettlement({ ok: false, error: 'action_outcome_unknown' });
-      else setLinkRefused(read.kind === 'refused' ? { code: read.code, details: read.failure?.details } : { code: 'unknown_error' });
+      else setLinkRefused(read.kind === 'refused' ? { code: read.code, details: read.failure?.details, failureCause: read.failure?.failureCause } : { code: 'unknown_error' });
     } finally { if (shouldContinue()) setBusy(null); }
   };
 
@@ -1048,7 +1052,8 @@ export function DeploymentPlatformTargetEditor(
             kind="error"
             title={t('projects.deployments.platformLink.linkRefused')}
             reason={readDeploymentConnectionPermissionRemedy(linkRefused.code, linkRefused.details)
-              ?? readDeploymentRefusalRecovery(linkRefused.code, linkRefused.details)?.remedy
+              ?? readDeploymentRefusalRecovery(linkRefused.code, linkRefused.details, undefined, linkRefused.failureCause?.errorCode,
+                { failureCause: linkRefused.failureCause })?.remedy
               ?? (linkRefused.code === DEPLOYMENT_TARGET_REQUIRES_REPOSITORY_DEFINITION
                 ? deploymentActionRefusalRemedy(linkRefused.code)
                 : readDeploymentRefusal(linkRefused.code).reason === 'permission'

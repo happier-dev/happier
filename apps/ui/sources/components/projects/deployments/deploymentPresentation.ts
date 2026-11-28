@@ -214,10 +214,7 @@ export function deploymentHistoryLead(
   failure: DeploymentReceiptFailureV1 | null | undefined,
 ): Readonly<{ tone: 'danger' | 'warning' | null; text: string }> | null {
   if (receipt.state === 'failed' && failure) {
-    const carrierUnavailable = failure.code === 'machine_carrier_unavailable'
-      || failure.failureCause?.errorCode === 'machine_carrier_unavailable';
-    const remedy = failure.nativeActivation || carrierUnavailable
-      ? readDeploymentRefusalRecovery(failure.code, failure)?.remedy : null;
+    const remedy = readDeploymentRefusalRecovery(failure.code, failure)?.remedy;
     return { tone: 'danger', text: remedy ?? deploymentFailureTitle(failure, receipt.operation) };
   }
   if (receipt.state === 'outcome_unknown' && failure?.code === 'deployment_activation_not_observed') {
@@ -614,12 +611,11 @@ export function readDeploymentRefusalRecovery(
   errorCode: string, details?: unknown, request?: DeploymentRefusalRequestV1, causeCode?: string | null,
   context?: { failureCause?: ActionFailureCauseV1; machine?: string | null },
 ) {
-  const recovery = readDeploymentRefusalRecoveryV1(context?.failureCause?.errorCode === 'deployment_image_rate_limited'
-    ? context.failureCause.errorCode : errorCode, details, request);
+  const detailsCause = isRecord(details) ? details.failureCause : undefined;
+  const cause = context?.failureCause ?? (detailsCause === undefined ? undefined : ActionFailureCauseV1Schema.safeParse(detailsCause).data);
+  const recovery = readDeploymentRefusalRecoveryV1(cause?.errorCode === 'deployment_image_rate_limited'
+    ? cause.errorCode : errorCode, details, request);
   if (recovery?.nextAction.destination === 'registryCredentials') {
-    const cause = context?.failureCause ?? ActionFailureCauseV1Schema.safeParse(
-      details && typeof details === 'object' && 'failureCause' in details ? details.failureCause : undefined,
-    ).data;
     const registry = cause && 'nativeErrorReason' in cause && cause.nativeErrorReason === 'docker_hub'
       ? 'Docker Hub' : t('projects.deployments.settingsSections.registryGenericName');
     return { ...recovery, remedy: t('projects.deployments.settingsSections.registryRateLimited', {

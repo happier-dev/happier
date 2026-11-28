@@ -32,6 +32,8 @@ import { useMachineListForServer } from '@/sync/store/hooks';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import { getPreferredLanguage, t } from '@/text';
 import type { DeploymentUiBindingsInput, DeploymentUiTelemetryInput, DeploymentUiTelemetryResult } from './deploymentActions';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readDeploymentRefusalRecovery } from './deploymentPresentation';
 import { readDeploymentActionError } from './deploymentActionOutcome';
 import { readDeploymentFailureRecovery } from './deploymentPresentation';
 import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
@@ -52,11 +54,12 @@ export type DeploymentTelemetrySheetInput = Readonly<{
   setBindings: (input: DeploymentUiBindingsInput) => Promise<DeploymentBindingsSetResultV1>;
   /** The Action settled: the Environment re-reads its revision and the tab says what applies next. */
   onSaved: (result: Extract<SaveResult, { ok: true }>) => void;
+  onApproval?: (artifactId: string) => void;
 }>;
 
 const NO_MACHINES: readonly never[] = Object.freeze([]);
 type SaveResult = DeploymentUiTelemetryResult | DeploymentBindingsSetResultV1;
-type Refusal = Readonly<{ error: string; details?: unknown }>;
+type Refusal = Readonly<{ error: string; details?: unknown; failureCause?: ActionExecuteFailure['failureCause'] }>;
 
 function refusalText(error: string | null): string | null {
   if (error === null) return null;
@@ -201,7 +204,12 @@ export function DeploymentTelemetrySheet(
       } else setRefusal(result);
     } catch (error) {
       const outcome = readDeploymentActionError(error);
-      if (outcome.kind === 'refused') setRefusal({ error: outcome.code, details: outcome.failure?.details });
+      if (outcome.kind === 'approval') {
+        props.onClose();
+        props.onApproval?.(outcome.artifactId);
+      } else if (outcome.kind === 'refused') {
+        setRefusal({ error: outcome.code, details: outcome.failure?.details, failureCause: outcome.failure?.failureCause });
+      }
     } finally {
       setSaving(false);
     }
@@ -461,7 +469,9 @@ export function DeploymentTelemetrySheet(
             title={refused}
             diagnosticCode={refusal?.error}
             reason={refusal && refused === t('deploymentTelemetry.sheet.refused.other')
-              ? readDeploymentFailureRecovery(refusal.error, refusal.details).remedy : undefined}
+              ? readDeploymentRefusalRecovery(refusal.error, refusal.details, undefined, refusal.failureCause?.errorCode,
+                { failureCause: refusal.failureCause })?.remedy
+                ?? readDeploymentFailureRecovery(refusal.error, refusal.details).remedy : undefined}
           />
         ) : null}
         {/* D30: raw telemetry stays on the collector; native issue metadata is Account data, said by Account mode. */}

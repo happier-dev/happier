@@ -21,6 +21,8 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { readDeploymentActionError } from './deploymentActionOutcome';
 import type { createDeploymentActions } from './deploymentActions';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { presentActionFailureOutcome } from '@/components/tools/shell/approvals/approvalFailureOutcome';
 import { deploymentActionRefusalRemedy } from './deploymentPresentation';
 import { deploymentDatabaseMoveDestination, deploymentDatabaseMoveManagedRefusal } from './deploymentRestore';
 import { useDeploymentPlatformTargetTitles } from './DeploymentPlatformTargetSheet';
@@ -101,7 +103,7 @@ function DeploymentDatabaseMoveSheet(props: Input & CustomModalInjectedProps) {
     : selected.snapshot.status === 'ready' && destination && checked !== undefined && !destinationDecision ? { section: 'sharing' as const, label: t('projects.deployments.databaseShare'),
       testID: 'project-deployments.move.destination.share' } : null;
   const [busy, setBusy] = React.useState(false);
-  const [refusal, setRefusal] = React.useState<Readonly<{ code: string; variable?: string }> | null>(null);
+  const [refusal, setRefusal] = React.useState<Readonly<{ code: string; variable?: string; failure?: ActionExecuteFailure }> | null>(null);
   const select = React.useCallback((row: DeploymentEnvironmentCollectionV1['items'][number]) => {
     setSelectedId(row.environment.id); setRefusal(null);
   }, []);
@@ -172,7 +174,7 @@ function DeploymentDatabaseMoveSheet(props: Input & CustomModalInjectedProps) {
     } catch (error) {
       const outcome = readDeploymentActionError(error);
       if (outcome.kind === 'approval') { props.onClose(); props.review.request(outcome.artifactId); }
-      else if (outcome.kind === 'refused') setRefusal({ code: outcome.code });
+      else if (outcome.kind === 'refused') setRefusal({ code: outcome.code, failure: outcome.failure });
     } finally { setBusy(false); }
   };
   // Only a destination refused after its read speaks, directly under its row: what is wrong, and what to do, per reason.
@@ -248,7 +250,9 @@ function DeploymentDatabaseMoveSheet(props: Input & CustomModalInjectedProps) {
           router.push(buildPluginsHomeRoute('app', { view: 'kind', kind: 'app', filters: DEPLOYMENT_DATABASE_CATALOG_FILTER }) as never);
         } }} />}
       {refusal ? <SurfaceStateCard testID="project-deployments.move.refused" size="line" kind="error"
-        title={t('projects.deployments.databaseMoveUnavailable')} diagnosticCode={refusal.code} reason={refusal.variable ?? (refusal.code === 'writer_review_required' ? t('projects.deployments.move.writerReviewRequired')
+        title={t('projects.deployments.databaseMoveUnavailable')} diagnosticCode={refusal.code} reason={refusal.variable
+          ?? (refusal.failure ? presentActionFailureOutcome(refusal.failure, 'deployment').reason : null)
+          ?? (refusal.code === 'writer_review_required' ? t('projects.deployments.move.writerReviewRequired')
           : refusal.code === 'noRunningWriter' ? t('projects.deployments.move.noRunningWriter')
           : refusal.code === 'no_connected_services' ? t('projects.deployments.move.noConnectedServices') : deploymentActionRefusalRemedy(refusal.code))} /> : null}
       {setChrome ? null : footer}

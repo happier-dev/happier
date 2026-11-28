@@ -3354,6 +3354,19 @@ describe('Project deployments page', () => {
     second.controller.retire();
   });
 
+  it('shows the Action permissions remedy on a refused Deploy', async () => {
+    const { controller, detail } = controllerFor({});
+    const deploy = vi.fn(async () => ({ ok: false as const, error: 'action_not_allowed' }));
+    try {
+      const screen = await renderScreen(
+        <DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id} demand={shown}
+          accountId="account-owner" serverId={scope.serverId} phone={false} deploy={deploy} review={noReview} onOpenReceipt={() => {}} />,
+      );
+      await screen.pressByTestIdAsync('project-deployments.environment.deploy');
+      await vi.waitFor(() => expect(screen.getTextContent()).toContain('Review the permissions with the owner'));
+    } finally { controller.retire(); }
+  });
+
   it('names the Compose file a refused revision lacks once, without the generic Source setup in its Details', async () => {
     const detail = environmentDetailForHome();
     const { controller } = controllerFor({ detail });

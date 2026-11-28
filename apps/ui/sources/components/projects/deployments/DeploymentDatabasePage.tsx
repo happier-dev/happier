@@ -64,6 +64,7 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { buildPluginsHomeRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 import { DeploymentEnvironmentChooser } from './DeploymentEnvironmentCollection';
 import { deploymentDatabaseMoveReview } from './DeploymentDatabaseMoveSheet';
+import { presentActionFailureOutcome } from '@/components/tools/shell/approvals/approvalFailureOutcome';
 import { deploymentActionRefusalRemedy } from './deploymentPresentation';
 import { isPrivateServiceExport, privateServiceExportAuthoring } from './privateServiceExport';
 import { privateServiceExportReachLabel, privateServiceExportUnavailableReason } from './DeploymentPrivateServiceExports';
@@ -890,7 +891,8 @@ function DeploymentConnectSheet(props: Readonly<{
             {press.outcome?.kind === 'refused' ? (
               <SurfaceStateCard testID="project-deployments.connect.refused" size="line" kind="error"
                 title={t('projects.deployments.databaseConnectRefused')} diagnosticCode={press.outcome.code}
-                reason={deploymentActionRefusalRemedy(press.outcome.code)} />
+                reason={(press.outcome.failure ? presentActionFailureOutcome(press.outcome.failure, 'deployment').reason : null)
+                  ?? deploymentActionRefusalRemedy(press.outcome.code)} />
             ) : null}
           </>
         )}

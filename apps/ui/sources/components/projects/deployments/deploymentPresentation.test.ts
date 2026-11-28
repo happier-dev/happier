@@ -6,7 +6,7 @@ import { DeploymentDataTeardownContentV1Schema } from '@happier-dev/deployments/
 import { projectDeploymentReceiptSourceFactsV1 } from '@happier-dev/deployments';
 import { deploymentReceiptTitleV1 } from '@happier-dev/deployment-protocol/v1';
 import { t } from '@/text';
-import { deploymentDeployAvailability, deploymentFailureTitle, deploymentReceiptTitle, deploymentRevisionLabel, deploymentStateLabel, deploymentHistoryLead, deploymentStateNotice, deploymentRailState, deploymentEnvironmentAttention, DEPLOYMENT_ENVIRONMENT_ATTENTION_ORDER, deploymentAttentionLeaves, deploymentEnvironmentRowState, deploymentHealthFact, deploymentSettledStateLabel } from './deploymentPresentation';
+import { deploymentDeployAvailability, deploymentFailureTitle, deploymentReceiptTitle, deploymentRevisionLabel, deploymentStateLabel, deploymentHistoryLead, deploymentStateNotice, deploymentRailState, deploymentEnvironmentAttention, DEPLOYMENT_ENVIRONMENT_ATTENTION_ORDER, deploymentAttentionLeaves, deploymentEnvironmentRowState, deploymentHealthFact, deploymentSettledStateLabel, readDeploymentRefusalRecovery } from './deploymentPresentation';
 
 it('presents the recorded interruption reason on the receipt and its history row', () => {
     const receipt = createDeploymentReceiptHeaderV1({ state: 'outcome_unknown' });
@@ -46,6 +46,28 @@ it('shows the Machine carrier recovery when a fleet archive restore fails', asyn
         tone: 'danger',
         text: readDeploymentRefusalRecoveryV1('machine_carrier_unavailable')?.remedy,
     });
+});
+
+it.each([
+    ['secret_missing', 'variables'],
+    ['stateful_service_multi_machine', 'databaseRecovery'],
+    ['deployment_image_rate_limited', 'registryCredentials'],
+] as const)('shows %s recovery on a failed history row', (code, destination) => {
+    const receipt = createDeploymentReceiptHeaderV1({ state: 'failed' });
+    const failure = { code, phase: 'activate' as const };
+    const recovery = readDeploymentRefusalRecovery(code, failure);
+    expect(recovery?.nextAction.destination).toBe(destination);
+    expect(deploymentHistoryLead(receipt, failure)).toEqual({ tone: 'danger', text: recovery?.remedy });
+});
+
+it('names Docker Hub when the registry cause is carried by the receipt details', () => {
+    const failureCause = {
+        phase: 'deployment.native.image.registry.deployment_image_rate_limited', errorClass: 'Error',
+        errorCode: 'deployment_image_rate_limited', httpStatus: null, nativeErrorReason: 'docker_hub',
+    };
+    const recovery = readDeploymentRefusalRecovery('native_failed', { failureCause });
+    expect(recovery?.nextAction.destination).toBe('registryCredentials');
+    expect(recovery?.remedy).toContain('Docker Hub');
 });
 
 describe('deploy availability', () => {

@@ -1648,7 +1648,7 @@ export const DeploymentEnvironmentDetail = React.memo(
                   member.activation === 'succeeded' && member.currentDeploymentId === activeId
                   && member.telemetryMachineId === detail.environment.telemetryMachineId && Boolean(member.telemetryTokenHash))
                 : undefined}
-              environmentName={detail.content.name} onChanged={() => { void environment.refresh(); }} />
+              environmentName={detail.content.name} onApproval={review.request} onChanged={() => { void environment.refresh(); }} />
           ) : tab === 'permissions' ? (
             <DeploymentPermissionsPanel
               detail={detail}
@@ -1860,7 +1860,7 @@ export function DeployOutcomeBanner(
       description={
         rollbackResponseUnavailable ? t('projects.deployments.receipt.rollbackResponseUnavailableBody')
           : unconfirmedSetting ? t('projects.deployments.settingChangeUnconfirmed')
-          : canonicalReason ?? (outcome.reason === 'permission'
+          : canonicalReason ?? (ownDeploy ? typedRecovery?.remedy : recovery?.remedy) ?? (outcome.reason === 'permission'
           ? t('projects.deployments.managersOnly')
           : outcome.reason === 'machine' && props.machine !== null
             ? t('projects.deployments.machineOffline', {
@@ -1871,7 +1871,7 @@ export function DeployOutcomeBanner(
                   machine: props.machine,
                 })
               : leadsNowhere ? (failedReceipt ? undefined : t('projects.deployments.refusedBeforeLogs'))
-              : (ownDeploy ? typedRecovery?.remedy : recovery?.remedy) ?? failure?.reason ?? refusalConsequence(outcome.code))
+              : failure?.reason ?? refusalConsequence(outcome.code))
       }
       {...(rollbackResponseUnavailable
         ? { action: { label: t('common.retry'), onPress: controller.retry } }

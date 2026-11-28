@@ -54,6 +54,8 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useServerScopedMachine, useServerScopedMachineLabel } from '@/sync/store/hooks';
 import { getPreferredLanguage, t } from '@/text';
+import { presentActionFailureOutcome } from '@/components/tools/shell/approvals/approvalFailureOutcome';
+import { readDeploymentActionError } from './deploymentActionOutcome';
 import { alertActionFailure, formatActionFailureDetails, showActionFailureDetails } from '@/utils/errors/alertActionFailure';
 import { HappyError } from '@/utils/errors/errors';
 import { createDeploymentActions } from './deploymentActions';
@@ -92,6 +94,7 @@ export function DeploymentTelemetryPanel(
     appCollectorServices?: readonly string[];
     /** Re-read the Environment after a save, so the next save carries its new revision. */
     onChanged: () => void;
+    onApproval?: (artifactId: string) => void;
   }>,
 ) {
   const { detail, lifetime } = props;
@@ -112,8 +115,9 @@ export function DeploymentTelemetryPanel(
       setTelemetry: input => createDeploymentActions(lifetime, environment.projectSourceId).setTelemetry(environment, input),
       setBindings: input => createDeploymentActions(lifetime, environment.projectSourceId).setBindings(input),
       onSaved: props.onChanged,
+      onApproval: props.onApproval,
     });
-  }, [detail, environment, lifetime, props.appAuthoredSampling, props.environmentName, props.onChanged]);
+  }, [detail, environment, lifetime, props.appAuthoredSampling, props.environmentName, props.onChanged, props.onApproval]);
   if (!collectorId) {
     return (
       <EmptyState
@@ -347,7 +351,10 @@ function DeploymentTelemetryTabs(props: Readonly<{
     } catch (error) {
       const failure = telemetryCaptureFailure(error);
       if (lifetime?.isCurrent() && failure.code !== 'approval_canceled' && failure.code !== PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE) {
-        alertActionFailure({ ...failure, reason: t('deploymentTelemetry.menu.clearFailed') });
+        const outcome = readDeploymentActionError(error);
+        const reason = outcome.kind === 'refused' && outcome.code !== 'unknown_error'
+          ? presentActionFailureOutcome(outcome.failure ?? { errorCode: outcome.code, error: outcome.code }, 'deployment').reason : null;
+        alertActionFailure({ ...failure, reason: reason ?? t('deploymentTelemetry.menu.clearFailed') });
       }
       return;
     }

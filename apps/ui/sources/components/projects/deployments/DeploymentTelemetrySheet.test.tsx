@@ -70,7 +70,7 @@ async function open(
     typeof showDeploymentTelemetrySheet
   >[0]['setTelemetry'],
   onSaved = vi.fn(),
-  status: Pick<Parameters<typeof showDeploymentTelemetrySheet>[0], 'readCaptureStatus'> = {},
+  status: Pick<Parameters<typeof showDeploymentTelemetrySheet>[0], 'readCaptureStatus' | 'onApproval'> = {},
 ) {
   const screen = await renderScreen(
     <ModalProvider>
@@ -452,6 +452,21 @@ describe('Environment telemetry sheet', () => {
     } finally {
       await screen.unmount();
     }
+  });
+
+  it('hands a telemetry save held for approval to Review', async () => {
+    const { HappyError } = await import('@/utils/errors/errors');
+    const onApproval = vi.fn();
+    const onSaved = vi.fn();
+    const screen = await open(async () => {
+      throw new HappyError('approval_request_created', false, { code: 'approval_request_created',
+        details: { kind: 'approval_request_created', artifactId: 'telemetry-approval', actionId: 'deployments.environments.telemetry.set' } });
+    }, onSaved, { onApproval });
+    try {
+      await screen.pressByTestIdAsync('project-deployments.telemetry.save');
+      expect(onApproval).toHaveBeenCalledWith('telemetry-approval');
+      expect(onSaved).not.toHaveBeenCalled();
+    } finally { await screen.unmount(); }
   });
 
   it('keeps the choices and names the recovery when the Action refuses the collector', async () => {

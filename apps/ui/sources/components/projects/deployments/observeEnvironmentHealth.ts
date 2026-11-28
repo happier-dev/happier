@@ -5,6 +5,7 @@ import { projectDeploymentHealthFactsV1, type DeploymentReadTransportV1,
 import type { DeploymentEnvironmentHeaderV1, DeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/contracts/v1';
 import { DeploymentHealthCurrentResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { MachineServicesListResultV1Schema } from '@happier-dev/protocol/actions/specs/machine/services';
+import { isRecord } from '@happier-dev/protocol/common/records';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { readServerAccountScopeOwnerLifetime, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
@@ -93,7 +94,9 @@ export function domainHealthObserver(lifetime: ServerAccountScopeLifetime,
                 subscriptions.push(owner.selection.subscribe(update, true));
                 update();
             }
-        }).catch(() => unavailable('deployment_read_failed'));
+        }).catch(error => {
+            unavailable(isRecord(error) && typeof error.code === 'string' ? error.code : 'deployment_read_failed');
+        });
         if (options.signal.aborted) close();
         return close;
     };

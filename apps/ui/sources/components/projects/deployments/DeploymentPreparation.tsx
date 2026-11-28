@@ -28,7 +28,7 @@ import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/ser
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { machineScmStatusSnapshot } from '@/sync/ops/scm/machineScm';
-import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { presentActionFailureOutcome } from '@/components/tools/shell/approvals/approvalFailureOutcome';
 import { HappyError } from '@/utils/errors/errors';
 import { t } from '@/text';
 import { buildProjectSourceOpenRoute } from '../activation/projectOpenRoute.mjs';
@@ -171,7 +171,7 @@ function DeploymentPreparationSheet(props: DeploymentPreparationContext & Readon
     const configurationPaths = paths.split(/\r?\n/).map(path => path.trim()).filter(Boolean);
     const [busy, setBusy] = React.useState(false);
     const [refused, setRefused] = React.useState<ActionExecuteFailure | null>(null);
-    const refusal = refused ? resolveActionExecutionFailureMessage(refused, deploymentActionRefusalRemedy(refused.errorCode)) : null;
+    const refusal = refused ? presentActionFailureOutcome(refused, 'deployment').reason ?? deploymentActionRefusalRemedy(refused.errorCode) : null;
     const [partial, setPartial] = React.useState<Extract<DeploymentPrepareResultV1, { kind: 'partial' }> | null>(null);
     const authoring = React.useRef<AbortController | null>(null);
     React.useEffect(() => () => authoring.current?.abort(), []);

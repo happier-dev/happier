@@ -7,6 +7,8 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 import { createFrontDoorUiActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { t } from '@/text';
 import { alertActionFailure } from '@/utils/errors/alertActionFailure';
+import { presentActionFailureOutcome } from '@/components/tools/shell/approvals/approvalFailureOutcome';
+import { readDeploymentActionError } from './deploymentActionOutcome';
 import { telemetryCaptureFailureCode } from './telemetryCaptureReads';
 
 type Finding = Parameters<typeof buildDatabaseFindingBriefV1>[0];
@@ -45,12 +47,16 @@ export function useDeploymentTelemetryBrief(lifetime: ServerAccountScopeLifetime
           : result.kind === 'failed' ? result.failure.errorCode
           : result.kind === 'authoringResult' && result.result.kind !== 'opened' ? result.result.reason
           : null;
-        if (code) alertActionFailure({ reason: t('deploymentTelemetry.request.investigateFailed'), code });
+        const reason = result.kind === 'failed' ? presentActionFailureOutcome(result.failure, 'deployment').reason : null;
+        if (code) alertActionFailure({ reason: reason ?? t('deploymentTelemetry.request.investigateFailed'), code });
         else return result.kind === 'authoringResult' && result.result.kind === 'opened';
       }
     } catch (error) {
       if (!signal.aborted) {
-        alertActionFailure({ reason: t('deploymentTelemetry.request.investigateFailed'), code: telemetryCaptureFailureCode(error) });
+        const outcome = readDeploymentActionError(error);
+        const reason = outcome.kind === 'refused' && outcome.code !== 'unknown_error'
+          ? presentActionFailureOutcome(outcome.failure ?? { errorCode: outcome.code, error: outcome.code }, 'deployment').reason : null;
+        alertActionFailure({ reason: reason ?? t('deploymentTelemetry.request.investigateFailed'), code: telemetryCaptureFailureCode(error) });
       }
     } finally {
       retirement.dispose();

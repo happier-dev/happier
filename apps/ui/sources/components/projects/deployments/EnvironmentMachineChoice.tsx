@@ -10,6 +10,14 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 
 import { buildDeployHostCheckTargetV1, DEPLOY_HOST_DOCKER_ITEM, readDeployHostRecipe, readDeployHostReadiness, type DeployHostReadiness } from '@happier-dev/protocol/deployments/deployHostReadiness';
 
+import { readDeploymentActionError } from './deploymentActionOutcome';
+
+function readHostReadinessFailure(error: unknown) {
+  const outcome = readDeploymentActionError(error);
+  const code = outcome.kind === 'refused' && outcome.code !== 'unknown_error' ? outcome.code : 'managed_request_failed';
+  return outcome.kind === 'refused' && outcome.failure ? outcome.failure : { ok: false as const, errorCode: code, error: code };
+}
+
 const frontDoor = createFrontDoorActionExecute();
 const HOST_RECIPE_SECTIONS = Object.freeze(['familiesById.machineRecipes']);
 type HostCurrentState = Readonly<{ lifetime: ServerAccountScopeLifetime; machineId: string;
@@ -55,7 +63,7 @@ export function useDeployHostReadiness(lifetime: ServerAccountScopeLifetime | nu
       if (!observed.ok) settle(observed);
       else settle(current, readDeployHostReadiness(observed.plan, machineId));
     }
-    void observe().catch(() => settle({ ok: false, errorCode: 'managed_request_failed', error: 'managed_request_failed' }));
+    void observe().catch(error => settle(readHostReadinessFailure(error)));
     return () => { controller.abort(); reviewController.current?.abort(); };
   }, [lifetime, machineId]);
   const current = state?.machineId === machineId && state.lifetime === lifetime ? state : null;
@@ -91,7 +99,7 @@ export function useDeployHostReadiness(lifetime: ServerAccountScopeLifetime | nu
         context: { surface: 'ui', serverId, expectedAccountId: current.lifetime.scope.accountId, signal: controller.signal },
         homeId, machineId: current.machineId, targets: [{ homeId, machineId: current.machineId }], selectedMachineId: current.machineId,
         currentPlan: current.result.plan, setup: current.setup, isCurrent });
-    } catch { next = { ok: false, errorCode: 'managed_request_failed', error: 'managed_request_failed' }; }
+    } catch (error) { next = readHostReadinessFailure(error); }
     if (isCurrent()) setReviewState({ current, pending: false, prepared: next });
   };
   return { prepared, readiness,

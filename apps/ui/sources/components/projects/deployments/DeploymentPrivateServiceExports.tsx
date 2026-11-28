@@ -22,6 +22,7 @@ import { useServerScopedMachine } from '@/sync/store/hooks';
 import { t } from '@/text';
 import type { DeploymentEnvironmentEditing } from './DeploymentEnvironmentSettingsPanel';
 import { useDeploymentChangePress } from './deploymentActionOutcome';
+import { presentActionFailureOutcome } from '@/components/tools/shell/approvals/approvalFailureOutcome';
 import { deploymentActionRefusalRemedy } from './deploymentPresentation';
 import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
 import { Text } from '@/components/ui/text/Text';
@@ -151,7 +152,8 @@ function PrivateServiceExportDetailSheet(props: Readonly<{
     <ItemGroup testID={`${id}.stopConsequence`} surface="none"
       description={t('projects.deployments.settingsSections.privateSharingStopConsequence', { service: entry.service })} />
     {change.outcome?.kind === 'refused' ? <SurfaceStateCard testID={`${id}.stopRefused`} size="line" kind="error"
-      title={deploymentActionRefusalRemedy(change.outcome.code)} diagnosticCode={change.outcome.code} /> : null}
+      title={(change.outcome.failure ? presentActionFailureOutcome(change.outcome.failure, 'deployment').reason : null)
+                  ?? deploymentActionRefusalRemedy(change.outcome.code)} diagnosticCode={change.outcome.code} /> : null}
     {setChrome ? null : footer}
   </View></ListPresentationProvider>;
 }
@@ -346,7 +348,8 @@ function PrivateServiceExportSheet(props: SheetInput & CustomModalInjectedProps)
     {invalid ? <SurfaceStateCard testID={`${id}.invalid`} size="line" kind="error"
       title={t('projects.deployments.settingsSections.privateSharingInvalid')} /> : null}
     {change.outcome?.kind === 'refused' ? <SurfaceStateCard testID={`${id}.refused`} size="line" kind="error"
-      title={deploymentActionRefusalRemedy(change.outcome.code)} diagnosticCode={change.outcome.code} /> : null}
+      title={(change.outcome.failure ? presentActionFailureOutcome(change.outcome.failure, 'deployment').reason : null)
+                  ?? deploymentActionRefusalRemedy(change.outcome.code)} diagnosticCode={change.outcome.code} /> : null}
     {setChrome ? null : footer}
   </View></ListPresentationProvider>;
 }

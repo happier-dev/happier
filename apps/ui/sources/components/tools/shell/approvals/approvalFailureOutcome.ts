@@ -28,6 +28,7 @@ import { formatWorkflowProblemMessage } from '@/components/workflows/presentatio
 import { isWorkflowOperationErrorCode, WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
 import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { readSessionSpawnNewFailure, resolveSessionSpawnNewResultFailureMessage } from '@/sync/ops/actions/sessionSpawnFailurePresentation';
 import { resolveLocalServiceOutput, type LocalServiceOutputRecovery } from '@/sync/domains/local/services/serviceFailure';
 import { isApprovalDecisionStale, presentApprovalFailure, presentRecordedApprovalFailure } from './useApprovalDecisionHandler';
 import { readConfidentialFillSettlement, resolveConfidentialFillOutcome } from '@/components/approvals/confidentialSecretApprovalModel';
@@ -160,6 +161,11 @@ export function presentActionFailureOutcome(failure: ApprovalFailureDiagnostics,
     if (refusal) return {
         reason: refusal.message ?? t('common.requestFailed'), message: null, code: failure.errorCode ?? null,
         technicalDetails, recoveryAction: null,
+    };
+    const childSession = scope === 'deployment' ? readSessionSpawnNewFailure(failure.details) : null;
+    if (childSession) return {
+        reason: resolveSessionSpawnNewResultFailureMessage(childSession),
+        message: null, code: failure.errorCode ?? null, technicalDetails, recoveryAction: null,
     };
     const cause = failure.failureCause;
     if (scope === 'deployment' && failure.errorCode === 'restore_failed' && cause && 'nativeErrorReason' in cause

@@ -38,6 +38,8 @@ import { buildPlatformTargetDraft, buildPlatformTargetLinkInput, applyPlatformFi
 import { buildPreviewBranchReadInput } from './previewDatabaseBranches';
 import { managedDataConnections, managedDataLinkContent, managedDataTargets, readManagedDataAdoptionReceipt, type ManagedDataOperation, type ManagedDataTarget } from './managedData';
 import { deploymentSheetStyles } from './deploymentSheet';
+import { isActionExecuteFailure, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { presentActionFailureOutcome } from '@/components/tools/shell/approvals/approvalFailureOutcome';
 import { readDeploymentActionError } from './deploymentActionOutcome';
 import { useManagedDataForm } from './useManagedDataForm';
 
@@ -72,7 +74,7 @@ export function DeploymentManagedDataSheet(props: DeploymentManagedDataInput & C
   const needsConnect = account === null && firstConnection.missing;
   const [results, setResults] = React.useState<Readonly<Record<string, Result>>>({});
   const [busy, setBusy] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
+  const [error, setError] = React.useState<ActionExecuteFailure | null>(null);
   const [bound, setBound] = React.useState(false);
   const [replace, setReplace] = React.useState<readonly string[]>([]);
   const [operationOpen, setOperationOpen] = React.useState(false);
@@ -150,7 +152,7 @@ export function DeploymentManagedDataSheet(props: DeploymentManagedDataInput & C
       if (!shouldContinue()) return;
       if (!response.ok) {
         if (response.approvalArtifactId) approval(response.approvalArtifactId);
-        else setError(response.code);
+        else setError({ ...response, errorCode: response.code, error: response.code });
         return;
       }
       setCursors(page);
@@ -168,7 +170,7 @@ export function DeploymentManagedDataSheet(props: DeploymentManagedDataInput & C
     } catch (failure) {
       const outcome = readDeploymentActionError(failure);
       if (outcome.kind === 'approval') approval(outcome.artifactId);
-      else setError(outcome.kind === 'refused' ? outcome.code : 'unknown_error');
+      else if (outcome.kind === 'refused') setError(outcome.failure ?? { ok: false, errorCode: outcome.code, error: outcome.code });
     } finally { if (shouldContinue()) setBusy(false); }
   };
   const link = async () => {
@@ -178,10 +180,11 @@ export function DeploymentManagedDataSheet(props: DeploymentManagedDataInput & C
       const response = await props.actions.link(buildPlatformTargetLinkInput({
         target: { pluginId: target.pluginId, targetId: target.target.id, targetKind: target.target.targetKind },
         environment: props.detail.environment, provider, role: 'data', title: serviceName }), { confirmed: true });
-      if (response.ok) props.onClose(); else setError(response.error);
+      if (response.ok) props.onClose(); else setError(isActionExecuteFailure(response)
+        ? response : { ok: false, errorCode: response.error, error: response.error, details: response });
     } catch (failure) {
       const outcome = readDeploymentActionError(failure);
-      if (outcome.kind === 'approval') approval(outcome.artifactId); else setError(outcome.kind === 'refused' ? outcome.code : 'unknown_error');
+      if (outcome.kind === 'approval') approval(outcome.artifactId); else if (outcome.kind === 'refused') setError(outcome.failure ?? { ok: false, errorCode: outcome.code, error: outcome.code });
     } finally { if (shouldContinue()) setBusy(false); }
   };
   const bind = async () => {
@@ -190,10 +193,11 @@ export function DeploymentManagedDataSheet(props: DeploymentManagedDataInput & C
     try {
       const response = await props.actions.setBindings({ environmentId: props.detail.environment.id,
         expectedRevision: props.detail.environment.revision, set: connectionBindings, remove: [] });
-      if (response.ok) setBound(true); else setError(response.error);
+      if (response.ok) setBound(true); else setError(isActionExecuteFailure(response)
+        ? response : { ok: false, errorCode: response.error, error: response.error, details: response });
     } catch (failure) {
       const outcome = readDeploymentActionError(failure);
-      if (outcome.kind === 'approval') approval(outcome.artifactId); else setError(outcome.kind === 'refused' ? outcome.code : 'unknown_error');
+      if (outcome.kind === 'approval') approval(outcome.artifactId); else if (outcome.kind === 'refused') setError(outcome.failure ?? { ok: false, errorCode: outcome.code, error: outcome.code });
     } finally { if (shouldContinue()) setBusy(false); }
   };
   const footer = <ModalCardFooterActions cancel={{ onPress: props.onClose, disabled: busy }}>
@@ -274,7 +278,8 @@ export function DeploymentManagedDataSheet(props: DeploymentManagedDataInput & C
           disabled={busy || !complete || bound || !replacementsReviewed} onPress={() => { void bind(); }} />
       </ItemGroup> : null}
     </>}
-    {error ? <SurfaceStateCard testID="managed-data.failed" size="line" kind="error" title={t('common.unavailable')} diagnosticCode={error} /> : null}
+    {error ? <SurfaceStateCard testID="managed-data.failed" size="line" kind="error" title={t('common.unavailable')}
+      reason={presentActionFailureOutcome(error, 'deployment').reason ?? undefined} diagnosticCode={error.errorCode} /> : null}
     {setChrome ? null : footer}
   </View></ListPresentationProvider>;
 }
