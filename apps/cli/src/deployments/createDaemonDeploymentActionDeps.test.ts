@@ -1,3 +1,4 @@
+import { artifactReadResponse } from '@/testkit/http/artifactHome';
 import { readDeploymentRefusalRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { deploymentTargetRoleWithNativeSelectorV1, DeploymentTargetGeneratedDomainAddInputV1ProtocolSchema }
     from '@happier-dev/protocol/plugins/contributions/deploymentTargets';
@@ -4212,7 +4213,7 @@ describe('installed deployment storage and target composition', () => {
         receipt.deployment.contentHeaderVersion++;
         receipt.deployment.contentBodyVersion++;
         let canonicalReads = 0;
-        const documents = new Map<string, Record<string, unknown>>();
+        const documents = new Map<string, { id: string } & Record<string, unknown>>();
         const put = (id: string, artifactKind: string, content: unknown, version = 1) => documents.set(id, {
             id, ownerAccountId: 'owner', access: 'owner', publicAudience: 'none', encryptionMode: 'plain',
             dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
@@ -4228,6 +4229,10 @@ describe('installed deployment storage and target composition', () => {
             if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
             const id = decodeURIComponent(new URL(url).pathname.split('/').at(-1)!);
             return { status: documents.has(id) ? 200 : 404, data: documents.get(id) ?? {} };
+        });
+        const batchReads = vi.spyOn(axios, 'post').mockImplementation(async (url, input) => {
+            expect(new URL(url).pathname).toBe('/v1/artifacts/read');
+            return artifactReadResponse(input, id => documents.get(id) ?? null);
         });
         vi.spyOn(axios, 'request').mockImplementation(async request => {
             const path = new URL(request.url!).pathname;
@@ -4250,6 +4255,7 @@ describe('installed deployment storage and target composition', () => {
         await expect(deps.prepareDeployCandidate({ environmentId: environment.environment.id, context: ownerContext }))
             .resolves.toMatchObject({ ok: false, errorCode: 'unsupported' });
         expect(canonicalReads).toBe(1);
+        expect(batchReads).toHaveBeenCalledTimes(kind === 'mismatched Artifact' ? 1 : 0);
     });
     it.each(['review', 'member', 'queued member', 'member wrong target', 'member wrong operation', 'member wrong installation'] as const)('validates promotion operands at review and consumes the admitted receipt for native child %s', async kind => {
         const member = kind !== 'review';
