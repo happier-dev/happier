@@ -1,5 +1,5 @@
 import { DeploymentEnvironmentCreateInputV1Schema, DeploymentEnvironmentCreateResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { WorkflowApprovedOperationV1Schema } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
+import { WorkflowApprovedOperationV1Schema, type WorkflowAcceptedSnapshotV1, type WorkflowApprovedOperationV1 } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1 } from '@happier-dev/protocol/actions/actionCatalog';
@@ -15,7 +15,7 @@ import { openWorkflowAcceptedSnapshotStoredEnvelopeV1, openWorkflowProgressStore
     parseWorkflowStoredContentEnvelopeV1, sealWorkflowAcceptedSnapshotStoredEnvelopeV1,
     sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 }
     from '@happier-dev/protocol/workflows/workflowStoredContentV1';
-import type { WorkflowProgressEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import type { WorkflowProgressEnvelopeV1, WorkflowRunInvocationIndexV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { DeploymentTargetPreparationBaseV1ProtocolSchema } from '@happier-dev/plugin-sdk';
 import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import * as supabase from '../../../../packages/plugins/deployment-supabase/src/index';
@@ -53,6 +53,39 @@ export function createPullRequestPreviewEnvironmentContent(request: Readonly<{
 
 /** Actual accepted/reviewed child and sealed storage, replacing only opaque Home
  * storage and provider HTTP. This does not stand in for the SCM event producer. */
+type PreviewInvocationReference = { runId: string; invocationId: string };
+type PreviewAdmissionCheck = Awaited<ReturnType<ReturnType<typeof createWorkflowApprovedOperationReader>>>;
+
+export type PullRequestPreviewDataCreationJourneyFixture = {
+    accountId: string;
+    pullRequest: {
+        repository: { kind: string; deployment: string; repository: string };
+        pullRequestId: string;
+        headSha: string;
+        branchName: string;
+        headRepository?: ScmHostingRepositoryIdentityV1;
+    };
+    parent: { actionId: 'deployments.environments.create'; input: WorkflowApprovedOperationV1['parent']['input'] };
+    input: WorkflowApprovedOperationV1['parent']['input'];
+    qualified: string;
+    context: ActionExecutorContext;
+    admissionChecks: Record<'changedCommit' | 'changedPullRequest' | 'wrongActor' | 'wrongInvocation', PreviewAdmissionCheck>;
+    requests: { method?: string; pathname: string; body: unknown }[];
+    storage: ReturnType<typeof createWorkflowRunStorageTestkit>;
+    accepted: WorkflowAcceptedSnapshotV1;
+    output: JsonValue;
+    captured: JsonValue | undefined;
+    environmentResult: unknown;
+    reference: PreviewInvocationReference;
+    readWorkflowInvocation: (requested?: PreviewInvocationReference, readContext?: ActionExecutorContext) =>
+        ReturnType<ReturnType<typeof createWorkflowRunActionOwner>['execute']>;
+    invocation: {
+        index: WorkflowRunInvocationIndexV1;
+        progress: WorkflowProgressEnvelopeV1;
+        parentRevision: ReturnType<ReturnType<typeof createWorkflowRunStorageTestkit>['run']>['revision'];
+    };
+};
+
 export async function createPullRequestPreviewDataCreationJourneyFixture(options: Readonly<{
     contributes: ResolvedExecutablePluginRuntimeRegistry['contributes'];
     encrypted?: boolean;
@@ -62,7 +95,7 @@ export async function createPullRequestPreviewDataCreationJourneyFixture(options
     readableByAccountIds?: readonly string[];
     createEnvironment?(input: ReturnType<typeof DeploymentEnvironmentCreateInputV1Schema.parse>,
         context: ActionExecutorContext, acceptedInputs: Readonly<Record<string, JsonValue>>): Promise<unknown>;
-}>) {
+}>): Promise<PullRequestPreviewDataCreationJourneyFixture> {
     const accountId = options.accountId ?? 'account-A', runId = 'ca00a439-791a-4bde-b332-d310c218799e';
     const invocationId = 'preview-data-create', actionRequestId = `${runId}/${invocationId}/0`;
     const action = { pluginId: supabase.manifest.id, localId: 'branches-create' };

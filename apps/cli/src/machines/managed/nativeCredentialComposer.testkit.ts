@@ -5,7 +5,7 @@ import nacl from 'tweetnacl';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import { resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTarget';
 import { ManagedMachineV1Schema, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import { ManagedControllerCredentialDeliveryReportV1Schema, ManagedNativeCredentialBindingV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedControllerCredentialDeliveryReportV1Schema, ManagedNativeCredentialBindingV1Schema, type ManagedNativeCredentialBindingV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { TeamCredentialProviderModelCatalogEntryV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import { MachineProvisionerNativeCredentialApplyInputV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import * as persistence from '@/persistence';
@@ -15,15 +15,41 @@ import { fixture as nativeFixture } from '@/plugins/runtime/invocation/actions/m
 import { createManagedProviderOperationAuthority } from '@/daemon/connectedServices/purposeBindings/managedProviderOperationAuthority';
 import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { createConnectedAccountRequestAuthSubjectRegistry } from '@/daemon/connectedServices/requestAuth/ConnectedAccountRequestAuthSubjectRegistry';
-import { createManagedMachineControllerClient } from './acquire';
+import { createManagedMachineControllerClient, type ManagedMachineAcquisitionDriverInput,
+  type ManagedMachineExecutionOptions } from './acquire';
 import { createManagedNativeInvocation } from './reconcile';
 import type { ComposeManagedNativeCredentialsInput } from './nativeCredentialComposer';
+
+type FixtureDriverInput = Required<Pick<ManagedMachineAcquisitionDriverInput,
+  'token' | 'credentials' | 'serverUrl' | 'externalActionMachineRequestPrivateKey' | 'homeId' | 'controller'
+  | 'runtimeRegistry' | 'managedProviderOperationAuthority' | 'homeTarget'>>;
+
+type FixtureExecutionOptions = Pick<ManagedMachineExecutionOptions, 'requestId'> & {
+  context: { operationOwnerUpdate: { update(): void } };
+};
+
+export type NativeCredentialComposerFixture = {
+  source: Awaited<ReturnType<typeof createTeamCredentialNativeProviderSourceFixture>>;
+  input: ComposeManagedNativeCredentialsInput;
+  binding: ManagedNativeCredentialBindingV1;
+  calls: Parameters<ComposeManagedNativeCredentialsInput['invoke']>[];
+  handles: TeamCredentialNativeProviderSource[];
+  material: unknown[];
+  native: ReturnType<typeof nativeFixture>;
+  driverInput: FixtureDriverInput;
+  options: FixtureExecutionOptions;
+  setVendorEffect(effect: (() => Promise<void>) | undefined): void;
+  setReportUnavailable(value: boolean): void;
+  setNativeBindings(value: ManagedNativeCredentialBindingV1[]): void;
+  setNativeDesiredBindingKeys(value: readonly string[]): void;
+  cleanup: () => ReturnType<Awaited<ReturnType<typeof createTeamCredentialNativeProviderSourceFixture>>['cleanup']>;
+};
 
 export async function createNativeCredentialComposerFixture(fixtureOptions: Readonly<{
   machine?: Partial<Pick<ManagedMachineV1, 'launch' | 'resource'>>;
   nativeOptions?: Parameters<typeof nativeFixture>[0];
   purposeBindingOwner?: Parameters<typeof createManagedProviderOperationAuthority>[0]['purposeBindingOwner'];
-}> = {}) {
+}> = {}): Promise<NativeCredentialComposerFixture> {
   const source = await createTeamCredentialNativeProviderSourceFixture();
   const projection = await source.services.projectModels(source.request);
   if (projection.status !== 'success') throw new Error('Expected source catalog');

@@ -184,54 +184,75 @@ const SESSION_IDENTITY_OPERATIONS = [
     pluginId: asHostProtocolZod(PluginIdSchema) }),
 ] as const;
 
-const SESSION_TURN_OPERATIONS = [
-  z.strictObject({
-    kind: z.literal('action.execute'),
-    surface: z.optional(z.enum(['agent', 'mcp'])),
-    reviewCommentPrincipal: z.optional(asHostProtocolZod(ReviewCommentPrincipalHeaderV1Schema)),
-    executionRun: z.optional(z.strictObject({ runId: OpaqueIdSchema, occurrenceId: OpaqueIdSchema })),
-    /** Host-selected Session/Run workspace, separate from authored SCM input. */
-    scmWorkspace: z.optional(asHostProtocolZod(WorkflowProjectTargetV1Schema)),
-    requestId: OpaqueIdSchema,
-    actionId: asHostProtocolZod(ActionIdSchema),
-    input: z.unknown(),
-    witness: AgentRuntimeDaemonServiceTurnWitnessV1Schema,
-    toolCallId: z.optional(OpaqueIdSchema),
-  }).check(z.refine((operation) => Object.prototype.hasOwnProperty.call(operation, 'input'), {
-    path: ['input'],
-    message: 'Action input must be present',
-  })),
-  z.strictObject({
-    kind: z.literal('session.open.attest'),
-    requestId: OpaqueIdSchema,
-    phase: z._default(z.enum(['prepare', 'commit', 'refused']), 'commit'),
-    failure: z.optional(SessionOpenConstructionFailureV1Schema),
-    request: AgentRuntimeDaemonSessionOpenRequestV1Schema,
-    providerSessionId: z.nullable(OpaqueIdSchema),
-  }),
-  z.strictObject({
-    kind: z.literal('turn.admission.authorize'),
-    requestId: OpaqueIdSchema,
-    witness: AgentRuntimeDaemonServiceTurnWitnessV1Schema,
-  }),
-  z.strictObject({
-    kind: z.literal('turn_contributions.resolve'),
-    requestId: OpaqueIdSchema,
-    request:
-      AgentRuntimeDaemonTurnContributionRequestV1Schema,
-  }),
-  z.strictObject({
-    kind: z.literal('session.input.admit'),
-    requestId: OpaqueIdSchema,
-    request: z.union([asHostProtocolZod(SessionPendingEnqueueByMachineRequestV1Schema), asHostProtocolZod(SessionPendingExecutionRunEnqueueByMachineRequestV2Schema)]),
-  }),
-  z.strictObject({
-    kind: z.literal('model_transition.authorize'),
-    requestId: OpaqueIdSchema,
-    selection:
-      AgentRuntimeDaemonProviderConnectionModelRefV1Schema,
-  }),
-] as const;
+const ActionExecuteOperationSchema = z.strictObject({
+  kind: z.literal('action.execute'),
+  surface: z.optional(z.enum(['agent', 'mcp'])),
+  reviewCommentPrincipal: z.optional(asHostProtocolZod(ReviewCommentPrincipalHeaderV1Schema)),
+  executionRun: z.optional(z.strictObject({ runId: OpaqueIdSchema, occurrenceId: OpaqueIdSchema })),
+  /** Host-selected Session/Run workspace, separate from authored SCM input. */
+  scmWorkspace: z.optional(asHostProtocolZod(WorkflowProjectTargetV1Schema)),
+  requestId: OpaqueIdSchema,
+  actionId: asHostProtocolZod(ActionIdSchema),
+  input: z.unknown(),
+  witness: AgentRuntimeDaemonServiceTurnWitnessV1Schema,
+  toolCallId: z.optional(OpaqueIdSchema),
+}).check(z.refine((operation) => Object.prototype.hasOwnProperty.call(operation, 'input'), {
+  path: ['input'],
+  message: 'Action input must be present',
+}));
+
+const SessionOpenAttestOperationSchema = z.strictObject({
+  kind: z.literal('session.open.attest'),
+  requestId: OpaqueIdSchema,
+  phase: z._default(z.enum(['prepare', 'commit', 'refused']), 'commit'),
+  failure: z.optional(SessionOpenConstructionFailureV1Schema),
+  request: AgentRuntimeDaemonSessionOpenRequestV1Schema,
+  providerSessionId: z.nullable(OpaqueIdSchema),
+});
+
+const TurnAdmissionAuthorizeOperationSchema = z.strictObject({
+  kind: z.literal('turn.admission.authorize'),
+  requestId: OpaqueIdSchema,
+  witness: AgentRuntimeDaemonServiceTurnWitnessV1Schema,
+});
+
+const TurnContributionsResolveOperationSchema = z.strictObject({
+  kind: z.literal('turn_contributions.resolve'),
+  requestId: OpaqueIdSchema,
+  request:
+    AgentRuntimeDaemonTurnContributionRequestV1Schema,
+});
+
+const SessionInputAdmitOperationSchema = z.strictObject({
+  kind: z.literal('session.input.admit'),
+  requestId: OpaqueIdSchema,
+  request: z.union([asHostProtocolZod(SessionPendingEnqueueByMachineRequestV1Schema), asHostProtocolZod(SessionPendingExecutionRunEnqueueByMachineRequestV2Schema)]),
+});
+
+const ModelTransitionAuthorizeOperationSchema = z.strictObject({
+  kind: z.literal('model_transition.authorize'),
+  requestId: OpaqueIdSchema,
+  selection:
+    AgentRuntimeDaemonProviderConnectionModelRefV1Schema,
+});
+
+type SessionTurnOperationSchemas = readonly [
+  typeof ActionExecuteOperationSchema,
+  typeof SessionOpenAttestOperationSchema,
+  typeof TurnAdmissionAuthorizeOperationSchema,
+  typeof TurnContributionsResolveOperationSchema,
+  typeof SessionInputAdmitOperationSchema,
+  typeof ModelTransitionAuthorizeOperationSchema,
+];
+
+const SESSION_TURN_OPERATIONS: SessionTurnOperationSchemas = [
+  ActionExecuteOperationSchema,
+  SessionOpenAttestOperationSchema,
+  TurnAdmissionAuthorizeOperationSchema,
+  TurnContributionsResolveOperationSchema,
+  SessionInputAdmitOperationSchema,
+  ModelTransitionAuthorizeOperationSchema,
+];
 
 const PROVIDER_BINDING_OPERATIONS = [
   z.strictObject({
@@ -385,152 +406,194 @@ export const AgentRuntimeDaemonServiceRequestV1Schema: z.ZodMiniType<AgentRuntim
   ]),
 }));
 
-export const AgentRuntimeDaemonServiceResponseV1Schema =
-  lazyZodSchema(() => z.discriminatedUnion('ok', [
+function createSessionIdentityResultSchemas() {
+  return [
+    z.strictObject({ kind: z.literal('connected_account.identity.observed') }),
+    z.strictObject({ kind: z.literal('native_realtime.input.admission'), admission: NativeRealtimeInputAdmissionV1Schema }),
+    z.strictObject({ kind: z.literal('native_realtime.input.retired') }),
+    z.strictObject({ kind: z.literal('agent_start.policy'), policy: AgentStartPolicyV1Schema }),
+    z.strictObject({ kind: z.literal('execution_run.review_plugin_authority'),
+      authority: z.nullable(z.strictObject({ sourceCustody: asHostProtocolZod(PluginSourceCustodyV1Schema),
+        caller: z.nullable(asHostProtocolZod(PluginMachineMaterializationRefV1Schema)) })) }),
+    ...RUNNER_EXECUTION_RUN_SNAPSHOT_RESULTS,
+    McpRequestAuthResultV1Schema,
+    McpRequestAuthClosedV1Schema,
+    ...RUNNER_PLUGIN_MCP_RESULTS,
+  ] as const;
+}
+
+function createSessionTurnResultSchemas() {
+  return [
     z.strictObject({
-      ok: z.literal(true),
-      result: z.union([
-        z.strictObject({ kind: z.literal('connected_account.identity.observed') }),
-        z.strictObject({ kind: z.literal('native_realtime.input.admission'), admission: NativeRealtimeInputAdmissionV1Schema }),
-        z.strictObject({ kind: z.literal('native_realtime.input.retired') }),
-        z.strictObject({ kind: z.literal('agent_start.policy'), policy: AgentStartPolicyV1Schema }),
-        z.strictObject({ kind: z.literal('execution_run.review_plugin_authority'),
-          authority: z.nullable(z.strictObject({ sourceCustody: asHostProtocolZod(PluginSourceCustodyV1Schema),
-            caller: z.nullable(asHostProtocolZod(PluginMachineMaterializationRefV1Schema)) })) }),
-        ...RUNNER_EXECUTION_RUN_SNAPSHOT_RESULTS,
-        McpRequestAuthResultV1Schema,
-        McpRequestAuthClosedV1Schema,
-        ...RUNNER_PLUGIN_MCP_RESULTS,
-        z.strictObject({
-          kind: z.literal('action.execution'),
-          requestId: OpaqueIdSchema,
-          outcome: ActionExecuteResultSchema,
-        }),
-        z.strictObject({
-          kind: z.literal('session.open.attestation'),
-          status: z.enum(['accepted', 'recorded']),
-        }),
-        z.strictObject({
-          kind: z.literal('turn.admission'),
-          status: z.literal('admitted'),
-          witness:
-            AgentRuntimeDaemonServiceTurnWitnessV1Schema,
-        }),
-        z.strictObject({
-          kind: z.literal('turn_contributions'),
-          status: z.literal('resolved'),
-          contributions:
-            AgentRuntimeDaemonTurnContributionsResultV1Schema,
-        }),
-        z.strictObject({
-          kind: z.literal('session.input.admission'),
-          status: z.literal('resolved'),
-          admission: SessionInputEnqueueResultV1Schema,
-        }),
-        z.strictObject({
-          kind: z.literal('model_transition'),
-          status: z.literal('authorized'),
-          authorization:
-            AgentRuntimeDaemonModelTransitionAuthorizationResultV1Schema,
-        }),
-        z.strictObject({
-          kind: z.literal('provider_managed.purpose'),
-          binding: asHostProtocolZod(QualifiedConnectedAccountPurposeBindingV1Schema),
-        }),
-        z.strictObject({
-          kind: z.literal('provider_managed.binding'),
-          bindingId: OpaqueIdSchema,
-          endpointUrl: CanonicalOriginSchema,
-          headers: z.record(EnvironmentKeySchema, DeclaredSecretValueSchema),
-        }),
-        z.strictObject({
-          kind: z.literal('provider_managed.binding.closed'),
-          status: z.literal('closed'),
-        }),
-        z.strictObject({
-          kind: z.literal('provider_broker.binding'),
-          status: z.literal('opened'),
-          providerBinding: AgentSessionTeamProviderBindingV1Schema,
-          environmentOverlay: SessionEnvOverlayV1Schema,
-          additionalRedactionValues: z.array(z.string().check(z.minLength(1), z.maxLength(65_536))).check(z.maxLength(64)),
-          bindingId: z.optional(OpaqueIdSchema),
-        }),
-        z.strictObject({
-          kind: z.literal('provider_broker.binding.closed'),
-          status: z.literal('closed'),
-        }),
-        z.strictObject({
-          kind: z.literal('provider_broker.refusal'),
-          denial: z.nullable(asHostProtocolZod(SessionRuntimeTeamCredentialDenialDetailsV1Schema)),
-          carrierFailure: z.optional(asHostProtocolZod(SessionRuntimeCarrierFailureV1Schema)),
-        }),
-        z.strictObject({
-          kind: z.literal('turn.admission'),
-          status: z.literal('denied'),
-          reason: OpaqueIdSchema,
-        }),
-        z.strictObject({
-          kind: z.literal('managed_server.supervision'),
-          status: z.literal('authorized'),
-          launch: AuthorizedManagedServiceLaunchSchema,
-        }),
-        z.strictObject({
-          kind: z.literal('managed_server.endpoint'),
-          status: z.literal('published'),
-          projectionToken: ProjectionTokenSchema,
-        }),
-        z.strictObject({
-          kind: z.literal('managed_server.endpoint'),
-          status: z.literal('released'),
-          released: z.boolean(),
-        }),
-        z.strictObject({
-          kind: z.literal('managed_server.endpoint'),
-          status: z.literal('resolved'),
-          projection: ManagedServiceEndpointProjectionV1Schema,
-        }),
-        z.strictObject({
-          kind: z.literal('managed_server.endpoint'),
-          status: z.literal('unavailable'),
-        }),
-        z.strictObject({
-          kind: z.literal('managed_server.endpoint.read'),
-          status: z.literal('claimed'),
-          requestId: OpaqueIdSchema,
-        }),
-        z.strictObject({
-          kind: z.literal('managed_server.endpoint.read'),
-          status: z.literal('unavailable'),
-          requestId: OpaqueIdSchema,
-        }),
-        z.strictObject({
-          kind: z.literal('managed_server.secret'),
-          status: z.literal('resolved'),
-          requestId: OpaqueIdSchema,
-          /** `null` is the configured-but-missing/empty credential state. */
-          value: z.nullable(DeclaredSecretValueSchema),
-          revision: OpaqueIdSchema,
-        }),
-        z.strictObject({
-          kind: z.literal('managed_server.secret'),
-          status: z.enum(['current', 'stale', 'unavailable']),
-          requestId: OpaqueIdSchema,
-        }),
-        RunnerAgentDaemonFacetResultV1Schema,
-        RunnerDaemonPluginServiceResultV1Schema,
-      ]),
+      kind: z.literal('action.execution'),
+      requestId: OpaqueIdSchema,
+      outcome: ActionExecuteResultSchema,
     }),
     z.strictObject({
-      ok: z.literal(false),
-      error: z.strictObject({
-        code: OpaqueIdSchema,
-        message: z.string().check(z.maxLength(4_096)),
-        cause: z.optional(RunnerDaemonPluginServicesPreparationCauseV1Schema),
-        retryable: z.optional(z.boolean()),
-        failureCause: z.optional(asHostProtocolZod(ActionFailureCauseV1Schema)),
-      }),
+      kind: z.literal('session.open.attestation'),
+      status: z.enum(['accepted', 'recorded']),
     }),
-  ]));
+    z.strictObject({
+      kind: z.literal('turn.admission'),
+      status: z.literal('admitted'),
+      witness:
+        AgentRuntimeDaemonServiceTurnWitnessV1Schema,
+    }),
+    z.strictObject({
+      kind: z.literal('turn_contributions'),
+      status: z.literal('resolved'),
+      contributions:
+        AgentRuntimeDaemonTurnContributionsResultV1Schema,
+    }),
+    z.strictObject({
+      kind: z.literal('session.input.admission'),
+      status: z.literal('resolved'),
+      admission: SessionInputEnqueueResultV1Schema,
+    }),
+    z.strictObject({
+      kind: z.literal('model_transition'),
+      status: z.literal('authorized'),
+      authorization:
+        AgentRuntimeDaemonModelTransitionAuthorizationResultV1Schema,
+    }),
+  ] as const;
+}
+
+function createProviderBindingResultSchemas() {
+  return [
+    z.strictObject({
+      kind: z.literal('provider_managed.purpose'),
+      binding: asHostProtocolZod(QualifiedConnectedAccountPurposeBindingV1Schema),
+    }),
+    z.strictObject({
+      kind: z.literal('provider_managed.binding'),
+      bindingId: OpaqueIdSchema,
+      endpointUrl: CanonicalOriginSchema,
+      headers: z.record(EnvironmentKeySchema, DeclaredSecretValueSchema),
+    }),
+    z.strictObject({
+      kind: z.literal('provider_managed.binding.closed'),
+      status: z.literal('closed'),
+    }),
+    z.strictObject({
+      kind: z.literal('provider_broker.binding'),
+      status: z.literal('opened'),
+      providerBinding: AgentSessionTeamProviderBindingV1Schema,
+      environmentOverlay: SessionEnvOverlayV1Schema,
+      additionalRedactionValues: z.array(z.string().check(z.minLength(1), z.maxLength(65_536))).check(z.maxLength(64)),
+      bindingId: z.optional(OpaqueIdSchema),
+    }),
+    z.strictObject({
+      kind: z.literal('provider_broker.binding.closed'),
+      status: z.literal('closed'),
+    }),
+    z.strictObject({
+      kind: z.literal('provider_broker.refusal'),
+      denial: z.nullable(asHostProtocolZod(SessionRuntimeTeamCredentialDenialDetailsV1Schema)),
+      carrierFailure: z.optional(asHostProtocolZod(SessionRuntimeCarrierFailureV1Schema)),
+    }),
+    z.strictObject({
+      kind: z.literal('turn.admission'),
+      status: z.literal('denied'),
+      reason: OpaqueIdSchema,
+    }),
+  ] as const;
+}
+
+function createManagedServerResultSchemas() {
+  return [
+    z.strictObject({
+      kind: z.literal('managed_server.supervision'),
+      status: z.literal('authorized'),
+      launch: AuthorizedManagedServiceLaunchSchema,
+    }),
+    z.strictObject({
+      kind: z.literal('managed_server.endpoint'),
+      status: z.literal('published'),
+      projectionToken: ProjectionTokenSchema,
+    }),
+    z.strictObject({
+      kind: z.literal('managed_server.endpoint'),
+      status: z.literal('released'),
+      released: z.boolean(),
+    }),
+    z.strictObject({
+      kind: z.literal('managed_server.endpoint'),
+      status: z.literal('resolved'),
+      projection: ManagedServiceEndpointProjectionV1Schema,
+    }),
+    z.strictObject({
+      kind: z.literal('managed_server.endpoint'),
+      status: z.literal('unavailable'),
+    }),
+    z.strictObject({
+      kind: z.literal('managed_server.endpoint.read'),
+      status: z.literal('claimed'),
+      requestId: OpaqueIdSchema,
+    }),
+    z.strictObject({
+      kind: z.literal('managed_server.endpoint.read'),
+      status: z.literal('unavailable'),
+      requestId: OpaqueIdSchema,
+    }),
+    z.strictObject({
+      kind: z.literal('managed_server.secret'),
+      status: z.literal('resolved'),
+      requestId: OpaqueIdSchema,
+      /** `null` is the configured-but-missing/empty credential state. */
+      value: z.nullable(DeclaredSecretValueSchema),
+      revision: OpaqueIdSchema,
+    }),
+    z.strictObject({
+      kind: z.literal('managed_server.secret'),
+      status: z.enum(['current', 'stale', 'unavailable']),
+      requestId: OpaqueIdSchema,
+    }),
+    RunnerAgentDaemonFacetResultV1Schema,
+    RunnerDaemonPluginServiceResultV1Schema,
+  ] as const;
+}
+
+type AgentRuntimeDaemonServiceResultSchemas = readonly [
+  ...ReturnType<typeof createSessionIdentityResultSchemas>,
+  ...ReturnType<typeof createSessionTurnResultSchemas>,
+  ...ReturnType<typeof createProviderBindingResultSchemas>,
+  ...ReturnType<typeof createManagedServerResultSchemas>,
+];
+
+function createAgentRuntimeDaemonServiceResultSchema(): z.ZodMiniUnion<AgentRuntimeDaemonServiceResultSchemas> {
+  return z.union<AgentRuntimeDaemonServiceResultSchemas>([
+    ...createSessionIdentityResultSchemas(),
+    ...createSessionTurnResultSchemas(),
+    ...createProviderBindingResultSchemas(),
+    ...createManagedServerResultSchemas(),
+  ]);
+}
+
+function createSuccessResponseSchema() {
+  return z.strictObject({ ok: z.literal(true), result: createAgentRuntimeDaemonServiceResultSchema() });
+}
+
+function createFailureResponseSchema() {
+  return z.strictObject({
+    ok: z.literal(false),
+    error: z.strictObject({
+      code: OpaqueIdSchema,
+      message: z.string().check(z.maxLength(4_096)),
+      cause: z.optional(RunnerDaemonPluginServicesPreparationCauseV1Schema),
+      retryable: z.optional(z.boolean()),
+      failureCause: z.optional(asHostProtocolZod(ActionFailureCauseV1Schema)),
+    }),
+  });
+}
+
+type AgentRuntimeDaemonServiceResponseSchema = z.ZodMiniDiscriminatedUnion<readonly [
+  ReturnType<typeof createSuccessResponseSchema>,
+  ReturnType<typeof createFailureResponseSchema>,
+], 'ok'>;
+
+export const AgentRuntimeDaemonServiceResponseV1Schema: AgentRuntimeDaemonServiceResponseSchema =
+  lazyZodSchema(() => z.discriminatedUnion('ok', [createSuccessResponseSchema(), createFailureResponseSchema()]));
 
 export type AgentRuntimeDaemonServiceResponseV1 =
   z.infer<typeof AgentRuntimeDaemonServiceResponseV1Schema>;

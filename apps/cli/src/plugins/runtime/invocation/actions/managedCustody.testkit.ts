@@ -120,6 +120,25 @@ export function pendingEnrollmentGuestRoleSource(input: Readonly<{
       };`;
 }
 
+export type ManagedCustodyFixture = {
+    runtimeRegistry: ResolvedExecutablePluginRuntimeRegistry;
+    targetActionInvocations: ReturnType<typeof createTargetActionInvocationRegistry>;
+    custody: {
+        managedId: string;
+        homeId: string;
+        intentRevision: number;
+        controller: { machineId: string; installationId: string };
+        contribution: { pluginId: string; localId: string; occurrenceId: ReturnType<typeof createPluginRuntimeOccurrenceId> };
+        role: 'acquire';
+        isCurrent: () => boolean;
+    };
+    materializedAccounts: string[];
+    manifest: CanonicalPluginManifest;
+    effects: () => number;
+    activations: () => number;
+    retire: () => void;
+};
+
 export function fixture(options: Readonly<{
     cold?: boolean; dangerous?: boolean; privateNative?: boolean;
     /** Lets a composed caller prove that a host-reviewed child, not plugin surface access, admitted a native role. */
@@ -163,7 +182,7 @@ export function fixture(options: Readonly<{
     referenceManifests?: readonly CanonicalPluginManifest[];
     credentialPurposes?: readonly Readonly<{ purpose: string; service: Readonly<{ pluginId: string; localId: string }> }>[];
     afterActivation?: () => void; credentialOwner?: StablePluginConnectedAccountsOwner;
-}> = {}) {
+}> = {}): ManagedCustodyFixture {
     const pluginId = options.fixtureManifest?.id ?? 'acme.compute';
     const occurrenceId = createPluginRuntimeOccurrenceId(pluginId);
     let currentOccurrenceId = occurrenceId;

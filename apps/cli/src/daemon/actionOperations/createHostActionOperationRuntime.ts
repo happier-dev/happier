@@ -10,13 +10,13 @@ import { buildActionExecutorContextForRpc, type RpcActionExecutorContext } from 
 import { readActionWorkflowOriginRunIdV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import { readRequesterAccountActionContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
 
-import { createActionOperationRpcHandlers, resolveActionOperationScope, type ActionOperationRpcContext } from './actionOperationRpcHandlers';
-import { createActionOperationRunner } from './actionOperationRunner';
-import { createActionOperationStore, type DeploymentBackupOperationTarget } from './actionOperationStore';
+import { createActionOperationRpcHandlers, resolveActionOperationScope, type ActionOperationRpcContext, type ActionOperationRpcHandlers } from './actionOperationRpcHandlers';
+import { createActionOperationRunner, type ActionOperationRunner } from './actionOperationRunner';
+import { createActionOperationStore, type ActionOperationStore, type DeploymentBackupOperation, type DeploymentBackupOperationTarget } from './actionOperationStore';
 import { readManagedCreationContinuationResultPort, type ManagedCreationContinuationResultPort } from '@/machines/managed/creationContinuation';
 import { isReviewedManagedExecWake } from '@/machines/managed/managedExecWake';
 import { readDeploymentTokenOperationOrigin } from './deploymentTokenOrigin';
-import type { ActionOperationCancellation, ActionOperationDomainOwner, ActionOperationProgressUpdate, HostActionOperationExecute } from './actionOperationTypes';
+import type { ActionOperationCancellation, ActionOperationDomainOwner, ActionOperationProgressUpdate, ActionOperationQueryScope, HostActionOperationExecute } from './actionOperationTypes';
 import { RequesterWorkAttributionV1Schema, type RequesterWorkAttributionV1 } from '@/daemon/lifecycle/requesterWorkAttribution';
 import { RpcError, RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
 import type { LiveWorkProducerV1 } from '@/daemon/lifecycle/managedActivity';
@@ -127,6 +127,75 @@ function observeUntilCallerAbort<T>(result: Promise<T>, signal: AbortSignal | un
   });
 }
 
+type HostActionExecutionRequest = Readonly<{
+  actionId: string;
+  input: unknown;
+  semanticInput?: unknown;
+  /** Receiving-host metadata for a typed operation arm, never public input. */
+  operation?: ActionOperationDeclarationV1;
+  response?: Parameters<ActionOperationRunner['observe']>[0]['response'];
+  joinEarlierActive?: Parameters<ActionOperationRunner['observe']>[0]['joinEarlierActive'];
+  creationContinuationResult?: ManagedCreationContinuationResultPort;
+  actionRequestId?: import('@happier-dev/protocol').ActionExecutorContext['actionRequestId'];
+  sessionId?: string;
+  /** Already admitted receiving-host context, never a public Action input. */
+  rpcContext?: ActionOperationRpcContext & ConfirmationContext;
+  actionContext?: ActionExecutorContext;
+  /** Existing domain owner opens and validates the exact candidate before returning correspondence. */
+  recoverPendingDeployment?: () => Promise<import('@happier-dev/protocol/deployments/deploymentActionsV1').DeploymentPendingAdmissionV1 | undefined>;
+  existingDeploymentOperationId?: string;
+  onOperation?: (operation: ActionOperationSnapshotV1) => void;
+  resumeRetained?: true;
+  resume?: HostActionOperationExecute;
+  execute: HostActionOperationExecute;
+}>;
+
+type HostPluginActionExecutionRequest = Readonly<{
+  actionId: string;
+  title: string;
+  operation: ActionOperationDeclarationV1;
+  input: unknown;
+  response?: 'admission' | 'terminal';
+  failureResult?: Parameters<ActionOperationRunner['observe']>[0]['failureResult'];
+  requestId?: string;
+  sessionId?: string;
+  rpcContext?: ActionOperationRpcContext & Pick<RpcActionExecutorContext, 'externalActionExecutionAuthorization'>;
+  actionContext?: ActionExecutorContext;
+  execute: (context: Readonly<{
+    signal: AbortSignal;
+    operationProgress: Readonly<{ update: (update: ActionOperationProgressUpdate) => void }>;
+    operationAcceptance?: import('@happier-dev/protocol').ActionExecutorContext['operationAcceptance'];
+    operationOwnerUpdate?: import('@happier-dev/protocol').ActionExecutorContext['operationOwnerUpdate'];
+  }>) => Promise<ActionExecuteResult>;
+}>;
+
+type HostActionOperationRequest = Parameters<NonNullable<ActionExecutorDeps['runActionOperation']>>[0]
+  & Readonly<{ recoverPendingDeployment?: () => Promise<import('@happier-dev/protocol/deployments/deploymentActionsV1').DeploymentPendingAdmissionV1 | undefined> }>;
+
+export type HostActionOperationRuntime = Readonly<{
+  store: ActionOperationStore;
+  runner: ActionOperationRunner;
+  handlers: ActionOperationRpcHandlers;
+  observeExecution: (request: HostActionExecutionRequest) => Promise<ActionExecuteResult>;
+  runActionOperation: (request: HostActionOperationRequest) => Promise<ActionExecuteResult>;
+  observePluginExecution: (request: HostPluginActionExecutionRequest) => Promise<ActionExecuteResult>;
+  attachOwner: (owner: ActionOperationDomainOwner) => () => void;
+  activity: LiveWorkProducerV1;
+  preparePendingDeploymentObservation(
+    request: PendingDeploymentObservationRequest,
+  ): Promise<((context: ActionExecutorContext) => Promise<ActionExecuteResult>) | undefined>;
+  readRestorePreparation(request: Readonly<{
+    operationId: string; context?: ActionOperationRpcContext;
+  }>): Promise<ActionOperationSnapshotV1 | null>;
+  readDeploymentBackupOperations(request: Readonly<{
+    target: DeploymentBackupOperationTarget; context?: ActionOperationRpcContext;
+  }>): Promise<readonly DeploymentBackupOperation[]>;
+  publishCurrentSnapshot(scope: ActionOperationQueryScope, operationId: string): Promise<void>;
+  decideSetupReview: ActionOperationRunner['decideSetupReview'];
+  retireProjectFiniteOperations: ActionOperationRunner['retireProjectFiniteOperations'];
+  waitForProjectTerminalAttachment: ActionOperationRunner['waitForProjectTerminalAttachment'];
+}>;
+
 export function createHostActionOperationRuntime(deps: Readonly<{
   /** Exact configured Home binding, shared with the incumbent Session launch owner. */
   serverId?: string;
@@ -143,7 +212,7 @@ export function createHostActionOperationRuntime(deps: Readonly<{
     actionId: 'session.fork' | 'session.spawn_new' | 'session.handoff' | 'projects.service.relocate',
     input: unknown,
   ) => boolean;
-}>) {
+}>): HostActionOperationRuntime {
   const store = createActionOperationStore({
     ...(deps.onBackupOutcome ? { onBackupOutcome: deps.onBackupOutcome } : {}),
     ...(deps.publishSnapshot ? { onSnapshot: deps.publishSnapshot } : {}),
@@ -239,28 +308,7 @@ export function createHostActionOperationRuntime(deps: Readonly<{
     return await resolveActionOperationScope(deps, context, sessionId);
   };
 
-  const observeExecution = async (request: Readonly<{
-    actionId: string;
-    input: unknown;
-    semanticInput?: unknown;
-    /** Receiving-host metadata for a typed operation arm, never public input. */
-    operation?: ActionOperationDeclarationV1;
-    response?: Parameters<typeof runner.observe>[0]['response'];
-    joinEarlierActive?: Parameters<typeof runner.observe>[0]['joinEarlierActive'];
-    creationContinuationResult?: ManagedCreationContinuationResultPort;
-    actionRequestId?: import('@happier-dev/protocol').ActionExecutorContext['actionRequestId'];
-    sessionId?: string;
-    /** Already admitted receiving-host context, never a public Action input. */
-    rpcContext?: ActionOperationRpcContext & ConfirmationContext;
-    actionContext?: ActionExecutorContext;
-    /** Existing domain owner opens and validates the exact candidate before returning correspondence. */
-    recoverPendingDeployment?: () => Promise<import('@happier-dev/protocol/deployments/deploymentActionsV1').DeploymentPendingAdmissionV1 | undefined>;
-    existingDeploymentOperationId?: string;
-    onOperation?: (operation: ActionOperationSnapshotV1) => void;
-    resumeRetained?: true;
-    resume?: HostActionOperationExecute;
-    execute: HostActionOperationExecute;
-  }>): Promise<ActionExecuteResult> => {
+  const observeExecution = async (request: HostActionExecutionRequest): Promise<ActionExecuteResult> => {
     const scope = await resolveObservedScope(request.rpcContext, request.sessionId);
     const deploymentChildIdentity = await readDeploymentArchiveOperationIdentityForHost(request.rpcContext, request.actionId);
     const settleManagedNativeOperation = scope
@@ -500,8 +548,7 @@ export function createHostActionOperationRuntime(deps: Readonly<{
     return result;
   };
 
-  const runActionOperation = async (request: Parameters<NonNullable<ActionExecutorDeps['runActionOperation']>>[0]
-    & Readonly<{ recoverPendingDeployment?: () => Promise<import('@happier-dev/protocol/deployments/deploymentActionsV1').DeploymentPendingAdmissionV1 | undefined> }>) => {
+  const runActionOperation = async (request: HostActionOperationRequest) => {
     return runHostActionOperation(observeExecution, request);
   };
 
@@ -552,24 +599,7 @@ export function createHostActionOperationRuntime(deps: Readonly<{
     };
   };
 
-  const observePluginExecution = async (request: Readonly<{
-    actionId: string;
-    title: string;
-    operation: ActionOperationDeclarationV1;
-    input: unknown;
-    response?: 'admission' | 'terminal';
-    failureResult?: Parameters<typeof runner.observe>[0]['failureResult'];
-    requestId?: string;
-    sessionId?: string;
-    rpcContext?: ActionOperationRpcContext & Pick<RpcActionExecutorContext, 'externalActionExecutionAuthorization'>;
-    actionContext?: ActionExecutorContext;
-    execute: (context: Readonly<{
-      signal: AbortSignal;
-      operationProgress: Readonly<{ update: (update: ActionOperationProgressUpdate) => void }>;
-      operationAcceptance?: import('@happier-dev/protocol').ActionExecutorContext['operationAcceptance'];
-      operationOwnerUpdate?: import('@happier-dev/protocol').ActionExecutorContext['operationOwnerUpdate'];
-    }>) => Promise<ActionExecuteResult>;
-  }>): Promise<ActionExecuteResult> => {
+  const observePluginExecution = async (request: HostPluginActionExecutionRequest): Promise<ActionExecuteResult> => {
     const scope = await resolveObservedScope(request.rpcContext, request.sessionId);
     if (!scope) {
       return await request.execute({
@@ -667,13 +697,10 @@ export function createHostActionOperationRuntime(deps: Readonly<{
     waitForProjectTerminalAttachment: runner.waitForProjectTerminalAttachment });
 }
 
-export type HostActionOperationRuntime = ReturnType<typeof createHostActionOperationRuntime>;
-
 /** All receiving hosts adapt admitted effects to the same runner and requester lifetime. */
 export async function runHostActionOperation(
   observeExecution: HostActionOperationRuntime['observeExecution'],
-  request: Parameters<NonNullable<ActionExecutorDeps['runActionOperation']>>[0]
-    & Readonly<{ recoverPendingDeployment?: () => Promise<import('@happier-dev/protocol/deployments/deploymentActionsV1').DeploymentPendingAdmissionV1 | undefined> }>,
+  request: HostActionOperationRequest,
   rpcContext?: ActionOperationRpcContext,
 ): Promise<ActionExecuteResult> {
   const context: RpcActionExecutorContext = request.context;

@@ -71,7 +71,7 @@ export function workspaceCheckoutFilesystemBoundary(actual: typeof import('node:
 export type WorkspaceCheckoutNativeChild = ChildProcessWithoutNullStreams;
 
 /** Run the finite cwd probe against the same virtual OS as the Workspace worker. */
-export async function runWorkspaceCheckoutCwdBoundary(bytes: Uint8Array, signal = new AbortController().signal) {
+export async function runWorkspaceCheckoutCwdBoundary(bytes: Uint8Array, signal: AbortSignal = new AbortController().signal) {
   const frame = await readAgentLaunchFrame(Readable.from([bytes], { objectMode: false }), signal, true);
   if (!('action' in frame) || frame.action !== 'resolve_cwd') return undefined;
   const [{ resolveAgentLaunchCwd }, filesystem] = await Promise.all([

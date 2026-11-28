@@ -11,6 +11,8 @@ import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityIntentReadAction
     PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE, normalizePluginReleaseFactsV1 } from '@happier-dev/protocol/plugins/availability';
 import { computePluginUiArtifactFileSetSha256DigestV1, computePluginUiArtifactSha256DigestV1,
     createPluginUiArtifactArchiveV1, encodePluginUiArtifactArchiveBodyV1, PluginUiArtifactsManifestV2Schema } from '@happier-dev/protocol/plugins/ui';
+import type { PluginUiArtifactsManifestV2 } from '@happier-dev/protocol/plugins/ui';
+import type { CanonicalPluginManifest } from '@/plugins/manifest/types';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { projectVerifiedPluginUiReleaseSlotsV2 } from '@/plugins/availability/releaseFacts';
 import { registerAccountArtifactRoutes } from '@/session/actions/widgetApproval.testkit';
@@ -23,9 +25,31 @@ import { manifest as authoredAccountManifest, sourceProviderManifest } from '../
 type AuthoredAccountReleaseSource = Readonly<{ manifest: unknown; projectRoot: string; entryPath: string;
     artifactId?: string; activateExport?: string; manifestExport?: string | null }>;
 
+type AuthoredAccountArtifactArchive = NonNullable<ReturnType<typeof createPluginUiArtifactArchiveV1>>;
+
+export type AuthoredAccountActionRelease = {
+    pluginId: string;
+    artifactId: string;
+    manifest: CanonicalPluginManifest;
+    generated: PluginUiArtifactsManifestV2;
+    files: { relativePath: string; bytes: Uint8Array }[];
+    archive: AuthoredAccountArtifactArchive;
+    hostedArtifacts: { artifactId: string; graphArtifactId: string; archive: AuthoredAccountArtifactArchive }[];
+    release: ReturnType<typeof normalizePluginReleaseFactsV1>;
+};
+
+export type RegisteredAuthoredAccountActionRelease = AuthoredAccountActionRelease & {
+    providerPluginId: string | undefined;
+    artifacts: ReturnType<typeof registerAccountArtifactRoutes<'plain' | 'e2ee'>>;
+    publishArtifacts: (credentials: StoredCredentials) => Promise<void>;
+    setPluginEnabled: (pluginId: string, value: boolean) => void;
+    setEnabled: (value: boolean) => void;
+    setBundledFallback: (value?: boolean) => void;
+};
+
 /** Canonical author compiler and release projection, independent of Home storage. */
 export async function buildAuthoredAccountActionRelease(input: Readonly<{ manifest: unknown; artifactId: string; accountArtifactId: string;
-        manifestExport: string | null; activateExport: string; archiveDigestCharacter: string; source?: AuthoredAccountReleaseSource }>) {
+        manifestExport: string | null; activateExport: string; archiveDigestCharacter: string; source?: AuthoredAccountReleaseSource }>): Promise<AuthoredAccountActionRelease> {
     const projectRoot = resolve(import.meta.dirname, '../../../../../packages/plugin-sdk/fixtures/account-actions');
     const packages = await readWorkspacePackages(resolve(import.meta.dirname, '../../../../..'));
     const packageJson = JSON.parse(await readFile(join(projectRoot, 'package.json'), 'utf8')) as {
@@ -93,7 +117,7 @@ export async function registerAuthoredAccountActionRelease(app: FastifyInstance,
     options: Readonly<{ includeAccountProvider?: boolean; includeBundledPluginIds?: readonly string[]; encryptionMode?: 'plain' | 'e2ee';
         scopedProjectKeys?: readonly string[];
         /** A package-owned author fixture using this same compiler/release/storage boundary. */
-        primary?: AuthoredAccountReleaseSource; additional?: readonly AuthoredAccountReleaseSource[] }> = {}) {
+        primary?: AuthoredAccountReleaseSource; additional?: readonly AuthoredAccountReleaseSource[] }> = {}): Promise<RegisteredAuthoredAccountActionRelease> {
     const primary = await buildAuthoredAccountActionRelease({ manifest: options.primary?.manifest ?? authoredAccountManifest, artifactId: options.primary?.artifactId ?? 'account-runtime',
         accountArtifactId: 'a7e5d73f-88a7-44bc-98ed-23edbffb6214',
         manifestExport: options.primary?.manifestExport === undefined ? 'manifest' : options.primary.manifestExport,

@@ -13,13 +13,18 @@ export type ExecutionRunNativeOperation = Readonly<{ signal: AbortSignal }> & (P
     | (Pick<PreparedNativeOperation, 'requesterIdentity' | 'agentIsolation' | 'workingDirectory' | 'dispose'>
         & Readonly<{ memberIdentity?: undefined; materialTarget?: undefined }>));
 
+export type ExecutionRunNativeOperationOwner = {
+    prepareNativeOperation(cwd: string, signal: AbortSignal, correlationId: string): Promise<ExecutionRunNativeOperation | undefined>;
+    disposeNativeOperation(): Promise<void>;
+};
+
 /** The captured Run owns one native operation; its Account attribution remains with the Run. */
 export function createExecutionRunNativeOperationOwner(input: Readonly<{
     machine: Pick<ApiMachineClient, 'prepareNativeOperation' | 'readMemberFolderOwner'>;
     agentIsolation: HostAgentIsolationLaunchContext;
     ingress: RpcHandlerContext;
     resolveRequesterIdentity(): Promise<HostRequesterExecutionIdentity>;
-}>) {
+}>): ExecutionRunNativeOperationOwner {
     const lifetime = new AbortController();
     let pending: Promise<ExecutionRunNativeOperation | undefined> | undefined;
     return {
