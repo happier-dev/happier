@@ -13,10 +13,9 @@ import {
   useHappierPageChrome,
   usePluginTranslation,
   SurfaceState,
-  useSurfaceContext,
 } from '@happier-dev/plugin-ui';
 import { AutomationsSection } from '@happier-dev/plugin-ui/components';
-import { useHostDatabaseWorkbench, usePluginUiEphemeralSharedScope } from '@happier-dev/plugin-ui/hostApi';
+import { useHostDatabaseWorkbench } from '@happier-dev/plugin-ui/hostApi';
 import {
   WorkbenchProvider,
   useDatabaseTargets,
@@ -42,12 +41,12 @@ import {
   readWorkbenchLaunchInput,
   type WorkbenchLaunchInput,
   useLinkedWorkbench,
+  useMountedWorkbenchAddress,
   useWorkbenchMount,
   WORKBENCH_DISPLAY_PAGE_ROWS,
 } from './mount.js';
 import { decodeWorkbenchSubPath, type WorkbenchPlace, type WorkbenchTargetDisplay } from './subPath.js';
 import { databaseEngineName } from './engines.js';
-import { bindMountedWorkbench } from './openWorkbench.js';
 
 function OverviewPane(props: Readonly<{ targetKey: string; scope: WorkbenchLaunchInput['scope']; onForgot?: () => void }>) {
   const translate = usePluginTranslation();
@@ -193,15 +192,7 @@ function MountedWorkbenchPage({ context, launch, place, root, client }: Readonly
   );
   const options = React.useMemo(() => ({ pageLocation: true }), []);
   const instance = useWorkbenchMount(context, launch, initial, options, client);
-  const mountId = useSurfaceContext().mountId;
-  const sharedScope = usePluginUiEphemeralSharedScope();
-  React.useEffect(() => {
-    if (!sharedScope || !mountId || !instance || !targetKey) return;
-    const release = bindMountedWorkbench(sharedScope, mountId, { instance, targetKey, signal: context.signal });
-    if (!release) return;
-    context.hostApi.publishCurrentUiContext({ detail: { address: { mountId } } });
-    return () => { release(); context.hostApi.publishCurrentUiContext(null); };
-  }, [sharedScope, mountId, instance, targetKey, context.signal, context.hostApi]);
+  useMountedWorkbenchAddress(context, instance, targetKey);
   // The host's Back, Forward or a link moves the page: the workbench takes that place, never writing it back.
   React.useEffect(() => { instance?.adopt(place); }, [instance, place]);
   // A link straight to a place goes to the root first and opens the place from there once the page has reached it,

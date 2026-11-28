@@ -9,7 +9,8 @@ import {
 import { computeSha256HexDigest } from '@happier-dev/plugin-sdk';
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
 import { databaseStatementRangesV1 } from '@happier-dev/databases/statements';
-import { useHostDatabaseWorkbench } from '@happier-dev/plugin-ui/hostApi';
+import { useSurfaceContext } from '@happier-dev/plugin-ui';
+import { useHostDatabaseWorkbench, usePluginUiEphemeralSharedScope } from '@happier-dev/plugin-ui/hostApi';
 import {
   createWorkbenchInstance,
   type WorkbenchInstance,
@@ -17,6 +18,7 @@ import {
 import { createConsoleDeviceStorage } from '../consoleDeviceStorage.js';
 import type { WorkbenchClient, WorkbenchLocation } from '../models.js';
 import { createHostWorkbenchClient } from './hostClient.js';
+import { bindMountedWorkbench } from './openWorkbench.js';
 import type { WorkbenchTargetDisplay } from './subPath.js';
 import { workbenchTargetKey } from '../workbench.js';
 
@@ -77,6 +79,22 @@ export function databaseTargetKey(descriptor: DatabaseDescriptorV1): string {
 
 export function workbenchDetailsInstanceKey(targetKey: string, place: string): string {
   return computeSha256HexDigest(JSON.stringify([targetKey, place]));
+}
+
+export function useMountedWorkbenchAddress(context: RenderContext, instance: WorkbenchInstance | null, targetKey: string | null) {
+  const { mountId } = useSurfaceContext();
+  const sharedScope = usePluginUiEphemeralSharedScope();
+  const { hostApi, signal } = context;
+  React.useEffect(() => {
+    if (!sharedScope || !mountId || !instance || !targetKey) return;
+    const release = bindMountedWorkbench(sharedScope, mountId, { instance, targetKey, signal });
+    if (!release) return;
+    hostApi.publishCurrentUiContext({ detail: { address: { mountId } } });
+    return () => {
+      release();
+      hostApi.publishCurrentUiContext(null);
+    };
+  }, [sharedScope, mountId, instance, targetKey, signal, hostApi]);
 }
 
 function useNoWorktreeTargetChanges() {}

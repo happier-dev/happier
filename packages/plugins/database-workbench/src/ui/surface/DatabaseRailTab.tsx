@@ -33,6 +33,7 @@ import { CatalogueReadFailure } from './CatalogueReadFailure.js';
 import {
   databaseTargetKey,
   readWorkbenchLaunchInput,
+  useMountedWorkbenchAddress,
   useWorkbenchMount,
   WORKBENCH_DISPLAY_PAGE_ROWS,
   workbenchDetailsInstanceKey,
@@ -284,6 +285,8 @@ function DatabaseRailSurface(context: RenderContext) {
       : null;
   }, [launch === null, inDetails, targetKey, place]); // eslint-disable-line react-hooks/exhaustive-deps
   const instance = useWorkbenchMount(context, launch, location, LOCAL_ONLY);
+  const insightsDetails = inDetails && railTabOf(context) === 'insights';
+  useMountedWorkbenchAddress(context, instance, inDetails && !insightsDetails ? targetKey : null);
   if (!instance || !launch) {
     return (
       <Text
@@ -298,7 +301,7 @@ function DatabaseRailSurface(context: RenderContext) {
   }
   return (
     <WorkbenchProvider instance={instance}>
-      {inDetails && railTabOf(context) === 'insights' ? (
+      {insightsDetails ? (
         <InsightsDetailsTab context={context} targetKey={targetKey} statementKey={place} />
       ) : inDetails ? (
         <DetailsTab targetKey={targetKey} scope={launch.scope} />

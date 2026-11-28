@@ -122,7 +122,8 @@ function connectionResourceHandlers(connected = descriptor) {
   };
 }
 
-it('addresses one mounted Workbench and scopes device history clearing without changing the SQL draft', async () => {
+it.each(['app page', 'Session details'] as const)('addresses one mounted Workbench on the %s and scopes device history clearing', async (placement) => {
+  const inDetails = placement === 'Session details';
   const entries = new Map<string, { value: unknown; refs: number; dispose(): void }>();
   const sharedScope: PluginEphemeralSharedScope = {
     acquire<T>(key: string, create: () => { value: T; dispose(): void }) {
@@ -153,17 +154,22 @@ it('addresses one mounted Workbench and scopes device history clearing without c
     return { status: 'ready', value: saved.get(request.key) ?? initialConsole };
   });
   const mountId = 'addressed-workbench';
+  const publish = vi.fn<NonNullable<PluginUiTestkitHostHandlers['publishCurrentUiContext']>>();
   const daemon = daemonAnswers([descriptor]);
   const requestRead = vi.fn<(request: PluginUiTestkitExecuteActionInput) => Promise<JsonValue>>()
     .mockRejectedValueOnce(new PluginError({ code: 'database_agent_access_none' }))
     .mockResolvedValue({ setBy: 'machine', agentAccess: 'read', access: { canRead: true, canWrite: false } });
   const page = await createPluginUiTestkit({
     identity: { instanceId: mountId, mountNonce: 'addressed-occurrence' },
-    authorPlugin: { id: 'happier.database', version: '0.0.0' }, surface: renderPage, subPath: savedDatabasePath,
+    authorPlugin: { id: 'happier.database', version: '0.0.0' },
+    ...(inDetails ? { surface: renderRail, launchInput: projectNativeJsonValueForTransport({ scope, descriptor, place: 'overview' }) }
+      : { surface: renderPage, subPath: savedDatabasePath }),
     surfaceContext: createSurfaceContextFixture({ mountId, mount: { kind: 'destination', destination: {
-      pluginId: 'happier.database', localId: WORKBENCH_PAGE_VIEW_ID }, container: 'appPage' }, target: { kind: 'app' } }),
+      pluginId: 'happier.database', localId: inDetails ? 'database-session-details' : WORKBENCH_PAGE_VIEW_ID },
+      container: inDetails ? 'detailsTab' : 'appPage' },
+      target: inDetails ? { kind: 'session', sessionId: 'addressed-session' } : { kind: 'app' } }),
     adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope: sharedScope }),
-    handlers: { ...connectionResourceHandlers(), deviceState, replacePageLocation, executeAction: request =>
+    handlers: { ...connectionResourceHandlers(), deviceState, replacePageLocation, publishCurrentUiContext: publish, executeAction: request =>
       request.action === databaseActionLocalIdV1(DATABASE_ACCESS_READ_ACTION_ID_V1) ? requestRead(request) : daemon(request) },
   });
   const context: Parameters<PluginClientActionHandler>[1] = {
@@ -175,8 +181,12 @@ it('addresses one mounted Workbench and scopes device history clearing without c
     } },
   };
   try {
-    await page.findByRole('button', { name: 'invoices' });
+    if (inDetails) {
+      await settle(20);
+      expect(await page.getByText('invoices')).toBeTruthy();
+    } else await page.findByRole('button', { name: 'invoices' });
     const address = { mountId };
+    expect(publish).toHaveBeenCalledWith(expect.objectContaining({ enrichment: { detail: { address } } }));
     await expect(navigate({ address: { mountId: 'different-mount' }, mode: 'insights' }, context)).resolves.toEqual({ status: 'unavailable' });
     expect(replacePageLocation).not.toHaveBeenCalled();
     await expect(read({ address, section: 'draft' }, context)).rejects.toMatchObject({ code: 'database_agent_access_none' });
@@ -204,7 +214,8 @@ it('addresses one mounted Workbench and scopes device history clearing without c
         .resolves.toEqual({ status: 'accepted', mode: 'data', relation: invoices,
           filters: { kind: 'null', column: 'number', isNull: false } });
     });
-    expect(replacePageLocation).toHaveBeenCalledWith(expect.objectContaining({ subPath: expect.stringContaining('data/public/invoices') }));
+    if (inDetails) expect(replacePageLocation).not.toHaveBeenCalled();
+    else expect(replacePageLocation).toHaveBeenCalledWith(expect.objectContaining({ subPath: expect.stringContaining('data/public/invoices') }));
   } finally {
     await page.dispose();
     await registration.dispose();
