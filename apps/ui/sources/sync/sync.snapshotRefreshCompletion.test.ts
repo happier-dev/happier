@@ -69,6 +69,41 @@ describe('snapshot refresh completion', () => {
         vi.unstubAllGlobals();
     });
 
+    it.each([false, true])('reconciles an omitted older session on pull-to-refresh when hasNext is %s', async (hasNext) => {
+        const { sync } = await import('./sync');
+        const { storage } = await import('./domains/state/storage');
+        const row = (id: string, time: number) => ({
+            id, seq: 1, createdAt: time, updatedAt: time, meaningfulActivityAt: time,
+            active: false, activeAt: time, archivedAt: null, encryptionMode: 'plain',
+            metadata: JSON.stringify({ path: '/workspace', host: 'test', name: id }),
+            metadataVersion: 1, agentState: null, agentStateVersion: 0, dataEncryptionKey: null,
+        });
+        const older = row('older-session', 100);
+        const newer = row('newer-session', 200);
+        let snapshot = { sessions: [newer, older], hasNext: false, nextCursor: null as string | null, includedActive: true };
+        vi.stubGlobal('fetch', vi.fn(createServerFetchWithReachabilityProbe(async (input) => {
+            const url = new URL(input instanceof Request ? input.url : String(input));
+            if (url.pathname === '/v2/session-organization') return Response.json({ snapshot: {
+                schemaVersion: 1, version: 1, pins: [], folders: [], folderAssignments: [],
+                tags: [], tagAssignments: [], orderEntries: [], labels: [],
+            } });
+            if (url.pathname === '/v2/sessions') return Response.json(snapshot);
+            throw new Error(`Unexpected request: ${url.pathname}`);
+        })));
+
+        await sync.refreshSessions({ awaitSessionListHydration: true });
+        expect(storage.getState().sessionListRenderables[older.id]).toBeDefined();
+
+        // A complete ordinary list excludes the remotely archived row. A partial list
+        // can also omit an older row that still exists on a subsequent page.
+        snapshot = { ...snapshot, sessions: [newer], hasNext, nextCursor: hasNext ? 'next-page' : null };
+        await sync.refreshSessions();
+
+        expect(Object.keys(storage.getState().sessionListRenderables).sort()).toEqual(
+            hasNext ? [newer.id, older.id] : [newer.id],
+        );
+    });
+
     it('hydrates only demanded cold list rows through the targeted snapshot', async () => {
         const { sync } = await import('./sync');
         const { storage } = await import('./domains/state/storage');
