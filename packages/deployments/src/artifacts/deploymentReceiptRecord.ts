@@ -67,7 +67,7 @@ export { DeploymentReceiptListResultV1Schema };
 export type DeploymentReceiptListResultV1 = z.infer<typeof DeploymentReceiptListResultV1Schema>;
 
 export function isDeploymentSettledV1(state: DeploymentStateV1): boolean {
-    return state === 'succeeded' || state === 'running_unverified' || state === 'failed' || state === 'cancelled';
+    return state === 'succeeded' || state === 'running_unverified' || state === 'failed' || state === 'cancelled' || state === 'skipped';
 }
 
 /** Successful settled releases remain rollback sources even without verified health. */
@@ -84,6 +84,7 @@ export function isNativeDeploymentPromotionSourceV1(receipt: Readonly<{
 
 /** Reconciliation observes unknown effects; settled receipts cannot launch another effect. */
 export function canTransitionDeploymentV1(from: DeploymentStateV1, to: DeploymentStateV1): boolean {
+    if (to === 'skipped') return false;
     if (from === to) return true;
     if (isDeploymentSettledV1(from)) return false;
     if (from === 'outcome_unknown') return to === 'failed' || to === 'cancelled';

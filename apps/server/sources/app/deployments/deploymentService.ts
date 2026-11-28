@@ -5,6 +5,7 @@ import { DeploymentReceiptHeaderV1Schema, DeploymentReceiptResultV1Schema, Deplo
     type DeploymentDeployAdmissionInputV1, type DeploymentRollbackAdmissionInputV1, type DeploymentPromoteAdmissionInputV1, type DeploymentTeardownAdmissionInputV1, type DeploymentTransitionInputV1,
     type DeploymentCancelInputV1, type DeploymentCancelTransitionInputV1 } from '@happier-dev/protocol';
 import { verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
+import { DEPLOYMENT_SKIPPED_STATE_V1 } from '@happier-dev/protocol/deployments/deploymentStateV1';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { canTransitionDeploymentV1, isDeploymentSettledV1, isDeploymentRollbackSourceEligibleV1, DeploymentStateV1Schema, getDeploymentTargetLinkLineageV1 } from '@happier-dev/deployments/contracts/v1';
 import { DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
@@ -265,10 +266,14 @@ export async function createDeploymentInTx(tx: Tx, actorAccountId: string,
     if (operation === 'deploy') {
         const pending = await admitDeploymentPendingInTx(tx, loaded.row, input, !!busy, actorAccountId, executionBinding);
         if (!pending.ok) return pending;
+        if ('skipped' in pending && pending.skipped) {
+            await publishDeploymentChangesInTx(tx, loaded.admission, loaded.row.id, pending.skipped.revision, pending.skipped.id);
+        }
         if ('result' in pending) {
             if (pending.changed) await publishDeploymentChangesInTx(tx, loaded.admission, loaded.row.id, pending.result.revision);
             return pending.result;
         }
+        if ('skipped' in pending) return receiptResult(pending.skipped, loaded.row.revision);
         takePending = pending.take;
     }
     const accountIds = await resolveProjectSourceAudienceInTx(tx, [loaded.admission.source]);
@@ -424,6 +429,7 @@ export async function transitionDeploymentInTx(tx: Tx, actorAccountId: string, i
         || isDeploymentSettledV1(DeploymentStateV1Schema.parse(row.state))))) return deploymentFailure('deployment_conflict');
     if (observedSettlement || row.operation === 'teardown' && (input.state === 'running' || input.teardownProof)) {
         const newer = await tx.deployment.findFirst({ where: { targetLinkId: link.id, id: { not: row.id },
+            state: { not: DEPLOYMENT_SKIPPED_STATE_V1 },
             OR: [{ requestedAt: { gt: row.requestedAt } }, { requestedAt: row.requestedAt, id: { gt: row.id } }] }, select: { id: true } });
         if (newer) return deploymentFailure('deployment_conflict');
     }

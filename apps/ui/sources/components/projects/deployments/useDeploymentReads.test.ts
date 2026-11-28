@@ -7,7 +7,7 @@ import { act, renderHook } from '@/dev/testkit/hooks/renderHook';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { createRenderCommitCounter, useRenderCommitCounter } from '@/dev/testkit/performance/counts';
-import { useEnvironmentRollbackMenu, useDeploymentCollection, useDeploymentEnvironment, useDeploymentEnvironmentDomains, useDeploymentHistory, useDeploymentReceipt, useSessionDeploymentChip } from './useDeploymentReads';
+import { useEnvironmentRollbackMenu, useDeploymentAttemptHistory, useDeploymentCollection, useDeploymentEnvironment, useDeploymentEnvironmentDomains, useDeploymentHistory, useDeploymentReceipt, useSessionDeploymentChip } from './useDeploymentReads';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import { useSessionActionOperations } from '@/sync/domains/actionOperations/useActionOperations';
 import { projectDeploymentHealthAggregateV1, type DeploymentHealthServicesObservationV1 } from '@happier-dev/deployments';
@@ -214,7 +214,7 @@ describe('deployment React demand', () => {
                 value: id === current.deployment.id ? current : previous }; },
         } });
         const page = await renderHook(() => ({ receipt: useDeploymentReceipt(controller, boundary.row.id, current.deployment.id, shown),
-            history: useDeploymentHistory(controller, boundary.row.id, shown),
+            history: useDeploymentAttemptHistory(controller, boundary.row.id, shown),
             menu: useEnvironmentRollbackMenu(controller, boundary.row.id, current.deployment.id, true) }));
         try {
             expect(page.getCurrent().receipt.snapshot.value?.facts).toMatchObject({ previousVersion: undefined,

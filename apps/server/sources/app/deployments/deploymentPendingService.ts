@@ -1,32 +1,76 @@
 import { isDeepStrictEqual } from 'node:util';
-import { DeploymentPendingDeployStoredV1Schema, type DeploymentDeployAdmissionInputV1, type DeploymentReceiptResultV1,
+import { DeploymentArtifactContentReferenceV1Schema, DeploymentPendingDeployStoredV1Schema, type DeploymentDeployAdmissionInputV1, type DeploymentReceiptResultV1,
     DeploymentPendingAdmissionV1Schema, type DeploymentPendingAdmissionV1, type DeploymentPendingCancelInputV1 } from '@happier-dev/protocol';
 import { z } from 'zod/mini';
 import { ActionOperationAddressV1Schema } from '@happier-dev/protocol/actions/specs/actionOperations';
 import { jsonPathEquals } from '@/storage/jsonPathFilter';
 import type { ExternalActionExecutionAuthorizationBindingV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
+import { isDeploymentRepositoryPushEventV1 } from '@happier-dev/protocol/automations/automationEventSetupResultV1';
+import { DeploymentIdentifierV1Schema, DeploymentRevisionV1Schema, DeploymentTimestampV1Schema } from '@happier-dev/protocol/deployments/deploymentIdentifiersV1';
+import { DEPLOYMENT_SKIPPED_STATE_V1 } from '@happier-dev/protocol/deployments/deploymentStateV1';
 import { getActivePrismaRuntime } from '@/storage/prisma';
 import type { Tx } from '@/storage/inTx';
+import { readTransactionDatabaseTime } from '@/storage/transactionDatabaseTime';
 import { deploymentFailure, canDeployDeploymentEnvironment, type DeploymentAuthentication } from './deploymentAdmission';
 import { loadDeploymentEnvironmentInTx, lockDeploymentEnvironmentInTx,
     type DeploymentEnvironmentRow } from './deploymentEnvironmentService';
-import { admitDeploymentStoredContentInTx } from './deploymentStoredContent';
+import { admitDeploymentStoredContentInTx, deploymentContentReference } from './deploymentStoredContent';
 import { publishDeploymentChangesInTx } from './deploymentPublication';
 
+type SkippedReceipt = Readonly<{ id: string; environmentId: string; revision: number; state: string }>;
 type PendingAdmission = Extract<DeploymentReceiptResultV1, { ok: false }>
     | Readonly<{ ok: true; take: boolean }>
-    | Readonly<{ ok: true; changed: boolean; result: Extract<DeploymentReceiptResultV1, { kind: 'pending' }> }>;
+    | Readonly<{ ok: true; changed: boolean; result: Extract<DeploymentReceiptResultV1, { kind: 'pending' }>;
+        skipped?: SkippedReceipt }>
+    | Readonly<{ ok: true; skipped: SkippedReceipt }>;
 
+const storedPush = z.strictObject({
+    ...DeploymentArtifactContentReferenceV1Schema.shape,
+    targetLinkId: DeploymentIdentifierV1Schema, originRunId: DeploymentIdentifierV1Schema,
+    occurredAtMs: DeploymentTimestampV1Schema, baseRevision: DeploymentRevisionV1Schema,
+});
 const storedPending = z.strictObject({ pendingDeploy: DeploymentPendingDeployStoredV1Schema,
-    admission: z.optional(DeploymentPendingAdmissionV1Schema) });
+    admission: z.optional(DeploymentPendingAdmissionV1Schema), push: z.optional(storedPush),
+}).check(z.refine(value => value.push === undefined || value.admission !== undefined));
+
+async function readPendingPushInTx(tx: Tx, input: DeploymentDeployAdmissionInputV1,
+    binding: ExternalActionExecutionAuthorizationBindingV1 | undefined,
+) {
+    const origin = binding?.workflowActionOrigin;
+    if (!origin) return null;
+    const run = await tx.automationRun.findFirst({
+        where: { id: origin.runId, accountId: binding.accountId, originKind: 'automation',
+            causeKind: 'trigger', causeTriggerKind: 'pluginEvent', occurrenceKey: input.requestKey,
+            automation: { deploymentEnvironmentId: input.environmentId } },
+        select: { causeOccurredAt: true, causeEventPluginId: true, causeEventLocalId: true },
+    });
+    if (!run?.causeOccurredAt || !run.causeEventPluginId || !run.causeEventLocalId
+        || !isDeploymentRepositoryPushEventV1({ pluginId: run.causeEventPluginId, localId: run.causeEventLocalId })) return null;
+    return { ...deploymentContentReference(input), targetLinkId: input.targetLinkId,
+        originRunId: origin.runId, occurredAtMs: run.causeOccurredAt.getTime() };
+}
+
+async function recordSkippedPushInTx(tx: Tx, environmentId: string,
+    push: Omit<z.infer<typeof storedPush>, 'baseRevision'>,
+    admission: Pick<DeploymentPendingAdmissionV1, 'requestKey' | 'requesterAccountId' | 'actionOperationId'>,
+): Promise<SkippedReceipt> {
+    const settledAt = await readTransactionDatabaseTime(tx);
+    return tx.deployment.create({ data: {
+        environmentId, targetLinkId: push.targetLinkId, operation: 'deploy', state: DEPLOYMENT_SKIPPED_STATE_V1,
+        requestKey: admission.requestKey, actionOperationId: admission.actionOperationId,
+        requestedByAccountId: admission.requesterAccountId, originRunId: push.originRunId,
+        requestedAt: new Date(Math.min(push.occurredAtMs, settledAt.getTime())), settledAt, ...deploymentContentReference(push),
+    }, select: { id: true, environmentId: true, revision: true, state: true } });
+}
 
 /** A malformed retained envelope is unavailable, never an absent desired intent. */
 export function readDeploymentPendingContent(row: Pick<DeploymentEnvironmentRow, 'pendingDeployContent'>) {
     if (row.pendingDeployContent === null) return { ok: true as const, pendingDeploy: undefined };
     const captured = storedPending.safeParse(row.pendingDeployContent);
     if (captured.success) return { ok: true as const, pendingDeploy: captured.data.pendingDeploy,
-        ...(captured.data.admission ? { pendingAdmission: captured.data.admission } : {}) };
+        ...(captured.data.admission ? { pendingAdmission: captured.data.admission } : {}),
+        ...(captured.data.push ? { pendingPush: captured.data.push } : {}) };
     return deploymentFailure('deployment_content_unavailable');
 }
 
@@ -117,26 +161,44 @@ export async function admitDeploymentPendingInTx(tx: Tx, row: DeploymentEnvironm
         if (busy) return { ok: true as const, changed: false as const, result: { ok: true as const,
             environmentId: row.id, revision: row.revision, kind: 'pending' as const, actionOperationId: captured.actionOperationId } };
     }
-    // Occurrence authentication/order belongs to Automation's producer, which has
-    // not yet supplied storage admission. An asserted reference confers no authority.
+    // A body claim confers no authority. Read the admitted Workflow Run cause.
     if (pending.t === 'plain' && pending.v.triggerOccurrence) return deploymentFailure('unsupported_action');
-    if (row.revision !== input.expectedRevision) return deploymentFailure('deployment_conflict');
     if (!busy) {
+        if (row.revision !== input.expectedRevision) return deploymentFailure('deployment_conflict');
         // A controller re-admits the exact protected intent under current grants
         // and row/link/Artifact CAS before this field is taken with receipt create.
         if (retained.pendingDeploy && !isDeepStrictEqual(retained.pendingDeploy, pending)) return deploymentFailure('deployment_conflict');
         return { ok: true as const, take: retained.pendingDeploy !== undefined };
     }
-    const revision = input.expectedRevision + 1;
+    const push = await readPendingPushInTx(tx, input, binding);
+    const previousPush = 'pendingPush' in retained ? retained.pendingPush : undefined;
+    const previousAdmission = 'pendingAdmission' in retained ? retained.pendingAdmission : undefined;
+    // A simultaneous push may have read the same Environment before an
+    // intervening slot write. A definition or Link edit breaks that sequence.
+    const baseRevision = push && previousPush && previousAdmission?.environmentRevision === row.revision
+        ? previousPush.baseRevision : row.revision;
+    if (input.expectedRevision < baseRevision || input.expectedRevision > row.revision) {
+        return deploymentFailure('deployment_conflict');
+    }
+    if (push && previousPush && push.occurredAtMs < previousPush.occurredAtMs) {
+        const skipped = await recordSkippedPushInTx(tx, row.id, push, {
+            requesterAccountId: actorAccountId, requestKey: input.requestKey, actionOperationId: input.actionOperationId,
+        });
+        return { ok: true, skipped };
+    }
+    const revision = row.revision + 1;
     // Only a successful locked CAS commits this exact revision and stamp.
     const admission: DeploymentPendingAdmissionV1 | undefined = binding ? DeploymentPendingAdmissionV1Schema.parse({
         requesterAccountId: actorAccountId, serverId: binding.serverIdentityId, requestKey: input.requestKey,
         actionOperationId: input.actionOperationId, controller: { machineId: binding.machineId, installationId: binding.installationId },
         environmentRevision: revision,
     }) : undefined;
-    const changed = await tx.deploymentEnvironment.updateMany({ where: { id: row.id, revision: input.expectedRevision },
-        data: { pendingDeployContent: { pendingDeploy: pending, ...(admission ? { admission } : {}) }, revision: { increment: 1 } } });
+    const changed = await tx.deploymentEnvironment.updateMany({ where: { id: row.id, revision: row.revision },
+        data: { pendingDeployContent: { pendingDeploy: pending, ...(admission ? { admission } : {}),
+            ...(push ? { push: { ...push, baseRevision } } : {}) }, revision: { increment: 1 } } });
     if (changed.count !== 1) throw new Error('Locked deployment Environment changed during pending replacement');
-    return { ok: true as const, changed: true as const, result: { ok: true as const, environmentId: row.id,
+    const skipped = push && previousPush && previousAdmission
+        ? await recordSkippedPushInTx(tx, row.id, previousPush, previousAdmission) : undefined;
+    return { ok: true as const, changed: true as const, ...(skipped ? { skipped } : {}), result: { ok: true as const, environmentId: row.id,
         revision, kind: 'pending' as const, actionOperationId: input.actionOperationId } };
 }

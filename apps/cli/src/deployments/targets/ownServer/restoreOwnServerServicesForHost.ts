@@ -116,7 +116,7 @@ export async function restoreOwnServerServicesForHost(input: Readonly<{
             const receiptHistory = (signal: AbortSignal) => readOwnServerDeploymentReceiptHistoryForHost({ environmentId: environment.id,
                 lineage: getDeploymentTargetLinkLineageV1(link, links),
                 readPage: next => deploymentAction!('deployments.receipts.list', { serverId: input.serverId,
-                    environmentId: environment.id, ...(next ? { cursor: next } : {}) }, { signal }),
+                    environmentId: environment.id, attemptsOnly: true, ...(next ? { cursor: next } : {}) }, { signal }),
                 readCurrent: deploymentId => readDeploymentReceiptForHost({ environmentId: environment.id,
                     deploymentId, context: { signal } }, receiptHost),
                 open: deployment => openDeploymentReceiptForHost(deployment, { signal }, receiptHost),

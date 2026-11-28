@@ -7,7 +7,7 @@ import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revis
 import { DeploymentPlatformSourceIntentV1Schema, DeploymentSecretBindingSourceV1Schema, DeploymentSourceMethodV1Schema, EnvironmentVariableBindingV1Schema } from '../../deployments/storedAppInputV1.js';
 import { DeploymentOwnedTelemetryDestinationsV1Schema, DeploymentTargetOwnedVariableV1Schema } from './deploymentTargetVariablesV1.js';
 export * from './deploymentTargetVariablesV1.js';
-import { DeploymentStateV1Schema, DeploymentStepV1Schema, DeploymentReceiptOperationV1Schema } from '../../deployments/deploymentStateV1.js';
+import { DeploymentEffectStateV1Schema, DeploymentStepV1Schema, DeploymentReceiptOperationV1Schema } from '../../deployments/deploymentStateV1.js';
 import { ScmHostingRepositoryIdentityV1Schema } from '../../scm/hostingRepositoryIdentity.js';
 import { ActionFailureCauseV1Schema } from '../../actions/actionExecutionResult.js';
 import { ScmBranchSourceRefSchema } from '../../scm/remoteNormalization.js';
@@ -333,7 +333,7 @@ export const DeploymentTargetRoleInputProtocolSchemasV1 = {
 } as const;
 
 export const DeploymentTargetRoleResultV1Schema = lazyZodSchema(() => z.strictObject({
-    v: z.literal(1), state: DeploymentStateV1Schema, providerDeploymentId: z.optional(id), observedAtMs: timestamp,
+    v: z.literal(1), state: DeploymentEffectStateV1Schema, providerDeploymentId: z.optional(id), observedAtMs: timestamp,
     /** Why an acknowledged operation could not be observed. The native id remains available for recovery. */
     failureCause: z.optional(ActionFailureCauseV1Schema),
     /** The provider-observed commit, which may differ from the reviewed request for branch builds. */

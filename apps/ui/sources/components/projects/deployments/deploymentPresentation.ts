@@ -124,6 +124,8 @@ export function deploymentStateLabel(state: ReceiptState): string {
       return t('projects.deployments.stateFailed');
     case 'cancelled':
       return t('projects.deployments.stateCancelled');
+    case 'skipped':
+      return t('projects.deployments.stateSkipped');
     case 'outcome_unknown':
       return t('projects.deployments.stateUnknown');
   }
@@ -405,6 +407,7 @@ export function deploymentRailState(
     case 'running_unverified':
     case 'succeeded':
     case 'cancelled':
+    case 'skipped':
       return null;
   }
 }

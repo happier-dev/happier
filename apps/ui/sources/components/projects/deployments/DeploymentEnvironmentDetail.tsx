@@ -169,6 +169,7 @@ import { showDeploymentPromotionSheet } from './DeploymentPromotionSheet';
 import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useDeploymentActorPresentations } from './useDeploymentActorPresentations';
 import {
+  useDeploymentAttemptHistory,
   useDeploymentEnvironment,
   useDeploymentHistory,
   useDeploymentReceipt,
@@ -290,11 +291,7 @@ export const DeploymentEnvironmentDetail = React.memo(
       props.environmentId,
       props.demand,
     );
-    const history = useDeploymentHistory(
-      props.controller,
-      props.environmentId,
-      props.demand,
-    );
+    const history = useDeploymentAttemptHistory(props.controller, props.environmentId, props.demand);
     // One stable handler for every receipt row; each row binds its own id, so a parent render redraws none of them.
     const openReceipt = useEventCallback(props.onOpenReceipt);
     const openAdminAddress = useEventCallback((url: string) => {

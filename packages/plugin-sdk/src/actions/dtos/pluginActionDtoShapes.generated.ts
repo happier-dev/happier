@@ -5651,31 +5651,6 @@ export type ActionDtoShape_1c99fb9118008e5b = [
         relative?: undefined;
     }
 ][0];
-export type ActionDtoShape_1ca8921d1f53fd40 = [
-    {
-        version: 1;
-        operationId: string;
-        revision: number;
-        actionId: string;
-        state: 'accepted' | 'cancelled' | 'failed' | 'running' | 'succeeded';
-        scope: ActionDtoShape_5916660f249c0f8c;
-        title: string;
-        createdAt: number;
-        cancellation: 'supported' | 'unsupported';
-        actor?: ActionDtoShape_86847a7011a05f99;
-        originRunId?: string | undefined;
-        requestId?: string | undefined;
-        startedAt?: number | undefined;
-        settledAt?: number | undefined;
-        progress?: ActionDtoShape_3f1d94814232e178;
-        result?: unknown;
-        operationCredentialUses?: ActionDtoShape_16a808f15ad647d4;
-        error?: ActionDtoShape_c0cc1d9014dffebb;
-        domainRef?: ActionDtoShape_63f33481e3175db7;
-        observation?: ActionDtoShape_4c310d292ffe7329;
-        setupReview?: ActionDtoShape_cc2434354234375e;
-    }
-][0];
 export type ActionDtoShape_1cb6c3d73eca265f = [
     undefined | ActionDtoShape_dc2cd815f599fb3c[]
 ][0];
@@ -6416,6 +6391,24 @@ export type ActionDtoShape_20b8355dcdcaa9f4 = [
         files?: number | undefined;
         bytes?: number | undefined;
         blobs?: number | undefined;
+    }
+][0];
+export type ActionDtoShape_20bcc5365a285340 = [
+    {
+        requiredFact: 'deploymentActionResult';
+        remedy: string;
+        deploymentId: string;
+        deploymentRevision: number;
+        state: 'cancelled' | 'failed' | 'outcome_unknown' | 'queued' | 'running' | 'running_unverified' | 'skipped' | 'succeeded';
+        ok: true;
+        environmentId: string;
+        revision: number;
+        nativeCompose?: ActionDtoShape_279432ced546a7be;
+        nativeActivation?: ActionDtoShape_180cdbf58afc15cc;
+        statefulService?: string | undefined;
+        environmentRemoved?: true | undefined;
+        previewCleanup?: ActionDtoShape_03a0a2d31dab93f6;
+        nativeCleanupWarnings?: ActionDtoShape_dfe9424781f1db0b;
     }
 ][0];
 export type ActionDtoShape_20c8b968ad8c515a = [
@@ -7704,6 +7697,18 @@ export type ActionDtoShape_273b1fad11953fe7 = [
         status: 'unavailable';
         code: string;
         voice: ActionDtoShape_3f801d246d29a738;
+    }
+][0];
+export type ActionDtoShape_27406e1af8574e1d = [
+    {
+        errorCode: string;
+        error: string;
+        requestId?: string | undefined;
+        effectAttempted?: boolean | undefined;
+        failureCause?: ActionFailureCauseV1 | undefined;
+        setupRetry?: ActionDtoShape_bee884e57673a63f;
+        handoffRecovery?: ActionDtoShape_7d7f7c2e85c5b0b3;
+        details?: ActionDtoShape_7b69274a9a8d230d;
     }
 ][0];
 export type ActionDtoShape_2755edede6a6e61e = [
@@ -9421,19 +9426,6 @@ export type ActionDtoShape_30af6959e7df1432 = [
         input: ActionDtoShape_fbaf2f8e6b432148;
     }
 ][0];
-export type ActionDtoShape_30b92f959ee9c956 = [
-    {
-        deploymentId: string;
-        deploymentRevision: number;
-        state: 'cancelled' | 'failed' | 'outcome_unknown' | 'queued' | 'running' | 'running_unverified' | 'succeeded';
-        ok: true;
-        environmentId: string;
-        revision: number;
-        environmentRemoved?: true | undefined;
-        previewCleanup?: ActionDtoShape_03a0a2d31dab93f6;
-        nativeCleanupWarnings?: ActionDtoShape_dfe9424781f1db0b;
-    }
-][0];
 export type ActionDtoShape_30c35dda551f0161 = [
     undefined | ActionDtoShape_35693e0100483c46
 ][0];
@@ -10619,24 +10611,6 @@ export type ActionDtoShape_36c23c4929aebe1b = [
         workspace?: ActionDtoShape_7539b2446ccfdfd4;
     }
 ][0];
-export type ActionDtoShape_36c9f6689d089ea1 = [
-    {
-        requiredFact: 'deploymentActionResult';
-        remedy: string;
-        deploymentId: string;
-        deploymentRevision: number;
-        state: 'cancelled' | 'failed' | 'outcome_unknown' | 'queued' | 'running' | 'running_unverified' | 'succeeded';
-        ok: true;
-        environmentId: string;
-        revision: number;
-        nativeCompose?: ActionDtoShape_279432ced546a7be;
-        nativeActivation?: ActionDtoShape_180cdbf58afc15cc;
-        statefulService?: string | undefined;
-        environmentRemoved?: true | undefined;
-        previewCleanup?: ActionDtoShape_03a0a2d31dab93f6;
-        nativeCleanupWarnings?: ActionDtoShape_dfe9424781f1db0b;
-    }
-][0];
 export type ActionDtoShape_36d3656eb7cdf1fd = [
     {
         home: string;
@@ -10749,9 +10723,6 @@ export type ActionDtoShape_3747d90f81009e91 = [
 ][0];
 export type ActionDtoShape_374854c4ad14bd88 = [
     undefined | ActionDtoShape_29aa49ca51e2dcb4
-][0];
-export type ActionDtoShape_37686a5c7ff8d5ff = [
-    ActionDtoShape_50a79b3b9ba8c8a1 | ActionDtoShape_6b0192fd0ff630b5
 ][0];
 export type ActionDtoShape_3769e19ee365625c = [
     {
@@ -11090,6 +11061,9 @@ export type ActionDtoShape_38ba47291ac33090 = [
     {
         kind: 'project_checkout';
     }
+][0];
+export type ActionDtoShape_38bb21ac73b0ed83 = [
+    undefined | ActionDtoShape_3be47c046bce416a | ActionDtoShape_245fe62866605de0 | ActionDtoShape_27406e1af8574e1d
 ][0];
 export type ActionDtoShape_38c0fb41b0802f21 = [
     null | undefined | ActionDtoShape_2892c40d04f80a29 | ActionDtoShape_cb093b4d1273fee9 | ActionDtoShape_0bb05bd5352e18b4
@@ -11911,6 +11885,9 @@ export type ActionDtoShape_3d0df56d7ae88fbb = [
         sourceId: string;
         discoveredFileCount?: number | undefined;
     }
+][0];
+export type ActionDtoShape_3d0e2e8656bff449 = [
+    ActionDtoShape_835bedeb10be00ef | ActionDtoShape_69b7fa1372cc79a9 | ActionDtoShape_016da42fc1c0e751 | ActionDtoShape_045ce964ea391ad1 | ActionDtoShape_3e90c8ab487c6520 | ActionDtoShape_fcb9352548c6e468 | ActionDtoShape_bc7f07146091ab32 | ActionDtoShape_69359b939e0e94eb
 ][0];
 export type ActionDtoShape_3d156f1dd8a2694d = [
     Record<string, ActionDtoShape_bcb2367183320f0c> | undefined
@@ -13756,6 +13733,9 @@ export type ActionDtoShape_47cc9272e607fa61 = [
 export type ActionDtoShape_47cfdf7f5c258b25 = [
     ActionDtoShape_0ecbd65f81dcadf1 | ActionDtoShape_e3bf3533ba8505f0 | ActionDtoShape_19a89c3007f88575
 ][0];
+export type ActionDtoShape_47d627e249a455d0 = [
+    undefined | ActionDtoShape_b3ae853563dd01cd[]
+][0];
 export type ActionDtoShape_47e699a0da8ed4b3 = [
     {
         ok: false;
@@ -14103,9 +14083,6 @@ export type ActionDtoShape_493d9ca5c5854637 = [
 ][0];
 export type ActionDtoShape_49531d7a13e3a6bb = [
     undefined | ActionDtoShape_1bdf5932940101e7
-][0];
-export type ActionDtoShape_4972d99b6433b3d9 = [
-    undefined | ActionDtoShape_30b92f959ee9c956 | ActionDtoShape_045ce964ea391ad1
 ][0];
 export type ActionDtoShape_4975a6cb976caab3 = [
     undefined | ActionDtoShape_894d9b16641ce9e1
@@ -17599,6 +17576,26 @@ export type ActionDtoShape_5bb23ae4bee11915 = [
         kind: 'workspace_sync';
     }
 ][0];
+export type ActionDtoShape_5bba4a1b1c863357 = [
+    {
+        kind: 'partial';
+        savedSecrets: ActionDtoShape_5ccbe5e57b7046e0[];
+        phase: 'bindings' | 'deploy' | 'domains' | 'environment' | 'generation' | 'metadata' | 'repository' | 'target';
+        errorCode: string;
+        environmentId?: string | undefined;
+        revision?: number | undefined;
+        projectSourceId?: string | undefined;
+        targetLinkId?: string | undefined;
+        definition?: ActionDtoShape_1f193149a65f8668;
+        repositoryChange?: ActionDtoShape_07016955c3d43d02;
+        requiredFact?: string | undefined;
+        remedy?: string | undefined;
+        failure?: ActionDtoShape_825fd5b9a7d99e93;
+        deployment?: ActionDtoShape_e41bbf2a5526b509;
+        continuation?: ActionDtoShape_858e88470f0c58a3;
+        unknownSecret?: ActionDtoShape_3e8918b1ad16999d;
+    }
+][0];
 export type ActionDtoShape_5bc2997da5e693e7 = [
     {
         actionId: "deployments.health.current";
@@ -20476,11 +20473,6 @@ export type ActionDtoShape_6af7e4ad15232077 = [
         machineKinds: ActionDtoShape_7b48b88fbcd55199;
     }
 ][0];
-export type ActionDtoShape_6b0192fd0ff630b5 = [
-    {
-        operation: ActionDtoShape_1ca8921d1f53fd40;
-    }
-][0];
 export type ActionDtoShape_6b058d6dc8e3bfca = [
     {
         targetLinkId: string;
@@ -21696,6 +21688,11 @@ export type ActionDtoShape_727e92ded60e63fd = [
         alertChannels?: ActionDtoShape_f7ad4561ec45e952;
     }
 ][0];
+export type ActionDtoShape_72834e6f4927a649 = [
+    {
+        operation: ActionDtoShape_da2dc136ee042d7d;
+    }
+][0];
 export type ActionDtoShape_728474112b48d8d4 = [
     {
         id: string;
@@ -21898,9 +21895,6 @@ export type ActionDtoShape_73f21eb2a7d8db26 = [
         durationMs: number;
         activeSinceMs: null | number;
     }
-][0];
-export type ActionDtoShape_73f6aaf562ea76af = [
-    undefined | ActionDtoShape_203c76c61274c2c5 | ActionDtoShape_d56a76deaacefc0e | ActionDtoShape_0da772b02e5326af | ActionDtoShape_a417815ca8f4572d | ActionDtoShape_419390fe1bc76f99 | ActionDtoShape_ae0caca4c550bbc5 | ActionDtoShape_758c636036ce9a4a | ActionDtoShape_c9a0354bf5e1af97 | ActionDtoShape_65c71d47727d8011 | ActionDtoShape_69261accd472466c | ActionDtoShape_bf17255e526c74b4 | ActionDtoShape_6fef414e2a840460 | ActionDtoShape_35e00b05e76ebecf | ActionDtoShape_fbcdc4f1386a3bf0 | ActionDtoShape_7586a2ec15da3942 | ActionDtoShape_8c017d066bc70c89 | ActionDtoShape_dda6236ca2cde2c7 | ActionDtoShape_b030ccc682e278d1 | ActionDtoShape_ebef82ab79ba13ad | ActionDtoShape_61eefd6e715d6a11 | ActionDtoShape_fc50487680d22179 | ActionDtoShape_ea62e905f25127e0 | ActionDtoShape_7ddbb053a3edb833 | ActionDtoShape_25a42d6ee7153864 | ActionDtoShape_cb1a5502e55dedb3 | ActionDtoShape_bcae776b1b3d4c96 | ActionDtoShape_5abf3d42f1b981d3 | ActionDtoShape_abbcdbcb594753ec | ActionDtoShape_ca23f6c85c00ddba | ActionDtoShape_06cd65cfb12a4939 | ActionDtoShape_3017b5bb6347a963 | ActionDtoShape_dca6d8d232d5edbd | ActionDtoShape_bae017eaa7925b77 | ActionDtoShape_36c9f6689d089ea1 | ActionDtoShape_6b3553f53e15752c | ActionDtoShape_acc02eb934848c51 | ActionDtoShape_707121ef10a331e2 | ActionDtoShape_5bc31566cb2d9334 | ActionDtoShape_81ba95e1bd41a2fd | ActionDtoShape_444357748664f061 | ActionDtoShape_ead62d35e78f3d5b
 ][0];
 export type ActionDtoShape_73f7a6ea313a0f82 = [
     {
@@ -23301,6 +23295,9 @@ export type ActionDtoShape_7b63f8151bf29588 = [
     {
         reason: 'checkout_unavailable' | 'context_memory_protocol_unavailable' | 'creation_lookup_unavailable' | 'creation_settlement_unavailable' | 'daemon_rpc_unavailable' | 'initial_access_unsupported' | 'initial_trigger_protocol_unavailable' | 'requester_credentials_unavailable' | 'session_spawn_protocol_unavailable' | 'spawn_rpc_unavailable' | 'target_preparation_invalid_result' | 'target_preparation_rpc_unavailable' | 'terminal_host_unavailable';
     }
+][0];
+export type ActionDtoShape_7b69274a9a8d230d = [
+    undefined | ActionDtoShape_203c76c61274c2c5 | ActionDtoShape_d56a76deaacefc0e | ActionDtoShape_0da772b02e5326af | ActionDtoShape_a417815ca8f4572d | ActionDtoShape_419390fe1bc76f99 | ActionDtoShape_ae0caca4c550bbc5 | ActionDtoShape_758c636036ce9a4a | ActionDtoShape_c9a0354bf5e1af97 | ActionDtoShape_65c71d47727d8011 | ActionDtoShape_69261accd472466c | ActionDtoShape_bf17255e526c74b4 | ActionDtoShape_6fef414e2a840460 | ActionDtoShape_35e00b05e76ebecf | ActionDtoShape_fbcdc4f1386a3bf0 | ActionDtoShape_7586a2ec15da3942 | ActionDtoShape_8c017d066bc70c89 | ActionDtoShape_dda6236ca2cde2c7 | ActionDtoShape_b030ccc682e278d1 | ActionDtoShape_ebef82ab79ba13ad | ActionDtoShape_61eefd6e715d6a11 | ActionDtoShape_5bba4a1b1c863357 | ActionDtoShape_ea62e905f25127e0 | ActionDtoShape_7ddbb053a3edb833 | ActionDtoShape_25a42d6ee7153864 | ActionDtoShape_cb1a5502e55dedb3 | ActionDtoShape_bcae776b1b3d4c96 | ActionDtoShape_5abf3d42f1b981d3 | ActionDtoShape_abbcdbcb594753ec | ActionDtoShape_ca23f6c85c00ddba | ActionDtoShape_06cd65cfb12a4939 | ActionDtoShape_3017b5bb6347a963 | ActionDtoShape_dca6d8d232d5edbd | ActionDtoShape_bae017eaa7925b77 | ActionDtoShape_20bcc5365a285340 | ActionDtoShape_6b3553f53e15752c | ActionDtoShape_acc02eb934848c51 | ActionDtoShape_707121ef10a331e2 | ActionDtoShape_5bc31566cb2d9334 | ActionDtoShape_81ba95e1bd41a2fd | ActionDtoShape_444357748664f061 | ActionDtoShape_ead62d35e78f3d5b
 ][0];
 export type ActionDtoShape_7b71b422c9e68f7f = [
     {
@@ -24859,6 +24856,19 @@ export type ActionDtoShape_834d06169dd7ea66 = [
         finished: number;
         attentionPrimary: 'access_pending' | 'action_required' | 'archived' | 'archiving' | 'background_active' | 'content_unavailable' | 'disconnected' | 'failed' | 'finished_unseen' | 'locked' | 'mentioned' | 'pending_input' | 'permission_required' | 'preparing' | 'ready' | 'recoverable_unservable' | 'repair_needed' | 'resuming' | 'setup_required' | 'stale' | 'stopped' | 'thinking' | 'unknown' | 'unread' | 'usage_limited' | 'waiting' | 'waiting_for_startup_lock' | null;
         archived?: number | undefined;
+    }
+][0];
+export type ActionDtoShape_835bedeb10be00ef = [
+    {
+        deploymentId: string;
+        deploymentRevision: number;
+        state: 'cancelled' | 'failed' | 'outcome_unknown' | 'queued' | 'running' | 'running_unverified' | 'skipped' | 'succeeded';
+        ok: true;
+        environmentId: string;
+        revision: number;
+        environmentRemoved?: true | undefined;
+        previewCleanup?: ActionDtoShape_03a0a2d31dab93f6;
+        nativeCleanupWarnings?: ActionDtoShape_dfe9424781f1db0b;
     }
 ][0];
 export type ActionDtoShape_837c630871b8610c = [
@@ -26926,9 +26936,6 @@ export type ActionDtoShape_8e34b358481c4595 = [
 ][0];
 export type ActionDtoShape_8e3af330bcaab857 = [
     ActionDtoShape_5a9d77431fbd3c7f | ActionDtoShape_ebc0b0b9e09b021b
-][0];
-export type ActionDtoShape_8e3e521682cdc6a7 = [
-    ActionDtoShape_30b92f959ee9c956 | ActionDtoShape_69b7fa1372cc79a9 | ActionDtoShape_016da42fc1c0e751 | ActionDtoShape_045ce964ea391ad1 | ActionDtoShape_3e90c8ab487c6520 | ActionDtoShape_fcb9352548c6e468 | ActionDtoShape_bc7f07146091ab32 | ActionDtoShape_69359b939e0e94eb
 ][0];
 export type ActionDtoShape_8e43b44c6d8f605c = [
     undefined | ActionDtoShape_8e288c95f9b588a2
@@ -33583,6 +33590,33 @@ export type ActionDtoShape_b3adbd02c6456a72 = [
         source: string;
     }
 ][0];
+export type ActionDtoShape_b3ae853563dd01cd = [
+    {
+        v: 1;
+        id: string;
+        environmentId: string;
+        targetLinkId: string;
+        revision: number;
+        operation: 'deploy' | 'promote' | 'rollback' | 'teardown';
+        state: 'cancelled' | 'failed' | 'outcome_unknown' | 'queued' | 'running' | 'running_unverified' | 'skipped' | 'succeeded';
+        requestKey: string;
+        requestedByAccountId: null | string;
+        actionOperationId: string;
+        requestedAtMs: number;
+        contentArtifactId: null | string;
+        contentHeaderVersion: number;
+        contentBodyVersion: number;
+        originRunId?: string | undefined;
+        acceptedExecution?: ActionDtoShape_1e00cda677c8e326;
+        predecessorDeploymentId?: string | undefined;
+        rollbackOfDeploymentId?: string | undefined;
+        restoreBackupId?: string | undefined;
+        promotedFromDeploymentId?: string | undefined;
+        cancelRequestedAtMs?: number | undefined;
+        startedAtMs?: number | undefined;
+        settledAtMs?: number | undefined;
+    }
+][0];
 export type ActionDtoShape_b3b16bc0b4c69f34 = [
     undefined | ActionDtoShape_696889c8e5f04f63
 ][0];
@@ -34012,9 +34046,6 @@ export type ActionDtoShape_b5ee0db23d6a273d = [
         adapterKind?: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface' | undefined;
         completion?: 'known' | 'unknown' | undefined;
     }
-][0];
-export type ActionDtoShape_b5fcc7a5e9c077aa = [
-    undefined | ActionDtoShape_cbda9e80a271cc89[]
 ][0];
 export type ActionDtoShape_b60c88e939347431 = [
     {
@@ -36164,9 +36195,6 @@ export type ActionDtoShape_c0bc209aad366abe = [
         input: JsonValue;
     }
 ][0];
-export type ActionDtoShape_c0cc1d9014dffebb = [
-    undefined | ActionDtoShape_3be47c046bce416a | ActionDtoShape_245fe62866605de0 | ActionDtoShape_dc6a9558f793ba20
-][0];
 export type ActionDtoShape_c0e3efcb5afadf7f = [
     {
         username: string;
@@ -38238,33 +38266,6 @@ export type ActionDtoShape_cbcfce19889f231c = [
     {
         kind: 'rename';
         name: string;
-    }
-][0];
-export type ActionDtoShape_cbda9e80a271cc89 = [
-    {
-        v: 1;
-        id: string;
-        environmentId: string;
-        targetLinkId: string;
-        revision: number;
-        operation: 'deploy' | 'promote' | 'rollback' | 'teardown';
-        state: 'cancelled' | 'failed' | 'outcome_unknown' | 'queued' | 'running' | 'running_unverified' | 'succeeded';
-        requestKey: string;
-        requestedByAccountId: null | string;
-        actionOperationId: string;
-        requestedAtMs: number;
-        contentArtifactId: null | string;
-        contentHeaderVersion: number;
-        contentBodyVersion: number;
-        originRunId?: string | undefined;
-        acceptedExecution?: ActionDtoShape_1e00cda677c8e326;
-        predecessorDeploymentId?: string | undefined;
-        rollbackOfDeploymentId?: string | undefined;
-        restoreBackupId?: string | undefined;
-        promotedFromDeploymentId?: string | undefined;
-        cancelRequestedAtMs?: number | undefined;
-        startedAtMs?: number | undefined;
-        settledAtMs?: number | undefined;
     }
 ][0];
 export type ActionDtoShape_cbe0761916adedc3 = [
@@ -40694,6 +40695,31 @@ export type ActionDtoShape_da22be5136a3cfe5 = [
 export type ActionDtoShape_da2733bd6db33322 = [
     undefined | ActionDtoShape_18791edbaf59b5fa
 ][0];
+export type ActionDtoShape_da2dc136ee042d7d = [
+    {
+        version: 1;
+        operationId: string;
+        revision: number;
+        actionId: string;
+        state: 'accepted' | 'cancelled' | 'failed' | 'running' | 'succeeded';
+        scope: ActionDtoShape_5916660f249c0f8c;
+        title: string;
+        createdAt: number;
+        cancellation: 'supported' | 'unsupported';
+        actor?: ActionDtoShape_86847a7011a05f99;
+        originRunId?: string | undefined;
+        requestId?: string | undefined;
+        startedAt?: number | undefined;
+        settledAt?: number | undefined;
+        progress?: ActionDtoShape_3f1d94814232e178;
+        result?: unknown;
+        operationCredentialUses?: ActionDtoShape_16a808f15ad647d4;
+        error?: ActionDtoShape_38bb21ac73b0ed83;
+        domainRef?: ActionDtoShape_63f33481e3175db7;
+        observation?: ActionDtoShape_4c310d292ffe7329;
+        setupReview?: ActionDtoShape_cc2434354234375e;
+    }
+][0];
 export type ActionDtoShape_da319ee9a42e92ba = [
     null | undefined | ActionDtoShape_9117ef829b01a2e5
 ][0];
@@ -41131,18 +41157,6 @@ export type ActionDtoShape_dc692fafe02b1efe = [
         homeId: string;
         managedId: string;
         guestCli?: ActionDtoShape_ca06cfe1604502f9;
-    }
-][0];
-export type ActionDtoShape_dc6a9558f793ba20 = [
-    {
-        errorCode: string;
-        error: string;
-        requestId?: string | undefined;
-        effectAttempted?: boolean | undefined;
-        failureCause?: ActionFailureCauseV1 | undefined;
-        setupRetry?: ActionDtoShape_bee884e57673a63f;
-        handoffRecovery?: ActionDtoShape_7d7f7c2e85c5b0b3;
-        details?: ActionDtoShape_73f6aaf562ea76af;
     }
 ][0];
 export type ActionDtoShape_dc70efd140eb5907 = [
@@ -42410,6 +42424,9 @@ export type ActionDtoShape_e410d19a32a3ecbe = [
 export type ActionDtoShape_e41b3ead320ea0f3 = [
     ActionDtoShape_4aa8a93c2a78ec9a | ActionDtoShape_914e223a93079c24 | ActionDtoShape_60b86d36d94da608 | ActionDtoShape_598dc5a945c02eca | ActionDtoShape_fae3f4a89cff78e4 | ActionDtoShape_86d803695d1514e3
 ][0];
+export type ActionDtoShape_e41bbf2a5526b509 = [
+    undefined | ActionDtoShape_835bedeb10be00ef | ActionDtoShape_045ce964ea391ad1
+][0];
 export type ActionDtoShape_e41c3db375876d82 = [
     undefined | ActionDtoShape_b8e69f0778241185
 ][0];
@@ -43594,6 +43611,9 @@ export type ActionDtoShape_ea495f2bd2194b30 = [
         status: 'unavailable';
         reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'target_unavailable' | 'transport_failed' | 'unsupported_root' | 'update_required';
     }
+][0];
+export type ActionDtoShape_ea4a1b368dbdca8d = [
+    ActionDtoShape_50a79b3b9ba8c8a1 | ActionDtoShape_72834e6f4927a649
 ][0];
 export type ActionDtoShape_ea57845c6ad5ea0c = [
     {
@@ -46786,26 +46806,6 @@ export type ActionDtoShape_fc47f8a28d61a2db = [
         decisions: string[];
     } | ActionDtoShape_9e8274022302c6b3 | {
         kind: 'text';
-    }
-][0];
-export type ActionDtoShape_fc50487680d22179 = [
-    {
-        kind: 'partial';
-        savedSecrets: ActionDtoShape_5ccbe5e57b7046e0[];
-        phase: 'bindings' | 'deploy' | 'domains' | 'environment' | 'generation' | 'metadata' | 'repository' | 'target';
-        errorCode: string;
-        environmentId?: string | undefined;
-        revision?: number | undefined;
-        projectSourceId?: string | undefined;
-        targetLinkId?: string | undefined;
-        definition?: ActionDtoShape_1f193149a65f8668;
-        repositoryChange?: ActionDtoShape_07016955c3d43d02;
-        requiredFact?: string | undefined;
-        remedy?: string | undefined;
-        failure?: ActionDtoShape_825fd5b9a7d99e93;
-        deployment?: ActionDtoShape_4972d99b6433b3d9;
-        continuation?: ActionDtoShape_858e88470f0c58a3;
-        unknownSecret?: ActionDtoShape_3e8918b1ad16999d;
     }
 ][0];
 export type ActionDtoShape_fc564cfa93bd46c6 = [

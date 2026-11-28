@@ -7,8 +7,8 @@ import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1
 import { createDeploymentEnvironmentHeaderV1, createDeploymentReceiptHeaderV1,
     createDeploymentSecretVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { buildDeploymentAccountChangeV1, readDeploymentAccountChangeV1, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { useDeploymentActivity, useDeploymentCollection, useDeploymentEnvironment,
-    useDeploymentEnvironmentDomains, useDeploymentHistory, useDeploymentReceipt } from './useDeploymentReads';
+import { useDeploymentActivity, useDeploymentAttemptHistory, useDeploymentCollection, useDeploymentEnvironment,
+    useDeploymentEnvironmentDomains, useDeploymentReceipt } from './useDeploymentReads';
 import { ACCOUNT_IDENTITIES_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 
 const homes = createHomeGovernanceHarness();
@@ -51,7 +51,7 @@ describe('deployment ProjectSource scope', () => {
             const { controller } = useDeploymentProject(account.accountLifetime, environment.projectSourceId, demand);
             return { environment: useDeploymentEnvironment(controller, environment.id, demand),
                 domains: useDeploymentEnvironmentDomains(controller, environment.id, demand),
-                history: useDeploymentHistory(controller, environment.id, demand),
+                history: useDeploymentAttemptHistory(controller, environment.id, demand),
                 receipt: useDeploymentReceipt(controller, environment.id, serving ? receipt.id : null, demand) };
         });
         const requestsTo = (url: string) => homes.requests.filter(request => request.path.split('?')[0] === url);
@@ -64,7 +64,8 @@ describe('deployment ProjectSource scope', () => {
             });
             expect(requestsTo(path)).toHaveLength(1);
             expect(requestsTo(`${path}/domains`)).toHaveLength(1);
-            expect(requestsTo(`${path}/deployments`)).toHaveLength(1);
+            expect(requestsTo(`${path}/deployments`).map(request => new URLSearchParams(request.path.split('?')[1]).get('attemptsOnly')))
+                .toEqual(['true']);
             expect(requestsTo(receiptPath)).toHaveLength(serving ? 1 : 0);
             expect(requestsTo('/v1/deployments/environments')).toHaveLength(0);
 

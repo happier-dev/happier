@@ -2,7 +2,7 @@
 // Type-only projection of Protocol-owned Action DTO declarations.
 
 import type { JsonValue } from '../../identity.js';
-import type { ActionDtoShape_1ca8921d1f53fd40, ActionDtoShape_65cc9df99ed60aed, ActionDtoShape_79e85118380710dd, ActionDtoShape_89ce25a6446ad007, ActionDtoShape_bb9618b7651e03c1, ActionDtoShape_d31d73bff6a0cf24, ActionDtoShape_e716c64d5aeb0482, ActionDtoShape_f256974addb39973, ActionDtoShape_f2a1fee82d706629, ActionDtoShape_f391c94e082ccd0f } from './pluginActionDtoShapes.generated.js';
+import type { ActionDtoShape_65cc9df99ed60aed, ActionDtoShape_79e85118380710dd, ActionDtoShape_89ce25a6446ad007, ActionDtoShape_bb9618b7651e03c1, ActionDtoShape_d31d73bff6a0cf24, ActionDtoShape_da2dc136ee042d7d, ActionDtoShape_e716c64d5aeb0482, ActionDtoShape_f256974addb39973, ActionDtoShape_f2a1fee82d706629, ActionDtoShape_f391c94e082ccd0f } from './pluginActionDtoShapes.generated.js';
 
 export type LocalServicesActionsActionInputById = {
     readonly "projects.service.relocate": {
@@ -30,7 +30,7 @@ export type LocalServicesActionsActionInputById = {
 export type LocalServicesActionsActionResultById = {
     readonly "projects.service.relocate": {
         status: 'accepted';
-        operation: ActionDtoShape_1ca8921d1f53fd40;
+        operation: ActionDtoShape_da2dc136ee042d7d;
     } | {
         status: 'moved' | 'unchanged';
         currentTarget: ActionDtoShape_f391c94e082ccd0f;

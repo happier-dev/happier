@@ -268,16 +268,21 @@ const NO_HISTORY_QUERY: DeploymentHistoryQueryV1 = Object.freeze({});
 
 export function useDeploymentHistory(controller: DeploymentReadControllerV1 | null, environmentId: string | null, demand: DeploymentReadDemandV1,
     query: DeploymentHistoryQueryV1 = NO_HISTORY_QUERY) {
-    const { cursor, state, actorAccountId, operation } = query;
+    const { cursor, state, actorAccountId, operation, attemptsOnly } = query;
     // The read owner applies the narrowing before paging; each distinct query is its own keyed page lease.
     const acquire = React.useMemo(() => controller && environmentId
         ? () => controller.acquireHistory(environmentId, { ...(cursor === undefined ? {} : { cursor }),
             ...(state === undefined ? {} : { state }), ...(actorAccountId === undefined ? {} : { actorAccountId }),
-            ...(operation === undefined ? {} : { operation }) }, INACTIVE) : null,
-    [controller, environmentId, cursor, state, actorAccountId, operation]);
+            ...(operation === undefined ? {} : { operation }), ...(attemptsOnly ? { attemptsOnly } : {}) }, INACTIVE) : null,
+    [controller, environmentId, cursor, state, actorAccountId, operation, attemptsOnly]);
     const read = useDeploymentPage(acquire, demand);
     return { ...read, result: projectDeploymentEnvironmentTabResult(read.snapshot, read.snapshot.value?.items ?? NO_TAB_ITEMS,
         read.refresh, read.snapshot.value?.coverage) };
+}
+
+export function useDeploymentAttemptHistory(controller: DeploymentReadControllerV1 | null, environmentId: string | null,
+    demand: DeploymentReadDemandV1) {
+    return useDeploymentHistory(controller, environmentId, demand, { attemptsOnly: true });
 }
 
 /** Exact Receipt and its observation, without Environment or retained-history demand. */
@@ -293,7 +298,7 @@ export function useDeploymentReceipt(controller: DeploymentReadControllerV1 | nu
     demand: DeploymentReadDemandV1) {
     const read = useReceiptRead(controller, environmentId, deploymentId, demand);
     const environment = useEnvironmentRead(controller, environmentId, demand, deploymentId ?? false);
-    const history = useDeploymentHistory(controller, deploymentId ? environmentId : null, demand);
+    const history = useDeploymentAttemptHistory(controller, deploymentId ? environmentId : null, demand);
     const detail = environment.snapshot.value;
     const runtime = detail?.runtimeTargetLink;
     const value = read.snapshot.value;

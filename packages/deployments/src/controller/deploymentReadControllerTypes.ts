@@ -84,7 +84,7 @@ export type DeploymentCollectionQueryV1 = Readonly<Omit<DeploymentEnvironmentLis
     previewPullRequestIds?: readonly string[];
 }>;
 export type DeploymentHistoryQueryV1 = Readonly<Pick<DeploymentReceiptListInputV1,
-    'cursor' | 'state' | 'actorAccountId' | 'operation' | 'requestedAtFromMs' | 'requestedAtToMs'>>;
+    'cursor' | 'state' | 'actorAccountId' | 'operation' | 'attemptsOnly' | 'requestedAtFromMs' | 'requestedAtToMs'>>;
 export type DeploymentDomainReadItemV1 = Readonly<{
     domain: DeploymentDomainHeaderV1; title: string; content: DeploymentDomainContentV1;
     health?: DeploymentDomainHealthFactsV1;

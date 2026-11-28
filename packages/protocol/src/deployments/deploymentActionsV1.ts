@@ -157,7 +157,7 @@ export { DEPLOYMENT_ACTION_IDS_V1, isDeploymentActionIdV1, type DeploymentAction
 
 import { DeploymentEnvironmentHeaderV1Schema, DeploymentReceiptHeaderV1Schema, DeploymentReceiptMetadataV1Schema,
   type DeploymentEnvironmentHeaderV1 } from './deploymentHeadersV1.js';
-import { DeploymentStateV1Schema, DeploymentCancellationConsequenceV1Schema } from './deploymentStateV1.js';
+import { DeploymentEffectStateV1Schema, DeploymentCancellationConsequenceV1Schema } from './deploymentStateV1.js';
 
 /** Storage transport leaves. Private deployment records remain deployment-protocol owned. */
 export * from './deploymentHeadersV1.js';
@@ -681,6 +681,7 @@ export const DeploymentReceiptListInputV1Schema = lazyZodSchema(() => z.strictOb
   requestedAtToMs: z.optional(DeploymentTimestampV1Schema),
   operation: z.optional(DeploymentReceiptMetadataV1Schema.shape.operation),
   inProgressOnly: z.optional(z.literal(true)),
+  attemptsOnly: z.optional(z.literal(true)),
   cursor: ProjectSourcesListInputV1Schema.shape.cursor, limit: ProjectSourcesListInputV1Schema.shape.limit,
 }));
 const deploymentProjectSourcePresentationV1Schema = lazyZodSchema(() => z.pick(ProjectSourceV1Schema, { id: true, name: true }));
@@ -1033,7 +1034,7 @@ export const DeploymentTransitionInputV1Schema = lazyZodSchema(() => z.strictObj
   ...environment, deploymentId: DeploymentIdentifierV1Schema, actionOperationId: DeploymentIdentifierV1Schema,
   machineId: DeploymentIdentifierV1Schema, installationId: DeploymentIdentifierV1Schema,
   proof: MachineInstallationProofV1Schema,
-  kind: z.enum(['stage', 'settle']), state: DeploymentStateV1Schema,
+  kind: z.enum(['stage', 'settle']), state: DeploymentEffectStateV1Schema,
   telemetryTokenHash: z.optional(z.nullable(DeploymentTelemetryTokenHashV1Schema)),
   telemetryMachineId: z.optional(z.nullable(DeploymentIdentifierV1Schema)),
   contentUpdate: z.optional(ArtifactJsonUpdateHttpInputV1Schema),

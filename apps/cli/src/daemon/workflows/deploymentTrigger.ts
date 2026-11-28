@@ -3,6 +3,7 @@ import { DeploymentEnvironmentGetResultV1Schema } from '@happier-dev/protocol/de
 import type { AutomationRunCause } from '@happier-dev/protocol/automations/run-cause';
 import { AutomationRunPluginEventTriggerEvidenceV1Schema } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
 import { deriveAutomationOccurrenceKeyV1 } from '@happier-dev/protocol/automations/automationOccurrenceV1';
+import { isDeploymentRepositoryPushEventV1 } from '@happier-dev/protocol/automations/automationEventSetupResultV1';
 import type { AutomationDeploymentTriggerV1 } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
 import { ProjectSourcesReadOutputV1Schema, type ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { ScmComparisonCaptureOutputSchema } from '@happier-dev/protocol/scm/diffSummary';
@@ -67,7 +68,7 @@ export function resolveDeploymentTriggerOccurrence(input: Readonly<{
     ? gitlabRepositoryEventSourceInstanceId(hostingRepository.deployment, repository.repositoryId)
     : `github:repository:${repository.repositoryId}`)) return { kind: 'refused', code: 'invalid_input' };
   const payload = event.payload;
-  const isPush = event.eventRef.localId === 'automation/repository-pushed-v1';
+  const isPush = isDeploymentRepositoryPushEventV1(event.eventRef);
   const pr = isWorkflowJsonObject(payload.pullRequest) ? payload.pullRequest : null;
   if (!isPush && event.eventRef.localId !== 'automation/pull-request-merged-v1') return { kind: 'refused', code: 'invalid_input' };
   const sha = isPush ? payload.after : pr?.mergeCommitSha;

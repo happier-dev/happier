@@ -106,6 +106,19 @@ it.each([
     expect(validateHomeReceipt.mock.calls.length + reparseReceipt.mock.calls.length).toBe(2);
 });
 
+it('returns a skipped push receipt without dispatching the deployment target', async () => {
+    const receipt = { ok: true, environmentId: 'environment', revision: 3,
+        deploymentId: 'skipped-push', deploymentRevision: 1, state: 'skipped' };
+    vi.spyOn(axios, 'request').mockResolvedValue({ status: 200, data: receipt });
+    const deps = createCliDeploymentActionDeps({ serverHttpBaseUrl: 'https://home.test', admitAccount: async () => null,
+        resolveRequestHeaders: () => ({}),
+        async dispatchReceipt() { throw new Error('A skipped push has no target execution'); } });
+    await expect(deps.deploymentAction!('deployments.deploy', { serverId: 'home', environmentId: 'environment',
+        targetLinkId: 'runtime', expectedRevision: 3, expectedTargetLinkRevision: 1, requestKey: 'push',
+        contentArtifactId: 'candidate', contentHeaderVersion: 1, contentBodyVersion: 1 },
+    { operationAcceptance: { operationId: 'operation', accept() {} } })).resolves.toEqual(receipt);
+});
+
 it('settles a rolled-back deployment request with its missing fact, recovery and transaction cause', async () => {
     vi.spyOn(axios, 'request').mockResolvedValue({ status: 503,
         data: { error: 'database_transaction_conflict_exhausted', statusCode: 503 } });

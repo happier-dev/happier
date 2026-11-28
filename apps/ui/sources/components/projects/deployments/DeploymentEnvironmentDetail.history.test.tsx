@@ -187,6 +187,8 @@ describe('Environment → History', () => {
     const items = [
       { ...createDeploymentReceiptHeaderV1({ id: 'receipt-rollback', environmentId, operation: 'rollback', state: 'succeeded',
         requestedAtMs: now - 3_000, startedAtMs: now - 2_000, settledAtMs: now - 1_000 }), source },
+      { ...createDeploymentReceiptHeaderV1({ id: 'receipt-skipped', environmentId, state: 'skipped',
+        requestedAtMs: now - 4_000, startedAtMs: undefined, settledAtMs: now - 3_000 }), source: { ...source, sha: 'b'.repeat(40) } },
       { ...createDeploymentReceiptHeaderV1({ id: 'receipt-deploy', environmentId, operation: 'deploy', state: 'succeeded',
         requestedAtMs: now - 2 * day, startedAtMs: now - 2 * day + 1, settledAtMs: now - 2 * day + 2 }), source },
     ];
@@ -201,6 +203,7 @@ describe('Environment → History', () => {
       expect(deploy.title).toContain('ccccccc');
       expect(rollback.title).not.toBe(deploy.title);
       expect(rollback.accessibilityRole).toBe('button');
+      expect(row('receipt-skipped').props.title).toMatch(/skipped bbbbbbb.*newer push replaced/i);
       // Two days, two groups, newest first.
       const groups = screen.findAll(node => typeof node.props.testID === 'string'
         && node.props.testID.startsWith('project-deployments.environment.history.day.') && typeof node.props.title === 'string');

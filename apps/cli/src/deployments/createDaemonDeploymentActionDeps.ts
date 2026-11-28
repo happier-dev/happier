@@ -553,7 +553,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
         environmentId: request.environmentId, lineage, ...(request.liveReferences ? { liveReferences: request.liveReferences } : {}),
         async readPage(cursor?: string) {
             const loaded = await storage('deployments.receipts.list', { serverId: host.serverId,
-                environmentId: request.environmentId, ...(cursor ? { cursor } : {}) }, request.context);
+                environmentId: request.environmentId, attemptsOnly: true, ...(cursor ? { cursor } : {}) }, request.context);
             if ('ok' in loaded && !loaded.ok && 'errorCode' in loaded) return refuse(loaded);
             return loaded;
         },
@@ -690,6 +690,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     ?? request.context.runtimeAccountId ?? readAccountIdFromToken(host.credentials.token);
                 if (!identity || !accountId) return failure('target_mismatch');
                 const receipt = request.receiptHeader;
+                if (request.state === 'skipped') return failure('deployment_conflict');
                 const content = request.content;
                 let contentReference: Pick<DeploymentTransitionInputV1, 'contentArtifactId' | 'contentHeaderVersion' | 'contentBodyVersion'> | undefined;
                 // Recovery records its reason through the same atomic receipt

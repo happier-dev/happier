@@ -24,6 +24,12 @@ export function readManagedGithubRepositoryEventV1(eventRef: Readonly<{ pluginId
   return null;
 }
 
+/** Repository push events admitted by the deploy Workflow, for both custody and execution. */
+export function isDeploymentRepositoryPushEventV1(eventRef: Readonly<{ pluginId: string; localId: string }>): boolean {
+  return eventRef.localId === GITHUB_MANAGED_PUSH_EVENT_LOCAL_ID_V1
+    && (eventRef.pluginId === GITHUB_EVENT_SETUP_ACTIONS_V1.pluginId || eventRef.pluginId === 'happier.scm.forge.gitlab');
+}
+
 /** A configured HTTPS ingress is a candidate. GitHub delivery establishes readiness. */
 export function readManagedGithubWebhookHomeUrlV1(
   home: Pick<HomeReachabilityV1, 'publicAddress' | 'hostAccess'>,

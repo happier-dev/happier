@@ -543,7 +543,7 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
             const { cursor: initialCursor, ...filters } = query;
             const key = (cursor: string | undefined) => JSON.stringify(['history', environmentId,
                 query.state ?? null, query.actorAccountId ?? null, query.operation ?? null,
-                query.requestedAtFromMs ?? null, query.requestedAtToMs ?? null, cursor ?? null]);
+                query.requestedAtFromMs ?? null, query.requestedAtToMs ?? null, query.attemptsOnly ?? null, cursor ?? null]);
             return createDeploymentReadPageLease<DeploymentHistoryPageV1>({ initialCursor, demand,
                 nextCursor: cursor => entries.get(key(cursor))?.nextCursor ?? null,
                 acquire: (cursor, pageDemand) => acquire<DeploymentHistoryPageV1>({

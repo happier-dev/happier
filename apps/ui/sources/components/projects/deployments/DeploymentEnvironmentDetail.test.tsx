@@ -3528,12 +3528,12 @@ describe('Project deployments page', () => {
   it('pages History on request only: one read per page, Older reads the next cursor, Newer returns', async () => {
     const { controller: base, detail, receipt } = controllerFor({});
     base.retire();
-    const cursors: (string | undefined)[] = [];
+    const queries: Pick<Parameters<DeploymentReadTransportV1['listHistory']>[2], 'attemptsOnly' | 'cursor'>[] = [];
     const transport: DeploymentReadTransportV1 = {
       listEnvironments: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
       readEnvironment: async () => ({ ok: true, value: detail }),
       listHistory: async (_scope, _id, query) => {
-        cursors.push(query.cursor);
+        queries.push({ attemptsOnly: query.attemptsOnly, cursor: query.cursor });
         return { ok: true, value: { ok: true, items: [receipt.deployment], nextCursor: query.cursor ? null : 'page-2' } };
       },
       readReceipt: async () => ({ ok: true, value: receipt }),
@@ -3543,11 +3543,16 @@ describe('Project deployments page', () => {
       <DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id} demand={shown}
         accountId="account-owner" serverId={scope.serverId} phone={false} deploy={null} review={noReview} onOpenReceipt={() => {}} />,
     );
+    expect(queries).toEqual([{ attemptsOnly: true, cursor: undefined }]);
     await selectEnvironmentTab(screen, 'history');
-    expect(cursors).toEqual([undefined]);
+    expect(queries).toEqual([{ attemptsOnly: true, cursor: undefined }, { attemptsOnly: undefined, cursor: undefined }]);
     expect(screen.findByTestId('project-deployments.environment.history.newer')).toBeNull();
     await screen.pressByTestIdAsync('project-deployments.environment.history.older');
-    expect(cursors).toEqual([undefined, 'page-2']);
+    expect(queries).toEqual([
+      { attemptsOnly: true, cursor: undefined },
+      { attemptsOnly: undefined, cursor: undefined },
+      { attemptsOnly: undefined, cursor: 'page-2' },
+    ]);
     expect(screen.findByTestId('project-deployments.environment.history.older')).toBeNull();
     expect(screen.findByTestId('project-deployments.environment.history.newer')).not.toBeNull();
     controller.retire();

@@ -3995,9 +3995,11 @@ The canonical Workflow starter catalog exposes `deploy-on-push` through
 deterministic Workflow containing one `deployments.deploy` Action and no Agent
 or enabled trigger. The person binds `serverId`, `environmentId` and
 `targetLinkId` when saving a repository trigger; the admitted occurrence supplies
-`sha` and `requestKey`. The Action uses `whenBusy: supersede`, so the existing
-pending-deployment owner handles newer commits. Resolving the starter grants
-no consent and starts no work.
+`sha` and `requestKey`. The Action uses `whenBusy: supersede`. While a deployment
+runs, eligible GitHub and GitLab pushes share one pending position per
+Environment. When it settles, only the newest pending push deploys. History
+keeps each skipped commit with the reason it was replaced. Resolving the
+starter grants no consent and starts no work.
 
 The development Workflow trigger owner accepts `deployment: {branch?, paths?}`
 on `workflow.trigger.add`. The update Action changes that selected trigger's

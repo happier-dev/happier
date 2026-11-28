@@ -3,7 +3,7 @@ import type { DeploymentReceiptHeaderV1 } from '@happier-dev/plugin-sdk/protocol
 type ReceiptState = DeploymentReceiptHeaderV1['state'];
 type ReceiptOperation = DeploymentReceiptHeaderV1['operation'];
 type SettledState = Exclude<ReceiptState, 'running_unverified'>;
-type OperationState = Exclude<SettledState, 'queued' | 'outcome_unknown'>;
+type OperationState = Exclude<SettledState, 'queued' | 'outcome_unknown' | 'skipped'>;
 type TitleParams = { sha: string };
 
 const OPERATION_HEADLINES = {
@@ -43,7 +43,8 @@ const UNVERSIONED_TEARDOWN_HEADLINES = {
 
 type HeadlineKey = (typeof OPERATION_HEADLINES)[ReceiptOperation][OperationState]
     | (typeof UNVERSIONED_TEARDOWN_HEADLINES)[OperationState]
-    | 'projects.deployments.headlineQueued' | 'projects.deployments.headlineUnknown';
+    | 'projects.deployments.headlineQueued' | 'projects.deployments.headlineUnknown'
+    | 'projects.deployments.headlineSkipped';
 
 /** The host's English locale and headless clients use the same Receipt copy. */
 export const DEPLOYMENT_RECEIPT_HEADLINE_COPY_EN = {
@@ -69,6 +70,8 @@ export const DEPLOYMENT_RECEIPT_HEADLINE_COPY_EN = {
     'projects.deployments.receipt.titleRemoveCancelled': () => 'Removal cancelled',
     'projects.deployments.headlineQueued': ({ sha }) => `${sha} is queued`,
     'projects.deployments.headlineUnknown': ({ sha }) => `Couldn’t confirm ${sha}`,
+    'projects.deployments.headlineSkipped': ({ sha }) => sha
+        ? `Skipped ${sha}. A newer push replaced it.` : 'Skipped. A newer push replaced it.',
 } satisfies Record<HeadlineKey, (params: TitleParams) => string>;
 
 export const DEPLOYMENT_RECEIPT_STATE_COPY_EN = {
@@ -77,6 +80,7 @@ export const DEPLOYMENT_RECEIPT_STATE_COPY_EN = {
     succeeded: 'Deployed',
     failed: 'Failed',
     cancelled: 'Cancelled',
+    skipped: 'Skipped',
     outcome_unknown: 'Outcome unknown',
 } satisfies Record<SettledState, string>;
 
@@ -98,6 +102,7 @@ export function deploymentReceiptTitleV1(
     },
 ): string {
     const state = deploymentSettledReceiptStateV1(receipt.state);
+    if (state === 'skipped') return copy.headline('projects.deployments.headlineSkipped', { sha: revisionLabel ?? '' });
     if (revisionLabel === null) {
         return receipt.operation === 'teardown' && state !== 'queued' && state !== 'outcome_unknown'
             ? copy.headline(UNVERSIONED_TEARDOWN_HEADLINES[state], { sha: '' }) : copy.state(state);

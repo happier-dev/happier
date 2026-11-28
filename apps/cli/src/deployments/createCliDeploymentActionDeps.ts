@@ -3,6 +3,7 @@ import { type DeploymentBindingSavedSecretRevisionV1 } from '@happier-dev/protoc
 import { resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
 import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { readDeploymentReceiptFailureCodeV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
+import { DEPLOYMENT_SKIPPED_STATE_V1 } from '@happier-dev/protocol/deployments/deploymentStateV1';
 import { deploymentAuthorizationFailure, readDeploymentAuthorizationFailure } from './deploymentAuthorizationFailure';
 import { projectUnsignedHomeAuthorizationHttpFailure, SignedHomeAuthorizationHttpError } from '@/api/client/homeAuthorizationHttpFailure';
 import { deploymentOutputValidationFailure } from './outputValidation';
@@ -572,7 +573,7 @@ export function createCliDeploymentActionDeps(params: Readonly<{
       domainRef: { kind: 'deployment', serverId: input.serverId,
         environmentId: receipt.environmentId, deploymentId: receipt.deploymentId },
     });
-    if (receipt.state === 'succeeded' || receipt.state === 'running_unverified') return receipt;
+    if (receipt.state === 'succeeded' || receipt.state === 'running_unverified' || receipt.state === DEPLOYMENT_SKIPPED_STATE_V1) return receipt;
     const receiptFailureCode = readDeploymentReceiptFailureCodeV1(receipt.state);
     if (receiptFailureCode && (actionId !== 'deployments.teardown' || receipt.state === 'cancelled')) {
       return { ok: false, errorCode: receiptFailureCode,

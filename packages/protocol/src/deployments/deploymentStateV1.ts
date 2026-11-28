@@ -3,9 +3,12 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { DeploymentIdentifierV1Schema as id, DeploymentTimestampV1Schema as timestamp } from './deploymentIdentifiersV1.js';
 
 /** Shared receipt and target-result leaves; importing them never reaches Action registration. */
-export const DeploymentStateV1Schema = lazyZodSchema(() => z.enum([
+const effectStates = [
     'queued', 'running', 'running_unverified', 'succeeded', 'failed', 'cancelled', 'outcome_unknown',
-]));
+] as const;
+export const DEPLOYMENT_SKIPPED_STATE_V1 = 'skipped';
+export const DeploymentEffectStateV1Schema = lazyZodSchema(() => z.enum(effectStates));
+export const DeploymentStateV1Schema = lazyZodSchema(() => z.enum([...effectStates, DEPLOYMENT_SKIPPED_STATE_V1]));
 export type DeploymentStateV1 = z.infer<typeof DeploymentStateV1Schema>;
 
 /** Receipt operation vocabulary also consumed by provider observation inputs. */

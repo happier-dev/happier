@@ -173,6 +173,7 @@ function ownServerFacts(state: ReceiptState, previous: string | null,
 
 /** The steps that wrote to the log before the receipt's state (the rest never started). */
 function startedSteps(state: ReceiptState): readonly string[] {
+  if (state === 'skipped') return [];
   if (state === 'running' || state === 'queued') return ['sync', 'build'];
   if (state === 'failed' || state === 'outcome_unknown') return ['sync', 'build', 'migrate', 'rollout'];
   return ['sync', 'build', 'migrate', 'rollout', 'route'];
@@ -189,7 +190,7 @@ function receiptFor(
   const base = createDeploymentReceiptDetailV1();
   const requestedAtMs = SPECIMEN_NOW - ageHours * HOUR;
   const settled =
-    state === 'succeeded' || state === 'failed' || state === 'cancelled';
+    state === 'succeeded' || state === 'failed' || state === 'cancelled' || state === 'skipped';
   const step = (
     stepId: string,
     label: string,
@@ -204,7 +205,7 @@ function receiptFor(
   const running =
     state === 'running' || state === 'queued';
   const steps =
-    state === 'failed'
+    state === 'skipped' ? [] : state === 'failed'
       ? [
           step('sync', 'Sync', 'succeeded', 4_000),
           step('build', 'Build', 'succeeded', 72_000),
@@ -241,7 +242,7 @@ function receiptFor(
       state,
       operation,
       requestedAtMs,
-      startedAtMs: requestedAtMs + 1_000,
+      startedAtMs: state === 'skipped' ? undefined : requestedAtMs + 1_000,
       ...(operation === 'rollback'
         ? { rollbackOfDeploymentId: 'deployment-c' }
         : {}),
@@ -478,6 +479,7 @@ function transportFor(
 ): DeploymentReadTransportV1 {
   const base = createDeploymentEnvironmentDetailV1();
   const railway = railwayTabs(tabs);
+  const incumbentServes = receiptState === 'running' || receiptState === 'queued' || receiptState === 'skipped';
   const baseHeader = createDeploymentEnvironmentHeaderV1({
     updatedAtMs: SPECIMEN_NOW - 0.4 * HOUR,
   });
@@ -502,11 +504,11 @@ function transportFor(
       ? { ...stagingHeader, capabilities: { ...stagingHeader.capabilities, role: 'reader', deploy: false, manage: false } }
       : stagingHeader,
     // While a deploy runs, the incumbent it replaces still serves.
-    ...(receiptState === 'running' || receiptState === 'queued' ? { targetLinks: base.targetLinks.map((link) => ({
+    ...(incumbentServes ? { targetLinks: base.targetLinks.map((link) => ({
       ...link, targetLink: { ...link.targetLink, activeDeploymentId: 'deployment-b' } })) } : {}),
     ...(railway ? { targetLinks: base.targetLinks.map((link) => ({ targetLink: {
       ...link.targetLink, source: { kind: 'plugin' as const, contribution: RAILWAY_TARGET }, targetKind: 'railway', machines: [], members: [],
-      activeDeploymentId: receiptState === 'running' || receiptState === 'queued' ? 'deployment-b' : 'deployment-a',
+      activeDeploymentId: incumbentServes ? 'deployment-b' : 'deployment-a',
     }, content: RAILWAY_LINK })) } : state === 'plugin' ? { targetLinks: base.targetLinks.map((link) => ({ ...link, targetLink: {
       ...link.targetLink, source: { kind: 'plugin' as const, contribution: { pluginId: 'vercel', localId: 'project' } },
       targetKind: 'vercel', machines: [], members: [], machineId: 'machine-a', installationId: 'installation-a',
@@ -557,6 +559,7 @@ function transportFor(
     machineResults: receipt.content.machineResults.map(result => ({ ...result,
       telemetryMachineId: stagingHeader.telemetryMachineId, telemetryTokenHash: '7'.repeat(64) })) } } : receipt;
   const receipts = onMachine(railway ? receiptFixtures.map(railwayReceipt) : receiptFixtures.map(delivered), machineId);
+  const latestAttempt = receipts[receiptState === 'skipped' ? 1 : 0]!;
   const never = new Promise<never>(() => {});
   return {
     listDomains: fixtures.listDomains,
@@ -581,8 +584,8 @@ function transportFor(
                           environment: onMachine(stagingWithData.environment, machineId),
                           title: 'Staging',
                           currentDeployment: {
-                            ...receipts[0]!.deployment,
-                            steps: receipts[0]!.content.steps,
+                            ...latestAttempt.deployment,
+                            steps: latestAttempt.content.steps,
                           },
                         },
                         {
@@ -599,14 +602,14 @@ function transportFor(
       value: onMachine(environmentId === production.environment.id ? production
         : preview ? withSpecimenPreview(stagingWithData, preview) : stagingWithData, machineId),
     }),
-    listHistory: async () => ({
+    listHistory: async (_scope, _environmentId, query) => ({
       ok: true,
       value: {
         ok: true,
         items: receipts.map((receipt, index) => ({
           ...receipt.deployment,
           title: RECEIPT_TITLES[index],
-        })),
+        })).filter(receipt => !query.attemptsOnly || receipt.state !== 'skipped'),
         nextCursor: null,
       },
     }),
@@ -885,6 +888,7 @@ export function DeploymentsSpecimen(
       'succeeded',
       'failed',
       'cancelled',
+      'skipped',
       'outcome_unknown',
     ].includes(props.receipt)
       ? props.receipt

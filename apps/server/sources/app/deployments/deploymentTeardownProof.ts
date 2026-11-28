@@ -1,11 +1,13 @@
 import { DeploymentTeardownProofV1Schema } from '@happier-dev/protocol';
+import { DEPLOYMENT_SKIPPED_STATE_V1 } from '@happier-dev/protocol/deployments/deploymentStateV1';
 import type { Tx } from '@/storage/inTx';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { readDeploymentAcceptedExecution } from './deploymentAcceptedExecution';
 
 /** A newer attempt supersedes cleanup evidence even when it leaves U unchanged. */
 export async function readLatestDeploymentTeardownInTx(tx: Tx, link: Readonly<{ id: string; environmentId: string }>) {
-    const latest = await tx.deployment.findFirst({ where: { environmentId: link.environmentId, targetLinkId: link.id },
+    const latest = await tx.deployment.findFirst({ where: { environmentId: link.environmentId, targetLinkId: link.id,
+        state: { not: DEPLOYMENT_SKIPPED_STATE_V1 } },
         orderBy: [{ requestedAt: 'desc' }, { id: 'desc' }] });
     const accepted = latest ? readDeploymentAcceptedExecution(latest) : null;
     const parsed = DeploymentTeardownProofV1Schema.safeParse(latest?.teardownProof);

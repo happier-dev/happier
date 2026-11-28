@@ -12226,8 +12226,9 @@ describe('deployment children retain their controller Action authority', () => {
             expect(await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.environment.id } })).toEqual(environmentBefore);
             expect(await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: f.link.id } })).toEqual(linkBefore);
             expect(await db.deployment.findUniqueOrThrow({ where: { id: f.receipt.id } })).toMatchObject({ state: 'outcome_unknown', revision: f.receipt.revision });
-            // Remove only this test's synthetic newer history to exercise the unsuperseded recovery.
-            await db.deployment.delete({ where: { id: newer.id } });
+            // A skipped push can be newer in History without superseding the actual attempt.
+            await db.deployment.update({ where: { id: newer.id }, data: { operation: 'deploy', state: 'skipped',
+                settledAt, acceptedControllerMachineId: null, acceptedControllerInstallationId: null } });
             // Exact provider success after Stop has its own settlement test. An
             // unverified observation still cannot publish a stopped rollout.
             if (operation !== 'deploy' || observedState !== 'succeeded') {

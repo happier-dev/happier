@@ -13,7 +13,9 @@ import { sealExternalActionRequestV2 } from '@happier-dev/protocol/actions/exter
 import { ExternalActionExecutionAuthorizationV1Schema, bindExternalActionExecutionAuthorizationHttpPathV1,
     EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
     EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, EXTERNAL_ACTION_RESOLVED_TARGET_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
-import { signExternalActionMachineRequestV1, encodeExternalActionResolvedTargetV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { computeExternalActionRequestEnvelopeDigestV1, signExternalActionMachineRequestV1, encodeExternalActionResolvedTargetV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { buildAutomationPluginEventOccurrenceEvidenceV1, deriveAutomationOccurrenceKeyV1 } from '@happier-dev/protocol/automations/automationOccurrenceV1';
+import { encodeAutomationRunCause } from '@/app/automations/automationRunCauseCodec';
 import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { createDeploymentEnvironmentV1, createDeploymentV1 } from '@happier-dev/deployments/testing/v1';
 import { db } from '@/storage/db';
@@ -29,6 +31,8 @@ import { observeSqliteRequests } from '@/testkit/observeSqliteRequests';
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { commitMachineRecipientKeyEnvelopesInTx, resolveMachineAdmission } from '@/app/machines/machineAccess';
 import { normalizeGithubWebhookDelivery } from '../../../../../packages/plugins/scm-github/src/observations/githubWebhookNormalization';
+import { normalizeGitlabWebhookDelivery } from '../../../../../packages/plugins/scm-gitlab/src/events';
+import { createDeploymentInTx } from './deploymentService';
 
 // Hop-local server admission test; the sole cross-component composed journey stays with S0.
 describe('protected deployment pending storage', () => {
@@ -592,6 +596,108 @@ describe('protected deployment pending storage', () => {
             const corrupt = await app.inject({ method: 'GET', url: `${base}?serverId=${serverId}`, headers });
             expect(corrupt.statusCode, corrupt.body).toBe(409);
             expect(corrupt.json()).toEqual({ ok: false, error: 'deployment_content_unavailable' });
+
+            // The Workflow Action root supplies authenticated Run provenance.
+            // The receipt owner must retain each replaced candidate even when
+            // the pending input is encrypted and only the controller sees its SHA.
+            const pushEnvironment = await app.inject({ method: 'POST', url: '/v1/deployments/environments', headers, payload: {
+                serverId, projectSourceId: source.source.id, requestKey: crypto.randomUUID(),
+                protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
+                controllerMachineId: machineId, buildMachineId: machineId,
+                ...await content('deployment-environment.v1', environment.content.v),
+            } });
+            expect(pushEnvironment.statusCode, pushEnvironment.body).toBe(200);
+            const pushEnvironmentId: string = pushEnvironment.json().environmentId;
+            const pushBase = `/v1/deployments/environments/${pushEnvironmentId}`;
+            const pushLink = await app.inject({ method: 'POST', url: `${pushBase}/targets`, headers, payload: {
+                serverId, environmentId: pushEnvironmentId, expectedRevision: pushEnvironment.json().revision,
+                targetId: 'own-server', role: 'runtime', machines: [{ machineId, installationId }],
+                ...await content('deployment-target-link.v1', {}), requestKey: crypto.randomUUID(),
+            } });
+            expect(pushLink.statusCode, pushLink.body).toBe(200);
+            const pushCoordinates = { environmentId: pushEnvironmentId, targetLinkId: pushLink.json().targetLinkId as string,
+                expectedTargetLinkRevision: pushLink.json().targetLinkRevision as number };
+            const runningInput = { ...input, ...pushCoordinates, expectedRevision: pushLink.json().revision,
+                requestKey: crypto.randomUUID(), actionOperationId: crypto.randomUUID() };
+            const busyPush = await signedDeploy(runningInput);
+            expect(busyPush.statusCode, busyPush.body).toBe(200);
+            const automation = await db.automation.create({ data: { accountId: owner.id, name: 'Deploy on push',
+                deploymentEnvironmentId: pushEnvironmentId, templateCiphertext: '{}' } });
+            const triggerId = crypto.randomUUID();
+            const sourceSelectorId = crypto.randomUUID();
+            const busyRevision: number = busyPush.json().revision;
+            let pushRevision = busyRevision;
+            const now = Date.now();
+            const admittedPushes = [];
+            for (const hex of shared ? ['b', 'd', 'c'] : ['b', 'c', 'd']) {
+                const delivery = { providerDeliveryId: crypto.randomUUID(), receivedAtMs: now + hex.charCodeAt(0) };
+                const sha = hex.repeat(40);
+                const event = mode === 'plain'
+                    ? normalizeGithubWebhookDelivery({ ...delivery, eventType: 'push', rawBody: new TextEncoder().encode(JSON.stringify({
+                        repository: { id: 77, full_name: 'acme/pending' }, ref: 'refs/heads/main', before: 'a'.repeat(40), after: sha,
+                    })) }).automationEvent
+                    : normalizeGitlabWebhookDelivery({ ...delivery, eventType: 'Push Hook', baseUrl: 'https://gitlab.example',
+                        rawBody: new TextEncoder().encode(JSON.stringify({ project: { id: 77, path_with_namespace: 'acme/pending' },
+                            ref: 'refs/heads/main', before: 'a'.repeat(40), after: sha })) });
+                if (!event) throw new Error('Expected normalized push event');
+                const evidence = buildAutomationPluginEventOccurrenceEvidenceV1({ eventRef: event.eventRef,
+                    sourceSelectorId, occurrenceId: event.occurrenceId, occurredAt: event.occurredAtMs, payload: event.payload });
+                const requestKey = deriveAutomationOccurrenceKeyV1({ triggerId, evidence });
+                const prepared = await preparePending(sha, mode === 'e2ee' ? busyRevision : pushRevision);
+                const pendingIntent = { sourceIntent: { ...intentContent.sourceIntent, sha }, requestKey,
+                    targetLinkId: pushCoordinates.targetLinkId, actionOperationId: prepared.actionOperationId };
+                const pushInput = { ...prepared, ...pushCoordinates, requestKey,
+                    pendingDeploy: DeploymentPendingDeployV1Schema.parse(mode === 'plain' ? { t: 'plain', v: pendingIntent }
+                        : { t: 'encrypted', c: privacyKit.encodeBase64(new Uint8Array(await sealSessionDataKeyBundleV0(pendingIntent, contentKey))) }) };
+                const at = new Date(event.occurredAtMs);
+                const run = await db.automationRun.create({ data: { automationId: automation.id, accountId: owner.id,
+                    ...encodeAutomationRunCause({ kind: 'trigger', triggerKind: 'pluginEvent', triggerId, triggerRevision: 1,
+                        occurredAt: at.getTime(), occurrenceKey: requestKey, evidence: { eventRef: event.eventRef, sourceSelectorId } }),
+                    triggerEvidenceEnvelope: mode === 'plain' ? JSON.stringify({ t: 'plain', v: evidence })
+                        : JSON.stringify({ t: 'encrypted', c: privacyKit.encodeBase64(new Uint8Array(await sealSessionDataKeyBundleV0(evidence, contentKey))) }),
+                    occurrenceEvidenceEqualityTag: mode === 'plain' ? null : 'a'.repeat(43),
+                    scheduledAt: at, dueAt: at, state: 'running',
+                    workflowCustodyState: 'pending', workflowAcceptedSnapshotEnvelope: '{}', claimedByMachineId: machineId } });
+                const requestId = crypto.randomUUID();
+                const target = { kind: 'machine' as const, machineId };
+                const binding = ExternalActionExecutionAuthorizationV1Schema.shape.binding.parse({
+                    serverIdentityId: serverId, accountId: owner.id, authentication: { kind: 'account', tokenEpoch: owner.tokenEpoch },
+                    actionId: 'deployments.deploy', requestId, target,
+                    requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1({ v: 1, requestId, target, input: pushInput }),
+                    machineId, installationId, custodianAccountId: owner.id, accountEncryptionMode: mode,
+                    workflowActionOrigin: { runId: run.id, requestId },
+                });
+                const queue = (expectedRevision: number) => inTx(tx => createDeploymentInTx(tx, owner.id,
+                    { ...pushInput, expectedRevision }, 'deploy', {}, binding));
+                const pendingResult = await queue(prepared.expectedRevision);
+                expect(pendingResult).toMatchObject(shared && hex === 'c'
+                    ? { ok: true, state: 'skipped' } : { ok: true, kind: 'pending' });
+                if (!pendingResult.ok) throw new Error(pendingResult.error);
+                pushRevision = pendingResult.revision;
+                admittedPushes.push({ hex, input: pushInput, queue });
+            }
+            const historyResponse = await app.inject({ method: 'GET', url: `${pushBase}/deployments?serverId=${serverId}`, headers });
+            expect(historyResponse.statusCode, historyResponse.body).toBe(200);
+            expect(historyResponse.json().items).toEqual(expect.arrayContaining(admittedPushes.filter(({ hex }) => hex !== 'd')
+                .map(({ input: push }) => expect.objectContaining({ state: 'skipped', requestKey: push.requestKey,
+                    contentArtifactId: push.contentArtifactId }))));
+            expect(historyResponse.json().items).toHaveLength(3);
+            const attempts = await app.inject({ method: 'GET',
+                url: `${pushBase}/deployments?serverId=${serverId}&attemptsOnly=true&limit=1`, headers });
+            expect(attempts.statusCode, attempts.body).toBe(200);
+            expect(attempts.json().items).toEqual([expect.objectContaining({ id: busyPush.json().deploymentId })]);
+            const replacedPush = admittedPushes[0]!;
+            expect(await replacedPush.queue(replacedPush.input.expectedRevision)).toMatchObject({ ok: true, state: 'skipped' });
+            const stopped = await app.inject({ method: 'POST', url: `${pushBase}/deployments/${busyPush.json().deploymentId}/transitions`, headers,
+                payload: { serverId, environmentId: pushEnvironmentId, deploymentId: busyPush.json().deploymentId,
+                    expectedReceiptRevision: busyPush.json().deploymentRevision, kind: 'cancel' } });
+            expect(stopped.statusCode, stopped.body).toBe(200);
+            const winner = admittedPushes.find(({ hex }) => hex === 'd')!;
+            expect(await winner.queue(stopped.json().revision)).toMatchObject({ ok: true, state: 'queued' });
+            const settledHistory = await app.inject({ method: 'GET', url: `${pushBase}/deployments?serverId=${serverId}`, headers });
+            expect(settledHistory.json().items).toHaveLength(4);
+            expect(settledHistory.json().items.filter((row: { state: string }) => row.state === 'queued'))
+                .toEqual([expect.objectContaining({ requestKey: winner.input.requestKey })]);
         });
     });
 });

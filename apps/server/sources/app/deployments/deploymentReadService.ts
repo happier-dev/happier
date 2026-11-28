@@ -44,6 +44,7 @@ import { readSavedSecretResourcesForAccountInTx } from '@/app/account/savedSecre
 import { DeploymentApprovalEnvironmentResultV1Schema } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 import { readArtifactHeadersForCallerInTx } from '@/app/artifacts/artifactAccessService';
 import { deploymentEnvironmentPrincipalSelect, type DeploymentEnvironmentPrincipalRow } from './deploymentEnvironmentDeployers';
+import { DEPLOYMENT_SKIPPED_STATE_V1 } from '@happier-dev/protocol/deployments/deploymentStateV1';
 
 type AcceptedDeploymentRead = NonNullable<VerifiedExternalActionExecutionRequest['acceptedDeploymentReceipt']>['read'];
 
@@ -336,6 +337,7 @@ export async function listDeploymentEnvironmentsInTx(tx: Tx, actorAccountId: str
         const sql = `SELECT e."projectSourceId" AS "projectSourceId", d."state" AS "state", COUNT(*) AS "environmentCount"
             FROM "DeploymentEnvironment" e JOIN "Deployment" d ON d."id" = (
                 SELECT newest."id" FROM "Deployment" newest WHERE newest."environmentId" = e."id"
+                AND newest."state" <> '${DEPLOYMENT_SKIPPED_STATE_V1}'
                 ORDER BY newest."requestedAt" DESC, newest."id" DESC LIMIT 1
             ) WHERE e."deletedAt" IS NULL${sourceFilter}
             GROUP BY e."projectSourceId", d."state"`;
@@ -366,7 +368,8 @@ export async function listDeploymentEnvironmentsInTx(tx: Tx, actorAccountId: str
             // Exact visible groups consume Environment headers, not latest-attempt
             // history. Ordinary inventory retains its incumbent receipt projection.
             deployments: input.environmentIds === undefined
-                ? { orderBy: [{ requestedAt: 'desc' }, { id: 'desc' }], take: 1 } : false,
+                ? { where: { state: { not: DEPLOYMENT_SKIPPED_STATE_V1 } },
+                    orderBy: [{ requestedAt: 'desc' }, { id: 'desc' }], take: 1 } : false,
             domains: input.environmentIds === undefined ? { where: { deletedAt: null }, orderBy: { id: 'asc' } } : false,
             runtimeTargetLink: { include: { machines: { orderBy: { position: 'asc' } },
                 activeDeployment: input.environmentIds === undefined } } } });
@@ -569,6 +572,7 @@ export async function listDeploymentReceiptsInTx(tx: Tx, actorAccountId: string,
     }
     const filters: Prisma.DeploymentWhereInput = { environmentId: input.environmentId,
         ...(input.state ? { state: input.state } : {}),
+        ...(input.attemptsOnly ? { NOT: { state: DEPLOYMENT_SKIPPED_STATE_V1 } } : {}),
         ...(input.actorAccountId ? { requestedByAccountId: input.actorAccountId } : {}),
         ...(input.requestedAtFromMs !== undefined || input.requestedAtToMs !== undefined ? { requestedAt: {
             ...(input.requestedAtFromMs === undefined ? {} : { gte: new Date(input.requestedAtFromMs) }),

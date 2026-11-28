@@ -428,11 +428,12 @@ export function registerDeploymentRoutes(app: Fastify): void {
     app.get('/v1/deployments/environments/:environmentId/deployments', { preHandler: app.authenticate, config: { allowApiToken: true }, attachValidation: true,
         schema: { params: environmentParams,
             querystring: z.extend(z.omit(inputs['deployments.receipts.list'], { environmentId: true, limit: true, inProgressOnly: true,
-                requestedAtFromMs: true, requestedAtToMs: true }), {
+                attemptsOnly: true, requestedAtFromMs: true, requestedAtToMs: true }), {
                 limit: z.optional(z.coerce.number().check(z.int(), z.positive())),
                 requestedAtFromMs: z.optional(z.pipe(z.coerce.number(), DeploymentTimestampV1Schema)),
                 requestedAtToMs: z.optional(z.pipe(z.coerce.number(), DeploymentTimestampV1Schema)),
                 inProgressOnly: z.optional(z.pipe(z.literal('true'), z.transform(() => true as const))),
+                attemptsOnly: z.optional(z.pipe(z.literal('true'), z.transform(() => true as const))),
             }), response: responses(outputs['deployments.receipts.list']) },
     }, async (request, reply) => {
         if (request.validationError) return reply.code(400).send(invalid);

@@ -3,7 +3,7 @@
 
 import type { ActionFailureCauseV1 } from '../../errors/index.js';
 import type { JsonValue } from '../../identity.js';
-import type { ActionDtoShape_018437f8f05070dd, ActionDtoShape_0279048094abc5b6, ActionDtoShape_045ce964ea391ad1, ActionDtoShape_09a4639393506c16, ActionDtoShape_0ebedc14ad6b6a8e, ActionDtoShape_159c9fd4dc5dd0a4, ActionDtoShape_16a808f15ad647d4, ActionDtoShape_256a68867cb6be26, ActionDtoShape_30b92f959ee9c956, ActionDtoShape_3d618f20d09cda76, ActionDtoShape_40d8ebd4cc6422ed, ActionDtoShape_4aca10a60374cec6, ActionDtoShape_77534bf5345eec2d, ActionDtoShape_777f079280abd79c, ActionDtoShape_8efbfd06cfc7c50d, ActionDtoShape_90f5b4887bf1dae9, ActionDtoShape_9ff4b783ef141d26, ActionDtoShape_a4762e7d427920b9, ActionDtoShape_a533c664dedf9813, ActionDtoShape_b27ea75caff993f2, ActionDtoShape_b47b3f510e786181, ActionDtoShape_c292549f293974ca, ActionDtoShape_cb1a5502e55dedb3, ActionDtoShape_d19b7975da80e800, ActionDtoShape_d23aeab3e1dbcbf2, ActionDtoShape_da319ee9a42e92ba, ActionDtoShape_ee4b7e5aa503dce6, ActionDtoShape_f8ca56adb798c02f, ActionDtoShape_fd179b907080596f } from './pluginActionDtoShapes.generated.js';
+import type { ActionDtoShape_018437f8f05070dd, ActionDtoShape_0279048094abc5b6, ActionDtoShape_045ce964ea391ad1, ActionDtoShape_09a4639393506c16, ActionDtoShape_0ebedc14ad6b6a8e, ActionDtoShape_159c9fd4dc5dd0a4, ActionDtoShape_16a808f15ad647d4, ActionDtoShape_256a68867cb6be26, ActionDtoShape_3d618f20d09cda76, ActionDtoShape_40d8ebd4cc6422ed, ActionDtoShape_4aca10a60374cec6, ActionDtoShape_77534bf5345eec2d, ActionDtoShape_777f079280abd79c, ActionDtoShape_835bedeb10be00ef, ActionDtoShape_8efbfd06cfc7c50d, ActionDtoShape_90f5b4887bf1dae9, ActionDtoShape_9ff4b783ef141d26, ActionDtoShape_a4762e7d427920b9, ActionDtoShape_a533c664dedf9813, ActionDtoShape_b27ea75caff993f2, ActionDtoShape_b47b3f510e786181, ActionDtoShape_c292549f293974ca, ActionDtoShape_cb1a5502e55dedb3, ActionDtoShape_d19b7975da80e800, ActionDtoShape_d23aeab3e1dbcbf2, ActionDtoShape_da319ee9a42e92ba, ActionDtoShape_ee4b7e5aa503dce6, ActionDtoShape_f8ca56adb798c02f, ActionDtoShape_fd179b907080596f } from './pluginActionDtoShapes.generated.js';
 
 export type ApprovalsActionInputById = {
     readonly "approval.request.list": {
@@ -235,7 +235,7 @@ export type ApprovalsActionResultById = {
         };
         deploymentReceipt?: undefined | {
             state: 'admitted';
-            receipt: ActionDtoShape_30b92f959ee9c956 | ActionDtoShape_045ce964ea391ad1;
+            receipt: ActionDtoShape_835bedeb10be00ef | ActionDtoShape_045ce964ea391ad1;
             approvalId: string;
             operation: 'deploy' | 'promote' | 'rollback' | 'teardown';
             environmentId?: string | undefined;
