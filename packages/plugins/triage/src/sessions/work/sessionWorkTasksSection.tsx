@@ -3,6 +3,7 @@ import type { RenderSurface } from '@happier-dev/plugin-sdk/ui';
 import {
   Item,
   ItemGroup,
+  Icon,
   TaskStatusGlyph,
   defineUiSurface,
   usePluginHostApi,
@@ -16,6 +17,7 @@ import { isHostCancellation } from '../../hostCancellation.js';
 import { triageEntryRowKey, type TriageListRowV1 } from '../../projection/listWindow.js';
 import { presentTriageMountedUiActionFailure } from '../../ui/mountedActions.js';
 import { openTriageLinkedEntry } from '../../ui/navigation/openLinkedEntry.js';
+import { projectTriageEntryDisplay, readTriageEntryGlyphV1 } from '../../ui/window/entryDisplay.js';
 import { useTriageListWindow } from '../../ui/window/useTriageListWindow.js';
 import { useTriageListWindowViewDemand } from '../../ui/window/useTriageListWindowViewDemand.js';
 
@@ -37,10 +39,9 @@ export function projectSessionWorkTasksV1(input: Readonly<{
 
   const matchedKeys = new Set<string>();
   for (const entry of taskProjection.entries) {
-    const linked = entry.result.kind === 'ready'
+    const linked = entry.result.kind !== 'failed'
       && entry.result.links.some((link) => link.sessionId === sessionId);
-    const claimed = entry.claim?.attemptBinding.kind === 'session'
-      && entry.claim.attemptBinding.sessionId === sessionId;
+    const claimed = entry.claim?.attemptBinding.sessionId === sessionId;
     if (linked || claimed) {
       matchedKeys.add(triageEntryRowKey(entry.entryRef));
     }
@@ -94,17 +95,19 @@ export function TriageSessionWorkTasksSection(): React.ReactElement | null {
       title={text('plugins.triage.tasks.title', 'Tasks')}
     >
       {tasks.map((row) => {
-        const observation = row.observation;
-        const category = triageTaskStatusCategoryV1(observation.task?.statusCategory ?? null, observation.lifecycle);
-        const statusLabel = observation.task?.statusName ?? observation.stateLabel;
-        const subtitle = [statusLabel, observation.scopeLabel].filter((part): part is string => Boolean(part && part.trim())).join(' · ');
+        const display = projectTriageEntryDisplay(row, text);
+        const state = row.content?.outcome.snapshot.state;
+        const category = state === undefined ? null : triageTaskStatusCategoryV1(state);
+        const subtitle = [display.lifecycleLabel, display.scopeLabel].filter(part => part?.trim()).join(' · ');
         return (
           <Item
-            key={triageEntryRowKey(row.entryRef)}
+            key={display.key}
             testID={`triage-session-work-task:${row.entryRef.entryId}`}
-            title={observation.title}
+            title={display.title}
             subtitle={subtitle || undefined}
-            icon={<TaskStatusGlyph category={category} />}
+            icon={category === null
+              ? <Icon name={readTriageEntryGlyphV1(display.lifecyclePresentation, null)} size="small" />
+              : <TaskStatusGlyph category={category} />}
             onPress={() => openTask(row)}
           />
         );
