@@ -485,6 +485,30 @@ export timing-mode runs with both instruments observed OFF on each side;
 otherwise they are unavailable. Legacy unspecified-mode bundles never qualify. Inspect captured host
 load and gaps before treating any comparison as a performance result.
 
+## ADEMark timing replay
+
+Produce one timing row from a group of existing samples using the Stack perf CLI.
+
+```sh
+node apps/stack/scripts/perf/perf.mjs ademark \
+  --bed agent-qa-perf-bed --host nl1 --n 3 --samples samples.json
+```
+
+The input JSON object contains `bed`, `host`, a full Git `rev`, the UTC capture
+time `at` (the ISO string with milliseconds), `metric`, and `samples`. Capture
+all repeats on the same bed, host and loaded revision. Each pair of markers
+must be in milliseconds on a common clock.
+
+| Metric | Start marker | End marker |
+| --- | --- | --- |
+| `A1-web-cold` | `navigationStartMs` | `firstSessionRowPaintMs` |
+| `A4-first-request` | `startTapMs` | `firstProviderRequestMs` |
+
+A successful replay emits `{metric, unit, n, p50, p90, host, rev, at}` on one
+line. The percentiles use nearest rank. An invalid interval, bed or host
+mismatch, or incomplete repeat count fails the replay. Replay consumes
+captured intervals and does not start a QA bed or drive its browser or provider.
+
 ## Request census (per-screen and per-flow request budgets)
 
 `request-census.mjs` is a lighter live check for repeated-request bugs. It

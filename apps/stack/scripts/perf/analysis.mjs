@@ -287,7 +287,7 @@ export function summarizeLogs(input, { startMs, endMs, date } = {}) {
     daemon: records.filter(record => ['daemon-control', 'external-action-stage'].includes(record.module)) };
 }
 
-function percentile(values, fraction) {
+export function percentile(values, fraction) {
   const sorted = [...values].sort((a, b) => a - b);
   return sorted[Math.max(0, Math.ceil(sorted.length * fraction) - 1)];
 }

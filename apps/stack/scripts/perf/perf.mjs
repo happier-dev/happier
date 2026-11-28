@@ -345,12 +345,22 @@ async function journey(id, options, runtime = {}) {
 
 export async function runPerformanceCli(argv = process.argv.slice(2), runtime = {}) {
   const [mode, id, after] = argv;
+  if (mode === 'ademark') {
+    try {
+      const { replayAdemarkSamples } = await import('./ademark.mjs');
+      process.stdout.write(JSON.stringify(await replayAdemarkSamples(argv.slice(1))) + '\n');
+    } catch (error) {
+      console.error(error.message);
+      process.exitCode = 1;
+    }
+    return;
+  }
   const options = Object.fromEntries(argv.slice(2).filter(arg => arg.startsWith('--')).map(arg => {
     const index = arg.indexOf('='); return index < 0 ? [arg.slice(2), true] : [arg.slice(2, index), arg.slice(index + 1)];
   }));
   if (mode === 'compare' && id && after) await compare(id, after);
   else if (mode === 'journey' && id) await journey(id, options, runtime).catch(error => { console.error(error.message); process.exitCode = 1; });
-  else console.log('node apps/ui/scripts/perf/agentBrowserUiPerfAudit.mjs journey J1|J13|J13-settled --session=P0-H --cdp=http://127.0.0.1:PORT --url=QA_URL --home-selector=CSS --cache=cold|warm --ui-mode=export|dev --capture-mode=timing|counts [--profiling] [--backend-profile=server,daemon] [--restore-stdin] [--out=NEW_DIRECTORY] [--journey=JSON_PATH] [--page-id=ID]\nnode apps/ui/scripts/perf/agentBrowserUiPerfAudit.mjs compare BEFORE_DIRECTORY AFTER_DIRECTORY');
+  else console.log('node apps/ui/scripts/perf/agentBrowserUiPerfAudit.mjs journey J1|J13|J13-settled --session=P0-H --cdp=http://127.0.0.1:PORT --url=QA_URL --home-selector=CSS --cache=cold|warm --ui-mode=export|dev --capture-mode=timing|counts [--profiling] [--backend-profile=server,daemon] [--restore-stdin] [--out=NEW_DIRECTORY] [--journey=JSON_PATH] [--page-id=ID]\nnode apps/ui/scripts/perf/agentBrowserUiPerfAudit.mjs compare BEFORE_DIRECTORY AFTER_DIRECTORY\nnode apps/stack/scripts/perf/perf.mjs ademark --bed NAME --host HOST --n COUNT --samples PATH');
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await runPerformanceCli();
