@@ -32,6 +32,25 @@ import {
   validateActionCliFlagCollisions,
 } from './parseCommandInput';
 
+it('admits explicit managed Delete flags with the required dependency confirmation', () => {
+  const command = findCompiledActionCliCommand(['machines', 'managed', 'delete'])!;
+  const spec = getActionSpec('machines.managed.delete');
+  const compose = (...effectFlags: string[]) => {
+    const parsed = parseActionCliCommandInput(command, [...command.path, '--home-id', 'home', '--managed-id', 'managed',
+      '--when', 'now', '--expected-revision', '0', ...effectFlags]);
+    if (!parsed.ok) return parsed;
+    return composeActionCliInput({ parsed, canonicalSchema: spec.inputSchema, callerSchema: command.callerSchema,
+      wholeInputSchema: command.wholeInputSchema, bindInput: command.bindInput,
+      context: { actionId: spec.id, invocationId: 'managed-delete', commandPath: command.path } });
+  };
+  expect(compose('--intent', 'delete', '--reviewed-dependencies'))
+    .toMatchObject({ ok: true, input: { homeId: 'home', managedId: 'managed', when: 'now',
+      expectedRevision: 0, intent: 'delete', reviewedDependencies: true } });
+  expect(compose('--intent', 'delete')).toMatchObject({ ok: false });
+  expect(compose('--intent', 'delete', '--no-reviewed-dependencies')).toMatchObject({ ok: false });
+  expect(compose('--intent', 'stop', '--reviewed-dependencies')).toMatchObject({ ok: false });
+});
+
 it('keeps generated Session creation CLI fields and whole JSON safe for the strict pre-observation reader', () => {
   const spec = getActionSpec('session.spawn_new');
   const compiled = compileActionCliFields(spec);

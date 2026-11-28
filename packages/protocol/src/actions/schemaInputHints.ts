@@ -53,6 +53,7 @@ function fieldPresentation(schema: JsonSchemaObject): Pick<ActionInputFieldHint,
 export function deriveActionInputHints(
   schema: JsonSchemaObject | undefined,
   authored: ActionInputHints | undefined,
+  hideFixedFields = true,
 ): ActionInputHints | undefined {
   if (!schema) return authored;
   const authoredFields = authored?.fields ?? [];
@@ -84,7 +85,7 @@ export function deriveActionInputHints(
       const property = variants[0]!;
       const required = parentRequired && alternatives.every(alternative => Array.isArray(alternative.required) && alternative.required.includes(key));
       const authoredIndex = fields.findIndex(field => field.path === path);
-      if (Object.hasOwn(property, 'const') && variants.length === alternatives.length
+      if (hideFixedFields && Object.hasOwn(property, 'const') && variants.length === alternatives.length
         && variants.every(variant => sameStrictJsonValue(property.const, variant.const))) {
         const fixed = StrictJsonValueSchema.safeParse(property.const);
         if (fixed.success) {
@@ -127,6 +128,7 @@ export function deriveActionInputHints(
 function withDerivedHints<T extends Readonly<{ inputSchema: ActionSpec['inputSchema']; inputHints?: ActionInputHints }>>(
   spec: T,
   readAuthoredHints = () => spec.inputHints,
+  hideFixedFields = true,
 ): T {
   const projected = { ...spec };
   Object.defineProperty(projected, 'inputHints', {
@@ -135,7 +137,9 @@ function withDerivedHints<T extends Readonly<{ inputSchema: ActionSpec['inputSch
     get() {
       // Prepare once on demand for this immutable catalog row, never eagerly
       // project the complete Action schema graph during Protocol module load.
-      const value = deriveActionInputHints(zodSchemaToJsonSchemaObject(spec.inputSchema, { unrepresentable: 'any' }), readAuthoredHints());
+      const value = deriveActionInputHints(
+        zodSchemaToJsonSchemaObject(spec.inputSchema, { unrepresentable: 'any' }), readAuthoredHints(), hideFixedFields,
+      );
       Object.defineProperty(projected, 'inputHints', { value, enumerable: true });
       return value;
     },
@@ -155,12 +159,12 @@ export function completeActionInputHints(spec: ActionSpec): ActionSpec {
       ? { ...authored, fields: authored.fields.filter(field => fields.has(field.path.split('.')[0]!)) }
       : authored;
   });
+  const cli = spec.cli;
   return withDerivedHints({
     ...spec,
-    ...(spec.cli ? { cli: withDerivedHints({ ...spec.cli,
-      inputSchema: spec.cli.inputSchema ?? spec.inputSchema,
-      inputHints: spec.cli.inputHints ?? spec.inputHints,
-    }) } : {}),
+    ...(cli ? { cli: withDerivedHints({ ...cli,
+      inputSchema: cli.inputSchema ?? spec.inputSchema,
+    }, () => cli.inputHints ?? spec.inputHints, false) } : {}),
     ...(spec.surfaceBindings ? { surfaceBindings: { ...spec.surfaceBindings,
       ...(agent ? { agent: toolHints(agent) } : {}),
       ...(mcp ? { mcp: toolHints(mcp) } : {}),
