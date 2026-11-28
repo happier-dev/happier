@@ -7,7 +7,7 @@ import {
   type GithubApiClientV1,
   type GithubApiResponseV1,
 } from '../observations/githubApiClient.js';
-import { GITHUB_API_ORIGIN } from '../observations/githubProviderContracts.js';
+import { GITHUB_API_ORIGIN, tryReadGithubPositiveDecimal } from '../observations/githubProviderContracts.js';
 
 import {
   classifyGithubResponseFailure,
@@ -339,6 +339,8 @@ export type GithubPullRequestSourceTipV1 = Readonly<{
 }>;
 
 export type GithubPullRequestFactsV1 = GithubIssueFactsV1 & Readonly<{
+  /** Database identity used by retained pull-request lifecycle events. */
+  pullRequestId: string | null;
   /** The validated provider pull-request number from this reread. */
   number: number;
   /** GitHub's own `state`, trimmed: `open` or `closed`. */
@@ -418,6 +420,7 @@ function readGithubPullRequestFacts(
     : null;
   return Object.freeze({
     ...readGithubIssueFacts(raw),
+    pullRequestId: tryReadGithubPositiveDecimal(raw.id),
     number,
     // GitHub publishes both; either one alone is enough to prove the merge happened,
     // and requiring both would report an already-merged pull request as unmerged.

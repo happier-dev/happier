@@ -1,3 +1,13 @@
+import { prepareHostReviewedChildPolicyV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleApproval';
+import { createAccountWorkflowTriggerActions } from '@happier-dev/protocol/actions/executor/workflowTriggerAccountHost';
+import { recordPresentUserApprovalV1 } from '@happier-dev/protocol/actions/executor/approvalReview';
+import { freezeWorkflowActionContractV1 } from '@happier-dev/protocol/actions/actionCatalog';
+import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/automationTriggerIdentity';
+import { AutomationSourceSelectorIdV1Schema } from '@happier-dev/protocol/automations/automationOccurrenceV1';
+import { sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
+import { AutomationDefinitionDetailSchema } from '@happier-dev/protocol/automations/automationApiV3';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
+import { readTriggerApprovedOperationForRun } from '@/daemon/workflows/workflowApprovedOperation';
 import { afterEach, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import fastify from 'fastify';
@@ -15,7 +25,7 @@ import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
 import { PLUGIN_MANIFEST } from '../../../../packages/plugins/scm-github/src/manifest';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import { deploymentEvents, deploymentEventActions, deploymentEventBackgroundServices } from '../../../../packages/plugins/machine-services/src/deploymentEvents';
-import { DEPLOYMENT_RECEIPT_EVENT_REFS_V1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
+import { DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1, DEPLOYMENT_RECEIPT_EVENT_REFS_V1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { GITHUB_CONNECTED_ACCOUNT_SERVICE } from '../../../../packages/plugins/scm-github/src/observations/githubProviderContracts';
 import { GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1 } from '../../../../packages/plugins/scm-github/src/triage/contribution';
 import { createPreviewEnrollmentForHost } from './previewEnrollment';
@@ -35,7 +45,8 @@ import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { activate, activateAccount } from '../../../../packages/plugins/scm-github/src/activate';
 import { CONFIGURED_ACCOUNT, REPOSITORY_KEY, previewStatusTransport } from '../../../../packages/plugins/scm-github/src/triage/testkit/githubMutation.test-support';
 import { GITHUB_FIXTURE_OWNER, GITHUB_FIXTURE_REPOSITORY, GITHUB_FIXTURE_REPOSITORY_ID } from '../../../../packages/plugins/scm-github/src/triage/__fixtures__/githubResponses';
-import { bindAutomationWorkflowInputs, resolveWorkflowActionFieldBinding } from '@/daemon/workflows/input';
+import { resolveWorkflowActionFieldBinding } from '@/daemon/workflows/input';
+import { sealWorkflowTriggerEventValuesV1 } from '@happier-dev/protocol/workflows/workflowTriggerEventReferenceV1';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { DeploymentReceiptChangedEventV1Schema } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { createForegroundPurposeOwnerFixture } from '@/daemon/agentRuntime/prepareForegroundAdmission.connectedServices.testkit';
@@ -44,7 +55,7 @@ import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/proto
 
 afterEach(() => { vi.restoreAllMocks(); });
 
-async function fixture(setupRefused = false, statusJourney = false) {
+async function fixture(setupRefused = false, statusJourney = false, projectNameUnavailable = false) {
     const serverId = statusJourney ? 'srv_preview' : 'home';
     const manifest = normalizePluginManifestV2(PLUGIN_MANIFEST);
     const loaded: LoadedPlugin = { pluginId: manifest.id, manifest,
@@ -127,13 +138,69 @@ async function fixture(setupRefused = false, statusJourney = false) {
         { value: { service: GITHUB_CONNECTED_ACCOUNT_SERVICE, accountId: 'available-account' }, label: 'Available account' },
     ];
     const enrollment = createPreviewEnrollmentForHost({ serverId, machineId: 'controller',
+        readProjectName: async () => 'field-guide-site',
         readEnvironment: async () => ({ ...environment, targetLinks: environment.targetLinks.map(row => row.targetLink) }),
+        ...(projectNameUnavailable ? { readProjectName: async () => { throw new Error('Project transport unavailable'); } } : {}),
         listEnvironments: async () => ({ ok: true, items: [], nextCursor: null, coverage: 'complete' }),
         listActionFormConnectedAccountOptions: async () => connectedOptions,
         acquirePluginRuntimeRegistryLease: async () => ({ registry: { contributes,
             resolveConnectedAccountPurposeBindingOwner: () => selected.owner },
             resolveCurrentPluginMaterializationRef: pluginId => ({ pluginId, machineId: 'controller', materializationId: 'installed' }),
             release: async () => {} }) });
+    const reviewer = 'preview-reviewer';
+    const unavailable = async (): Promise<never> => { throw new Error('Unexpected Automation storage operation'); };
+    const ids = ['22222222-2222-4222-8222-222222222222', '44444444-4444-4444-8444-444444444444'];
+    const triggers = createAccountWorkflowTriggerActions({
+        automations: { get: unavailable, list: async () => ({ automations: [], nextCursor: null }),
+            listDetails: unavailable, reconcile: unavailable, delete: unavailable,
+            async readTriggerEventDeclarations({ triggerEventDeclarations }) {
+                return { triggerEvents: triggerEventDeclarations.map(({ eventRef }) => {
+                    const declaration = contributes.automationEligibleEvents?.find(({ event }) =>
+                        event.identity.pluginId === eventRef.pluginId && event.identity.localId === eventRef.localId);
+                    if (!declaration?.event.payloadSchema) throw new Error('Expected the registered receipt Event payload schema');
+                    return { event: eventRef, payloadSchema: declaration.event.payloadSchema };
+                }) };
+            },
+            async create(request) {
+                const selected = request.triggers[0];
+                if (!selected || selected.trigger.kind !== 'pluginEvent' || 'triggerDefinitionEnvelope' in selected.trigger) {
+                    throw new Error('Expected a plain Account receipt Event');
+                }
+                const trigger = selected.trigger;
+                const sourceSelectorId = AutomationSourceSelectorIdV1Schema.parse('00000000-0000-4000-8000-000000000001');
+                const envelope = sealAutomationTriggerDefinitionStoredEnvelopeV1({
+                    mode: 'plain',
+                    binding: { v: 1, automationId: request.automationId, triggerId: AutomationTriggerIdSchema.parse(selected.triggerId),
+                        triggerRevision: 0, triggerKind: 'pluginEvent', eventRef: trigger.eventRef, sourceSelectorId },
+                    definition: { v: 1, sourceInstanceId: trigger.sourceInstanceId, sourceConfig: trigger.sourceConfig,
+                        displayLabel: trigger.displayLabel, filter: trigger.filter, maximumObservationAgeMs: trigger.maximumObservationAgeMs },
+                });
+                return AutomationDefinitionDetailSchema.parse({
+                    id: request.automationId, name: request.name, description: null, enabled: request.enabled,
+                    targetType: null, existingSessionId: null, lastRunAt: null, createdAt: 1, updatedAt: 1,
+                    templateVersion: 1, workflowDefinitionId: null, scopeSessionId: null, executionRecipe: request.executionRecipe,
+                    assignments: request.assignments?.map(assignment => ({ ...assignment,
+                        enabled: assignment.enabled ?? true, priority: assignment.priority ?? 0, updatedAt: 1 })),
+                    triggers: [{ kind: 'pluginEvent', id: selected.triggerId, revision: 0, createdAt: 1, updatedAt: 1,
+                        enabled: trigger.enabled, eventRef: trigger.eventRef, sourceSelectorId,
+                        sourceContractVersion: trigger.sourceContractVersion, observation: { kind: 'checkpointedPull', watcher: null },
+                        sourceStatus: null, sourceCatalogStatus: null, triggerDefinitionEnvelope: JSON.stringify(envelope) }],
+                });
+            } },
+        resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
+        resolveWorkflow: unavailable, randomBytes: size => new Uint8Array(size), newId: () => {
+            const id = ids.shift();
+            if (!id) throw new Error('Unexpected Automation id allocation');
+            return id;
+        },
+        nativeAccount: { accountId: reviewer, serverId, isCurrent: async () => true },
+        resolveMaterializer: async () => ({ effects: { resolveTargetAvailability: async () => true,
+            readActionContract: async id => {
+                const ref = parseQualifiedPluginActionId(id);
+                const action = ref && readResolvedActionContribution(contributes, ref);
+                return action ? freezeWorkflowActionContractV1({ ...action.definition, outputSchema: action.definition.outputSchema ?? {} }) : null;
+            } } }),
+    });
     async function save(enabled: boolean | null, afterPrepare?: () => Promise<void>, previewWatcher?: typeof connectedOptions[number]['value']) {
         const input = { environmentId: environment.environment.id, previewWatcher,
             patch: { previewTemplate: enabled === null ? null : { ...environment.content.previewTemplate!, enabled } } };
@@ -143,16 +210,45 @@ async function fixture(setupRefused = false, statusJourney = false) {
         await afterPrepare?.();
         if (enabled === null) delete environment.content.previewTemplate;
         else environment.content.previewTemplate = input.patch.previewTemplate ?? undefined;
-        const preparedContext = await plan.prepareExecutionContext({});
-        const context = { ...preparedContext, hostReviewedChild: createHostReviewedChildPortV1({ actionId: 'deployments.environments.update',
-            input, context: {}, plan, async execute(input, _context, actionId) {
+        const requestId = 'review-preview-template';
+        const parentAction = 'deployments.environments.update';
+        const caller: ActionExecutorContext = statusJourney ? {
+            surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+            serverId, runtimeAccountId: reviewer, actionRequestId: requestId, actionsSettings: normalizeActionsSettingsV1(undefined),
+            presentUserApproval: recordPresentUserApprovalV1({ actionId: parentAction, requestId, input, decidingAccountId: reviewer }),
+        } : {};
+        let triggerFailure: unknown;
+        const preparedContext = await plan.prepareExecutionContext(caller);
+        const policies = statusJourney ? plan.children.map(child => {
+            const policy = prepareHostReviewedChildPolicyV1(child, preparedContext);
+            if (!policy) throw new Error('Expected the Environment child admission policy');
+            return policy;
+        }) : undefined;
+        const context = { ...preparedContext, hostReviewedChild: createHostReviewedChildPortV1({ actionId: parentAction,
+            input, context: preparedContext, plan, ...(policies ? { policies, reviewAdmitted: true as const } : {}),
+            async execute(input, context, actionId) {
+                const parsed = actionId === 'workflow.trigger.add' ? WorkflowTriggerAddRequestV1Schema.parse(input) : null;
+                if (statusJourney && parsed?.trigger.kind === 'pluginEvent'
+                    && parsed.trigger.eventRef.localId === 'deployment-receipt-changed') {
+                    calls.push({ actionId, input });
+                    try {
+                        const result = await triggers.add(parsed, context);
+                        saved.push(result.set);
+                        return { ok: true, result };
+                    } catch (error) {
+                        triggerFailure = error;
+                        throw error;
+                    }
+                }
                 const response = await app.inject({ method: 'POST', url: '/child', payload: { actionId, input } });
                 responses.push(response.body);
                 return ActionExecuteResultSchema.parse(response.json());
             } }) };
         // Storage receives only its public patch after private Artifact preparation.
-        return DeploymentActionOutputSchemasV1['deployments.environments.update'].parse(await enrollment.completeUpdate(
-            { ok: true, environmentId: environment.environment.id, revision: ++environment.environment.revision }, { ...input, patch: {} }, context));
+        const updated = await enrollment.completeUpdate(
+            { ok: true, environmentId: environment.environment.id, revision: ++environment.environment.revision }, { ...input, patch: {} }, context);
+        if (triggerFailure) throw triggerFailure;
+        return DeploymentActionOutputSchemasV1['deployments.environments.update'].parse(updated);
     }
     async function selectSetupAccount(accountId: string) {
         await selected.store.update(current => ({ ...current, bindings: [{ ...selected.binding,
@@ -272,6 +368,7 @@ it('requires explicit review before enabling the GitHub hook even with a saved U
         expect(outcome).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
         expect(confirm).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ actionId, preview: expect.objectContaining({
             summary: expect.stringContaining('Happier also receives pull request events from this repository'),
+            hostReviewedContent: { previewsUpdate: { projectName: 'field-guide-site', environmentName: f.environment.content.name } },
         }) }));
         expect(effect).not.toHaveBeenCalled();
     } finally { await f.app.close(); }
@@ -337,11 +434,11 @@ it('enrolls receipt changes into the existing Forge status Action and reuses its
         expect(status).toBeDefined();
         expect(status?.context?.deploymentPreview).toBeUndefined();
         expect(status?.target).toMatchObject({ kind: 'inline', definition: {
-            inputs: [{ name: 'payload', valueType: 'json', required: true }],
+            inputs: [],
             blocks: [{ kind: 'action', actionId: `${PLUGIN_MANIFEST.id}/actions/${GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestPreviewStatus}`, input: {
                 templateEnvironmentId: { kind: 'literal', value: f.environment.environment.id },
-                environmentId: { kind: 'input', name: 'payload', path: ['environmentId'] },
-                deploymentId: { kind: 'input', name: 'payload', path: ['deploymentId'] },
+                environmentId: { kind: 'trigger_event', path: ['environmentId'] },
+                deploymentId: { kind: 'trigger_event', path: ['deploymentId'] },
             } }],
         } });
         await f.selectSetupAccount('replacement-account');
@@ -379,6 +476,14 @@ it('preserves an unrelated multi-action Workflow while refreshing the exact stat
     } finally { await f.app.close(); }
 });
 
+it('saves a preview disable when its display-only Project name cannot be read', async () => {
+    const f = await fixture(false, false, true);
+    try {
+        expect(await f.save(false)).toMatchObject({ ok: true, previewEnrollment: { status: 'disabled' } });
+        expect(f.environment.content.previewTemplate?.enabled).toBe(false);
+    } finally { await f.app.close(); }
+});
+
 it('publishes ready through the enrolled receipt Workflow and the registered Forge Action', async () => {
     const f = await fixture(false, true);
     const transport = previewStatusTransport({ operation: 'deploy', pullRequestState: 'open', domainState: 'active' });
@@ -388,15 +493,40 @@ it('publishes ready through the enrolled receipt Workflow and the registered For
         expect(await f.save(true)).toMatchObject({ ok: true, previewEnrollment: { status: 'enrolled' } });
         const status = f.saved.find(set => set.triggers.some(trigger => trigger.kind === 'pluginEvent'
             && trigger.eventRef.localId === 'deployment-receipt-changed'));
-        if (status?.target.kind !== 'inline') throw new Error('The saved receipt source must execute its ordinary inline Workflow');
+        if (status?.target?.kind !== 'inline') throw new Error('The saved receipt source must execute its ordinary inline Workflow');
+        const approval = status.context?.actionApprovals?.[0];
+        expect(approval?.operation.approvedBy).toEqual({ accountId: 'preview-reviewer' });
+        const receipt = status.triggers[0];
+        if (!approval || receipt?.kind !== 'pluginEvent') throw new Error('Expected stored receipt consent');
+        const event = receipt.eventRef;
+        expect(approval.operation.steps).toEqual([{
+            actionId: `${PLUGIN_MANIFEST.id}/actions/${GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestPreviewStatus}`,
+            input: { v: 1, serverId: 'srv_preview', templateEnvironmentId: 'preview-template', sourceConfig: {
+                v: 1, credentialRef: CONFIGURED_ACCOUNT, repository: { v: 1, repositoryId: GITHUB_FIXTURE_REPOSITORY_ID,
+                    owner: GITHUB_FIXTURE_OWNER, name: GITHUB_FIXTURE_REPOSITORY, nameWithOwner: REPOSITORY_KEY },
+            } },
+            binding: { kind: 'trigger_event', references: {
+                environmentId: { kind: 'trigger_event', event, path: ['environmentId'] },
+                deploymentId: { kind: 'trigger_event', event, path: ['deploymentId'] },
+            } },
+        }]);
+        expect(readTriggerApprovedOperationForRun(status.context?.actionApprovals, receipt.id, 'preview-reviewer'))
+            .toEqual(approval.operation);
+        expect(readTriggerApprovedOperationForRun(status.context?.actionApprovals, receipt.id, 'other-account'))
+            .toBeUndefined();
         const definition = status.target.definition;
+        const authoring = f.calls.find(call => call.actionId === 'workflow.trigger.add'
+            && readRecord(readRecord(call.input).trigger).sourceInstanceId === 'preview-receipts');
+        expect(authoring?.input).toMatchObject({ actionApproval: 'automatic' });
         const leaf = definition.blocks[0];
         if (leaf?.kind !== 'action') throw new Error('The receipt Workflow must invoke the registered Forge Action');
         const payload = DeploymentReceiptChangedEventV1Schema.parse({ environmentId: 'preview-child',
             deploymentId: 'preview-teardown', targetLinkId: 'preview-runtime', receiptRevision: 1, observedAt: 1,
             operation: 'deploy', state: 'succeeded' });
-        const inputs = bindAutomationWorkflowInputs({ definition, evidence: { payload } });
-        const runtime = { inputs, resolveResult: async (): Promise<never> => { throw new Error('No prior Workflow result is required'); },
+        const triggerEventValues = sealWorkflowTriggerEventValuesV1([definition], {
+            event: DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1, payload,
+        });
+        const runtime = { inputs: {}, triggerEventValues, resolveResult: async (): Promise<never> => { throw new Error('No prior Workflow result is required'); },
             resolveWorkspace: async (): Promise<never> => { throw new Error('No workspace lookup is required'); } };
         const operand = Object.fromEntries(await Promise.all(Object.entries(leaf.input).map(async ([name, binding]) =>
             [name, await resolveWorkflowActionFieldBinding(binding, runtime)])));

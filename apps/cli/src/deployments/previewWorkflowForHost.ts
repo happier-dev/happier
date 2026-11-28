@@ -109,7 +109,7 @@ export async function resolvePreviewWorkflowForHost(input: PreviewWorkflowForHos
             ...(template.environment.deployerPrincipals ? { deployerPrincipals: template.environment.deployerPrincipals } : {}),
             preview: { templateEnvironmentId: template.environment.id, expectedTemplateRevision: template.environment.revision,
                 runtimeTargetLinkId: policy.runtimeTargetLinkId, pullRequestId: input.event.id, headSha: input.event.headSha,
-                provenance: provenance.data },
+                provenance: provenance.data, ...(input.event.title ? { pullRequestTitle: input.event.title } : {}) },
         });
     const blocks: WorkflowBlock[] = [{ id: createId, kind: 'action', actionId: DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1,
         input: createInput }];

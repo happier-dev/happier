@@ -1,6 +1,6 @@
 import type { GithubTriageInvocationContext } from '../invocation.js';
 import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
-import { isPluginError } from '@happier-dev/plugin-sdk/errors';
+import { isPluginError, PluginError } from '@happier-dev/plugin-sdk/errors';
 import { isPluginActionApprovalRequestCreated, type DeploymentsActionResultById } from '@happier-dev/plugin-sdk/actions';
 import { deploymentInProgressStates } from '@happier-dev/plugin-sdk/events';
 import {
@@ -26,6 +26,7 @@ import {
 import { publishGithubPullRequestPreviewStatus } from './previewStatus.js';
 
 type Request = GithubPullRequestPreviewStatusInputV1;
+type ReceiptRequest = Exclude<ReturnType<typeof GithubPullRequestPreviewStatusActionInputV1Schema.parse>, Request>;
 type Refusal = Extract<GithubPullRequestPreviewStatusResultV1, { kind: 'refused' | 'failed' }>;
 type Environment = Extract<DeploymentsActionResultById['deployments.environments.get'], { ok: true }>;
 type ContentReference = Pick<Environment['environment'], 'contentArtifactId' | 'contentHeaderVersion' | 'contentBodyVersion'>;
@@ -77,12 +78,12 @@ function isEnvironment(value: Environment | Refusal): value is Environment { ret
 /** One private receipt/provenance/Domain readiness owner for the read and publication Actions. */
 export async function readGithubPreviewDeployment(request: Pick<Request, 'serverId' | 'environmentId'>,
   admitted: Extract<GithubAdmittedInvocationV1, { ok: true }>, context: GithubTriageInvocationContext,
-  retainedChild?: Environment): Promise<PreviewDeployment> {
+  retained?: { child: Environment; body: Awaited<ReturnType<typeof readArtifact>> }): Promise<PreviewDeployment> {
   let child: Environment | Refusal;
   let receiptRaw;
   try {
     [child, receiptRaw] = await Promise.all([
-      retainedChild ?? readEnvironment(request.environmentId, request, context),
+      retained?.child ?? readEnvironment(request.environmentId, request, context),
       context.services.actions.execute('deployments.receipts.list', { serverId: request.serverId,
         environmentId: request.environmentId, limit: 1 }, { signal: context.signal }),
     ]);
@@ -117,7 +118,7 @@ export async function readGithubPreviewDeployment(request: Pick<Request, 'server
     [template, sourceResult, childBody, receiptBody] = await Promise.all([
       readEnvironment(environment.previewTemplateEnvironmentId, request, context),
       context.services.actions.execute('projects.sources.read', { serverId: request.serverId, sourceId: environment.projectSourceId }, { signal: context.signal }),
-      readArtifact(environment, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, context),
+      retained?.body ?? readArtifact(environment, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, context),
       readArtifact({ ...deployment, contentArtifactId }, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, context),
     ]);
   } catch (error) { context.signal.throwIfAborted(); return fail('deployment_content_unavailable', context.requestId, error); }
@@ -185,26 +186,44 @@ export async function publishGithubPullRequestPreviewStatusAction(input: unknown
   if (!parsed.success) return fail('github_mutation_input_invalid', context.requestId);
   const request = parsed.data;
   if ('sourceConfig' in request) {
-    const child = await readEnvironment(request.environmentId, request, context);
-    if (!isEnvironment(child)) return child;
-    let repository;
-    try { repository = parseGithubRepositorySourceConfig(request.sourceConfig.repository); }
-    catch { return fail('github_mutation_input_invalid', context.requestId); }
-    const localRef = buildGithubEntryLocalRef({ kindId: 'pull-request', repositoryId: repository.repositoryId,
-      nativeItemId: child.environment.previewPullRequestId });
-    const route = parseGithubRoutingToken(repository.nameWithOwner);
-    if (!localRef || !route) return changed();
-    const admitted = { ok: true as const, localRef, route, entryNumber: localRef.entryId, kindId: 'pull-request' as const,
-      client: await createGithubApiClient(context, request.sourceConfig.credentialRef), signal: context.signal };
-    const preview = await readGithubPreviewDeployment(request, admitted, context, child);
-    if (preview.kind !== 'deployment') return preview.kind === 'failed'
-      ? { kind: preview.kind, failure: preview.failure } : { kind: preview.kind, reason: preview.reason };
-    if (preview.provenance.templateEnvironmentId !== request.templateEnvironmentId || preview.deployment.id !== request.deploymentId) return changed();
-    const status = readGithubPreviewPublicationStatus(preview);
-    if (status === null) return changed();
-    return publishAdmittedPreview({ ...request, targetLinkId: preview.environment.runtimeTargetLinkId!,
-      expectedHeadSha: preview.servingSha, status, targetUrl: status === 'ready' ? preview.targetUrl : null }, preview, admitted, context);
+    const result = await publishReceiptPreviewStatus(request, context);
+    if (result.kind === 'applied') return result;
+    const code = result.kind === 'refused' ? result.reason : result.kind === 'failed'
+      ? result.failure.code : 'github_preview_status_outcome_uncertain';
+    throw new PluginError({ code, details: result });
   }
+  return publishReviewedPreviewStatus(request, context);
+}
+
+async function publishReceiptPreviewStatus(request: ReceiptRequest,
+  context: GithubTriageInvocationContext): Promise<GithubPullRequestPreviewStatusResultV1> {
+  const child = await readEnvironment(request.environmentId, request, context);
+  if (!isEnvironment(child)) return child;
+  let repository;
+  try { repository = parseGithubRepositorySourceConfig(request.sourceConfig.repository); }
+  catch { return fail('github_mutation_input_invalid', context.requestId); }
+  const body = await readArtifact(child.environment, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, context);
+  if (!body.ok) return fail(body.error, context.requestId);
+  const provenance = ProtocolDeploymentPreviewProvenanceV1Schema.safeParse(record(body.body) ? body.body.previewProvenance : undefined);
+  if (!provenance.success) return changed();
+  const localRef = buildGithubEntryLocalRef({ kindId: 'pull-request', repositoryId: repository.repositoryId,
+    nativeItemId: String(provenance.data.pullRequestNumber) });
+  const route = parseGithubRoutingToken(repository.nameWithOwner);
+  if (!localRef || !route) return changed();
+  const admitted = { ok: true as const, localRef, route, entryNumber: localRef.entryId, kindId: 'pull-request' as const,
+    client: await createGithubApiClient(context, request.sourceConfig.credentialRef), signal: context.signal };
+  const preview = await readGithubPreviewDeployment(request, admitted, context, { child, body });
+  if (preview.kind !== 'deployment') return preview.kind === 'failed'
+    ? { kind: preview.kind, failure: preview.failure } : { kind: preview.kind, reason: preview.reason };
+  if (preview.provenance.templateEnvironmentId !== request.templateEnvironmentId || preview.deployment.id !== request.deploymentId) return changed();
+  const status = readGithubPreviewPublicationStatus(preview);
+  if (status === null) return changed();
+  return publishAdmittedPreview({ ...request, targetLinkId: preview.environment.runtimeTargetLinkId!,
+    expectedHeadSha: preview.servingSha, status, targetUrl: status === 'ready' ? preview.targetUrl : null }, preview, admitted, context);
+}
+
+async function publishReviewedPreviewStatus(request: Request,
+  context: GithubTriageInvocationContext): Promise<GithubPullRequestPreviewStatusResultV1> {
   if (request.status !== 'ready' && request.targetUrl !== null) return { kind: 'refused', reason: 'preview_url_unavailable' };
   const admitted = await admitGithubEntryInvocation({ ...request, admissibleKinds: ['pull-request'] }, context);
   if (!admitted.ok) return { kind: 'failed', failure: admitted.failure };
@@ -217,7 +236,7 @@ export async function publishGithubPullRequestPreviewStatusAction(input: unknown
 async function publishAdmittedPreview(request: Pick<Request, 'serverId' | 'environmentId' | 'templateEnvironmentId' | 'targetLinkId'
   | 'deploymentId' | 'expectedHeadSha' | 'status' | 'targetUrl'>, preview: Extract<PreviewDeployment, { kind: 'deployment' }>,
   admitted: Extract<GithubAdmittedInvocationV1, { ok: true }>, context: GithubTriageInvocationContext): Promise<GithubPullRequestPreviewStatusResultV1> {
-  const environments = await readGithubPreviewEnvironments(request.serverId, admitted.route, admitted.localRef.entryId, context);
+  const environments = await readGithubPreviewEnvironments(request.serverId, admitted.route, preview.provenance.pullRequestId, context);
   if (!environments.ok) return fail(environments.error, context.requestId);
   if (!environments.items.some(environment => environment.id === request.environmentId)) return changed();
   if (preview.environment.previewTemplateEnvironmentId !== request.templateEnvironmentId

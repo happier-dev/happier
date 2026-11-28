@@ -16,6 +16,7 @@ export const ScmHostingPullRequestLifecycleV1Schema = lazyZodSchema(() => z.stri
     id: z.string().check(z.regex(/^[1-9][0-9]*$/)),
     number: z.number().check(z.int(), z.minimum(1)),
     action: ScmHostingPullRequestLifecycleActionV1Schema,
+    title: z.optional(z.string().check(z.minLength(1))),
     headSha: z.string().check(z.regex(/^[a-fA-F0-9]{40}$/)),
     headRef: z.string().check(z.minLength(1)), baseRef: z.string().check(z.minLength(1)),
     /** Omitted when the Forge did not supply draft status. */

@@ -259,6 +259,7 @@ export const DeploymentEnvironmentCreateIntentInputV1Schema = lazyZodSchema(() =
   /** Authored PR intent; the controller reads the selected template and protects child content. */
   preview: z.optional(z.extend(DeploymentPreviewReferenceV1Schema, {
     provenance: DeploymentPreviewProvenanceV1Schema, headSha: ScmCommitOidSchema,
+    pullRequestTitle: z.optional(DeploymentTextV1Schema),
   })),
   mode: z.optional(z.enum(['preview', 'apply'])),
   definition: z.optional(z.union([DeploymentStoredDefinitionInputV1Schema, DeploymentCatalogAppDefinitionInputV1Schema, DeploymentFolderDefinitionInputV1Schema,

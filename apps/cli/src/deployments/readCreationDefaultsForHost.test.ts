@@ -122,7 +122,7 @@ describe('deployment creation defaults at the captured Account and exact Project
         const sourceRead = headers.mock.calls.find(([, , transport]) => transport.path
             === '/v1/projects/sources/source?serverId=home');
         expect(sourceRead?.[1]).toBe(PROJECT_SOURCE_READ_ACTION_ID_V1);
-        expect(prepared).toEqual({ projectOwner: { kind: 'account', accountId: 'owner' },
+        expect(prepared).toEqual({ projectOwner: { kind: 'account', accountId: 'owner' }, projectName: 'Project',
             values: { buildMachineId: 'project-build', controllerMachineId: 'explicit-controller', retainPreviousDeployments: 0 },
             sources: { buildMachineId: 'project', controllerMachineId: 'explicit', retainPreviousDeployments: 'project' },
             reviewBasis: { projectSourceId: 'source', sourceRevision: 6, projectDefaultsRevision: 2,

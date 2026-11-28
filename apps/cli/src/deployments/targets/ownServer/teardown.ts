@@ -437,7 +437,7 @@ export function createOwnServerTeardownForHost(host: Host) {
                 }
                 const volumes: ReviewedNativeVolume[] | ActionExecuteFailure = prior
                     ? prior.content.teardown?.resources.filter(resource => resource.kind === 'data') ?? []
-                    : volumesInput?.length ? await readVolumes({ serverId: input.serverId, environmentId: input.environmentId,
+                    : (volumesInput?.length || removeEnvironment === true) ? await readVolumes({ serverId: input.serverId, environmentId: input.environmentId,
                         targetLinkId: link.id, reason: input.reason, ...(machines ? { machines } : {}) }, context, environment) : [];
                 if ('errorCode' in volumes) return volumes;
                 const selected = new Map(volumesInput?.map(volume => [volume.name, volume.disposition]));

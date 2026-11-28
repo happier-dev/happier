@@ -309,7 +309,7 @@ describe('saved deployment preview Workflow composition', () => {
         const managed = current.detail.content.previewTemplate!.data.find(selection => selection.kind === 'managed');
         if (!managed || managed.kind !== 'managed') throw new Error('Expected saved managed parent');
         Object.assign(managed.parentBranchRef, { displayName: 'Production database' });
-        const result = await resolvePreviewWorkflowForHost(current.input);
+        const result = await resolvePreviewWorkflowForHost({ ...current.input, event: { ...event, title: 'Add ranger station hours' } });
         expect(result.kind).toBe('available');
         if (result.kind !== 'available') throw new Error(result.reason);
         const definition = WorkflowDefinitionV1Schema.parse(result.definition);
@@ -317,7 +317,8 @@ describe('saved deployment preview Workflow composition', () => {
         expect(current.reads()).toBe(1);
         const create = DeploymentEnvironmentCreateIntentInputV1Schema.parse(await bindings(actions[0]!.input));
         expect(create).toMatchObject({ purpose: 'preview', protection: 'nonProduction', preview: { headSha: event.headSha,
-            pullRequestId: event.id, provenance: { pullRequestNumber: 12, author: { id: '19', login: 'alice' } } } });
+            pullRequestId: event.id, pullRequestTitle: 'Add ranger station hours',
+            provenance: { pullRequestNumber: 12, author: { id: '19', login: 'alice' } } } });
         expect(create).not.toHaveProperty('definition');
         const child = { environmentId: 'child', revision: 2, runtimeTargetLinkId: 'child-runtime', previewDataTargets: [
             { templateDataTargetLinkId: 'template-database', targetLinkId: 'child-database', targetLinkRevision: 1 }] };

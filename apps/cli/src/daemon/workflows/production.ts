@@ -1,3 +1,4 @@
+import { readTriggerApprovedOperationForRun } from './workflowApprovedOperation';
 import { readServerHttpRequestBodyUtf8ByteLengthV1, SERVER_HTTP_REQUEST_MAX_BODY_UTF8_BYTES_V1 } from '@happier-dev/protocol/server/http/requestBodyBoundsV1';
 import type { WorkflowTriggerEventIdentityV1 } from '@happier-dev/protocol/workflows/workflowReferenceV1';
 import { randomUUID } from 'node:crypto';
@@ -1997,12 +1998,10 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
       const prepared = prepareWorkflowRunDataKeyV1({ accountId: params.accountId, encryption: accountEncryption,
         ...(census ? { census } : {}), randomBytes: getRandomBytes });
       const triggerCause = claim.automationCause;
-      const exactConsent = triggerCause.kind === 'trigger'
-        ? storedDefinition.data.actionApprovals?.find(approval => approval.triggerId === triggerCause.triggerId)
+      const approvedOperation = triggerCause.kind === 'trigger'
+        ? readTriggerApprovedOperationForRun(storedDefinition.data.actionApprovals, triggerCause.triggerId, params.accountId)
         : undefined;
-      if (exactConsent && exactConsent.operation.approvedBy.accountId === params.accountId) {
-        created = { ...created, snapshot: { ...created.snapshot, approvedOperation: structuredClone(exactConsent.operation) } };
-      }
+      if (approvedOperation) created = { ...created, snapshot: { ...created.snapshot, approvedOperation } };
       const { acceptedEnvelope: candidate, displayEnvelope } = sealWorkflowRunAcceptedEnvelopesV1({
         ...sealMode({ witness: accountEncryption.witness, runCrypto: prepared.runCrypto }),
         accountId: params.accountId, runId: claim.runId, acceptedSnapshot: created.snapshot,

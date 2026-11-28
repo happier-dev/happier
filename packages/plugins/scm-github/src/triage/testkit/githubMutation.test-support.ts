@@ -63,6 +63,7 @@ export function previewStatusInput() {
 
 /** Network-contract fixtures for the public Home Actions. Internal policy/Artifact parsing remains real in the handler. */
 export function previewStatusTransport(options: Readonly<{
+  pullRequestId?: string;
   tombstoned?: boolean;
   replacementChild?: boolean;
   headSha?: string; foreignSource?: boolean; foreignReceipt?: boolean; artifactRevision?: number;
@@ -71,11 +72,13 @@ export function previewStatusTransport(options: Readonly<{
   receiptState?: 'running' | 'failed' | 'cancelled'; operation?: 'deploy' | 'teardown'; pullRequestState?: 'open';
   domainState?: 'active' | 'failed'; domainHostname?: string; domainPath?: string; supersededReceipt?: boolean; inactiveReceipt?: boolean;
   multiplePreviews?: boolean; unavailableFirstPreview?: boolean; previewQueryError?: 'deployment_access_denied'; previewReadDenied?: boolean;
+  publicationDispatchFailure?: boolean;
   publicationReadDenied?: boolean; publicationReadFailure?: 'transport' | 'malformed';
   controllerState?: 'available' | 'paused' | 'unknown';
   noReceipt?: boolean; headerOnlyReceipt?: boolean;
 }> = {}) {
   const childId = options.childId ?? 'preview-child';
+  const pullRequestId = options.pullRequestId ?? '1284';
   const repository = { kind: 'github', deployment: 'https://github.com', repository: REPOSITORY_KEY };
   const reference = (id: string) => ({ contentArtifactId: `${id}-content`, contentHeaderVersion: 1, contentBodyVersion: 1 });
   const environment = (id: string, purpose: 'preview' | 'standard') => ProtocolDeploymentEnvironmentHeaderV1Schema.parse({ v: 1, id, serverId: 'srv_preview',
@@ -84,7 +87,7 @@ export function previewStatusTransport(options: Readonly<{
     deployerMode: 'managers', dataEditorMode: 'off', dataAgentAccess: 'none', controllerMachineId: 'preview-controller',
     runtimeTargetLinkId: purpose === 'preview' ? 'preview-runtime' : 'template-runtime',
     ...(purpose === 'preview' ? { previewTemplateEnvironmentId: 'preview-template', previewRepositoryId: 'preview-source',
-      previewPullRequestId: '1284', previewTargetLinkId: 'template-runtime' } : {}),
+      previewPullRequestId: pullRequestId, previewTargetLinkId: 'template-runtime' } : {}),
     ...reference(id), createdByAccountId: 'preview-owner', createdAtMs: 1, updatedAtMs: 1,
     ...(purpose === 'preview' ? id === childId && (options.deletedChild || options.tombstoned) ? { deletedAtMs: 2 } : {} : options.deletedTemplate ? { deletedAtMs: 2 } : {}),
     capabilities: { editData: false, role: 'manager', read: true, deploy: true, manage: true, manageBindings: true, manageTargets: true, delete: true } });
@@ -99,7 +102,7 @@ export function previewStatusTransport(options: Readonly<{
   const sourceIntent = { kind: 'repository', projectSourceId: 'preview-source', sourceRevision: 1, sha: OBSERVED_HEAD,
     compose: { path: 'compose.yaml', services: ['app'], profiles: [] }, pullRequestHead: { number: 1284 } };
   const provenance = { v: 1, templateEnvironmentId: 'preview-template', runtimeTargetLinkId: 'template-runtime',
-    repository, pullRequestId: '1284', pullRequestNumber: 1284,
+    repository, pullRequestId, pullRequestNumber: 1284,
     author: { id: 'preview-author', login: 'preview-author' }, headRepository: repository };
   const contextDigest = computeCanonicalDomainSeparatedDigest('happier.github.preview-status.v1', ['preview-template', 'template-runtime']);
   let published: Readonly<Record<string, unknown>> | null = options.existing ? {
@@ -107,11 +110,11 @@ export function previewStatusTransport(options: Readonly<{
     state: 'success', description: 'Preview removed', target_url: null,
   } : null;
   let pullRequestReads = 0;
-  return createStubGithubTransport({
+  const transport = createStubGithubTransport({
     executeAction: async (actionId, input) => {
       const request = input as Readonly<Record<string, unknown>>;
       if (actionId === 'deployments.environments.list') {
-        if (JSON.stringify(request.previewPullRequestIds) !== JSON.stringify(['1284'])
+        if (JSON.stringify(request.previewPullRequestIds) !== JSON.stringify([pullRequestId])
           || JSON.stringify(request.previewRepository) !== JSON.stringify(repository)) throw new Error('Expected one exact repository/PR query');
         if (options.previewQueryError) return { ok: false, error: options.previewQueryError };
         const secondPage = options.multiplePreviews && request.cursor === 'preview-next-page';
@@ -194,7 +197,7 @@ export function previewStatusTransport(options: Readonly<{
         if (options.previewReadDenied) return json({ message: 'Forbidden' }, 403);
         pullRequestReads += 1;
         const headSha = options.advanceHeadAfterRead && pullRequestReads > 1 ? ADVANCED_HEAD : options.headSha;
-        return json(pullRequestBody({ state: options.pullRequestState ?? 'closed', ...(headSha ? { headSha } : {}) }));
+        return json({ ...pullRequestBody({ state: options.pullRequestState ?? 'closed', ...(headSha ? { headSha } : {}) }), id: Number(pullRequestId) });
       }
       if (request.method === 'GET' && path === `${REPOSITORY_PATH}/commits/${OBSERVED_HEAD}/statuses`) {
         if (options.publicationReadDenied) return json({ message: 'Resource not accessible by integration' }, 403);
@@ -204,6 +207,7 @@ export function previewStatusTransport(options: Readonly<{
       }
       if (request.method === 'POST' && path === `${REPOSITORY_PATH}/statuses/${OBSERVED_HEAD}`) {
         if (options.deny) return json({ message: 'Resource not accessible by integration' }, 403);
+        if (options.publicationDispatchFailure) throw new Error('Provider unavailable before accepting the write');
         published = { id: 91, ...(readRecordedJsonBody(request) as Readonly<Record<string, unknown>>) };
         if (options.loseResponse) throw new Error('Provider response lost');
         return json(published, 201);
@@ -211,6 +215,7 @@ export function previewStatusTransport(options: Readonly<{
       return undefined;
     },
   });
+  return { ...transport, completedPublication: () => published };
 }
 
 export type PullRequestShape = Readonly<{

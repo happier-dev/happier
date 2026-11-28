@@ -226,6 +226,7 @@ export function normalizeGithubPullRequestLifecycle(
     headRef: readString(head, 'ref'),
     baseRef: readString(base, 'ref'),
     ...(typeof pullRequest.draft === 'boolean' ? { draft: pullRequest.draft } : {}),
+    ...(typeof pullRequest.title === 'string' && pullRequest.title.trim() ? { title: pullRequest.title } : {}),
     ...readGithubWorkItemEventMetadata(pullRequest),
     baseRepository: identity(base.repo),
     headRepository: head.repo === null ? null : identity(head.repo),

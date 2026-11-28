@@ -684,6 +684,16 @@ describe('deployment teardown through the canonical Action front door', () => {
                     expect(removed, JSON.stringify(removed)).toMatchObject({ ok: true,
                         result: { ok: true, state: 'succeeded', environmentRemoved: true } });
                     expect(await docker.readVolumeNames()).toEqual([deletedVolume, keptVolume, foreignVolume].sort());
+                    const removal = await db.deployment.findFirstOrThrow({ where: {
+                        environmentId: detail.environment.id, operation: 'teardown',
+                    } });
+                    const receipt = readDeploymentReceiptArtifactV1(removal, await runWithServerHttpBaseUrl(home.baseUrl,
+                        () => fixture.artifacts.read(removal.contentArtifactId, { prepareRecipients: false, includeSharedAudience: false })));
+                    if (!receipt.ok) throw new Error(receipt.error);
+                    expect(receipt.content.teardown?.resources.filter(resource => resource.kind === 'data')).toEqual(
+                        [deletedVolume, keptVolume].sort().map(id => expect.objectContaining({ id, disposition: 'retain' })));
+                    expect(receipt.content.teardown?.proofs.find(proof => proof.step === 'verify')?.resources).toEqual(
+                        expect.arrayContaining([deletedVolume, keptVolume].map(resourceId => ({ resourceId, disposition: 'retained' }))));
                     const source = await db.projectSource.findUniqueOrThrow({ where: { id: detail.environment.projectSourceId } });
                     const sourceRemoved = await fixture.invoke('projects.sources.delete', { serverId: home.serverId,
                         sourceId: source.id, expectedRevision: source.revision });

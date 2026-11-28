@@ -1044,7 +1044,12 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     ...(defaults.reviewBasis ? { creationDefaultsBasis: defaults.reviewBasis } : {}),
                     ...(definitionCommitment ? { definitionCommitment } : {}),
                     ...(copy.review ? { copy: copy.review } : {}),
-                    ...(folder ? { folder } : {}) });
+                    ...(folder ? { folder } : {}),
+                    ...(preview.provenance && preview.templateEnvironmentName ? { previewCreate: {
+                        projectName: defaults.projectName, environmentName: preview.templateEnvironmentName,
+                        pullRequestNumber: preview.provenance.pullRequestNumber,
+                        ...(authored.preview?.pullRequestTitle ? { pullRequestTitle: authored.preview.pullRequestTitle } : {}),
+                    } } : {}) });
             if (deferred) {
                 if (!plan.definitionCommitment) return failure('invalid_action_output');
                 const preview = review(defaults.values.controllerMachineId, resolved.buildMachineId, plan.definitionCommitment);
@@ -1201,6 +1206,10 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
     const failureEnrollment = createPlatformFailureEnrollmentForHost({ ...host,
         readEnvironment: targetHostReaders.readEnvironment });
     const previewEnrollment = createPreviewEnrollmentForHost({ ...host,
+        async readProjectName(projectSourceId, context) {
+            const source = await publicationSources.projectSourcesRead!({ serverId: host.serverId, sourceId: projectSourceId }, context);
+            return source.ok ? source.source.name : undefined;
+        },
         listEnvironments: (input, context) => storage('deployments.environments.list', input, context),
         readEnvironment: request => readDeploymentEnvironmentForHost(request, {
             readMetadata: readEnvironmentMetadata, open, assertCurrent,

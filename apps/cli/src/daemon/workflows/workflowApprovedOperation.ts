@@ -22,6 +22,15 @@ import { readDeploymentBackupOccurrenceV1 } from '@happier-dev/protocol/workflow
 import { DeploymentBackupPolicyV1Schema, DeploymentBackupRunInputV1Schema } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 import { DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 
+export function readTriggerApprovedOperationForRun(
+  approvals: readonly Readonly<{ triggerId: string; operation: WorkflowApprovedOperationV1 }>[] | undefined,
+  triggerId: string,
+  accountId: string,
+): WorkflowApprovedOperationV1 | undefined {
+  const operation = approvals?.find(approval => approval.triggerId === triggerId)?.operation;
+  return operation?.approvedBy.accountId === accountId ? structuredClone(operation) : undefined;
+}
+
 function record(value: unknown): Readonly<Record<string, unknown>> {
   return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : {};
 }

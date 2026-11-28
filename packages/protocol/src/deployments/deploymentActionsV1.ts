@@ -32,7 +32,7 @@ import { DeploymentCreationDefaultsV1Schema, ResolvedDeploymentCreationDefaultsV
 import { DeploymentControllerAvailabilityV1Schema } from './deploymentControllerAvailabilityV1.js';
 import { DeploymentPreviewForkEligibilityV1Schema } from './deploymentPreviewTemplateV1.js';
 import { ConnectedAccountActionFormSelectionV1Schema } from '../connect/connectedAccountPurposeBindings.js';
-import { EnvironmentVariableBindingInputV1Schema } from './storedAppInputV1.js';
+import { DeploymentTextV1Schema, EnvironmentVariableBindingInputV1Schema } from './storedAppInputV1.js';
 export * from './deploymentControllerAvailabilityV1.js';
 import { ActionExecuteFailureSchema, ActionFailureCauseV1Schema, type ActionExecuteFailure } from '../actions/actionExecutionResult.js';
 export { buildDeploymentTargetLinkInputV1 } from './targetLinkInput.js';
@@ -828,6 +828,11 @@ export const DeploymentEnvironmentCreationReviewV1Schema = lazyZodSchema(() => z
   template: z.optional(deploymentTemplates.DeploymentTemplateInstantiationReviewV1Schema),
   copy: z.optional(DeploymentEnvironmentCopyReviewV1Schema),
   folder: z.optional(DeploymentFolderReviewRevisionV1Schema),
+  previewCreate: z.optional(z.strictObject({
+    projectName: DeploymentTextV1Schema, environmentName: DeploymentTextV1Schema,
+    pullRequestNumber: z.number().check(z.int(), z.positive()),
+    pullRequestTitle: z.optional(DeploymentTextV1Schema),
+  })),
 }));
 export type DeploymentEnvironmentCreationReviewV1 = z.infer<typeof DeploymentEnvironmentCreationReviewV1Schema>;
 export const DeploymentEnvironmentCreatePreviewV1Schema = lazyZodSchema(() => z.strictObject({

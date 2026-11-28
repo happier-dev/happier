@@ -53,6 +53,7 @@ export type EnvironmentCreateHost = Readonly<{
 }>;
 export type EnvironmentCreatePreviewResolution = Readonly<{
     input: DeploymentEnvironmentCreateIntentInputV1; provenance?: DeploymentPreviewProvenanceV1;
+    templateEnvironmentName?: string;
     fork?: boolean;
     domain?: NonNullable<import('@happier-dev/protocol/deployments/deploymentPreviewTemplateV1').DeploymentPreviewTemplateV1['domain']>;
     nativeTemplate?: PreviewTemplateCreationPlanForHost;
@@ -146,7 +147,7 @@ export async function resolveEnvironmentCreatePreviewForHost(
             firstTargetLink: { machines: runtime.members.map(member => ({ machineId: member.machineId, installationId: member.installationId })) },
             controllerMachineId: template.environment.controllerMachineId,
             ...(template.environment.buildMachineId === undefined ? {} : { buildMachineId: template.environment.buildMachineId }) },
-            provenance: preview.provenance, fork: admission.fork, dataTargetLinks,
+            provenance: preview.provenance, templateEnvironmentName: template.content.name, fork: admission.fork, dataTargetLinks,
             ...(template.content.previewTemplate!.domain ? { domain: template.content.previewTemplate!.domain } : {}),
             ...(nativeTemplate ? { nativeTemplate } : {}) };
     } catch (error) {

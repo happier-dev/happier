@@ -61,6 +61,7 @@ export function createPreviewEnrollmentForHost(host: Readonly<{
     listActionFormConnectedAccountOptions?: DaemonConnectedAccountPurposeBindingRuntime['listActionFormConnectedAccountOptions'];
     readEnvironment(input: Readonly<{ environmentId: string; context: ActionExecutorContext }>):
         Promise<Parameters<typeof prepareProposedPreviewForkEligibilityForHost>[1] & Pick<DeploymentEnvironmentDetailV1, 'content'>>;
+    readProjectName?(projectSourceId: string, context: ActionExecutorContext): Promise<string | undefined>;
     listEnvironments(input: DeploymentEnvironmentListInputV1,
         context: ActionExecutorContext): Promise<unknown>;
 }>) {
@@ -135,6 +136,15 @@ export function createPreviewEnrollmentForHost(host: Readonly<{
                     controllerMachineId: environment.environment.controllerMachineId } };
                 return forkEligibility ? withAdmittedPreviewForkEligibilityForHost(prepared, environment.environment, forkEligibility) : prepared;
             };
+            let projectName: string | undefined;
+            try {
+                projectName = await host.readProjectName?.(environment.environment.projectSourceId, context);
+            } catch {
+                // The Project name decorates the review. Enrollment can proceed without it.
+            }
+            const review = { prepareExecutionContext, approvalPreview: { previewsUpdate: {
+                environmentName: environment.content.name, ...(projectName ? { projectName } : {}),
+            } } };
             const children = [
                 { action: 'workflow.trigger.list' as const, role: TRIGGER_ROLE },
                 { action: 'workflow.trigger.update' as const, role: TRIGGER_ROLE },
@@ -144,11 +154,11 @@ export function createPreviewEnrollmentForHost(host: Readonly<{
             const enabledChildren = [...children, { action: 'workflow.trigger.add' as const, role: TRIGGER_ROLE }];
             // The Environment write reports the existing fork refusal after review.
             // No watcher is prepared for an ineligible placement.
-            if (forkEligibility && forkEligibility.kind !== 'eligible') return { children: enabledChildren, prepareExecutionContext };
+            if (forkEligibility && forkEligibility.kind !== 'eligible') return { children: enabledChildren, ...review };
             try {
                 return await withEvents(policy.repository.kind, async (events, lease) => {
                     if (events.length !== 1 || !events[0]) return policy.enabled
-                        ? refusal('source_unavailable') : { children: enabledChildren, prepareExecutionContext };
+                        ? refusal('source_unavailable') : { children: enabledChildren, ...review };
                     const event = events[0];
                     const choices = readWatcherChoices(event, lease, context);
                     const requested = input.previewWatcher === 'options' ? undefined : input.previewWatcher;
@@ -161,7 +171,7 @@ export function createPreviewEnrollmentForHost(host: Readonly<{
                             : options.length === 0 ? 'connected_account_required' : 'preview_watcher_account_selection_required');
                     }
                     if (!choices || !account) return policy.enabled
-                        ? refusal('credential_scope_denied') : { children: enabledChildren, prepareExecutionContext };
+                        ? refusal('credential_scope_denied') : { children: enabledChildren, ...review };
                     const setupInput = writeInputPath({ repository: policy.repository.repository }, choices.path, account);
                     const setupChildren = [{ action: event.setupAction.identity, role: SETUP_ROLE,
                         input: normalizeStrictJsonValue(setupInput) }];
@@ -170,14 +180,14 @@ export function createPreviewEnrollmentForHost(host: Readonly<{
                     return { children: [
                         ...setupChildren,
                         ...(receiptEvent ? [{ action: receiptEvent.setupAction.identity, role: SETUP_ROLE }] : []), ...enabledChildren,
-                    ], prepareExecutionContext,
+                    ], ...review,
                         ...(policy.enabled && readManagedGithubRepositoryEventV1(event.event.identity) === 'pull_request'
                             ? { requiredByPolicy: true as const } : {}) };
-                }) ?? (policy.enabled ? refusal('source_unavailable') : { children: enabledChildren, prepareExecutionContext });
+                }) ?? (policy.enabled ? refusal('source_unavailable') : { children: enabledChildren, ...review });
             } catch (error) {
                 if (policy.enabled) return { ok: false as const, ...normalizeActionExecutorThrownError(error, 'deployment.preview.update_preparation') };
                 recordFailureCause(error, 'deployment.preview.update_preparation');
-                return { children: enabledChildren, prepareExecutionContext };
+                return { children: enabledChildren, ...review };
             }
         },
         async completeUpdate(updated: UpdateSuccess, input: UpdateInput, context: ActionExecutorContext): Promise<UpdateSuccess> {
@@ -243,7 +253,7 @@ export function createPreviewEnrollmentForHost(host: Readonly<{
                                 ...managedWebhook, trigger: { ...trigger, enabled: true } }) });
                         if (!written.ok) return refused(written);
                         const statusActionRef = source.scmPullRequestLifecycle?.previewStatusActionRef;
-                        if (statusActionRef) {
+                        if (statusActionRef && policy.enabled) {
                             const receiptEvent = readReceiptEvent(lease);
                             if (!receiptEvent) return unavailable();
                             const receiptSource = receiptEvent.event.automation.source;
@@ -258,15 +268,17 @@ export function createPreviewEnrollmentForHost(host: Readonly<{
                             if (receiptConfigured.sourceContractVersion !== receiptSource.sourceContractVersion
                                 || !compilePluginJsonSchema(receiptSource.sourceConfigSchema)(receiptConfigured.sourceConfig)) return unavailable();
                             const statusActionId = formatQualifiedPluginActionId(statusActionRef);
-                            const target = { kind: 'inline' as const, definition: { version: 1, inputs: [
-                                { name: 'payload', valueType: 'json', required: true },
-                            ], defaults: {}, blocks: [{ kind: 'action', id: 'preview-status', actionId: statusActionId, input: {
+                            const eventField = (field: 'environmentId' | 'deploymentId') => ({
+                                kind: 'trigger_event' as const, event: receiptEvent.event.identity, path: [field],
+                            });
+                            const target = { kind: 'inline' as const, definition: { version: 1, inputs: [],
+                                defaults: {}, blocks: [{ kind: 'action', id: 'preview-status', actionId: statusActionId, input: {
                                 v: { kind: 'literal', value: 1 },
                                 serverId: { kind: 'literal', value: host.serverId },
                                 templateEnvironmentId: { kind: 'literal', value: input.environmentId },
                                 sourceConfig: { kind: 'literal', value: configured.sourceConfig },
-                                environmentId: { kind: 'input', name: 'payload', path: ['environmentId'] },
-                                deploymentId: { kind: 'input', name: 'payload', path: ['deploymentId'] },
+                                environmentId: eventField('environmentId'),
+                                deploymentId: eventField('deploymentId'),
                             } }] } };
                             const statusSet = allSets.find(set => set.target?.kind === 'inline'
                                 && set.target.definition.blocks.length === 1
@@ -290,10 +302,10 @@ export function createPreviewEnrollmentForHost(host: Readonly<{
                             const statusWritten = statusSet && statusTrigger
                                 ? await invoke({ action: 'workflow.trigger.update', role: TRIGGER_ROLE, input: normalizeStrictJsonValue({
                                     automationId: statusSet.automationId, triggerId: statusTrigger.id, expectedRevision: statusSet.revision,
-                                    patch: { enabled: true, target, trigger: receiptTrigger } }) })
+                                    patch: { enabled: true, target, trigger: receiptTrigger, actionApproval: 'automatic' } }) })
                                 : await invoke({ action: 'workflow.trigger.add', role: TRIGGER_ROLE, input: normalizeStrictJsonValue({
                                     project: { machineId: host.machineId, directory: '~' }, executionTarget: { kind: 'detached_run' },
-                                    target, trigger: { ...receiptTrigger, enabled: true } }) });
+                                    target, actionApproval: 'automatic', trigger: { ...receiptTrigger, enabled: true } }) });
                             if (!statusWritten.ok) return refused(statusWritten);
                         }
                         return { status: policy.enabled ? 'enrolled' : 'disabled' };

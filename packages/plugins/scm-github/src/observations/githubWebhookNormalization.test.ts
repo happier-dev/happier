@@ -52,7 +52,7 @@ describe('GitHub webhook normalization', () => {
       expect(delivery.automationEvents).toContainEqual(expect.objectContaining({
         eventRef: { pluginId: 'happier.scm.forge.github', localId: 'automation/pull-request-lifecycle-v1' },
         payload: { repository: { repositoryId: '77', nameWithOwner: 'acme/widgets' }, pullRequest: {
-          id: '455', number, action, headSha: 'a'.repeat(40), headRef: 'preview', baseRef: 'main',
+          id: '455', number, title: 'Preview', action, headSha: 'a'.repeat(40), headRef: 'preview', baseRef: 'main',
           baseRepository: { kind: 'github', deployment: 'https://github.com', repository: 'acme/widgets' },
           headRepository: { kind: 'github', deployment: 'https://github.com', repository: 'octocat/widgets' },
           author: { id: '99', login: 'octocat', kind: 'human' },

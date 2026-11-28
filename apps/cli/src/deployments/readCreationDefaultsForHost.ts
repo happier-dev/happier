@@ -63,7 +63,7 @@ export async function prepareDeploymentCreationDefaultsForHost(request: Readonly
     actionId: CreationPreparationActionId; context: ActionExecutorContext;
     explicit?: DeploymentCreationDefaultsInputV1['explicit']; target: DeploymentCreationDefaultsInputV1['target'];
 }>, host: CreationDefaultsHost): Promise<ReturnType<typeof resolveDeploymentCreationDefaultsV1> & Readonly<{
-    projectOwner: ProjectSourceOwnerV1; reviewBasis?: DeploymentTemplateInstantiationReviewV1['creationDefaultsBasis'];
+    projectOwner: ProjectSourceOwnerV1; projectName: string; reviewBasis?: DeploymentTemplateInstantiationReviewV1['creationDefaultsBasis'];
 }>> {
     await host.assertCurrent(request.context);
     if (request.newProject) {
@@ -71,7 +71,7 @@ export async function prepareDeploymentCreationDefaultsForHost(request: Readonly
         const inputs = await readDeploymentCreationDefaultInputsForHost({ projectOwner, context: request.context,
             actionId: request.actionId }, host);
         return { ...resolveDeploymentCreationDefaultsV1({ projectOwner, ...inputs,
-            explicit: request.explicit, target: request.target }), projectOwner };
+            explicit: request.explicit, target: request.target }), projectOwner, projectName: request.newProject.name };
     }
     if (!request.projectSourceId) return refuse('invalid_parameters');
     const sources = createCliProjectSourceActionDeps({ serverHttpBaseUrl: host.serverHttpBaseUrl,
@@ -89,7 +89,7 @@ export async function prepareDeploymentCreationDefaultsForHost(request: Readonly
         sourceRevision: source.source.revision }, host);
     const resolved = resolveDeploymentCreationDefaultsV1({ ...request, projectOwner, ...inputs });
     await host.assertCurrent(request.context);
-    return { ...resolved, projectOwner, ...(inputs.reviewBasis ? { reviewBasis: inputs.reviewBasis } : {}) };
+    return { ...resolved, projectOwner, projectName: source.source.name, ...(inputs.reviewBasis ? { reviewBasis: inputs.reviewBasis } : {}) };
 }
 
 /** Exact private Project demand; Account preferences stay with the captured requesting Account. */
