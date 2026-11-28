@@ -12,6 +12,7 @@ import { admitLinearInstance, collectLinearDetail, projectLinearIssue, readLinea
 export type LinearWriteResult = TriageTaskWriteResultV1;
 type EntryInput = Readonly<{ instance: TriageConfiguredSourceInstanceV1; localRef: TriageSourceEntryLocalRefV1 }>;
 type Observation = ReturnType<typeof projectLinearIssue>;
+type WriteConfirmation = Extract<LinearWriteResult, { kind: 'applied' | 'uncertain' }>;
 type Dispatch = Readonly<{ kind: 'accepted'; id: string }> | Readonly<{ kind: 'unknown'; failure: TriageSourceFailureV1 }> | Readonly<{ kind: 'failed'; failure: TriageSourceFailureV1 }>;
 
 function refusedFields(fields: TriageTaskFieldsV1, creating: boolean): string | undefined {
@@ -68,13 +69,16 @@ async function dispatchMutation(input: EntryInput['instance'], operationName: st
   }
 }
 
-async function settleWrite(dispatch: () => Promise<Dispatch>, confirm: (result: Dispatch) => Promise<LinearWriteResult>): Promise<LinearWriteResult> {
+async function settleWrite(dispatch: () => Promise<Dispatch>, confirm: (result: Dispatch) => Promise<WriteConfirmation>): Promise<LinearWriteResult> {
   const settled = await settleAtMostOnceProviderWrite<Dispatch, Observation, TriageSourceFailureV1>({
     dispatch,
     mayHaveChanged: (result) => result.kind !== 'failed',
     confirm: async (dispatched) => {
       const result = await confirm(dispatched);
-      return result.kind === 'applied' || result.kind === 'uncertain' ? result : { kind: 'uncertain' };
+      if (result.kind === 'uncertain' && dispatched.kind === 'unknown') {
+        return { ...result, failure: dispatched.failure };
+      }
+      return result;
     },
   });
   if (settled.kind === 'settled') return settled.result.kind === 'failed'
@@ -83,7 +87,7 @@ async function settleWrite(dispatch: () => Promise<Dispatch>, confirm: (result: 
 }
 
 async function confirmIssue(input: EntryInput, fields: TriageTaskFieldsV1, context: LinearSourceContext,
-  options: Readonly<{ stateId?: string; addedLabels?: readonly string[]; removedLabels?: readonly string[] }> = {}): Promise<LinearWriteResult> {
+  options: Readonly<{ stateId?: string; addedLabels?: readonly string[]; removedLabels?: readonly string[] }> = {}): Promise<WriteConfirmation> {
   try {
     const read = await readLinearIssue(input, context, true);
     const observation = projectLinearIssue(read.issue, read.viewer);
@@ -113,13 +117,13 @@ export async function createLinearIssue(input: unknown, context: LinearSourceCon
     return await settleWrite(() => dispatchMutation(parsed.instance, 'LinearCreate',
       'mutation LinearCreate($input: IssueCreateInput!) { issueCreate(input: $input) { success issue { id } } }',
       { input: { teamId, ...nativeFields(parsed.fields), ...(parsed.fields.labelIds === undefined ? {} : { labelIds: parsed.fields.labelIds }) } }, 'issueCreate', 'issue', context),
-    async (result) => result.kind !== 'accepted' ? { kind: 'uncertain', ...(result.kind === 'unknown' ? { failure: result.failure } : {}) }
+    async (result) => result.kind !== 'accepted' ? { kind: 'uncertain' }
       : confirmIssue({ instance: parsed.instance, localRef: { kindId: 'issue', collisionScope: 'linear', entryId: result.id } }, { ...parsed.fields, scopeId: teamId }, context));
   } catch (error) { return { kind: 'failed', failure: failureFrom(error, context.signal) }; }
 }
 
 async function updateIssue(input: EntryInput, native: Record<string, unknown>, context: LinearSourceContext,
-  confirm: () => Promise<LinearWriteResult>): Promise<LinearWriteResult> {
+  confirm: () => Promise<WriteConfirmation>): Promise<LinearWriteResult> {
   return settleWrite(() => dispatchMutation(input.instance, 'LinearUpdate',
     'mutation LinearUpdate($id: String!, $input: IssueUpdateInput!) { issueUpdate(id: $id, input: $input) { success issue { id } } }',
     { id: input.localRef.entryId, input: native }, 'issueUpdate', 'issue', context), async () => confirm());
@@ -159,7 +163,7 @@ export async function commentLinearIssue(input: unknown, context: LinearSourceCo
     return await settleWrite(() => dispatchMutation(parsed.instance, 'LinearComment',
       'mutation LinearComment($input: CommentCreateInput!) { commentCreate(input: $input) { success comment { id } } }',
       { input: { issueId: parsed.localRef.entryId, body: parsed.body } }, 'commentCreate', 'comment', context), async (result) => {
-      if (result.kind !== 'accepted') return { kind: 'uncertain', ...(result.kind === 'unknown' ? { failure: result.failure } : {}) };
+      if (result.kind !== 'accepted') return { kind: 'uncertain' };
       try {
         const { account } = admitLinearInstance(parsed.instance, parsed.localRef);
         const data = await requestLinearGraphql({ context, account, operationName: 'LinearCommentRead',

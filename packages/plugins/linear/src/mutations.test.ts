@@ -94,6 +94,22 @@ describe('Linear native writes', () => {
       .toMatchObject({ kind: 'uncertain', observation: { snapshot: { title: issue.title } } });
   });
 
+  it('preserves a GraphQL write refusal when an HTTP 200 update leaves the issue unchanged', async () => {
+    const h = host(({ operationName }) => operationName === 'LinearViewer' ? { viewer: { id: 'viewer-1' } } : { issue });
+    const request = h.request.getMockImplementation()!;
+    h.request.mockImplementation((input, options) => {
+      const { operationName } = JSON.parse(new TextDecoder().decode(input.body));
+      if (operationName !== 'LinearUpdate') return request(input, options);
+      return Promise.resolve({ status: 200, finalUrl: input.url, headers: {}, body: new TextEncoder().encode(JSON.stringify({
+        data: { issueUpdate: null }, errors: [{ message: 'Issue update rejected' }],
+      })) });
+    });
+    expect(await editLinearIssue({ v: 1, instance, localRef, fields: { title: 'Changed title' } }, h.context))
+      .toMatchObject({ kind: 'uncertain', failure: { class: 'unsupportedContract', code: 'linear/queryRejected' },
+        observation: { snapshot: { title: issue.title } } });
+    expect(h.request.mock.calls.filter(([input]) => new TextDecoder().decode(input.body).includes('mutation LinearUpdate'))).toHaveLength(1);
+  });
+
   it('does not confirm an empty description from a missing provider field', async () => {
     const h = host(({ operationName }) => operationName === 'LinearViewer' ? { viewer: { id: 'viewer-1' } }
       : operationName === 'LinearUpdate' ? { issueUpdate: { success: true, issue: { id: issue.id } } } : { issue });
