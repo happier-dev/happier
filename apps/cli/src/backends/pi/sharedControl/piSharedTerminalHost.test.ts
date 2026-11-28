@@ -276,10 +276,13 @@ describe('Pi shared terminal host', () => {
     await expect(host.channelHost.open(SPEC)).rejects.toThrow(PI_SHARED_CONTROL_BRIDGE_UNAVAILABLE_ERROR);
   });
 
-  it('fences a replaced terminal session with a notice and read-only local control', async () => {
+  it.each([
+    { sessionId: 'pi-session-2', sessionFile: '/tmp/original.jsonl' },
+    { sessionId: 'pi-session-1', sessionFile: '/tmp/imported-copy.jsonl' },
+  ])('fences a replaced terminal session ($sessionId, $sessionFile)', async (replacement) => {
     const { host } = createHost();
     const port = createSessionPort();
-    const { config, bridge, channel } = await attachFirstBridge(host);
+    const { config, bridge, channel } = await attachFirstBridge(host, { sessionFile: '/tmp/original.jsonl' });
     const initial = listenTo(channel);
     host.publishLocalControl(port.session);
     expect(port.localControl()).toEqual({
@@ -299,7 +302,7 @@ describe('Pi shared terminal host', () => {
     const reopening = host.channelHost.open(SPEC).then((next) => {
       next.listen({ onStdoutLine: stdout, onStderrLine: stderr, onIoError: () => {}, onClosed: () => {} });
     }, (error: unknown) => error);
-    const replaced = await connectBridge(config, { sessionId: 'pi-session-2' });
+    const replaced = await connectBridge(config, replacement);
     sockets.push(replaced.socket);
     replaced.sendHello(
       { ch: 'out', line: JSON.stringify({ type: 'agent_start' }) },

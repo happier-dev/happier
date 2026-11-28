@@ -177,13 +177,17 @@ export function createPiSharedTerminalHost(params: Readonly<{
   // Backends to wake when the terminal is back on the bound session with nothing attached.
   const availabilityListeners = new Set<() => void>();
 
-  let boundSessionId: string | null = null;
+  let boundSession: Pick<PiSharedControlHello, 'sessionId' | 'sessionFile'> | null = null;
   let fenced = false;
   let session: PiSharedTerminalSession | null = null;
   let publication: Readonly<{ session: PiSharedTerminalSession; remoteWritable: boolean }> | null = null;
 
   let disposed = false;
   let disposePromise: Promise<void> | null = null;
+
+  const isBoundSession = ({ sessionId, sessionFile }: PiSharedControlHello): boolean => (
+    boundSession?.sessionId === sessionId && boundSession.sessionFile === sessionFile
+  );
 
   const publish = async (target: PiSharedTerminalSession): Promise<void> => {
     const remoteWritable = !fenced;
@@ -297,8 +301,9 @@ export function createPiSharedTerminalHost(params: Readonly<{
     awaitingHello = false;
     // A reconnecting bridge can say hello before its predecessor's close is observed.
     if (previous && !previous.closed) previous.socket.destroy();
-    boundSessionId ??= next.hello.sessionId;
-    const onBoundSession = next.hello.sessionId === boundSessionId;
+    // Pi preserves the header ID when importing a session into a separate file.
+    boundSession ??= { sessionId: next.hello.sessionId, sessionFile: next.hello.sessionFile };
+    const onBoundSession = isBoundSession(next.hello);
     // Leaving fences at once; returning lifts the fence only when a backend binds again (bindChannel).
     if (!onBoundSession) updateFence(true);
     logger.infoFile('[pi] Shared terminal bridge connected');
@@ -412,7 +417,7 @@ export function createPiSharedTerminalHost(params: Readonly<{
 
   const bindChannel = (live: BridgeConnection): PiRpcChannel => {
     // A bridge can send frames in the same read as hello, before the backend can query its state.
-    if (live.hello.sessionId !== boundSessionId) {
+    if (!isBoundSession(live.hello)) {
       throw new PiSharedTerminalUnavailableError('The Pi terminal is on another session');
     }
     const binding = createAttachedChannel(live, () => {
