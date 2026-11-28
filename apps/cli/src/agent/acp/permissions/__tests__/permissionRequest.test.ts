@@ -255,6 +255,14 @@ describe('extractPermissionInputWithFallback', () => {
     ).toEqual({ command: titleCommand });
   });
 
+  it('adds the canonical command to execute inputs that name it CommandLine (agy)', () => {
+    const rawInput = { CommandLine: 'npm test', WaitMsBeforeAsync: 500, toolSummary: 'Run tests' };
+    expect(extractPermissionInputWithFallback({ toolCall: { kind: 'execute', rawInput } }, 'call_agy', new Map()))
+      .toEqual({ ...rawInput, command: 'npm test' });
+    expect(extractPermissionInputWithFallback({ toolCall: { kind: 'execute' } }, 'call_agy', new Map([['call_agy', rawInput]])))
+      .toEqual({ ...rawInput, command: 'npm test' });
+  });
+
   it('prefers rich toolCall content when rawInput only contains shell metadata', () => {
     expect(
       extractPermissionInputWithFallback(

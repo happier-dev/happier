@@ -81,7 +81,8 @@ export function normalizeBashInput(rawInput: unknown): { command?: string; timeo
     const record = asRecord(rawInput) ?? {};
     const out: UnknownRecord = { ...record };
 
-    const commandRaw = record.command ?? record.cmd ?? record.argv ?? record.items;
+    // agy run_command names it CommandLine.
+    const commandRaw = record.command ?? record.cmd ?? record.argv ?? record.items ?? record.CommandLine;
     const fromString = typeof commandRaw === 'string' && commandRaw.trim().length > 0 ? commandRaw.trim() : null;
     const fromArray = asStringArray(commandRaw);
     const stripped = fromArray ? stripShellWrapper(fromArray) : null;
