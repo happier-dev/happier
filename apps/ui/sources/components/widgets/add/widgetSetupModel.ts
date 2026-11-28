@@ -14,6 +14,8 @@ import type { IconName } from '@/components/ui/icons/Icon';
 import { describeHostInputTypePickerValue } from '@/components/sessions/actions/hostInputTypePickerForm';
 import { describeBuiltinInputOptionValue } from '@/text/builtinInputPrompts';
 
+import type { WidgetBindingValueSource } from '../surface/widgetBindingValueLabel';
+
 /**
  * The Set up / Edit inputs step's model (lab `dashboards` dadd A/Ab/IN, dbind E/X). It only presents
  * bindings and admitted sizes: what each input is bound to, which choices the person has, and whether the step can
@@ -42,9 +44,10 @@ export type WidgetSetupContextOffer = Readonly<{
 }>;
 
 /** One input as the step draws it: the neutral field plus what this surface can offer for it. */
-export type WidgetSetupInheritedReading =
-    | Readonly<{ kind: 'single'; valueLabel: string; pageSlot?: string }>
-    | Readonly<{ kind: 'several' }>;
+export type WidgetSetupInheritedReading = Readonly<(
+    | { kind: 'single'; valueLabel: string; pageSlot?: string }
+    | { kind: 'several' }
+) & { source?: WidgetBindingValueSource }>;
 
 export type WidgetSetupField = Readonly<{
     field: InputFieldHint;

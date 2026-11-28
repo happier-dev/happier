@@ -38,7 +38,8 @@ function formatFollowReading(source: string, value: string | null | undefined): 
 
 function formatGroupReading(reading: WidgetSetupInheritedReading, includeSource = true): string {
     const value = reading.kind === 'single' ? reading.valueLabel : t('widgetAdd.severalValues');
-    return includeSource ? formatFollowReading(t('widgetFrame.followingGroup'), value) : value;
+    if (!includeSource || reading.source === undefined) return value;
+    return formatFollowReading(t(reading.source === 'page' ? 'widgetAdd.thisPage' : 'widgetFrame.followingGroup'), value);
 }
 
 type WidgetBindingInForce =

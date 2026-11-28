@@ -118,8 +118,8 @@ describe('widget setup fields share the typed-field owners', () => {
     });
 
     describe('inherited group readings', () => {
-        const single = { kind: 'single', valueLabel: 'Resolved value' } as const;
-        const several = { kind: 'several' } as const;
+        const single = { kind: 'single', valueLabel: 'Resolved value', source: 'group' } as const;
+        const several = { kind: 'several', source: 'group' } as const;
         const singleReading = 'Resolved value (widgetFrame.followingGroup)';
         const severalReading = 'widgetAdd.severalValues (widgetFrame.followingGroup)';
         const choices = [{ value: 'one', label: 'One' }, { value: 'two', label: 'Two' }];
@@ -311,12 +311,12 @@ describe('widget setup fields share the typed-field owners', () => {
         const screen = await renderScreen(<WidgetSetupFieldRow
             entry={{ field: { path: 'agents', title: 'Agents', widget: 'select', optionsSourceId: 'usage.filters.agents' },
                 follow: { slot: 'agents', label: 'This page', values: [] },
-                inherited: { kind: 'single', valueLabel: 'Other slot agent' } }}
+                inherited: { kind: 'single', valueLabel: 'Other slot agent', source: 'page' } }}
             row={{ kind: 'needed' }} options={[]} optionsStatus="ready" plainValue={undefined}
             phone testID="setup.otherSlot" onChange={() => {}} />);
         expect.soft(screen.getTextContent()).toContain('Other slot agent');
         expect(screen.findByTestId('setup.otherSlot.control.trigger')?.props.accessibilityLabel)
-            .toContain('Other slot agent (widgetFrame.followingGroup)');
+            .toContain('Other slot agent (widgetAdd.thisPage)');
     });
 
     it('uses the public choice owner for own long choices and collections, including limits and failed discovery', async () => {

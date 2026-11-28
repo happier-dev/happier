@@ -12,7 +12,7 @@ import {
 } from '@happier-dev/protocol/widgets';
 
 import { readWidgetSurfaceSlotLabel, widgetProvidedContext, type WidgetSurfaceContext } from '../surface/widgetSurfaceSetup';
-import { describeWidgetBindingPinValue, describeWidgetPageBindingValue, readWidgetBindingFieldTitle, summarizeWidgetBindingReadings, type WidgetBindingLabelField, type WidgetBindingReading, type WidgetBindingValueLabels } from '../surface/widgetBindingValueLabel';
+import { describeWidgetBindingPinValue, describeWidgetPageBindingValue, readWidgetBindingFieldTitle, summarizeWidgetBindingReadings, type WidgetBindingLabelField, type WidgetBindingReading, type WidgetBindingValueLabels, type WidgetBindingValueSource } from '../surface/widgetBindingValueLabel';
 import type { WidgetGroupHeaderReading } from './widgetGroupInputs';
 
 export type WidgetGroupInputReadings = Readonly<{
@@ -30,6 +30,8 @@ export function readWidgetGroupInputFollowers(instance: WidgetInstanceV1, descri
     });
 }
 
+export type WidgetGroupFollowedInputReading = WidgetBindingReading & Readonly<{ source: WidgetBindingValueSource }>;
+
 /** The editor and card read the same configured inputs. Captions are looked up by the bound slot. */
 export function createWidgetGroupFollowedInputReader(input: Readonly<{
     context: WidgetSurfaceContext;
@@ -45,22 +47,22 @@ export function createWidgetGroupFollowedInputReader(input: Readonly<{
     });
     return (instance: WidgetInstanceV1, descriptor: WidgetInputDescriptorV1) => {
         const resolved = resolveConfiguredWidgetInputs({ instance, descriptor, providedContext: composed, viewerValues: {} });
-        return ({ field, slot }: WidgetBindingLabelField): WidgetBindingReading | null => {
+        return ({ field, slot }: WidgetBindingLabelField): WidgetGroupFollowedInputReading | null => {
             const value = resolved.status === 'ready' ? readInputPath(resolved.input, field.path) as JsonValue | undefined : undefined;
             if (value === undefined) return null;
             const binding = bindings[slot];
             if (binding?.kind === 'value') {
                 const labelled = labelledBindings?.[slot];
                 if (labelled?.kind === 'value' && sameStrictJsonValue(labelled.value, value)) {
-                    return { value, label: labels?.[slot] ?? null };
+                    return { value, label: labels?.[slot] ?? null, source: 'group' };
                 }
                 const summary = summarizeWidgetBindingReadings(fields.filter(declared => declared.slot === slot).map(declared => ({
                     value, label: describeWidgetBindingPinValue(declared.field, value, declared.sessionTarget, true),
                 })));
-                return { value, label: summary?.kind === 'single' ? summary.label : null };
+                return { value, label: summary?.kind === 'single' ? summary.label : null, source: 'group' };
             }
             const pageSlot = binding?.kind === 'context' ? binding.slot : slot;
-            return { value, label: describeWidgetPageBindingValue(field, value, readWidgetSurfaceSlotLabel(context, pageSlot)) };
+            return { value, label: describeWidgetPageBindingValue(field, value, readWidgetSurfaceSlotLabel(context, pageSlot)), source: 'page' };
         };
     };
 }

@@ -180,7 +180,7 @@ it('shows inherited values as placeholders without setting group overrides', asy
   expect(period.props.value).toBe('Today');
   expect(period.props.placeholder ?? '').not.toContain('Yesterday');
   expect(screen.findByTestId('edit.field.basis.control.trigger')?.props.accessibilityLabel).toBe('Cost basis: common.choose');
-  expect(project.props.accessibilityLabel).toBe('Project: widgetAdd.inheritedValue(value=Example project,source=widgetFrame.followingGroup)');
+  expect(project.props.accessibilityLabel).toBe('Project: widgetAdd.inheritedValue(value=Example project,source=widgetAdd.thisPage)');
   const projectMenu = () => screen.root.findAllByType(DropdownMenu).find(menu => menu.props.testID === 'edit.field.project')!;
   const openProjectMenu = async () => {
     await screen.pressByTestIdAsync('edit.field.project.trigger');
@@ -249,7 +249,7 @@ describe('group inherited readings', () => {
   } satisfies NonNullable<WidgetSurfaceContext['slots']>;
   const follow = (slot: string) => ({ kind: 'context', slot } as const);
   const pin = (value: string | number) => ({ kind: 'value', value } as const);
-  const inherited = (value: string) => `widgetAdd.inheritedValue(value=${value},source=widgetFrame.followingGroup)`;
+  const inherited = (value: string, source = 'widgetFrame.followingGroup') => `widgetAdd.inheritedValue(value=${value},source=${source})`;
 
   const mount = async (children: readonly WidgetInputBindingsV1[], bindings: WidgetInputBindingsV1 = {}) => {
     const setInputs = vi.fn(async (): Promise<WidgetSetupSubmitResult> => ({ ok: true }));
@@ -299,6 +299,39 @@ describe('group inherited readings', () => {
     expect(untouched.setInputs).toHaveBeenCalledWith({});
   });
 
+  it('attributes page aliases and group pins to the values that feed the previews', async () => {
+    const { screen, setInputs } = await mount([
+      { unknownChoice: follow('route'), retryLimit: follow('retrySetting') },
+    ], { route: follow('periodAlias'), retrySetting: pin(2) });
+
+    expect.soft(screen.findByTestId('edit.field.unknownChoice.control.trigger')?.props.accessibilityLabel)
+      .toBe(`Unknown choice: ${inherited('Period option', 'widgetAdd.thisPage')}`);
+    expect(screen.findByTestId('edit.field.retryLimit.input')?.props.placeholder).toBe(inherited('2'));
+    await act(async () => screen.changeTextByTestId('edit.field.retrySetting.input', '3'));
+    expect(screen.findByTestId('edit.field.retryLimit.input')?.props.placeholder).toBe(inherited('3'));
+    expect(setInputs).not.toHaveBeenCalled();
+  });
+
+  it('keeps the group source for several values supplied by its own pins', async () => {
+    const { screen } = await mount([
+      { retryLimit: follow('firstLimit') }, { retryLimit: follow('secondLimit') },
+    ], { firstLimit: pin(1), secondLimit: pin(2) });
+
+    expect(screen.findByTestId('edit.field.retryLimit.input')?.props.placeholder)
+      .toBe(inherited('widgetAdd.severalValues'));
+  });
+
+  it.each([['retrySetting', 'secondLimit'], ['secondLimit', 'retrySetting']])(
+    'names several values without a shared attribution for %s and %s', async (first, second) => {
+      const { screen } = await mount([
+        { retryLimit: follow(first) }, { retryLimit: follow(second) },
+      ], { secondLimit: pin(2) });
+
+      expect(screen.findByTestId('edit.field.retryLimit.input')?.props.placeholder)
+        .toBe('widgetAdd.severalValues');
+    },
+  );
+
   it('shows the child preview under the short choice and saves no overrides', async () => {
     const { screen, setInputs } = await mount([{ basis: follow('basisPreview') }]);
     expect(screen.getTextContent()).toContain('Automatic');
@@ -311,7 +344,7 @@ describe('group inherited readings', () => {
   it('names a draft retry limit with its number even when Priority uses the same number', async () => {
     const { screen, setInputs } = await mount([{ retryLimit: follow('retrySetting') }], { priority: pin(2) });
     const reading = () => screen.findByTestId('edit.field.retryLimit.input')?.props.placeholder;
-    expect(reading()).toBe(inherited('1'));
+    expect(reading()).toBe(inherited('1', 'widgetAdd.thisPage'));
     await act(async () => screen.changeTextByTestId('edit.field.retrySetting.input', '2'));
     expect(reading()).toBe(inherited('2'));
     await screen.pressByTestIdAsync('edit.submit');
@@ -332,7 +365,7 @@ describe('group inherited readings', () => {
   it('leaves a choice unnamed when its bound draft input has no applicable label', async () => {
     const { screen } = await mount([{ unknownChoice: follow('route') }]);
     const reading = () => screen.findByTestId('edit.field.unknownChoice.control.trigger')?.props.accessibilityLabel;
-    expect(reading()).toBe(`Unknown choice: ${inherited('Listed')}`);
+    expect(reading()).toBe(`Unknown choice: ${inherited('Listed', 'widgetAdd.thisPage')}`);
     await act(async () => screen.changeTextByTestId('edit.field.route.input', 'opaque'));
     expect(reading()).toBe(`Unknown choice: ${inherited('Unknown choice')}`);
   });
@@ -373,13 +406,13 @@ describe('group inherited readings', () => {
 
   it('does not name a text value the numeric child rejects', async () => {
     const { screen } = await mount([{ count: follow('calendar') }]);
-    expect(screen.findByTestId('edit.field.count.input')?.props.placeholder).toBe(inherited('Count'));
+    expect(screen.findByTestId('edit.field.count.input')?.props.placeholder).toBe('Count');
   });
 
   it('uses the one inherited list to read a count of two Projects in a popup field', async () => {
     const { screen } = await mount([{ projects: follow('work') }]);
     expect(screen.findByTestId('edit.field.projects.control.trigger')?.props.accessibilityLabel)
-      .toBe(`Projects: ${inherited('2 projects')}`);
+      .toBe(`Projects: ${inherited('2 projects', 'widgetAdd.thisPage')}`);
   });
 
   it('shows a set short choice as selected radios with no inherited claim', async () => {

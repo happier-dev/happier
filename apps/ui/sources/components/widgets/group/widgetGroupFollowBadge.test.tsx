@@ -200,7 +200,7 @@ it('prints only label-owner answers across the five mounted group input surfaces
     const popover = hook.getCurrent().popover;
     if (!React.isValidElement<React.ComponentProps<typeof WidgetSetupPopover>>(popover)) throw Error('No group editor');
     const draft = { operand: { kind: 'value', value: { label: 'Safe note', path: '/private/' + marker } } } as const;
-    expect.soft(popover.props.readInherited?.(draft).get('followed')).toEqual({ kind: 'single', valueLabel: 'Safe note' });
+    expect.soft(popover.props.readInherited?.(draft).get('followed')).toEqual({ kind: 'single', valueLabel: 'Safe note', source: 'group' });
     await hook.unmount();
 
     const calendar: WidgetCandidate = { ...candidate, inputs: { fields: [{ path: 'calendar', title: 'Calendar', widget: 'text' }] } };
@@ -221,7 +221,7 @@ it('prints only label-owner answers across the five mounted group input surfaces
         await act(async () => editor.getCurrent().editInputs!.onPress());
         const form = editor.getCurrent().popover;
         if (!React.isValidElement<React.ComponentProps<typeof WidgetSetupPopover>>(form)) throw Error('No group editor');
-        expect.soft(form.props.readInherited?.({}).get('calendar'), order).toEqual({ kind: 'several' });
+        expect.soft(form.props.readInherited?.({}).get('calendar'), order).toEqual({ kind: 'several', source: 'page' });
         await editor.unmount();
     }
 
@@ -311,7 +311,7 @@ it.each(hiddenCases)('does not disclose the withheld $title in either follow sur
         visible: card.getTextContent().includes(caption(title)),
         accessible: card.findByTestId('private.source')?.props.accessibilityLabel,
         editor: reading,
-    }).toEqual({ visible: true, accessible: caption(title), editor: { kind: 'single', valueLabel: title } });
+    }).toEqual({ visible: true, accessible: caption(title), editor: { kind: 'single', valueLabel: title, source: 'group' } });
 });
 
 it('withdraws a previously visible Session name in an already open group editor', async () => {
@@ -344,9 +344,9 @@ it('withdraws a previously visible Session name in an already open group editor'
             }
             return popover.props.readInherited?.(saved).get('followed');
         };
-        expect(read()).toEqual({ kind: 'single', valueLabel: 'Review invoices' });
+        expect(read()).toEqual({ kind: 'single', valueLabel: 'Review invoices', source: 'group' });
         await act(async () => setScreenSharingPrivacyActive(true));
-        expect(read()).toEqual({ kind: 'single', valueLabel: 'Session' });
+        expect(read()).toEqual({ kind: 'single', valueLabel: 'Session', source: 'group' });
         await editor.unmount();
     } finally {
         setScreenSharingPrivacyActive(false);
@@ -381,7 +381,7 @@ it('uses the slot name in the badge and editor when consuming titles disagree', 
         await act(async () => editor.editInputs!.onPress());
         const popover = output.getCurrent().editor.popover;
         if (!React.isValidElement<React.ComponentProps<typeof WidgetSetupPopover>>(popover)) throw Error('No group editor');
-        expect.soft(popover.props.readInherited?.(group).get('targetPath'), order).toEqual({ kind: 'single', valueLabel: 'operand' });
+        expect.soft(popover.props.readInherited?.(group).get('targetPath'), order).toEqual({ kind: 'single', valueLabel: 'operand', source: 'group' });
         await output.unmount();
     }
 });

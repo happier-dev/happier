@@ -25,14 +25,14 @@ import {
 } from '@/components/widgets/surface/widgetSurfaceSetup';
 import { resolveWidgetInstanceTitle, type WidgetCandidate } from '@/components/widgets/widgetCatalog';
 import { useWidgetBindingValueLabels } from '@/components/widgets/surface/useWidgetBindingValueLabels';
-import { readWidgetBindingFieldTitle, summarizeWidgetBindingReadings, type WidgetBindingReading } from '@/components/widgets/surface/widgetBindingValueLabel';
+import { readWidgetBindingFieldTitle, summarizeWidgetBindingReadings } from '@/components/widgets/surface/widgetBindingValueLabel';
 import { t } from '@/text';
 
 import {
   buildWidgetGroupInputsCandidate,
   describeWidgetGroupInputsBinding,
 } from './widgetGroupInputs';
-import { createWidgetGroupFollowedInputReader, readWidgetGroupInputFollowers, type WidgetGroupInputReadings } from './widgetGroupFollowedInputs';
+import { createWidgetGroupFollowedInputReader, readWidgetGroupInputFollowers, type WidgetGroupFollowedInputReading, type WidgetGroupInputReadings } from './widgetGroupFollowedInputs';
 import { WIDGET_GROUP_ICON } from './widgetGroupMenu';
 import type { WidgetGroupChildInputRepairContext } from './WidgetGroupChildInputRepairContext';
 
@@ -74,7 +74,7 @@ function createGroupInheritedReader(
     const readChild = createWidgetGroupFollowedInputReader({
       context, surfaceOwner, bindings, labelledBindings, labels: readings.labels, fields: declaredSlots,
     });
-    const values = new Map<string, { slot: string; reading: WidgetBindingReading | null }[]>();
+    const values = new Map<string, { slot: string; reading: WidgetGroupFollowedInputReading | null }[]>();
     for (const { instance, descriptor, followers } of children) {
       const unset = followers.filter(({ field }) => bindings[field.path] === undefined);
       if (!unset.length) continue;
@@ -93,17 +93,22 @@ function createGroupInheritedReader(
       const matching = values.get(field.path);
       if (!matching) continue;
       const result = summarizeWidgetBindingReadings(matching.map(({ reading }) => reading));
+      const first = matching[0]!;
+      const source = first.reading?.source;
+      const attribution = source !== undefined && matching.every(({ reading }) => reading?.source === source)
+        ? { source } : {};
       if (result?.kind === 'several') {
-        inherited.set(field.path, result);
+        inherited.set(field.path, { ...result, ...attribution });
         continue;
       }
-      const slot = matching[0]!.slot;
+      const { slot } = first;
       // Only a common, resolved slot with no group override can be the field's implicit page binding.
       const pageSlot = bindings[slot] === undefined && matching.every(candidate =>
         candidate.slot === slot && candidate.reading !== null) ? slot : undefined;
       inherited.set(field.path, {
         kind: 'single',
         valueLabel: result?.label ?? fieldTitles.get(field.path)!,
+        ...attribution,
         ...(pageSlot === undefined ? {} : { pageSlot }),
       });
     }

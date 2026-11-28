@@ -7,6 +7,7 @@ import { describeHostInputTypePickerValue } from '@/components/sessions/actions/
 export type WidgetBindingValueLabel = string | null | undefined;
 export type WidgetBindingValueLabels = Readonly<Record<string, WidgetBindingValueLabel>>;
 export type WidgetBindingLabelField = Readonly<{ slot: string; field: InputFieldHint; sessionTarget: boolean }>;
+export type WidgetBindingValueSource = 'page' | 'group';
 export type WidgetBindingReading = Readonly<{ value: JsonValue; label: WidgetBindingValueLabel }>;
 
 /** Prefer a shared declared title, then the common slot, then the editor's field name. */
