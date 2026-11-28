@@ -101,6 +101,8 @@ export type WorkspaceSyncTargetFileReadRequest = Readonly<{
   expectedDigest?: string;
   maxBytes: number;
   signal?: AbortSignal;
+  /** The reading ingress; an installed writer reaches another Account's TARGET only through it. */
+  context?: RpcHandlerContext;
 }>;
 
 export type WorkspaceSyncTargetBootstrapPrepareRequest = Readonly<
@@ -222,6 +224,8 @@ export type WorkspaceSyncTargetAuthority = Readonly<{
   inspectCommittedCopyHere(request: WorkspaceSyncCommittedCopyRequest, context?: RpcHandlerContext): Promise<void>;
   removeCommittedCopyHere(request: WorkspaceSyncCommittedCopyRequest, context?: RpcHandlerContext): Promise<void>;
   assertRetainedCopyDependencyAdmission(request: ProjectWorkerDependencyQueryV1, context: RpcHandlerContext): Promise<void>;
+  /** Installed SOURCE writer's dependency read of its retained TARGET endpoint; null when this daemon is not that writer. */
+  readDependenciesAsInstalledWriter(request: ProjectWorkerDependencyQueryV1, context?: RpcHandlerContext, signal?: AbortSignal): Promise<unknown> | null;
   inspectCommittedCopyAtTarget(request: WorkspaceSyncCommittedCopyRequest, context?: RpcHandlerContext): Promise<void>;
   removeCommittedCopyAtTarget(request: WorkspaceSyncCommittedCopyRequest, context?: RpcHandlerContext): Promise<void>;
   /** Owner-local: lend retained spoke custody for a finite source read. */
@@ -2716,6 +2720,49 @@ export function createWorkspaceSyncTargetAuthority(
     }
   };
   const parseVoidOk = (raw: unknown): void => { assertOkResult(raw); };
+  // The installed SOURCE writer reads its exact retained TARGET endpoint through
+  // Home's writer-target admission (current writer custody, the writer's access to
+  // the TARGET Machine) and the TARGET's retained-custody match. A raw Account RPC
+  // to another Account's Machine stays custodian_only.
+  const resolveInstalledWriterTargetSender = (context: RpcHandlerContext | undefined, phase: 'inspect' | 'dependencies',
+    relationshipId: string, sourceWorkspace: WorkspaceRefV1, targetWorkspace: WorkspaceRefV1) => {
+    const admission = context?.machineAdmission;
+    const installedAccountId = dependencies.localAccountId;
+    const send = dependencies.callWorkspaceTargetPhase;
+    if (!context || !admission || !installedAccountId || !send || admission.actorAccountId !== installedAccountId
+      || admission.machineId !== localMachineId || resolveWorkspaceSyncExecutionMachineIdV1(sourceWorkspace) !== localMachineId) return undefined;
+    const targetMachineId = resolveWorkspaceSyncExecutionMachineIdV1(targetWorkspace);
+    const routing = WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse({ v: 1,
+      sourceWriter: { machineId: localMachineId, installationId: admission.installationId },
+      source: { v: 1, phase: 'prepare', operationId: relationshipId, accountServerId: localServerId,
+        sourceMachineId: localMachineId, sourceRootPath: sourceWorkspace.rootPath,
+        sourceContext: projectWorkspaceSyncPhysicalContextFromActionContext(buildActionExecutorContextForRpc(context)) },
+      target: { v: 1, phase, operationId: relationshipId, accountServerId: localServerId,
+        targetMachineId, targetRootPath: targetWorkspace.rootPath } });
+    return async (method: string, request: unknown, signal?: AbortSignal) => await send({ machineId: targetMachineId,
+      method, request, routing: routing.target, ...(signal ? { signal } : {}) }, {
+      signal: signal ?? context.signal, callerAuthority: 'present_user',
+      machineAdmission: admission,
+      workspaceSyncSourceWriterTargetRouting: routing });
+  };
+  /** The relationship's other endpoint, read from the same rows that named the TARGET. */
+  const findRelationshipSourceWorkspace = (relationshipId: string, targetWorkspace: WorkspaceRefV1) => {
+    const snapshot = readSnapshot(relationshipId);
+    const relationship = snapshot?.relationships.find(value => value.relationshipId === relationshipId);
+    const sourceRefId = relationship?.alphaWorkspaceRefId === targetWorkspace.id ? relationship.betaWorkspaceRefId
+      : relationship?.betaWorkspaceRefId === targetWorkspace.id ? relationship.alphaWorkspaceRefId : undefined;
+    return snapshot && sourceRefId ? resolveWorkspaceRefById(snapshot.workspaceRefs, sourceRefId, localServerId) : null;
+  };
+  const callTargetRead = async <TResult>(input: Readonly<{ relationshipId: string; workspace: WorkspaceRefV1; method: string;
+    request: unknown; signal?: AbortSignal; context?: RpcHandlerContext; local: () => Promise<TResult>; parse: (raw: unknown) => TResult }>) => {
+    const isLocal = isExecutionHere(input.workspace);
+    const sourceWorkspace = isLocal ? undefined : findRelationshipSourceWorkspace(input.relationshipId, input.workspace);
+    const send = sourceWorkspace && resolveInstalledWriterTargetSender(input.context, 'inspect', input.relationshipId,
+      sourceWorkspace, input.workspace);
+    if (send) return input.parse(await send(input.method, input.request, input.signal));
+    return await callAtTarget({ machineId: resolveWorkspaceSyncExecutionMachineIdV1(input.workspace), method: input.method,
+      request: input.request, signal: input.signal, isLocal, local: input.local, parse: input.parse });
+  };
 
   const authority: WorkspaceSyncTargetAuthority = {
     activity,
@@ -2745,24 +2792,10 @@ export function createWorkspaceSyncTargetAuthority(
       const resolved = snapshot ? resolveCommittedCopyPreview(request, snapshot) : await refreshCommittedCopyPreview(request, context);
       const { parsed, workspace } = resolved;
       if (isLocalWorkspace(workspace)) return await inspectCommittedCopyPreviewHere(request, resolved);
-      const admission = context?.machineAdmission;
-      const installedAccountId = dependencies.localAccountId;
-      const routing = admission && installedAccountId && admission.custodianAccountId === installedAccountId
-        && admission.machineId === localMachineId && resolveWorkspaceSyncExecutionMachineIdV1(resolved.sourceWorkspace) === localMachineId
-        ? WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse({ v: 1,
-          sourceWriter: { machineId: localMachineId, installationId: admission.installationId },
-          source: { v: 1, phase: 'prepare', operationId: parsed.expectedRelationship.relationshipId,
-            accountServerId: localServerId, sourceMachineId: localMachineId, sourceRootPath: resolved.sourceWorkspace.rootPath,
-            sourceContext: projectWorkspaceSyncPhysicalContextFromActionContext(buildActionExecutorContextForRpc(context!)) },
-          target: { v: 1, phase: 'inspect', operationId: parsed.expectedRelationship.relationshipId,
-            accountServerId: localServerId, targetMachineId: resolveWorkspaceSyncExecutionMachineIdV1(workspace), targetRootPath: workspace.rootPath } }) : undefined;
-      const raw = routing && dependencies.callWorkspaceTargetPhase
-        ? await dependencies.callWorkspaceTargetPhase({ machineId: resolveWorkspaceSyncExecutionMachineIdV1(workspace),
-          method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT, request: parsed, routing: routing.target,
-          ...(request.signal ? { signal: request.signal } : {}) }, {
-          signal: request.signal ?? context!.signal, callerAuthority: 'present_user',
-          machineAdmission: { ...admission!, actorAccountId: installedAccountId!, role: 'manage' },
-          workspaceSyncSourceWriterTargetRouting: routing })
+      const send = resolveInstalledWriterTargetSender(context, 'inspect', parsed.expectedRelationship.relationshipId,
+        resolved.sourceWorkspace, workspace);
+      const raw = send
+        ? await send(RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT, parsed, request.signal)
         : await callMachineRpc({ machineId: resolveWorkspaceSyncExecutionMachineIdV1(workspace),
           method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT, request: parsed,
           ...(request.signal ? { signal: request.signal } : {}) });
@@ -2783,6 +2816,16 @@ export function createWorkspaceSyncTargetAuthority(
         || (request.workspaceRefId !== entry.sourceWorkspaceRefId && request.workspaceRefId !== entry.targetWorkspaceRefId)) {
         throw authorityError('forbidden', 'Dependency observation does not match retained requester custody');
       }
+    },
+    readDependenciesAsInstalledWriter: (request, context, signal) => {
+      const snapshot = readSnapshot(request.relationshipId);
+      const relationship = snapshot?.relationships.find(value => value.relationshipId === request.relationshipId);
+      const endpoints = relationship ? [relationship.alphaWorkspaceRefId, relationship.betaWorkspaceRefId]
+        .map(id => resolveWorkspaceRefById(snapshot!.workspaceRefs, id, localServerId)) : [];
+      const target = endpoints.find(ref => ref !== null && resolveWorkspaceSyncExecutionMachineIdV1(ref) === request.machineId);
+      const source = endpoints.find(ref => ref !== null && ref !== target);
+      const send = target && source && resolveInstalledWriterTargetSender(context, 'dependencies', request.relationshipId, source, target);
+      return send ? send(RPC_METHODS.DAEMON_PROJECT_WORKER_DEPENDENCIES, request, signal) : null;
     },
     inspectCommittedCopyHere: async (request, context) => {
       const native = await prepareCommittedCopyHere(request, context, 'inspect');
@@ -3245,9 +3288,9 @@ export function createWorkspaceSyncTargetAuthority(
         maxBytes: request.maxBytes, ...(request.expectedDigest === undefined ? {} : { expectedDigest: request.expectedDigest }),
       });
       const workspace = assertOwnedTargetWorkspace(targetRequest.relationshipId, targetRequest.workspaceRefId, request.targetMachineId);
-      return await callAtTarget({
-        machineId: resolveWorkspaceSyncExecutionMachineIdV1(workspace), method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_FILE_READ,
-        request: targetRequest, signal: request.signal, isLocal: isExecutionHere(workspace),
+      return await callTargetRead({ relationshipId: targetRequest.relationshipId, workspace,
+        method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_FILE_READ, request: targetRequest,
+        ...(request.signal ? { signal: request.signal } : {}), ...(request.context ? { context: request.context } : {}),
         local: () => readFileHere(targetRequest, request.signal),
         parse: raw => ReadWorkspaceSyncFileResultV1Schema.parse(raw),
       });
@@ -3257,9 +3300,9 @@ export function createWorkspaceSyncTargetAuthority(
         relationshipId: request.relationshipId, workspaceRefId: request.targetWorkspaceRefId, path: request.path,
       });
       const workspace = assertOwnedTargetWorkspace(targetRequest.relationshipId, targetRequest.workspaceRefId, request.targetMachineId);
-      return await callAtTarget({
-        machineId: resolveWorkspaceSyncExecutionMachineIdV1(workspace), method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_ENTRY_OBSERVE,
-        request: targetRequest, signal: request.signal, isLocal: isExecutionHere(workspace),
+      return await callTargetRead({ relationshipId: targetRequest.relationshipId, workspace,
+        method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_ENTRY_OBSERVE, request: targetRequest,
+        ...(request.signal ? { signal: request.signal } : {}), ...(request.context ? { context: request.context } : {}),
         local: () => observeEntryHere(targetRequest, request.signal),
         parse: raw => WorkspaceSyncEntryExpectationV1Schema.parse(raw),
       });

@@ -62,6 +62,7 @@ it.each(['destination', 'source'] as const)('reads Handoff %s with the admitted 
     if (path === '/v1/account/encryption/currentness') return { status: 200, data: currentness };
     if (path === `/v1/machines/${targetMachineId}`) return { status: 200, data: { machine: {
       id: targetMachineId, storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+      managedMachineRef: null, metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
     } } };
     if (path === `/v2/sessions/${sessionId}`) return { status: 200, data: { session: createCurrentSessionProjectionRecordFixture({
       id: sessionId, encryptionMode: 'plain', share: null, metadata: 'not-json',

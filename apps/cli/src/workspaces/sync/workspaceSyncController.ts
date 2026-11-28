@@ -5,6 +5,7 @@ import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actio
 import { WorkspaceRefV1Schema, isManagedWorkspaceRefV2, type ManagedWorkspaceRefV2, type WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import type { WorkspaceSyncConflictInspectEndpointV1, WorkspaceSyncConflictInspectRpcRequestV1, WorkspaceSyncConflictInspectRpcResultV1, WorkspaceSyncConflictResolutionResultV1, WorkspaceSyncConflictResolutionV1, WorkspaceSyncConflictResolveActionInputV1, WorkspaceSyncEntryExpectationV1, WorkspaceSyncPathSelectionV1, WorkspaceSyncSelectionDiagnoseV1, WorkspaceSyncRelationshipsListRpcRequestV1, WorkspaceSyncRelationshipsListRpcResultV1 } from '@happier-dev/protocol';
 import { machineCarrierUnavailableError } from '@/daemon/peer/iroh/machineCarrier';
+import type { RpcHandlerContext } from '@/api/rpc/types';
 import { deriveWorkspaceSyncConflictAsidePaths, deriveWorkspaceSyncConflictOperationId } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { validateWorkspaceSyncRelationship, validateWorkspaceSyncRelationships } from './workspaceSyncSettings';
 import { deriveWorkspaceSyncEndpointId } from './transport/workspaceSyncBrokerProtocol';
@@ -54,6 +55,8 @@ export type WorkspaceSyncTargetFileRead = (input: Readonly<{
   expectedDigest?: string;
   maxBytes: number;
   signal?: AbortSignal;
+  /** The reading ingress, carried to the TARGET authority's installed-writer route. */
+  context?: RpcHandlerContext;
 }>) => Promise<ReadWorkspaceSyncFileResultV1>;
 /**
  * Authenticated observation of one confined entry on a linked endpoint. The
@@ -68,6 +71,8 @@ export type WorkspaceSyncTargetEntryObserve = (input: Readonly<{
   targetWorkspaceRefId: string;
   path: string;
   signal?: AbortSignal;
+  /** The inspecting ingress, carried to the TARGET authority's installed-writer route. */
+  context?: RpcHandlerContext;
 }>) => Promise<WorkspaceSyncEntryExpectationV1>;
 export type WorkspaceSyncCopyOnceTargetRecovery = (operation: WorkspaceSyncCopyOnceV1) => Promise<Readonly<{
   release(reason: 'abort' | 'commit'): Promise<void>;
@@ -1536,7 +1541,8 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
       statusRevision,
     });
   }
-  async inspectConflict(request: WorkspaceSyncConflictInspectRpcRequestV1, signal?: AbortSignal, admittedRelationshipIds?: ReadonlySet<string>): Promise<WorkspaceSyncConflictInspectRpcResultV1> {
+  async inspectConflict(request: WorkspaceSyncConflictInspectRpcRequestV1, signal?: AbortSignal, admittedRelationshipIds?: ReadonlySet<string>,
+    context?: RpcHandlerContext): Promise<WorkspaceSyncConflictInspectRpcResultV1> {
     abortIfRequested(signal);
     const valid = WorkspaceSyncConflictInspectRpcRequestV1Schema.parse(request);
     await this.lifecycle.start();
@@ -1571,6 +1577,7 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
       set.relationships,
       valid.path,
       signal,
+      context,
     )));
     const grouped = new Map<WorkspaceSyncEntryExpectationV1, string[]>();
     for (const endpoint of endpoints) {
@@ -1618,7 +1625,7 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
       }
       for (const asidePath of paths) {
         const observed = await this.observeInspectEndpoint(
-          set.hubWorkspaceRefId, hubMembership, set.relationships, asidePath, signal,
+          set.hubWorkspaceRefId, hubMembership, set.relationships, asidePath, signal, context,
         );
         if (observed.outcome !== 'observed' || !observed.observation) {
           preservationOptions.push({ status: 'unavailable', source, reason: 'destination_unavailable' });
@@ -1685,6 +1692,7 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
     expectedDefinitions: readonly WorkspaceSyncRelationshipV1[],
     path: string,
     signal?: AbortSignal,
+    context?: RpcHandlerContext,
   ): Promise<WorkspaceSyncConflictInspectEndpointV1> {
     const selections = (reason: 'selection_unavailable' | 'endpoint_unavailable') => membership.map((entry) => ({
       ...entry,
@@ -1736,6 +1744,7 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
           targetWorkspaceRefId: workspaceRefId,
           path,
           ...(signal ? { signal } : {}),
+          ...(context ? { context } : {}),
         });
       }
       const diagnosedSelections = await Promise.all(membership.map(async (entry) => {
@@ -2365,7 +2374,7 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
       }
     }
   }
-  async readFile(request: ReadWorkspaceSyncFileV1, signal?: AbortSignal): Promise<ReadWorkspaceSyncFileResultV1> {
+  async readFile(request: ReadWorkspaceSyncFileV1, signal?: AbortSignal, context?: RpcHandlerContext): Promise<ReadWorkspaceSyncFileResultV1> {
     abortIfRequested(signal);
     const valid = ReadWorkspaceSyncFileV1Schema.parse(request);
     const definition = this.definitions.get(valid.relationshipId);
@@ -2402,6 +2411,7 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
       ...(valid.expectedDigest === undefined ? {} : { expectedDigest: valid.expectedDigest }),
       maxBytes: valid.maxBytes,
       signal,
+      ...(context ? { context } : {}),
     });
   }
   async withAuthorizedSourceSeedExport<T>(

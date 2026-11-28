@@ -112,7 +112,9 @@ describe('workspace sync machine RPC handlers', () => {
       { workspaceRefId: 'workspace-a', path: 'src/index.ts' }, { signal },
     )).resolves.toMatchObject({ endpoints: [{ observation: { kind: 'missing' } }] });
     expect(listRelationships).toHaveBeenCalledWith({ workspaceRefId: 'workspace-c' }, signal);
-    expect(inspectConflict).toHaveBeenCalledWith({ workspaceRefId: 'workspace-a', path: 'src/index.ts' }, signal);
+    // The ingress context reaches the controller for the TARGET authority's installed-writer route.
+    expect(inspectConflict).toHaveBeenCalledWith({ workspaceRefId: 'workspace-a', path: 'src/index.ts' }, signal,
+      undefined, expect.objectContaining({ signal }));
     await expect(handlers.get(RPC_METHODS.DAEMON_WORKSPACE_SYNC_CONFLICT_INSPECT)?.({
       workspaceRefId: 'workspace-a', path: 'src/index.ts', root: '/caller/root',
     })).rejects.toThrow();
@@ -278,7 +280,7 @@ describe('workspace sync machine RPC handlers', () => {
     expect(controller.pause).not.toHaveBeenCalled();
     expect(controller.readFile).toHaveBeenCalledWith(expect.objectContaining({
       relationshipId: 'rel-1', side: 'alpha', path: 'src/index.ts', maxBytes: 1024,
-    }), expect.any(AbortSignal));
+    }), expect.any(AbortSignal), undefined);
   });
 
   it('keeps target mutation roots daemon-resolved and fails closed without the runtime', async () => {

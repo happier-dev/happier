@@ -125,6 +125,19 @@ export function createCliSessionHandoffActionDeps(
           if (!requester || handoff.admission.sessionId !== sessionId || handoff.admission.targetMachineId !== targetMachineId) {
             return { type: 'error' as const, result: { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' } };
           }
+          // A Can use requester on another person's Machine copies only inside their
+          // own member capture there. The TARGET capture and its matched-capture
+          // writer preflight decide that destination in-flow; this Manage-only
+          // Account read would refuse before it (O-MACH ruling 2026-11-28 10:18Z).
+          const [{ readPublishedMachineRow }, { requiresRequesterWorkspaceCapture }] = await Promise.all([
+            import('@/api/machine/readPublishedMachineRow'), import('@/api/machine/machineRpcAuthorization')]);
+          const targetAccess = (await runWithServerHttpBaseUrl(requester.serverHttpBaseUrl,
+            () => readPublishedMachineRow(targetMachineId, requester.credentials, signal ? { signal } : undefined))
+            .catch((error) => { if (signal?.aborted) throw error; return null; }))?.access;
+          if (targetAccess && requiresRequesterWorkspaceCapture({ actorAccountId: handoff.root.binding.accountId,
+            custodianAccountId: targetAccess.custodian.accountId, role: targetAccess.role })) {
+            return { type: 'not_required' as const };
+          }
           const { callExactMachineRpc, executionRunAuthorityCeiling } = await import('@/session/transport/rpc/machineRpc');
           raw = readMachineActionRpcResult(await callExactMachineRpc({ ...rpc, credentials: requester.credentials,
             serverUrl: requester.serverHttpBaseUrl, requestId: context.actionRequestId,

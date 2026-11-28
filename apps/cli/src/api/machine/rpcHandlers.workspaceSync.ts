@@ -34,13 +34,15 @@ export type WorkspaceSyncRpcController = Readonly<{
   terminate(relationshipId: string, signal?: AbortSignal): Promise<void>;
   listConflicts(request: WorkspaceSyncConflictPageRequestV1, signal?: AbortSignal): Promise<WorkspaceSyncConflictPageV1>;
   listRelationships(request: WorkspaceSyncRelationshipsListRpcRequestV1, signal?: AbortSignal): Promise<WorkspaceSyncRelationshipsListRpcResultV1>;
-  inspectConflict(request: WorkspaceSyncConflictInspectRpcRequestV1, signal?: AbortSignal): Promise<WorkspaceSyncConflictInspectRpcResultV1>;
+  /** The ingress context reaches the TARGET authority's installed-writer route; the admitted Relationship ids stay the controller's. */
+  inspectConflict(request: WorkspaceSyncConflictInspectRpcRequestV1, signal?: AbortSignal, admittedRelationshipIds?: ReadonlySet<string>,
+    context?: RpcHandlerContext): Promise<WorkspaceSyncConflictInspectRpcResultV1>;
   resolveConflict(
     request: WorkspaceSyncConflictResolutionV1,
     signal: AbortSignal | undefined,
     actionReceiptId: string,
   ): Promise<WorkspaceSyncConflictResolutionResultV1>;
-  readFile(request: ReadWorkspaceSyncFileV1, signal?: AbortSignal): Promise<ReadWorkspaceSyncFileResultV1>;
+  readFile(request: ReadWorkspaceSyncFileV1, signal?: AbortSignal, context?: RpcHandlerContext): Promise<ReadWorkspaceSyncFileResultV1>;
 }>;
 
 export type MachineWorkspaceSyncRpcService = Readonly<{
@@ -390,7 +392,7 @@ export function registerMachineWorkspaceSyncRpcHandlers(params: Readonly<{
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_WORKSPACE_SYNC_CONFLICT_INSPECT, async (raw, context) => {
     const request = WorkspaceSyncConflictInspectRpcRequestV1Schema.parse(raw);
     return WorkspaceSyncConflictInspectRpcResultV1Schema.parse(
-      await (await requesterService(context)).controller.inspectConflict(request, signal(context?.signal)),
+      await (await requesterService(context)).controller.inspectConflict(request, signal(context?.signal), undefined, context),
     );
   });
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_WORKSPACE_SYNC_CONFLICT_RESOLVE, async (raw, context) => {
@@ -411,7 +413,7 @@ export function registerMachineWorkspaceSyncRpcHandlers(params: Readonly<{
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_WORKSPACE_SYNC_FILE_READ, async (raw, context) => {
     const request = ReadWorkspaceSyncFileV1Schema.parse(raw);
     return ReadWorkspaceSyncFileResultV1Schema.parse(
-      await (await requesterService(context)).controller.readFile(request, signal(context?.signal)),
+      await (await requesterService(context)).controller.readFile(request, signal(context?.signal), context),
     );
   });
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_CONFLICT_STAGE, async (raw, context) => {

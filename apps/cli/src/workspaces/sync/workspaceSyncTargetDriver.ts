@@ -65,6 +65,8 @@ export type DriverBootstrapReleaseInput = Readonly<{
 
 export type DriverConflictObserveInput = Readonly<{
   relationshipId: string; targetMachineId: string; targetWorkspaceRefId: string; path: string; signal?: AbortSignal;
+  /** The inspecting ingress, carried to the TARGET authority's installed-writer route. */
+  context?: RpcHandlerContext;
 }>;
 
 export interface WorkspaceSyncTargetDriver {

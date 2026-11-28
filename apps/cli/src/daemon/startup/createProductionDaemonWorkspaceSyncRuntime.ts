@@ -1901,7 +1901,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     const result = WorkspaceSyncCommittedCopyTargetResultV1Schema.parse(retained.result);
     if (!result.ok) throw Object.assign(compositionError(result.errorCode, 'Workspace copy has dependent work'), { dependencies: result.dependencies });
   };
-  const relationshipDependencyReader = (credentials: StoredCredentials): NonNullable<WorkspaceSyncRelationshipOwnerOptions['readRelationshipDependencies']> =>
+  const relationshipDependencyReader = (credentials: StoredCredentials, installedContext?: RpcHandlerContext): NonNullable<WorkspaceSyncRelationshipOwnerOptions['readRelationshipDependencies']> =>
     async (relationship, snapshot, removal) => {
       const serverId = semanticServerId;
       // Byte removal asks every component Machine and needs every answer. Keeping
@@ -1923,7 +1923,9 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
             const target = capture ? resolveRelationshipBootstrapTarget(capture.execution.getSnapshot?.() ?? null, relationship, serverId) : null;
             // A retained target loan admits only that physical target, never other Machines in the component.
             const retained = target?.machineId === machineId ? await callRetainedCopyPhase(relationship, 'dependencies', request) : null;
-            const result = retained ? retained.result : await factories.callMachineRpc({ credentials, machineId,
+            // The installed writer reaches its retained TARGET endpoint, including one on another Account's Machine.
+            const installedWriter = retained || capture ? null : targetAuthority.readDependenciesAsInstalledWriter(request, installedContext);
+            const result = retained ? retained.result : installedWriter ? await installedWriter : await factories.callMachineRpc({ credentials, machineId,
               method: RPC_METHODS.DAEMON_PROJECT_WORKER_DEPENDENCIES, request });
             readMachineActionRpcResult(result);
             return z.array(ProjectWorkerDependencyV1Schema).parse(result);
@@ -2008,7 +2010,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
             return result;
           }
         : baseMutate,
-      readRelationshipDependencies: relationshipDependencyReader(capture?.credentials ?? input.credentials),
+      readRelationshipDependencies: relationshipDependencyReader(capture?.credentials ?? input.credentials, retirementContext),
       removeCommittedRelationshipTarget: (relationship, approval, retire, signal) =>
         removeCommittedCopy(relationship, approval, retire, signal, retirementContext),
       ensureRelationship: async (relationship, signal, preparation) => {
