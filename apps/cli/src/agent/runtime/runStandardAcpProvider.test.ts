@@ -10,6 +10,7 @@ import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { reloadConfiguration } from '@/configuration';
 import * as daemonControlClient from '@/daemon/controlClient';
+import { HAPPIER_DAEMON_PENDING_FIRST_INPUT_ENV_KEY } from '@/daemon/spawn/pendingFirstInput';
 import { runPermissionModePromptLoop } from './runPermissionModePromptLoop';
 import { createPermissionModeQueueState } from './createPermissionModeQueueState';
 
@@ -266,8 +267,8 @@ describe('runStandardAcpProvider', () => {
   it.each(['runtime', 'startup'] as const)('respects %s ownership when reporting tmux startup fallback', async (terminalHostOwner) => {
     const harness = createHarness();
     const home = await createTempDir('happier-provider-terminal-owner-');
-    const env = createEnvKeyScope(['HAPPIER_HOME_DIR']);
-    env.patch({ HAPPIER_HOME_DIR: home });
+    const env = createEnvKeyScope(['HAPPIER_HOME_DIR', HAPPIER_DAEMON_PENDING_FIRST_INPUT_ENV_KEY]);
+    env.patch({ HAPPIER_HOME_DIR: home, [HAPPIER_DAEMON_PENDING_FIRST_INPUT_ENV_KEY]: undefined });
     reloadConfiguration();
     const daemonReport = vi.spyOn(daemonControlClient, 'notifyDaemonSessionStarted').mockResolvedValue({});
     harness.opts.startedBy = 'daemon';
