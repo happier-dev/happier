@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { BackendTargetRefSchema, matchesBackendTargetAgentId } from './backendTargets/backendTargetRef.js';
 
 import { ConnectedServiceBindingsV1Schema } from './connect/connectedServiceBindings.js';
+import { ConnectedServiceUxDiagnosticV1Schema } from './connect/connectedServiceUxDiagnostics.js';
 import { AcpConfigOptionOverridesV1Schema } from './sessionMetadata/metadataOverridesV1.js';
 import { isSessionAgentTransitionDividerLocalId } from './sessionAgentTransitionDivider.js';
 import { PendingLocalIdSchema } from './sessionMessages/pendingLocalId.js';
@@ -176,6 +177,7 @@ export const SESSION_AGENT_TRANSITION_REJECTED_CODES_V1 = [
    * another account, rather than being told the Agent itself is unavailable.
    */
   'connected_account_unsupported',
+  'connected_account_unavailable',
 ] as const;
 
 /**
@@ -274,6 +276,7 @@ const SessionAgentTransitionRejectedResultV1Schema = lazySchema(() => z
   .object({
     type: z.literal('rejected'),
     code: SessionAgentTransitionRejectedCodeV1Schema,
+    connectedServiceDiagnostic: ConnectedServiceUxDiagnosticV1Schema.optional(),
     /**
      * Always `'none'`. `rejected` is the "nothing happened" arm by construction;
      * any code reachable with the source already stopped lives on

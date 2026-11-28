@@ -1,3 +1,4 @@
+import { resolveConnectedServiceUxDiagnosticPresentation, translateConnectedServiceUxDiagnosticBody } from '@/components/sessions/connectedServices/diagnostics/connectedServiceUxDiagnostics';
 import {
     buildBackendTargetKey,
     type BackendTargetRefV1,
@@ -237,6 +238,8 @@ function resolveRejectedMessage(
             return t('session.agentContinuation.transition.rejected.sourceStopFailed', {
                 agent: labels.sourceAgentLabel,
             });
+        case 'connected_account_unavailable':
+            return t('connectedServices.authSwitch.switchFailed');
         case 'connected_account_unsupported':
             return t('session.agentContinuation.transition.rejected.connectedAccountUnsupported', {
                 agent: labels.targetAgentLabel,
@@ -414,14 +417,17 @@ export function reconcileArmedAgentContinuationDisposition(params: Readonly<{
                 message: '',
                 awaitingRuntime: resolveAwaitingRuntime(result, facts),
             });
-        case 'rejected':
+        case 'rejected': {
+            const diagnostic = resolveConnectedServiceUxDiagnosticPresentation(result.connectedServiceDiagnostic);
             return buildDisposition({
                 depth: 'no_effect',
-                message: resolveRejectedMessage(result.code, labels),
+                message: diagnostic ? translateConnectedServiceUxDiagnosticBody({ presentation: diagnostic, translate: t })
+                    : resolveRejectedMessage(result.code, labels),
                 // A Session that already runs the armed Agent makes the armed row
                 // a promise about a switch that cannot happen.
                 armSpent: result.code === 'same_target',
             });
+        }
         case 'partially_applied':
             if (result.applied === 'source_stopped') {
                 return buildDisposition({

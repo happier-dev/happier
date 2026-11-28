@@ -1152,15 +1152,9 @@ async function materializeAndVerifyConnectedServiceAuthForSpawn(params: Readonly
   return materialized;
 }
 
-export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
+type ConnectedServiceSpawnAdmissionInput = Readonly<{
   agentId: CatalogAgentId;
-  materializationPurpose?: 'probe';
-  sessionDirectory?: string | null;
   connectedServicesBindingsRaw: unknown;
-  materializationKey: string;
-  connectedServiceMaterializationIdentityV1?: ConnectedServiceMaterializationIdentityV1 | null;
-  activeServerDir: string;
-  baseDir: string;
   credentials: Credentials;
   api: ApiClient;
   accountUsageStore?: AccountUsageStoreForAuthGroupSwitchState | null;
@@ -1170,42 +1164,11 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
   sessionId?: string;
   authGroupSwitchCoordinator?: ConnectedServiceAuthGroupPreTurnSwitchCoordinator | null;
   quotaProbeDeadlineAtMs?: number;
-  accountSettings?: AccountSettings | Readonly<Record<string, unknown>> | null;
-  processEnv?: NodeJS.ProcessEnv;
-  previousMaterializedRoot?: string | null;
-  existingSessionMetadata?: unknown;
   credentialRefreshService?: ConnectedServiceSpawnCredentialRefreshService | null;
-  /**
-   * The vendor `--resume` reference the spawned process will resume from. Required for the §2
-   * post-materialization reachability re-verify; null/absent means this is a fresh (non-resume)
-   * spawn and the gate is skipped.
-   */
-  vendorResumeId?: string | null;
-  /**
-   * Whether shared-state continuity was requested for this spawn. When true (and a `vendorResumeId`
-   * is present), the reachability gate runs against the REAL materialized target before the vendor
-   * launches; when false the spawn is not continuity-gated (e.g. isolated state).
-   */
-  resumeReachabilityRequired?: boolean;
-  /**
-   * A persisted absolute vendor session-file hint, when known. Per D8 this is a fast-path hint only:
-   * a stale/cross-machine path that fails to stat must degrade to the id+cwd native search, never
-   * hard-fail.
-   */
-  candidatePersistedSessionFile?: string | null;
-  sessionStateMode?: 'existing';
   signal?: AbortSignal;
-  onCleanup?: (cleanup: () => Promise<void>) => void;
-}>): Promise<Readonly<{
-  env: Record<string, string>;
-  materializationRoot?: string | null;
-  cleanupMaterializationRoot?: (() => void) | null;
-  cleanupOnFailure: (() => void) | null;
-  cleanupOnExit: (() => void) | null;
-  connectedServicesBindings: ConnectedServicesBindingsV1;
-  runtimeAccountIdentitySelections: ReadonlyArray<RuntimeAccountIdentitySelectionInput>;
-  diagnostics?: readonly ConnectedServicesMaterializationDiagnostic[];
-}> | null> {
+}>;
+
+export async function admitConnectedServiceAuthForSpawn(params: ConnectedServiceSpawnAdmissionInput) {
   params.signal?.throwIfAborted();
   const selections = parseConnectedServiceBindingSelections(params.connectedServicesBindingsRaw);
   if (selections.length === 0) return null;
@@ -1277,6 +1240,57 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
       if (!switched) throw error;
     }
   }
+  return { selections, recordsByServiceId, credentialRevisionsByServiceId, groupSelections, nowMs, forceSpawnPreflightOauthRefresh };
+}
+
+export type ConnectedServiceSpawnAdmission = NonNullable<Awaited<ReturnType<typeof admitConnectedServiceAuthForSpawn>>>;
+
+export async function resolveConnectedServiceAuthForSpawn(params: ConnectedServiceSpawnAdmissionInput & Readonly<{
+  materializationPurpose?: 'probe';
+  admittedAuth?: ConnectedServiceSpawnAdmission;
+  sessionDirectory?: string | null;
+  materializationKey: string;
+  connectedServiceMaterializationIdentityV1?: ConnectedServiceMaterializationIdentityV1 | null;
+  activeServerDir: string;
+  baseDir: string;
+  accountSettings?: AccountSettings | Readonly<Record<string, unknown>> | null;
+  processEnv?: NodeJS.ProcessEnv;
+  previousMaterializedRoot?: string | null;
+  existingSessionMetadata?: unknown;
+  /**
+   * The vendor `--resume` reference the spawned process will resume from. Required for the §2
+   * post-materialization reachability re-verify; null/absent means this is a fresh (non-resume)
+   * spawn and the gate is skipped.
+   */
+  vendorResumeId?: string | null;
+  /**
+   * Whether shared-state continuity was requested for this spawn. When true (and a `vendorResumeId`
+   * is present), the reachability gate runs against the REAL materialized target before the vendor
+   * launches; when false the spawn is not continuity-gated (e.g. isolated state).
+   */
+  resumeReachabilityRequired?: boolean;
+  /**
+   * A persisted absolute vendor session-file hint, when known. Per D8 this is a fast-path hint only:
+   * a stale/cross-machine path that fails to stat must degrade to the id+cwd native search, never
+   * hard-fail.
+   */
+  candidatePersistedSessionFile?: string | null;
+  sessionStateMode?: 'existing';
+  onCleanup?: (cleanup: () => Promise<void>) => void;
+}>): Promise<Readonly<{
+  env: Record<string, string>;
+  materializationRoot?: string | null;
+  cleanupMaterializationRoot?: (() => void) | null;
+  cleanupOnFailure: (() => void) | null;
+  cleanupOnExit: (() => void) | null;
+  connectedServicesBindings: ConnectedServicesBindingsV1;
+  runtimeAccountIdentitySelections: ReadonlyArray<RuntimeAccountIdentitySelectionInput>;
+  diagnostics?: readonly ConnectedServicesMaterializationDiagnostic[];
+}> | null> {
+  params.signal?.throwIfAborted();
+  const admitted = params.admittedAuth ?? await admitConnectedServiceAuthForSpawn(params);
+  if (!admitted) return null;
+  const { selections, recordsByServiceId, credentialRevisionsByServiceId, groupSelections, nowMs, forceSpawnPreflightOauthRefresh } = admitted;
   const maxMaterializationAttempts = resolveMaxSpawnMaterializationAttempts(groupSelections);
   for (let attempt = 0; attempt < maxMaterializationAttempts; attempt += 1) {
     const selectionsByServiceId = buildSelectionsByServiceIdForSpawn({

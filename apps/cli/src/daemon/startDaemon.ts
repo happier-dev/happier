@@ -3710,7 +3710,10 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                       ).stateMode,
                       descriptor: await getConnectedServiceStateSharingDescriptor(catalogAgentId),
                     }) === 'shared';
+                    const admittedAuth = transitionLaunch?.admittedAuth;
                     connectedServiceAuth = await resolveConnectedServiceAuthForSpawn({
+                      ...(admittedAuth && admittedAuth.materializationId === connectedServiceMaterializationIdentityV1.id
+                        ? { admittedAuth: admittedAuth.credentials } : {}),
                       agentId: catalogAgentId,
                       sessionDirectory: resolvedDirectory,
                       connectedServicesBindingsRaw: normalizedOptions.connectedServices,
@@ -8719,6 +8722,8 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
               });
               connectedApiMachine.setRPCHandlers({
                 spawnSession,
+                connectedServiceAdmission: { api, credentialRefreshService: connectedServiceRefreshCoordinator,
+                  accountUsageStore: providerAccountUsageStore, runtimeQuotaSnapshots: connectedServiceRuntimeQuotaSnapshots },
                 spawnSessionForHandoff: spawnSession,
                 resolveSpawnSessionByNonce: resolveDaemonSpawnSessionByNonce,
                 abandonSpawnSessionByNonce: async (spawnNonce) => await abandonSpawnedSessionUntilCompleted({
