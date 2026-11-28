@@ -99,7 +99,7 @@ export async function openOwnServerDatabaseConnectionForHost(input: Readonly<{
                     return await machineNativeEffectAdmission.runStage(effect, () => openConnection(url.toString(), signal, {
                         ...transport, runOperation,
                         ...(isPostgresql ? write ? { writeRoleSetupSql: postgresqlWriteRoleSetupSql }
-                            : { sessionGuardSql: ownServerReadOnlyRoleGuardSql('postgresql') } : {}),
+                            : { access: 'read', sessionGuardSql: ownServerReadOnlyRoleGuardSql('postgresql') } : {}),
                     })).catch((error: unknown) => {
                             if (error && typeof error === 'object' && 'code' in error) {
                                 if (error.code === 'write_role_unavailable') return refuse(error.code);

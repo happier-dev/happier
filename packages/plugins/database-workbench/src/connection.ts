@@ -68,7 +68,7 @@ export async function openDatabaseConnection(input: Readonly<{
     });
     const engine = DatabaseBuiltinEngineIdV1Schema.parse(descriptor.engine);
     switch (engine) {
-        case 'postgresql': return { engine, ...await openPostgresqlConnection(input.connectionString, input.signal) };
+        case 'postgresql': return { engine, ...await openPostgresqlConnection(input.connectionString, input.signal, { access: input.access }) };
         case 'mysql': return { engine, ...await openMysqlConnection(input.connectionString, input.signal) };
         case 'sqlite': return { engine, ...await openSqliteConnection(fileURLToPath(sqliteDatabaseFileUrl(input.connectionString)), { readOnly: input.access === 'read' }) };
     }

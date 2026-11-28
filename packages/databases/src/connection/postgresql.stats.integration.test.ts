@@ -150,8 +150,13 @@ it('preserves user statement counts and Activity while excluding Workbench metad
         external = new Client({ host: directory, user: 'happier_ro', database: 'postgres', application_name: 'fixture-user' });
         await external.connect();
         const externalActivityKey = String((await external.query<{ pid: number }>('SELECT pg_catalog.pg_backend_pid() AS pid')).rows[0]!.pid);
+        await external.query('BEGIN READ ONLY');
+        await external.query("SET LOCAL statement_timeout = '20s'");
+        await external.query('COMMIT');
         for (const login of ['fixture', 'happier_ro']) {
-            const connection = await openPostgresqlConnection(`postgresql://${login}@localhost/postgres?host=${encodeURIComponent(directory)}&application_name=fixture-client`);
+            const address = new URL(`postgresql://${login}@localhost/postgres?host=${encodeURIComponent(directory)}&application_name=fixture-client`);
+            address.searchParams.set('options', '-c statement_timeout=20s -c search_path=public');
+            const connection = await openPostgresqlConnection(address.href, undefined, { access: 'read' });
             opened.push(connection);
             for (const request of requests) {
                 const settled = await connection.execute({ operation: 'stats.read', target, request });
@@ -161,11 +166,6 @@ it('preserves user statement counts and Activity while excluding Workbench metad
         }
         const connection = opened[1]!;
         const read = (sql: string) => connection.execute({ operation: 'statement.run', target, mode: 'read', statement: { sql, parameters: [] } });
-        const currentActivity = await read('SELECT pg_catalog.pg_backend_pid()');
-        expect(currentActivity).toMatchObject({ ok: true, operation: 'statement.run' });
-        if (!currentActivity.ok || currentActivity.operation !== 'statement.run') throw new Error('Current backend PID control failed');
-        const pid = currentActivity.results[0]?.rows[0]?.cells[0];
-        if (pid?.type !== 'integer') throw new Error('Current backend did not return an integer PID');
         const schemaList = await connection.execute({ operation: 'schemas.list', target, page: { rows: 20 } });
         expect(schemaList).toMatchObject({ ok: true, schemas: expect.arrayContaining([{ name: 'public' }]) });
         const catalog = await connection.execute({ operation: 'relations.list', target, schema: 'public', page: { rows: 20 } });
@@ -176,8 +176,11 @@ it('preserves user statement counts and Activity while excluding Workbench metad
             { relation: { name: 'pg_stat_statements' }, kind: 'view' },
             { relation: { name: 'pg_stat_statements_info' }, kind: 'view' },
         ] });
-        const manualSizeSql = 'SELECT pg_catalog.pg_database_size(current_database())::text AS size_bytes';
-        for (let i = 0; i < 2; i++) expect(await read(manualSizeSql)).toMatchObject({ ok: true });
+        const workbenchSessions = (await external.query<{ pid: number }>(`
+            SELECT pid FROM pg_catalog.pg_stat_activity
+            WHERE datname = current_database() AND application_name = 'happier-database-workbench'
+        `)).rows;
+        expect(workbenchSessions).toHaveLength(2);
         const activity = await connection.execute({ operation: 'stats.read', target, request: {
             kind: 'stats.read', group: 'activity', selection: { page: { rows: 20 } },
         } });
@@ -187,11 +190,21 @@ it('preserves user statement counts and Activity while excluding Workbench metad
         }
         const activityKeys = activity.observation.data.map(row => row.key);
         expect(activityKeys).toContain(externalActivityKey);
-        expect.soft(activityKeys).not.toContain(pid.value);
-        const otherActivityKey = String((await external.query<{ pid: number }>(
-            'SELECT pid FROM pg_catalog.pg_stat_activity WHERE datname=current_database() AND usename=$1', ['fixture'],
-        )).rows[0]!.pid);
-        expect.soft(activityKeys).not.toContain(otherActivityKey);
+        for (const { pid } of workbenchSessions) expect.soft(activityKeys).not.toContain(String(pid));
+
+        const statementPage = await connection.execute({ operation: 'stats.read', target, request: requests[1] });
+        expect(statementPage).toMatchObject({ ok: true, observation: { group: 'statements', status: 'available',
+            data: expect.arrayContaining(['begin read only', 'set local statement_timeout', 'commit'].map(prefix =>
+                expect.objectContaining({ shape: expect.stringMatching(new RegExp(`^${prefix}\\b`)), calls: '1' }))) } });
+
+        expect(await read('SHOW statement_timeout')).toMatchObject({ ok: true, results: [{ rows: [{ cells: [{ type: 'text', value: '20s' }] }] }] });
+        expect(await read('SHOW search_path')).toMatchObject({ ok: true, results: [{ rows: [{ cells: [{ type: 'text', value: 'public' }] }] }] });
+        expect(await read('SHOW default_transaction_read_only')).toMatchObject({ ok: true, results: [{ rows: [{ cells: [{ type: 'text', value: 'on' }] }] }] });
+        const privilegedRead = (sql: string) => opened[0]!.execute({ operation: 'statement.run', target, mode: 'read', statement: { sql, parameters: [] } });
+        expect(await privilegedRead("SELECT pg_catalog.set_config('default_transaction_read_only', 'off', false)")).toMatchObject({ ok: true });
+        expect(await privilegedRead('INSERT INTO items VALUES (1)')).toMatchObject({ ok: false, cause: { code: '25006' } });
+        const manualSizeSql = 'SELECT pg_catalog.pg_database_size(current_database())::text AS size_bytes';
+        for (let i = 0; i < 2; i++) expect(await read(manualSizeSql)).toMatchObject({ ok: true });
 
         const statements = await connection.execute({ operation: 'stats.read', target, request: requests[1] });
         expect(statements).toMatchObject({ ok: true, operation: 'stats.read', observation: { group: 'statements', status: 'available' } });

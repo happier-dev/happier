@@ -26,7 +26,7 @@ export function createDatabaseEnginesService(input: Readonly<{
             }
             if (matches.length === 0 && engineId === 'postgresql') {
                 const { openPostgresqlConnection } = await import('@happier-dev/databases/connection/postgresql');
-                return { engine: engineId, ...await openPostgresqlConnection(request.connectionString, request.signal) };
+                return { engine: engineId, ...await openPostgresqlConnection(request.connectionString, request.signal, { access: request.access }) };
             }
             // Ambiguous engine ids cannot silently select a different plugin's transport.
             if (matches.length !== 1) throw new PluginError({ code: 'plugin_service_unavailable' });

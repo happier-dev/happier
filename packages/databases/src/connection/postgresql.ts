@@ -1,6 +1,6 @@
 import { Client, Query } from 'pg';
 import type { Duplex } from 'node:stream';
-import type { DatabaseOperationInputV1, DatabaseOperationResultV1 } from '@happier-dev/plugin-sdk/database';
+import type { DatabaseOperationClassV1, DatabaseOperationInputV1, DatabaseOperationResultV1 } from '@happier-dev/plugin-sdk/database';
 import { statsOperationResultV1 } from '../stats.js';
 import { databaseConnectionUrlWithoutOptions, databaseTlsVerification, withDatabaseConnectionUrlOptions, type DatabaseConnectionOperationRunner, type DatabaseTls } from '../connection.js';
 import {
@@ -26,7 +26,7 @@ export interface PostgresqlConnection {
 
 /** The caller owns this demand's credential and connection. No pool, timer or retry outlives it. */
 export async function openPostgresqlConnection(connectionString: string, signal?: AbortSignal,
-    options: Readonly<{ sessionGuardSql?: string; tls?: DatabaseTls;
+    options: Readonly<{ access?: DatabaseOperationClassV1; sessionGuardSql?: string; tls?: DatabaseTls;
         /** One row admits the writer. A null value keeps the login's own grants. */
         writeRoleSetupSql?: string;
         runOperation?: DatabaseConnectionOperationRunner;
@@ -37,7 +37,7 @@ export async function openPostgresqlConnection(connectionString: string, signal?
         application_name: POSTGRESQL_WORKBENCH_APPLICATION_NAME,
     });
     const tls = options.tls && databaseTlsVerification(options.tls);
-    const openClient = async () => {
+    const openClient = async (address = uri) => {
         const transport = await options.openStream?.();
         try {
             // pg 8.23.1's stream factory expects these two Socket methods.
@@ -47,18 +47,52 @@ export async function openPostgresqlConnection(connectionString: string, signal?
                 setNoDelay() { return transport.stream; },
                 connect() { queueMicrotask(() => transport.stream.emit('connect')); return transport.stream; },
             }) : undefined;
-            return { client: new Client({ connectionString: uri, ...(stream ? { stream: () => stream } : {}),
+            return { client: new Client({ connectionString: address, ...(stream ? { stream: () => stream } : {}),
                 ...(tls ? { ssl: { rejectUnauthorized: tls.verify, ...(tls.ca === undefined ? {} : { ca: tls.ca }) } } : {}),
             }), transport };
         } catch (error) { await transport?.close(); throw error; }
     };
-    const { client, transport } = await openClient();
+    let terminalError: unknown;
+    let defaultReadOnly = false;
+    const connectClient = async (address: string) => {
+        const connection = await openClient(address);
+        const { client, transport } = connection;
+        const abort = () => { void client.end().catch(() => {}); };
+        signal?.addEventListener('abort', abort, { once: true });
+        client.on('error', error => { terminalError = error; });
+        // PostgreSQL reports the effective default at login and after any change.
+        client.connection.on('parameterStatus', (parameter: { parameterName: string; parameterValue: string }) => {
+            if (parameter.parameterName === 'default_transaction_read_only') defaultReadOnly = parameter.parameterValue === 'on';
+        });
+        try {
+            signal?.throwIfAborted();
+            await client.connect();
+            return connection;
+        } catch (error) {
+            await client.end().catch(() => {});
+            await transport?.close().catch(() => {});
+            throw error;
+        } finally { signal?.removeEventListener('abort', abort); }
+    };
+    const originalStartupOptions = new URL(uri).searchParams.get('options') || process.env.PGOPTIONS;
+    const readOnlyUri = options.access === 'read' ? withDatabaseConnectionUrlOptions(uri, {
+        options: [originalStartupOptions, '-c default_transaction_read_only=on'].filter(Boolean).join(' '),
+    }) : undefined;
+    const { client, transport } = await connectClient(readOnlyUri ?? uri).catch(error => {
+        // Older PgBouncer releases can reject the setting or the options field.
+        // Keep the explicit per-operation guard when startup cannot carry it.
+        if (!readOnlyUri || signal?.aborted || !(error instanceof Error)
+            || (error.message !== 'unsupported startup parameter in options: default_transaction_read_only'
+                && (originalStartupOptions || error.message !== 'unsupported startup parameter: options'))) throw error;
+        terminalError = undefined;
+        defaultReadOnly = false;
+        return connectClient(uri);
+    });
     // pg stores the PID supplied in PostgreSQL's BackendKeyData startup message.
     // The driver does not expose it in @types/pg.
     const backendKey = client as Client & { readonly processID?: number };
     let closed = false;
     let closing: Promise<void> | undefined;
-    let terminalError: unknown;
     let activeQuery: Query<Array<string | null>, PostgresqlCompiledStatement['values']> | undefined;
     let activeCompletion: Promise<void> | undefined;
     let cancellation: Promise<void> | undefined;
@@ -97,8 +131,6 @@ export async function openPostgresqlConnection(connectionString: string, signal?
         }
         return closing;
     };
-    // pg emits idle network failures separately from query rejections. Retain the cause for the next request.
-    client.on('error', error => { terminalError = error; });
     const query = (statement: PostgresqlCompiledStatement): Promise<PostgresqlNativeResult> => {
         const config = { text: statement.text, values: statement.values, rowMode: 'array' as const,
             ...(statement.simpleProtocol ? {} : { queryMode: 'extended' }), types: { getTypeParser: () => (value: string) => value } };
@@ -118,11 +150,9 @@ export async function openPostgresqlConnection(connectionString: string, signal?
     let setup: PostgresqlSetupFactsV1;
     let writeRoleSql: string | undefined;
     const onConnectAbort = () => { void close().catch(() => {}); };
-    signal?.throwIfAborted();
     signal?.addEventListener('abort', onConnectAbort, { once: true });
     try {
         signal?.throwIfAborted();
-        await client.connect();
         if (options.sessionGuardSql) await query({ text: options.sessionGuardSql, values: [] });
         if (options.writeRoleSetupSql) {
             const role = (await query({ text: postgresqlWorkbenchReadSql(options.writeRoleSetupSql), values: [] })).rows[0]?.[0];
@@ -148,6 +178,9 @@ export async function openPostgresqlConnection(connectionString: string, signal?
             || (input.operation === 'statement.run' && input.mode === 'write')
             || (input.operation === 'statement.explain' && input.accessMode === 'write');
         const indexAdvice = input.operation === 'stats.read' && input.request.group === 'indexAdvice';
+        // Console SQL retains explicit transaction semantics, including SET LOCAL.
+        const useTransaction = write || indexAdvice || input.operation === 'statement.run'
+            || input.operation === 'statement.explain' || !defaultReadOnly;
         let transaction = false;
         let committing = false;
         const executionOptions: PostgresqlExecutionOptions = input.operation === 'stats.read'
@@ -156,8 +189,10 @@ export async function openPostgresqlConnection(connectionString: string, signal?
         operationSignal?.addEventListener('abort', onAbort, { once: true });
         try {
             if (signalsBackend) return await executePostgresqlOperation(input, query);
-            await query({ text: write ? 'BEGIN' : 'BEGIN READ ONLY', values: [] });
-            transaction = true;
+            if (useTransaction) {
+                await query({ text: write ? 'BEGIN' : 'BEGIN READ ONLY', values: [] });
+                transaction = true;
+            }
             if (write && writeRoleSql) await query({ text: writeRoleSql, values: [] });
             const queryOperation: typeof query = indexAdvice ? statement => {
                 operationSignal?.throwIfAborted();
@@ -165,6 +200,7 @@ export async function openPostgresqlConnection(connectionString: string, signal?
             } : query;
             const result = await executePostgresqlOperation(input, queryOperation, executionOptions);
             operationSignal?.throwIfAborted();
+            if (!transaction) return result;
             if (!result.ok || (input.operation === 'statement.explain' && input.accessMode === 'write')) {
                 await query({ text: 'ROLLBACK', values: [] });
             } else {
@@ -192,7 +228,7 @@ export async function openPostgresqlConnection(connectionString: string, signal?
                     { status: 'unavailable', reason: 'visibility_restricted' }, [], executionOptions.stats);
             }
             // Installed pg_stat_statements reports 55000 when its shared library
-            // was not loaded. Settle after rollback, preserving this connection
+            // was not loaded. Preserve this connection
             // for ordinary reads and leaving user-authored SQL failures intact.
             if (input.operation === 'stats.read' && (input.request.group === 'statements' || indexAdvice)
                 && failureCause.code === '55000' && executionOptions.stats) {
