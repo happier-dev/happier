@@ -19,7 +19,7 @@ import {
 import {
   canExecuteRequesterWorkspaceOnDaemonForHost,
   isHostRequesterUnrestrictedOwner,
-  isRequesterOwnWorkPlacedOnDaemonForHost,
+  resolveHostRequesterAgentPlacementForHost,
   selectHostRequesterExecutionIdentity,
   type HostRequesterExecutionIdentity,
 } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
@@ -1314,13 +1314,21 @@ function selectRequesterWorkspacePlacement(
   method: string,
   admission: 'machine' | 'editable_session' | 'member_folder' | 'owner_only',
   readPolicy: MachineRpcAdmissionBoundary['readAgentIsolation'],
+  admittedMachineRole?: SocketRpcMachineAdmissionContextV1['role'],
 ): 'owner' | 'daemon' | 'member' | 'unavailable' {
   if (isHostRequesterUnrestrictedOwner(identity)) return 'owner';
   if (identity.kind !== 'isolated' || admission === 'owner_only') return 'unavailable';
   const personOrAccountAutomation = identity.presentPerson === true || identity.accountAutomation === true;
   const daemonScope = admission === 'machine' || (admission === 'editable_session' && personOrAccountAutomation);
-  if (isRequesterOwnWorkPlacedOnDaemonForHost(identity, readPolicy)) return daemonScope ? 'daemon' : 'unavailable';
-  return personOrAccountAutomation && (isScmMemberFolderRpcMethod(method) || isScmHostingCredentialRpcMethod(method))
+  const snapshot = readPolicy?.();
+  const placement = snapshot && resolveHostRequesterAgentPlacementForHost({ identity, snapshot });
+  if (placement === 'daemon') return daemonScope ? 'daemon' : 'unavailable';
+  const memberRepositoryMethod = isScmMemberFolderRpcMethod(method);
+  // Home has admitted the raw Action. Keep its Manage scope and run local
+  // repository effects as the Session's member user.
+  if (admission === 'machine' && admittedMachineRole === 'manage' && placement === 'member' && memberRepositoryMethod)
+    return 'member';
+  return personOrAccountAutomation && (memberRepositoryMethod || isScmHostingCredentialRpcMethod(method))
     ? 'member' : 'unavailable';
 }
 
@@ -2100,7 +2108,7 @@ export async function authorizeMachineRpcRequest(
         if (request.signal?.aborted) return forbidden('request_cancelled');
         if (installationId !== machine.resolveInstallationId())
           return forbidden('machine_installation');
-        const placement = selectRequesterWorkspacePlacement(identity, rpcMethod, 'machine', machine.readAgentIsolation);
+        const placement = selectRequesterWorkspacePlacement(identity, rpcMethod, 'machine', machine.readAgentIsolation, context.role);
         if (placement === 'daemon' && identity.kind === 'isolated') {
           // Placement never substitutes for the method's remaining authorization checks.
           authorized = { ok: true, directWorkspaceRequester: identity };

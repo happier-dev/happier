@@ -5,7 +5,8 @@ import { z } from 'zod';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { createMachineSetupNativeBackend, type MachineSetupBackend } from '@happier-dev/cli-common/machineSetup';
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
-import { MACHINE_MEMBER_WORKSPACES_ROOT_V1, readMachineMemberWorkspaceRelativePathV1 } from '@happier-dev/protocol/machines/agentIsolationV1';
+import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
+import { MACHINE_MEMBER_WORKSPACES_ROOT_V1, readMachineMemberHomeRelativePathV1, readMachineMemberWorkspaceRelativePathV1 } from '@happier-dev/protocol/machines/agentIsolationV1';
 import { deriveAgentIsolationMemberIdentity, type AgentIsolationMemberIdentity } from './provisioning';
 import type { HostRequesterExecutionIdentity } from './agentIsolationLaunchPolicy';
 import { observeAgentIsolationMemberNativeIdentity, readAgentIsolationNativeIdentity,
@@ -130,12 +131,21 @@ export async function readAgentIsolationMemberBindingForAccount(scope: AgentIsol
   }
 }
 
-/** The member whose own folder holds this path (lexical), from that member's committed
- * binding. Placement only: the caller has already admitted the request. */
+/** The committed member placement for this lexical path. The calling owner can also
+ * ask for the admitted Account's own private home. */
 export async function readAgentIsolationMemberRequesterForWorkspacePath(scope: AgentIsolationMemberBindingScope,
-  path: string): Promise<Extract<HostRequesterExecutionIdentity, { kind: 'isolated' }> | null> {
-  if (readMachineMemberWorkspaceRelativePathV1(path) === null) return null;
-  const digest = path.slice(MACHINE_MEMBER_WORKSPACES_ROOT_V1.length + 1).split('/')[0];
+  path: string, ownHomeAccountId?: string): Promise<Extract<HostRequesterExecutionIdentity, { kind: 'isolated' }> | null> {
+  let digest: string;
+  if (readMachineMemberWorkspaceRelativePathV1(path) !== null) {
+    digest = path.slice(MACHINE_MEMBER_WORKSPACES_ROOT_V1.length + 1).split('/')[0];
+  } else {
+    if (!ownHomeAccountId || readMachineMemberHomeRelativePathV1(path) === null) return null;
+    const owner = deriveAgentIsolationMemberIdentity({ homeServerIdentityId: scope.homeServerIdentityId,
+      requester: { serverId: scope.homeServerIdentityId, accountId: ownHomeAccountId,
+        machineId: scope.machineId, installationId: scope.installationId } });
+    if (!isCanonicalAbsolutePathInsideRoot(owner.home, path)) return null;
+    digest = owner.digest;
+  }
   try {
     const value = await readBinding(await privateRoot(scope.activeServerDir, false), `${digest}.json`);
     if (value.homeServerIdentityId !== scope.homeServerIdentityId || value.machineId !== scope.machineId

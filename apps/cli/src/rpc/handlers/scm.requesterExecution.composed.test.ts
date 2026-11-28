@@ -13,6 +13,7 @@ import { PassThrough, type Readable } from 'node:stream';
 import { afterAll, afterEach, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createRequire, syncBuiltinESMExports } from 'node:module';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { ScmBranchCheckoutResponseSchema, ScmHistoryEntriesResponseSchema } from '@happier-dev/protocol/scm';
 import { invokeHostReviewedChildV1, settleActionOutput, type ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
 import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
@@ -62,6 +63,7 @@ import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedSer
 import { requesterActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { startGitSmartHttpFixture } from '@/testkit/scm/gitSmartHttpFixture';
 import { prepareRequesterNativeOperation } from '@/daemon/agentIsolation/prepareNativeOperation';
+import { readAgentIsolationMemberRequesterForWorkspacePath, writeAgentIsolationMemberBinding } from '@/daemon/agentIsolation/memberBindings';
 import { createActionExecuteFailureError, projectActionFailureForAgentV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { createBackgroundServiceProcessFrameDecoder, encodeBackgroundServiceProcessFrame, parseBackgroundServiceProcessMessage } from '@/plugins/runtime/lifecycle/contributions/backgroundServiceProcessProtocol';
@@ -71,6 +73,7 @@ import type { WorkspaceEffectServices } from '@/workspaces/activation/workspaceE
 const os = vi.hoisted(() => ({
   identity: undefined as unknown as import('node:async_hooks').AsyncLocalStorage<'member'>,
   repository: '',
+  privateRepository: '',
   secret: '',
   daemonTouches: [] as string[],
   memberReads: [] as string[],
@@ -109,6 +112,22 @@ beforeAll(() => {
   syncBuiltinESMExports();
 });
 afterAll(() => { Object.assign(fsPromises, originalFs); syncBuiltinESMExports(); });
+vi.mock('node:fs', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  const guard = (path: unknown) => {
+    if (!os.privateRepository || typeof path !== 'string' || os.identity.getStore() === 'member') return;
+    if (path !== os.privateRepository && !path.startsWith(`${os.privateRepository}/`)) return;
+    os.daemonTouches.push(path);
+    throw Object.assign(new Error('Private member directory'), { code: 'EACCES' });
+  };
+  return { ...actual, realpathSync: Object.assign((...args: Parameters<typeof actual.realpathSync>) => {
+    guard(args[0]);
+    return actual.realpathSync(...args);
+  }, { native: (...args: Parameters<typeof actual.realpathSync.native>) => {
+    guard(args[0]);
+    return actual.realpathSync.native(...args);
+  } }) };
+});
 vi.mock('@happier-dev/cli-common/process', async importOriginal => {
   const actual = await importOriginal<typeof import('@happier-dev/cli-common/process')>();
   return { ...actual, execFileWithDeadline: async (...request: Parameters<typeof actual.execFileWithDeadline>) => {
@@ -185,7 +204,7 @@ vi.mock('node:child_process', async original => {
     return child as unknown as ChildProcess;
   } };
 });
-afterEach(() => { os.repository = ''; os.secret = ''; os.daemonTouches.length = 0; os.memberReads.length = 0;
+afterEach(() => { os.repository = ''; os.privateRepository = ''; os.secret = ''; os.daemonTouches.length = 0; os.memberReads.length = 0;
   os.direct.length = 0; os.runAs.length = 0; os.memberHomes.clear(); os.terminalLaunch = false; os.subprocessWorker = false;
   os.workerFailure = undefined; vi.restoreAllMocks(); });
 
@@ -206,7 +225,8 @@ async function fixture(options: Readonly<{ projectCleanupUnavailable?: boolean;
   /** The native member binding store rejects with its existing typed failure. */
   memberReadFailure?: Error;
   /** Home's answer for this person's Machine grant (false: withdrawn). */
-  admissionCurrent?: boolean;
+  admissionCurrent?: boolean | ((accountId: string) => boolean);
+  privateHomeRepository?: true;
   /** The hosting provider plugin is installed, and each person's own connected accounts by Account id. */
   hostingAccounts?: ReadonlyMap<string, NonNullable<ReturnType<typeof createConnectedAccountPurposeBindingOwner>>>;
   resolveProjectRuntime?: NonNullable<Parameters<typeof registerScmHandlers>[2]>['resolveProjectRuntime'] }> = {}) {
@@ -222,9 +242,13 @@ async function fixture(options: Readonly<{ projectCleanupUnavailable?: boolean;
   const otherMemberRoot = join(directory, 'other-member-folder');
   const otherMemberRepository = await repository(otherMemberRoot, 'other-project');
   const memberHome = join(directory, 'member-home');
+  const privateRepository = options.privateHomeRepository ? await repository(memberHome, 'private-project') : undefined;
   const machineId = 'separate-users-machine';
   const installationId = 'separate-users-installation';
   const home = configuration.activeServerId;
+  const ownerBinding = deriveAgentIsolationMemberIdentity({ homeServerIdentityId: home,
+    requester: { serverId: home, accountId: 'owner-account', machineId, installationId } });
+  if (privateRepository) await writeAgentIsolationMemberBinding(directory, { ...ownerBinding, agentUid: 2401, agentGid: 2401 });
   const daemonIsolation: HostAgentIsolationLaunchSnapshot = options.sourceRuntimeIsolation ? {
     enabled: options.sourceRuntimeIsolation === 'required',
     status: options.sourceRuntimeIsolation === 'required' ? { kind: 'unavailable', code: 'provisioning_unavailable' }
@@ -278,7 +302,8 @@ async function fixture(options: Readonly<{ projectCleanupUnavailable?: boolean;
       readAgentIsolation: () => daemonIsolation,
       resolveHomeServerIdentityId: async () => home,
       // Authentication/currentness are the Home network boundary.
-      verifyMachineAdmission: async () => options.admissionCurrent ?? true,
+      verifyMachineAdmission: async ({ context }) => typeof options.admissionCurrent === 'function'
+        ? options.admissionCurrent(context.actorAccountId) : options.admissionCurrent ?? true,
     }));
   const manager = createRpcHandlerManager({
     scopePrefix: machineId, scopeKind: 'machine', localMachineId: machineId,
@@ -298,7 +323,12 @@ async function fixture(options: Readonly<{ projectCleanupUnavailable?: boolean;
     ...(options.projectCleanupUnavailable ? { resolveProjectRuntime: async () => null } : {}),
     ...(options.resolveProjectRuntime ? { resolveProjectRuntime: options.resolveProjectRuntime } : {}),
     // The member binding store (native OS state) names the member who owns a member folder.
-    nativeOperationRuntime: { prepareNativeOperation, readMemberFolderOwner: async (path: string) => {
+    nativeOperationRuntime: { prepareNativeOperation, readMemberFolderOwner: async (path: string, ownHomeAccountId?: string) => {
+      if (privateRepository && (path === memberHome || path.startsWith(`${memberHome}/`))) {
+        const bindingScope = { activeServerDir: directory, homeServerIdentityId: home, machineId, installationId };
+        // The OS fixture uses a temp home in place of the provisioned /var/lib directory.
+        return readAgentIsolationMemberRequesterForWorkspacePath(bindingScope, `${ownerBinding.home}${path.slice(memberHome.length)}`, ownHomeAccountId);
+      }
       const owner = [[memberRoot, 'member-account'], [otherMemberRoot, 'other-account']]
         .find(([root]) => path === root || path.startsWith(`${root}/`))?.[1];
       return owner ? { kind: 'isolated' as const, separationRequired: true,
@@ -316,8 +346,8 @@ async function fixture(options: Readonly<{ projectCleanupUnavailable?: boolean;
       machineAdmission: { actorAccountId: accountId, custodianAccountId: 'owner-account', machineId, installationId,
         role, encryptionMode: 'plain' },
     } });
-  os.repository = memberRepository;
-  return { directory, ownerRepository, memberRoot, memberRepository, otherMemberRoot, otherMemberRepository, invoke, manager, plugins,
+  os.repository = privateRepository ?? memberRepository;
+  return { directory, ownerRepository, privateRepository, memberRoot, memberRepository, otherMemberRoot, otherMemberRepository, invoke, manager, plugins,
     authorizeRequest, prepareNativeOperation, home, machineId, installationId };
 }
 
@@ -759,6 +789,80 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
     }
     expect(gitLaunches()).toHaveLength(readCount);
     expect([...new Set(os.runAs.map(run => run.uid))]).toEqual(isolation === 'enabled' ? [2401] : []);
+  });
+
+  it('reads history and switches branches for a reviewed Session Agent in its private repository', async () => {
+    const f = await fixture({ privateHomeRepository: true, admissionCurrent: accountId => accountId !== 'other-account' });
+    const cwd = f.privateRepository!;
+    await writeFile(join(cwd, 'member.txt'), 'private history\n');
+    git(cwd, 'add', 'member.txt');
+    git(cwd, 'commit', '-qm', 'member history');
+    git(cwd, 'branch', 'topic');
+
+    // Model the mode-0700 member home at the realpath OS boundary.
+    os.privateRepository = cwd;
+
+    const target = { kind: 'machine', machineId: f.machineId, project: { machineId: f.machineId, directory: cwd } };
+    const targeted = (input: unknown) => ({ v: 1, kind: 'targeted_action_rpc', input, target });
+    const origin = {
+      v: 1, caller: { kind: 'session', sessionId: 'c30-session', starterDepth: 0, turnDepth: 0 },
+      sourceTurnId: 'c30-turn', callerPermissionMode: 'default', requestId: 'c30-request',
+    } as const;
+    const checkout = { cwd, name: 'topic', strategy: 'bring_changes' };
+    // Home verifies the Machine grant and reviewed replay before the installed receiver.
+    const invoke = (method: string, input: unknown, accountId = 'owner-account') =>
+      f.invoke(method, targeted(input), accountId, 'manage', undefined, undefined, origin);
+
+    const control = await f.invoke(RPC_METHODS.SCM_STATUS_SNAPSHOT, { cwd: f.ownerRepository }, 'owner-account', 'manage');
+    expect(control).toMatchObject({ success: true, snapshot: { repo: { isRepo: true } } });
+    expect(await invoke(RPC_METHODS.SCM_BRANCH_CHECKOUT, checkout, 'other-account'))
+      .toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN, effectAttempted: false });
+    expect(git(cwd, 'branch', '--show-current')).toBe('main\n');
+    // Can use stays in its member folder, even for a repository in its member user's home.
+    const useRead = await f.invoke(RPC_METHODS.SCM_STATUS_SNAPSHOT, { cwd }, 'member-account', 'use');
+    expect(useRead, JSON.stringify(useRead)).toMatchObject({ success: false, errorCode: 'INVALID_PATH' });
+    // A current Can use grant's own Session checkout there keeps today's Manage refusal.
+    const useCheckout = await f.invoke(RPC_METHODS.SCM_BRANCH_CHECKOUT, targeted(checkout), 'member-account', 'use',
+      undefined, undefined, { ...origin, caller: { ...origin.caller, sessionId: 'use-session' } });
+    expect(useCheckout, JSON.stringify(useCheckout)).toMatchObject({ errorCode: 'machine_manage_required', effectAttempted: false });
+    expect(git(cwd, 'branch', '--show-current')).toBe('main\n');
+
+    // History arrives as an exact Home Account read without the Session review stamp.
+    const history = await f.invoke(RPC_METHODS.SCM_HISTORY_ENTRIES, targeted({ cwd, folder: '', paths: ['member.txt'] }),
+      'owner-account', 'manage');
+    const switched = await invoke(RPC_METHODS.SCM_BRANCH_CHECKOUT, checkout);
+    expect({ history, switched }).toMatchObject({
+      history: { success: true, entries: [{ path: 'member.txt', kind: 'commit', commit: { subject: 'member history' } }] },
+      switched: { success: true },
+    });
+    expect(ScmHistoryEntriesResponseSchema.parse(history).success).toBe(true);
+    expect(ScmBranchCheckoutResponseSchema.parse(switched).success).toBe(true);
+    expect(git(cwd, 'branch', '--show-current')).toBe('topic\n');
+
+    const file = join(cwd, 'member.txt');
+    await writeFile(file, 'topic change\n');
+    expect(await invoke(RPC_METHODS.SCM_STATUS_SNAPSHOT, { cwd }))
+      .toMatchObject({ success: true, snapshot: { repo: { isRepo: true } } });
+    expect(await invoke(RPC_METHODS.SCM_DIFF_FILE, { cwd, path: 'member.txt' }))
+      .toMatchObject({ success: true, diff: expect.stringContaining('+topic change') });
+    git(cwd, 'commit', '-qam', 'topic change');
+    // Prepare a divergent commit in the temp fixture, then merge through reviewed ingress.
+    git(cwd, 'switch', '-q', 'main');
+    await writeFile(file, 'main change\n');
+    git(cwd, 'commit', '-qam', 'main change');
+    git(cwd, 'switch', '-q', 'topic');
+    git(cwd, 'config', 'user.name', 'Private repository test');
+    git(cwd, 'config', 'user.email', 'private@example.invalid');
+    expect(await invoke(RPC_METHODS.SCM_BRANCH_MERGE, { cwd, sourceRef: 'main' }))
+      .toMatchObject({ success: false, errorCode: 'CONFLICTING_WORKTREE' });
+    expect(await invoke(RPC_METHODS.SCM_CONFLICT_ACCEPT_SIDE, { cwd, path: 'member.txt', side: 'theirs' }))
+      .toMatchObject({ success: true });
+    expect(await invoke(RPC_METHODS.SCM_BRANCH_OPERATION_CONTINUE, { cwd, operation: 'merge' }))
+      .toMatchObject({ success: true });
+    expect(readFileSync(file, 'utf8')).toBe('main change\n');
+    expect(git(cwd, 'log', '-1', '--format=%P').trim().split(' ')).toHaveLength(2);
+    expect(os.daemonTouches).toEqual([]);
+    expect([...new Set(os.runAs.map(run => `${run.args[0]}:${run.uid}`))]).toEqual(['workspace-effect:2401']);
   });
 
   // SCM-MEMBER-LIVE-1115: the Action surface sends the Project as a targeted machine target.

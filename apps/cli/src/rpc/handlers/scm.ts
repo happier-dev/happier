@@ -131,7 +131,7 @@ import { isScmHostingCredentialRpcMethod, isScmLocalRepositoryRpcMethod, isScmMe
 import { isScmActionId } from '@happier-dev/protocol/actions/executor/actionFamilies';
 import { randomUUID } from 'node:crypto';
 import { resolve as resolvePath } from 'node:path';
-import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
+import { expandHomeDirPath, isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 import { registerScmWorkspaceWatchHandler } from './scmWorkspaceWatch';
 import { localWorkspaceSource } from '@/workspaces/source/localWorkspaceSource';
 import { currentWorkspaceSource, runWithWorkspaceSource, runWithWorkspaceSourceDemand, type WorkspaceSource } from '@/workspaces/source/workspaceSource';
@@ -208,7 +208,7 @@ export function registerScmHandlers(
     // Workspace effect child: the daemon never opens a member-controlled path
     // (SEC-FORKC-1115F F1: a symlinked or FIFO Git state file).
     const runAsMember = async (context: RpcHandlerContext, identity: IsolatedRequester,
-        method: string, projectRoot: string | undefined, input: unknown, comparisons?: () => unknown, requesterAccountId?: string,
+        method: string, projectRoot: string | undefined, input: unknown, ownHomeTarget: string | undefined, comparisons?: () => unknown, requesterAccountId?: string,
         reportScmWatchEvent?: import('@/workspaces/activation/workspaceEffectWorker').WorkspaceEffectServices['reportScmWatchEvent']): Promise<unknown> => {
         if (!deps?.nativeOperationRuntime) return refuseRequesterPlacement(method, 'scm.requester.native_runtime', undefined, false);
         const material = Object.freeze({ materializationKey: context.transportRequestId ?? context.localActionContext?.actionRequestId
@@ -229,8 +229,12 @@ export function registerScmHandlers(
                 () => runWithScmComparisonOperations(createMemberScmComparisonOperations({ native, signal: context.signal }), comparisons), context.callerInputAuthorization);
             const { readScmAsMember } = await import('@/scm/rpc/memberScmRead');
             const memberRoot = native.memberIdentity.workspaceRoot;
+            // Manage's local repository work in its own member user's private home runs there, as that user.
+            const memberHome = native.memberIdentity.home;
+            const workspaceRoot = ownHomeTarget !== undefined && isCanonicalAbsolutePathInsideRoot(memberHome, ownHomeTarget)
+                ? memberHome : memberRoot;
             const placement = { agentIsolation: native.agentIsolation, requesterIdentity: identity,
-                workspaceRoot: memberRoot, ...(projectRoot !== undefined ? { root: projectRoot } : {}),
+                workspaceRoot, ...(projectRoot !== undefined ? { root: projectRoot } : {}),
                 method, input, signal: context.signal,
                 ...(requester ? { requesterCredentials: native.connectedAccounts ? { connectedAccounts: native.connectedAccounts } : {} } : {}) };
             if (reportScmWatchEvent) return await readScmAsMember({ ...placement, reportScmWatchEvent });
@@ -265,7 +269,7 @@ export function registerScmHandlers(
     // Ingress admits anyone else only to local repository work in their own member folder; closed host calls keep their runner.
     const runAsAdmittedRequester = async (context: RpcHandlerContext | undefined, method: string,
         projectRoot: string | undefined, input: unknown, selected: WorkspaceSource, run: () => unknown,
-        observeAsMember?: (context: RpcHandlerContext, identity: IsolatedRequester) => Promise<unknown>): Promise<unknown> => {
+        observeAsMember?: (context: RpcHandlerContext, identity: IsolatedRequester, ownHomeTarget: string | undefined) => Promise<unknown>): Promise<unknown> => {
         if (!context) return await run();
         const directRequester = context.directWorkspaceRequester;
         const requester = directRequester ? undefined : await deps?.resolveRequester?.(context);
@@ -275,11 +279,15 @@ export function registerScmHandlers(
         try {
             const comparisons = method.startsWith('scm.diffSummary.') || method === RPC_METHODS.SCM_DIFF_FILE
                 && input !== null && typeof input === 'object' && Reflect.get(input, 'captured') !== undefined;
-            const executeAsMember = (member: IsolatedRequester) => observeAsMember
-                ? observeAsMember(context, member)
-                : runAsMember(context, member, method, projectRoot, input, comparisons ? run : undefined,
-                    identity.kind === 'unknown' ? undefined : identity.requester.accountId);
+            const target = readRequestCwd(input, projectRoot);
             const unrestricted = isHostRequesterUnrestrictedOwner(identity);
+            // Only Manage may place local repository work in its own member user's home; Can use stays in its member folder.
+            const ownHomeTarget = selected.kind === 'local' && isScmMemberFolderRpcMethod(method)
+                && (unrestricted || context.machineAdmission?.role === 'manage') ? target : undefined;
+            const executeAsMember = (member: IsolatedRequester) => observeAsMember
+                ? observeAsMember(context, member, ownHomeTarget)
+                : runAsMember(context, member, method, projectRoot, input, ownHomeTarget, comparisons ? run : undefined,
+                    identity.kind === 'unknown' ? undefined : identity.requester.accountId);
             const directMachinePlacement = selected.kind === 'local' && directRequester && directRequester.scmPlacement !== 'member';
             if (identity.kind !== 'unknown' && (unrestricted || directMachinePlacement)) {
                 // Manage keeps full access to a member folder, but daemon Git never runs a member
@@ -288,10 +296,10 @@ export function registerScmHandlers(
                 // adds a safe.directory exception for it. Network and hosting work (clone included) is
                 // different: it authenticates, so in a member folder it runs only for that folder's member,
                 // with their own connected accounts (owner ruling 2026-11-26, SEC-RU2-1126B N2).
-                const target = readRequestCwd(input, projectRoot);
                 const readOwner = deps?.nativeOperationRuntime?.readMemberFolderOwner;
-                const member = readOwner && target !== undefined && (hosting || comparisons || isScmLocalRepositoryRpcMethod(method))
-                    ? await readOwner(target).catch(() => 'unavailable' as const) : null;
+                const ownHomeAccountId = unrestricted && ownHomeTarget !== undefined ? identity.requester.accountId : undefined;
+                const member = readOwner && (hosting || comparisons || isScmLocalRepositoryRpcMethod(method))
+                    ? await readOwner(target, ownHomeAccountId).catch(() => 'unavailable' as const) : null;
                 if (member === 'unavailable') return refuseRequesterPlacement(method, 'scm.requester.member_folder', undefined, false);
                 if (member && !unrestricted) return refuseRequesterPlacement(method, 'scm.requester.member_folder', undefined, false);
                 // Network and hosting work in a member folder runs only for the member who owns it, with their own
@@ -309,7 +317,7 @@ export function registerScmHandlers(
             // on this Machine as them (SEC1116I item 1). Another person's placed root stays in the
             // member's own child, whose OS account decides.
             if (selected.kind !== 'local') {
-                const owner = await deps?.nativeOperationRuntime?.readMemberFolderOwner?.(readRequestCwd(input, projectRoot))
+                const owner = await deps?.nativeOperationRuntime?.readMemberFolderOwner?.(target)
                     .catch(() => null);
                 if (owner && isSameRequester(owner, identity)) return await run();
             }
@@ -558,9 +566,9 @@ export function registerScmHandlers(
             const method = RPC_METHODS.SCM_WORKSPACE_WATCH;
             return ScmWorkspaceWatchResponseSchema.parse(await runAsAdmittedRequester(
                 context, method, undefined, { cwd: request.directory }, source, runLocal,
-                (ingress, identity) => observeMember(JSON.stringify(identity.requester), callbacks => {
+                (ingress, identity, ownHomeTarget) => observeMember(JSON.stringify(identity.requester), callbacks => {
                     const lifetime = new AbortController();
-                    void runAsMember({ ...ingress, signal: lifetime.signal }, identity, method, undefined, request,
+                    void runAsMember({ ...ingress, signal: lifetime.signal }, identity, method, undefined, request, ownHomeTarget,
                         undefined, undefined, async event => {
                             if (event === 'ready') callbacks.onReady?.();
                             if (event === 'changed') callbacks.onChange();

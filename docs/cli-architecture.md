@@ -3251,6 +3251,12 @@ reads fail closed rather than reaching member-planted files (MEMBER-PATH-READS-1
 A `safe.directory` exception in the daemon user's Git config removes that refusal. The child
 resolves `cwd` against the selected Project root and confines it to the intersection
 of that Project and the member folder, so a path outside either is `INVALID_PATH`.
+On a Separate-users Machine, Session Actions with Manage admission use their
+own member user for these local repository methods. The repository can also
+be in that user's private home. An exact-Machine Account read selects its own
+private home from the committed member binding. The existing member child
+resolves the repository and Project paths as that user. Can use stays confined
+to its member folder.
 Member placement uses the operation's effective `cwd` (or clone destination parent),
 even when the Project root is an ancestor of the member folder. The child has no
 daemon credentials. Captured comparisons and commit-plan repository effects use

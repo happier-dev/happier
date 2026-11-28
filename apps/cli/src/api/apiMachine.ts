@@ -1158,8 +1158,8 @@ export class ApiMachineClient {
     } | null = null;
 
     /** Member whose own folder holds this path; null off a separate-users Machine or outside member folders. */
-    async readMemberFolderOwner(path: string) {
-        return await this.agentIsolationMemberOperations?.readWorkspaceOwner(path) ?? null;
+    async readMemberFolderOwner(path: string, ownHomeAccountId?: string) {
+        return await this.agentIsolationMemberOperations?.readWorkspaceOwner(path, ownHomeAccountId) ?? null;
     }
 
     async readAgentIsolationMember(input: Parameters<NonNullable<HostAgentIsolationLaunchContext['readMember']>>[0]) {
@@ -2315,7 +2315,7 @@ export class ApiMachineClient {
             admitWorkspaceSource: this.filesystemEffectAdmission.rpc,
             resolveRequester: this.filesystemEffectAdmission.resolveRpcRequester,
             nativeOperationRuntime: { prepareNativeOperation: input => this.prepareNativeOperation(input),
-                readMemberFolderOwner: path => this.readMemberFolderOwner(path) },
+                readMemberFolderOwner: (path, ownHomeAccountId) => this.readMemberFolderOwner(path, ownHomeAccountId) },
             prepareRequesterCredentials: async (requesterAccount, signal) => await prepareRequesterOperationMaterial({
                 requesterAccount, reloadController: pluginReloadController, signal }),
             deliverFileAtRevision: async (request, response, signal) => await deliverScmFileAtRevision({ request, response, signal,

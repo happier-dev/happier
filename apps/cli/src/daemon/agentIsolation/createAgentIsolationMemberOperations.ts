@@ -91,10 +91,10 @@ export function createAgentIsolationMemberOperations(options: Readonly<{
   };
   return Object.freeze({
     /** The member who owns a member folder, for work an admitted Manage requester runs there as that member. */
-    async readWorkspaceOwner(path: string) {
+    async readWorkspaceOwner(path: string, ownHomeAccountId?: string) {
       const target = options.target();
       return target ? readAgentIsolationMemberRequesterForWorkspacePath({ activeServerDir: options.activeServerDir,
-        homeServerIdentityId: target.homeServerIdentityId, machineId: target.machineId, installationId: target.installationId }, path) : null;
+        homeServerIdentityId: target.homeServerIdentityId, machineId: target.machineId, installationId: target.installationId }, path, ownHomeAccountId) : null;
     },
     /** Native operations consume the admitted binding. Setup/readiness belongs
      * to preparation and explicit own-status, never the per-operation path. */
