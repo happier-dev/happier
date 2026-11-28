@@ -1,4 +1,5 @@
 import { encryptLegacyBase64 } from './messageCrypto';
+import { encryptDataKeyBase64 } from './rpcCrypto';
 import { createLegacyRpcClient, type RpcSocket } from './syntheticAgent/rpcClient';
 import { waitFor } from './timing';
 
@@ -130,11 +131,14 @@ export async function postEncryptedSessionMessage(params: {
   token: string;
   sessionId: string;
   secret: Uint8Array;
+  encryptionVariant?: 'legacy' | 'dataKey';
   payload: unknown;
   localId?: string;
   messageRole?: 'user' | 'agent' | 'event' | 'unknown';
 }): Promise<void> {
-  const ciphertext = encryptLegacyBase64(params.payload, params.secret);
+  const ciphertext = params.encryptionVariant === 'dataKey'
+    ? encryptDataKeyBase64(params.payload, params.secret)
+    : encryptLegacyBase64(params.payload, params.secret);
   const res = await fetch(`${params.baseUrl}/v2/sessions/${params.sessionId}/messages`, {
     method: 'POST',
     headers: {

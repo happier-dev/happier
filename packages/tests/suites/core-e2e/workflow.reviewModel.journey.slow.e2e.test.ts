@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { basename, delimiter, dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -6,6 +6,7 @@ import { ensureManagedJavaScriptRuntimeCommand, managedJavaScriptRuntimeBinPath,
 import { connectUiPersonActionClient } from '@happier-tests/ui-action-client';
 import { REVIEW_NEW_ROUND_ACTION_ID_V1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { reviewReviewerIdForSelectionV1, type ReviewEngineReviewerSelectionV1 } from '@happier-dev/protocol/reviews/reviewStart';
+import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
 import { WorkflowDefinitionCreateResultV1Schema, WorkflowInvocationListResultV1Schema, WorkflowRunGetResultV1Schema, WorkflowRunListResultV1Schema, WorkflowRunStartResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { REPOSITORY_REVIEW_WORKFLOW_V1 } from '@happier-dev/protocol/workflows/builtins/repositoryReview';
 import { WorkflowTriggerWriteResultV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
@@ -32,7 +33,7 @@ import { writeFinMuseExecutable } from '../../src/testkit/finMuse';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { waitFor } from '../../src/testkit/timing';
 import { startDatabaseWorkbenchPostgres } from '../../src/testkit/process/databaseWorkbenchPostgres';
-import { encryptLegacyBase64 } from '../../src/testkit/messageCrypto';
+import { encryptDataKeyBase64 } from '../../src/testkit/rpcCrypto';
 import { postEncryptedSessionMessage } from '../../src/testkit/memoryRpc';
 import { createSessionWithCiphertexts } from '../../src/testkit/sessions';
 import { execGit, initGitRepo } from '../../src/testkit/uiE2e/gitRepoFixtures';
@@ -57,6 +58,7 @@ describe('FIN selected Muse Review and convergence through public Actions', () =
   let recording: Awaited<ReturnType<typeof readMuseLoginRecording>>;
   let sourceSessionId: string;
   let codeRabbitReplyPath: string;
+  let sourceSessionDataKey: Uint8Array;
   let codeRabbitAuditPath: string;
   let panelReplyPath: string;
   let panelAuditPath: string;
@@ -66,18 +68,23 @@ describe('FIN selected Muse Review and convergence through public Actions', () =
   let nativeHoldPath: string;
   async function createSourceSession(account = owner) {
     const source = await createSessionWithCiphertexts({ baseUrl: fixture!.server.baseUrl, token: account.auth.token,
-      metadataCiphertextBase64: encryptLegacyBase64({ path: machine.workspaceDir }, account.auth.accountSigningSeed),
+      metadataCiphertextBase64: encryptDataKeyBase64({ path: machine.workspaceDir }, dataKey),
+      dataEncryptionKeyBase64: Buffer.from(sealEncryptedDataKeyEnvelopeV1({ dataKey,
+        recipientPublicKey: account.credentials.encryption.publicKey, randomBytes })).toString('base64'),
     });
     await postEncryptedSessionMessage({ baseUrl: fixture!.server.baseUrl, token: account.auth.token,
-      sessionId: source.sessionId, secret: account.auth.accountSigningSeed, messageRole: 'user',
+      sessionId: source.sessionId, secret: dataKey, encryptionVariant: 'dataKey', messageRole: 'user',
       payload: { role: 'user', content: { type: 'text', text: sourceClaim } },
     });
-    return source.sessionId;
+    return { sessionId: source.sessionId, dataKey };
   }
   async function nativeReply(value: unknown) {
     // Schema-derived model output inside the existing sanitized native capture.
     // Request/response framing and lifecycle remain the captured MSP protocol.
     await writeFile(recordingPath, JSON.stringify(recording).replaceAll('"PEBBLE"', JSON.stringify(JSON.stringify(value))));
+    // Paired-device credentials open a Session DEK, never content encrypted
+    // directly with the Account recovery secret.
+    const dataKey = randomBytes(32);
   }
   beforeEach(async () => {
     const testDir = run.testDir(`fin-review-model-${randomUUID()}`);
@@ -233,7 +240,9 @@ else {
     execGit(machine.workspaceDir, ['commit', '-m', 'test: review baseline']);
     await writeFile(join(machine.workspaceDir, 'README.md'), 'Review fixture with a change\n');
     ui = await connectUiPersonActionClient({ serverUrl: fixture!.actionServerApiUrl, accountSecret: owner.auth.accountSigningSeed });
-    sourceSessionId = await createSourceSession();
+    const sourceSession = await createSourceSession();
+    sourceSessionId = sourceSession.sessionId;
+    sourceSessionDataKey = sourceSession.dataKey;
     // The fixture observes daemon control readiness and this client awaits its
     // Account bootstrap. The public Action owns target availability admission.
   });
@@ -771,7 +780,7 @@ else {
     const skippedTests = 'I skipped the test command; no tests ran.';
     for (const message of [skippedTests, testSuccessClaim]) {
       await postEncryptedSessionMessage({ baseUrl: fixture!.server.baseUrl, token: owner.auth.token,
-        sessionId: sourceSessionId, secret: owner.auth.accountSigningSeed, messageRole: 'agent',
+        sessionId: sourceSessionId, secret: sourceSessionDataKey, encryptionVariant: 'dataKey', messageRole: 'agent',
         payload: { role: 'agent', content: { type: 'acp', agentId: 'muse', data: { type: 'message', message } } },
       });
     }
@@ -917,13 +926,14 @@ else {
   });
   it('F1 refuses an inaccessible source Session before launching a reviewer', async () => {
     const other = await fixture!.createAccount('source-owner');
-    const inaccessibleSessionId = await createSourceSession(other);
+    const { sessionId: inaccessibleSessionId } = await createSourceSession(other);
     const denied = await execute('review.start', { target: { kind: 'detached' },
       sourceSession: { sessionId: inaccessibleSessionId, serverId: ui!.serverId },
       reviewers: [{ kind: 'engine', engineId: 'muse', includeSessionTranscript: true }],
       instructions: 'Review the actual workspace change.', reviewCommentAuthorIntent: 'open',
     });
-    expect(denied).toMatchObject({ ok: false, errorCode: 'not_found' });
+    // Home's signed Action admission preserves its typed source-access refusal.
+    expect(denied).toMatchObject({ ok: false, errorCode: 'action_forbidden' });
     const nativeAudit = await readMuseMspProcessAudit(auditPath).catch((error: unknown) => {
       if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return undefined;
       throw error;
