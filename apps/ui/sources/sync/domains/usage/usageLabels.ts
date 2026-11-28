@@ -105,27 +105,32 @@ export function usageAgentTitle(agentId: string, fallback?: string): string {
     }
 }
 
+/** Classification and display text use the same model identity, including the absent and synthetic cases. */
+export function usageModelLabel(key: string, label?: string): Readonly<{ kind: 'named' | 'unattributed'; label: string }> {
+    if (key === 'unknown') return { kind: 'unattributed', label: t('usage.board.plans.cellUnknown') };
+    const modelId = canonicalUsageModelPriceId(key);
+    if (modelId === null) return { kind: 'unattributed', label: t('usage.board.page.unattributed') };
+    for (const agentId of AGENT_IDS) {
+        const model = getAgentStaticModels(agentId, { catalogOnly: true }).find(model => model.id === modelId || model.extendedContextModelId === modelId);
+        if (model) return { kind: 'named', label: model.name };
+    }
+    const display = label?.trim();
+    // An uncatalogued model id is its exact fallback, not a name invented by title casing.
+    return { kind: 'named', label: display && display !== key && display !== formatUsageDimensionLabel('source', key) ? display : key };
+}
+
 /** Shared label projection for accounting dimensions; identity remains the unchanged key. */
 export function usageDimensionLabel(dimension: UsageAnalyticsBreakdownDimension, key: string, label?: string,
     machineNames?: ReadonlyMap<string, string>): string {
     if (dimension === 'agent') return usageAgentTitle(key, label);
     if (dimension === 'machine') return machineNames?.get(key) ?? getMachineDisplayName({ id: key, absence: 'unlisted' });
     if (dimension === 'source') return usageSourceTitle(key, label);
-    if (dimension !== 'model' && dimension !== 'backendMode') return label ?? key;
+    if (dimension === 'model') return usageModelLabel(key, label).label;
+    if (dimension !== 'backendMode') return label ?? key;
     // An engine that is an Agent (`codex`) is named as that Agent, never by its raw id.
-    if (dimension === 'backendMode' && (AGENT_IDS as readonly string[]).includes(key)) return usageAgentTitle(key, label);
-    if (dimension === 'model') {
-        if (key === 'unknown') return t('usage.board.plans.cellUnknown');
-        const modelId = canonicalUsageModelPriceId(key);
-        if (modelId === null) return t('usage.board.page.unattributed');
-        for (const agentId of AGENT_IDS) {
-            const model = getAgentStaticModels(agentId, { catalogOnly: true }).find(model => model.id === modelId || model.extendedContextModelId === modelId);
-            if (model) return model.name;
-        }
-    }
+    if ((AGENT_IDS as readonly string[]).includes(key)) return usageAgentTitle(key, label);
     if (!key || key === 'unknown') return label && label !== key ? label : t('usage.board.page.unattributed');
     const display = label?.trim();
     if (display && display !== key && display !== formatUsageDimensionLabel('source', key)) return display;
-    // An unknown model id is its exact fallback, not a name invented by title casing.
-    return dimension === 'model' ? key : formatUsageDimensionLabel('source', key);
+    return formatUsageDimensionLabel('source', key);
 }

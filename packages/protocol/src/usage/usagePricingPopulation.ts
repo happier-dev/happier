@@ -271,12 +271,11 @@ export function priceUsagePricingPopulation(population: UsagePricingPopulation, 
         for (const fact of resolveUsageCostFacts(cost)) facts.add({ ...base, ...fact, currency: fact.kind === 'api_equivalent' ? 'USD' : fact.currency }, group.contributionCount);
         if (!estimate && cost.apiEquivalentUsd === undefined) facts.add({ ...base, kind: 'unpriced', currency: 'USD', amountUsd: null,
             source: categories ? 'model_price_unknown' : 'token_categories_unknown', complete: false }, group.contributionCount);
-        // The producer already admitted each group's report selection. A missing
-        // report selects no charge, just as for a rich row; it does not invalidate
-        // unrelated known money. Both shapes use the same selected-money fold.
+        // The group retains report scope admission after stripping the member IDs.
         const state = mode === 'api_equivalent' ? 'plain' : group.selection[mode];
         costs.add(cost, state === 'plain' ? undefined : { available: true,
-            selected: state === 'total' ? resolveUsageCostBasis(cost, mode) : null });
+            selected: state === 'total' ? resolveUsageCostBasis(cost, mode) : null,
+            ...(state === 'unavailable' ? { missing: 'basis_unavailable' as const } : {}) });
     }
     const total = population.groups.length === 0 ? aggregateUsageContributionCosts([], mode) : costs.value();
     const selected = resolveUsageCostBasis(total, mode);

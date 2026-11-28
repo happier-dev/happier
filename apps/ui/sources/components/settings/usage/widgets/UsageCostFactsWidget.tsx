@@ -20,7 +20,7 @@ import {
   UsageBodyNote,
 } from './usageBodyKit';
 import { UsageModelPricesLine } from './UsageModelPrices';
-import { usagePageCostCaption, usageTokensFromPartsNote } from '../usageCostPresentation';
+import { usageCostKindPhrase, usageTokensFromPartsNote } from '../usageCostPresentation';
 import { resolveUsageMeasuredTokens } from '@/sync/api/account/usageMeasuredTokens';
 import { readUsageAppCallsEnvironmentIds } from '@/sync/domains/usage/usageAppCallsSource';
 
@@ -122,7 +122,7 @@ export function UsageCostFactsWidget(props: UsageBodyProps) {
   const prices = <UsageModelPricesLine slice={props.slice} serverId={props.serverId} testID={`${props.testID}.prices`} />;
   const leadTokens = leadFact ? resolveUsageMeasuredTokens(leadFact.tokens).total : null;
   // The qualifier comes before the token basis, so a two-line caption never cuts it off (J-B77).
-  const leadCaption = total === null ? '' : [usagePageCostCaption(total),
+  const leadCaption = total === null ? '' : [usageCostKindPhrase(total.selection.kind),
     leadFact && !leadFact.complete && !partialOnce ? t('usage.board.page.factIncomplete') : null,
     leadFact ? costFactTokensCaption(leadFact, leadTokens === null ? null : formatTokenCount(leadTokens)) : null].filter(Boolean).join(' · ');
   const leadFigure = total ? <HappierDataMetric testID={`${props.testID}.total`} theme={chartTheme} size="hero"

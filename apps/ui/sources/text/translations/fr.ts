@@ -17060,6 +17060,7 @@ settingsSession: {
             efficiencyNoBasisTitle: "Pas encore de base pour les ratios",
             efficiencyNoBasisReason: "Les ratios exigent des catégories de jetons et un coût connu.",
             costUnpricedCaption: "Total indisponible : une partie de l’usage n’a ni coût signalé, ni prix de modèle, ni estimation enregistrée.",
+            costBasisUnavailable: "Aucun total pour cette base de coût",
             efficiencyUnpricedReason: "Une partie de l’usage de cette période n’a ni coût déclaré ni prix de modèle : ses ratios ne peuvent pas être chiffrés.",
             cacheHit: "Taux de cache",
             cacheListPriceDifference: ({ amount }: { amount: string | number }) => `${amount} d'écart au prix catalogue`,

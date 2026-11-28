@@ -2,7 +2,7 @@ import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usage
 import { WidgetFrameBodyCaptionContext } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ChartDatum, HappierDataMetric, HappierDataRows, HappierDataTable, RankedRows, StackedSeriesChart, UsageAgentRiver, UsageConstellation } from '@happier-dev/plugin-ui/presentation';
 import { WidgetPresentationProvider } from '@happier-dev/plugin-ui/components';
 import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
@@ -144,6 +144,21 @@ describe('one selected money basis across Usage bodies', () => {
       .toEqual({ 'parts-model': [10, false], 'second-model': [10, false] });
     // Once under the facts and once under the breakdown.
     expect(screen.getTextContent().split(sharedQualifier)).toHaveLength(3);
+  });
+  it('ranks a model nobody reported last, in neutral ink, so a named model leads (USAGE-DESIGN-PASS-57 #11)', async () => {
+    const props = mountedCosts();
+    const query = normalizeUsageQuery({ ...props.query, metric: 'tokens', breakdown: ['model'] });
+    const cost = props.slice.accounting!.totals.cost;
+    const at = (total: number) => ({ ...props.slice.accounting!.totals.tokens, input: total, total });
+    const slice = { ...props.slice, accounting: { ...props.slice.accounting!, breakdowns: { model: [
+      { key: 'unknown', eventCount: 2, tokens: at(232), cost },
+      { key: 'claude-opus-4-1', eventCount: 1, tokens: at(200), cost },
+    ] } } };
+    const screen = await renderScreen(<UsageBreakdownsWidget {...props} query={query} slice={slice} id="usage_breakdowns" testID="models" />);
+    const rows = screen.findByType(RankedRows).props.rows as readonly { id: string; color: string }[];
+    expect(rows.map(row => row.id)).toEqual(['claude-opus-4-1', 'unknown']);
+    // The named leader takes the accent; the unreported row keeps the ordinary ink.
+    expect(rows[1]!.color).not.toBe(rows[0]!.color);
   });
   it('qualifies folded Breakdowns rows only after they are shown', async () => {
     const props = mountedCosts();
@@ -1002,6 +1017,96 @@ describe('one selected money basis across Usage bodies', () => {
     expect(screen.getTextContent()).not.toContain('5400');
     expect(screen.getTextContent()).not.toContain('1.5');
     expect(screen.findAllByType(ChartDatum).filter(node => node.props.datum?.label === t('usage.board.page.agentTime'))).toHaveLength(0);
+  });
+  it('says the time on the clock only where it differs from the agent time (USAGE-DESIGN-PASS-57 #4)', async () => {
+    const props = mountedCosts();
+    const query = normalizeUsageQuery({ ...props.query, includeSessionEvidence: true });
+    const sliceOf = (facts: readonly { startMs: number; endMs: number }[]) => resolveUsagePageAggregation({ queries: [query],
+      accounting: [{ query, status: 'available', value: props.slice.accounting! }],
+      howYouWork: [{ query, asOfMs: day, detail: { status: 'available', facts: facts.map((fact, index) => (
+        { workId: `work-${index}`, evidenceId: `turn-${index}`, agentId: null, machineId: null, kind: 'busy' as const, ...fact })) } }],
+    }, bundledUsageModelPriceCatalog).results[0]!;
+    const renderAgentTime = async (slice: ReturnType<typeof sliceOf>) => {
+      const numberFormats = vi.spyOn(Intl, 'NumberFormat');
+      try {
+        const screen = await renderScreen(<UsagePeriodSummaryWidget {...props} query={query} slice={slice}
+          id="usage_period_summary" testID="clock-summary" />);
+        const metric = screen.findAllByType(HappierDataMetric).find(metric => metric.props.label === t('usage.board.page.agentTime'))!;
+        const { value, caption } = metric.props;
+        const durationFormats = numberFormats.mock.calls.filter(([, options]) => options?.style === 'unit');
+        await screen.unmount();
+        return { value, caption, formats: durationFormats.length };
+      } finally {
+        numberFormats.mockRestore();
+      }
+    };
+    // One agent at a time: the clock and the agent time are one fact.
+    const minute = formatUsageDurationCompact(60_000);
+    expect.soft(await renderAgentTime(sliceOf([{ startMs: 0, endMs: 60_000 }])))
+      .toEqual({ value: minute, caption: undefined, formats: 2 });
+    // Two agents side by side: the clock says the shorter span.
+    const hour = formatUsageDurationCompact(3_600_000);
+    const twoHours = formatUsageDurationCompact(7_200_000);
+    expect(await renderAgentTime(sliceOf([{ startMs: 0, endMs: 3_600_000 }, { startMs: 0, endMs: 3_600_000 }])))
+      .toEqual({ value: twoHours, caption: t('usage.board.page.elapsedTime', { time: hour }), formats: 2 });
+  });
+  it.each([true, false])('explains a missing Reported total with an API price present: %s', async apiPriced => {
+    const props = mountedCosts('all');
+    const query = normalizeUsageQuery({ ...props.query, costBasis: 'reported' });
+    const source = props.slice.accounting!;
+    const accounting = repriceUsageAnalyticsResponse({
+      ...source,
+      contributions: source.contributions!.map(row => ({ ...row, modelId: apiPriced ? 'claude-haiku-4-5' : row.modelId })),
+    }, bundledUsageModelPriceCatalog, {}, query.costBasis);
+    const slice = resolveUsagePageAggregation({
+      queries: [query], accounting: [{ query, status: 'available', value: accounting }],
+    }, bundledUsageModelPriceCatalog).results[0]!;
+    expect(slice.costFactTotals?.some(fact => fact.kind === 'api_equivalent' && (fact.amountUsd ?? 0) > 0)).toBe(apiPriced);
+    const frame = lentCaption();
+    const screen = await renderScreen(<>
+      <UsagePeriodSummaryWidget {...props} query={query} slice={slice} id="usage_period_summary" testID="missing-summary" />
+      <UsageEfficiencyWidget {...props} query={query} slice={slice} id="usage_efficiency" testID="missing-efficiency" />
+      <WidgetFrameBodyCaptionContext.Provider value={frame.lend}>
+        <UsageBreakdownsWidget {...props} query={query} slice={slice} id="usage_breakdowns" testID="missing-agents" />
+      </WidgetFrameBodyCaptionContext.Provider>
+    </>);
+    const reason = t(apiPriced ? 'usage.board.page.costBasisUnavailable' : 'usage.board.page.factUnpriced');
+    for (const testID of ['missing-summary.hero', 'missing-efficiency.perMtok']) {
+      const metric = screen.findAllByType(HappierDataMetric).find(metric => metric.props.testID === testID);
+      expect.soft(metric?.props.value).toBe('—');
+      expect.soft(metric?.props.caption).toBe(reason);
+    }
+    expect(frame.read()).toContain(reason);
+  });
+  it('explains the two missing Reported amounts in the Breakdown rows', async () => {
+    const props = mountedCosts();
+    const query = normalizeUsageQuery({ ...props.query, costBasis: 'reported' });
+    const source = props.slice.accounting!;
+    const reported = source.contributions![0]!;
+    const missing = source.contributions![1]!;
+    const cost = { reportedUsd: null, estimatedUsd: null, currency: 'USD' };
+    const accounting = repriceUsageAnalyticsResponse({
+      ...source,
+      contributions: [
+        reported,
+        { ...missing, agentId: 'codex', modelId: 'claude-haiku-4-5', cost },
+        { ...missing, id: 'no-price', agentId: 'gemini', modelId: 'unpriced-model', cost },
+      ],
+    }, bundledUsageModelPriceCatalog, {}, query.costBasis, UsageAnalyticsQueryRequestSchema.parse({
+      dateRange: { startMs: 0, endMs: day }, costMode: query.costBasis, breakdowns: ['agent'],
+    }));
+    const slice = resolveUsagePageAggregation({
+      queries: [query], accounting: [{ query, status: 'available', value: accounting }],
+    }, bundledUsageModelPriceCatalog).results[0]!;
+    const screen = await renderScreen(
+      <UsageBreakdownsWidget {...props} query={query} slice={slice} id="usage_breakdowns" testID="agents" />,
+    );
+    const rows = screen.findByType(RankedRows).props.rows;
+    expect(rows[0]).toMatchObject({ id: 'claude', value: 1 });
+    expect(rows).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'codex', value: null, annotation: expect.stringContaining(t('usage.board.page.costBasisUnavailable')) }),
+      expect.objectContaining({ id: 'gemini', value: null, annotation: expect.stringContaining(t('usage.board.page.factUnpriced')) }),
+    ]));
   });
   it('renders observed merged counts from compact Work facts without allocation rows', async () => {
     const props = mountedCosts();

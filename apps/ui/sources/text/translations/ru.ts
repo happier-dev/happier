@@ -17131,6 +17131,7 @@ settingsSession: {
             efficiencyNoBasisTitle: "Пока нет основы для показателей",
             efficiencyNoBasisReason: "Нужны категории токенов и известная стоимость.",
             costUnpricedCaption: "Итог недоступен: часть использования не имеет ни отчётной стоимости, ни цены модели, ни записанной оценки.",
+            costBasisUnavailable: "Нет итоговой суммы для этой базы расчёта стоимости",
             efficiencyUnpricedReason: "Для части использования за этот период нет ни указанной стоимости, ни цены модели, поэтому показатели нельзя рассчитать.",
             cacheHit: "Попадания в кэш",
             cacheListPriceDifference: ({ amount }: { amount: string | number }) => `${amount} разницы по прайсу`,

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { UsageAccountingMetricSchema, getUsageQueryKey } from '@happier-dev/protocol/inputs/usageQuery';
+import { UsageAccountingMetricSchema, getUsageQueryKey, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { useUnistyles } from 'react-native-unistyles';
 import { useWidgetPresentation } from '@happier-dev/plugin-ui';
 import { resolveUsageCalendarInstant } from '@happier-dev/protocol/usage/usageCalendar';
@@ -14,7 +14,7 @@ import { t } from '@/text';
 import { agentIdFromEngineKey, USAGE_MODEL_MIX_OTHER_KEY } from '@/sync/api/account/usageAnalytics';
 import { useUsageAgentColor, usageOtherColor, usageSignatureAccent } from '../usageAccent';
 import { formatUsageCalendarDate, formatUsageWeeklyBucketLabel, resolveUsageShownCalendarRange } from '@/sync/domains/usage/usageCalendarPresentation';
-import { usageCostKindPhrase, usagePageCostTrend } from '../usageCostPresentation';
+import { usageHasRecordedUnpricedCost, usagePageCostCaption, usagePageCostTrend } from '../usageCostPresentation';
 import { useUsageDrill } from '../usageDrill';
 import { useUsageChartDetails } from './usageMountedControls';
 import { usageSeriesTitle } from './usageChartLabels';
@@ -39,6 +39,7 @@ import {
   useUsagePluginTheme,
   type UsageBodyProps,
   UsageBodyNoUsage,
+  UsageBodyReading,
   useUsageChartPlotPx,
   USAGE_CHART_FRAME_PX,
 } from './usageBodyKit';
@@ -64,6 +65,23 @@ export function useUsageDailyChartShape(): Readonly<{ kind: 'chart'; plotPx: num
   if (presentation?.size === 'small' || presentation?.size === 'wide')
     return { kind: 'chart', plotPx: Math.max(1, (presentation.geometry?.height ?? 96) - USAGE_CHART_FRAME_PX.chrome / 2), peak: false };
   return { kind: 'chart', peak, plotPx };
+}
+
+/**
+ * The card's name for the bars its period draws ("Hourly usage" for Today, "Daily usage" for days, "Weekly usage" for a
+ * year): from the read's own range once it answers, and from the query's period before then, so the title the first
+ * read shows is the one that settles (USAGE-DESIGN-PASS-57 #7). One rule for the first read and the drawn chart.
+ */
+function useUsageSeriesIdentity(granularity: UsageQuery['granularity'] | undefined) {
+  const identity = React.useMemo(() => granularity !== undefined ? { title: usageSeriesTitle(granularity) } : null, [granularity]);
+  useWidgetFrameBodyIdentity(identity);
+  return identity;
+}
+
+/** Daily's first read: the settled chart's room, under the name its bars will have. */
+export function UsageDailyReading(props: Readonly<{ query: UsageQuery; testID: string }>) {
+  useUsageSeriesIdentity(props.query.granularity);
+  return <UsageBodyReading testID={props.testID} shape={useUsageDailyChartShape()} />;
 }
 
 /**
@@ -100,16 +118,16 @@ export function UsageDailyWidget(props: UsageBodyProps) {
       ),
     [range, props.query.granularity, props.query.timeZoneOffsetMinutes],
   );
-  const { series: sourceSeries, incompleteBucketStarts } = React.useMemo(() => usageSourceTimelineSeries({
+  const { series: sourceSeries, bucketFacts } = React.useMemo(() => usageSourceTimelineSeries({
     timeline: metric === 'cost' ? view?.pageCost.accounting.engineTimeline : props.slice.accounting?.engineTimeline,
-    range, coverage, metric, costMode: props.query.costBasis, costSelection: view?.pageCost.selection ?? null,
+    range, coverage, metric, costSelection: view?.pageCost.selection ?? null, collectBucketFacts: true,
     dimensionKey: agentIdFromEngineKey, label: usageAgentTitle,
     color: (_index, key) => key === USAGE_MODEL_MIX_OTHER_KEY ? usageOtherColor(theme) : agentColor(key), bucketLabel,
-  }), [props.slice.accounting?.engineTimeline, view?.pageCost, range, coverage, metric, props.query.costBasis, theme, agentColor, bucketLabel]);
+  }), [props.slice.accounting?.engineTimeline, view?.pageCost, range, coverage, metric, theme, agentColor, bucketLabel]);
   const byAgent = sourceSeries.length > 0 || (metric === 'tokens' && view?.agentMix.hasData === true);
   const agentForSeries = React.useCallback((id: string) => sourceSeries.find(entry => entry.id === id)?.dimensionKey ?? id, [sourceSeries]);
   const pageCost = view?.pageCost;
-  const costTrend = React.useMemo(() => metric === 'cost' && pageCost ? usagePageCostTrend(pageCost) : null, [metric, pageCost]);
+  const costTrend = React.useMemo(() => metric === 'cost' && pageCost ? usagePageCostTrend(pageCost, true) : null, [metric, pageCost]);
   const series = React.useMemo<readonly HappierSeries[]>(() => {
     if (!view) return [];
     if (sourceSeries.length > 0) return sourceSeries;
@@ -172,13 +190,12 @@ export function UsageDailyWidget(props: UsageBodyProps) {
     },
     [drill, drillable, agentForSeries],
   );
+  const costCaption = metric === 'cost' && view ? usagePageCostCaption(view.pageCost) : undefined;
   const lens = useUsageSeriesLens({
     series,
     format,
     accentColor: theme.colors.text.primary,
-    ...(metric === 'cost' && view
-      ? { footer: view.pageCost.selection ? usageCostKindPhrase(view.pageCost.selection.kind) : t('common.unavailable') }
-      : {}),
+    ...(costCaption ? { footer: costCaption } : {}),
     ...(drillable ? { choice } : {}),
     testID: `${props.testID}.lens`,
   });
@@ -190,20 +207,19 @@ export function UsageDailyWidget(props: UsageBodyProps) {
       ? costTrend?.filter(point => point.partialCost)
       : view?.trend.filter(point => point.tokensFromParts);
     const incompleteTrendStarts = new Set(incompleteTrend?.map(point => point.timestamp * 1000));
-    // Cost hatching describes actual usage without a price. A calendar-only slot
-    // can still have an unknown value without carrying that meaning.
-    const unpricedStarts = byAgent ? incompleteBucketStarts : new Set(costTrend
-      ?.filter(point => point.recordedUnpriced)
+    // Hatching describes a witnessed absence of price, distinct from a missing selected basis or an unread slot.
+    const unpricedStarts = byAgent ? bucketFacts?.unpricedBucketStarts : new Set(costTrend
+      ?.filter(point => usageHasRecordedUnpricedCost(point.reportCount, point.costUnavailableReason))
       .map(point => point.timestamp * 1000));
     const buckets = (series[0]?.points ?? []).flatMap((point, index) => {
       if (typeof point.x !== 'number' || !Number.isFinite(point.x)) return [];
       const startMs = byAgent ? point.x : point.x * 1000;
       const values = series.map(entry => entry.points[index]?.y);
-      const complete = !incompleteBucketStarts.has(startMs) && !incompleteTrendStarts.has(startMs)
+      const complete = !bucketFacts?.incompleteBucketStarts.has(startMs) && !incompleteTrendStarts.has(startMs)
         && values.every(value => typeof value === 'number' && Number.isFinite(value));
       const total = complete
         ? values.reduce<number>((sum, value) => sum + (value ?? 0), 0) : null;
-      const gap = metric === 'cost' ? unpricedStarts.has(startMs) : values.every(value => value == null);
+      const gap = metric === 'cost' ? unpricedStarts?.has(startMs) === true : values.every(value => value == null);
       return [{ id: point.id, startMs, total, gap }];
     });
     const peak = {
@@ -225,7 +241,7 @@ export function UsageDailyWidget(props: UsageBodyProps) {
     const barRanges = current?.total !== null && current?.total !== undefined && current.total < value
       ? [{ bucketId: current.id, lower: current.total, upper: value, label: reference.label }] : [];
     return { reference, barRanges, bucketShading, ...peak };
-  }, [series, byAgent, range, props.query.granularity, props.query.timeZoneOffsetMinutes, metric, incompleteBucketStarts, costTrend, view?.trend]);
+  }, [series, byAgent, range, props.query.granularity, props.query.timeZoneOffsetMinutes, metric, bucketFacts, costTrend, view?.trend]);
   const weekly = range?.granularity === 'week';
   const axisTicks = React.useMemo(() => {
     const starts = series[0]?.points.map((point) => typeof point.x === 'number' ? (byAgent ? point.x : point.x * 1000) : null) ?? [];
@@ -244,9 +260,7 @@ export function UsageDailyWidget(props: UsageBodyProps) {
   // The card is named for the bars it draws ("Weekly usage" for a year, "Hourly usage" for Today, "Daily usage" for
   // days), never a bucket it does not draw (USAGE-ACCEPT 1121 #16, N1, J-B78); before the read the catalog's
   // bucket-neutral name stands. A name the person gave the widget still wins at the frame.
-  const bucket = range?.granularity ?? props.query.granularity;
-  const seriesIdentity = React.useMemo(() => bucket !== undefined ? { title: usageSeriesTitle(bucket) } : null, [bucket]);
-  useWidgetFrameBodyIdentity(seriesIdentity);
+  const seriesIdentity = useUsageSeriesIdentity(range?.granularity ?? props.query.granularity);
   // The frame's subtitle is the same from the first paint: whether the bars split by agent is only known once the
   // read answers, and the legend says it then. The chart's own label (for assistive technology) names the split.
   useWidgetFrameBodyCaption(measure);

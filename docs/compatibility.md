@@ -1821,6 +1821,20 @@ direct cut; no compatibility shim, capability flag or persistence change is adde
 The scoped clean `../0.2` frontier at `c680de922e4475b7dfbaeedcd63a8af7d985d3c3`
 has no current analytics query service/contracts.
 
+## Usage selected cost coverage (unreleased 0.3)
+
+Compact usage cost projections carry optional `selectedBasis.missing` evidence
+from the selected-cost fold. It distinguishes a genuinely unpriced contribution
+from a contribution with no applicable price under the selected basis. Both can
+make the known amount partial. Older responses remain readable. When an older
+partial amount does not preserve the reason, the chart leaves the
+unpriced hatch off.
+
+Matching Protocol, server and UI readers load together. Older strict 0.3
+development readers reject the extra field. The inspected `../0.2` frontier at
+`4df6e9e1a1c` has no matching Usage analytics contract or v2 query path. The
+grouped pricing operands, persisted formats and query wire epoch stay the same.
+
 ## Usage filter inventory (unreleased 0.3)
 
 Private accounting responses add optional closed `scopeKeys` entries containing

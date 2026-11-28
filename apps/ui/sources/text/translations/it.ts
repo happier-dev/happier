@@ -17557,6 +17557,7 @@ settingsSession: {
             efficiencyNoBasisTitle: "Ancora nessuna base per i rapporti",
             efficiencyNoBasisReason: "I rapporti richiedono categorie di token e un costo noto.",
             costUnpricedCaption: "Totale non disponibile: parte dell’utilizzo non ha costo riportato, prezzo del modello né stima registrata.",
+            costBasisUnavailable: "Nessun totale per questa base di costo",
             efficiencyUnpricedReason: "Parte dell’uso in questo periodo non ha né un costo riportato né un prezzo del modello, quindi i rapporti non sono calcolabili.",
             cacheHit: "Hit della cache",
             cacheListPriceDifference: ({ amount }: { amount: string | number }) => `${amount} di differenza a listino`,

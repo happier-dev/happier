@@ -17341,6 +17341,7 @@ settingsSession: {
             efficiencyNoBasisTitle: "Noch keine Basis für Kennzahlen",
             efficiencyNoBasisReason: "Kennzahlen brauchen Token-Kategorien und bekannte Kosten.",
             costUnpricedCaption: "Gesamtwert nicht verfügbar: Für einen Teil der Nutzung gibt es weder gemeldete Kosten noch Modellpreis noch erfasste Schätzung.",
+            costBasisUnavailable: "Keine Gesamtsumme für diese Kostengrundlage",
             efficiencyUnpricedReason: "Für einen Teil der Nutzung in diesem Zeitraum gibt es weder gemeldete Kosten noch einen Modellpreis, daher lassen sich die Kennzahlen nicht bepreisen.",
             cacheHit: "Cache-Treffer",
             cacheListPriceDifference: ({ amount }: { amount: string | number }) => `${amount} Differenz zum Listenpreis`,

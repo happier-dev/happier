@@ -17294,6 +17294,7 @@ settingsSession: {
             efficiencyNoBasisTitle: "Ainda sem base para as proporções",
             efficiencyNoBasisReason: "As proporções exigem categorias de tokens e um custo conhecido.",
             costUnpricedCaption: "Total indisponível: parte do uso não tem custo informado, preço de modelo nem estimativa registrada.",
+            costBasisUnavailable: "Não há total para esta base de custo",
             efficiencyUnpricedReason: "Parte do uso neste período não tem custo informado nem preço de modelo, por isso os índices não podem ser calculados.",
             cacheHit: "Acertos de cache",
             cacheListPriceDifference: ({ amount }: { amount: string | number }) => `${amount} de diferença no preço de tabela`,

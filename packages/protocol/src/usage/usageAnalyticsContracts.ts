@@ -75,6 +75,7 @@ export const UsageObservationCostSchema = lazyZodSchema(() => z.strictObject({
   effectiveUsd: z.optional(NonNegativeNumberSchema),
   /** Compact query projection only: selected availability survives JSON without report member identities. */
   selectedBasis: z.optional(z.strictObject({ mode: UsageAnalyticsCostModeSchema,
+    missing: z.optional(z.enum(['unpriced', 'basis_unavailable'])),
     value: z.nullable(z.strictObject({ kind: z.enum(['reported', 'estimated', 'invoice', 'api_equivalent', 'mixed']),
       currency: z.string().check(z.minLength(1)), source: z.string().check(z.minLength(1)), partial: z.optional(z.literal(true)) })) })),
 }));

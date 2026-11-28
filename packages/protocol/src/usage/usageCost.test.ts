@@ -2,7 +2,8 @@ import { withUsageMoney, readUsageMoney } from './usageMoney.js';
 import { expect, it } from 'vitest';
 import { admitUsageAnalyticsServerPrices, projectUsageAnalyticsSummary, projectUsagePageCost, repriceUsageAnalyticsResponse, repriceUsageAnalyticsResponseSteps, repriceUsageObservationCost, resolveUsageCostFacts, resolveUsageCostBasis, resolveEffectiveUsageCostUsd } from './usageCost.js';
 import { bundledUsageModelPriceCatalog } from './usageModelPriceCatalog.js';
-import { UsageAnalyticsQueryRequestSchema, UsageAnalyticsQueryResponseSchema, type UsageAnalyticsQueryResponse, type UsageObservationCost } from './usageAnalyticsContracts.js';
+import { projectUsageCostBucket, serializeUsageCostBasis } from './usageCostFacts.js';
+import { UsageAnalyticsQueryRequestSchema, UsageAnalyticsQueryResponseSchema, UsageObservationCostSchema, type UsageAnalyticsQueryResponse, type UsageObservationCost } from './usageAnalyticsContracts.js';
 import { addUsageCostForMode, aggregateUsageContributionCosts, aggregateUsageCostPartitions, createEmptyUsageCost, createEmptyUsageTokens } from './usageAggregation.js';
 import { projectUsageAgentAccountingCalendar } from './usageAgentCalendar.js';
 import { mergeUsageActivityProjectionFacts, projectUsageActivityProjectionDayFacts, projectUsageActivitySubjectProjectionFacts, projectUsageContributionTotals } from './usageActivityProjectionFacts.js';
@@ -90,6 +91,34 @@ it.each(['auto', 'reported', 'estimated', 'api_equivalent'] as const)(
     expect(resolveEffectiveUsageCostUsd(repriceUsageAnalyticsResponse(merged, bundledUsageModelPriceCatalog, {}, mode).totals.cost, mode)).toBeNull();
   });
 
+it.each([
+  { modelId: 'priced', apiEquivalentUsd: 2, missing: 'basis_unavailable' },
+  { modelId: 'unpriced', apiEquivalentUsd: undefined, missing: 'unpriced' },
+])('preserves $missing for an incomplete Reported bucket through compact delivery', ({ modelId, apiEquivalentUsd, missing }) => {
+  const noMoney = { reportedUsd: null, estimatedUsd: null, currency: 'USD' };
+  const reported = { ...noMoney, reportedUsd: 3, costSource: 'provider_reported' as const };
+  const missingReport = apiEquivalentUsd === undefined ? noMoney : { ...noMoney, apiEquivalentUsd, pricingSource: 'catalog' };
+  const aggregate = aggregateUsageContributionCosts([{ cost: reported }, { cost: missingReport }], 'reported');
+  const tokens = { input: 1_000_000, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 1_000_000 };
+  const catalog = { ...bundledUsageModelPriceCatalog, models: { priced: { inputUsdPerMillion: 2, outputUsdPerMillion: 0 } } };
+  const grouped = priceUsagePricingPopulation(buildUsagePricingPopulation([
+    { id: 'reported', observedAtMs: 1, modelId: null, cost: reported, tokens, tokenCategories: tokens, eventCount: 1 },
+    { id: 'missing-report', observedAtMs: 2, modelId, cost: noMoney, tokens, tokenCategories: tokens, eventCount: 1 },
+  ]), catalog, {}, 'reported');
+  for (const input of [serializeUsageCostBasis(aggregate, 'reported'), grouped.cost]) {
+    const cost = UsageObservationCostSchema.parse(JSON.parse(JSON.stringify(input)));
+    expect(resolveUsageCostBasis(cost, 'reported')).toMatchObject({ amountUsd: 3, partial: true });
+    expect(cost.selectedBasis).toMatchObject({ mode: 'reported', missing });
+    expect(projectUsageCostBucket(cost, 'reported')).toMatchObject({ amountUsd: 3, partial: true,
+      unavailableReason: missing === 'unpriced' ? 'part_unpriced' : 'basis_unavailable' });
+    const { missing: _reason, ...legacyBasis } = cost.selectedBasis!;
+    const legacy = UsageObservationCostSchema.parse({ ...cost, selectedBasis: legacyBasis });
+    expect(projectUsageCostBucket(legacy, 'reported')).toMatchObject({
+      amountUsd: 3, partial: true, unavailableReason: 'basis_unavailable',
+    });
+  }
+});
+
 it('keeps unknown token categories unpriced in detailed and compact projections without losing known money', () => {
   const unknown = { input: null, output: null, reasoning: null, cacheRead: null, cacheWrite: null, total: null };
   const measured = { input: 1_000_000, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 1_000_000 };
@@ -108,6 +137,30 @@ it('keeps unknown token categories unpriced in detailed and compact projections 
   expect(compact.selected?.amountUsd).toBe(known);
   expect(compact.facts).toContainEqual(expect.objectContaining({ kind: 'unpriced', tokens: unknown }));
   expect(resolveUsageCostBasis(repriceUsageObservationCost(cost, 'gpt-4o', unknown, bundledUsageModelPriceCatalog), 'auto')).toBeNull();
+});
+
+it.each([
+  { reportedTotalId: 'report-outside-window', reason: 'basis_unavailable' },
+  { reportedTotalId: undefined, reason: 'unpriced' },
+])('uses the bucket’s $reason decision for an unavailable Reported total in rich and compact reads', ({ reportedTotalId, reason }) => {
+  const tokens = { input: 5, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 5 };
+  const raw = { ...createEmptyUsageCost(), ...(reportedTotalId ? { reportedTotalId } : {}) };
+  const contributions = [{ id: 'call', eventCount: 1, observedAtMs: 1, sessionId: null, turnId: null,
+    agentId: null, modelId: null, machineId: null, projectKey: null, workspaceId: null, source: null, tokens, cost: raw }];
+  const cost = aggregateUsageContributionCosts(contributions, 'reported');
+  const rich: UsageAnalyticsQueryResponse = { v: 1, contributions, totals: { eventCount: 1, tokens, cost } };
+  const compact = UsageAnalyticsQueryResponseSchema.parse(JSON.parse(JSON.stringify({
+    v: 1, totals: { ...rich.totals, cost: serializeUsageCostBasis(cost, 'reported') },
+  })));
+  let rawAmountReads = 0;
+  const { reportedUsd } = compact.totals.cost;
+  Object.defineProperty(compact.totals.cost, 'reportedUsd', { get() { rawAmountReads++; return reportedUsd; } });
+
+  for (const response of [rich, compact]) {
+    expect(projectUsageCostBucket(response.totals.cost, 'reported').unavailableReason).toBe(reason);
+    expect.soft(projectUsagePageCost(response, 'reported')).toMatchObject({ amountUsd: null, unavailableReason: reason });
+  }
+  expect(rawAmountReads).toBe(0);
 });
 
 it('never turns unpriced usage into a free request through a no_tokens fact', () => {

@@ -17302,6 +17302,7 @@ settingsSession: {
       efficiencyNoBasisTitle: "Brak podstaw do obliczenia wskaźników",
       efficiencyNoBasisReason: "Wskaźniki wymagają kategorii tokenów i znanego kosztu.",
       costUnpricedCaption: "Suma niedostępna: część użycia nie ma zgłoszonego kosztu, ceny modelu ani zapisanego szacunku.",
+      costBasisUnavailable: "Brak sumy dla tej podstawy kosztów",
       efficiencyUnpricedReason: "Część użycia w tym okresie nie ma ani zgłoszonego kosztu, ani ceny modelu, więc nie można wycenić jej wskaźników.",
       cacheHit: "Trafienie w pamięć podręczną",
       cacheListPriceDifference: ({ amount }: { amount: string | number }) => `${amount} różnicy według cennika`,

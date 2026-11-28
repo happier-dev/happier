@@ -17463,6 +17463,7 @@ settingsSession: {
             efficiencyNoBasisTitle: "比率の基準がまだありません",
             efficiencyNoBasisReason: "比率にはトークン区分と既知の費用が必要です。",
             costUnpricedCaption: "合計は利用できません: 一部の使用量には報告コスト、モデル価格、記録された見積もりがありません。",
+            costBasisUnavailable: "この費用の算定方法では合計額を表示できません",
             efficiencyUnpricedReason: "この期間の一部の利用には報告されたコストもモデル価格もないため、比率を算出できません。",
             cacheHit: "キャッシュヒット",
             cacheListPriceDifference: ({ amount }: { amount: string | number }) => `定価との差 ${amount}`,

@@ -15,9 +15,11 @@ export interface UsageCostBasis {
 /** A best-available aggregate labels unlike witnessed kinds rather than calling them reported. */
 export type UsageSelectedCostBasis = Omit<UsageCostBasis, 'kind'> & Readonly<{
   kind: UsageCostBasis['kind'] | 'mixed';
-  /** The known amount omits a witnessed unpriced contribution. */
+  /** The known amount omits a contribution without the selected basis. */
   partial?: true | undefined;
 }>;
+
+export type UsageSelectedCostMissing = NonNullable<NonNullable<UsageObservationCost['selectedBasis']>['missing']>;
 
 /** Covered fallback facts remain readable, but are not another selected charge or attributed zero. */
 export function isUsageCostCoveredByReportedTotal(cost: UsageObservationCost, mode: UsageCostMode): boolean {
@@ -51,6 +53,7 @@ export type UsagePageCostSelection = Readonly<Pick<UsageSelectedCostBasis, 'kind
 export type UsagePageCostProjection = Readonly<{
   selection: UsagePageCostSelection | null;
   amountUsd: number | null;
+  unavailableReason: 'unpriced' | 'part_unpriced' | 'basis_unavailable' | null;
   accounting: UsageAnalyticsQueryResponse;
 }>;
 
@@ -127,6 +130,61 @@ export function resolveUsagePageCostSelection(costs: readonly UsageObservationCo
   return first ? { kind: facts.every(fact => fact.kind === first.kind) ? first.kind : 'mixed', currency: first.currency, mode } : null;
 }
 
+function isMonetaryUsageFact(fact: { kind: UsageAnalyticsCostFactKind; source: string }): boolean {
+  // A zero-token tariff is an aggregation identity, not evidence of a model price.
+  return fact.kind !== 'unpriced' && fact.source !== 'no_tokens';
+}
+
+function hasMonetaryUsageCost(cost: UsageObservationCost): boolean {
+  return usageCostFactKinds.some(kind => {
+    const fact = readUsageCostFact(cost, kind);
+    return fact !== undefined && isMonetaryUsageFact(fact);
+  });
+}
+
+/** Classify each contribution once, then use the admitted evidence on every folded or compact bucket. */
+export function readUsageSelectedCostMissing(cost: UsageObservationCost, mode: UsageCostMode,
+  selected: UsageSelectedCostBasis | null): UsageSelectedCostMissing | undefined {
+  const aggregation = (cost as AggregatedUsageCost)[usageCostAggregationBasis];
+  if (aggregation?.mode === mode) return aggregation.missing ?? (aggregation.available ? undefined : 'basis_unavailable');
+
+  const compact = cost.selectedBasis;
+  if (compact?.mode === mode && compact.missing) return compact.missing;
+  // A legacy compact partial amount does not identify whether the omitted
+  // contribution has another price or unresolved report scope.
+  if (selected?.partial) return 'basis_unavailable';
+  if (selected || compact?.value === null && cost.effectiveUsd === 0) return undefined;
+  return compact?.value || hasUnresolvedUsageReportedTotalScope(cost, mode) || hasMonetaryUsageCost(cost)
+    ? 'basis_unavailable' : 'unpriced';
+}
+
+/** Completeness and genuinely unpriced usage are independent chart facts. */
+export function projectUsageCostBucket(cost: UsageObservationCost, selection: UsagePageCostSelection | UsageCostMode | null):
+  Pick<UsagePageCostProjection, 'amountUsd' | 'unavailableReason'> & Readonly<{ basis: UsageSelectedCostBasis | null; partial: boolean }> {
+  const mode = typeof selection === 'string' ? selection : selection ? selectionMode(selection)
+    : (cost as AggregatedUsageCost)[usageCostAggregationBasis]?.mode ?? cost.selectedBasis?.mode ?? 'auto';
+  const basis = typeof selection === 'string' ? resolveUsageCostBasis(cost, mode)
+    : resolveUsageCostBasisForSelection(cost, selection);
+  const missing = readUsageSelectedCostMissing(cost, mode, basis);
+  return { basis, amountUsd: basis?.amountUsd ?? null, partial: basis?.partial === true,
+    unavailableReason: missing === 'unpriced' ? (basis ? 'part_unpriced' : 'unpriced')
+      : missing ?? (basis ? null : 'basis_unavailable') };
+}
+
+function readUsagePageCostUnavailableReason(response: UsageAnalyticsQueryResponse,
+  costs: readonly UsageObservationCost[], total: UsageObservationCost, mode: UsageCostMode): NonNullable<UsagePageCostProjection['unavailableReason']> {
+  const aggregate = (total as AggregatedUsageCost)[usageCostAggregationBasis];
+  const compact = total.selectedBasis;
+  if (aggregate?.mode === mode || (compact?.mode === mode && compact.missing !== undefined)) {
+    return projectUsageCostBucket(total, mode).unavailableReason ?? 'basis_unavailable';
+  }
+  // Legacy compact responses may only carry the witnessed price in the page facts.
+  const hasMoney = (response.costPresentation !== undefined && response.costPresentation.source !== 'no_tokens')
+    || response.costFacts?.some(isMonetaryUsageFact)
+    || costs.some(hasMonetaryUsageCost);
+  return hasMoney ? 'basis_unavailable' : 'unpriced';
+}
+
 /**
  * Best available resolves reported -> API-priced -> estimated for every contribution and keeps
  * a mixed aggregate labelled. Explicit modes and unknown money remain unavailable. Raw facts
@@ -163,7 +221,8 @@ export function projectUsagePageCost(response: UsageAnalyticsQueryResponse, mode
     const selection = selected === undefined ? { kind, currency: presentation.currency, mode } : selected;
     const matches = selection && selection.currency === presentation.currency && selectionMode(selection) === mode
       && (selection.mode === 'auto' || selection.kind === 'mixed' || selection.kind === kind);
-    return { selection, amountUsd: matches ? presentation.effectiveUsd : null, accounting: response };
+    return { selection, amountUsd: matches ? presentation.effectiveUsd : null,
+      unavailableReason: matches ? null : 'basis_unavailable', accounting: response };
   }
   const costs = (rows ? resolveUsageContributionCosts(rows, mode) : [response.totals.cost])
     .filter(cost => !(cost as AggregatedUsageCost)[usageCostAggregationBasis]?.covered);
@@ -178,10 +237,12 @@ export function projectUsagePageCost(response: UsageAnalyticsQueryResponse, mode
   const total = rows ? aggregateUsageContributionCosts(rows, selectedMode) : response.totals.cost;
   const amountUsd = resolveUsageCostForSelection(total, selection)
     ?? (resolveUsageCostBasis(total, selectedMode) === null && resolveEffectiveUsageCostUsd(total, selectedMode) === 0 ? 0 : null);
-  if (!rows?.length || !selection) return retain({ selection, amountUsd, accounting: response });
+  const unavailableReason = amountUsd === null
+    ? readUsagePageCostUnavailableReason(response, costs, total, selectedMode) : null;
+  if (!rows?.length || !selection) return retain({ selection, amountUsd, unavailableReason, accounting: response });
   const ranking = reprojectUsageLeaders(response, rows, selectedMode,
     (_raw, contributions) => aggregateUsageContributionCosts(contributions, selectedMode));
-  const projection = { selection, amountUsd, accounting: { ...response, ...ranking,
+  const projection = { selection, amountUsd, unavailableReason, accounting: { ...response, ...ranking,
     totals: { ...response.totals, cost: total },
   } };
   return retain(projection);
@@ -219,9 +280,10 @@ function readUsageCostFact(cost: UsageObservationCost, kind: UsageCostBasis['kin
   return transferUsageMoney(cost, field, fact.amountUsd, fact, 'amountUsd');
 }
 
+const usageCostFactKinds = ['reported', 'estimated', 'invoice', 'api_equivalent'] as const satisfies readonly UsageCostBasis['kind'][];
+
 export function resolveUsageCostFacts(cost: UsageObservationCost): UsageCostBasis[] {
-  const kinds = ['reported', 'estimated', 'invoice', 'api_equivalent'] as const;
-  return kinds.flatMap(kind => { const fact = readUsageCostFact(cost, kind); return fact ? [fact] : []; });
+  return usageCostFactKinds.flatMap(kind => { const fact = readUsageCostFact(cost, kind); return fact ? [fact] : []; });
 }
 
 /** A monetary value is available only when its selected basis is witnessed. */
@@ -248,13 +310,15 @@ export function resolveUsageCostBasis(cost: UsageObservationCost, mode: UsageCos
 /** Compact delivery retains the resolved selection, not the private report-scope identifiers. */
 export function serializeUsageCostBasis(cost: UsageObservationCost, mode: UsageCostMode): UsageObservationCost {
   const selected = resolveUsageCostBasis(cost, mode);
+  const missing = readUsageSelectedCostMissing(cost, mode, selected);
   const { effectiveUsd: _effective, selectedBasis: _previous, ...observed } = cost;
+  const selection = { mode, ...(missing ? { missing } : {}) };
   return selected ? withUsageMoney<UsageObservationCost>({ ...observed, effectiveUsd: selected.amountUsd,
-    selectedBasis: { mode, value: { kind: selected.kind, currency: selected.currency, source: selected.source,
+    selectedBasis: { ...selection, value: { kind: selected.kind, currency: selected.currency, source: selected.source,
       ...(selected.partial ? { partial: selected.partial } : {}) } } },
     { effectiveUsd: readUsageMoney(selected, 'amountUsd', selected.amountUsd) })
-    : { ...observed, ...(resolveEffectiveUsageCostUsd(cost, mode) === 0 ? { effectiveUsd: 0 } : {}),
-      selectedBasis: { mode, value: null } };
+    : { ...observed, ...(cost.selectedBasis?.value === null && cost.effectiveUsd === 0 ? { effectiveUsd: 0 } : {}),
+      selectedBasis: { ...selection, value: null } };
 }
 
 /** Empty population zero is mode-independent and attributes no report or tariff basis. */

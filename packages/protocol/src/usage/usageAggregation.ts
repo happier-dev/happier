@@ -1,5 +1,5 @@
 import type { UsageAccountingMetadata, UsageAnalyticsTokens, UsageObservationCost, UsageObservationTokens } from './usageAnalyticsContracts.js';
-import { resolveEffectiveUsageCostUsd, resolveUsageCostBasis, type UsageCostMode, type UsageSelectedCostBasis } from './usageCostFacts.js';
+import { readUsageSelectedCostMissing, resolveEffectiveUsageCostUsd, resolveUsageCostBasis, type UsageCostMode, type UsageSelectedCostBasis, type UsageSelectedCostMissing } from './usageCostFacts.js';
 import { addUsageMoney, createUsageMoneyAccumulator, hasUsageMoneyProvenance, readUsageMoney, usageMoneyToNumber, withUsageMoney, type ExactUsageMoney } from './usageMoney.js';
 
 export function createEmptyUsageTokens(): UsageObservationTokens {
@@ -149,17 +149,16 @@ export function addUsageCost(left: UsageObservationCost, right: UsageObservation
 // This aggregation-only evidence never enters the serialized contract.
 export const usageCostAggregationBasis = Symbol('usageCostAggregationBasis');
 export type AggregatedUsageCost = UsageObservationCost & { [usageCostAggregationBasis]?: {
-    mode: UsageCostMode; available: boolean; selected?: UsageSelectedCostBasis; covered?: boolean; hasUnpriced?: true;
+    mode: UsageCostMode; available: boolean; selected?: UsageSelectedCostBasis; covered?: boolean; missing?: UsageSelectedCostMissing;
 } };
 
 /** Selected monetary state, after population-level overlap has been resolved.
- * Missing selection is neutral unless an actual unpriced operand is witnessed; unavailable is sticky.
+ * A missing contribution carries its reason. Empty and covered operands remain neutral.
  */
 export interface UsageSelectedCostAccumulator {
     available: boolean;
     selected: UsageSelectedCostBasis | null;
-    /** An actual unknown operand, distinct from the empty/covered identity. */
-    hasUnpriced?: true;
+    missing?: UsageSelectedCostMissing;
 }
 
 export function createEmptyUsageSelectedCost(): UsageSelectedCostAccumulator {
@@ -171,10 +170,8 @@ export function selectResolvedUsageCost(cost: UsageObservationCost, mode: UsageC
     if (state?.covered) return createEmptyUsageSelectedCost();
     const admitted = state?.mode === mode ? state : undefined;
     const selected = resolveUsageCostBasis(cost, mode);
-    // A folded partition already decided whether its missing selection is neutral or unpriced.
-    const hasUnpriced = admitted ? admitted.hasUnpriced : !selected && resolveEffectiveUsageCostUsd(cost, mode) !== 0;
-    return { available: admitted?.available ?? true, selected,
-        ...(hasUnpriced || selected?.partial ? { hasUnpriced: true as const } : {}) };
+    const missing = readUsageSelectedCostMissing(cost, mode, selected);
+    return { available: admitted?.available ?? true, selected, ...(missing ? { missing } : {}) };
 }
 
 /** Merge already-selected partitions without re-reading raw facts or resolving overlap. */
@@ -183,11 +180,11 @@ export function mergeUsageSelectedCosts(left: UsageSelectedCostAccumulator, righ
     return publishSelectedCost(mergeSelectedCostOperands(selectedCostOperands(left), selectedCostOperands(right), mode));
 }
 
-type SelectedCostOperands = Readonly<{ available: boolean; basis: Omit<UsageSelectedCostBasis, 'amountUsd'> | null; amount?: ExactUsageMoney; hasUnpriced?: true }>;
-type SelectedCostEvidence = Pick<SelectedCostOperands, 'available' | 'basis' | 'hasUnpriced'>;
+type SelectedCostOperands = Readonly<{ available: boolean; basis: Omit<UsageSelectedCostBasis, 'amountUsd'> | null; amount?: ExactUsageMoney; missing?: UsageSelectedCostMissing }>;
+type SelectedCostEvidence = Pick<SelectedCostOperands, 'available' | 'basis' | 'missing'>;
 function selectedCostOperands(state: UsageSelectedCostAccumulator): SelectedCostOperands {
     const basis = state.selected;
-    return { available: state.available, basis, ...(state.hasUnpriced || basis?.partial ? { hasUnpriced: true as const } : {}),
+    return { available: state.available, basis, ...(state.missing ? { missing: state.missing } : {}),
         ...(basis ? { amount: readUsageMoney(basis, 'amountUsd', basis.amountUsd) } : {}) };
 }
 function mergeSelectedCostOperands(left: SelectedCostOperands, right: SelectedCostOperands, mode: UsageCostMode): SelectedCostOperands {
@@ -196,22 +193,23 @@ function mergeSelectedCostOperands(left: SelectedCostOperands, right: SelectedCo
         : addUsageMoney(left.amount!, right.amount!) } : {}) };
 }
 function mergeSelectedCostEvidence(left: SelectedCostEvidence, right: SelectedCostEvidence, mode: UsageCostMode): SelectedCostEvidence {
-    const unpriced = left.hasUnpriced || right.hasUnpriced ? { hasUnpriced: true as const } : {};
-    if (!left.available || !right.available) return { available: false, basis: null, ...unpriced };
-    if (!left.basis) return { ...right, ...unpriced };
-    if (!right.basis) return { ...left, ...unpriced };
+    const missing = right.missing === 'unpriced' ? right.missing : left.missing ?? right.missing;
+    const evidence = missing ? { missing } : {};
+    if (!left.available || !right.available) return { available: false, basis: null, ...evidence };
+    if (!left.basis) return { ...right, ...evidence };
+    if (!right.basis) return { ...left, ...evidence };
     const a = left.basis;
     const b = right.basis;
-    if (a.currency !== b.currency || mode !== 'auto' && a.kind !== b.kind) return { available: false, basis: null, ...unpriced };
-    return { available: true, ...unpriced,
+    if (a.currency !== b.currency || mode !== 'auto' && a.kind !== b.kind) return { available: false, basis: null, ...evidence };
+    return { available: true, ...evidence,
         basis: { kind: a.kind === b.kind ? a.kind : 'mixed', currency: a.currency,
             source: a.kind === b.kind && a.source === b.source ? a.source : 'best_available' } };
 }
 function publishSelectedCost(state: SelectedCostOperands): UsageSelectedCostAccumulator {
     // A zero-token tariff identity is not evidence that an unpriced request was free.
-    const basis = state.hasUnpriced && state.basis?.source === 'no_tokens' ? null : state.basis;
-    return { available: state.available, ...(state.hasUnpriced ? { hasUnpriced: true as const } : {}), selected: basis ? withUsageMoney({ ...basis,
-        ...(state.hasUnpriced ? { partial: true as const } : {}), amountUsd: usageMoneyToNumber(state.amount!) }, { amountUsd: state.amount! }) : null };
+    const basis = state.missing && state.basis?.source === 'no_tokens' ? null : state.basis;
+    return { available: state.available, ...(state.missing ? { missing: state.missing } : {}), selected: basis ? withUsageMoney({ ...basis,
+        ...(state.missing ? { partial: true as const } : {}), amountUsd: usageMoneyToNumber(state.amount!) }, { amountUsd: state.amount! }) : null };
 }
 
 /** Resolve whole-total overlap only within the actual selected population, including bucket/Work subsets. */
@@ -279,16 +277,16 @@ export function createUsageCostPartitionAccumulator(initial: UsageObservationCos
     let hasOperands = false;
     const fields = ['reportedUsd', 'estimatedUsd', 'invoiceUsd'] as const;
     const initialState = (initial as AggregatedUsageCost)[usageCostAggregationBasis];
-    const initialBasis = resolveUsageCostBasis(initial, mode);
     const identity = !initialState && initial.costSource === 'none' && initial.apiEquivalentUsd === undefined
         && fields.every(field => initial[field] == null);
     let raw = identity ? undefined : createUsageCostAccumulator(initial);
     let api = initial.apiEquivalentUsd === undefined ? undefined : createUsageMoneyAccumulator(readUsageMoney(initial, 'apiEquivalentUsd', initial.apiEquivalentUsd));
     let pricingSource = initial.pricingSource;
-    let selected: SelectedCostEvidence = selectedCostOperands({ available: initialState?.available ?? true, selected: initialBasis,
-        ...(initialState?.hasUnpriced ? { hasUnpriced: true as const } : {}) });
-    const selectedMoney = createUsageMoneyAccumulator(initialBasis
-        ? readUsageMoney(initialBasis, 'amountUsd', initialBasis.amountUsd) : { units: 0n, scale: 0 });
+    const initialSelection = identity && initial.selectedBasis === undefined
+        ? createEmptyUsageSelectedCost() : selectResolvedUsageCost(initial, mode);
+    const initialOperands = selectedCostOperands(initialSelection);
+    let selected: SelectedCostEvidence = initialOperands;
+    const selectedMoney = createUsageMoneyAccumulator(initialOperands.amount ?? { units: 0n, scale: 0 });
     // Compact operands carry the producer's selection after private report identities are removed.
     return { add(input: UsageObservationCost, admittedSelection?: UsageSelectedCostAccumulator): void {
         hasOperands = true;
@@ -322,7 +320,7 @@ export function createUsageCostPartitionAccumulator(initial: UsageObservationCos
             ...(exactApi === undefined ? {} : { apiEquivalentUsd: usageMoneyToNumber(exactApi), pricingSource }),
             ...(selectedBasis ? { effectiveUsd: selectedBasis.amountUsd } : {}),
             [usageCostAggregationBasis]: { mode, available: published.available,
-                ...(published.hasUnpriced ? { hasUnpriced: true as const } : {}), ...(selectedBasis ? { selected: selectedBasis } : {}) } },
+                ...(published.missing ? { missing: published.missing } : {}), ...(selectedBasis ? { selected: selectedBasis } : {}) } },
             { ...(exactApi === undefined ? {} : { apiEquivalentUsd: exactApi }), ...(exactSelected ? { effectiveUsd: exactSelected } : {}) });
     } };
 }

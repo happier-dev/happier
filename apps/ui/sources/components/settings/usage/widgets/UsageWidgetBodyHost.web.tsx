@@ -1,8 +1,9 @@
 import * as React from 'react';
 import { View } from 'react-native';
 
-import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
+import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { retryableLazy } from '@/components/ui/performance/retryableLazy';
+import { t } from '@/text';
 
 import { usageBodyOccurrence, useUsageBodyRememberedHeight } from './usageBodyHeightMemory';
 
@@ -17,9 +18,17 @@ export const UsageWidgetBody = React.memo((props: React.ComponentProps<typeof Co
     </React.Suspense>
 ));
 
-/** While the body's code loads, hold the room the body last drew here so its arrival moves nothing below it. */
+/**
+ * While the body's code loads, hold the room the body last drew here so its arrival moves nothing below it. The room
+ * holds the same loading rows the body's own first read draws, never a centred spinner card of a fixed height that
+ * every card shares and then leaves (USAGE-DESIGN-PASS-57 #6).
+ */
 function UsageBodyLoadingRoom(props: Readonly<{ serverId: string; testID: string }>) {
     const remembered = useUsageBodyRememberedHeight(usageBodyOccurrence(props.serverId, props.testID));
-    if (remembered === null) return <PaneLoadingFallback />;
-    return <View style={{ height: remembered, overflow: 'hidden' }}><PaneLoadingFallback /></View>;
+    const rows = <ItemLoadStateRows testID={`${props.testID}.loading`} state={LOADING} rows={3} lines={2} shape="list"
+        accessibilityLabel={t('usage.board.page.loading')} />;
+    if (remembered === null) return rows;
+    return <View style={{ height: remembered, overflow: 'hidden' }}>{rows}</View>;
 }
+
+const LOADING = Object.freeze({ kind: 'loading' as const });

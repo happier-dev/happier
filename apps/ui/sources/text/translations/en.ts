@@ -20610,6 +20610,7 @@ const enUsage = {
       efficiencyNoBasisTitle: "No basis for ratios yet",
       efficiencyNoBasisReason: "Ratios need token categories and a known cost.",
       costUnpricedCaption: "Total unavailable: some usage has no reported cost, model price or recorded estimate.",
+      costBasisUnavailable: "No total for this cost basis",
       efficiencyUnpricedReason: "Some usage in this period has neither a reported cost nor a model price, so its ratios can't be priced.",
       cacheHit: "Cache hit",
       cacheListPriceDifference: ({ amount }: { amount: string | number }) => `${amount} list-price difference`,

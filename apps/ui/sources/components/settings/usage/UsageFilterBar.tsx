@@ -153,12 +153,14 @@ export function UsageFilterBar<M extends string = 'tokens' | 'cost'>(
       }),
     [props.scopeFilters, props.testID, coverageIncomplete, agentColor, linkScopeRecovery, openScopeFilter, onScopeFilterOpenChange],
   );
-  // While the read that names the cost bases is outstanding the chip already shows the basis in force (its
-  // only known choice), so the trailing edge keeps its width and nothing beside it moves when the rest arrive.
-  const costBasisChoices = props.costBasisPending ? [props.costBasis] : props.costBasisOptions;
+  // The chip appears once its owner reports more than one basis: shown while the read is outstanding, a chip that a
+  // one-basis answer then removes moves the toolbar twice (USAGE-DESIGN-PASS-57 #7). A basis the person chose was one
+  // of several, so while the read is outstanding it stays in view as its only known choice.
+  const chosenWhilePending = props.costBasisPending && props.costBasis !== 'auto';
+  const costBasisChoices = props.costBasisPending ? (chosenWhilePending ? [props.costBasis] : []) : props.costBasisOptions;
   const costFilter = React.useMemo(
     (): SelectionListFilter | null =>
-      costBasisChoices.length < 2 && !props.costBasisPending
+      costBasisChoices.length < 2 && !chosenWhilePending
         ? null
         : {
             id: 'costBasis',
@@ -174,7 +176,7 @@ export function UsageFilterBar<M extends string = 'tokens' | 'cost'>(
             },
             testID: `${props.testID}.costBasis`,
           },
-    [props.costBasis, costBasisChoices, props.costBasisPending, props.onCostBasisChange, props.testID],
+    [props.costBasis, costBasisChoices, chosenWhilePending, props.onCostBasisChange, props.testID],
   );
   const metricTabs = React.useMemo(
     () => props.metricOptions.map((option) => ({ ...option, disabled: props.metricPending })),

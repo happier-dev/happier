@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
-import { resolveUsageCostForSelection, type UsagePageCostSelection } from '@happier-dev/protocol/usage/usageCostFacts';
+import { projectUsageCostBucket, resolveUsageCostForSelection, type UsagePageCostSelection } from '@happier-dev/protocol/usage/usageCostFacts';
 import { compareUsageMeasurementsDescending } from '@happier-dev/protocol/usage/usageAggregation';
 import { type UsageAnalyticsBreakdownDimension, type UsageAnalyticsBreakdownEntry } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import type { UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
@@ -34,9 +34,10 @@ import {
 } from './usageBodyKit';
 import { useAllMachines } from '@/sync/domains/state/storage';
 import { resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
-import { usagePageCostCaption, usagePageCostRow, usageTokensFromPartsNote } from '../usageCostPresentation';
+import { usageCostBucketLabel, usagePageCostCaption, usageTokensFromPartsNote } from '../usageCostPresentation';
 import { UsageCrewBody } from './UsageChartStyleBodies';
 import { resolveUsageMeasuredTokens } from '@/sync/api/account/usageMeasuredTokens';
+import { usageModelLabel } from '@/sync/domains/usage/usageLabels';
 
 const DEFAULT_DIMENSIONS: readonly UsageAnalyticsBreakdownDimension[] = [
   'agent',
@@ -57,14 +58,19 @@ const DRILL_FIELD: Readonly<
  * A breakdown's rows in the measure the card draws, largest first: the one order every ranking of Usage facts shows, so
  * a row's bar, figure and place agree. Leaders arrive ordered by tokens (their frontier); this orders what is drawn.
  */
-export function rankUsageBreakdownEntries(entries: readonly UsageAnalyticsBreakdownEntry[], metric: UsageQuery['metric'],
-  selection: UsagePageCostSelection | null, dropUnmeasured = false) {
-  return entries.map(entry => {
-    const tokens = resolveUsageMeasuredTokens(entry.tokens);
-    return { entry, tokens, value: metric === 'cost' ? resolveUsageCostForSelection(entry.cost, selection) : tokens.total };
-  })
+function rankUsageBreakdownRows<Row extends { value: number | null }>(entries: readonly UsageAnalyticsBreakdownEntry[],
+  project: (entry: UsageAnalyticsBreakdownEntry, tokens: ReturnType<typeof resolveUsageMeasuredTokens>) => Row,
+  dropUnmeasured: boolean) {
+  return entries.map(entry => project(entry, resolveUsageMeasuredTokens(entry.tokens)))
     .filter(({ value }) => !dropUnmeasured || value !== null)
     .sort((left, right) => compareUsageMeasurementsDescending(left.value, right.value));
+}
+
+export function rankUsageBreakdownEntries(entries: readonly UsageAnalyticsBreakdownEntry[], metric: UsageQuery['metric'],
+  selection: UsagePageCostSelection | null, dropUnmeasured = false) {
+  return rankUsageBreakdownRows(entries, (entry, tokens) => ({
+    entry, tokens, value: metric === 'cost' ? resolveUsageCostForSelection(entry.cost, selection) : tokens.total,
+  }), dropUnmeasured);
 }
 
 /** One body per widget: its Style own-input picks the encoding of the same question. */
@@ -129,21 +135,28 @@ function UsageBreakdownsWidgetOriginal(props: UsageBodyProps) {
   const blocks = dimensions.flatMap((dimension) => {
     const entries = accounting?.breakdowns?.[dimension];
     if (!entries?.length) return [];
-    const rows = rankUsageBreakdownEntries(entries, metric, selection, dimension === 'model')
-      .map(({ entry, tokens, value }) => {
-        return {
-          id: entry.key,
-          value,
-          tokensFromParts: tokens.total === null ? null : tokens.fromParts,
-          label: usageDimensionLabel(dimension, entry.key, entry.label, machineNames),
-          annotation:
-            // Unknown tokens leave no "—" ahead of the basis (sweep 1110 N5); the basis still says why money is missing.
-            metric === 'cost'
-              ? [tokens.total === null ? null : formatTokenCount(tokens.total),
-                rowBasis(usagePageCostRow(entry.cost, selection)?.label)].filter(Boolean).join(' · ')
-              : undefined,
-        };
-      });
+    const rankedRows = rankUsageBreakdownRows(entries, (entry, tokens) => {
+      const cost = metric === 'cost' ? projectUsageCostBucket(entry.cost, selection) : null;
+      return { entry, tokens, cost, value: cost ? cost.amountUsd : tokens.total };
+    }, dimension === 'model');
+    const presentedRows = rankedRows.map(({ entry, tokens, cost, value }) => {
+      const model = dimension === 'model' ? usageModelLabel(entry.key, entry.label) : null;
+      return {
+        id: entry.key,
+        value,
+        tokensFromParts: tokens.total === null ? null : tokens.fromParts,
+        unattributedModel: model?.kind === 'unattributed',
+        label: model?.label ?? usageDimensionLabel(dimension, entry.key, entry.label, machineNames),
+        annotation:
+          // Unknown tokens leave no "—" ahead of the basis (sweep 1110 N5); the basis still says why money is missing.
+          cost ? [tokens.total === null ? null : formatTokenCount(tokens.total),
+            rowBasis(usageCostBucketLabel(cost))].filter(Boolean).join(' · ') : undefined,
+      };
+    });
+    // Keep measured order within each group, with every named model ahead of unattributed usage.
+    const rows = dimension === 'model'
+      ? [...presentedRows.filter(row => !row.unattributedModel), ...presentedRows.filter(row => row.unattributedModel)]
+      : presentedRows;
     if (rows.length === 0) return [];
     const ranked = accounting?.coverage?.ranked.find(
       (row) => row.dimension === dimension,
@@ -185,9 +198,10 @@ function UsageBreakdownsWidgetOriginal(props: UsageBodyProps) {
         return {
             id: block.dimension,
             label: heading(block.dimension),
-            rows: lead.rows.map(({ tokensFromParts: _tokensFromParts, ...row }, index) => ({
+            rows: lead.rows.map(({ tokensFromParts: _tokensFromParts, unattributedModel, ...row }, index) => ({
               ...row,
-              color: block.dimension === 'agent' ? agentColor(row.id) : usageMeterFill(theme, index === 0),
+              color: block.dimension === 'agent' ? agentColor(row.id)
+                : usageMeterFill(theme, index === 0 && !unattributedModel),
             })),
             total,
             // An unmeasured value is a quiet dash in the figure column; the row's own line says why ("Without an API

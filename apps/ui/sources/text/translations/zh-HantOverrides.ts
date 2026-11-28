@@ -14015,6 +14015,7 @@ settingsSession: {
             sessionRecipientSubtitle: "你的帳號在此工作階段中的用量。",
             sessionRecipientFigure: "你的用量",
             noneLinkedByEvidence: "尚未連結",
+            costBasisUnavailable: "此費用計算方式沒有總額",
             oldestSourceUpdate: ({ time }: { time: string }) => `最早的來源更新：${time}`,
             sourceClaudeResponses: "Claude 回覆",
             sourceClaudeSessionSummaries: "Claude 工作階段摘要",

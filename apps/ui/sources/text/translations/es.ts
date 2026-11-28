@@ -17186,6 +17186,7 @@ settingsSession: {
             efficiencyNoBasisTitle: "Aún sin base para ratios",
             efficiencyNoBasisReason: "Los ratios requieren categorías de tokens y un costo conocido.",
             costUnpricedCaption: "Total no disponible: parte del uso no tiene coste informado, precio de modelo ni estimación registrada.",
+            costBasisUnavailable: "No hay un total para esta base de coste",
             efficiencyUnpricedReason: "Parte del uso de este periodo no tiene coste informado ni precio de modelo, así que sus ratios no se pueden calcular.",
             cacheHit: "Aciertos de caché",
             cacheListPriceDifference: ({ amount }: { amount: string | number }) => `${amount} de diferencia a precio de lista`,

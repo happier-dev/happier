@@ -12,7 +12,7 @@ import { agentIdFromEngineKey, USAGE_MODEL_MIX_OTHER_KEY } from '@/sync/api/acco
 import { t } from '@/text';
 import { useUsageAgentColor, usageOtherColor, usageSeriesColor } from '../usageAccent';
 import { formatUsageCalendarDate, resolveUsageShownCalendarRange } from '@/sync/domains/usage/usageCalendarPresentation';
-import { usageCostKindPhrase, usagePageCostTrend } from '../usageCostPresentation';
+import { usagePageCostCaption, usagePageCostTrend } from '../usageCostPresentation';
 import { useUsageDrill } from '../usageDrill';
 import { useUsageChartDetails } from './usageMountedControls';
 import {
@@ -73,7 +73,7 @@ function UsageFlowWidgetOriginal(props: UsageBodyProps) {
   const { series: sourceSeries } = React.useMemo(() => usageSourceTimelineSeries({
     timeline: byModel ? accounting?.modelTimeline : accounting?.engineTimeline,
     range, coverage: props.slice.accounting?.coverage,
-    metric, costMode: props.query.costBasis, costSelection: view?.pageCost.selection ?? null,
+    metric, costSelection: view?.pageCost.selection ?? null,
     dimensionKey: byModel ? key => key : agentIdFromEngineKey,
     label: byModel ? (key, fallback) => usageDimensionLabel('model', key, fallback) : usageAgentTitle,
     color: (index, key) => key === USAGE_MODEL_MIX_OTHER_KEY ? usageOtherColor(theme)
@@ -148,10 +148,11 @@ function UsageFlowWidgetOriginal(props: UsageBodyProps) {
     },
     [drill, drillable, agentForSeries],
   );
+  const costCaption = cost && view ? usagePageCostCaption(view.pageCost) : undefined;
   const lens = useUsageSeriesLens({
     series,
     format,
-    ...(cost ? { footer: view?.pageCost.selection ? usageCostKindPhrase(view.pageCost.selection.kind) : t('common.unavailable') } : {}),
+    ...(costCaption ? { footer: costCaption } : {}),
     accentColor: theme.colors.text.primary,
     ...(drillable ? { choice } : {}),
     testID: `${props.testID}.lens`,

@@ -68,7 +68,7 @@ describe('usage projection into the shared series renderer', () => {
                 { bucketStartMs: 10, bucketEndMs: 20, leaders: [leader('a', 10), leader('g', 11)] },
                 { bucketStartMs: 20, bucketEndMs: 30, leaders: [leader('f', 1)] },
             ],
-            range: null, metric, costMode: 'reported',
+            range: null, metric, costSelection: { kind: 'reported', currency: 'USD' },
             dimensionKey: key => key, label: key => key, color: () => 'ink', bucketLabel: String,
         });
         expect(series.map(entry => entry.id)).toEqual(['a', 'g', 'f', 'e', 'd', '__other__']);
@@ -85,7 +85,7 @@ describe('usage projection into the shared series renderer', () => {
                 { source: 'native', path: 'native', execution: 'outside', eventCount: 1, tokens: unknown, cost },
                 { source: 'runtime', path: 'runtime', execution: 'happier', eventCount: 1, tokens: known, cost },
             ] },
-        ] }], range: null, metric: 'tokens', costMode: 'auto', dimensionKey: key => key.split(':')[0]!,
+        ] }], range: null, metric: 'tokens', costSelection: null, dimensionKey: key => key.split(':')[0]!,
             label: key => key, color: () => 'ink', bucketLabel: String });
         expect(series[0]?.points[0]?.y).toBe(12);
         expect(series[0]?.sourceDetails?.['0']?.map(part => part.value)).toEqual([null, 12]);
@@ -101,7 +101,7 @@ describe('usage projection into the shared series renderer', () => {
         const leaders = ['claude:local', 'claude:remote', 'codex:local'].map(key => ({ key, eventCount: 4,
             tokens: { ...tokens, input: 20, total: 20 }, cost: { ...cost, estimatedUsd: 36 }, sources }));
         const project = (entries: typeof leaders) => usageSourceTimelineSeries({
-            timeline: [{ bucketStartMs: 0, bucketEndMs: 10, leaders: entries }], range: null, metric, costMode: 'auto',
+            timeline: [{ bucketStartMs: 0, bucketEndMs: 10, leaders: entries }], range: null, metric,
             costSelection: { kind: 'estimated', currency: 'USD', mode: 'auto' },
             dimensionKey: key => key.split(':')[0]!, label: key => key, color: () => 'ink', bucketLabel: String,
         }).series;
@@ -126,7 +126,7 @@ describe('usage projection into the shared series renderer', () => {
             { bucketStartMs: 0, bucketEndMs: 10, leaders: [{ key: 'claude', eventCount: 1, tokens, cost }] },
             { bucketStartMs: 10, bucketEndMs: 20, leaders: [{ key: 'claude', eventCount: 1, tokens, cost,
                 sources: [{ source: 'native', path: 'native', execution: 'outside', eventCount: 1, tokens, cost }] }] },
-        ], range: null, metric: 'cost', costMode: 'auto', costSelection: { kind: 'estimated', currency: 'USD', mode: 'auto' },
+        ], range: null, metric: 'cost', costSelection: { kind: 'estimated', currency: 'USD', mode: 'auto' },
         dimensionKey: key => key, label: key => key, color: () => 'ink', bucketLabel: String });
         expect(series[0]?.points.map(point => point.y)).toEqual([9, 9]);
         expect(series[0]?.fillPattern).toBeUndefined();
@@ -134,14 +134,14 @@ describe('usage projection into the shared series renderer', () => {
     it('keeps the token value unavailable for an unpartitioned bucket without token measurements', () => {
         const tokens = { input: 5, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 5 };
         const cost = { reportedUsd: 0, estimatedUsd: 9, currency: 'USD', costSource: 'pricing_estimate' as const };
-        const { series, incompleteBucketStarts } = usageSourceTimelineSeries({ timeline: [
+        const { series, bucketFacts } = usageSourceTimelineSeries({ timeline: [
             { bucketStartMs: 0, bucketEndMs: 10, leaders: [{ key: 'claude', eventCount: 1, cost }] },
             { bucketStartMs: 10, bucketEndMs: 20, leaders: [{ key: 'claude', eventCount: 1, tokens, cost,
                 sources: [{ source: 'native', path: 'native', execution: 'outside', eventCount: 1, tokens, cost }] }] },
-        ], range: null, metric: 'tokens', costMode: 'auto',
+        ], range: null, metric: 'tokens', costSelection: null, collectBucketFacts: true,
         dimensionKey: key => key, label: key => key, color: () => 'ink', bucketLabel: String });
         expect(series[0]?.points.map(point => point.y)).toEqual([null, 5]);
-        expect(incompleteBucketStarts.has(0)).toBe(true);
+        expect(bucketFacts?.incompleteBucketStarts.has(0)).toBe(true);
     });
     it('keeps source appearance orthogonal to dimension hue and missing calendar evidence', () => {
         const day = 86_400_000;
@@ -158,7 +158,7 @@ describe('usage projection into the shared series renderer', () => {
             ] },
             { bucketStartMs: day * 2, bucketEndMs: day * 3, leaders: [{ key: 'model:local', eventCount: 1, tokens, cost, sources: [sources[0]!] }] },
         ], range: { startMs: 0, endMs: day * 3, granularity: 'day', timeZoneOffsetMinutes: 0 }, coverage: coverage(0, day * 3, false),
-        metric: 'tokens', costMode: 'auto', dimensionKey: key => key.split(':')[0]!, label: key => key, color: index => `hue-${index}`, bucketLabel: String });
+        metric: 'tokens', costSelection: null, dimensionKey: key => key.split(':')[0]!, label: key => key, color: index => `hue-${index}`, bucketLabel: String });
         expect(series.map(entry => ({ color: entry.color, values: entry.points.map(point => point.y) }))).toEqual([
             { color: 'hue-0', values: [10, null, 5] },
         ]);
@@ -168,7 +168,7 @@ describe('usage projection into the shared series renderer', () => {
         ]);
         expect(series[0]!.sourceDetails?.['0']?.every(part => !part.label.includes('runtime'))).toBe(true);
         expect(usageSourceTimelineSeries({ timeline: [{ bucketStartMs: 0, bucketEndMs: day, leaders: [{ key: 'old', eventCount: 1, tokens, cost }] }],
-            range: null, metric: 'tokens', costMode: 'auto', dimensionKey: key => key, label: key => key, color: () => 'ink', bucketLabel: String }).series).toEqual([]);
+            range: null, metric: 'tokens', costSelection: null, dimensionKey: key => key, label: key => key, color: () => 'ink', bucketLabel: String }).series).toEqual([]);
     });
     it('retains older accounting buckets and the current currency in exact selected values', async () => {
         const points = Array.from({ length: 40 }, (_, index) => ({ timestamp: 1_710_000_000 + index * 86_400, tokens: index, cost: index === 0 ? 0.00004 : index, reportCount: 1 }));

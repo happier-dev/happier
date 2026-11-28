@@ -16358,6 +16358,7 @@ settingsSession: {
           efficiencyNoBasisTitle: "Encara no hi ha base per calcular ràtios",
           efficiencyNoBasisReason: "Les ràtios necessiten categories de tokens i un cost conegut.",
           costUnpricedCaption: "Total no disponible: part de l’ús no té cost informat, preu de model ni estimació registrada.",
+          costBasisUnavailable: "No hi ha cap total per a aquesta base de cost",
           efficiencyUnpricedReason: "Una part de l’ús d’aquest període no té ni cost informat ni preu del model, de manera que no es poden valorar les seves ràtios.",
           cacheHit: "Encert de memòria cau",
           cacheListPriceDifference: ({ amount }: { amount: string | number }) => `${amount} de diferència a preu de catàleg`,

@@ -23,7 +23,7 @@ import {
 } from '@/utils/format/usageNumbers';
 import { getPreferredLanguage, t } from '@/text';
 import { usageSeriesColor } from '../usageAccent';
-import { usageCostKindPhrase } from '../usageCostPresentation';
+import { usagePageCostCaption } from '../usageCostPresentation';
 import { usageComparison } from '../usageComparisonPresentation';
 import { usageChartValuesLabels } from './usageChartHost';
 import {
@@ -110,8 +110,7 @@ export function UsageEfficiencyWidget(props: UsageBodyProps) {
         1e6
       : null;
   const perMtokComparison = usageComparison(efficiency.costPerMtokUsd, previousPerMtok);
-  // A candidate basis whose amount is unavailable: some usage has neither a reported cost nor a model price.
-  const unpriced = view.pageCost.selection != null && view.pageCost.amountUsd === null;
+  const costCaption = usagePageCostCaption(view.pageCost);
   const hasRatios =
     efficiency.cacheHitRatePct !== null || efficiency.costPerMtokUsd !== null;
   const perMergedPr = selectEfficiencyPerMergedPr(props, view.pageCost.amountUsd);
@@ -125,7 +124,7 @@ export function UsageEfficiencyWidget(props: UsageBodyProps) {
       <UsageBodyInsufficient
         testID={`${props.testID}.noBasis`}
         title={t('usage.board.page.efficiencyNoBasisTitle')}
-        reason={t(unpriced ? 'usage.board.page.efficiencyUnpricedReason' : 'usage.board.page.efficiencyNoBasisReason')}
+        reason={view.pageCost.amountUsd === null && costCaption ? costCaption : t('usage.board.page.efficiencyNoBasisReason')}
       />
     );
   const cacheCaption = efficiency.cacheHitRatePct === null ? t('common.unavailable')
@@ -158,13 +157,8 @@ export function UsageEfficiencyWidget(props: UsageBodyProps) {
             label={t('usage.board.page.perMillionTokens')}
             value={efficiency.costPerMtokUsd ?? unknownFigure}
             caption={
-              efficiency.costPerMtokUsd === null
-                ? unpriced
-                  ? t('usage.board.page.costUnpricedCaption')
-                  : t('common.unavailable')
-                : view.pageCost.selection
-                  ? usageCostKindPhrase(view.pageCost.selection.kind)
-                  : undefined
+              efficiency.costPerMtokUsd === null && view.pageCost.amountUsd !== null
+                ? t('common.unavailable') : costCaption
             }
             valueFormatter={(value) => formatUsageCost(value, efficiency.currency)}
             {...(perMtokComparison !== null

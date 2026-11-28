@@ -15,7 +15,7 @@ import { UsageExactHistoryDemandContext } from './usageMountedControls';
 import { useWidgetPresentation } from '@happier-dev/plugin-ui';
 import { useUsageWidgetModel } from './usageWidgetBatch';
 import { useUsageQueryActions } from './useUsageQueryActions';
-import { UsageDailyWidget, useUsageDailyChartShape } from './UsageDailyWidget';
+import { UsageDailyReading, UsageDailyWidget } from './UsageDailyWidget';
 import type { UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -218,12 +218,9 @@ function UsageQueryWidgetContent(props: UsageWidgetBodyInput & Readonly<{
   // A first read holds the room of the shape that lands (Period summary's figures, the Coach's strip), so the
   // widgets below it do not move when the facts arrive; every other body holds three list rows.
   const presentation = useWidgetPresentation();
-  // The same declared plot the settled chart draws, decided before the first paint (sweep 1110 #8).
-  const dailyShape = useUsageDailyChartShape();
   const readingShape = props.id === 'usage_period_summary' ? { kind: 'summary' as const }
     : props.id === 'usage_capacity' ? { kind: 'capacity' as const }
-    : props.id === 'usage_coach' && isUsageCoachStrip(presentation) ? { kind: 'strip' as const }
-    : props.id === 'usage_daily' ? dailyShape : undefined;
+    : props.id === 'usage_coach' && isUsageCoachStrip(presentation) ? { kind: 'strip' as const } : undefined;
   if (!query)
     return (
       <SurfaceStateCard
@@ -247,6 +244,8 @@ function UsageQueryWidgetContent(props: UsageWidgetBodyInput & Readonly<{
         />
       );
     // Pending is never zero: the rows' space is held until the first facts arrive.
+    // Daily holds its chart's room under the name its bars will have, so neither moves when the facts arrive.
+    if (props.id === 'usage_daily') return <UsageDailyReading query={query} testID={`${props.testID}.loading`} />;
     if (readingShape) return <UsageBodyReading testID={`${props.testID}.loading`} shape={readingShape} />;
     // Cost facts lead with figures: its first read holds a figure-led block, never list rows (r223 #66).
     if (props.id === 'usage_cost_facts') return <UsageCostFactsReading testID={`${props.testID}.loading`} />;

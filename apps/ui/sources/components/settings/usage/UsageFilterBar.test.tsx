@@ -283,14 +283,18 @@ describe('UsageFilterBar', () => {
     await screen.unmount();
   });
 
-  it('holds the cost basis chip and each unanswered count slot while the usage read is outstanding', async () => {
+  it('shows the cost basis chip only once its owner reports more than one basis, keeping a chosen basis while it reads (USAGE-DESIGN-PASS-57 #7)', async () => {
     Object.assign(viewport, { width: 1280, height: 900 });
     vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (X11; Linux x86_64)', maxTouchPoints: 0 });
     const pending = await renderBar([], { costBasisPending: true, metric: null });
-    const chips = pending.findAllByType(SelectionListFilterChip).map((chip) => chip.props.filter);
-    // The basis in force is the chip's only known choice.
-    expect(chips.find((chip) => chip.id === 'costBasis')?.options.map((option: { id: string }) => option.id)).toEqual(['auto']);
+    // The default basis while the read is outstanding: nothing to choose yet, so no chip that a settled read removes.
+    expect(pending.findAllByType(SelectionListFilterChip).map((chip) => chip.props.filter.id)).not.toContain('costBasis');
     await pending.unmount();
+    // A basis the person chose stays in force and in view while the read is outstanding.
+    const chosen = await renderBar([], { costBasisPending: true, costBasis: 'reported', metric: null });
+    expect(chosen.findAllByType(SelectionListFilterChip).map((chip) => chip.props.filter)
+      .find((chip) => chip.id === 'costBasis')?.options.map((option: { id: string }) => option.id)).toEqual(['reported']);
+    await chosen.unmount();
     // Answered with one basis only: nothing to choose, so the chip is gone.
     const settled = await renderBar([]);
     expect(settled.findAllByType(SelectionListFilterChip).map((chip) => chip.props.filter.id)).not.toContain('costBasis');

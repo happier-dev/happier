@@ -16828,6 +16828,7 @@ settingsSession: {
             efficiencyNoBasisTitle: "暂无可计算比率的依据",
             efficiencyNoBasisReason: "比率需要令牌分类和已知费用。",
             costUnpricedCaption: "总计不可用：部分用量没有上报费用、模型价格或已记录的估算。",
+            costBasisUnavailable: "此费用计算方式没有总额",
             efficiencyUnpricedReason: "此期间的部分用量既没有上报费用，也没有模型价格，因此无法计算比率。",
             cacheHit: "缓存命中",
             cacheListPriceDifference: ({ amount }: { amount: string | number }) => `按标价差额 ${amount}`,

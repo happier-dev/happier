@@ -1,5 +1,7 @@
 import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import * as React from 'react';
+import { GestureDetector } from 'react-native-gesture-handler';
+import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WidgetPresentationProvider } from '@happier-dev/plugin-ui';
 import { StackedSeriesChart } from '@happier-dev/plugin-ui/presentation';
@@ -7,22 +9,28 @@ import { normalizeUsageQuery, type UsageQuery } from '@happier-dev/protocol/inpu
 import { resolveUsagePageAggregation } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { resolveUsageBucketBounds } from '@happier-dev/protocol/usage/usageCalendar';
 import { aggregateUsageContributionCosts } from '@happier-dev/protocol/usage/usageAggregation';
+import { UsageObservationCostSchema, type UsageObservationCost } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { serializeUsageCostBasis } from '@happier-dev/protocol/usage/usageCostFacts';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { t } from '@/text';
+import { Text } from '@/components/ui/text/Text';
 import { WidgetFrameBodyRowsContext } from '@/components/widgets/frame/widgetFrameBody';
 import { WidgetFrameBodyCaptionContext, WidgetFrameBodyIdentityContext, type WidgetFrameBodyIdentity } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { renderMountedCurrentUiContext } from '@/dev/testkit/harness/mountedCurrentUiContext';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
+import { usageSourceTitle } from '@/sync/domains/usage/usageLabels';
 import { UsageDailyWidget } from './UsageDailyWidget';
 import { UsageFlowWidget } from './UsageFlowWidget';
+import { ScrubLens } from '../UsageScrubLens';
 import type { UsageWidgetBodyModel } from '../useUsageWidgetResource';
 import { resetPlayedEntrancesForTests } from '../usageEntrance';
 import { formatUsageCalendarDate } from '@/sync/domains/usage/usageCalendarPresentation';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
+vi.mock('@/components/ui/popover', async importOriginal =>
+  (await import('@/dev/testkit/mocks/popover')).createInlinePopoverModuleMock(importOriginal));
 let controlsHome: Awaited<ReturnType<typeof serveActionHomes>> | undefined;
 afterEach(async () => { standardCleanup(); resetPlayedEntrancesForTests(); await controlsHome?.dispose(); controlsHome = undefined; vi.restoreAllMocks(); });
 async function renderControls(children: React.ReactNode) {
@@ -198,6 +206,40 @@ describe('Daily period chart', () => {
     expect(lent.at(-1)?.title).toBe(t('usage.board.page.dailyUsage'));
     expect(t('usage.widgets.usage_daily')).not.toBe(t('usage.board.page.dailyUsage'));
   });
+  it('names the card for the bars its period draws from the first read, never the catalog name first (USAGE-DESIGN-PASS-57 #7)', async () => {
+    const { UsageWidgetBody } = await import('./UsageWidgetBody');
+    const query = normalizeUsageQuery({ period: { relative: '7days' }, metric: 'tokens' });
+    const lent: (WidgetFrameBodyIdentity | null)[] = [];
+    const facts = { authority: { serverId: 'home', accountId: 'usage-account' }, query, slice: null, pending: true, error: null,
+      refresh: async () => {} };
+    await renderScreen(<WidgetFrameBodyIdentityContext.Provider value={(identity) => { lent.push(identity); }}>
+      <UsageWidgetBody id="usage_daily" input={{}} serverId="home" testID="daily" facts={facts} />
+    </WidgetFrameBodyIdentityContext.Provider>);
+    expect(lent.at(-1)?.title).toBe(t('usage.board.page.dailyUsage'));
+  });
+  it('holds the settled chart room on the Usage page, where the header says coverage and the body draws no note (USAGE-DESIGN-PASS-57 #6)', async () => {
+    const { UsageBodyReading, USAGE_CHART_FRAME_PX, resolveUsageChartChromePx } = await import('./usageBodyKit');
+    const { UsageWidgetBatchProvider } = await import('./usageWidgetBatch');
+    const { readUsageWidgetQueryOverrides } = await import('../usageWidgetPageContext');
+    const query = normalizeUsageQuery({ period: { relative: '7days' }, metric: 'tokens' });
+    const shape = { kind: 'chart' as const, plotPx: 252, peak: true };
+    const minHeightOf = async (node: React.ReactElement) => {
+      const screen = await renderScreen(<WidgetPresentationProvider value={{ size: 'medium',
+        footprint: { columns: 2, columnSpan: 1, rowSpan: 2, width: 'half', height: 'regular' }, geometry: { width: 480, height: 400 } }}>{node}</WidgetPresentationProvider>);
+      const style = screen.findHostByTestId('daily.loading')!.props.style;
+      await screen.unmount();
+      return (Array.isArray(style) ? Object.assign({}, ...style) : style).minHeight as number;
+    };
+    const home = await minHeightOf(<UsageBodyReading testID="daily.loading" shape={shape} />);
+    const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+    const page = await minHeightOf(<InjectedAuthProvider credentials={null}>
+      <UsageWidgetBatchProvider clauses={readUsageWidgetQueryOverrides(query)} enabled={false}>
+        <UsageBodyReading testID="daily.loading" shape={shape} />
+      </UsageWidgetBatchProvider>
+    </InjectedAuthProvider>);
+    expect(home).toBe(252 + resolveUsageChartChromePx(480, { peak: true }));
+    expect(page).toBe(home - USAGE_CHART_FRAME_PX.note);
+  });
   it('rises on first data and draws retained bars immediately on a revisit, keeping change motion', async () => {
     const props = fixture([10, 30], start + 2 * day);
     const first = await renderScreen(<UsageDailyWidget {...props} />);
@@ -280,24 +322,95 @@ describe('Daily period chart', () => {
     expect(screen.findHostByTestId('daily.chart-peak')?.props.children).toBe(hasCompleteDay ? '$1.50' : undefined);
   });
 
-  it.each([true, false])('hatches recorded usage without selected cost, and leaves earlier missing buckets blank (by Agent: %s)', async (byAgent) => {
-    const endMs = start + 3 * day;
-    const props = fixture([null, 10, 20], endMs, byAgent);
+  it.each([true, false])('distinguishes alternate pricing from a price gap after a Daily bucket merge (by Agent: %s)', async (byAgent) => {
+    const endMs = start + 6 * day;
+    vi.spyOn(Date, 'now').mockReturnValue(endMs + day);
+    const props = fixture([null, 10, 20, 30, 40, 50], endMs, byAgent);
     const query = normalizeUsageQuery({ ...props.query, metric: 'cost', costBasis: 'reported' });
     const accounting = props.slice.accounting!;
-    const unknownCost = { ...accounting.totals.cost, reportedUsd: null, estimatedUsd: null };
+    const unpriced = { reportedUsd: null, estimatedUsd: null, currency: 'USD' };
+    const apiPriced = { ...unpriced, apiEquivalentUsd: 2, pricingSource: 'catalog' };
+    const reported = (amount: number) => ({ ...unpriced, reportedUsd: amount });
+    const operands = [[unpriced], [apiPriced], [reported(3), apiPriced], [reported(4), unpriced], [reported(1.5)]];
+    const compact = (costs: readonly UsageObservationCost[]) => UsageObservationCostSchema.parse(JSON.parse(JSON.stringify(
+      serializeUsageCostBasis(aggregateUsageContributionCosts(costs.map(cost => ({ cost })), 'reported'), 'reported'),
+    )));
+    const costs = operands.map(compact);
+    const period = operands.flat();
     const slice = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'available', value: {
       ...accounting,
-      series: accounting.series?.map((bucket, index) => index === 0 ? { ...bucket, cost: unknownCost } : bucket),
-      engineTimeline: accounting.engineTimeline?.map((bucket, index) => index === 0 ? {
-        ...bucket, leaders: bucket.leaders.map(leader => ({ ...leader, cost: unknownCost })),
-      } : bucket),
+      totals: { ...accounting.totals, eventCount: period.length, cost: compact(period) },
+      series: accounting.series?.map((bucket, index) => ({ ...bucket, eventCount: operands[index]!.length, cost: costs[index]! })),
+      engineTimeline: accounting.engineTimeline?.map((bucket, index) => ({
+        ...bucket, leaders: bucket.leaders.map(leader => ({ ...leader,
+          eventCount: operands[index]!.length, cost: costs[index]!,
+          sources: operands[index]!.map((cost, sourceIndex) => ({
+            ...leader.sources![0]!,
+            ...(sourceIndex === 1 ? { source: 'native', path: 'native' as const, execution: 'outside' as const } : {}),
+            cost: compact([cost]),
+          })),
+        })),
+      })),
     } }] }, bundledUsageModelPriceCatalog).results[0]!;
-    const screen = await renderScreen(<UsageDailyWidget {...props} query={query} slice={slice} />);
-    const bucketId = (ms: number) => String(byAgent ? ms : ms / 1000);
-    expect(screen.findHostByTestId(`daily.chart-gap-${bucketId(start)}`)).toBeFalsy();
-    expect(screen.findHostByTestId(`daily.chart-gap-${bucketId(start + day)}`)).toBeTruthy();
+    const widget = <UsageDailyWidget {...props} query={query} slice={slice} />;
+    const screen = byAgent ? await renderControls(widget) : await renderScreen(widget);
+    const bucketId = (index: number) => String((start + index * day) / (byAgent ? 1 : 1_000));
+    const chart = screen.findByType(StackedSeriesChart);
+    expect(chart.props.series[0].points.map((point: { y: number | null }) => point.y)).toEqual([null, null, null, 3, 4, 1.5]);
+    for (const [index, hatched] of [false, true, false, false, true, false].entries()) {
+      expect.soft(Boolean(screen.findHostByTestId(`daily.chart-gap-${bucketId(index)}`)), `Day ${index + 1} hatch`).toBe(hatched);
+    }
     expect(screen.findHostByTestId('daily.chart-gap-key')).toBeTruthy();
+    expect.soft(chart.props.reference?.value).toBe(1.5);
+    expect.soft(screen.findHostByTestId('daily.chart-peak')?.props.children).toBe('$1.50');
+    if (byAgent) {
+      await act(async () => {
+        screen.findHostByTestId('daily.chart')!.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 640, height: 240 } } });
+      });
+      const scrub = screen.findByType(ScrubLens);
+      const x = scrub.props.layout.centers[2];
+      const gesture = scrub.findByType(GestureDetector).props.gesture;
+      await act(async () => { gesture.gestures[1].gestures[1].__handlers.onEnd({ x }); });
+      const lens = screen.findByTestId('daily.lens-lens');
+      expect(lens).toBeTruthy();
+      const labels = lens!.findAllByType(Text).map(node => node.props.children);
+      expect(labels).toContain([
+        t('usage.board.page.executionHappier'), usageSourceTitle('runtime'), t('usage.board.page.costBasisUnavailable'),
+      ].join(' · '));
+    }
+  });
+
+  it('does not inspect alternate prices on timeline leaders or sources when Flow has no selected basis', async () => {
+    const endMs = start + 7 * day;
+    const props = fixture([10, 20, 30, 40, 50, 60, 70], endMs, true, 'day', ['codex', 'claude', 'gemini', 'cursor', 'opencode', 'qwen']);
+    const query = normalizeUsageQuery({ ...props.query, metric: 'cost', costBasis: 'reported' });
+    const accounting = props.slice.accounting!;
+    const onlyApi = serializeUsageCostBasis({
+      reportedUsd: null, estimatedUsd: null, currency: 'USD', apiEquivalentUsd: 2, pricingSource: 'catalog',
+    }, 'reported');
+    // Previously serialized leaders can have a selected amount without a stored missing-price fact.
+    const legacyApiOnly = { ...onlyApi, selectedBasis: { mode: 'reported' as const, value: null } };
+    let leaderCostReads = 0;
+    let sourceCostReads = 0;
+    const slice = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'available', value: {
+      ...accounting, totals: { ...accounting.totals, cost: onlyApi },
+      series: accounting.series?.map(bucket => ({ ...bucket, cost: onlyApi })),
+      engineTimeline: accounting.engineTimeline?.map(bucket => ({
+        ...bucket, leaders: bucket.leaders.map(leader => ({
+          ...leader,
+          cost: { ...legacyApiOnly, get apiEquivalentUsd() { leaderCostReads += 1; return onlyApi.apiEquivalentUsd!; } },
+          sources: leader.sources?.map(source => ({
+            ...source,
+            cost: { ...legacyApiOnly, get apiEquivalentUsd() { sourceCostReads += 1; return onlyApi.apiEquivalentUsd!; } },
+          })),
+        })),
+      })),
+    } }] }, bundledUsageModelPriceCatalog).results[0]!;
+    leaderCostReads = 0;
+    sourceCostReads = 0;
+    const screen = await renderScreen(<UsageFlowWidget {...props} query={query} slice={slice} id="usage_flow" testID="flow" />);
+    expect(screen.findHostByTestId('flow.empty')).toBeTruthy();
+    expect({ leaderCostReads, sourceCostReads }).toEqual({ leaderCostReads: 0, sourceCostReads: 0 });
   });
 
   it('hatches recorded unpriced Daily costs even when an Agent has a known bar or zero', async () => {

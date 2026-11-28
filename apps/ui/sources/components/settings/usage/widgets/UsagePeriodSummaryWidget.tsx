@@ -105,14 +105,16 @@ export function UsagePeriodSummaryWidget(props: UsageBodyProps) {
     );
   // The query chooses the statistic; asynchronous arrivals only replace its
   // value. An unanswered duration never temporarily becomes Active days.
-  if (props.query.includeSessionEvidence)
+  if (props.query.includeSessionEvidence) {
+    const agentTime = intervals ? formatUsageDurationCompact(intervals.agentTimeMs) : null;
+    const elapsedTime = intervals ? formatUsageDurationCompact(intervals.elapsedBusyMs) : null;
+    // When the two formatted readings agree, the caption would repeat the headline.
+    const caption = elapsedTime === null ? unmeasured('how_you_work')
+      : elapsedTime === agentTime ? undefined : t('usage.board.page.elapsedTime', { time: elapsedTime });
     stats.push(
-      { id: 'agent', label: t('usage.board.page.agentTime'), value: intervals ? formatUsageDurationCompact(intervals.agentTimeMs) : UNKNOWN_VALUE,
-        caption: intervals ? t('usage.board.page.elapsedTime', {
-          time: formatUsageDurationCompact(intervals.elapsedBusyMs),
-        }) : unmeasured('how_you_work') },
+      { id: 'agent', label: t('usage.board.page.agentTime'), value: agentTime ?? UNKNOWN_VALUE, caption },
     );
-  else
+  } else
     stats.push(
       { id: 'active', label: t('usage.board.page.activeDays'), value: view.insights.activeDays ?? UNKNOWN_VALUE,
         caption: view.hero.longestStreakDays === null ? undefined : t('usage.board.page.longestStreak', {

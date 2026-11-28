@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AgentUiBehaviorDeclarationV1Schema } from '@happier-dev/protocol/plugins/contributions/agentUiGrammar';
 import { clearProjectedAgentUiBehaviorDescriptors, publishProjectedAgentUiBehaviorDescriptors } from '@/agents/registry/agentUiBehaviorProjection';
-import { usageAgentTitle, usageSourceAgentId, usageSourceTitle } from './usageLabels';
+import { usageAgentTitle, usageModelLabel, usageSourceAgentId, usageSourceTitle } from './usageLabels';
 import { MUSE_UI_DESCRIPTOR } from '../../../../../../packages/plugins/muse/src/ui/descriptor';
 import { MUSE_ACCOUNTING_SOURCE_ID } from '../../../../../../packages/plugins/muse/src/agent/definition';
 import { getPreferredLanguage, preloadTranslations, setPreferredLanguageFromSettings, t } from '@/text';
@@ -12,6 +12,22 @@ vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks
 afterEach(() => {
     clearProjectedAgentUiBehaviorDescriptors();
     vi.restoreAllMocks();
+});
+
+describe('model labels', () => {
+    it('distinguishes unnamed usage from an uncatalogued model with a real identifier', () => {
+        expect(usageModelLabel('unknown')).toEqual({
+            kind: 'unattributed', label: t('usage.board.plans.cellUnknown'),
+        });
+        for (const key of ['', '<synthetic>']) {
+            expect(usageModelLabel(key)).toEqual({
+                kind: 'unattributed', label: t('usage.board.page.unattributed'),
+            });
+        }
+        expect(usageModelLabel('research/model-snapshot')).toEqual({
+            kind: 'named', label: 'research/model-snapshot',
+        });
+    });
 });
 
 describe('declared accounting source presentation', () => {
