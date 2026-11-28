@@ -115,7 +115,6 @@ test('Store controls and shared Add effects use agent-visible Action admission',
 test('person-only Review verdict controls retain exact parity dispositions', () => {
   const paths = [
     'apps/ui/sources/components/reviews/useReviewHumanActions.ts',
-    'apps/ui/sources/components/settings/teams/identity/identityAdministrationClient.ts',
     'apps/ui/sources/sync/domains/reviews/humanApi.ts',
   ];
   const actionId = REVIEW_HUMAN_ACTION_IDS_V1.submitVerdict;
