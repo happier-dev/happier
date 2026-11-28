@@ -299,6 +299,8 @@ export type AcpRuntime = Readonly<{
   setSessionMode: (modeId: string) => Promise<void>;
   /** Restore the backend's mapped permission policy when a native mode override is cleared. */
   clearSessionModeOverride?: () => Promise<void>;
+  /** Apply the session's current permission mode to the running provider session; false means it needs a restart. */
+  applyPermissionModeInPlace?: () => Promise<boolean>;
   /**
    * Request a provider-native ACP session model change when supported.
    * No-op when unsupported or when the session has not been started/loaded.
@@ -349,6 +351,8 @@ export type AcpRuntimeBackend = Omit<AgentBackend, 'waitForResponseComplete' | '
    */
   setSessionMode?: (sessionId: string, modeId: string) => Promise<void>;
   clearSessionModeOverride?: (sessionId: string) => Promise<void>;
+  /** Take the current permission mode without a restart; false when the agent cannot. */
+  applyPermissionModeInPlace?: (sessionId: string) => Promise<boolean>;
   /**
    * Optional provider-native ACP session model change (UNSTABLE in ACP; may be unsupported).
    */
@@ -1415,6 +1419,7 @@ export function createAcpRuntime(params: {
       (error) => {
         logger.debug(`[${params.provider}] Failed to abort pending permission requests at turn boundary`, error);
       },
+      { keepRetainedPastTurn: !turn.turnAborted },
     );
     turn.settlement = enqueueTurnSettlement(async () => {
       if (turn.pendingTurnOutcome?.kind === 'failed') {
@@ -2784,6 +2789,12 @@ export function createAcpRuntime(params: {
       if (!sessionId) return;
       const b = await ensureBackend();
       await b.clearSessionModeOverride?.(sessionId);
+    },
+
+    async applyPermissionModeInPlace(): Promise<boolean> {
+      if (!sessionId) return false;
+      const b = await ensureBackend();
+      return await b.applyPermissionModeInPlace?.(sessionId) === true;
     },
 
     async setSessionModel(modelId: string): Promise<void> {

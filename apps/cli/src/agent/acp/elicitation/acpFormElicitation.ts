@@ -242,7 +242,7 @@ function isApproved(decision: string): boolean {
 
 /** Registers the ACP form elicitation request against the session's structured question owner. */
 export function buildAcpFormElicitationRegistration(
-  permissionHandler: AcpPermissionHandler,
+  permissionHandler: Pick<AcpPermissionHandler, 'handleToolCall'>,
 ): AcpExtensionRegistration {
   return defineAcpExtensionRequest({
     method: ACP_ELICITATION_CREATE_METHOD,

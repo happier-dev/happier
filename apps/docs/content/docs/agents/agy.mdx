@@ -16,7 +16,7 @@ account-switch validation is still in progress.
 
 Install the Antigravity CLI using the [official Antigravity CLI guide](https://antigravity.google/docs/cli/install), and make sure `agy` is available on `PATH` on the machine where Happier runs. Happier needs a CLI that includes the ACP server (Antigravity CLI 1.5.0 or newer); connected accounts need Antigravity CLI 1.5.16 or newer. Run `agy update` to upgrade an older install.
 
-Native Antigravity can continue a background task after the conversation returns to idle. Its result appears on the original tool card, and later activity can appear as another continuation. When Antigravity cannot identify which prompt originated a permission request, Happier asks you to decide even if a newer prompt has broader permissions.
+Native Antigravity can continue a background task after the conversation returns to idle. Its result appears on the original tool card, and later activity can appear as another continuation. Work Antigravity resumes on its own keeps the permission setting its background task started under. When Antigravity cannot identify which task the work belongs to, Happier keeps that setting only if all of the session's background work and its current setting agree; otherwise it asks you to decide, even if the newer setting is broader.
 
 Without a connected account, `agy acp` uses the same Antigravity CLI login as the interactive `agy`, so if you already signed in there, sessions are ready to start. If you set `GEMINI_HOME`, Happier passes it to `agy` as the profile directory (`--gemini-dir`). Otherwise run this on the machine where Happier runs:
 
@@ -103,6 +103,11 @@ command request for you to decide. Auto approves edits inside the workspace and 
 commands in Antigravity's terminal sandbox, asking only before commands that would leave
 it. Happier does not use Auto when the CLI does not advertise it.
 
+Changing the permission setting takes effect with your next message in the running
+Antigravity session, so background tasks keep running and "don't ask again for this session"
+approvals stay. Switching back to CLI Settings after another setting restarts the Antigravity
+session instead, because Happier cannot restore Antigravity's own default in place.
+
 Plan switches Antigravity to its Plan mode until you choose Build again; Build returns to
 the mode your permission setting maps to. Plan appears when `agy acp` advertises it for the
 session. A session saved with an Antigravity approval mode picked in an earlier version's
@@ -120,7 +125,9 @@ it. Images you attach to a message are sent to Antigravity with the prompt.
 In development builds, when Antigravity launches subagents of its own, each launch
 shows as a subagent card in the transcript and the subagent's tool calls appear inside
 that card instead of interrupting the main reply. Permission requests from a subagent's
-tool calls still reach you. Antigravity streams only a subagent's tool calls, not its
+tool calls still reach you, and stay open after the main reply ends while the subagent waits.
+Antigravity stops waiting on an unanswered subagent request after about a minute and fails
+that tool call; Happier then removes the request. Antigravity streams only a subagent's tool calls, not its
 messages. Happier matches a subagent to its launch through the role Antigravity records
 for it; a subagent it cannot match keeps its tool calls out of the main reply but is not
 shown under a card.

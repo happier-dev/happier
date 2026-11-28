@@ -86,6 +86,7 @@ type RuntimeForLoop = {
   cancel: (options?: AgentCancelOptions) => Promise<void>;
   setSessionMode: (modeId: string) => Promise<void>;
   clearSessionModeOverride?: () => Promise<void>;
+  applyPermissionModeInPlace?: () => Promise<boolean>;
   setSessionConfigOption: (configId: string, value: string | number | boolean | null) => Promise<void>;
   setSessionModel: (modelId: string) => Promise<void>;
 };

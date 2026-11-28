@@ -94,6 +94,38 @@ describe('catalog-defined Antigravity ACP backend permission modes', () => {
     20_000,
   );
 
+  it('takes a permission change in the running session unless it must return to the agent\'s own policy', async () => {
+    await withTempDir('happier-agy-live-permission-', async (dir) => {
+      const { scriptPath, setModesPath } = writeAgyAcpAgentScript(dir, true);
+      let permissionMode: PermissionMode = 'default';
+      const backend = createCatalogDefinedAcpBackend('agy', {
+        cwd: dir,
+        getPermissionMode: () => permissionMode,
+        launch: { command: process.execPath, args: [scriptPath] },
+      }) as ReturnType<typeof createCatalogDefinedAcpBackend> & {
+        setSessionMode: (sessionId: SessionId, modeId: string) => Promise<void>;
+        clearSessionModeOverride: (sessionId: SessionId) => Promise<void>;
+        applyPermissionModeInPlace: (sessionId: SessionId) => Promise<boolean>;
+      };
+      try {
+        const { sessionId } = await backend.startSession();
+        expect(await backend.applyPermissionModeInPlace(sessionId)).toBe(true);
+        permissionMode = 'yolo';
+        expect(await backend.applyPermissionModeInPlace(sessionId)).toBe(true);
+        await backend.setSessionMode(sessionId, 'plan');
+        permissionMode = 'read-only';
+        // Plan stays the agent mode; the permission setting applies again in Build.
+        expect(await backend.applyPermissionModeInPlace(sessionId)).toBe(true);
+        await backend.clearSessionModeOverride(sessionId);
+        permissionMode = 'default';
+        expect(await backend.applyPermissionModeInPlace(sessionId)).toBe(false);
+        expect(readSetModeIds(setModesPath)).toEqual(['auto', 'plan', 'plan', 'default']);
+      } finally {
+        await backend.dispose();
+      }
+    });
+  });
+
   it('switches agy between Plan and the permission-derived Build mode, ignoring persisted approval overrides', async () => {
     await withTempDir('happier-agy-agent-mode-', async (dir) => {
       const { scriptPath, setModesPath } = writeAgyAcpAgentScript(dir, true);

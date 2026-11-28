@@ -3,7 +3,7 @@ import type { PermissionMode } from '@/api/types';
 import { parseSpecialCommand } from '@/cli/parsers/specialCommands';
 import type { ProviderEnforcedPermissionHandler } from '@/agent/permissions/ProviderEnforcedPermissionHandler';
 import type { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
-import { resolveAppendSystemPromptBaseOverride } from '@/agent/runtime/permission/appendSystemPromptField';
+import { resolveAppendSystemPromptBaseOverride, resolveAppendSystemPromptQueueKeyValue } from '@/agent/runtime/permission/appendSystemPromptField';
 import {
   initializePermissionModeStateSync,
 } from '@/agent/runtime/permission/permissionModeStateSync';
@@ -42,6 +42,8 @@ type PromptRuntime = {
   reset: () => Promise<void>;
   getSessionId: () => string | null;
   shouldResumeAfterPermissionModeChange?: () => boolean;
+  /** Apply the session's current permission mode to the running provider session; false means it needs a restart. */
+  applyPermissionModeInPlace?: () => Promise<boolean>;
 };
 
 type OverrideSynchronizer = {
@@ -151,6 +153,7 @@ export async function runPermissionModePromptLoop(opts: {
 }): Promise<void> {
   let wasStarted = false;
   let currentModeHash: string | null = null;
+  let currentAppendSystemPromptKey: ReturnType<typeof resolveAppendSystemPromptQueueKeyValue> | null = null;
   let pending: QueuedPermissionModeMessage | null = null;
   let storedSessionIdForResume: { value: string; origin: 'initial' | 'restart' } | null = null;
   let didReplaySeedBootstrap = false;
@@ -392,6 +395,15 @@ export async function runPermissionModePromptLoop(opts: {
 
     opts.permissionHandler.setPermissionMode(message.mode.permissionMode);
 
+    const appendSystemPromptKey = resolveAppendSystemPromptQueueKeyValue(message.mode);
+    // A permission-only change applies in place when the running session can take it, keeping its background work
+    // and session approvals; anything else restarts the provider session.
+    if (wasStarted && currentModeHash && message.hash !== currentModeHash
+      && appendSystemPromptKey === currentAppendSystemPromptKey
+      && await opts.runtime.applyPermissionModeInPlace?.() === true) {
+      if (opts.shouldExit()) break;
+      currentModeHash = message.hash;
+    }
     if (wasStarted && currentModeHash && message.hash !== currentModeHash) {
       const resumeId = opts.runtime.getSessionId();
       currentModeHash = message.hash;
@@ -421,6 +433,7 @@ export async function runPermissionModePromptLoop(opts: {
     }
 
     currentModeHash = message.hash;
+    currentAppendSystemPromptKey = appendSystemPromptKey;
     await ensureFreshSessionSnapshotBeforeTurnBestEffort();
     syncPermissionModeFromMetadata();
     overrideSync.syncFromMetadata();

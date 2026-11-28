@@ -71,7 +71,10 @@ export function normalizeWriteInput(rawInput: unknown): UnknownRecord {
                     ? (out as any).filepath.trim()
                 : typeof out.path === 'string' && out.path.trim().length > 0
                     ? out.path.trim()
-                    : null;
+                    // agy write_to_file names it Path, with Content and Overwrite.
+                    : typeof out.Path === 'string' && out.Path.trim().length > 0
+                        ? out.Path.trim()
+                        : null;
     const firstItem = coerceFirstItemDiff(out.items);
     const fromItem = filePath ? null : coerceItemPath(firstItem);
     const fromLocations = filePath || fromItem ? null : coerceSingleLocationPath(out.locations);
@@ -89,7 +92,9 @@ export function normalizeWriteInput(rawInput: unknown): UnknownRecord {
                     ? out.data
                     : typeof out.newText === 'string'
                         ? out.newText
-                        : null;
+                        : typeof out.Content === 'string'
+                            ? out.Content
+                            : null;
     const fromItemContent = content != null ? null : coerceItemNewText(firstItem);
     const normalizedContent = content ?? fromItemContent;
     if (normalizedContent != null && typeof out.content !== 'string') out.content = normalizedContent;

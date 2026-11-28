@@ -191,6 +191,35 @@ describe('BasePermissionHandler allowlist', () => {
     expect(handler.isAllowed('bash', input)).toBe(false);
   });
 
+  it('does not restore a tool-wide shell approval saved from a request that carried no command', () => {
+    const session = new FakeSession();
+    // agy sessions before 632b3cc308: "don't ask for this session" on a run_command without a canonical command.
+    session.agentState.completedRequests.legacy = {
+      tool: 'execute',
+      arguments: { CommandLine: 'rm -rf build', WaitMsBeforeAsync: 500, toolSummary: 'Clean' },
+      createdAt: 1,
+      completedAt: 2,
+      status: 'approved',
+      decision: 'approved_for_session',
+      allowedTools: ['execute'],
+    };
+    session.agentState.completedRequests.toolWide = {
+      tool: 'execute',
+      arguments: { CommandLine: 'npm test', command: 'npm test' },
+      createdAt: 3,
+      completedAt: 4,
+      status: 'approved',
+      decision: 'approved_for_session',
+      allowedTools: ['execute'],
+    };
+
+    expect(new TestPermissionHandler(session as any).isAllowed('execute', { command: 'git push --force' })).toBe(true);
+    delete session.agentState.completedRequests.toolWide;
+    const handler = new TestPermissionHandler(session as any);
+    expect(handler.isAllowed('execute', { command: 'git push --force' })).toBe(false);
+    expect(handler.isAllowed('execute', { command: 'rm -rf build' })).toBe(false);
+  });
+
   it.each(['immediate', 'queued'] as const)('answers a retained live request after its %s persisted pending projection is lost', async (publicationMode) => {
     const session = new FakeSession();
     let publication = Promise.resolve();

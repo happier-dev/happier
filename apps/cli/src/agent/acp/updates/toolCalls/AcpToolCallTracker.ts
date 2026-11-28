@@ -377,7 +377,7 @@ export function createAcpToolCallTracker<TimerHandle = ReturnType<typeof setTime
     },
     detachFromTurn(callId) {
       const record = records.get(callId);
-      if (!record || record.permissionPending) return;
+      if (!record) return;
       detached.add(callId);
       clearRecordTimer(record);
     },

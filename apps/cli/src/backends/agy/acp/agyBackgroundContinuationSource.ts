@@ -105,10 +105,13 @@ export function createAgyBackgroundContinuationSource(
 
     const isLive = () => !disposed && !failed && !host.signal.aborted;
 
-    /** Register still-running tool calls as tasks whose settlement can resume Agy, then release every witness. */
+    /**
+     * Register still-running tool calls, and calls a subagent still waits to have approved, as tasks whose
+     * settlement can resume Agy, then release every witness. The host keeps a waiting call only with its request.
+     */
     const retainBackgroundTasks = (toolCalls: ToolCalls) => {
       for (const [toolCallId, { status }] of toolCalls) {
-        if (status === 'in_progress' && host.registerContinuation({
+        if ((status === 'in_progress' || status === 'pending') && host.registerContinuation({
           id: toolCallId, parentToolCallId: toolCallId, keepToolCallOpen: true,
         })) {
           backgroundTasks.add(toolCallId);

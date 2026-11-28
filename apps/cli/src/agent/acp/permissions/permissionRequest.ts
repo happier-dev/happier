@@ -1,5 +1,9 @@
 import { extractCommandFromExecuteTitle, isGenericExecuteTitle } from '@/agent/permissions/permissionCommandTitle';
+import { canonicalizeToolNameV2 } from '@/agent/tools/normalization';
+import { normalizeEditInput } from '@/agent/tools/normalization/families/edit';
 import { normalizeBashInput } from '@/agent/tools/normalization/families/execute';
+import { normalizeReadInput } from '@/agent/tools/normalization/families/read';
+import { normalizeWriteInput } from '@/agent/tools/normalization/families/write';
 
 export type PermissionToolCallLike = {
   kind?: unknown;
@@ -260,15 +264,40 @@ export function extractPermissionInput(
   return {};
 }
 
-/** Publish an execute request's command under the canonical `command` key that renderers and session approvals read. */
-function withCanonicalShellCommand(
+/** The transcript's canonical input normalizers for the families whose permission cards read canonical keys. */
+const CANONICAL_PERMISSION_INPUT_FAMILIES: Readonly<Record<string, (input: unknown) => Record<string, unknown>>> = {
+  Read: normalizeReadInput,
+  Edit: normalizeEditInput,
+  Write: normalizeWriteInput,
+};
+
+function resolveCanonicalPermissionInputNormalizer(
+  input: Record<string, unknown>,
+  params: PermissionRequestLike,
+  options?: ExtractPermissionInputOptions,
+): ((input: unknown) => Record<string, unknown>) | null {
+  if (isExecuteLikeToolCall(params.toolCall ?? undefined, options)) return normalizeBashInput;
+  const toolCall = params.toolCall ?? undefined;
+  const toolName = [options?.toolNameHint, toolCall?.kind, toolCall?.toolName]
+    .find((candidate): candidate is string => typeof candidate === 'string' && candidate.trim().length > 0);
+  if (!toolName) return null;
+  return CANONICAL_PERMISSION_INPUT_FAMILIES[canonicalizeToolNameV2({ protocol: 'acp', toolName, toolInput: input })] ?? null;
+}
+
+/**
+ * Publish a request's command, path and replaced text under the canonical keys that permission cards and session
+ * approvals read, as the transcript does for the same call. Provider keys stay; canonical keys never overwrite them.
+ */
+function withCanonicalToolInput(
   input: Record<string, unknown>,
   params: PermissionRequestLike,
   options?: ExtractPermissionInputOptions,
 ): Record<string, unknown> {
-  if ('command' in input || !isExecuteLikeToolCall(params.toolCall ?? undefined, options)) return input;
-  const command = normalizeBashInput(input).command;
-  return typeof command === 'string' ? { ...input, command } : input;
+  const normalize = resolveCanonicalPermissionInputNormalizer(input, params, options);
+  if (!normalize) return input;
+  const canonical = normalize(input);
+  const added = Object.entries(canonical).filter(([key, value]) => !(key in input) && typeof value === 'string');
+  return added.length === 0 ? input : { ...input, ...Object.fromEntries(added) };
 }
 
 export function extractPermissionInputWithFallback(
@@ -278,11 +307,11 @@ export function extractPermissionInputWithFallback(
   options?: ExtractPermissionInputOptions,
 ): Record<string, unknown> {
   const extracted = extractPermissionInput(params, options);
-  if (Object.keys(extracted).length > 0) return withCanonicalShellCommand(extracted, params, options);
+  if (Object.keys(extracted).length > 0) return withCanonicalToolInput(extracted, params, options);
 
   const fallback = toolCallIdToInputMap?.get(toolCallId);
   if (fallback && typeof fallback === 'object' && !Array.isArray(fallback) && Object.keys(fallback).length > 0) {
-    return withCanonicalShellCommand(fallback, params, options);
+    return withCanonicalToolInput(fallback, params, options);
   }
 
   const optionCommandHint = isExecuteLikeToolCall(params.toolCall ?? undefined, options)

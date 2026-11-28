@@ -24,6 +24,11 @@ function isShellToolName(name: string): boolean {
   return SHELL_TOOL_NAMES.has(name.toLowerCase());
 }
 
+/** A tool-wide identifier for a shell tool, which approves every command. */
+export function isShellToolIdentifier(identifier: string): boolean {
+  return isShellToolName(identifier.trim());
+}
+
 function normalizeToolName(value: unknown): string {
   return typeof value === 'string' ? value.trim().toLowerCase().replace(/[\s_-]+/g, '') : '';
 }

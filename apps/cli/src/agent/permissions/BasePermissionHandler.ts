@@ -82,6 +82,8 @@ export abstract class BasePermissionHandler {
     private isResetting = false;
     private readonly requestScope: 'foreground' | 'execution_run';
     private allowedToolIdentifiers = new Set<string>();
+    /** Pending requests the provider keeps waiting on after the turn that asked them ended. */
+    private readonly requestsRetainedPastTurn = new Set<string>();
     private readonly requestStore: AgentStateRequestStore;
     private readonly requestCoordinator: PermissionRequestCoordinator<PermissionResult>;
     private readonly onAbortRequested: (() => void | Promise<void>) | null;
@@ -516,6 +518,7 @@ export abstract class BasePermissionHandler {
 
         return pending.finally(() => {
             this.pendingRequests.delete(toolCallId);
+            this.requestsRetainedPastTurn.delete(toolCallId);
         });
     }
 
@@ -596,18 +599,30 @@ export abstract class BasePermissionHandler {
     }
 
     /**
+     * Keep a pending request through the end of the turn that asked it, because the provider keeps waiting on it
+     * (a subagent's permission after the main turn ended). Stop, reset and failures still withdraw it.
+     */
+    retainPendingRequestPastTurn(requestId: string): boolean {
+        if (!this.pendingRequests.has(requestId)) return false;
+        this.requestsRetainedPastTurn.add(requestId);
+        return true;
+    }
+
+    /**
      * Reset state for new sessions.
      * This method is idempotent - safe to call multiple times.
      */
-    private async cancelPendingRequests(params: Readonly<{ reason: string }>): Promise<void> {
-        const pendingSnapshot = Array.from(this.pendingRequests.entries());
+    private async cancelPendingRequests(params: Readonly<{ reason: string; keepRetainedPastTurn?: boolean }>): Promise<void> {
+        const keep = (requestId: string) => params.keepRetainedPastTurn === true && this.requestsRetainedPastTurn.has(requestId);
+        const pendingSnapshot = Array.from(this.pendingRequests.entries()).filter(([requestId]) => !keep(requestId));
         const requests = this.session.getAgentStateSnapshot?.()?.requests ?? {};
         const stateOnlyRequestIds = Object.keys(requests).filter((requestId) => (
-            this.ownsPersistedRequest(requestId)
+            !keep(requestId)
+            && this.ownsPersistedRequest(requestId)
             && this.requestCoordinator.getResponseContext(requestId)?.correlation === 'agent_state'
         ));
         await Promise.all([
-            this.requestCoordinator.cancelAll(params.reason),
+            this.requestCoordinator.cancelAll(params.reason, keep),
             ...(stateOnlyRequestIds.length > 0 ? [this.requestStore.cancelAllRequests({
                 reason: params.reason, decision: 'abort', requestIds: stateOnlyRequestIds,
             })] : []),
@@ -619,9 +634,12 @@ export abstract class BasePermissionHandler {
         }
     }
 
-    async abortPendingRequestsAndFlush(reason: string = 'Aborted by user'): Promise<void> {
+    async abortPendingRequestsAndFlush(
+        reason: string = 'Aborted by user',
+        options?: Readonly<{ keepRetainedPastTurn?: boolean }>,
+    ): Promise<void> {
         try {
-            await this.cancelPendingRequests({ reason });
+            await this.cancelPendingRequests({ reason, keepRetainedPastTurn: options?.keepRetainedPastTurn });
         } catch (error) {
             // The coordinator retains the exact detached cancellation for retry.
             // A failed history write must not prevent the caller from stopping the provider.
@@ -648,6 +666,7 @@ export abstract class BasePermissionHandler {
             });
 
             this.allowedToolIdentifiers.clear();
+            this.requestsRetainedPastTurn.clear();
             // A turn reset can be followed by another request on this handler.
             // Keep its session RPC subscription; updateSession moves it when the session swaps.
             this.requestStore.dispose();

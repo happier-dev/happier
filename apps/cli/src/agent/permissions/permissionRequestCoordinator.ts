@@ -447,8 +447,8 @@ export class PermissionRequestCoordinator<TResult> {
         entry.waiters.clear();
     }
 
-    async cancelAll(reason: string): Promise<void> {
-        const entries = [...this.pendingRequests.entries()];
+    async cancelAll(reason: string, keep?: (requestId: string) => boolean): Promise<void> {
+        const entries = [...this.pendingRequests.entries()].filter(([requestId]) => keep?.(requestId) !== true);
         const requestIds = entries.filter(([requestId]) => !this.isRequestClaimed(requestId)).map(([requestId]) => requestId);
         for (const requestId of requestIds) this.invalidatedDecisionRequestIds.add(requestId);
         for (const requestId of this.cachedDecisions.keys()) {
