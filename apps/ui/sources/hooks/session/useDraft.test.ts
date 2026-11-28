@@ -1021,21 +1021,13 @@ describe('useDraft', () => {
     });
     await flushHookEffects({ cycles: 1, turns: 1 });
 
-    // Simulate autosave committing the latest text so there are no unsaved local edits.
-    sessionsById = {
-      s1: { draft: 'draft-1 edited', metadata: {} },
-    };
-    await act(async () => {
-      harness.getCurrent().rerender();
-    });
-    await flushHookEffects({ cycles: 1, turns: 1 });
-
-    sessionsById = {
-      s1: { draft: 'rollback target prompt', metadata: {} },
-    };
+    expect(sessionsById.s1?.draft).toBe('draft-1 edited');
 
     await act(async () => {
-      harness.getCurrent().rerender();
+      sessionsById = {
+        s1: { draft: 'rollback target prompt', metadata: {} },
+      };
+      for (const listener of sessionDraftListeners) listener();
     });
     await flushHookEffects({ cycles: 1, turns: 1 });
 
@@ -1045,23 +1037,22 @@ describe('useDraft', () => {
 
   it('does not adopt a repository snapshot superseded before its passive hydration effect runs', async () => {
     sessionsById = {
-      s2: { draft: 'hello world', metadata: {} },
-    };
-    const harness = await renderHarness({ initialSessionId: 's2' });
-    expect(harness.getCurrent().value).toBe('hello world');
-
-    sessionsById = {
+      s1: { draft: 'first session', metadata: {} },
       s2: { draft: 'hello wo', metadata: {} },
     };
+    const harness = await renderHarness({ initialSessionId: 's1' });
+    expect(harness.getCurrent().value).toBe('first session');
+
     onHarnessLayoutEffect = () => {
       onHarnessLayoutEffect = null;
       sessionsById = {
+        ...sessionsById,
         s2: { draft: 'hello world', metadata: {} },
       };
     };
 
     await act(async () => {
-      harness.getCurrent().rerender();
+      harness.getCurrent().setSessionId('s2');
     });
     await flushHookEffects({ cycles: 1, turns: 1 });
 

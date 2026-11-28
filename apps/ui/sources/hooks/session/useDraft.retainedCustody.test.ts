@@ -80,6 +80,36 @@ async function loadOwners() {
 }
 
 describe('useDraft retained custody', () => {
+    it('clears the accepted prompt in the text leaf without rendering the draft host', async () => {
+        const owners = await loadOwners();
+        const scope = owners.lifetime.scope;
+        const session = owners.createSessionFixture({ id: 'accepted-draft', serverId: scope.serverId });
+        const address = { kind: 'session' as const, sessionId: session.id };
+        const textStore = owners.composer.createComposerTextStore('');
+        let hostRenders = 0;
+        const hook = await renderHook(() => {
+            hostRenders += 1;
+            owners.useDraft(session.id, textStore, { accountLifetime: owners.lifetime, session, active: true });
+        });
+
+        try {
+            await act(async () => textStore.setPrompt('prompt sent to the runner'));
+            const currentness = owners.repository.captureSessionDraftCurrentness({ scope, address, fieldIds: ['composer.text'] });
+            expect(owners.repository.getSessionComposerDraftSnapshot(scope, address)?.composer.text.value)
+                .toBe('prompt sent to the runner');
+            const rendersBeforeReceipt = hostRenders;
+            await act(async () => {
+                expect(owners.repository.clearSessionDraftCurrentnessLocal({
+                    scope, address, currentness, fieldIds: ['composer.text'], clearComposerReferencesWithCurrentText: true,
+                })).toBe(true);
+            });
+            expect(textStore.getPrompt()).toBe('');
+            expect(hostRenders).toBe(rendersBeforeReceipt);
+        } finally {
+            await hook.unmount();
+        }
+    });
+
     it.each([
         { seed: 'fork', switchSession: false },
         { seed: 'initial', switchSession: false },

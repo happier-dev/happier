@@ -71,8 +71,7 @@ function readSessionComposerSnapshot(scope: ServerAccountScopeLifetime['scope'],
 /**
  * Binds one Session's live composer text (`textStore`) to its canonical draft replica. The text
  * store is the composer's live value; this owner adopts, seeds, persists, restores and clears it.
- * It never renders its host for a keystroke: it subscribes only to a stored draft that differs
- * from the text on screen, which the repository echo of this composer's own edits never does.
+ * Ordinary repository text changes reach the text store without rendering this hook's host.
  */
 export function useDraft(
     sessionId: string | null | undefined,
@@ -95,25 +94,6 @@ export function useDraft(
     ), [accountLifetime]);
     const resolvedSessionId = normalizeSessionId(sessionId);
     const session = resolvedSessionId ? options.session : null;
-    const subscribeStoredDraft = useCallback((listener: () => void) => (
-        resolvedSessionId && draftScope
-            ? subscribeSessionDraft(draftScope, { kind: 'session', sessionId: resolvedSessionId }, listener)
-            : () => undefined
-    ), [draftScope, resolvedSessionId]);
-    // A load trigger, not a text projection: only a stored draft that differs from the live text
-    // (a remote edit, a finished materialization) re-runs the load owner below. The repository echo
-    // of this composer's own edits equals the live text, so it neither renders the host per
-    // keystroke nor re-adopts the value that is still waiting for its debounced remote flush.
-    const readStoredDraftTrigger = useCallback((): string | typeof UNREADABLE_RETAINED_SESSION_DRAFT | null => {
-        if (!resolvedSessionId || !draftScope) return null;
-        const snapshot = readSessionComposerSnapshot(draftScope, resolvedSessionId);
-        if (!snapshot && getSessionDraftSnapshot(draftScope, { kind: 'session', sessionId: resolvedSessionId })) {
-            return UNREADABLE_RETAINED_SESSION_DRAFT;
-        }
-        const stored = snapshot?.composer.text.value;
-        return typeof stored === 'string' && stored !== textStore.getPrompt() ? stored : null;
-    }, [draftScope, resolvedSessionId, textStore]);
-    const storedDraft = useSyncExternalStore(subscribeStoredDraft, readStoredDraftTrigger, readStoredDraftTrigger);
     const ownerMetadata = session ? readSessionOwnerMetadataView(session) : null;
     const forkInitialPrompt = readForkInitialPromptV1(ownerMetadata);
     const forkInitialPromptText = forkInitialPrompt?.text ?? null;
@@ -134,6 +114,26 @@ export function useDraft(
     const activeSessionInitialPrompt = sessionInitialPromptKey && consumedSessionInitialPromptKeyRef.current !== sessionInitialPromptKey
         ? sessionInitialPrompt
         : null;
+
+    // An unconsumed seed must be reconciled when a previously unavailable draft
+    // becomes readable. Live text edits (including an accepted send's clear)
+    // are delivered to the composer text store by the repository adoption below.
+    const hasPendingDraftSeed = Boolean(forkInitialPromptText || activeSessionInitialPrompt);
+    const subscribeDraftSeedReadiness = useCallback((listener: () => void) => (
+        hasPendingDraftSeed && resolvedSessionId && draftScope
+            ? subscribeSessionDraft(draftScope, { kind: 'session', sessionId: resolvedSessionId }, listener)
+            : () => undefined
+    ), [draftScope, hasPendingDraftSeed, resolvedSessionId]);
+    const readDraftSeedTrigger = useCallback((): string | typeof UNREADABLE_RETAINED_SESSION_DRAFT | null => {
+        if (!hasPendingDraftSeed || !resolvedSessionId || !draftScope) return null;
+        const snapshot = readSessionComposerSnapshot(draftScope, resolvedSessionId);
+        if (!snapshot && getSessionDraftSnapshot(draftScope, { kind: 'session', sessionId: resolvedSessionId })) {
+            return UNREADABLE_RETAINED_SESSION_DRAFT;
+        }
+        const stored = snapshot?.composer.text.value;
+        return typeof stored === 'string' && stored !== textStore.getPrompt() ? stored : null;
+    }, [draftScope, hasPendingDraftSeed, resolvedSessionId, textStore]);
+    const draftSeedTrigger = useSyncExternalStore(subscribeDraftSeedReadiness, readDraftSeedTrigger, readDraftSeedTrigger);
 
     // Exact hydration follows the active composer rather than the one-shot session-visible
     // callback. That makes a warm session retry as soon as its account scope becomes available,
@@ -430,7 +430,7 @@ export function useDraft(
             }
         };
         return followSignal(presented, (isPresented) => { if (isPresented) adoptPresentedDraft(); });
-    }, [active, activeSessionInitialPrompt, adoptPersistedDraftText, presented, clearForkInitialPrompt, clearSessionInitialPrompt, composeSessionInitialPromptText, draftScope, flushDraftForSession, forkInitialPromptText, isDraftOwnerCurrent, onChange, persistSeededDraftText, resolvedSessionId, saveDraftForSession, storedDraft]);
+    }, [active, activeSessionInitialPrompt, adoptPersistedDraftText, presented, clearForkInitialPrompt, clearSessionInitialPrompt, composeSessionInitialPromptText, draftScope, flushDraftForSession, forkInitialPromptText, isDraftOwnerCurrent, onChange, persistSeededDraftText, resolvedSessionId, saveDraftForSession, draftSeedTrigger]);
 
     useEffect(() => {
         if (!draftScope || !resolvedSessionId || !isDraftOwnerCurrent()) return;
