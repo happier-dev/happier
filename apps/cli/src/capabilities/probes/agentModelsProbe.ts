@@ -702,7 +702,8 @@ export async function probeAgentModelsBestEffort(params: {
     }
   };
 
-  const result = usesProviderOwnedCache || params.signal || needsLiveProbe
+  // A configured-model observation cannot share an ordinary catalog probe.
+  const result = usesProviderOwnedCache || params.signal || params.includeConfiguredModel
     ? await runProbe()
     : await agentModelsProbeCache.runDedupe(cacheKey, runProbe);
   return usesProviderOwnedCache ? { ...result, cacheable: false } : result;
