@@ -7,6 +7,7 @@ import { readPinnedServerPortFromEnvFile, resolveServerPortFromEnv } from './por
 import { normalizeUrlNoTrailingSlash } from '../net/url.mjs';
 import { hasTrustedStackRuntimeLifecycle, readStackRuntimeStateFile, resolveTrustedStackRuntimeServerPort } from '../stack/runtime_state.mjs';
 import { resolveDevServerConnection } from '../dev/resolveDevServerConnection.mjs';
+import { resolvePublicServerUrl } from './public_server_url.mjs';
 
 /** Runtime ingress wins over a retained port; only the process owner can attest it. */
 export async function resolveStackServerEndpoint({
@@ -160,7 +161,7 @@ export async function resolveServerUrls({ env = process.env, serverPort, allowEn
     (env.HAPPIER_STACK_STACK ?? '').toString().trim() ||
     getStackName(env);
   const { defaultPublicUrl, envPublicUrl } = getPublicServerUrlEnvOverride({ env, serverPort });
-  const { resolvePublicServerUrl } = await import('../../tailscale.mjs');
+  await import('../env/env.mjs');
   const resolved = await resolvePublicServerUrl({
     internalServerUrl,
     defaultPublicUrl,

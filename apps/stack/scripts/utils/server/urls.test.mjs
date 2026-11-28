@@ -27,6 +27,39 @@ async function writeStackEnvAtStorageRoot(storageDir, stackName, contents) {
   await writeFile(join(stackDir, 'env'), contents, 'utf-8');
 }
 
+test('passive named-stack URL resolution leaves the Tailscale command unloaded', async (t) => {
+  const { storageDir, stackName } = await createIsolatedStackStorage(t);
+  const urlsModule = new URL('./urls.mjs', import.meta.url).href;
+  const commandModule = new URL('../../tailscale.mjs', import.meta.url).href;
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', `
+    import { registerHooks } from 'node:module';
+    let commandLoads = 0;
+    registerHooks({
+      load(url, context, nextLoad) {
+        if (url === ${JSON.stringify(commandModule)}) commandLoads++;
+        return nextLoad(url, context);
+      },
+    });
+    const { resolveServerUrls } = await import(${JSON.stringify(urlsModule)});
+    const { internalServerUrl, publicServerUrlSource } = await resolveServerUrls({
+      serverPort: 43123, allowEnable: false,
+    });
+    console.log(JSON.stringify({ internalServerUrl, publicServerUrlSource, commandLoads }));
+  `], { encoding: 'utf8', env: {
+    ...sanitizeStackTestRunnerEnv(process.env, { isolatedStackRoot: storageDir }),
+    HOME: join(storageDir, 'home'),
+    HAPPIER_HOME_DIR: join(storageDir, 'cli'),
+    HAPPIER_STACK_STORAGE_DIR: storageDir,
+    HAPPIER_STACK_STACK: stackName,
+  } });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout.trim()), {
+    internalServerUrl: 'http://127.0.0.1:43123',
+    publicServerUrlSource: 'default',
+    commandLoads: 0,
+  });
+});
+
 test('canonical URL owner preserves the configured signing identity across server projection', async (t) => {
   const { storageDir, stackName } = await createIsolatedStackStorage(t);
   const canonical = ['https:', '', 'signing.example.test'].join('/');
