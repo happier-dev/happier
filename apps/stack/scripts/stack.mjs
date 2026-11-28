@@ -1,5 +1,6 @@
 import './utils/env/env.mjs';
 import { normalizeStackNameFirstArgs, stackNameFromArg } from './stack/command_arguments.mjs';
+import { resolveStackListArguments, runStackListCommand } from './stack/stack_list_command.mjs';
 import { getRootDir } from './utils/paths/paths.mjs';
 import { stackExistsSync } from './utils/stack/stacks.mjs';
 
@@ -30,16 +31,8 @@ if ((command === 'happier' || command === 'bug-report') && stackName
     const { reportStackCommandFailure } = await import('./stack/command_failure.mjs');
     reportStackCommandFailure(error);
   }
-} else if (command === 'list' && !helpScopeArgv.includes('--help') && !helpScopeArgv.includes('-h')) {
-  const { listAllStackNames } = await import('./utils/stack/stacks.mjs');
-  const names = (await listAllStackNames()).filter((name) => name !== 'main');
-  if (helpScopeArgv.includes('--json')) {
-    process.stdout.write(`${JSON.stringify({ stacks: names }, null, 2)}\n`);
-  } else if (names.length) {
-    process.stdout.write(`[stack] stacks:\n${names.map((name) => `- ${name}`).join('\n')}\n`);
-  } else {
-    process.stdout.write('[stack] no stacks found\n');
-  }
 } else {
-  await import('./stack_commands.mjs');
+  const list = resolveStackListArguments(argv);
+  if (list) await runStackListCommand(list);
+  else await import('./stack_commands.mjs');
 }

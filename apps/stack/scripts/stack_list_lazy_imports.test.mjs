@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import test from 'node:test';
+import { buildStackFixtureEnv } from './testkit/core/env_scope.mjs';
+import { createTempFixture } from './testkit/core/temp_fixture.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -39,6 +42,37 @@ export async function resolve(specifier, context, nextResolve) {
   } finally {
     await rm(fixtureDir, { recursive: true, force: true });
   }
+});
+
+test('hstack stack list preserves output without a second foreground Node process', async t => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-list-processes-' });
+  // Run the actual dispatcher with authored dependencies and an isolated
+  // launcher root, so this process test never kicks off a checkout install.
+  const cliRoot = join(root, 'apps', 'stack');
+  await cp(join(import.meta.dirname, '../bin'), join(cliRoot, 'bin'), { recursive: true });
+  await symlink(join(import.meta.dirname, '../../../scripts'), join(root, 'scripts'), 'junction');
+  await symlink(import.meta.dirname, join(cliRoot, 'scripts'), 'junction');
+  const stackDir = join(cliRoot, 'fixture-stacks', 'example');
+  await mkdir(stackDir, { recursive: true });
+  await writeFile(join(stackDir, 'env'), '');
+
+  const counts = join(root, 'node-pids');
+  const preload = join(root, 'preload.mjs');
+  const runtime = new URL('../../../packages/cli-common/registerSourceRuntime.mjs', import.meta.url);
+  await writeFile(preload, `import { appendFileSync } from 'node:fs';
+appendFileSync(${JSON.stringify(counts)}, process.pid + '\\n');`);
+  const { stdout, stderr } = await execFileAsync(process.execPath, [
+    join(cliRoot, 'bin/hstack.mjs'), 'stack', 'list', '--json',
+  ], {
+    cwd: root,
+    env: buildStackFixtureEnv({ homeDir: root, storageDir: 'fixture-stacks', stripStackEnv: true,
+      extraEnv: { HAPPIER_STACK_TOOLING_PACKAGES: 'live',
+        NODE_OPTIONS: `--import=${runtime.href} --import=${pathToFileURL(preload).href}` } }),
+  });
+  assert.deepEqual(JSON.parse(stdout), { stacks: ['example'] });
+  assert.equal(stderr, '');
+  const pids = new Set((await readFile(counts, 'utf8')).trim().split('\n'));
+  assert.equal(pids.size, 1, 'one Node process owns the invocation');
 });
 
 test('Stack dispatch and runtime helpers do not construct the unrelated Protocol root schemas', async () => {

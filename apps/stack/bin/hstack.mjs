@@ -292,6 +292,15 @@ async function runNodeScript(cliRootDir, scriptRelPath, args) {
     console.error(`[hstack] missing script: ${scriptPath}`);
     process.exit(1);
   }
+  if (scriptRelPath === 'scripts/stack.mjs' && args[0] === 'list') {
+    const { resolveStackListArguments, runStackListCommand } = await import('../scripts/stack/stack_list_command.mjs');
+    const list = resolveStackListArguments(args);
+    if (list) {
+      // Match the script's cwd for storage and environment lookup.
+      process.chdir(cliRootDir);
+      return runStackListCommand(list);
+    }
+  }
   const res = await runForegroundChild({ command: process.execPath, args: [scriptPath, ...args], options: {
     detached: process.platform !== 'win32',
     stdio: 'inherit',
