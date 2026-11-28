@@ -139,7 +139,7 @@ describe('mounted current-context descendant commands', () => {
         routeState.pathname = '/session/palette-a'; routeState.segments = ['(app)', 'session', '[id]'];
         routeState.params = { id: 'palette-a', serverId: server.id };
         getStorage().setState({ sessions: Object.fromEntries(['palette-a', 'palette-b'].map(id => [id,
-            { ...createSessionFixture({ id, serverId: server.id }), accountId: 'account-a' }])) });
+            createSessionFixture({ id, serverId: server.id })])) });
         let runtime!: ReturnType<typeof useUniversalSearchRuntime>;
         function Presenter() {
             runtime = useUniversalSearchRuntime();
@@ -160,6 +160,8 @@ describe('mounted current-context descendant commands', () => {
             .toContain('session.action:ui.session.rename');
         expect(runtime.buildCommands('palette-b', { ...scope, sessionId: 'palette-b' }).map(command => command.id))
             .not.toContain('session.action:ui.session.rename');
+        expect(runtime.buildCommands('palette-a', { ...scope, accountId: 'account-b', sessionId: 'palette-a' }).map(command => command.id))
+            .not.toContain('session.action:ui.session.rename');
     });
 
     it.each(['modal', 'route'] as const)('lends Session commands to the requesting %s palette, restores them on dismissal, and settles when their owner retires', async presentation => {
@@ -169,21 +171,21 @@ describe('mounted current-context descendant commands', () => {
         const credentials = (await TokenStorage.getCredentialsForServerUrl(home.homes.a!.serverUrl))!;
         const { buildSessionCommands, setSessionCommandPalettePresented } = await import('../commandPalette/sessionCommands');
         const { buildSessionMenuCommands } = await import('@/components/sessions/actions/sessionMenuCommands');
-        function SessionPresenter(props: Readonly<{ ready: boolean }>) {
+        function SessionPresenter() {
             const [presented, setPresented] = React.useState(false);
             const [modalId, setModalId] = React.useState<string | null | undefined>(undefined);
             useCurrentUiContextLocalCommands([
                 { key: 'session.menu.open', title: 'Session menu', invoke: () => {},
                     setCommandPalettePresented: (next, modal) => { setPresented(next); setModalId(modal); } },
-                ...buildSessionMenuCommands({ items: presented && props.ready ? [{ id: 'ui.session.rename', title: 'Rename Session' }] : [], select: () => { changes.push('renamed'); } }),
+                ...buildSessionMenuCommands({ items: [{ id: 'ui.session.rename', title: 'Rename Session' }], select: () => { changes.push('renamed'); } }),
             ], { foregroundModalId: presented ? modalId : undefined });
             return null;
         }
-        const tree = (presenter: boolean, focused = true, ready = true) => <InjectedAuthProvider credentials={credentials}>
+        const tree = (presenter: boolean, focused = true) => <InjectedAuthProvider credentials={credentials}>
             <MainAppTabStateProvider><AppPaneProvider><ModalProvider><CurrentUiContextProvider>
                 <CurrentUiContextActionHost /><ObserveReader />
                 <PluginSurfaceFocusEligibilityProvider active={focused} currentUiContextActive={focused}>
-                    {presenter ? <SessionPresenter ready={ready} /> : null}
+                    {presenter ? <SessionPresenter /> : null}
                 </PluginSurfaceFocusEligibilityProvider>
             </CurrentUiContextProvider></ModalProvider></AppPaneProvider></MainAppTabStateProvider>
         </InjectedAuthProvider>;
@@ -212,7 +214,7 @@ describe('mounted current-context descendant commands', () => {
         await command!.action();
         expect(changes).toEqual(['renamed']);
         await act(async () => { demand(); });
-        expect(buildSessionCommands({ reader: current, execute })).toEqual([]);
+        expect(buildSessionCommands({ reader: current, execute }).map(command => command.id)).toContain('session.action:ui.session.rename');
         await act(async () => { preparing = setSessionCommandPalettePresented({ reader: current, execute, presented: true }); });
         demand = (await preparing)!;
         command = buildSessionCommands({ reader: current, execute }).find(candidate => candidate.id === 'session.action:ui.session.rename');
@@ -231,17 +233,6 @@ describe('mounted current-context descendant commands', () => {
         expect(alert.mock.lastCall?.[1]).toContain('unsupported_action');
         demand();
         await act(async () => { Modal.hideAll(); });
-        if (presentation === 'route') {
-            await screen.update(tree(true, true, false));
-            let completed = false;
-            await act(async () => { preparing = setSessionCommandPalettePresented({ reader: current, execute, presented: true }); });
-            const waiting = Promise.resolve(preparing).then(withdraw => { completed = true; return withdraw; });
-            await act(async () => {});
-            expect(completed).toBe(false);
-            await screen.update(tree(false));
-            (await waiting)?.();
-            expect(completed).toBe(true);
-        }
     });
     it('publishes focused host commands and withdraws them with only the focus commits', async () => {
         home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://focused-commands.test', accountId: 'account-a', currentAccount: true }],

@@ -26,7 +26,8 @@ installModalComponentCommonModuleMocks({
 });
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock({ segments: [], pathname: () => route.pathname, params: () => route.params }).module;
+    return createExpoRouterMock({ segments: () => route.pathname.startsWith('/session/') ? ['(app)', 'session', '[id]'] : [],
+        pathname: () => route.pathname, params: () => route.params }).module;
 });
 vi.mock('@/utils/web/radixCjs', async () => {
     const { createRadixCjsRealModule } = await import('@/dev/testkit/mocks/radixCjs');
@@ -66,6 +67,66 @@ const [{ WorkspaceProvider }, { AppPaneProvider }, { resolveCompactAppDestinatio
     import('@/components/appShell/workspace/workspaceActionRuntime'),
     import('@/sync/domains/workspaces/files/recentWorkspaceFiles'), import('@/sync/domains/workspaces/workspaceScope'),
 ]);
+
+it('keeps the unopened Session menu available to scoped Search and its Mod binding from the composer', async () => {
+    const [{ SessionHeaderActionMenu }, { CurrentUiContextProvider }, { MainAppTabStateProvider },
+        { PluginSurfaceFocusEligibilityProvider }, { createSessionFixture }, { TokenStorage }, { Modal },
+        { CurrentUiContextActionHost }] = await Promise.all([
+        import('@/components/sessions/actions/SessionHeaderActionMenu'),
+        import('@/components/appShell/currentUiContext/CurrentUiContextProvider'),
+        import('@/components/navigation/mobile/chrome/MainAppTabStateProvider'),
+        import('@/components/ui/presentation/PluginSurfaceFocusEligibility'), import('@/dev/testkit/fixtures/sessionFixtures'),
+        import('@/auth/storage/tokenStorage'), import('@/modal'),
+        import('@/components/appShell/currentUiContext/currentUiContextVoiceToolPort'),
+    ]);
+    const settings = { ...settingsDefaults, commandPaletteEnabled: true, keyboardShortcutsV2Enabled: true,
+        keyboardShortcutOverridesV1: { 'session.action:ui.session.rename': [{ binding: 'Mod+Alt+U' }] } };
+    const homes = await serveActionHomes({ homes: [{ key: 'session', serverUrl: 'https://session-menu-search.test',
+        serverIdentityId: 'srv_session_menu_search', accountId: 'alice', currentAccount: true, settings }] });
+    const credentials = (await TokenStorage.getCredentialsForServerUrl(homes.homes.session!.serverUrl))!;
+    const before = storage.getState();
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    const session = createSessionFixture({ id: 'palette-session', serverId: homes.homes.session!.id });
+    route.pathname = `/session/${session.id}`; route.params = { id: session.id };
+    const prompt = vi.spyOn(Modal, 'prompt').mockResolvedValue(null);
+    storage.setState({ isDataReady: true, sessions: { [session.id]: session }, settings });
+    try {
+        await act(async () => root.render(<InjectedAuthProvider credentials={credentials}>
+            <ModalProvider><AppPaneProvider><MainAppTabStateProvider><CurrentUiContextProvider>
+                <CurrentUiContextActionHost />
+                <CommandPaletteProvider><PluginSurfaceFocusEligibilityProvider active currentUiContextActive>
+                    <SessionHeaderActionMenu sessionId={session.id} session={session} />
+                    <textarea data-testid="session-composer" />
+                </PluginSurfaceFocusEligibilityProvider></CommandPaletteProvider>
+            </CurrentUiContextProvider></MainAppTabStateProvider></AppPaneProvider></ModalProvider>
+        </InjectedAuthProvider>));
+        const composer = container.querySelector<HTMLTextAreaElement>('textarea')!;
+        composer.focus();
+        const { resolveKeyboardPlatform } = await import('@/keyboard/runtime');
+        const command = ['macos', 'ios'].includes(resolveKeyboardPlatform());
+        await act(async () => composer.dispatchEvent(new KeyboardEvent('keydown', {
+            key: 'u', code: 'KeyU', metaKey: command, ctrlKey: !command, altKey: true, bubbles: true, cancelable: true,
+        })));
+        await vi.waitFor(() => expect(prompt).toHaveBeenCalledOnce());
+        await act(async () => composer.dispatchEvent(new KeyboardEvent('keydown', {
+            key: 'k', code: 'KeyK', metaKey: command, ctrlKey: !command, bubbles: true, cancelable: true,
+        })));
+        const host = () => document.querySelector('[data-testid="universal-search-host"]');
+        await vi.waitFor(() => expect(host()?.textContent).toContain('Rename'));
+        const input = host()!.querySelector('input')!;
+        await act(async () => {
+            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'rename');
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        await vi.waitFor(() => expect(host()?.textContent).toContain('Rename'));
+    } finally {
+        await act(async () => root.unmount());
+        prompt.mockRestore(); container.remove(); route.pathname = '/'; route.params = {};
+        await homes.dispose(); storage.setState(before, true);
+    }
+});
 
 it.each(['checkout', 'idle', 'focus'] as const)('opens Text in files from the presented Project: %s', async contract => {
     const restoreLocks = installBrowserStorageLockBoundary();

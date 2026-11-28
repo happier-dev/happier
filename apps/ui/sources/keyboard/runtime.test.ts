@@ -33,6 +33,22 @@ function keyEvent(event: Partial<NormalizedKeyboardEvent>): NormalizedKeyboardEv
 }
 
 describe('createKeyboardShortcutDispatcher', () => {
+    it.each(['session.action:ui.session.rename', 'action:review.start', 'action:acme.tools/actions/run'] as const)(
+        'runs a saved Mod binding for %s while typing, while preserving editable exclusions', commandId => {
+            const run = vi.fn();
+            const dispatch = (binding: string, allowInEditable?: boolean) => createKeyboardShortcutDispatcher({
+                enabled: true, platform: 'macos', surface: 'web', singleKeyShortcutsEnabled: false,
+                disabledCommandIds: [], overrides: { [commandId]: [{ binding, ...(allowInEditable == null ? {} : { allowInEditable }) }] },
+                handlers: { [commandId]: run },
+                getContext: () => ({ isEditableTarget: true, isComposerTarget: true, isComposing: false }),
+            });
+            expect(dispatch('Mod+Alt+U')(keyEvent({ key: 'u', code: 'KeyU', metaKey: true, altKey: true }))).toBe(true);
+            expect(run).toHaveBeenCalledOnce();
+            expect(dispatch('Alt+U')(keyEvent({ key: '¨', code: 'KeyU', altKey: true }))).toBe(false);
+            expect(dispatch('Mod+Alt+U', false)(keyEvent({ key: 'u', code: 'KeyU', metaKey: true, altKey: true }))).toBe(false);
+            expect(run).toHaveBeenCalledOnce();
+        },
+    );
     it('dispatches both composer mode defaults and picker shortcuts while typing', () => {
         const mode = vi.fn();
         const model = vi.fn();

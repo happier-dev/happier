@@ -13,7 +13,7 @@ export const sessionPanelKeyboardCommands = [
 
 export const defaultKeyboardCommands: readonly KeyboardCommand[] = [
     ...DERIVED_KEYBOARD_COMMAND_METADATA.map((command): KeyboardCommand => ({
-        id: command.id, settingsTitleKey: command.titleKey, nativeConsumable: true,
+        id: command.id, settingsTitleKey: command.titleKey, nativeConsumable: true, allowInEditable: true,
         ...('title' in command ? { settingsTitle: command.title } : {}),
     })),
     ...sessionPanelKeyboardCommands.map(({ id, settingsTitleKey }): KeyboardCommand => ({ id, settingsTitleKey })),
@@ -838,7 +838,8 @@ export function getKeyboardCommand(commandId: string): KeyboardCommand | undefin
     const identity = parseQualifiedPluginActionId(commandId.slice('action:'.length));
     if (!identity) return undefined;
     const qualifiedId = formatQualifiedPluginActionId(identity);
-    return { id: `action:${qualifiedId}`, settingsTitleKey: 'settingsKeyboard.groupApp', settingsTitle: qualifiedId, nativeConsumable: true };
+    return { id: `action:${qualifiedId}`, settingsTitleKey: 'settingsKeyboard.groupApp', settingsTitle: qualifiedId,
+        nativeConsumable: true, allowInEditable: true };
 }
 
 /** Saved plugin preferences remain configurable even while their contribution is unavailable. */

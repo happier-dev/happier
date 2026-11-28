@@ -235,12 +235,16 @@ export function buildCommandPaletteCommands(
     alert,
   } = params;
 
+  const session = activeSessionId ? sessionsById[activeSessionId] : null;
+  const contextCategory = session ? getSessionName(session) : undefined;
   const cmds: Command[] = [
     ...(params.focusedMessageActions ?? []).flatMap((action): Command[] => {
       const command = defaultKeyboardCommands.find(candidate => candidate.id === action.commandId);
       return command ? [{ id: action.commandId, emptyQuerySuggested: true, title: t(command.settingsTitleKey),
-        category: t('settingsKeyboard.groupTranscript'), shortcut: params.shortcutLabels?.[action.commandId], action: action.run }] : [];
+        category: t('settingsKeyboard.groupTranscript'), contextCategory: t('settingsKeyboard.groupTranscript'),
+        shortcut: params.shortcutLabels?.[action.commandId], action: action.run }] : [];
     }),
+    ...(contextCategory ? (params.sessionCommands ?? []).map(command => ({ ...command, contextCategory })) : []),
     {
       id: 'new-session',
       emptyQuerySuggested: true,
@@ -746,14 +750,12 @@ export function buildCommandPaletteCommands(
     });
   }
 
-  const session = activeSessionId ? sessionsById[activeSessionId] : null;
   const metadata = session ? readSessionOwnerMetadataView(session) : null;
   const context = {
     defaultSessionId: activeSessionId,
     defaultSessionMachineId: metadata?.machineId,
     defaultSessionRootPath: metadata?.path,
   };
-  const contextCategory = session ? getSessionName(session) : undefined;
   const handled = new Set(cmds.map(command => command.actionSpecId).filter(Boolean));
   // The desktop opener decides Notch availability, including unsupported hosts.
   if (notch) handled.add(notch.id);
@@ -788,6 +790,5 @@ export function buildCommandPaletteCommands(
       shortcutActions.add(command.actionSpecId);
     }
   }
-  if (contextCategory) cmds.push(...(params.sessionCommands ?? []).map(command => ({ ...command, contextCategory })));
   return cmds;
 }

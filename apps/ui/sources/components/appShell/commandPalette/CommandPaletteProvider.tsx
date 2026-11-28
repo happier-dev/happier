@@ -296,12 +296,13 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
     const isExactSessionContext = useCallback((requestedActiveSessionId: string | null, requestedScope?: UniversalSearchScopeSeed) => {
         if (requestedActiveSessionId !== commandContextSessionId) return false;
         const ambientSession = requestedActiveSessionId
-            ? (storage.getState().sessions as Record<string, { serverId?: string; accountId?: string } | undefined>)[requestedActiveSessionId]
+            ? storage.getState().sessions[requestedActiveSessionId]
             : null;
+        const accountScope = captureActiveServerAccountScopeLifetime()?.scope;
         return !requestedScope || !requestedActiveSessionId || (
             resolveServerProfileScopeIdForIdentifier(ambientSession?.serverId ?? null)
                 === resolveServerProfileScopeIdForIdentifier(requestedScope.serverId)
-            && (requestedScope.accountId === null || ambientSession?.accountId === requestedScope.accountId)
+            && (requestedScope.accountId === null || accountScope?.accountId === requestedScope.accountId)
         );
     }, [commandContextSessionId]);
     const buildCommands = useCallback((requestedActiveSessionId: string | null = commandContextSessionId, requestedScope?: UniversalSearchScopeSeed, symbols?: UniversalSearchOpenOptions['symbols']) => {
@@ -395,8 +396,8 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
     const prepareSettingsCommands = useCallback(() => voiceEnabled && !readSettingsPagePresentation()
         ? loadSettingsPagePresentation() : undefined, [voiceEnabled]);
     React.useEffect(() => registerCommandPaletteActionCatalog(
-        () => actionCommandBuilder.current(), prepareSessionCommands, prepareSettingsCommands,
-    ), [prepareSessionCommands, prepareSettingsCommands]);
+        () => actionCommandBuilder.current(), prepareSettingsCommands,
+    ), [prepareSettingsCommands]);
     const sessionCommandDemandRelease = React.useRef<SessionCommandDemand | null>(null);
     React.useEffect(() => () => sessionCommandDemandRelease.current?.(), []);
 
@@ -515,7 +516,7 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
             };
             const demand = prepareSessionCommands(null, invocationScope.sessionId, invocationScope);
             const settingsCommands = prepareSettingsCommands();
-            if (typeof demand === 'function' && !settingsCommands) { pushSearchRoute(demand); return; }
+            if (!settingsCommands) { pushSearchRoute(demand); return; }
             const opening = Promise.resolve(demand).then(async release => {
                 try {
                     await settingsCommands;
@@ -540,7 +541,7 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
             const [{ UniversalSearchModal }] = await Promise.all([
                 import('@/components/appShell/search/UniversalSearchModal'), prepareSettingsCommands(),
             ]);
-            const releaseSessionCommands = await prepareSessionCommands(undefined, invocationScope.sessionId, invocationScope);
+            const releaseSessionCommands = prepareSessionCommands(undefined, invocationScope.sessionId, invocationScope);
             sessionCommandDemandRelease.current = releaseSessionCommands;
             if (pendingPaletteOpen.current !== pending || (lifetime && !lifetime.isCurrent())) { releaseSessionCommands(); return; }
             let modalId = '';

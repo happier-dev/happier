@@ -25,7 +25,7 @@ import {
 import { requireSessionOrganizationMutationScope } from '@/sync/ops/sessionOrganization/requireSessionOrganizationMutationScope';
 import { writeSessionOrganizationAppearance } from '@/sync/ops/sessionOrganization/sessionOrganizationMutationOwner';
 import { useDetailsTabHeaderActionsCompact } from '@/components/appShell/panes/details/header/DetailsTabHeader';
-import { useLayoutPresentationSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useLayoutPresentationActive, useLayoutPresentationSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { Platform, View } from 'react-native';
 import { listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
 import { useUnistyles } from 'react-native-unistyles';
@@ -422,6 +422,7 @@ function SessionHeaderMenuDropdown(props: Omit<React.ComponentProps<typeof Dropd
 
 type SessionHeaderMenuRowsProps = SessionHeaderActionMenuProps & Readonly<{
   open: boolean;
+  commandsActive: boolean;
   palettePresented: boolean;
   paletteModalId: string | null | undefined;
   setOpen: (open: boolean) => void;
@@ -439,12 +440,14 @@ type SessionHeaderMenuRowsProps = SessionHeaderActionMenuProps & Readonly<{
 
 /**
  * Everything only the menu's rows read: Action availability, handoff, approvals, Machine and daemon
- * facts. Mounted when the menu first opens, then kept: an approval a row started outlives the menu.
+ * facts. The presented Session's command surface also demands these operations; an approval a row
+ * started outlives the menu, so the owner stays mounted after its first demand.
  */
 function SessionHeaderActionMenuRows(props: SessionHeaderMenuRowsProps) {
   const { open, setOpen, session, sessionServerId, companionAddress, followEditor, showCompanionInOverflow,
     companionHeaderIntent, applyCompanionHeaderIntent, invokePluginHeaderAction } = props;
   const detailPresented = open || props.palettePresented;
+  const actionsPresented = detailPresented || props.commandsActive;
   const automationsSupport = useAutomationsSupport();
   const openExecutionRunDraft = useOpenExecutionRunLauncherDraft();
   const commandBridge = useCurrentUiContextCommandBridge();
@@ -497,7 +500,7 @@ function SessionHeaderActionMenuRows(props: SessionHeaderMenuRowsProps) {
     sessionId: props.sessionId, serverId: sessionServerId ?? null,
     onNavigate: React.useCallback(() => safeRouterBack({ router, fallbackHref: '/' }), [router]),
   });
-  const writeClipboard = useClipboardWrite(sessionServerId ?? null, { enabled: detailPresented });
+  const writeClipboard = useClipboardWrite(sessionServerId ?? null, { enabled: actionsPresented });
   const followApproval = useActionApprovalContinuation({
     scopeKey: JSON.stringify([sessionServerId, props.sessionId, profileId]),
     serverId: sessionServerId ?? '', onExecuted: () => {},
@@ -548,7 +551,7 @@ function SessionHeaderActionMenuRows(props: SessionHeaderMenuRowsProps) {
   const isAttentionStandingSession = sessionAttentionStandingKey != null
     && resolveSessionAttentionStanding(attentionStanding.policy, sessionAttentionStandingKey);
   // Colour data is detail: read only while this menu is open (closed-popover rule).
-  const sessionAppearancesSupported = useSessionAppearancesSupported(sessionServerId, { enabled: detailPresented });
+  const sessionAppearancesSupported = useSessionAppearancesSupported(sessionServerId, { enabled: actionsPresented });
   const appearanceDataActive = detailPresented && sessionAppearancesSupported;
   const ownAppearanceColor = useSessionOwnAppearanceColor(sessionServerId, props.sessionId, { enabled: appearanceDataActive });
   const customAppearanceColors = useCustomSessionAppearanceColors(sessionServerId, { enabled: appearanceDataActive });
@@ -669,7 +672,7 @@ function SessionHeaderActionMenuRows(props: SessionHeaderMenuRowsProps) {
   const tasksFolded = React.useContext(SessionHeaderOptionalEntriesFoldedContext);
   const taskLinks = useSessionHeaderTaskLinks(tasksFolded ? props.taskSession ?? null : null);
   const actions = React.useMemo(() => {
-    if (!detailPresented) return NO_MENU_ROWS;
+    if (!actionsPresented) return NO_MENU_ROWS;
     const actionItems: DropdownMenuItem[] = listActionSpecs()
       // Placement first: only the few specs placed in this menu reach the enablement check.
       .filter((spec) => Array.isArray(spec.placements) && spec.placements.includes('session_action_menu' as any))
@@ -839,7 +842,7 @@ function SessionHeaderActionMenuRows(props: SessionHeaderMenuRowsProps) {
     push('session', { id: 'header.reportIssue', title: resolveSessionActionTitle(getSessionActionMetadata('header.reportIssue')!),
       icon: <Icon name="bug" size={16} color={iconColor} /> });
 
-    if (detailPresented) push('session', createSessionCopyMenuItem({
+    if (actionsPresented) push('session', createSessionCopyMenuItem({
       iconColor,
       information: buildSessionDebugInformationForSession(session),
     }));
@@ -863,7 +866,7 @@ function SessionHeaderActionMenuRows(props: SessionHeaderMenuRowsProps) {
     return composeSessionHeaderMenu(out);
   }, [
     open,
-    detailPresented,
+    actionsPresented,
     automationsSupport?.enabled,
     props.actionAccountLifetime,
     sessionAppearancesSupported,
@@ -1212,9 +1215,9 @@ function SessionHeaderActionMenuRows(props: SessionHeaderMenuRowsProps) {
   const latestSelect = React.useRef(select);
   latestSelect.current = select;
   const stableSelect = React.useCallback((actionId: string, selection?: DropdownMenuSelection) => latestSelect.current(actionId, selection), []);
-  const paletteCommands = React.useMemo(() => props.palettePresented ? buildSessionMenuCommands({
+  const paletteCommands = React.useMemo(() => buildSessionMenuCommands({
     items: actions, select: stableSelect,
-  }) : [], [actions, props.palettePresented, stableSelect]);
+  }), [actions, stableSelect]);
   useCurrentUiContextLocalCommands(paletteCommands, { contextKey: JSON.stringify(companionAddress), foregroundModalId: props.paletteModalId });
   const { publish } = props;
   // Only an open menu draws rows; a shut one keeps whatever it last showed and publishes nothing.
@@ -1226,11 +1229,15 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
   const [open, setOpen] = React.useState(false);
   const [palettePresented, setPalettePresented] = React.useState(false);
   const [paletteModalId, setPaletteModalId] = React.useState<string | null | undefined>(undefined);
-  // A shut menu is its trigger (DropdownMenu's rule): the rows, and the hooks that feed only them, mount
-  // when the menu first opens.
+  // Controls without a current-context command consumer still defer rows until the menu first opens.
   const [rowsMounted, setRowsMounted] = React.useState(false);
   const [rowsStore] = React.useState(createSessionHeaderMenuRowsStore);
-  const rowsDemanded = rowsMounted || palettePresented;
+  const currentUiContextReader = useOptionalCurrentUiContextReader();
+  // The mounted Session owns both menu rows and command availability. A command consumer
+  // must not need to open another surface before it can discover or invoke an operation.
+  const presentationActive = useLayoutPresentationActive();
+  const commandsActive = currentUiContextReader !== null && presentationActive;
+  const rowsDemanded = commandsActive || rowsMounted || palettePresented;
   const handleOpenChange = React.useCallback((next: boolean) => {
     if (next) setRowsMounted(true);
     setOpen(next);
@@ -1240,7 +1247,6 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
     if (presented) setRowsMounted(true);
     setPalettePresented(presented);
   }, []);
-  const currentUiContextReader = useOptionalCurrentUiContextReader();
   const session = React.useMemo(
     () => open || palettePresented ? readCurrentSessionForOpenMenu(props.sessionId, props.session) : props.session,
     [open, palettePresented, props.session, props.sessionId],
@@ -1392,6 +1398,7 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
         <SessionHeaderActionMenuRows
           {...props}
           open={open}
+          commandsActive={commandsActive}
           palettePresented={palettePresented}
           paletteModalId={paletteModalId}
           setOpen={setOpen}

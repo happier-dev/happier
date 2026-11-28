@@ -4,7 +4,6 @@ import type { Command } from './types';
 import type { KeyboardCommandId } from '@/keyboard/types';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
-import { alertActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 type CommandPaletteAction = NonNullable<ActionExecutorDeps['uiCommandPaletteAction']>;
@@ -12,17 +11,15 @@ type CommandPaletteActionRequest = Parameters<CommandPaletteAction>[0];
 
 let mountedCatalog: Readonly<{
     read: () => readonly Command[];
-    prepareSessionCommands?: () => (() => void) | Promise<() => void>;
     prepareSettingsCommands?: () => Promise<unknown> | undefined;
 }> | null = null;
 
 /** Binds the existing command builder for this shell's mounted lifetime. */
 export function registerCommandPaletteActionCatalog(
     buildCommands: () => readonly Command[],
-    prepareSessionCommands?: () => (() => void) | Promise<() => void>,
     prepareSettingsCommands?: () => Promise<unknown> | undefined,
 ): () => void {
-    const catalog = { read: buildCommands, prepareSessionCommands, prepareSettingsCommands };
+    const catalog = { read: buildCommands, prepareSettingsCommands };
     mountedCatalog = catalog;
     return () => {
         if (mountedCatalog === catalog) mountedCatalog = null;
@@ -42,27 +39,6 @@ export function executeCommandPaletteKeyboardCommand(commandId: KeyboardCommandI
                 || entry.id === `plugin-action:${actionSpecId}`) : undefined);
     };
     const command = find();
-    if (!command && commandId.startsWith('session.action:') && catalog?.prepareSessionCommands) {
-        const prepared = catalog.prepareSessionCommands();
-        const invokePrepared = async (release: () => void) => {
-            try {
-                if (mountedCatalog !== catalog) return;
-                const current = find();
-                if (!current) {
-                    alertActionExecutionFailure({ ok: false, errorCode: 'unsupported_action', error: 'command_palette_entry_unavailable' });
-                    return;
-                }
-                await current.action();
-            } finally { release(); }
-        };
-        if (typeof prepared === 'function') {
-            if (!find()) { prepared(); return 'pass'; }
-            fireAndForget(invokePrepared(prepared), { tag: 'CommandPalette.keyboard.session' });
-        } else {
-            fireAndForget(prepared.then(invokePrepared), { tag: 'CommandPalette.keyboard.session' });
-        }
-        return 'handled';
-    }
     if (!command) return 'pass';
     fireAndForget(Promise.resolve().then(() => command.action()), { tag: 'CommandPalette.keyboard' });
     return 'handled';

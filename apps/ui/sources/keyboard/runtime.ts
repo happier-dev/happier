@@ -93,15 +93,19 @@ function getCommandBindings(
             ?? command?.defaultBinding?.allowInEditable;
         const defaultNativeConsumable = command?.nativeConsumable ?? command?.defaultBindings?.find((rule) => rule.nativeConsumable != null)?.nativeConsumable
             ?? command?.defaultBinding?.nativeConsumable;
-        return override.map((rule) => ({
-            ...rule,
-            ...(rule.allowInEditable == null && defaultAllowInEditable != null
-                ? { allowInEditable: defaultAllowInEditable }
-                : {}),
-            ...(rule.nativeConsumable == null && defaultNativeConsumable != null
-                ? { nativeConsumable: defaultNativeConsumable }
-                : {}),
-        }));
+        return override.map((rule) => {
+            // Commands without defaults (including derived Actions) may opt into typing-safe
+            // Mod chords. An Alt-only override still belongs to text input unless explicitly allowed.
+            const allowInEditable = defaultAllowInEditable
+                ?? (parseKeybindingRule(rule).mod === true ? command?.allowInEditable : undefined);
+            return {
+                ...rule,
+                ...(rule.allowInEditable == null && allowInEditable != null ? { allowInEditable } : {}),
+                ...(rule.nativeConsumable == null && defaultNativeConsumable != null
+                    ? { nativeConsumable: defaultNativeConsumable }
+                    : {}),
+            };
+        });
     }
     const defaults = command?.defaultBindings?.length ? command.defaultBindings
         : command?.defaultBinding ? [command.defaultBinding] : [];

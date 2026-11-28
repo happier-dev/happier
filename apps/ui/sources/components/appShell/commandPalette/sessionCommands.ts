@@ -53,13 +53,13 @@ export function buildSessionCommands(params: SessionCommandParams): Command[] {
 export type SessionCommandDemand = (() => void) & Readonly<{ setModalId(modalId: string | null | undefined): void }>;
 
 /** Returns the same mounted source's withdrawal, including after its descriptors leave the snapshot. */
-export function setSessionCommandPalettePresented(params: SessionCommandParams & Readonly<{ presented: boolean; modalId?: string | null }>): SessionCommandDemand | Promise<SessionCommandDemand> {
+export function setSessionCommandPalettePresented(params: SessionCommandParams & Readonly<{ presented: boolean; modalId?: string | null }>): SessionCommandDemand {
     const reader = params.reader;
     const sources = reader?.readCurrentUiContext()?.commands.flatMap(descriptor => {
         const resolved = reader.resolveCurrentUiCommand(descriptor.id);
         const command = resolved?.command;
         return command?.kind === 'hostLocal' && command.key?.startsWith('session.') && command.setCommandPalettePresented
-            ? [{ command, setPresented: command.setCommandPalettePresented, retirementSignal: resolved!.retirementSignal }] : [];
+            ? [{ setPresented: command.setCommandPalettePresented }] : [];
     }) ?? [];
     if (!reader || sources.length === 0) return Object.assign(() => {}, { setModalId: () => {} });
     const release = Object.assign(() => { for (const source of sources) source.setPresented(false); }, {
@@ -67,18 +67,5 @@ export function setSessionCommandPalettePresented(params: SessionCommandParams &
     });
     if (!params.presented) { release(); return release; }
     for (const source of sources) source.setPresented(true, params.modalId);
-    return new Promise<void>(resolve => {
-        const finish = () => {
-            unsubscribe();
-            for (const source of sources) source.retirementSignal.removeEventListener('abort', check);
-            resolve();
-        };
-        const check = () => {
-            if (sources.every(source => source.retirementSignal.aborted || source.command.isMounted?.() === false)
-                || buildSessionCommands(params).length > 0) finish();
-        };
-        const unsubscribe = reader.subscribe(check);
-        for (const source of sources) source.retirementSignal.addEventListener('abort', check, { once: true });
-        check();
-    }).then(() => release);
+    return release;
 }

@@ -44,12 +44,12 @@ import { UNSUPPORTED_AGENT_SESSION_CAPABILITIES } from '@happier-dev/agents';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { MainAppTabStateProvider } from '@/components/navigation/mobile/chrome/MainAppTabStateProvider';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
-import { CurrentUiContextProvider, useOptionalCurrentUiContextReader, usePublishCurrentUiContext, type CurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
-import { CurrentUiContextCommandsProvider, useCurrentUiContextComposedCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { CurrentUiContextProvider, useOptionalCurrentUiContextReader, type CurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { CurrentUiContextActionHost } from '@/components/appShell/currentUiContext/currentUiContextVoiceToolPort';
-import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
+import { CommandPaletteProvider } from '@/components/appShell/commandPalette/CommandPaletteProvider';
+import { useUniversalSearchRuntime, type UniversalSearchRuntime } from '@/components/appShell/search/UniversalSearchRuntimeContext';
 
 vi.hoisted(async () => {
     const { mkdirSync, realpathSync } = await import('node:fs');
@@ -69,7 +69,9 @@ let organizationEditorsEnabled = false;
 // projection, Home/store readers, ask-first policy and scoped RPC remain real.
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
-vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
+    segments: ['(app)', 'session', '[id]'], pathname: '/session/sess_1', params: { id: 'sess_1' },
+}).module);
 vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({
     spies: { show: modalShow, alert: modalAlert, prompt: modalPrompt },
@@ -292,15 +294,15 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
         expect(resetItem()).toBeUndefined();
     });
 
-    it('publishes the current Session menu on palette demand and runs rename through its existing prompt', async () => {
+    it('publishes the unopened Session menu through the real palette provider and runs its bound rename', async () => {
         organizationEditorsEnabled = true;
         const { TokenStorage } = await import('@/auth/storage/tokenStorage');
         const credentials = (await TokenStorage.getCredentialsForServerUrl(homes.homes.projection!.serverUrl))!;
         let reader: CurrentUiContextReader | null = null;
+        let runtime: UniversalSearchRuntime | null = null;
         function Publication() {
             reader = useOptionalCurrentUiContextReader();
-            const commands = useCurrentUiContextComposedCommands();
-            usePublishCurrentUiContext(React.useMemo(() => ({ commands }), [commands]));
+            runtime = useUniversalSearchRuntime();
             return null;
         }
         const session = storage.getState().sessions.sess_1!;
@@ -317,9 +319,9 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
         const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}>
             <MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider>
                 <PluginSurfaceFocusEligibilityProvider active currentUiContextActive>
-                <CurrentUiContextCommandsProvider authority={captureActiveServerAccountScopeLifetime()}>
-                    <CurrentUiContextActionHost /><Publication /><SessionHeaderActionMenu sessionId={session.id} session={session} />
-                </CurrentUiContextCommandsProvider>
+                    <CommandPaletteProvider><CurrentUiContextActionHost /><Publication />
+                        <SessionHeaderActionMenu sessionId={session.id} session={session} />
+                    </CommandPaletteProvider>
                 </PluginSurfaceFocusEligibilityProvider>
             </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
         </InjectedAuthProvider>);
@@ -329,15 +331,10 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
             return command?.kind === 'hostLocal' && 'key' in command && command.key === 'session.menu.open';
         });
         expect(source).toBeDefined();
-        const { buildSessionCommands, setSessionCommandPalettePresented } = await import('@/components/appShell/commandPalette/sessionCommands');
-        const executor = createDefaultActionExecutor();
-        const execute: Parameters<typeof buildSessionCommands>[0]['execute'] = (actionId, input) => executor.execute(actionId, input, { surface: 'ui' });
-        expect(buildSessionCommands({ reader: current, execute })).toEqual([]);
-        let demand: ReturnType<typeof setSessionCommandPalettePresented> | undefined;
-        await act(async () => { demand = setSessionCommandPalettePresented({ reader: current, execute, presented: true }); });
-        await flushHookEffects();
-        await demand;
-        const commands = buildSessionCommands({ reader: current, execute });
+        const { executeCommandPaletteKeyboardCommand } = await import('@/components/appShell/commandPalette/commandPaletteActionRuntime');
+        const invocationScope = { ...captureActiveServerAccountScopeLifetime()!.scope, serverId, sessionId: session.id,
+            machineId: null, rootPath: null };
+        const commands = runtime!.buildCommands(session.id, invocationScope);
         expect(commands).toEqual(expect.arrayContaining([
             expect.objectContaining({ id: `session.action:${SESSION_ACTION_RENAME_ID}` }),
             expect.objectContaining({ id: 'session.action:header.reportIssue' }),
@@ -345,8 +342,23 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
             expect.objectContaining({ id: 'session.action:ui.session.tags.edit' }),
             expect.objectContaining({ id: 'session.action:ui.session.move-to-folder' }),
         ]));
+        const { buildCommandPaletteSelectionListSections } = await import('@/components/appShell/commandPalette/buildCommandPaletteSelectionListSections');
+        const sections = buildCommandPaletteSelectionListSections(commands);
+        expect(sections[0]?.kind === 'static' ? sections[0].options[0]?.id : null).toContain('session.action:');
+        const cursor = await import('@/components/sessions/transcript/messageCursor/transcriptMessageCursorStore');
+        cursor.setTranscriptMessageCursor({ sessionAddress: { serverId, sessionId: session.id }, messageId: 'focused', routeMessageId: 'focused' });
+        const releaseCursor = cursor.registerTranscriptMessageCursorActions('focused', { list: () => [{
+            id: 'copy', commandId: cursor.TRANSCRIPT_MESSAGE_CURSOR_ACTION_COMMANDS.copy, title: 'Copy', run: () => {},
+        }] });
+        try {
+            const focusedSections = buildCommandPaletteSelectionListSections(runtime!.buildCommands());
+            expect(focusedSections[0]?.kind === 'static' ? focusedSections[0].options[0]?.id : null)
+                .toContain(cursor.TRANSCRIPT_MESSAGE_CURSOR_ACTION_COMMANDS.copy);
+        } finally { releaseCursor(); cursor.clearTranscriptMessageCursor(); }
         expect(screen.findByType(DropdownMenu).props.open).toBe(false);
-        await act(async () => { await commands.find(command => command.id === `session.action:${SESSION_ACTION_RENAME_ID}`)!.action(); });
+        await act(async () => {
+            expect(executeCommandPaletteKeyboardCommand(`session.action:${SESSION_ACTION_RENAME_ID}`)).toBe('handled');
+        });
         expect(modalPrompt).toHaveBeenCalledWith(expect.any(String), undefined, expect.objectContaining({ defaultValue: expect.any(String) }));
         await act(async () => { await commands.find(command => command.id === 'session.action:ui.session.tags.edit')!.action(); });
         const tagsModal = modalShow.mock.calls.at(-1)![0] as { component: React.ComponentType<Record<string, unknown>>; props: Record<string, unknown> };
@@ -366,9 +378,6 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
         await flushHookEffects();
         expect(retiredEditor.findAllByType(SelectionList).length).toBe(0);
         await retiredEditor.unmount();
-        await act(async () => { await setSessionCommandPalettePresented({ reader: current, execute, presented: false }); });
-        await flushHookEffects();
-        expect(buildSessionCommands({ reader: current, execute })).toEqual([]);
         await screen.unmount();
     });
 

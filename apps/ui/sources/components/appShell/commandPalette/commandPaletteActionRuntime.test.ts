@@ -16,21 +16,6 @@ describe('mounted command palette Actions', () => {
         } finally { release(); }
     });
 
-    it('prepares an unopened Session menu before running its bound operation and withdraws demand afterwards', async () => {
-        let demanded = false;
-        let invoked = false;
-        const release = registerCommandPaletteActionCatalog(() => demanded ? [{
-            id: 'session.action:ui.session.rename', title: 'Rename', action: () => { invoked = true; },
-        }] : [], async () => {
-            demanded = true;
-            return () => { demanded = false; };
-        });
-        try {
-            expect(executeCommandPaletteKeyboardCommand('session.action:ui.session.rename')).toBe('handled');
-            await vi.waitFor(() => expect(invoked).toBe(true));
-            expect(demanded).toBe(false);
-        } finally { release(); }
-    });
     it('runs the current palette callback for bound Actions including bespoke variants and releases unavailable commands', async () => {
         let invoked = '';
         let commands: readonly Command[] = [{ id: 'voice-mode:0', actionSpecId: 'ui.voice_global.reset', title: 'Reset', action: () => { invoked = 'voice'; } },
