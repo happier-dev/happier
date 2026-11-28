@@ -183,6 +183,35 @@ describe('Connected configuration Account transport', () => {
         expect(disclosed).toBe(false);
     });
 
+    it.each([0, 2])('initializes purposes from version %i of the current Settings document', async version => {
+        const accountId = `purpose-initialization-${version}`;
+        const serverId = await home.addHome({ name: 'Purpose initialization', serverUrl: `https://${accountId}.test`,
+            accountId, currentAccount: true, accountEncryptionMode: 'plain', active: false });
+        const scope = { serverId, accountId };
+        const { retainAccountSettingsRawSnapshot } = await import('@/sync/engine/settings/accountSettingsRawSnapshot');
+        retainAccountSettingsRawSnapshot(scope, 0, null);
+        home.answer(serverId, 'GET /v1/account/encryption/currentness', {
+            body: createPlainAccountEncryptionCurrentnessFixture({ settingsVersion: version }),
+        });
+        home.answer(serverId, 'GET /v2/account/settings', { body: { content: null, version } });
+        home.answer(serverId, 'GET /v2/account/settings/history', { body: { snapshots: [] } });
+        const path = '/v1/account/entity-rows/connected-accounts/purposes';
+        let row = ConnectedAccountCatalogRowReadResponseV1Schema.parse({ status: 'absent' });
+        home.answer(serverId, `GET ${path}`, { select: () => ({ body: row }) });
+        home.answer(serverId, `POST ${path}`, { select: input => {
+            const mutation = ConnectedAccountCatalogRowMutationV1Schema.parse(input);
+            expect(mutation.expectedRevision).toBe('absent');
+            expect(mutation.sourceSettingsVersion).toBe(version);
+            row = ConnectedAccountCatalogRowReadResponseV1Schema.parse({ status: 'present', revision: 1, content: mutation.content });
+            return { body: { status: 'updated', revision: 1, cursor: 1 } };
+        } });
+
+        await expect(readConnectedAccountCatalog(scope, 'purposes', undefined, undefined, {}))
+            .resolves.toMatchObject({ status: 'ready', revision: 1 });
+        expect(home.requests.filter(request => request.method === 'GET' && request.path === '/v2/account/settings'))
+            .toHaveLength(version === 0 ? 0 : 1);
+    });
+
     it.each(['current-settings', 'history-only'] as const)('publishes an existing purpose catalog and transfers obsolete Agent maps from %s', async source => {
         const accountId = 'purpose-cutover-owner';
         let raw: Record<string, unknown> = {

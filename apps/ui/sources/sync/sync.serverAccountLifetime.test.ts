@@ -88,7 +88,7 @@ function runPath(automationId = eventRunDetail.automationId) {
     return `/v3/automations/${automationId}/runs`;
 }
 
-async function restoreAccount(accountId: string) {
+async function restoreAccount(accountId: string, options?: { warmAutomationCatalog?: boolean }) {
     connection = await restoreServerAccountForTest({
         serverUrl: 'https://sync-lifetime.example.test', accountId,
         additionalRequestOrigins: [otherHomeUrl],
@@ -121,7 +121,7 @@ async function restoreAccount(accountId: string) {
     });
     expect(captureActiveServerAccountScopeLifetime()?.isCurrent()).toBe(true);
     await vi.waitFor(() => expect(storage.getState().isDataReady).toBe(true));
-    await sync.refreshAutomations();
+    if (options?.warmAutomationCatalog !== false) await sync.refreshAutomations();
 }
 async function changeAccount() {
     await connection!.dispose();
@@ -312,6 +312,44 @@ function createCancellationResponse(ownerAccountId: string, revision = runSummar
 }
 
 describe('Sync Server/Account lifetime reset boundary', () => {
+    it('uses the settled empty Automation catalog to answer Home Latest Runs', async () => {
+        await connection!.dispose();
+        await restoreAccount('fresh-home', { warmAutomationCatalog: false });
+        requests.length = 0;
+        const lifetime = captureActiveServerAccountScopeLifetime()!;
+        const latestPath = '/v3/automations/runs';
+        const catalog = hold('/v3/automations');
+        const refresh = sync.refreshAutomations();
+        await catalog.started;
+        const latest = sync.readLatestAutomationRuns(lifetime, 4);
+        catalog.release({ automations: [], nextCursor: null });
+        await refresh;
+        await expect(latest).resolves.toEqual([]);
+        expect(requests.filter(request => request.path === '/v3/automations')).toHaveLength(1);
+        expect(requests.filter(request => request.path === latestPath)).toHaveLength(0);
+
+        answer('/v3/automations', { automations: [automationSummary()], nextCursor: null });
+        await sync.refreshAutomations();
+        answer(latestPath, { runs: [runSummary], nextCursor: null });
+        await expect(sync.readLatestAutomationRuns(lifetime, 4)).resolves.toEqual([runSummary]);
+        expect(requests.filter(request => request.path === latestPath)).toHaveLength(1);
+    });
+
+    it('reads Home Latest Runs after the first catalog attempt fails', async () => {
+        await connection!.dispose();
+        await restoreAccount('fresh-home', { warmAutomationCatalog: false });
+        let attempts = 0;
+        replies.set('GET /v3/automations', () => {
+            attempts += 1;
+            return Response.json({}, { status: 403 });
+        });
+        answer('/v3/automations/runs', { runs: [runSummary], nextCursor: null });
+        const lifetime = captureActiveServerAccountScopeLifetime()!;
+
+        await expect(sync.readLatestAutomationRuns(lifetime, 4)).resolves.toEqual([runSummary]);
+        expect(attempts).toBe(1);
+    });
+
     it('reopens the Home Latest Runs window freshly and releases its demand while hidden or unmounted', async () => {
         const { AutomationsLatestRunsSection } = await import('@/components/automations/home/AutomationsLatestRunsSection');
         const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');

@@ -9331,6 +9331,26 @@ class Sync {
     }
 
     public async readLatestAutomationRuns(lifetime: ServerAccountScopeLifetime, limit: number, signal?: AbortSignal): Promise<readonly AutomationDefinitionRun[]> {
+        // The unfiltered history only includes Runs for listed Automations.
+        // The Account's complete empty catalog answers this window too.
+        const credentials = this.credentials;
+        if (credentials && lifetime === captureActiveServerAccountScopeLifetime()
+            && Object.keys(storage.getState().automations).length === 0) {
+            if (this.automationsReadForCredentials !== credentials) {
+                try {
+                    await this.automationsSync.invalidateAndAwait({ coalesce: true, settleOnFirstAttempt: true, signal });
+                } catch (error) {
+                    signal?.throwIfAborted();
+                    if (!lifetime.isCurrent()) throw error;
+                    console.warn('Automation catalog unavailable for Latest Runs', error instanceof Error ? error.name : 'unknown');
+                }
+            }
+            signal?.throwIfAborted();
+            const state = storage.getState();
+            if (lifetime.isCurrent() && this.credentials === credentials && this.automationsReadForCredentials === credentials
+                && !this.automationsSync.hasPendingWork() && state.automationDefinitionNextCursor === null
+                && Object.keys(state.automations).length === 0) return [];
+        }
         const [{ captureLazyActionAccountContext }, { listAutomationDefinitionRuns }] = await Promise.all([
             import('@/sync/ops/actions/actionAccountContext'),
             import('@/sync/api/automations/apiAutomationRuns'),
@@ -10354,6 +10374,7 @@ class Sync {
         const historyLifetime = captureActiveServerAccountScopeLifetime();
         const backfillLifetime = historyLifetime && this.managedTargetBackfillLifetime !== historyLifetime ? historyLifetime : null;
         if (backfillLifetime) this.managedTargetBackfillLifetime = backfillLifetime;
+        let catalogApplied = false;
         try {
             const result = await fetchAndApplyAutomations({
                 credentials,
@@ -10370,8 +10391,11 @@ class Sync {
                         logError: false,
                     });
                 } : undefined,
-                applyAutomations: (automations, nextCursor) =>
-                    storage.getState().applyAutomations(automations, nextCursor),
+                applyAutomations: (automations, nextCursor) => {
+                    const traversalToken = storage.getState().applyAutomations(automations, nextCursor);
+                    catalogApplied = true;
+                    return traversalToken;
+                },
                 appendAutomations: (cursor, traversalToken, automations, nextCursor) =>
                     storage.getState().appendAutomations(cursor, traversalToken, automations, nextCursor),
                 getDemandedAutomationRunIds: () => refreshRuns
@@ -10380,7 +10404,7 @@ class Sync {
                     storage.getState().refreshAutomationRunsWindow(automationId, runs, nextCursor),
             });
             this.automationDefinitionTraversalToken = result.traversalToken;
-            if (shouldContinue()) this.automationsReadForCredentials = credentials;
+            if (shouldContinue()) this.automationsReadForCredentials = catalogApplied ? credentials : null;
         } catch (error) {
             if (refreshRuns && shouldContinue()) this.automationRunRefreshPending = true;
             throw error;

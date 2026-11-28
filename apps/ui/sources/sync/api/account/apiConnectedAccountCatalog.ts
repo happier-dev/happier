@@ -112,22 +112,18 @@ async function readConnectedAccountCatalogWithAdmissionInContext(context: Connec
                             const source = await readAccountSettingsBaseline({ credentials: context.credentials, encryption, accountMode: mode,
                                 request: (path, init) => context.request(path, init, { retry: 'none' }) });
                             context.assertCurrent();
-                            return source;
+                            return { raw: source.raw ?? {}, version: source.version };
                         };
-                        if (key === 'purposes' && purpose === 'cleanup') {
-                            return readCurrentAccountSettingsRawSnapshot({ serverId: context.serverId, accountId: context.accountId }, {
-                                credentials: context.credentials, request: context.request, signal,
-                                readBaseline: async () => {
-                                    const source = await readSource();
-                                    return { raw: source.raw ?? {}, version: source.version };
-                                },
-                            });
-                        }
-                        let source = await readSource();
+                        let source = key === 'purposes'
+                            ? await readCurrentAccountSettingsRawSnapshot({ serverId: context.serverId, accountId: context.accountId }, {
+                                credentials: context.credentials, request: context.request, signal, readBaseline: readSource,
+                            })
+                            : await readSource();
+                        context.assertCurrent();
                         emptySourceInitialization = key === 'configurations' && purpose === 'initialization'
-                            && !Object.hasOwn(source.raw ?? {}, CONNECTED_ACCOUNT_CATALOG_RETAINED_ROOTS_V1.configurations);
+                            && !Object.hasOwn(source.raw, CONNECTED_ACCOUNT_CATALOG_RETAINED_ROOTS_V1.configurations);
                         const retained = purpose === 'initialization' && key === 'configurations'
-                            ? readRetainedConnectedAccountCatalogRecordV1(source.raw ?? {}, key) : null;
+                            ? readRetainedConnectedAccountCatalogRecordV1(source.raw, key) : null;
                         // Only a complete genuine source with personal references needs
                         // promotion. Partial source admission remains the catalog owner's.
                         if (retained?.status === 'ready' && retained.record.key === 'configurations'
@@ -160,9 +156,9 @@ async function readConnectedAccountCatalogWithAdmissionInContext(context: Connec
                                 mergedProviderProjectionById: projection.inputs.mergedProviderProjectionById,
                                 mergedBackendProjectionById: projection.inputs.mergedBackendProjectionById,
                             }) : null;
-                            return { raw: source.raw ?? {}, version: source.version, purposeDefaultAgents };
+                            return { ...source, purposeDefaultAgents };
                         }
-                        return { raw: source.raw ?? {}, version: source.version };
+                        return source;
                     },
                     initializeRecord: input => writeConnectedAccountCatalogRecordInContext(context, input, signal),
                     replaceSource: input => context.mutateRawSettings(() => ({ ...input.raw }), {
