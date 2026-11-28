@@ -161,7 +161,10 @@ export function shareActionDtoStructures(declarations, { sharedPath, declaration
       shared.set(nested.name, nested);
       return nested.name;
     });
-    aliases.set(name, `export type ${name} = ${body};`);
+    // A concrete tuple lookup keeps the shared body anonymous during inference.
+    // Downstream declaration emit can print it through public SDK imports
+    // without needing to name this private shard's alias.
+    aliases.set(name, `export type ${name} = [${body}][0];`);
   }
   output.set(sharedPath, [renderImports(sharedPath, references), ...[...aliases].sort(([a], [b]) => a.localeCompare(b))
     .map(([, alias]) => alias)].join('\n'));

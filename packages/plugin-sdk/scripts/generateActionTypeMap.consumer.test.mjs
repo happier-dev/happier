@@ -62,9 +62,11 @@ test('Action DTO declaration consumers retain literal keys and result fields wit
     export type PluginActionResultById = InventoryActionResultById;
     export type PluginInvocableActionId = keyof PluginActionInputById;
   `);
+  const details = `{ readonly kind: 'exact'; readonly source: string }
+    | { readonly kind: 'estimate'; readonly confidence: number }`;
   put('packages/protocol/src/actions/inventoryActionDtos.ts', `
-    export type InventoryActionInputById = { readonly 'inventory.list': { query?: string } };
-    export type InventoryActionResultById = { readonly 'inventory.list': { count: number } };
+    export type InventoryActionInputById = { readonly 'inventory.list': { query?: string; details?: ${details} } };
+    export type InventoryActionResultById = { readonly 'inventory.list': { count: number; details: ${details} } };
   `);
   assert.equal(typeof generator.projectActionDtoDeclarations, 'function',
     'the declaration consumer must receive the named Protocol DTO closure');
@@ -103,6 +105,24 @@ test('Action DTO declaration consumers retain literal keys and result fields wit
   `);
   const consumer = compile(['--noEmit', 'consumer.ts']);
   assert.equal(consumer.status, 0, consumer.stdout + consumer.stderr);
+  // An external package must be able to infer a declaration from a shared DTO
+  // member through the public entry point, where the shape shard is private.
+  put('declarations/package.json', JSON.stringify({
+    name: 'fixture-sdk', exports: { './actions': './actionTypeMap.generated.d.ts' },
+  }));
+  mkdirSync(resolve(root, 'node_modules'), { recursive: true });
+  symlinkSync(resolve(root, 'declarations'), resolve(root, 'node_modules/fixture-sdk'), 'junction');
+  put('external.ts', `
+    import type { PluginActionResultById } from 'fixture-sdk/actions';
+    declare const result: PluginActionResultById['inventory.list'];
+    export const details = result.details;
+  `);
+  const external = compile(['--declaration', '--emitDeclarationOnly', 'external.ts']);
+  assert.equal(external.status, 0, external.stdout + external.stderr);
+  const externalDeclaration = readFileSync(resolve(root, 'external.d.ts'), 'utf8');
+  assert.doesNotMatch(externalDeclaration, /node_modules|pluginActionDtoShapes/u);
+  assert.match(externalDeclaration, /confidence: number/u);
+
   // A changed canonical result must fail against the stale emitted declaration,
   // then reach the real consumer after explicit projection. Unknown/any or a
   // string-indexed map would conceal this RED.
@@ -158,7 +178,9 @@ test('syntax projection retains concrete family rows beyond the retired compiler
   const result = file.statements.find(node => ts.isTypeAliasDeclaration(node) && node.name.text === 'Results');
   const shared = projection.outputs.get('packages/plugin-sdk/src/actions/dtos/pluginActionDtoShapes.generated.ts');
   const sharedFile = ts.createSourceFile('shared.ts', shared, ts.ScriptTarget.ES2022, true);
-  const shapes = new Map(sharedFile.statements.filter(ts.isTypeAliasDeclaration).map(node => [node.name.text, node.type]));
+  const shapes = new Map(sharedFile.statements.filter(ts.isTypeAliasDeclaration).map(node => [
+    node.name.text, node.type.objectType.elements[0],
+  ]));
   assert.deepEqual(result.type.members.map(node => node.name.text), keys);
   for (const member of result.type.members) {
     const row = ts.isTypeReferenceNode(member.type) ? shapes.get(member.type.typeName.text) : member.type;
