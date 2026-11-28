@@ -84,7 +84,7 @@ import { createExternalSessionTerminalFollowProjector } from '@/session/external
 import { shareSessionCommittedTranscriptLocalIds } from '@/api/session/client/transcript/committedTranscriptLocalIdBaseline';
 import { projectRuntimeTranscriptEvent } from '@/agent/runtime/session/transcripts/projectRuntimeTranscriptEvent';
 import { logger } from '@/ui/logger';
-import { createRunnerAgentProjectLaunchInvocation } from '@/daemon/agentRuntime/runnerAgentProjectLaunch';
+import type { createRunnerAgentProjectLaunchInvocation } from '@/daemon/agentRuntime/runnerAgentProjectLaunch';
 import { withExecutionRunHostRuntimeCleanup } from '@/agent/runtime/bridges/executionRun/hostRuntime/cleanup';
 import { issueAgentNativeLaunchQualifierForHost } from '@/plugins/runtime/invocation/services/exec';
 import { readAgentRuntimeMaxInputUnicodeCharacters } from '@/capabilities/probes/agentRuntimeInputCapacity';
@@ -574,6 +574,7 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
                                 const workflowInput = options.workflowActionContext
                                     ? { ...operationInput, workflowActionContext: options.workflowActionContext } : operationInput;
                                 if (!captured) return await baseCreateRunInvocationServices(workflowInput);
+                                const { createRunnerAgentProjectLaunchInvocation } = await import('@/daemon/agentRuntime/runnerAgentProjectLaunch');
                                 const nativeOperation = await captured.prepareNativeOperation?.(input.cwd, input.signal, input.correlationId);
                                 const invocation = createRunnerAgentProjectLaunchInvocation({ ...captured, cwd: input.cwd, signal: input.signal,
                                     ...(projectSetupOperation ? { operation: projectSetupOperation } : {}),
