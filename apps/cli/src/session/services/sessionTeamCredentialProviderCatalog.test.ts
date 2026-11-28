@@ -304,7 +304,9 @@ describe('Session Team runtime catalog', () => {
         .rejects.toMatchObject({ code: 'provider_incompatible_with_agent' });
       expect(seen).toHaveLength(2);
       current = null;
-      await expect(read(selectedApplication)).resolves.toEqual([]);
+      await expect(read(selectedApplication)).rejects.toMatchObject({
+        code: 'session_team_credential_binding_rejected', reason: 'access_removed',
+      });
       expect(seen).toHaveLength(3);
     } finally { await worker.cleanup(); }
   });

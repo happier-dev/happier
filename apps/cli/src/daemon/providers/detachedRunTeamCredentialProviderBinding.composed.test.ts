@@ -27,8 +27,12 @@ it.each([
   { surface: 'detached Run', requester: 'guest', audience: 'guest', admitted: true },
   { surface: 'detached Run', requester: 'custodian', audience: 'custodian', admitted: true },
   { surface: 'detached Run', requester: 'guest', audience: 'custodian', admitted: false },
+  { surface: 'detached Run', requester: 'guest', audience: 'custodian', admitted: false, teamHidden: true },
+  { surface: 'detached Run', requester: 'guest', audience: 'guest', admitted: false, noModels: true },
   { surface: 'Session', requester: 'guest', audience: 'guest', admitted: true },
-])('opens a $surface as $requester against the $audience-only Team offer', async ({ surface, requester, audience, admitted }) => {
+])('opens a $surface as $requester against the $audience-only Team offer ($admitted/$teamHidden/$noModels)', async ({
+  surface, requester, audience, admitted, teamHidden, noModels,
+}) => {
   const controller = createPluginReloadController();
   const fixture = await createManagedRunLaunchFixture({ controller });
   const home = vi.spyOn(axios, 'request');
@@ -67,9 +71,16 @@ it.each([
     home.mockImplementation(async config => {
       expect(config.url).toBe(`${serverHttpBaseUrl}/v1/teams/credential-resources/entitled/list`);
       expect(config.data).toMatchObject({ resourceId: selection.resourceId, executionMachineId: machineId });
-      return config.headers?.Authorization === recipientBearer
-        ? { status: 200, data: offered }
-        : { status: 404, data: { error: 'not_found_or_not_visible' } };
+      if (config.headers?.Authorization === recipientBearer) {
+        const data = noModels ? TeamCredentialResourceEntitledPageV1Schema.parse({ resources: [{ ...offered.resources[0],
+          sourcePresentation: { kind: 'connected_service', service: { pluginId: 'acme.managed-run', localId: 'accounts' } },
+          providerModels: [],
+        }] }) : offered;
+        return { status: 200, data };
+      }
+      return teamHidden
+        ? { status: 404, data: { error: 'not_found_or_not_visible' } }
+        : { status: 200, data: { resources: [], nextCursor: null } };
     });
     const payload = TeamCredentialDirectMaterialPayloadV1Schema.parse({
       v: 1, domain: 'happier.team-credential-direct-material', homeServerIdentityId: 'home',
@@ -128,9 +139,9 @@ it.each([
         { readOperationContext: () => operation ?? null }),
     });
     if (!admitted) {
-      await expect(result.then(async launch => { await launch.cleanupOnExit?.(); })).rejects.toMatchObject({
-        code: 'session_team_credential_binding_rejected', reason: 'access_removed',
-      });
+      await expect(result.then(async launch => { await launch.cleanupOnExit?.(); })).rejects.toMatchObject(noModels
+        ? { code: 'team_credential_provider_selection_not_current' }
+        : { code: 'session_team_credential_binding_rejected', reason: 'access_removed' });
       expect(material).not.toHaveBeenCalled();
       expect(encryption).not.toHaveBeenCalled();
       return;

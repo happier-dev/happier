@@ -139,5 +139,11 @@ export async function readSessionTeamCredentialResourceCatalog(input: Readonly<{
       resourcesById.set(resource.id, resource);
     }
   }
+  // A Team can be visible while the exact Provider offer has no recipient row.
+  // Check the Home's rows before model filtering so a visible, incompatible
+  // offer keeps its model-selection failure.
+  if (input.resourceId && input.teamIds?.length === 1 && input.applications.length > 0 && !resourcesById.has(input.resourceId)) {
+    throw new SessionTeamCredentialBindingRejectedError('access_removed');
+  }
   return [...mergeTeamCredentialCatalogResourcesV1(pages, null, { requireProviderModels: input.applications.length > 0 }).values()];
 }
