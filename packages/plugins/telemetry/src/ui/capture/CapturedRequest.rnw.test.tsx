@@ -7,11 +7,11 @@ import {
   type PluginUiTestkit,
 } from '@happier-dev/plugin-sdk/testing';
 import { defineUiSurface } from '@happier-dev/plugin-ui';
+import { CapturedLogLines } from '@happier-dev/plugin-ui/components';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
-  CapturedLogLines,
   CapturedRequestSlowest,
   CapturedRequestWaterfall,
   type CapturedTraceV1,

@@ -7,6 +7,8 @@
  * the top level and counted once. Nothing is invented for a missing span.
  */
 
+import { requestLabelOf } from '@happier-dev/plugin-ui/components';
+
 import type {
   DatabaseCaptureRepeatedQueryV1,
   DatabaseCaptureSummaryV1,
@@ -42,24 +44,6 @@ export type WaterfallV1 = Readonly<{
 const timed = (summary: DatabaseCaptureSummaryV1) =>
   (summary.kind === 'span' || summary.kind === 'query') &&
   typeof summary.durationMs === 'number';
-
-/**
- * A request's route in its two parts (the quiet method, then the route in identifier type), as every capture surface
- * draws it: list rows, the request's title and its waterfall. A record with no route names itself by its label.
- */
-export function requestRouteOf(
-  summary: DatabaseCaptureSummaryV1,
-): Readonly<{ method: string | null; route: string }> {
-  return summary.endpointMethod && summary.endpointRoute
-    ? { method: summary.endpointMethod, route: summary.endpointRoute }
-    : { method: null, route: requestLabelOf(summary) };
-}
-
-export function requestLabelOf(summary: DatabaseCaptureSummaryV1): string {
-  if (summary.endpointMethod && summary.endpointRoute)
-    return `${summary.endpointMethod} ${summary.endpointRoute}`;
-  return summary.shape ?? summary.kind;
-}
 
 export function projectWaterfall(
   summaries: readonly DatabaseCaptureSummaryV1[],

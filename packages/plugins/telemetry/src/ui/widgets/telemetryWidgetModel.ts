@@ -5,7 +5,7 @@
  */
 
 import type { TelemetryMetricsReadInputV1, TelemetryMetricsReadResultV1 } from '@happier-dev/database-protocol';
-import { formatHappierDuration, type HappierSeries } from '@happier-dev/plugin-ui';
+import { formatCaptureShare, formatHappierDuration, type HappierSeries } from '@happier-dev/plugin-ui';
 
 export const TELEMETRY_PLUGIN_ID = 'happier.telemetry';
 
@@ -232,8 +232,7 @@ export function formatTelemetryMetric(
       maximumFractionDigits: fractionDigits,
       minimumFractionDigits: 0,
     }).format(input);
-  if (metric === 'errorRate')
-    return `${number(value < 0.1 ? 1 : 0, value * 100)}%`;
+  if (metric === 'errorRate') return formatCaptureShare(value, locale);
   if (metric === 'requests') return `${number(value < 10 ? 1 : 0, value)}/s`;
   if (metric === 'heap') {
     const megabytes = value / 1_000_000;

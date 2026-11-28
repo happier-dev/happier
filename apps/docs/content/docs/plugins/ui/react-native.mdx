@@ -2919,13 +2919,43 @@ panel controller owns state and reads; unknown or inactive lists/items and
 exhausted pages return `unavailable`. This development seam changes in place
 and requires matching Triage/source packages; it is not a released SDK contract.
 
-### Render captured database queries (0.3 development)
+### Render captured queries, endpoints, traces, and logs (0.3 development)
 
-Import `CaptureQueries` from `@happier-dev/plugin-ui/components` to render a list of
-`DatabaseCaptureSummaryV1` values for your selected target. Supply the capture
-read result, loading state, and locale. Pass `more` when a next page is available
-and `detail` to control the selected row and supply its detail renderer. Your
-surface owns the capture reads and target selection.
+Import `CaptureQueries`, `CaptureEndpoints`, `CaptureTraces`, and `CaptureLogs`
+from `@happier-dev/plugin-ui/components`. Supply the selected source's page,
+loading state, and locale. Your surface owns source selection, capture reads,
+and paging. Pass `more` when the read returns a next page.
+
+```tsx
+import type { DatabaseCaptureEndpointV1, DatabaseCaptureSummaryV1 } from '@happier-dev/plugin-sdk/database';
+import {
+  CaptureEndpoints, CaptureLogs, CaptureTraces, Stack, type CapturedLogBodyReader,
+} from '@happier-dev/plugin-ui/components';
+
+export function RequestsAndLogs(props: Readonly<{
+  endpoints: readonly DatabaseCaptureEndpointV1[];
+  traces: readonly DatabaseCaptureSummaryV1[];
+  logs: readonly DatabaseCaptureSummaryV1[];
+  loading: boolean;
+  locale: string;
+  openTrace: (trace: DatabaseCaptureSummaryV1) => void;
+  readLogBody: CapturedLogBodyReader;
+}>) {
+  const { endpoints, traces, logs, loading, locale, openTrace, readLogBody } = props;
+  return (
+    <Stack gap="medium">
+      <CaptureEndpoints items={endpoints} loading={loading} locale={locale} />
+      <CaptureTraces items={traces} loading={loading} locale={locale} onOpen={openTrace} />
+      <CaptureLogs items={logs} loading={loading} locale={locale} readBody={readLogBody} />
+    </Stack>
+  );
+}
+```
+
+For a split list and detail layout, pass `detail` to `CaptureQueries` or
+`CaptureTraces` with the selected row ID, a selection handler, and your detail
+renderer. For logs, bind `readLogBody` to the selected source. The component
+calls it when a reader expands a truncated log line.
 
 ## Accessibility and offline snapshots
 

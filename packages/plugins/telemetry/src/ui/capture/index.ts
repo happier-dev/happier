@@ -2,31 +2,17 @@
  * The capture views every capture reader draws (the Environment's Telemetry tab, a worktree's local capture,
  * the exception detail's request): one component set over the `capture/*` read answers.
  */
-export { CaptureQueries, type CaptureListDetail, type CapturePageMore } from '@happier-dev/plugin-ui/components';
 export {
-  CaptureAppLlmCalls,
-  CaptureEndpoints,
-  CaptureLogs,
-  CaptureTraces,
-  type CaptureAppLlmCallV1,
-  type CaptureEndpointAction,
-} from './CaptureViews.js';
+  CaptureEndpoints, CaptureLogs, CaptureQueries, CaptureTraces, CapturedLogLines, requestLabelOf,
+  type CapturedLogBodyReader, type CaptureEndpointAction, type CaptureListDetail, type CapturePageMore,
+} from '@happier-dev/plugin-ui/components';
+export { CaptureAppLlmCalls, type CaptureAppLlmCallV1 } from './CaptureViews.js';
 export {
-  CapturedLogLines,
-  CapturedRequestLogs,
-  CapturedRequestSlowest,
-  CapturedRequestWaterfall,
-  projectCapturedLogBody,
-  type CapturedLogBodyReader,
+  CapturedRequestLogs, CapturedRequestSlowest, CapturedRequestWaterfall, projectCapturedLogBody,
   type CapturedTraceV1,
 } from './CapturedRequest.js';
-export {
-  captureEndpointTitle,
-  captureSummaryFailed,
-  projectCaptureEndpoints,
-  type CaptureEndpointView,
-} from './model.js';
-export { projectWaterfall, requestLabelOf, requestRouteOf, slowestSteps } from '../traceWaterfall.js';
+export { captureSummaryFailed } from './model.js';
+export { projectWaterfall, slowestSteps } from '../traceWaterfall.js';
 /** The metric vocabulary the Telemetry widgets read, shared with the Environment's Metrics view. */
 export {
   formatTelemetryMetric,

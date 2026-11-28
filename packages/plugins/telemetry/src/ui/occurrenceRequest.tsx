@@ -16,7 +16,7 @@ import {
   type PluginActionExecution,
 } from '@happier-dev/plugin-ui';
 import { projectPluginActionRejectionV1 } from '@happier-dev/plugin-ui/hostApi';
-import { formatHappierDuration } from '@happier-dev/plugin-ui/components';
+import { formatHappierDuration, requestLabelOf, type CapturedLogBodyReader } from '@happier-dev/plugin-ui/components';
 import { DATABASE_CAPTURE_QUERY_GET_ACTION_ID_V1, DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1, DatabaseCaptureQueryGetResultV1Schema, DatabaseCaptureTraceGetResultV1Schema, type DatabaseCaptureSourceV1, type DatabaseCaptureTraceGetResultV1 } from '@happier-dev/database-protocol';
 import { databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
 import { PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1 } from '@happier-dev/plugin-sdk/storage';
@@ -28,8 +28,8 @@ import {
   TELEMETRY_PLUGIN_ID,
   type ExceptionOccurrenceV1,
 } from './exceptionReads.js';
-import { projectWaterfall, requestLabelOf } from './traceWaterfall.js';
-import { CapturedRequestLogs, CapturedRequestWaterfall, projectCapturedLogBody, type CapturedLogBodyReader } from './capture/CapturedRequest.js';
+import { projectWaterfall } from './traceWaterfall.js';
+import { CapturedRequestLogs, CapturedRequestWaterfall, projectCapturedLogBody } from './capture/CapturedRequest.js';
 
 const TRACE_ACTION = Object.freeze({
   pluginId: TELEMETRY_PLUGIN_ID,

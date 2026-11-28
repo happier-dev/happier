@@ -60,6 +60,9 @@ export {
   CaptureList, CaptureMoreButton, CaptureQueries, CaptureTimeMeta,
   type CaptureListDetail, type CapturePageMore,
 } from './capture/CaptureQueries.js';
+export { CaptureEndpoints, CaptureLogs, CaptureTraces, type CaptureEndpointAction } from './capture/CaptureViews.js';
+export { CapturedLogLines, type CapturedLogBody, type CapturedLogBodyReader } from './capture/CapturedLogLines.js';
+export { formatCaptureShare, requestLabelOf } from './capture/capturePresentation.js';
 export { CollectionRowNeedsYouHighlight, useCollectionRowNeedsYouHighlight,
   type CollectionRowNeedsYouHighlightProps } from './CollectionRowNeedsYouHighlight.js';
 export * from './CollectionSavedViewsStrip.js';
