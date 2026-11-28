@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { AutomationRunCauseSchema } from '@happier-dev/protocol/automations/run-cause';
 import { AutomationRunPluginEventTriggerEvidenceV1Schema } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
 import { AutomationSourceSelectorIdV1Schema, deriveAutomationOccurrenceKeyV1 } from '@happier-dev/protocol/automations/automationOccurrenceV1';
-import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/automationTriggerIdentity';
-import { PluginJsonValueV2Schema, WorkflowAcceptedSnapshotV1Schema, type PluginJsonValueV2 } from '@happier-dev/protocol';
+import { AutomationTriggerIdSchema, type AutomationPluginEventRef } from '@happier-dev/protocol/automations/automationTriggerIdentity';
+import { PluginJsonValueV2Schema, WorkflowAcceptedSnapshotV1Schema } from '@happier-dev/protocol';
 import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
@@ -23,11 +23,11 @@ function occurrence(payload: unknown, eventType = 'push') {
   return normalizedOccurrence(delivery);
 }
 function normalizedOccurrence(delivery: Readonly<{
-  eventRef: Pick<ReturnType<typeof AutomationRunPluginEventTriggerEvidenceV1Schema.parse>, 'eventRef'>['eventRef'];
+  eventRef: AutomationPluginEventRef;
   sourceInstanceId: string;
   occurrenceId: string;
   occurredAtMs: number;
-  payload: PluginJsonValueV2;
+  payload: unknown;
 }>) {
   const base = { v: 1 as const, kind: 'pluginEvent' as const, eventRef: delivery.eventRef,
     sourceSelectorId, occurrenceId: delivery.occurrenceId, occurredAt: delivery.occurredAtMs, payload: PluginJsonValueV2Schema.parse(delivery.payload) };
