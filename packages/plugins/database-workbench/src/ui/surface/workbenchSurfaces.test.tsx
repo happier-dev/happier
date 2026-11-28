@@ -30,6 +30,7 @@ import { TargetActionApprovalRequestV1Schema } from '@happier-dev/protocol/appro
 import { admitTargetActionApprovalTransition } from '@happier-dev/protocol/approvals/targetActionApprovalRequestTransition';
 import { PluginUiActionControlExecutionV1Schema } from '@happier-dev/protocol/plugins/ui/actionControl';
 import { decryptWithDataKeyResult, encryptWithDataKey } from '../../../../../../apps/cli/src/api/encryption';
+import { projectContributedActionFailure } from '../../../../../../apps/cli/src/plugins/runtime/invocation/actions/contributedActionFailure';
 import { settleTargetActionExecution } from '../../../../../../apps/cli/src/session/actions/approvals/targetActionSettlement';
 import type { JsonValue, PluginEphemeralSharedScope } from '@happier-dev/plugin-sdk';
 import { computeSha256HexDigest, createCanonicalJsonSigningInput, PluginError } from '@happier-dev/plugin-sdk';
@@ -726,7 +727,12 @@ describe('Database workbench surfaces', () => {
           executeApproved: async ({ request, persist, nextTimestamp }) => {
             const executing = { ...request, status: 'executing' as const, updatedAtMs: nextTimestamp(request) };
             expect(await persist(executing)).toBeNull();
-            return settleTargetActionExecution({ request: executing, result: failure, persist,
+            const result = projectContributedActionFailure({
+              errorCode: failure.errorCode, error: failure.error, data: {
+                effectAttempted: failure.effectAttempted, failureCause: failure.failureCause, details: failure.details,
+              },
+            });
+            return settleTargetActionExecution({ request: executing, result, persist,
               operationCredentialUses: [], executedAtMs: nextTimestamp(executing) });
           },
         });
@@ -734,6 +740,8 @@ describe('Database workbench surfaces', () => {
           context: { surface: 'ui', authority: 'present_user', runtimeAccountId: 'owner' },
         })).toMatchObject({ ok: false, errorCode: failure.errorCode });
         const receipt = await read();
+        expect(receipt.execution?.details).toEqual(outcome === 'recoverable binding failure'
+          ? { savedSecretRef, resourceRevision } : undefined);
         approvedFailureRecorded = receipt.status === 'failed' && receipt.decision?.authority === 'present_user';
         const recorded = buildActionExecuteResultFromRecordedApprovalExecution(receipt);
         if (!recorded || recorded.ok) throw new Error('Expected an approved database Apply failure receipt');

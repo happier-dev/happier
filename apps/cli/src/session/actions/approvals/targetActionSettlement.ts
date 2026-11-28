@@ -3,6 +3,7 @@ import type { TargetActionApprovalRequestV1 } from '@happier-dev/protocol';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions';
 import { isActionOutcomeUnknownErrorCodeV1, type ActionOperationCredentialUseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { buildTargetActionApprovalDecisionResult } from '@happier-dev/protocol/actions/targetActionApprovalDecision';
+import { projectDatabaseReadAccessCreateApprovalRecoveryV1 } from '@happier-dev/protocol/actions/databaseActionMetadata';
 
 /** Unknown means an effect may have happened; it never grants another execution. */
 export function targetActionOutcomeUnknown(request: TargetActionApprovalRequestV1, now = Date.now()): TargetActionApprovalRequestV1 {
@@ -18,13 +19,17 @@ export function targetActionOutcomeUnknown(request: TargetActionApprovalRequestV
 export async function persistTargetActionReceipt(input: Readonly<{
   request: TargetActionApprovalRequestV1;
   execution: Omit<ApprovalExecutionV2, 'executedAtMs'>;
+  failureDetails?: unknown;
   executedAtMs: number;
   write(request: TargetActionApprovalRequestV1): Promise<boolean>;
 }>): Promise<TargetActionApprovalRequestV1 | null> {
   const { request, execution, executedAtMs } = input;
+  const { details, ...receipt } = execution;
+  const recovery = execution.ok ? undefined : projectDatabaseReadAccessCreateApprovalRecoveryV1(
+    request.qualifiedActionId, execution.errorCode, details ?? input.failureDetails);
   const terminal: TargetActionApprovalRequestV1 = {
     ...request, status: execution.ok ? 'executed' : 'failed', updatedAtMs: executedAtMs,
-    execution: { ...execution, executedAtMs,
+    execution: { ...receipt, executedAtMs, ...(recovery ?? (details === undefined ? {} : { details })),
       ...(execution.ok || execution.operationCredentialUses?.length ? { effectAttempted: true } : {}) },
   };
   const settled = !execution.ok && isActionOutcomeUnknownErrorCodeV1(execution.errorCode)
@@ -52,6 +57,7 @@ export async function settleTargetActionExecution(input: Readonly<{
         ...(result.effectAttempted === undefined ? {} : { effectAttempted: result.effectAttempted }),
         ...(result.failureCause === undefined ? {} : { failureCause: result.failureCause }) };
   const settled = await persistTargetActionReceipt({ request, executedAtMs,
+    ...(result.ok || result.details === undefined ? {} : { failureDetails: result.details }),
     execution: { ...execution, ...(operationCredentialUses.length ? { operationCredentialUses: [...operationCredentialUses] } : {}) },
     write: async request => (await persist(request)) === null });
   if (!settled) {

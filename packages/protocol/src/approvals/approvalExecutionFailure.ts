@@ -1,6 +1,6 @@
 import { DeploymentBackupReceiverFailureDetailsV1Schema } from '../deployments/deploymentBackupAnotherMachineV1.js';
 import { readActionFailurePresentationV1 } from '../actions/actionFailurePresentation.js';
-import { databaseReadAccessCreateApprovalFailure } from '../actions/databaseActionMetadata.js';
+import { projectDatabaseReadAccessCreateApprovalRecoveryV1 } from '../actions/databaseActionMetadata.js';
 import type { ActionExecuteFailure } from '../actions/actionExecutionResult.js';
 import { ApprovalRequestConflictFailureDetailsV1Schema, ActionFailureCauseV1Schema, AccountActionHttpFailureDetailsV1Schema, ClientActionFailureDetailsV1Schema, ClientActionRpcFailureCodeV1Schema } from '../actions/actionExecutionResult.js';
 import * as z from '../zodRuntimePolicy.js';
@@ -732,11 +732,9 @@ export function readApprovalExecutionFailure(
     ...(failureCause.success ? { failureCause: failureCause.data } : {}),
   };
   if (request.v !== 2) {
-    const recovery = databaseReadAccessCreateApprovalFailure;
-    if (target?.success && target.data.qualifiedActionId === recovery.actionId && errorCode === recovery.errorCode) {
-      const details = createStoredReadSchema(recovery.detailsSchema).safeParse(currentExecution.details);
-      return details.success ? { ...failure, details: details.data } : failure;
-    }
+    const recovery = target?.success && projectDatabaseReadAccessCreateApprovalRecoveryV1(
+      target.data.qualifiedActionId, errorCode, currentExecution.details);
+    if (recovery) return { ...failure, ...recovery };
     const startRefusal = readActionFailurePresentationV1(errorCode, currentExecution.details)?.startRefusal;
     return startRefusal ? { ...failure, details: startRefusal } : failure;
   }

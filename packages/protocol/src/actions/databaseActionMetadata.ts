@@ -2,17 +2,26 @@ import * as database from './actionIdsDatabaseV1.js';
 import type { PluginActionContributionV2 } from '../plugins/actions/v2.js';
 import { pluginActionDeclarationIsReadOnlyForInput } from '../plugins/actions/readOnly.js';
 import { SharedSavedSecretReferenceSelectionV1Schema } from '../account/settings/savedSecretReferenceV1.js';
+import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import * as z from '../zodRuntimePolicy.js';
 
-/** The Create Action discloses the saved login's selection when binding fails after Save. */
-export const databaseReadAccessCreateApprovalFailure = {
-    actionId: database.DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1,
-    errorCode: 'database_read_role_binding_failed',
-    detailsSchema: z.strictObject({
-        savedSecretRef: SharedSavedSecretReferenceSelectionV1Schema.shape.ref,
-        resourceRevision: SharedSavedSecretReferenceSelectionV1Schema.shape.resourceRevision,
-    }),
-} as const;
+const databaseReadAccessCreateApprovalFailureDetailsSchema = createStoredReadSchema(z.strictObject({
+    savedSecretRef: SharedSavedSecretReferenceSelectionV1Schema.shape.ref,
+    resourceRevision: SharedSavedSecretReferenceSelectionV1Schema.shape.resourceRevision,
+}));
+
+/** The approved Create may recover only the login selection after Save succeeds. */
+export function projectDatabaseReadAccessCreateApprovalRecoveryV1(
+    qualifiedActionId: string, errorCode: string | undefined, details: unknown,
+) {
+    if (qualifiedActionId !== database.DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1
+        || errorCode !== 'database_read_role_binding_failed') return undefined;
+    // The host can carry the author's details inside the projected PluginError.
+    const payload = details && typeof details === 'object' && !('savedSecretRef' in details) && 'details' in details
+        ? details.details : details;
+    const parsed = databaseReadAccessCreateApprovalFailureDetailsSchema.safeParse(payload);
+    return parsed.success ? { details: parsed.data } : {};
+}
 
 type Metadata = Pick<PluginActionContributionV2,
     'title' | 'description' | 'dangerLevel' | 'readOnly' | 'placementBindings' | 'confirmation' | 'confirmationWhen'

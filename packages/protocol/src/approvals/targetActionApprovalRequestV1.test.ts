@@ -42,6 +42,8 @@ it('reads only the Saved Secret selection from an approved database Apply bindin
   );
   const failure = { ok: false, errorCode, error: errorCode, effectAttempted: true };
   expect(read(request)).toEqual({ ...failure, details });
+  expect(read({ ...request, execution: { ...request.execution, details: { details: request.execution.details } } }))
+    .toEqual({ ...failure, details });
   expect(read({ ...request, qualifiedActionId: 'acme.unrelated/actions/run' })).toEqual(failure);
   expect(read({ ...request, execution: { ...request.execution, details: { ...details, resourceRevision: 0 } } }))
     .toEqual(failure);
