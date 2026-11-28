@@ -1030,9 +1030,9 @@ describe('the mounted Session cockpit', () => {
             renderSessionLinkedEntriesSurface, undefined, undefined, readNativeRelations);
 
         await expect(fixture.getByText('Linked entries could not be read')).resolves.toBeDefined();
-        await openRow(fixture, 'Details');
-        await expect(fixture.getByText('plugin_action_resource_placement_unavailable')).resolves.toBeDefined();
-        await expect(fixture.getByText('pr-relation-request')).resolves.toBeDefined();
+        await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Details' })); });
+        expect(document.body.textContent).toContain('plugin_action_resource_placement_unavailable');
+        expect(document.body.textContent).toContain('pr-relation-request');
     });
 
     it('recovers a failed cold linked entry through the cockpit Refresh', async () => {
@@ -1166,6 +1166,29 @@ describe('the mounted Session cockpit', () => {
         await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Refresh' })); });
         await expect(fixture.getByText('Readable PR')).resolves.toBeDefined();
     });
+    it('shows an update refusal and its request ID once beside readable links', async () => {
+        const harness = createDataHarness({ snapshot: { status: 'ready', rows: [], hasMore: false } });
+        const code = 'collection_update_required';
+        const requestId = 'collection-update-request-1';
+        const fixture = await mountCockpit(harness, { kind: 'session', sessionId: SESSION_ID },
+            null, true, null, undefined, true, undefined, async () => ({ kind: 'partial',
+                links: [{ entryRef: linkRow().entryRef, sessionId: SESSION_ID, linkedAtMs: 10, displayPath: 'Readable PR' }],
+                lanes: [{ source: { pluginId: 'acme.ledger', localId: 'items' },
+                    sourceInstanceId: '22222222-2222-4222-8222-222222222222', displayLabel: 'acme/ledger',
+                    kindIds: ['issue'], health: { kind: 'failed',
+                        failure: { class: 'transient', code: 'sessionLinksReadFailed' },
+                        invocationError: { code, retryable: false, requestId } } }],
+            }), undefined, false, false, renderSessionLinkedEntriesSurface, undefined, undefined,
+            async () => ({ kind: 'relations', links: [], failures: [{ sessionId: SESSION_ID, code, requestId }] }));
+        await expect(fixture.getByText('Readable PR')).resolves.toBeDefined();
+        await expect(fixture.getByText('acme/ledger: This connection needs an update.')).resolves.toBeDefined();
+        expect(document.body.textContent).not.toContain('Could not be reached');
+        await expect(fixture.queryByRole('button', { name: 'Details: acme/ledger' })).resolves.toBeUndefined();
+        await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Details' })); });
+        expect(document.body.textContent).toContain(requestId);
+        expect(document.body.textContent).toContain(code);
+    });
+
     it('offers complete-lane candidates when an unrelated configured source is unavailable', async () => {
         const scope = createTriageEphemeralSharedScopeFixture();
         const observation = testkitObservation({ entryRef: testkitEntryRef() });

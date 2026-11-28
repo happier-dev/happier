@@ -11,6 +11,11 @@ export function presentRetiredTriageSourceConnection(text: PluginTranslate): Rea
   };
 }
 
+const collectionUpdateRequired = {
+  key: 'plugins.triage.sourceFailure.collectionUpdateRequired',
+  fallback: 'This connection needs an update.',
+};
+
 export function presentTriageSourceConnectionFailure(
   code: string | undefined,
   text: PluginTranslate,
@@ -20,6 +25,12 @@ export function presentTriageSourceConnectionFailure(
   }
   if (code === TRIAGE_SOURCE_SCOPE_OUTSIDE_BINDING_CODE_V1) {
     return { title: text('plugins.triage.sourceFailure.scope-outside-binding', 'This entry’s source is no longer connected') };
+  }
+  if (code === 'collection_update_required') {
+    return {
+      title: text(collectionUpdateRequired.key, collectionUpdateRequired.fallback),
+      description: text('plugins.triage.sourceFailure.collectionUpdateRecovery', 'Update Happier on the machine that reads this connection.'),
+    };
   }
   return undefined;
 }

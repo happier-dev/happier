@@ -50,6 +50,7 @@ import { useLinkedPullRequestStatus, type LinkedPullRequestStatusRead } from './
 import { PullRequestStatusFacts } from '../pullRequestGlance/PullRequestGlance.js';
 import { PullRequestFailureDetails } from '../pullRequestGlance/PullRequestReadFailure.js';
 import { ActionFailureDetails } from '../../ui/ActionFailureDetails.js';
+import { presentTriageSourceConnectionFailure } from '../../ui/configuration/sourceConnectionFailure.js';
 import { TriageFailureLineAction } from '../../ui/shell/sourceFailure.js';
 
 /**
@@ -416,16 +417,17 @@ function NativePullRequestPeek({ url }: Readonly<{ url: string }>): React.ReactE
 }
 
 /** "{source}: {reason}": the connection's own name, then why it could not be read. */
-function sourceProblemText(text: Translate, source: TriageUnavailableLinkSourceV1): string {
+function sourceProblemText(text: Translate, source: TriageUnavailableLinkSourceV1, reason: string | undefined): string {
     return text('plugins.triage.sessionLinks.sourceProblem', '{source}: {reason}', {
         source: source.label,
-        reason: text(source.reason.key, source.reason.fallback),
+        reason: reason ?? text(source.reason.key, source.reason.fallback),
     });
 }
 
-function RelatedPullRequestFailureDetails({ failures }: { failures: TriageSessionLinkedEntriesNoticeV1['readFailures'] }) {
-    return failures?.map(failure => <PullRequestFailureDetails key={failure.sessionId}
-        codes={[failure.code]} requestId={failure.requestId} />);
+function readFailureDetails(text: Translate, code: string, requestId?: string): string {
+    const codeLabel = text('plugins.triage.sourceFailure.code', 'Code');
+    const requestLabel = text('plugins.triage.sourceFailure.requestId', 'Request ID');
+    return requestId === undefined ? `${codeLabel}: ${code}` : `${codeLabel}: ${code}\n${requestLabel}: ${requestId}`;
 }
 
 /**
@@ -435,24 +437,45 @@ function RelatedPullRequestFailureDetails({ failures }: { failures: TriageSessio
 function UnavailableLinkSources(props: Readonly<{
     notice: TriageSessionLinkedEntriesNoticeV1;
     onRefresh: () => void;
+    empty?: boolean;
 }>): React.ReactElement {
     const text = usePluginTranslation();
-    const refresh = { label: text('plugins.triage.surface.refresh', 'Refresh'), onPress: props.onRefresh };
-    if (props.notice.error !== undefined) return <LinkReadFailure notice={props.notice} onRefresh={props.onRefresh} />;
-    const reasons = props.notice.sources.length === 0
-        ? [text('plugins.triage.sessionLinks.unavailable', 'Linked entries could not be read')]
-        : props.notice.sources.map((source) => sourceProblemText(text, source));
+    const { error, sources, readFailures } = props.notice;
+    if (error !== undefined) return <LinkReadFailure notice={props.notice} onRefresh={props.onRefresh} />;
+    const related = readFailures?.filter(failure => !sources.some(({ diagnostic }) =>
+        diagnostic?.code === failure.code && diagnostic.requestId === failure.requestId)) ?? [];
+    const refreshLabel = text('plugins.triage.surface.refresh', 'Refresh');
+    const refreshIndex = sources.findIndex(source =>
+        presentTriageSourceConnectionFailure(source.diagnostic?.code, text) === undefined);
     return (
         <Stack gap="xsmall">
-            {reasons.map((reason, index) => (
-                <Stack key={`${reason}\u0000${props.notice.sources[index]?.diagnostic?.code ?? ''}\u0000${props.notice.sources[index]?.diagnostic?.requestId ?? ''}`} gap="xsmall">
-                    <FreshnessLine tone="warning" reason={reason} {...(index === 0 ? { action: refresh } : {})} />
-                    <PullRequestFailureDetails codes={[props.notice.sources[index]?.diagnostic?.code]}
-                        title={`${text('plugins.triage.surface.detail.tab.details', 'Details')}: ${props.notice.sources[index]?.label ?? ''}`}
-                        requestId={props.notice.sources[index]?.diagnostic?.requestId} />
-                </Stack>
-            ))}
-            <RelatedPullRequestFailureDetails failures={props.notice.readFailures} />
+            {props.empty && (sources.length === 0 || refreshIndex !== -1) ? <ErrorState kind="unavailable" layout="line"
+                title={text('plugins.triage.sessionLinks.unavailable', 'Linked entries could not be read')}
+                onRetry={props.onRefresh} retryLabel={refreshLabel} /> : null}
+            {sources.map(source => {
+                const { diagnostic } = source;
+                const connectionFailure = presentTriageSourceConnectionFailure(diagnostic?.code, text);
+                const reason = sourceProblemText(text, source, connectionFailure?.title);
+                if (connectionFailure === undefined || diagnostic === undefined) {
+                    return <Stack key={reason} gap="xsmall">
+                        <FreshnessLine tone="warning" reason={reason} {...(!props.empty && source === sources[refreshIndex]
+                            ? { action: { label: refreshLabel, onPress: props.onRefresh } } : {})} />
+                        <PullRequestFailureDetails codes={[diagnostic?.code]}
+                            title={`${text('plugins.triage.surface.detail.tab.details', 'Details')}: ${source.label}`}
+                            requestId={diagnostic?.requestId} />
+                    </Stack>;
+                }
+                return <ErrorState key={`${reason}\u0000${diagnostic?.code ?? ''}\u0000${diagnostic?.requestId ?? ''}`}
+                    kind="unavailable" layout="line" title={reason} description={connectionFailure.description}
+                    details={readFailureDetails(text, diagnostic.code, diagnostic.requestId)} />;
+            })}
+            {related.map(failure => {
+                const connectionFailure = presentTriageSourceConnectionFailure(failure.code, text);
+                return <ErrorState key={failure.sessionId} kind="unavailable" layout="line"
+                    title={connectionFailure?.title ?? text('plugins.triage.sessionLinks.nativeReadFailed', 'Pull request links could not be read')}
+                    description={connectionFailure?.description}
+                    details={readFailureDetails(text, failure.code, failure.requestId)} />;
+            })}
         </Stack>
     );
 }
@@ -462,6 +485,10 @@ function LinkReadFailure({ notice, onRefresh }: Readonly<{
 }>): React.ReactElement {
     const text = usePluginTranslation();
     const error = notice.error;
+    const connectionFailure = presentTriageSourceConnectionFailure(error?.code, text);
+    if (connectionFailure !== undefined && error !== undefined) return <ErrorState kind="unavailable" layout="line"
+        title={connectionFailure.title} description={connectionFailure.description}
+        details={readFailureDetails(text, error.code, readPluginErrorRequestIdV1(error))} />;
     return <ActionFailureDetails code={error?.code} message={error?.message} details={error?.details}
         requestId={readPluginErrorRequestIdV1(error)} inline={{
             fallback: text('plugins.triage.sessionLinks.unavailable', 'Linked entries could not be read'),
@@ -701,27 +728,7 @@ function TriageSessionLinkedEntriesPanel(
         return (
             <Screen safeArea>
                 {header}
-                {view.notice.error !== undefined ? <LinkReadFailure notice={view.notice} onRefresh={onRefresh} /> : <ErrorState
-                    kind="unavailable"
-                    title={text(
-                        'plugins.triage.sessionLinks.unavailable',
-                        'Linked entries could not be read',
-                    )}
-                    {...(view.notice.sources.length === 0 ? {} : {
-                        description: view.notice.sources.map((source) => sourceProblemText(text, source)).join('\n'),
-                    })}
-                    action={(
-                        <Button
-                            title={text('plugins.triage.surface.refresh', 'Refresh')}
-                            variant="secondary"
-                            onPress={onRefresh}
-                        />
-                    )}
-                />}
-                {view.notice.sources.map((source, index) => <PullRequestFailureDetails key={index}
-                    title={`${text('plugins.triage.surface.detail.tab.details', 'Details')}: ${source.label}`}
-                    codes={[source.diagnostic?.code]} requestId={source.diagnostic?.requestId} />)}
-                <RelatedPullRequestFailureDetails failures={view.notice.readFailures} />
+                <UnavailableLinkSources notice={view.notice} onRefresh={onRefresh} empty />
             </Screen>
         );
     }
