@@ -83,6 +83,19 @@ describe('ItemGroup radio selection', () => {
         expect(group?.props['aria-label']).toBe(accessibilityLabel ?? 'Use');
     });
 
+    // Cut 58 axe (Machine details, "Included with Happier"): a section's name sat on a role-less box, which a reader
+    // drops (`aria-prohibited-attr`). A named section is a named group, as a plugin page section is.
+    it.each(['sheet', 'none'] as const)('names a titled section as a group, never a label on a role-less box (surface %s)', async (surface) => {
+        const screen = await renderScreen(
+            <ItemGroupComponent title="Included with Happier" surface={surface}>
+                <ItemComponent title="Browser" onPress={() => {}} />
+            </ItemGroupComponent>,
+        );
+        const named = screen.findAllByProps({ 'aria-label': 'Included with Happier' });
+        expect(named.length).toBeGreaterThan(0);
+        expect(named.map((node) => node.props.role)).toEqual(named.map(() => 'group'));
+    });
+
     it('exposes one named radio group with checked, disabled, and roving-tab-stop semantics', async () => {
         const screen = await renderScreen(
             <RadioGroupHarness initialSelected="openai" />,

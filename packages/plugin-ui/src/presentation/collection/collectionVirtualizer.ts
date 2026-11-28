@@ -38,7 +38,10 @@ export type CollectionVirtualizerRequest<Item> = CollectionVirtualizerBase<Item>
   | Readonly<{
       kind: 'flat';
       items: readonly Item[];
-      /** A page list draws its rows on one sheet; windowed rows and their spacers stand inside it. */
+      /**
+       * A page list draws its rows on one sheet; windowed rows and their spacers stand inside it. The sheet's own rows
+       * element then carries the collection's role and name (its totals close the sheet beside it), not the root.
+       */
       renderRows?(rows: ReactNode): ReactNode;
     }>
   | Readonly<{

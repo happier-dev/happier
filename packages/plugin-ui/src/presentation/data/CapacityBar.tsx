@@ -38,7 +38,10 @@ export function CapacityBar(props: CapacityBarProps) {
   const hasScale = known(capacity) && capacity > 0;
   const height = props.height ?? (props.size === 'inline' ? 4 : 8);
   const remainder = props.projection === 'remaining' && known(props.projected) && known(props.value);
-  return <View testID={props.testID} accessibilityLabel={description} style={[{ gap: props.theme.spacing.xsmall }, props.style]}>
+  // One picture its label describes, as a stack of shares is (`HappierProgress` image semantics): a name on a role-less
+  // box is never read (axe aria-prohibited-attr).
+  return <View testID={props.testID} role="img" aria-label={description} accessibilityLabel={description}
+    style={[{ gap: props.theme.spacing.xsmall }, props.style]}>
     {props.showCaption === false ? null : <HappierText style={text.caption} tabularNumbers>{description}</HappierText>}
     {hasScale && known(props.value) ? <View>
       <HappierProgress theme={props.theme} semantics="none" label={description} value={props.value / capacity}

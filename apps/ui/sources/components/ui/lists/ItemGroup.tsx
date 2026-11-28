@@ -342,6 +342,15 @@ const stylesheet = StyleSheet.create((theme) => {
 });
 
 /**
+ * The role a section's body takes on the web: its own (a radio group), else a named group, as a plugin page section
+ * is (`ItemGroupPageSheet`). A name on a role-less box is never read (axe aria-prohibited-attr).
+ */
+function itemGroupWebRole(role: 'radiogroup' | undefined, label: string | undefined): 'radiogroup' | 'group' | undefined {
+    if (Platform.OS !== 'web') return undefined;
+    return role ?? (label ? 'group' : undefined);
+}
+
+/**
  * The default layout: every row inside one shared card, separated by dividers.
  * Owns the group-level accessibility container and the virtualized-chunk
  * surface joins.
@@ -362,6 +371,7 @@ const ItemGroupSharedCardBody = React.memo(function ItemGroupSharedCardBody(prop
             <View
                 accessibilityLabel={props.accessibilityLabel}
                 aria-label={Platform.OS === 'web' ? props.accessibilityLabel : undefined}
+                role={itemGroupWebRole(props.accessibilityRole, props.accessibilityLabel)}
                 style={[styles.contentContainerBare, props.containerStyle]}
             >
                 {/* Without the card the rows still have positions: the last one draws no hairline. */}
@@ -374,7 +384,7 @@ const ItemGroupSharedCardBody = React.memo(function ItemGroupSharedCardBody(prop
             accessibilityRole={Platform.OS === 'web' ? undefined : props.accessibilityRole}
             accessibilityLabel={props.accessibilityLabel}
             aria-label={Platform.OS === 'web' ? props.accessibilityLabel : undefined}
-            role={Platform.OS === 'web' ? props.accessibilityRole : undefined}
+            role={itemGroupWebRole(props.accessibilityRole, props.accessibilityLabel)}
             style={[
                 styles.contentContainerOuter,
                 virtualizedSegment ? styles.virtualizedSurfaceSegment : undefined,
@@ -431,7 +441,7 @@ export const ItemGroupPageSheetBody = React.memo(function ItemGroupPageSheetBody
             accessibilityRole={Platform.OS === 'web' ? undefined : props.accessibilityRole}
             accessibilityLabel={props.accessibilityLabel}
             aria-label={Platform.OS === 'web' ? props.accessibilityLabel : undefined}
-            role={Platform.OS === 'web' ? props.accessibilityRole : undefined}
+            role={itemGroupWebRole(props.accessibilityRole, props.accessibilityLabel)}
         >
             <HappierPageSheet
                 colors={colors}
@@ -569,6 +579,7 @@ const ItemGroupColumnedBody = React.memo(function ItemGroupColumnedBody(props: R
             onLayout={handleMeasureLayout}
             accessibilityLabel={props.accessibilityLabel}
             aria-label={Platform.OS === 'web' ? props.accessibilityLabel : undefined}
+            role={itemGroupWebRole(undefined, props.accessibilityLabel)}
         >
             <GlassSurface surfaceGroup="card" nested enabled={!isGrid} solidColor={isGrid ? 'transparent' : undefined} finishRole={isGrid ? null : 'card'}
                 style={[
@@ -752,7 +763,7 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
                                     accessibilityRole={Platform.OS === 'web' ? undefined : accessibilityRole}
                                     accessibilityLabel={resolvedAccessibilityLabel}
                                     aria-label={Platform.OS === 'web' ? resolvedAccessibilityLabel : undefined}
-                                    role={Platform.OS === 'web' ? accessibilityRole : undefined}
+                                    role={itemGroupWebRole(accessibilityRole, resolvedAccessibilityLabel)}
                                     style={[styles.menuSectionRows, containerStyle]}
                                 >
                                     {projectedChildren}

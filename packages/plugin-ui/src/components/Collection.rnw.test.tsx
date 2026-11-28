@@ -8679,6 +8679,8 @@ describe('an ungrouped page list (a phone)', () => {
     },
   ];
 
+  const COLLECTION_ROLES = '[role="grid"], [role="treegrid"], [role="listbox"], [role="list"]';
+
   it("keeps the table's header on its one sheet: what the rows are, their order, then the rows and totals", () => {
     const view = mountTree({
       presentation: 'list',
@@ -8693,10 +8695,12 @@ describe('an ungrouped page list (a phone)', () => {
     expect(bar!.textContent).toContain('Started by Happier');
     expect(view.query('procs:sort:memory')?.textContent).toContain('Memory');
     expect(view.query('procs:sort:memory:arrow')?.textContent).toBe('↓');
-    // One sheet: the bar leads the rows and the totals inside the same sheet body.
-    const sheetBody = bar!.parentElement!;
+    // One sheet: the bar leads the rows in the collection, and the totals close the same sheet body after it (a grid
+    // owns only rows: aria-required-children).
+    const sheetBody = bar!.parentElement!.parentElement!;
     expect(sheetBody.contains(view.rowElement(view.rows()[0]!))).toBe(true);
     expect(sheetBody.textContent).toContain('Happier in total');
+    expect(view.query('procs:total')!.closest(COLLECTION_ROLES)).toBeNull();
     view.unmount();
   });
 
@@ -8709,6 +8713,7 @@ describe('an ungrouped page list (a phone)', () => {
     for (const row of view.rows()) expect(sheetBody.contains(view.rowElement(row))).toBe(true);
     expect(sheetBody.textContent).toContain('Left behind');
     expect(sheetBody.textContent).toContain('Happier in total');
+    expect(view.query('procs:total')!.closest(COLLECTION_ROLES)).toBeNull();
     view.unmount();
   });
 

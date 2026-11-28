@@ -98,13 +98,16 @@ export const FilesystemBrowserList = React.memo(function FilesystemBrowserList(p
         })
     ), [props.nodes.length, props.renderRow]);
 
+    // A tree owns only its rows (axe aria-required-children): the page's header, empty state and footer stand beside them.
+    const webTree = Platform.OS === 'web' && props.treeRole === true;
     if (props.presentation === 'inline') {
+        const rows = props.nodes.map((node, index) => (
+            <React.Fragment key={keyExtractor(node)}>{renderItem({ item: node, index })}</React.Fragment>
+        ));
         return (
-            <View style={props.style} {...(Platform.OS === 'web' && props.treeRole ? { role: 'tree' as const } : {})}>
+            <View style={props.style}>
                 {listHeaderComponent}
-                {props.nodes.map((node, index) => (
-                    <React.Fragment key={keyExtractor(node)}>{renderItem({ item: node, index })}</React.Fragment>
-                ))}
+                {webTree && rows.length > 0 ? <View role="tree">{rows}</View> : rows}
                 {props.nodes.length === 0 ? props.listEmpty : null}
                 {props.listFooter ?? null}
             </View>
@@ -116,6 +119,7 @@ export const FilesystemBrowserList = React.memo(function FilesystemBrowserList(p
     const list = (
         <VirtualizedList<FilesystemBrowserListNode>
             data={props.nodes}
+            {...(webTree ? { itemsRole: 'tree' as const } : {})}
             keyExtractor={keyExtractor}
             style={props.style}
             contentContainerStyle={contentContainerStyle}
@@ -140,7 +144,5 @@ export const FilesystemBrowserList = React.memo(function FilesystemBrowserList(p
             ref={props.listRef}
         />
     );
-    return props.treeRole ? (
-        <View style={{ flex: 1, minHeight: 0 }} {...(Platform.OS === 'web' ? { role: 'tree' as const } : {})}>{list}</View>
-    ) : list;
+    return props.treeRole ? <View style={{ flex: 1, minHeight: 0 }}>{list}</View> : list;
 });

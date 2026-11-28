@@ -26,6 +26,18 @@ describe('neutral capacity and ranked data through public presentation', () => {
         && args.some((arg) => String(arg).includes('accessible')))).toEqual([]);
     } finally { mount.unmount(); errors.mockRestore(); }
   });
+  // Cut 58 axe (Machine details, swap and volume meters): the bar's name sat on a role-less box, which a reader drops
+  // (`aria-prohibited-attr`). The bar is one picture its label describes, as a stack of shares is.
+  it.each([false, true])('names the bar as one picture with its label, never a label on a role-less box (caption %s)', (showCaption) => {
+    const mount = mountThroughReactNativeWeb(<CapacityBar theme={createSurfaceContext().theme} label="Swap, 8 GiB of 8 GiB used"
+      value={8} capacity={8} showCaption={showCaption} testID="swap" />);
+    try {
+      const bar = mount.container.querySelector('[data-testid="swap"]');
+      expect(bar?.getAttribute('role')).toBe('img');
+      expect(bar?.getAttribute('aria-label')).toContain('Swap, 8 GiB of 8 GiB used');
+      expect([...mount.container.querySelectorAll('[aria-label]')].filter((element) => !element.hasAttribute('role'))).toEqual([]);
+    } finally { mount.unmount(); }
+  });
   it('keeps a declared composition denominator instead of summing overlapping categories', () => {
     expect(presentation).toHaveProperty('CompositionStrip', expect.any(Function));
     const mount = mountThroughReactNativeWeb(<presentation.CompositionStrip theme={createSurfaceContext().theme}

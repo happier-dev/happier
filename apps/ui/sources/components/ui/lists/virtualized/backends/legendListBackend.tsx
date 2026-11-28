@@ -15,6 +15,9 @@ import type {
     VirtualizedListRenderItemInfo,
 } from '../virtualizedListTypes';
 
+/** The class Legend's web runtime gives its scroll content (header, cell container, footer). */
+const LEGEND_LIST_CONTENT_CONTAINER_CLASS = 'legend-list-content-container';
+
 const LEGEND_LIST_WEB_FILL_STYLE = {
     flex: 1,
     minHeight: 0,
@@ -81,6 +84,7 @@ function LegendListBackendInner<T>(
         style,
         webScrollHandlers,
         retainedItemKeys,
+        itemsRole,
         ...legendShared
     } = shared;
     const legendContentContainerStyle = React.useMemo(() => (
@@ -147,12 +151,19 @@ function LegendListBackendInner<T>(
     // A browser retains keyboard focus while a person scrolls. Keep that cell in Legend's
     // existing pinned inventory so recycling cannot silently move focus to the document body.
     const { keyExtractor, renderItem: renderRow } = legendShared;
+    // Legend draws its cells in one container beside the header, empty state and footer: the items' role goes there,
+    // so a tree owns only its items. The container exists only while there are cells, and each cell names it.
+    const markItemsContainer = React.useCallback((cell: HTMLDivElement | null) => {
+        if (!itemsRole) return;
+        const items = cell?.closest(`.${LEGEND_LIST_CONTENT_CONTAINER_CLASS} > *`);
+        if (items && items.getAttribute('role') !== itemsRole) items.setAttribute('role', itemsRole);
+    }, [itemsRole]);
     const renderWebItem = React.useCallback((info: VirtualizedListRenderItemInfo<T>) => {
         const key = keyExtractor(info.item, info.index);
-        return <div style={{ display: 'contents' }} onFocus={() => setFocusedItemKey(key)} onBlur={(event) => {
+        return <div ref={markItemsContainer} style={{ display: 'contents' }} onFocus={() => setFocusedItemKey(key)} onBlur={(event) => {
             if (!event.currentTarget.contains(event.relatedTarget)) setFocusedItemKey(null);
         }}>{renderRow(info)}</div>;
-    }, [keyExtractor, renderRow]);
+    }, [keyExtractor, markItemsContainer, renderRow]);
     const renderItem = Platform.OS === 'web' ? renderWebItem : renderRow;
     const retainedKeys = focusedItemKey ? [...(retainedItemKeys ?? []), focusedItemKey] : retainedItemKeys;
 

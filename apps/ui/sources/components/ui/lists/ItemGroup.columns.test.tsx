@@ -279,7 +279,10 @@ describe('ItemGroup columns', () => {
             </ItemGroup>,
         );
 
-        expect(screen.findAllByProps({ 'aria-label': 'Connected services' }).length).toBeGreaterThan(0);
+        const named = screen.findAllByProps({ 'aria-label': 'Connected services' });
+        expect(named.length).toBeGreaterThan(0);
+        // The name is read only on a role (axe aria-prohibited-attr): the columned group is a named group.
+        expect(named.map((node) => node.props.role)).toEqual(named.map(() => 'group'));
     });
 
     it('refuses to combine columns with a virtualized segment', async () => {

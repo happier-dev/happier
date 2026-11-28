@@ -54,6 +54,11 @@ export type VirtualizedListProps<T> = Readonly<{
     keyExtractor: (item: T, index: number) => string;
     /** Keep an active interaction's rows mounted while the viewport moves past them. */
     retainedItemKeys?: readonly string[];
+    /**
+     * Web: the role of the element that holds only the items, never the header, footer or empty state, so a
+     * composite (a tree) owns only its items (axe aria-required-children).
+     */
+    itemsRole?: 'tree';
 
     testID?: string;
     nativeID?: string;

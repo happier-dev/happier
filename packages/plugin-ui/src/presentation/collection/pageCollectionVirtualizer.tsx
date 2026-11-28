@@ -298,13 +298,15 @@ function PageCollectionWindow<Item>({ request, geometry, tracker, tabStopKey, re
     );
     renderedEnd = unitEnd;
   }
+  // A flat list's own sheet (`renderRows`) holds its rows' collection element, beside the sheet's totals.
+  const semantics = request.kind === 'flat' && request.renderRows !== undefined ? null : request;
   return (
     <View ref={root} onLayout={() => { void measure(); }}
-      accessibilityRole={request.accessibilityRole}
+      accessibilityRole={semantics?.accessibilityRole}
       // @ts-expect-error RN's role union omits RNW's standard listbox role.
-      role={request.role}
-      aria-rowcount={request.rowCount} aria-multiselectable={request.multiSelectable}
-      accessibilityCollection={request.nativeCollection} accessibilityLabel={request.accessibilityLabel}
+      role={semantics?.role}
+      aria-rowcount={semantics?.rowCount} aria-multiselectable={semantics?.multiSelectable}
+      accessibilityCollection={semantics?.nativeCollection} accessibilityLabel={semantics?.accessibilityLabel}
       testID={request.testID} style={[request.style, request.contentContainerStyle, Platform.OS === 'web' ? webKeyedAnchorStyle : undefined]}>
       {content}
       {totalHeight <= renderedEnd ? null : <View aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={{ height: totalHeight - renderedEnd }} />}

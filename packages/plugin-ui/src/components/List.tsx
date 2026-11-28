@@ -2112,6 +2112,21 @@ function VirtualizedList<Item>(
       </ItemGroupPageSheet>
     </ItemGroupPageColumn>
   );
+  // The collection's role, extent and name: on the element its rows stand in. A flat page sheet's totals (the footer)
+  // close the same sheet beside that element, never inside it: a grid or list owns only rows (aria-required-children).
+  const collectionSemantics: CollectionSemantics = {
+    accessibilityRole:
+      collectionRole === 'radiogroup'
+        ? 'radiogroup'
+        : selectionEnabled
+          ? undefined
+          : 'list',
+    role: collectionRole,
+    rowCount: gridRole ? collectionRowCount : undefined,
+    multiSelectable: collectionMultiSelectable,
+    nativeCollection,
+    accessibilityLabel: props.accessibilityLabel,
+  };
   const virtualizerRequest: CollectionVirtualizerRequest<Item> = {
     ...(visibleSections === undefined
       ? ({
@@ -2120,8 +2135,10 @@ function VirtualizedList<Item>(
           ...(pageSheets === undefined || !flatPageSheet ? {} : { renderRows: (rows: ReactNode) => (
             <HappierPageSheet colors={pageSheets.colors} rowDividers={false} {...pageSheetSurface(pageSheets, flatPageSheetStyle)}>
               <View>
-                {pageSheets.header}
-                {rows}
+                <CollectionRowsElement semantics={collectionSemantics}>
+                  {pageSheets.header}
+                  {rows}
+                </CollectionRowsElement>
                 {props.footer}
               </View>
             </HappierPageSheet>
@@ -2165,17 +2182,7 @@ function VirtualizedList<Item>(
             encodeHappierSectionRowCellKey(keyForItem(item, index)),
     renderItem: renderVirtualizedItem,
     onHandle: onVirtualizerHandle,
-    accessibilityRole:
-      collectionRole === 'radiogroup'
-        ? 'radiogroup'
-        : selectionEnabled
-          ? undefined
-          : 'list',
-    role: collectionRole,
-    rowCount: gridRole ? collectionRowCount : undefined,
-    multiSelectable: collectionMultiSelectable,
-    nativeCollection,
-    accessibilityLabel: props.accessibilityLabel,
+    ...collectionSemantics,
     testID: props.testID,
     style: emptyFillsRegion ? [props.style, emptyScrollerStyle] : props.style,
     // An ungrouped directory stands the header gap below its search whether or not its rows are windowed.
@@ -2211,22 +2218,9 @@ function VirtualizedList<Item>(
         retainedKeys={retainedVirtualizerKeys}
       />
     ) : pageScroll ? (
-      <View
-        accessibilityRole={
-          collectionRole === 'radiogroup'
-            ? 'radiogroup'
-            : selectionEnabled
-              ? undefined
-              : 'list'
-        }
-        // @ts-expect-error React Native's role union omits RNW's standard listbox role.
-        role={collectionRole}
-        aria-rowcount={
-          gridRole ? collectionRowCount : undefined
-        }
-        aria-multiselectable={collectionMultiSelectable}
-        accessibilityCollection={nativeCollection}
-        accessibilityLabel={props.accessibilityLabel}
+      <CollectionRowsElement
+        // A flat page sheet's rows carry the collection inside it, beside the sheet's totals.
+        semantics={flatPageSheet ? null : collectionSemantics}
         testID={props.testID}
         style={[props.style, densityStyle, props.contentContainerStyle]}
       >
@@ -2290,12 +2284,14 @@ function VirtualizedList<Item>(
               // section's own sheet when it already sits on one).
               <HappierPageSheet colors={pageSheet.colors} rowDividers={false} {...pageSheetSurface(pageSheet, flatPageSheetStyle)}>
                 <View>
-                  {pageSheet.header}
-                  {(visibleItems ?? []).map((item, index) => (
-                    <Fragment key={keyForItem(item, index)}>
-                      {renderFlatRow({ item, index })}
-                    </Fragment>
-                  ))}
+                  <CollectionRowsElement semantics={collectionSemantics}>
+                    {pageSheet.header}
+                    {(visibleItems ?? []).map((item, index) => (
+                      <Fragment key={keyForItem(item, index)}>
+                        {renderFlatRow({ item, index })}
+                      </Fragment>
+                    ))}
+                  </CollectionRowsElement>
                   {props.footer}
                 </View>
               </HappierPageSheet>
@@ -2316,7 +2312,7 @@ function VirtualizedList<Item>(
               </Fragment>
             ))}
         {collectionEndContent}
-      </View>
+      </CollectionRowsElement>
     ) : (
       virtualizer.render(virtualizerRequest)
     );
@@ -2972,6 +2968,33 @@ export function ItemGroup(props: ItemGroupProps): ReactElement {
         {children}
       </HappierItemGroupBehavior>
     </ItemGroupPageColumn>
+  );
+}
+
+type CollectionSemantics = Pick<CollectionVirtualizerRequest<unknown>,
+  'accessibilityRole' | 'role' | 'rowCount' | 'multiSelectable' | 'nativeCollection' | 'accessibilityLabel'>;
+
+/** The element a collection's rows stand in: its role, extent and name (`null` while its rows' own element holds them). */
+function CollectionRowsElement({ semantics, testID, style, children }: Readonly<{
+  semantics: CollectionSemantics | null;
+  testID?: string;
+  style?: HappierStyleProp;
+  children: ReactNode;
+}>): ReactElement {
+  return (
+    <View
+      accessibilityRole={semantics?.accessibilityRole}
+      // @ts-expect-error React Native's role union omits RNW's standard listbox role.
+      role={semantics?.role}
+      aria-rowcount={semantics?.rowCount}
+      aria-multiselectable={semantics?.multiSelectable}
+      accessibilityCollection={semantics?.nativeCollection}
+      accessibilityLabel={semantics?.accessibilityLabel}
+      testID={testID}
+      style={style}
+    >
+      {children}
+    </View>
   );
 }
 
