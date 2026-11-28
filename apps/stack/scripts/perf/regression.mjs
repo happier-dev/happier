@@ -225,6 +225,25 @@ function resolveRouteChunks(entrySources) {
   throw new Error(`Home route ${HOME_ROUTE_FILES[0]} is not in the entry scripts`);
 }
 
+/** Discover the initial Metro entry and the files it loads to render Home. */
+export async function readWebBootFiles(root) {
+  const html = await readFile(join(root, 'index.html'), 'utf8');
+  const styles = [...html.matchAll(/<link\b[^>]*>/gu)].map(([tag]) => tag)
+    .filter(tag => /\brel="stylesheet"/u.test(tag)).map(tag => tag.match(/\bhref="([^"]+)"/u)?.[1]).filter(Boolean).map(exportPath);
+  const scripts = [...html.matchAll(/<script\b[^>]*\bsrc="([^"]+\.js)"/gu)].map(match => exportPath(match[1]));
+  if (!scripts.length) throw new Error('Web export index.html has no entry scripts');
+  const entrySources = new Map(await Promise.all(scripts.map(async file =>
+    [file, await readFile(join(root, file), 'utf8')])));
+  const routeChunks = resolveRouteChunks(entrySources.values());
+  const homeRoutes = HOME_ROUTE_FILES.map(key => routeChunks.get(key));
+  const files = new Map();
+  for (const [kind, list] of [['style', styles], ['script', scripts],
+    ['shared', homeRoutes.flatMap(route => route.shared)], ['route', homeRoutes.flatMap(route => route.files)]]) {
+    for (const file of list) if (!files.has(file)) files.set(file, { file, kind });
+  }
+  return { files: [...files.values()], routeChunks, entrySources };
+}
+
 /**
  * Deterministic weight of what loads before Home on web: index.html's scripts
  * and stylesheets, the shared chunks the Home route chunks require first, and
@@ -236,33 +255,20 @@ function resolveRouteChunks(entrySources) {
  * when Home needs it).
  */
 export async function readWebBootWeight(root) {
-  const html = await readFile(join(root, 'index.html'), 'utf8');
-  const styles = [...html.matchAll(/<link\b[^>]*>/gu)].map(([tag]) => tag)
-    .filter(tag => /\brel="stylesheet"/u.test(tag)).map(tag => tag.match(/\bhref="([^"]+)"/u)?.[1]).filter(Boolean).map(exportPath);
-  const scripts = [...html.matchAll(/<script\b[^>]*\bsrc="([^"]+\.js)"/gu)].map(match => exportPath(match[1]));
-  if (!scripts.length) throw new Error('Web export index.html has no entry scripts');
+  const { files: bootFiles, routeChunks, entrySources } = await readWebBootFiles(root);
   const precompressed = (await readdir(join(root, '_expo/static'), { recursive: true }).catch(() => [])).some(name => name.endsWith('.br'));
   const weights = new Map();
   const weigh = async file => {
     if (!weights.has(file)) {
       const bytes = (await stat(join(root, file))).size;
       const brotliBytes = precompressed ? await stat(join(root, `${file}.br`)).then(info => info.size, () => bytes) : null;
-      const modules = file.endsWith('.js') ? (await readFile(join(root, file), 'utf8')).split('__d(').length - 1 : 0;
+      const modules = file.endsWith('.js') ? (entrySources.get(file) ?? await readFile(join(root, file), 'utf8')).split('__d(').length - 1 : 0;
       weights.set(file, { bytes, brotliBytes, modules });
     }
     return weights.get(file);
   };
-  const routeChunks = resolveRouteChunks(await Promise.all(scripts.map(file => readFile(join(root, file), 'utf8'))));
-  const home = HOME_ROUTE_FILES.map(key => routeChunks.get(key));
   const files = [];
-  const listed = new Set();
-  for (const [kind, list] of [['style', styles], ['script', scripts], ['shared', home.flatMap(route => route.shared)], ['route', home.flatMap(route => route.files)]]) {
-    for (const file of list) {
-      if (listed.has(file)) continue;
-      listed.add(file);
-      files.push({ file, kind, ...await weigh(file) });
-    }
-  }
+  for (const row of bootFiles) files.push({ ...row, ...await weigh(row.file) });
   const routes = {};
   for (const [key, { files: own, shared }] of routeChunks) {
     const rows = await Promise.all(own.map(weigh));

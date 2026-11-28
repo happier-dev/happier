@@ -11,6 +11,8 @@ test('export measurement rejects each emitted entry leak and admits demanded lea
     const directory = await mkdtemp(join(tmpdir(), 'happier-entry-leaks-'));
     const scripts = join(directory, '_expo/static/js/web');
     const source = 'export const marker = 1;';
+    const context = '__d((function(g,r,i,a,m,e,d){m.exports={"./(app)/_layout.tsx":{get:()=>r(d[0])},'
+        + '"./(app)/index.tsx":{get:()=>r(d[0])},"./_layout.tsx":{get:()=>r(d[0])}}}),1,{"0":0,"paths":{}});';
     const cases = [
         ['/node_modules/@hugeicons/core-free-icons/dist/esm/index.js', 'hugeIconsBarrel'],
         ['/apps/ui/sources/components/ui/icons/iconRegistryHuge.generated.ts', 'hugeIconRegistry'],
@@ -24,7 +26,7 @@ test('export measurement rejects each emitted entry leak and admits demanded lea
     try {
         await mkdir(scripts, { recursive: true });
         await writeFile(join(directory, 'index.html'), '<script src="/_expo/static/js/web/entry.js"></script>');
-        await writeFile(join(scripts, 'entry.js'), source);
+        await writeFile(join(scripts, 'entry.js'), `${source}\n${context}`);
         for (const [file, expectedLeak] of cases) {
             // The external export boundary supplies a standard one-segment source map.
             // The real Metro consumer, byte attribution and demand assertion run below.
