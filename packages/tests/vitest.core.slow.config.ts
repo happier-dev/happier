@@ -12,6 +12,7 @@ export default mergeConfig(createUiProductionHooksVitestConfig(), defineConfig({
       'suites/core-e2e/workLoop.dispatchAndFleet.composed.spec.ts',
       'suites/core-e2e/workLoop.factoryAndIncident.composed.spec.ts',
       'suites/core-e2e/workLoop.incidentTaskSpine.composed.spec.ts',
+      'suites/core-e2e/workLoop.managedSessionsAndEscalation.composed.spec.ts',
       'suites/core-e2e/workLoop.questionsAndAttention.composed.spec.ts',
       'suites/core-e2e/workLoop.taskCommentsSecurity.composed.spec.ts',
       'suites/core-e2e/workLoop.tasksReadyClaimResult.composed.spec.ts',

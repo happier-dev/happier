@@ -1742,4 +1742,79 @@ describe('ApiSessionClient socket write readiness', () => {
       sessionId: session.id, mutationId: `runtime-activity-snapshot:${session.id}`, snapshot: { state: 'unknown', activeCount: 0 },
     });
   });
+
+  it('retains follow-rule request admission across an equal-version AgentState snapshot refresh during daemon IPC', async () => {
+    const socket = createSocket();
+    const requestId = 'q-escalated-1';
+    const createdAt = 1_700_000_000_000;
+    const turnId = 'turn-q1';
+    const agentState = {
+      requests: Object.assign(Object.create(null), {
+        [requestId]: {
+          tool: 'AskUserQuestion',
+          kind: 'user_action',
+          arguments: { questions: [] },
+          createdAt,
+          turnId,
+          questionV1: { mode: 'wait', type: 'decision', lasting: false },
+          currentHandler: { kind: 'person' },
+        },
+      }),
+      completedRequests: Object.create(null),
+    };
+    const session = createPlainSessionFixture({ id: 's-equal-version-request-notify', agentState: agentState as never, agentStateVersion: 7 });
+    serveSession(createSessionRecordFixture({
+      id: session.id,
+      metadataLayoutVersion: 0,
+      metadata: JSON.stringify(session.metadata),
+      metadataVersion: session.metadataVersion,
+      agentState: JSON.stringify(agentState),
+      agentStateVersion: 7,
+      encryptionMode: 'plain',
+      share: null,
+    }));
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'test-owner' })).toString('base64url')}.signature`;
+    const client = createClient(session, [socket], {
+      durableMutationDeliveryInitiallyActive: false,
+      metadataAuthority: { kind: 'owner', credentials: { ...ownerCredentials, token } },
+    }, undefined, token);
+    const evidence = {
+      v: 1 as const,
+      ownerAccountId: 'test-owner',
+      event: { kind: 'needs_you' as const, type: 'decision' as const, mode: 'wait' as const, handling: 'person' as const },
+      facts: { serverId: 'socket-readiness-home', kind: 'session' as const },
+    };
+
+    // Case 1: equal-version snapshot refresh during daemon IPC must NOT drop the admission.
+    daemonPost.mockImplementationOnce(async (path) => {
+      if (path === '/session-activity-changed') {
+        await client.refreshSessionSnapshotFromServerRequired({ reason: 'waitForMetadataUpdate' });
+        return { ok: true, personalFollow: { sourceSessionId: session.id, requests: [{ requestId, policies: [{ preset: 'important' }] }] } };
+      }
+      return { ok: true };
+    });
+    await expect(client.notifySessionFollowRuleRequestCommitted({ requestId, createdAt, turnId, evidence })).resolves.toEqual({
+      personalFollow: { sourceSessionId: session.id, requests: [{ requestId, policies: [{ preset: 'important' }] }] },
+    });
+
+    // Case 2: a newer AgentState version during daemon IPC MUST still invalidate the stale admission.
+    serveSession(createSessionRecordFixture({
+      id: session.id,
+      metadataLayoutVersion: 0,
+      metadata: JSON.stringify(session.metadata),
+      metadataVersion: session.metadataVersion,
+      agentState: JSON.stringify({ requests: {}, completedRequests: { [requestId]: { status: 'approved', createdAt } } }),
+      agentStateVersion: 8,
+      encryptionMode: 'plain',
+      share: null,
+    }));
+    daemonPost.mockImplementationOnce(async (path) => {
+      if (path === '/session-activity-changed') {
+        await client.refreshSessionSnapshotFromServerRequired({ reason: 'waitForMetadataUpdate' });
+        return { ok: true, personalFollow: { sourceSessionId: session.id, requests: [{ requestId, policies: [{ preset: 'important' }] }] } };
+      }
+      return { ok: true };
+    });
+    await expect(client.notifySessionFollowRuleRequestCommitted({ requestId, createdAt, turnId, evidence })).resolves.toBeNull();
+  });
 });

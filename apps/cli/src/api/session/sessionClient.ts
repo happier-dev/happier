@@ -3162,6 +3162,7 @@ export class ApiSessionClient extends EventEmitter {
         if (this.closed || this.metadataAuthorityKind !== 'owner' || input.evidence.ownerAccountId !== readAccountIdFromToken(this.token)) return null;
         const sourcePublisher = await this.readCurrentPublisherPrecondition();
         const state = this.agentState;
+        const stateVersion = this.agentStateVersion;
         const current = state?.requests?.[input.requestId];
         if (this.closed || !current || current.createdAt !== input.createdAt || current.turnId !== input.turnId) return null;
         if (!sourcePublisher) {
@@ -3171,7 +3172,14 @@ export class ApiSessionClient extends EventEmitter {
                 && supportsSessionPublisherAuthorityCheckV1(this.sessionSyncPendingInputServerContractResult) ? null : undefined;
         }
         const active = readActiveForegroundAgentRequests(state, resolveCatalogAgentRequestCoverageOptions({ metadata: this.metadata }));
-        if (!active.some(([requestId]) => requestId === input.requestId) || this.agentStateVersion <= 0) return null;
+        if (!active.some(([requestId]) => requestId === input.requestId) || stateVersion <= 0) return null;
+        const isSameCommittedState = () => {
+            if (this.closed || this.agentStateVersion !== stateVersion) return false;
+            if (this.agentState === state) return true;
+            const latest = this.agentState?.requests?.[input.requestId];
+            return Boolean(latest && latest.createdAt === input.createdAt && latest.turnId === input.turnId
+                && isDeepStrictEqual(latest.currentHandler ?? null, current.currentHandler ?? null));
+        };
         const requestEvidence = active.map(([requestId, request]) => {
             const evidence = SessionFollowRuleSourceEvidenceV1Schema.safeParse(
                 (request as Readonly<Record<string, unknown>>)[SESSION_FOLLOW_RULE_EVIDENCE_META_KEY_V1]);
@@ -3179,12 +3187,12 @@ export class ApiSessionClient extends EventEmitter {
             return { requestId, ...(evidence.success && event ? { evidence: { ...evidence.data, event } } : {}) };
         });
         const { notifyDaemonSessionActivityChanged } = await import('@/daemon/controlClient');
-        if (this.closed || this.agentState !== state) return null;
+        if (!isSameCommittedState()) return null;
         const result = await notifyDaemonSessionActivityChanged(this.sessionId, { sourceSessionId: this.sessionId, sourcePublisher,
-            sourceRequests: { agentStateVersion: this.agentStateVersion,
+            sourceRequests: { agentStateVersion: stateVersion,
                 requests: active.map(([requestId, request]) => ({ requestId, createdAt: request.createdAt,
                     ...(request.turnId ? { turnId: request.turnId } : {}) })) }, requestEvidence });
-        return !this.closed && this.agentState === state ? result : null;
+        return isSameCommittedState() ? result : null;
     }
 
     enqueueAgentMessageCommitted(
