@@ -3,9 +3,7 @@ import * as React from 'react';
 import type { PetAnimationStateV1 } from '@happier-dev/protocol/pets/constants';
 
 import {
-    PET_ANIMATION_TICK_MS,
-} from '@/components/pets/animation/petAnimationPlaybackConfig';
-import {
+    resolvePetAnimationNextFrameDelayMs,
     resolvePetAnimationTimeline,
     type ResolvedPetAnimationFrame,
 } from '@/components/pets/animation/resolvePetAnimationTimeline';
@@ -29,15 +27,24 @@ export function usePetAnimatedFrame(params: {
         setNowMs(now);
     }, [active, params.state, params.reducedMotion]);
 
+    // One render per visible frame: wake at the next frame boundary rather than
+    // on a fixed tick, and stop once the frame is fixed (reduced motion or a
+    // settled action).
     React.useEffect(() => {
         if (!active || params.reducedMotion) return undefined;
+        const delayMs = resolvePetAnimationNextFrameDelayMs({
+            state: params.state,
+            elapsedMs: nowMs - stateStartedAtMsRef.current,
+            reducedMotion: params.reducedMotion,
+        });
+        if (delayMs === null) return undefined;
 
-        const interval = setInterval(() => {
+        const timeout = setTimeout(() => {
             setNowMs(readNowMs());
-        }, PET_ANIMATION_TICK_MS);
+        }, delayMs);
 
-        return () => clearInterval(interval);
-    }, [active, params.reducedMotion, params.state]);
+        return () => clearTimeout(timeout);
+    }, [active, nowMs, params.reducedMotion, params.state]);
 
     return React.useMemo(() => resolvePetAnimationTimeline({
         state: params.state,

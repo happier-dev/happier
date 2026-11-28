@@ -137,3 +137,39 @@ export function resolvePetAnimationTimeline(input: ResolvePetAnimationTimelineIn
         resolveFrameFromDurations(requestedRow.durationsMs, loopElapsedMs),
     );
 }
+
+function resolveMsUntilNextBoundary(durationsMs: readonly number[], loopElapsedMs: number): number {
+    let cursorMs = 0;
+    for (const durationMs of durationsMs) {
+        cursorMs += durationMs;
+        if (loopElapsedMs < cursorMs) return cursorMs - loopElapsedMs;
+    }
+    return Math.max(1, resolveRowTotalDurationMs(durationsMs) - loopElapsedMs);
+}
+
+/**
+ * Milliseconds until `resolvePetAnimationTimeline` returns a different frame,
+ * or `null` when the frame is fixed (reduced motion, or an action that has
+ * settled back to the idle rest frame). Playback schedules its next render at
+ * this boundary instead of re-rendering on a fixed tick between frame changes.
+ */
+export function resolvePetAnimationNextFrameDelayMs(input: ResolvePetAnimationTimelineInput): number | null {
+    if (input.reducedMotion || resolveLookCell(input)) return null;
+    const elapsedMs = normalizeElapsedMs(input.elapsedMs);
+    const requestedRow = resolveAnimationRow(input.state);
+
+    if (requestedRow.state === 'idle') {
+        const idleDurationsMs = requestedRow.durationsMs.map((durationMs) => durationMs * PET_IDLE_DURATION_MULTIPLIER);
+        const totalDurationMs = resolveRowTotalDurationMs(idleDurationsMs);
+        if (totalDurationMs <= 0 || idleDurationsMs.length < 2) return null;
+        return resolveMsUntilNextBoundary(idleDurationsMs, elapsedMs % totalDurationMs);
+    }
+
+    const actionDurationMs = resolveRowTotalDurationMs(requestedRow.durationsMs);
+    const actionWindowMs = actionDurationMs * PET_ACTION_LOOP_COUNT;
+    if (actionDurationMs <= 0 || elapsedMs >= actionWindowMs) return null;
+    return Math.min(
+        resolveMsUntilNextBoundary(requestedRow.durationsMs, elapsedMs % actionDurationMs),
+        actionWindowMs - elapsedMs,
+    );
+}
