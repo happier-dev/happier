@@ -46,6 +46,7 @@ export async function inspectWorkspaceLocationWithScmWorkspace(input: Readonly<{
     registry?: ScmBackendRegistry;
     /** Accepted checkout registration requests hosting facts; ordinary location probes stay cheap. */
     includeRepositoryIdentity?: boolean;
+    includeHostingProviders?: false;
     signal?: AbortSignal;
 }>): Promise<ScmWorkspaceIntegrationWorkspaceLocationResult | null> {
     return runWithScmBackendRegistryLease(input.registry, async (registry) => {
@@ -101,5 +102,5 @@ export async function inspectWorkspaceLocationWithScmWorkspace(input: Readonly<{
             checkoutDiscovery,
             checkoutProviderKinds: checkoutDiscovery.map(({ kind }) => kind),
         };
-    });
+    }, { includeHostingProviders: input.includeRepositoryIdentity || input.includeHostingProviders });
 }

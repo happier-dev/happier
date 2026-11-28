@@ -96,6 +96,29 @@ describe('SCM backend registry runtime lease convergence', () => {
     expect(releaseLeaseMock).toHaveBeenCalledTimes(1);
   });
 
+  it('can prepare a Workflow checkout while optional hosting providers are unavailable', async () => {
+    const contributes = {
+      ...createContributionRegistry(),
+      scmHostingProviders: Object.freeze([{
+        pluginId: 'acme.hosting',
+        definition: { id: 'forge' },
+      }]),
+    } as unknown as ResolvedContributionRegistry;
+    const runtimeRegistry = createRuntimeRegistry(contributes);
+    vi.spyOn(runtimeRegistry, 'activateContributionsOnDemand').mockRejectedValue(new Error('hosting unavailable'));
+    acquireAuthoritativePluginRuntimeRegistryLeaseMock.mockResolvedValue({
+      registry: runtimeRegistry, source: 'active', release: releaseLeaseMock,
+    });
+
+    const { prepareWorkflowAcceptedWorkspaceTarget } = await import('@/daemon/workflows/resolveWorkflowWorkspace');
+    await expect(prepareWorkflowAcceptedWorkspaceTarget({
+      projectTarget: { machineId: 'machine-1', directory: process.cwd() },
+      definition: { version: 1, inputs: [], defaults: {}, blocks: [
+        { kind: 'action', id: 'machines', actionId: 'machines.list', input: {} },
+      ] },
+    })).resolves.toMatchObject({ ok: true, workspaceTarget: { project: { directory: process.cwd() } } });
+  });
+
   it('retains the authoritative runtime lease until the complete SCM operation settles', async () => {
     const runtimeRegistry = createRuntimeRegistry(createContributionRegistry());
     acquireAuthoritativePluginRuntimeRegistryLeaseMock.mockResolvedValue({

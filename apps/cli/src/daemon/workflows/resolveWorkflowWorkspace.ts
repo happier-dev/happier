@@ -82,8 +82,13 @@ async function canonicalExistingPathsEqual(left: string, right: string): Promise
   return canonicalAbsolutePathsEqual(await canonicalize(left), await canonicalize(right));
 }
 
+function inspectWorkflowWorkspaceLocation(input: Readonly<{ candidatePath: string; signal?: AbortSignal }>) {
+  // A Run accepts local checkout identity and an optional original revision.
+  return inspectWorkspaceLocationWithScmWorkspace({ ...input, includeHostingProviders: false });
+}
+
 async function inspectCommittedRevision(directory: string): Promise<string | null> {
-  const inspected = await inspectWorkspaceLocationWithScmWorkspace({ candidatePath: directory });
+  const inspected = await inspectWorkflowWorkspaceLocation({ candidatePath: directory });
   return inspected?.inspection.committedRevision ?? null;
 }
 
@@ -117,7 +122,7 @@ export async function verifyWorkflowWorkspaceCurrentness(
     }
   });
   if (!await pathIsDirectory(workspace.directory)) return 'missing';
-  const inspected = await (input.inspectLocation ?? inspectWorkspaceLocationWithScmWorkspace)({
+  const inspected = await (input.inspectLocation ?? inspectWorkflowWorkspaceLocation)({
     candidatePath: workspace.directory,
   });
   if (!inspected) return workspace.checkout ? 'conflict' : 'available';
@@ -139,7 +144,7 @@ export async function verifyWorkflowWorkspaceCurrentness(
     }
   }
   if (!checkout?.repositoryIdentityPath || !input.creationIntent) return 'conflict';
-  const source = await (input.inspectLocation ?? inspectWorkspaceLocationWithScmWorkspace)({
+  const source = await (input.inspectLocation ?? inspectWorkflowWorkspaceLocation)({
     candidatePath: input.creationIntent.sourceDirectory,
   });
   const sourceCheckout = source?.checkoutDiscovery?.find((candidate) => (
@@ -285,7 +290,7 @@ export async function admitWorkflowProjectWorkspace(input: Readonly<{
       }
     });
     if (!await pathIsDirectory(normalizedTarget.directory)) return { ok: false, code: 'workspace_unavailable' };
-    const inspected = await (input.inspectLocation ?? inspectWorkspaceLocationWithScmWorkspace)({
+    const inspected = await (input.inspectLocation ?? inspectWorkflowWorkspaceLocation)({
       candidatePath: normalizedTarget.directory,
     });
     if (workspaceRef && (inspected
@@ -611,7 +616,7 @@ export function createCoordinatorWorkspaceResolver(input: Readonly<{
         // Remote reuse retains only the Session's cwd. The cwd is the
         // descriptor's scope; no coordinator-side SCM root is inferred.
         const inspected = conversationWorkspace.machineId === input.projectWorkspace.machineId
-          ? await (input.scm?.inspectLocation ?? inspectWorkspaceLocationWithScmWorkspace)({ candidatePath: directory })
+          ? await (input.scm?.inspectLocation ?? inspectWorkflowWorkspaceLocation)({ candidatePath: directory })
           : null;
         const checkoutRootPath = inspected?.inspection.rootPath ?? directory;
         source = { descriptor: {
