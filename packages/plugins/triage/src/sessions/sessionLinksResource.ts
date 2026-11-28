@@ -23,10 +23,12 @@ function channelsUnavailable(code: string) {
 }
 
 async function readChannelsRelations(options: PluginDynamicResourceInvocationOptionsV1, sessionId: string): Promise<SessionPullRequestRelations | undefined> {
-    const failed = (code: string): SessionPullRequestRelations => ({ kind: 'relations', links: [], failures: [{ sessionId, code }] });
+    const failed = (code: string, requestId?: string): SessionPullRequestRelations => ({ kind: 'relations', links: [],
+        failures: [{ sessionId, code, ...(requestId === undefined ? {} : { requestId }) }] });
     try {
         const envelope = await options.readAction(channelsAction, channelsInput(sessionId), { signal: options.signal });
-        if (!envelope.ok) return channelsUnavailable(envelope.errorCode) ? undefined : failed(envelope.errorCode);
+        if (!envelope.ok) return channelsUnavailable(envelope.errorCode) ? undefined
+            : failed(envelope.errorCode, envelope.requestId ?? readPluginErrorRequestIdV1(envelope));
         const { result, refusals } = readTriageSessionSetEnvelopeV1(envelope.result);
         const refusal = refusals.get(sessionId);
         if (refusal !== undefined) return failed(refusal);
@@ -38,7 +40,7 @@ async function readChannelsRelations(options: PluginDynamicResourceInvocationOpt
     } catch (error) {
         options.signal.throwIfAborted();
         const code = isPluginError(error) ? error.code : 'sessionLinksReadFailed';
-        return channelsUnavailable(code) ? undefined : failed(code);
+        return channelsUnavailable(code) ? undefined : failed(code, readPluginErrorRequestIdV1(error));
     }
 }
 

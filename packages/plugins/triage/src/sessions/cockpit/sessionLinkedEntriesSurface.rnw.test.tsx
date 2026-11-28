@@ -1170,6 +1170,7 @@ describe('the mounted Session cockpit', () => {
         const harness = createDataHarness({ snapshot: { status: 'ready', rows: [], hasMore: false } });
         const code = 'collection_update_required';
         const requestId = 'collection-update-request-1';
+        const openExternalLink = vi.fn(async (_url: string) => {});
         const fixture = await mountCockpit(harness, { kind: 'session', sessionId: SESSION_ID },
             null, true, null, undefined, true, undefined, async () => ({ kind: 'partial',
                 links: [{ entryRef: linkRow().entryRef, sessionId: SESSION_ID, linkedAtMs: 10, displayPath: 'Readable PR' }],
@@ -1179,7 +1180,7 @@ describe('the mounted Session cockpit', () => {
                         failure: { class: 'transient', code: 'sessionLinksReadFailed' },
                         invocationError: { code, retryable: false, requestId } } }],
             }), undefined, false, false, renderSessionLinkedEntriesSurface, undefined, undefined,
-            async () => ({ kind: 'relations', links: [], failures: [{ sessionId: SESSION_ID, code, requestId }] }));
+            async () => ({ kind: 'relations', links: [], failures: [{ sessionId: SESSION_ID, code, requestId }] }), openExternalLink);
         await expect(fixture.getByText('Readable PR')).resolves.toBeDefined();
         await expect(fixture.getByText('acme/ledger: This connection needs an update.')).resolves.toBeDefined();
         expect(document.body.textContent).not.toContain('Could not be reached');
@@ -1187,6 +1188,8 @@ describe('the mounted Session cockpit', () => {
         await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Details' })); });
         expect(document.body.textContent).toContain(requestId);
         expect(document.body.textContent).toContain(code);
+        await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Update instructions' })); });
+        expect(openExternalLink).toHaveBeenCalledExactlyOnceWith('https://docs.happier.dev/releases/updates#cli-updates-binary-vs-npm');
     });
 
     it('offers complete-lane candidates when an unrelated configured source is unavailable', async () => {

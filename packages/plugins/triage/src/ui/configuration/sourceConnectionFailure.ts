@@ -19,7 +19,7 @@ const collectionUpdateRequired = {
 export function presentTriageSourceConnectionFailure(
   code: string | undefined,
   text: PluginTranslate,
-): Readonly<{ title: string; description?: string }> | undefined {
+): Readonly<{ title: string; description?: string; recovery?: Readonly<{ label: string; url: string }> }> | undefined {
   if (code === TRIAGE_SOURCE_RETIRED_CODE) {
     return presentRetiredTriageSourceConnection(text);
   }
@@ -30,6 +30,10 @@ export function presentTriageSourceConnectionFailure(
     return {
       title: text(collectionUpdateRequired.key, collectionUpdateRequired.fallback),
       description: text('plugins.triage.sourceFailure.collectionUpdateRecovery', 'Update Happier on the machine that reads this connection.'),
+      recovery: {
+        label: text('plugins.triage.sourceFailure.collectionUpdateInstructions', 'Update instructions'),
+        url: 'https://docs.happier.dev/releases/updates#cli-updates-binary-vs-npm',
+      },
     };
   }
   return undefined;

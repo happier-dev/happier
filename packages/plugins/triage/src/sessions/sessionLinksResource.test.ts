@@ -6,7 +6,7 @@ import type { PluginDynamicResourceInvocationOptionsV1 } from '@happier-dev/plug
 
 import { testkitEntryRef } from '../corpus/testkit/observations.test-support.js';
 import { TriageReadSourceSessionLinksResultV1Schema } from '../actions/sessionLinksProtocol.js';
-import { TRIAGE_SESSION_LINKS_RESOURCE_RUNTIME } from './sessionLinksResource.js';
+import { decodeTriageSessionLinksResource, TRIAGE_SESSION_LINKS_RESOURCE_RUNTIME } from './sessionLinksResource.js';
 
 describe('the Session relation Resource', () => {
     it('reads the full composed owner result for only the host-stamped Session', async () => {
@@ -30,6 +30,20 @@ describe('the Session relation Resource', () => {
             { kind: 'readRelations', credentialRef: null, sessionIds: ['session-a'] }, { signal: options.signal },
         );
         expect(readAction).toHaveBeenCalledTimes(2);
+    });
+
+    it('retains the request ID when Channels rejects the Session relation read', async () => {
+        const refusal = { ok: false as const, errorCode: 'collection_update_required',
+            error: 'Update required', requestId: 'channels-update-request' };
+        const options = createTestResourceInvocationContext({ context: { kind: 'session', sessionId: 'session-a' },
+            signal: new AbortController().signal,
+            readAction: async action => action.localId === SESSION_PULL_REQUEST_RELATIONS_ACTION_ID_V1
+                ? refusal : { ok: true, result: { kind: 'complete', links: [], lanes: [] } },
+        });
+        const value = await TRIAGE_SESSION_LINKS_RESOURCE_RUNTIME.read(options);
+        const bytes = typeof value === 'string' ? new TextEncoder().encode(value) : value;
+        expect(decodeTriageSessionLinksResource(bytes).channels?.failures)
+            .toEqual([{ sessionId: 'session-a', code: refusal.errorCode, requestId: refusal.requestId }]);
     });
 
     it('refuses absent Session authority and unadmitted read answers instead of reporting an empty set', async () => {

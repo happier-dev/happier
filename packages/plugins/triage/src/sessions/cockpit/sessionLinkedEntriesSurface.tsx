@@ -17,6 +17,7 @@ import {
     Screen,
     Stack,
     Status,
+    SurfaceState,
     Text,
     defineUiSurface,
     projectPluginActionRejectionV1,
@@ -430,6 +431,24 @@ function readFailureDetails(text: Translate, code: string, requestId?: string): 
     return requestId === undefined ? `${codeLabel}: ${code}` : `${codeLabel}: ${code}\n${requestLabel}: ${requestId}`;
 }
 
+function SessionLinkFailureLine({ title, code, requestId, presentation }: Readonly<{
+    title: string;
+    code: string;
+    requestId?: string;
+    presentation: ReturnType<typeof presentTriageSourceConnectionFailure>;
+}>): React.ReactElement {
+    const host = usePluginHostApi();
+    const text = usePluginTranslation();
+    const recovery = presentation?.recovery;
+    return <SurfaceState kind="unavailable" size="line" title={title} description={presentation?.description}
+        details={readFailureDetails(text, code, requestId)}
+        action={recovery === undefined ? undefined : { label: recovery.label, onPress: () =>
+            host.openExternalLink(recovery.url).catch(error => {
+                if (!isHostCancellation(error, undefined)) return presentTriageMountedUiActionFailure(host, error, text);
+            }),
+        }} />;
+}
+
 /**
  * The sources a Session's links could not be read from, each named with why, as the quiet line over rows that
  * are still shown (never an empty state). One Refresh serves them all, so it sits on the first line only.
@@ -465,16 +484,14 @@ function UnavailableLinkSources(props: Readonly<{
                             requestId={diagnostic?.requestId} />
                     </Stack>;
                 }
-                return <ErrorState key={`${reason}\u0000${diagnostic?.code ?? ''}\u0000${diagnostic?.requestId ?? ''}`}
-                    kind="unavailable" layout="line" title={reason} description={connectionFailure.description}
-                    details={readFailureDetails(text, diagnostic.code, diagnostic.requestId)} />;
+                return <SessionLinkFailureLine key={`${reason}\u0000${diagnostic.code}\u0000${diagnostic.requestId ?? ''}`}
+                    title={reason} code={diagnostic.code} requestId={diagnostic.requestId} presentation={connectionFailure} />;
             })}
             {related.map(failure => {
                 const connectionFailure = presentTriageSourceConnectionFailure(failure.code, text);
-                return <ErrorState key={failure.sessionId} kind="unavailable" layout="line"
+                return <SessionLinkFailureLine key={failure.sessionId}
                     title={connectionFailure?.title ?? text('plugins.triage.sessionLinks.nativeReadFailed', 'Pull request links could not be read')}
-                    description={connectionFailure?.description}
-                    details={readFailureDetails(text, failure.code, failure.requestId)} />;
+                    code={failure.code} requestId={failure.requestId} presentation={connectionFailure} />;
             })}
         </Stack>
     );
@@ -486,9 +503,8 @@ function LinkReadFailure({ notice, onRefresh }: Readonly<{
     const text = usePluginTranslation();
     const error = notice.error;
     const connectionFailure = presentTriageSourceConnectionFailure(error?.code, text);
-    if (connectionFailure !== undefined && error !== undefined) return <ErrorState kind="unavailable" layout="line"
-        title={connectionFailure.title} description={connectionFailure.description}
-        details={readFailureDetails(text, error.code, readPluginErrorRequestIdV1(error))} />;
+    if (connectionFailure !== undefined && error !== undefined) return <SessionLinkFailureLine
+        title={connectionFailure.title} code={error.code} requestId={readPluginErrorRequestIdV1(error)} presentation={connectionFailure} />;
     return <ActionFailureDetails code={error?.code} message={error?.message} details={error?.details}
         requestId={readPluginErrorRequestIdV1(error)} inline={{
             fallback: text('plugins.triage.sessionLinks.unavailable', 'Linked entries could not be read'),
