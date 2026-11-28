@@ -462,7 +462,12 @@ describe('shared Account workflow run owner', () => {
     { outcome: 'unresolved', scope: 'repository', title: '/repo' },
     { outcome: 'accepted', scope: 'repository', title: '/repo' },
     { outcome: 'accepted', scope: 'changes', title: 'Working tree changes' },
-  ] as const)('settles a composed Review only when its Workflow admission is definitely $outcome ($scope)', async ({ outcome, scope, title }) => {
+    { outcome: 'accepted', scope: 'changes', title: 'acme/reviews#1', pullRequest: true },
+  ] as const)('settles a composed Review only when its Workflow admission is definitely $outcome ($title)', async scenario => {
+    const { outcome, scope, title } = scenario;
+    const pullRequestSource = 'pullRequest' in scenario
+      ? { kind: 'pullRequest' as const, locator: { providerId: 'github', repository: 'acme/reviews', number: 1 } }
+      : undefined;
     const records = createInMemoryReviewRecordPortV1();
     let workflowWrites = 0;
     let nativeStarts = 0;
@@ -507,9 +512,11 @@ describe('shared Account workflow run owner', () => {
       // SCM capture is an external Machine boundary; Review composition and sealed admission stay real.
       scmActionExecute: async ({ actionId }) => {
         expect(actionId).toBe('scm.diffSummary.capture');
-        return { success: true, comparison: { id: 'c'.repeat(64), source: { kind: 'workingTree', area: 'pending' },
-          repository: { rootPath: '/repo' }, endpoints: {}, inventory: { state: 'complete', files: [], reasons: [] } },
-          metadata: { sourceKey: 'c'.repeat(64), source: { kind: 'workingTree', area: 'pending' } } } satisfies ScmComparisonCaptureOutput;
+        const source = pullRequestSource ?? { kind: 'workingTree', area: 'pending' } as const;
+        return { success: true, comparison: { id: 'c'.repeat(64), source,
+          repository: { rootPath: '/repo' }, endpoints: pullRequestSource ? { before: 'base-oid', after: 'head-oid' } : {},
+          inventory: { state: 'complete', files: [], reasons: [] } },
+          metadata: { sourceKey: 'c'.repeat(64), source } } satisfies ScmComparisonCaptureOutput;
       },
       executionRunStart: async () => {
         nativeStarts += 1;
@@ -517,7 +524,8 @@ describe('shared Account workflow run owner', () => {
       },
     });
     const selection = { reviewers: [{ kind: 'engine' as const, engineId: 'agent:happier.agent.codex/codex' },
-      { kind: 'engine' as const, engineId: 'agent:happier.agent.codex/codex' }], instructions: 'Review independently.', scope, cwd: '/repo' };
+      { kind: 'engine' as const, engineId: 'agent:happier.agent.codex/codex' }], instructions: 'Review independently.', scope, cwd: '/repo',
+      ...(pullRequestSource ? { source: pullRequestSource } : {}) };
     const result = await executor.execute('review.start', selection, { surface: 'ui', defaultSessionId: 'origin-1', defaultSessionMachineId: 'machine-a',
       externalActionTarget: { kind: 'machine', machineId: 'machine-a', project: { machineId: 'machine-a', directory: '/repo' } } });
     expect(result, JSON.stringify(result)).toMatchObject(outcome === 'accepted' ? { ok: true }
@@ -528,10 +536,15 @@ describe('shared Account workflow run owner', () => {
     const record = await records.read(binding!.reviewId);
     expect(record?.rounds[0]?.state).toBe(outcome === 'refused' ? 'failed' : 'running');
     if (outcome === 'accepted') {
-      expect(readReviewStartActionResultV1(result, selection)).toMatchObject({
-        kind: 'workflow', workflow: { runId: expect.any(String) }, reviewRound: binding,
-      });
+      if (pullRequestSource) {
+        expect(result).toMatchObject({ ok: true, result: { reviewTarget: {
+          locator: pullRequestSource.locator, headOid: 'head-oid',
+        } } });
+      }
       if (!admitted) throw new Error('review_workflow_not_admitted');
+      expect(readReviewStartActionResultV1(result, selection)).toMatchObject({
+        kind: 'workflow', workflow: { runId: admitted.run.id }, reviewRound: binding,
+      });
       const opened = openWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
         binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'account-1', runId: admitted.run.id },
         envelope: parseWorkflowStoredContentEnvelopeV1(admitted.acceptedEnvelope) });

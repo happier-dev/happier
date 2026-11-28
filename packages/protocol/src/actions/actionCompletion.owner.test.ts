@@ -49,21 +49,25 @@ describe('Action completion owner', () => {
   it('awaits the exact composed Review Workflow receipt and returns its terminal aggregate', async () => {
     const run = { id: 'review-workflow', sourceArtifactId: null, ownerAccountId: 'account', visibleTeamId: null,
       attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
-      origin: { kind: 'direct' }, state: 'running', revision: 1, machineId: 'machine',
+      origin: { kind: 'direct' }, state: 'queued', revision: 1, machineId: 'machine', heldCount: 0,
       workflowCustodyState: 'pending', originDeliveryAckRevision: null,
       availability: { pause: true, resumeBoundary: false, restoreWorkspace: false, cancel: true, inspectExecution: false, disabledReasons: [] },
       createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' };
     const reviewRound = { reviewId: 'review', roundOrdinal: 1 };
-    for (const metadata of [{}, { reviewRound }]) {
+    const reviewTarget = { locator: { providerId: 'github', repository: 'acme/reviews', number: 1 },
+      headOid: 'a'.repeat(40), url: 'https://github.com/acme/reviews/pull/1' };
+    for (const metadata of [{}, { reviewRound }, { reviewRound, reviewTarget }]) {
       for (const value of [{ run, admission: 'created', ...metadata }, { ok: true, result: { run, admission: 'created', ...metadata } }]) {
         expect(readReviewStartActionResultV1(value, selection)).toEqual({ kind: 'workflow',
-          workflow: { runId: run.id, origin: run.origin }, ...metadata });
+          workflow: { runId: run.id, origin: run.origin }, ...('reviewRound' in metadata ? { reviewRound } : {}) });
       }
     }
     for (const invalid of [{ reviewRound: { reviewId: 'review', roundOrdinal: 0 } }, { unrelatedMetadata: true }]) {
       expect(readReviewStartActionResultV1({ run, admission: 'created', ...invalid }, selection)).toEqual({ kind: 'outcome_unknown' });
     }
-    const prepared = prepareActionCompletionV1(reviewStartCompletion, { ok: true, result: { run, admission: 'created', reviewRound } });
+    const prepared = prepareActionCompletionV1(reviewStartCompletion, {
+      ok: true, result: { run, admission: 'created', reviewRound, reviewTarget },
+    });
     expect(prepared).toMatchObject({ kind: 'awaiting', state: { awaitedWorkflows: [{ key: 'review', runId: run.id }] } });
     if (prepared.kind !== 'awaiting') throw new Error('Expected retained Review Workflow');
     const result = { review: { state: 'completed', counts: { total: 51, needsDecision: 1 } },

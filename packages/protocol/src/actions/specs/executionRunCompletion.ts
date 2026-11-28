@@ -62,14 +62,14 @@ export type ReviewStartActionResultV1 =
   | Readonly<{ kind: 'workflow'; workflow: WorkflowRunActionResultReferenceV1; reviewRound?: ReviewRoundBindingV1 }>
   | Readonly<{ kind: 'outcome_unknown' }>;
 
-/** Review adds its round binding to the ordinary Workflow admission receipt. */
+/** Unwrap Review metadata before validating the ordinary Workflow admission receipt. */
 export function readReviewWorkflowStartActionResultV1(value: unknown): Readonly<{
   workflow: WorkflowRunActionResultReferenceV1;
   reviewRound?: ReviewRoundBindingV1;
 }> | null {
   const envelope = ActionExecuteResultSchema.safeParse(value);
   const output = envelope.success ? envelope.data.ok ? envelope.data.result : undefined : value;
-  const { reviewRound, ...start } = readRecord(output);
+  const { reviewRound, reviewTarget: _reviewTarget, ...start } = readRecord(output);
   const workflow = parseWorkflowRunStartActionResultReferenceV1(start);
   if (!workflow) return null;
   if (reviewRound === undefined) return { workflow };
