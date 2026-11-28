@@ -956,6 +956,58 @@ describe('Session id-batched reads (SQLite integration)', () => {
         } finally { stopObserving(); }
     });
 
+    it('captures the requested main first page under the same exact access resolution for the owner and an admitted guest', async () => {
+        const owner = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: 'plain' } });
+        const { id: sessionId } = await db.session.create({ data: { accountId: owner.id, tag: crypto.randomUUID(),
+            metadata: '{"v":1}', metadataLayoutVersion: 1, encryptionMode: 'plain',
+            ownerMetadata: JSON.stringify({ t: 'plain', v: { v: 1 } }) } });
+        const guest = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: 'plain' } });
+        const grant = await db.sessionGrant.create({ data: { principalKind: 'account', sessionId, accountId: guest.id,
+            createdByAccountId: owner.id, accessLevel: 'view' } });
+        await db.sessionMessage.createMany({ data: Array.from({ length: 1200 }, (_, index) => ({
+            sessionId, seq: index + 1, messageRole: 'user',
+            sidechainId: index >= 1198 ? 'child' : null,
+            content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: `message ${index + 1}` } } },
+        })) });
+        const bundles = vi.spyOn(sessionAccessOwner, 'resolveSessionAccessCapabilitiesForRowsInTx');
+        try {
+            await withAuthenticatedTestApp(registerSessionReadRoutes, async app => {
+                const url = '/v2/sessions/read-batch?initialTranscript=main';
+                const payload = { sessionIds: [sessionId], accessProjectionVersion: 1 };
+                for (const account of [owner, guest]) {
+                    const token = await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
+                    const headers = { authorization: `Bearer ${token}`, ...currentAccountStoredContentCompatibilityHeaders };
+                    const baseline = await app.inject({ method: 'POST', url: '/v2/sessions/read-batch', headers, payload });
+                    expect(baseline.statusCode, baseline.body).toBe(200);
+                    const [baselineResult] = SessionReadBatchResponseV1Schema.parse(baseline.json()).results;
+                    expect(baselineResult?.detail?.status).toBe(200);
+                    expect(baselineResult?.messages).toBeUndefined();
+                    const page = await app.inject({ method: 'GET', url: `/v1/sessions/${sessionId}/messages?scope=main`, headers });
+                    expect(page.statusCode).toBe(200);
+                    bundles.mockClear();
+                    const batch = await app.inject({ method: 'POST', url, headers, payload });
+                    expect(batch.statusCode, batch.body).toBe(200);
+                    const [result] = SessionReadBatchResponseV1Schema.parse(batch.json()).results;
+                    expect(result?.detail?.status, JSON.stringify(result?.detail?.body)).toBe(200);
+                    expect(result?.turns?.status).toBe(200);
+                    expect(result?.messages).toEqual({ status: 200, body: page.json() });
+                    expect(result?.messages?.body).toMatchObject({ hasMore: true, nextBeforeSeq: 1049 });
+                    expect(bundles.mock.calls.map(([, , rows, requests]) => [rows.length, requests.length])).toEqual([[1, 2]]);
+                }
+                await db.sessionGrant.delete({ where: { id: grant.id } });
+                const guestToken = await auth.createToken(guest.id, undefined, { kind: 'account', authority: 'present_user' });
+                const revoked = await app.inject({ method: 'POST', url, payload,
+                    headers: { authorization: `Bearer ${guestToken}`, ...currentAccountStoredContentCompatibilityHeaders } });
+                expect(revoked.statusCode, revoked.body).toBe(200);
+                const [result] = SessionReadBatchResponseV1Schema.parse(revoked.json()).results;
+                expect(result?.detail?.status).toBe(404);
+                expect(result?.messages).toBeUndefined();
+            }, { authentication: 'real' });
+        } finally {
+            bundles.mockRestore();
+        }
+    });
+
     it('returns the existing admitted snapshot and first message page independently for mixed ids and modes', async () => {
         const owner = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: 'plain' } });
         const foreign = await db.account.create({ data: { publicKey: crypto.randomUUID() } });

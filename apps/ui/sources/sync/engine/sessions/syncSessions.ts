@@ -1185,6 +1185,7 @@ export async function buildUpdatedSessionListRenderablePatchFromSocketUpdate(par
 
 export async function fetchAndApplyMessages(params: {
     sessionId: string;
+    prefetchedMainPage?: SessionMessagesPageV1;
     shouldContinue?: () => boolean;
     scope?: 'main' | 'sidechain' | 'all';
     sidechainId?: string | null;
@@ -1215,6 +1216,7 @@ export async function fetchAndApplyMessages(params: {
     const result = await runSessionMessagesPagePipeline({
         sessionId: params.sessionId,
         purpose: 'initial',
+        prefetchedPage: scope === 'main' ? params.prefetchedMainPage : undefined,
         shouldContinue: params.shouldContinue,
         serverId: params.serverId,
         page: {

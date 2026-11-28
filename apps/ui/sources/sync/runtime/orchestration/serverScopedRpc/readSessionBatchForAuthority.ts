@@ -28,6 +28,7 @@ export type SessionPartsReadOptions = Readonly<{
     includeSnapshot: boolean;
     includeTurns?: boolean;
     includeMessages: boolean;
+    initialTranscript?: 'main';
     accessProjectionVersion?: 1;
     signal?: AbortSignal;
     fresh?: boolean;
@@ -53,8 +54,9 @@ export function prepareSessionPartsRead(params: Omit<SessionPartsReadOptions, 's
     const transport = params.readTransport;
     const transportKey = transport?.key;
     const scope = transport?.scope ?? transportKey;
+    const path = params.initialTranscript === 'main' ? '/v2/sessions/read-batch?initialTranscript=main' : '/v2/sessions/read-batch';
     const reservation = sessionParts.reserve(JSON.stringify([transportKey ?? null, params.includeSnapshot, includeTurns, params.includeMessages,
-        params.accessProjectionVersion ?? null, params.retry ?? null, params.underSessionId ?? null]), { scope, signal: params.signal, fresh: params.fresh || !transport });
+        params.accessProjectionVersion ?? null, params.retry ?? null, params.underSessionId ?? null, params.initialTranscript ?? null]), { scope, signal: params.signal, fresh: params.fresh || !transport });
     return {
         release: reservation.release,
         async read(sessionIds: readonly string[]): Promise<ReadonlyMap<string, SessionReadPart>> {
@@ -92,8 +94,8 @@ export function prepareSessionPartsRead(params: Omit<SessionPartsReadOptions, 's
                             return parsed.data;
                         };
                         const body = transport
-                            ? await transport.read('/v2/sessions/read-batch', init, params.retry ? { retry: params.retry } : undefined, consume)
-                            : await consume(await params.request('/v2/sessions/read-batch', init));
+                            ? await transport.read(path, init, params.retry ? { retry: params.retry } : undefined, consume)
+                            : await consume(await params.request(path, init));
                         const expected = new Set(sessionIds);
                         const completed = new Map<string, SessionReadPart>();
                         for (const row of body.results) {

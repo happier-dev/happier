@@ -60,8 +60,9 @@ vi.mock('react-native-safe-area-context', async () => ({
 
 const reads: string[] = [];
 const httpRequests: string[] = [];
-const coldOpenId = 'cold-open-settled-turn';
-const coldOpenRead = createDeferred<void>();
+let coldOpenId = 'cold-open-settled-turn';
+let coldOpenRead = createDeferred<void>();
+let serveColdTranscriptInBatch = true;
 const coldOpenRequests: string[] = [];
 const revisitId = 'turn-marker-revisit';
 const jumpId = 'turn-marker-jump';
@@ -108,7 +109,7 @@ const runtime = installSessionPaneRuntimeTestHarness({
         } else if (method === 'POST' && path === '/v2/sessions/read-batch') {
             const batch = JSON.parse(String(init?.body));
             if (batch.includeSnapshot && batch.sessionIds.includes(coldOpenId)) {
-                coldOpenRequests.push(batch.includeTurns ? 'snapshot with turns' : 'snapshot without turns');
+                coldOpenRequests.push(`${batch.includeTurns ? 'snapshot with turns' : 'snapshot without turns'} and ${url.searchParams.get('initialTranscript') ?? 'no transcript'}`);
             }
             if (batch.sessionIds.includes(revisitId)) revisitReads.push(`${path} ${String(batch.includeTurns)}`);
         }
@@ -130,6 +131,28 @@ const runtime = installSessionPaneRuntimeTestHarness({
     },
     request: async (input, init) => {
         const url = new URL(String(input));
+        if (serveColdTranscriptInBatch && url.pathname === '/v2/sessions/read-batch' && url.searchParams.get('initialTranscript') === 'main') {
+            const batch = JSON.parse(String(init?.body));
+            if (batch.sessionIds.length === 1 && batch.sessionIds[0] === coldOpenId) {
+                await coldOpenRead.promise;
+                return Response.json({ results: [{
+                    sessionId: coldOpenId,
+                    detail: { status: 200, body: { session: createPlainSessionWithDisplayRecordFixture({ id: coldOpenId, seq: 3 }) } },
+                    turns: { status: 200, body: buildSessionTurnsProjectionV1({ sessionId: coldOpenId, updatedAt: 4001, turns: [{
+                        turnId: 'settled', status: 'completed', startedAt: 1, updatedAt: 4001, terminalAt: 4001,
+                        transcriptAnchors: { startUserMessageSeq: 1, finalAssistantMessageSeq: 2 },
+                    }] }) },
+                    messages: { status: 200, body: {
+                        messages: [3, 2, 1].map(seq => ({
+                            id: `message-${seq}`, seq, localId: null, sidechainId: null,
+                            content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: `Turn ${seq}` } } },
+                            createdAt: seq, updatedAt: seq,
+                        })),
+                        hasMore: false, nextBeforeSeq: null, nextAfterSeq: null,
+                    } },
+                }] });
+            }
+        }
         const markerId = [revisitId, jumpId, failedId].find(id => url.pathname === `/v2/sessions/${id}`
             || url.pathname.startsWith(`/v1/sessions/${id}/`));
         if (markerId && url.pathname.startsWith('/v2/sessions/')) {
@@ -192,8 +215,15 @@ const runtime = installSessionPaneRuntimeTestHarness({
     },
 });
 
-it('includes settled turn markers in the first populated cold transcript commit with one open read', async () => {
-    const id = coldOpenId;
+it.each([
+    { home: 'current Home', servesBatchPage: true, expectedMessageGets: 0 },
+    { home: 'older read-batch Home', servesBatchPage: false, expectedMessageGets: 1 },
+])('includes settled turn markers in the first populated cold transcript commit on a $home', async ({ servesBatchPage, expectedMessageGets }) => {
+    const id = servesBatchPage ? 'cold-open-settled-turn' : 'cold-open-older-home';
+    coldOpenId = id;
+    coldOpenRead = createDeferred<void>();
+    coldOpenRequests.length = 0;
+    serveColdTranscriptInBatch = servesBatchPage;
     storage.getState().applyServerScopedSessionListRows(runtime.serverId, [
         createSessionListRenderableSessionFixture({ id, serverId: runtime.serverId, seq: 3 }),
     ], { source: 'rowOnly', mode: 'append' });
@@ -224,8 +254,8 @@ it('includes settled turn markers in the first populated cold transcript commit 
             await waitForHomeGovernance(() => expect(storage.getState().sessionMessages[id]?.isLoaded).toBe(true));
         });
         await flushHookEffects({ cycles: 3, turns: 3 });
-        expect.soft(coldOpenRequests).toEqual(['snapshot with turns']);
-        expect.soft(reads.filter(path => path.startsWith(`/v1/sessions/${id}/messages`))).toHaveLength(1);
+        expect.soft(coldOpenRequests).toEqual(['snapshot with turns and main']);
+        expect.soft(reads.filter(path => path.startsWith(`/v1/sessions/${id}/messages`))).toHaveLength(expectedMessageGets);
         expect(screen.getTextContent()).toContain('Turn 1');
         expect(firstPaintMarkerCount).toBe(1);
     } finally {

@@ -1,3 +1,4 @@
+import type { SessionMessagesPageV1 } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
 import type { CapturedServerReadTransport } from '@/sync/runtime/orchestration/serverScopedRpc/capturedServerReadTransport';
 import { mergeAbortSignals, throwIfAborted } from '@/utils/runtime/abortSignals';
 import { readSessionParts, SessionPartsHttpError, resetSessionPartsReadsForTests } from '@/sync/runtime/orchestration/serverScopedRpc/readSessionBatchForAuthority';
@@ -6,7 +7,8 @@ import type { ScopedBatchResolutionContext } from '@/sync/runtime/orchestration/
 
 type SessionByIdRequest = (path: string, init: RequestInit) => Promise<Response>;
 export type SessionByIdHttpRead = Readonly<{ ok: boolean; status: number; body: unknown;
-  turns?: Readonly<{ status: number; body: unknown }> }>;
+  turns?: Readonly<{ status: number; body: unknown }>;
+  initialMessagesPage?: SessionMessagesPageV1 }>;
 
 export type SessionByIdHttpReadParams = Readonly<{
   sessionId: string;
@@ -17,6 +19,7 @@ export type SessionByIdHttpReadParams = Readonly<{
   timeoutMs?: number;
   accessProjectionVersion?: 1;
   projection?: 'detail' | 'turns' | 'snapshot';
+  initialTranscript?: 'main';
   signal?: AbortSignal;
   retry?: 'none';
   fresh?: boolean;
@@ -36,13 +39,15 @@ export async function readSessionByIdHttp(params: SessionByIdHttpReadParams): Pr
       try {
         const row = (await readSessionParts({ request: params.request, readTransport: params.readTransport,
           sessionIds: [params.sessionId], includeSnapshot: true, includeTurns: projection !== 'detail',
-          includeMessages: false, accessProjectionVersion: params.accessProjectionVersion,
+          includeMessages: false, initialTranscript: projection === 'snapshot' ? params.initialTranscript : undefined, accessProjectionVersion: params.accessProjectionVersion,
           signal: cancellation.signal, fresh: params.fresh, retry: params.retry, assertCurrent: () => {},
           onResult: (_id, _part, chunk) => params.onBatch?.(chunk) })).get(params.sessionId);
         const part = projection === 'turns' ? row?.turns ?? (row?.detail?.status !== 200 ? row?.detail : undefined) : row?.detail;
         if (!part) throw new Error('Incomplete Session parts response');
         return { ok: part.status === 200, status: part.status, body: part.body,
-          ...(projection === 'snapshot' && row?.turns ? { turns: row.turns } : {}) };
+          ...(projection === 'snapshot' && row?.turns ? { turns: row.turns } : {}),
+          ...(params.initialTranscript === 'main' && projection === 'snapshot' && row?.messages?.status === 200
+            ? { initialMessagesPage: row.messages.body } : {}) };
       } catch (error) {
         if (error instanceof SessionPartsHttpError) return { ok: false, status: error.httpStatus, body: error.body };
         throw error;

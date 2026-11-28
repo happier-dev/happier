@@ -33,6 +33,7 @@ import { createV2SessionListServerTiming } from "@/app/session/listing/timing";
 import { registerSessionFilteredListingRoute } from "./registerSessionFilteredListingRoute";
 import { assembleProjectedSessionRecord, parseProjectedSessionByIdResponse } from './sessionRecordResponse';
 import { readSessionTurnsForRowsInTx } from './readSessionTurns';
+import { readSessionMessagePage } from './readSessionMessagePage';
 import {
     createSessionMetadataListRepresentabilityWhere,
     createSessionMetadataPrivacyUpgradeRequiredResponse,
@@ -155,6 +156,7 @@ type SessionDetailInput = Readonly<{ userId: string; authentication: SessionAcce
      * detail. The component decides its own `readTranscript` permission from those rows.
      */
     turnResults?: Map<string, PromiseSettledResult<Awaited<ReturnType<typeof readSessionTurnsForRowsInTx>> extends ReadonlyMap<string, infer R> ? (R extends PromiseSettledResult<infer V> ? V : never) : never>>;
+    initialTranscriptResults?: Map<string, PromiseSettledResult<Awaited<ReturnType<typeof readSessionMessagePage>>>>;
 }>;
 export type SessionDetailResponse =
     | { status: 200; body: z.infer<typeof V2SessionByIdResponseSchema> }
@@ -304,6 +306,20 @@ export async function readSessionDetails(input: SessionDetailInput & Readonly<{ 
                                 ? { computerMachineBinding: computerBindings.get(session.id) } : {}) }) };
                         result.set(session.id, { kind: 'found', session: payload.session, observationCursor });
                     } catch (error) { result.set(session.id, sessionDetailFailure(error)); }
+                }
+                if (input.initialTranscriptResults && combined) {
+                    for (const row of rows) {
+                        if (result.get(row.id)?.kind !== 'found') continue;
+                        const decision = combined[1]?.get(row.id);
+                        if (!decision) continue;
+                        try {
+                            const page = await readSessionMessagePage({ userId, sessionId: row.id, authentication,
+                                initialSnapshot: { tx, decision, publication: row } });
+                            input.initialTranscriptResults.set(row.id, { status: 'fulfilled', value: page });
+                        } catch (reason) {
+                            input.initialTranscriptResults.set(row.id, { status: 'rejected', reason });
+                        }
+                    }
                 }
                 if (input.turnResults) {
                     const admittedIds = batch.filter(id => result.get(id)?.kind === 'found');

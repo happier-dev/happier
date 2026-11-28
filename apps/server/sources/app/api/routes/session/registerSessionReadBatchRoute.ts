@@ -22,10 +22,13 @@ import { inReadSnapshot } from '@/storage/inTx';
 import { loadSessionRuleReadBoundariesInTx, projectSessionRuleReadStates } from '@/app/session/personal/readState';
 import { readAccountFollowRuleProjectionRowsInTx, projectAccountFollowRuleReceiverCounts } from '@/app/session/follow/accountFollowRuleService';
 import { parseProjectedSessionBatchDetail } from './sessionRecordResponse';
+import type { readSessionMessagePage } from './readSessionMessagePage';
+
+type SessionTurnsResult = Awaited<ReturnType<typeof readSessionTurnsBatch>> extends ReadonlyMap<string, PromiseSettledResult<infer V>> ? V : never;
 
 /** Each demanded kind reads one admitted set; projection preserves per-id outcomes. */
 export function registerSessionReadBatchRoute(app: Fastify) {
-    app.post<{ Body: SessionReadBatchRequestV1; Reply: SessionReadBatchResponseV1 }>('/v2/sessions/read-batch', {
+    app.post<{ Body: SessionReadBatchRequestV1; Reply: SessionReadBatchResponseV1; Querystring: { initialTranscript?: unknown } }>('/v2/sessions/read-batch', {
         preHandler: app.authenticate,
         config: { rateLimit: resolveApiHotEndpointRateLimit(process.env, 'session.detail'),
             restrictedCredentialBinding: { scope: 'session_managed_subtree', session: 'body.underSessionId' },
@@ -43,20 +46,33 @@ export function registerSessionReadBatchRoute(app: Fastify) {
                 return { status: 503 as const, body: { error: databaseError ?? 'session_read_unavailable' } };
             }
         };
+        // Older Homes ignore this representation preference and return the ordinary snapshot.
+        const initialTranscriptResults = request.body.includeSnapshot && request.body.includeTurns !== false
+            && request.query.initialTranscript === 'main'
+            && !request.body.includeMessages && request.body.underSessionId === undefined
+            && authentication.authority === 'present_user' && !authentication.contentDisclosureSessionId
+            && !request.apiTokenPrincipal && !request.externalActionExecutionAuthorized
+            ? new Map<string, PromiseSettledResult<Awaited<ReturnType<typeof readSessionMessagePage>>>>()
+            : undefined;
+        const sharedTurnResults = initialTranscriptResults
+            ? new Map<string, PromiseSettledResult<SessionTurnsResult>>() : undefined;
         const details = request.body.includeSnapshot ? await readComponent(() => readSessionDetails({
             userId: request.userId, sessionIds: request.body.sessionIds, authentication,
             accessProjectionVersion: request.body.accessProjectionVersion, storedContentCompatibility,
             underSessionId: request.body.underSessionId,
             includePrivateRuleProjection: false,
+            ...(sharedTurnResults ? { turnResults: sharedTurnResults, initialTranscriptResults } : {}),
         })) : undefined;
-        const turnIds = request.body.includeSnapshot && request.body.includeTurns !== false && details && !('status' in details)
+        const turnIds = !sharedTurnResults && request.body.includeSnapshot && request.body.includeTurns !== false && details && !('status' in details)
             ? request.body.sessionIds.filter(id => {
                 const detail = details.get(id);
                 return detail?.status === 'fulfilled' && detail.value.status === 200;
             }) : [];
-        const turnResults = turnIds.length ? await readComponent(() => readSessionTurnsBatch({
-            userId: request.userId, sessionIds: turnIds, authentication,
-        })) : undefined;
+        const turnResults = sharedTurnResults
+            ? (details && 'status' in details ? details : sharedTurnResults)
+            : turnIds.length ? await readComponent(() => readSessionTurnsBatch({
+                userId: request.userId, sessionIds: turnIds, authentication,
+            })) : undefined;
         const messageResults = request.body.includeMessages ? await readComponent(() => readSessionMessagePages({
             userId: request.userId, sessionIds: request.body.sessionIds, authentication, previewRequest: request,
         })) : undefined;
@@ -89,9 +105,10 @@ export function registerSessionReadBatchRoute(app: Fastify) {
                     });
                 }
             }
-            if (request.body.includeMessages) {
+            const initialTranscript = result.detail?.status === 200 && initialTranscriptResults?.has(sessionId);
+            if (request.body.includeMessages || initialTranscript) {
                 result.messages = await readComponent(async () => {
-                    const messages = componentFor(messageResults, sessionId);
+                    const messages = componentFor(initialTranscript ? initialTranscriptResults : messageResults, sessionId);
                     return SessionReadBatchMessagesV1Schema.parse({ ...messages,
                         body: projectSessionTurnWaitingCompatibility(messages.body, storedContentCompatibility) });
                 });

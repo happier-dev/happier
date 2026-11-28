@@ -538,6 +538,7 @@ export async function fetchSessionByIdWithServerScope(params: Readonly<{
     timeoutMs?: number;
     signal?: AbortSignal;
     includeTurnsProjection?: boolean | 'required';
+    initialTranscript?: 'main';
     /** Explicit list maintenance awaits its CAS inside the containing concurrency budget. */
     awaitDisplayProjectionMaintenance?: true;
     authority?: ServerAccountRequestAuthority;
@@ -638,6 +639,7 @@ export async function fetchSessionByIdWithServerScope(params: Readonly<{
             log: params.log,
             timeoutMs: params.timeoutMs,
             includeTurnsProjection: params.includeTurnsProjection,
+            initialTranscript: params.initialTranscript,
             includeMetadataTupleMutationSnapshot:
                 params.includeMetadataTupleMutationSnapshot
                 ?? ((params.contentDemand === undefined || params.contentDemand === 'session')

@@ -420,6 +420,7 @@ export async function runSessionMessagesPagePipeline(params: {
     sessionId: string;
     purpose: MessagePagePurpose;
     page: SessionMessagesPageRequest;
+    prefetchedPage?: SessionMessagesPageV1;
     lifecyclePolicy: LifecyclePolicy;
     getSessionEncryption: (sessionId: string) => SessionMessagesEncryption | null;
     isSessionKnown?: (sessionId: string) => boolean;
@@ -452,7 +453,7 @@ export async function runSessionMessagesPagePipeline(params: {
     const isCurrent = () => params.isCurrent?.() !== false && params.isSessionKnown?.(params.sessionId) !== false
         && resolveSessionMessagesEncryption(params) === encryption;
 
-    const data = await fetchSessionMessagesPageWithTelemetry({
+    const data = params.prefetchedPage ?? await fetchSessionMessagesPageWithTelemetry({
         sessionId: params.sessionId,
         purpose: params.purpose,
         request: params.request,

@@ -1327,6 +1327,15 @@ cursors. At least one demand must be enabled; the application HTTP body limit
 owns request size. Snapshot and message demands can be sent separately so slow
 transcripts do not hold an available snapshot.
 
+An authenticated cold Session open can add `?initialTranscript=main` to a
+snapshot with turns. On a supporting Home, the existing `messages` component
+then carries the first main-transcript page. Detail, turns and the page share
+one read snapshot and access resolution, with distinct detail and transcript
+permission decisions. The page uses the same publication ceiling, default
+size and cursors as `GET /v1/sessions/:id/messages?scope=main`. This preference
+applies to present-user Account requests with `includeMessages` disabled.
+Clients use the standalone main-page read when the batch omits a usable page.
+
 The response is `{results:[{sessionId, detail?, turns?, messages?}]}`, where each
 component is `{status, body}` with the single-read envelope. Access denial and
 missing Sessions retain the same non-disclosing result; component failures do

@@ -4741,6 +4741,15 @@ result per line) in either mode. Streaming avoids a single Account-sized JSON
 string; only the compact record path changes the acquired encrypted evidence.
 The Session read-batch keeps its ordinary JSON contract for its other consumers.
 
+The 0.3 development Session read-batch also accepts the optional query
+preference `initialTranscript=main` on a present-user cold snapshot. The JSON
+request body and response schema are unchanged. An older Home that supports
+read-batch ignores the query preference and omits the optional `messages`
+component, so the client uses the standalone main-transcript page read.
+Callers using explicit `includeMessages: true` retain the existing all-scope
+page. A Home without read-batch retains the existing operation-scoped update
+requirement.
+
 Released 0.2 legacy SystemRecord clients use a closed record vocabulary. An
 unscoped legacy list omits Usage records before pagination, preserving that
 page contract; explicitly scoped v1 Usage record reads remain available.

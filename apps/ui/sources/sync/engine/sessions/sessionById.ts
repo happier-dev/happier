@@ -76,7 +76,7 @@ import { admitOpenedSessionListDisplayMetadata, admitOpenedSessionListAgentState
 import type { AgentStateOpenResult } from '@/sync/encryption/sessionEncryption';
 import { parsePlainSessionAgentStateResult } from './parsePlainSessionPayload';
 import { SessionDisplayProjectionV1Schema } from '@happier-dev/protocol/sessions';
-import { readSessionByIdHttp } from './sessionByIdHttp';
+import { readSessionByIdHttp, type SessionByIdHttpRead } from './sessionByIdHttp';
 import type { CapturedServerReadTransport } from '@/sync/runtime/orchestration/serverScopedRpc/capturedServerReadTransport';
 import type { ScopedBatchResolutionContext } from '@/sync/runtime/orchestration/serverScopedRpc/scopedResolutionSingleFlight';
 
@@ -464,6 +464,7 @@ export async function fetchAndApplySessionById(params: Readonly<{
   log: { log: (message: string) => void };
   timeoutMs?: number;
   includeTurnsProjection?: boolean | 'required';
+  initialTranscript?: 'main';
   includeMetadataTupleMutationSnapshot?: boolean;
   /** Capturing a maintenance tuple must not bypass shared ordinary reads. */
   fresh?: boolean;
@@ -476,6 +477,7 @@ export async function fetchAndApplySessionById(params: Readonly<{
   session: HydratedSessionById | Session | null;
   /** This response's admitted full-publication witness, independent of retained content time. */
   sessionPublicationUpdatedAt?: number;
+  initialMessagesPage?: SessionByIdHttpRead['initialMessagesPage'];
   sessionListRenderable?: SessionListRenderableSession;
   encryptionMode?: 'e2ee' | 'plain';
   sessionDataKeyHydration?: SessionDataKeyHydrationResult;
@@ -520,8 +522,9 @@ export async function fetchAndApplySessionById(params: Readonly<{
   let responseStatus = 0;
   let body: unknown = null;
   let acquiredTurns: SessionByIdPrefetchedRead['turns'];
+  let initialMessagesPage: SessionByIdHttpRead['initialMessagesPage'];
   try {
-    const response = params.prefetched ? {
+    const response: SessionByIdHttpRead = params.prefetched ? {
       ok: params.prefetched.detail.status === 200,
       status: params.prefetched.detail.status,
       body: params.prefetched.detail.body,
@@ -534,6 +537,7 @@ export async function fetchAndApplySessionById(params: Readonly<{
       readTransport: params.readTransport,
       projection: params.readTransport && (params.contentDemand === undefined || params.contentDemand === 'session')
         && params.includeTurnsProjection !== false ? 'snapshot' : 'detail',
+      initialTranscript: params.initialTranscript,
       signal: params.signal,
       fresh: params.fresh ?? params.includeMetadataTupleMutationSnapshot === true,
       timeoutMs: params.timeoutMs,
@@ -545,6 +549,7 @@ export async function fetchAndApplySessionById(params: Readonly<{
     responseStatus = response.status;
     body = response.body;
     acquiredTurns = response.turns;
+    initialMessagesPage = response.initialMessagesPage;
   } catch (err) {
     if (isTerminalAuthError(err)) {
       throw err;
@@ -1224,6 +1229,7 @@ export async function fetchAndApplySessionById(params: Readonly<{
     // Never borrow a later global witness: this borrower may have been in flight
     // while a newer full publication retained the same content object.
     sessionPublicationUpdatedAt: nextSession.updatedAt,
+    ...(initialMessagesPage ? { initialMessagesPage } : {}),
     ...(params.includeMetadataTupleMutationSnapshot === true
       ? { metadataTupleMutationSnapshot: classifySessionTupleApplyCurrentness(previousSession, nextSession).fullyCurrent
           ? metadataTupleMutationSnapshot : null }

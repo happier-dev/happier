@@ -1476,7 +1476,9 @@ class Sync {
     private sessionListScrollActiveUntilMs = 0;
     private sessionListScrollSettleTimer: ReturnType<typeof setTimeout> | null = null;
     private sessionListScrollIdleResolvers: Array<() => void> = [];
-    private messagesSync = new Map<string, InvalidateSync>();
+    private messagesSync = new Map<string, InvalidateSync & {
+        stageInitialPage: (read: () => SessionMessagesPageV1 | undefined) => void;
+    }>();
     private activeServerSessionIds = new Set<string>();
     private hasFetchedSessionsSnapshotForActiveServer = false;
     /** The cold load's one list read for both page-one memberships (ordinary and query). */
@@ -4320,6 +4322,9 @@ class Sync {
             // Captured and applied readers of the same Home/credentials share
             // the existing acquisition; capturing authority is not new demand.
             const authorityScopeKey = resolveAuthCredentialsScopeKey(credentials);
+            const initialTranscript = includeTurnsProjection && !existingSession && prefersActiveServer
+                && !options?.authority && options?.hydrateMessages !== false && !embedScope
+                && storage.getState().sessionMessages[normalized]?.isLoaded !== true ? 'main' : undefined;
             // A lean background read cannot satisfy an opened transcript's turn demand.
             const inFlightKey = `${buildSessionByIdHydrationInFlightKey(normalized, preferredServerId)}:${authorityScopeKey}:${includeTurnsProjection}`;
             const finishMessageHydration = async (result: EnsureSessionVisibleForRouteResult) => {
@@ -4415,6 +4420,7 @@ class Sync {
                         applySessions: this.applySessions,
                         log,
                         includeTurnsProjection,
+                        initialTranscript,
                         authority: options?.authority,
                         onResolvedContext: reader.capture,
                         accountCurrentnessSource: options?.accountCurrentnessSource,
@@ -4466,6 +4472,13 @@ class Sync {
                     const publishedSession = readHydrationSession(normalized);
                     if (observationAddress && observationCursor !== undefined && publishedSession) {
                         sessionRuntimeObservations.recordServerObservation(observationAddress, observationCursor, publishedSession, reader.accountId);
+                    }
+                    const initialPage = result.initialMessagesPage;
+                    if (initialPage && hydratedSession && storage.getState().sessionMessages[normalized]?.isLoaded !== true) {
+                        this.getOrCreateMessagesSync(normalized).stageInitialPage(() => (
+                            isHydrationCurrent() && readHydrationSession(normalized) === hydratedSession
+                                ? initialPage : undefined
+                        ));
                     }
                     if (DEBUG_SESSION_HYDRATE) {
                         const hasEncryption = result.session?.encryptionMode === 'plain'
@@ -11150,12 +11163,12 @@ class Sync {
         return true;
     }
 
-    private fetchMessages = async (sessionId: string): Promise<void> => {
+    private fetchMessages = async (sessionId: string, takeInitialPage?: () => SessionMessagesPageV1 | undefined): Promise<void> => {
             const isCurrent = this.createServerScopeGuard();
             const serverId = storage.getState().sessions[sessionId]?.serverId;
             const priorIssue = storage.getState().getSessionTranscriptLoadIssue(sessionId);
             try {
-                await this.fetchMessagesInternal(sessionId);
+                await this.fetchMessagesInternal(sessionId, takeInitialPage);
             } catch (error) {
                 if (!isCurrent() || !areServerProfileIdentifiersEquivalent(serverId, storage.getState().sessions[sessionId]?.serverId)) throw error;
                 // All transcript reads share this owner. External-session readers may already
@@ -11176,7 +11189,7 @@ class Sync {
             }
         };
 
-    private fetchMessagesInternal = async (sessionId: string) => {
+    private fetchMessagesInternal = async (sessionId: string, takeInitialPage?: () => SessionMessagesPageV1 | undefined) => {
         // Decide what to fetch from the transcript this client has already received: live rows
         // still waiting for their frame are applied first, so a gap fetch starts at the covered prefix.
         const settling = settleReceivedSessionMessages(sessionId);
@@ -11355,6 +11368,7 @@ class Sync {
               this.deferredForwardLoadingSessions.delete(sessionId);
               const fetchSnapshot = () => fetchAndApplyMessages({
                   sessionId,
+                  prefetchedMainPage: !hasLoadedMessages && !externalSessionLink ? takeInitialPage?.() : undefined,
                   serverId: read.serverId,
                   sessionEncryptionMode,
                   getSessionEncryption: (id) => read.encryption?.getSessionEncryption(id) ?? null,
@@ -13516,10 +13530,17 @@ class Sync {
           }
       }
 
-        private getOrCreateMessagesSync(sessionId: string): InvalidateSync {
+        private getOrCreateMessagesSync(sessionId: string) {
             let ex = this.messagesSync.get(sessionId);
             if (!ex) {
-                ex = new InvalidateSync(() => this.fetchMessages(sessionId), {
+                let initialPage: (() => SessionMessagesPageV1 | undefined) | undefined;
+                const queue = new InvalidateSync(() => this.fetchMessages(sessionId, () => {
+                    const page = initialPage;
+                    initialPage = undefined;
+                    return page?.();
+                }).finally(() => {
+                    initialPage = undefined;
+                }), {
                     pause: this.pauseController,
                     backoff: {
                         minDelayMs: this.syncTuning.invalidateSyncBackoffMinDelayMs,
@@ -13527,6 +13548,9 @@ class Sync {
                         maxFailureCount: 'infinite',
                     },
                     shouldRetry: shouldRetrySyncInvalidation,
+                });
+                ex = Object.assign(queue, {
+                    stageInitialPage: (read: () => SessionMessagesPageV1 | undefined) => { initialPage = read; },
                 });
                 this.messagesSync.set(sessionId, ex);
             }

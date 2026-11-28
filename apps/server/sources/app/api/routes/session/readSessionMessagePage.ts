@@ -12,8 +12,9 @@ import { parseStoredSessionTurns } from "@/app/session/turns/parseSessionTurnSta
 import { isSessionTurnTranscriptAnchorProjectionCurrent } from "@/app/session/turns/sessionTurnTranscriptAnchorProjection";
 import { ensureSessionTurnTranscriptAnchorProjection } from "@/app/session/turns/sessionTurnTranscriptAnchorProjectionBackfill";
 import { resolveSessionTurnProjectionSeqs, type SessionTurnProjectionSeqs } from "./resolveSessionTurnProjectionSeqs";
-import { resolveSessionAccessForOperation } from '@/app/session/access/sessionAccess';
+import { resolveSessionAccessForOperation, type SessionAccessOperationDecision } from '@/app/session/access/sessionAccess';
 import { captureReadSnapshot } from '@/storage/captureReadSnapshot';
+import type { Tx } from '@/storage/inTx';
 import { PRESENT_USER_REQUIRED_ERROR } from "@/app/api/utils/apiTokenRouteAdmission";
 import { SessionTranscriptMessagePageResponseSchema, type SessionListPreviewQuery, isAdmittedSessionListPreviewRequest, readExternalShareableSequence, projectExternalShareableReferencedUserRow, resolveRequestedMessageRoles, buildRequestedMessageRoleWhere, SESSION_MESSAGE_PAGE_ROW_SELECT, findAvailableSessionToolOutputs, projectSessionMessagePage, SESSION_MESSAGE_PAGE_DEFAULT_LIMIT } from './sessionMessagePageProjection';
 import { decodeSessionMessageToolOutput } from '@/storage/sessionMessageToolOutput';
@@ -23,9 +24,13 @@ export async function readSessionMessagePage(input: Readonly<{
     userId: string;
     sessionId: string;
     authentication: SessionAccessAuthentication;
-    query?: SessionListPreviewQuery;
-    previewRequest?: Pick<FastifyRequest, "externalActionExecutionAuthorized" | "externalActionEffectActionId" | "externalActionExecutionTarget">;
-}>): Promise<{
+}> & (
+    | { initialSnapshot?: undefined; query?: SessionListPreviewQuery;
+        previewRequest?: Pick<FastifyRequest, "externalActionExecutionAuthorized" | "externalActionEffectActionId" | "externalActionExecutionTarget"> }
+    | { initialSnapshot: Readonly<{ tx: Tx; decision: SessionAccessOperationDecision;
+        publication: Awaited<ReturnType<typeof loadSessionTranscriptPublication>> }>;
+        query?: never; previewRequest?: never }
+)): Promise<{
     status: 200;
     body: z.input<typeof SessionTranscriptMessagePageResponseSchema>;
 } | {
@@ -35,7 +40,8 @@ export async function readSessionMessagePage(input: Readonly<{
         code?: string;
     };
 }> {
-    const { userId, sessionId, authentication, query } = input;
+    const { userId, sessionId, authentication, initialSnapshot } = input;
+    const query: SessionListPreviewQuery | undefined = initialSnapshot ? { scope: 'main' } : input.query;
     const previewRequest = input.previewRequest ?? {};
     if (!isAdmittedSessionListPreviewRequest({ request: previewRequest, sessionId, query })) {
         return { status: 403, body: { error: PRESENT_USER_REQUIRED_ERROR } };
@@ -97,14 +103,14 @@ export async function readSessionMessagePage(input: Readonly<{
     if (admittedAccessDecision?.status === 'allowed') {
         await ensureSessionTurnTranscriptAnchorProjection(sessionId);
     }
-    const { messages: resultMessages, hasMore, publicationBlocked, externalShareableSnapshot, accessDecision: snapshotAccessDecision, turnProjectionNextBeforeSeq, pageAccountActors, activity, pendingOwnsTranscriptLocalIds, availableToolOutputIds, exactToolOutput, } = await captureReadSnapshot(async (tx) => {
-        const accessDecision = admittedAccessDecision ?? await resolveSessionAccessForOperation(tx, { accountId: userId,
+    const readPageInTx = async (tx: Tx) => {
+        const accessDecision = initialSnapshot?.decision ?? admittedAccessDecision ?? await resolveSessionAccessForOperation(tx, { accountId: userId,
             sessionId, authentication, capability: 'readTranscript' });
         if (accessDecision.status !== 'allowed')
             return { messages: [], hasMore: false,
                 publicationBlocked: false, externalShareableSnapshot: undefined, accessDecision,
                 turnProjectionNextBeforeSeq: null, pageAccountActors: [], activity: undefined, pendingOwnsTranscriptLocalIds: undefined };
-        const publication = await loadSessionTranscriptPublication(tx, sessionId);
+        const publication = initialSnapshot?.publication ?? await loadSessionTranscriptPublication(tx, sessionId);
         const currentParticipantWhere = { id: sessionId };
         // TURN PROJECTION: each prompt plus that turn's final reply, read from the anchors
         // `SessionTurn` already materialises. Constraining `where` HERE (rather than
@@ -334,8 +340,10 @@ export async function readSessionMessagePage(input: Readonly<{
                     authorAccountId: v.authorAccountId,
                 }))),
         };
-    });
-    const accessDecision = snapshotAccessDecision;
+    };
+    const { messages: resultMessages, hasMore, publicationBlocked, externalShareableSnapshot, accessDecision,
+        turnProjectionNextBeforeSeq, pageAccountActors, activity, pendingOwnsTranscriptLocalIds, availableToolOutputIds, exactToolOutput,
+    } = await (initialSnapshot ? readPageInTx(initialSnapshot.tx) : captureReadSnapshot(readPageInTx));
     if (accessDecision.status === "authentication_required") {
         return { status: 403, body: { error: "team_authentication_required" } };
     }
