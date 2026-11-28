@@ -213,10 +213,10 @@ export function captureFastifyExceptionForSentry(error: unknown, request: {
         scope.setTag("runtime", "server");
         scope.setTag("http.method", method);
         if (path) scope.setTag("http.path", path);
-        if (userAgent) scope.setExtra("http.userAgent", userAgent);
-        if (ip) scope.setExtra("http.ip", ip);
 
         if (cachedConfig?.sendDefaultPii) {
+            if (userAgent) scope.setExtra("http.userAgent", userAgent);
+            if (ip) scope.setExtra("http.ip", ip);
             const userId = typeof request.userId === "string" ? request.userId : null;
             if (userId) {
                 scope.setUser({ id: userId });

@@ -2792,8 +2792,6 @@ export function useCreateNewSession(params: Readonly<{
                 },
                 extra: {
                     phase: 'create_session',
-                    machineId: current.selectedMachineId,
-                    selectedPath: effectiveSelectedPath,
                 },
             });
             if (!mountedRef.current && !launchOutlivesSurfaceRef.current) return;

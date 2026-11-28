@@ -18218,7 +18218,7 @@ const enSettingsAccount = {
   thisHomeTitle: 'This Home',
   shareUsageData: 'Share anonymous usage data',
   shareUsageDataDescription:
-    'Helps improve Happier. No personal information is collected.',
+    'Analytics are anonymous and help improve Happier.',
   shareCrashReports: 'Share crash reports',
   deleteAccountEllipsis: 'Delete account…',
   signOutFootnote:
@@ -18464,7 +18464,7 @@ const enSettingsAccount = {
   secretKeyCopyFailed: 'Failed to copy recovery key',
   privacy: 'Privacy',
   privacyDescription:
-    'Help improve the app by sharing anonymous usage data. No personal information is collected.',
+    'Analytics and crash reports are anonymous and help improve the app. You can turn either one off here at any time.',
   analytics: 'Analytics',
   analyticsDisabled: 'No data is shared',
   analyticsEnabled: 'Anonymous usage data is shared',

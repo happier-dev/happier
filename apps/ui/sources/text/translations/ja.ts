@@ -15622,7 +15622,7 @@ settingsSession: {
     thisHome: "この Home",
     thisHomeTitle: "この Home",
     shareUsageData: "匿名の使用状況データを共有",
-    shareUsageDataDescription: "Happier の改善に役立ちます。個人情報は収集されません。",
+    shareUsageDataDescription: "アナリティクスは匿名で、Happier の改善に役立てられます。",
     shareCrashReports: "クラッシュレポートを共有",
     deleteAccountEllipsis: "アカウントを削除…",
     signOutFootnote: "この Home からサインアウトしても、ほかの Home とサインインサービスにはサインインしたままです。",
@@ -15764,7 +15764,7 @@ settingsSession: {
     secretKeyCopyFailed: "復旧キーのコピーに失敗しました",
     privacy: "プライバシー",
     privacyDescription:
-      "匿名の使用データを共有してアプリの改善にご協力ください。個人情報は収集されません。",
+      "アナリティクスとクラッシュレポートは匿名で、アプリの改善に役立てられます。どちらもここでいつでもオフにできます。",
     analytics: "アナリティクス",
     analyticsDisabled: "データは共有されません",
     analyticsEnabled: "匿名の使用データが共有されます",

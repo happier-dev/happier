@@ -14855,7 +14855,7 @@ settingsSession: {
     thisHome: "此 Home",
     thisHomeTitle: "此 Home",
     shareUsageData: "共享匿名使用数据",
-    shareUsageDataDescription: "帮助改进 Happier。不会收集任何个人信息。",
+    shareUsageDataDescription: "分析数据为匿名，用于帮助改进 Happier。",
     shareCrashReports: "共享崩溃报告",
     deleteAccountEllipsis: "删除账户…",
     signOutFootnote: "退出此 Home 后，你的其他 Home 和登录服务仍保持登录。",
@@ -14995,7 +14995,7 @@ settingsSession: {
     secretKeyCopyFailed: "复制恢复密钥失败",
     privacy: "隐私",
     privacyDescription:
-      "通过分享匿名使用数据来帮助改进应用。不会收集个人信息。",
+      "分析数据和崩溃报告均为匿名，用于帮助改进应用。你可以随时在这里关闭。",
     analytics: "分析",
     analyticsDisabled: "不分享数据",
     analyticsEnabled: "分享匿名使用数据",

@@ -15183,7 +15183,7 @@ settingsSession: {
     thisHome: "этот Home",
     thisHomeTitle: "Этот Home",
     shareUsageData: "Отправлять анонимные данные об использовании",
-    shareUsageDataDescription: "Помогает улучшать Happier. Личные данные не собираются.",
+    shareUsageDataDescription: "Аналитика анонимна и помогает улучшать Happier.",
     shareCrashReports: "Отправлять отчёты о сбоях",
     deleteAccountEllipsis: "Удалить аккаунт…",
     signOutFootnote: "Выход из этого Home не затрагивает другие ваши Home и сервис входа.",
@@ -15325,7 +15325,7 @@ settingsSession: {
     secretKeyCopyFailed: "Не удалось скопировать ключ восстановления",
     privacy: "Конфиденциальность",
     privacyDescription:
-      "Помогите улучшить приложение, поделившись анонимными данными об использовании. Никакая личная информация не собирается.",
+      "Аналитика и отчёты о сбоях анонимны и помогают улучшать приложение. Их можно отключить здесь в любой момент.",
     analytics: "Аналитика",
     analyticsDisabled: "Данные не передаются",
     analyticsEnabled: "Анонимные данные об использовании передаются",

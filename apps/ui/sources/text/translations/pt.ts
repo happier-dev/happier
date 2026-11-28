@@ -15454,7 +15454,7 @@ settingsSession: {
     thisHome: "este Home",
     thisHomeTitle: "Este Home",
     shareUsageData: "Compartilhar dados de uso anônimos",
-    shareUsageDataDescription: "Ajuda a melhorar o Happier. Nenhuma informação pessoal é coletada.",
+    shareUsageDataDescription: "As análises são anônimas e ajudam a melhorar o Happier.",
     shareCrashReports: "Compartilhar relatórios de falhas",
     deleteAccountEllipsis: "Excluir conta…",
     signOutFootnote: "Sair deste Home mantém você conectado aos seus outros Homes e ao seu serviço de login.",
@@ -15596,7 +15596,7 @@ settingsSession: {
     secretKeyCopyFailed: "Falha ao copiar chave de recuperação",
     privacy: "Privacidade",
     privacyDescription:
-      "Ajude a melhorar o aplicativo compartilhando dados de uso anônimos. Nenhuma informação pessoal é coletada.",
+      "As análises e os relatórios de falhas são anônimos e ajudam a melhorar o aplicativo. Você pode desativá-los aqui a qualquer momento.",
     analytics: "Análises",
     analyticsDisabled: "Nenhum dado é compartilhado",
     analyticsEnabled: "Dados de uso anônimos são compartilhados",

@@ -15173,7 +15173,7 @@ settingsSession: {
     thisHome: "ten Home",
     thisHomeTitle: "Ten Home",
     shareUsageData: "Udostępniaj anonimowe dane o użyciu",
-    shareUsageDataDescription: "Pomaga ulepszać Happier. Nie zbieramy danych osobowych.",
+    shareUsageDataDescription: "Analityka jest anonimowa i pomaga ulepszać Happier.",
     shareCrashReports: "Udostępniaj raporty o awariach",
     deleteAccountEllipsis: "Usuń konto…",
     signOutFootnote: "Wylogowanie z tego Home nie wylogowuje Cię z innych Home ani z usługi logowania.",
@@ -15315,7 +15315,7 @@ settingsSession: {
     secretKeyCopyFailed: "Nie udało się skopiować klucza odzyskiwania",
     privacy: "Prywatność",
     privacyDescription:
-      "Pomóż ulepszyć aplikację, udostępniając anonimowe dane o użytkowaniu. Nie zbieramy żadnych informacji osobistych.",
+      "Analityka i raporty awarii są anonimowe i pomagają ulepszać aplikację. Możesz je tu wyłączyć w dowolnym momencie.",
     analytics: "Analityka",
     analyticsDisabled: "Dane nie są udostępniane",
     analyticsEnabled: "Anonimowe dane o użytkowaniu są udostępniane",

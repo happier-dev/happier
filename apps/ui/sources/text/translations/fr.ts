@@ -15208,7 +15208,7 @@ settingsSession: {
     thisHome: "ce Home",
     thisHomeTitle: "Ce Home",
     shareUsageData: "Partager des données d’utilisation anonymes",
-    shareUsageDataDescription: "Aide à améliorer Happier. Aucune information personnelle n’est collectée.",
+    shareUsageDataDescription: "Les analytics sont anonymes et aident à améliorer Happier.",
     shareCrashReports: "Partager les rapports de plantage",
     deleteAccountEllipsis: "Supprimer le compte…",
     signOutFootnote: "Te déconnecter de ce Home te laisse connecté à tes autres Homes et à ton service de connexion.",
@@ -15350,7 +15350,7 @@ settingsSession: {
     secretKeyCopyFailed: "Échec de la copie de la clé de récupération",
     privacy: "Confidentialité",
     privacyDescription:
-      "Aide à améliorer l’app en partageant des données d’usage anonymes. Aucune information personnelle n’est collectée.",
+      "Les analytics et les rapports de crash sont anonymes et aident à améliorer l’app. Tu peux les désactiver ici à tout moment.",
     analytics: "Statistiques d’usage",
     analyticsDisabled: "Aucune donnée n’est partagée",
     analyticsEnabled: "Les données d’usage anonymes sont partagées",
