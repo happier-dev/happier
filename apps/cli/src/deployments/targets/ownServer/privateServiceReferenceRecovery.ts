@@ -26,7 +26,7 @@ export async function restorePrivateServiceReferencesForHost(input: Omit<Private
         for (const resource of [...resources].reverse()) {
             try { await resource.close(); } catch (error) { failures.push(error); }
         }
-        if (failures.length) throw new AggregateError(failures, 'Private reference cleanup failed');
+        if (failures.length) throw new AggregateError(failures, 'Private reference cleanup failed', { cause: failures[0] });
     })();
     // Docker retains direct source-network membership itself. In particular,
     // split host/port facts are not listener URLs and need no reconstruction.

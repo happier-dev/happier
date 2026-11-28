@@ -1,7 +1,7 @@
 import { createServer } from 'node:net';
 import { getEventListeners, once } from 'node:events';
 import { expect, it } from 'vitest';
-import { createServiceReferenceForwardCustody } from './serviceReferenceForwardCustody';
+import { createServiceReferenceForwardCustody, releaseRemovedServiceReferenceForwards } from './serviceReferenceForwardCustody';
 
 it('retains a host-local collector bridge through the same consuming service lifetime', async () => {
     const bridge = createServer();
@@ -66,5 +66,31 @@ it('keeps the acquired listener after launch release until every consuming servi
         expect(getEventListeners(host.signal, 'abort')).toEqual([]);
         expect(getEventListeners(one.signal, 'abort')).toEqual([]);
         expect(getEventListeners(two.signal, 'abort')).toEqual([]);
+    } finally { host.abort(); if (server.listening) await new Promise<void>(resolve => server.close(() => resolve())); }
+});
+
+it('awaits the retained forward only for the proved Docker engine and Compose project', async () => {
+    const server = createServer();
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('TCP listener required');
+    const host = new AbortController();
+    const consumer = new AbortController();
+    const project = { kind: 'composeProject', dockerEndpoint: 'owned-engine', projectName: 'owned-project' } as const;
+    const custody = createServiceReferenceForwardCustody({ signal: host.signal,
+        async acquire() { throw new Error('Local collector must not acquire a peer transport'); } });
+    try {
+        custody.adopt({ host: '127.0.0.1', port: address.port, observedPath: 'direct',
+            close: () => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())) });
+        custody.retain([consumer.signal], undefined, [project]);
+        await custody.release();
+
+        const removed = new Set([consumer.signal]);
+        await releaseRemovedServiceReferenceForwards(removed, [{ ...project, dockerEndpoint: 'other-engine' }]);
+        await releaseRemovedServiceReferenceForwards(removed, [{ ...project, projectName: 'other-project' }]);
+        expect(server.listening).toBe(true);
+        await releaseRemovedServiceReferenceForwards(removed, [project]);
+        expect(server.listening).toBe(false);
     } finally { host.abort(); if (server.listening) await new Promise<void>(resolve => server.close(() => resolve())); }
 });

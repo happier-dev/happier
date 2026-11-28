@@ -512,7 +512,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                             signal: input.snapshot.signal, isCurrent: () => activated.project.isCurrent(),
                             nativeEffects: { keys: activated.render.keys, settleNative: project.settleNative },
                             io: recovery.runtime.nativeIo, project: activated.project });
-                        recovery.runtime.retainServiceReferences?.(handles);
+                        recovery.runtime.retainServiceReferences?.(handles, activated.render.keys);
                         observeServices({ environment, receipt: generation, deploymentId: generation.deployment.id, runtime: recovery.runtime,
                             homeServerIdentityId: recovery.homeServerIdentityId, handles, installationId: input.installationId });
                     },
@@ -1501,7 +1501,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                             appliedServiceExports,
                             signal: snapshot.signal, isCurrent: () => project.isCurrent(),
                             nativeEffects: { keys: activationRender.keys, settleNative: prepared.project.settleNative }, io: prepared.runtime.nativeIo, project });
-                        prepared.runtime.retainServiceReferences?.(handles);
+                        prepared.runtime.retainServiceReferences?.(handles, activationRender.keys);
                         if (activationRender.appEnrollments?.length) {
                             if (!prepared.runtime.enrollAppServices) throw new PluginError({ code: 'admission_unavailable',
                                 message: 'App enrollment is unavailable on this deployment host' });

@@ -249,10 +249,10 @@ export function createOwnServerTeardownForHost(host: Host) {
                         engine = await readNativeComposeEngine({ io: runtime.nativeIo, command: launch.command, prefix: launch.args,
                             cwd: runtime.deploymentRoot, env: launch.env, ...(request.context.signal ? { signal: request.context.signal } : {}) });
                     } finally { await launch.release(); }
+                    const keys = [...projects].map(projectName => ({ kind: 'composeProject' as const, dockerEndpoint: engine.id, projectName }));
                     return machineNativeEffectAdmission.run({ operation: { operationId: operation.actionOperationId,
                         kind: 'deployments.teardown', ...(request.context.signal ? { signal: request.context.signal } : {}) },
-                        keys: [...projects].map(projectName => ({ kind: 'composeProject', dockerEndpoint: engine.id, projectName })),
-                        settleNative: runtime.settleNative }, async () => {
+                        keys, settleNative: runtime.settleNative }, async () => {
                         let undoExpectedStop: (() => void) | undefined;
                         try {
                             for (const project of projects) {
@@ -267,8 +267,10 @@ export function createOwnServerTeardownForHost(host: Host) {
                                     return { kind: 'unknown' as const, reason: 'removal_unproved' };
                                 }
                             }
-                            // Revisit shared networks after every retained generation
-                            // has been removed. The native owner also handles empty projects.
+                            if (operation.step === 'removeTarget') await runtime.releaseEnvironmentServiceReferences({
+                                homeServerIdentityId: identity.homeServerIdentityId, environmentId: operation.environmentId,
+                            }, keys);
+                            // Retained forwards can hold the native network after the last workload leaves.
                             const networkFailure = await removeUnusedNativeComposeNetworks({ projects: [...projects], run });
                             if (networkFailure) return { kind: networkFailure === 'network_removal_failed' ? 'failed' as const : 'unknown' as const,
                                 reason: networkFailure };

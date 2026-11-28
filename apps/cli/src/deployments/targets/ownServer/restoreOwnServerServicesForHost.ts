@@ -139,7 +139,7 @@ export async function restoreOwnServerServicesForHost(input: Readonly<{
                 },
                 async restoreServiceReferences({ docker, engine, onFailure }) {
                     const addresses = receipt.content.ownServer?.referenceAddresses ?? [];
-                    if (!addresses.some(address => address.route?.kind === 'iroh' || address.route?.kind === 'local')) return { async close() {} };
+                    if (!addresses.some(address => address.route?.kind === 'iroh' || address.route?.kind === 'local')) return;
                     const identity = readInstallationIdentityIfExistsSync();
                     if (!identity || identity.installationId !== input.installationId) return refuse('admission_unavailable');
                     const lease = await acquirePluginRuntimeRegistryLease();

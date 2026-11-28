@@ -32,8 +32,9 @@ import { createDeploymentSourceMaterializationPort } from './exactCommitRelease'
 import { createOwnServerDeploymentReads } from './ownServerDeploymentReads';
 import { createOwnServerDockerBoundary } from './ownServerDeployment.testkit';
 import { resolveOwnServerDeploymentIdentityForHost } from './paths';
-import { restoreOwnServerDeploymentServices } from './restoreOwnServerDeploymentServices';
+import { restoreOwnServerDeploymentServices, type RestoreOwnServerDeploymentServicesInput } from './restoreOwnServerDeploymentServices';
 import { restoreOwnServerServicesForHost } from './restoreOwnServerServicesForHost';
+import { releaseRemovedServiceReferenceForwards } from './serviceReferenceForwardCustody';
 import { captureOwnServerDeploymentSource } from './sourceProvenance';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { RpcHandler } from '@/api/rpc/types';
@@ -302,6 +303,10 @@ async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopp
     }
     const fixture = await createAdmittedPluginRuntimeFixture({ happyHomeDir: configuration.happyHomeDir,
         controller: pluginReloadController, runtimeOptions: { pluginIds: [] } });
+    const recover = (owner: RestoreOwnServerDeploymentServicesInput['owner'], signal: AbortSignal,
+        restoreServiceReferences?: RestoreOwnServerDeploymentServicesInput['restoreServiceReferences']) =>
+        restoreOwnServerDeploymentServices({ ...target, installationId: 'installation-a', receipt, owner, signal,
+            isCurrent: () => !signal.aborted, readReceipt, ...(restoreServiceReferences ? { restoreServiceReferences } : {}) });
     const runtime = createMachineServicesRuntime({ target,
         readMetadata: () => ({ status: 'ready', metadataVersion: 1, metadata: { serviceWatchesV1: { v: 1, watches: [] } } }),
         captureMetadataPort() { throw new Error('Read-only recovery must not write Machine metadata'); },
@@ -309,8 +314,7 @@ async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopp
             ? restoreOwnServerServicesForHost({ ...observations, ...target, environmentId, installationId: 'installation-a', owner, signal,
                 isCurrent: () => !signal.aborted, async resolveRuntime() { return { ...target, accountId: 'owner', credentials,
                     serverHttpBaseUrl: serverUrl, isCurrent: async () => !signal.aborted }; } })
-            : restoreOwnServerDeploymentServices({ ...target,
-                installationId: 'installation-a', receipt, owner, signal, isCurrent: () => !signal.aborted, readReceipt }),
+            : recover(owner, signal),
     });
     const serviceFor = (composeService: string) => ({ kind: 'deployment' as const, machineId: target.machineId, environmentId: environment.id,
         environmentInstanceId: identity.environmentInstanceId, serviceId: `${identity.environmentInstanceId}/${composeService}`, composeService });
@@ -345,6 +349,8 @@ async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopp
             }));
         },
         readHandle: () => fixture.registry.projectManagedServices.resolveEnvironmentService(identity.homeServerIdentityId, service),
+        recoverWithReferences: (restoreServiceReferences: NonNullable<RestoreOwnServerDeploymentServicesInput['restoreServiceReferences']>) =>
+            recover(fixture.registry.projectManagedServices, new AbortController().signal, restoreServiceReferences),
         // A recovery whose Home view still names the retained source receipt.
         recoverRetainedSourceReceipt: () => restoreOwnServerDeploymentServices({ ...target, installationId: 'installation-a',
             receipt: sourceReceipt, owner: fixture.registry.projectManagedServices, signal: new AbortController().signal,
@@ -447,6 +453,32 @@ async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopp
 }
 
 describe('retained Environment service recovery on first use', () => {
+    it('awaits the restored reference cleanup and leaves observation retirement to the teardown proof', async () => {
+        const fixture = await createRestartedEnvironmentFixture();
+        const started = Promise.withResolvers<void>();
+        const complete = Promise.withResolvers<void>();
+        const close = vi.fn(async () => { started.resolve(); await complete.promise; });
+        let retired: Promise<void> | undefined;
+        try {
+            expect(await fixture.recoverWithReferences(async () => ({ close }))).toEqual([]);
+            const handle = fixture.readHandle();
+            if (!handle) throw new Error('Expected a recovered native service observation');
+            const keys = await handle.readNativeEffectKeys();
+            retired = releaseRemovedServiceReferenceForwards(new Set([handle.retirementSignal]), keys);
+            const winner = await Promise.race([started.promise.then(() => 'started'), retired.then(() => 'finished')]);
+            expect(winner).toBe('started');
+            expect(fixture.readHandle()).toBe(handle);
+            complete.resolve();
+            await retired;
+            await handle.dispose();
+            expect(close).toHaveBeenCalledTimes(1);
+        } finally {
+            complete.resolve();
+            await retired?.catch(() => undefined);
+            await fixture.dispose();
+        }
+    });
+
     it.each(['plain', 'e2ee'] as const)('publishes the restored stopped service through the native notice owner with its current restart choice ($0)', async mode => {
         const fixture = await createRestartedEnvironmentFixture('stopped', mode);
         try {

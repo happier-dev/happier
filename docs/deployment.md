@@ -5261,11 +5261,12 @@ Workflow execution. Prepared receipt operands retain Account placement. A local
 single-member target, local or remote from the controller, uses source-independent
 native acquisition, observes the
 canonical project and retained candidate generations, and stops/removes their
-verified containers with Docker's configured stop grace, then removes networks
-labelled with each exact owned project in that same teardown step. Networks with
-active endpoints cannot be removed; the receipt retains the unproved step and
-its typed reason. Successful empty container and owned-network inventory is an
-idempotent absence proof; an unavailable engine is not. Named data volumes remain
+verified containers with Docker's configured stop grace. After proving those
+workloads absent, it awaits the release of private service and telemetry forwards
+held only for the removed workloads, then removes networks labelled with each
+exact owned project. A network still held by another endpoint leaves the step
+unproved with its typed reason. Successful empty container and owned-network
+inventory is an idempotent absence proof; an unavailable engine is not. Named data volumes remain
 unless explicitly selected for data removal. Plain target teardown keeps
 images available for rollback and leaves source files in place.
 The approval review names the Project and addressed Machines. It uses the

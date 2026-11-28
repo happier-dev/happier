@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { nativeCaddyProfile, createNativeCaddySetupInput, createNativeCaddyBindings,
     createCaddyContainerSetupSteps, ensureNativeCaddyContainer, type NativeCaddyFirewallExposure } from '@happier-dev/cli-common/machineSetup';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
-import { machineNativeEffectAdmission } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
+import { machineNativeEffectAdmission, type MachineNativeEffectKey } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import { runElevatedMachineSetupIntent } from '@/machines/adminAccess/runElevatedEffect';
 import { resolveMachineEffectCli } from '@/machines/adminAccess/machineEffectCli';
 import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises';
@@ -43,7 +43,7 @@ import { resolveOwnServerImageArchivePathForHost } from './releaseProvenance';
 import { createDeploymentImageArchiveCopyForHost } from './imageArchiveCopy';
 import { createOwnServerNativeRuntime } from './nativeRuntime';
 import { acquirePrivateServiceReferenceForwardForHost, resolvePrivateServiceReferenceMaterialForHost } from './privateServiceReference';
-import { createServiceReferenceForwardCustody } from './serviceReferenceForwardCustody';
+import { createServiceReferenceForwardCustody, releaseRemovedServiceReferenceForwards } from './serviceReferenceForwardCustody';
 import { acquirePrivateServiceContainerBridge, PrivateServiceContainerBridgeUnavailableError } from './privateServiceContainerBridge';
 import { resolvePrivateServiceLocalContainerAddress } from './privateServiceLocalNetwork';
 import type { ServiceExportMachineForward } from '@/daemon/peer/iroh/serviceExportMachineForward';
@@ -418,9 +418,9 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                             ? [{ source: { environmentId: retained.local.serviceExport.service.environmentId,
                                 export: retained.local.serviceExport.exportKey }, networkId: retained.address.networkId }] : []) };
                     },
-                    retainServiceReferences(consumers) {
+                    retainServiceReferences(consumers, keys) {
                         referenceForwards.retain(consumers.map(consumer => consumer.retirementSignal),
-                            failure => { for (const consumer of consumers) consumer.reportDependencyFailure?.(failure); });
+                            failure => { for (const consumer of consumers) consumer.reportDependencyFailure?.(failure); }, keys);
                     },
                     currentDomainEdgeObservation: retainedLease.registry.currentDomainEdgeObservation,
                     readHealthAlertSource: retainedLease.registry.readHealthAlertSource, sourceIntent: intent,
@@ -583,6 +583,11 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                 throw error;
             }
             return undoExpectedStop;
+          },
+          async releaseEnvironmentServiceReferences(scope: ObserverScope, keys: readonly MachineNativeEffectKey[]) {
+            const consumers = new Set<AbortSignal>();
+            await visitEnvironmentObservers(scope, handle => { consumers.add(handle.retirementSignal); });
+            await releaseRemovedServiceReferenceForwards(consumers, keys);
           },
           retireEnvironmentObservers(scope: ObserverScope) {
             return visitEnvironmentObservers(scope, handle => handle.dispose());

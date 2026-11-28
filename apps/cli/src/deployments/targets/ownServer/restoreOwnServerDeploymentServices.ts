@@ -15,6 +15,7 @@ import { observeRetainedDeploymentSourceForHost } from './exactCommitRelease';
 import type { NativeDockerEngineFacts } from '@happier-dev/cli-common/machineSetup';
 import type { ProjectNativeDockerPort } from '@/plugins/runtime/invocation/services/managedProcessSupervisor';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { retainServiceReferenceForwardCleanup } from './serviceReferenceForwardCustody';
 
 export type RestoreOwnServerDeploymentServicesInput = Readonly<{
     serverId: string;
@@ -28,7 +29,7 @@ export type RestoreOwnServerDeploymentServicesInput = Readonly<{
     observeServices?(input: Readonly<{ homeServerIdentityId: string;
         handles: readonly EnvironmentProjectManagedServiceHandle[] }>): void;
     restoreServiceReferences?(input: Readonly<{ docker: ProjectNativeDockerPort; engine: NativeDockerEngineFacts;
-        onFailure(failure: ActionExecuteFailure | null): void }>): Promise<Readonly<{ close(): Promise<void> }>>;
+        onFailure(failure: ActionExecuteFailure | null): void }>): Promise<Readonly<{ close(): Promise<void> }> | undefined>;
 }>;
 
 /** Restore observations only. The receipt supplies definition/source custody;
@@ -64,6 +65,12 @@ export async function restoreOwnServerDeploymentServices(input: RestoreOwnServer
         isCurrent: input.isCurrent });
     let launch: Awaited<ReturnType<typeof authorizePluginExecLaunchForHost>> | undefined;
     let serviceReferences: Readonly<{ close(): Promise<void> }> | undefined;
+    let forwardCleanup: ReturnType<typeof retainServiceReferenceForwardCleanup> | undefined;
+    let closingReferences: Promise<void> | undefined;
+    const closeReferences = (): Promise<void> => closingReferences ??= (async () => {
+        try { await serviceReferences?.close(); }
+        finally { forwardCleanup?.forget(); }
+    })();
     const consumers: Awaited<ReturnType<typeof produceEnvironmentProjectServices>>[number][] = [];
     const failures: EnvironmentServiceRecoveryRow[] = [];
     const unavailable = (services: readonly string[], error: unknown) => {
@@ -84,7 +91,7 @@ export async function restoreOwnServerDeploymentServices(input: RestoreOwnServer
     let references = 1;
     const release = async () => {
         if (--references !== 0) return;
-        try { try { await serviceReferences?.close(); } finally { await launch?.release(); await runtime.settleNative(); } }
+        try { try { await closeReferences(); } finally { await launch?.release(); await runtime.settleNative(); } }
         finally { await readPluginExecProcessCustodyForHost(runtime.exec).requestStop(); }
     };
     try {
@@ -120,6 +127,7 @@ export async function restoreOwnServerDeploymentServices(input: RestoreOwnServer
                     cwd: tuple.cwd!, env: tuple.env }),
                 async run(args) { const result = await run(args); return { ...result, exitCode: result.exitCode ?? -1 }; } } });
         const { projectName, targets } = generation;
+        const keys = [{ kind: 'composeProject', dockerEndpoint: engine.id, projectName }] as const;
         // Compose may retain an unchanged service from an earlier source while
         // creating another service from the current one. Each source is proven
         // by the same retained-receipt custody owner before it is observed.
@@ -148,7 +156,7 @@ export async function restoreOwnServerDeploymentServices(input: RestoreOwnServer
                     appliedServiceExports: basis.ownServer?.serviceExports,
                     release: releaseSource, specIdentity: receipt.deployment.id, signal: input.signal, isCurrent: input.isCurrent,
                     recovery: true,
-                    nativeEffects: { keys: [{ kind: 'composeProject', dockerEndpoint: engine.id, projectName }], settleNative: runtime.settleNative },
+                    nativeEffects: { keys, settleNative: runtime.settleNative },
                     io: runtime.nativeIo, project: { composeArgs,
                         services,
                         nativeIdsForService: service => targets[projection.services.indexOf(service)]?.containerIds ?? [],
@@ -170,6 +178,9 @@ export async function restoreOwnServerDeploymentServices(input: RestoreOwnServer
                 consumers.push(...handles);
                 if (referenceFailure) for (const handle of handles) handle.reportDependencyFailure?.(referenceFailure);
             } catch (error) { unavailable(services, error); }
+        }
+        if (serviceReferences && consumers.length) {
+            forwardCleanup = retainServiceReferenceForwardCleanup(consumers.map(consumer => consumer.retirementSignal), keys, closeReferences);
         }
     } catch (error) {
         unavailable(projection.services.filter(service => !consumers.some(handle => handle.composeService === service)

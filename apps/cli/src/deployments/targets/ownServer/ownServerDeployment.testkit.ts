@@ -275,16 +275,25 @@ else if (args[0] === 'image' && args[1] === 'pull' && /^docker\.io\/library\/hap
     const name = args[args.indexOf('--name') + 1];
     const directory = args[args.indexOf('--label') + 1].split('=').slice(1).join('=');
     const networkId = args[args.indexOf('--network') + 1];
-    if (!state.relayImages?.[args[args.indexOf('haproxy') - 1]] || !state.networks.some(row => row.Id === networkId)
+    const network = state.networks.find(row => row.Id === networkId);
+    if (!state.relayImages?.[args[args.indexOf('haproxy') - 1]] || !network
         || !fs.statSync(path.join(directory, 'forward.sock')).isSocket()) throw new Error('fixture_relay_unavailable');
     const id = hash(name);
     const relays = state.privateRelays ||= {};
     if (relays[id]) throw new Error('fixture_relay_already_exists');
-    relays[id] = { id, name, directory };
+    relays[id] = { id, name, directory, networkId, running: false };
     save(); write(id);
 } else if (args[0] === 'container' && args[1] === 'start' && state.privateRelays?.[args[2]]) {
-    write(state.privateRelays[args[2]].name);
+    const relay = state.privateRelays[args[2]];
+    const network = state.networks.find(row => row.Id === relay.networkId);
+    if (!network) throw new Error('fixture_relay_network_missing');
+    relay.running = true;
+    network.Containers[relay.id] = { Name: relay.name };
+    save(); write(relay.name);
 } else if (args[0] === 'container' && args[1] === 'rm' && state.privateRelays?.[args.at(-1)]) {
+    const relay = state.privateRelays[args.at(-1)];
+    const network = state.networks.find(row => row.Id === relay.networkId);
+    if (network) delete network.Containers[relay.id];
     delete state.privateRelays[args.at(-1)]; save();
 }
 else if (args[0] === 'container' && args[1] === 'ls' && args.includes('label=dev.happier.machine-setup.recipe=caddy@1')) {
@@ -771,7 +780,14 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
     } else complete();
 } else if (args[0] === 'ps') {
     const filters = args.flatMap((arg, index) => arg === '--filter' ? [args[index + 1]] : []);
-    const rows = [...state.containers, ...(state.nativeCaddy && filters.some(filter => filter.startsWith('network=')) ? [state.nativeCaddy] : [])];
+    const includesNetwork = filters.some(filter => filter.startsWith('network='));
+    const relays = includesNetwork ? Object.values(state.privateRelays || {}).flatMap(relay => {
+        const network = state.networks.find(row => row.Id === relay.networkId);
+        return network ? [{ Id: relay.id, Mounts: [], State: { Running: relay.running },
+            Config: { Labels: { 'dev.happier.private-relay.directory': relay.directory } },
+            NetworkSettings: { Networks: { [network.Name]: { NetworkID: network.Id } } } }] : [];
+    }) : [];
+    const rows = [...state.containers, ...(state.nativeCaddy && includesNetwork ? [state.nativeCaddy] : []), ...relays];
     write(rows.filter(row => (args.includes('--all') || row.State.Status === 'running' || row.State.Running === true) && filters.every(filter => {
         if (filter.startsWith('status=')) return row.State.Status === filter.slice('status='.length);
         if (filter.startsWith('volume=')) return row.Mounts.some(mount => mount.Name === filter.slice('volume='.length));
@@ -1236,12 +1252,15 @@ else throw new Error('fixture_unexpected_docker_command:' + JSON.stringify(args)
             await writeState(state);
         },
         /** Docker network inventory, including exact labels and active endpoints. */
-        async seedNetwork(id: string, project?: string, endpointIds: readonly string[] = []) {
+        async seedNetwork(id: string, project?: string, endpointIds: readonly string[] = [],
+            bridge?: Readonly<{ subnet: string; gateway: string }>) {
             const state = JSON.parse(await readFile(statePath, 'utf8')) as { networks: Array<{
                 Id: string; Labels: Record<string, string>; Containers: Record<string, object>;
             }> };
             state.networks.push({ Id: id, Labels: project ? { 'com.docker.compose.project': project } : {},
-                Containers: Object.fromEntries(endpointIds.map(endpoint => [endpoint, {}])) });
+                Containers: Object.fromEntries(endpointIds.map(endpoint => [endpoint, {}])),
+                ...(bridge ? { Name: id, Driver: 'bridge', Scope: 'local',
+                    IPAM: { Config: [{ Subnet: bridge.subnet, Gateway: bridge.gateway }] } } : {}) });
             await writeState(state);
         },
         async readNativeCaddyAttachments(): Promise<Readonly<{ containerId: string; networkIds: readonly string[] }> | null> {

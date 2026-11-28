@@ -20,7 +20,7 @@ import type { prepareEnvironmentSecretBindingsForLaunch } from '@/deployments/se
 import type { DeploymentSourceAdmissionForHost } from './exactCommitRelease';
 import type { ProjectNativeToolchainIo } from '@/workspaces/toolchain/prepareProjectNativeToolchain';
 import type { ProjectNativeDockerPort } from '@/plugins/runtime/invocation/services/managedProcessSupervisor';
-import type { MachineNativeEffectContext } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
+import type { MachineNativeEffectContext, MachineNativeEffectKey } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import type { NativeComposeStartFirstRoutes } from '@/daemon/local/services/launch/nativeComposeStartFirst';
 import { createOwnServerDeploymentExecutor } from './ownServerDeploymentExecutor';
 
@@ -132,6 +132,8 @@ export type OwnServerDeploymentRuntime = Readonly<{
         machineId: string; installationId: string }>, assertCurrent: () => Promise<void>):
         Promise<Awaited<ReturnType<NonNullable<OwnServerDeploymentRuntime['acquireRetention']>>> & Readonly<{
             expectEnvironmentStop(scope: Readonly<{ homeServerIdentityId: string; environmentId: string }>): Promise<() => void>;
+            releaseEnvironmentServiceReferences(scope: Readonly<{ homeServerIdentityId: string; environmentId: string }>,
+                keys: readonly MachineNativeEffectKey[]): Promise<void>;
             retireEnvironmentObservers(scope: Readonly<{ homeServerIdentityId: string; environmentId: string }>): Promise<void>;
         }>>;
     acquireTeardownReview?(request: Readonly<{ machineId: string; installationId: string;
@@ -171,7 +173,7 @@ export type OwnServerDeploymentRuntimeAcquisition = Readonly<{
         }>): Promise<void>;
         prepareReferenceContainerNetwork?: import('@/daemon/local/services/launch/nativeComposeLifecycle').NativeComposeEnvironmentProjectInput['prepareReferenceContainerNetwork'];
         retainServiceReferences?(consumers: readonly Pick<import('@/plugins/runtime/invocation/services/managedServicesOwner').ProjectManagedServiceHandle,
-            'retirementSignal' | 'reportDependencyFailure'>[]): void;
+            'retirementSignal' | 'reportDependencyFailure'>[], keys: readonly MachineNativeEffectKey[]): void;
         /** Invocation-owned empty cwd; build tools must not discover source .env files. */
         buildExecutionDirectory?: string;
         exec: ExecService;
