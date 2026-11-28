@@ -93,6 +93,14 @@ describe('Script row title line', () => {
     await screen.unmount();
   });
 
+  it('invites the person to run a script whose output has never been produced', async () => {
+    const screen = await renderScreen(row());
+    await screen.pressByTestIdAsync('script');
+    expect(screen.getTextContent()).toContain('projects.scripts.output.empty');
+    expect(screen.getTextContent()).not.toContain('tools.fullView.noOutput');
+    await screen.unmount();
+  });
+
   it('leaves the phone row to its name and source badge, so the name never wraps by letter', async () => {
     device.current = 'phone';
     const screen = await renderScreen(row());

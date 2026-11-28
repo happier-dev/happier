@@ -663,6 +663,8 @@ describe('useMachineTerminalSession', () => {
         if (emptyOutput) {
             await vi.waitFor(() => expect(screen.findByTestId('project-command-output-page.noOutput')).not.toBeNull());
             expect(screen.getTextContent()).toContain('Completed');
+            expect(screen.getTextContent()).toContain('No output was produced');
+            expect(screen.getTextContent()).not.toContain('No output yet');
             expect(screen.findByTestId('workspace-embedded-terminal-root')).toBeNull();
             expect(terminalOps.streamReadBytes).toHaveBeenCalledWith('machine', expect.objectContaining({ terminalId }),
                 expect.objectContaining({ serverId: homeIds.primary }));

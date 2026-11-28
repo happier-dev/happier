@@ -120,7 +120,7 @@ export const ProjectCommandOutputPage = React.memo(
     }
     const emptyOutput = isActionOperationTerminal(operation.snapshot.state) ? (
       <View style={styles.empty}>
-        <SurfaceStateCard size="line" kind="empty" title={t('projects.scripts.output.empty')}
+        <SurfaceStateCard size="line" kind="empty" title={t('tools.fullView.noOutput')}
           testID="project-command-output-page.noOutput" />
       </View>
     ) : null;
