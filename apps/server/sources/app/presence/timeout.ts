@@ -89,7 +89,7 @@ async function persistMachineOfflineInTx(tx: Tx, machine: MachinePresenceRow) {
     const recipientAccountIds = await resolveCurrentMachineRecipientAccountIdsInTx(tx, machine.id);
     const wentOfflineAt = await readTransactionDatabaseTime(tx);
     await retainMachinePresenceTransitionInTx(tx, { machineId: machine.id, active: false,
-        occurredAt: wentOfflineAt.getTime(), recipientAccountIds });
+        occurredAt: Date.now(), recipientAccountIds });
     return { ...machine, recipientAccountIds, wentOfflineAt };
 }
 
