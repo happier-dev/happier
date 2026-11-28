@@ -44,6 +44,8 @@ type PromptRuntime = {
   reset: () => Promise<void>;
   getSessionId: () => string | null;
   shouldResumeAfterPermissionModeChange?: () => boolean;
+  /** Apply the session's current permission mode to the running provider session; false means it needs a restart. */
+  applyPermissionModeInPlace?: () => Promise<boolean>;
 };
 
 type OverrideSynchronizer = {
@@ -430,21 +432,26 @@ export async function runPermissionModePromptLoop(opts: {
     }
     if (!message) continue;
 
+    const appendSystemPromptKey = resolveAppendSystemPromptQueueKeyValue(message.mode);
     if (launchPermissionMode !== null) {
       // Messages queued before the startup lock can still carry an older request.
       if (message.mode.permissionMode !== launchPermissionMode) acceptPermissionMode(message.mode.permissionMode);
-      const appendSystemPrompt = resolveAppendSystemPromptQueueKeyValue(message.mode);
-      if (previousAppendSystemPrompt !== undefined && appendSystemPrompt !== previousAppendSystemPrompt) {
+      if (previousAppendSystemPrompt !== undefined && appendSystemPromptKey !== previousAppendSystemPrompt) {
         const notice = opts.describeUnavailableRuntimeReset?.('settings_change');
         if (notice) postNotice(notice);
       }
-      previousAppendSystemPrompt = appendSystemPrompt;
       currentModeHash = message.hash;
     } else {
       opts.permissionHandler.setPermissionMode(message.mode.permissionMode);
-      if (wasStarted && currentModeHash && message.hash !== currentModeHash && opts.describeUnavailableRuntimeReset) {
-        currentModeHash = message.hash;
-        postNotice(opts.describeUnavailableRuntimeReset('settings_change'));
+      if (wasStarted && currentModeHash && message.hash !== currentModeHash) {
+        if (opts.describeUnavailableRuntimeReset) {
+          currentModeHash = message.hash;
+          postNotice(opts.describeUnavailableRuntimeReset('settings_change'));
+        } else if (appendSystemPromptKey === previousAppendSystemPrompt
+          && await opts.runtime.applyPermissionModeInPlace?.() === true) {
+          if (opts.shouldExit()) break;
+          currentModeHash = message.hash;
+        }
       }
     }
     if (wasStarted && currentModeHash && message.hash !== currentModeHash) {
@@ -476,6 +483,7 @@ export async function runPermissionModePromptLoop(opts: {
     }
 
     currentModeHash = message.hash;
+    previousAppendSystemPrompt = appendSystemPromptKey;
     await ensureFreshSessionSnapshotBeforeTurnBestEffort();
     syncPermissionModeFromMetadata();
     overrideSync.syncFromMetadata();

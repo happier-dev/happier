@@ -263,6 +263,19 @@ describe('extractPermissionInputWithFallback', () => {
       .toEqual({ ...rawInput, command: 'npm test' });
   });
 
+  // Logs 2026-11-28: agy read and edit permission requests carry only its own key names.
+  it('adds the canonical path and text to read, edit and write inputs that use agy key names', () => {
+    const read = { Path: '/repo/a.ts', StartLine: 1, EndLine: 20 };
+    expect(extractPermissionInputWithFallback({ toolCall: { kind: 'read', rawInput: read } }, 'call_read', new Map()))
+      .toEqual({ ...read, file_path: '/repo/a.ts' });
+    const edit = { Path: '/repo/a.ts', Target: 'const a = 1;', Replacement: 'const a = 2;' };
+    expect(extractPermissionInputWithFallback({ toolCall: { kind: 'edit', rawInput: edit } }, 'call_edit', new Map()))
+      .toEqual({ ...edit, file_path: '/repo/a.ts', old_string: 'const a = 1;', new_string: 'const a = 2;' });
+    const write = { Path: '/repo/b.ts', Content: 'export {};\n', Overwrite: true };
+    expect(extractPermissionInputWithFallback({ toolCall: { kind: 'edit' } }, 'call_write', new Map([['call_write', write]])))
+      .toEqual({ ...write, file_path: '/repo/b.ts', content: 'export {};\n' });
+  });
+
   it('prefers rich toolCall content when rawInput only contains shell metadata', () => {
     expect(
       extractPermissionInputWithFallback(

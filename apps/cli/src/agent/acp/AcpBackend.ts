@@ -115,7 +115,7 @@ import { createEventShapeLoggerForLog } from '@/diagnostics/eventShapeForLog';
 import type { AcpTurnOutcome } from './backend/turn/_types';
 import type { AcpProviderTurnSource, AcpProviderTurnSourceFactory, AcpProviderTurnSink } from './backend/turn/providerTurns';
 import { mapStopReasonToAcpTurnOutcome, readPromptStopReason } from './backend/turn/acpTurnCompletion';
-import { abortPendingAcpPermissionRequests } from './backend/permissions/acpPermissionFinalization';
+import { abortPendingAcpPermissionRequests, type AcpPendingPermissionAbortOptions } from './backend/permissions/acpPermissionFinalization';
 import { SessionControlApplyError } from '@/agent/runtime/sessionControlApplyError';
 import { buildAcpPromptContentBlocks } from './prompt/buildAcpPromptContentBlocks';
 import { buildAcpFormElicitationRegistration } from './elicitation/acpFormElicitation';
@@ -417,7 +417,10 @@ export interface AcpPermissionHandler {
    *
    * This is intentionally event-driven from turn finalization/cancellation, not timer-based.
    */
-  abortPendingRequestsAndFlush?(reason: string): Promise<void>;
+  abortPendingRequestsAndFlush?(reason: string, options?: AcpPendingPermissionAbortOptions): Promise<void>;
+
+  /** Keep one pending request through the end of its turn because the provider keeps waiting on it. */
+  retainPendingRequestPastTurn?(requestId: string): boolean;
 }
 
 export type SessionMode = {
@@ -1043,8 +1046,13 @@ export class AcpBackend implements AgentBackend {
   private providerCancellation: Promise<void> | null = null;
   private providerSourceLifetime: AbortController | null = null;
   private readonly providerToolContexts = new Map<string, AcpPermissionCallContext>();
+  /** Provider permission requests for tracked tool calls that wait on the permission handler. */
+  private readonly unansweredProviderPermissions = new Map<string, { withdrawn: boolean }>();
   private readonly providerContinuations = new Map<string, AcpPermissionCallContext | null>();
-  /** The one policy every background command of this provider source was admitted under, or the explicit-decision policy when they differ. */
+  /**
+   * The one policy every background command of this provider source was admitted under (since the last in-place
+   * permission change), or the explicit-decision policy when they differ.
+   */
   private providerBackgroundPermissionContext: AcpPermissionCallContext | null = null;
   private providerTurn: Readonly<{ generation: number; turnId: string; lifetime: AbortController }> | null = null;
   private activePermissionContext: AcpPermissionCallContext | undefined;
@@ -1093,6 +1101,7 @@ export class AcpBackend implements AgentBackend {
       }),
       onCallClosed: ({ callId, reason, activeSize }) => {
         logger.debug(`[AcpBackend] Tool call closed: ${callId} (${reason}); active=${activeSize}`);
+        if (reason === 'terminal') this.withdrawProviderAbandonedPermission(callId);
         if ((reason === 'terminal' || reason === 'timeout') && activeSize === 0 && !this.disposed) {
           if (this.idleTimeout) {
             clearTimeout(this.idleTimeout);
@@ -1205,8 +1214,41 @@ export class AcpBackend implements AgentBackend {
    * a policy only when both were admitted under it; any difference requires an explicit decision.
    */
   private getLivePermissionContext(): AcpPermissionCallContext | undefined {
-    if (this.providerSource?.hasUnattributedWork?.() !== true) return this.activePermissionContext;
-    return mergeAdmittedPermissionContexts(this.activePermissionContext, this.providerBackgroundPermissionContext ?? undefined);
+    const background = this.providerBackgroundPermissionContext;
+    if (this.providerSource?.hasUnattributedWork?.() !== true || !background) return this.activePermissionContext;
+    return mergeAdmittedPermissionContexts(this.activePermissionContext, background);
+  }
+
+  /**
+   * A permission mode the user changes in the running session is a new policy boundary, as a restart was: unattributed
+   * work then answers only to the background tasks still registered, under the policy each was admitted with.
+   */
+  rebasePermissionPolicyOnLiveWork(): void {
+    let live: AcpPermissionCallContext | null = null;
+    for (const context of this.providerContinuations.values()) {
+      if (context) live = live ? mergeAdmittedPermissionContexts(live, context) : context;
+    }
+    this.providerBackgroundPermissionContext = live;
+  }
+
+  /**
+   * A provider can finish a tool call without waiting for its permission answer (agents give up on an unanswered
+   * subagent request). The request is withdrawn with it so its prompt, notifications and steering hold end too.
+   */
+  private withdrawProviderAbandonedPermission(toolCallId: string): void {
+    const pending = this.unansweredProviderPermissions.get(toolCallId);
+    if (!pending || pending.withdrawn) return;
+    pending.withdrawn = this.options.permissionHandler?.cancelPendingRequest?.(
+      toolCallId, 'The agent closed the tool call without waiting for an answer',
+    ) === true;
+    if (pending.withdrawn) logger.debug(`[AcpBackend] Withdrew the permission request the agent abandoned: ${toolCallId}`);
+  }
+
+  /** The policy the session admits new foreground work under right now. */
+  private currentSessionPermissionContext(): AcpPermissionCallContext {
+    return Object.freeze({
+      permissionMode: this.options.getPermissionMode?.() ?? this.options.permissionMode ?? 'default',
+    });
   }
 
   /**
@@ -1227,6 +1269,11 @@ export class AcpBackend implements AgentBackend {
       registerContinuation: ({ id, parentToolCallId, keepToolCallOpen }) => {
         const context = this.providerToolContexts.get(parentToolCallId);
         if (!current() || !readNonBlankOpaqueIdentifier(id) || !context || this.providerContinuations.has(id)) return false;
+        // A call still waiting for its permission answer outlives the turn only together with that request.
+        if (this.toolCalls.get(parentToolCallId)?.snapshot.status === 'pending' && !(
+          this.unansweredProviderPermissions.has(parentToolCallId)
+          && this.options.permissionHandler?.retainPendingRequestPastTurn?.(parentToolCallId) === true
+        )) return false;
         this.providerContinuations.set(id, context);
         this.providerBackgroundPermissionContext = mergeAdmittedPermissionContexts(
           this.providerBackgroundPermissionContext ?? context, context,
@@ -1245,7 +1292,12 @@ export class AcpBackend implements AgentBackend {
         }
       },
       beginContinuation: ({ id, turnId }): AcpProviderTurnSink | null => {
-        const context = id === undefined ? EXPLICIT_PROVIDER_PERMISSION_CONTEXT : this.providerContinuations.get(id);
+        // Provider work resumed with no attributable task descends from this source's background work: it keeps the one
+        // policy that work and the session's current policy share, and needs an explicit decision otherwise.
+        const background = this.providerBackgroundPermissionContext;
+        const context = id === undefined
+          ? (background ? mergeAdmittedPermissionContexts(background, this.currentSessionPermissionContext()) : this.currentSessionPermissionContext())
+          : this.providerContinuations.get(id);
         if (!current() || !context || !readNonBlankOpaqueIdentifier(turnId)
           || this.waitingForResponse || this.activePromptRpc || this.providerTurn) return null;
         if (id !== undefined) this.providerContinuations.set(id, null);
@@ -1909,9 +1961,14 @@ export class AcpBackend implements AgentBackend {
         const hasSessionPolicy = !tracksForeground && this.options.permissionHandler !== undefined;
         const admitted = requestSessionId === this.acpSessionId && !this.disposed
           && (hasSessionPolicy || (this.waitingForResponse && !this.isCurrentTurnGenerationClosed()));
+        const permissionSourceLifetime = this.providerSourceLifetime;
+        const ownsCurrentTurn = () => permissionTurnGeneration === this.turnGeneration
+          && this.waitingForResponse && !this.isCurrentTurnGenerationClosed();
+        // A request for a call the provider source kept running past its turn stays owned by that source.
+        const outlivedItsTurn = () => permissionSourceLifetime !== null
+          && permissionSourceLifetime === this.providerSourceLifetime && this.providerContinuations.has(toolCallId);
         const isCurrentPermissionRequest = () => admitted && requestSessionId === this.acpSessionId
-          && !this.disposed && (hasSessionPolicy || (permissionTurnGeneration === this.turnGeneration
-            && this.waitingForResponse && !this.isCurrentTurnGenerationClosed()));
+          && !this.disposed && (hasSessionPolicy || ownsCurrentTurn() || outlivedItsTurn());
         const withdrawPermissionRequest = (): RequestPermissionResponse => {
           logger.warn('[AcpBackend] Withdrew permission request without current ownership', {
             reason: requestSessionId !== this.acpSessionId ? 'session_mismatch'
@@ -2040,6 +2097,8 @@ export class AcpBackend implements AgentBackend {
 
         // Use permission handler if provided, otherwise auto-approve
         if (this.options.permissionHandler) {
+          const unanswered = { withdrawn: false };
+          if (tracksForeground) this.unansweredProviderPermissions.set(toolCallId, unanswered);
           try {
             const result = await this.options.permissionHandler.handleToolCall(
               toolCallId,
@@ -2048,6 +2107,7 @@ export class AcpBackend implements AgentBackend {
               permissionContext,
             );
 
+            if (unanswered.withdrawn) return { outcome: { outcome: 'cancelled' } };
             if (!isCurrentPermissionRequest()) return withdrawPermissionRequest();
             const isApproved = result.decision === 'approved'
               || result.decision === 'approved_for_session'
@@ -2088,7 +2148,7 @@ export class AcpBackend implements AgentBackend {
               //
               // Important: still return the actual permission outcome (e.g. "deny") so ACP agents
               // can distinguish an explicit rejection from a transport cancellation.
-              if (tracksForeground) {
+              if (tracksForeground && ownsCurrentTurn()) {
                 void this.cancel(requestSessionId).catch((error: unknown) => {
                   this.emit({ type: 'status', status: 'error', detail: error instanceof Error ? error.message : 'ACP cancellation failed', error });
                 });
@@ -2104,6 +2164,7 @@ export class AcpBackend implements AgentBackend {
             }
             return { outcome };
           } catch (error) {
+            if (unanswered.withdrawn) return { outcome: { outcome: 'cancelled' } };
             if (!isCurrentPermissionRequest()) return withdrawPermissionRequest();
             logger.warn('[AcpBackend] Permission handler failed', {
               errorType: error instanceof Error ? 'Error' : typeof error,
@@ -2111,6 +2172,8 @@ export class AcpBackend implements AgentBackend {
             if (tracksForeground) this.clearTrackedToolCall(toolCallId, 'permission handler error');
             // Fallback to deny on error
             return { outcome: { outcome: 'cancelled' } };
+          } finally {
+            if (this.unansweredProviderPermissions.get(toolCallId) === unanswered) this.unansweredProviderPermissions.delete(toolCallId);
           }
         }
 
@@ -2129,17 +2192,9 @@ export class AcpBackend implements AgentBackend {
 
     const clientHandlers: AcpClientConnectionHandlers = {
       ...providerClientHandlers,
-      // A running prompt waiting on this answer cannot take a steer; hold steering until it moves on.
-      requestPermission: async (params: RequestPermissionRequest): Promise<RequestPermissionResponse> => {
-        const turnGeneration = this.turnGeneration;
-        this.unansweredProviderInputRequestCount += 1;
-        try {
-          return await providerClientHandlers.requestPermission(params);
-        } finally {
-          this.unansweredProviderInputRequestCount -= 1;
-          this.inFlightSteerHeldTurnGeneration = turnGeneration;
-        }
-      },
+      requestPermission: (params: RequestPermissionRequest): Promise<RequestPermissionResponse> => (
+        this.awaitProviderInputAnswer(async () => await providerClientHandlers.requestPermission(params))
+      ),
     };
 
     if (isAcpFsEnabled()) {
@@ -2164,9 +2219,10 @@ export class AcpBackend implements AgentBackend {
         },
       } satisfies Pick<AcpClientConnectionHandlers, 'readTextFile' | 'writeTextFile'>);
     }
-    const formElicitationHandler = this.options.formElicitation === true
-      ? this.options.permissionHandler ?? null
-      : null;
+    const questionHandler = this.options.formElicitation === true ? this.options.permissionHandler ?? null : null;
+    const formElicitationHandler: Pick<AcpPermissionHandler, 'handleToolCall'> | null = questionHandler && {
+      handleToolCall: (...args) => this.awaitProviderInputAnswer(() => questionHandler.handleToolCall(...args)),
+    };
     this.connection = await createAcpClientConnection({
       name: 'happier-cli',
       transport: stream,
@@ -3483,8 +3539,11 @@ export class AcpBackend implements AgentBackend {
     this.dispatchedPromptTurnGeneration = null;
     this.pendingPromptResponseTurnGeneration = null;
     this.idleStatusDeferredUntilPromptResponse = false;
-    this.abortPendingPermissionsForCurrentTurn(this.resolvePermissionFlushReasonForOutcome(outcome));
+    // The provider source first keeps the work that outlives this turn, with the permission requests it still waits on.
     this.providerSource?.onTurnFinished?.(outcome);
+    this.abortPendingPermissionsForCurrentTurn(
+      this.resolvePermissionFlushReasonForOutcome(outcome), { keepRetainedPastTurn: outcome.kind === 'completed' },
+    );
     this.clearActiveToolCallStateForTerminalTurn(this.resolvePermissionFlushReasonForOutcome(outcome));
     this.plans.finalizeTurn(resolveAcpPlanTurnId(this.turnGeneration));
     this.closeCurrentTurnGeneration();
@@ -3551,6 +3610,18 @@ export class AcpBackend implements AgentBackend {
     return true;
   }
 
+  /** A running prompt waiting on a permission or question answer cannot take a steer; hold steering until it moves on. */
+  private async awaitProviderInputAnswer<T>(answer: () => Promise<T>): Promise<T> {
+    const turnGeneration = this.turnGeneration;
+    this.unansweredProviderInputRequestCount += 1;
+    try {
+      return await answer();
+    } finally {
+      this.unansweredProviderInputRequestCount -= 1;
+      this.inFlightSteerHeldTurnGeneration = turnGeneration;
+    }
+  }
+
   /** Whether a steer prompt can reach the running turn now, rather than waiting on a provider input request. */
   isInFlightSteerWindowOpen(): boolean {
     return this.unansweredProviderInputRequestCount === 0
@@ -3580,12 +3651,12 @@ export class AcpBackend implements AgentBackend {
     steer.acknowledge();
   }
 
-  private abortPendingPermissionsForCurrentTurn(reason: string): void {
+  private abortPendingPermissionsForCurrentTurn(reason: string, options?: AcpPendingPermissionAbortOptions): void {
     if (this.permissionFlushTurnGeneration === this.turnGeneration) return;
     this.permissionFlushTurnGeneration = this.turnGeneration;
     void abortPendingAcpPermissionRequests(this.options.permissionHandler, reason, (error) => {
       logger.debug('[AcpBackend] Failed to abort pending permission requests:', error);
-    });
+    }, options);
   }
 
   private filterPromptTurnUpdatesByDispatch(updateCandidates: unknown[]): unknown[] {
@@ -3758,9 +3829,7 @@ export class AcpBackend implements AgentBackend {
     }
 
     this.emit({ type: 'status', status: 'running' });
-    this.beginResponseTurn(this.spawnedProviderTurnSource ? Object.freeze({
-      permissionMode: this.options.getPermissionMode?.() ?? this.options.permissionMode ?? 'default',
-    }) : undefined);
+    this.beginResponseTurn(this.spawnedProviderTurnSource ? this.currentSessionPermissionContext() : undefined);
     const turnGeneration = this.turnGeneration;
 
     type PromptErrorDisposition =

@@ -209,7 +209,10 @@ export function canonicalizeToolNameV2(opts: {
                     ? (record as any).content.trim().length > 0
                     : typeof (record as any).text === 'string'
                         ? (record as any).text.trim().length > 0
-                        : false;
+                        // agy write_to_file sends the file text as Content.
+                        : typeof (record as any).Content === 'string'
+                            ? (record as any).Content.trim().length > 0
+                            : false;
         const changes = asRecord((record as any).changes);
         if (changes && Object.keys(changes).length > 0) return 'Patch';
         if (hasEdits) return 'MultiEdit';

@@ -90,13 +90,17 @@ describe('AcpBackend form elicitation', () => {
     await withTempDir('happier-acp-elicitation-', async (dir) => {
       const resultFile = `${dir}/result.json`;
       const calls: Array<{ id: string; toolName: string; input: unknown }> = [];
+      // agy refuses a steer while its question is open, so steering waits for the answer.
+      const steerableWhileQuestionOpen: boolean[] = [];
+      let backend: AcpBackend | null = null;
       const permissionHandler: AcpPermissionHandler = {
         async handleToolCall(id, toolName, input): Promise<Decision> {
           calls.push({ id, toolName, input });
+          steerableWhileQuestionOpen.push(backend?.isInFlightSteerWindowOpen() ?? true);
           return { decision: 'approved', answers: { q1: ['Green'] } };
         },
       };
-      const backend = new AcpBackend({
+      backend = new AcpBackend({
         agentName: 'test',
         cwd: dir,
         command: process.execPath,
@@ -108,6 +112,7 @@ describe('AcpBackend form elicitation', () => {
         const { sessionId } = await backend.startSession();
         await backend.sendPrompt(sessionId, 'ask me');
         const result = JSON.parse(await readFileEventually(resultFile, { timeoutMs: 5_000 }));
+        expect(steerableWhileQuestionOpen).toEqual([false]);
         expect(result.initCapabilities).toMatchObject({ elicitation: { form: {} } });
         expect(result.response.result).toEqual({ action: 'accept', content: { q1: '2' } });
         expect(calls).toEqual([{

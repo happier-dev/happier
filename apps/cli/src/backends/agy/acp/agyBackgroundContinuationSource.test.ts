@@ -31,15 +31,16 @@ function agyAgent(directory: string, version?: string): string {
       let permissionCount = 0;
       let finishForeground;
       let killedByClose = [];
+      let subagentPermission = null;
       const running = new Set();
       const pendingPermissions = new Map();
-      const COMMANDS = { call_build: 'npm run build', call_verify: 'cat build.log', call_tests: 'npm test', call_hook: 'echo hook' };
+      const COMMANDS = { call_build: 'npm run build', call_verify: 'cat build.log', call_tests: 'npm test', call_hook: 'echo hook', call_watch: 'npm run watch' };
       const send = value => process.stdout.write(JSON.stringify(value) + '\\n');
       const ok = (id, result) => send({ jsonrpc: '2.0', id, result });
       const notify = update => send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: '${SESSION_ID}', update } });
       const tool = (sessionUpdate, toolCallId, status, extra = {}) => notify({
         sessionUpdate, toolCallId, name: 'run_command', kind: 'execute', title: COMMANDS[toolCallId], status,
-        rawInput: { CommandLine: COMMANDS[toolCallId], WaitMsBeforeAsync: 500, IsDaemon: toolCallId === 'call_build' || toolCallId === 'call_tests' }, ...extra,
+        rawInput: { CommandLine: COMMANDS[toolCallId], WaitMsBeforeAsync: 500, IsDaemon: ['call_build', 'call_tests', 'call_watch'].includes(toolCallId) }, ...extra,
       });
       const settle = (toolCallId, output) => {
         running.delete(toolCallId);
@@ -107,6 +108,31 @@ function agyAgent(directory: string, version?: string): string {
             if (text === 'hold the foreground prompt') {
               finishForeground = endTurn;
               say('The foreground prompt started.');
+            } else if (text === 'delegate to a subagent') {
+              // A subagent asks to read a file; the main agent answers the prompt while that request still waits.
+              const toolCallId = 'subagent-2:call_read';
+              const rawInput = { Path: '/repo/notes.md', StartLine: 1, EndLine: 5 };
+              notify({ sessionUpdate: 'tool_call', toolCallId, kind: 'read', title: 'notes.md', status: 'pending', rawInput });
+              const id = 'permission-' + permissionCount++;
+              pendingPermissions.set(id, result => {
+                subagentPermission = result;
+                if (result?.outcome?.optionId !== 'allow') {
+                  notify({ sessionUpdate: 'tool_call_update', toolCallId, kind: 'read', status: 'failed' });
+                  return;
+                }
+                notify({ sessionUpdate: 'tool_call_update', toolCallId, kind: 'read', status: 'in_progress' });
+                notify({ sessionUpdate: 'tool_call_update', toolCallId, kind: 'read', status: 'completed',
+                  content: [{ type: 'content', content: { type: 'text', text: 'notes' } }] });
+                say('The subagent read the notes.');
+                usage();
+              });
+              send({ jsonrpc: '2.0', id, method: 'session/request_permission', params: {
+                sessionId: '${SESSION_ID}',
+                toolCall: { toolCallId, title: 'notes.md', kind: 'read', status: 'pending', rawInput },
+                options: [{ optionId: 'allow', kind: 'allow_once', name: 'Allow' }, { optionId: 'deny', kind: 'reject_once', name: 'Deny' }],
+              } });
+              say('A subagent is reading the notes.');
+              setTimeout(endTurn, 100);
             } else if (text === 'check the build') {
               settle('call_build', 'build ok');
               say('The build finished.');
@@ -150,13 +176,38 @@ function agyAgent(directory: string, version?: string): string {
             usage();
             ok(message.id, {});
           } else if (message.method === 'test/late-work') {
+            const { toolCallId = 'call_hook', keepRunning = false } = message.params ?? {};
             usage();
-            runCommand('call_hook', () => {
-              settle('call_hook', 'hook done');
-              say('The deferred hook finished.');
+            runCommand(toolCallId, () => {
+              if (keepRunning) say('The deferred hook is running.');
+              else {
+                settle(toolCallId, 'hook done');
+                say('The deferred hook finished.');
+              }
               usage();
               ok(message.id, { resumed: true });
             }, permission => ok(message.id, { resumed: false, permission }));
+          } else if (message.method === 'test/subagent-read') {
+            // Log 2026-11-28-13-33-10: a subagent's read asks for permission; agy fails the call after about 60 s unanswered.
+            const toolCallId = 'subagent-1:call_read';
+            const rawInput = { Path: '/repo/README.md', StartLine: 1, EndLine: 20 };
+            notify({ sessionUpdate: 'tool_call', toolCallId, kind: 'read', title: 'README.md', status: 'pending', rawInput });
+            const id = 'permission-' + permissionCount++;
+            pendingPermissions.set(id, result => ok(message.id, { permission: result }));
+            send({ jsonrpc: '2.0', id, method: 'session/request_permission', params: {
+              sessionId: '${SESSION_ID}',
+              toolCall: { toolCallId, title: 'README.md', kind: 'read', status: 'pending', rawInput },
+              options: [{ optionId: 'allow', kind: 'allow_once', name: 'Allow' }, { optionId: 'deny', kind: 'reject_once', name: 'Deny' }],
+            } });
+          } else if (message.method === 'test/subagent-gives-up') {
+            const toolCallId = 'subagent-1:call_read';
+            notify({ sessionUpdate: 'tool_call_update', toolCallId, kind: 'read', status: 'in_progress' });
+            notify({ sessionUpdate: 'tool_call_update', toolCallId, kind: 'read', status: 'failed',
+              content: [{ type: 'content', content: { type: 'text', text: 'permission request timed out' } }] });
+            ok(message.id, {});
+          } else if (message.method === 'test/progress') {
+            say('Still working.');
+            ok(message.id, {});
           } else if (message.method === 'test/repeat-build-status') {
             settle('call_build', 'build ok');
             usage();
@@ -164,7 +215,7 @@ function agyAgent(directory: string, version?: string): string {
           } else if (message.method === 'test/finish-foreground') {
             finishForeground();
             ok(message.id, {});
-          } else if (message.method === 'test/status') ok(message.id, { pid: process.pid, closes, loads, running: [...running] });
+          } else if (message.method === 'test/status') ok(message.id, { pid: process.pid, closes, loads, running: [...running], subagentPermission });
           else if (message.id !== undefined) ok(message.id, {});
         }
       });
@@ -345,6 +396,76 @@ describe('createAgyBackgroundContinuationSource', () => {
     });
   });
 
+  it('keeps YOLO for work Agy resumes on its own after its background work went idle', async () => {
+    await fixture(async ({ backend, events, permissionSession }) => {
+      await backend.sendPrompt(SESSION_ID, 'build in the background');
+      await backend.waitForResponseComplete();
+      expect(await backend.requestExtension('test/finish-build', {})).toEqual({ resumed: true });
+      await expect.poll(() => finishedTurns(events)).toHaveLength(2);
+
+      const late = backend.requestExtension('test/late-work', {});
+      try {
+        await expect.poll(() => events).toContainEqual(expect.objectContaining({
+          type: 'model-output', textDelta: 'The deferred hook finished.',
+        }));
+        expect(pendingPermissionIds(permissionSession)).toEqual([]);
+      } finally {
+        if (pendingPermissionIds(permissionSession).length > 0) await approvePendingPermission(permissionSession);
+        await late;
+      }
+      await expect.poll(() => finishedTurns(events)).toHaveLength(3);
+    }, () => 'yolo');
+  });
+
+  it('keeps YOLO for later prompts after resumed work leaves a command running', async () => {
+    await fixture(async ({ backend, events, permissionSession }) => {
+      await backend.sendPrompt(SESSION_ID, 'build in the background');
+      await backend.waitForResponseComplete();
+      expect(await backend.requestExtension('test/finish-build', {})).toEqual({ resumed: true });
+      await expect.poll(() => finishedTurns(events)).toHaveLength(2);
+      const running = backend.requestExtension('test/late-work', { toolCallId: 'call_watch', keepRunning: true });
+      try {
+        await expect.poll(() => finishedTurns(events)).toHaveLength(3);
+      } finally {
+        if (pendingPermissionIds(permissionSession).length > 0) await approvePendingPermission(permissionSession);
+        await running;
+      }
+
+      const successor = backend.sendPrompt(SESSION_ID, 'hold the foreground prompt');
+      await expect.poll(() => events).toContainEqual(expect.objectContaining({
+        type: 'model-output', textDelta: 'The foreground prompt started.',
+      }));
+      const late = backend.requestExtension('test/late-work', {});
+      try {
+        await expect.poll(() => events.filter((event) => event.type === 'model-output'
+          && event.textDelta === 'The deferred hook finished.')).toHaveLength(1);
+        expect(pendingPermissionIds(permissionSession)).toEqual([]);
+      } finally {
+        if (pendingPermissionIds(permissionSession).length > 0) await approvePendingPermission(permissionSession);
+        await late;
+        await backend.requestExtension('test/finish-foreground', {});
+        await successor;
+      }
+    }, () => 'yolo');
+  });
+
+  it('asks for work Agy resumes on its own once the session policy changed since its background work started', async () => {
+    let mode: 'default' | 'yolo' = 'default';
+    await fixture(async ({ backend, events, permissionSession }) => {
+      await promptBuild(backend, permissionSession);
+      const resumed = backend.requestExtension('test/finish-build', {});
+      await approvePendingPermission(permissionSession);
+      expect(await resumed).toEqual({ resumed: true });
+      await expect.poll(() => finishedTurns(events)).toHaveLength(2);
+
+      mode = 'yolo';
+      const late = backend.requestExtension('test/late-work', {});
+      await expect.poll(() => pendingPermissionIds(permissionSession)).toEqual(['call_hook']);
+      await approvePendingPermission(permissionSession);
+      expect(await late).toEqual({ resumed: true });
+    }, () => mode);
+  });
+
   it('requires explicit approval for unattributed work during a full-access successor prompt', async () => {
     let mode: 'default' | 'yolo' = 'default';
     await fixture(async ({ backend, events, permissionSession }) => {
@@ -365,6 +486,36 @@ describe('createAgyBackgroundContinuationSource', () => {
         await approvePendingPermission(permissionSession);
         expect(await late).toEqual({ resumed: true });
       } finally {
+        await backend.requestExtension('test/finish-foreground', {});
+        await successor;
+      }
+    }, () => mode);
+  });
+
+  it('applies a permission mode changed in place to unattributed work once no earlier background task is live', async () => {
+    let mode: 'default' | 'yolo' = 'default';
+    await fixture(async ({ backend, events, permissionSession }) => {
+      await promptBuild(backend, permissionSession);
+      const resumed = backend.requestExtension('test/finish-build', {});
+      await approvePendingPermission(permissionSession);
+      expect(await resumed).toEqual({ resumed: true });
+      await expect.poll(() => finishedTurns(events)).toHaveLength(2);
+
+      mode = 'yolo';
+      backend.rebasePermissionPolicyOnLiveWork();
+      const successor = backend.sendPrompt(SESSION_ID, 'hold the foreground prompt');
+      await expect.poll(() => events).toContainEqual(expect.objectContaining({
+        type: 'model-output', textDelta: 'The foreground prompt started.',
+      }));
+      const late = backend.requestExtension('test/late-work', {});
+      try {
+        await expect.poll(() => events).toContainEqual(expect.objectContaining({
+          type: 'model-output', textDelta: 'The deferred hook finished.',
+        }));
+        expect(pendingPermissionIds(permissionSession)).toEqual([]);
+      } finally {
+        if (pendingPermissionIds(permissionSession).length > 0) await approvePendingPermission(permissionSession);
+        await late;
         await backend.requestExtension('test/finish-foreground', {});
         await successor;
       }
@@ -392,6 +543,53 @@ describe('createAgyBackgroundContinuationSource', () => {
         await successor;
       }
     }, () => 'yolo');
+  });
+
+  it('withdraws a permission request Agy abandons when it fails the tool call, keeping the turn running', async () => {
+    await fixture(async ({ backend, events, permissionSession }) => {
+      const prompt = backend.sendPrompt(SESSION_ID, 'hold the foreground prompt');
+      await expect.poll(() => events).toContainEqual(expect.objectContaining({
+        type: 'model-output', textDelta: 'The foreground prompt started.',
+      }));
+      try {
+        const request = backend.requestExtension('test/subagent-read', {});
+        await expect.poll(() => pendingPermissionIds(permissionSession)).toEqual(['subagent-1:call_read']);
+        expect(backend.isInFlightSteerWindowOpen()).toBe(false);
+
+        await backend.requestExtension('test/subagent-gives-up', {});
+
+        await expect.poll(() => pendingPermissionIds(permissionSession)).toEqual([]);
+        expect(await request).toEqual({ permission: { outcome: { outcome: 'cancelled' } } });
+        await backend.requestExtension('test/progress', {});
+        await expect.poll(() => backend.isInFlightSteerWindowOpen()).toBe(true);
+        expect(finishedTurns(events)).toEqual([]);
+      } finally {
+        await backend.requestExtension('test/finish-foreground', {});
+        await prompt;
+      }
+    });
+  });
+
+  it('keeps a subagent permission request Agy still waits on after the main turn ended', async () => {
+    await fixture(async ({ backend, events, permissionSession }) => {
+      await backend.sendPrompt(SESSION_ID, 'delegate to a subagent');
+      await backend.waitForResponseComplete();
+      expect(finishedTurns(events)).toHaveLength(1);
+      await delay(TEST_TIMING.generationSettleMs);
+      expect(pendingPermissionIds(permissionSession)).toEqual(['subagent-2:call_read']);
+      expect(await backend.requestExtension('test/status', {})).toMatchObject({ subagentPermission: null });
+
+      await approvePendingPermission(permissionSession);
+
+      await expect.poll(() => backend.requestExtension('test/status', {})).toMatchObject({
+        subagentPermission: { outcome: { outcome: 'selected', optionId: 'allow' } },
+      });
+      await expect.poll(() => events).toContainEqual(expect.objectContaining({
+        type: 'model-output', textDelta: 'The subagent read the notes.',
+      }));
+      await expect.poll(() => finishedTurns(events)).toHaveLength(2);
+      expect(pendingPermissionIds(permissionSession)).toEqual([]);
+    });
   });
 
   it('keeps a finishing continuation open for a background command that settles while its output drains', async () => {

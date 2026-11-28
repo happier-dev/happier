@@ -86,31 +86,49 @@ export function createCatalogDefinedAcpBackend(
   const configurable = backend as AgentBackend & {
     setSessionMode?: (sessionId: SessionId, modeId: string) => Promise<void>;
     clearSessionModeOverride?: (sessionId: SessionId) => Promise<void>;
+    applyPermissionModeInPlace?: (sessionId: SessionId) => Promise<boolean>;
+    rebasePermissionPolicyOnLiveWork?: () => void;
     getSessionModeState?: () => { availableModes: ReadonlyArray<{ id: string }> } | null;
   };
   if (typeof configurable.setSessionMode !== 'function') return backend;
 
   const setNativeSessionMode = configurable.setSessionMode.bind(backend);
+  // The agent mode this session runs, and whether Happier replaced the agent's own approval policy on it.
+  let agentModeOverride: string | null = null;
+  let nativeModeWritten = false;
+  const currentPermissionMode = () => options.getPermissionMode?.() ?? options.permissionMode ?? 'default';
+  const resolveSessionMode = (agentModeId: string | null) => resolveAcpSessionMode({
+    agentId,
+    agentModeId,
+    permissionMode: currentPermissionMode(),
+    availableModes: configurable.getSessionModeState?.()?.availableModes ?? [],
+  });
   const applySessionMode = async (sessionId: SessionId, agentModeId: string | null): Promise<void> => {
-    const permissionMode = options.getPermissionMode?.() ?? options.permissionMode ?? 'default';
-    const resolution = resolveAcpSessionMode({
-      agentId,
-      agentModeId,
-      permissionMode,
-      availableModes: configurable.getSessionModeState?.()?.availableModes ?? [],
-    });
+    const resolution = resolveSessionMode(agentModeId);
+    if (resolution.kind === 'unavailable') {
+      throw new Error(`Agent '${agentId}' has no advertised permission mode for '${currentPermissionMode()}'`);
+    }
+    agentModeOverride = agentModeId;
     // Provider policy delegates to the agent; it does not imply a native reset token.
     if (resolution.kind === 'provider-policy') return;
-    if (resolution.kind === 'unavailable') {
-      throw new Error(`Agent '${agentId}' has no advertised permission mode for '${permissionMode}'`);
-    }
     await setNativeSessionMode(sessionId, resolution.modeId);
+    nativeModeWritten = true;
   };
   const applyPermissionMode = (sessionId: SessionId): Promise<void> => applySessionMode(sessionId, null);
   configurable.setSessionMode = applySessionMode;
   configurable.clearSessionModeOverride = applyPermissionMode;
+  // A mapped mode is a live native write. The agent's own policy cannot be restored once Happier replaced it,
+  // so a permission mode that leaves Build to the agent's policy needs a fresh native session.
+  configurable.applyPermissionModeInPlace = async (sessionId: SessionId): Promise<boolean> => {
+    const build = resolveSessionMode(null);
+    if (build.kind === 'unavailable' || (build.kind === 'provider-policy' && nativeModeWritten)) return false;
+    await applySessionMode(sessionId, agentModeOverride);
+    configurable.rebasePermissionPolicyOnLiveWork?.();
+    return true;
+  };
 
   const applyMode = async (result: StartSessionResult): Promise<StartSessionResult> => {
+    nativeModeWritten = false;
     await applyPermissionMode(result.sessionId);
     return result;
   };

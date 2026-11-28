@@ -1943,6 +1943,49 @@ describe('runPermissionModePromptLoop', () => {
     expect(runtime.startOrLoad).toHaveBeenNthCalledWith(2, { resumeId: 'resume-from-runtime', importHistory: false });
   });
 
+  it.each([
+    { name: 'applies a permission-only change in the running session', appliesInPlace: true, secondMode: { permissionMode: 'yolo' } },
+    { name: 'restarts when the running session cannot take the permission change', appliesInPlace: false, secondMode: { permissionMode: 'yolo' } },
+    { name: 'restarts when the system prompt changes with the permission mode', appliesInPlace: true, secondMode: { permissionMode: 'yolo', appendSystemPrompt: 'Be brief.' } },
+  ] as const)('$name', async ({ appliesInPlace, secondMode }) => {
+    const session = createPromptLoopSession();
+    const queue = createModeQueue();
+    const runtime = Object.assign(createRuntime(), { applyPermissionModeInPlace: vi.fn(async () => appliesInPlace) });
+    const permissionHandler = { setPermissionMode: vi.fn(), reset: vi.fn() } as any;
+
+    queue.push({ text: 'first', localId: 'local-live-1' }, { permissionMode: 'default' });
+    queue.push({ text: 'second', localId: 'local-live-2' }, secondMode);
+
+    let readyCount = 0;
+    await runPermissionModePromptLoop({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler,
+      runtime,
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer: new MessageBuffer(),
+      shouldExit: () => readyCount >= 2,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: () => { readyCount += 1; },
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+    });
+
+    const restarted = !appliesInPlace || 'appendSystemPrompt' in secondMode;
+    expect(runtime.sendPrompt).toHaveBeenNthCalledWith(2, expect.stringContaining('second'));
+    expect(runtime.reset).toHaveBeenCalledTimes(restarted ? 1 : 0);
+    expect(permissionHandler.reset).toHaveBeenCalledTimes(restarted ? 1 : 0);
+    expect(runtime.startOrLoad).toHaveBeenCalledTimes(restarted ? 2 : 1);
+    expect(permissionHandler.setPermissionMode).toHaveBeenLastCalledWith('yolo');
+  });
+
   it('drops vendor resume without transcript replay when permission settings change on a runtime that requires a fresh session', async () => {
     const fetchRecentTranscriptTextItemsForAcpImport = vi.fn(async () => [
       { role: 'user' as const, text: 'Remember project codename CONTEXT-ALPHA.' },

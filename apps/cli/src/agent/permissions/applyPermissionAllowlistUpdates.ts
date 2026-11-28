@@ -1,3 +1,5 @@
+import { extractShellCommand, isShellToolIdentifier } from './permissionToolIdentifier';
+
 type UnknownRecord = Record<string, unknown>;
 
 function asRecord(value: unknown): UnknownRecord | null {
@@ -64,6 +66,16 @@ export function applyAllowedToolsToAllowlist(allowedIdentifiers: Set<string>, al
   }
 }
 
+/**
+ * A tool-wide shell approval recorded from a shell request whose input had no command cannot be told apart from the
+ * blanket approval older builds derived for "don't ask for this session" on such a request (agy before its inputs
+ * carried `command`). It is not restored; approvals recorded from requests that carried a command still are.
+ */
+function isCommandlessShellApproval(entry: UnknownRecord, identifier: string): boolean {
+  return isShellToolIdentifier(identifier) && typeof entry.tool === 'string' && isShellToolIdentifier(entry.tool)
+    && extractShellCommand(entry.arguments) === null;
+}
+
 export function seedAllowlistFromCompletedRequests(allowedIdentifiers: Set<string>, completedRequests: unknown): void {
   const rec = asRecord(completedRequests);
   if (!rec) return;
@@ -74,7 +86,11 @@ export function seedAllowlistFromCompletedRequests(allowedIdentifiers: Set<strin
     if (Object.prototype.hasOwnProperty.call(entry, 'remoteMediationSettlementId')) continue;
     if (entry.status !== 'approved') continue;
 
-    applyUpdatedPermissionsToAllowlist(allowedIdentifiers, entry.updatedPermissions);
-    applyAllowedToolsToAllowlist(allowedIdentifiers, entry.allowedTools ?? entry.allowTools);
+    const restored = new Set<string>();
+    applyUpdatedPermissionsToAllowlist(restored, entry.updatedPermissions);
+    applyAllowedToolsToAllowlist(restored, entry.allowedTools ?? entry.allowTools);
+    for (const identifier of restored) {
+      if (!isCommandlessShellApproval(entry, identifier)) allowedIdentifiers.add(identifier);
+    }
   }
 }
