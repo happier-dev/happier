@@ -378,7 +378,7 @@ function withPropertyChoices(): void {
 }
 
 function typePropertySearch(property: 'assignees' | 'labels', query: string): void {
-  const search = document.querySelector<HTMLInputElement>(`[data-testid="github-pr-${property}.${property}.value.search"]`);
+  const search = document.querySelector<HTMLInputElement>(`[data-testid="github-pr-${property}.value.search"]`);
   expect(search, 'the shared property choice search is present').not.toBeNull();
   const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
   setValue.call(search, query);
@@ -1329,6 +1329,24 @@ describe('the mounted GitHub write controls', () => {
     const detail = await mountWritableDetail({ presentation: 'active', nativeLabel: 'Open' });
     await expect(detail.getByRole('button', { name: 'Assignees, None' })).resolves.toBeDefined();
     await expect(detail.getByRole('button', { name: 'Labels, None' })).resolves.toBeDefined();
+  });
+
+  it('PR member pickers stand as the same title-over-value Details rows as their siblings (N30)', async () => {
+    withPropertyChoices();
+    const detail = await mountWritableDetail({ presentation: 'active', nativeLabel: 'Open' });
+    await expect(detail.getByRole('button', { name: 'Assignees, octocat' })).resolves.toBeDefined();
+    // A row title is drawn by the row owner; a picker's own label column draws it in a different face.
+    const details = document.querySelector<HTMLElement>('[role="group"][aria-label="Details"]');
+    expect(details, 'the Details section is drawn').not.toBeNull();
+    const drawnFace = (words: string): string => {
+      const node = [...details!.querySelectorAll<HTMLElement>('*')].find((element) => element.textContent === words
+        && element.children.length === 0);
+      expect(node, `"${words}" is drawn`).toBeDefined();
+      return `${node!.className}|${node!.getAttribute('style') ?? ''}`;
+    };
+    const siblingTitle = drawnFace('Milestone');
+    expect(drawnFace('Assignees')).toBe(siblingTitle);
+    expect(drawnFace('Labels')).toBe(siblingTitle);
   });
 
   it.each(['failed', 'uncertain', 'rejected'] as const)('PR member picker preserves the current value after a %s settlement', async (kind) => {
