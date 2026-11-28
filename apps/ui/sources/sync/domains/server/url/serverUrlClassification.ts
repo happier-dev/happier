@@ -22,6 +22,16 @@ function isPrivateIpv4(hostname: string): boolean {
     return false;
 }
 
+function isTailscaleCGNATIpv4(hostname: string): boolean {
+    const host = String(hostname ?? '').trim();
+    const parts = host.split('.');
+    if (parts.length !== 4) return false;
+    const nums = parts.map((p) => Number(p));
+    if (nums.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return false;
+    const [a, b] = nums;
+    return a === 100 && b >= 64 && b <= 127;
+}
+
 function isLocalishIpv6(hostname: string): boolean {
     const raw = stripBrackets(hostname).toLowerCase();
     if (!raw) return false;
@@ -114,4 +124,25 @@ export function canSafelyAutoAdoptCanonicalServerUrl(params: Readonly<{
     if (currentLocalish && !advertisedLocalish) return true;
 
     return false;
+}
+
+/**
+ * Returns true if the URL looks like a Tailscale tailnet URL (CGNAT 100.64.0.0/10
+ * or *.ts.net hostname), which is reachable across the tailnet even though it
+ * uses private addressing.
+ */
+export function isTailscaleServerUrl(serverUrl: string): boolean {
+    try {
+        const url = new URL(serverUrl);
+        const host = stripBrackets(String(url.hostname ?? '').trim().toLowerCase());
+        if (!host) return false;
+
+        if (host.endsWith('.ts.net')) return true;
+
+        if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return isTailscaleCGNATIpv4(host);
+
+        return false;
+    } catch {
+        return false;
+    }
 }
