@@ -2476,6 +2476,14 @@ once, consuming the host-issued exact operation for a reviewed Move child.
 The admitted Start consumes that decision without routing Ask again; explicit
 reviewed-effect digest mismatch refusals remain in force.
 
+A Workflow-origin Ask replays with its Run's retained requester custody,
+whatever the Run principal: approval-origin currentness admits the exact
+recorded invocation, and `acquireWorkflowApprovalRequester` reopens the Run's
+Machine admission and requester bootstrap, the same custody the live Run
+transport spends. Only a host-principal Run also carries the host Workflow
+requester marker; the receiving authorizer still selects and separates the
+requester from the installed Account.
+
 The existing Machine capability publication owner advertises enforcement/refusal
 only after its existing resolved Home snapshot accepts protocol v1. Older, malformed or
 unavailable Home facts omit only this leaf; native readiness is a separate fact.

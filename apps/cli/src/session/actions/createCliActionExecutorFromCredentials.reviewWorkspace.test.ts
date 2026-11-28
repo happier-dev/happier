@@ -59,17 +59,23 @@ import { WorkflowAcceptedSnapshotV1Schema } from '@happier-dev/protocol/workflow
 import { sealWorkflowAcceptedSnapshotStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
 import { createWorkflowRunStorageTestkit } from '@/daemon/workflows/workflowRunStorage.testkit';
 import { WORKFLOW_RUN_STORAGE_HTTP_PATH, type WorkflowRunStorageOperation } from '@/daemon/workflows/workflowRunStorageClient';
+import { registerScmHandlers } from '@/rpc/handlers/scm';
+import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
+import { createTestGitScmBackendRegistry } from '@/scm/rpc/__tests__/testRpcHarness';
+import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 
 afterEach(() => vi.restoreAllMocks());
 afterAll(() => pluginReloadController.shutdown());
 
 it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'account-approval-verify', 'account-agent-approval-verify',
   'plugin-approval-verify', 'unobserved-plugin-approval-verify', 'local-unobserved-plugin-approval-verify', 'workflow-unobserved-plugin-approval-verify', 'workflow-unobserved-plugin-approval-prepare', 'workflow-source-approval-prepare', 'workflow-source-meta-approval-prepare', 'account-approval-reject', 'account-approval-cancel', 'approval-reject', 'approval-cancel', 'owner-verify', 'owner-local-verify', 'owner-prepare', 'owner-foreign-use', 'owner-foreign-manage',
-  'owner-unadmitted', 'owner-retarget', 'owner-home'] as const)('runs mounted source %s through its serving Machine SDK executor without minting an Account root', async shape => {
+  'owner-unadmitted', 'owner-retarget', 'owner-home', 'workflow-source-session-approval-status'] as const)('runs mounted source %s through its serving Machine SDK executor without minting an Account root', async shape => {
   const approvalShape = shape.includes('approval-');
   const accountChild = shape.startsWith('account-');
   const workflowChild = shape.startsWith('workflow-');
   const workflowSourceApproval = shape.includes('source-');
+  const workflowSessionStatus = shape === 'workflow-source-session-approval-status';
+  const sourceSessionId = 'cmx0gyk0q00v9izmc4obotmp3';
   const unobservedPluginChild = workflowChild || shape === 'unobserved-plugin-approval-verify' || shape === 'local-unobserved-plugin-approval-verify';
   const localPluginChild = shape === 'plugin-approval-verify' || unobservedPluginChild;
   const accountOrigin = shape === 'account-agent-approval-verify' ? 'agent' as const : 'cli' as const;
@@ -131,6 +137,10 @@ it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'account-ap
       approvalHome.get('/v1/machines', async () => [machine]);
       approvalHome.get('/v1/machines/:id', async () => ({ machine }));
       approvalHome.post('/v1/machines/:id/admission/verify', async () => ({ v: 1, ok: true }));
+      if (workflowSessionStatus) approvalHome.get(`/v2/sessions/${sourceSessionId}`, async () => ({
+        session: createSessionRecordFixture({ id: sourceSessionId, machineId, encryptionMode: 'plain',
+          metadata: JSON.stringify({ path: root, machineId }) }),
+      }));
       if (accountChild) approvalHome.post(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read'], async () =>
         PluginAvailabilityIntentReadActionOutputV1Schema.parse({ availabilityCursor: 1, hostingCapability: { enabled: false },
           intent: { pluginId: accountManifest.id, desiredVersion: accountManifest.version, enabled: true,
@@ -196,6 +206,9 @@ it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'account-ap
         inputSchema: { type: 'object', additionalProperties: approvalShape },
         run: async (_input, context) => {
           sourceEntered = true;
+          if (workflowSessionStatus) return context.services.actions.execute('scm.status.snapshot', {
+            sessionId: sourceSessionId, detail: 'facts',
+          });
           if (approvalShape) expect(await createConnectedServiceCredentialApi(credentials)
             .getAccountEncryptionMode({ throwOnTransportError: true })).toBe('plain');
           if (approvalShape) return (verifyShape ? verifyGithubTriageReviewWorkspace : prepareGithubTriageReviewWorkspace)(_input, { ...github.context,
@@ -211,12 +224,31 @@ it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'account-ap
     });
     const actionsSettingsProvider = createActionSettingsProvider({ getAccountSettings: () => accountSettings,
       allowEnvironmentOverride: false });
+    const rpc = new RpcHandlerManager({ scopePrefix: machineId, encryptionMode: 'plain', logger: () => {},
+      authorizeRequest: request => authorizeMachineRpcRequest(request, { machineId,
+        resolveHomeServerIdentityId: async () => 'srv_review_home',
+        resolveCustodianAccountId: async () => accountId, resolveInstallationId: () => 'review-installation',
+        verifyMachineAdmission: admission => verifyMachineRpcAdmissionCurrent({ ...admission,
+          privateKey: keys.secretKey, daemonToken: credentials.token, serverHttpBaseUrl: 'https://review-home.test' }),
+        // The installed daemon always supplies its Agent isolation policy to requester placement.
+        ...(workflowSessionStatus ? { readAgentIsolation: () => ({ enabled: false, status: { kind: 'disabled' as const }, workspaceRoots: [] }) } : {}),
+      }) });
+    if (workflowSessionStatus) {
+      const filesystem = createFilesystemEffectAdmission({ resolveHomeServerIdentityId: async () => 'srv_review_home',
+        resolveHostIdentity: async () => ({ machineId, installationId: 'review-installation', custodianAccountId: accountId }),
+      });
+      registerScmHandlers(rpc, root, { machineId, registry: createTestGitScmBackendRegistry(),
+        selectWorkspaceSource: filesystem.selectWorkspaceSource, admitWorkspaceSource: filesystem.rpc,
+        resolveRequester: filesystem.resolveRpcRequester,
+      });
+    }
     const runtime = await createAuthoredAdmittedPluginRuntimeFixture({ happyHomeDir: homeDir, controller: pluginReloadController,
       plugins: [{ manifest: { ...source.manifest, contributes: { ...source.manifest.contributes,
         ui: { renderers: [{ id: 'panel', kind: 'declarative', root: { kind: 'text', text: 'Review' } }],
           views: [{ id: 'page', container: 'appPage', target: { kind: 'app' }, renderer: 'panel' }] } } }, files: { 'daemon.mjs': 'export function activate() {}' },
         instantiateCommittedModule: () => ({ activate: source.activate }) }],
       runtimeOptions: { pluginIds: [source.manifest.id, 'happier.scm.backend.git'],
+        ...(workflowSessionStatus ? { machineActionDirectTargetTransport: { machineId, invoke: rpc.invokeLocal.bind(rpc) } } : {}),
         scopedActionRuntime: { credentials,
           // Approval persistence has its own composed tests. This Account has
           // deliberately waived the plugin child's confirmation, so this
@@ -229,13 +261,6 @@ it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'account-ap
       } });
     try {
       const operations = createHostActionOperationRuntime({ serverId, machineId, resolveAccountId: async () => accountId });
-      const rpc = new RpcHandlerManager({ scopePrefix: machineId, encryptionMode: 'plain', logger: () => {},
-        authorizeRequest: request => authorizeMachineRpcRequest(request, { machineId,
-          resolveHomeServerIdentityId: async () => 'srv_review_home',
-          resolveCustodianAccountId: async () => accountId, resolveInstallationId: () => 'review-installation',
-          verifyMachineAdmission: admission => verifyMachineRpcAdmissionCurrent({ ...admission,
-            privateKey: keys.secretKey, daemonToken: credentials.token, serverHttpBaseUrl: 'https://review-home.test' }),
-        }) });
       registerDaemonContributionRegistryProjectionHandler(rpc, {
         resolveRuntimeRegistry: async () => runtime.registry, resolveInstalledPackages: async () => [],
         resolvePluginProjectionExecutionOriginContext: () => ({ serverIdentityId: 'srv_review_home', machineId }),
@@ -371,7 +396,8 @@ it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'account-ap
             credentials, accountId, serverId, serverHttpBaseUrl: 'https://review-home.test', savedSecretOperationContext,
             callMachineAction: unavailable, readWorkflowDefinition: unavailable,
           }), attribution, transport.resolveActionRequesterContext);
-          approvalContext = { ...await resolveContext({ runId, authorization: { principal: { kind: 'host' },
+          approvalContext = { ...await resolveContext({ runId, authorization: {
+            principal: workflowSessionStatus ? { kind: 'session', sessionId: sourceSessionId } : { kind: 'host' },
             admittedPermissionCeiling: 'default' }, workspace: { machineId, directory: root, checkoutRootPath: root }, workDepth: 0,
             origin: { kind: 'direct', authenticatedStarterV1: { requestRef: 'native-workflow-start',
               requester: { serverId: 'srv_review_home', accountId } } } }),
@@ -406,7 +432,8 @@ it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'account-ap
               expectedContentRevision: '0', expectedLifecycle: 'pending', lifecycle: 'waiting_for_approval', contentEnvelope });
             workflowStorage = storage;
             const retainedInput = { scopeId: runId, credentials, attribution, happyHomeDir: homeDir,
-              homeServerIdentityId: 'srv_review_home', machineAdmission: approvalContext.machineAdmission };
+              homeServerIdentityId: 'srv_review_home', machineAdmission: approvalContext.machineAdmission,
+              fromRunClaim: true as const };
             await retainWorkflowRequesterCredentials(retainedInput);
             const store = createCliApprovalsArtifactStore({ credentials, serverId, serverHttpBaseUrl: 'https://review-home.test' });
             const lease = { registry: runtime.registry, source: 'ephemeral' as const, durableRevision: -1, release: async () => {} };
@@ -523,6 +550,10 @@ it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'account-ap
           result = settled;
           if (child) expect(await child).toMatchObject({ ok: true, result: { kind: 'verified' } });
         }
+      }
+      if (workflowSessionStatus) {
+        expect(result).toMatchObject({ ok: true, result: { success: true, snapshot: { repo: { isRepo: true } } } });
+        return;
       }
       expect(result, JSON.stringify({ result, sourceEntered, approvalPaths,
         getPaths: get.mock.calls.map(([url]) => new URL(String(url)).pathname),

@@ -52,6 +52,8 @@ export type AdmittedWorkflowApprovalRequester = Readonly<{
   machineId: string;
   runId: string;
   requestId: string;
+  /** A host-principal Run is a host Workflow requester; other principals keep their own source. */
+  principal: 'host' | 'requester';
 }>;
 
 export type DaemonApprovalExecutionOriginCurrentness = (args: Readonly<{
@@ -390,14 +392,16 @@ export function createDaemonApprovalExecutionOriginCurrentness(input: Readonly<{
         if (!token) return stale('credential_changed');
         if (token.expiresAt !== null && Date.parse(token.expiresAt) <= now()) return stale('credential_expired');
       }
-      if (onWorkflowRequesterAdmitted && origin.caller.kind === 'workflowRun' && origin.caller.authorization.principal.kind === 'host'
+      // Any admitted Run principal replays with its Run's requester custody, as its live steps do.
+      if (onWorkflowRequesterAdmitted && origin.caller.kind === 'workflowRun'
         && !externalAuthorization && origin.accountId && origin.machineId && origin.serverIdentityId && request?.v === 2) {
         const runId = origin.caller.runId;
         const approved = await readApprovedWorkflowInvocation(runId, { runtimeAccountId: origin.accountId,
           actionCaller: origin.caller, executionRunWorkflowRunId: runId }, request.actionId);
         if (approved?.admission.run.machineId === origin.machineId && sameStrictJsonValue(approved.effect.input, approved.approved.input)) {
           onWorkflowRequesterAdmitted({ serverId: origin.serverId, homeServerIdentityId: origin.serverIdentityId,
-            accountId: origin.accountId, machineId: origin.machineId, runId, requestId: origin.requestId });
+            accountId: origin.accountId, machineId: origin.machineId, runId, requestId: origin.requestId,
+            principal: origin.caller.authorization.principal.kind === 'host' ? 'host' : 'requester' });
         }
       }
       return current();

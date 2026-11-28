@@ -18,7 +18,7 @@ import type { RequesterWorkAttributionV1 } from '../lifecycle/requesterWorkAttri
 import { readPrivateOwnerFile, replacePrivateBearerFile } from '../privateBearerFile';
 import { createWorkflowRunStorageClient } from './workflowRunStorageClient';
 import { CustodyStoredReadSchema } from '../sessionEncryption/requesterSessionCustody';
-import { createRequesterSessionCredentialCustody, listRequesterSessionCredentialBindings, requesterSessionCredentialPath, resolveRequesterSessionCredentials, retireRequesterSessionCredentialCustody } from '../sessionEncryption/requesterSessionCredentials';
+import { createRequesterSessionCredentialCustody, listRequesterSessionCredentialBindings, prepareRequesterSessionBootstrap, requesterSessionCredentialPath, resolveRequesterSessionCredentials, retireRequesterSessionCredentialCustody, type AdmittedRequesterSessionBootstrap } from '../sessionEncryption/requesterSessionCredentials';
 
 type ScopeBinding = Readonly<{ happyHomeDir: string; serverId: string; machineId: string; installationId: string; scopeId: string;
   accountId?: string; homeServerIdentityId?: string; serverHttpBaseUrl?: string; signal?: AbortSignal }>;
@@ -396,20 +396,35 @@ export async function acquireWorkflowAutomationRequesterCredentials(input: Autom
 }
 
 
-/** Durable native consent reopens the original Run's private custody, never the deciding person's context. */
+/**
+ * Durable native consent reopens the original Run's private custody, never the deciding person's context.
+ * Replay spends the same requester custody the live Run transport spends: the Run's Machine admission and
+ * its requester bootstrap. Only a host-principal Run is a host Workflow requester.
+ */
 export async function acquireWorkflowApprovalRequester(input: Readonly<{
   requester: AdmittedWorkflowApprovalRequester; serverHttpBaseUrl: string; happyHomeDir: string; installationId: string; signal?: AbortSignal;
 }>): Promise<Readonly<{ context: Pick<ActionExecutorContext, 'admittedHostWorkflowRequester' | 'verifyMachineAdmissionCurrent'
-  | 'executionRunWorkflowRunId' | 'actionRequestId'>; release(): Promise<void> }> | null> {
-  const { serverId, machineId, runId, accountId, homeServerIdentityId, requestId } = input.requester;
+  | 'executionRunWorkflowRunId' | 'actionRequestId' | 'machineAdmission' | 'requesterWorkAttributionV1'>
+  & Readonly<{ requesterSessionBootstrap: AdmittedRequesterSessionBootstrap }>; release(): Promise<void> }> | null> {
+  const { serverId, machineId, runId, accountId, homeServerIdentityId, requestId, principal } = input.requester;
   const retained = await acquireWorkflowRequesterCredentials({ happyHomeDir: input.happyHomeDir, serverId,
     machineId, installationId: input.installationId, scopeId: runId, accountId, homeServerIdentityId,
     serverHttpBaseUrl: input.serverHttpBaseUrl, signal: input.signal });
   if (!retained) return null;
   if (!retained.machineAdmission?.role) { await retained.release(); return null; }
-  return { context: { executionRunWorkflowRunId: runId, actionRequestId: requestId,
-    admittedHostWorkflowRequester: { ...retained.machineAdmission, role: retained.machineAdmission.role,
-      machineId: retained.attribution.machineId, installationId: retained.attribution.installationId },
-    // Origin currentness verified the exact admission. Replay follows its local cancellation signal.
-    verifyMachineAdmissionCurrent: async signal => !input.signal?.aborted && !signal?.aborted }, release: retained.release };
+  const machineAdmission = { ...retained.machineAdmission, role: retained.machineAdmission.role,
+    machineId: retained.attribution.machineId, installationId: retained.attribution.installationId };
+  // Origin currentness verified the exact admission. Replay follows its local cancellation signal.
+  const verifyMachineAdmissionCurrent = async (signal?: AbortSignal) => !input.signal?.aborted && !signal?.aborted;
+  const bootstrap = await prepareRequesterSessionBootstrap({ credentials: retained.credentials,
+    attribution: retained.attribution, homeServerIdentityId, machineAdmission, verifyMachineAdmissionCurrent,
+    boundary: { serverId, serverHttpBaseUrl: input.serverHttpBaseUrl, happyHomeDir: input.happyHomeDir },
+    ...(input.signal ? { signal: input.signal } : {}) }).catch(async error => { await retained.release(); throw error; });
+  if (!bootstrap) { await retained.release(); return null; }
+  return { context: { executionRunWorkflowRunId: runId, actionRequestId: requestId, machineAdmission,
+    requesterWorkAttributionV1: retained.attribution, requesterSessionBootstrap: bootstrap.admitted,
+    ...(principal === 'host' ? { admittedHostWorkflowRequester: machineAdmission } : {}),
+    verifyMachineAdmissionCurrent }, release: async () => {
+    try { await bootstrap.cleanupOnFailure(); } finally { await retained.release(); }
+  } };
 }

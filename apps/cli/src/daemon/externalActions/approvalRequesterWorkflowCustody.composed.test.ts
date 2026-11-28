@@ -20,6 +20,7 @@ import { registerAccountHomeHttp } from '@/session/actions/widgetApproval.testki
 import { createDaemonApprovalExecutionAuthorizationPreparer } from './approvalExecutionAuthorization';
 import { invokeHostReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { isHostRequesterUnrestrictedOwner, selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { acquireWorkflowApprovalRequester, retainWorkflowRequesterCredentials } from '@/daemon/workflows/requesterCustody';
 
 it.each([
   { sealed: false, mode: 'plain' as const, workflow: true },
@@ -135,5 +136,66 @@ it.each([
           return { ok: true, result: null };
         } });
     } finally { await disposePrepared?.(); await workflowRequester?.dispose(); await requester?.dispose(); await channel.close(); fetchBoundary.mockRestore(); restore(); await app.close(); }
+  });
+});
+
+it.each(['session', 'host'] as const)('replays a guest %s-principal Workflow Ask with its own Run requester custody, never the installed Account', async principalKind => {
+  await withConfiguredDaemonTestHome({ prefix: 'workflow-approval-guest-replay-' }, async () => {
+    const app = fastify();
+    const endpoint = 'http://workflow-approval-guest-replay.test';
+    const restore = installAxiosFastifyAdapter({ app, origin: endpoint });
+    const channel = await createRequesterCurrentnessSocketHarness();
+    const homeId = 'srv_workflow';
+    const machineId = 'shared-machine';
+    // HTTP is the only boundary: the Run's retained custody belongs to the guest.
+    registerAccountHomeHttp(app, { accountId: 'guest', serverId: homeId });
+    const fetchBoundary = vi.spyOn(globalThis, 'fetch').mockImplementation(async resource => {
+      const url = new URL(resource instanceof Request ? resource.url : String(resource));
+      if (url.origin !== endpoint) throw new Error('Unexpected Home');
+      const response = await app.inject({ method: 'GET', url: `${url.pathname}${url.search}` });
+      return new Response(response.body, { status: response.statusCode, headers: { 'content-type': 'application/json' } });
+    });
+    const installation = await readOrCreateInstallationIdentity();
+    const runId = 'guest-workflow-run';
+    const attribution = { serverId: configuration.activeServerId, accountId: 'guest', machineId,
+      installationId: installation.installationId };
+    const credentials: StoredCredentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'guest' })).toString('base64url')}.signature`,
+      encryption: null };
+    const admitted = (accountId: string) => ({ serverId: configuration.activeServerId, homeServerIdentityId: homeId,
+      accountId, machineId, runId, requestId: 'guest-request', principal: principalKind === 'host' ? 'host' as const : 'requester' as const });
+    const acquire = (accountId: string) => runWithServerHttpBaseUrl(endpoint, () => acquireWorkflowApprovalRequester({
+      requester: admitted(accountId), serverHttpBaseUrl: endpoint, happyHomeDir: configuration.happyHomeDir,
+      installationId: installation.installationId }));
+    let replay: Awaited<ReturnType<typeof acquireWorkflowApprovalRequester>> = null;
+    try {
+      await app.ready();
+      await retainWorkflowRequesterCredentials({ scopeId: runId, credentials, attribution, happyHomeDir: configuration.happyHomeDir,
+        homeServerIdentityId: homeId, fromRunClaim: true,
+        machineAdmission: { actorAccountId: 'guest', custodianAccountId: 'owner', role: 'use' } });
+      // Cross-person refusal: neither the installed owner nor another person can reopen the guest's Run custody.
+      expect(await acquire('owner')).toBeNull();
+      expect(await acquire('mallory')).toBeNull();
+
+      replay = await acquire('guest');
+      expect(replay?.context).toMatchObject({ executionRunWorkflowRunId: runId, actionRequestId: 'guest-request',
+        machineAdmission: { actorAccountId: 'guest', custodianAccountId: 'owner', role: 'use', machineId,
+          installationId: installation.installationId },
+        requesterWorkAttributionV1: attribution });
+      expect(replay?.context.requesterSessionBootstrap).toBeDefined();
+      expect(replay?.context.admittedHostWorkflowRequester !== undefined).toBe(principalKind === 'host');
+      if (!replay) throw new Error('Expected guest replay custody');
+      // The receiving authorizer selects the requester from this custody: the guest stays separated
+      // from the installed owner Account on the shared Machine.
+      const identity = selectHostRequesterExecutionIdentity({ actionContext: { authority: 'account_automation',
+        machineAdmission: replay.context.machineAdmission, requesterSessionBootstrap: replay.context.requesterSessionBootstrap,
+        verifyMachineAdmissionCurrent: replay.context.verifyMachineAdmissionCurrent,
+        localActionContext: { authority: 'account_automation', actionCaller: { kind: 'workflowRun', runId,
+          authorization: { admittedPermissionCeiling: 'read-only', principal: principalKind === 'host'
+            ? { kind: 'host' } : { kind: 'session', sessionId: 'guest-session' } } } } },
+        hostHomeServerIdentityId: homeId, hostCustodianAccountId: 'owner',
+        hostExecutionTarget: { machineId, installationId: installation.installationId } });
+      expect(identity).toMatchObject({ kind: 'isolated', requester: { accountId: 'guest' }, separationRequired: true });
+      expect(isHostRequesterUnrestrictedOwner(identity)).toBe(false);
+    } finally { await replay?.release(); await channel.close(); fetchBoundary.mockRestore(); restore(); await app.close(); }
   });
 });
