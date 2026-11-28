@@ -344,13 +344,14 @@ export async function listDeploymentEnvironmentsInTx(tx: Tx, actorAccountId: str
             ...(input.projectSourceId === undefined ? [] : [input.projectSourceId]));
         const sourceIds = [...new Set(rows.map(row => row.projectSourceId))].filter(id => !sources.has(id));
         const admissions = sourceIds.length ? await resolveProjectSourcesAccessInTx(tx, actorAccountId, sourceIds, authentication, { includeDeleted: true }) : null;
-        const activity = { running: false, failed: false, attentionCount: 0 };
+        const activity = { running: false, failed: false, attentionCount: 0, environmentCount: 0 };
         for (const row of rows) {
             if (!sources.get(row.projectSourceId) && admissions?.get(row.projectSourceId)?.ok !== true) continue;
             const fact = projectDeploymentReceiptActivityV1(DeploymentStateV1Schema.parse(row.state));
             activity.running ||= fact.running;
             activity.failed ||= fact.failed;
             if (fact.running || fact.failed) activity.attentionCount += Number(row.environmentCount);
+            activity.environmentCount += Number(row.environmentCount);
         }
         return { ok: true as const, items: [], currentDeployments: [], runtimeTargetLinks: [],
             nextCursor: null, coverage: 'complete' as const, activity };

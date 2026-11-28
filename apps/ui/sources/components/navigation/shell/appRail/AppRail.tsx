@@ -62,6 +62,8 @@ import {
     type AppRailPlacementItem,
 } from './appRailModel';
 import { useAppShellLocation } from './useAppShellLocation';
+import { AppRailArrivals, useAppRailArrivals } from './AppRailArrivals';
+import { useActiveServerAccountScope } from '@/sync/store/hooks';
 import { useSessionListRailOrganizationAction } from '@/components/sessions/shell/useSessionListRailOrganizationAction';
 import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { moveAppRailBot } from './useAppRailBotReorder';
@@ -125,7 +127,14 @@ export const AppRail = React.memo(function AppRail() {
         selectDestination(entry.id);
     }, [activate, selectDestination]);
 
-    const items = React.useMemo(() => buildAppRailPlacementItems(entries, updatesVisible), [entries, updatesVisible]);
+    // Deployments, Monitoring and Machines join the rail the first time the person has something there (owner 11-28).
+    const scope = useActiveServerAccountScope();
+    const arrived = useAppRailArrivals(scope);
+    const items = React.useMemo(() => buildAppRailPlacementItems(entries, updatesVisible, arrived), [arrived, entries, updatesVisible]);
+    const arrivalTitles = React.useMemo(() => {
+        const title = (id: string) => items.find(item => item.id === id)?.title ?? '';
+        return { deployments: title('deployments'), monitoring: title('monitoring'), 'app-rail-machines': title('app-rail-machines') };
+    }, [items]);
     const customize = React.useCallback(() => {
         // The customizer names the rail's bands (owner Q8); a move stays inside its band.
         const banded = items.map(item => ({ ...item, group: t(APP_RAIL_BAND_TITLE_KEYS[appRailItemBand(item)]) }));
@@ -134,8 +143,11 @@ export const AppRail = React.memo(function AppRail() {
                 props: { surfaceId: 'appRail', items: banded, testID: 'app-rail-customizer' } });
         }), { tag: 'AppRail.customize' });
     }, [items]);
-    return <AppRailSurface entries={entries} activeId={activeId} onOpen={open} preferences={preferences}
-        updatesVisible={updatesVisible} onCustomize={customize} focusBoundary={focusBoundary} />;
+    return <>
+        <AppRailSurface entries={entries} activeId={activeId} onOpen={open} preferences={preferences}
+            updatesVisible={updatesVisible} arrived={arrived} onCustomize={customize} focusBoundary={focusBoundary} />
+        <AppRailArrivals scope={scope} arrived={arrived} preferences={preferences} titles={arrivalTitles} />
+    </>;
 });
 
 /** The real rail composition, shared by the shell and its fixture preview. */
@@ -145,6 +157,8 @@ export const AppRailSurface = React.memo(function AppRailSurface(props: Readonly
     onOpen: (entry: AppRailEntry) => void;
     preferences?: NavigationPlacementPreferences;
     updatesVisible?: boolean;
+    /** The rail arrivals the person already has something in (owner 11-28): they stand on the rail by default. */
+    arrived?: ReadonlySet<string>;
     onCustomize?: () => void;
     /** Static previews replace only the effectful footer boundary, using the same rail composition. */
     renderFooter?: (item: AppRailPlacementItem, renderTrigger?: SidebarFooterPopoverTrigger) => React.ReactNode;
@@ -170,7 +184,8 @@ export const AppRailSurface = React.memo(function AppRailSurface(props: Readonly
         const height = Math.max(0, event.nativeEvent.layout.height - APP_RAIL_PADDING_TOP_PX - RAIL_PADDING_BOTTOM_PX);
         setAvailableHeight(current => current === height ? current : height);
     }, []);
-    const items = React.useMemo(() => buildAppRailPlacementItems(entries, props.updatesVisible === true), [entries, props.updatesVisible]);
+    const items = React.useMemo(() => buildAppRailPlacementItems(entries, props.updatesVisible === true, props.arrived),
+        [entries, props.arrived, props.updatesVisible]);
     const placements = resolveNavigationPlacements(items, props.preferences);
     // Bots pinned to the rail stand right under the one Bots entry, in the person's order (60s3). A pin
     // is its own explicit placement: when the Bots entry is in overflow or hidden, the pins close the top.

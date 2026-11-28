@@ -11,7 +11,7 @@ import {
     type CompactAppDestination,
 } from '@/components/appShell/destinations/compactAppDestinationCatalog';
 import { t } from '@/text';
-import type { NavigationPlacement } from '@/sync/domains/settings/navigationPlacement';
+import type { NavigationDefaultPlacement, NavigationPlacement } from '@/sync/domains/settings/navigationPlacement';
 import type { SessionOrganizationProjection } from '@/sync/domains/session/organization';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
@@ -109,23 +109,40 @@ export type AppRailPlacementItem = Readonly<{
     title: string;
     icon: AppRailEntry['icon'];
     group: 'app' | 'plugins' | 'account';
-    defaultPlacement: NavigationPlacement;
+    defaultPlacement: NavigationDefaultPlacement;
+    /** For an `auto` default (an arrival): whether the person has something there yet. */
+    hasContent?: boolean;
 }> & (Readonly<{ kind: 'destination'; entry: AppRailEntry }> | Readonly<{ kind: 'footer'; id: AppRailFooterItemId }>);
+
+/**
+ * The rail entries that join a fresh rail the first time the person has something there (owner 11-28, servers IA
+ * rail C): a first deployed Environment (Deployments), a first saved Check (Monitoring), a Machine besides this
+ * computer (the Machines control). Until then they wait in More like the rest.
+ */
+export const APP_RAIL_ARRIVAL_IDS = ['deployments', 'monitoring', 'app-rail-machines'] as const;
+export type AppRailArrivalId = typeof APP_RAIL_ARRIVAL_IDS[number];
+const ARRIVAL_IDS: ReadonlySet<string> = new Set(APP_RAIL_ARRIVAL_IDS);
+const NONE_ARRIVED: ReadonlySet<string> = new Set();
 
 /**
  * All customizable controls, including the anchored footer's canonical actions. A fresh rail pins only
  * the work band (owner Q8: Sessions, Search, Inbox, Projects, Workflows), Settings and Account; every
- * other destination and footer control starts in More (owner 2026-11-10). These are defaults only: the
- * person's own placements always win (`resolveNavigationPlacements`).
+ * other destination and footer control starts in More (owner 2026-11-10), except an arrival the person
+ * already has something in (`arrived`, owner 11-28). These are defaults only: the person's own placements
+ * always win (`resolveNavigationPlacements`).
  */
-export function buildAppRailPlacementItems(entries: AppRailEntries, updatesVisible: boolean): readonly AppRailPlacementItem[] {
+export function buildAppRailPlacementItems(entries: AppRailEntries, updatesVisible: boolean,
+    arrived: ReadonlySet<string> = NONE_ARRIVED): readonly AppRailPlacementItem[] {
+    // An arrival is the placement owner's automatic default: pinned once it has content, More until then.
+    const arrival = (id: string) => ARRIVAL_IDS.has(id) ? { defaultPlacement: 'auto' as const, hasContent: arrived.has(id) } : null;
     const destinations = (items: readonly AppRailEntry[], group: AppRailPlacementItem['group']): AppRailPlacementItem[] =>
         items.map(entry => ({ kind: 'destination', id: entry.id, title: entry.title, icon: entry.icon, group,
             // A contextual page (owner Q3) waits in the customizer until the person pins it.
             defaultPlacement: entry.visibility === 'hidden' || entry.contextual ? 'hidden'
-                : resolveAppRailBand(entry) === 'work' || group === 'account' ? 'pinned' : 'overflow', entry }));
+                : resolveAppRailBand(entry) === 'work' || group === 'account' ? 'pinned' : 'overflow',
+            ...(entry.visibility === 'hidden' || entry.contextual ? null : arrival(entry.id)), entry }));
     const footer = (id: AppRailFooterItemId, title: string, icon: AppRailEntry['icon'], defaultPlacement: NavigationPlacement): AppRailPlacementItem =>
-        ({ kind: 'footer', id, title, icon, group: 'account', defaultPlacement });
+        ({ kind: 'footer', id, title, icon, group: 'account', defaultPlacement, ...arrival(id) });
     return [
         ...destinations(entries.app, 'app'), ...destinations(entries.plugins, 'plugins'),
         footer('app-rail-usage', t('settings.usage'), 'speedometer', 'overflow'),

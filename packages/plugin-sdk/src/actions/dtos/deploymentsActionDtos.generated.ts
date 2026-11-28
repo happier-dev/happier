@@ -1712,6 +1712,7 @@ export type DeploymentsActionResultById = {
             running: boolean;
             failed: boolean;
             attentionCount?: number | undefined;
+            environmentCount?: number | undefined;
         };
         coverage?: 'complete' | 'partial' | undefined;
     };

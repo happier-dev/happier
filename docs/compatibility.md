@@ -1616,6 +1616,11 @@ their meaning. A missing count stays unknown in destination consumers; they do n
 infer a number from booleans or drain inventory pages. This extends the current
 0.3 development response and introduces no persisted field or migration.
 
+The same projection also carries optional `environmentCount`, the number of readable
+Environments with at least one deploy attempt, summed from the same admitted rows.
+The app rail reads it only to decide whether Deployments joins the rail by default
+(owner 11-28); a missing count is unknown and leaves Deployments in More.
+
 The saved health observer adds optional `current` per-check results to its
 existing encrypted Account KV checkpoint. New readers accept checkpoints without
 that projection and report never observed; results are joined only to the same

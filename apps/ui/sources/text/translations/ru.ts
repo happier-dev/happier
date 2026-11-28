@@ -17166,7 +17166,7 @@ settingsSession: {
             sourcesAppsValue: ({ name }: { name: string }) => `Ваши приложения · ${name}`,
             appsNothingTitle: "За этот период вызовов моделей нет",
             appsNothingBody: "Когда ваше приложение вызывает модель, его SDK может записывать модель и токены каждого вызова. Happier оценивает их по вашим ценам моделей.",
-            appsNothingAction: "Перейти к сервисам",
+            appsNothingAction: "Перейти к развёртываниям",
             filterAgents: "Агенты",
             filterMachines: "Машины",
             filterProjects: "Проекты",

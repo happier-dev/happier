@@ -17221,7 +17221,7 @@ settingsSession: {
             sourcesAppsValue: ({ name }: { name: string }) => `Tus apps · ${name}`,
             appsNothingTitle: "No hay llamadas a modelos en este período",
             appsNothingBody: "Cuando tu app llama a un modelo, su SDK puede registrar el modelo y los tokens de cada llamada. Happier les pone precio con tus precios de modelos.",
-            appsNothingAction: "Ir a Servicios",
+            appsNothingAction: "Ir a Despliegues",
             filterAgents: "Agentes",
             filterMachines: "Máquinas",
             filterProjects: "Proyectos",

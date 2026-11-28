@@ -27,8 +27,8 @@ const en = {
   uptimeOverDays: ({ percent }: { percent: string }) => `${percent} · 30 days`,
   emptyTitle: 'Know when something stops answering',
   emptyBody:
-    'A check opens an address, a port or a certificate on a schedule and tells you when it fails. Add one from an app’s Checks and alerts, or from a domain’s menu, in Services.',
-  openServices: 'Open Services',
+    'A check opens an address, a port or a certificate on a schedule and tells you when it fails. Add one from an app’s Checks and alerts, or from a domain’s menu, in Deployments.',
+  openServices: 'Open Deployments',
   viewLabel: 'View',
   viewList: 'List',
   viewCards: 'Cards',
@@ -80,7 +80,7 @@ const en = {
   widgetChooseCheck: 'Choose a check to show here',
   widgetCheckMissing: 'This check is no longer saved',
   widgetWhichCheck: 'Which check?',
-  widgetNoChecks: 'No saved checks yet. Add one from an app’s Checks and alerts in Services.',
+  widgetNoChecks: 'No saved checks yet. Add one from an app’s Checks and alerts in Deployments.',
 };
 type MonitoringCopy = typeof en;
 
@@ -110,8 +110,8 @@ export const deploymentMonitoringTranslations = {
       `${percent} · 30 dies`,
     emptyTitle: 'Sàpigues quan alguna cosa deixa de respondre',
     emptyBody:
-      'Una comprovació obre una adreça, un port o un certificat periòdicament i t’avisa quan falla. Afegeix-ne una des de Comprovacions i alertes d’una aplicació, o des del menú d’un domini, a Serveis.',
-    openServices: 'Obre Serveis',
+      'Una comprovació obre una adreça, un port o un certificat periòdicament i t’avisa quan falla. Afegeix-ne una des de Comprovacions i alertes d’una aplicació, o des del menú d’un domini, a Desplegaments.',
+    openServices: 'Obre Desplegaments',
     viewLabel: 'Vista',
     viewList: 'Llista',
     viewCards: 'Targetes',
@@ -163,7 +163,7 @@ export const deploymentMonitoringTranslations = {
     widgetChooseCheck: 'Tria una comprovació per mostrar-la aquí',
     widgetCheckMissing: 'Aquesta comprovació ja no està desada',
     widgetWhichCheck: 'Quina comprovació?',
-    widgetNoChecks: 'Encara no hi ha comprovacions desades. Afegeix-ne una des de Comprovacions i alertes d’una aplicació, a Serveis.',
+    widgetNoChecks: 'Encara no hi ha comprovacions desades. Afegeix-ne una des de Comprovacions i alertes d’una aplicació, a Desplegaments.',
   },
   de: {
     title: 'Überwachung',
@@ -189,8 +189,8 @@ export const deploymentMonitoringTranslations = {
       `${percent} · 30 Tage`,
     emptyTitle: 'Erfahre, wenn etwas nicht mehr antwortet',
     emptyBody:
-      'Eine Prüfung ruft regelmäßig eine Adresse, einen Port oder ein Zertifikat ab und meldet, wenn sie fehlschlägt. Füge eine unter „Prüfungen und Warnungen“ einer App oder im Menü einer Domain in Dienste hinzu.',
-    openServices: 'Dienste öffnen',
+      'Eine Prüfung ruft regelmäßig eine Adresse, einen Port oder ein Zertifikat ab und meldet, wenn sie fehlschlägt. Füge eine unter „Prüfungen und Warnungen“ einer App oder im Menü einer Domain in Deployments hinzu.',
+    openServices: 'Deployments öffnen',
     viewLabel: 'Ansicht',
     viewList: 'Liste',
     viewCards: 'Karten',
@@ -242,7 +242,7 @@ export const deploymentMonitoringTranslations = {
     widgetChooseCheck: 'Wähle eine Prüfung, die hier erscheinen soll',
     widgetCheckMissing: 'Diese Prüfung ist nicht mehr gespeichert',
     widgetWhichCheck: 'Welche Prüfung?',
-    widgetNoChecks: 'Noch keine gespeicherten Prüfungen. Füge eine unter „Prüfungen und Warnungen“ einer App in Dienste hinzu.',
+    widgetNoChecks: 'Noch keine gespeicherten Prüfungen. Füge eine unter „Prüfungen und Warnungen“ einer App in Deployments hinzu.',
   },
   es: {
     title: 'Monitorización',
@@ -268,8 +268,8 @@ export const deploymentMonitoringTranslations = {
       `${percent} · 30 días`,
     emptyTitle: 'Entérate cuando algo deja de responder',
     emptyBody:
-      'Una comprobación abre una dirección, un puerto o un certificado de forma periódica y te avisa cuando falla. Añade una desde Comprobaciones y alertas de una app, o desde el menú de un dominio, en Servicios.',
-    openServices: 'Abrir Servicios',
+      'Una comprobación abre una dirección, un puerto o un certificado de forma periódica y te avisa cuando falla. Añade una desde Comprobaciones y alertas de una app, o desde el menú de un dominio, en Despliegues.',
+    openServices: 'Abrir Despliegues',
     viewLabel: 'Vista',
     viewList: 'Lista',
     viewCards: 'Tarjetas',
@@ -321,7 +321,7 @@ export const deploymentMonitoringTranslations = {
     widgetChooseCheck: 'Elige una comprobación para mostrarla aquí',
     widgetCheckMissing: 'Esta comprobación ya no está guardada',
     widgetWhichCheck: '¿Qué comprobación?',
-    widgetNoChecks: 'Aún no hay comprobaciones guardadas. Añade una desde Comprobaciones y alertas de una aplicación, en Servicios.',
+    widgetNoChecks: 'Aún no hay comprobaciones guardadas. Añade una desde Comprobaciones y alertas de una aplicación, en Despliegues.',
   },
   fr: {
     title: 'Surveillance',
@@ -347,8 +347,8 @@ export const deploymentMonitoringTranslations = {
       `${percent} · 30 jours`,
     emptyTitle: 'Sachez quand quelque chose ne répond plus',
     emptyBody:
-      'Une vérification ouvre une adresse, un port ou un certificat à intervalles réguliers et vous prévient en cas d’échec. Ajoutez-en une depuis Vérifications et alertes d’une app, ou depuis le menu d’un domaine, dans Services.',
-    openServices: 'Ouvrir Services',
+      'Une vérification ouvre une adresse, un port ou un certificat à intervalles réguliers et vous prévient en cas d’échec. Ajoutez-en une depuis Vérifications et alertes d’une app, ou depuis le menu d’un domaine, dans Déploiements.',
+    openServices: 'Ouvrir Déploiements',
     viewLabel: 'Affichage',
     viewList: 'Liste',
     viewCards: 'Cartes',
@@ -402,7 +402,7 @@ export const deploymentMonitoringTranslations = {
     widgetChooseCheck: 'Choisissez une vérification à afficher ici',
     widgetCheckMissing: 'Cette vérification n’est plus enregistrée',
     widgetWhichCheck: 'Quelle vérification ?',
-    widgetNoChecks: 'Aucune vérification enregistrée pour l’instant. Ajoutez-en une depuis Vérifications et alertes d’une application, dans Services.',
+    widgetNoChecks: 'Aucune vérification enregistrée pour l’instant. Ajoutez-en une depuis Vérifications et alertes d’une application, dans Déploiements.',
   },
   it: {
     title: 'Monitoraggio',
@@ -428,8 +428,8 @@ export const deploymentMonitoringTranslations = {
       `${percent} · 30 giorni`,
     emptyTitle: 'Sappi quando qualcosa smette di rispondere',
     emptyBody:
-      'Un controllo apre periodicamente un indirizzo, una porta o un certificato e ti avvisa quando fallisce. Aggiungine uno da Controlli e avvisi di un’app, o dal menu di un dominio, in Servizi.',
-    openServices: 'Apri Servizi',
+      'Un controllo apre periodicamente un indirizzo, una porta o un certificato e ti avvisa quando fallisce. Aggiungine uno da Controlli e avvisi di un’app, o dal menu di un dominio, in Deployment.',
+    openServices: 'Apri Deployment',
     viewLabel: 'Vista',
     viewList: 'Elenco',
     viewCards: 'Schede',
@@ -481,7 +481,7 @@ export const deploymentMonitoringTranslations = {
     widgetChooseCheck: 'Scegli un controllo da mostrare qui',
     widgetCheckMissing: 'Questo controllo non è più salvato',
     widgetWhichCheck: 'Quale controllo?',
-    widgetNoChecks: 'Nessun controllo salvato. Aggiungine uno da Controlli e avvisi di un’app, in Servizi.',
+    widgetNoChecks: 'Nessun controllo salvato. Aggiungine uno da Controlli e avvisi di un’app, in Deployment.',
   },
   ja: {
     title: 'モニタリング',
@@ -506,8 +506,8 @@ export const deploymentMonitoringTranslations = {
     uptimeOverDays: ({ percent }: { percent: string }) => `${percent} · 30 日`,
     emptyTitle: '応答が止まったときに気づけます',
     emptyBody:
-      'チェックはアドレス、ポート、証明書を定期的に確認し、失敗したら知らせます。サービスで、アプリの「チェックとアラート」またはドメインのメニューから追加できます。',
-    openServices: 'サービスを開く',
+      'チェックはアドレス、ポート、証明書を定期的に確認し、失敗したら知らせます。デプロイで、アプリの「チェックとアラート」またはドメインのメニューから追加できます。',
+    openServices: 'デプロイを開く',
     viewLabel: '表示',
     viewList: 'リスト',
     viewCards: 'カード',
@@ -558,7 +558,7 @@ export const deploymentMonitoringTranslations = {
     widgetChooseCheck: 'ここに表示するチェックを選んでください',
     widgetCheckMissing: 'このチェックは保存されていません',
     widgetWhichCheck: 'どのチェックですか?',
-    widgetNoChecks: '保存したチェックはまだありません。サービスでアプリの「チェックとアラート」から追加できます。',
+    widgetNoChecks: '保存したチェックはまだありません。デプロイでアプリの「チェックとアラート」から追加できます。',
   },
   pl: {
     title: 'Monitorowanie',
@@ -583,8 +583,8 @@ export const deploymentMonitoringTranslations = {
     uptimeOverDays: ({ percent }: { percent: string }) => `${percent} · 30 dni`,
     emptyTitle: 'Dowiedz się, gdy coś przestaje odpowiadać',
     emptyBody:
-      'Sprawdzenie regularnie otwiera adres, port lub certyfikat i informuje, gdy coś zawiedzie. Dodaj je w Usługach z sekcji Sprawdzenia i alerty aplikacji albo z menu domeny.',
-    openServices: 'Otwórz Usługi',
+      'Sprawdzenie regularnie otwiera adres, port lub certyfikat i informuje, gdy coś zawiedzie. Dodaj je we Wdrożeniach z sekcji Sprawdzenia i alerty aplikacji albo z menu domeny.',
+    openServices: 'Otwórz Wdrożenia',
     viewLabel: 'Widok',
     viewList: 'Lista',
     viewCards: 'Karty',
@@ -635,7 +635,7 @@ export const deploymentMonitoringTranslations = {
     widgetChooseCheck: 'Wybierz sprawdzenie, które ma się tu pojawić',
     widgetCheckMissing: 'To sprawdzenie nie jest już zapisane',
     widgetWhichCheck: 'Które sprawdzenie?',
-    widgetNoChecks: 'Brak zapisanych sprawdzeń. Dodaj je w sekcji Sprawdzenia i alerty aplikacji, w Usługach.',
+    widgetNoChecks: 'Brak zapisanych sprawdzeń. Dodaj je w sekcji Sprawdzenia i alerty aplikacji, we Wdrożeniach.',
   },
   pt: {
     title: 'Monitorização',
@@ -661,8 +661,8 @@ export const deploymentMonitoringTranslations = {
       `${percent} · 30 dias`,
     emptyTitle: 'Saiba quando algo deixa de responder',
     emptyBody:
-      'Uma verificação abre um endereço, uma porta ou um certificado periodicamente e avisa quando falha. Adicione uma em Verificações e alertas de uma app, ou no menu de um domínio, em Serviços.',
-    openServices: 'Abrir Serviços',
+      'Uma verificação abre um endereço, uma porta ou um certificado periodicamente e avisa quando falha. Adicione uma em Verificações e alertas de uma app, ou no menu de um domínio, em Implantações.',
+    openServices: 'Abrir Implantações',
     viewLabel: 'Vista',
     viewList: 'Lista',
     viewCards: 'Cartões',
@@ -714,7 +714,7 @@ export const deploymentMonitoringTranslations = {
     widgetChooseCheck: 'Escolha uma verificação para mostrar aqui',
     widgetCheckMissing: 'Esta verificação já não está guardada',
     widgetWhichCheck: 'Qual verificação?',
-    widgetNoChecks: 'Ainda não há verificações guardadas. Adicione uma em Verificações e alertas de uma aplicação, em Serviços.',
+    widgetNoChecks: 'Ainda não há verificações guardadas. Adicione uma em Verificações e alertas de uma aplicação, em Implantações.',
   },
   ru: {
     title: 'Мониторинг',
@@ -740,8 +740,8 @@ export const deploymentMonitoringTranslations = {
       `${percent} · 30 дней`,
     emptyTitle: 'Узнавайте, когда что-то перестаёт отвечать',
     emptyBody:
-      'Проверка регулярно открывает адрес, порт или сертификат и сообщает о сбое. Добавьте её в Сервисах: в разделе «Проверки и оповещения» приложения или в меню домена.',
-    openServices: 'Открыть Сервисы',
+      'Проверка регулярно открывает адрес, порт или сертификат и сообщает о сбое. Добавьте её в Развёртываниях: в разделе «Проверки и оповещения» приложения или в меню домена.',
+    openServices: 'Открыть Развёртывания',
     viewLabel: 'Вид',
     viewList: 'Список',
     viewCards: 'Карточки',
@@ -792,7 +792,7 @@ export const deploymentMonitoringTranslations = {
     widgetChooseCheck: 'Выберите проверку, чтобы показать её здесь',
     widgetCheckMissing: 'Эта проверка больше не сохранена',
     widgetWhichCheck: 'Какая проверка?',
-    widgetNoChecks: 'Сохранённых проверок пока нет. Добавьте её в разделе «Проверки и оповещения» приложения в «Сервисах».',
+    widgetNoChecks: 'Сохранённых проверок пока нет. Добавьте её в разделе «Проверки и оповещения» приложения в «Развёртываниях».',
   },
   'zh-Hans': {
     title: '监控',
@@ -817,8 +817,8 @@ export const deploymentMonitoringTranslations = {
     uptimeOverDays: ({ percent }: { percent: string }) => `${percent} · 30 天`,
     emptyTitle: '在服务停止响应时得到通知',
     emptyBody:
-      '检查会定期访问地址、端口或证书，并在失败时通知你。在“服务”中，从应用的“检查和提醒”或域名菜单添加。',
-    openServices: '打开服务',
+      '检查会定期访问地址、端口或证书，并在失败时通知你。在“部署”中，从应用的“检查和提醒”或域名菜单添加。',
+    openServices: '打开部署',
     viewLabel: '视图',
     viewList: '列表',
     viewCards: '卡片',
@@ -869,7 +869,7 @@ export const deploymentMonitoringTranslations = {
     widgetChooseCheck: '选择要在这里显示的检查',
     widgetCheckMissing: '此检查已不再保存',
     widgetWhichCheck: '哪项检查？',
-    widgetNoChecks: '还没有已保存的检查。可在“服务”中应用的“检查和提醒”里添加。',
+    widgetNoChecks: '还没有已保存的检查。可在“部署”中应用的“检查和提醒”里添加。',
   },
   'zh-Hant': {
     title: '監控',
@@ -894,8 +894,8 @@ export const deploymentMonitoringTranslations = {
     uptimeOverDays: ({ percent }: { percent: string }) => `${percent} · 30 天`,
     emptyTitle: '在服務停止回應時收到通知',
     emptyBody:
-      '檢查會定期存取位址、連接埠或憑證，並在失敗時通知你。在「服務」中，從應用程式的「檢查與提醒」或網域選單新增。',
-    openServices: '開啟服務',
+      '檢查會定期存取位址、連接埠或憑證，並在失敗時通知你。在「部署」中，從應用程式的「檢查與提醒」或網域選單新增。',
+    openServices: '開啟部署',
     viewLabel: '檢視',
     viewList: '清單',
     viewCards: '卡片',
@@ -946,6 +946,6 @@ export const deploymentMonitoringTranslations = {
     widgetChooseCheck: '選擇要在這裡顯示的檢查',
     widgetCheckMissing: '此檢查已不再儲存',
     widgetWhichCheck: '哪項檢查？',
-    widgetNoChecks: '還沒有已儲存的檢查。可在「服務」中應用程式的「檢查和提醒」裡新增。',
+    widgetNoChecks: '還沒有已儲存的檢查。可在「部署」中應用程式的「檢查和提醒」裡新增。',
   },
 } satisfies Record<SupportedLanguage, MonitoringCopy>;

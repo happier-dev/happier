@@ -17095,7 +17095,7 @@ settingsSession: {
             sourcesAppsValue: ({ name }: { name: string }) => `Vos apps · ${name}`,
             appsNothingTitle: "Aucun appel de modèle sur cette période",
             appsNothingBody: "Quand votre app appelle un modèle, son SDK peut enregistrer le modèle et les tokens de chaque appel. Happier les chiffre avec vos prix des modèles.",
-            appsNothingAction: "Ouvrir Services",
+            appsNothingAction: "Ouvrir Déploiements",
             filterAgents: "Agents",
             filterMachines: "Machines",
             filterProjects: "Projets",

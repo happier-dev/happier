@@ -344,7 +344,8 @@ describe('deployment detail admission cost', () => {
             const summary = await app.inject({ method: 'GET', url: `/v1/deployments/environments?${summaryQuery}`,
                 headers: { 'x-test-user-id': owner.id } }).finally(stopSummary);
             expect(summary.statusCode, summary.body).toBe(200);
-            expect(summary.json()).toMatchObject({ activity: { running: false, failed: true }, items: [], nextCursor: null });
+            // The rail's default placement reads whether any readable Environment was ever deployed from the same rows.
+            expect(summary.json()).toMatchObject({ activity: { running: false, failed: true, environmentCount: 1 }, items: [], nextCursor: null });
             expect(summaryRequests.filter(row => row.model === 'Artifact'
                 || row.model === 'DeploymentEnvironment' && row.action === 'findMany'
                 || row.model === 'ProjectSource' && row.action === 'findMany'
@@ -352,12 +353,12 @@ describe('deployment detail admission cost', () => {
             const hiddenSummary = await app.inject({ method: 'GET',
                 url: `/v1/deployments/environments?${new URLSearchParams({ serverId, projection: 'activity' })}`,
                 headers: { 'x-test-user-id': stranger.id } });
-            expect(hiddenSummary.json()).toMatchObject({ activity: { running: false, failed: false }, items: [] });
+            expect(hiddenSummary.json()).toMatchObject({ activity: { running: false, failed: false, environmentCount: 0 }, items: [] });
             await db.deployment.create({ data: { ...receipt, requestKey: randomUUID(), actionOperationId: randomUUID(),
                 state: 'succeeded', requestedAt: new Date(2000) } });
             const recovered = await app.inject({ method: 'GET', url: `/v1/deployments/environments?${summaryQuery}`,
                 headers: { 'x-test-user-id': owner.id } });
-            expect(recovered.json()).toMatchObject({ activity: { running: false, failed: false } });
+            expect(recovered.json()).toMatchObject({ activity: { running: false, failed: false, environmentCount: 1 } });
         });
     });
 

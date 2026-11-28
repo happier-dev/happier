@@ -17376,7 +17376,7 @@ settingsSession: {
             sourcesAppsValue: ({ name }: { name: string }) => `Deine Apps · ${name}`,
             appsNothingTitle: "Keine Modellaufrufe in diesem Zeitraum",
             appsNothingBody: "Wenn deine App ein Modell aufruft, kann ihr SDK Modell und Tokens jedes Aufrufs erfassen. Happier bepreist sie mit deinen Modellpreisen.",
-            appsNothingAction: "Zu den Diensten",
+            appsNothingAction: "Zu den Deployments",
             filterAgents: "Agenten",
             filterMachines: "Rechner",
             filterProjects: "Projekte",

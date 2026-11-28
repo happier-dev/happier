@@ -16393,7 +16393,7 @@ settingsSession: {
           sourcesAppsValue: ({ name }: { name: string }) => `Les teves apps · ${name}`,
           appsNothingTitle: "Cap crida a models en aquest període",
           appsNothingBody: "Quan la teva app crida un model, el seu SDK pot registrar el model i els tokens de cada crida. Happier els posa preu amb els teus preus dels models.",
-          appsNothingAction: "Ves a Serveis",
+          appsNothingAction: "Ves a Desplegaments",
           filterAgents: "Agents",
           filterMachines: "Màquines",
           filterProjects: "Projectes",

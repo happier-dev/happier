@@ -16863,7 +16863,7 @@ settingsSession: {
             sourcesAppsValue: ({ name }: { name: string }) => `你的应用 · ${name}`,
             appsNothingTitle: "此期间没有模型调用",
             appsNothingBody: "当你的应用调用模型时，它的 SDK 可以记录每次调用的模型和 token。Happier 会按你的模型价格计价。",
-            appsNothingAction: "前往服务",
+            appsNothingAction: "前往部署",
             filterAgents: "代理",
             filterMachines: "机器",
             filterProjects: "项目",

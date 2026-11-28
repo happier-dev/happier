@@ -17498,7 +17498,7 @@ settingsSession: {
             sourcesAppsValue: ({ name }: { name: string }) => `あなたのアプリ · ${name}`,
             appsNothingTitle: "この期間のモデル呼び出しはありません",
             appsNothingBody: "アプリがモデルを呼び出すと、SDK が呼び出しごとのモデルとトークンを記録できます。Happier はあなたのモデル価格で金額を出します。",
-            appsNothingAction: "サービスへ移動",
+            appsNothingAction: "デプロイへ移動",
             filterAgents: "エージェント",
             filterMachines: "マシン",
             filterProjects: "プロジェクト",

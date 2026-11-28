@@ -689,6 +689,8 @@ export const DeploymentEnvironmentListResultV1Schema = lazyZodSchema(() => z.uni
     activity: z.optional(z.strictObject({ running: z.boolean(), failed: z.boolean(),
       /** Number of readable Environments whose latest attempt is running or failed. */
       attentionCount: z.optional(z.number().check(z.int(), z.nonnegative())),
+      /** Number of readable Environments with at least one deploy attempt (the rail's "has deployments" fact). */
+      environmentCount: z.optional(z.number().check(z.int(), z.nonnegative())),
     })),
     coverage: z.optional(z.enum(['complete', 'partial'])) }),
   DeploymentActionFailureV1Schema,

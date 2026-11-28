@@ -8,6 +8,8 @@ export type DeploymentDestinationSignalValue = Readonly<{
     kind: 'deploymentAttentionCount';
     /** Missing on boolean-only peers; never count a partial Environment page. */
     count: number | null;
+    /** Readable Environments with a deploy attempt; missing on older peers (unknown). */
+    environmentCount: number | null;
     snapshot: DeploymentReadSnapshotV1<DeploymentActivityV1>;
     refresh(): Promise<void>;
 }>;
@@ -19,6 +21,7 @@ export function useDeploymentDestinationSignal(presented: boolean): DeploymentDe
     const controller = useDeploymentAccountController(lifetime, true, demand);
     const read = useDeploymentActivity(controller, demand);
     return React.useMemo(() => ({ kind: 'deploymentAttentionCount',
-        count: read.snapshot.value?.attentionCount ?? null, snapshot: read.snapshot, refresh: read.refresh,
+        count: read.snapshot.value?.attentionCount ?? null, environmentCount: read.snapshot.value?.environmentCount ?? null,
+        snapshot: read.snapshot, refresh: read.refresh,
     }), [read.snapshot, read.refresh]);
 }

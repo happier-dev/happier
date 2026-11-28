@@ -303,7 +303,8 @@ it('offers the existing deployments destination in overflow and preserves a deli
     const destinations = catalog([]);
     const entries = buildAppRailEntries(destinations);
     const item = buildAppRailPlacementItems(entries, false).find(item => item.id === 'deployments');
-    expect(item).toMatchObject({ defaultPlacement: 'overflow', entry: { routePath: '/projects/deployments', signal: 'deploymentAttentionCount' } });
+    expect(item).toMatchObject({ entry: { routePath: '/projects/deployments', signal: 'deploymentAttentionCount' } });
+    expect(ids(resolveNavigationPlacements(buildAppRailPlacementItems(entries, false)).overflow)).toContain('deployments');
     const pinned = resolveNavigationPlacements(buildAppRailPlacementItems(entries, false),
         { orderedIds: [], placements: { deployments: 'pinned' } });
     expect(ids(pinned.pinned)).toContain('deployments');
@@ -316,4 +317,20 @@ it('offers Monitoring in the Library band right after Services, opening its own 
     const order = ids(rail.app);
     expect(order.indexOf('monitoring')).toBe(order.indexOf('deployments') + 1);
     expect(rail.app.find(entry => entry.id === 'monitoring')).toMatchObject({ routePath: '/monitoring', activation: 'navigate' });
+});
+
+// Owner 11-28 (servers IA, rail C): a destination joins the rail the first time the person has something there.
+it('lets Deployments, Monitoring and Machines join the rail once the person has something there; their own placement wins', () => {
+    const entries = buildAppRailEntries(catalog([]), { includeHidden: true });
+    const fresh = resolveNavigationPlacements(buildAppRailPlacementItems(entries, false));
+    expect(ids(fresh.overflow)).toEqual(expect.arrayContaining(['deployments', 'monitoring', 'app-rail-machines']));
+    const arrived = buildAppRailPlacementItems(entries, false, new Set(['deployments', 'monitoring', 'app-rail-machines']));
+    const joined = resolveNavigationPlacements(arrived);
+    expect(ids(joined.pinned)).toEqual(expect.arrayContaining(['deployments', 'monitoring', 'app-rail-machines']));
+    // Nothing else moves: Usage, Boards and the rest still wait in More.
+    expect(ids(joined.overflow)).toEqual(expect.arrayContaining(['app-rail-usage', 'boards', 'artifacts']));
+    const chosen = resolveNavigationPlacements(arrived, { orderedIds: [], placements: { deployments: 'overflow', monitoring: 'hidden' } });
+    expect(ids(chosen.overflow)).toContain('deployments');
+    expect(ids(chosen.hidden)).toContain('monitoring');
+    expect(ids(chosen.pinned)).toContain('app-rail-machines');
 });

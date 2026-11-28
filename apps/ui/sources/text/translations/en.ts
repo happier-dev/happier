@@ -20645,7 +20645,7 @@ const enUsage = {
       sourcesAppsValue: ({ name }: { name: string }) => `Your apps · ${name}`,
       appsNothingTitle: "No model calls in this period",
       appsNothingBody: "When your app calls a model, its SDK can record the model and tokens of each call. Happier prices them with your model prices.",
-      appsNothingAction: "Go to Services",
+      appsNothingAction: "Go to Deployments",
       filterAgents: "Agents",
       filterMachines: "Machines",
       filterProjects: "Projects",
