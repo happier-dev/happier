@@ -47,20 +47,21 @@ it.each([
     ? [{ ...testCase, localMachineId: 'another-local-machine', differentRoot: false, admitted: true },
       { ...testCase, localMachineId: 'parent-machine', differentRoot: true, admitted: true },
       { ...testCase, localMachineId: 'parent-machine', differentRoot: true, admitted: false }] : []),
-]))('uses the admitted requester for committed birth ($active, v$protocolVersion, path=$path, checkout=$checkout, local=$localMachineId, differentRoot=$differentRoot, admitted=$admitted)', async ({ active, protocolVersion, path: authoredPath, checkout, localMachineId, differentRoot, admitted }) => {
+]).map(testCase => ({ ...testCase, permissionMode: testCase.localMachineId === 'machine-1' ? 'read-only' as const : 'default' as const })))('uses the admitted requester for committed birth ($active, v$protocolVersion, path=$path, checkout=$checkout, local=$localMachineId, differentRoot=$differentRoot, admitted=$admitted, permission=$permissionMode)', async ({ active, protocolVersion, path: authoredPath, checkout, localMachineId, differentRoot, admitted, permissionMode }) => {
   const accountId = 'requester';
   const sessionId = `requester-session-${active ? 'active' : 'offline'}-v${protocolVersion}-${authoredPath ? 'path' : 'managed'}-${checkout ? 'checkout' : 'plain'}-${localMachineId ?? 'remote'}`;
   const token = `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
   const credentials = { token, encryption: null };
   const rootMachineId = differentRoot ? 'parent-machine' : 'machine-1';
   const targetInstallationId = differentRoot ? 'target-installation' : 'installation-1';
-  const targetKey = nacl.box.keyPair.fromSecretKey(new Uint8Array(32).fill(9));
+  const targetKey = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(9));
   const exactDaemon = localMachineId === 'machine-1';
   const checkoutCreationDraft = checkout ? { kind: 'git_worktree' as const, displayName: 'bot', baseRef: 'main', branchMode: 'new' as const } : undefined;
   const input = SessionSpawnNewInputV2Schema.parse({ creationKey: 'finite-template-birth',
     executionTarget: { serverId: 'home-a', machineId: 'machine-1' }, directory: authoredPath
       ? { kind: 'path', path: exactDaemon ? tmpdir() : 'C:\\Users\\Remote\\project' } : { kind: 'managed' },
     agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+    permissionMode, identity: { bot: { kind: 'bot' }, createdAsBot: true },
     connectedServices: { v: 2, bindingsByServiceId: {} }, memoryEnabled: false,
     ...(checkoutCreationDraft ? { checkoutCreationDraft } : {}),
   });
@@ -197,6 +198,7 @@ it.each([
         expect(ownerMetadata.v.workspace?.path).toBe(preparedDirectory);
         const shared = Reflect.get(raw, 'sharedMetadata');
         if (!shared || typeof shared !== 'object') throw new Error('Missing shared metadata');
+        expect(JSON.parse(String(Reflect.get(shared, 'ciphertext')))).toMatchObject({ bot: { kind: 'bot' } });
         bornSession = { id: sessionId, seq: 0, createdAt: 1, updatedAt: 1,
             active: false, activeAt: 1, archivedAt: null, metadataVersion: 1, metadataLayoutVersion: 1,
             metadata: Reflect.get(shared, 'ciphertext'), ownerMetadata, encryptionMode: 'plain', agentState: null,
@@ -217,6 +219,11 @@ it.each([
         expect(AxiosHeaders.from(config?.headers).get('Authorization')).toBe(`Bearer ${token}`);
         expect(body.request).toMatchObject({ v: 1, targetMachineId: 'machine-1', requestedAction: { v: 1, kind: 'send_now' }, content: { t: 'plain' } });
         expect(JSON.stringify(body.request.content)).toContain('hostOnboarding');
+        if (permissionMode === 'read-only') {
+          const kickoff = JSON.stringify(body.request.content);
+          expect(kickoff).toContain('Do not execute the example task, use tools, or perform external work.');
+          expect(kickoff).not.toMatch(/report[ -]in|report to (?:the|your) creator/i);
+        }
         // An admitted explicit path reuses its prepared preflight result; a
         // managed directory or new checkout needs native preparation instead.
         expect(events).toEqual([authoredPath && !checkout ? 'preflight' : 'prepare',
@@ -249,7 +256,7 @@ it.each([
         readMachineMetadataSnapshot: () => ({ status: 'ready', metadataVersion: 1, metadata: {} }),
         spawnLifecycleHandler: async raw => {
           const request = SpawnDaemonSessionRequestSchema.parse(raw);
-          expect(request).toMatchObject({ directory: tmpdir(), existingSessionId: sessionId });
+          expect(request).toMatchObject({ directory: tmpdir(), existingSessionId: sessionId, permissionMode });
           events.push('spawn');
           return { type: 'success', sessionId, sessionCreationOutcome: {
             disposition: 'created', organizationPlacement: { folderId: null, tagIds: [] } } };
