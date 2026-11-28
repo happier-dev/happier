@@ -67,9 +67,8 @@ describe('codexPreflightSessionControlsProbeAdapter', () => {
                 accountSettings: null,
             });
 
-            expect(Array.isArray(raw)).toBe(true);
-            expect(raw).toEqual([
-                {
+            expect(raw).toEqual({
+                availableModels: [{
                     id: 'gpt-5.4',
                     name: 'GPT 5.4',
                     description: 'Latest frontier agentic coding model.',
@@ -86,8 +85,8 @@ describe('codexPreflightSessionControlsProbeAdapter', () => {
                             ],
                         },
                     ],
-                },
-            ]);
+                }],
+            });
         });
     }
 
@@ -124,7 +123,7 @@ describe('codexPreflightSessionControlsProbeAdapter', () => {
             },
         });
 
-        expect(raw).toEqual(expect.any(Array));
+        expect(raw).toMatchObject({ availableModels: [expect.objectContaining({ id: 'gpt-5.4' })] });
         expect(existsSync(captureFile)).toBe(true);
         expect(JSON.parse(readFileSync(captureFile, 'utf8'))).toEqual({
             CODEX_HOME: codexHome,
