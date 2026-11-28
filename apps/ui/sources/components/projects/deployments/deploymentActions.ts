@@ -309,6 +309,15 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
                 domainId: input.domainId ?? randomUUID(), requestKey: input.requestKey ?? randomUUID(),
             }, operation));
         },
+        /**
+         * Serve or stop serving the maintenance page on every own-server Domain of the Environment (owner 11-28). The
+         * Action coordinates; each Domain replacement keeps its own review and returns its own outcome.
+         */
+        async setMaintenance(input: Readonly<{ environmentId: string; enabled: boolean }>, operation?: UiActionOperation) {
+            assertCurrent();
+            return DeploymentActionOutputSchemasV1['deployments.environments.maintenance.set'].parse(await invoke(
+                'deployments.environments.maintenance.set', { ...input, serverId: lifetime.scope.serverId }, operation));
+        },
         /** Remove one address; the Action's irreversible confirmation is the designed one. */
         async removeDomain(input: DeploymentUiDomainInput, operation?: UiActionOperation) {
             assertCurrent();

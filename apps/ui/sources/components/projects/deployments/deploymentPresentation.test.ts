@@ -168,6 +168,13 @@ describe('Environment attention slot (DEPLOY-COMPOSE R3): one notice, highest pr
             'approvalWaiting', 'unhealthy']);
     });
 
+    it('owner 11-28: the maintenance page is said on every tab, above the 503s it causes, below anything that blocks', () => {
+        expect(deploymentEnvironmentAttention({ ...calm, maintenance: true, latest: { id: 'd-1', state: 'succeeded' },
+            health: { status: 'down' } })).toEqual({ kind: 'maintenance' });
+        expect(deploymentEnvironmentAttention({ ...calm, maintenance: true, latest: failed })?.kind).toBe('latestFailed');
+        expect(deploymentEnvironmentAttention({ ...calm, maintenance: true, machineOffline: true })?.kind).toBe('machineOffline');
+    });
+
     it('names the receipt it is about: a failed latest deploy, or the one still deploying', () => {
         expect(deploymentEnvironmentAttention({ ...calm, latest: failed })).toEqual({ kind: 'latestFailed', deploymentId: 'd-failed' });
         expect(deploymentEnvironmentAttention({ ...calm, latest: { id: 'd-run', state: 'queued' }, health: { status: 'down' } }))

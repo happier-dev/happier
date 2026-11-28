@@ -2694,6 +2694,31 @@ describe('Project deployments page', () => {
   });
 
 
+  it('owner 11-28: a Domain serving the maintenance page says so above every tab, and the header ⋯ offers turning it off', async () => {
+    const { t } = await import('@/text');
+    const detail = environmentDetailForHome();
+    const runtime = detail.targetLinks.find(row => row.targetLink.id === detail.environment.runtimeTargetLinkId)!.targetLink;
+    const { controller } = controllerFor({ detail, listDomains: async () => ({ ok: true as const, value: { items: [{
+      domain: { v: 1 as const, id: 'app-domain', environmentId: detail.environment.id, targetLinkId: runtime.id, revision: 1,
+        state: 'active' as const, contentArtifactId: 'domain-content', contentHeaderVersion: 1, contentBodyVersion: 1,
+        createdByAccountId: 'account-owner', createdAtMs: 1, updatedAtMs: 1 },
+      title: 'shop.example.test',
+      content: { hostname: 'shop.example.test', target: { service: 'app', containerPort: 3000 }, maintenancePage: true },
+    }], nextCursor: null } }) });
+    const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+    const screen = await renderScreen(<DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id}
+      demand={shown} accountId={scope.accountId} serverId={scope.serverId} phone={false} deploy={null} review={noReview}
+      onOpenReceipt={() => {}} lifetime={lifetime} />);
+    try {
+      await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.environment.attention.maintenance')).toBeTruthy());
+      expect(screen.getTextContent()).toContain('shop.example.test');
+      const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+      const menu = screen.findAllByType(DropdownMenu).find(node => node.props.items.some((item: { id: string }) => item.id === 'settings'));
+      const maintenance = menu?.props.items.find((item: { id: string }) => item.id === 'maintenance');
+      expect(maintenance?.title).toBe(t('projects.deployments.maintenance.turnOffMenu'));
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+
   describe('the first deploy ends on the live address (FIRST-DEPLOY-URL-1112)', () => {
     const liveDomains = (targetLinkId: string): DeploymentReadTransportV1['listDomains'] => async () => ({ ok: true as const, value: {
       items: [{

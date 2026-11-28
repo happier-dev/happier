@@ -110,6 +110,7 @@ import {
 } from './deploymentPresentation';
 import {
   useDeploymentPress,
+  useDeploymentChangePress,
   hasDeploymentPressAttention,
   readDeploymentActionError,
   readDeploymentRefusal,
@@ -310,6 +311,12 @@ export const DeploymentEnvironmentDetail = React.memo(
     // The address under the title (lab d1): the first Domain that is not on its way out.
     const domains = useDeploymentEnvironmentDomains(props.controller, props.environmentId, props.demand);
     const domainHost = domains.result.items.find((item) => item.domain.state !== 'removing')?.content.hostname ?? null;
+    // The maintenance page (owner 11-28) lives on each retained own-server Domain; the same Domains read says whether it shows.
+    const ownDomains = domains.result.items.filter((item) => item.domain.state !== 'removing' && item.content.target.kind !== 'provider');
+    const maintenanceHosts = ownDomains.flatMap((item) => item.content.maintenancePage === true && item.content.hostname
+      ? [item.content.hostname] : []);
+    const maintenanceOn = ownDomains.some((item) => item.content.maintenancePage === true);
+    const maintenanceChange = useDeploymentChangePress(props.review, domains.retry);
     const runtime = detail?.runtimeTargetLink ?? null;
     const activeId = runtime?.activeDeploymentId ?? null;
     const active = useDeploymentReceipt(
@@ -598,6 +605,7 @@ export const DeploymentEnvironmentDetail = React.memo(
       ...(composeHosted && definition ? [{ key: 'definition', text: definition, mono: true }] : []),
       // Overview's live row says the address once it serves; elsewhere the header still names where it is reached.
       ...(domainHost && !(liveUrl && tab === 'overview') ? [{ key: 'domain', text: domainHost, icon: 'globe' as const }] : []),
+      ...(maintenanceOn ? [{ key: 'maintenance', text: t('projects.deployments.maintenance.meta'), icon: 'warning' as const }] : []),
     ];
     const environmentEditing: DeploymentEnvironmentEditing | null = props.environmentActions ? {
       actions: props.environmentActions,
@@ -621,6 +629,24 @@ export const DeploymentEnvironmentDetail = React.memo(
         compact={props.phone} emphasis={ready ? 'secondary' : 'primary'} placement={ready ? 'section' : 'facts'} />
     );
     const { review, environmentId } = props;
+    // Turn the page on or off for the whole Environment. Each Domain's replacement keeps its own review: a held one opens
+    // the page's approval, and the first refused Domain is the press's outcome.
+    const setMaintenance = previewActions && detail.environment.capabilities.manage && ownDomains.length > 0
+      ? (enabled: boolean) => {
+          const run = () => maintenanceChange.press(async () => {
+            const result = await previewActions.setMaintenance({ environmentId, enabled });
+            const held = result.outcomes.find((entry) => 'kind' in entry && entry.kind === 'approval_request_created');
+            if (held && 'artifactId' in held) review.request(held.artifactId);
+            const refused = result.outcomes.find((entry) => 'ok' in entry && entry.ok === false);
+            return refused && 'errorCode' in refused ? refused : { ok: true as const };
+          });
+          if (!enabled) { void run(); return; }
+          void Modal.confirm(t('projects.deployments.maintenance.confirmTitle'),
+            t('projects.deployments.maintenance.confirmBody', { domains: ownDomains.flatMap((item) => item.content.hostname
+              ? [item.content.hostname] : []).join(', ') }),
+            { confirmText: t('projects.deployments.maintenance.turnOn') }).then((confirmed) => { if (confirmed) void run(); });
+        }
+      : null;
     const deployAction = props.deploy;
     const deploy: typeof props.deploy = deployAction ? async (...args) => {
       const [input] = args;
@@ -915,6 +941,7 @@ export const DeploymentEnvironmentDetail = React.memo(
         onOpenHistory={activeId !== null && history.result.items.some((receipt) => receipt.id !== activeId && isDeploymentRollbackSourceEligibleV1(receipt.state))
           ? () => selectPage('history') : undefined}
         onOpenSettings={() => selectPage('settings')}
+        maintenance={setMaintenance ? { on: maintenanceOn, toggle: () => setMaintenance(!maintenanceOn) } : undefined}
         // The header opener for the Logs companion (ruling 11-08, option a): offered only while Logs is.
         logs={logsOffered ? { open: navigation.companion.activeId === 'logs', toggle: () => {
           if (navigation.companion.activeId === 'logs') navigation.companion.close();
@@ -980,6 +1007,7 @@ export const DeploymentEnvironmentDetail = React.memo(
       health: overview ? detail.healthAggregate ?? null : null,
       catalogUpdate: overview && Boolean(templateRef && (catalogUpdatePending || catalogUpdate.upstream
         && catalogUpdate.upstream.state !== 'current' || catalogUpdate.error)),
+      maintenance: maintenanceOn,
     });
     // "Deploy when finished" runs the repository's newest commit after the running one; a stored definition has no newer
     // source to wait for, so it is offered only where a repository can move ahead (R16-D2).
@@ -1144,6 +1172,18 @@ export const DeploymentEnvironmentDetail = React.memo(
             />
           );
         }
+        case 'maintenance':
+          return (
+            <AttentionBanner
+              testID="project-deployments.environment.attention.maintenance"
+              tone="warning"
+              title={t('projects.deployments.maintenance.onTitle')}
+              description={t('projects.deployments.maintenance.onBody', { domains: maintenanceHosts.join(', ') })}
+              {...(setMaintenance ? { action: { label: t('projects.deployments.maintenance.turnOff'),
+                testID: 'project-deployments.environment.attention.maintenance.turnOff',
+                onPress: () => setMaintenance(false) } } : {})}
+            />
+          );
         case 'catalogUpdate': {
           if (catalogUpdatePending) return (
             <SurfaceStateCard testID="project-deployments.environment.attention.catalogUpdate.loading"
@@ -1239,6 +1279,7 @@ export const DeploymentEnvironmentDetail = React.memo(
           </ItemGroup>
           {/* One attention slot under the tabs (R3): only the highest-precedence notice; lower ones stay in their rows. */}
           {attentionNotice}
+          {maintenanceChange.outcome ? <DeployOutcomeBanner controller={maintenanceChange.banner} machine={machineLabel} copy="setting" /> : null}
           {tab === 'overview' ? (
             <>
               {settingsSection === 'databaseRecovery' && lifetime && previewActions && detail.environment.capabilities.manage ? (
@@ -2308,6 +2349,8 @@ function EnvironmentMenu(
     /** Pin keeps it at the top of the person's Services column; Unpin takes it off (projects.services.pin). */
     pin?: Readonly<{ pinned: boolean; toggle: () => void }>;
     deployProduction?: () => void;
+    /** The maintenance page for the whole Environment (owner 11-28), beside Roll back. */
+    maintenance?: Readonly<{ on: boolean; toggle: () => void }>;
   }>,
 ) {
   const { theme } = useUnistyles();
@@ -2342,6 +2385,10 @@ function EnvironmentMenu(
           />
         ),
       }] : []),
+      ...(props.maintenance ? [{ id: 'maintenance', testID: 'project-deployments.environment.menu.maintenance',
+        title: t(props.maintenance.on ? 'projects.deployments.maintenance.turnOffMenu' : 'projects.deployments.maintenance.turnOnMenu'),
+        subtitle: t('projects.deployments.maintenance.menuHint'),
+        icon: <Icon name="wrench" size={16} color={theme.colors.text.secondary} /> }] : []),
       {
         id: 'settings',
         testID: 'project-deployments.environment.menu.settings',
@@ -2364,7 +2411,7 @@ function EnvironmentMenu(
           }]
         : []),
     ],
-    [Boolean(props.deployProduction), props.deleteTitle, props.onDuplicate, props.move?.kind, props.onOpenHistory, props.logs?.open, Boolean(props.logs), props.pin?.pinned, Boolean(props.pin), theme.colors.state.danger.foreground, theme.colors.text.secondary],
+    [Boolean(props.deployProduction), props.maintenance?.on, Boolean(props.maintenance), props.deleteTitle, props.onDuplicate, props.move?.kind, props.onOpenHistory, props.logs?.open, Boolean(props.logs), props.pin?.pinned, Boolean(props.pin), theme.colors.state.danger.foreground, theme.colors.text.secondary],
   );
   return (
     <DropdownMenu
@@ -2378,6 +2425,7 @@ function EnvironmentMenu(
         if (id === 'deployProduction') props.deployProduction?.();
         else if (id === 'pin') props.pin?.toggle();
         else if (id === 'history') props.onOpenHistory?.();
+        else if (id === 'maintenance') props.maintenance?.toggle();
         else if (id === 'duplicate') props.onDuplicate?.();
         else if (id === 'move' && props.move?.kind === 'ready') props.move.open();
         else if (id === 'logs') props.logs?.toggle();

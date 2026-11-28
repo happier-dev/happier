@@ -519,7 +519,7 @@ export function deploymentEnvironmentHealthPresentation(
  */
 export const DEPLOYMENT_ENVIRONMENT_ATTENTION_ORDER = [
   'machineOffline', 'machineReinstalled', 'noTarget', 'controllerPaused', 'actionRefused', 'latestFailed', 'latestUnknown', 'approvalWaiting', 'deploying',
-  'unhealthy', 'secretWithdrawn', 'runningUnverified', 'catalogUpdate',
+  'maintenance', 'unhealthy', 'secretWithdrawn', 'runningUnverified', 'catalogUpdate',
 ] as const;
 export type DeploymentEnvironmentAttentionKind = (typeof DEPLOYMENT_ENVIRONMENT_ATTENTION_ORDER)[number];
 export type DeploymentEnvironmentAttention =
@@ -546,6 +546,8 @@ export type DeploymentEnvironmentAttentionFacts = Readonly<{
   health: HealthEvidence | null;
   /** The template's catalog has a newer release (registry update observation). */
   catalogUpdate?: boolean;
+  /** A retained Domain serves the maintenance page (its own content, owner 11-28): said above the 503s it causes. */
+  maintenance?: boolean;
 }>;
 
 export function deploymentEnvironmentAttention(facts: DeploymentEnvironmentAttentionFacts): DeploymentEnvironmentAttention | null {
@@ -562,6 +564,7 @@ export function deploymentEnvironmentAttention(facts: DeploymentEnvironmentAtten
   if (facts.latest?.state === 'outcome_unknown') return { kind: 'latestUnknown', deploymentId: facts.latest.id };
   if (facts.reviewPending) return { kind: 'approvalWaiting' };
   if (facts.latest?.state === 'queued' || facts.latest?.state === 'running') return { kind: 'deploying', deploymentId: facts.latest.id };
+  if (facts.maintenance) return { kind: 'maintenance' };
   const health = deploymentEnvironmentHealthKind(facts.health);
   if (health === 'down' || health === 'degraded') return { kind: 'unhealthy' };
   if (health === 'unchecked') return { kind: 'runningUnverified' };
