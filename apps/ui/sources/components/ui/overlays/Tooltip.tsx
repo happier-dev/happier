@@ -44,13 +44,19 @@ export function Tooltip(props: Readonly<{
             onPress={props.onPress}
             focusable={props.focusable}
             accessibilityLabel={props.accessibilityLabel ?? (label === '' ? undefined : label)}
-            onHoverIn={() => setHovered(true)}
-            onHoverOut={() => { setHovered(false); resetSuppression(); }}
+            // Pointer enter/leave, not Pressable hover: the web renderer's hover lock gives hover only to the
+            // innermost hoverable, so a wrapped control (a chip, a button) would never show its tooltip.
+            {...(Platform.OS === 'web' ? {
+                onPointerEnter: (event: { nativeEvent?: { pointerType?: string } }) => {
+                    if (event.nativeEvent?.pointerType !== 'touch') setHovered(true);
+                },
+                onPointerLeave: () => { setHovered(false); resetSuppression(); },
+                onPointerDown: suppress,
+            } : {})}
             onFocus={() => setFocused(true)}
             onBlur={() => setFocused(false)}
             onLongPress={touchReadout ? () => setHeld(true) : undefined}
             onPressOut={touchReadout ? () => setHeld(false) : undefined}
-            {...(Platform.OS === 'web' ? { onPointerDown: suppress } : {})}
             style={props.style}
         >
             {props.children}

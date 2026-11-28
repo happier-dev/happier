@@ -114,7 +114,7 @@ describe('ConnectionStatusControl connection details', () => {
         const lastSync = screen.findByTestId('connection-popover-last-sync');
         expect(lastSync?.props.accessibilityLabel).toContain(exact);
         if (Platform.OS === 'web') {
-            await act(async () => lastSync?.props.onHoverIn?.());
+            await act(async () => lastSync?.props.onPointerEnter?.({ nativeEvent: { pointerType: 'mouse' } }));
             await act(async () => { await import('@/components/ui/overlays/AnchoredTooltip'); });
             expect(screen.findByTestId('connection-popover-last-sync-tooltip')).not.toBeNull();
         } else {

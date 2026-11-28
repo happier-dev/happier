@@ -40,12 +40,12 @@ describe('AgentInputChipRowReach', () => {
             {permissionChip()}
         </KeyboardShortcutLabelsContext.Provider>);
         const help = () => screen.findByTestId('agent-input-permission-chip-help');
-        await act(async () => { help()?.props.onHoverIn?.(); });
+        await act(async () => { help()?.props.onPointerEnter?.({ nativeEvent: { pointerType: 'mouse' } }); });
         expect(screen.findByTestId('agent-input-permission-chip-help-tooltip')?.props.label).toBe('Permissions (Cmd+J)');
         await act(async () => { help()?.props.onPointerDown?.(); });
         expect(screen.findByTestId('agent-input-permission-chip-help-tooltip')).toBeNull();
-        await act(async () => { help()?.props.onHoverOut?.(); });
-        await act(async () => { help()?.props.onHoverIn?.(); });
+        await act(async () => { help()?.props.onPointerLeave?.(); });
+        await act(async () => { help()?.props.onPointerEnter?.({ nativeEvent: { pointerType: 'mouse' } }); });
         expect(screen.findByTestId('agent-input-permission-chip-help-tooltip')).toBeTruthy();
     });
 
