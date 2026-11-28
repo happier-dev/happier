@@ -165,6 +165,53 @@ describe('rapid Account settings intents', () => {
         expect(storage.getState().settings.analyticsOptOut).toBe(true);
     });
 
+    it('writes a toggle at the admitted head with one fresh witness and no document read, and reads a moved head', async () => {
+        const serverId = await harness.addHome({ name: 'Toggle at head', serverUrl: 'https://toggle-head.example', accountId: 'owner' });
+        const scope = { serverId, accountId: 'owner' };
+        let raw: Record<string, unknown> = { analyticsOptOut: false };
+        let version = 5;
+        let pending: Partial<Settings> = {};
+        storage.setState({ settingsScope: scope, settingsVersion: null, settings: settingsParse({}) });
+        savePendingAccountSettings(scope, {});
+        harness.answer(serverId, '/v2/account/settings', { select: () => ({ body: { content: { t: 'plain', v: raw }, version },
+            headers: { [ACCOUNT_SETTINGS_REMOTE_ALERT_POLICY_STATUS_HTTP_HEADER]: 'disabled' } }) });
+        harness.answer(serverId, '/v1/account/encryption/currentness', { select: () => ({ body: createPlainAccountEncryptionCurrentnessFixture({ settingsVersion: version }) }) });
+        harness.answer(serverId, 'POST /v2/account/settings', { select: input => {
+            const write = AccountSettingsV2UpdateRequestSchema.parse(input);
+            if (write.content?.t !== 'plain') throw new Error('Expected plain Account settings');
+            if (write.expectedVersion !== version) return { body: { success: false, error: 'version-mismatch', currentVersion: version, currentContent: { t: 'plain', v: raw } } };
+            raw = write.content.v;
+            return { body: { success: true, version: ++version } };
+        } });
+        const credentials = { token: createAccountTokenForTests('owner', { currentAccount: true }) };
+        const toggle = (analyticsOptOut: boolean) => {
+            applySettingsLocalDelta({ expectedSettingsScope: scope, delta: { analyticsOptOut }, settingsSecretsKey: null,
+                getPendingSettings: () => pending, setPendingSettings: next => { pending = next; savePendingAccountSettings(scope, next); },
+                schedulePendingSettingsFlush: () => {} });
+            return syncSettings({ credentials, encryption: null, settingsScope: scope, pendingSettings: pending,
+                getPendingSettings: () => pending, clearPendingSettings: next => { pending = next; savePendingAccountSettings(scope, next); } });
+        };
+        const since = (start: number, method: string) => harness.requests.slice(start)
+            .filter(request => request.method === method).map(request => request.path).sort();
+        await syncSettings({ credentials, encryption: null, settingsScope: scope, pendingSettings: {}, getPendingSettings: () => ({}), clearPendingSettings: () => {} });
+        const admitted = harness.requests.length;
+        await toggle(true);
+        // The fresh identity witness carries the Settings head; the admitted document at that head is the baseline.
+        expect(since(admitted, 'GET')).toEqual(['/v1/account/encryption/currentness']);
+        expect(since(admitted, 'POST')).toEqual(['/v2/account/settings']);
+        expect(raw.analyticsOptOut).toBe(true);
+        expect(storage.getState().settingsVersion).toBe(6);
+        // Another writer moved the head: the next toggle reads the moved document before writing.
+        raw = { ...raw, crashReportsOptOut: true };
+        version = 7;
+        const moved = harness.requests.length;
+        await toggle(false);
+        expect(since(moved, 'GET')).toEqual(['/v1/account/encryption/currentness', '/v1/account/encryption/currentness', '/v2/account/settings']);
+        expect(since(moved, 'POST')).toEqual(['/v2/account/settings']);
+        expect(raw).toMatchObject({ analyticsOptOut: false, crashReportsOptOut: true });
+        expect(storage.getState().settingsVersion).toBe(8);
+    });
+
     it('adds no settings-head probes while the socket observation is live and catches up after a gap', async () => {
         // Owner ruling 2026-11-12: reuse the delivered head, preserving fresh encryption admission.
         const endpointUrl = 'https://live-settings-head.example';

@@ -414,7 +414,9 @@ async function syncSettingsUnlocked<TOneShotMutationValue>(params: SyncSettingsP
         applyCrashReportsOptOut(nextSettings.crashReportsOptOut);
     }
 
-    type AccountSettingsServerBaseline = AccountSettingsBaselineContent & {
+    /** The envelope and its cipher format are opened at the read seam; the write loop reads only the document. */
+    type AccountSettingsWriteBaseline = Omit<AccountSettingsBaselineContent, 'content' | 'format'>;
+    type AccountSettingsServerBaseline = AccountSettingsWriteBaseline & {
         serverIdentityKeysChanged: boolean;
     };
 
@@ -497,7 +499,7 @@ async function syncSettingsUnlocked<TOneShotMutationValue>(params: SyncSettingsP
         return migrateRawServerIdentityKeys(merged).raw;
     }
 
-    async function fetchAccountSettingsBaseline(admitted?: NonNullable<SyncSettingsParams['requestContext']>['admittedBaseline']): Promise<AccountSettingsServerBaseline> {
+    async function fetchAccountSettingsBaseline(admitted?: Readonly<{ value: AccountSettingsWriteBaseline }>): Promise<AccountSettingsServerBaseline> {
         // The wire read and envelope opening live in the shared baseline seam;
         // this wrapper adds only the captured-scope identity-key migration and
         // its local normalization side effect.
@@ -538,10 +540,8 @@ async function syncSettingsUnlocked<TOneShotMutationValue>(params: SyncSettingsP
         }
         return {
             api: data.currentContent !== undefined ? 'v2' : 'v1',
-            content: currentContent,
             version: data.currentVersion,
             raw: migrated.raw,
-            format: opened.format,
             serverIdentityKeysChanged: migrated.changed,
         };
     }
@@ -710,6 +710,7 @@ async function syncSettingsUnlocked<TOneShotMutationValue>(params: SyncSettingsP
         });
     }
 
+    let legacyImportRequested = false;
     async function maybeImportLegacySessionOrganization(rawSettings: Record<string, unknown> | null): Promise<boolean> {
         if (!settingsScope || !rawSettings) return false;
         if (hasCompletedLegacySessionOrganizationImport(settingsScope)) {
@@ -736,6 +737,7 @@ async function syncSettingsUnlocked<TOneShotMutationValue>(params: SyncSettingsP
                 includeAllFolderAssignments: true,
                 includeAllTagAssignments: true,
             } as const;
+            legacyImportRequested = true;
             const existing = await fetchSessionOrganizationSnapshot({
                 credentials,
                 requestAtEndpoint: request,
@@ -791,7 +793,18 @@ async function syncSettingsUnlocked<TOneShotMutationValue>(params: SyncSettingsP
         }
     }
 
-    const initialBaseline = await fetchAccountSettingsBaseline(requestContext?.admittedBaseline);
+    // A write at the head this attempt's fresh witness reports starts from the document Sync already
+    // admitted at that version instead of reading the whole blob again. The CAS write still binds that
+    // version, and a mover's version-mismatch answer carries the document to rebase on.
+    const writes = (Object.keys(pendingServerSettings).length > 0 || params.accountSettingsMutation) && !params.oneShotServerSettingsMutation;
+    const retainedAtWitnessHead = writes && !admittedBaseline && settingsScope ? readRetainedAccountSettingsRawSnapshot(settingsScope) : undefined;
+    const headBaseline: AccountSettingsWriteBaseline | undefined = retainedAtWitnessHead
+        && retainedAtWitnessHead.version === writeMaterial.settingsVersion
+        ? { api: 'v2', version: retainedAtWitnessHead.version, raw: { ...retainedAtWitnessHead.raw },
+            remoteAlertPolicyStatus: storage.getState().settingsRemoteAlertPolicyStatus ?? undefined }
+        : undefined;
+    const initialBaseline = await fetchAccountSettingsBaseline(requestContext?.admittedBaseline
+        ?? (headBaseline ? { value: headBaseline } : undefined));
     let prefetchedFinalBaseline: AccountSettingsServerBaseline | null = initialBaseline;
 
     // Apply pending settings
@@ -836,8 +849,11 @@ async function syncSettingsUnlocked<TOneShotMutationValue>(params: SyncSettingsP
                 return Object.freeze({ status: 'invalid', reason: 'invalidPreparedMutation' });
             }
             // Preparation may await a key change. Re-admit before importing legacy
-            // organization data, normalizing secrets or sealing this attempt.
-            await refreshWriteMaterial();
+            // organization data, normalizing secrets or sealing this attempt. A first
+            // attempt that awaited nothing since its witness (baseline at the witnessed
+            // head, no mutation or import) seals under that same witness.
+            if (!(retryCount === 0 && headBaseline && !params.oneShotServerSettingsMutation
+                && !legacyImportRequested)) await refreshWriteMaterial();
             if (params.oneShotServerSettingsMutation) {
                 pendingLegacySessionOrganizationImported = await maybeImportLegacySessionOrganization(
                     mergePendingLegacySessionOrganizationSettings(baseline.raw),
