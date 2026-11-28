@@ -13,6 +13,8 @@ import { readAuthTokenProvenance } from '@happier-dev/protocol/auth/authToken';
 import { decodeJwtPayload } from '@/cloud/decodeJwtPayload';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import { ReviewEngineInventorySchema } from '@happier-dev/protocol/reviews/reviewEngines';
+import { projectAgentRuntimeDaemonServiceTurnWitnessV1 } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceTurnWitness';
 import { createRunnerExecutionRunSnapshotResolver } from '@/agent/runtime/session/process/runnerExecutionRunSnapshot';
 import * as controlServer from '@/daemon/controlServer';
 import * as daemonControlHttp from '@/daemon/controlHttp';
@@ -35,7 +37,7 @@ import type { HappyMcpSessionClient } from './startHappyServer';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
-it.each(['account_depth', 'account_agent', 'account_ceiling', 'policy_read_unavailable', 'workflow_preflight', 'ordinary_run_authority', 'home_authority'] as const)(
+it.each(['account_depth', 'account_agent', 'account_ceiling', 'policy_read_unavailable', 'workflow_preflight', 'ordinary_run_authority', 'home_authority', 'review_inventory'] as const)(
   'dispatches through the production daemon/native composition for an authored Agent (%s)', async scenario => {
   let installed: Parameters<typeof controlServer.startDaemonControlServer>[0] | null = null;
   // The listener and Home HTTP are system boundaries; startup, request admission,
@@ -75,6 +77,7 @@ it.each(['account_depth', 'account_agent', 'account_ceiling', 'policy_read_unava
           module: './runtime.mjs', export: 'createRuntime', runtimeApiVersion: 1 } }); }`,
     },
   }, undefined, {
+    ...(scenario === 'review_inventory' ? { additionalPluginIds: ['happier.review.deepsec'] } : {}),
     credentials: { token: `e30.${Buffer.from(JSON.stringify({ sub: 'custodian' })).toString('base64url')}.signature`, encryption: null },
     resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: 'srv_run-home', machineId: 'machine' }),
   });
@@ -95,13 +98,17 @@ it.each(['account_depth', 'account_agent', 'account_ceiling', 'policy_read_unava
   const homeWrite = vi.mocked(axios.post).getMockImplementation()!;
   const daemonOutcomes: unknown[] = [];
   let authorizedMachineId = 'machine';
+  const inventoryActionId = scenario === 'review_inventory' ? 'review.engines.list' : 'agents.backends.list';
   vi.mocked(axios.post).mockImplementation(async (...args) => {
-    if (new URL(String(args[0])).pathname === bindExternalActionExecutionAuthorizationVerifyHttpPathV1('agents.backends.list')) {
+    if (new URL(String(args[0])).pathname === bindExternalActionExecutionAuthorizationVerifyHttpPathV1(inventoryActionId)) {
       return { status: h.f.isHomeCurrent() ? 200 : 403, data: h.f.isHomeCurrent() ? { ok: true } : { error: 'access_denied' } };
     }
-    if (new URL(String(args[0])).pathname === bindExternalActionExecutionAuthorizationHttpPathV1('agents.backends.list')) {
+    if (new URL(String(args[0])).pathname === bindExternalActionExecutionAuthorizationHttpPathV1(inventoryActionId)) {
       const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(args[1]);
       expect(request.sessionActionOrigin?.caller.sessionId).toBe(h.sessionId);
+      if (scenario === 'review_inventory') {
+        expect(args[2]?.headers?.Authorization).toBe(`Bearer ${h.f.bootstrap.credentials.token}`);
+      }
       expect(request.sessionActionSource).toEqual({ machineId: 'machine', installationId: h.f.installation.installationId });
       expect(request.installationProof).toBeDefined();
       return { status: 200, data: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'fixture-home-authorization', binding: {
@@ -109,7 +116,7 @@ it.each(['account_depth', 'account_agent', 'account_ceiling', 'policy_read_unava
           decodeJwtPayload(String(args[2]?.headers?.Authorization).slice('Bearer '.length)), { allowLegacyHome: true })?.provenance.kind,
           tokenEpoch: 0 }, serverIdentityId: 'srv_run-home',
         machineId: authorizedMachineId, custodianAccountId: 'custodian', installationId: h.f.installation.installationId,
-        actionId: 'agents.backends.list', requestId: request.envelope.requestId, target: { kind: 'machine', machineId: authorizedMachineId },
+        actionId: inventoryActionId, requestId: request.envelope.requestId, target: { kind: 'machine', machineId: authorizedMachineId },
         accountEncryptionMode: 'plain', requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
         sessionActionOrigin: request.sessionActionOrigin, sessionActionSource: request.sessionActionSource,
       } }) };
@@ -213,6 +220,38 @@ it.each(['account_depth', 'account_agent', 'account_ceiling', 'policy_read_unava
   try {
     await runtime.mcp.connect(serverTransport);
     await client.connect(clientTransport);
+    if (scenario === 'review_inventory') {
+      const input = { sessionId: h.sessionId, includeDisabled: true, includeExecutionRunProfiles: true };
+      const witness = host.getActiveTurnAdmissionWitness?.();
+      if (!witness) throw new Error('Missing ordinary turn witness');
+      // Establish the same installed daemon's working inventory through its
+      // production dispatch before testing delivery from the runner's MCP ingress.
+      const controlRead = await h.dispatch({ kind: 'action.execute', requestId: h.operationBase().requestId,
+        actionId: inventoryActionId, surface: 'agent', input,
+        witness: projectAgentRuntimeDaemonServiceTurnWitnessV1(witness),
+      });
+      expect(controlRead).toMatchObject({ ok: true, result: { kind: 'action.execution', outcome: { ok: true } } });
+      if (!controlRead.ok || controlRead.result.kind !== 'action.execution' || !controlRead.result.outcome.ok) {
+        throw new Error('Installed daemon inventory control failed');
+      }
+      const inventory = ReviewEngineInventorySchema.parse(controlRead.result.outcome.result);
+      expect(inventory.executionRunProfiles).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 'happier.review.deepsec/review', optionsSchema: expect.any(Object) }),
+      ]));
+      const readInventory = async () => {
+        const reply = CallToolResultSchema.parse(await client.callTool({ name: 'action_execute',
+          arguments: { actionId: inventoryActionId, input } }));
+        const content = reply.content.find(row => row.type === 'text');
+        if (content?.type !== 'text') throw new Error('Missing Review inventory response');
+        return { ok: reply.isError !== true, payload: JSON.parse(content.text) as unknown };
+      };
+      expect(await readInventory()).toEqual({ ok: true, payload: { ...inventory, sessionId: h.sessionId } });
+      expect(daemonOutcomes).toEqual([{ actionId: inventoryActionId, ok: true }]);
+
+      foreignAccount = true;
+      expect(await readInventory()).toMatchObject({ ok: false, payload: { errorCode: 'target_unavailable' } });
+      return;
+    }
     const request = { intent: 'task', backendTarget: { kind: 'agent', identity }, instructions: 'Reply only.', modelId: 'fixture-model',
       permissionMode: 'read_only', retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response', waitForCompletion: true };
     const start = async (input: Record<string, unknown>) => {

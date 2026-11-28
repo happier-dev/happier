@@ -36,7 +36,7 @@ const uncertain = (): ActionExecuteResult => ({ ok: false, errorCode: 'outcome_u
 // These readers use the bound host's live Session RPC/catalog, including in a
 // daemonless host. Reading another Session still needs credentialed transport.
 const BOUND_SESSION_RPC_READS: ReadonlySet<ActionId> = new Set([
-  'review.engines.list', 'session.work_state.get', 'session.goal.get',
+  'session.work_state.get', 'session.goal.get',
   'session.vendor_plugin_catalog.list', 'session.skill_catalog.list',
 ]);
 
