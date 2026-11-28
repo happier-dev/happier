@@ -61,6 +61,11 @@ export function formatGovernanceApprovalSummary(context: ApprovalPresentationCon
 export type ApprovalPresentationContext = Readonly<{
   /** Resolve the localized copy authored for a plugin confirmation. */
   resolvePluginConfirmationText?: (text: import('../../plugins/actions/v2.js').PluginActionConfirmationInputFieldV2['title']) => string;
+  /** Visible field hints and choice labels from an admitted target Action declaration. */
+  targetActionFieldPresentation?: Readonly<{
+    fields: readonly import('../../plugins/actions/v2.js').PluginActionConfirmationInputFieldV2[];
+    formatValue: (path: string, value: unknown) => string | null;
+  }>;
   /** The presenting host's catalog supplies declaration labels and units, never mutation policy. */
   readSettingDeclaration?: (anchor: string) => PortableSettingDeclarationV1 | null;
   /** Public labels captured for the exact Team admission operands. */

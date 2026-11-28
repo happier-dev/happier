@@ -10,6 +10,7 @@ import type { PluginProjectedWorkItemsEntryV1 } from '@happier-dev/protocol/daem
 import type { PluginDeclaredUiEntriesV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { PluginCollectionListExtensionV1 } from '@happier-dev/protocol/plugins/contributions/ui';
 import type { PluginContributionIntrospectionPresentationV1 } from '@happier-dev/protocol/daemon/pluginContributionIntrospection';
+import type { PluginProjectedActionReviewPresentation } from './actionPresentation';
 import { resolveLocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/platform';
 import type { LocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/url';
 import { PluginUiWidgetAreaDeclarationsV1Schema, type PluginUiWidgetAreaDeclarationV1 } from '@happier-dev/protocol/plugins/contributions/ui/widgetAreas';
@@ -75,8 +76,8 @@ export function arePluginUiMaterializationsEquivalent(
 
 export type PluginUiInstalledPackageProjection = PluginProjectionInstalledPackageV2 & Readonly<{
     declaredExecution?: PluginUiDeclaredExecution;
-    /** Authored titles of known installed Actions, independent of the executable catalog. */
-    actionTitlesById?: Readonly<Record<string, PluginLocalizedStringV2>>;
+    /** Authored presentation of installed Actions, independent of executable availability. */
+    actionPresentationsById?: Readonly<Record<string, PluginProjectedActionReviewPresentation>>;
     /** Host-private coverage fact from a full describe, never restored presentation. */
     resourceDeclarationsComplete?: true;
 }>;

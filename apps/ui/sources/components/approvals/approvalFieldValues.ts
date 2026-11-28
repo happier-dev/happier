@@ -8,6 +8,7 @@ import {
     resolveApprovalRequestApproveAdmission as resolveProtocolApprovalRequestApproveAdmission,
     type ApprovalRequestApproveAdmission,
 } from '@happier-dev/protocol/actions';
+import type { ApprovalPresentationContext } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import type { TargetActionApprovalRequestV1 } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
@@ -73,9 +74,10 @@ export function describeApprovalActionFields(input: Parameters<typeof describePr
 
 /** Immediate and retained reviews disclose the same evaluated facts with the UI's quantity formatter. */
 export function describeApprovalRequestFields(input: Parameters<typeof describeProtocolApprovalRequestFields>[0],
-    environmentName?: string | null, automationName?: string | null) {
+    environmentName?: string | null, automationName?: string | null,
+    targetActionFieldPresentation?: ApprovalPresentationContext['targetActionFieldPresentation']) {
     const presentation = describeProtocolApprovalRequestFields(input, {
-        resolvePluginConfirmationText,
+        resolvePluginConfirmationText, targetActionFieldPresentation,
         readSettingDeclaration: readVoiceSettingsDeclaration,
         formatDataBytes: formatHappierDataBytes, workflowTriggerLabels: workflowTriggerLabels(environmentName),
     });
@@ -84,11 +86,13 @@ export function describeApprovalRequestFields(input: Parameters<typeof describeP
 
 /** Keep Protocol's admission decision and adapt its disclosure through the same UI presenter. */
 export function resolveApprovalRequestApproveAdmission(request: ApprovalRequest): ApprovalRequestApproveAdmission;
-export function resolveApprovalRequestApproveAdmission(request: ApprovalRequest | TargetActionApprovalRequestV1):
+export function resolveApprovalRequestApproveAdmission(request: ApprovalRequest | TargetActionApprovalRequestV1,
+    targetActionFieldPresentation?: ApprovalPresentationContext['targetActionFieldPresentation']):
     ReturnType<typeof resolveProtocolApprovalRequestApproveAdmission>;
-export function resolveApprovalRequestApproveAdmission(request: ApprovalRequest | TargetActionApprovalRequestV1) {
+export function resolveApprovalRequestApproveAdmission(request: ApprovalRequest | TargetActionApprovalRequestV1,
+    targetActionFieldPresentation?: ApprovalPresentationContext['targetActionFieldPresentation']) {
     return resolveProtocolApprovalRequestApproveAdmission(request, {
-        resolvePluginConfirmationText,
+        resolvePluginConfirmationText, targetActionFieldPresentation,
         readSettingDeclaration: readVoiceSettingsDeclaration, workflowTriggerLabels: workflowTriggerLabels() });
 }
 

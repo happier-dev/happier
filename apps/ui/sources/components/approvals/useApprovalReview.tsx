@@ -17,6 +17,7 @@ import { ApprovalAutomaticChecks, readApprovalAutomaticChecksCarryRefusal, readA
 import { Modal } from '@/modal';
 import { HappyError } from '@/utils/errors/errors';
 import { t } from '@/text';
+import { useTargetActionApprovalPresentation } from './useTargetActionApprovalPresentation';
 import { useApprovalArtifact } from './useApprovalArtifact';
 import {
   storage,
@@ -201,11 +202,6 @@ export function useApprovalReview(props: ApprovalReviewInput) {
   const reviewedBindingRequest = bindingChoice.reviewRequest;
   const review = useActionApprovalReview(parsed?.kind === 'built_in' ? reviewedBindingRequest ?? parsed.request : null);
   const docEditProposal = review?.docEditProposal;
-  const approveAdmission = review?.admission ?? (parsed?.kind === 'target' && parsed.request.status === 'open'
-    ? resolveApprovalRequestApproveAdmission(parsed.request) : null);
-  const actionFields = React.useMemo(() => approveAdmission?.presentation
-    ?? (parsed?.kind === 'built_in' || parsed?.kind === 'target'
-      ? describeApprovalRequestFields(reviewedBindingRequest ?? parsed.request) : null), [approveAdmission, parsed, reviewedBindingRequest]);
   // A Project's setup or command reads as the machine and the exact command, not as its protocol operands.
   const projectCommand = React.useMemo(
     () => (parsed?.kind === 'built_in' ? readProjectCommandApproval(parsed.request) : null),
@@ -224,11 +220,6 @@ export function useApprovalReview(props: ApprovalReviewInput) {
   const discussionDraftDecisions = discussionDraft ? { approve: discussionDraft.postLabel, reject: discussionDraft.declineLabel } : null;
   // An Agent's enable request is decided by its own controller here too: Allow · Always in <place> · Not now (P8 U8.5).
   const capabilityEnable = review?.capabilityEnable ?? null;
-  const approvalWithheld = approveAdmission?.status === 'unavailable';
-  const invocationUnavailable = approveAdmission?.status === 'unavailable' && approveAdmission.reason === 'live_invocation_unavailable';
-  // A request that can never run says why here too, in the card's words (owner ruling C3).
-  const cannotRun = readApprovalCannotRunReason(approveAdmission);
-
   const request = parsed?.request ?? null;
   const confidentialAction = review?.confidentialAction ?? false;
   const confidentialApproval = review?.confidential ?? null;
@@ -260,9 +251,6 @@ export function useApprovalReview(props: ApprovalReviewInput) {
       : parsed?.kind === 'host_action'
         ? parsed.request.sessionId
         : '';
-  // Requested by already names an ordinary same-Session target: the fields' one rule keeps only its id in the disclosure.
-  const shownActionFields = React.useMemo(() => actionFields ? demoteAskingSessionTarget(actionFields, sessionId) : actionFields,
-    [actionFields, sessionId]);
   const { replayRoute } = useApprovalHome(
     { id: artifact?.id ?? props.artifactId, header: artifact?.header ?? null },
     parsed?.kind === 'built_in' || parsed?.kind === 'target' ? parsed.request : null,
@@ -355,6 +343,21 @@ export function useApprovalReview(props: ApprovalReviewInput) {
   const proposal = useResourceProposalCheck(parsed?.kind === 'built_in' ? parsed.request : null, approvalServerId, props.artifactId);
   const proposalLabels = proposal ? resolveResourceProposalLabels(proposal) : null;
   const { resolution: approvalScopeResolution, binding: approvalAccountLifetime } = useServerCredentialAccountScopeBinding(approvalServerId);
+  const targetPresentation = useTargetActionApprovalPresentation(parsed?.kind === 'target' ? parsed.request : null, approvalAccountLifetime);
+  const approveAdmission = review?.admission ?? (parsed?.kind === 'target' && parsed.request.status === 'open'
+    ? resolveApprovalRequestApproveAdmission(parsed.request, targetPresentation.fieldPresentation) : null);
+  const actionFields = React.useMemo(() => approveAdmission?.presentation
+    ?? (parsed?.kind === 'built_in' || parsed?.kind === 'target'
+      ? describeApprovalRequestFields(reviewedBindingRequest ?? parsed.request, undefined, undefined, targetPresentation.fieldPresentation)
+      : null), [approveAdmission, parsed, reviewedBindingRequest, targetPresentation.fieldPresentation]);
+  const approvalWithheld = approveAdmission?.status === 'unavailable';
+  const invocationUnavailable = approveAdmission?.status === 'unavailable' && approveAdmission.reason === 'live_invocation_unavailable';
+  // A request that can never run says why here too, in the card's words (owner ruling C3).
+  const cannotRun = readApprovalCannotRunReason(approveAdmission);
+
+  // Requested by already names an ordinary same-Session target: the fields' one rule keeps only its id in the disclosure.
+  const shownActionFields = React.useMemo(() => actionFields ? demoteAskingSessionTarget(actionFields, sessionId) : actionFields,
+    [actionFields, sessionId]);
   const { session, name: requesterName, status: requesterStatus, homeObservation } = useApprovalSessionReading(approvalServerId, sessionId, approvalScopeResolution, { exactRead: true, homeUnavailable: approvalRouteUnavailable });
   const audienceAddresses = React.useMemo(() => approvalServerId && sessionId
     ? [{ serverId: approvalServerId, sessionId }] : [], [approvalServerId, sessionId]);
@@ -748,7 +751,8 @@ export function useApprovalReview(props: ApprovalReviewInput) {
   const decisionBar = parsed.request.status === 'open' && !answeredWhileOpen && !confidentialApproval && !confidentialInputs
     && (!requesterConfirmation || requesterMayDecide) ? (
     <ApprovalDecisionBar testID="approvals.actions" busy={(checking ? checks.isCancellingChecks : isDeciding) && !homeUnavailable}
-      irreversible={review?.irreversible === true && !confidentialAction && !consent && !checking}
+      destructive={targetPresentation.decision?.destructive === true && !consent && !checking}
+      irreversible={(review?.irreversible === true || targetPresentation.irreversible) && !confidentialAction && !consent && !checking}
       layout={handoffTargetPresentation ? 'stacked' : 'inline'}
       approve={invocationUnavailable || checking ? undefined : consent ? (canAllow ? {
         testID: 'approvals.approve', label: t('workflows.triggers.checks.allow'),
@@ -757,7 +761,7 @@ export function useApprovalReview(props: ApprovalReviewInput) {
       } : undefined) : !confidentialAction ? {
         testID: 'approvals.approve', label: override ? t('workflows.triggers.checks.approveAnyway')
           : handoffTargetPresentation?.decisionLabel ?? projectCommandDecisions?.approve ?? deploymentDecision?.approve ?? proposalLabels?.approve
-          ?? discussionDraftDecisions?.approve ?? review?.approveVerb ?? undefined,
+          ?? discussionDraftDecisions?.approve ?? targetPresentation.decision?.confirmLabel ?? review?.approveVerb ?? undefined,
         disabled: approveDisabled,
         accessibilityHint: approveWithheldReason ?? undefined,
         onPress: () => decide('approve'),

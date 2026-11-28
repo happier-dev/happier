@@ -16,6 +16,11 @@ export type PluginProjectedActionPresentation = Pick<
     'title' | 'description' | 'inputHints'
 >;
 
+export type PluginProjectedActionReviewPresentation = Pick<
+    PluginProjectedActionV2,
+    'title' | 'dangerLevel' | 'inputHints' | 'confirmation' | 'confirmVerb' | 'irreversible'
+>;
+
 export type ResolvedPluginProjectedActionPresentation = Readonly<{
     title: string;
     description: string | null;
@@ -23,13 +28,30 @@ export type ResolvedPluginProjectedActionPresentation = Readonly<{
 }>;
 
 /** Resolves presentation for an exact Action already known to the caller. */
-export function createPluginProjectedActionTitleResolver(projection: PluginUiProjectionModel | null) {
+export function createPluginProjectedActionReviewResolver(projection: PluginUiProjectionModel | null) {
     const resolveAction = createPluginUiProjectedActionResolver(projection?.actionsById);
-    return ({ pluginId, localId }: PluginContributionIdentityV1): PluginLocalizedStringV2 | undefined => {
+    return ({ pluginId, localId }: PluginContributionIdentityV1): PluginProjectedActionReviewPresentation | undefined => {
         const action = resolveAction({ pluginId, localId });
-        if (action) return action.title;
-        const titles = projection?.installedPackagesById[pluginId]?.actionTitlesById;
-        return titles && Object.hasOwn(titles, localId) ? titles[localId] : undefined;
+        if (action) return action;
+        const presentations = projection?.installedPackagesById[pluginId]?.actionPresentationsById;
+        return presentations && Object.hasOwn(presentations, localId) ? presentations[localId] : undefined;
+    };
+}
+
+export function createPluginProjectedActionTitleResolver(projection: PluginUiProjectionModel | null) {
+    const resolveAction = createPluginProjectedActionReviewResolver(projection);
+    return (identity: PluginContributionIdentityV1) => resolveAction(identity)?.title;
+}
+
+/** The immediate and retained Action confirmations share the declaration's decision copy and tone. */
+export function resolvePluginActionConfirmationDecision(
+    action: PluginProjectedActionReviewPresentation,
+    confirmation: Pick<NonNullable<PluginProjectedActionV2['confirmation']>, 'confirmLabel'> | undefined,
+    resolveText: (value: PluginLocalizedStringV2) => string,
+) {
+    return {
+        confirmLabel: resolveText(action.confirmVerb ?? confirmation?.confirmLabel ?? action.title),
+        destructive: action.dangerLevel === 'destructive' || action.irreversible === true,
     };
 }
 

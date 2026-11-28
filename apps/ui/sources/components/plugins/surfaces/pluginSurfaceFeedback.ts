@@ -17,6 +17,7 @@ import type {
 import { PluginUiMountedActionReferenceV1Schema, type PluginUiMountedActionReferenceV1 } from '@happier-dev/protocol/plugins/ui';
 
 import { createAppShellTransientInteractions } from '@/components/appShell/plugins/appShellQuestionInteractions';
+import { resolvePluginActionConfirmationDecision } from '@/sync/domains/plugins/ui/actionPresentation';
 import { createPluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import { readCurrentAppShellPluginUiTranslationRuntime } from '@/components/appShell/plugins/committedPluginUiProjection';
 import { getPreferredLanguage } from '@/text';
@@ -147,16 +148,12 @@ export async function preparePluginActionConfirmation(input: Readonly<{
         ? projectTargetActionApprovalInput(request.input,
             request.action.inputHints?.fields.filter(field => field.widget === 'secret').map(field => field.path) ?? [])
         : null;
-    const confirmation = resolveTargetActionConfirmationPresentation(declaredConfirmation, reviewedInput) ?? {
+    const declaredPresentation = resolveTargetActionConfirmationPresentation(declaredConfirmation, reviewedInput);
+    const confirmation = declaredPresentation ?? {
         title: request.action.title,
         ...(request.action.description ? { body: request.action.description } : {}),
     };
     const title = readConfirmationText(confirmation.title);
-    const confirmLabel = request.action.confirmVerb
-        ? readConfirmationText(request.action.confirmVerb)
-        : 'confirmLabel' in confirmation && confirmation.confirmLabel
-        ? readConfirmationText(confirmation.confirmLabel)
-        : readConfirmationText(request.action.title);
     const body = confirmation.body ? readConfirmationText(confirmation.body) : title;
     const fields = 'inputFields' in confirmation ? confirmation.inputFields ?? [] : [];
     const operands = reviewedInput
@@ -165,9 +162,7 @@ export async function preparePluginActionConfirmation(input: Readonly<{
         : [];
     const message = operands.length ? `${body}\n\n${operands.join('\n')}` : body;
     scoped?.dispose();
-    // The confirm takes the destructive treatment for an Action that destroys something.
-    const destructive = request.action.dangerLevel === 'destructive' || request.action.irreversible === true;
-    return { title, message, confirmLabel, destructive };
+    return { title, message, ...resolvePluginActionConfirmationDecision(request.action, declaredPresentation, readConfirmationText) };
 }
 
 export function createPluginActionCurrentIntentHandler(input: Readonly<{

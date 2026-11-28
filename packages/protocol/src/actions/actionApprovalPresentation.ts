@@ -1758,6 +1758,7 @@ export function projectTargetActionApprovalOperandRows(
   projection: NonNullable<ReturnType<typeof projectTargetActionApprovalInput>>,
   fields: readonly TargetActionApprovalInputField[],
   resolveText: (text: TargetActionApprovalInputField['title']) => string = resolvePluginLocalizedStringV2Text,
+  formatValue?: (path: string, value: unknown) => string | null,
 ): readonly Extract<ApprovalActionFieldRow, { kind: 'value' }>[] {
   return fields.flatMap(field => {
     const segments = field.path.split('.');
@@ -1771,8 +1772,9 @@ export function projectTargetActionApprovalOperandRows(
     const value = values.length === 1 ? values[0] : undefined;
     const label = typeof value === 'string' && field.valueLabels && Object.hasOwn(field.valueLabels, value)
       ? field.valueLabels[value] : undefined;
-    const literal = label === undefined ? formatApprovalFieldValues(values, { preserveStructuredValues: true }) : resolveText(label);
-    const reference = values.length === 1 ? describeApprovalOperandReference(field.path, values[0]) : undefined;
+    const choice = values.length === 1 ? formatValue?.(field.path, value) : null;
+    const literal = label === undefined ? choice ?? formatApprovalFieldValues(values, { preserveStructuredValues: true }) : resolveText(label);
+    const reference = choice == null && values.length === 1 ? describeApprovalOperandReference(field.path, value) : undefined;
     return literal === null ? [] : [{
       kind: 'value', path: `input.${field.path}`, title: resolveText(field.title), value: literal, ...(reference ? { reference } : {}),
     }];
@@ -1802,8 +1804,10 @@ function describeTargetActionApprovalFields(request: TargetActionApprovalFieldsR
     ? Object.entries(redacted).map(([key, value]) => ({ key, value }))
     : [{ key: '', value: redacted }];
   try {
-    const rows = confidentialRows.concat(projectTargetActionApprovalOperandRows(projection, request.inputFields ?? [], context?.resolvePluginConfirmationText));
-    const hasDeclaredFacts = rows.length > confidentialPaths.length;
+    const fallback = request.inputFields?.length ? undefined : context?.targetActionFieldPresentation;
+    const rows = confidentialRows.concat(projectTargetActionApprovalOperandRows(projection,
+      fallback?.fields ?? request.inputFields ?? [], context?.resolvePluginConfirmationText, fallback?.formatValue));
+    const hasDeclaredFacts = fallback !== undefined || rows.length > confidentialPaths.length;
     for (const { key, value } of fields) {
       if (confidentialPaths.includes('') || confidentialPaths.includes(key)) continue;
       // The built-in formatter deliberately trims and joins values. Arbitrary

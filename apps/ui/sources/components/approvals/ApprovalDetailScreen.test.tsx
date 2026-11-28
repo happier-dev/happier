@@ -886,7 +886,11 @@ installApprovalCommonModuleMocks({
 const account = createProviderSettingsAccountHarness();
 const homes = account.home;
 const rpcDestinations: Array<{ method: string; serverUrl: string | undefined }> = [];
+let retainedOptionsRegistry: unknown;
 const rpcRequests = installSessionActionRpcBoundary((request, context) => {
+  if (request.method === `machine-2:${RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE}` && retainedOptionsRegistry) {
+    return retainedOptionsRegistry;
+  }
   rpcDestinations.push({ method: request.method, serverUrl: context.serverUrl });
   if (request.method.endsWith(`:${ACTION_OPERATION_RPC_METHODS_V2.get}`) && retainedSetupOperation) {
     return { kind: 'found', operation: retainedSetupOperation };
@@ -1124,6 +1128,7 @@ beforeEach(async () => {
   beforeArtifactUpdate = null;
   includeExactApprovalMachine = true;
   retainedSetupOperation = null;
+  retainedOptionsRegistry = undefined;
   const { Modal } = await import('@/modal');
   vi.mocked(Modal.alert).mockClear();
 });
@@ -2348,6 +2353,112 @@ describe('ApprovalDetailScreen', () => {
     expect(readRenderedText(screen)).toContain('approvals.status.executing');
     expect(screen.findByTestId('approvals.actions')).toBeNull();
     expect(screen.findByTestId('approvals.approve')).toBeNull();
+  });
+
+  it.each([
+    ['deployment-railway', 'postgresql-provision', { v: 1, expectedRevision: 1, workspaceId: 'workspace-opaque',
+      providerAccountId: 'project-opaque', railwayEnvironmentId: 'environment-opaque' }],
+    ['deploy-railway', 'project-delete', { scope: { name: 'Harbor Billing' } }],
+  ] as const)('reads the retained Railway %s %s approval from first-paint declarations', async (asset, localId, input) => {
+    const { readIndexedBundledDeclarationManifest } = await import('../../../../cli/src/plugins/projection/registry/builtIn/declarationAssetFormat.mjs');
+    const { projectBundledPluginUiDeclaration, projectBundledPluginUiFirstPaintDeclaration } = await import('../../../../cli/scripts/build-owned/bundledPlugins/uiDeclarations.mjs');
+    const { createPluginAccountAvailabilityReader } = await import('@/sync/domains/plugins/availability/reader');
+    const { createAppShellPluginUiProjectionPublication } = await import('@/components/appShell/plugins/appShellPluginUiProjectionPublication');
+    const { AppShellPluginUiProjectionValueProvider } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
+    const { PluginPortableReleaseManifestV1Schema } = await import('@happier-dev/protocol/plugins/availability');
+    const manifest = PluginPortableReleaseManifestV1Schema.parse(readIndexedBundledDeclarationManifest(new URL(
+      `../../../../cli/assets/bundled-plugin-manifests/${asset}.json`, import.meta.url)));
+    const full = await projectBundledPluginUiDeclaration({ packageName: asset, packageVersion: manifest.version, manifest, artifactGraphs: [] });
+    const declaration = manifest.contributes.actions?.find(action => action.id === localId);
+    if (!declaration?.confirmation) throw new Error('Expected a confirmable Railway Action');
+    const cold = await projectBundledPluginUiFirstPaintDeclaration(full);
+    const loadDeclaration = vi.fn(async () => full);
+    if ('workspaceId' in input) {
+      const machine = machineFixtures['machine-2'];
+      machineFixtures['machine-2'] = { ...machine, activeAt: Date.now(),
+        access: createPlainMachineRowFixture({ id: machine.id, accountId: 'account-1' }).access };
+      const { DaemonContributionRegistryProjectionDescribeResponseSchema } = await import('@happier-dev/protocol/daemon/contributionRegistryProjection');
+      const { buildQualifiedPluginContributionKey } = await import('@happier-dev/protocol/plugins/contribution-identity');
+      const key = (localId: string) => buildQualifiedPluginContributionKey({ pluginId: manifest.id, localId });
+      retainedOptionsRegistry = DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
+        protocolVersion: 1, projectionDigest: 'd'.repeat(64),
+        projection: { v: 2, generation: 1, installedPackagesById: {}, agentsById: {}, actionsById: {}, settingsById: {}, diagnostics: [],
+          familiesById: { inputTypes: { family: 'inputTypes', entriesById: Object.fromEntries(
+            (manifest.contributes.inputTypes ?? []).map(definition => [key(definition.id), {
+              id: key(definition.id), pluginId: manifest.id, pluginVersion: manifest.version,
+              occurrenceId: `${manifest.id}:1`, definition,
+            }])) } },
+          resourcesById: Object.fromEntries((manifest.contributes.resources ?? []).filter(resource => 'scope' in resource)
+            .map(resource => [key(resource.id), { id: resource.id, pluginId: manifest.id, resourceKind: resource.kind,
+              scope: 'global', execution: resource.execution, accountRuntimeDeclared: true }])),
+        },
+      });
+    }
+    await prepareApprovalFixture();
+    const scope = { serverId: resolveServerProfileScopeIdForIdentifier(account.serverId)!, accountId: 'account-1' };
+    const reader = createPluginAccountAvailabilityReader({ scope, snapshot: {
+      availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [],
+    }, hostBundledUi: [{ ...cold, loadDeclaration }] });
+    const shell = createAppShellPluginUiProjectionPublication();
+    const artifact = createTargetActionApprovalArtifact();
+    const request = TargetActionApprovalRequestV1Schema.parse({
+      ...JSON.parse(artifact.body), qualifiedActionId: `${manifest.id}/actions/${localId}`, input,
+      summary: declaration.confirmation.title,
+      ...(declaration.confirmation.inputFields ? { inputFields: declaration.confirmation.inputFields } : {}),
+    });
+    currentArtifact = { ...artifact, header: buildTargetActionApprovalArtifactHeaderV1(request), body: JSON.stringify(request) };
+    if ('workspaceId' in input) {
+      const { getActionSpec } = await import('@happier-dev/protocol/actions/actionSpecs');
+      await answerExternalActionAccountForHome(homes, account.serverId, {
+        actionId: 'action.options.resolve', machineId: 'machine-2', installationId: 'options-installation', tokenEpoch: 0,
+        execute: (raw) => {
+          const query = getActionSpec('action.options.resolve').inputSchema.parse(raw);
+          const choices = {
+            workspaceId: { value: input.workspaceId, label: 'Harbor Workspace' },
+            providerAccountId: { value: input.providerAccountId, label: 'Harbor Billing' },
+            railwayEnvironmentId: { value: input.railwayEnvironmentId, label: 'Production' },
+          };
+          const fieldPath = Object.keys(choices).find(key => key === query.fieldPath) as keyof typeof choices | undefined;
+          return { actionId: request.qualifiedActionId, fieldPath: query.fieldPath ?? 'scope',
+            optionsSourceId: query.optionsSourceId ?? null, options: fieldPath ? [choices[fieldPath]] : [] };
+        },
+      });
+    }
+    try {
+      shell.publishSources({ accountLifetime: null, availabilityInputs: reader.readUiProjectionInputs(),
+        hostBundledUiEnabled: true, activeServerId: scope.serverId, serverProfilesGeneration: 0,
+        activeInventoryLoaded: true, onlineMachineIds: [], selectableMachineIds: [] });
+      const projection = shell.getSnapshot().pluginUiProjection;
+      expect(projection?.installedPackagesById[manifest.id]).toBeDefined();
+      // Model a receiving shell that has published declarations before its Action catalog.
+      const coldProjection = projection && { ...projection, actionsById: {} };
+      const screen = await renderScreen(<AppShellPluginUiProjectionValueProvider value={{
+        pluginUiProjection: coldProjection, pluginBrowserProjection: null, phase: 'establishing',
+        interactionEnabled: false, machineId: null, serverId: scope.serverId, platform: 'web',
+        accountLifetime: null, clientExecutableActivation: { status: 'establishing' },
+        reloadClientExecutables: () => {}, reloadConnectedAccountProjection: () => {},
+      }}><approvalDetailScreenModule.ApprovalDetailScreen artifactId={artifact.id} /></AppShellPluginUiProjectionValueProvider>);
+      await vi.waitFor(() => expect(screen.findByTestId('approvals.approve')).not.toBeNull());
+      if ('workspaceId' in input) {
+        expect(readRenderedText(screen)).not.toContain(input.providerAccountId);
+        await vi.waitFor(() => {
+          expect(readRenderedText(screen)).toContain('Harbor Billing');
+          expect(readRenderedText(screen)).toContain('Production');
+        });
+        expect(readRenderedText(screen)).not.toContain(input.railwayEnvironmentId);
+        expect(readRenderedText(screen)).not.toContain('Expected revision');
+        await screen.pressByTestIdAsync('approvals.technical-details.header');
+        expect(readRenderedText(screen)).toContain(input.providerAccountId);
+        expect(readRenderedText(screen)).toContain(input.railwayEnvironmentId);
+        expect(readRenderedText(screen)).toContain('Expected revision');
+      } else {
+        await vi.waitFor(() => expect(decisionButton(screen, 'approvals.approve')?.props.title).toBe(declaration.title));
+        expect(decisionButton(screen, 'approvals.approve')?.props.display).toBe('destructive');
+      }
+      expect(loadDeclaration).not.toHaveBeenCalled();
+    } finally {
+      shell.dispose();
+    }
   });
 
   it('renders an executing target Action approval without decision controls', async () => {

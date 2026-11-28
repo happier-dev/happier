@@ -19,6 +19,8 @@ type ApprovalDecisionAction = Omit<HappierDecisionAction, 'label'> & Readonly<{ 
 export type ApprovalDecisionBarProps = Omit<HappierDecisionBarProps, 'Button' | 'approve' | 'reject' | 'dismiss'> & Readonly<{
   /** The approved Action declares it cannot be undone: the approval reads as destructive and says so once. */
   irreversible?: boolean;
+  /** Apply the destructive button tone independently of the consequence note. */
+  destructive?: boolean;
   /** Where the surface has no room under the buttons (an Inbox row), it carries the sentence itself. */
   hideIrreversibleNote?: boolean;
   /** A bar inside a pressable row keeps its buttons' hit areas to the row's gaps; the row owns the rest. */
@@ -64,10 +66,10 @@ function QuietIrreversibleApprovalDecisionButton(props: HappierDecisionButtonPro
 }
 
 /** Localized host defaults; request-specific consequence labels remain with their existing owners. */
-export function ApprovalDecisionBar({ approve, reject, dismiss, irreversible, hideIrreversibleNote, hitReach, quiet, ...props }: ApprovalDecisionBarProps) {
+export function ApprovalDecisionBar({ approve, reject, dismiss, irreversible, destructive, hideIrreversibleNote, hitReach, quiet, ...props }: ApprovalDecisionBarProps) {
   const decisionBar = <HappierDecisionBar {...props} Button={quiet
-      ? (irreversible ? QuietIrreversibleApprovalDecisionButton : QuietApprovalDecisionButton)
-      : (irreversible ? IrreversibleApprovalDecisionButton : ApprovalDecisionButton)}
+      ? (destructive || irreversible ? QuietIrreversibleApprovalDecisionButton : QuietApprovalDecisionButton)
+      : (destructive || irreversible ? IrreversibleApprovalDecisionButton : ApprovalDecisionButton)}
     approve={approve ? { ...approve, label: approve.label ?? t('approvals.approve') } : undefined}
     reject={reject ? { ...reject, label: reject.label ?? t('approvals.reject') } : undefined}
     dismiss={dismiss ? { ...dismiss, label: dismiss.label ?? t('approvals.dismiss') } : undefined} />;

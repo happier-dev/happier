@@ -1,4 +1,5 @@
 import type { PluginDeclaredUiEntriesV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import type { PluginActionContributionV2 } from '@happier-dev/protocol/plugins/actions/v2';
 import type { PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plugins/availability';
 import type { PluginCollectionContractRefV1 } from '@happier-dev/protocol/plugins/data/collectionContractRefV1';
 import type { PluginUiArtifactsManifestEntryV2 } from '@happier-dev/protocol/plugins/ui';
@@ -38,5 +39,7 @@ export declare function projectBundledPluginUiFirstPaintDeclaration(
 ): Promise<Omit<BundledPluginUiDeclaration, 'normalizedManifest'> & {
   presentationManifest: PluginPortableReleaseManifestV1;
   healthCheckKindTitles?: readonly Readonly<{ id: string; title: string }>[];
+  actionPresentations?: readonly Pick<PluginActionContributionV2,
+    'id' | 'title' | 'dangerLevel' | 'inputHints' | 'confirmation' | 'confirmVerb' | 'irreversible'>[];
   targetedPluginIds: string[];
 }>;
