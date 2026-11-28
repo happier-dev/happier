@@ -185,19 +185,36 @@ async function readFirstLine(filePath: string): Promise<string | null> {
     }
 }
 
-export async function readCodexSessionMetaFromRollout(filePath: string): Promise<CodexSessionMetaPayload | null> {
+type CodexRolloutHead =
+    | Readonly<{ kind: 'session-meta'; metadata: CodexSessionMetaPayload }>
+    | Readonly<{ kind: 'legacy-prefix' }>;
+
+export async function readCodexRolloutHead(filePath: string): Promise<CodexRolloutHead | null> {
     const line = await readFirstLine(filePath);
     if (!line) return null;
     try {
-        const parsed = JSON.parse(line) as any;
-        if (!parsed || typeof parsed !== 'object') return null;
-        if (parsed.type !== 'session_meta') return null;
-        const payload = parsed.payload;
-        if (!payload || typeof payload !== 'object') return null;
-        return payload as CodexSessionMetaPayload;
+        const parsed: unknown = JSON.parse(line);
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+        const record = parsed as Record<string, unknown>;
+        const payload = record.payload;
+        if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
+        if (record.type === 'session_meta') return { kind: 'session-meta', metadata: payload as CodexSessionMetaPayload };
+        // Legacy rollouts can start with an event before the metadata. Paginated rollouts begin
+        // with SessionMeta at ordinal zero and record an ordinal on following lines.
+        if (record.ordinal === undefined && typeof record.timestamp === 'string'
+            && (record.type === 'response_item' || record.type === 'event_msg'
+                || record.type === 'turn_context' || record.type === 'compacted')) {
+            return { kind: 'legacy-prefix' };
+        }
+        return null;
     } catch {
         return null;
     }
+}
+
+export async function readCodexSessionMetaFromRollout(filePath: string): Promise<CodexSessionMetaPayload | null> {
+    const head = await readCodexRolloutHead(filePath);
+    return head?.kind === 'session-meta' ? head.metadata : null;
 }
 
 export function scoreCodexRolloutCandidate(opts: {
