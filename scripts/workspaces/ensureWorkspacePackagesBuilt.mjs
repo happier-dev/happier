@@ -1365,7 +1365,7 @@ function sourcePackageOutputStorePath(env, { inputFingerprint, builtDependencies
 
 const WORKSPACE_PACKAGE_OUTPUT_RETENTION_MS = 48 * 60 * 60 * 1000;
 
-async function reclaimRetiredPackageOutput(publishing, name) {
+export async function reclaimRetiredPackageOutput(publishing, name) {
   if (!/^[a-f0-9]{64}$/.test(name) || name === basename(publishing)) return;
   const entry = join(dirname(publishing), name);
   const cutoff = Date.now() - WORKSPACE_PACKAGE_OUTPUT_RETENTION_MS;
