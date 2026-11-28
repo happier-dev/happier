@@ -36,9 +36,9 @@ describe('listPutUnderCandidates', () => {
         const records = { self: session('self'), [lead.id]: lead, [peer.id]: peer };
         try {
             const receipt = { ...lead, updatedAt: 43 };
-            expect(resolveSessionRuntimePublication(lead, receipt, receipt)).toBe(lead);
+            expect(resolveSessionRuntimePublication(lead, receipt, receipt, receipt.updatedAt)).toBe(lead);
             const foreignReceipt = { ...foreignPeer, updatedAt: 1000 };
-            expect(resolveSessionRuntimePublication(foreignPeer, foreignReceipt, foreignReceipt)).toBe(foreignPeer);
+            expect(resolveSessionRuntimePublication(foreignPeer, foreignReceipt, foreignReceipt, foreignReceipt.updatedAt)).toBe(foreignPeer);
 
             expect(listPutUnderCandidates(records, records.self, facts(records, 'self')).map(item => item.id))
                 .toEqual([lead.id, peer.id]);
