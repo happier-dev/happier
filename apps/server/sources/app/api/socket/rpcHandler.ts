@@ -113,16 +113,18 @@ function normalizeRpcMethodName(value: unknown): string | null {
 async function waitForRpcTargetAvailability<T>(
     method: string,
     lookup: () => T | null | Promise<T | null>,
+    canForwardImmediately: (target: T) => boolean = () => true,
 ): Promise<T | null> {
     let target = await lookup();
-    if (target !== null) return target;
+    if (target !== null && canForwardImmediately(target)) return target;
 
     const deadline = Date.now() + resolveRpcMethodAvailabilityGraceMs(method);
     const pollMs = resolveRpcMethodAvailabilityPollMs();
     let remainingMs = deadline - Date.now();
-    while (target === null && remainingMs > 0) {
+    while (remainingMs > 0) {
         await new Promise<void>((resolve) => setTimeout(resolve, Math.min(pollMs, remainingMs)));
         target = await lookup();
+        if (target !== null && canForwardImmediately(target)) return target;
         remainingMs = deadline - Date.now();
     }
     return target;
@@ -537,24 +539,30 @@ export function rpcHandler(
                     resolveSocketRpcProviderStartingMethod(method) || explicitMachineStopRequest,
                 );
                 let unreachableRemoteId: string | null = null;
+                let initialRedisSocketId: string | null | undefined;
                 const target = redisRegistry.enabled
                     ? await waitForRpcTargetAvailability(method, async () => {
                         const id = await redisRegistry.lookupSocketId(targetUserId, method);
+                        if (initialRedisSocketId === undefined) initialRedisSocketId = id;
                         if (!id) {
                             unreachableRemoteId = null;
                             return null;
                         }
                         const local = lookupConnectedLocalTarget();
-                        if (local?.id === id) return { id, local, metadata: local };
-                        if (!needsRemoteMachine || id === socket.id) return { id, local: null, metadata: null };
+                        if (local?.id === id) return { id, local, metadata: local, ready: true };
+                        if (!needsRemoteMachine || id === socket.id) {
+                            // For ordinary calls, preserve the existing Redis-only grace when
+                            // the initial remote ID is unchanged. No cluster census is needed.
+                            return { id, local: null, metadata: null, ready: id !== initialRedisSocketId || id === socket.id };
+                        }
 
                         // Reuse the reconnect window without running a cluster lookup on every poll.
                         if (id === unreachableRemoteId) return null;
                         const candidates = await ctx.io.in(id).fetchSockets();
                         const remote = candidates.find(candidate => candidate.id === id);
                         unreachableRemoteId = remote ? null : id;
-                        return remote ? { id, local: null, metadata: remote } : null;
-                    })
+                        return remote ? { id, local: null, metadata: remote, ready: true } : null;
+                    }, target => target.ready)
                     : await waitForRpcTargetAvailability(method, () => {
                         const initial = targetResolution.targetSocket;
                         const local = initial?.connected ? initial : lookupConnectedLocalTarget();

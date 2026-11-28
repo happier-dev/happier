@@ -145,6 +145,33 @@ describe("Redis-backed RPC registration lifecycle", () => {
         }
     });
 
+    it("waits for a replacement for an ordinary scoped method before forwarding", async () => {
+        const method = "scope:example";
+        const previous = attach(createFakeSocket({ id: "previous" }), {} as Server, "previous-node");
+        const replacement = attach(createFakeSocket({ id: "replacement" }), {} as Server, "replacement-node");
+        const to = vi.fn((id: string) => ({
+            emitWithAck: async () => id === replacement.id ? ["replacement"] : [],
+        }));
+        const caller = attach(createFakeSocket({ id: "caller" }), {
+            timeout: () => ({ to }),
+        } as unknown as Server, "caller-node");
+
+        try {
+            await triggerSocketHandler(previous, SOCKET_RPC_EVENTS.REGISTER, { method });
+            const lookup = vi.spyOn(getRedisClient("fail-on-disconnect"), "hmget");
+            const response = call(caller, method);
+            await vi.waitFor(() => expect(lookup).toHaveBeenCalledWith(routeKey(method), "socketId"));
+            const firstRead = lookup.mock.results[0].value;
+            expect(await firstRead).toEqual([previous.id]);
+            await triggerSocketHandler(replacement, SOCKET_RPC_EVENTS.REGISTER, { method });
+            expect(await response).toEqual({ ok: true, result: "replacement" });
+            expect(to.mock.calls).toEqual([[replacement.id]]);
+        } finally {
+            await triggerSocketHandler(previous, "disconnect");
+            await triggerSocketHandler(replacement, "disconnect");
+        }
+    });
+
     it("does not replay an unacknowledged registration over a newer owner", async () => {
         const method = "example";
         const target = attach(createFakeSocket({ id: "first" }), {} as Server, "first-node");
