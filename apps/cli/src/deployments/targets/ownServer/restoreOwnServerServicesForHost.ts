@@ -37,6 +37,7 @@ export async function restoreOwnServerServicesForHost(input: Readonly<{
     isCurrent(): boolean;
     resolveRuntime(signal: AbortSignal): Promise<MachineTerminalAccountReadRuntime | null>;
     acquireServiceExportForward?: OwnServerDeploymentRuntimeHostInput['acquireServiceExportForward'];
+    readTelemetryCollectorEndpoint?: RestoreOwnServerDeploymentServicesInput['readTelemetryCollectorEndpoint'];
     readHealthAlertSource?: DeploymentServiceHealthNoticeInput['readHealthAlertSource'];
     currentDomainEdgeObservation?: NonNullable<DeploymentServiceHealthNoticeInput['nativeWorkload']>['edge'];
 }>): Promise<readonly EnvironmentServiceRecoveryRow[]> {

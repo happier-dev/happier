@@ -30,6 +30,7 @@ export interface DeploymentTelemetryHostOptions {
     createPublisherHeader?: CreatePluginInstallationPublisherHeader;
     environment?: NodeJS.ProcessEnv;
     readInstalledCollectorCaddy?: (signal: AbortSignal) => Promise<InstalledCollectorCaddy | null>;
+    restoreLocalDeploymentRelays?(): Promise<void>;
 }
 
 /** One runtime endpoint publication, owned by the existing background invocation. */
@@ -96,7 +97,11 @@ export function createDeploymentTelemetryHost(options: DeploymentTelemetryHostOp
                     const receiver = new AbortController();
                     readEndpoint = read;
                     domains.publish(AbortSignal.any([signal, receiver.signal]));
-                    void domains.restore().catch(error => { if (!receiver.signal.aborted && !signal.aborted) options.onRefreshError(error); });
+                    const reportRestoreFailure = (error: unknown) => {
+                        if (!receiver.signal.aborted && !signal.aborted) options.onRefreshError(error);
+                    };
+                    void domains.restore().catch(reportRestoreFailure);
+                    void options.restoreLocalDeploymentRelays?.().catch(reportRestoreFailure);
                     return retain(() => {
                         receiver.abort();
                         if (readEndpoint === read) readEndpoint = null;

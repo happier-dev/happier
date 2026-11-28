@@ -15,6 +15,8 @@ import { observeRetainedDeploymentSourceForHost } from './exactCommitRelease';
 import type { NativeDockerEngineFacts } from '@happier-dev/cli-common/machineSetup';
 import type { ProjectNativeDockerPort } from '@/plugins/runtime/invocation/services/managedProcessSupervisor';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createOwnServerTelemetryRelayForward, ownServerTelemetryRelayKey } from './localTelemetryRelay';
+import { acquirePrivateServiceContainerBridge, resolvePrivateServiceContainerRelayHost, type PrivateServiceContainerBridge } from './privateServiceContainerBridge';
 import { retainServiceReferenceForwardCleanup } from './serviceReferenceForwardCustody';
 
 export type RestoreOwnServerDeploymentServicesInput = Readonly<{
@@ -26,13 +28,14 @@ export type RestoreOwnServerDeploymentServicesInput = Readonly<{
     signal: AbortSignal;
     isCurrent(): boolean;
     readReceipt?(deploymentId: string): Promise<DeploymentReceiptDetailV1>;
+    readTelemetryCollectorEndpoint?(): string | null;
     observeServices?(input: Readonly<{ homeServerIdentityId: string;
         handles: readonly EnvironmentProjectManagedServiceHandle[] }>): void;
     restoreServiceReferences?(input: Readonly<{ docker: ProjectNativeDockerPort; engine: NativeDockerEngineFacts;
         onFailure(failure: ActionExecuteFailure | null): void }>): Promise<Readonly<{ close(): Promise<void> }> | undefined>;
 }>;
 
-/** Restore observations only. The receipt supplies definition/source custody;
+/** Restore observations and local dependencies for surviving workloads. The receipt supplies definition/source custody;
  * the same cold native read as logs supplies surviving container identities. */
 export async function restoreOwnServerDeploymentServices(input: RestoreOwnServerDeploymentServicesInput): Promise<readonly EnvironmentServiceRecoveryRow[]> {
     const { receipt } = input;
@@ -65,11 +68,15 @@ export async function restoreOwnServerDeploymentServices(input: RestoreOwnServer
         isCurrent: input.isCurrent });
     let launch: Awaited<ReturnType<typeof authorizePluginExecLaunchForHost>> | undefined;
     let serviceReferences: Readonly<{ close(): Promise<void> }> | undefined;
+    const telemetryRelays = new Map<string, PrivateServiceContainerBridge>();
     let forwardCleanup: ReturnType<typeof retainServiceReferenceForwardCleanup> | undefined;
     let closingReferences: Promise<void> | undefined;
     const closeReferences = (): Promise<void> => closingReferences ??= (async () => {
-        try { await serviceReferences?.close(); }
-        finally { forwardCleanup?.forget(); }
+        try {
+            const results = await Promise.allSettled([serviceReferences?.close(), ...[...telemetryRelays.values()].map(relay => relay.close())]);
+            const failure = results.find(result => result.status === 'rejected');
+            if (failure) throw failure.reason;
+        } finally { forwardCleanup?.forget(); }
     })();
     const consumers: Awaited<ReturnType<typeof produceEnvironmentProjectServices>>[number][] = [];
     const failures: EnvironmentServiceRecoveryRow[] = [];
@@ -104,6 +111,17 @@ export async function restoreOwnServerDeploymentServices(input: RestoreOwnServer
             args: [...tuple.args, ...args], cwd: tuple.cwd!, env: tuple.env, signal: input.signal });
         const engine = await readNativeComposeEngine({ io: runtime.nativeIo, command: tuple.command, prefix: tuple.args,
             cwd: tuple.cwd!, env: tuple.env, signal: input.signal });
+        const forward = input.readTelemetryCollectorEndpoint ? createOwnServerTelemetryRelayForward(input.readTelemetryCollectorEndpoint) : undefined;
+        const uid = process.getuid?.();
+        const docker: ProjectNativeDockerPort = { engineId: engine.id,
+            removeOwnedContainer: retainNativeDockerContainerRemoval({ command: tuple.command, prefix: tuple.args,
+                cwd: tuple.cwd!, env: tuple.env }),
+            async run(args, signal) {
+                const result = await runtime.nativeIo.run({ command: tuple.command, args: [...tuple.args, ...args],
+                    cwd: tuple.cwd!, env: tuple.env, signal: signal ?? input.signal });
+                return { ...result, exitCode: result.exitCode ?? -1 };
+            },
+        };
         const generations = [];
         for (const projectName of new Set([projection.physicalProjectName,
             resolveNativeComposeCandidateProjectName(projection.physicalProjectName, receipt.deployment.id)])) {
@@ -111,7 +129,7 @@ export async function restoreOwnServerDeploymentServices(input: RestoreOwnServer
             // earlier release. Native source identity comes from its working
             // directory; custody below resolves that exact source receipt.
             const targets = await readColdNativeComposeTargetsForHost({ ...identity, projectName,
-                composeServices: projection.services, run });
+                composeServices: projection.services, run, observeTelemetryRelay: forward !== undefined });
             if (!targets) throw createActionExecuteFailureError({ ok: false, errorCode: 'service_unavailable', error: 'Native service inventory is unavailable' });
             if (targets.some(Boolean)) generations.push({ projectName, targets });
         }
@@ -122,10 +140,7 @@ export async function restoreOwnServerDeploymentServices(input: RestoreOwnServer
         if (!generation) return [];
         serviceReferences = await input.restoreServiceReferences?.({ engine,
             onFailure(failure) { referenceFailure = failure ?? undefined; for (const consumer of consumers) consumer.reportDependencyFailure?.(failure); },
-            docker: { engineId: engine.id,
-                removeOwnedContainer: retainNativeDockerContainerRemoval({ command: tuple.command, prefix: tuple.args,
-                    cwd: tuple.cwd!, env: tuple.env }),
-                async run(args) { const result = await run(args); return { ...result, exitCode: result.exitCode ?? -1 }; } } });
+            docker });
         const { projectName, targets } = generation;
         const keys = [{ kind: 'composeProject', dockerEndpoint: engine.id, projectName }] as const;
         // Compose may retain an unchanged service from an earlier source while
@@ -143,6 +158,19 @@ export async function restoreOwnServerDeploymentServices(input: RestoreOwnServer
             try {
                 const source = await custody(sourcePath);
                 if (!source) throw createActionExecuteFailureError({ ok: false, errorCode: 'deployment_source_unavailable', error: 'Retained source is unavailable' });
+                if (forward && uid !== undefined) {
+                    for (const service of services) {
+                        const target = targets[projection.services.indexOf(service)]!;
+                        const key = ownServerTelemetryRelayKey(identity.environmentInstanceId, target.deploymentId);
+                        for (const { host, networkId } of target.telemetryRelayCandidates ?? []) {
+                            if (telemetryRelays.has(host) || host !== resolvePrivateServiceContainerRelayHost({
+                                uid, engineId: engine.id, networkId, key,
+                            })) continue;
+                            telemetryRelays.set(host, await acquirePrivateServiceContainerBridge({ docker, engine, networkId,
+                                forward, route: { key }, signal: input.signal }));
+                        }
+                    }
+                }
                 const releaseSource = observeRetainedDeploymentSourceForHost({ environmentId: identity.environmentId,
                     environmentInstanceId: identity.environmentInstanceId, deploymentId: receipt.deployment.id,
                     machineId: input.machineId, installationId: input.installationId, rootPath: source.rootPath,
@@ -179,7 +207,7 @@ export async function restoreOwnServerDeploymentServices(input: RestoreOwnServer
                 if (referenceFailure) for (const handle of handles) handle.reportDependencyFailure?.(referenceFailure);
             } catch (error) { unavailable(services, error); }
         }
-        if (serviceReferences && consumers.length) {
+        if ((serviceReferences || telemetryRelays.size) && consumers.length) {
             forwardCleanup = retainServiceReferenceForwardCleanup(consumers.map(consumer => consumer.retirementSignal), keys, closeReferences);
         }
     } catch (error) {

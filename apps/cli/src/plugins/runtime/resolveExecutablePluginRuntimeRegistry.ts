@@ -3702,6 +3702,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         ? createDeploymentTelemetryHost({
             serverBaseUrl: collectorServerHttpBaseUrl, token: collectorCredentials.token, machineId: telemetryMachineId,
             readInstalledCollectorCaddy,
+            ...(params?.ensureEnvironmentServices ? { restoreLocalDeploymentRelays: () => params.ensureEnvironmentServices!() } : {}),
             ...(collectorConnection && { databaseBindings: {
                 async read(environmentId, signal) {
                     const reader = await readDeploymentTargetRoleAdmissionHost({ signal });

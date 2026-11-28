@@ -3483,8 +3483,11 @@ slots receive the managed OTLP HTTP/protobuf endpoint, authorization header,
 service name and resource attributes. The managed `OTEL_METRICS_EXPORTER` value is
 `otlp` only when Metrics is selected,
 and `none` otherwise. A same-Machine container reaches the
-loopback receiver through `privateServiceContainerBridge`. Sampling variables
-remain absent unless a person selects a ratio; explicit sampling uses the
+loopback receiver through `privateServiceContainerBridge`. When the receiver
+publishes after a daemon restart, OwnServer recovery restores the retained
+exporter's original relay alias on its Compose network. The deployment can
+send new telemetry without recreating its containers.
+Sampling variables remain absent unless a person selects a ratio; explicit sampling uses the
 standard `parentbased_traceidratio` sampler and argument through ordinary
 Environment bindings. **Trace sampling** in the Environment's Telemetry settings
 sets those variables for the next deploy. Native Compose services receive them

@@ -58,6 +58,14 @@ const networkInspection = z.array(z.object({
     IPAM: z.object({ Config: z.array(z.object({ Subnet: z.string(), Gateway: z.string().optional() })) }),
 })).length(1);
 
+export function resolvePrivateServiceContainerRelayHost(input: Readonly<{
+    uid: number; engineId: string; networkId: string; key: string;
+}>): string {
+    return relayPrefix + createHash('sha256').update(JSON.stringify([
+        input.uid, input.engineId, input.networkId, input.key,
+    ])).digest('hex').slice(0, 32);
+}
+
 export function readPrivateServiceContainerRelayHost(address: Readonly<{ host: string; port: number }>): string | null {
     return address.port === relayPort && relayName.test(address.host) ? address.host : null;
 }
@@ -123,8 +131,8 @@ export async function acquirePrivateServiceContainerBridge(input: Readonly<{
 
     const uid = process.getuid!();
     const gid = process.getgid!();
-    const host = 'restoredHost' in input.route ? input.route.restoredHost : relayPrefix +
-        createHash('sha256').update(JSON.stringify([uid, input.engine.id, network.Id, input.route.key])).digest('hex').slice(0, 32);
+    const host = 'restoredHost' in input.route ? input.route.restoredHost
+        : resolvePrivateServiceContainerRelayHost({ uid, engineId: input.engine.id, networkId: network.Id, key: input.route.key });
     if (!relayName.test(host)) throw new PrivateServiceContainerBridgeUnavailableError('relay_container_failed', 'relay');
 
     // List by both name and ownership label. Docker refuses a conflicting name

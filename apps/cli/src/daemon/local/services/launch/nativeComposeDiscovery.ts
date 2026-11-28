@@ -3,10 +3,12 @@ import { projectNativeComposeReview } from '@/workspaces/projectSetup/nativeComp
 import { isNativeDefinitionRecord as record } from '@/workspaces/projectSetup/nativePackageScripts';
 import { readNativeComposePorts } from './nativeComposePorts';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readPrivateServiceContainerRelayHost } from '@/deployments/targets/ownServer/privateServiceContainerBridge';
 import { logger } from '@/ui/logger';
 
 type ColdTarget = NonNullable<ReturnType<typeof readNativeComposeLogTargetForHost>> & Readonly<{
     configuration: NativeComposeActivatedServiceFacts['configuration'] | undefined;
+    telemetryRelayCandidates?: readonly Readonly<{ host: string; networkId: string }>[];
 }>;
 
 /** Native inspection supplies effective ports even when no activation render
@@ -36,6 +38,23 @@ function readColdConfiguration(rows: readonly unknown[], target: NonNullable<Ret
     return configuration ? { ...configuration, ports } : undefined;
 }
 
+/** Project only the exact relay origin and network IDs, discarding authored
+ * URLs, headers and other environment values at the Docker boundary. */
+function readTelemetryRelayCandidates(rows: readonly unknown[], ids: readonly string[]) {
+    const slot = 'OTEL_EXPORTER_OTLP_ENDPOINT=';
+    return rows.flatMap(row => {
+        if (!record(row) || typeof row.Id !== 'string' || !ids.includes(row.Id)
+            || !record(row.Config) || !Array.isArray(row.Config.Env)
+            || !record(row.NetworkSettings) || !record(row.NetworkSettings.Networks)) return [];
+        const value = row.Config.Env.find((entry: unknown): entry is string => typeof entry === 'string' && entry.startsWith(slot));
+        const endpoint = value ? URL.parse(value.slice(slot.length)) : null;
+        if (!endpoint || endpoint.href !== `http://${endpoint.hostname}:${endpoint.port}/`) return [];
+        const host = readPrivateServiceContainerRelayHost({ host: endpoint.hostname, port: Number(endpoint.port) });
+        return host ? Object.values(row.NetworkSettings.Networks).flatMap(network =>
+            record(network) && typeof network.NetworkID === 'string' && network.NetworkID ? [{ host, networkId: network.NetworkID }] : []) : [];
+    });
+}
+
 /** Read-only discovery shared by cold logs and retained deployment observations.
  * Labels route native facts; the caller supplies retained definition/source custody. */
 export async function readColdNativeComposeTargetsForHost(input: Readonly<{
@@ -45,6 +64,7 @@ export async function readColdNativeComposeTargetsForHost(input: Readonly<{
     projectName: string;
     composeServices: readonly string[];
     deploymentId?: string;
+    observeTelemetryRelay?: boolean;
     run(args: readonly string[]): Promise<Readonly<{ exitCode: number | null; stdout: string }>>;
 }>): Promise<readonly (ColdTarget | null)[] | null> {
     const listed = await input.run(['ps', '--all', '--no-trunc', '--filter', `label=com.docker.compose.project=${input.projectName}`,
@@ -64,7 +84,9 @@ export async function readColdNativeComposeTargetsForHost(input: Readonly<{
     const inspectedRows: readonly unknown[] = rows;
     const targets = input.composeServices.map(composeService => {
         const target = readNativeComposeLogTargetForHost({ ...input, stdout: inspected.stdout, composeService });
-        return target ? { ...target, configuration: readColdConfiguration(inspectedRows, target, composeService) } : null;
+        return target ? { ...target, configuration: readColdConfiguration(inspectedRows, target, composeService),
+            ...(input.observeTelemetryRelay ? { telemetryRelayCandidates: readTelemetryRelayCandidates(inspectedRows, target.containerIds) } : {}),
+        } : null;
     });
     if (targets.some(target => target?.containerIds.some(id => !ids.includes(id)))) return null;
     return targets;

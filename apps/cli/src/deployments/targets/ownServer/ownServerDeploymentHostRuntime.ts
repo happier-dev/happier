@@ -44,6 +44,7 @@ import { createDeploymentImageArchiveCopyForHost } from './imageArchiveCopy';
 import { createOwnServerNativeRuntime } from './nativeRuntime';
 import { acquirePrivateServiceReferenceForwardForHost, resolvePrivateServiceReferenceMaterialForHost } from './privateServiceReference';
 import { createServiceReferenceForwardCustody, releaseRemovedServiceReferenceForwards } from './serviceReferenceForwardCustody';
+import { createOwnServerTelemetryRelayForward, ownServerTelemetryRelayKey } from './localTelemetryRelay';
 import { acquirePrivateServiceContainerBridge, PrivateServiceContainerBridgeUnavailableError } from './privateServiceContainerBridge';
 import { resolvePrivateServiceLocalContainerAddress } from './privateServiceLocalNetwork';
 import type { ServiceExportMachineForward } from '@/daemon/peer/iroh/serviceExportMachineForward';
@@ -362,13 +363,10 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                                     reason: 'receiver_unavailable', nextActions: ['enable_telemetry_role'],
                                 });
                                 if (!telemetryForward) {
-                                    const initial = new URL(endpoint);
-                                    const forward: ServiceExportMachineForward = { host: initial.hostname,
-                                        // A role restart may replace its ephemeral listener. The
-                                        // existing bridge reads this address per TCP connection.
-                                        get port() { const current = readEndpoint?.(); return Number(current ? new URL(current).port : initial.port); },
-                                        observedPath: 'direct', close: () => releaseBridge(forward) };
-                                    referenceBridges.set(forward, { routeKey: JSON.stringify([environmentInstanceId, materializationId, 'telemetry']) });
+                                    const target = createOwnServerTelemetryRelayForward(() => readEndpoint?.());
+                                    const forward: ServiceExportMachineForward = { get host() { return target.host; },
+                                        get port() { return target.port; }, observedPath: 'direct', close: () => releaseBridge(forward) };
+                                    referenceBridges.set(forward, { routeKey: ownServerTelemetryRelayKey(environmentInstanceId, materializationId) });
                                     telemetryForward = referenceForwards.adopt(forward);
                                 }
                                 const address = await materializeBridge(telemetryForward);

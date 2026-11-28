@@ -45,7 +45,7 @@ export function createMachineServicesRuntime(input: Readonly<{
     readMetadata(): MachineMetadataFieldReadV1;
     captureMetadataPort(): MachineMetadataFieldPortV1;
     restoreEnvironmentServices?(owner: ResolvedExecutablePluginRuntimeRegistry['projectManagedServices'], signal: AbortSignal,
-        observations: Pick<ResolvedExecutablePluginRuntimeRegistry, 'readHealthAlertSource' | 'currentDomainEdgeObservation'>,
+        observations: Pick<ResolvedExecutablePluginRuntimeRegistry, 'readHealthAlertSource' | 'currentDomainEdgeObservation' | 'readTelemetryCollectorEndpoint'>,
         environmentId?: string): Promise<void | readonly EnvironmentServiceRecoveryRow[]>;
 }>): Readonly<{ execute(request: Invocation): Promise<MachineServiceActionOutput | ActionExecuteFailure>; sampleUsage(): Promise<readonly MachineServiceUsageV1[]>; getSummary(): MachineManagedServicesSummaryV1 | undefined; canReadHistory(serviceId: string, request: MachineServiceDisclosureRequest): Promise<boolean>; reconcile(): Promise<void>; ensureEnvironmentServices: EnsureEnvironmentServices; dispose(): Promise<void> }> {
     let disposed = false;

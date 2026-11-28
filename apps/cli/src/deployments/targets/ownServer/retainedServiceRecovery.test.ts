@@ -1,5 +1,7 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { once } from 'node:events';
+import { createServer } from 'node:http';
 import { mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
@@ -34,6 +36,8 @@ import { createOwnServerDockerBoundary } from './ownServerDeployment.testkit';
 import { resolveOwnServerDeploymentIdentityForHost } from './paths';
 import { restoreOwnServerDeploymentServices, type RestoreOwnServerDeploymentServicesInput } from './restoreOwnServerDeploymentServices';
 import { restoreOwnServerServicesForHost } from './restoreOwnServerServicesForHost';
+import { readRelayHttpBody } from './privateServiceContainerBridge.testkit';
+import { createDeploymentTelemetryHost } from '../../telemetry/collectorHost';
 import { releaseRemovedServiceReferenceForwards } from './serviceReferenceForwardCustody';
 import { captureOwnServerDeploymentSource } from './sourceProvenance';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -65,7 +69,7 @@ afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopped' | 'removed' | 'partially-removed' = 'running',
     homeInventoryMode?: 'plain' | 'e2ee', sourceCase?: 'reused-container' | 'foreign-environment' | 'mixed-service-sources', publishedPorts = true, noHealthcheck = false,
     primaryService = 'app', appliedServiceExports: DeploymentServiceExportV1[] = [], restoration = false, prepareReadRole = false,
-    referencePublication?: Readonly<{ host: string; port: string }>, includeUnreadableEnvironment = false) {
+    referencePublication?: Readonly<{ host: string; port: string }>, includeUnreadableEnvironment = false, readTelemetryCollectorEndpoint?: () => string | null) {
     const root = await mkdtemp(join(tmpdir(), 'happier-retained-service-recovery-'));
     const home = createHash('sha256').update(root).digest('hex').slice(0, 12);
     const docker = await createOwnServerDockerBoundary(join(root, 'tools'), { engineId: `recovery-${home}`, accounting: { memoryBytes: 2097152 } });
@@ -96,8 +100,13 @@ async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopp
     const sourceIdentity = sourceCase === 'foreign-environment'
         ? await resolveOwnServerDeploymentIdentityForHost({ happierHomeDir: configuration.happyHomeDir,
             serverId: target.serverId, environmentId: 'environment-foreign' }) : identity;
+    const exporterHost = readTelemetryCollectorEndpoint ? 'happier-relay-' + createHash('sha256').update(JSON.stringify([
+        process.getuid!(), `recovery-${home}`, createHash('sha256').update(`${identity.projectName}_default`).digest('hex'),
+        JSON.stringify([identity.environmentInstanceId, sourceDeploymentId, 'telemetry']),
+    ])).digest('hex').slice(0, 32) : undefined;
     const document = JSON.stringify({ services: Object.fromEntries(images.map(image => [image.service,
         { image: image.registryReference, pull_policy: 'never', restart: 'unless-stopped',
+            ...(exporterHost ? { environment: { OTEL_EXPORTER_OTLP_ENDPOINT: `http://${exporterHost}:8080` } } : {}),
             ...(noHealthcheck ? { healthcheck: { disable: true } } : {}),
             ports: image.service === primaryService && publishedPorts ? [{ target: 5432, published: referencePublication?.port ?? '25432', host_ip: referencePublication?.host ?? '100.64.0.7', protocol: 'tcp' },
                 { target: 5432, published: '35432', host_ip: '127.0.0.1', protocol: 'udp' }] : [] }])) });
@@ -311,7 +320,7 @@ async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopp
         readMetadata: () => ({ status: 'ready', metadataVersion: 1, metadata: { serviceWatchesV1: { v: 1, watches: [] } } }),
         captureMetadataPort() { throw new Error('Read-only recovery must not write Machine metadata'); },
         restoreEnvironmentServices: (owner, signal, observations, environmentId) => homeInventoryMode
-            ? restoreOwnServerServicesForHost({ ...observations, ...target, environmentId, installationId: 'installation-a', owner, signal,
+            ? restoreOwnServerServicesForHost({ ...observations, readTelemetryCollectorEndpoint, ...target, environmentId, installationId: 'installation-a', owner, signal,
                 isCurrent: () => !signal.aborted, async resolveRuntime() { return { ...target, accountId: 'owner', credentials,
                     serverHttpBaseUrl: serverUrl, isCurrent: async () => !signal.aborted }; } })
             : recover(owner, signal),
@@ -453,6 +462,46 @@ async function createRestartedEnvironmentFixture(nativeState: 'running' | 'stopp
 }
 
 describe('retained Environment service recovery on first use', () => {
+    it.skipIf(process.platform !== 'linux')('restores the retained Compose exporter alias to the new collector receiver', async () => {
+        const receiver = createServer((_request, response) => response.end('collector after restart'));
+        receiver.listen(0, '127.0.0.1');
+        await once(receiver, 'listening');
+        const address = receiver.address();
+        if (!address || typeof address === 'string') throw new Error('Expected a TCP receiver');
+        const recovery = Promise.withResolvers<void>();
+        const lifetime = new AbortController();
+        const collector = createDeploymentTelemetryHost({
+            serverBaseUrl: 'https://home.test', machineId: 'machine-a', token: 'fixture',
+            subscribeMachineChanges: () => () => {},
+            onRefreshError: recovery.reject,
+            async restoreLocalDeploymentRelays() {
+                await fixture.runtime.ensureEnvironmentServices();
+                recovery.resolve();
+            },
+        });
+        const fixture = await createRestartedEnvironmentFixture('running', 'e2ee', undefined, true, false,
+            'app', [], false, false, undefined, false, collector.readEndpoint);
+        try {
+            const exporter = new URL((await fixture.docker.readRuntimeEnvironment('app')).OTEL_EXPORTER_OTLP_ENDPOINT!);
+            await expect(fixture.docker.readPrivateRelaySocketPath(exporter.hostname)).rejects.toThrow('fixture_private_relay_missing');
+            collector.bind(lifetime.signal).exposeEndpoint(() => `http://127.0.0.1:${address.port}`);
+            await recovery.promise;
+            const socketPath = await fixture.docker.readPrivateRelaySocketPath(exporter.hostname);
+            expect(await readRelayHttpBody(socketPath)).toBe('collector after restart');
+            await fixture.runtime.ensureEnvironmentServices();
+            expect(fixture.inventoryReads).toBe(1);
+            expect((await fixture.docker.readInvocations()).filter(call => call.args.includes('up'))).toHaveLength(1);
+            const handle = fixture.readHandle();
+            if (!handle) throw new Error('Expected a recovered native service observation');
+            await releaseRemovedServiceReferenceForwards(new Set([handle.retirementSignal]), await handle.readNativeEffectKeys());
+            await expect(fixture.docker.readPrivateRelaySocketPath(exporter.hostname)).rejects.toThrow('fixture_private_relay_missing');
+        } finally {
+            lifetime.abort();
+            try { await fixture.dispose(); }
+            finally { await new Promise<void>(resolve => receiver.close(() => resolve())); }
+        }
+    });
+
     it('awaits the restored reference cleanup and leaves observation retirement to the teardown proof', async () => {
         const fixture = await createRestartedEnvironmentFixture();
         const started = Promise.withResolvers<void>();
