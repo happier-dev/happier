@@ -569,7 +569,9 @@ function BrowserSurfaceRuntime(props: BrowserSurfaceHostProps): React.ReactEleme
             actionId: hasManagedView ? 'browser.profile.select' as const : 'browser.view.open' as const,
             command: { kind: 'openView' as const,
                 browserSessionId: hasManagedView ? focusedView.browserSessionId : presenceSessionId!, viewId: focusedView.viewId,
-                platform: focusedView.platform, target: focusedView.target,
+                platform: focusedView.platform,
+                target: !hasManagedView && focusedView.target.kind === 'externalUrl' && focusedView.currentUrl
+                    ? resolveExternalUrlTargetFromInput(focusedView.currentUrl) ?? focusedView.target : focusedView.target,
                 ...(!hasManagedView ? { engineOverride: 'managed' as const } : {}),
                 ...(focusedView.currentUrl ? { currentUrl: focusedView.currentUrl } : {}), focus: true },
             onSelected: (profile: BrowserProfileV1, events: readonly BrowserEventV1[]) => applyDaemonEvents(events, profile),

@@ -752,7 +752,8 @@ describe('BrowserSurfaceHost', () => {
             const selection = screen.findByType(BrowserShell).props.browserProfile.management.source.selection;
             expect(selection).toMatchObject({ actionId: 'browser.view.open', command: {
                 browserSessionId: 'session_1', viewId: 'shown-page', engineOverride: 'managed',
-                target: externalTarget, currentUrl: 'https://docs.happier.test/guide',
+                target: expect.objectContaining({ kind: 'externalUrl', url: 'https://docs.happier.test/guide' }),
+                currentUrl: 'https://docs.happier.test/guide',
             } });
         } finally { await screen.unmount(); }
     });
