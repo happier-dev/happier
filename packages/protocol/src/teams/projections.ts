@@ -138,6 +138,24 @@ export type TeamSummaryV1 = z.infer<typeof TeamSummaryV1Schema>;
  * filter DSL is explicitly out of scope.
  */
 export const TEAM_DIRECTORY_PAGE_LIMIT_MAX_V1 = 100;
+
+export const TEAM_SUMMARIES_READ_BATCH_PATH_V1 = '/v1/teams/read-batch';
+
+export const TeamSummariesReadBatchInputV1Schema = lazyZodSchema(() => z.strictObject({
+  v: z.literal(1),
+  teamIds: z.array(TeamSummaryV1Schema.shape.id).check(z.minLength(1), z.maxLength(TEAM_DIRECTORY_PAGE_LIMIT_MAX_V1)),
+}));
+
+export const TeamSummariesReadBatchResultV1Schema = lazyZodSchema(() => z.strictObject({
+  v: z.literal(1),
+  results: z.array(z.union([
+    TeamSummaryV1Schema,
+    z.strictObject({
+      teamId: TeamSummaryV1Schema.shape.id,
+      error: z.enum(['team_not_found', 'team_authentication_required', 'team_authentication_unavailable']),
+    }),
+  ])),
+}));
 export const TEAM_DIRECTORY_PAGE_LIMIT_DEFAULT_V1 = 50;
 
 export const TeamsListInputV1Schema = lazyZodSchema(() => z.strictObject({

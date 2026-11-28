@@ -40,6 +40,7 @@ export function resolveTeamsFeature(env: NodeJS.ProcessEnv): FeaturesPayloadDelt
         },
         capabilities: {
             teams: {
+                ...(config.enabled ? { summariesReadBatchVersion: 1 as const } : {}),
                 credentialResources: {
                     externalApi: resolveExternalApiDeploymentAvailability(env),
                 },

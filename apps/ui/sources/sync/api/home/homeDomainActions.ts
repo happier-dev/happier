@@ -23,6 +23,8 @@ import {
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
+import { readKnownServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
+import { TeamRefInputV1Schema } from '@happier-dev/protocol/teams';
 
 import { homeDomainFailureKindForHttpStatus, requestHomeDomain, type HomeDomainFailure, type HomeDomainResult } from './homeServerActionTransport';
 
@@ -239,6 +241,11 @@ export function createHomeDomainActionExecutorForScope(
         if (readCurrentness?.() === false) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
         const retiredSessionId = actionId === 'session.delete' && typeof input === 'object' && input !== null
             && 'sessionId' in input && typeof input.sessionId === 'string' ? input.sessionId : null;
+        const features = actionId === 'teams.get' && context?.surface === 'ui'
+            && context.authority === 'present_user' && !preparedRequest
+            ? readKnownServerFeaturesSnapshot({ serverId: scope.serverId }) : null;
+        const teamRef = features?.status === 'ready' && features.features.capabilities.teams?.summariesReadBatchVersion === 1
+            ? TeamRefInputV1Schema.safeParse(input) : null;
         const result = await requestHomeDomain<unknown, string>({
             scope,
             method: request.method,
@@ -246,6 +253,7 @@ export function createHomeDomainActionExecutorForScope(
             input: request.body,
             schema: homeDomainActionOutputSchemaV1(actionId, preparedRequest),
             effect: spec.sideEffectClass === 'read' ? 'read' : 'write',
+            ...(teamRef?.success ? { batchableTeamId: teamRef.data.teamId } : {}),
             // The host-stamped caller authority travels to the Home, as on every other Account transport.
             ...(context?.authority === 'account_automation' ? { authorityCeiling: 'account_automation' as const } : {}),
             ...(errorSchema ? { errorSchema } : {}),

@@ -7,7 +7,7 @@ import {
     type TeamsListInputV1,
 } from '@happier-dev/protocol/teams';
 
-import { renderHook, standardCleanup, teamSummaryFixture } from '@/dev/testkit';
+import { createRootLayoutFeaturesResponse, renderHook, standardCleanup, teamSummaryFixture } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 
 const home = createHomeGovernanceHarness();
@@ -15,6 +15,7 @@ installHomeGovernanceBoundaries(home);
 // Only the Team HTTP response varies by case; Action/account/settings admission stays real.
 const runtimeFetchMock = vi.fn<(request: { url: string; init: RequestInit | undefined }) => Promise<Response>>();
 const { createServerAccountScope } = await import('@/sync/domains/scope/serverAccountScope');
+const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
 const { setActiveServerId } = await import('@/sync/domains/server/serverProfiles');
 const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
 const {
@@ -75,6 +76,72 @@ afterEach(async () => {
 });
 
 describe('teamsDirectoryEngine', () => {
+    it.each([true, false])('updates nine exact Team reads across two wakes (batch capability %s)', async supportsBatch => {
+        const serverId = await home.addHome({
+            name: 'Home', serverUrl: 'https://team-fan-out.example', accountId: 'account',
+            teamsEnabled: true, currentAccount: true,
+        });
+        const features = createRootLayoutFeaturesResponse();
+        features.features.teams.enabled = true;
+        if (supportsBatch) features.capabilities.teams = {
+            summariesReadBatchVersion: 1,
+            credentialResources: { externalApi: { available: false, reason: 'feature_disabled' } },
+        };
+        primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features } });
+        for (const path of ['/v1/teams/get', '/v1/teams/read-batch']) {
+            home.answer(serverId, path, {
+                select: async (_input, request) => {
+                    const response = await runtimeFetchMock(request);
+                    return { status: response.status, body: await response.json() };
+                },
+            });
+        }
+        await setActiveServerId(serverId, { scope: 'device' });
+        const scope = createServerAccountScope(serverId, 'account')!;
+        const addresses = Array.from({ length: 9 }, (_, index) => createTeamAddress(serverId, `t${index + 1}`)!);
+        const traffic: { requestBytes: number; responseBytes: number }[] = [];
+        let revision = 0;
+        runtimeFetchMock.mockImplementation(async request => {
+            const path = new URL(request.url).pathname;
+            expect(path).toBe(supportsBatch ? '/v1/teams/read-batch' : '/v1/teams/get');
+            const requestBody = String(request.init?.body);
+            const projection = (teamId: string) => team(teamId, `Team ${teamId} revision ${revision}`);
+            const body = JSON.parse(requestBody);
+            const responseBody = JSON.stringify(path === '/v1/teams/read-batch'
+                ? { v: 1, results: (body.teamIds as string[]).map(projection) }
+                : projection(body.teamId));
+            const bytes = new TextEncoder();
+            traffic.push({ requestBytes: bytes.encode(requestBody).length, responseBytes: bytes.encode(responseBody).length });
+            return new Response(responseBody, { status: 200 });
+        });
+        const release = addresses.map(address => observeTeam(scope, address));
+        const settle = () => waitForHomeGovernance(() => {
+            for (const address of addresses) {
+                expect(getTeamSnapshot(scope, address)?.data?.name).toBe(`Team ${address.teamId} revision ${revision}`);
+            }
+        });
+        try {
+            await settle();
+            traffic.length = 0;
+            revision = 1;
+            publishHomeAccountChange(serverId, [TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1]);
+            await settle();
+            revision = 2;
+            publishHomeAccountChange(serverId, [HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1]);
+            await settle();
+            const totals = traffic.reduce((total, row) => ({
+                requestBytes: total.requestBytes + row.requestBytes,
+                responseBytes: total.responseBytes + row.responseBytes,
+            }), { requestBytes: 0, responseBytes: 0 });
+            if (process.env.P03_TEAM_BATCH_MEASURE === '1') {
+                console.info('P03 IF-005 fixture', { supportsBatch, posts: traffic.length, ...totals });
+            }
+            expect(traffic).toHaveLength(supportsBatch ? 2 : 18);
+        } finally {
+            for (const stop of release) stop();
+        }
+    });
+
     it('keeps Team Overview current across a tab gap and reads once after its Teams wake', async () => {
         const serverId = await addHome('Home', 'https://team-tab-gap.example');
         await setActiveServerId(serverId, { scope: 'device' });

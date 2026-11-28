@@ -830,6 +830,13 @@ One Home-local page ordered by `(normalized name, teamId)`.
 An unreadable Team and an absent one produce the same answer, so Team existence cannot be
 probed. Team summaries never enumerate other Home Accounts.
 
+In unreleased 0.3 development source, a Home can advertise
+`capabilities.teams.summariesReadBatchVersion: 1`. The UI then combines concurrent,
+admitted exact-Team reads from one full Account into `POST /v1/teams/read-batch`.
+Each requested Team uses the same read and authentication qualification as
+`teams.get`. The UI still uses `teams.get` for single reads, Homes without the
+capability and credentials outside the full Account route.
+
 ## Realtime
 
 Mutations publish `AccountChange` with `kind: 'account'` and entity ID `teams`, and clients

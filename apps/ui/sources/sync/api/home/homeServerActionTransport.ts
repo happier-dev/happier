@@ -8,10 +8,17 @@ import { readActionCredentialScopeDeniedHttpFailureV1 } from '@happier-dev/proto
 import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invocationAuthority';
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import { runWithServerRequestAuthorityForServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
+import { runWithServerRequestAuthorityForServerAccountScope, type ServerAccountRequestAuthority } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
 import { classifyHttpMutationRequestFailure } from '@/sync/http/mutationRequestOutcome';
 import type { ServerFetch } from '@/sync/http/client';
 import { invalidateHomeAccountReadJoins } from '@/sync/runtime/orchestration/homeAccountChange';
+import { isLegacyHomeAccountToken, readCredentialAuthorityKind } from '@/auth/context/credentialAuthority';
+import {
+    TEAM_DIRECTORY_PAGE_LIMIT_MAX_V1, TEAM_SUMMARIES_READ_BATCH_PATH_V1, TeamSummariesReadBatchResultV1Schema,
+} from '@happier-dev/protocol/teams/projections';
+import { teamErrorHttpStatusV1 } from '@happier-dev/protocol/teams';
+import { createScopedBatchResolutionSingleFlight } from '@/sync/runtime/orchestration/serverScopedRpc/scopedResolutionSingleFlight';
+import type { CapturedServerReadTransport } from '@/sync/runtime/orchestration/serverScopedRpc/capturedServerReadTransport';
 
 /**
  * The Home family's client transport.
@@ -168,6 +175,40 @@ function classifyAnswer<TCode extends string>(
     return failure(homeDomainFailureKindForHttpStatus(status, code), status >= 500 || status === 408 || status === 429, code, undefined, status);
 }
 
+type TeamBatchAnswer = Readonly<{ status: number; body: unknown }>;
+const teamBatchReads = createScopedBatchResolutionSingleFlight<TeamBatchAnswer | undefined>();
+
+function readTeamSummaryBatch(readTransport: CapturedServerReadTransport, teamId: string, signal?: AbortSignal) {
+    return teamBatchReads.run('team-summaries-v1', [teamId], async (ids, sharedSignal, publish) => {
+        const results = new Map<string, TeamBatchAnswer | undefined>();
+        if (ids.length === 1) return new Map([[ids[0]!, undefined]]);
+        for (let start = 0; start < ids.length; start += TEAM_DIRECTORY_PAGE_LIMIT_MAX_V1) {
+            const teamIds = ids.slice(start, start + TEAM_DIRECTORY_PAGE_LIMIT_MAX_V1);
+            const chunk = await readTransport.read(TEAM_SUMMARIES_READ_BATCH_PATH_V1, {
+                method: 'POST', headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ v: 1, teamIds }), signal: sharedSignal,
+            }, undefined, async response => {
+                const body = await readJsonBody(response);
+                const forAll = (answer: TeamBatchAnswer) => new Map(teamIds.map(id => [id, answer]));
+                if (!response.ok) return forAll({ status: response.status, body });
+                const batch = TeamSummariesReadBatchResultV1Schema.safeParse(body);
+                const remaining = new Set(teamIds);
+                const rows = new Map<string, TeamBatchAnswer>();
+                for (const row of batch.success ? batch.data.results : []) {
+                    const id = 'error' in row ? row.teamId : row.id;
+                    if (!remaining.delete(id)) return forAll({ status: 200, body: null });
+                    rows.set(id, 'error' in row ? { status: teamErrorHttpStatusV1(row.error), body: { error: row.error } }
+                        : { status: 200, body: row });
+                }
+                return remaining.size ? forAll({ status: 200, body: null }) : rows;
+            });
+            for (const [id, result] of chunk) results.set(id, result);
+            publish(chunk);
+        }
+        return results;
+    }, { scope: [readTransport.scope ?? readTransport.key, readTransport.key], signal });
+}
+
 export async function requestHomeDomain<TValue, TCode extends string = HomeDomainErrorCode>(params: Readonly<{
     /** The exact Home and Account this intent belongs to, captured by the caller. */
     scope: ServerAccountScope;
@@ -182,6 +223,8 @@ export async function requestHomeDomain<TValue, TCode extends string = HomeDomai
     errorSchema?: StrictDomainSchema<TCode>;
     /** The row/domain's side-effect class; required so response loss is never guessed. */
     effect: 'read' | 'write';
+    /** An admitted UI teams.get read eligible for a negotiated physical batch. */
+    batchableTeamId?: string;
     signal?: AbortSignal;
     /** An Agent, plugin or caller-authored document's invocation: the Home must not treat it as the person. */
     authorityCeiling?: 'account_automation';
@@ -190,8 +233,20 @@ export async function requestHomeDomain<TValue, TCode extends string = HomeDomai
 }>): Promise<HomeDomainResult<TValue, TCode | HomeDomainErrorCode>> {
     let issued = false;
     try {
-        const carry = async (authority: Readonly<{ request: ServerFetch }>) => {
+        const carry = async (authority: Readonly<{ request: ServerFetch }>
+            & Partial<Pick<ServerAccountRequestAuthority, 'context' | 'readTransport'>>) => {
             params.requestAuthority?.assertCurrent();
+            const credentials = authority.context?.credentials;
+            if (params.batchableTeamId && authority.readTransport && credentials
+                && readCredentialAuthorityKind(credentials.token) === 'account' && !isLegacyHomeAccountToken(credentials.token)) {
+                const batch = await readTeamSummaryBatch(authority.readTransport, params.batchableTeamId, params.signal);
+                const answer = batch.get(params.batchableTeamId);
+                if (answer) {
+                    if (answer.status !== 200) return classifyAnswer<TCode>(answer.status, answer.body, params.errorSchema);
+                    const parsed = params.schema.safeParse(answer.body);
+                    return parsed.success ? { ok: true as const, value: parsed.data } : failure('invalid', false);
+                }
+            }
             const ceilingHeader = params.authorityCeiling ? { [AUTHORITY_CEILING_HEADER_V1]: params.authorityCeiling } : null;
             const response = await authority.request(params.path, {
                 method: params.method ?? 'POST',

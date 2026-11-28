@@ -764,6 +764,27 @@ describe("Team routes (SQLite integration)", () => {
         expect(hidden.json()).toEqual({ error: "team_not_found" });
         expect(missing.json()).toEqual(hidden.json());
 
+        const selectedIds = [teamId, "no-such-team"];
+        const ownTeam = await post("/v1/teams/get", owner.id, { v: 1, teamId });
+        const ownerBatch = await post("/v1/teams/read-batch", owner.id, { v: 1, teamIds: selectedIds });
+        expect(ownerBatch.statusCode).toBe(200);
+        expect(ownerBatch.json()).toEqual({ v: 1, results: [
+            ownTeam.json(),
+            { teamId: "no-such-team", error: "team_not_found" },
+        ] });
+        const strangerBatch = await post("/v1/teams/read-batch", stranger.id, { v: 1, teamIds: selectedIds });
+        expect(strangerBatch.statusCode).toBe(200);
+        expect(strangerBatch.json()).toEqual({ v: 1, results: selectedIds.map(id => ({
+            teamId: id, error: "team_not_found",
+        })) });
+        const terminalBatch = await app.inject({ method: "POST", url: "/v1/teams/read-batch",
+            headers: { "x-test-user-id": owner.id, "x-test-auth-token-kind": "terminal" },
+            payload: { v: 1, teamIds: selectedIds },
+        });
+        expect({ status: terminalBatch.statusCode, body: terminalBatch.json() }).toEqual({
+            status: 403, body: { error: "team_forbidden" },
+        });
+
         const badInput = await post("/v1/teams/create", owner.id, {
             v: 1, name: "   ", requestKey: crypto.randomUUID(),
         });

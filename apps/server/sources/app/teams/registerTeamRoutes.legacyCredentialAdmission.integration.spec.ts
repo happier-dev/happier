@@ -166,6 +166,7 @@ describe("Team API composition legacy Home credential admission (SQLite integrat
                 await inject("/v2/teams/label-envelopes"),
                 // The reads the Share dialog's Team and Group pickers issue.
                 await inject("/v1/teams/list", { v: 1, scope: "member", archived: "active" }),
+                await inject("/v1/teams/read-batch", { v: 1, teamIds: [team.id] }),
                 await inject("/v1/teams/groups/list", { v: 1, teamId: team.id, archived: "active" }),
             ];
             // The released bearer is still a valid Home credential, so Team

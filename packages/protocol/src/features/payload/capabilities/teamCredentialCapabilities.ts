@@ -52,6 +52,7 @@ export type TeamCredentialExternalApiAvailabilityV1 = z.infer<
 >;
 
 export const TeamCredentialCapabilitiesSchema = lazyZodSchema(() => z.object({
+  summariesReadBatchVersion: z.catch(z.optional(z.literal(1)), undefined),
   credentialResources: z.object({
     externalApi: TeamCredentialExternalApiAvailabilityV1Schema,
   }),
