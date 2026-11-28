@@ -91,8 +91,7 @@ export const defaultKeyboardCommands: readonly KeyboardCommand[] = [
         ['media.annotate', 'mediaAnnotate', 'e'],
     ] as const).map(([id, title, binding]): KeyboardCommand => ({
         id, settingsTitleKey: `settingsKeyboard.commands.${title}`,
-        // The open stage owns its keys while it is open, like the annotator: app-wide opt-ins don't gate them.
-        singleKeyScope: 'focused',
+        ...(id === 'media.annotate' ? { singleKeyScope: 'focused' as const } : {}),
         defaultBindings: (id === 'media.zoomIn' ? [binding, 'NumpadAdd'] : [binding])
             .map(binding => ({ binding, conflictScope: 'mediaStage', nativeConsumable: true })),
         when: context => !context.isEditableTarget,

@@ -54,7 +54,14 @@ type KeyboardShortcutRegistrationContextValue = Readonly<{
 }>;
 
 /** Native keyboard events identify an editable view; its mounted composer supplies focus ownership. */
-type KeyboardShortcutHandlerContext = Readonly<{ isComposerTarget?: boolean }>;
+type KeyboardShortcutHandlerContext = Readonly<{
+    isComposerTarget?: boolean;
+    /**
+     * This registration owns its keys while it is registered (an open media stage, like the annotator's
+     * tools): neither app-wide opt-in gates its commands. Every other registrant of the same commands stays gated.
+     */
+    ownsKeys?: boolean;
+}>;
 
 type NativeKeyboardInputRegistration = Readonly<{
     bindings: readonly string[];
@@ -100,6 +107,7 @@ export function KeyboardShortcutContextBridge(props: React.PropsWithChildren<Rea
 }
 
 const NO_DISABLED_COMMAND_IDS: readonly KeyboardCommandId[] = Object.freeze([]);
+const NO_OWNED_COMMAND_IDS: readonly KeyboardCommandId[] = Object.freeze([]);
 const NO_SHORTCUT_OVERRIDES: NonNullable<Parameters<typeof buildKeyboardShortcutLabels>[2]>['overrides'] = Object.freeze({});
 
 const HANDLER_KEY_SIGNATURE_SEPARATOR = '\u0000';
@@ -150,6 +158,7 @@ export function useKeyboardShortcutHandlers(
     latestHandlersRef.current = handlers;
     const handlerKeySignature = buildHandlerKeySignature(handlers);
     const isComposerTarget = context?.isComposerTarget;
+    const ownsKeys = context?.ownsKeys === true;
     const registeredHandlers = React.useMemo<KeyboardShortcutHandlers>(() => {
         if (!handlerKeySignature) return {};
         const next: KeyboardShortcutHandlers = {};
@@ -164,10 +173,11 @@ export function useKeyboardShortcutHandlers(
     React.useEffect(() => {
         if (!registration) return;
         if (!handlerKeySignature) return;
-        const handlerContext = isComposerTarget === undefined ? undefined : { isComposerTarget };
+        const handlerContext = isComposerTarget === undefined && !ownsKeys ? undefined
+            : { ...(isComposerTarget === undefined ? {} : { isComposerTarget }), ...(ownsKeys ? { ownsKeys } : {}) };
         if (!active) return registration.registerHandlers(registeredHandlers, undefined, handlerContext);
         return followSignal(active, (isActive) => isActive ? registration.registerHandlers(registeredHandlers, undefined, handlerContext) : undefined);
-    }, [active, handlerKeySignature, registeredHandlers, registration, isComposerTarget]);
+    }, [active, handlerKeySignature, registeredHandlers, registration, isComposerTarget, ownsKeys]);
 
     return registration != null;
 }
@@ -304,6 +314,20 @@ export function KeyboardShortcutProvider(props: React.PropsWithChildren<Readonly
         }
         return next;
     }, [scopedHandlerEntries]);
+    // The commands whose effective (latest) registration owns its keys; a later ordinary registrant takes them back.
+    const ownedCommandIdsKey = React.useMemo(() => {
+        const owned = new Set<KeyboardCommandId>();
+        for (const entry of scopedHandlerEntries.values()) {
+            for (const id of Object.keys(entry.handlers) as KeyboardCommandId[]) {
+                if (entry.context?.ownsKeys === true) owned.add(id);
+                else owned.delete(id);
+            }
+        }
+        return [...owned].sort().join(HANDLER_KEY_SIGNATURE_SEPARATOR);
+    }, [scopedHandlerEntries]);
+    const ownedCommandIds = React.useMemo<readonly KeyboardCommandId[]>(
+        () => (ownedCommandIdsKey ? ownedCommandIdsKey.split(HANDLER_KEY_SIGNATURE_SEPARATOR) as KeyboardCommandId[] : NO_OWNED_COMMAND_IDS),
+        [ownedCommandIdsKey]);
     const nativeInputs = React.useMemo(() => [...scopedHandlerEntries.values()]
         .flatMap((entry) => entry.nativeInput ? [entry.nativeInput] : []).reverse(), [scopedHandlerEntries]);
     const nativeInputsRef = React.useRef(nativeInputs);
@@ -391,6 +415,7 @@ export function KeyboardShortcutProvider(props: React.PropsWithChildren<Readonly
     const nativeKeyboardConfigurationKey = React.useMemo(() => [
         keyboardShortcutsV2Enabled === true ? 'enabled' : 'disabled',
         buildSignatureListKey(enabledWhenDisabledCommandIds),
+        ownedCommandIdsKey,
         platform,
         surface,
         singleKeyShortcutsEnabled === true ? 'single-key-on' : 'single-key-off',
@@ -404,12 +429,14 @@ export function KeyboardShortcutProvider(props: React.PropsWithChildren<Readonly
         overrides,
         platform,
         enabledWhenDisabledCommandIds,
+        ownedCommandIdsKey,
         singleKeyShortcutsEnabled,
         surface,
     ]);
     const dispatcherOptions = React.useMemo(() => ({
         enabled: keyboardShortcutsV2Enabled === true,
         enabledWhenDisabledCommandIds,
+        ownedCommandIds,
         platform,
         surface,
         webHost,
@@ -431,6 +458,7 @@ export function KeyboardShortcutProvider(props: React.PropsWithChildren<Readonly
         overrides,
         platform,
         enabledWhenDisabledCommandIds,
+        ownedCommandIds,
         singleKeyShortcutsEnabled,
         surface,
         webHost,

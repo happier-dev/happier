@@ -11,7 +11,12 @@ import type { ItemAction } from '@/components/ui/lists/itemActions';
  */
 export type PaneHeaderLineSegment =
     | string
-    | Readonly<{ text: string; emphasis: true }>
+    | Readonly<{ text: string; emphasis: true; shrink?: true }>
+    /**
+     * The one fact that gives way when the line is short (a long Session or Machine name): it takes the room
+     * the others leave and ellipsizes, so the facts after it keep their whole words instead of wrapping away.
+     */
+    | Readonly<{ text: string; shrink: true }>
     /** A line count of a change (`+4`, `−2`): the one place colour means added or removed. */
     | Readonly<{ text: string; tone: 'added' | 'removed' }>
     /** The one fact that needs the person ("1 waiting for you"): drawn in the attention colour. */
@@ -25,7 +30,7 @@ export type PaneHeaderLineSegment =
      * A fact led by its glyph (the task a conversation hangs off, "Invited only" behind a lock). With
      * `onPress` it is a way back to that thing: a link that keeps the line's quiet tone until pointed at.
      */
-    | Readonly<{ text: string; icon: IconName; onPress?: () => void; accessibilityLabel?: string; testID?: string }>
+    | Readonly<{ text: string; icon: IconName; onPress?: () => void; accessibilityLabel?: string; testID?: string; shrink?: true }>
     /**
      * A fact that has not arrived yet, in words as long as it will be ("0 changed"): the header keeps its room,
      * unseen and unannounced, so the fact fills it instead of wrapping the line when it lands.

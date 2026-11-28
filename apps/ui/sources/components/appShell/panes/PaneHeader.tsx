@@ -45,6 +45,10 @@ function readSegmentText(segment: PaneHeaderLineSegment): string {
     return typeof segment === 'string' ? segment : segment.text;
 }
 
+function isShrinkSegment(segment: PaneHeaderLineSegment): boolean {
+    return typeof segment !== 'string' && 'shrink' in segment && segment.shrink === true;
+}
+
 /** A fact that has not arrived: it holds its room on the line and is neither seen nor spoken. */
 function isPendingSegment(segment: PaneHeaderLineSegment): boolean {
     return typeof segment !== 'string' && 'pending' in segment;
@@ -126,7 +130,7 @@ export const PaneHeaderLineView = React.memo(function PaneHeaderLineView(props: 
                 <Text numberOfLines={1} style={[styles.subtitle, large ? styles.largeSubtitle : null, styles.iconFactText, hovered ? styles.linkHovered : null]}>{segment.text}</Text>
             </>;
             return (
-                <View key={index} style={[styles.iconFact, index === 0 ? null : styles.followingFact]}>
+                <View key={index} style={[styles.iconFact, index === 0 || isShrinkSegment(segment) ? null : styles.followingFact]}>
                     {separator ? <Text style={[styles.subtitle, large ? styles.largeSubtitle : null]}>{separator}</Text> : null}
                     {onPress ? (
                         <HappierPressable testID={segment.testID} accessibilityRole="link" accessibilityLabel={segment.accessibilityLabel ?? segment.text}
@@ -160,7 +164,7 @@ export const PaneHeaderLineView = React.memo(function PaneHeaderLineView(props: 
                 key={index}
                 // A large header's fact wraps inside its two lines; the band's stays on its one.
                 numberOfLines={large ? LARGE_FACTS_LINES : 1}
-                style={[styles.subtitle, large ? styles.largeSubtitle : null, index === 0 ? null : styles.followingFact]}
+                style={[styles.subtitle, large ? styles.largeSubtitle : null, index === 0 || isShrinkSegment(segment) ? null : styles.followingFact]}
             >
                 {separator}
                 {typeof segment === 'string'
@@ -171,7 +175,9 @@ export const PaneHeaderLineView = React.memo(function PaneHeaderLineView(props: 
                             ? <Text style={styles.attention}>{segment.text}</Text>
                             : 'failure' in segment
                                 ? <Text style={styles.failure}>{segment.text}</Text>
-                            : <Text style={styles.emphasis}>{segment.text}</Text>}
+                            : 'emphasis' in segment
+                                ? <Text style={styles.emphasis}>{segment.text}</Text>
+                            : segment.text}
             </Text>
         );
     };
@@ -240,7 +246,8 @@ export const PaneHeaderLineView = React.memo(function PaneHeaderLineView(props: 
                     // One spoken line, unless a fact on it is a link of its own to reach.
                     accessible={!hasLink}
                     accessibilityLabel={hasLink ? undefined : readSpokenLine(line.segments)}
-                    style={[styles.facts, { height: factsLine.lineHeight }]}
+                    // A line with a fact that gives way stays one row: that fact ellipsizes instead of the rest wrapping out.
+                    style={[styles.facts, line.segments.some(isShrinkSegment) ? styles.factsOneRow : null, { height: factsLine.lineHeight }]}
                 >
                     {line.segments.map((segment, index) => renderFact(segment, index, bandSeparator(index)))}
                     {factsLine.probe}
@@ -617,6 +624,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexWrap: 'wrap',
         overflow: 'hidden',
         marginTop: HEADER_BAND_SUBTITLE_TEXT.marginTop,
+    },
+    factsOneRow: {
+        flexWrap: 'nowrap',
     },
     // Out of the flow and unseen: it only reports the facts' laid-out line height.
     factsProbe: {

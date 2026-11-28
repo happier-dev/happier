@@ -7,6 +7,9 @@ import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLo
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { SessionCockpitSurfaceNavigationProvider } from '@/components/workspaceCockpit/session/SessionCockpitSurfaceNavigation';
 import { useActiveServerAccountScopeLifetime } from '@/sync/store/hooks';
+import { AppPaneProvider, useAppPaneContext } from '@/components/appShell/panes/AppPaneProvider';
+import { AppPaneScopeLayoutProvider, type AppPaneScopeLayoutState } from '@/components/appShell/panes/hooks/useAppPaneScopeLayout';
+import { createSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
 import { useShowGalleryItemInChat } from './useShowGalleryItemInChat';
 
 vi.mock('expo-router', async () => {
@@ -43,11 +46,13 @@ it('brings the chat forward on a phone before the transcript jumps to the pictur
   }
   await renderScreen(
     <InjectedAuthProvider credentials={null}>
-    <SessionCockpitSurfaceNavigationProvider
-      value={{ switchSurface, returnToPreviousSurface() {} }}
-    >
-      <Test />
-    </SessionCockpitSurfaceNavigationProvider>
+      <AppPaneProvider>
+        <SessionCockpitSurfaceNavigationProvider
+          value={{ switchSurface, returnToPreviousSurface() {} }}
+        >
+          <Test />
+        </SessionCockpitSurfaceNavigationProvider>
+      </AppPaneProvider>
     </InjectedAuthProvider>,
   );
   let result: Awaited<ReturnType<typeof show>> | undefined;
@@ -56,4 +61,52 @@ it('brings the chat forward on a phone before the transcript jumps to the pictur
   });
   expect(switchSurface).toHaveBeenCalledExactlyOnceWith('chat');
   expect(result).toEqual({ ok: true, query: { jumpSeq: 7 } });
+});
+
+it('closes a Details drawer that covers the chat on a desktop before the transcript jumps (round 2 B2)', async () => {
+  const home = await account.restore({
+    accountId: 'chat-account',
+    currentAccount: true,
+    serverIdentityId: 'srv_chat_home',
+    httpAnswers: {
+      'GET /v2/sessions/session/messages/by-local-id/shots': { body: { message: { localId: 'shots', seq: 7 } } },
+    },
+  });
+  const scopeId = createSessionPaneScopeId('session', home.serverId);
+  // The Media tab is open in a Details drawer over the Session (1440 with Files docked beside it).
+  const drawerOverChat: AppPaneScopeLayoutState = {
+    arrangement: 'session', mainHidden: false, mainDrawerOpen: false, effectiveDetailsOpen: true, detailsAvailable: false,
+    containerWidthPx: 1100, containerHeightPx: 860, mainRegionWidthPx: 700, mainRegionHeightPx: 860,
+    multiPaneEnabled: true, deviceType: 'tablet', bottomPresentation: 'hidden',
+    layout: { kind: 'twoPane', main: 'docked', right: 'docked', details: 'overlay' },
+  };
+  let detailsOpen: boolean | undefined;
+  let show!: ReturnType<typeof useShowGalleryItemInChat>;
+  function Test() {
+    const context = useAppPaneContext();
+    detailsOpen = context.state.scopes[scopeId]?.details.isOpen;
+    React.useEffect(() => {
+      context.dispatch({ type: 'activateScope', scopeId });
+      context.dispatch({ type: 'openDetailsTab', scopeId, tab: { key: 'session-media', kind: 'session-gallery', title: 'Media', resource: {} }, openAs: 'pinned' });
+    }, [context.dispatch]);
+    const lifetime = useActiveServerAccountScopeLifetime(true);
+    show = useShowGalleryItemInChat({ sessionId: 'session', serverId: home.serverId }, lifetime);
+    return null;
+  }
+  await renderScreen(
+    <InjectedAuthProvider credentials={null}>
+      <AppPaneProvider>
+        <AppPaneScopeLayoutProvider value={drawerOverChat}>
+          <Test />
+        </AppPaneScopeLayoutProvider>
+      </AppPaneProvider>
+    </InjectedAuthProvider>,
+  );
+  expect(detailsOpen).toBe(true);
+  let result: Awaited<ReturnType<typeof show>> | undefined;
+  await act(async () => {
+    result = await show({ messageLocalId: 'shots' });
+  });
+  expect(result).toEqual({ ok: true, query: { jumpSeq: 7 } });
+  expect(detailsOpen).toBe(false);
 });

@@ -32,6 +32,8 @@ export function isFindKeyboardCommand(commandId: KeyboardCommandId): commandId i
 export type KeyboardShortcutDispatcherOptions = Readonly<{
     enabled: boolean;
     enabledWhenDisabledCommandIds?: readonly KeyboardCommandId[];
+    /** Held by a registration that owns its keys while registered (the open media stage): no app-wide opt-in gates them. */
+    ownedCommandIds?: readonly KeyboardCommandId[];
     platform: KeyboardPlatform;
     surface?: KeyboardSurface;
     webHost?: KeyboardWebHost;
@@ -45,6 +47,8 @@ export type KeyboardShortcutDispatcherOptions = Readonly<{
 export type KeyboardShortcutLabelOptions = Readonly<{
     enabled?: boolean;
     enabledWhenDisabledCommandIds?: readonly KeyboardCommandId[];
+    /** Held by a registration that owns its keys while registered (the open media stage): no app-wide opt-in gates them. */
+    ownedCommandIds?: readonly KeyboardCommandId[];
     webHost?: KeyboardWebHost;
     disabledCommandIds?: readonly string[];
     overrides?: Readonly<Record<string, readonly KeybindingRule[]>>;
@@ -116,6 +120,8 @@ export function isKeybindingRuleAvailable(
         commandId?: KeyboardCommandId;
         enabled?: boolean;
         enabledWhenDisabledCommandIds?: readonly KeyboardCommandId[];
+        /** Held by a registration that owns its keys while registered (the open media stage): no app-wide opt-in gates them. */
+        ownedCommandIds?: readonly KeyboardCommandId[];
     }>,
 ): boolean {
     const parsed = parseKeybindingRule(rule);
@@ -130,7 +136,8 @@ export function isKeybindingRuleAvailable(
     if (options.surface === 'web' && parsed.webHost
         && parsed.webHost !== (options.webHost ?? (isDesktopHost() ? 'desktop' : 'browser'))) return false;
     const focusedCommand = options.commandId !== undefined
-        && getKeyboardCommand(options.commandId)?.singleKeyScope === 'focused';
+        && (getKeyboardCommand(options.commandId)?.singleKeyScope === 'focused'
+            || options.ownedCommandIds?.includes(options.commandId) === true);
     if (options.enabled === false && !focusedCommand
         && !(options.commandId && options.enabledWhenDisabledCommandIds?.includes(options.commandId))) return false;
     if (!options.singleKeyShortcutsEnabled && !focusedCommand && isSingleKeyRule(parsed) && rule.conflictScope !== 'findInput') return false;
@@ -184,6 +191,8 @@ export function commandHasAvailableKeyboardHandler(params: Readonly<{
     commandId: KeyboardCommandId;
     enabled: boolean;
     enabledWhenDisabledCommandIds?: readonly KeyboardCommandId[];
+    /** Held by a registration that owns its keys while registered (the open media stage): no app-wide opt-in gates them. */
+    ownedCommandIds?: readonly KeyboardCommandId[];
     platform: KeyboardPlatform;
     surface: KeyboardSurface;
     webHost?: KeyboardWebHost;
@@ -202,6 +211,7 @@ export function commandHasAvailableKeyboardHandler(params: Readonly<{
         commandId: command.id,
         enabled: params.enabled,
         enabledWhenDisabledCommandIds: params.enabledWhenDisabledCommandIds,
+        ownedCommandIds: params.ownedCommandIds,
         platform: params.platform,
         surface: params.surface,
         webHost: params.webHost,
@@ -216,6 +226,7 @@ export function hasAnyAvailableKeyboardHandler(options: KeyboardShortcutDispatch
         commandId: command.id,
         enabled: options.enabled,
         enabledWhenDisabledCommandIds: options.enabledWhenDisabledCommandIds,
+        ownedCommandIds: options.ownedCommandIds,
         platform: options.platform,
         surface,
         webHost: options.webHost,
@@ -239,6 +250,7 @@ export function resolveNativeHardwareKeyboardConsumableEventSignatures(
             commandId: command.id,
             enabled: options.enabled,
             enabledWhenDisabledCommandIds: options.enabledWhenDisabledCommandIds,
+            ownedCommandIds: options.ownedCommandIds,
             platform: options.platform,
             surface,
             webHost: options.webHost,
@@ -261,6 +273,7 @@ export function resolveNativeHardwareKeyboardConsumableEventSignatures(
                 commandId: command.id,
                 enabled: options.enabled,
                 enabledWhenDisabledCommandIds: options.enabledWhenDisabledCommandIds,
+                ownedCommandIds: options.ownedCommandIds,
                 platform: options.platform,
                 surface,
                 webHost: options.webHost,
@@ -292,6 +305,7 @@ export function createKeyboardShortcutDispatcher(options: KeyboardShortcutDispat
                 commandId: command.id,
                 enabled: options.enabled,
                 enabledWhenDisabledCommandIds: options.enabledWhenDisabledCommandIds,
+                ownedCommandIds: options.ownedCommandIds,
                 platform: options.platform,
                 surface,
                 webHost: options.webHost,
@@ -307,6 +321,7 @@ export function createKeyboardShortcutDispatcher(options: KeyboardShortcutDispat
                     commandId: command.id,
                     enabled: options.enabled,
                     enabledWhenDisabledCommandIds: options.enabledWhenDisabledCommandIds,
+                    ownedCommandIds: options.ownedCommandIds,
                     platform: options.platform,
                     surface,
                     webHost: options.webHost,
@@ -416,6 +431,7 @@ export function buildKeyboardShortcutLabels(
                         commandId: command.id,
                         enabled: options.enabled,
                         enabledWhenDisabledCommandIds: options.enabledWhenDisabledCommandIds,
+                        ownedCommandIds: options.ownedCommandIds,
                         platform,
                         surface,
                         webHost: options.webHost,

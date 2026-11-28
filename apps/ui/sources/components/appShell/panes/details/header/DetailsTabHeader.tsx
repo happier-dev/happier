@@ -109,11 +109,13 @@ function toLineSegments(meta: readonly DetailsTabHeaderMetaFact[] | undefined): 
             if (fact.removed > 0) segments.push({ text: `−${fact.removed}`, tone: 'removed' });
             continue;
         }
-        segments.push(fact.icon ? { text: fact.text, icon: fact.icon,
+        const shrink = fact.shrink ? { shrink: true as const } : {};
+        segments.push(fact.icon ? { text: fact.text, icon: fact.icon, ...shrink,
             ...(fact.onPress ? { onPress: fact.onPress, testID: fact.testID, ...(fact.accessibilityLabel ? { accessibilityLabel: fact.accessibilityLabel } : {}) } : {}) }
             : fact.tone === 'failure' ? { text: fact.text, failure: true,
                 ...(fact.onPress ? { onPress: fact.onPress, testID: fact.testID, ...(fact.accessibilityLabel ? { accessibilityLabel: fact.accessibilityLabel } : {}) } : {}) }
-            : fact.tone === 'strong' ? { text: fact.text, emphasis: true } : fact.text);
+            : fact.tone === 'strong' ? { text: fact.text, emphasis: true, ...shrink }
+            : fact.shrink ? { text: fact.text, shrink: true } : fact.text);
     }
     return segments;
 }

@@ -129,6 +129,9 @@ export function SessionMediaGalleryView(props: SessionMediaGalleryViewProps) {
   );
   // A real zero teaches the feature: its one next step is this Session's own composer picker (lab SM1z).
   const cockpit = useSessionCockpitSurfaceNavigation();
+  // A pending wait for the chat composer ends when this view goes away, or when a newer press replaces it.
+  const composerWait = React.useRef<(() => void) | null>(null);
+  React.useEffect(() => () => composerWait.current?.(), []);
   const attachPicture = React.useCallback(() => {
     if (!lifetime?.isCurrent()) return;
     const scope = lifetime.scope;
@@ -138,10 +141,15 @@ export function SessionMediaGalleryView(props: SessionMediaGalleryViewProps) {
     // composer registers (its own event, once), since it mounts only after the chat is in front.
     if (!cockpit) { pick(); return; }
     cockpit.switchSurface('chat');
+    composerWait.current?.();
+    composerWait.current = null;
     if (pick() !== 'unavailable') return;
     const stop = subscribeComposerPresentationTarget(ref, () => {
-      if (pick() !== 'unavailable') stop();
+      if (pick() === 'unavailable') return;
+      stop();
+      composerWait.current = null;
     });
+    composerWait.current = stop;
   }, [cockpit, lifetime, props.sessionId]);
   const loadRest = React.useCallback(async () => {
     if (loadMore) await loadMore();
@@ -196,11 +204,11 @@ export function SessionMediaGalleryView(props: SessionMediaGalleryViewProps) {
         testID="media-tab-header"
         title={t('files.pane.gallery.media')}
         leading={<Icon name="image" size={20} color={theme.colors.text.secondary} />}
-        // The Session's name can be long: it stands last and gives way, so the count and order stay readable.
+        // The Session's name leads (lab SG2f) and gives way when long, so the count and order keep their words.
         meta={[
+          ...(sessionName ? [{ key: 'session', text: sessionName, tone: 'strong' as const, shrink: true }] : []),
           ...(countsKnown ? [{ key: 'count', text: t('files.pane.gallery.pictureCount', { count: model.shownCount }) }] : []),
           { key: 'order', text: t('files.pane.gallery.newestFirst'), tone: 'muted' as const },
-          ...(sessionName ? [{ key: 'session', text: sessionName, tone: 'strong' as const, shrink: true }] : []),
         ]}
       />
     ) : null;

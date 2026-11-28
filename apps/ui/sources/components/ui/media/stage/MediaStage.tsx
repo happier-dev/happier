@@ -712,6 +712,13 @@ function StageGalleryStrip(props: Readonly<{
   const stride = STRIP_THUMB_SIZE + theme.space.s4;
   const { phone, index: current } = props;
   const phoneInset = phone ? Math.max(0, (props.width - PHONE_WIDE_STRIDE) / 2) : 0;
+  // The first open lands the current cell in the middle (lab ST1p): its centred offset once the strip has laid out.
+  const placed = React.useRef(false);
+  const placeCurrent = React.useCallback(() => {
+    if (!phone || placed.current) return;
+    placed.current = true;
+    list.current?.scrollToOffset({ offset: PHONE_NARROW_STRIDE * current, animated: false });
+  }, [current, phone]);
   return <FlatList
     ref={list}
     testID="media-stage-gallery"
@@ -725,6 +732,7 @@ function StageGalleryStrip(props: Readonly<{
     {...(phone ? { ListHeaderComponent: <View style={{ width: phoneInset }} />, ListFooterComponent: <View style={{ width: phoneInset }} /> } : {})}
     keyExtractor={(_item, index) => String(index)}
     onViewableItemsChanged={onViewableItemsChanged}
+    onContentSizeChange={placeCurrent}
     style={{ maxWidth: props.width }}
     contentContainerStyle={phone ? stageStyles.phoneStripRow : stageStyles.stripRow}
     accessibilityRole="tablist"

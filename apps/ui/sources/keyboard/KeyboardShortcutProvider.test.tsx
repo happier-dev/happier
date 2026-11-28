@@ -718,6 +718,33 @@ describe('KeyboardShortcutProvider', () => {
         storage.setState({ settings: initialSettings });
     });
 
+    it('lets only the registration that owns its keys (the open media stage) take them while shortcuts and letter keys are off', async () => {
+        vi.stubGlobal('navigator', { platform: 'MacIntel' });
+        storage.setState({ settings: { ...storage.getState().settings, keyboardShortcutsV2Enabled: false, keyboardSingleKeyShortcutsEnabled: false } });
+        const filesVideo = vi.fn();
+        const stageNext = vi.fn();
+        const stagePlay = vi.fn();
+        // A Files tab video registers its keys like any surface; the open stage owns its own.
+        function FilesVideo() {
+            useKeyboardShortcutHandlers({ 'media.playPause': filesVideo });
+            return <Child />;
+        }
+        function Stage({ open }: { open: boolean }) {
+            useKeyboardShortcutHandlers(open ? { 'media.next': stageNext, 'media.playPause': stagePlay } : {}, undefined, { ownsKeys: true });
+            return <Child />;
+        }
+        const button = { tagName: 'BUTTON', isContentEditable: false, closest: () => null } as unknown as EventTarget;
+        const press = (key: string, code: string) => window.dispatchEvent(createKeyboardEvent({ key, code, target: button }));
+        const screen = await renderScreen(<KeyboardShortcutProvider handlers={{}}><FilesVideo /><Stage open={false} /></KeyboardShortcutProvider>);
+        await act(async () => { press(' ', 'Space'); });
+        expect(filesVideo).not.toHaveBeenCalled();
+        await screen.update(<KeyboardShortcutProvider handlers={{}}><FilesVideo /><Stage open /></KeyboardShortcutProvider>);
+        await act(async () => { press('ArrowRight', 'ArrowRight'); press(' ', 'Space'); });
+        expect(stageNext).toHaveBeenCalledOnce();
+        expect(stagePlay).toHaveBeenCalledOnce();
+        expect(filesVideo).not.toHaveBeenCalled();
+    });
+
     it('moves unhandled printable typing into the current composer on every web platform without cancelling the key', async () => {
         vi.stubGlobal('navigator', { platform: 'MacIntel' });
         storage.setState({ settings: { ...storage.getState().settings, keyboardShortcutsV2Enabled: false } });

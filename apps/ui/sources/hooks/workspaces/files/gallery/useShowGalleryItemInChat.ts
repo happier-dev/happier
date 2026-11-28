@@ -1,6 +1,8 @@
 import * as React from 'react';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
-import { useSessionCockpitSurfaceNavigation } from '@/components/workspaceCockpit/session/SessionCockpitSurfaceNavigation';
+import { useDestinationPaneScopeId } from '@/components/appShell/workspace/DestinationInstanceHost';
+import { createSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
+import { useSessionChatReveal } from '@/components/sessions/panes/useSessionChatReveal';
 import { createServerRequestForServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
 import { runWithServerAccountScopeRequestGuard } from '@/sync/runtime/orchestration/serverScopedRpc/serverAccountScopeRequestGuard';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
@@ -13,9 +15,10 @@ import { resolveGalleryChatJump, type GalleryChatJump } from './showGalleryItemI
 
 export function useShowGalleryItemInChat(address: SessionAddress, lifetime: ServerAccountScopeLifetime | null) {
     const navigate = useNavigateToSession();
-    // A phone shows one surface at a time: the chat comes forward before the transcript jumps (lab pr974 SM1jp).
-    const cockpit = useSessionCockpitSurfaceNavigation();
     const { sessionId, serverId } = address;
+    // The chat comes forward before the transcript jumps: a phone switches to it (lab pr974 SM1jp), and a
+    // Details drawer covering it closes, through the one reveal owner the review handoff uses too.
+    const revealChat = useSessionChatReveal(useDestinationPaneScopeId(createSessionPaneScopeId(sessionId, serverId)));
     return React.useCallback(async (item: Pick<GalleryMediaItem, 'messageLocalId'>, signal?: AbortSignal): Promise<GalleryChatJump> => {
         if (!item.messageLocalId) return { ok: false, code: 'no_message' };
         if (!lifetime?.isCurrent() || !areServerProfileIdentifiersEquivalent(serverId, lifetime.scope.serverId)) {
@@ -39,12 +42,12 @@ export function useShowGalleryItemInChat(address: SessionAddress, lifetime: Serv
             });
             if (!lifetime.isCurrent() || signal?.aborted) return { ok: false, code: 'cancelled' };
             if (result.ok) {
-                cockpit?.switchSurface('chat');
+                revealChat();
                 await navigate(sessionId, { serverId, query: result.query });
             }
             return result;
         } catch (error) {
             return { ok: false, code: error === retired || signal?.aborted || !lifetime.isCurrent() ? 'cancelled' : 'read_failed' };
         }
-    }, [cockpit, lifetime, navigate, serverId, sessionId]);
+    }, [lifetime, navigate, revealChat, serverId, sessionId]);
 }
