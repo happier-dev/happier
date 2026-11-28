@@ -98,6 +98,7 @@ export async function startDatabaseWorkbenchFixture(params: Readonly<{
   completeTerminalConnect?: Parameters<typeof import('./daemon/projectDaemon').startProjectDaemonFixture>[0]['completeTerminalConnect'];
   serverEnv?: NodeJS.ProcessEnv;
   guestReachableHome?: Parameters<typeof import('./teamSetupF').startTeamSetupFFixture>[0]['guestReachableHome'];
+  serverPreloadModules?: Parameters<typeof import('./teamSetupF').startTeamSetupFFixture>[0]['serverPreloadModules'];
   advertiseRequestObservationEndpoint?: boolean;
   captureRequestBody?: (request: RecordedHttpProxyRequest) => boolean;
   beforeForwardResponse?: (request: RecordedHttpProxyRequest) => void | Promise<void>;
@@ -111,6 +112,7 @@ export async function startDatabaseWorkbenchFixture(params: Readonly<{
       completeTerminalConnect: params.completeTerminalConnect,
       dbProvider: 'postgres', observeActionRequests: true,
       guestReachableHome: params.guestReachableHome,
+      serverPreloadModules: params.serverPreloadModules,
       advertiseRequestObservationEndpoint: params.advertiseRequestObservationEndpoint,
       captureRequestBody: params.captureRequestBody, beforeForwardResponse: params.beforeForwardResponse,
       serverEnv: { NODE_ENV: process.env.NODE_ENV, ...params.serverEnv, DATABASE_URL: postgres.homeDatabaseUrl } });

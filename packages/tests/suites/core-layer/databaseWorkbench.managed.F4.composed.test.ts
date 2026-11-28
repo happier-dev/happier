@@ -121,6 +121,7 @@ async function exerciseManagedDatabase(provider: (typeof providers)[number], mod
   const boundary = await startDeploymentProvidersHttp(providerBoundary);
   let postgresTls: Awaited<ReturnType<typeof createEphemeralTlsServerFixture>> | undefined;
   try {
+    const providerHttpPreload = new URL('../../src/testkit/deploymentProvidersHttpPreload.mjs', import.meta.url).href;
     const hostEnv = { ...boundary.env, HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' };
     if (provider === 'supabase') {
       postgresTls = await createEphemeralTlsServerFixture();
@@ -132,6 +133,7 @@ async function exerciseManagedDatabase(provider: (typeof providers)[number], mod
     }
     fixture = await startDatabaseWorkbenchFixture({
       testDir, postgresTls, serverEnv: { ...hostEnv, NODE_ENV: process.env.NODE_ENV },
+      serverPreloadModules: [providerHttpPreload],
       advertiseRequestObservationEndpoint: provider === 'neon',
       captureRequestBody: request => request.path === eventAdmitPath || request.path === eventSourcePath
         || observeSessionReads && request.path === actionAdmissionPath,
@@ -178,7 +180,7 @@ async function exerciseManagedDatabase(provider: (typeof providers)[number], mod
         resolve(repoRootDir(), 'apps/cli/src/index.ts')], cwd: repoRootDir() }, env: { ...hostEnv,
       ...(requesterVendor ? { HAPPIER_CLAUDE_PATH: requesterVendor.executablePath } : {}),
       HAPPIER_DEPLOYED_TELEMETRY_PORT: String(collectorPort),
-      NODE_OPTIONS: `${fixture.sourceOptions} --import ${new URL('../../src/testkit/deploymentProvidersHttpPreload.mjs', import.meta.url).href}` } };
+      NODE_OPTIONS: `${fixture.sourceOptions} --import ${providerHttpPreload}` } };
     const machine = await fixture.enrollDaemon(account, managedDaemonOptions);
     await writeFile(join(testDir, 'runtime.json'), JSON.stringify({ homeId: fixture.serverId,
       serverPid: fixture.server.proc.child.pid, daemonPid: machine.daemon.state.pid,
@@ -228,11 +230,14 @@ async function exerciseManagedDatabase(provider: (typeof providers)[number], mod
       attemptId: attempt.attemptId, expectedConfigurationRevision: configuration.revision }));
     if (begun.status !== 'awaitingManual') throw new Error(`F4 Connect did not request credentials (${begun.status})`);
     const token = `${provider}-F4-fixture-only-token`;
+    const beforeConnect = boundary.entries().length;
     const connected = ConnectedAccountAttemptResponseSchema.parse(await invoke('connectedServices.authentication.submitManual', {
       attemptId: begun.attemptId, fields: { token } }));
     if (connected.status !== 'connected') {
       throw new Error(`F4 Connect did not settle (${connected.status}${'code' in connected ? `/${connected.code}` : ''})`);
     }
+    const organizationPath = provider === 'neon' ? `/api/v2/organizations/${boundary.neon.organizationId}` : '/v1/organizations';
+    expect(boundary.entries().slice(beforeConnect).some(request => request.method === 'GET' && request.path === organizationPath)).toBe(true);
     const source = ProjectSourcesReadOutputV1Schema.parse(await invoke('projects.sources.create', {
       serverId: fixture.serverId, name: `${provider} first Project`, requestKey: randomUUID(), defaultRef: 'main',
       repository: { provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },

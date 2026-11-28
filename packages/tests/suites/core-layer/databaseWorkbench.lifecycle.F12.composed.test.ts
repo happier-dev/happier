@@ -2,12 +2,16 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
 
+import {
+  DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1, DATABASE_CAPTURE_RESOURCE_REF_V1, DATABASE_CAPTURE_STATUS_ACTION_ID_V1,
+  DatabaseCaptureConfigureResultV1Schema, DatabaseCaptureStatusResultV1Schema, databaseActionLocalIdV1,
+} from '@happier-dev/database-protocol';
 import { PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/account/settings/personalSavedSecretActionsV1';
 import { AutomationEventActionHttpPathsV1 } from '@happier-dev/protocol/automations/event';
 import { DATABASE_PLUGIN_ID_V1, DATABASE_ROWS_READ_ACTION_ID_V1, DATABASE_TARGETS_CONNECT_ACTION_ID_V1 } from '../../../database-protocol/src/actionIdsDatabaseV1';
 import { DatabaseOperationResultV1Schema, DatabaseRowsReadInputV1Schema } from '@happier-dev/plugin-sdk/database';
 import { DatabaseDescriptorV1Schema as DatabaseTargetsConnectResultV1Schema } from '@happier-dev/plugin-sdk/database';
-import { startDatabaseWorkbenchInsightsFixture } from '../../src/testkit/databaseWorkbench';
+import { installDatabaseCapturePluginFixture, startDatabaseWorkbenchInsightsFixture } from '../../src/testkit/databaseWorkbench';
 import { createRunDirs } from '../../src/testkit/runDir';
 
 const run = createRunDirs({ runLabel: 'core' });
@@ -24,6 +28,21 @@ it('F12-known-good-enabled-workbench then disable and re-enable through lifecycl
     daemonEnv: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' },
   });
   try {
+    const machineId = fixture.machine.target.machineId;
+    const project = { serverId: fixture.serverId, machineId, projectId: fixture.targets.selected.projectKey };
+    const captureSource = { kind: 'worktree', ...project, workspaceId: fixture.targets.selected.workspace.workspaceId };
+    await installDatabaseCapturePluginFixture({ testDir, daemonPort: fixture.machine.daemon.state.httpPort,
+      controlToken: fixture.machine.daemon.state.controlToken });
+    function capture(actionId: typeof DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1 | typeof DATABASE_CAPTURE_STATUS_ACTION_ID_V1,
+      input: unknown) {
+      return fixture.owner.executeReviewed('action.invoke', {
+        action: { pluginId: DATABASE_CAPTURE_RESOURCE_REF_V1.pluginId, localId: databaseActionLocalIdV1(actionId) }, input,
+      }, { externalActionTarget: { kind: 'machine', machineId }, presentUserConfirmation: { actionId: 'action.invoke' } });
+    }
+    const configuredCapture = await capture(DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1, { project, enabled: true });
+    if (!configuredCapture.ok) throw new Error(`F12 Capture configuration refused (${configuredCapture.errorCode})`);
+    expect(DatabaseCaptureConfigureResultV1Schema.parse(configuredCapture.result)).toMatchObject({ ok: true, enabled: true });
+
     const saved = await fixture.owner.execute('secrets.create', {
       name: 'F12 native target', kind: 'other', value: fixture.postgres.selectedDatabaseUrl,
     }, { presentUserConfirmation: { actionId: 'secrets.create' } });
@@ -54,7 +73,7 @@ it('F12-known-good-enabled-workbench then disable and re-enable through lifecycl
     expect(BigInt(await selectedStatementCount())).toBeGreaterThan(beforeControl);
     expect(await readFile(moduleImportJournal, 'utf8')).toMatch(/^\d+\n/m);
     console.info('F12-known-good-enabled-workbench passed', fixture.runtime);
-    const lifecycleInput = { pluginId: DATABASE_PLUGIN_ID_V1, machineId: fixture.machine.target.machineId, scope: 'machine' };
+    const lifecycleInput = { pluginId: DATABASE_PLUGIN_ID_V1, machineId, scope: 'machine' };
     const disabled = await fixture.owner.executeReviewed('plugins.disable', lifecycleInput);
     expect(disabled).toMatchObject({ ok: true, result: { ok: true, change: { kind: 'committed' } } });
     const beforeDisabledStartup = await selectedStatementCount();
@@ -67,6 +86,9 @@ it('F12-known-good-enabled-workbench then disable and re-enable through lifecycl
     const refused = await fixture.executeDatabase(DATABASE_ROWS_READ_ACTION_ID_V1, input);
     // Disabling the Workbench removes its Action from Machine dispatch.
     expect(refused).toMatchObject({ ok: false, errorCode: 'contributed_action_unavailable' });
+    const captureStatus = await capture(DATABASE_CAPTURE_STATUS_ACTION_ID_V1, { source: captureSource });
+    if (!captureStatus.ok) throw new Error(`F12 Capture status refused (${captureStatus.errorCode})`);
+    expect(DatabaseCaptureStatusResultV1Schema.parse(captureStatus.result)).toMatchObject({ ok: true, enabled: true });
     expect(await readFile(moduleImportJournal, 'utf8')).toBe(importsBeforeDisabledStartup);
     expect(await selectedStatementCount()).toBe(beforeDisabledStartup);
     expect(fixture.readActionOccurrences()).toHaveLength(0);
@@ -84,7 +106,7 @@ it('F12-known-good-enabled-workbench then disable and re-enable through lifecycl
     expect(BigInt(await selectedStatementCount())).toBeGreaterThan(beforeReenabled);
     expect((await readFile(moduleImportJournal, 'utf8')).length).toBeGreaterThan(importsBeforeDisabledStartup.length);
     console.info('F12 disabled restart census passed', {
-      enabledPid, disabledPid, moduleImports: 0, selectedStatements: 0, eventAdmissions: 0,
+      enabledPid, disabledPid, moduleImports: 0, selectedStatements: 0, eventAdmissions: 0, captureEnabled: true,
     });
   } finally {
     await fixture.stop();
