@@ -1,4 +1,3 @@
-import { connect } from '@happier-dev/sdk';
 import { isPluginError } from '@happier-dev/plugin-sdk/errors';
 import { readPublishedMachineRow, readPublishedMachineRowWithLegacyOwnerProof } from '@/api/machine/readPublishedMachineRow';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -54,6 +53,9 @@ export async function readHostAccountExecutionIdentity(input: Readonly<{
     const installation = readInstallationIdentityIfExistsSync();
     if (!installation) return unavailable();
     const accountId = input.kind === 'automation' ? await (async () => {
+      // Only API-token automations need the SDK; loaded here so runners importing this
+      // custody owner do not load the SDK client stack (and its Undici transport).
+      const { connect } = await import('@happier-dev/sdk');
       const client = connect({ endpoint: input.serverHttpBaseUrl!, token: credentials.token });
       try { return (await client.apiTokens.self({ signal: input.signal })).accountId; }
       finally { await client.close(); }

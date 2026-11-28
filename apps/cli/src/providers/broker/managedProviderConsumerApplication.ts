@@ -4,7 +4,6 @@ import { PluginError } from '@happier-dev/plugin-sdk';
 import type { ProviderCredentialTransportV1 } from '@happier-dev/protocol';
 
 import { renderProviderProbeCredential } from '@/providers/spawn/runtimeCredential';
-import { startProviderBrokerApplicationServer } from './providerBrokerApplicationServer';
 import type { ProviderBrokerRequestHandler } from './providerBrokerRequestHandler';
 import { sanitizeProviderBrokerRequestV1 } from './requestPolicyV1';
 
@@ -32,6 +31,9 @@ export async function startManagedProviderConsumerApplication(input: Readonly<{
     const localCredentialHeader = transport.destination.name.toLowerCase();
     const lifetime = new AbortController();
     const isCurrent = () => !input.signal.aborted && !lifetime.signal.aborted;
+    // The HTTP application (Fastify) is needed only once a shared Provider run starts;
+    // runners import this module on every start, so the server stack loads here.
+    const { startProviderBrokerApplicationServer } = await import('./providerBrokerApplicationServer');
     const server = await startProviderBrokerApplicationServer({
         handler: async () => ({ ok: false, reasonCode: 'transport_identity_mismatch' }),
         localConsumer: {
