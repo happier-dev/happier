@@ -1058,6 +1058,43 @@ describe('Database workbench surfaces', () => {
     } finally { await fixture.dispose(); }
   });
 
+  it.each(['manual', 'service'] as const)('offers Forget database at the end of a %s database Overview only when it was connected by hand', async kind => {
+    const forget = databaseActionLocalIdV1(DATABASE_TARGETS_FORGET_ACTION_ID_V1);
+    const { kind: _kind, ...placement } = scope;
+    const shown = kind === 'manual'
+      ? { ...descriptor, target: { ...placement, kind: 'manual' as const, savedSecretId: 'saved-url' } }
+      : descriptor;
+    const write = vi.fn<Parameters<typeof createPluginUiActionControlTestHost>[0]>(async request => {
+      expect(request.action).toEqual(forget);
+      expect(request.input).toEqual({ target: shown.target });
+      return { ok: true, result: { ok: true } };
+    });
+    const control = createPluginUiActionControlTestHost(write);
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: `page-forget-${kind}`, mountNonce: `page-forget-${kind}` },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' }, surface: renderPage,
+      launchInput: projectNativeJsonValueForTransport({ scope, descriptor: shown }), subPath: 'overview',
+      surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: { pluginId: 'happier.database', localId: 'database-workbench' }, container: 'appPage' }, target: { kind: 'app' } }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: { ...connectionResourceHandlers(shown), executeAction: daemonAnswers([shown]), actionControl: control.handler,
+        replacePageLocation: async ({ subPath }) => subPath },
+    });
+    try {
+      await settle(20);
+      if (kind === 'service') {
+        expect(control.presentation('Forget database')).toBeUndefined();
+        return;
+      }
+      // A quiet control at its own width; the review the Action carries confirms it.
+      expect(control.presentation('Forget database')?.variant).toBe('secondary');
+      await act(async () => control.press('Forget database'));
+      await settle();
+      expect(write).toHaveBeenCalledTimes(1);
+      expect(await fixture.getByText('billing_dev is no longer connected')).toBeTruthy();
+      expect(control.presentation('Forget database')).toBeUndefined();
+    } finally { await fixture.dispose(); }
+  });
+
   it('heads the Overview with where the database is, not the engine the rail already says', async () => {
     const located = { ...descriptor, endpointLabel: 'localhost:5432' };
     const fixture = await createPluginUiTestkit({
@@ -1966,12 +2003,8 @@ describe('Database workbench surfaces', () => {
       await settle();
       expect(await fixture.getByText(installed.label)).toBeTruthy();
       expect(write.mock.calls.map(([request]) => request.action)).toEqual([connect, connect]);
-      await act(async () => control.press('Forget database'));
-      await settle();
-      expect(await fixture.getByText(container === 'servicesPanel'
-        ? 'No databases found in this checkout’s services'
-        : 'No database for this project yet')).toBeTruthy();
-      expect(write.mock.calls.map(([request]) => request.action)).toEqual([connect, connect, forget]);
+      // A connected database is forgotten from its Overview, never from its row or the rail at rest (DBW ORCH 11-28).
+      expect(control.presentation('Forget database')).toBeUndefined();
       expect(operate.mock.calls.some(([request]) => request.action === connect || request.action === forget)).toBe(false);
     } finally { await fixture.dispose(); }
   });

@@ -148,41 +148,59 @@ function StatementsLead(
   return <SinceLastLook views={props.views} complete={props.complete} />;
 }
 
-/** Total time, then its share of the time shown, as the lab's two-line cell. */
-function TotalTime(props: Readonly<{ view: StatementView }>) {
+/** The statement's share of the time shown as a bar; the share's words are its accessible name. */
+function ShareBar(props: Readonly<{ view: StatementView }>) {
+  const theme = usePluginTheme();
   const translate = usePluginTranslation();
   return (
-    <Stack gap="none" align="flex-end">
-      <Text variant="body" value={formatDuration(props.view.row.totalTimeMs) ?? ''} />
-      <Text
-        variant="meta"
-        tone="secondary"
-        value={translate('plugins.database.insights.shareLabel', '{share} of time', {
-          share: formatPercent(props.view.share) ?? '',
-        })}
-      />
+    <CapacityBar
+      theme={theme}
+      size="inline"
+      showCaption={false}
+      label={translate('plugins.database.insights.shareLabel', '{share} of time', {
+        share: formatPercent(props.view.share) ?? '',
+      })}
+      value={Math.round(props.view.share * 1000) / 10}
+      capacity={100}
+    />
+  );
+}
+
+const SPAN_CELL = { alignSelf: 'stretch' } as const;
+
+/**
+ * Total time, then its share of the time shown: the bar across the column with the share beside it, so a table row
+ * reads where the time goes at rest (lab dbInsights/statements), as a list row's bar under its statement does.
+ */
+function TotalTime(props: Readonly<{ view: StatementView }>) {
+  return (
+    // The cell aligns its value to the end; this column spans the cell so the bar has the column's width to fill.
+    <Stack gap="xsmall" align="stretch" style={SPAN_CELL}>
+      <Row justify="flex-end">
+        <Text variant="body" value={formatDuration(props.view.row.totalTimeMs) ?? ''} />
+      </Row>
+      <Row gap="small" align="center">
+        <Stack grow><ShareBar view={props.view} /></Stack>
+        <Text variant="meta" tone="secondary" value={formatPercent(props.view.share) ?? ''} />
+      </Row>
     </Stack>
   );
 }
 
+function rowsPerCallLabel(view: StatementView): string {
+  if (view.rowsPerCall === null) return '—';
+  const rows = Math.round(view.rowsPerCall);
+  return formatCount(rows) ?? String(rows);
+}
+
 /** The second line under the shape, then its share of time as a bar across the statement column. */
 function StatementByline(props: Readonly<{ view: StatementView }>) {
-  const theme = usePluginTheme();
   const translate = usePluginTranslation();
   const line = statementByline(props.view, translate);
   return (
     <Stack gap="xsmall">
       {line ? <Text variant="meta" tone="secondary" value={line} numberOfLines={1} /> : null}
-      <CapacityBar
-        theme={theme}
-        size="inline"
-        showCaption={false}
-        label={translate('plugins.database.insights.shareLabel', '{share} of time', {
-          share: formatPercent(props.view.share) ?? '',
-        })}
-        value={Math.round(props.view.share * 1000) / 10}
-        capacity={100}
-      />
+      <ShareBar view={props.view} />
     </Stack>
   );
 }
@@ -235,9 +253,17 @@ export function StatementsView(
         ),
       },
       {
+        key: 'rows',
+        title: translate('plugins.database.insights.rowsPerCall', 'Rows per call'),
+        minWidth: 104,
+        priority: 0,
+        align: 'end',
+        render: (view) => <Text variant="body" value={rowsPerCallLabel(view)} />,
+      },
+      {
         key: 'total',
         title: translate('plugins.database.insights.totalTime', 'Total time'),
-        minWidth: 120,
+        minWidth: 136,
         priority: 3,
         align: 'end',
         render: (view) => <TotalTime view={view} />,

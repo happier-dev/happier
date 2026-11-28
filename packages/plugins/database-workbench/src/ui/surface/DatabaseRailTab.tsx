@@ -28,7 +28,7 @@ import {
 import { WorkbenchMain } from './WorkbenchPage.js';
 import { InsightsDetailsTab, InsightsRailList } from './insights/InsightsRail.js';
 import { AddTelemetrySetup } from './insights/InsightsSetup.js';
-import { DatabaseConnection, DatabaseForget } from './DatabaseConnection.js';
+import { DatabaseConnection } from './DatabaseConnection.js';
 import { CatalogueReadFailure } from './CatalogueReadFailure.js';
 import {
   databaseTargetKey,
@@ -246,12 +246,8 @@ function RailTab(
     <WorkbenchRailList
       key={current.targetKey}
       targetKey={current.targetKey}
-      header={current.target.kind === 'manual' ? <Stack>{pickerHeader}
-        <DatabaseForget target={current.target} onForgot={() => {
-          setOpenedKey(null);
-          picker.refresh();
-        }} />
-      </Stack> : pickerHeader}
+      // Forgetting a database lives on its Overview, never at rest beside the picker (DBW ORCH 11-28).
+      header={pickerHeader}
       selected={selected}
       onOpen={open}
       showOverview={false}

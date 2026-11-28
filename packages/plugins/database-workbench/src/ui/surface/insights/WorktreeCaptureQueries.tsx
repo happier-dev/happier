@@ -20,7 +20,7 @@ import {
 } from '@happier-dev/plugin-sdk/database';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import { PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1 } from '@happier-dev/plugin-sdk/storage';
-import { Button, ErrorState, Item, ItemGroup, Stack, Text, usePluginTranslation, useSurfaceContext } from '@happier-dev/plugin-ui';
+import { Button, ErrorState, Item, ItemGroup, LoadingState, Stack, Text, usePluginTranslation, useSurfaceContext } from '@happier-dev/plugin-ui';
 import { CaptureQueries } from '@happier-dev/plugin-ui/components';
 import { usePluginHostApi } from '@happier-dev/plugin-ui/hostApi';
 
@@ -83,7 +83,8 @@ function CaptureReadStatus({ state, retry }: Readonly<{
   retry: () => void;
 }>) {
   const t = usePluginTranslation();
-  if (state.kind === 'pending') return <Text tone="secondary">{t('plugins.database.capture.reading', 'Reading capture…')}</Text>;
+  // The shared loading line, the shape of what is coming, rather than a sentence about reading.
+  if (state.kind === 'pending') return <LoadingState layout="line" rows={2} />;
   return <ErrorState layout="line"
     title={t('plugins.database.capture.readFailed', 'Capture could not be read')}
     details={state.details} onRetry={retry} retryLabel={t('plugins.database.retry', 'Try again')} />;

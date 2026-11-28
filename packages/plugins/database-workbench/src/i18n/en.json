@@ -44,7 +44,7 @@
   "plugins.database.insights.adviceNone": "No single-column index halved the estimated cost.",
   "plugins.database.insights.adviceRetry": "Retry",
   "plugins.database.insights.adviceSetup": "Ask your database administrator to make HypoPG available on the server and run CREATE EXTENSION hypopg in this database. Then retry.",
-  "plugins.database.insights.adviceShape": "This statement’s query shape is outside the supported set.",
+  "plugins.database.insights.adviceShape": "Index suggestions cover one-table reads written as select * from schema.table where …",
   "plugins.database.insights.adviceTransport": "This check needs a direct connection to PostgreSQL 16 or later.",
   "plugins.database.insights.adviceUnavailable": "Index suggestions are unavailable.",
   "plugins.database.insights.askInvestigation": "Ask for investigation",

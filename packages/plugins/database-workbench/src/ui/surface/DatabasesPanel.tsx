@@ -21,7 +21,7 @@ import {
   type WorkbenchLaunchInput,
 } from './mount.js';
 import { openWorkbenchPage } from './openWorkbench.js';
-import { DatabaseConnection, DatabaseForget } from './DatabaseConnection.js';
+import { DatabaseConnection } from './DatabaseConnection.js';
 import { CatalogueReadFailure } from './CatalogueReadFailure.js';
 
 const PANEL_LOCATION = Object.freeze({
@@ -140,26 +140,24 @@ function DatabaseRows(
   return (
     <>
       {targets.map((target) => (
-        <Stack key={target.targetKey}>
-          <Item
-            title={target.name}
-            // A database is an identity (its mark), and the row opens its workbench (the navigation chevron).
-            icon={<Icon name="database" tone="secondary" />}
-            showChevron
-            subtitle={targetSubtitle(target, translate)}
-            {...(target.relationCount
-              ? {
-                  detail: translate(
-                    'plugins.database.target.tables',
-                    '{count} tables',
-                    { count: target.relationCount },
-                  ),
-                }
-              : {})}
-            onPress={() => open(target)}
-          />
-          {target.target.kind === 'manual' ? <DatabaseForget target={target.target} onForgot={refresh} /> : null}
-        </Stack>
+        <Item
+          key={target.targetKey}
+          title={target.name}
+          // A database is an identity (its mark), and the row opens its workbench (the navigation chevron).
+          icon={<Icon name="database" tone="secondary" />}
+          showChevron
+          subtitle={targetSubtitle(target, translate)}
+          {...(target.relationCount
+            ? {
+                detail: translate(
+                  'plugins.database.target.tables',
+                  '{count} tables',
+                  { count: target.relationCount },
+                ),
+              }
+            : {})}
+          onPress={() => open(target)}
+        />
       ))}
     </>
   );

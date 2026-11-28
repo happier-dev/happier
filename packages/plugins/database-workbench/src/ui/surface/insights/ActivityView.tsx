@@ -101,17 +101,37 @@ function stateWord(session: Session, translate: PluginTranslate): string {
   }
 }
 
+/** What a session is waiting on, in words: PostgreSQL's wait class says it; the raw event name stays in the database. */
 function waitText(view: SessionView, translate: PluginTranslate): string {
   const lock = view.session.locks?.find((item) => !item.granted);
   if (lock)
-    return translate('plugins.database.activity.lockOn', 'lock · {relation}', {
-      relation: lock.relation ?? lock.mode,
-    });
-  return (
-    [view.session.waitClass, view.session.waitEvent]
-      .filter(Boolean)
-      .join(' · ') || '—'
-  );
+    return lock.relation
+      ? translate('plugins.database.activity.lockOn', 'lock · {relation}', { relation: lock.relation })
+      : translate('plugins.database.activity.waitRowLock', 'another session');
+  switch (view.session.waitClass) {
+    case undefined:
+    case '':
+    case 'Activity':
+      return '—';
+    case 'Lock':
+      return translate('plugins.database.activity.waitLock', 'a lock');
+    case 'LWLock':
+      return translate('plugins.database.activity.waitInternalLock', 'the database’s internal locks');
+    case 'IO':
+      return translate('plugins.database.activity.waitDisk', 'disk');
+    case 'Client':
+      return translate('plugins.database.activity.waitClient', 'the app');
+    case 'Timeout':
+      return translate('plugins.database.activity.waitTimer', 'a timer');
+    case 'IPC':
+      return translate('plugins.database.activity.waitProcess', 'another database process');
+    case 'BufferPin':
+      return translate('plugins.database.activity.waitBuffer', 'a shared buffer');
+    case 'Extension':
+      return translate('plugins.database.activity.waitExtension', 'an extension');
+    default:
+      return view.session.waitClass;
+  }
 }
 
 /**
@@ -217,7 +237,8 @@ function CancelActivity({ target, activityKey, queryStartedAt }: Readonly<{
     <Action.Control
       action={databaseActionLocalIdV1(DATABASE_ACTIVITY_CANCEL_ACTION_ID_V1)}
       title={t('plugins.database.activity.cancel', 'Cancel activity')}
-      variant="destructive"
+      // Quiet at rest on every working row; the Action's review says what cancelling does.
+      variant="secondary"
       disabled={notice?.disable === true}
       reviewedInput={input}
       controller={{

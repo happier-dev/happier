@@ -1159,6 +1159,37 @@ describe('Database Insights surfaces', () => {
     expect(adviceReads).toBe(2);
   });
 
+  it('says which statements index suggestions cover and offers no Retry that cannot change the answer', async () => {
+    const normalStats = daemon(statements);
+    const executeAction = vi.fn(async (call: PluginUiTestkitExecuteActionInput) => {
+      if (!JSON.stringify(call.input ?? null).includes('"group":"indexAdvice"')) return normalStats(call);
+      return projectNativeJsonValueForTransport({ ok: true, operation: 'stats.read',
+        observation: { v: 1, observedAtMs: 1, engineId: 'postgresql', scope: { database: 'billing_dev' },
+          intervalBasis: basis, group: 'indexAdvice', status: 'unavailable', reason: 'index_advice_statement_unsupported' } });
+    });
+    const details = await createPluginUiTestkit({
+      identity: { instanceId: 'details-shape', mountNonce: 'details-shape' },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' },
+      surface: renderRail,
+      launchInput: projectNativeJsonValueForTransport({ scope, descriptor, place: 'q-slow' }),
+      surfaceContext: createSurfaceContextFixture({
+        mount: { kind: 'destination', destination: { pluginId: 'happier.database', localId: 'insights-session-details' },
+          container: 'detailsTab' },
+        target: { kind: 'session', sessionId: 'session-1' },
+      }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: { ...resourceHandlers(), executeAction },
+    });
+    try {
+      await settle();
+      await act(async () => { await details.press((await details.queryByRole('button', { name: 'Check for index suggestions' }))!); });
+      expect(await details.queryByText('Index suggestions cover one-table reads written as select * from schema.table where …')).toBeTruthy();
+      expect(await details.queryByRole('button', { name: 'Retry' })).toBeFalsy();
+    } finally {
+      await details.dispose();
+    }
+  });
+
   it('prepares the selected finding once before handing its editable brief to the Session Composer', async () => {
     const readId = databaseActionLocalIdV1(DATABASE_INSIGHTS_FINDINGS_READ_ACTION_ID_V1);
     const buildId = databaseActionLocalIdV1(DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1);

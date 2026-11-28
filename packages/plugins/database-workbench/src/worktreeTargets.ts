@@ -17,7 +17,7 @@ import { findDatabaseConnectionDescriptor, openDatabaseConnection, type Database
 import type { DatabaseManualIdentity } from './manualTargets.js';
 
 type WorktreeScope = Extract<DatabaseTargetsListInputV1['scope'], { kind: 'worktree' }>;
-type Entry = Readonly<{ scope: WorktreeScope; serviceId: string; variables: readonly string[];
+type Entry = Readonly<{ scope: WorktreeScope; serviceId: string; serviceName?: string; variables: readonly string[];
     readEnvironment: PluginServiceLaunchEnvironmentInputV1['readEnvironment'] }>;
 type LevelStore = Pick<StorageScopeService, 'get' | 'set'>;
 type Request = Readonly<{ identity: Partial<DatabaseManualIdentity>; requester: DatabaseRequesterKindV1 | undefined;
@@ -122,11 +122,15 @@ export function createWorktreeDatabaseTargets(): Readonly<{
     }
     const descriptor = async (target: DatabaseWorktreeTargetV1, connectionString: string, request: Request,
         admittedAccess?: DatabaseAgentAccessV1): Promise<DatabaseDescriptorV1 | undefined> => {
-        const { source, workspace } = target;
+        const { source, ...scope } = target;
+        const { workspace } = scope;
         const selected = findDatabaseConnectionDescriptor(connectionString, request.databaseEngines);
         if (!selected) return undefined;
         const agentAccess = admittedAccess ?? await readLevel(request, target);
-        const origin = source.kind === 'service' ? source.serviceId : source.path;
+        // A service reads by its admitted name; its id (a native service's is a hash) only when it has none.
+        const origin = source.kind === 'service'
+            ? entries.get(entryKey({ scope, serviceId: source.serviceId }))?.serviceName ?? source.serviceId
+            : source.path;
         const machine = workspace.kind === 'managed' ? workspace.controller : workspace;
         const label = source.kind === 'sqlite_file' ? source.path : `${origin} · ${source.variable}`;
         return { target, label, ...selected, capabilities: [...selected.capabilities],
@@ -156,7 +160,8 @@ export function createWorktreeDatabaseTargets(): Readonly<{
                 installationId: input.requester.installationId, projectKey: input.workspace.projectKey,
                 workspace: { serverId: input.workspace.serverId, machineId: input.workspace.machineId,
                     workspaceId: input.workspace.id, rootPath: input.workspace.rootPath } };
-            const entry: Entry = { scope, serviceId: input.serviceId, variables, readEnvironment };
+            const entry: Entry = { scope, serviceId: input.serviceId, ...(input.serviceName ? { serviceName: input.serviceName } : {}),
+                variables, readEnvironment };
             const key = entryKey(entry);
             entries.set(key, entry);
             return { kind: 'unchanged',

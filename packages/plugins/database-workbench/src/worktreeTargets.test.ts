@@ -49,7 +49,7 @@ it('discovers the selected launched service from prepared originals, isolates cu
         const launch = {
             workspace: { id: 'selected', serverId: 'home', machineId: 'machine', rootPath: '/selected', projectKey: 'project' },
             project: { serverId: 'home', projectId: 'project' }, requester: { accountId: 'alice', installationId: 'installation' },
-            serviceId: 'postgres', physicalRootIdentity: '/physical/selected', executionPlacement: { mode: 'spawn', machineId: 'machine' }, assignedPorts: {},
+            serviceId: 'postgres', serviceName: 'billing-db', physicalRootIdentity: '/physical/selected', executionPlacement: { mode: 'spawn', machineId: 'machine' }, assignedPorts: {},
             async readEnvironment() { return { projectedEnvironment: { DATABASE_URL: 'postgresql://capture@localhost/replacement' }, provenance: {} }; },
             async readDeclaredEnvironment() { return { projectedEnvironment: { ...unrelatedVariables, API_URL: 'https://api.example.test', CUSTOM_DATABASE: original },
                 provenance: { CUSTOM_DATABASE: { source: 'dotenv', file: '.env' } } }; },
@@ -62,7 +62,9 @@ it('discovers the selected launched service from prepared originals, isolates cu
         const list = (selectedScope: typeof scope = scope) => kit.invokeAction(databaseActionLocalIdV1(DATABASE_TARGETS_LIST_ACTION_ID_V1),
             { scope: selectedScope }, identity);
         const result = await list();
-        expect(result).toMatchObject({ targets: [{ engine: 'postgresql', access: { canRead: true, canWrite: true }, target: { ...scope,
+        expect(result).toMatchObject({ targets: [{ engine: 'postgresql',
+            // Named by the service's own name, never its id (a native service id is a hash).
+            label: 'billing-db · CUSTOM_DATABASE', origin: { label: 'billing-db' }, access: { canRead: true, canWrite: true }, target: { ...scope,
             source: { kind: 'service', serviceId: 'postgres', variable: 'CUSTOM_DATABASE' } } }], completeness: { complete: true } });
         expect(accessReads).toBe(1);
         expect(JSON.stringify(result)).not.toContain('private-selected');

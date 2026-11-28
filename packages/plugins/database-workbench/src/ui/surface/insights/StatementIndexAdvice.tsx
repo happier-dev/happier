@@ -24,7 +24,7 @@ function unavailableMessage(reason: DatabaseStatsReasonV1, t: ReturnType<typeof 
     case 'row_evicted':
       return t('plugins.database.insights.adviceExpired', 'This statement is no longer visible in the database statistics.');
     case 'index_advice_statement_unsupported':
-      return t('plugins.database.insights.adviceShape', 'This statement’s query shape is outside the supported set.');
+      return t('plugins.database.insights.adviceShape', 'Index suggestions cover one-table reads written as select * from schema.table where …');
     case 'unsupported_transport':
     case 'unsupported_engine':
     case 'unsupported_group':
@@ -32,6 +32,11 @@ function unavailableMessage(reason: DatabaseStatsReasonV1, t: ReturnType<typeof 
     default:
       return t('plugins.database.insights.adviceUnavailable', 'Index suggestions are unavailable.');
   }
+}
+
+/** Reasons a person can change and then check again; the others answer the same way every time. */
+function canRetry(reason: DatabaseStatsReasonV1): boolean {
+  return reason === 'hypopg_missing' || reason === 'visibility_restricted';
 }
 
 export function StatementIndexAdvice({ target, statementKey }: Readonly<{ target: DatabaseTargetV1; statementKey: string }>) {
@@ -74,7 +79,7 @@ export function StatementIndexAdvice({ target, statementKey }: Readonly<{ target
       description={observation.reason === 'hypopg_missing'
         ? t('plugins.database.insights.adviceSetup', 'Ask your database administrator to make HypoPG available on the server and run CREATE EXTENSION hypopg in this database. Then retry.')
         : observation.remediation}
-      onRetry={run} retryLabel={retryLabel} />;
+      {...(canRetry(observation.reason) ? { onRetry: run, retryLabel } : {})} />;
   }
   if (observation.data.length === 0) {
     return <Text tone="secondary"

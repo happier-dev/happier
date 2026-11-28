@@ -7,6 +7,7 @@ import {
   ListDetailLayout,
   LoadingState,
   PageHeader,
+  Row,
   Stack,
   defineUiSurface,
   useHappierPageChrome,
@@ -32,6 +33,7 @@ import { StagedBar, StagedReview } from './StagedChanges.js';
 import { OverviewFacts } from './OverviewFacts.js';
 import { ReadAccessSetup } from './ReadAccessSetup.js';
 import { CatalogueReadFailure } from './CatalogueReadFailure.js';
+import { DatabaseForget } from './DatabaseConnection.js';
 import { renderWorkbenchWriteSetup } from './writeSetup.js';
 import { TableDirectory } from './TableDirectory.js';
 import { WorkbenchRail } from './WorkbenchRail.js';
@@ -47,7 +49,7 @@ import { decodeWorkbenchSubPath, type WorkbenchPlace, type WorkbenchTargetDispla
 import { databaseEngineName } from './engines.js';
 import { bindMountedWorkbench } from './openWorkbench.js';
 
-function OverviewPane(props: Readonly<{ targetKey: string; scope: WorkbenchLaunchInput['scope'] }>) {
+function OverviewPane(props: Readonly<{ targetKey: string; scope: WorkbenchLaunchInput['scope']; onForgot?: () => void }>) {
   const translate = usePluginTranslation();
   const descriptor = useWorkbenchInstance().target(props.targetKey);
   // The rail beside says the engine and where the database came from; the page says where it is and what it holds,
@@ -71,11 +73,20 @@ function OverviewPane(props: Readonly<{ targetKey: string; scope: WorkbenchLaunc
         <AutomationsSection subject={descriptor.automationSubject.subject} subjectName={descriptor.label}
           testID="database-automations" />
       ) : null}
+      {/* A database connected by hand is forgotten here, last and quiet, at its own width; the Action's review confirms it. */}
+      {props.onForgot && descriptor.target.kind === 'manual' ? (
+        <Row><DatabaseForget target={descriptor.target} onForgot={props.onForgot} /></Row>
+      ) : null}
     </Stack>
   );
 }
 
-export function WorkbenchMain(props: Readonly<{ targetKey: string; scope: WorkbenchLaunchInput['scope'] }>) {
+export function WorkbenchMain(props: Readonly<{
+  targetKey: string;
+  scope: WorkbenchLaunchInput['scope'];
+  /** The page's own Overview offers Forget database; a rail's details never do. */
+  onForgot?: () => void;
+}>) {
   const location = useWorkbenchLocation();
   const [reviewing, setReviewing] = React.useState(false);
   const closeReview = React.useCallback(() => setReviewing(false), []);
@@ -86,7 +97,7 @@ export function WorkbenchMain(props: Readonly<{ targetKey: string; scope: Workbe
   if (location.mode === 'insights')
     return <InsightsPane targetKey={props.targetKey} />;
   if (!relation || location.mode === 'overview')
-    return <OverviewPane targetKey={props.targetKey} scope={props.scope} />;
+    return <OverviewPane targetKey={props.targetKey} scope={props.scope} {...(props.onForgot ? { onForgot: props.onForgot } : {})} />;
   if (reviewing)
     return (
       <StagedReview
@@ -230,6 +241,20 @@ function MountedWorkbenchPage({ context, launch, place, root, client }: Readonly
 }
 
 function WorkbenchLayout(props: Readonly<{ targetKey: string; scope: WorkbenchLaunchInput['scope']; root: boolean }>) {
+  const translate = usePluginTranslation();
+  const label = useWorkbenchInstance().target(props.targetKey).label;
+  const [forgotten, setForgotten] = React.useState(false);
+  const forget = React.useCallback(() => setForgotten(true), []);
+  if (forgotten) {
+    return (
+      <EmptyState
+        layout="page"
+        icon="database"
+        title={translate('plugins.database.forgotten.title', '{name} is no longer connected', { name: label })}
+        description={translate('plugins.database.forgotten.body', 'Its Saved Secret stays. Connect it again from Dev servers.')}
+      />
+    );
+  }
   return (
     <ListDetailLayout
       minListWidth={232}
@@ -238,7 +263,7 @@ function WorkbenchLayout(props: Readonly<{ targetKey: string; scope: WorkbenchLa
       // A phone opens on the rail (lab tablesp) and pushes the page it picks; the host's Back returns to the rail.
       stackedPane={props.root ? 'list' : 'detail'}
       list={<WorkbenchRail targetKey={props.targetKey} />}
-      detail={<WorkbenchMain targetKey={props.targetKey} scope={props.scope} />}
+      detail={<WorkbenchMain targetKey={props.targetKey} scope={props.scope} onForgot={forget} />}
     />
   );
 }
