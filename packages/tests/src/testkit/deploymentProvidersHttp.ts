@@ -1,22 +1,13 @@
-import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { postgresqlReadOnlyRoleGuardSql } from '../../../deployment-protocol/src/secrets/postgresqlReadOnlyRole';
+import { routeDeploymentProviderHttp } from './deploymentProvidersHttpPreload.mjs';
 import { startConnectedAccountTlsRecordingProxy } from './providers/connectedAccountTlsRecordingProxy';
 
 export type DeploymentJourneyProvider = 'vercel' | 'cloudflare' | 'neon';
 
-// Install the external HTTP delegate before the first account-host import.
-// loadUndici's CJS named exports snapshot this function, so its identity stays
-// stable for the test module while each sequential journey owns its socket.
 const undici: typeof import('undici') = createRequire(new URL('../../../../apps/cli/package.json', import.meta.url))('undici/index.js');
 const providerHosts = new Set(['api.vercel.com', 'api.cloudflare.com', 'console.neon.tech', 'ep-journey.neon.tech', 'api.eu-central-1.aws.neon.tech',
   'api.supabase.com', 'api.preview.aws.neon.tech', 'api.production.aws.neon.tech', 'api.neighbor.aws.neon.tech']);
-const nativeFetch = undici.fetch;
-let providerDispatcher: InstanceType<typeof undici.ProxyAgent> | undefined;
-undici.fetch = (input, init) => {
-  const address = new URL(typeof input === 'object' && 'url' in input ? input.url : String(input));
-  return nativeFetch(input, providerDispatcher && providerHosts.has(address.hostname) ? { ...init, dispatcher: providerDispatcher } : init);
-};
 
 type ManagedSupabaseRead = Readonly<{ branchRef: string; sql: string; parameters: readonly unknown[] }>;
 
@@ -220,10 +211,9 @@ export async function startDeploymentProvidersHttp({ seedManagedProjects = false
       throw new Error(`Unexpected provider HTTP: ${method} ${url.hostname}${path}`);
     },
   });
-  let dispatcher: InstanceType<typeof undici.ProxyAgent>;
-  try { dispatcher = new undici.ProxyAgent({ uri: proxy.url, requestTls: { ca: await readFile(proxy.caCertPath) } }); }
+  let stopRouting: Awaited<ReturnType<typeof routeDeploymentProviderHttp>>;
+  try { stopRouting = await routeDeploymentProviderHttp({ proxyUrl: proxy.url, caPath: proxy.caCertPath, hosts: [...providerHosts] }); }
   catch (error) { await proxy.stop(); throw error; }
-  providerDispatcher = dispatcher;
   return { vercel, cloudflare, neon, supabase, managedBranches, entries: proxy.entries,
     async fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
       // UI and native Account hosts share the same third-party HTTPS vectors.
@@ -238,8 +228,7 @@ export async function startDeploymentProvidersHttp({ seedManagedProjects = false
     rejectNextCloudflareDeployment() { rejectNextCloudflareDeployment = true; },
     rejectNextManagedQuery(provider: 'neon' | 'supabase') { rejectNextManagedQuery = provider; },
     async stop() {
-      providerDispatcher = undefined;
-      try { await dispatcher.close(); } finally { await proxy.stop(); }
+      try { await stopRouting(); } finally { await proxy.stop(); }
     },
   };
 }
