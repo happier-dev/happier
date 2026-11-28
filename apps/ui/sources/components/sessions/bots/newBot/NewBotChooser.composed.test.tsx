@@ -23,6 +23,7 @@ const { createPlainPromptLibraryCatalogHomeFixture } =
 const { waitForHomeGovernance } =
   await import('@/dev/testkit/harness/homeGovernanceHarness');
 const { NewBotChooser } = await import('./NewBotChooser');
+const { listBundledBotTemplates } = await import('@happier-dev/plugins-bot-templates/catalog');
 const { BotTemplateRecipientScreen } =
   await import('@/components/sessions/bots/templates/BotTemplateRecipientScreen');
 
@@ -118,6 +119,14 @@ it('lists the ways in and every Store template, and a picked template opens its 
       (request) => request.method !== 'GET' && request.path.includes('plugins'),
     ),
   ).toBe(false);
+  // The templates that ship with Happier lead the list; one opens its exact shipped release.
+  const shipped = listBundledBotTemplates();
+  const shippedRows = screen.root.findAll((node) => typeof node.props.testID === 'string'
+    && node.props.testID.startsWith('new-bot.template.bundled.') && typeof node.props.onPress === 'function');
+  expect(new Set(shippedRows.map((node) => node.props.testID)).size).toBe(shipped.length);
+  await screen.pressByTestIdAsync(`new-bot.template.bundled.${shipped[0]!.source.contributionId}`);
+  await layout();
+  await waitForHomeGovernance(() => expect(recipient()!.props.source).toEqual(shipped[0]!.source));
   await screen.pressByTestIdAsync('new-bot.close');
   expect(onClose).toHaveBeenCalledTimes(1);
 });

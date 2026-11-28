@@ -9,23 +9,31 @@ import { Directory, type DirectoryRow } from './StoreKindPage';
 
 const TEMPLATES = listBundledBotTemplates();
 
-export function BundledBotTemplateSection({ query, presented, open, minCardWidth, markSize }: Readonly<{
-    query: string; presented: boolean; minCardWidth: number; markSize: number;
-    open: (source: BotTemplateReleaseSourceV1) => void;
-}>) {
-    const rows = React.useMemo((): readonly DirectoryRow[] => {
+/** The ten Happier templates that ship with the app, narrowed by a search's words (Store › Bots and New bot alike). */
+export function useBundledBotTemplates(query: string) {
+    return React.useMemo(() => {
         const words = query.trim().toLocaleLowerCase().split(/\s+/);
         return TEMPLATES.filter(({ identity }) => {
             const description = `${identity.name} ${identity.description}`.toLocaleLowerCase();
             return words.every(word => description.includes(word));
-        }).map(({ source, identity }) => {
+        });
+    }, [query]);
+}
+
+export function BundledBotTemplateSection({ query, presented, open, minCardWidth, markSize }: Readonly<{
+    query: string; presented: boolean; minCardWidth: number; markSize: number;
+    open: (source: BotTemplateReleaseSourceV1) => void;
+}>) {
+    const templates = useBundledBotTemplates(query);
+    const rows = React.useMemo((): readonly DirectoryRow[] => {
+        return templates.map(({ source, identity }) => {
             const select = () => open(source);
             return { key: source.contributionId, title: identity.name, description: identity.description, group: 'bundled',
                 mark: <SessionBotFace facts={{ seed: source.contributionId, face: identity.face ?? null }}
                     size={markSize} motion={false} visible={presented} />,
                 facts: { extra: [source.registryItem.version] }, open: select, add: select, addLabel: t('botTemplateRecipient.makeOwn') };
         });
-    }, [query, open, presented, markSize]);
+    }, [templates, open, presented, markSize]);
     if (!rows.length) return null;
     const title = t('botTemplates.fromHappier');
     return <>

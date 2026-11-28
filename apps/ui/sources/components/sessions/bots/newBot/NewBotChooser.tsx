@@ -10,6 +10,7 @@ import { openNewBotDraft } from '@/components/sessions/bots/newBotDraft';
 import { useAskHappierOpener } from '@/components/sessions/bots/useAskHappierOffer';
 import { SessionBotFace } from '@/components/sessions/bots/face/SessionBotFace';
 import { BotTemplateRecipientScreen } from '@/components/sessions/bots/templates/BotTemplateRecipientScreen';
+import { useBundledBotTemplates } from '@/components/store/BundledBotTemplateSection';
 import { useReceivedBotTemplates } from '@/components/store/catalog/useReceivedBotTemplates';
 import {
   useStoreBotTemplateItem,
@@ -41,7 +42,7 @@ const LIST_RATIO = 0.4;
 type Choice =
   | Readonly<{ kind: 'store'; key: string; item: StoreBotTemplateItemRef }>
   | Readonly<{
-      kind: 'received';
+      kind: 'source';
       key: string;
       source: BotTemplateReleaseSourceV1;
     }>;
@@ -64,6 +65,7 @@ export function NewBotChooser(props: NewBotChooserProps) {
     true,
   );
   const received = useReceivedBotTemplates(query, true);
+  const bundled = useBundledBotTemplates(query);
   const { onClose } = props;
   // The same owners the roster's New bot and Ask Happier use, mounted here so they outlive the roster that opened
   // this card: Blank bot opens the ordinary Bot draft (the composer's Send creates it), Ask Happier its guide.
@@ -132,6 +134,37 @@ export function NewBotChooser(props: NewBotChooserProps) {
           onPress={ask}
         />
       </ItemGroup>
+      {bundled.length > 0 ? (
+        <ItemGroup
+          testID="new-bot.bundled"
+          title={t('botTemplates.fromHappier')}
+          titleLeading={<Icon name="seal-check" />}
+          surface="none"
+        >
+          {bundled.map(({ source, identity }) => {
+            const key = `bundled.${source.contributionId}`;
+            return (
+              <Item
+                key={key}
+                testID={`new-bot.template.${key}`}
+                title={identity.name}
+                subtitle={identity.description}
+                subtitleLines={1}
+                showChevron={false}
+                selected={choice?.key === key}
+                icon={
+                  <SessionBotFace
+                    facts={{ seed: source.contributionId, face: identity.face ?? null }}
+                    size={ROW_MARK_PX}
+                    motion={false}
+                  />
+                }
+                onPress={() => setChoice({ kind: 'source', key, source })}
+              />
+            );
+          })}
+        </ItemGroup>
+      ) : null}
       {received.items.length > 0 ? (
         <ItemGroup title={t('botTemplates.sharedWithYou')} surface="none">
           {received.items.map((item) => {
@@ -153,7 +186,7 @@ export function NewBotChooser(props: NewBotChooserProps) {
                   />
                 }
                 onPress={() =>
-                  setChoice({ kind: 'received', key, source: item.source })
+                  setChoice({ kind: 'source', key, source: item.source })
                 }
               />
             );
@@ -242,7 +275,7 @@ export function NewBotChooser(props: NewBotChooserProps) {
             />
           </View>
         ) : null}
-        {choice.kind === 'received' ? (
+        {choice.kind === 'source' ? (
           <BotTemplateRecipientScreen
             key={choice.key}
             source={choice.source}
