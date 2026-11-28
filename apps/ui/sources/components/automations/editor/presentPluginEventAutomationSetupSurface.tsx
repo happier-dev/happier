@@ -41,7 +41,10 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import { subscribeMachineContributionRegistryProjectionInvalidation } from '@/sync/ops/machineContributionRegistryProjection';
+import {
+    getMachineContributionRegistryProjectionAuthorityRevision,
+    subscribeMachineContributionRegistryProjectionInvalidation,
+} from '@/sync/ops/machineContributionRegistryProjection';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
 
@@ -491,9 +494,16 @@ export async function presentPluginEphemeralInputSurface(params: EphemeralInputS
         attachSignal(params.signal);
         const retirement = params.accountLifetime.onRetire(onAbort);
         releaseRetirement = () => retirement.dispose();
-        releaseProjection = subscribeMachineContributionRegistryProjectionInvalidation({
+        const projectionScope = {
             machineId: params.machineId, serverId: params.serverId,
-        }, onAbort);
+        };
+        const authorityRevision = getMachineContributionRegistryProjectionAuthorityRevision(projectionScope);
+        releaseProjection = subscribeMachineContributionRegistryProjectionInvalidation(projectionScope, () => {
+            // A refresh of the same watcher must let a refused write return to the open draft.
+            if (!params.holdUntilSettled || getMachineContributionRegistryProjectionAuthorityRevision(projectionScope) !== authorityRevision) {
+                onAbort();
+            }
+        });
         if (phase === 'done') {
             releaseRetirement();
             releaseProjection();

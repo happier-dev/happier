@@ -1299,7 +1299,7 @@ it.each(['configured', 'refused'] as const)('settles native Add check while its 
 
 // The alternate Machine can finish its first origin read after the native form opens.
 // R17-D3 (refusedInDraft): the open form keeps its draft until the write settles, and a refused write comes back to it.
-it.each(['submitted', 'replyLostAndCompensated', 'replyLostAfterSave', 'cancelled', 'switched', 'refreshedBeforeWatcher', 'telemetryWatcherEstablishing', 'projectionRefused', 'retiredWhileOpening', 'secondCheck', 'refusedInDraft', 'watcherOwnershipChanged'] as const)('Add check writes once on Save and nothing on Cancel (%s)', async (outcome) => {
+it.each(['submitted', 'replyLostAndCompensated', 'replyLostAfterSave', 'cancelled', 'switched', 'refreshedBeforeWatcher', 'telemetryWatcherEstablishing', 'projectionRefused', 'retiredWhileOpening', 'secondCheck', 'refusedInDraft', 'watcherOwnershipChanged', 'watcherRefreshedDuringWrite'] as const)('Add check writes once on Save and nothing on Cancel (%s)', async (outcome) => {
     const { createDeferred } = await import('@/dev/testkit/hooks/createDeferred');
     const { AddCheckSetup } = await import('@/components/projects/deployments/AddCheckSetup');
     const { Modal } = await import('@/modal');
@@ -1316,6 +1316,7 @@ it.each(['submitted', 'replyLostAndCompensated', 'replyLostAfterSave', 'cancelle
     const disposeLoader = await installRealActionExecutorModuleLoader();
     const telemetry = outcome === 'telemetryWatcherEstablishing';
     const watcherOwnershipChanged = outcome === 'watcherOwnershipChanged';
+    const watcherRefreshedDuringWrite = outcome === 'watcherRefreshedDuringWrite';
     // The Plain R2 replay used one Machine for the Source controller and collector.
     const collectorMachineId = telemetry ? '3f180abc-ddbd-450b-9fa0-d1c32ae7bab9' : undefined;
     const accountId = 'native-add-check';
@@ -1327,6 +1328,7 @@ it.each(['submitted', 'replyLostAndCompensated', 'replyLostAfterSave', 'cancelle
     let exactIntentRead: unknown;
     let savedWithoutReceipt = false;
     let refusedByHome = 0;
+    let refreshWatcherProjection = () => {};
     const connection = await restoreServerAccountForTest({ serverUrl: 'https://native-add-check.test',
         serverIdentityId, accountId, machineId: collectorMachineId, peerMachineId: outcome === 'switched' ? peerMachineId : undefined, request: async (input, init) => {
             const path = new URL(String(input)).pathname;
@@ -1340,6 +1342,11 @@ it.each(['submitted', 'replyLostAndCompensated', 'replyLostAfterSave', 'cancelle
             if (watcherOwnershipChanged && path === '/v3/automations' && init?.method === 'POST') {
                 refusedByHome++;
                 return Response.json({ error: 'event_watcher_not_owned' }, { status: 400 });
+            }
+            if (watcherRefreshedDuringWrite && refusedByHome === 0 && path === '/v3/automations' && init?.method === 'POST') {
+                refusedByHome++;
+                refreshWatcherProjection();
+                return Response.json({ error: 'event_watcher_not_current' }, { status: 400 });
             }
             const response = await workflows.handle(new URL(String(input)), init);
             if (outcome === 'replyLostAndCompensated' && path === '/v3/automations' && init?.method === 'POST' && response?.ok) {
@@ -1357,6 +1364,7 @@ it.each(['submitted', 'replyLostAndCompensated', 'replyLostAfterSave', 'cancelle
         connection.serverId, serverIdentityId, true, { eventId: HEALTH_CHECK_EVENT_REFS_V1.status.localId, actionId: 'health/setup' },
         PLUGIN_MANIFEST, collectorMachineId, outcome === 'secondCheck',
     );
+    refreshWatcherProjection = () => publishMachineContributionRegistryProjectionInvalidation({ machineId, serverId: connection.serverId }, 'refresh');
     const peer = outcome === 'switched'
         ? healthSetupFixture(connection.serverId, serverIdentityId, true,
             { eventId: HEALTH_CHECK_EVENT_REFS_V1.status.localId, actionId: 'health/setup' }, PLUGIN_MANIFEST, peerMachineId)
@@ -1627,19 +1635,28 @@ it.each(['submitted', 'replyLostAndCompensated', 'replyLostAfterSave', 'cancelle
             expect(add.state?.disabled ?? false).toBe(false);
             expect(previews).toEqual([machineId]);
             await act(async () => { await alternate.press(add); });
-        } else if (watcherOwnershipChanged) {
+        } else if (watcherOwnershipChanged || watcherRefreshedDuringWrite) {
             const { t } = await import('@/text');
             expect(refusedByHome).toBe(0);
+            const hide = vi.spyOn(Modal, 'hide');
             const sheet = settleThroughSheet(0);
-            await act(async () => {
-                await expect(sheet({ kind: 'completed', input: setupInput })).rejects.toMatchObject({
-                    code: 'event_watcher_not_owned',
-                    message: t('projects.deployments.monitoring.addCheckCollectorOwnership'),
+            try {
+                await act(async () => {
+                    await expect(sheet({ kind: 'completed', input: setupInput })).rejects.toMatchObject(watcherRefreshedDuringWrite
+                        ? { code: 'event_watcher_not_current', message: t('workflows.problem.targetUnavailable') }
+                        : { code: 'event_watcher_not_owned', message: t('projects.deployments.monitoring.addCheckCollectorOwnership') });
                 });
-            });
-            expect(refusedByHome).toBe(1);
-            expect(workflows.rows.size).toBe(0);
-            expect(onClose).not.toHaveBeenCalled();
+                expect(refusedByHome).toBe(1);
+                expect(workflows.rows.size).toBe(0);
+                expect(onClose).not.toHaveBeenCalled();
+                expect(hide).not.toHaveBeenCalled();
+                if (watcherRefreshedDuringWrite) {
+                    await act(async () => { await sheet({ kind: 'completed', input: setupInput }); });
+                    await waitForHomeGovernance(() => expect(onClose).toHaveBeenCalledTimes(1));
+                    expect(workflows.rows.size).toBe(1);
+                    expect(hide).toHaveBeenCalledWith('native-add-check');
+                }
+            } finally { hide.mockRestore(); }
             return;
         } else if (outcome === 'refusedInDraft' || outcome === 'secondCheck') {
             // Open a second Add sheet against the exact revision saved by the first.
