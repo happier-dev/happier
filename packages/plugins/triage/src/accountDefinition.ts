@@ -127,6 +127,14 @@ const configuredRecipientStatusField = {
   path: 'recipientStopNotice', title: configuredConfirmationText('sessionStatus', 'Session status'),
 } satisfies ActionConfirmationInputField;
 
+const configuredActionField = {
+  path: 'handoff.configuredActionId', title: configuredConfirmationText('reference', 'Configured action'),
+  valueLabels: Object.fromEntries(TRIAGE_SEEDED_ACTIONS_V1.actions.map(action => {
+    const key = readTriageActionTitleKeyV1(action);
+    return [action.actionId, key === null ? action.label : { key, fallback: action.label }];
+  })),
+} satisfies ActionConfirmationInputField;
+
 const configuredConfirmationFields = [
   { path: 'singleIntent.launchMode', title: configuredConfirmationText('launch', 'Launch'), valueLabels: {
     start: configuredConfirmationText('start', 'Start a new Session'),
@@ -139,11 +147,7 @@ const configuredConfirmationFields = [
   } },
   configuredDestinationField,
   configuredDeliveryField,
-  { path: 'handoff.configuredActionId', title: configuredConfirmationText('reference', 'Configured action'),
-    valueLabels: Object.fromEntries(TRIAGE_SEEDED_ACTIONS_V1.actions.map(action => {
-      const key = readTriageActionTitleKeyV1(action);
-      return [action.actionId, key === null ? action.label : { key, fallback: action.label }];
-    })) },
+  configuredActionField,
   configuredRecipientStatusField,
 ] satisfies readonly ActionConfirmationInputField[];
 
@@ -184,7 +188,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
             inputFields: [
               configuredDestinationField,
               configuredDeliveryField,
-              { path: 'sendPresentation.actionLabel', title: { key: 'plugins.triage.surface.bulk.action', fallback: 'Action' } },
+              { ...configuredActionField, title: { key: 'plugins.triage.surface.bulk.action', fallback: 'Action' } },
               { path: 'sendPresentation.sessionTitle', title: { key: 'plugins.triage.surface.detail.session', fallback: 'Session' } },
               configuredRecipientStatusField,
             ],

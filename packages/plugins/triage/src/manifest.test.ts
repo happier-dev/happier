@@ -89,11 +89,14 @@ describe('Triage plugin manifest', () => {
     expect(confirmation.confirmLabel).toMatchObject({ fallback: mode === 'send' ? 'Send' : 'Run action' });
     const rows = projectTargetActionApprovalOperandRows(projection, confirmation.inputFields ?? []);
     expect(rows.map(row => row.value)).toContain(expected);
-    expect(rows.map(row => row.value)).toContain(mode === 'send' ? 'Resolve production alert' : 'Fix');
     if (mode === 'send') {
+      expect(action?.surfaces).toContain('agent');
       expect(rows.filter(row => row.title === 'Action' || row.title === 'Configured action'))
-        .toEqual([expect.objectContaining({ title: 'Action', value: 'Resolve production alert' })]);
+        .toEqual([expect.objectContaining({ title: 'Action', value: 'Fix' })]);
+      expect(rows.map(row => row.value)).not.toContain('Resolve production alert');
       expect(rows.map(row => row.value)).toEqual(expect.arrayContaining(['Existing Session', 'Production investigation']));
+    } else {
+      expect(rows.map(row => row.value)).toContain('Fix');
     }
   });
 
