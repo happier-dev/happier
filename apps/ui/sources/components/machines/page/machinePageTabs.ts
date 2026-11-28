@@ -23,7 +23,7 @@ import { machinePageTabEntryKey, machinePageTabKey, type MachinePageTabId, type 
 export { machinePageTabEntryKey } from './machinePageTabQuery';
 
 /**
- * The machine page's tabs (R2: Overview · Services · Processes · Storage · Guard; MACH-COMPOSE D1 adds Setup and Security). One typed static table, edited
+ * The machine page's tabs (R2: Overview · Services · Processes · Storage · Guard; MACH-COMPOSE D1 adds Security and Setup, Security first: owner 11-28). One typed static table, edited
  * by the plan that lands a tab body: no registry, no contribution family. A tab is listed only once its
  * body exists; with Overview alone the page draws no tab bar.
  */
@@ -108,8 +108,8 @@ export const MACHINE_PAGE_TABS: readonly MachinePageTabEntry[] = [
     { id: 'storage', icon: 'hard-drives', titleKey: 'machineStorage.tab', Body: MachineStorageTab, hiddenMode: 'activity', BarAccessory: StorageTabBarAccessory, parseParams: parseStorageParams,
         ownsScroll: params => params.id === 'storage' && params.page === 'suggestions' },
     { id: 'guard', icon: 'shield', titleKey: 'machineGuard.tab', Body: GuardTab, hiddenMode: 'activity', BarAccessory: GuardBarAccessory, parseParams: parseGuardParams },
-    { id: 'setup', icon: 'file-text', titleKey: 'machineDetailPage.tabs.setup', Body: MachineSetupTab, suspendWhenHidden: true, parseParams: parseMachineSetupParams },
     { id: 'security', icon: 'shield-check', titleKey: 'machineDetailPage.subPages.security', Body: MachineSecurityTab, suspendWhenHidden: true, parseParams: parseSecurityParams },
+    { id: 'setup', icon: 'file-text', titleKey: 'machineDetailPage.tabs.setup', Body: MachineSetupTab, suspendWhenHidden: true, parseParams: parseMachineSetupParams },
     { id: 'sandboxes', icon: 'cube', titleKey: 'machineDetailPage.isolation.host.tab', Body: MachineSandboxesTab, suspendWhenHidden: true, parseParams: () => SANDBOXES_PARAMS },
 ];
 
