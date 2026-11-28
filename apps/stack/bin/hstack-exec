@@ -1387,13 +1387,15 @@ fi
 # SIGKILL runs no trap, so a later dispatch reclaims them once that owner is
 # provably retired (reclaim_retired_controller_temporaries).
 controller_temporary_owner="$$-$(heavyweight_process_token "$$")"
+# Custody's live FIFO endpoints belong outside the provenance directory.
+controller_custody_template="$cache_dir/../controller-custody.tmp"
 create_cache_temporary() {
   cache_destination=$1
   (umask 077; mktemp "${cache_destination}.tmp.${controller_temporary_owner}.XXXXXX")
 }
 
 reclaim_retired_controller_temporaries() {
-  for retired_temporary in "$cache_dir"/*.tmp.*-*.* "$cache_dir"/.*.tmp.*-*.*; do
+  for retired_temporary in "$cache_dir"/*.tmp.*-*.* "$cache_dir"/.*.tmp.*-*.* "$controller_custody_template".*-*.*; do
     [ -e "$retired_temporary" ] || continue
     retired_owner=${retired_temporary##*.tmp.}
     retired_owner=${retired_owner%%.*}
@@ -1403,7 +1405,13 @@ reclaim_retired_controller_temporaries() {
     case "$retired_token" in ''|*[!0-9-]*) continue ;; esac
     # Inconclusive observations retain the file (native_process_identity.sh).
     heavyweight_process_is_provably_retired "$retired_pid" "$retired_token" || continue
-    rm -f -- "$retired_temporary" 2>/dev/null || true
+    case "$retired_temporary" in
+      "$controller_custody_template".*)
+        [ -d "$retired_temporary" ] && [ ! -L "$retired_temporary" ] || continue
+        rm -f -- "$retired_temporary/lifetime.pipe" "$retired_temporary/admission-error.pipe" 2>/dev/null || true
+        rmdir -- "$retired_temporary" 2>/dev/null || true ;;
+      *) rm -f -- "$retired_temporary" 2>/dev/null || true ;;
+    esac
   done
 }
 
@@ -2711,15 +2719,6 @@ run_selected_ssh() {
   fi
 }
 
-custody_pipe=
-custody_watcher_pid=
-custody_pipe=$(create_cache_temporary "$cache_dir/remote-custody" 2>/dev/null || true)
-if [ -z "$custody_pipe" ]; then release_reservation; exit 1; fi
-rm -f -- "$custody_pipe"
-if ! mkfifo "$custody_pipe"; then release_reservation; exit 1; fi
-exec 9<> "$custody_pipe"
-[ "$control_stdin" != 1 ] || exec 5<&0
-[ "$explicit_tty" != 1 ] || exec 4<&0
 run_selected_ssh_with_custody() {
   # The controller owns the reservation and joins both children. Close its
   # lock and lifetime pipe in the stderr reader, which can outlive the controller.
@@ -2735,14 +2734,12 @@ run_selected_ssh_with_custody() {
   fi
   ssh_pid=$!
 }
+controller_custody_dir=
+custody_pipe=
+custody_fd_open=0
+custody_watcher_pid=
 admission_error_log=
 admission_error_pipe=
-if { [ "$heavyweight_admission_required" -eq 1 ] || [ "$requires_remote_dependencies" -eq 1 ]; } && [ "$explicit_tty" != 1 ]; then
-  admission_error_log=$(create_cache_temporary "$cache_dir/admission-error" 2>/dev/null || true)
-  [ -n "$admission_error_log" ] || { release_reservation; exit 1; }
-  admission_error_pipe="$admission_error_log.pipe"
-  mkfifo "$admission_error_pipe" || { rm -f -- "$admission_error_log"; release_reservation; exit 1; }
-fi
 release_custody_pipe() {
   # This reader owns the whole coalesced job, including retries and fallback.
   # Only transport-owned input readers belong to custody-attempt cleanup.
@@ -2750,13 +2747,33 @@ release_custody_pipe() {
     executor_signal_pid controller_input_cleanup "$control_input_pid"
     control_input_pid=
   fi
-  [ -n "$custody_pipe" ] || return 0
-  exec 9>&-
-  rm -f -- "$custody_pipe"
+  [ -n "$controller_custody_dir" ] || return 0
+  if [ "$custody_fd_open" = 1 ]; then
+    exec 9>&-
+    custody_fd_open=0
+  fi
   [ -z "$custody_watcher_pid" ] || executor_signal_pid controller_custody_cleanup "$custody_watcher_pid"
-  [ -z "$admission_error_log" ] || rm -f -- "$admission_error_log" "$admission_error_pipe"
+  [ -z "$admission_error_log" ] || rm -f -- "$admission_error_log"
+  rm -f -- "$controller_custody_dir/lifetime.pipe" "$controller_custody_dir/admission-error.pipe"
+  rmdir -- "$controller_custody_dir" 2>/dev/null || true
+  controller_custody_dir=
+  custody_pipe=
 }
 trap release_custody_pipe EXIT
+controller_custody_dir=$(umask 077; mktemp -d "$controller_custody_template.$controller_temporary_owner.XXXXXX") \
+  || { release_reservation; exit 1; }
+custody_pipe="$controller_custody_dir/lifetime.pipe"
+(umask 077; mkfifo "$custody_pipe") || { release_reservation; exit 1; }
+exec 9<> "$custody_pipe"
+custody_fd_open=1
+[ "$control_stdin" != 1 ] || exec 5<&0
+[ "$explicit_tty" != 1 ] || exec 4<&0
+if { [ "$heavyweight_admission_required" -eq 1 ] || [ "$requires_remote_dependencies" -eq 1 ]; } && [ "$explicit_tty" != 1 ]; then
+  admission_error_log=$(create_cache_temporary "$cache_dir/admission-error" 2>/dev/null || true)
+  [ -n "$admission_error_log" ] || { release_reservation; exit 1; }
+  admission_error_pipe="$controller_custody_dir/admission-error.pipe"
+  (umask 077; mkfifo "$admission_error_pipe") || { release_reservation; exit 1; }
+fi
 cancel_remote_execution_record() {
   cancel_command="bash $(quote_remote "$remote_custody") cancel $(quote_remote "$1") $(quote_remote "$2") $(quote_remote "$3") $(quote_remote "$execution_id")"
   # Cancellation must survive loss of the authoritative SSH control master.

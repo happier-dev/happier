@@ -1,6 +1,6 @@
 // @happier-test-preparation source
 import assert from 'node:assert/strict';
-import { access, chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, unlink, utimes, writeFile } from 'node:fs/promises';
+import { access, chmod, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, unlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { createConnection, createServer } from 'node:net';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -2944,6 +2944,17 @@ async function installBusyAdmissionTransport(fixture) {
     '    fi ;;',
     '   *) printf "[preferred-execution] waiting for heavyweight admission on pinned fixture\\n" >&2 ;;',
     '  esac',
+    '  if [ -n "${FIFO_CENSUS-}" ]; then',
+    '    for entry in "${HAPPIER_EXEC_CONFIG_PATH%/*}/dev-target-command-load-native/"*; do',
+    '      if [ -p "$entry" ]; then printf "%s\\n" "$entry"; fi',
+    '    done > "$FIFO_CENSUS"',
+    '  fi',
+    '  if [ -n "${CUSTODY_EOF_MARKER-}" ]; then',
+    '    : > "$CUSTODY_READ_MARKER"',
+    '    cat >/dev/null || exit 97',
+    '    : > "$CUSTODY_EOF_MARKER"',
+    '    exit 0',
+    '  fi',
     '  printf "payload:%s\\n" "$name"; exit "${PAYLOAD_EXIT-0}" ;;',
     'esac', '',
   ].join('\n'));
@@ -2969,6 +2980,52 @@ test('automatic admission waits on the selected worker and preserves payload sta
   const commands = (await readFile(fixture.invocation.env.FIXTURE_TRACE, 'utf8')).split('\n').filter(line => line.includes('remote_execution_custody.sh') && line.includes('--heavyweight-admission'));
   assert.doesNotMatch(commands[0], /--no-wait/);
   assert.doesNotMatch(commands.at(-1), /--no-wait/);
+});
+
+test('keeps live custody and admission stderr FIFOs out of execution provenance', async (t) => {
+  const fixture = await memoryRoutingFixture(t, { availableKiB: 28000000, roomyLoad: 12 });
+  const controller = await isolatedRoutingController(fixture);
+  await installBusyAdmissionTransport(fixture);
+  const census = join(fixture.root, 'fifo-census.txt');
+  const result = spawnSync('/bin/sh', [controller, '--target=starved', '--', 'node', '--test', 'focused.test.mjs'], {
+    ...fixture.invocation, env: { ...fixture.invocation.env, FIFO_CENSUS: census }, timeout: 15_000,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, 'payload:starved\n');
+  assert.equal(await readFile(census, 'utf8'), '');
+});
+
+test('private custody delivers EOF and reaps FIFOs after controller SIGKILL', async (t) => {
+  const fixture = await memoryRoutingFixture(t, { availableKiB: 28000000, roomyLoad: 12 });
+  const controller = await isolatedRoutingController(fixture);
+  await installBusyAdmissionTransport(fixture);
+  const ready = join(fixture.root, 'custody-script-read');
+  const eof = join(fixture.root, 'custody-eof');
+  const argv = [controller, '--target=starved', '--', 'node', '--test', 'focused.test.mjs'];
+  const child = spawn('/bin/sh', argv, {
+    ...fixture.invocation,
+    env: { ...fixture.invocation.env, CUSTODY_READ_MARKER: ready, CUSTODY_EOF_MARKER: eof },
+    stdio: ['pipe', 'ignore', 'pipe'],
+  });
+  let stderr = '';
+  child.stderr.on('data', chunk => { stderr += chunk; });
+  t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); });
+  const exited = new Promise(resolve => child.once('exit', (_code, signal) => resolve(signal)));
+  const exists = file => access(file).then(() => true, () => false);
+  await waitForRuntime(async () => await exists(ready) || child.exitCode !== null, () => stderr);
+  assert.equal(child.exitCode, null, stderr);
+  const directories = (await readdir(fixture.stackDir)).filter(name => name.startsWith('controller-custody.tmp.'));
+  assert.equal(directories.length, 1);
+  const directory = join(fixture.stackDir, directories[0]);
+  assert.deepEqual((await readdir(directory)).sort(), ['admission-error.pipe', 'lifetime.pipe']);
+  assert.equal((await lstat(directory)).mode & 0o777, 0o700);
+  assert.equal(await exists(eof), false);
+  child.kill('SIGKILL');
+  assert.equal(await exited, 'SIGKILL');
+  await waitForRuntime(() => exists(eof), () => 'SSH transport never saw custody EOF');
+  const next = spawnSync('/bin/sh', argv, { ...fixture.invocation, timeout: 15_000 });
+  assert.equal(next.status, 0, next.stderr);
+  assert.equal(await exists(directory), false);
 });
 
 test('AUTO queue selection excludes a worker whose final sync flush fails', async t => {
