@@ -40,13 +40,13 @@ import { PageLoadingRows } from '@/components/ui/layout/PageLoadingRows';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
-import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
+import type { DeploymentEnvironmentCollectionV1, DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
 
 import { useProjectSaveAsSource } from '../ProjectSaveAsSourceSheet';
 import { useProjectsSourcesComposition } from '../useProjectsSourcesComposition';
 import { useOpenNewApp } from '../starters/newAppPresentation';
-import { DeploymentEnvironmentCollection, environmentAfterDelete } from './DeploymentEnvironmentCollection';
+import { DeploymentEnvironmentCollection, environmentAfterDelete, isDeploymentEnvironmentRemoved } from './DeploymentEnvironmentCollection';
 import { ProjectDeploymentDefaultsSettings } from './ProjectDeploymentDefaultsSettings';
 import { DeploymentPreparationEntry } from './DeploymentPreparation';
 import { Button } from '@happier-dev/plugin-ui/components';
@@ -137,6 +137,9 @@ export const ProjectDeploymentsBody = React.memo(
 
 const NO_OPENED_SOURCES: ReadonlySet<string> = new Set();
 const NO_VISIBLE_ENVIRONMENT_HEALTH: readonly string[] = Object.freeze([]);
+/** The Project read includes its removed Environments, whose pages keep their removal Receipts (R20-D4). */
+const PROJECT_COLLECTION_QUERY = Object.freeze({ includeDeleted: true as const });
+const NO_ENVIRONMENTS: readonly DeploymentEnvironmentCollectionV1['items'][number][] = Object.freeze([]);
 
 function ProjectDeploymentsTitle({ title }: Readonly<{ title: string }>) {
   useDestinationPageTitle(title);
@@ -293,7 +296,7 @@ const ProjectDeploymentsPage = React.memo(
       focused: props.demand.focused && collectionVisible,
       // Keep the Project metadata for the detail. The visible column owns its rows' live health.
       healthEnvironmentIds: usesServicesColumn ? NO_VISIBLE_ENVIRONMENT_HEALTH : props.demand.healthEnvironmentIds,
-    });
+    }, PROJECT_COLLECTION_QUERY);
     const selectionRef = React.useRef(selection);
     selectionRef.current = selection;
     const setSelection = React.useCallback((next: Selection) => {
@@ -320,14 +323,17 @@ const ProjectDeploymentsPage = React.memo(
         deploymentSection: next.section ?? undefined,
       });
     }, [props.accountId, props.serverId, router]);
-    const items = collection.snapshot.value?.items ?? [];
+    // One split: every consumer of the Project's Environments reads `items`; removed ones are listed on their own.
+    const allItems = collection.snapshot.value?.items ?? NO_ENVIRONMENTS;
+    const items = React.useMemo(() => allItems.filter(item => !isDeploymentEnvironmentRemoved(item)), [allItems]);
+    const removedItems = React.useMemo(() => allItems.filter(isDeploymentEnvironmentRemoved), [allItems]);
     const status = collection.snapshot.status;
     const readFailure = collection.snapshot.failure;
     const homeUnreachable = deploymentReadIssue(readFailure?.code) === 'homeUnreachable';
     const retained = collection.snapshot.value !== null;
     // The exact read owns admission; a paged collection is not a membership authority.
     const selectedTitle =
-      items.find((item) => item.environment.id === environmentId)?.title ??
+      allItems.find((item) => item.environment.id === environmentId)?.title ??
       null;
     // A variable reference names its sibling Environment from this page's own list, never a second read.
     const referenceEnvironments = React.useMemo(
@@ -353,9 +359,9 @@ const ProjectDeploymentsPage = React.memo(
       navigateEnvironment(next);
     }, [navigateEnvironment, setSelection]);
     // Project settings lead to each Environment's own Automations (its Settings tab); no Project-wide trigger read.
-    const triggerEnvironments = React.useMemo(() => (collection.snapshot.value?.items ?? [])
+    const triggerEnvironments = React.useMemo(() => items
       .map((item) => ({ id: item.environment.id, title: item.title,
-        previewTemplateConfigured: item.previewTemplateConfigured })), [collection.snapshot.value]);
+        previewTemplateConfigured: item.previewTemplateConfigured })), [items]);
     const selectEnvironment = React.useCallback((id: string) => {
       setSelection({ environmentId: id, deploymentId: null });
     }, [setSelection]);
@@ -481,7 +487,7 @@ const ProjectDeploymentsPage = React.memo(
         onDiscard={() => router.setParams({ newDefinition: undefined, deployMachine: undefined })}
       />
     ) : null;
-    if (!selection.defaults && !environmentId && items.length === 0 && !selection.drafting) {
+    if (!selection.defaults && !environmentId && allItems.length === 0 && !selection.drafting) {
       const emptySettingsAction = {
         label: t('projects.deployments.defaultsEditor.projectTitle'),
         onPress: openDefaults,
@@ -526,7 +532,7 @@ const ProjectDeploymentsPage = React.memo(
     // An open Environment stands beside the Services column. A bare Project route keeps its own collection and title.
     // An open Environment means the Project has one, so the page stands beside the column from the first paint rather
     // than in a split with an empty rail until its list answers (PAGE-ACCEPT-176 R12-D3: the detail pane's 0.14 shift).
-    const besideList = usesServicesColumn && (items.length > 0 || environmentId !== null);
+    const besideList = usesServicesColumn && (allItems.length > 0 || environmentId !== null);
     const openHostProject = () => router.push(projectSourceRoute(props.sourceId));
     const detail =
       selection.defaults ? <ProjectDeploymentDefaultsSettings key={`defaults:${props.serverId}:${props.accountId}:${props.sourceId}`}
@@ -666,6 +672,13 @@ const ProjectDeploymentsPage = React.memo(
                 columns={SERVICES_APPS_COLUMNS_BINDING}
                 testID="project-deployments.project.previewRows" accessibilityLabel={t('projects.deployments.previewsTitle')} />
             </> : null}
+            {/* A removed Environment's page keeps its removal Receipt (R20-D4): the last group, as in the rail. */}
+            {removedItems.length > 0 ? <>
+              <ItemGroup testID="project-deployments.project.removed" title={t('projects.deployments.removedGroup')} />
+              <DeploymentEnvironmentRows items={removedItems} serverId={props.serverId} lifetime={props.lifetime ?? null}
+                columns={SERVICES_APPS_COLUMNS_BINDING}
+                testID="project-deployments.project.removedRows" accessibilityLabel={t('projects.deployments.removedGroup')} />
+            </> : null}
             {/* The agent ways are one row of the page (R12-D8), as the draft's "Ask an agent" row: Prepare its action,
                 Import a quiet second, beneath the words on a phone. */}
             {newWorkEnabled && sourceAvailable && props.lifetime ? (
@@ -743,7 +756,7 @@ const ProjectDeploymentsPage = React.memo(
                 }
               /> : null}
               <DeploymentEnvironmentCollection
-                items={collection.snapshot.value?.items ?? null}
+                items={collection.snapshot.value ? allItems : null}
                 preparation={preparation}
                 selectedId={environmentId}
                 stale={stale}

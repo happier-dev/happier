@@ -10,6 +10,7 @@ import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { ActionConfirmationReviewFacts } from '@/components/approvals/ActionConfirmationReview';
 import { DeploymentCreationReviewFacts, type DeploymentCreationReviewPlan } from '@/components/approvals/ApprovalReviewFacts';
 import { useInStepActionConfirmation } from '@/components/approvals/useInStepActionConfirmation';
+import { ModalRoutePresentationContext } from '@/modal/context/ModalRoutePresentationContext';
 import type { DeploymentEnvironmentTabV1 } from '@happier-dev/deployments';
 import { DeploymentPartialProgress } from './DeploymentPartialProgress';
 import { presentActionFailureOutcome } from '@/components/tools/shell/approvals/approvalFailureOutcome';
@@ -257,6 +258,15 @@ export const DeploymentEnvironmentDraft = React.memo(
     const refusedDomainKey = catalogTemplate?.variables.find(variable => variable.key === refusedVariableKey)?.valueFrom?.domainKey;
     const partial = refusal?.kind === 'refused' ? refusal.progress : undefined;
     const createOutcomeUnknown = refusal?.kind === 'refused' && isActionOutcomeUnknownErrorCodeV1(refusal.code);
+    // A retained dialog that steps aside for another destination comes back on Back or on its entry with the person's
+    // writing (docs/app-shell-panes.md), never with an unconfirmed Create: that attempt and its spent invocation go,
+    // so the next open reviews and creates again (PAGE-ACCEPT-176 R20-D8).
+    const presentationSuspended = React.useContext(ModalRoutePresentationContext)?.suspended === true;
+    React.useEffect(() => {
+      if (!presentationSuspended || !createOutcomeUnknown) return;
+      setRefusal(null);
+      setPrepared(null);
+    }, [presentationSuspended, createOutcomeUnknown]);
     const recoveryEnvironmentId = partial?.environmentId;
     const recoveryProjectSourceId = partial?.projectSourceId ?? sourceId;
     const recoveryReceipt = partial?.deployment;

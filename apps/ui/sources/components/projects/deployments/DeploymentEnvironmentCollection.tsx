@@ -36,6 +36,14 @@ import { formatDeploymentLiveAddress } from './deploymentLiveAddressFacts';
 type EnvironmentItem = DeploymentEnvironmentCollectionV1['items'][number];
 const EMPTY_ENVIRONMENTS: readonly EnvironmentItem[] = [];
 
+/**
+ * A removed Environment keeps its record and its page, where its removal Receipt stays (R20-D4). A Project read that asks
+ * for it (`includeDeleted`) lists it under its own Removed group, never among the Environments it counts.
+ */
+export function isDeploymentEnvironmentRemoved(item: Pick<EnvironmentItem, 'environment'>): boolean {
+  return item.environment.deletedAtMs !== undefined;
+}
+
 /** Selection belongs to the keyed row producer: unchanged rows keep their handler, changed rows select current data. */
 export function useDeploymentEnvironmentRowSelection<T extends object>(items: readonly T[],
   keyOf: (item: T) => string, onSelect: (item: T) => void): Array<T & { onPress: () => void }> {
@@ -89,8 +97,9 @@ export const DeploymentEnvironmentCollection = React.memo(
     const rows = useDeploymentEnvironmentRowSelection(parts, row => row.environmentId, selectRow);
     // Preview Environments (one per pull request) follow the Environments under their own group (lab d5), from the
     // same collection read: the rail counts Environments, the group counts previews.
-    const environmentRows = React.useMemo(() => rows.filter(row => !row.preview), [rows]);
-    const previewRows = React.useMemo(() => rows.filter(row => row.preview), [rows]);
+    const environmentRows = React.useMemo(() => rows.filter(row => !row.preview && !row.removed), [rows]);
+    const previewRows = React.useMemo(() => rows.filter(row => row.preview && !row.removed), [rows]);
+    const removedRows = React.useMemo(() => rows.filter(row => row.removed), [rows]);
     const renderRow = (row: typeof rows[number]) => (
       <CollectionNavigationRow
         surface="page"
@@ -152,6 +161,11 @@ export const DeploymentEnvironmentCollection = React.memo(
           <CollectionListGroupLabel testID="project-deployments.rail.previews" title={t('projects.deployments.previewsTitle')}
             count={previewRows.length} mark={<Icon name="eye" size={16} color={theme.colors.text.secondary} />} />
           {previewRows.map(renderRow)}
+        </> : null}
+        {removedRows.length > 0 ? <>
+          <CollectionListGroupLabel testID="project-deployments.rail.removed" title={t('projects.deployments.removedGroup')}
+            count={removedRows.length} mark={<Icon name="cloud-slash" size={16} color={theme.colors.text.secondary} />} />
+          {removedRows.map(renderRow)}
         </> : null}
         {props.preparation ? <View style={styles.preparation}>{props.preparation}</View> : null}
         {props.paging && (props.paging.hasPrevious || props.paging.hasNext) ? (
@@ -223,8 +237,10 @@ export function useDeploymentEnvironmentRowParts(items: readonly EnvironmentItem
     const name = member ? machineNames[member.machineId] ?? null : null;
     // Machine names wrap between words, never at their own hyphens (lab K12-5).
     const machine = name ? keepNamesWhole(name) : null;
-    // Live health and the latest attempt through the one Environment state rule the page also reads (D11).
-    const latest = deploymentEnvironmentRowState(item);
+    const removed = isDeploymentEnvironmentRemoved(item);
+    // Live health and the latest attempt through the one Environment state rule the page also reads (D11). A removed
+    // Environment runs nothing: it never needs the person, and its state says when it went.
+    const latest = removed ? null : deploymentEnvironmentRowState(item);
     // Compose and runtime Machine names belong to native runtime membership, never to its controller.
     const compose = runtimeTargetLink?.targetKind === 'ownServer' ? t('projects.deployments.compose') : null;
     const platform = runtimeTargetLink?.source.kind === 'plugin' ? platformTitle(runtimeTargetLink.source) : null;
@@ -250,6 +266,8 @@ export function useDeploymentEnvironmentRowParts(items: readonly EnvironmentItem
       platform: platform !== null,
       /** A pull request's preview of a template Environment: listed under the rail's Previews group. */
       preview: environment.purpose === 'preview',
+      /** Removed, its page and Receipts kept: listed under the Removed group. */
+      removed,
       /** A platform Environment's identity for its mark, known from the link before the platform's name is read. */
       platformMark: runtimeTargetLink?.source.kind === 'plugin' ? { pluginId: runtimeTargetLink.source.contribution.pluginId,
         title: platform ?? t('projects.deployments.platformLink.platform') } satisfies DeploymentPlatformIdentity : null,
@@ -268,7 +286,9 @@ export function useDeploymentEnvironmentRowParts(items: readonly EnvironmentItem
       state: latest,
       // The State column: the state that speaks, else the latest deploy's own settled word, quiet; never deployed says so,
       // quietly, in the word its filter uses (PAGE-ACCEPT-176 R12-D8: it read "—").
-      stateWord: latest ?? { tone: 'quiet' as const, text: currentDeployment ? deploymentSettledStateLabel(currentDeployment.state)
+      stateWord: latest ?? { tone: 'quiet' as const, text: environment.deletedAtMs !== undefined
+        ? t('projects.deployments.removedOn', { when: formatRelativeTimeShort(environment.deletedAtMs, nowMs) })
+        : currentDeployment ? deploymentSettledStateLabel(currentDeployment.state)
         : t('projects.deployments.services.filterNotDeployed') },
       steps,
       stepCaption: steps ? deploymentStepCaption(steps) : null,
@@ -287,7 +307,7 @@ export function useDeploymentEnvironmentRowParts(items: readonly EnvironmentItem
           : environment.purpose === 'preview' && liveAddress
             ? [platform ?? machine, formatDeploymentLiveAddress(liveAddress)].filter(Boolean).join(' · ') : where,
       leading: latest ? { state: latest, testID: `${testIDPrefix}.${environment.id}.state` } : null,
-      detail: formatRelativeTime(environment.updatedAtMs, nowMs),
+      detail: formatRelativeTime(environment.deletedAtMs ?? environment.updatedAtMs, nowMs),
       // Last deploy (Services → Apps): when the latest deploy happened; an Environment never deployed has none, whatever
       // its own edits (QA-WAVE-1115).
       // Lab envRow "ver · age": which version went live, then when (owner D4).

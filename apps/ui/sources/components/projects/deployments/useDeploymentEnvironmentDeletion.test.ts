@@ -671,4 +671,44 @@ describe('Environment deletion client over the Action owner', () => {
         expect(homes.requestsFor(`/v1/deployments/environments/${f.detail.environment.id}/delete`)).toHaveLength(0);
         expect(homes.requestsFor(`/v1/deployments/environments/${f.detail.environment.id}/targets/${f.detail.targetLinks[0]!.targetLink.id}/unlink`)).toHaveLength(0);
     });
+
+    it('names a provider Delete refused before any effect by the choice and says nothing changed there (Design Review 3 P1)', async () => {
+        const f = await setup();
+        const { t } = await import('@/text');
+        const { readDeploymentRefusalRecoveryV1 } = await import('@happier-dev/protocol/deployments/deploymentFailureRecoveryV1');
+        const refusal = { errorCode: 'cancelled', error: 'cancelled', effectAttempted: false };
+        await answerExternalActionAccountForHome(homes, f.serverId, { actionId: 'deployments.teardown',
+            machineId: f.detail.environment.controllerMachineId!, installationId: 'installation-controller', tokenEpoch: 0,
+            requesterInvocation: 'required', execute: () => refusal, failure: () => refusal });
+        const hook = await renderHook(() => useDeploymentEnvironmentDeletion({ environmentId: f.detail.environment.id,
+            lifetime: f.lifetime, snapshot: { status: 'ready', value: f.detail, failure: null }, actions: f.actions,
+            controller: null, demand: shown }));
+        const link = f.detail.targetLinks[0]!.targetLink.id;
+        const { ModalProvider } = await import('@/modal');
+        const { showDeploymentDispositionSheet } = await import('./DeploymentDispositionSheet');
+        const screen = await renderScreen(React.createElement(ModalProvider));
+        // The database page's managed-data removal: a provider resource the removal owner defaults to Delete.
+        await act(async () => { showDeploymentDispositionSheet({ subject: { kind: 'target', targetLinkId: link },
+            name: 'Orders', machine: null, provider: 'Railway', running: false, hasRetainedAssociations: true, canRemove: true,
+            providerResource: { name: 'Postgres', consequence: null, defaultChoice: 'delete', role: 'data' },
+            run: choice => hook.getCurrent().stopAndRemove(link, undefined, undefined,
+                { providerRemoval: choice === 'remove' ? 'delete' : 'unlink', removeEnvironment: false }),
+            onApproval: () => { throw new Error('Already confirmed'); }, onDone: () => { throw new Error('Nothing was removed'); } }); });
+        await act(async () => {
+            screen.findByTestId('project-deployments.disposition.resourceConfirmation')?.props.onChangeText('Postgres');
+        });
+        await screen.pressByTestIdAsync('project-deployments.disposition.confirm');
+        await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.disposition.refused')).not.toBeNull());
+        const text = screen.getTextContent();
+        expect(text).toContain(t('projects.deployments.deleteRefused', { name: 'Postgres' }));
+        expect(text).not.toContain(t('projects.deployments.unlinkRefused', { machine: 'Railway' }));
+        expect(text).not.toContain(readDeploymentRefusalRecoveryV1('cancelled')!.remedy);
+        expect(text).toContain(t('projects.deployments.refusedNothingChanged', { place: 'Railway' }));
+        expect(homes.requestsFor('/v1/actions/deployments.teardown')).toHaveLength(1);
+        // Review again returns to the same review; nothing is sent until the person confirms again.
+        await screen.pressByTestIdAsync('project-deployments.disposition.reviewAgain');
+        expect(screen.findByTestId('project-deployments.disposition.refused')).toBeNull();
+        expect(screen.findByTestId('project-deployments.disposition.confirm')).not.toBeNull();
+        expect(homes.requestsFor('/v1/actions/deployments.teardown')).toHaveLength(1);
+    });
 });

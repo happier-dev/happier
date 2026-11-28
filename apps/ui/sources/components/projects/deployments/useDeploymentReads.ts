@@ -95,7 +95,7 @@ export function useDeploymentCollection(controller: DeploymentReadControllerV1 |
     const read = React.useMemo(() => {
         if (!controller) return null;
         const position: DeploymentCollectionQueryV1 = { cursor: query.cursor, machineId: query.machineId, environmentIds,
-            includeTotal: query.includeTotal, includeDatabaseMoveCandidates: query.includeDatabaseMoveCandidates,
+            includeTotal: query.includeTotal, includeDeleted: query.includeDeleted, includeDatabaseMoveCandidates: query.includeDatabaseMoveCandidates,
             previewRepositoryId: query.previewRepositoryId, previewPullRequestIds,
             previewTemplateEnvironmentId: query.previewTemplateEnvironmentId };
         return {
@@ -104,7 +104,7 @@ export function useDeploymentCollection(controller: DeploymentReadControllerV1 |
         };
         // The canonical set key preserves the lease across equivalent inline vectors.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [controller, query.cursor, query.machineId, query.includeTotal, query.includeDatabaseMoveCandidates, environmentIdsKey,
+    }, [controller, query.cursor, query.machineId, query.includeTotal, query.includeDeleted, query.includeDatabaseMoveCandidates, environmentIdsKey,
         query.previewRepositoryId, previewPullRequestIdsKey, query.previewTemplateEnvironmentId]);
     const page = useDeploymentPage(read?.acquire ?? null,
         visibleHealthOnly ? { ...demand, healthEnvironmentIds } : demand, read?.readRetained);

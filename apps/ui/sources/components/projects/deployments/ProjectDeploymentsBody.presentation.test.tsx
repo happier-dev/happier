@@ -224,6 +224,42 @@ describe('Environment detail in a split pane', () => {
         }
     });
 
+    it.each([true, false])('lists removed Environments under their own Removed group so their removal Receipt stays reachable (live sibling %s, R20-D4)', async live => {
+        const detail = createDeploymentEnvironmentDetailV1();
+        const removed = { ...detail.environment, id: 'env-removed', deletedAtMs: 1_700_000_000_000 };
+        const queries: unknown[] = [];
+        // The Home returns removed Environments only to a Project read that asks for them (`includeDeleted`).
+        const transport: DeploymentReadTransportV1 = {
+            listEnvironments: async (_scope, query) => {
+                queries.push(query);
+                return { ok: true, value: { items: [...(live ? [{ environment: detail.environment, title: 'Staging' }] : []),
+                    ...(query.includeDeleted ? [{ environment: removed, title: 'Production' }] : [])], nextCursor: null } };
+            },
+            readEnvironment: async () => ({ ok: true, value: detail }),
+            readReceipt: async () => ({ ok: true, value: createDeploymentReceiptDetailV1() }),
+            listHistory: async () => ({ ok: true, value: { ok: true, items: [], nextCursor: null } }),
+        };
+        const scope = { serverId: 'home', accountId: 'account-owner', projectSourceId: 'source-app' };
+        const controller = createDeploymentReadControllerV1({ scope, transport });
+        const screen = await renderScreen(<AccountNoticeInvestigationBoundary><ProjectDeploymentsView controller={controller}
+            demand={{ mounted: true, visible: true, focused: true }} lifetime={null} serverId={scope.serverId}
+            accountId={scope.accountId} sourceId={scope.projectSourceId} /></AccountNoticeInvestigationBoundary>);
+        try {
+            const ids = screen.tree.findAll((node: { props: Record<string, unknown> }) => typeof node.props.testID === 'string')
+                .map((node: { props: Record<string, unknown> }) => node.props.testID as string);
+            expect(screen.findByTestId('project-deployments.empty')).toBeNull();
+            const group = ids.indexOf('project-deployments.project.removed');
+            expect(group).toBeGreaterThan(-1);
+            expect(ids.indexOf('project-deployments.project.removedRows.row.env-removed')).toBeGreaterThan(group);
+            // A removed Environment is not one of the Project's Environments: it is never counted or listed with them.
+            expect(ids).not.toContain('project-deployments.project.environments.row.env-removed');
+            if (live) expect(group).toBeGreaterThan(ids.indexOf(`project-deployments.project.environments.row.${detail.environment.id}`));
+            expect(queries.every(query => (query as { includeDeleted?: true }).includeDeleted === true)).toBe(true);
+        } finally {
+            await screen.unmount(); controller.retire();
+        }
+    });
+
     it.each([[true, 1], [false, 0]] as const)('reads the selected Environment while its pane is visible (%s) even when another pane has focus', async (visible, reads) => {
         const detail = createDeploymentEnvironmentDetailV1();
         const receipt = createDeploymentReceiptDetailV1();

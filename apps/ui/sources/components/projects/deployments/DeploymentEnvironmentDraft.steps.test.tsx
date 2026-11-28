@@ -59,6 +59,7 @@ const {
   DeploymentEnvironmentCreateIntentInputV1Schema,
 } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
 const { createRegistryHostV1 } = await import('@happier-dev/protocol/registries');
+const { ModalRoutePresentationContext } = await import('@/modal/context/ModalRoutePresentationContext');
 await import('@/sync/ops/actions/defaultActionExecutor');
 
 describe('Environment draft hosted as steps (journey-deploy D3: Where → Configure → Review in the Deploy an app dialog)', () => {
@@ -173,7 +174,16 @@ describe('Environment draft hosted as steps (journey-deploy D3: Where → Config
           />
         );
       }
-      const screen = await renderScreen(<SteppedDraft />);
+      // The modal host's presentation owner: a retained dialog is suspended while another destination is current.
+      let setSuspended!: (suspended: boolean) => void;
+      function PresentedDraft() {
+        const [suspended, set] = React.useState(false);
+        setSuspended = set;
+        return <ModalRoutePresentationContext.Provider value={{ suspended, willNavigate: () => {} }}>
+          <SteppedDraft />
+        </ModalRoutePresentationContext.Provider>;
+      }
+      const screen = await renderScreen(<PresentedDraft />);
       const frame = () => frames[frames.length - 1]!;
       const field = (id: string) =>
         screen
@@ -251,6 +261,18 @@ describe('Environment draft hosted as steps (journey-deploy D3: Where → Config
         await act(async () => frame().back());
         expect(onExit).toHaveBeenCalledOnce();
         expect(saved).toEqual([]);
+        // R20-D8: the dialog steps aside for another destination, then its entry opens it again. The writing stays;
+        // the unconfirmed Create does not, so the person reviews and creates again instead of facing a stale result.
+        await act(async () => setSuspended(true));
+        await act(async () => setSuspended(false));
+        await settle(() => expect(screen.findByTestId('project-deployments.draft.outcome-unknown')).toBeNull());
+        expect(frame().step).toBe('configure');
+        expect(field('project-deployments.draft.composeDocument')?.props.value).toBe('services:\n  web:\n    image: nginx:stable\n');
+        await settle(() => expect(frame().primary.disabled).toBe(false));
+        await act(async () => frame().press());
+        await settle(() => expect(frame().step).toBe('review'));
+        expect(authored).toHaveLength(2);
+        expect(committed).toHaveLength(1);
         await screen.unmount();
         return;
       }

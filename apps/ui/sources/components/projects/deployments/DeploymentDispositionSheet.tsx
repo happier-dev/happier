@@ -139,6 +139,14 @@ function DeploymentDispositionSheet(
   const domains = useDeploymentEnvironmentDomains(domainInput?.controller ?? null, domainInput?.environmentId ?? null, PRESENTED);
   const domainsReady = !domainInput || domains.result.status === 'ready' || domains.result.status === 'empty';
   const failure = refused?.failure ? presentActionFailureOutcome(refused.failure, 'deployment') : null;
+  // The owner's typed cause: a refusal the Action records as before any effect changed nothing. A stop then is the
+  // request's, not a deployment's, so its deploy-time remedy ("The deployment was stopped…") never applies. A refusal
+  // without that fact (a scope change after the effect ran) claims nothing.
+  const notAttempted = refused?.failure?.effectAttempted === false;
+  const refusedReason = notAttempted && (refused?.code === 'cancelled' || !failure?.reason)
+    ? props.provider ? t('projects.deployments.refusedNothingChanged', { place: keepNamesWhole(props.provider) })
+      : t('projects.deployments.nothingChanged')
+    : failure?.reason;
   const volumeFailure = volumeError ? presentActionFailureOutcome(volumeError, 'deployment') : null;
   const platform = props.provider ? keepNamesWhole(props.provider) : null;
   const resourceName = resource ? keepNamesWhole(resource.name) : null;
@@ -461,14 +469,20 @@ function DeploymentDispositionSheet(
           testID="project-deployments.disposition.refused"
           size="line"
           kind="error"
+          // Titled by what was chosen: deleting a provider resource names that resource, never an unlink.
           title={
-            target
-              ? t('projects.deployments.unlinkRefused', { machine })
+            resourceName && choice === 'remove'
+              ? t('projects.deployments.deleteRefused', { name: resourceName })
+              : target
+              ? t('projects.deployments.unlinkRefused', { machine: resourceName ?? machine })
               : t('projects.deployments.deleteRefused', { name: props.name })
           }
-          reason={failure?.reason ?? undefined}
+          reason={refusedReason ?? undefined}
           action={blockedId && props.recovery ? { label: t('projects.deployments.history'),
-            testID: 'project-deployments.disposition.history', onPress: () => { props.onClose(); props.recovery!.onHistory(); } } : undefined}
+            testID: 'project-deployments.disposition.history', onPress: () => { props.onClose(); props.recovery!.onHistory(); } }
+            // Nothing happened: the person is back on this same review and confirms again from here.
+            : notAttempted ? { label: t('projects.deployments.reviewAgain'), testID: 'project-deployments.disposition.reviewAgain',
+              onPress: () => setRefused(null) } : undefined}
           secondaryAction={blockedId && cancellation.canCancel ? { label: t('common.stop'),
             testID: 'project-deployments.disposition.stop', onPress: cancellation.pressCancel,
             busy: cancellation.press.running || cancellation.cancelRequested,
