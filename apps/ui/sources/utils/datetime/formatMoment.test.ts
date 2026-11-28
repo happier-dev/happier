@@ -5,7 +5,7 @@ import {
   setPreferredLanguageFromSettings,
 } from '@/text';
 
-import { formatMoment } from './formatMoment';
+import { formatMoment, formatMomentRange } from './formatMoment';
 
 const previousLanguage = getPreferredLanguage();
 beforeEach(async () => {
@@ -54,5 +54,42 @@ describe('formatMoment', () => {
     const options = { day: 'numeric', month: 'short' } as const;
     expect(date(at, options)).not.toBe(new Intl.DateTimeFormat(undefined, options).format(at));
     expect(formatMoment(at, now)).toBe(date(at, options));
+  });
+});
+
+describe('formatMomentRange', () => {
+  const clock = { timeStyle: 'short' } as const;
+  const weekdayTime = (at: number) => `${date(at, { weekday: 'short' })} ${date(at, clock)}`;
+
+  it('gives a window that ends today the day of each end, so 24 hours never reads as no time', () => {
+    const since = new Date(2026, 9, 9, 10, 21).getTime();
+    const until = new Date(2026, 9, 10, 10, 21).getTime();
+    expect(formatMomentRange(since, until, now)).toBe(`${weekdayTime(since)} – ${weekdayTime(until)}`);
+  });
+
+  it('says one moment, not a range, when the window starts and ends together', () => {
+    const at = new Date(2026, 9, 10, 10, 21).getTime();
+    expect(formatMomentRange(at, at, now)).toBe(formatMoment(at, now));
+    expect(formatMomentRange(at, at + 20_000, now)).toBe(formatMoment(at, now));
+  });
+
+  it('names the day once for a window inside one day', () => {
+    const since = new Date(2026, 9, 10, 9, 0).getTime();
+    const until = new Date(2026, 9, 10, 11, 0).getTime();
+    expect(formatMomentRange(since, until, now)).toBe(`${date(since, clock)} – ${date(until, clock)}`);
+    const earlier = new Date(2026, 9, 8, 9, 0).getTime();
+    const earlierEnd = new Date(2026, 9, 8, 11, 0).getTime();
+    expect(formatMomentRange(earlier, earlierEnd, now)).toBe(`${weekdayTime(earlier)} – ${date(earlierEnd, clock)}`);
+  });
+
+  it('says calendar dates for a long or old window', () => {
+    const since = new Date(2026, 8, 20, 12).getTime();
+    const until = new Date(2026, 9, 10, 9).getTime();
+    expect(formatMomentRange(since, until, now))
+      .toBe(`${date(since, { day: 'numeric', month: 'short' })} – ${date(until, { day: 'numeric', month: 'short' })}`);
+    const oldSince = new Date(2026, 8, 1, 12).getTime();
+    const oldUntil = new Date(2026, 8, 3, 12).getTime();
+    expect(formatMomentRange(oldSince, oldUntil, now))
+      .toBe(`${date(oldSince, { day: 'numeric', month: 'short' })} – ${date(oldUntil, { day: 'numeric', month: 'short' })}`);
   });
 });

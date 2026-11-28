@@ -6,17 +6,18 @@ import { Text } from '@/components/ui/text/Text';
 import { Tooltip } from '@/components/ui/overlays/Tooltip';
 import { Typography } from '@/constants/Typography';
 import { getPreferredLanguage, t } from '@/text';
+import { formatMomentRange } from '@/utils/datetime/formatMoment';
 import type { DeploymentEnvironmentBylineFact, DeploymentEnvironmentResourceColumn } from './deploymentEnvironmentColumns';
 import { useServiceColumnValue, type ServiceColumnValue } from './ServiceColumnResources';
-import { formatServiceCheckLatency, formatServiceCheckShare, serviceCheckWindowEnds } from './serviceCheckPresentation';
+import { formatServiceCheckLatency, formatServiceCheckShare } from './serviceCheckPresentation';
 import { ServiceTrendChart } from './ServiceTrendChart';
 
 /**
  * The one readout of a contributed Services fact, for a column cell and a folded byline fact alike: its title, the
  * producer's full value and unit, where it comes from, its window and producers, and how complete the measurement is.
  */
-function serviceFieldReadout(fact: Pick<DeploymentEnvironmentBylineFact, 'title' | 'source'> & Readonly<{
-  field: AdmittedPluginListFilterFieldV1 }>, value: ServiceColumnValue | null, locale: string): string {
+export function serviceFieldReadout(fact: Pick<DeploymentEnvironmentBylineFact, 'title' | 'source'> & Readonly<{
+  field: AdmittedPluginListFilterFieldV1 }>, value: ServiceColumnValue | null, locale: string, nowMs: number): string {
   const scalar = value?.value;
   const declared = fact.field.declaration.value;
   const full = new Intl.NumberFormat(locale, { maximumSignificantDigits: 21 });
@@ -27,10 +28,12 @@ function serviceFieldReadout(fact: Pick<DeploymentEnvironmentBylineFact, 'title'
           : declared.unit === '{issue}' ? full.format(scalar) : `${full.format(scalar)} ${declared.unit}`
       : Array.isArray(scalar) ? scalar.join(', ') : String(scalar);
   const measurement = value?.provenance;
-  const windowEnds = measurement ? serviceCheckWindowEnds(measurement.window.since, measurement.window.until, Date.now()) : null;
+  // Producers are named by service and version; an instance id is the collector's key, and its replicas are one producer.
+  const producers = measurement ? new Set(measurement.producers.map(producer =>
+    [producer.serviceName, producer.serviceVersion].filter(Boolean).join(' · '))) : null;
   return [`${fact.title} ${fullValue}`, fact.source,
-    ...(measurement && windowEnds ? [`${windowEnds[0]} – ${windowEnds[1]}`,
-      ...measurement.producers.map(producer => [producer.serviceName, producer.serviceVersion, producer.serviceInstanceId].filter(Boolean).join(' · ')),
+    ...(measurement && producers ? [formatMomentRange(measurement.window.since, measurement.window.until, nowMs),
+      ...producers,
       ...(measurement.basis === 'sampled_spans' || measurement.basis === 'mixed_telemetry' ? [t('deploymentTelemetry.measurement.sampled')] : []),
       ...(measurement.completeness === 'partial' ? [t('deploymentTelemetry.measurement.partial')]
         : measurement.completeness === 'unknown' ? [t('deploymentTelemetry.measurement.unknown')] : [])] : [])].filter(Boolean).join(' · ');
@@ -45,7 +48,7 @@ export function ServiceColumnCell(props: Readonly<{ column: DeploymentEnvironmen
   const scalar = value?.value;
   const text = scalar === null || scalar === undefined ? '—' : typeof scalar === 'number'
     ? new Intl.NumberFormat(locale, { maximumSignificantDigits: 21 }).format(scalar) : Array.isArray(scalar) ? scalar.join(', ') : String(scalar);
-  const label = serviceFieldReadout(props.column, value, locale);
+  const label = serviceFieldReadout(props.column, value, locale, Date.now());
   const points = React.useMemo(() => (value?.trend ?? []).map(interval => ({
     id: String(interval.at), x: interval.at, y: interval.value,
   })), [value?.trend]);
@@ -79,7 +82,7 @@ export function ServiceBylineFact(props: Readonly<{ fact: DeploymentEnvironmentB
         : declared.unit === '{issue}' ? new Intl.NumberFormat(locale).format(scalar)
           : `${new Intl.NumberFormat(locale).format(scalar)} ${declared.unit}`
     : Array.isArray(scalar) ? scalar.join(', ') : String(scalar);
-  const readout = serviceFieldReadout(props.fact, value, locale);
+  const readout = serviceFieldReadout(props.fact, value, locale, Date.now());
   // The fact keeps its own width and gives way last: the deploy text before it ellipsizes first (lab phone row).
   return <Tooltip testID={props.testID} label={readout} accessibilityLabel={readout} onPress={props.onOpen}
     style={{ flexShrink: 0, minWidth: 0 }}>
