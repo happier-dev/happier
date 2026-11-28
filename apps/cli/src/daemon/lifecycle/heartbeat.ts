@@ -1,14 +1,11 @@
-import { readFileSync } from 'fs';
-
 import { isPidPresent } from '@happier-dev/cli-common/process';
 import type { ApiMachineClient } from '@/api/apiMachine';
 import type { DaemonLocallyPersistedState } from '@/persistence';
-import { projectPath } from '@/projectPath';
 import { logger } from '@/ui/logger';
 import { gcExecutionRunMarkers } from '@/daemon/executionRunRegistry';
 import { findHappyProcessByPid } from '@/daemon/doctor';
 import { processGenerationProvesReuse, readProcessIdentitiesByPid, readProcessIdentityByPid } from '@/daemon/processIdentity';
-import { resolveComparableCliVersion } from '@/daemon/resolveComparableCliVersion';
+import { createInstalledCliVersionReader } from '@/daemon/resolveComparableCliVersion';
 import { readDaemonRestartVerifyPollMs, readDaemonRestartVerifyTimeoutMs } from '@/daemon/startupWaitDefaults';
 import { configuration } from '@/configuration';
 import { recoverSessionHandoffPrepareTargetJobsAfterRestart } from '@/session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
@@ -120,6 +117,7 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
   // Periodically: observe runners whose exit the daemon cannot see, and restart onto a newer installed
   // CLI. Daemon state is published on real changes by its owners, never re-written per tick.
   const heartbeatIntervalMs = parsePositiveInt(process.env.HAPPIER_DAEMON_HEARTBEAT_INTERVAL, 30_000);
+  const readInstalledCliVersion = createInstalledCliVersionReader({ fallbackVersion: currentCliVersion });
   const restartVerifyTimeoutMs = readDaemonRestartVerifyTimeoutMs();
   const restartVerifyPollMs = readDaemonRestartVerifyPollMs();
   let heartbeatRunning = false;
@@ -294,14 +292,7 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
       await cleanupKeyMapIfUntracked(spawnResourceCleanupByKey);
       await cleanupKeyMapIfUntracked(sessionAttachCleanupByKey);
 
-      // Check if daemon needs update
-      // If version on disk is different from the one in package.json - we need to restart
-      // BIG if - does this get updated from underneath us on npm upgrade?
-      const projectVersion = resolveComparableCliVersion({
-        fallbackVersion: currentCliVersion,
-        projectRootPath: projectPath(),
-        readFileSyncImpl: readFileSync,
-      });
+      const projectVersion = readInstalledCliVersion();
 
       if (isShuttingDown?.() === true) {
         return;

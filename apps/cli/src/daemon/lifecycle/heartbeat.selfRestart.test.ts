@@ -1,10 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { existsSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { mkdirSync } from 'node:fs';
-vi.mock('fs', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('fs')>();
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
   return {
     ...actual,
     readFileSync: vi.fn(actual.readFileSync),
@@ -29,7 +28,13 @@ vi.mock('@/ui/logger', () => ({
   },
 }));
 
-import { readFileSync } from 'fs';
+vi.mock('@/projectPath', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/projectPath')>();
+  return { ...actual, projectPath: vi.fn(actual.projectPath) };
+});
+
+import { readFileSync } from 'node:fs';
+import { projectPath } from '@/projectPath';
 
 import { readDaemonState } from '@/persistence';
 import { spawnDetachedDaemonStartSync } from '@/daemon/runtime/spawnDetachedDaemonStartSync';
@@ -38,6 +43,15 @@ import { spawnSleepyDetachedProcess } from '@/daemon/testkit/fakeDaemonLifecycle
 describe('startDaemonHeartbeatLoop daemon self-restart', () => {
   const originalHappyHomeDir = process.env.HAPPIER_HOME_DIR;
   let happyHomeDir: string | null = null;
+
+  function installVersion(projectRoot: string, version: string): string {
+    vi.mocked(projectPath).mockReturnValue(projectRoot);
+    const manifest = join(projectRoot, 'package.json');
+    const replacement = join(projectRoot, 'package.next.json');
+    writeFileSync(replacement, JSON.stringify({ version }));
+    renameSync(replacement, manifest);
+    return manifest;
+  }
 
   afterEach(() => {
     delete process.env.HAPPIER_DAEMON_HEARTBEAT_INTERVAL;
@@ -82,11 +96,14 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
         return 1 as any;
       }) as any);
 
-    vi.mocked(readFileSync)
-      .mockImplementationOnce(() => {
-        throw new Error('boom');
-      })
-      .mockReturnValue(JSON.stringify({ version: '1.0.0' }) as any);
+    const manifest = installVersion(happyHomeDir, '1.0.0');
+    const readPackage = vi.mocked(readFileSync);
+    const { readFileSync: readFile } = await vi.importActual<typeof import('node:fs')>('node:fs');
+    let manifestReads = 0;
+    readPackage.mockImplementation(((...args: Parameters<typeof readFileSync>) => {
+      if (args[0] === manifest && ++manifestReads === 1) throw new Error('transient read failure');
+      return Reflect.apply(readFile, undefined, args);
+    }) as typeof readFileSync);
 
     vi.mocked(spawnDetachedDaemonStartSync).mockResolvedValue({ unref: vi.fn() } as any);
     vi.mocked(readDaemonState).mockResolvedValue({
@@ -125,6 +142,8 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
     }
 
     await tick!();
+    await tick!();
+    expect(manifestReads).toBe(2);
     expect(spawnDetachedDaemonStartSync).not.toHaveBeenCalled();
   }, 15_000);
 
@@ -146,7 +165,7 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
         return 1 as any;
       }) as any);
 
-    vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ version: '2.0.0' }) as any);
+    installVersion(happyHomeDir, '2.0.0');
     vi.mocked(spawnDetachedDaemonStartSync).mockResolvedValue({ unref: vi.fn() } as any);
     vi.mocked(readDaemonState).mockResolvedValue({
       pid: process.pid,
@@ -188,6 +207,10 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
     expect(firstSpawnCall?.env?.HAPPIER_DAEMON_RUNTIME_ID).toBe('runtime-heartbeat-restart');
     expect(exitSpy).not.toHaveBeenCalled();
 
+    installVersion(happyHomeDir, '3.0.0');
+    await tick!();
+    expect(spawnDetachedDaemonStartSync).toHaveBeenCalledTimes(2);
+
     clearInterval(interval);
   }, 15_000);
 
@@ -211,7 +234,7 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
           return 1 as any;
         }) as any);
 
-      vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ version: '2.0.0' }) as any);
+      installVersion(happyHomeDir, '2.0.0');
       vi.mocked(spawnDetachedDaemonStartSync).mockResolvedValue({ unref: vi.fn() } as any);
       vi.mocked(readDaemonState)
         .mockResolvedValueOnce({
