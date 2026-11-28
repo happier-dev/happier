@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { ACTION_IDS } from './actionIds.js';
 import type { ActionId } from './actionIds.js';
 import type { AutomationDefinitionDetail } from '../automations/automationApiV3.js';
+import { USAGE_COACH_ACTION_IDS } from '../usage/usageActionIdsV1.js';
 import { createActionExecutor, type ActionExecutorContext } from './actionExecutor.js';
 import {
   normalizeActionsSettingsV1,
@@ -883,8 +884,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
     'connectedServices.pools.switchNow',
     'connectedServices.pools.reorder',
     'connectedServices.pools.default.set',
-    'usage.coach.apply',
-    'usage.coach.undo',
+    ...USAGE_COACH_ACTION_IDS,
     'usage.sources.stop',
     'usage.sources.root.set',
     'widgets.item.add',
@@ -1057,21 +1057,18 @@ describe('isApprovalRequiredByActionsSettings', () => {
       const spec = getActionSpec(actionId);
       const context = { surface: 'ui', authority: 'present_user' } as const;
       for (const settings of [undefined, EMPTY_SETTINGS]) {
-        expect(
-          resolveActionApprovalRouting({ actionId, spec, settings, context })
-            .required,
-        ).toBe(false);
+        expectOwnUiReview(resolveActionApprovalRouting({ actionId, spec, settings, context }), false);
         for (const surface of ['agent', 'cli', 'mcp'] as const) {
           if (!spec.surfaces[surface]) continue;
-          expect(
-            resolveActionApprovalRouting({
-              actionId,
-              spec,
-              settings,
-              context: { ...context, surface },
-            }).required,
-            surface,
-          ).toBe(true);
+          for (const caller of [context, {
+            authority: 'account_automation',
+            actionCaller: { kind: 'session', sessionId: 'approval-session', starterDepth: 0, turnDepth: 0 },
+          }] as const) {
+            expect(
+              resolveActionApprovalRouting({ actionId, spec, settings, context: { ...caller, surface } }).required,
+              surface,
+            ).toBe(true);
+          }
         }
         for (const ambiguous of [
           undefined,
@@ -1110,10 +1107,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
         actions: { [actionId]: { approvalRequiredSurfaces: ['ui'] } },
         approvalWaivedSurfaces: { [actionId]: ['ui'] },
       });
-      expect(
-        resolveActionApprovalRouting({ actionId, spec, context, settings: ask })
-          .required,
-      ).toBe(false);
+      expectOwnUiReview(resolveActionApprovalRouting({ actionId, spec, context, settings: ask }), true);
     },
   );
 

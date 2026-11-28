@@ -1,7 +1,8 @@
 import { bundledUsageModelPriceCatalog } from '../usage/usageModelPriceCatalog.js';
 import { describe, expect, it, vi } from 'vitest';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
-import { getActionSpec } from './actionSpecs.js';
+import { getActionSpec, SignedRootActionIdSchema } from './actionSpecs.js';
+import { resolveCredentialActionAdmissionV1 } from './decisionAuthority.js';
 import { normalizeActionsSettingsV1 } from './actionSettings.js';
 import { normalizeUsageQuery } from '../inputs/usageQuery.js';
 import type { ActionId } from './actionIds.js';
@@ -32,6 +33,15 @@ function coachKv(read: () => ReturnType<typeof UsageCoachSuppressionStateV1Schem
 }
 
 describe('evidence-bound Coach Action admission', () => {
+    it.each(['usage.coach.dismiss', 'usage.coach.snooze'] as const)(
+        'admits %s as a signed CLI root for Account automation credentials',
+        actionId => {
+            expect(SignedRootActionIdSchema.safeParse(actionId).success).toBe(true);
+            expect(resolveCredentialActionAdmissionV1({ spec: getActionSpec(actionId),
+                authority: 'account_automation', grant: null, surface: 'cli' })).toMatchObject({ ok: true });
+        },
+    );
+
     it('lets a person dismiss, restore and snooze their own finding directly in the app', async () => {
         const aggregate = () => resolveUsagePageAggregation({ queries: [query], howYouWork: [{ query, asOfMs: 200,
             detail: { status: 'partial', permissions: [{ requestId: 'p', workId: 'w', requestedAtMs: 120,
