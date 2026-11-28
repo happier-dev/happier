@@ -1,6 +1,7 @@
 import { z } from "zod/mini";
 import { PushNotificationTestResultSchema } from '@happier-dev/protocol/push/pushNotificationTest';
 import { sendAccountExpoPushMessages } from '@/app/activity/accountPushTransport';
+import { forgetAccountActivityBadgeDevice } from '@/app/activity/refreshAccountActivityBadgePushes';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { type Fastify } from "../../types";
 import { db, getActivePrismaRuntime } from "@/storage/db";
@@ -115,6 +116,7 @@ export function pushRoutes(app: Fastify) {
                     clientServerUrl: clientServerUrl ?? null,
                 }
             });
+            forgetAccountActivityBadgeDevice(userId, token);
 
             return reply.send({ success: true });
         } catch (error) {
@@ -150,6 +152,7 @@ export function pushRoutes(app: Fastify) {
                     token: token
                 }
             });
+            forgetAccountActivityBadgeDevice(userId, token);
 
             return reply.send({ success: true });
         } catch (error) {

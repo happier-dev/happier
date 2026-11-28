@@ -18,19 +18,23 @@ const authentication = createPresentUserSessionAccessAuthentication();
  * the decisions this contract is about.
  */
 const badgePushes = vi.hoisted(() => [] as { accountId: string; badge: number | undefined; type: unknown }[]);
-vi.mock("@/app/activity/accountPushTransport", () => ({
-    sendAccountExpoPushMessages: async (
-        deliveries: ReadonlyArray<{ accountId: string; message: { badge?: number; data?: { type?: unknown } } }>,
-    ) => {
-        for (const delivery of deliveries) {
-            badgePushes.push({
-                accountId: delivery.accountId,
-                badge: delivery.message.badge,
-                type: delivery.message.data?.type,
-            });
-        }
-    },
-}));
+vi.mock("expo-server-sdk", async (importOriginal) => {
+    const { Expo } = await importOriginal<typeof import("expo-server-sdk")>();
+    return {
+        Expo: class extends Expo {
+            override async sendPushNotificationsAsync(messages: import("expo-server-sdk").ExpoPushMessage[]) {
+                return messages.map((message) => {
+                    badgePushes.push({
+                        accountId: String(message.to).slice("ExponentPushToken[".length, -1),
+                        badge: message.badge,
+                        type: message.data?.type,
+                    });
+                    return { status: "ok" as const, id: "discussion-test-ticket" };
+                });
+            }
+        },
+    };
+});
 
 /** The refresh is coalesced on a 25 ms timer, so settle before asserting. */
 async function settledBadgePushes(): Promise<Map<string, number | undefined>> {
@@ -114,6 +118,15 @@ describe("Discussion grants control Account badge facts (SQLite)", () => {
         // The author's own post is never news to its author.
         expect(afterCreate.get(owner.id)).toBe(0);
         expect(afterCreate.has(browser.id)).toBe(false);
+
+        badgePushes.length = 0;
+        expect((await setDiscussionReadCursor({
+            actorAccountId: follower.id,
+            discussionId: created.value.discussion.id,
+            lastReadSeq: 1,
+            authentication,
+        })).ok).toBe(true);
+        expect((await settledBadgePushes()).get(follower.id)).toBe(0);
 
         badgePushes.length = 0;
         expect((await postDiscussionMessage({

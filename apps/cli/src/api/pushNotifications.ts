@@ -39,10 +39,6 @@ export type PushNotificationDeliveryOptions = Readonly<{
     suppressIfComputerFocused?: boolean
 }>
 
-interface AccountActivityBadgeSnapshotResponse {
-    badgeCount: number
-}
-
 function isExpoMessageTooBig(result: unknown): boolean {
     return getExpoErrorCode(result) === 'MessageTooBig'
 }
@@ -239,32 +235,6 @@ export class PushNotificationClient {
                         ? String((error as { message: string }).message)
                         : 'Unknown error'
             throw new Error(`Failed to fetch push tokens: ${errorMessage}`)
-        }
-    }
-
-    async fetchAccountActivityBadgeCount(): Promise<number | null> {
-        const debugPush = isPushDebugEnabled()
-        try {
-            const response = await axios.get<AccountActivityBadgeSnapshotResponse>(
-                `${this.baseUrl}/v1/account/activity/badge-snapshot`,
-                {
-                    headers: {
-                        ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
-                        'Authorization': `Bearer ${this.token}`,
-                        'Content-Type': 'application/json'
-                    },
-                    timeout: readPushFetchTokensTimeoutMs(),
-                }
-            )
-
-            const badgeCount = Number.isInteger(response.data?.badgeCount) && response.data.badgeCount >= 0
-                ? response.data.badgeCount
-                : null
-            if (debugPush) logger.debug(`[PUSH] Fetched badge snapshot count: ${badgeCount ?? 'null'}`)
-            return badgeCount
-        } catch (error) {
-            logger.debug('[PUSH] Failed to fetch badge snapshot:', serializeAxiosErrorForLog(error))
-            return null
         }
     }
 
@@ -504,7 +474,6 @@ export class PushNotificationClient {
                 return false
             }
 
-            const badgeCount = await this.fetchAccountActivityBadgeCount()
             const accountId = readAccountIdFromToken(this.token)
             const { accountId: _untrustedAccountId, ...callerData } = data ?? {}
             const scopedData = accountId ? { ...callerData, accountId } : callerData
@@ -525,7 +494,6 @@ export class PushNotificationClient {
                     categoryId,
                     channelId,
                     subtitle,
-                    badge: badgeCount ?? undefined,
                 }
                 const sound = options && Object.prototype.hasOwnProperty.call(options, 'sound')
                     ? options.sound

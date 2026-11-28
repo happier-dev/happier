@@ -432,6 +432,50 @@ describe("refreshAccountActivityBadgePushes", () => {
         expect(sendPushNotificationsAsyncSpy).toHaveBeenCalledTimes(1);
     });
 
+    it("sends the latest badge when attention changes during Expo delivery", async () => {
+        vi.useFakeTimers();
+        const { scheduleAccountActivityBadgeRefresh } = await import("./refreshAccountActivityBadgePushes");
+        dbAccountPushTokenFindMany.mockResolvedValue([{ accountId: "a1", token: "ExponentPushToken[a1]" }]);
+        const schedule = (lastViewedSessionSeq: number) => {
+            dbSessionFindMany.mockResolvedValue([{
+                accountId: "a1", id: "s-a1", currentStorageState: "hosted", acceptedThroughServerSeq: null,
+                materializationPublicationId: null, materializedThroughSourceAt: null, publishedThroughServerSeq: null,
+                seq: 5, pendingCount: 0, lastViewedSessionSeq, pendingPermissionRequestCount: 0,
+                pendingUserActionRequestCount: 0, active: true, archivedAt: null,
+            }]);
+            scheduleAccountActivityBadgeRefresh({ badgeAttentionChanged: true, accountIds: ["a1"] });
+        };
+
+        schedule(1);
+        await vi.advanceTimersByTimeAsync(1_000);
+        const delivery = Promise.withResolvers<void>();
+        sendPushNotificationsAsyncSpy.mockImplementationOnce(async (chunk) => {
+            await delivery.promise;
+            return chunk.map(() => ({ status: "ok" }));
+        });
+        try {
+            schedule(5);
+            await vi.advanceTimersByTimeAsync(1_000);
+            expect(sendPushNotificationsAsyncSpy).toHaveBeenCalledTimes(2);
+            schedule(1);
+            await vi.advanceTimersByTimeAsync(1_000);
+            expect(sendPushNotificationsAsyncSpy.mock.calls.map(([chunk]) => chunk)).toEqual(
+                [1, 0, 1].map((badge) => [expect.objectContaining({ badge })]),
+            );
+        } finally {
+            delivery.resolve();
+            await vi.advanceTimersByTimeAsync(1_000);
+        }
+
+        schedule(1);
+        await vi.advanceTimersByTimeAsync(1_000);
+        schedule(1);
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(sendPushNotificationsAsyncSpy.mock.calls.map(([chunk]) => chunk)).toEqual(
+            [1, 0, 1, 1].map((badge) => [expect.objectContaining({ badge })]),
+        );
+    });
+
     it("publishes no badge traffic for ordinary messages while a real attention flip reaches Expo", async () => {
         vi.useFakeTimers();
         const { didSessionActivityBadgeSignalChange } = await import("./accountActivityBadge");

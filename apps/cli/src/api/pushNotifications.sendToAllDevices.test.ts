@@ -656,16 +656,11 @@ describe('PushNotificationClient.sendToAllDevicesAsync', () => {
     });
   });
 
-  it('applies the server badge snapshot count to outbound Expo messages', async () => {
+  it('leaves the app badge to the server: no badge on alert pushes and no badge recount per push', async () => {
     (axios as any).get
       .mockResolvedValueOnce({
         data: {
           tokens: [{ id: '1', token: 'ExponentPushToken[a]' }],
-        },
-      })
-      .mockResolvedValueOnce({
-        data: {
-          badgeCount: 4,
         },
       });
 
@@ -675,35 +670,13 @@ describe('PushNotificationClient.sendToAllDevicesAsync', () => {
     const [chunk] = sendPushNotificationsAsyncSpy.mock.calls.at(-1) ?? [];
     expect(Array.isArray(chunk)).toBe(true);
     expect(chunk).toHaveLength(1);
-    expect((chunk as any[])[0]).toMatchObject({
-      badge: 4,
-    });
-    expect((axios as any).get).toHaveBeenNthCalledWith(2,
+    expect((chunk as any[])[0]).not.toHaveProperty('badge');
+    // The only HTTP read is the token list; the server's own badge_refresh owns the count.
+    expect((axios as any).get).toHaveBeenCalledTimes(1);
+    expect((axios as any).get).not.toHaveBeenCalledWith(
       'https://api.example.test/v1/account/activity/badge-snapshot',
-      expect.objectContaining({
-        headers: expect.objectContaining({
-          Authorization: 'Bearer t',
-        }),
-      }),
+      expect.anything(),
     );
-  });
-
-  it('still sends push notifications when fetching the badge snapshot fails', async () => {
-    (axios as any).get
-      .mockResolvedValueOnce({
-        data: {
-          tokens: [{ id: '1', token: 'ExponentPushToken[a]' }],
-        },
-      })
-      .mockRejectedValueOnce(new Error('badge snapshot unavailable'));
-
-    const client = new PushNotificationClient('t', 'https://api.example.test');
-    await client.sendToAllDevicesAsync('Title', 'Body', { sessionId: 's_1' });
-
-    const [chunk] = sendPushNotificationsAsyncSpy.mock.calls.at(-1) ?? [];
-    expect(Array.isArray(chunk)).toBe(true);
-    expect(chunk).toHaveLength(1);
-    expect((chunk as any[])[0].badge).toBeUndefined();
   });
 
   it('deletes push tokens that Expo marks as DeviceNotRegistered', async () => {
