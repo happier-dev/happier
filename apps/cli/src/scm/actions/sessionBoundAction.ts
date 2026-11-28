@@ -25,7 +25,7 @@ import type { resolveCwd } from '@/scm/runtime';
 import type { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import { isStoredScmReviewEvidenceAction, type bindScmActionToSessionWorkspace, type isRetainedScmReviewAction } from '@/scm/actions/placement';
 import { resolveSocketRpcSessionAuthorization } from '@happier-dev/protocol/socketRpc';
-import type { ActionExecutorDeps, ActionExecutorContext, ScmDiffSummaryGenerateInput } from '@happier-dev/protocol';
+import type { ActionExecutorDeps, ActionExecutorContext, ScmComparisonCaptureInput, ScmDiffSummaryGenerateInput } from '@happier-dev/protocol';
 import { getActionSpec, requiresExplicitScmMachineTarget } from '@happier-dev/protocol/actions/actionSpecs';
 import { configuration } from '@/configuration';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -347,6 +347,8 @@ export function createSessionBoundScmAction(
       };
       const request = workspace ? addressManagedWorkspace(machineInput) : root ? createTargetedActionRpcRequestV1(machineInput,
         { kind: 'machine', machineId, project: selectedTarget?.project ?? { machineId, directory: root } }, context) : machineInput;
+      const capture = method === RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE ? inputRecord as ScmComparisonCaptureInput : undefined;
+      const sourceAction = !capture?.comparisonId && capture?.source?.kind === 'pullRequest' ? capture.source.locator.sourceAction : undefined;
       const invoke = () => executeCapturedMachineAction({ actionId,
         assertCurrent: async () => {
           if (!await isMachineActionServerScopeCurrent({ serverId: context.serverId, machineId, context,
@@ -358,6 +360,7 @@ export function createSessionBoundScmAction(
           ...(sessionAuthorization ? { authorization: sessionAuthorization } : {}),
           context, effectActionId: actionId,
           ...(scmSessionWorkspace ? { scmSessionWorkspace } : {}),
+          ...(sourceAction ? { scmPullRequestComparisonRead: { sourceAction, readPage: readPullRequestComparisonPage } } : {}),
           authority: context.authority, exactMachine: true,
           // SCM reads, like effects, belong to the containing Action lifetime.
           timeoutMs: null,

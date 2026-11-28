@@ -66,6 +66,11 @@ export type RpcLocalActionContext = Readonly<Partial<Pick<
     processEnvironmentRead?: (target: Readonly<{ serverId: string; environmentId: string }>) => Promise<boolean>;
     /** Home-resolved access to the exact Session supplying this SCM workspace. */
     scmSessionWorkspace?: Readonly<{ sessionId: string; access: 'edit' | 'owner' }>;
+    /** The originating Action's reader for this captured source, passed only in-process. */
+    scmPullRequestComparisonRead?: Readonly<{
+        sourceAction: import('@/scm/comparisons/readPullRequestComparisonPage').PullRequestComparisonSourceAction;
+        readPage: import('@/scm/comparisons/readPullRequestComparisonPage').ReadPullRequestComparisonPage;
+    }>;
 }>;
 
 /** Content-free, host-owned operation observations; never part of an RPC DTO. */

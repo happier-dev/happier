@@ -7,6 +7,7 @@ import { discoverScmRepositories } from '../repositoryDiscovery';
 import type { ScmRepositoryDiscoverRequest } from '@happier-dev/protocol/scm/repositoryDiscovery';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { FileReviewNoteV1, FileReviewNoteOperationV1 } from '@happier-dev/protocol/messages/structured/fileReviewNoteV1';
 import { scmPathMatchesScopePath } from '@happier-dev/protocol/scm/pathScope';
 import { logger } from '@/ui/logger';
@@ -337,6 +338,10 @@ async function runLocalScmAction(params: ExecuteScmActionOperationParams & Reado
                 ...(request.sessionId ? { sessionId: request.sessionId } : {}),
                 ...(typeof source.sessionId === 'string' ? { sourceSessionId: source.sessionId } : {}) });
             if (!request.comparisonId && !await admitSource(request.source!)) return unavailable;
+            const admittedSourceRead = scmRpcOperationContextStorage.getStore()?.context.localActionContext?.scmPullRequestComparisonRead;
+            const readPullRequestComparisonPage = admittedSourceRead && !request.comparisonId && request.source?.kind === 'pullRequest'
+                && sameStrictJsonValue(admittedSourceRead.sourceAction, request.source.locator.sourceAction)
+                ? admittedSourceRead.readPage : params.readPullRequestComparisonPage;
             try {
                 if (request.comparisonId && request.projection) {
                     const page = await readCapturedScmComparisonPage({ ...request, comparisonId: request.comparisonId,
@@ -351,7 +356,7 @@ async function runLocalScmAction(params: ExecuteScmActionOperationParams & Reado
                     signal: params.signal,
                     ...(params.registry ? { registry: params.registry } : {}),
                     ...(params.readComparisonTranscriptPage ? { readTranscriptPage: params.readComparisonTranscriptPage } : {}),
-                    ...(params.readPullRequestComparisonPage ? { readPullRequestComparisonPage: params.readPullRequestComparisonPage } : {}),
+                    ...(readPullRequestComparisonPage ? { readPullRequestComparisonPage } : {}),
                 });
                 if (request.comparisonId && !await admitSource(captured.comparison.source)) return unavailable;
                 return projectCapturedComparison(captured, request.projection);

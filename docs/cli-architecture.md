@@ -3201,10 +3201,12 @@ an Agent cannot gain the person's terminal authority through copied context.
 Session-less Project SCM (the Machine-scoped `scm.*` RPCs) runs where the
 admitted viewer may run. The SCM handler resolves the requester through the
 filesystem-effect requester owner. In 0.3 development, native comparison
-capture from a contributed Action can carry the authenticated local root's
-requester to the same Machine receiver. The receiver matches the private
-custody against its Home, custodian Account, Machine and installation before
-placing the capture.
+capture can carry the authenticated local root's requester to the same
+Machine receiver. The receiver matches the private custody against its Home,
+custodian Account, Machine and installation before placing the capture. A
+fresh hosted comparison can use the originating Action's source reader for
+the exact selected pull request. This lets a detached Review capture the
+forge's head and title under the originating requester's admission.
 
 An admitted Manage requester or the custodian
 runs Git as the daemon user, unisolated, like its file effects and shell,

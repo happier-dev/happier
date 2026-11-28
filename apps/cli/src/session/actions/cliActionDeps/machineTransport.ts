@@ -50,6 +50,7 @@ export function requiresWorkflowMachineActionAdmission(actionId: string, context
 export type CliMachineActionCall = (input: Readonly<{
     processEnvironmentRead?: RpcLocalActionContext['processEnvironmentRead'];
     scmSessionWorkspace?: RpcLocalActionContext['scmSessionWorkspace'];
+    scmPullRequestComparisonRead?: RpcLocalActionContext['scmPullRequestComparisonRead'];
     machineId: string;
     authority?: ActionExecutorContext['authority'];
     serverId?: string;
@@ -387,6 +388,8 @@ export function createCliMachineActionTransport(
         ...(admittedProcessRead ? { processEnvironmentRead: input.processEnvironmentRead } : {}),
         ...(retainedLocalRequester && input.scmSessionWorkspace
           ? { scmSessionWorkspace: input.scmSessionWorkspace } : {}),
+        ...(retainedLocalRequester && input.method === RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE && input.scmPullRequestComparisonRead
+          ? { scmPullRequestComparisonRead: input.scmPullRequestComparisonRead } : {}),
         ...(admittedLocalRequester && input.effectActionId === 'session.open'
           && input.context?.actionCaller?.kind === 'session' && input.request
           && typeof input.request === 'object' && 'type' in input.request && input.request.type === 'resume-session'
