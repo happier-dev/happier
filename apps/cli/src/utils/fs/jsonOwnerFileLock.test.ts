@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { link as linkMock, mkdir, mkdtemp, readFile, readdir, rename as renameMock, rm, rm as rmMock, rmdir as rmdirMock, stat, unlink, utimes, writeFile } from 'node:fs/promises';
+import { link as linkMock, mkdir, mkdtemp, open as openMock, readFile, readdir, rename as renameMock, rm, rm as rmMock, rmdir as rmdirMock, stat, unlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -311,6 +311,51 @@ afterEach(() => {
 });
 
 describe('withJsonOwnerFileLock', () => {
+  it('releases its published owner when a hard link changes ctime during the release read', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-json-owner-lock-release-'));
+    const lockPath = join(dir, 'marker.lock');
+    const aliasPath = join(dir, 'alias');
+    const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+    const open = vi.mocked(openMock);
+    const originalOpen = open.getMockImplementation();
+    let releaseRead = false;
+    let changedCtime = false;
+    const options = { lockPath, timeoutMs: 1_000, staleAfterMs: 1, errorCode: 'owner_release_timeout' };
+    try {
+      await withJsonOwnerFileLock(options, async () => {
+        open.mockImplementation(async (...args) => {
+          const handle = await actual.open(...args);
+          if (releaseRead || String(args[0]) !== lockPath || args[1] !== 'r') return handle;
+          releaseRead = true;
+          return new Proxy(handle, {
+            get(target, property) {
+              if (property === 'readFile') {
+                return async (...readArgs: Parameters<typeof target.readFile>) => {
+                  const raw = await target.readFile(...readArgs);
+                  const before = await target.stat();
+                  await new Promise<void>((resolve) => setTimeout(resolve, 25));
+                  await actual.link(lockPath, aliasPath);
+                  await actual.unlink(aliasPath);
+                  const after = await target.stat();
+                  changedCtime = before.ctimeMs !== after.ctimeMs && before.mtimeMs === after.mtimeMs;
+                  return raw;
+                };
+              }
+              const value = Reflect.get(target, property, target) as unknown;
+              return typeof value === 'function' ? value.bind(target) : value;
+            },
+          });
+        });
+      });
+      expect(changedCtime).toBe(true);
+      await expect(readdir(dir)).resolves.toEqual([]);
+      await expect(withJsonOwnerFileLock(options, async () => 'next')).resolves.toBe('next');
+    } finally {
+      open.mockImplementation(originalOpen ?? actual.open);
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('writes the real Linux process-start witness used by marker-lock contenders', async () => {
     if (process.platform !== 'linux') return;
     const dir = await mkdtemp(join(tmpdir(), 'happier-json-owner-lock-real-witness-'));

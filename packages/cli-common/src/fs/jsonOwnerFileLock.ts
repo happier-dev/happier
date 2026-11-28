@@ -264,7 +264,11 @@ function sameContentVersion(left: FileSnapshot, right: FileSnapshot): boolean {
     && left.mtimeMs === right.mtimeMs;
 }
 
-async function readSnapshot(path: string): Promise<FileSnapshot | null> {
+// NTFS can change ctime while a hard-linked owner is read. Only readers with
+// an immutable owner snapshot can ignore it and verify the exact content version.
+type SnapshotMatch = 'exact' | 'content';
+
+async function readSnapshot(path: string, match: SnapshotMatch = 'exact'): Promise<FileSnapshot | null> {
   const handle = await open(path, 'r').catch(() => null);
   if (!handle) return null;
   try {
@@ -275,7 +279,7 @@ async function readSnapshot(path: string): Promise<FileSnapshot | null> {
       || before.ino !== after.ino
       || before.size !== after.size
       || before.mtimeMs !== after.mtimeMs
-      || before.ctimeMs !== after.ctimeMs) return null;
+      || (match === 'exact' && before.ctimeMs !== after.ctimeMs)) return null;
     return {
       raw,
       identity: { dev: after.dev, ino: after.ino },
@@ -293,16 +297,16 @@ async function readSnapshot(path: string): Promise<FileSnapshot | null> {
 async function snapshotStillMatches(
   path: string,
   expected: FileSnapshot,
-  match: 'exact' | 'content' = 'exact',
+  match: SnapshotMatch = 'exact',
 ): Promise<boolean> {
-  const current = await readSnapshot(path);
+  const current = await readSnapshot(path, match);
   return current !== null
     && sameContentVersion(current, expected)
     && (match === 'content' || current.ctimeMs === expected.ctimeMs);
 }
 
-async function unlinkExactFile(path: string, expected: FileSnapshot): Promise<boolean> {
-  if (!(await snapshotStillMatches(path, expected))) return false;
+async function unlinkExactFile(path: string, expected: FileSnapshot, match: SnapshotMatch = 'exact'): Promise<boolean> {
+  if (!(await snapshotStillMatches(path, expected, match))) return false;
   try {
     await unlink(path);
     return true;
@@ -336,10 +340,8 @@ async function quarantineExactFile(
   expected: FileSnapshot,
   quarantineLabel: 'reclaim' | 'publication' | 'cleanup' | 'stale',
   readQuarantinedRaw: (path: string) => Promise<string>,
+  match: SnapshotMatch = 'exact',
 ): Promise<ReclaimResult> {
-  // The guard we published is immutable. NTFS can advance its ctime when a
-  // hard link is removed, while the inode, owner bytes and mtime stay intact.
-  const match = quarantineLabel === 'cleanup' ? 'content' : 'exact';
   if (!(await snapshotStillMatches(path, expected, match))) return 'successor_preserved';
   const quarantinePath = `${path}.${quarantineLabel}-${process.pid}-${Date.now()}-${randomUUID()}`;
   try {
@@ -356,13 +358,13 @@ async function quarantineExactFile(
     if (moved) await restoreQuarantinedFile(quarantinePath, path, moved);
     return 'ownership_unknown';
   }
-  const moved = await readSnapshot(quarantinePath);
+  const moved = await readSnapshot(quarantinePath, match);
   if (!moved) return 'ownership_unknown';
   if (movedRaw !== expected.raw || !sameContentVersion(moved, expected)) {
     await restoreQuarantinedFile(quarantinePath, path, moved);
     return 'successor_preserved';
   }
-  return await unlinkExactFile(quarantinePath, moved) ? 'reclaimed' : 'ownership_unknown';
+  return await unlinkExactFile(quarantinePath, moved, match) ? 'reclaimed' : 'ownership_unknown';
 }
 
 async function publishReclaimGuard(path: string): Promise<{ snapshot: FileSnapshot; privatePath: string } | ReclaimResult> {
@@ -386,16 +388,17 @@ async function publishReclaimGuard(path: string): Promise<{ snapshot: FileSnapsh
     await handle.close();
     handle = null;
     await link(privatePath, `${path}.reclaim`);
-    const linkedPrivate = await readSnapshot(privatePath);
-    if (!linkedPrivate || !sameContentVersion(linkedPrivate, snapshot)) return 'ownership_unknown';
-    await unlinkExactFile(privatePath, linkedPrivate);
-    const published = await readSnapshot(`${path}.reclaim`);
-    if (!published || published.raw !== raw || !sameIdentity(published.identity, snapshot.identity)) return 'ownership_unknown';
+    await unlinkExactFile(privatePath, snapshot, 'content');
+    const published = await readSnapshot(`${path}.reclaim`, 'content');
+    if (!published || !sameContentVersion(published, snapshot)) return 'ownership_unknown';
     return { snapshot: published, privatePath };
   } catch (error) {
     await handle?.close().catch(() => {});
-    const privateSnapshot = await readSnapshot(privatePath);
-    if (privateSnapshot) await unlinkExactFile(privatePath, privateSnapshot);
+    if (snapshot) await unlinkExactFile(privatePath, snapshot, 'content');
+    else {
+      const privateSnapshot = await readSnapshot(privatePath);
+      if (privateSnapshot) await unlinkExactFile(privatePath, privateSnapshot);
+    }
     return (error as NodeJS.ErrnoException | null)?.code === 'EEXIST' ? 'successor_preserved' : 'ownership_unknown';
   }
 }
@@ -405,6 +408,14 @@ export async function reclaimJsonOwnerFileLockSnapshot(
   expectedRaw: string,
   readQuarantinedRaw: (path: string) => Promise<string> = async (quarantinePath) => await readFile(quarantinePath, 'utf8'),
 ): Promise<ReclaimResult> {
+  return await reclaimFileLock(path, expectedRaw, readQuarantinedRaw);
+}
+
+async function reclaimFileLock(
+  path: string,
+  expected: string | FileSnapshot,
+  readQuarantinedRaw: (path: string) => Promise<string>,
+): Promise<ReclaimResult> {
   // A reclaimer can die after publishing its guard but before removing it. Recover a
   // guard whose owner is proven dead (or whose unparseable bytes are safely stale)
   // before attempting to publish the next exact-owner reclaim.
@@ -413,12 +424,19 @@ export async function reclaimJsonOwnerFileLockSnapshot(
   if (typeof guard === 'string') return guard;
 
   try {
-    const current = await readSnapshot(path);
-    if (!current) return 'reclaimed';
-    if (current.raw !== expectedRaw) return 'successor_preserved';
-    return await quarantineExactFile(path, current, 'reclaim', readQuarantinedRaw);
+    const match = typeof expected === 'string' ? 'exact' : 'content';
+    const current = await readSnapshot(path, match);
+    if (!current) {
+      return await lstat(path).then(
+        () => 'ownership_unknown',
+        (error: NodeJS.ErrnoException) => error.code === 'ENOENT' ? 'reclaimed' : 'ownership_unknown',
+      );
+    }
+    const matches = typeof expected === 'string' ? current.raw === expected : sameContentVersion(current, expected);
+    if (!matches) return 'successor_preserved';
+    return await quarantineExactFile(path, current, 'reclaim', readQuarantinedRaw, match);
   } finally {
-    await quarantineExactFile(`${path}.reclaim`, guard.snapshot, 'cleanup', async (quarantinePath) => await readFile(quarantinePath, 'utf8'));
+    await quarantineExactFile(`${path}.reclaim`, guard.snapshot, 'cleanup', async (quarantinePath) => await readFile(quarantinePath, 'utf8'), 'content');
   }
 }
 
@@ -788,7 +806,7 @@ export async function withJsonOwnerFileLock<TResult>(
     return await withPredecessorCompatibleDirectoryLock(options, effect);
   }
 
-  let ownRaw: string | null = null;
+  let ownerSnapshot: FileSnapshot | null = null;
   for (;;) {
     throwIfLockAdmissionCancelled(options.signal);
     if (Date.now() - startedAtMs >= options.timeoutMs) throw new Error(options.errorCode);
@@ -805,7 +823,6 @@ export async function withJsonOwnerFileLock<TResult>(
     );
     const ownerTempPath = `${options.lockPath}.owner-${process.pid}-${Date.now()}-${randomUUID()}`;
     let handle: Awaited<ReturnType<typeof open>> | null = null;
-    let ownerSnapshot: FileSnapshot | null = null;
     let ownerPublished = false;
     try {
       const observedStartMs = await (
@@ -815,7 +832,7 @@ export async function withJsonOwnerFileLock<TResult>(
       if (observedStartMs === null || !Number.isSafeInteger(observedStartMs) || observedStartMs < 0) {
         throw new Error(`${options.errorCode}_identity_unavailable`);
       }
-      ownRaw = serializeOwner(Date.now(), observedStartMs);
+      const ownRaw = serializeOwner(Date.now(), observedStartMs);
       handle = await open(ownerTempPath, 'wx', 0o600);
       // Not flushed to disk: the record only has to outlive its process, which the page cache
       // guarantees. Bytes lost to a power failure are reclaimed by `predatesThisBoot`.
@@ -837,28 +854,25 @@ export async function withJsonOwnerFileLock<TResult>(
       ownerPublished = true;
       if (await stat(`${options.lockPath}.reclaim`).then(() => true, () => false)
         || await inspectAndScavengeLockArtifacts(options.lockPath, options.staleAfterMs)) {
-        const canonicalSnapshot = await readSnapshot(options.lockPath);
-        const removed = canonicalSnapshot
-          && canonicalSnapshot.raw === ownRaw
-          && sameIdentity(canonicalSnapshot.identity, ownerSnapshot.identity)
-          ? await quarantineExactFile(options.lockPath, canonicalSnapshot, 'publication', readQuarantinedRaw)
-          : 'successor_preserved';
+        const removed = await quarantineExactFile(options.lockPath, ownerSnapshot, 'publication', readQuarantinedRaw, 'content');
         if (removed === 'reclaimed') ownerPublished = false;
         throw Object.assign(new Error('lock reclaim raced publication'), { code: 'EEXIST' });
       }
-      const linkedPrivate = await readSnapshot(ownerTempPath);
-      if (linkedPrivate) await unlinkExactFile(ownerTempPath, linkedPrivate);
+      await unlinkExactFile(ownerTempPath, ownerSnapshot, 'content');
       break;
     } catch (error) {
       await handle?.close().catch(() => {});
-      const privateSnapshot = await readSnapshot(ownerTempPath);
-      if (privateSnapshot) await unlinkExactFile(ownerTempPath, privateSnapshot);
-      if (ownerPublished && ownRaw !== null) {
-        const release = await reclaimJsonOwnerFileLockSnapshot(options.lockPath, ownRaw, readQuarantinedRaw);
+      if (ownerSnapshot) await unlinkExactFile(ownerTempPath, ownerSnapshot, 'content');
+      else {
+        const privateSnapshot = await readSnapshot(ownerTempPath);
+        if (privateSnapshot) await unlinkExactFile(ownerTempPath, privateSnapshot);
+      }
+      if (ownerPublished && ownerSnapshot) {
+        const release = await reclaimFileLock(options.lockPath, ownerSnapshot, readQuarantinedRaw);
         if (release === 'ownership_unknown') throw new Error(`${options.errorCode}_compromised`);
         throw error;
       }
-      ownRaw = null;
+      ownerSnapshot = null;
       if ((error as NodeJS.ErrnoException | null)?.code !== 'EEXIST') throw error;
       if (Date.now() - startedAtMs >= options.timeoutMs) throw new Error(options.errorCode);
       const observed = await readSnapshot(options.lockPath);
@@ -880,8 +894,8 @@ export async function withJsonOwnerFileLock<TResult>(
   try {
     return await effect();
   } finally {
-    if (ownRaw !== null) {
-      const release = await reclaimJsonOwnerFileLockSnapshot(options.lockPath, ownRaw, readQuarantinedRaw);
+    if (ownerSnapshot) {
+      const release = await reclaimFileLock(options.lockPath, ownerSnapshot, readQuarantinedRaw);
       if (release === 'ownership_unknown') throw new Error(`${options.errorCode}_compromised`);
     }
   }
