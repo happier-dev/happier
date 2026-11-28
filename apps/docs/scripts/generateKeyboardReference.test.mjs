@@ -58,9 +58,8 @@ test('documents Search independent gating and account-synced shortcut preference
       defaultBinding: { binding: 'Alt+N' },
     },
 ];\n`);
-    await writeFile(settingsPath, `const settings = {
-  commandPaletteEnabled: accountPreference(z.boolean(), true, 'keyboard shortcuts'),
-  keyboardShortcutsV2Enabled: accountPreference(z.boolean(), false, 'keyboard shortcuts'),
+    await writeFile(settingsPath, `export const ACCOUNT_SETTING_ARTIFACTS = {
+  defaults: { commandPaletteEnabled: true, keyboardShortcutsV2Enabled: false },
 };\n`);
 
     const markdown = await renderKeyboardReferenceMarkdown({ commandsPath, settingsPath });

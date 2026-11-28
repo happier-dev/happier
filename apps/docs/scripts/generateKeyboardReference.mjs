@@ -12,7 +12,6 @@
  * including mapped ordinals, rather than reconstructing a second registry from
  * source formatting.
  */
-import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -128,20 +127,10 @@ export async function readKeyboardCommands(commandsPath = COMMANDS) {
   return commands;
 }
 
-/**
- * Read a boolean account preference's default.
- *
- * These settings used to be local settings carrying an inline `default:` field.
- * They are account preferences now, declared in the protocol as
- * `accountPreference(z.boolean(), false, 'keyboard shortcuts')`, and the
- * per-app registry file that replaced the old one holds analytics metadata
- * rather than values — reading a default from it silently describes the wrong
- * thing, so this reads the protocol declaration instead.
- */
-function readDefault(source, name) {
-  const match = new RegExp(`${name}:\\s*accountPreference\\(\\s*z\\.boolean\\(\\)\\s*,\\s*(true|false)`).exec(source);
-  if (!match) throw new Error(`Could not read the default for ${name}`);
-  return match[1] === 'true';
+function readDefault(defaults, name) {
+  const value = defaults[name];
+  if (typeof value !== 'boolean') throw new Error(`Could not read the default for ${name}`);
+  return value;
 }
 
 function formatBindings(bindings) {
@@ -156,9 +145,10 @@ export async function renderKeyboardReferenceMarkdown({
   settingsPath = SETTINGS,
 } = {}) {
   const commands = await readKeyboardCommands(commandsPath);
-  const settings = readFileSync(settingsPath, 'utf8');
-  const paletteOn = readDefault(settings, 'commandPaletteEnabled');
-  const shortcutsOn = readDefault(settings, 'keyboardShortcutsV2Enabled');
+  const { ACCOUNT_SETTING_ARTIFACTS } = await import(pathToFileURL(settingsPath).href);
+  const { defaults } = ACCOUNT_SETTING_ARTIFACTS;
+  const paletteOn = readDefault(defaults, 'commandPaletteEnabled');
+  const shortcutsOn = readDefault(defaults, 'keyboardShortcutsV2Enabled');
 
   const grouped = GROUPS.map((group) => {
     const rows = Object.entries(group.commands)
