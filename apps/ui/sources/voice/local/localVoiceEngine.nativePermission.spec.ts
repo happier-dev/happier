@@ -732,7 +732,7 @@ describe('native Voice permission input', () => {
       }
       if (ordinaryQuestion) {
         const starts = sessionRpcWithServerScope.mock.calls.filter(([request]) => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START_V2);
-        expect(starts.slice(startsBeforeAnswer).map(([request]) => request.payload)).toContainEqual(expect.objectContaining({ message: expect.stringContaining(answer) }));
+        expect(starts.slice(startsBeforeAnswer).map(([request]) => request.payload)).toContainEqual(expect.objectContaining({ message: expect.stringContaining(typedQuestion ? answer : 'What is the capital of france') }));
         expect(expoSpeechSpeak.mock.calls.slice(speechBeforeAnswer).map(([text]) => text)).toContain('Daemon reply');
         expect(storage.getState().sessions[actualRequestSessionId]?.agentState?.requests?.['native-write']).toBeDefined();
         expect(sessionRpcWithServerScope.mock.calls.some(([request]) => request.method === RPC_METHODS.SESSION_PERMISSION_RESPOND)).toBe(false);

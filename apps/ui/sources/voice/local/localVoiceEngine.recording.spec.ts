@@ -29,6 +29,21 @@ afterAll(() => restoreHarnessModuleLoader());
 describe('local voice engine recording lifecycle', () => {
     registerLocalVoiceEngineHarnessHooks();
 
+    it.each([
+        ['HE BEGAN A CONFUSED COMPLAINT AGAINST THE WIZARD.', 'He began a confused complaint against the wizard.'],
+        ['Open README.md for API', 'Open README.md for API'],
+    ])('persists normalized recorded speech: %s', async (transcript, expected) => {
+        localVoiceSpeechTranscription.mockResolvedValueOnce(transcript);
+        const { toggleLocalVoiceTurn } = await loadLocalVoiceEngineWithCompatState();
+        await toggleLocalVoiceTurn('s1');
+        await toggleLocalVoiceTurn('s1');
+        expect(localVoicePendingEnqueue).toHaveBeenCalledWith(expect.objectContaining({
+            sessionId: 's1', body: expect.objectContaining({ content: { t: 'plain', v: expect.objectContaining({
+                role: 'user', content: { type: 'text', text: expected },
+            }) } }),
+        }));
+    });
+
     it('cleans up and reports an error when recording initialization fails', async () => {
         setNextRecorderPrepareError(new Error('prepare failed'));
 

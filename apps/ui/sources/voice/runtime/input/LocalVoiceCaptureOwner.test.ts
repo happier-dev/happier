@@ -604,6 +604,25 @@ describe('createLocalVoiceCaptureOwner', () => {
         }
     });
 
+    it.each([
+        ['HE BEGAN A CONFUSED COMPLAINT AGAINST THE WIZARD.', 'He began a confused complaint against the wizard.'],
+        ['Open README.md for API', 'Open README.md for API'],
+    ])('normalizes device partials and submitted turns: %s', async (transcript, expected) => {
+        const partials: string[] = [];
+        const owner = createLocalVoiceCaptureOwner({
+            getSettings: () => ({}), onCaptureStarted() {}, onCaptureError() {},
+            onPartialTranscript: partial => partials.push(partial.transcript),
+        });
+        await owner.startCapture({ handsFree: true, capturePurpose: 'conversation', provider: 'device', sessionId: 'casing-session' });
+        emitRecognition('result', { isFinal: false, results: [{ transcript }] });
+        expect(partials).toEqual([expected]);
+        emitRecognition('result', { isFinal: true, results: [{ transcript }] });
+        await expect(owner.stopEndpointDrivenCapture({
+            adaptiveConfig: { ignoredPhrases: [] }, provider: 'device', sessionId: 'casing-session',
+        })).resolves.toMatchObject({ kind: 'submit_turn', transcript: expected });
+        await owner.stopSession();
+    });
+
     it('keeps hands-free session ownership in the runtime capture owner instead of the provider controllers', async () => {
         const owner = createLocalVoiceCaptureOwner({ getSettings: () => ({}), onCaptureStarted() {}, onCaptureError() {} });
         await owner.startCapture({ handsFree: true, provider: 'device', sessionId: ' session-1 ' });

@@ -1,3 +1,4 @@
+import { normalizeRecognizedTranscriptText } from '@/voice/transcript/normalizeRecognizedTranscriptText';
 import { VoiceProviderOperationErrorCodeSchema } from '@happier-dev/protocol/voice/providerOperations';
 import { DAEMON_VOICE_INFERENCE_CLIENT_ERROR_CODES } from '@/voice/runtime/daemonInference/daemonVoiceInferenceErrors';
 import { prepareDaemonVoiceInferenceSttSource } from '@/voice/input/prepareDaemonVoiceInferenceSttSource';
@@ -166,13 +167,13 @@ export function createRecordedAudioTranscriptionController(options?: Readonly<{
         adapter,
         stt,
       };
-      if (controller) return await controller.transcribe(context);
-      return await transcribeWithRegisteredSpeechProvider({
+      const text = controller ? await controller.transcribe(context) : await transcribeWithRegisteredSpeechProvider({
         params: context,
         providerId: provider,
         registry,
         runtime: speechRuntime,
       });
+      return normalizeRecognizedTranscriptText(text);
     },
   };
 }

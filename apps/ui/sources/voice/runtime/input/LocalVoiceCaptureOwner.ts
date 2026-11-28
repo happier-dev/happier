@@ -1,3 +1,4 @@
+import { normalizeRecognizedTranscriptText } from '@/voice/transcript/normalizeRecognizedTranscriptText';
 import {
     createTurnEndpointController,
     type TurnEndpointController,
@@ -417,7 +418,7 @@ export function createLocalVoiceCaptureOwner(
         });
     };
     const emitThrottledPartial = (controlSessionId: string, transcript: string, flush: boolean): void => {
-        const trimmed = transcript.trim();
+        const trimmed = normalizeRecognizedTranscriptText(transcript) ?? '';
         if (trimmed.length === 0) {
             return;
         }
@@ -699,7 +700,7 @@ export function createLocalVoiceCaptureOwner(
             }
             return { finalText: '', failed: true };
         }
-        return { finalText: result.finalText, failed: false };
+        return { finalText: normalizeRecognizedTranscriptText(result.finalText) ?? '', failed: false };
     };
 
     const configureHandsFree = (args: Readonly<{

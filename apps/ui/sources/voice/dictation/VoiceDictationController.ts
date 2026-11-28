@@ -1,3 +1,4 @@
+import { normalizeRecognizedTranscriptText } from '@/voice/transcript/normalizeRecognizedTranscriptText';
 import type {
     LocalVoiceCaptureOwner,
     LocalVoiceCaptureProvider,
@@ -32,18 +33,6 @@ export const VOICE_DICTATION_LIMITS = Object.freeze({
 });
 
 const TRANSCRIPTION_CANCELLED = Symbol('voice_dictation_transcription_cancelled');
-
-function normalizeDictationTranscript(rawText: string | null): string | null {
-    const text = rawText?.trim();
-    if (!text) return null;
-    // Recognizers without punctuation/casing can return whole utterances in
-    // uppercase. Keep supplied mixed casing, including acronyms and filenames.
-    if (text !== text.toUpperCase() || text === text.toLowerCase()) return text;
-    return text.toLowerCase()
-        .replace(/(^|[.!?]\s+)([^\p{L}]*)(\p{L})/gu, (_match, boundary: string, prefix: string, letter: string) => (
-            boundary + prefix + letter.toUpperCase()
-        ));
-}
 
 export type VoiceDictationFailureReason =
     | 'capture_failed'
@@ -446,7 +435,7 @@ export function createVoiceDictationController(deps: Readonly<{
                 ) {
                     return { kind: 'cancelled' } as const;
                 }
-                const text = normalizeDictationTranscript(rawText);
+                const text = normalizeRecognizedTranscriptText(rawText);
                 return { kind: 'completed', text } as const;
             });
             if (result === TRANSCRIPTION_CANCELLED) {
@@ -693,7 +682,7 @@ export function createVoiceDictationController(deps: Readonly<{
         },
         reportPartialTranscript: ({ controlSessionId, transcript }) => {
             if (!active || active.sessionId !== controlSessionId || active.cancelled || active.failed) return;
-            const text = normalizeDictationTranscript(transcript);
+            const text = normalizeRecognizedTranscriptText(transcript);
             if (partialSessionId === controlSessionId && partialTranscript === text) return;
             partialSessionId = controlSessionId;
             partialTranscript = text;
