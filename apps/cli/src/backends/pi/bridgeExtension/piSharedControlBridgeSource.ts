@@ -273,8 +273,8 @@ function startSharedControl(pi, ctx, endpoint, sideChannel) {
 
   // Pi's extension agent_end has no willRetry and fires before retries and queued follow-ups;
   // agent_settled is the final idle signal, so the run ends there.
-  on("agent_settled", () => {
-    sendOut({ type: "agent_end", willRetry: false });
+  on("agent_settled", (event) => {
+    sendOut({ type: "agent_end", willRetry: false, ...(event.aborted === true ? { aborted: true } : {}) });
   });
 
   on("session_before_compact", (event) => {

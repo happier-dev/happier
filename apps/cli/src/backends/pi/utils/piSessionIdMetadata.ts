@@ -10,6 +10,7 @@ import {
   findPiSessionFileForId,
   matchesPiSessionFileIdentity,
   pathExistsAsFile,
+  resolveExpectedPiSessionIdForResume,
   resolvePiSessionIdFromResumeReference,
 } from '@/backends/pi/utils/piSessionFiles';
 
@@ -168,7 +169,8 @@ export async function resolvePiSessionFileForRuntimeSession(params: Readonly<{
   const reportedSessionFile = normalizeOptionalAbsolutePath(params.reportedSessionFile);
 
   if (reportedSessionFile) {
-    return vendorSessionReference && await matchesPiSessionFileIdentity(reportedSessionFile, vendorSessionReference, {
+    const sessionId = vendorSessionReference ? await resolveExpectedPiSessionIdForResume(vendorSessionReference) : null;
+    return sessionId && await matchesPiSessionFileIdentity(reportedSessionFile, sessionId, {
       requireHeader: true,
     }) ? reportedSessionFile : null;
   }

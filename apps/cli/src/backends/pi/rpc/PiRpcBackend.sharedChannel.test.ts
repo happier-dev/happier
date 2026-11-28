@@ -705,6 +705,7 @@ describe('ACP runtime over the attached channel with shared-mode event order', (
     const sent: ACPMessageData[] = [];
     const committedUserRows: string[] = [];
     const keepAlive = vi.fn();
+    const onProviderTurnCompleted = vi.fn();
     const session = createBasicSessionClientWithOverrides({
       sendAgentMessage: (_provider, body) => { sent.push(body); },
       sendUserTextMessageCommitted: async (text) => { committedUserRows.push(text); },
@@ -720,11 +721,12 @@ describe('ACP runtime over the attached channel with shared-mode event order', (
       onThinkingChange: (thinking) => { if (hostOwnsKeepAlive) keepAlive(thinking, 'local'); },
       keepAliveOwner: hostOwnsKeepAlive ? 'host' : 'runtime',
       promptTurnOwner: 'provider',
+      onProviderTurnCompleted,
       ensureBackend: async () => backend,
     });
     await runtime.startOrLoad({ resumeId: null });
     const count = (type: string) => sent.filter((message) => message?.type === type).length;
-    return { fake, runtime, sent, committedUserRows, count, keepAlive };
+    return { fake, runtime, sent, committedUserRows, count, keepAlive, onProviderTurnCompleted };
   }
 
   it('lets the host publish the only presence update for a native Pi turn', async () => {
@@ -801,8 +803,8 @@ describe('ACP runtime over the attached channel with shared-mode event order', (
     expect(sent.filter((message) => message?.type === 'turn_failed' || message?.type === 'turn_aborted')).toEqual([]);
   });
 
-  it('reports a terminal run that fails while a web prompt waits as a diagnostic, without failing the web turn', async () => {
-    const { fake, runtime, sent, count } = await startRuntime();
+  it('fails the terminal run and still delivers the web prompt waiting behind it', async () => {
+    const { fake, runtime, sent, count, onProviderTurnCompleted } = await startRuntime();
     fake.emitOut({ type: 'agent_start' });
     await vi.waitFor(() => expect(count('task_started')).toBe(1));
     fake.setPromptScript(
@@ -818,13 +820,52 @@ describe('ACP runtime over the attached channel with shared-mode event order', (
     await vi.waitFor(() => expect(promptCommands(fake)).toHaveLength(1));
     await flushIo();
     fake.emitOut({ type: 'message_end', message: { role: 'assistant', content: [], stopReason: 'error', errorMessage: 'terminal model exploded' } });
+    expect(count('turn_failed')).toBe(0);
     fake.emitOut({ type: 'agent_end', willRetry: false });
     await web;
-    await vi.waitFor(() => expect(count('task_complete')).toBe(2));
+    await vi.waitFor(() => expect(onProviderTurnCompleted).toHaveBeenCalledExactlyOnceWith({ assistantText: 'web answer' }));
 
+    const turns = sent.filter((message) => message.type === 'task_started');
+    expect(turns).toHaveLength(2);
+    expect(sent).toContainEqual(expect.objectContaining({ type: 'turn_failed', id: turns[0]!.id }));
+    expect(sent.filter((message) => message.type === 'task_complete').map((message) => message.id)).toEqual([turns[1]!.id]);
     expect(promptCommands(fake)).toHaveLength(2);
-    expect(sent.filter((message) => message?.type === 'turn_failed' || message?.type === 'turn_aborted')).toEqual([]);
-    expect(count('tool-result')).toBeGreaterThanOrEqual(1);
+  });
+
+  it('cancels a Pi-aborted terminal turn without publishing its partial answer as a completion', async () => {
+    const { fake, runtime, sent, count, onProviderTurnCompleted } = await startRuntime();
+    fake.emitOut({ type: 'agent_start' });
+    fake.emitOut({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'partial terminal answer' } });
+    fake.emitOut({ type: 'agent_end', willRetry: false, aborted: true });
+    await runtime.flushTurn();
+
+    const started = sent.find((message) => message.type === 'task_started');
+    expect(started).toBeDefined();
+    expect(sent).toContainEqual(expect.objectContaining({ type: 'turn_cancelled', id: started!.id }));
+    expect(count('task_complete')).toBe(0);
+    expect(onProviderTurnCompleted).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])('settles native overflow from the final Pi result (recovered: %s)', async (recovered) => {
+    const { fake, runtime, count } = await startRuntime();
+    fake.emitOut({ type: 'agent_start' });
+    fake.emitOut({
+      type: 'message_end',
+      message: { role: 'assistant', content: [], stopReason: 'error', errorMessage: 'context_length_exceeded' },
+    });
+    await flushIo();
+    expect(count('turn_failed')).toBe(0);
+    if (recovered) {
+      fake.emitOut({ type: 'compaction_start', reason: 'overflow' });
+      fake.emitOut({ type: 'compaction_end', reason: 'overflow', aborted: false, willRetry: true });
+      fake.emitOut({ type: 'agent_start' });
+      fake.emitOut({ type: 'message_end', message: { role: 'assistant', stopReason: 'stop' } });
+    }
+    fake.emitOut({ type: 'agent_end', willRetry: false });
+    await runtime.flushTurn();
+
+    expect(count('turn_failed')).toBe(recovered ? 0 : 1);
+    expect(count('task_complete')).toBe(recovered ? 1 : 0);
   });
 
   it('commits a terminal prompt once when its marker follows agent_start', async () => {

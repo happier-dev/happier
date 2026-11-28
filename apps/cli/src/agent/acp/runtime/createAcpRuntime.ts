@@ -1428,6 +1428,7 @@ export function createAcpRuntime(params: {
     }
     const terminalTurn = captureTerminalTurn(turn);
     if (turn === turnState) retireCurrentTurn();
+    const nextTurnState = turnState;
     const permissionSettlement = abortPendingAcpPermissionRequests(
       params.permissionHandler,
       turn.turnAborted ? 'ACP runtime turn aborted' : 'ACP runtime turn ended',
@@ -1531,6 +1532,8 @@ export function createAcpRuntime(params: {
       if (
         params.promptTurnOwner === 'provider'
         && terminalTurn.providerTurnId
+        && turnState === nextTurnState
+        && turnState.currentTurnId === null
         && !turn.turnAborted
         && (!turn.pendingTurnOutcome || turn.pendingTurnOutcome.kind === 'completed')
       ) {
@@ -1743,9 +1746,12 @@ export function createAcpRuntime(params: {
           });
           setThinking(false);
         }
-        if (msg.status === 'idle' && (!turnState.turnInFlight || msg.turnFinished)) {
+        if (msg.status === 'idle' && (!turnState.turnInFlight || msg.turnFinished || msg.turnCancelled)) {
           const turn = turnState;
-          const completion = msg.turnFinished ? waitForTurnResponse(b, turn) : undefined;
+          if (msg.turnCancelled && !turn.turnAborted && (turn.currentTurnId || turn.turnInFlight)) {
+            rememberTurnOutcome({ kind: 'aborted', stopReason: 'cancelled' }, turn);
+          }
+          const completion = msg.turnFinished && !msg.turnCancelled ? waitForTurnResponse(b, turn) : undefined;
           void flushCapturedTurn(turn, completion).catch((error) => {
             logger.infoFile(`[${params.provider}] Failed to settle provider turn`, error);
           });

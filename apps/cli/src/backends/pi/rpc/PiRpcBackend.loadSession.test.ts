@@ -307,6 +307,28 @@ describe('PiRpcBackend loadSession', () => {
     expect(boots[0]!.argv).toContain(sessionPath);
   });
 
+  it('keeps an open Pi session bound to its explicit file when another file shares its id', async () => {
+    workDir = makeTempDir('happier-pi-load-session-exact-file-');
+    const sessionPath = join(workDir, 'original.jsonl');
+    const otherSessionPath = join(workDir, 'copy.jsonl');
+    const sessionId = 'pi-session-1';
+    const header = `${JSON.stringify({ type: 'session', id: sessionId, cwd: workDir })}\n`;
+    writeFileSync(sessionPath, header);
+    writeFileSync(otherSessionPath, header);
+
+    backend = new PiRpcBackend({
+      cwd: workDir,
+      command: process.execPath,
+      args: [makeFakePiRpcLoadSessionScript(workDir)],
+      env: { FAKE_PI_RPC_SESSION_ID: sessionId },
+    });
+
+    await expect(backend.loadSession!(sessionPath)).resolves.toEqual({ sessionId });
+    await expect(backend.loadSession!(sessionId)).resolves.toEqual({ sessionId });
+    await expect(backend.loadSession!(sessionPath)).resolves.toEqual({ sessionId });
+    await expect(backend.loadSession!(otherSessionPath)).rejects.toThrow(/session file mismatch/i);
+  });
+
   it.each(['resume', 'create'] as const)('lets native --continue select the session on initial startup (%s)', async (operation) => {
     workDir = makeTempDir('happier-pi-load-session-continue-');
     const sessionDir = join(workDir, 'sessions');

@@ -4,7 +4,7 @@ import spawn from 'cross-spawn';
 
 import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
 
-import { attachPiRpcJsonlLineReader, type PiRpcJsonlLineReader } from './attachPiRpcJsonlLineReader';
+import { attachPiRpcJsonlLineReader } from './attachPiRpcJsonlLineReader';
 
 /** The interactive Pi cannot take a prompt now. No provider effect occurred, so retry is safe. */
 export class PiSharedTerminalUnavailableError extends Error {
@@ -91,25 +91,17 @@ export type PiRpcChannelHost = Readonly<{
 
 export type SpawnedPiRpcChannel = PiRpcChannel & Readonly<{ child: ChildProcessWithoutNullStreams }>;
 
-async function stopPiRpcProcess(child: ChildProcessWithoutNullStreams): Promise<void> {
-  // Register before signaling so a fast Windows exit cannot race the close listener. `close` is
-  // later than `exit` and proves the child's stdio/OS handles have been released as well as its PID.
-  const closed = new Promise<void>((resolve) => {
-    child.once('close', () => resolve());
-  });
-  await killProcessTree(child, { graceMs: 2_000 });
-  await closed;
-}
-
 type SpawnedChannelEvent =
+  | Readonly<{ kind: 'stdout'; line: string }>
+  | Readonly<{ kind: 'stderr'; line: string }>
   | Readonly<{ kind: 'io-error'; error: Error }>
   | Readonly<{ kind: 'closed'; closure: PiRpcChannelClosure }>;
 
 export function createSpawnedPiRpcChannel(child: ChildProcessWithoutNullStreams): SpawnedPiRpcChannel {
   let listener: PiRpcChannelListener | null = null;
   let closed = false;
+  let closePromise: Promise<void> | null = null;
   const earlyEvents: SpawnedChannelEvent[] = [];
-  const readers: PiRpcJsonlLineReader[] = [];
 
   const deliver = (event: SpawnedChannelEvent): void => {
     if (closed) return;
@@ -117,14 +109,28 @@ export function createSpawnedPiRpcChannel(child: ChildProcessWithoutNullStreams)
       earlyEvents.push(event);
       return;
     }
-    if (event.kind === 'io-error') {
-      listener.onIoError(event.error);
-      return;
+    switch (event.kind) {
+      case 'stdout':
+        listener.onStdoutLine(event.line);
+        break;
+      case 'stderr':
+        listener.onStderrLine(event.line);
+        break;
+      case 'io-error':
+        listener.onIoError(event.error);
+        break;
+      case 'closed':
+        closed = true;
+        for (const reader of readers) reader.close();
+        listener.onClosed(event.closure);
+        break;
     }
-    closed = true;
-    listener.onClosed(event.closure);
-    for (const reader of readers) reader.close();
   };
+
+  const readers = [
+    attachPiRpcJsonlLineReader(child.stdout, (line) => deliver({ kind: 'stdout', line })),
+    attachPiRpcJsonlLineReader(child.stderr, (line) => deliver({ kind: 'stderr', line })),
+  ];
 
   // Defensive: avoid unhandled EPIPE on stdio streams when the subprocess exits between turns.
   const handleIoError = (error: unknown): void => {
@@ -136,8 +142,13 @@ export function createSpawnedPiRpcChannel(child: ChildProcessWithoutNullStreams)
   child.on('error', (error) => {
     deliver({ kind: 'closed', closure: { kind: 'failed', error } });
   });
-  child.on('exit', (code, signal) => {
-    deliver({ kind: 'closed', closure: { kind: 'exited', code, signal } });
+  // Observe close once, even when the process exits before the backend attaches its listener.
+  // Unlike exit, close also means that the stdio streams have drained.
+  const childClosed = new Promise<void>((resolve) => {
+    child.once('close', (code, signal) => {
+      resolve();
+      deliver({ kind: 'closed', closure: { kind: 'exited', code, signal } });
+    });
   });
 
   return {
@@ -145,11 +156,6 @@ export function createSpawnedPiRpcChannel(child: ChildProcessWithoutNullStreams)
     listen: (next) => {
       if (listener) throw new Error('Pi RPC channel already has a listener');
       listener = next;
-      // Streams buffer until a reader attaches, so no line is lost before `listen`.
-      readers.push(
-        attachPiRpcJsonlLineReader(child.stdout, (line) => next.onStdoutLine(line)),
-        attachPiRpcJsonlLineReader(child.stderr, (line) => next.onStderrLine(line)),
-      );
       for (const event of earlyEvents.splice(0)) deliver(event);
     },
     write: (line) => new Promise<void>((resolve, reject) => {
@@ -158,10 +164,13 @@ export function createSpawnedPiRpcChannel(child: ChildProcessWithoutNullStreams)
         else resolve();
       });
     }),
-    close: async () => {
+    close: () => {
+      if (closePromise) return closePromise;
       closed = true;
+      earlyEvents.length = 0;
       for (const reader of readers) reader.close();
-      await stopPiRpcProcess(child);
+      closePromise = killProcessTree(child, { graceMs: 2_000 }).then(() => childClosed);
+      return closePromise;
     },
   };
 }

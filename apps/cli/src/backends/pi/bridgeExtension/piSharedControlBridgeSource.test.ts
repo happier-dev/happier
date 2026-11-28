@@ -370,7 +370,7 @@ describe('Pi shared-control bridge (TUI mode)', () => {
     await roundTrip(bridge, 'preparation');
     bridge.runner.send({ id: 'stop-preparation', type: 'abort' });
     await roundTrip(bridge, 'idle-stop');
-    expect(bridge.runner.responses('stop-preparation')[0]).toMatchObject({ success: true });
+    expect(bridge.runner.responses('stop-preparation')[0]).toMatchObject({ success: true, data: { didRequestAbort: false } });
     expect(bridge.api.abort).not.toHaveBeenCalled();
     expect(bridge.runner.responses('preparing')[0]?.data).toEqual({ disposition: 'handed_off' });
 
@@ -378,13 +378,13 @@ describe('Pi shared-control bridge (TUI mode)', () => {
     await bridge.emit('agent_start');
     bridge.runner.send({ id: 'stop-run', type: 'abort' });
     await roundTrip(bridge, 'busy-stop');
-    expect(bridge.runner.responses('stop-run')[0]).toMatchObject({ success: true });
+    expect(bridge.runner.responses('stop-run')[0]).toMatchObject({ success: true, data: { didRequestAbort: true } });
     expect(bridge.api.abort).toHaveBeenCalledOnce();
 
     bridge.state.idle = true;
     await bridge.emit('agent_settled', { aborted: true });
     await roundTrip(bridge, 'settled');
-    expect(bridge.runner.outRecords()).toContainEqual({ type: 'agent_end', willRetry: false });
+    expect(bridge.runner.outRecords()).toContainEqual({ type: 'agent_end', willRetry: false, aborted: true });
   });
 
   it('A9: sets the model and thinking level through Pi, failing when Pi refuses the model', async () => {

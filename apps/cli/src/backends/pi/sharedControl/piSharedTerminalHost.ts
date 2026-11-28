@@ -203,7 +203,8 @@ export function createPiSharedTerminalHost(params: Readonly<{
 
   const publish = async (target: PiSharedTerminalSession, reconnecting = false): Promise<void> => {
     if (disposed || session !== target) return;
-    const remoteWritable = !fenced;
+    // An orderly reload has a pending hello and can still accept a send through reattachment.
+    const remoteWritable = !fenced && (awaitingHello || (attached?.connection === connection && connection?.closed === false));
     if (publication?.session === target && publication.remoteWritable === remoteWritable) {
       if (reconnecting && publication.inFlight) publication.retryAfterFailure = true;
       return;
@@ -276,9 +277,11 @@ export function createPiSharedTerminalHost(params: Readonly<{
     }
     logger.infoFile('[pi] Shared terminal bridge disconnected', { bye: closed.bye, superseded });
     const binding = attached;
-    if (binding?.connection !== closed) return;
-    attached = null;
-    binding.deliver({ kind: 'closed', closure: closureFor(closed, superseded) });
+    if (binding?.connection === closed) {
+      attached = null;
+      binding.deliver({ kind: 'closed', closure: closureFor(closed, superseded) });
+    }
+    if (!superseded && !awaitingHello && !fenced && session) void publish(session);
   };
 
   const handleFrame = (from: BridgeConnection, line: string): void => {
@@ -501,7 +504,9 @@ export function createPiSharedTerminalHost(params: Readonly<{
         throw new Error('Pi shared terminal already has an attached backend');
       }
       opening = true;
+      let channel: PiRpcChannel;
       try {
+        if (options?.signal?.aborted) throw attachCancelled(options.signal);
         if (!launched) {
           await ensureListening();
           if (disposed) throw bridgeUnavailable();
@@ -537,11 +542,14 @@ export function createPiSharedTerminalHost(params: Readonly<{
             () => onPiExited({ code: null, signal: null }),
           );
           if (disposed) throw bridgeUnavailable();
-          return await ready;
+          channel = await ready;
+        } else if (connection && !connection.closed) {
+          channel = bindChannel(connection);
+        } else if (awaitingHello && !piExit) {
+          channel = await waitForHello(options?.signal);
+        } else {
+          throw bridgeUnavailable();
         }
-        if (connection && !connection.closed) return bindChannel(connection);
-        if (!awaitingHello || piExit) throw bridgeUnavailable();
-        return await waitForHello(options?.signal);
       } finally {
         opening = false;
         try {
@@ -550,6 +558,11 @@ export function createPiSharedTerminalHost(params: Readonly<{
           logger.infoFile('[pi] Shared terminal unused launch artifact cleanup incomplete', error);
         }
       }
+      if (options?.signal?.aborted) {
+        await channel.close();
+        throw attachCancelled(options.signal);
+      }
+      return channel;
     },
     onSessionAvailable: (listener) => {
       availabilityListeners.add(listener);
@@ -586,17 +599,22 @@ export function createPiSharedTerminalHost(params: Readonly<{
           const listener = server;
           if (listener) await new Promise<void>((resolve) => listener.close(() => resolve()));
         })();
-        const process = pi ?? await launching?.catch(() => null);
-        if (process && !piExit) {
-          try {
-            await process.terminate();
-          } catch (error) {
-            logger.infoFile('[pi] Shared terminal Pi could not be terminated', error);
+        try {
+          const process = pi ?? await launching?.catch(() => null);
+          if (process && !piExit) {
+            try {
+              await process.terminate();
+            } catch (error) {
+              logger.infoFile('[pi] Shared terminal Pi could not be terminated', error);
+              // Pi can still read its launch files. Its exit handler releases them.
+              throw error;
+            }
           }
+          await bridgeExtension?.catch(() => undefined);
+          await releaseArtifacts();
+        } finally {
+          await closing;
         }
-        await bridgeExtension?.catch(() => undefined);
-        await releaseArtifacts();
-        await closing;
       })();
       return disposePromise;
     },

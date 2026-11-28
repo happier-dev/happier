@@ -170,10 +170,11 @@ describe('runPi', () => {
       subscribeToSessionConnectionState: () => () => undefined,
     } });
     await config.onAfterStart({ session, runtime: {}, initialControlsApplied: true, prepareLocalAttachment: async () => false });
+    // The mocked runtime has not bound the native transport.
     expect(agentState.localControl).toEqual({
       attached: true,
       topology: 'shared',
-      remoteWritable: true,
+      remoteWritable: false,
       canAttach: false,
       canDetach: false,
     });

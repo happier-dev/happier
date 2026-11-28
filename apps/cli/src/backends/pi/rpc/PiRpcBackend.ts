@@ -747,6 +747,12 @@ export class PiRpcBackend implements AgentBackend {
   private cancelGeneration = 0;
   /** A web prompt is waiting for a busy terminal: runs seen meanwhile are not its own. */
   private sharedPromptHeld = false;
+  /** Pi can retry within one native run. Its last assistant failure only settles at agent_settled. */
+  private nativeTurnFailure: {
+    diagnostic: PiProviderFailureDiagnostic;
+    classification: ConnectedServiceRuntimeFailureClassification | null;
+    record: Record<string, unknown>;
+  } | null = null;
   private stopObservingSessionAvailability: (() => void) | null = null;
   /**
    * Memoized once-per-session broker preflight (fail-closed). Broker readiness is a launch-time fact
@@ -1004,6 +1010,12 @@ export class PiRpcBackend implements AgentBackend {
     if (this.sessionId) {
       if (this.sessionId !== expectedSessionId) {
         throw new Error(`Pi session mismatch (expected ${expectedSessionId}, got ${this.sessionId})`);
+      }
+      if (requestedAbsoluteSessionFile && (
+        !this.sessionFile || !isAbsolute(this.sessionFile)
+        || resolve(this.sessionFile) !== resolve(requestedAbsoluteSessionFile)
+      )) {
+        throw new Error(`Pi session file mismatch (requested ${requestedAbsoluteSessionFile})`);
       }
       return { sessionId: this.sessionId };
     }
@@ -1815,11 +1827,13 @@ export class PiRpcBackend implements AgentBackend {
     this.sessionModelsRefresh = createDeferred<boolean>();
     this.pendingModelObservation = null;
     this.modelRuntimeStateReady = false;
+    this.nativeTurnFailure = null;
     this.channel = channel;
 
     const detachChannel = () => {
       if (this.channel !== channel) return;
       this.channel = null;
+      this.nativeTurnFailure = null;
       this.settleModelDiscovery(false);
       void this.cleanupProtectedSpawnArtifacts();
       // A web prompt waiting for the terminal re-checks against the next channel.
@@ -2352,7 +2366,16 @@ export class PiRpcBackend implements AgentBackend {
   private handlePiAssistantFailureEvent(event: Record<string, unknown>): void {
     const detail = this.readPiAssistantErrorMessage(event);
     const isTerminalFailure = isPiFailedAssistantTerminalEvent(event);
-    if (!detail && !isTerminalFailure) return;
+    if (!detail && !isTerminalFailure) {
+      if (this.nativeTurnFailure && event.type === 'message_end') {
+        const message = asRecord(event.message);
+        const stopReason = message?.stopReason ?? message?.stop_reason;
+        if (message?.role === 'assistant' && (stopReason === 'stop' || stopReason === 'toolUse' || stopReason === 'length')) {
+          this.nativeTurnFailure = null;
+        }
+      }
+      return;
+    }
     if (detail) {
       this.tracePiRpcFailureBoundary('assistant_failure_event_detail_present', event);
     }
@@ -2383,12 +2406,15 @@ export class PiRpcBackend implements AgentBackend {
     // account recovery can proceed, but it must not race Pi's already-running retry by ending the
     // Happier turn. The recoverable error carries no surfaceable assistant text, so suppressing the
     // status here does not hide anything from the transcript.
-    if (detail && this.isRecoverablePiAssistantError(event)) {
-      if (classification) {
-        void this.reportPiRuntimeAuthFailureToDaemon(classification);
-      }
+    const recoverable = detail !== null && this.isRecoverablePiAssistantError(event);
+    if (recoverable && classification) {
+      void this.reportPiRuntimeAuthFailureToDaemon(classification);
+    }
+    if (this.channelHost.kind === 'attached') {
+      this.nativeTurnFailure = { diagnostic: failure, classification, record: event };
       return;
     }
+    if (recoverable) return;
     if (isTerminalFailure) {
       this.tracePiRpcFailureBoundary('failed_assistant_terminal_event_matched', event);
     }
@@ -2496,7 +2522,18 @@ export class PiRpcBackend implements AgentBackend {
     }
 
     if (normalizedEvent.type === 'agent_end') {
-      if (this.pendingTurn) {
+      if (this.channelHost.kind === 'attached') {
+        const failure = this.nativeTurnFailure;
+        this.nativeTurnFailure = null;
+        if (normalizedEvent.aborted === true) {
+          this.emitMessage({ type: 'status', status: 'idle', turnCancelled: true });
+        } else if (failure) {
+          this.surfacePiProviderFailure(failure.diagnostic, failure.classification, failure.record);
+        } else {
+          this.emitMessage({ type: 'status', status: 'idle' });
+        }
+        this.scheduleUsageStatsPublish();
+      } else if (this.pendingTurn) {
         if (!this.pendingTurn.agentStartObserved && this.pendingTurn.preStartTerminalFailure) {
           const failure = this.pendingTurn.preStartTerminalFailure;
           this.emitPiProviderFailureDiagnostic(failure.message);
@@ -2875,11 +2912,6 @@ export class PiRpcBackend implements AgentBackend {
   ): void {
     this.logPiProviderFailure(failure, failureRecord);
     this.emitPiProviderFailureDiagnostic(failure.sanitizedPreview);
-    if (!this.pendingTurn && this.sharedPromptHeld) {
-      // The failed run is the terminal's, not the held web prompt's: report it, but do not fail the
-      // web turn waiting for Pi or drop its busy state.
-      return;
-    }
     const classification = runtimeAuthClassification ?? this.classifyPiRuntimeAuthFailure({
       provider: this.currentModelProvider,
       message: failure.sanitizedPreview,

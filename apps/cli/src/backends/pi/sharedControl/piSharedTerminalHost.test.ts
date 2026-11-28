@@ -1,4 +1,5 @@
 import { connect, Server, type Socket } from 'node:net';
+import { setImmediate } from 'node:timers/promises';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -281,6 +282,39 @@ describe('Pi shared terminal host', () => {
     }
   });
 
+  it('releases a provisional attachment cancelled before the process handle arrives', async () => {
+    const { host, launch, fakePi } = createHost();
+    const config = await host.ensureListening();
+    const launchGate = createDeferred<PiSharedTerminalProcess>();
+    launch.mockReturnValueOnce(launchGate.promise);
+    const abort = new AbortController();
+    const reason = new Error('attach cancelled');
+    const opening = host.channelHost.open(SPEC, { signal: abort.signal });
+    const outcome = opening.then((channel) => channel, (error: unknown) => error);
+    try {
+      const bridge = await connectBridge(config);
+      sockets.push(bridge.socket);
+      bridge.sendHello();
+      await vi.waitFor(() => expect(bridge.received.map((line) => JSON.parse(line))).toContainEqual({
+        type: PI_SHARED_CONTROL_ADMISSION_FRAME,
+      }));
+
+      abort.abort(reason);
+      launchGate.resolve(fakePi.process);
+
+      expect(await outcome).toBe(reason);
+      const reattached = listenTo(await host.channelHost.open(SPEC));
+      bridge.out({ type: 'agent_start' });
+      await vi.waitFor(() => expect(reattached.stdout).toEqual([JSON.stringify({ type: 'agent_start' })]));
+      expect(launch).toHaveBeenCalledTimes(1);
+      expect(fakePi.terminate).not.toHaveBeenCalled();
+    } finally {
+      abort.abort(reason);
+      launchGate.resolve(fakePi.process);
+      await outcome;
+    }
+  });
+
   it('waits for the next hello after bye{reload}', async () => {
     const { host, launch } = createHost();
     const { config, bridge, channel } = await attachFirstBridge(host);
@@ -314,16 +348,32 @@ describe('Pi shared terminal host', () => {
     expect(await opening).toBeInstanceOf(PiSharedTerminalUnavailableError);
   });
 
-  it('fails fast when the bridge closes without bye', async () => {
+  it('withdraws remote writes if the bridge fails and restores them after the same session is reattached', async () => {
     const { host } = createHost();
-    const { bridge, channel } = await attachFirstBridge(host);
+    const port = createSessionPort();
+    const { config, bridge, channel } = await attachFirstBridge(host);
     const first = listenTo(channel);
+    host.publishLocalControl(port.session);
+    expect(port.localControl()?.remoteWritable).toBe(true);
 
     await bridge.end();
     await vi.waitFor(() => expect(first.closures).toHaveLength(1));
 
     expect(first.closures[0]).toMatchObject({ kind: 'failed', error: { message: PI_SHARED_CONTROL_BRIDGE_UNAVAILABLE_ERROR } });
     await expect(host.channelHost.open(SPEC)).rejects.toBeInstanceOf(PiSharedTerminalUnavailableError);
+    expect(port.localControl()?.remoteWritable).toBe(false);
+
+    const replacement = await connectBridge(config);
+    sockets.push(replacement.socket);
+    replacement.sendHello();
+    await vi.waitFor(() => expect(replacement.received.map((line) => JSON.parse(line))).toContainEqual({
+      type: PI_SHARED_CONTROL_ADMISSION_FRAME,
+    }));
+
+    port.reconnect();
+    expect(port.localControl()?.remoteWritable).toBe(false);
+    await host.channelHost.open(SPEC);
+    expect(port.localControl()?.remoteWritable).toBe(true);
   });
 
   it.each([
@@ -560,6 +610,13 @@ describe('Pi shared terminal host', () => {
       launchStarted.resolve();
       return launchGate.promise;
     });
+    const terminationStarted = createDeferred();
+    const terminationGate = createDeferred();
+    fakePi.terminate.mockImplementationOnce(async () => {
+      terminationStarted.resolve();
+      await terminationGate.promise;
+      fakePi.exit(0);
+    });
     const releaseArtifacts = vi.fn(async () => undefined);
     const abort = new AbortController();
     const outcome = host.channelHost.open(SPEC, { retainArtifacts: releaseArtifacts, signal: abort.signal }).catch((error: unknown) => error);
@@ -567,14 +624,44 @@ describe('Pi shared terminal host', () => {
     const disposal = host.dispose();
     try {
       launchGate.resolve(fakePi.process);
+      await terminationStarted.promise;
+      await setImmediate();
+      expect(releaseArtifacts).not.toHaveBeenCalled();
+      terminationGate.resolve();
       await disposal;
-      expect(fakePi.terminate).toHaveBeenCalledBefore(releaseArtifacts);
       expect(releaseArtifacts).toHaveBeenCalledTimes(1);
       await expect(outcome).resolves.toMatchObject({ message: PI_SHARED_CONTROL_BRIDGE_UNAVAILABLE_ERROR });
       expect(terminations).toEqual([]);
     } finally {
+      terminationGate.resolve();
       abort.abort();
       await outcome;
+    }
+  });
+
+  it('retains launch artifacts after a failed termination until Pi exits', async () => {
+    const fakePi = createFakePi();
+    const error = new Error('termination could not be verified');
+    fakePi.terminate.mockRejectedValueOnce(error);
+    const host = createPiSharedTerminalHost({ launch: async () => fakePi.process, requestRunnerTermination: vi.fn() });
+    const releaseArtifacts = vi.fn(async () => undefined);
+    try {
+      const config = await host.ensureListening();
+      const opening = host.channelHost.open(SPEC, { retainArtifacts: releaseArtifacts });
+      const bridge = await connectBridge(config);
+      sockets.push(bridge.socket);
+      bridge.sendHello();
+      await opening;
+
+      await expect(host.dispose()).rejects.toBe(error);
+      expect(releaseArtifacts).not.toHaveBeenCalled();
+      await bridge.closed;
+
+      fakePi.exit(0);
+      await vi.waitFor(() => expect(releaseArtifacts).toHaveBeenCalledTimes(1));
+    } finally {
+      fakePi.exit(0);
+      await host.dispose().catch(() => undefined);
     }
   });
 

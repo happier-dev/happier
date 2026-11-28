@@ -9,6 +9,7 @@ import type { Metadata } from '@/api/types';
 import { buildPiAgentRuntimeDescriptorV1 } from '@happier-dev/protocol';
 import { createDeferred } from '@/testkit/async/deferred';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
+import { withTempDir } from '@/testkit/fs/tempDir';
 import { formatPiSessionDirectoryForCwd } from '@/backends/pi/utils/piSessionFiles';
 import { AsyncLock } from '@/utils/lock';
 
@@ -192,6 +193,24 @@ describe('maybeUpdatePiSessionIdMetadata', () => {
     });
 
     expect(resolved).toBe(sessionFile);
+  });
+
+  it('validates a reported session file against the header of an absolute resume reference', async () => {
+    await withTempDir('pi-session-reported-file-', async (cwd) => {
+      const sessionFile = join(cwd, 'renamed.jsonl');
+      await writeFile(sessionFile, `${JSON.stringify({ type: 'session', id: 'actual-session-id', cwd })}\n`);
+
+      await expect(resolvePiSessionFileForRuntimeSession({
+        vendorSessionReference: sessionFile,
+        cwd,
+        reportedSessionFile: sessionFile,
+      })).resolves.toBe(sessionFile);
+      await expect(resolvePiSessionFileForRuntimeSession({
+        vendorSessionReference: 'other-session-id',
+        cwd,
+        reportedSessionFile: sessionFile,
+      })).resolves.toBeNull();
+    });
   });
 
   it('publishes piSessionFile via runtime session discovery when available', async () => {
