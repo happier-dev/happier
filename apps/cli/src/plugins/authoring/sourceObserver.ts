@@ -62,7 +62,8 @@ export type StartWatchingPluginDirectory = (
 }>;
 
 export type PluginDevelopmentSourceObserverHandle = Readonly<{
-  stop(): void;
+  /** Stop watching immediately and settle any already delivered observation. */
+  stop(): void | Promise<void>;
   /**
    * Settles (rejects) when a post-start scheduled refresh fails. The observer
    * stops itself exactly once on that failure, and the owning command races
@@ -387,6 +388,7 @@ export async function startPluginDevelopmentSourceObserver(input: Readonly<{
   let timer: ReturnType<typeof setTimeout> | undefined;
   let stopped = false;
   let refreshing = false;
+  let delivery: ReturnType<typeof input.onObservation> | undefined;
   let refreshAgain = false;
   let dependencyInputSignatures: ReadonlyMap<string, string | null> | undefined;
   let observedFileSignatures: ReadonlyMap<string, ObservedFileSignature> | undefined;
@@ -498,14 +500,15 @@ export async function startPluginDevelopmentSourceObserver(input: Readonly<{
       // the caller has released the observer and no longer owns the consequences
       // of a change request raised on its behalf.
       if (stopped) return;
-      const delivery = await input.onObservation(observation);
+      delivery = input.onObservation(observation);
+      const deliveryResult = await delivery;
       if (observation.ok && nextObservedFileSignatures && nextDependencyInputSignatures) {
         attemptedFileSignatures = nextObservedFileSignatures;
         attemptedDependencySignatures = nextDependencyInputSignatures;
       }
       if (
         observation.ok
-        && delivery === 'adopted'
+        && deliveryResult === 'adopted'
         && nextObservedFileSignatures
         && nextDependencyInputSignatures
       ) {
@@ -513,6 +516,7 @@ export async function startPluginDevelopmentSourceObserver(input: Readonly<{
         dependencyInputSignatures = nextDependencyInputSignatures;
       }
     } finally {
+      delivery = undefined;
       refreshing = false;
       if (refreshAgain && !stopped) {
         refreshAgain = false;
@@ -538,11 +542,15 @@ export async function startPluginDevelopmentSourceObserver(input: Readonly<{
   }
 
   return {
-    stop(): void {
-      if (stopped) return;
-      stopped = true;
-      if (timer) clearTimeout(timer);
-      stopWatching();
+    stop() {
+      if (!stopped) {
+        stopped = true;
+        if (timer) clearTimeout(timer);
+        stopWatching();
+      }
+      if (delivery !== undefined) {
+        return Promise.resolve(delivery).then(() => undefined, () => undefined);
+      }
     },
     failure,
   };

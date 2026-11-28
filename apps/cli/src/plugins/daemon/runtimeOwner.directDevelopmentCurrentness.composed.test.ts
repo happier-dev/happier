@@ -121,7 +121,7 @@ it('adopts bundled development edits without review and settles a restored autho
   }
 }, 120_000);
 
-it('re-prepares one refused development candidate once and converges concurrent roots without a manual reload', async () => {
+it.each([false, true])('converges concurrent development roots (manual reload: %s)', async (manualReload) => {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'happier-development-registry-conflict-')));
   const pluginId = 'acme.development-registry-conflict';
   const peerId = 'acme.development-registry-peer';
@@ -132,6 +132,7 @@ it('re-prepares one refused development candidate once and converges concurrent 
   const { owner, reloadController } = createRuntime(join(root, 'home'), pluginId);
   const writeEdition = (path: string, id: string, edition: number) => writeFile(path, [
     `export const manifest = ${JSON.stringify(createPluginManifestV2Fixture({ id, entrypoints: undefined,
+      engines: { happier: '>=0.0.0' },
       contributes: { actions: [{ id: 'identity', title: 'Identity', scopes: ['global'], surfaces: ['cli'],
         execution: { target: 'daemon' }, dangerLevel: 'safe' }] },
     }))};`,
@@ -151,7 +152,9 @@ it('re-prepares one refused development candidate once and converges concurrent 
     if (id === pluginId && edition === 2) {
       // Count real authored activation at the preparation boundary. The
       // incumbent must remain executable during both the refusal and retry.
-      await expect(invoke(pluginId)).resolves.toMatchObject({ status: 'executed', value: { edition: 1 } });
+      if (!manualReload || editions.length === 2) {
+        await expect(invoke(pluginId)).resolves.toMatchObject({ status: 'executed', value: { edition: 1 } });
+      }
       if (editions.length === 2) { entered(); await resume; }
     }
   });
@@ -160,21 +163,27 @@ it('re-prepares one refused development candidate once and converges concurrent 
     await initial.release();
     for (const [path, id] of [[entryPath, pluginId], [peerPath, peerId]] as const) {
       await writeEdition(path, id, 1);
-      await owner.changeService.controlPluginDevelopment!({ kind: 'registerExplicit', rootPath: path });
+      const registration = await owner.changeService.controlPluginDevelopment!({ kind: 'registerExplicit', rootPath: path });
       const pending = (await owner.changeService.listPendingPluginChanges()).changes[0];
-      if (!pending) throw new Error('Expected initial development review');
+      if (!pending) throw new Error(registration.kind === 'failed'
+        ? `Expected initial development review: ${registration.code}: ${registration.message}`
+        : 'Expected initial development review');
       await expect(owner.changeService.decidePluginChange({ pendingChangeId: pending.pendingChangeId,
         decision: 'installAndTrust' })).resolves.toMatchObject({ kind: 'committed', pluginId: id });
     }
     const incumbent = reloadController.readCurrentPluginOccurrenceId?.(pluginId);
     await writeEdition(entryPath, pluginId, 2);
     await preparing;
+    const reload = manualReload
+      ? owner.changeService.controlPluginDevelopment!({ kind: 'reload', rootPath: entryPath })
+      : null;
     await writeEdition(peerPath, peerId, 2);
     await vi.waitFor(async () => {
       await expect(invoke(peerId)).resolves.toMatchObject({ status: 'executed', value: { edition: 2 } });
     }, { timeout: 120_000 });
     const peerOccurrence = reloadController.readCurrentPluginOccurrenceId?.(peerId);
     release();
+    if (reload) await expect(reload).resolves.toMatchObject({ kind: 'status' });
     await vi.waitFor(async () => {
       const status = (await owner.changeService.controlPluginDevelopment!({ kind: 'status' })).status.plugins
         .find(plugin => plugin.pluginId === pluginId);
@@ -182,7 +191,7 @@ it('re-prepares one refused development candidate once and converges concurrent 
     }, { timeout: 120_000 });
     await expect(invoke(pluginId)).resolves.toMatchObject({ status: 'executed', value: { edition: 2 } });
     await expect(invoke(peerId)).resolves.toMatchObject({ status: 'executed', value: { edition: 2 } });
-    expect(activations.get(pluginId)).toEqual([1, 2, 2]);
+    if (!manualReload) expect(activations.get(pluginId)).toEqual([1, 2, 2]);
     expect(activations.get(peerId)).toEqual([1, 2]);
     expect(reloadController.readCurrentPluginOccurrenceId?.(pluginId)).not.toBe(incumbent);
     expect(reloadController.readCurrentPluginOccurrenceId?.(peerId)).toBe(peerOccurrence);

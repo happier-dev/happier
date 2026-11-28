@@ -778,8 +778,11 @@ export function createDaemonPluginDevelopmentRootsOwner(params: Readonly<{
       return;
     }
     if (source) {
+      // An observer can stop watching while its submitted candidate still
+      // owns this source. Let that apply settle before replacing the observer.
+      await source.handle?.stop();
+      if (sources.get(canonicalRoot) !== source) return;
       const owners = [...source.owners];
-      source.handle?.stop();
       sources.delete(canonicalRoot);
       await attachSource(owners[0] ?? canonicalRoot, canonicalRoot, roots.get(canonicalRoot)?.sdkRegistryOrigin, preparation);
       for (const owner of owners.slice(1)) sources.get(canonicalRoot)?.owners.add(owner);
