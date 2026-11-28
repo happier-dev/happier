@@ -22,7 +22,7 @@ const { listInstances, scan, get } = TriageSourcesContributionProtocolV1.operati
 const read = {
   surfaces: ['plugin', 'ui', 'agent', 'mcp', 'cli'],
   scopes: ['global'],
-  execution: TELEMETRY_ACCOUNT_EXECUTION,
+  execution: { ...TELEMETRY_ACCOUNT_EXECUTION, invokingUi: true },
   dangerLevel: 'safe',
   readOnly: true,
 } as const;
