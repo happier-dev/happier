@@ -2,7 +2,9 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import type { Command } from './types';
-import type { SelectionListSectionDescriptor, SelectionListStep } from '@/components/ui/selectionList';
+import { SelectionList, type SelectionListSectionDescriptor, type SelectionListStep } from '@/components/ui/selectionList';
+import { SelectionListBodyVirtualized } from '@/components/ui/selectionList/SelectionListVirtualizedBody';
+import { PlanOptionRow } from '@/components/ui/selectionList/SelectionListOptionRow';
 import { buildCommandPaletteSelectionListSections } from './buildCommandPaletteSelectionListSections';
 import type { SectionRenderPlan } from '@/components/ui/selectionList/SelectionListRenderPlan';
 
@@ -31,8 +33,6 @@ describe('command palette row lifetime', () => {
             .toEqual(['command:general', 'command:session']);
     });
     it('retains a visible result when its source refresh fails and recovers', async () => {
-        const { SelectionListBodyVirtualized } = await import('@/components/ui/selectionList/SelectionListVirtualizedBody');
-        const { PlanOptionRow } = await import('@/components/ui/selectionList/SelectionListOptionRow');
         const option = { id: 'retained-session', label: 'Session' };
         const props = (dynamicState?: SectionRenderPlan['dynamicState']) => ({
             rootTestID: 'palette', stepId: 'palette', listboxAria: null,
@@ -49,8 +49,6 @@ describe('command palette row lifetime', () => {
     });
 
     it('mounts only the viewport on the first key and retains unchanged rows on refinement', async () => {
-        const { SelectionList } = await import('@/components/ui/selectionList');
-        const { PlanOptionRow } = await import('@/components/ui/selectionList/SelectionListOptionRow');
         // REPLAY67B observed 81 options across categories, each below the per-section threshold.
         const commands: Command[] = Array.from({ length: 81 }, (_, index) => ({
             id: `command-${index}`, title: `Session ${index}`, category: `Category ${Math.floor(index / 27)}`,

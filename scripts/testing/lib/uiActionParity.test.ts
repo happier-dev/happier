@@ -16,6 +16,47 @@ const specs = [
   { id: 'settings.set', surfaces: { ui: true, agent: true, mcp: true, cli: true }, cli: { commands: [{ path: ['settings', 'set'] }] } },
 ];
 
+test('contextual Action callbacks retain finite operands through imported object parameters', () => {
+  const report = collectUiActionParity([
+    { filePath: 'apps/ui/sources/sessionCommands.ts', content: `
+      type Params = Readonly<{ execute(actionId: 'demo.edit' | 'demo.missing', input: unknown): void }>;
+      export function buildCommands(params: Params) {}
+      export function prepareCommands(params: Params & Readonly<{ presented: boolean }>) {}
+      export function unknownCommands(params: Readonly<{ execute(actionId: string, input: unknown): void }>) {}
+    ` },
+    { filePath: 'apps/ui/sources/components/Example.tsx', content: `
+      import { buildCommands, prepareCommands, unknownCommands } from '../sessionCommands';
+      buildCommands({ execute: (actionId, input) => executor.execute(actionId, input) });
+      prepareCommands({ presented: true, execute: (actionId, input) => executor.execute(actionId, input) });
+      unknownCommands({ execute: (actionId, input) => executor.execute(actionId, input) });
+    ` },
+  ], specs, []);
+  assert.deepEqual(report.actions.map(site => site.actionId), ['demo.edit', 'demo.missing', 'demo.edit', 'demo.missing']);
+  assert.deepEqual(report.findings.map(site => site.code), ['unregistered_action', 'unregistered_action', 'dynamic_action']);
+});
+
+test('catalog placement iteration checks its real Action ids while unknown list producers remain findings', () => {
+  const report = collectUiActionParity([
+    { filePath: 'packages/protocol/src/actions/actionSpecs.ts', content: `
+      export function listUiActionSpecsForPlacement(placement: string) { return []; }
+    ` },
+    { filePath: 'apps/ui/sources/components/Example.tsx', content: `
+      import { listUiActionSpecsForPlacement as listPaletteSpecs } from '@happier-dev/protocol/actions/actionSpecs';
+      const rows = listPaletteSpecs('command_palette').filter(spec => enabled(spec.id));
+      for (const spec of rows) executor.execute(spec.id, {});
+      for (const spec of readUnknownSpecs()) executor.execute(spec.id, {});
+    ` },
+  ], [
+    { id: 'demo.edit', surfaces: { ui: true, agent: true }, placements: ['command_palette'] },
+    { id: 'demo.private', surfaces: { ui: true, agent: false }, placements: ['command_palette'] },
+    { id: 'demo.other', surfaces: { ui: true, agent: false }, placements: ['session_menu'] },
+  ], []);
+  assert.deepEqual(report.actions.map(site => site.actionId), ['demo.edit', 'demo.private']);
+  assert.deepEqual(report.findings.map(site => [site.code, site.operation]), [
+    ['agent_unavailable', 'demo.private'], ['dynamic_action', 'PropertyAccessExpression: spec.id'],
+  ]);
+});
+
 test('declared surfaces require actual callable composition and receiver registration', () => {
   const root = mkdtempSync(join(tmpdir(), 'action-dispatch-parity-'));
   try {

@@ -7,7 +7,7 @@ import { THEME_ACTION_IDS } from '../../../packages/protocol/src/actions/themeAc
 export type UiParitySource = Readonly<{ filePath: string; content: string }>;
 
 type Surfaces = Readonly<{ ui?: boolean; agent?: boolean; mcp?: boolean; cli?: boolean }>;
-type Spec = Readonly<{ id: string; surfaces: Surfaces; cli?: Readonly<{ commands?: readonly unknown[] }> }>;
+type Spec = Readonly<{ id: string; surfaces: Surfaces; placements?: readonly string[]; cli?: Readonly<{ commands?: readonly unknown[] }> }>;
 type Setting = Readonly<{ anchor: string; surfaces?: Surfaces; storage?: Readonly<{
   scope: string; key?: string; path?: readonly string[]; access?: string;
 }> }>;
@@ -405,7 +405,7 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
     const aliases = new Map<string, string>();
     const currentUiContextLocalCommandHooks = new Set<string>();
     type Binding = Readonly<{ initializer?: ts.Expression; annotation?: ts.TypeNode; parameter?: boolean; writer?: string; dispatch?: boolean; actionArgument?: number;
-      iterations?: readonly ts.Expression[];
+      iterations?: readonly ts.Expression[]; catalogIds?: readonly string[];
       mutable?: Readonly<{ key: ts.Expression; scope: string }> }>;
     const bindings = new Map<ts.Node, Map<string, Binding>>();
     const mutableNames = new Set<string>();
@@ -643,6 +643,10 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
       if (ts.isConditionalExpression(node)) return complete([
         finiteStrings(node.whenTrue, new Set(seen), typed), finiteStrings(node.whenFalse, new Set(seen), typed),
       ]);
+      if (ts.isPropertyAccessExpression(node) && node.name.text === 'id' && ts.isIdentifier(node.expression)) {
+        const ids = lookup(node.expression, node.expression.text)?.catalogIds;
+        if (ids) return [...ids];
+      }
       if (ts.isIdentifier(node)) {
         const local = lookup(node, node.text);
         if (local?.iterations) return complete(local.iterations.map(value => finiteStrings(value, new Set(seen), typed)));
@@ -769,6 +773,42 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
       return immutable && ts.isArrayLiteralExpression(receiver)
         && receiver.elements.every(element => !ts.isSpreadElement(element)) ? [...receiver.elements] : undefined;
     }
+    function catalogIterationIds(expression: ts.Expression): readonly string[] | undefined {
+      const value = localValue(expression);
+      if (!ts.isCallExpression(value)) return undefined;
+      if (ts.isPropertyAccessExpression(value.expression) && value.expression.name.text === 'filter') {
+        return catalogIterationIds(value.expression.expression);
+      }
+      if (!ts.isIdentifier(value.expression)) return undefined;
+      const owner = declaration(value.getSourceFile().fileName, value.expression.text);
+      if (!owner || !ts.isFunctionDeclaration(owner) || owner.name?.text !== 'listUiActionSpecsForPlacement'
+        || relativePath(owner.getSourceFile().fileName) !== 'packages/protocol/src/actions/actionSpecs.ts') return undefined;
+      const placements = value.arguments[0] && finiteStrings(value.arguments[0]);
+      return placements ? specs.filter(spec => spec.surfaces.ui && spec.placements?.some(placement => placements.includes(placement)))
+        .map(spec => spec.id) : undefined;
+    }
+    function contextualCallbackParameter(callback: ts.SignatureDeclaration, index: number): ts.TypeNode | undefined {
+      const field = callback.parent;
+      if (!ts.isPropertyAssignment(field)) return undefined;
+      const object = field.parent;
+      const call = object.parent;
+      if (!ts.isObjectLiteralExpression(object) || !ts.isCallExpression(call)
+        || !ts.isIdentifier(call.expression)) return undefined;
+      const owner = declaration(call.getSourceFile().fileName, call.expression.text);
+      if (!owner || !ts.isFunctionDeclaration(owner)) return undefined;
+      const expected = owner.parameters[call.arguments.indexOf(object)]?.type;
+      const key = field.name.getText().replaceAll(/['"]/g, '');
+      function parameter(type: ts.TypeNode): ts.TypeNode | undefined {
+        type = typeDefinition(type);
+        if (ts.isIntersectionTypeNode(type)) return type.types.map(parameter).find(Boolean);
+        if (!ts.isTypeLiteralNode(type)) return undefined;
+        const member = type.members.find(member => member.name?.getText().replaceAll(/['"]/g, '') === key);
+        if (member && ts.isMethodSignature(member)) return member.parameters[index]?.type;
+        const signature = member && ts.isPropertySignature(member) && member.type ? typeDefinition(member.type) : undefined;
+        return signature && ts.isFunctionTypeNode(signature) ? signature.parameters[index]?.type : undefined;
+      }
+      return expected && parameter(expected);
+    }
     function collect(node: ts.Node): void {
       if (ts.isImportSpecifier(node)) {
         const imported = node.propertyName?.text ?? node.name.text;
@@ -798,7 +838,7 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
           || ts.isCallExpression(call) && ts.isPropertyAccessExpression(call.expression) && unwrap(call.expression.expression) === receiver);
         const iterations = receiver && ts.isArrayLiteralExpression(receiver)
           && immutable && receiver.elements.every(element => !ts.isSpreadElement(element)) ? [...receiver.elements] : undefined;
-        let annotation = node.type;
+        let annotation = node.type ?? contextualCallbackParameter(callback, callback.parameters.indexOf(node));
         if (!annotation && ts.isVariableDeclaration(callback.parent) && callback.parent.type) {
           const expected = typeDefinition(callback.parent.type);
           if (ts.isFunctionTypeNode(expected)) annotation = expected.parameters[callback.parameters.indexOf(node)]?.type;
@@ -827,7 +867,7 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
           && expression.expression.name.text === 'entries' && !expression.arguments.length;
         const iterations = iterationValues(entries ? expression.expression.expression : expression);
         const binding = entries && ts.isArrayBindingPattern(node.name) ? node.name.elements[1] : undefined;
-        if (ts.isIdentifier(node.name)) declare(node, node.name.text, { iterations });
+        if (ts.isIdentifier(node.name)) declare(node, node.name.text, { iterations, catalogIds: catalogIterationIds(expression) });
         else if (binding && ts.isBindingElement(binding) && ts.isIdentifier(binding.name)) {
           declare(binding, binding.name.text, { iterations });
         }
