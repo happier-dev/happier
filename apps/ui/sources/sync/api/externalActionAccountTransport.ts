@@ -498,12 +498,18 @@ export async function executeOriginalAccountActionTransport(params: DeploymentRe
             if (retainsEffectReceipt) return await current.requestEffectReceipt(path, init, options, readResponse);
             response = await current.request(path, init, options);
         } catch (error) {
-            // An issued effect needs reconciliation. For a read, report the network failure.
-            const code = retainsEffectReceipt ? (issued ? 'outcome_unknown' : null) : readServerUnreachableFetchCode(error);
+            if (retainsEffectReceipt && !issued) {
+                const refused = parseActionExecuteFailure(error);
+                if (refused) return { ...refused, effectAttempted: false };
+            }
+            // The HTTP owner can confirm whether it dispatched the effect. Only a dispatched write needs reconciliation.
+            const code = retainsEffectReceipt && issued ? 'outcome_unknown' : readServerUnreachableFetchCode(error);
             if (code) return withActionFailureDiagnostic({ ...failure(code),
+                ...(retainsEffectReceipt && !issued ? { effectAttempted: false } : {}),
                 failureCause: projectActionFailureCauseV1(error, 'external_action.http.execute'),
             }, { phase: 'external_action.http.execute', causeKind: 'incomplete', error });
-            if (error instanceof ServerFetchWriteTimeoutError) return failure('admission_unavailable');
+            if (error instanceof ServerFetchWriteTimeoutError) return { ...failure('admission_unavailable'),
+                ...(retainsEffectReceipt ? { effectAttempted: false } : {}) };
             throw error;
         }
         return readResponse(response);

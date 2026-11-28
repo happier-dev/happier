@@ -1,6 +1,7 @@
 import { readDeploymentMoveEligibility, showDeploymentMoveSheet, type DeploymentMoveEligibility } from './DeploymentMoveSheet';
 import * as React from 'react';
 import { ROLLBACK_RESPONSE_UNAVAILABLE } from '@/sync/ops/actions/actionResult';
+import { isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isDeploymentRollbackSourceEligibleV1, resolveDeploymentSourceMethodV1 } from '@happier-dev/deployments/contracts/v1';
 import { selectDeploymentTargetRemovalChoicesV1 } from '@happier-dev/deployments';
 import { SubjectTriggersSection } from '@/components/workflows/triggers/SubjectTriggersSection';
@@ -1768,7 +1769,9 @@ export function DeployOutcomeBanner(
     && (!failedReceipt || failedReceipt.logsAvailable === false);
   // The cure is this Environment's own Deploy, already on the page: the sentence names it, no second button.
   const ownDeploy = typedRecovery?.nextAction.destination === 'deploy';
-  const recovery = leadsNowhere || ownDeploy ? null : typedRecovery;
+  const unconfirmedSetting = setting && (isActionOutcomeUnknownErrorCodeV1(outcome.code)
+    || typedRecovery?.nextAction.destination === 'history' && outcome.code === 'database_transaction_conflict_exhausted');
+  const recovery = leadsNowhere || ownDeploy || unconfirmedSetting ? null : typedRecovery;
   const recoveryMachineId = recovery?.nextAction.machineId
     ?? (recovery?.nextAction.destination === 'machines' ? props.machineId : undefined);
   const storedRemedy = failure?.technicalDetails.find(line => line.key === 'failure-remedy')?.value;
@@ -1812,6 +1815,7 @@ export function DeployOutcomeBanner(
       }
       description={
         rollbackResponseUnavailable ? t('projects.deployments.receipt.rollbackResponseUnavailableBody')
+          : unconfirmedSetting ? t('projects.deployments.settingChangeUnconfirmed')
           : canonicalReason ?? (outcome.reason === 'permission'
           ? t('projects.deployments.managersOnly')
           : outcome.reason === 'machine' && props.machine !== null
@@ -1837,8 +1841,9 @@ export function DeployOutcomeBanner(
                 : recoveryMachineId ? { machineId: recoveryMachineId } : undefined) } } : {})}
       // The typed code is for support; the sentence says what it left. When the typed remedy is the sentence, the
       // stored recovery line would only repeat or contradict it.
-      details={failure ? failure.technicalDetails.filter(line => !(line.key === 'failure-remedy' && (leadsNowhere || ((recovery || ownDeploy) && !canonicalReason))))
-        .map(line => `${line.label}: ${line.value}`) : [outcome.code]}
+      details={failure ? failure.technicalDetails.filter(line => !(line.key === 'failure-remedy'
+        && (unconfirmedSetting || leadsNowhere || ((recovery || ownDeploy) && !canonicalReason))))
+        .map(line => `${line.label}: ${line.value}`) : unconfirmedSetting ? undefined : [outcome.code]}
     />
   );
 }

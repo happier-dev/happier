@@ -124,6 +124,19 @@ it('lets a refused backup press request a fresh review from its failure banner',
   expect(screen.findByTestId('project-deployments.outcome.approval')).not.toBeNull();
 });
 
+it('keeps an unconfirmed settings write on the setting that submitted it', async () => {
+  const openRecovery = vi.fn();
+  const screen = await renderScreen(<DeployOutcomeBanner machine={null} copy="setting" controller={{
+    outcome: { kind: 'refused', reason: 'other', code: 'outcome_unknown' },
+    pending: false, openReview: null, async retry() {}, openRecovery,
+  }} />);
+  const banner = screen.findByTestId('project-deployments.outcome.refused.other');
+  expect(banner).not.toBeNull();
+  const action = screen.findByTestId('project-deployments.outcome.refused.other.action');
+  if (action) await screen.pressByTestIdAsync('project-deployments.outcome.refused.other.action');
+  expect(openRecovery).not.toHaveBeenCalledWith('history', undefined);
+});
+
 async function waitForContent(screen: Awaited<ReturnType<typeof renderScreen>>, testID: string) {
   await waitForHomeGovernance(async () => {
     await act(async () => {});

@@ -740,7 +740,7 @@ export const DeploymentEnvironmentDraft = React.memo(
       <AttentionBanner testID="project-deployments.draft.outcome-unknown" tone="neutral"
         title={t(recoveryEnvironmentId ? 'projects.deployments.createResultUnknownTitle' : 'projects.deployments.createOutcomeUnknownTitle')}
         description={t('projects.deployments.createOutcomeUnknownBody')}
-        details={refusal?.kind === 'refused' ? [refusal.code] : undefined} />
+        details={[t('projects.deployments.createOutcomeUnknownDetails')]} />
     ) : machineCausedRefusal ? null
       : refusal && refusal.kind === 'approval' ? (
             <AttentionBanner

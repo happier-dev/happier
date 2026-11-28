@@ -1397,6 +1397,16 @@ describe('captured Account Action response decoding', () => {
         expect(await execute()).toMatchObject({ ok: false, errorCode: 'outcome_unknown' });
     });
 
+    it('returns a typed refusal when an effect cannot reach Home before issuance', async () => {
+        if (!account) throw new Error('Expected captured Account');
+        const disconnected = { ...account, requestEffectReceipt: async () => { throw new TypeError('Failed to fetch'); } };
+        const result = await executeOriginalAccountActionTransport({ account: disconnected, binding,
+            input: { machineId: 'machine-1', pluginId: 'example.plugin' }, authority: 'present_user' });
+        expect(result).toMatchObject({ ok: false, errorCode: 'server_unreachable', effectAttempted: false,
+            failureCause: { phase: 'external_action.http.execute', errorClass: 'TypeError' } });
+        expect(homes.requestsFor(path)).toHaveLength(0);
+    });
+
     it('keeps an issued Action uncertain when its HTTP observer loses the response', async () => {
         homes.answer(serverId, path, { dispatchThenFail: true });
         const result = await execute();
