@@ -1192,6 +1192,29 @@ describe('the mounted Session cockpit', () => {
         expect(openExternalLink).toHaveBeenCalledExactlyOnceWith('https://docs.happier.dev/releases/updates#cli-updates-binary-vs-npm');
     });
 
+    it('names the native pull request link refusal beside a source refusal with a different request ID', async () => {
+        const harness = createDataHarness({ snapshot: { status: 'ready', rows: [], hasMore: false } });
+        const code = 'collection_update_required';
+        const fixture = await mountCockpit(harness, { kind: 'session', sessionId: SESSION_ID },
+            null, true, null, undefined, true, undefined, async () => ({ kind: 'partial',
+                links: [{ entryRef: linkRow().entryRef, sessionId: SESSION_ID, linkedAtMs: 10, displayPath: 'Readable PR' }],
+                lanes: [{ source: { pluginId: 'acme.ledger', localId: 'items' },
+                    sourceInstanceId: '22222222-2222-4222-8222-222222222222', displayLabel: 'acme/ledger',
+                    kindIds: ['issue'], health: { kind: 'failed',
+                        failure: { class: 'transient', code: 'sessionLinksReadFailed' },
+                        invocationError: { code, retryable: false, requestId: 'source-request' } } }],
+            }), undefined, false, false, renderSessionLinkedEntriesSurface, undefined, undefined,
+            async () => ({ kind: 'relations', links: [], failures: [{ sessionId: SESSION_ID, code, requestId: 'native-request' }] }));
+        await expect(fixture.getByText('Readable PR')).resolves.toBeDefined();
+        await expect(fixture.getByText('acme/ledger: This connection needs an update.')).resolves.toBeDefined();
+        await expect(fixture.getByText('Pull request links: This connection needs an update.')).resolves.toBeDefined();
+        const details = await fixture.getAllByRole('button', { name: 'Details' });
+        expect(details).toHaveLength(2);
+        await act(async () => { await fixture.press(details[1]!); });
+        expect(document.body.textContent).toContain('native-request');
+        expect(document.body.textContent).not.toContain('source-request');
+    });
+
     it('offers complete-lane candidates when an unrelated configured source is unavailable', async () => {
         const scope = createTriageEphemeralSharedScopeFixture();
         const observation = testkitObservation({ entryRef: testkitEntryRef() });

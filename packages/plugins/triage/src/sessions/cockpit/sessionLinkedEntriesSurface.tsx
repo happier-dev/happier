@@ -490,7 +490,9 @@ function UnavailableLinkSources(props: Readonly<{
             {related.map(failure => {
                 const connectionFailure = presentTriageSourceConnectionFailure(failure.code, text);
                 return <SessionLinkFailureLine key={failure.sessionId}
-                    title={connectionFailure?.title ?? text('plugins.triage.sessionLinks.nativeReadFailed', 'Pull request links could not be read')}
+                    title={connectionFailure === undefined
+                        ? text('plugins.triage.sessionLinks.nativeReadFailed', 'Pull request links could not be read')
+                        : `${text('plugins.triage.sessionLinks.nativeReadSource', 'Pull request links')}: ${connectionFailure.title}`}
                     code={failure.code} requestId={failure.requestId} presentation={connectionFailure} />;
             })}
         </Stack>
