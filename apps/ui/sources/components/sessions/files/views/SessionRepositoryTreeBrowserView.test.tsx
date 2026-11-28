@@ -136,10 +136,13 @@ describe('Session shared browser consumer', () => {
 
     it('reveals a matching folder without opening file Details', async () => {
         const { screen, onOpenFile } = await render();
+        // Go to file stands as its glyph in a Session's Files pane (lab pr974 SG1): it opens the field.
+        await pressTestInstanceAsync(screen.findByTestId('repository-tree-search-open')!, 'Go to file');
         await act(async () => screen.changeTextByTestId('repository-tree-search', 'nested'));
         await vi.waitFor(() => expect(findSearchResult(screen, 'src/nested/')).toBeTruthy());
         await pressTestInstanceAsync(findSearchResult(screen, 'src/nested/'), 'matching folder result');
-        expect(screen.findByTestId('repository-tree-search')?.props.value).toBe('');
+        // The query clears; the empty field may fold back into its glyph.
+        expect(screen.findByTestId('repository-tree-search')?.props.value ?? '').toBe('');
         expect(fixture.storage.getState().getSessionRepositoryTreeExpandedPaths('s1')).toEqual(['src', 'src/nested']);
         expect(onOpenFile).not.toHaveBeenCalled();
     });
