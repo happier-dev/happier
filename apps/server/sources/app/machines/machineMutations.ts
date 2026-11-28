@@ -118,7 +118,8 @@ export function readMachineRegistrationCredentialToBind(
     if (managedEnrollment || machine.deploymentAppDeploymentId || machine.replacedByMachineId || !isPersistentMachine(machine)) {
         return undefined;
     }
-    return terminalAuthRequestId === machine.terminalAuthRequestId ? undefined : terminalAuthRequestId;
+    // A bound legacy terminal credential stays revocable through its Machine.
+    return machine.terminalAuthRequestId === null ? terminalAuthRequestId : undefined;
 }
 
 /** The registration Account lock serializes writers for the signed, Account-owned terminal id. */

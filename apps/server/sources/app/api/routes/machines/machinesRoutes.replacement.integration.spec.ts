@@ -117,6 +117,24 @@ describe("machinesRoutes machine replacement", () => {
         }, { authentication: "real" });
     });
 
+    it("keeps the incumbent terminal credential bound through ordinary registration with another credential", async () => {
+        const incumbent = await auth.createToken(accountId, { session: randomUUID() }, { kind: "terminal", authority: "account_automation" });
+        const other = await auth.createToken(accountId, { session: randomUUID() }, { kind: "terminal", authority: "account_automation" });
+        const person = await auth.createToken(accountId, undefined, { kind: "account", authority: "present_user" });
+
+        await withAuthenticatedTestApp(machinesRoutes, async app => {
+            const request = (method: "GET" | "POST", url: string, token: string, payload?: unknown) => app.inject({
+                method, url, headers: { authorization: `Bearer ${token}` }, payload,
+            });
+            expect((await request("POST", "/v1/machines", incumbent, proposal())).statusCode).toBe(200);
+            expect((await request("POST", "/v1/machines", other, { id: "m2", metadata: "opaque" })).statusCode).toBe(200);
+            expect((await request("POST", "/v1/machines", other, proposal())).statusCode).toBe(200);
+            expect((await request("POST", "/v1/machines/m2/revoke", person)).statusCode).toBe(200);
+            expect.soft((await request("GET", "/v1/machines", incumbent)).statusCode).toBe(401);
+            expect((await request("GET", "/v1/machines", other)).statusCode).toBe(200);
+        }, { authentication: "real" });
+    });
+
     it("preserves sign-out when an admitted registration replaces a Machine already removed", async () => {
         const session = randomUUID();
         await readyReplacement(false, false);
