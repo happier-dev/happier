@@ -73,6 +73,12 @@ export type CustomModalChromeCardConfig = Readonly<{
     titleTestID?: string;
     subtitleTestID?: string;
     closeButtonTestID?: string;
+    /**
+     * `bar` (default) draws the titled header row. `floatingClose` draws no bar, only the close
+     * button over the body's top-right corner, for content that carries its own headline; the
+     * title then only names the dialog for assistive tech.
+     */
+    header?: 'bar' | 'floatingClose';
     layout?: 'fit' | 'fill';
     bodyScroll?: 'none' | 'auto';
     dimensions?: ModalCardDimensionOptions;
@@ -107,6 +113,7 @@ export interface ModalState {
 }
 
 export interface ModalContextValue {
+    hasOpenModal?: () => boolean;
     isKeyboardLiftSuppressedByModal: boolean;
     state: ModalState;
     showModal: (config: Omit<ModalConfig, 'id'>) => string;

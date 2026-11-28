@@ -35,6 +35,7 @@ import {
     type SessionListRowModelAdjacency,
 } from './buildSessionListRowModels';
 import { SessionListRow } from './SessionListRow';
+import { useLeavingSessionRowLabel } from '@/components/sessions/keepOrLetGo/leavingSessionsView';
 import type {
     SessionListRowPresentationSettings,
     SessionListRowSessionItem,
@@ -274,6 +275,9 @@ const SessionListRowModelBoundaryContent = React.memo(function SessionListRowMod
     }), [props.adjacency, props.item, settings, snapshot]);
 
     useSessionListRuntimeWake(rowModel.nextRuntimeFreshnessAtMs, props.dataActive);
+    // "Leaves 31 Dec" takes the subtitle slot for a session in the leaving batch: one lookup in the
+    // list's published leaving view, no per-row store read.
+    const leavingLabel = useLeavingSessionRowLabel(props.item.session.id, props.item.serverId);
 
     const sessionKey = rowModel.rowKey || null;
     const rowAttentionAnimationEnabled = props.rowStoreSubscriptionMode === 'all-rendered'
@@ -327,8 +331,8 @@ const SessionListRowModelBoundaryContent = React.memo(function SessionListRowMod
             overlayShared={props.overlayShared}
             rowModel={rowModel}
             session={rowModel.session}
-            subtitleOverride={rowModel.subtitle ?? null}
-            subtitleEllipsizeMode={rowModel.subtitleEllipsizeMode}
+            subtitleOverride={leavingLabel ?? rowModel.subtitle ?? null}
+            subtitleEllipsizeMode={leavingLabel ? 'tail' : rowModel.subtitleEllipsizeMode}
             serverId={rowModel.serverId ?? undefined}
             serverName={rowModel.serverName}
             currentUserId={rowModel.currentUserId}

@@ -1,3 +1,5 @@
+import type { Prisma } from '@prisma/client';
+
 export type SessionDeleteTarget = Readonly<{
     id: string;
     accountId: string;
@@ -7,13 +9,16 @@ export type SessionDeleteTarget = Readonly<{
 export async function loadSessionDeleteRecipients(
     tx: {
         session: {
-            findFirst: (args: unknown) => Promise<SessionDeleteTarget | null>;
+            findFirst: (args: {
+                where: Prisma.SessionWhereInput;
+                select: { id: true; accountId: true; shares: { select: { sharedWithUserId: true } } };
+            }) => Promise<SessionDeleteTarget | null>;
         };
     },
     params: {
         sessionId: string;
         ownerAccountId?: string | null;
-        sessionWhereGuard?: Record<string, unknown>;
+        sessionWhereGuard?: Prisma.SessionWhereInput;
     },
 ): Promise<SessionDeleteTarget | null> {
     const where = params.ownerAccountId

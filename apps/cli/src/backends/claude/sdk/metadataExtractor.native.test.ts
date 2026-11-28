@@ -5,6 +5,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import { expect, it, vi } from 'vitest';
 
 import { startAnthropicSseBoundary } from './anthropicSseBoundary.testkit';
+import { resolveClaudeSessionEnvOverlay } from '../spawn/resolveClaudeSessionEnvOverlay';
 
 it.runIf(Boolean(process.env.HAPPIER_TEST_NATIVE_CLAUDE_PATH))('does not persist cache-miss metadata probes with native history enabled or disabled', async () => {
     const nativePath = process.env.HAPPIER_TEST_NATIVE_CLAUDE_PATH!;
@@ -27,7 +28,7 @@ it.runIf(Boolean(process.env.HAPPIER_TEST_NATIVE_CLAUDE_PATH))('does not persist
         vi.stubEnv('CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC', '1');
         vi.resetModules();
         const { extractSDKMetadata } = await import('./metadataExtractor');
-        for (const enabled of [true, false]) {
+        for (const enabled of [undefined, false]) {
             const metadata = await extractSDKMetadata({ claudeCodeIncludeInNativeHistory: enabled });
             expect(metadata.tools?.length).toBeGreaterThan(0);
             expect(metadata.slashCommands?.length).toBeGreaterThan(0);
@@ -44,7 +45,7 @@ it.runIf(Boolean(process.env.HAPPIER_TEST_NATIVE_CLAUDE_PATH))('does not persist
         // Positive control: an ordinary interactive SDK session still has its native history.
         let interactiveId: string | undefined;
         const interactive = query({ prompt: 'hello interactive control', options: {
-            cwd: projectDir, env: { ...process.env, CLAUDE_CODE_ENTRYPOINT: 'happier' },
+            cwd: projectDir, env: { ...process.env, ...resolveClaudeSessionEnvOverlay({}) },
             pathToClaudeCodeExecutable: nativePath, settingSources: [], maxTurns: 1,
             model: 'claude-sonnet-4-6',
         } });
@@ -60,6 +61,8 @@ it.runIf(Boolean(process.env.HAPPIER_TEST_NATIVE_CLAUDE_PATH))('does not persist
         expect(rows.map(row => row.path.split(/[\\/]/).at(-1))).toEqual([`${interactiveId}.jsonl`]);
         expect(rows[0].text).toContain('hello interactive control');
         expect(rows[0].text).toContain('Local native test response.');
+        expect(rows[0].text.trim().split('\n').map(line => JSON.parse(line)))
+            .toContainEqual(expect.objectContaining({ entrypoint: 'happier' }));
     } finally {
         process.chdir(originalCwd);
         vi.unstubAllEnvs();

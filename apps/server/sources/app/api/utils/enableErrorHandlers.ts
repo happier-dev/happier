@@ -1,4 +1,5 @@
 import { log } from "@/utils/logging/log";
+import { redactHttpRequestUrl } from "@/utils/logging/redactHttpRequestUrl";
 import { FastifyError, type FastifyReply } from "fastify";
 import { Fastify } from "../types";
 import { readFile, stat } from "node:fs/promises";
@@ -28,7 +29,7 @@ export function enableErrorHandlers(app: Fastify) {
     // Global error handler
     app.setErrorHandler(async (error: FastifyError, request, reply) => {
         const method = request.method;
-        const url = redactPublicShareCapabilityUrl(request.url);
+        const url = redactHttpRequestUrl(request.url);
         const errorMessage = redactPublicShareCapabilityUrl(error.message);
         const stack = typeof error.stack === "string"
             ? redactPublicShareCapabilityUrl(error.stack)
@@ -143,7 +144,7 @@ export function enableErrorHandlers(app: Fastify) {
         const userAgent = request.headers['user-agent'] || 'unknown';
         const contentType = request.headers['content-type'] || 'unknown';
         const hasAuthorization = typeof request.headers.authorization === 'string' && request.headers.authorization.length > 0;
-        const safeUrl = redactPublicShareCapabilityUrl(request.url);
+        const safeUrl = redactHttpRequestUrl(request.url);
         log(
             { module: '404-handler', method: request.method, path: safeUrl, userAgent, contentType, hasAuthorization },
             '404 - Not found'
@@ -154,7 +155,7 @@ export function enableErrorHandlers(app: Fastify) {
     // Error hook for additional logging
     app.addHook('onError', async (request, reply, error) => {
         const method = request.method;
-        const url = redactPublicShareCapabilityUrl(request.url);
+        const url = redactHttpRequestUrl(request.url);
         const errorMessage = redactPublicShareCapabilityUrl(error.message);
         const duration = (Date.now() - (request.startTime || Date.now())) / 1000;
 
@@ -183,7 +184,7 @@ export function enableErrorHandlers(app: Fastify) {
                     module: 'fastify-serialization-error',
                     level: 'error',
                     method: request.method,
-                    url: redactPublicShareCapabilityUrl(request.url),
+                    url: redactHttpRequestUrl(request.url),
                     stack: typeof error?.stack === "string"
                         ? redactPublicShareCapabilityUrl(error.stack)
                         : error?.stack

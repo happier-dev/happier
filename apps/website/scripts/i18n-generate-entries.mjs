@@ -68,7 +68,7 @@ const { codes, prefixes } = readLocales();
 const DEFAULT_LOCALE = codes[0] === 'en' ? 'en' : codes[0];
 const others = codes.filter((c) => c !== DEFAULT_LOCALE);
 
-/** The English entries are the source of truth for which pages exist. */
+/** The English entries supply page code. The slice manifest selects which routes ship in each locale. */
 const englishEntries = readdirSync(ENTRIES)
     .filter((f) => f.endsWith('.tsx') && !f.startsWith('_'))
     .filter((f) => !others.some((code) => f.startsWith(`${prefixes.get(code).replace(/^\//, '')}--`) || f === `${prefixes.get(code).replace(/^\//, '')}.tsx`))
@@ -108,6 +108,10 @@ for (const code of others) {
     const sliceManifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
 
     for (const slug of englishEntries) {
+        if (!Object.hasOwn(sliceManifest, slug)) continue;
+        const namespaces = sliceManifest[slug];
+        if (!Array.isArray(namespaces)) throw new Error(`${code}/${slug}: expected a list of translation namespaces`);
+
         const routePath = pathForSlug(slug);
         const servedPath = routePath === '/' ? prefix : `${prefix}${routePath}`;
         const targetSlug = entrySlugFor(servedPath);
@@ -124,11 +128,6 @@ for (const code of others) {
             continue;
         }
 
-        const namespaces = sliceManifest[slug];
-        if (!Array.isArray(namespaces)) {
-            console.error(`  ${slug}.tsx: no slice entry for ${code} — re-run yarn i18n:slice`);
-            continue;
-        }
         const nsIdent = (ns) => `ns_${ns.replace(/[^A-Za-z0-9]/g, '_')}`;
         const nsImports = namespaces
             .map((ns) => `import ${nsIdent(ns)} from '../i18n/generated/slices/${code}/${ns}.json';`)

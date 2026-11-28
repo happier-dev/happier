@@ -4,6 +4,8 @@ import { ActionIdSchema, type ActionId } from './actionIds.js';
 import { ActionUiPlacementSchema, type ActionUiPlacement } from './actionUiPlacements.js';
 import { ReviewStartInputSchema } from '../reviews/reviewStart.js';
 import { ActionInputPredicateSchema, type ActionInputPredicate } from './actionInputPredicates.js';
+import { DirectSessionRetentionDaysSchema } from '../directSessions/daemonRpcV1.js';
+import { LocalHistoryItemsSchema, LocalHistorySourceSchema } from '../directSessions/localHistoryRpc.js';
 import { MemorySearchQueryV1Schema } from '../memory/memorySearch.js';
 import { ApprovalRequestCreatedBySchema, ApprovalRequestOriginV1Schema } from '../approvals/approvalRequestV1.js';
 import { PromptRegistryConfiguredSourceV1Schema } from '../promptLibrary/promptRegistriesV1.js';
@@ -18,6 +20,7 @@ import { PendingFirstInputV1Schema } from '../spawnSession.js';
 import { SessionSpawnSourceContextV1Schema } from '../sessionSpawnSourceContextV1.js';
 import { SessionHandoffWorkspaceTransferSchema } from '../sessionControl/handoff/handoffSchemas.js';
 import { ActionApprovalSchema, type ActionApproval } from './actionApprovalMetadata.js';
+import { SupporterCodeV1Schema } from '../plans/supporterV1.js';
 import {
   SessionUsageLimitCheckNowRequestV1Schema,
   SessionUsageLimitConsumeResetCreditRequestV1Schema,
@@ -1094,6 +1097,90 @@ const PromptRegistryInstallInputSchema = lazySchema(() => z.object({
     installMode: PromptAssetInstallModeV1Schema.optional(),
   }).optional(),
 }).passthrough());
+
+const BillingCheckoutOpenInputSchema = lazySchema(() => z.object({
+  offerId: z.string().trim().min(1),
+  interval: z.enum(['month', 'year', 'once']),
+  amountMinor: z.number().int().positive().optional(),
+}).strict());
+
+const BillingManageOpenInputSchema = lazySchema(() => z.object({
+  target: z.string().trim().min(1).optional(),
+}).strict());
+
+const SupporterCodeApplyInputSchema = lazySchema(() => z.object({
+  code: SupporterCodeV1Schema,
+}).strict());
+
+export type BillingCheckoutOpenInput = z.infer<typeof BillingCheckoutOpenInputSchema>;
+export type BillingManageOpenInput = z.infer<typeof BillingManageOpenInputSchema>;
+export type SupporterCodeApplyInput = z.infer<typeof SupporterCodeApplyInputSchema>;
+
+const SupporterProfileUpdateInputSchema = lazySchema(() => z.object({
+  publicName: z.string().trim().min(1).nullable().optional(),
+  publicLink: z.string().url().startsWith('https://').nullable().optional(),
+  label: z.boolean().optional(),
+}).strict());
+
+const SupporterRingSetInputSchema = lazySchema(() => z.object({
+  visible: z.boolean(),
+}).strict());
+
+const SupporterAskCloseInputSchema = lazySchema(() => z.object({
+  ask: z.enum(['star', 'supporter_prompt']),
+}).strict());
+
+const AppIconSetInputSchema = lazySchema(() => z.object({
+  iconId: z.string().trim().min(1),
+}).strict());
+
+const SessionOrganizationPinSetInputSchema = lazySchema(() => z.object({
+  sessionId: z.string().min(1),
+  pinned: z.boolean(),
+}).strict());
+export type SessionOrganizationPinSetInput = z.infer<typeof SessionOrganizationPinSetInputSchema>;
+
+const SessionRetentionLeavingDismissInputSchema = lazySchema(() => z.object({
+  through: z.number().int().min(0),
+}).strict());
+export type SessionRetentionLeavingDismissInput = z.infer<typeof SessionRetentionLeavingDismissInputSchema>;
+
+const SessionExportInputSchema = lazySchema(() => z.object({
+  sessionId: z.string().min(1).optional(),
+  all: z.literal(true).optional(),
+  seqs: z.array(z.number().int().min(0)).min(1).optional(),
+  format: z.enum(['markdown', 'json']),
+}).strict().superRefine((value, ctx) => {
+  if ((value.sessionId === undefined) === (value.all === undefined)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'provide exactly one of sessionId or all', path: ['sessionId'] });
+  }
+  if (value.seqs !== undefined && value.sessionId === undefined) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'seqs requires sessionId', path: ['seqs'] });
+  }
+}));
+export type SessionExportInput = z.infer<typeof SessionExportInputSchema>;
+const LocalHistoryTargetInput = lazySchema(() => LocalHistorySourceSchema.extend({ machineId: z.string().trim().min(1) }).strict());
+const LocalHistoryRetentionInput = lazySchema(() => LocalHistoryTargetInput.extend({
+  days: DirectSessionRetentionDaysSchema,
+  expectedCurrentDays: z.number().int().positive().nullable().optional(),
+}).strict());
+const LocalHistoryItemsInput = lazySchema(() => LocalHistoryTargetInput.extend({ items: LocalHistoryItemsSchema }).strict());
+
+/**
+ * 0.2 has no client-routed Action path: a client-placed action is UI only here, and the UI
+ * calls its owner directly. 0.3 routes the same ids to agents and the CLI.
+ */
+const UI_ONLY_SURFACES: ActionSurfaces = Object.freeze({
+  ui_button: true,
+  ui_slash_command: false,
+  voice_tool: false,
+  voice_action_block: false,
+  session_agent: false,
+  mcp: false,
+  cli: false,
+});
+const UI_AND_AGENT_SURFACES: ActionSurfaces = Object.freeze({ ...UI_ONLY_SURFACES, session_agent: true });
+const UI_AGENT_MCP_CLI_SURFACES: ActionSurfaces = Object.freeze({ ...UI_AND_AGENT_SURFACES, mcp: true, cli: true });
 
 const APPROVAL_RESULT_REQUIRED: ActionApproval = Object.freeze({ result: 'required' });
 const APPROVAL_RESULT_NONE: ActionApproval = Object.freeze({ result: 'none' });
@@ -3856,6 +3943,382 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       ],
     },
   },
+  // Plans & Supporter. Agent approval defaults (Ask only for money, public exposure and
+  // third-party writes) are user-changeable and live in DEFAULT_ACTIONS_SETTINGS_V1.
+  {
+    id: 'account.plan.get',
+    title: 'Get account plan',
+    description: 'Read the account plan, its limits and the offers available on this server.',
+    safety: 'safe',
+    sideEffectClass: 'read',
+    approval: APPROVAL_RESULT_REQUIRED,
+    placements: [],
+    bindings: { mcpToolName: 'account_plan_get' },
+    surfaces: UI_AGENT_MCP_CLI_SURFACES,
+    inputSchema: EmptyObjectSchema,
+    inputHints: { title: 'Get account plan', fields: [] },
+  },
+  {
+    id: 'billing.checkout.open',
+    title: 'Open checkout',
+    description: 'Open checkout for an offer on this device. Spends money, so agents ask first by default.',
+    safety: 'safe',
+    sideEffectClass: 'external',
+    approval: APPROVAL_RESULT_NONE,
+    placements: [],
+    surfaces: UI_ONLY_SURFACES,
+    inputSchema: BillingCheckoutOpenInputSchema,
+    inputHints: {
+      title: 'Open checkout',
+      fields: [
+        { path: 'offerId', title: 'Offer', widget: 'text', required: true },
+        {
+          path: 'interval',
+          title: 'Interval',
+          widget: 'select',
+          required: true,
+          options: [
+            { value: 'month', label: 'Monthly' },
+            { value: 'year', label: 'Yearly' },
+            { value: 'once', label: 'Once' },
+          ],
+        },
+        { path: 'amountMinor', title: 'Amount (minor units)', widget: 'text' },
+      ],
+    },
+  },
+  {
+    id: 'billing.manage.open',
+    title: 'Manage billing',
+    description: 'Open the billing provider’s email-code portal on this device. The result never carries the portal URL.',
+    safety: 'safe',
+    sideEffectClass: 'external',
+    approval: APPROVAL_RESULT_NONE,
+    placements: [],
+    surfaces: UI_ONLY_SURFACES,
+    inputSchema: BillingManageOpenInputSchema,
+    inputHints: {
+      title: 'Manage billing',
+      fields: [{ path: 'target', title: 'Target', widget: 'text' }],
+    },
+  },
+  {
+    id: 'billing.restore',
+    title: 'Restore purchases',
+    description: 'Re-read store purchases on this device. Unsupported on web.',
+    safety: 'safe',
+    sideEffectClass: 'write',
+    approval: APPROVAL_RESULT_NONE,
+    placements: [],
+    surfaces: UI_ONLY_SURFACES,
+    inputSchema: EmptyObjectSchema,
+    inputHints: { title: 'Restore purchases', fields: [] },
+  },
+  {
+    id: 'billing.refresh',
+    title: 'Refresh billing',
+    description: 'Re-check purchases for this account with the billing provider.',
+    safety: 'safe',
+    sideEffectClass: 'write',
+    approval: APPROVAL_RESULT_NONE,
+    placements: [],
+    bindings: { mcpToolName: 'billing_refresh' },
+    surfaces: UI_AGENT_MCP_CLI_SURFACES,
+    inputSchema: EmptyObjectSchema,
+    inputHints: { title: 'Refresh billing', fields: [] },
+  },
+  {
+    id: 'supporter.code.apply',
+    title: 'Apply supporter code',
+    description: 'Apply a supporter code on this device. Agents never take the code.',
+    safety: 'safe',
+    sideEffectClass: 'write',
+    approval: APPROVAL_RESULT_NONE,
+    placements: [],
+    surfaces: UI_ONLY_SURFACES,
+    inputSchema: SupporterCodeApplyInputSchema,
+    inputHints: {
+      title: 'Apply supporter code',
+      fields: [{ path: 'code', title: 'Supporter code', widget: 'text', required: true }],
+    },
+  },
+  {
+    id: 'supporter.profile.get',
+    title: 'Get supporter profile',
+    description: 'Read the supporter profile: public name, public link and issue label.',
+    safety: 'safe',
+    sideEffectClass: 'read',
+    approval: APPROVAL_RESULT_REQUIRED,
+    placements: [],
+    surfaces: UI_AGENT_MCP_CLI_SURFACES,
+    inputSchema: EmptyObjectSchema,
+    inputHints: { title: 'Get supporter profile', fields: [] },
+  },
+  {
+    id: 'supporter.profile.update',
+    title: 'Update supporter profile',
+    description: 'Change what the public supporter wall and credits show. Null turns a field off. Public, so agents ask first by default.',
+    safety: 'safe',
+    sideEffectClass: 'write',
+    approval: APPROVAL_RESULT_NONE,
+    placements: [],
+    surfaces: UI_AGENT_MCP_CLI_SURFACES,
+    inputSchema: SupporterProfileUpdateInputSchema,
+    inputHints: {
+      title: 'Update supporter profile',
+      fields: [
+        { path: 'publicName', title: 'Public name', widget: 'text' },
+        { path: 'publicLink', title: 'Public link', widget: 'text' },
+        { path: 'label', title: 'Supporter issue label', widget: 'toggle' },
+      ],
+    },
+  },
+  {
+    id: 'supporter.credits.list',
+    title: 'List supporter credits',
+    description: 'List the public supporter credits.',
+    safety: 'safe',
+    sideEffectClass: 'read',
+    approval: APPROVAL_RESULT_REQUIRED,
+    placements: [],
+    surfaces: UI_AGENT_MCP_CLI_SURFACES,
+    inputSchema: EmptyObjectSchema,
+    inputHints: { title: 'List supporter credits', fields: [] },
+  },
+  {
+    id: 'supporter.ring.set',
+    title: 'Show supporter ring',
+    description: 'Show or hide the supporter ring others see on your avatar. Agents ask first by default.',
+    safety: 'safe',
+    sideEffectClass: 'write',
+    approval: APPROVAL_RESULT_NONE,
+    placements: [],
+    bindings: { mcpToolName: 'supporter_ring_set' },
+    surfaces: UI_AGENT_MCP_CLI_SURFACES,
+    inputSchema: SupporterRingSetInputSchema,
+    inputHints: {
+      title: 'Show supporter ring',
+      fields: [{ path: 'visible', title: 'Visible', widget: 'toggle', required: true }],
+    },
+  },
+  {
+    id: 'supporter.discord.link',
+    title: 'Link Discord',
+    description: 'Open Discord consent for Happier Linked Roles.',
+    safety: 'safe',
+    sideEffectClass: 'external',
+    approval: APPROVAL_RESULT_NONE,
+    placements: [],
+    surfaces: UI_ONLY_SURFACES,
+    inputSchema: EmptyObjectSchema,
+    inputHints: { title: 'Link Discord', fields: [] },
+  },
+  {
+    id: 'supporter.github.link',
+    title: 'Link GitHub for supporter perks',
+    description: 'Link a GitHub account for the supporter issue label and sponsor perks. UI only.',
+    safety: 'safe',
+    sideEffectClass: 'external',
+    approval: APPROVAL_RESULT_NONE,
+    placements: [],
+    surfaces: UI_ONLY_SURFACES,
+    inputSchema: EmptyObjectSchema,
+    inputHints: { title: 'Link GitHub', fields: [] },
+  },
+  {
+    id: 'supporter.ask.close',
+    title: 'Close supporter ask',
+    description: 'Close the star ask or the supporter prompt for this account for good.',
+    safety: 'safe',
+    sideEffectClass: 'write',
+    approval: APPROVAL_RESULT_NONE,
+    placements: [],
+    surfaces: UI_AND_AGENT_SURFACES,
+    inputSchema: SupporterAskCloseInputSchema,
+    inputHints: {
+      title: 'Close supporter ask',
+      fields: [
+        {
+          path: 'ask',
+          title: 'Ask',
+          widget: 'select',
+          required: true,
+          options: [
+            { value: 'star', label: 'Star ask' },
+            { value: 'supporter_prompt', label: 'Supporter prompt' },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    id: 'github.star.status',
+    title: 'Get GitHub star status',
+    description: 'Check whether the machine GitHub CLI account has starred the Happier repository.',
+    safety: 'safe',
+    sideEffectClass: 'read',
+    approval: APPROVAL_RESULT_REQUIRED,
+    placements: [],
+    surfaces: UI_AGENT_MCP_CLI_SURFACES,
+    inputSchema: EmptyObjectSchema,
+    inputHints: { title: 'Get GitHub star status', fields: [] },
+  },
+  {
+    // UI only, never agent-reachable: GitHub's terms name automated starring, and approval
+    // defaults are user-changeable, so an agent path could become automatic.
+    id: 'github.star',
+    title: 'Star Happier on GitHub',
+    description: 'Star the Happier repository through the machine GitHub CLI. UI only.',
+    safety: 'safe',
+    sideEffectClass: 'external',
+    approval: APPROVAL_RESULT_NONE,
+    placements: [],
+    surfaces: UI_ONLY_SURFACES,
+    inputSchema: EmptyObjectSchema,
+    inputHints: { title: 'Star Happier on GitHub', fields: [] },
+  },
+  {
+    id: 'app.icon.list',
+    title: 'List app icons',
+    description: 'List the app icons on this device, with locked icons marked.',
+    safety: 'safe',
+    sideEffectClass: 'read',
+    approval: APPROVAL_RESULT_REQUIRED,
+    placements: [],
+    surfaces: UI_ONLY_SURFACES,
+    inputSchema: EmptyObjectSchema,
+    inputHints: { title: 'List app icons', fields: [] },
+  },
+  {
+    id: 'app.icon.set',
+    title: 'Set app icon',
+    description: 'Set the app icon on this device.',
+    safety: 'safe',
+    sideEffectClass: 'write',
+    approval: APPROVAL_RESULT_NONE,
+    placements: [],
+    surfaces: UI_ONLY_SURFACES,
+    inputSchema: AppIconSetInputSchema,
+    inputHints: {
+      title: 'Set app icon',
+      fields: [{ path: 'iconId', title: 'Icon', widget: 'text', required: true }],
+    },
+  },
+  {
+    // 0.2 pins live in the client-written account settings, so this is client-placed (UI only) here.
+    id: 'session.organization.pin.set',
+    title: 'Set session pin',
+    description: 'Pin or unpin a session in the session list.',
+    safety: 'safe',
+    sideEffectClass: 'write',
+    approval: APPROVAL_RESULT_NONE,
+    placements: [],
+    surfaces: UI_ONLY_SURFACES,
+    inputSchema: SessionOrganizationPinSetInputSchema,
+    inputHints: {
+      title: 'Set session pin',
+      fields: [
+        { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
+        { path: 'pinned', title: 'Pinned', widget: 'toggle', required: true },
+      ],
+    },
+  },
+  {
+    id: 'session.retention.leaving.list',
+    title: 'List sessions leaving',
+    description: 'List sessions due to leave the cloud under the retention policy, with titles decrypted on this device.',
+    safety: 'safe',
+    sideEffectClass: 'read',
+    approval: APPROVAL_RESULT_REQUIRED,
+    placements: [],
+    surfaces: UI_ONLY_SURFACES,
+    inputSchema: EmptyObjectSchema,
+    inputHints: { title: 'List sessions leaving', fields: [] },
+  },
+  {
+    id: 'session.retention.leaving.dismiss',
+    title: 'Dismiss leaving notice',
+    description: 'Hide the sessions-leaving notice on this device until the given time.',
+    safety: 'safe',
+    sideEffectClass: 'write',
+    approval: APPROVAL_RESULT_NONE,
+    placements: [],
+    surfaces: UI_ONLY_SURFACES,
+    inputSchema: SessionRetentionLeavingDismissInputSchema,
+    inputHints: {
+      title: 'Dismiss leaving notice',
+      fields: [{ path: 'through', title: 'Dismiss through (epoch ms)', widget: 'text', required: true }],
+    },
+  },
+  {
+    id: 'session.retention.summary.get',
+    title: 'Get retention summary',
+    description: 'Read the account session retention summary.',
+    safety: 'safe',
+    sideEffectClass: 'read',
+    approval: APPROVAL_RESULT_REQUIRED,
+    placements: [],
+    surfaces: UI_AGENT_MCP_CLI_SURFACES,
+    inputSchema: EmptyObjectSchema,
+    inputHints: { title: 'Get retention summary', fields: [] },
+  },
+  {
+    id: 'session.export',
+    title: 'Export sessions',
+    description: 'Export one session, selected messages of it, or every session as a Markdown or JSON file on this device.',
+    safety: 'safe',
+    sideEffectClass: 'read',
+    approval: APPROVAL_RESULT_REQUIRED,
+    placements: [],
+    surfaces: UI_ONLY_SURFACES,
+    inputSchema: SessionExportInputSchema,
+    inputHints: {
+      title: 'Export sessions',
+      fields: [
+        { path: 'sessionId', title: 'Session id', widget: 'text' },
+        { path: 'all', title: 'Every session', widget: 'toggle' },
+        { path: 'seqs', title: 'Message seqs', widget: 'text_list', listSeparator: 'comma' },
+        {
+          path: 'format',
+          title: 'Format',
+          widget: 'select',
+          required: true,
+          options: [
+            { value: 'markdown', label: 'Markdown' },
+            { value: 'json', label: 'JSON' },
+          ],
+        },
+      ],
+    },
+  },
+  ...([
+    ['machines.localHistory.status.get', 'Read local history retention', LocalHistoryTargetInput, 'read'],
+    ['machines.localHistory.due.list', 'List local sessions due to leave', LocalHistoryTargetInput, 'read'],
+    ['machines.localHistory.retention.set', 'Set local history retention', LocalHistoryRetentionInput, 'write'],
+    ['machines.localHistory.keep', 'Keep local sessions', LocalHistoryItemsInput, 'write'],
+    ['machines.localHistory.letGo', 'Let go of kept local sessions', LocalHistoryItemsInput, 'write'],
+  ] as const).map(([id, title, inputSchema, sideEffectClass]): ActionSpec => ({
+    id,
+    title,
+    description: title,
+    safety: sideEffectClass === 'write' ? 'danger' : 'safe',
+    sideEffectClass,
+    approval: sideEffectClass === 'write' ? APPROVAL_RESULT_OPTIONAL_DEFERRED : APPROVAL_RESULT_REQUIRED,
+    placements: [],
+    surfaces: UI_AGENT_MCP_CLI_SURFACES,
+    bindings: { mcpToolName: id.replaceAll('.', '_') },
+    inputHints: {
+      fields: [
+        { path: 'machineId', title: 'Machine ID', widget: 'text', required: true },
+        { path: 'providerId', title: 'Provider ID', widget: 'text', required: true },
+        { path: 'source.kind', title: 'Source kind', widget: 'text', required: true },
+        ...(id === 'machines.localHistory.retention.set'
+          ? [{ path: 'days', title: 'Retention days or never', widget: 'text' as const, required: true }]
+          : []),
+      ],
+    },
+    inputSchema,
+  })),
 ]);
 
 export function listActionSpecs(): readonly ActionSpec[] {

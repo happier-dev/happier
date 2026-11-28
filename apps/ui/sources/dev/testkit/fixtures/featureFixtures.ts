@@ -57,6 +57,8 @@ type RootLayoutFeaturesOverrides = Omit<Partial<RootLayoutFeatures>, 'features' 
 const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
     features: {
         bugReports: { enabled: true },
+        plans: { enabled: false },
+        supporter: { enabled: false },
         e2ee: {
             keylessAccounts: { enabled: false },
         },

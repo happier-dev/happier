@@ -19,6 +19,7 @@ export type ChatFooterDirectControlState = Readonly<{
     onCancelImport?: () => void | Promise<void>;
     onRefreshImport?: () => void | Promise<void>;
     onRequestTakeOverDirect?: () => void | Promise<void>;
+    onPrepareRetainedConversion?: () => void | Promise<void>;
     onRequestTakeOverPersist?: () => void | Promise<void>;
 }> | null;
 
@@ -136,6 +137,10 @@ export const ChatFooter = React.memo((props: ChatFooterProps) => {
             && props.directControl.canTakeOverPersist
             && typeof props.directControl.onRequestTakeOverPersist === 'function';
 
+        const prepareRetainedConversion = props.directControl.onPrepareRetainedConversion;
+        const showPrepareRetainedConversion = !switchingToDirect && !switchingToPersisted
+            && props.directControl.machineOnline && !showPersistAction && prepareRetainedConversion;
+
         const textKey = (() => {
             if (operation?.state === 'cancelled') return 'chatFooter.directImportCancelled';
             if (operation?.state === 'failed') return 'chatFooter.directImportFailed';
@@ -169,6 +174,13 @@ export const ChatFooter = React.memo((props: ChatFooterProps) => {
                     tone={importing ? 'neutral' : 'warning'}
                     body={body}
                     secondaryActions={[
+                        ...(showPrepareRetainedConversion ? [{
+                            key: 'prepareRetainedConversion',
+                            testID: 'session-chatFooter-prepareRetainedConversion',
+                            label: t('transcriptExport.prepareConversion'),
+                            accessibilityLabel: t('transcriptExport.prepareConversion'),
+                            onPress: showPrepareRetainedConversion,
+                        }] : []),
                         ...(showPersistAction ? [{
                             key: 'takeOverPersist',
                             testID: 'session-chatFooter-takeOverPersist',

@@ -15,9 +15,9 @@ const sharp = createRequire(path.join(repoRoot, 'package.json'))('sharp');
 const MACOS_ICON_TILE_FRACTION = 824 / 1024;
 
 async function readEmbeddedDockIconPath() {
-  const source = await readFile(path.join(srcTauriDir, 'src', 'dock_icon.rs'), 'utf8');
-  const match = source.match(/const DOCK_ICON_PNG: &\[u8\] = include_bytes!\("([^"]+)"\);/u);
-  assert.ok(match, 'dock_icon.rs should embed its PNG with include_bytes!');
+  const source = await readFile(path.join(srcTauriDir, 'src', 'app_icon.rs'), 'utf8');
+  const match = source.match(/DEFAULT_ICON_ID => include_bytes!\("([^"]+)"\)/u);
+  assert.ok(match, 'app_icon.rs should embed the default Dock PNG with include_bytes!');
   return path.join(srcTauriDir, 'src', match[1]);
 }
 

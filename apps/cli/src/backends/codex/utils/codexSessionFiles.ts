@@ -24,6 +24,13 @@ export function resolveCodexLogicalRolloutPath(path: string): string {
   return /\.jsonl\.zst$/i.test(path) ? path.slice(0, -4) : path;
 }
 
+/** A plain rollout takes precedence when Codex briefly has both physical variants. */
+export function isCodexRolloutCandidate(name: string, fileNames: ReadonlySet<string>, includeCompressed = true): boolean {
+  if (!name.startsWith('rollout-') || !isCodexRolloutFilePath(name)) return false;
+  const plain = resolveCodexLogicalRolloutPath(name);
+  return plain === name || (includeCompressed && !fileNames.has(plain));
+}
+
 /** Leave decoding and append-time materialization to Codex's native rollout owner. */
 export async function resolveExistingCodexRolloutPath(path: string): Promise<string | null> {
   const plainPath = resolveCodexLogicalRolloutPath(path);

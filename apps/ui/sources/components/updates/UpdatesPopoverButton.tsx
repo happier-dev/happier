@@ -127,13 +127,14 @@ export const UpdatesPopoverButton = React.memo(function UpdatesPopoverButton(pro
         : <Icon name={(copy?.icon ?? 'hard-drive-download') as IconName} size={size} color={color} />;
 
     const buttonSize = props.buttonSize ?? 28;
+    const accessibilityLabel = copy?.a11y ?? t('updates.title');
     const trigger = props.variant === 'icon' ? (
         <PressableSurface
             testID={props.testID ?? `updates.entry.${props.variant}`}
             accessibilityRole="button"
-            accessibilityLabel={copy?.a11y ?? t('updates.title')}
+            accessibilityLabel={accessibilityLabel}
             accessibilityState={{ expanded: open }}
-            webTooltip={copy?.label}
+            webTooltip={accessibilityLabel}
             tooltipPlacement="bottom"
             hitSlop={8}
             focusRingRadius={buttonSize / 2}
@@ -151,7 +152,7 @@ export const UpdatesPopoverButton = React.memo(function UpdatesPopoverButton(pro
         <PressableSurface
             testID={props.testID ?? `updates.entry.${props.variant}`}
             accessibilityRole="button"
-            accessibilityLabel={copy?.a11y ?? t('updates.title')}
+            accessibilityLabel={accessibilityLabel}
             accessibilityState={{ expanded: open }}
             hitSlop={Platform.select({ web: 6, default: 12 })}
             focusRingRadius={10}

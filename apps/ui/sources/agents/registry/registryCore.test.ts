@@ -12,11 +12,18 @@ import {
     resolveAgentIdFromConnectedServiceId,
     resolveAgentIdFromFlavor,
     getAgentCore,
+    listLocalHistoryProviders,
     AGENT_IDS,
 } from './registryCore';
 import { buildAgentToolsUiConfig } from './buildAgentToolsUiConfig';
 
 describe('agents/registryCore', () => {
+    it('lists providers with a local history settings source', () => {
+        expect(listLocalHistoryProviders().map(({ id, localHistory }) => [id, localHistory.source])).toEqual([
+            ['claude', { kind: 'claudeConfig' }],
+        ]);
+    });
+
     it('exposes a stable list of agent ids', () => {
         expect(Array.isArray(AGENT_IDS)).toBe(true);
         expect(AGENT_IDS.length).toBeGreaterThan(0);

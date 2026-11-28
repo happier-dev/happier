@@ -276,6 +276,7 @@ export type MachineRpcHandlerDeps = Readonly<{
   machineRpcWorkingDirectory?: string;
   filesystemAccessPolicy?: FilesystemAccessPolicy;
   emitDirectSessionTranscriptUpdate?: (payload: DirectSessionTranscriptDeltaEphemeral) => void;
+  publishKeptDueAtMs?: (dueAtMs: number | null) => Promise<void>;
   emitActionOperationRevision?: (snapshot: ActionOperationSnapshotV1) => void;
   createAccountPet?: (request: AccountPetCreateRequestV1) => Promise<AccountPetCreateResponseV1>;
   resumeInactiveSessionWhenUsageLimitReady?: ResumeInactiveSessionWhenUsageLimitReady;
@@ -1186,6 +1187,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
     spawnSession,
     stopSession: stopSessionConfirmed,
     emitDirectSessionTranscriptUpdate: params.deps?.emitDirectSessionTranscriptUpdate,
+    publishKeptDueAtMs: params.deps?.publishKeptDueAtMs,
     ...(actionOperationRuntime ? { actionOperations: actionOperationRuntime } : {}),
   });
   registerMachineConnectedServiceQuotaRpcHandlers({

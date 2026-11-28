@@ -77,7 +77,6 @@ describe('core e2e: voice lease mint (account-scoped)', () => {
       dbProvider: 'sqlite',
       extraEnv: {
         HAPPIER_FEATURE_VOICE__ENABLED: 'true',
-        HAPPIER_FEATURE_VOICE__REQUIRE_SUBSCRIPTION: 'false',
         VOICE_TOKEN_MAX_PER_MINUTE: '0',
         VOICE_MAX_CONCURRENT_SESSIONS: '1',
         VOICE_MAX_SESSION_SECONDS: '60',

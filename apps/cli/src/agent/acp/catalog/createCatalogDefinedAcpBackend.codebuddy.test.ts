@@ -157,7 +157,7 @@ describe('catalog-defined ACP capability detection', () => {
 
 describe('createCatalogDefinedAcpBackend (CodeBuddy Code)', () => {
   it.each(['create', 'resume'] as const)(
-    'preserves native modes across %s and permission restart, and restores mapped permissions on clear',
+    'keeps CodeBuddy Plan across %s and permission restart, and leaves approval levels to the permission selector',
     async (operation) => {
       await withCodeBuddyAgent('happier-codebuddy-override-', async ({ callsPath }) => {
         let permissionMode: PermissionMode = 'safe-yolo';
@@ -198,7 +198,7 @@ describe('createCatalogDefinedAcpBackend (CodeBuddy Code)', () => {
           await sync.flushPendingAfterStart();
           expect(readSetModeIds(callsPath).at(-1)).toBe('plan');
 
-          // Permission changes retain the native override, including the existing restart path.
+          // Permission changes retain the Plan agent mode, including the existing restart path.
           permissionMode = 'read-only';
           sync.syncFromMetadata();
           await sync.flushPendingAfterStart();
@@ -216,31 +216,24 @@ describe('createCatalogDefinedAcpBackend (CodeBuddy Code)', () => {
           await sync.flushPendingAfterStart();
           expect(readSetModeIds(callsPath).at(-1)).toBe('dontAsk');
 
+          // A raw approval preset persisted as a Mode override by older builds resumes as Build,
+          // so the permission selector keeps choosing CodeBuddy's approval mode.
           session.updateMetadata((metadata) => metadata && {
             ...metadata,
             sessionModeOverrideV1: { v: 1, updatedAt: 31, modeId: 'auto' },
           });
           sync.syncFromMetadata();
           await sync.flushPendingAfterStart();
-          expect(readSetModeIds(callsPath).at(-1)).toBe('auto');
+          expect(readSetModeIds(callsPath).at(-1)).toBe('dontAsk');
 
-          session.updateMetadata((metadata) => metadata && {
-            ...metadata,
-            sessionModeOverrideV1: { v: 1, updatedAt: 23, modeId: null },
-          });
+          permissionMode = 'yolo';
+          const writesBeforeRestart = readSetModeIds(callsPath).length;
+          await runtime.reset();
+          await runtime.startOrLoad({ resumeId });
           sync.syncFromMetadata();
           await sync.flushPendingAfterStart();
-          expect(readSetModeIds(callsPath).at(-1)).toBe('auto');
-
-          // Unmapped default defers to provider policy rather than inventing a reset mode.
-          permissionMode = 'default';
-          session.updateMetadata((metadata) => metadata && {
-            ...metadata,
-            sessionModeOverrideV1: { v: 1, updatedAt: 32, modeId: null },
-          });
-          sync.syncFromMetadata();
-          await sync.flushPendingAfterStart();
-          expect(readSetModeIds(callsPath).at(-1)).toBe('auto');
+          expect(readSetModeIds(callsPath).at(-1)).toBe('bypassPermissions');
+          expect(readSetModeIds(callsPath).slice(writesBeforeRestart)).not.toContain('auto');
         } finally {
           await runtime.reset();
         }

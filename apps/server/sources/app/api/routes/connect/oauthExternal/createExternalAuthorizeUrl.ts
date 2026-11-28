@@ -6,6 +6,7 @@ import { generatePkceVerifier, pkceChallengeS256 } from "@/app/oauth/pkce";
 import type { OAuthFlowProvider } from "@/app/oauth/providers/registry";
 import { db } from "@/storage/db";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
+import { oauthStateAttemptKey } from "../connectRoutes.oauthStateAttempt";
 import { resolveOauthStateAttemptTtlMsFromEnv } from "./oauthExternalConfig";
 
 type ExternalAuthorizeFlowParams =
@@ -25,6 +26,21 @@ type ExternalAuthorizeFlowParams =
           env: NodeJS.ProcessEnv;
           userId: string;
           webAppOAuthReturnUrl?: string | null;
+      }>
+    | Readonly<{
+          flow: "supporter";
+          providerId: "github";
+          provider: OAuthFlowProvider;
+          env: NodeJS.ProcessEnv;
+          supporter: { accountId: string | null; code: string | null; publishGitHubLogin: boolean };
+      }>
+    | Readonly<{
+          flow: "supporter";
+          providerId: "discord";
+          provider: Pick<OAuthFlowProvider, "resolveAuthorizeUrl">;
+          env: NodeJS.ProcessEnv;
+          scope: string;
+          supporterDiscord: { id: string; accountId: string | null; codeDigest: string | null } | null;
       }>;
 
 export async function createExternalAuthorizeUrl(params: ExternalAuthorizeFlowParams): Promise<string | null> {
@@ -32,6 +48,9 @@ export async function createExternalAuthorizeUrl(params: ExternalAuthorizeFlowPa
     const pkceCodeVerifier = generatePkceVerifier(64);
     const codeChallenge = pkceChallengeS256(pkceCodeVerifier);
     const nonce = randomBytes(32).toString("base64url");
+    const attemptBinding = params.flow === "supporter"
+        ? params.providerId === "discord" ? { supporterDiscord: params.supporterDiscord } : { supporter: params.supporter }
+        : params.webAppOAuthReturnUrl ? { webAppOAuthReturnUrl: params.webAppOAuthReturnUrl } : {};
 
     let sid = "";
     for (let i = 0; i < 3; i++) {
@@ -39,12 +58,12 @@ export async function createExternalAuthorizeUrl(params: ExternalAuthorizeFlowPa
         try {
             await db.repeatKey.create({
                 data: {
-                    key: `oauth_state_${sid}`,
+                    key: oauthStateAttemptKey(sid),
                     value: JSON.stringify({
                         provider: params.providerId,
                         pkceCodeVerifier,
                         nonce,
-                        ...(params.webAppOAuthReturnUrl ? { webAppOAuthReturnUrl: params.webAppOAuthReturnUrl } : {}),
+                        ...attemptBinding,
                     }),
                     expiresAt: new Date(Date.now() + ttlMs),
                 },
@@ -55,7 +74,7 @@ export async function createExternalAuthorizeUrl(params: ExternalAuthorizeFlowPa
         }
     }
     if (!sid) return null;
-    const repeatKeyId = `oauth_state_${sid}`;
+    const repeatKeyId = oauthStateAttemptKey(sid);
 
     let state: string;
     try {
@@ -68,10 +87,11 @@ export async function createExternalAuthorizeUrl(params: ExternalAuthorizeFlowPa
                   proofHash: params.proofHash,
               })
             : await auth.createOauthStateToken({
-                  flow: "connect",
+                  flow: params.flow,
                   provider: params.providerId,
                   sid,
-                  userId: params.userId,
+                  userId: params.flow === "connect" ? params.userId
+                      : params.providerId === "discord" ? params.supporterDiscord?.accountId : params.supporter.accountId,
               });
     } catch (error) {
         if (isOAuthStateUnavailableError(error)) {
@@ -81,7 +101,9 @@ export async function createExternalAuthorizeUrl(params: ExternalAuthorizeFlowPa
         throw error;
     }
 
-    const scope = params.provider.resolveScope({ env: params.env, flow: params.flow });
+    const scope = params.flow === "supporter"
+        ? params.providerId === "discord" ? params.scope : "read:user"
+        : params.provider.resolveScope({ env: params.env, flow: params.flow });
     return await params.provider.resolveAuthorizeUrl({
         env: params.env,
         state,

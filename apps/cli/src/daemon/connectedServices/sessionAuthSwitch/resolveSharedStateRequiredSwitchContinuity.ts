@@ -43,6 +43,7 @@ export async function resolveSharedStateRequiredSwitchContinuity(input: Readonly
   vendorResumeId?: string | null;
   cwd?: string | null;
   candidatePersistedSessionFile?: string | null;
+  failedFirstLaunch?: 'retry_original_transition';
   warnings?: readonly string[];
 }>): Promise<SessionConnectedServiceSwitchContinuity> {
   if (!input.accountSettings) {
@@ -69,9 +70,15 @@ export async function resolveSharedStateRequiredSwitchContinuity(input: Readonly
       };
     }
 
+    if (input.failedFirstLaunch === 'retry_original_transition'
+      && !asNonEmptyString(input.vendorResumeId)
+      && !asNonEmptyString(input.candidatePersistedSessionFile)) {
+      return { mode: 'restart_rematerialize', warnings: input.warnings ?? [] };
+    }
+
+    const vendorResumeId = asNonEmptyString(input.vendorResumeId);
     const serviceId = asNonEmptyString(input.serviceId);
     const targetMaterializedRoot = asNonEmptyString(input.targetMaterializedRoot);
-    const vendorResumeId = asNonEmptyString(input.vendorResumeId);
     const cwd = asNonEmptyString(input.cwd);
     const materializationIdentity = input.materializationIdentity ?? null;
     if (

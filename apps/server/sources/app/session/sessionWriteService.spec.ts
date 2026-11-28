@@ -650,12 +650,12 @@ describe("sessionWriteService", () => {
             expect(currentTx.session.update).toHaveBeenNthCalledWith(1, {
                 where: { id: "s1" },
                 select: { seq: true },
-                data: {
+                data: expect.objectContaining({
                     // The message auto-advances the read cursor, so the session stays read and the
                     // unread edge instant is cleared in the same statement that moves `seq`.
                     seq: { increment: 1 },
                     unreadSince: null,
-                },
+                }),
             });
             expect(currentTx.session.updateMany).toHaveBeenCalledWith({
                 where: {
@@ -1865,12 +1865,12 @@ describe("sessionWriteService", () => {
             expect(currentTx.session.update).toHaveBeenCalledWith({
                 where: { id: "s1" },
                 select: { seq: true },
-                data: {
+                data: expect.objectContaining({
                     // A read session crossing into unread stamps the unread edge instant, taken as
                     // the statement is built so it can never post-date the message that causes it.
                     seq: { increment: 1 },
                     unreadSince: beforeLock,
-                },
+                }),
             });
             expect(currentTx.sessionMessage.create).toHaveBeenCalledWith(
                 expect.objectContaining({

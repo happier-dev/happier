@@ -33,6 +33,30 @@ function bashToolUseMessage(): SDKAssistantMessage {
 const defaultMode = { permissionMode: 'default' } as EnhancedMode;
 
 describe('permission RPC routing', () => {
+  it('keeps a Claude question pending after approval without an answer and accepts a later answer', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('notification-question-approval');
+    const requests = new AgentStateRequestStore({ session: session.client, logPrefix: 'permission-rpc-test' });
+    const { PermissionHandler } = await import('./permissionHandler');
+    const handler = new PermissionHandler(session);
+    const controller = new AbortController();
+    try {
+      const pending = handler.handleToolCall('AskUserQuestion', {
+        questions: [{ question: 'Which branch?', options: [{ label: 'main' }] }],
+      }, defaultMode, { signal: controller.signal, toolUseId: 'question' });
+      void pending.catch(() => undefined);
+      const occurrenceId = requests.readOutstandingRequest('question')?.occurrenceId;
+      expect(occurrenceId).toEqual(expect.any(String));
+      const rpc = client.rpcHandlerManager.getHandler(SESSION_RPC_METHODS.SESSION_PERMISSION_RESPOND_TO_OCCURRENCE_V1)!;
+      await expect(rpc({ id: 'question', occurrenceId, approved: true })).rejects.toMatchObject({
+        rpcErrorCode: 'STRUCTURED_QUESTION_INVALID',
+      });
+      expect(requests.readOutstandingRequest('question')?.occurrenceId).toBe(occurrenceId);
+      await expect(rpc({ id: 'question', occurrenceId, approved: true,
+        structuredAnswersV1: { 'Which branch?': ['main'] } })).resolves.toEqual({ ok: true });
+      await expect(pending).resolves.toMatchObject({ behavior: 'allow', updatedInput: { answers: { 'Which branch?': 'main' } } });
+    } finally { controller.abort(); handler.dispose(); }
+  });
+
   it('delivers projected notification answers through the real structured receiver and rejects stale or unowned answers', async () => {
     const { session, client } = createPermissionHandlerSessionStub('structured-notification-occurrence');
     const requests = new AgentStateRequestStore({ session: session.client, logPrefix: 'permission-rpc-test' });

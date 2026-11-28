@@ -84,7 +84,7 @@ export function createRealtimeElevenLabsVoiceAdapter(): VoiceAdapterController {
       localId: dispatch.localId,
     });
     if (!isVoiceSessionStarted()) {
-      await startRealtimeSession(opts.controlSessionId, undefined, false, { textOnly: true });
+      await startRealtimeSession(opts.controlSessionId, undefined, { textOnly: true });
     }
     const activeVoice = getVoiceSession();
     if (!activeVoice) {

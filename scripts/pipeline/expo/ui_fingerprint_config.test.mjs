@@ -137,7 +137,6 @@ test('UI fingerprint config strips volatile extra.app keys from expoConfig conte
         postHogKey: 'phc_abc',
         revenueCatAppleKey: 'rc_apple_1',
         revenueCatGoogleKey: 'rc_google_1',
-        revenueCatStripeKey: 'rc_stripe_1',
       },
     },
   };
@@ -150,7 +149,6 @@ test('UI fingerprint config strips volatile extra.app keys from expoConfig conte
         postHogKey: 'phc_def',
         revenueCatAppleKey: 'rc_apple_2',
         revenueCatGoogleKey: 'rc_google_2',
-        revenueCatStripeKey: 'rc_stripe_2',
       },
     },
   };
@@ -182,7 +180,6 @@ test('UI fingerprint config strips volatile extra.app keys from expoConfig conte
     assert.equal('postHogKey' in (parsed?.extra?.app ?? {}), false);
     assert.equal('revenueCatAppleKey' in (parsed?.extra?.app ?? {}), false);
     assert.equal('revenueCatGoogleKey' in (parsed?.extra?.app ?? {}), false);
-    assert.equal('revenueCatStripeKey' in (parsed?.extra?.app ?? {}), false);
   } finally {
     if (originalAppEnv === undefined) delete process.env.APP_ENV;
     else process.env.APP_ENV = originalAppEnv;

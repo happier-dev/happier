@@ -24,6 +24,7 @@ describe('AGENTS_CORE cloudConnect status', () => {
 
   it('advertises session auth switching for providers with implemented switch continuity', () => {
     expect(AGENTS_CORE.claude.connectedServices?.sessionAuthSwitch).toEqual({
+      accountSwitchTiming: 'mid_turn',
       continuityMode: 'restart_same_home',
       supportedTransitions: ['same_connected_group'],
       providerStateSharingRequired: {
@@ -32,6 +33,7 @@ describe('AGENTS_CORE cloudConnect status', () => {
       },
     });
     expect(AGENTS_CORE.codex.connectedServices?.sessionAuthSwitch).toEqual({
+      accountSwitchTiming: 'mid_turn',
       continuityMode: 'restart_shared_state_required',
       supportedTransitions: ['same_connected_group'],
       providerStateSharingRequired: {

@@ -11,7 +11,7 @@ const ALLOWED_COMPATIBILITY_ONLY_FILES = new Set([
 ]);
 
 const COMPATIBILITY_ONLY_SETTING_KEY_PATTERN =
-    /['"`](compactSessionView|compactSessionViewMinimal|usePickerSearch|lastUsedPermissionMode|lastUsedModelMode|reviewPromptAnswered|reviewPromptLikedApp|inferenceOpenAIKey|viewInline|expandTodos)['"`]/;
+    /['"`](compactSessionView|compactSessionViewMinimal|usePickerSearch|lastUsedPermissionMode|lastUsedModelMode|inferenceOpenAIKey|viewInline|expandTodos)['"`]/;
 
 function walkSourceFiles(root: string): string[] {
     const results: string[] = [];

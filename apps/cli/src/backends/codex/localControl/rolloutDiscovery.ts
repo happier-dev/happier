@@ -1,6 +1,4 @@
-import { createReadStream } from 'node:fs';
-import { readdir, stat } from 'node:fs/promises';
-import * as zlib from 'node:zlib';
+import { open, readdir, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 
@@ -9,6 +7,7 @@ import {
     resolvePathForComparison,
 } from '@/utils/path/normalizePathForComparison';
 import { parseCodexRolloutFilename } from '../utils/codexSessionFiles';
+import { canDecodeCompressedCodexRollouts, isCompressedCodexRollout, readCompressedCodexRollout } from '../rollout/openCompressedCodexRollout';
 
 export type CodexSessionMetaPayload = {
     id?: string;
@@ -129,48 +128,93 @@ async function collectRolloutFiles(opts: ScanOptions): Promise<RolloutFileEntry[
 }
 
 async function readFirstLine(filePath: string): Promise<string | null> {
-    const compressed = filePath.endsWith('.zst');
-    if (compressed && typeof zlib.createZstdDecompress !== 'function') return null;
-    const file = createReadStream(filePath, { highWaterMark: 4 * 1024 });
-    const decoder = compressed ? zlib.createZstdDecompress() : null;
-    if (decoder) file.once('error', error => decoder.destroy(error));
-    const stream = decoder ? file.pipe(decoder) : file;
-    try {
-        const utf8 = new StringDecoder('utf8');
-        const parts: string[] = [];
-        // session_meta includes full base instructions. Read through its newline.
-        for await (const chunk of stream) {
-            const text = utf8.write(chunk);
-            const newline = text.indexOf('\n');
-            if (newline >= 0) {
-                parts.push(text.slice(0, newline));
-                return parts.join('').trim() || null;
+    if (isCompressedCodexRollout(filePath)) {
+        if (!canDecodeCompressedCodexRollouts) return null;
+        try {
+            const decoder = new StringDecoder('utf8');
+            const parts: string[] = [];
+            for await (const chunk of readCompressedCodexRollout(filePath)) {
+                const text = decoder.write(chunk);
+                const newline = text.indexOf('\n');
+                if (newline >= 0) {
+                    parts.push(text.slice(0, newline));
+                    return parts.join('').trim() || null;
+                }
+                parts.push(text);
             }
-            parts.push(text);
+            parts.push(decoder.end());
+            return parts.join('').trim() || null;
+        } catch {
+            return null;
         }
-        parts.push(utf8.end());
-        return parts.join('').trim() || null;
+    }
+    const chunkBytes = 4 * 1024;
+    try {
+        const fh = await open(filePath, 'r');
+        try {
+            const decoder = new StringDecoder('utf8');
+            const chunk = Buffer.allocUnsafe(chunkBytes);
+            let readOffset = 0;
+            const parts: string[] = [];
+
+            // session_meta includes full base instructions; its first record has no vendor size cap.
+            // Stop at its newline so even a large transcript only needs its metadata head.
+            while (true) {
+                const res = await fh.read(chunk, 0, chunk.byteLength, readOffset);
+                if (res.bytesRead <= 0) break;
+                readOffset += res.bytesRead;
+                const text = decoder.write(chunk.subarray(0, res.bytesRead));
+                const idx = text.indexOf('\n');
+                if (idx !== -1) {
+                    parts.push(text.slice(0, idx));
+                    const line = parts.join('').trim();
+                    return line.length > 0 ? line : null;
+                }
+                parts.push(text);
+                if (res.bytesRead < chunk.byteLength) break;
+            }
+
+            parts.push(decoder.end());
+            const line = parts.join('').trim();
+            return line.length > 0 ? line : null;
+        } finally {
+            await fh.close();
+        }
     } catch {
         return null;
-    } finally {
-        file.destroy();
-        decoder?.destroy();
+    }
+}
+
+type CodexRolloutHead =
+    | Readonly<{ kind: 'session-meta'; metadata: CodexSessionMetaPayload }>
+    | Readonly<{ kind: 'legacy-prefix' }>;
+
+export async function readCodexRolloutHead(filePath: string): Promise<CodexRolloutHead | null> {
+    const line = await readFirstLine(filePath);
+    if (!line) return null;
+    try {
+        const parsed: unknown = JSON.parse(line);
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+        const record = parsed as Record<string, unknown>;
+        const payload = record.payload;
+        if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
+        if (record.type === 'session_meta') return { kind: 'session-meta', metadata: payload as CodexSessionMetaPayload };
+        // Legacy rollouts can start with an event before the metadata. Paginated rollouts begin
+        // with SessionMeta at ordinal zero and record an ordinal on following lines.
+        if (record.ordinal === undefined && typeof record.timestamp === 'string'
+            && (record.type === 'response_item' || record.type === 'event_msg'
+                || record.type === 'turn_context' || record.type === 'compacted')) {
+            return { kind: 'legacy-prefix' };
+        }
+        return null;
+    } catch {
+        return null;
     }
 }
 
 export async function readCodexSessionMetaFromRollout(filePath: string): Promise<CodexSessionMetaPayload | null> {
-    const line = await readFirstLine(filePath);
-    if (!line) return null;
-    try {
-        const parsed = JSON.parse(line) as any;
-        if (!parsed || typeof parsed !== 'object') return null;
-        if (parsed.type !== 'session_meta') return null;
-        const payload = parsed.payload;
-        if (!payload || typeof payload !== 'object') return null;
-        return payload as CodexSessionMetaPayload;
-    } catch {
-        return null;
-    }
+    const head = await readCodexRolloutHead(filePath);
+    return head?.kind === 'session-meta' ? head.metadata : null;
 }
 
 export function scoreCodexRolloutCandidate(opts: {

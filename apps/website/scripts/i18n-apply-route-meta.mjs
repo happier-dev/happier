@@ -26,6 +26,7 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const PARTS = join(ROOT, 'src/i18n/messages/overlays/.parts');
+const OVERLAY = join(PARTS, '..', 'routeMeta.json');
 const OUT = join(ROOT, 'src/data/routeMetaI18n.ts');
 const CHECK = process.argv.includes('--check');
 
@@ -125,6 +126,8 @@ for (const path of routePaths) {
     byRoute[path] = {};
     for (const locale of locales) byRoute[path][locale] = byLocale[locale][path];
 }
+
+writeFileSync(OVERLAY, `${JSON.stringify(byRoute, null, 2)}\n`, 'utf8');
 
 const body = Object.entries(byRoute)
     .map(([path, perLocale]) => {

@@ -171,7 +171,7 @@ pub fn leave(app: &AppHandle) {
             if let Err(error) = handle.set_activation_policy(tauri::ActivationPolicy::Regular) {
                 log::warn!("failed to restore the Dock icon: {error}");
             }
-            crate::dock_icon::apply();
+            crate::app_icon::reapply(&handle);
         }) {
             log::warn!("failed to schedule Dock restoration: {error}");
         }

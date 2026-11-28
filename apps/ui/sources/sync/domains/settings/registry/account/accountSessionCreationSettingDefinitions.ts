@@ -186,18 +186,6 @@ export const ACCOUNT_SESSION_CREATION_SETTING_DEFINITIONS = defineSettingDefinit
         default: {} as Record<string, never>,
         description: 'Remembered new-session engine selections keyed by server and backend target',
         storageScope: 'account',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'count',
-            privacy: 'count_only',
-            identityScope: 'person',
-            serializeCurrent: (value: unknown) => (
-                value && typeof value === 'object' && !Array.isArray(value)
-                    ? Object.keys(value as Record<string, unknown>).length
-                    : 0
-            ),
-        },
     },
     newSessionDefaultPersistenceModeV1: {
         schema: SessionTranscriptStorageModeSchema,

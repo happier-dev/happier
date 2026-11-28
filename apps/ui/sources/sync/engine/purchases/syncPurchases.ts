@@ -1,222 +1,93 @@
 import { Platform } from 'react-native';
 import { config } from '@/config';
-import { RevenueCat, LogLevel, PaywallResult } from '@/sync/domains/purchases';
+import { RevenueCat, LogLevel } from '@/sync/domains/purchases';
+import type { AccountPlanResponseV1 } from '@happier-dev/protocol';
 
-export async function syncPurchases(params: {
-    serverID: string;
-    revenueCatInitialized: boolean;
-    setRevenueCatInitialized: (next: boolean) => void;
-    // RevenueCat types are not exported consistently across platforms; keep this loose.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    applyPurchases: (customerInfo: any) => void;
+type PurchaseScope = { appUserId: string; shouldContinue?: () => boolean };
+let configuredUser: string | null = null;
+let pendingStoreOperation: Promise<unknown> = Promise.resolve();
+
+function nativeKey(): string | undefined {
+    return Platform.OS === 'ios' ? config.revenueCatAppleKey
+        : Platform.OS === 'android' ? config.revenueCatGoogleKey
+        : undefined;
+}
+
+export function supportsNativeStorePurchases(): boolean {
+    return Boolean(nativeKey());
+}
+
+export function hasNativeStoreOffers(data: AccountPlanResponseV1 | null | undefined): boolean {
+    const offers = data?.offers;
+    return offers?.billingReference === 'account' && Boolean(offers.supporter?.storeOfferingId
+        || offers.plans.some((plan) => plan.prices.some((price) => price.storeProductId || price.storeOfferingId)));
+}
+
+async function configureFor(appUserId: string, apiKey: string): Promise<void> {
+    if (configuredUser === appUserId) return;
+    if (configuredUser === null) {
+        if (__DEV__) RevenueCat.setLogLevel(LogLevel.DEBUG);
+        RevenueCat.configure({ apiKey, appUserID: appUserId });
+    } else {
+        await RevenueCat.logIn(appUserId);
+    }
+    configuredUser = appUserId;
+}
+
+function runStoreOperation<T>(scope: PurchaseScope, run: () => Promise<T>): Promise<T | null> {
+    const apiKey = nativeKey();
+    if (!apiKey || !scope.appUserId || scope.shouldContinue?.() === false) return Promise.resolve(null);
+    // Keep a purchase or restore bound to the same native identity until the SDK settles it.
+    const pending = pendingStoreOperation.then(async () => {
+        if (scope.shouldContinue?.() === false) return null;
+        await configureFor(scope.appUserId, apiKey);
+        if (scope.shouldContinue?.() === false) return null;
+        return await run();
+    });
+    pendingStoreOperation = pending.then(() => undefined, () => undefined);
+    return pending;
+}
+
+export async function ensurePurchasesConfiguredAtLaunch(params: {
+    accountId: string;
+    storePlansOffered: boolean;
     shouldContinue?: () => boolean;
 }): Promise<void> {
-    const { serverID, revenueCatInitialized, setRevenueCatInitialized, applyPurchases } = params;
-    const shouldContinue = params.shouldContinue ?? (() => true);
-
-    try {
-        if (!shouldContinue()) return;
-        // Initialize RevenueCat if not already done
-        if (!revenueCatInitialized) {
-            // Get the appropriate API key based on platform
-            let apiKey: string | undefined;
-
-            if (Platform.OS === 'ios') {
-                apiKey = config.revenueCatAppleKey;
-            } else if (Platform.OS === 'android') {
-                apiKey = config.revenueCatGoogleKey;
-            } else if (Platform.OS === 'web') {
-                apiKey = config.revenueCatStripeKey;
-            }
-
-            if (!apiKey) {
-                return;
-            }
-
-            // Configure RevenueCat
-            if (__DEV__) {
-                RevenueCat.setLogLevel(LogLevel.DEBUG);
-            }
-
-            // Initialize with the public ID as user ID
-            RevenueCat.configure({
-                apiKey,
-                appUserID: serverID, // In server this is a CUID, which we can assume is globaly unique even between servers
-                useAmazon: false,
-            });
-
-            if (!shouldContinue()) return;
-            setRevenueCatInitialized(true);
-        }
-
-        // Sync purchases
-        await RevenueCat.syncPurchases();
-        if (!shouldContinue()) return;
-
-        // Fetch customer info
-        const customerInfo = await RevenueCat.getCustomerInfo();
-        if (!shouldContinue()) return;
-
-        // Apply to storage (storage handles the transformation)
-        applyPurchases(customerInfo);
-    } catch (error) {
-        console.error('Failed to sync purchases:', error);
-        // Don't throw - purchases are optional
-    }
+    if (!params.storePlansOffered) return;
+    await runStoreOperation({ appUserId: params.accountId, shouldContinue: params.shouldContinue }, async () => undefined);
 }
 
-export async function purchaseProduct(params: {
-    revenueCatInitialized: boolean;
-    productId: string;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    applyPurchases: (customerInfo: any) => void;
-    shouldContinue?: () => boolean;
+export async function purchaseProduct(params: PurchaseScope & {
+    productId?: string;
+    offeringId?: string;
 }): Promise<{ success: boolean; error?: string }> {
-    const { revenueCatInitialized, productId, applyPurchases } = params;
-    const shouldContinue = params.shouldContinue ?? (() => true);
-
     try {
-        if (!shouldContinue()) {
-            return { success: false, error: 'Purchase scope changed' };
-        }
-        // Check if RevenueCat is initialized
-        if (!revenueCatInitialized) {
-            return { success: false, error: 'RevenueCat not initialized' };
-        }
-
-        // Fetch the product
-        const products = await RevenueCat.getProducts([productId]);
-        if (!shouldContinue()) {
-            return { success: false, error: 'Purchase scope changed' };
-        }
-        if (products.length === 0) {
-            return { success: false, error: `Product '${productId}' not found` };
-        }
-
-        // Purchase the product
-        const product = products[0];
-        const { customerInfo } = await RevenueCat.purchaseStoreProduct(product);
-        if (!shouldContinue()) {
-            return { success: false, error: 'Purchase scope changed' };
-        }
-
-        // Update local purchases data
-        applyPurchases(customerInfo);
-
-        return { success: true };
-    } catch (error: any) {
-        // Check if user cancelled
-        if (error.userCancelled) {
-            return { success: false, error: 'Purchase cancelled' };
-        }
-
-        // Return the error message
-        return { success: false, error: error.message || 'Purchase failed' };
-    }
-}
-
-export async function getOfferings(params: {
-    revenueCatInitialized: boolean;
-}): Promise<{ success: boolean; offerings?: any; error?: string }> {
-    const { revenueCatInitialized } = params;
-
-    try {
-        // Check if RevenueCat is initialized
-        if (!revenueCatInitialized) {
-            return { success: false, error: 'RevenueCat not initialized' };
-        }
-
-        // Fetch offerings
-        const offerings = await RevenueCat.getOfferings();
-
-        // Return the offerings data
-        return {
-            success: true,
-            offerings: {
-                current: offerings.current,
-                all: offerings.all,
-            },
-        };
-    } catch (error: any) {
-        return { success: false, error: error.message || 'Failed to fetch offerings' };
-    }
-}
-
-export async function presentPaywall(params: {
-    revenueCatInitialized: boolean;
-    trackPaywallPresented: () => void;
-    trackPaywallPurchased: () => void;
-    trackPaywallCancelled: () => void;
-    trackPaywallRestored: () => void;
-    trackPaywallError: (error: string) => void;
-    syncPurchases: () => Promise<void>;
-    shouldContinue?: () => boolean;
-}): Promise<{ success: boolean; purchased?: boolean; error?: string }> {
-    const {
-        revenueCatInitialized,
-        trackPaywallPresented,
-        trackPaywallPurchased,
-        trackPaywallCancelled,
-        trackPaywallRestored,
-        trackPaywallError,
-        syncPurchases,
-    } = params;
-    const shouldContinue = params.shouldContinue ?? (() => true);
-
-    try {
-        if (!shouldContinue()) {
-            return { success: false, error: 'Paywall scope changed' };
-        }
-        // Check if RevenueCat is initialized
-        if (!revenueCatInitialized) {
-            const error = 'RevenueCat not initialized';
-            trackPaywallError(error);
-            return { success: false, error };
-        }
-
-        // Track paywall presentation
-        trackPaywallPresented();
-
-        // Present the paywall
-        const result = await RevenueCat.presentPaywall();
-        if (!shouldContinue()) {
-            return { success: false, error: 'Paywall scope changed' };
-        }
-
-        // Handle the result
-        switch (result) {
-            case PaywallResult.PURCHASED:
-                trackPaywallPurchased();
-                // Refresh customer info after purchase
-                if (!shouldContinue()) {
-                    return { success: false, error: 'Paywall scope changed' };
-                }
-                await syncPurchases();
-                return { success: true, purchased: true };
-            case PaywallResult.RESTORED:
-                trackPaywallRestored();
-                // Refresh customer info after restore
-                if (!shouldContinue()) {
-                    return { success: false, error: 'Paywall scope changed' };
-                }
-                await syncPurchases();
-                return { success: true, purchased: true };
-            case PaywallResult.CANCELLED:
-                trackPaywallCancelled();
-                return { success: true, purchased: false };
-            case PaywallResult.NOT_PRESENTED:
-                // Don't track error for NOT_PRESENTED as it's a platform limitation
-                return { success: false, error: 'Paywall not available on this platform' };
-            case PaywallResult.ERROR:
-            default: {
-                const errorMsg = 'Failed to present paywall';
-                trackPaywallError(errorMsg);
-                return { success: false, error: errorMsg };
+        const purchased = await runStoreOperation(params, async () => {
+            if (params.offeringId) {
+                return await RevenueCat.purchasePackage(params.offeringId, params.productId, params.shouldContinue);
             }
-        }
-    } catch (error: any) {
-        const errorMessage = error.message || 'Failed to present paywall';
-        trackPaywallError(errorMessage);
-        return { success: false, error: errorMessage };
+            if (!params.productId) return null;
+            const [product] = await RevenueCat.getProducts([params.productId]);
+            if (!product || params.shouldContinue?.() === false) return null;
+            return await RevenueCat.purchaseStoreProduct(product, params.shouldContinue);
+        });
+        return { success: purchased !== null && params.shouldContinue?.() !== false };
+    } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : 'Purchase failed' };
     }
+}
+
+export async function readSupporterStorePackages(scope: PurchaseScope, offeringId: string) {
+    const offerings = await runStoreOperation(scope, () => RevenueCat.getOfferings());
+    return scope.shouldContinue?.() === false ? [] : offerings?.all[offeringId]?.availablePackages ?? [];
+}
+
+export async function restorePurchases(scope: PurchaseScope): Promise<boolean> {
+    const customerInfo = await runStoreOperation(scope, () => RevenueCat.restore());
+    return customerInfo !== null && scope.shouldContinue?.() !== false;
+}
+
+export async function getManagementURL(scope: PurchaseScope): Promise<string | null> {
+    const info = await runStoreOperation(scope, () => RevenueCat.getCustomerInfo());
+    return scope.shouldContinue?.() === false ? null : info?.managementURL ?? null;
 }

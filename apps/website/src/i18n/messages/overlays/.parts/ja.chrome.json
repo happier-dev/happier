@@ -87,5 +87,13 @@
  "usageLimits.SERVICE_SUPPORT.claude-subscription.meter": "あり",
  "usageLimits.SERVICE_SUPPORT.openai-codex.meter": "あり",
  "usageLimits.SERVICE_SUPPORT.gemini.autoSwitch": "なし",
- "usageLimits.SERVICE_SUPPORT.gemini.meter": "あり"
+ "usageLimits.SERVICE_SUPPORT.gemini.meter": "あり",
+ "navigation.FOOTER_COLUMNS.product.links.plans.label": "プラン",
+ "navigation.FOOTER_COLUMNS.open-source.links.how-happier-stays-free.label": "Happier が無料であり続ける仕組み",
+ "navigation.FOOTER_COLUMNS.open-source.links.supporters.label": "サポーター",
+ "navigation.FOOTER_LEGAL_LINKS.privacy.label": "プライバシー",
+ "navigation.FOOTER_LEGAL_LINKS.terms.label": "利用規約",
+ "navigation.FOOTER_LEGAL_LINKS.terms-of-sale.label": "販売条件",
+ "navigation.FOOTER_LEGAL_LINKS.refunds.label": "返金",
+ "navigation.FOOTER_LEGAL_LINKS.imprint.label": "運営者情報"
 }

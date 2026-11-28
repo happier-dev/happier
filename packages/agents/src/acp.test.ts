@@ -7,6 +7,8 @@ import {
   getBuiltInAcpConfig,
   hasBuiltInAcpConfig,
   isAcpSessionListingDeclared,
+  resolveAcpAgentModeId,
+  resolveAcpSessionMode,
 } from './acp.js';
 import { getProviderCliRuntimeSpec } from './providers/providerCliRuntime.js';
 import { getAgentSessionCapability } from './sessionControls/sessionCapabilities.js';
@@ -37,6 +39,7 @@ describe('built-in ACP config', () => {
         yolo: 'bypassPermissions',
         plan: 'plan',
       },
+      agentModeIds: ['plan'],
     });
     expect(isAcpSessionListingDeclared('codebuddy')).toBe(false);
   });
@@ -76,6 +79,7 @@ describe('built-in ACP config', () => {
         yolo: ['auto', 'accept-edits'],
         plan: 'plan',
       },
+      agentModeIds: ['plan'],
     });
   });
 
@@ -148,6 +152,7 @@ describe('built-in ACP config', () => {
         yolo: 'dangerous',
         plan: null,
       },
+      agentModeIds: [],
     });
   });
 
@@ -198,3 +203,61 @@ describe('ACP session-listing declaration', () => {
     expect(missing).toEqual([]);
   });
 });
+
+describe('ACP session mode resolution', () => {
+  const agyModes = (withAuto: boolean) => [
+    { id: 'default' }, { id: 'accept-edits' }, { id: 'plan' }, ...(withAuto ? [{ id: 'auto' }] : []),
+  ];
+
+  it('keeps agy approval levels out of the agent mode: only Plan is an agent mode, the rest is Build', () => {
+    expect(resolveAcpAgentModeId('agy', 'plan')).toBe('plan');
+    for (const legacyApprovalOverride of ['default', 'accept-edits', 'auto', '', null]) {
+      expect(resolveAcpAgentModeId('agy', legacyApprovalOverride)).toBeNull();
+    }
+  });
+
+  it('derives the agy native mode from Plan, else from the permission selector', () => {
+    expect(resolveAcpSessionMode({ agentId: 'agy', agentModeId: 'plan', permissionMode: 'yolo', availableModes: agyModes(true) }))
+      .toEqual({ kind: 'mode', modeId: 'plan' });
+    expect(resolveAcpSessionMode({ agentId: 'agy', agentModeId: null, permissionMode: 'yolo', availableModes: agyModes(true) }))
+      .toEqual({ kind: 'mode', modeId: 'auto' });
+    expect(resolveAcpSessionMode({ agentId: 'agy', agentModeId: null, permissionMode: 'safe-yolo', availableModes: agyModes(false) }))
+      .toEqual({ kind: 'mode', modeId: 'accept-edits' });
+    // A persisted raw approval override resumes under the permission selector.
+    expect(resolveAcpSessionMode({ agentId: 'agy', agentModeId: 'accept-edits', permissionMode: 'read-only', availableModes: agyModes(false) }))
+      .toEqual({ kind: 'mode', modeId: 'default' });
+    expect(resolveAcpSessionMode({ agentId: 'agy', agentModeId: 'auto', permissionMode: 'default', availableModes: agyModes(true) }))
+      .toEqual({ kind: 'provider-policy' });
+    // Legacy permission-mode Plan still means agy Plan.
+    expect(resolveAcpSessionMode({ agentId: 'agy', agentModeId: null, permissionMode: 'plan', availableModes: agyModes(false) }))
+      .toEqual({ kind: 'mode', modeId: 'plan' });
+  });
+
+  it('splits every agent with a permission mapping: its approval levels are never agent modes', () => {
+    const undeclared = Object.values(BUILT_IN_ACP_CONFIG)
+      .filter((config) => config?.permissionModeMapping && config.agentModeIds === undefined)
+      .map((config) => config?.agentId);
+    expect(undeclared).toEqual([]);
+  });
+
+  it('keeps CodeBuddy Plan as its agent mode and resolves persisted approval presets through the permission selector', () => {
+    const codebuddyModes = ['default', 'acceptEdits', 'plan', 'auto', 'dontAsk', 'bypassPermissions'].map((id) => ({ id }));
+    expect(resolveAcpAgentModeId('codebuddy', 'plan')).toBe('plan');
+    expect(resolveAcpSessionMode({ agentId: 'codebuddy', agentModeId: 'acceptEdits', permissionMode: 'yolo', availableModes: codebuddyModes }))
+      .toEqual({ kind: 'mode', modeId: 'bypassPermissions' });
+    expect(resolveAcpSessionMode({ agentId: 'codebuddy', agentModeId: 'auto', permissionMode: 'read-only', availableModes: codebuddyModes }))
+      .toEqual({ kind: 'mode', modeId: 'dontAsk' });
+  });
+
+  it('treats every Devin and FX mode as an approval level reached through the permission selector', () => {
+    for (const devinMode of ['normal', 'accept-edits', 'dangerous']) expect(resolveAcpAgentModeId('devin', devinMode)).toBeNull();
+    for (const fxMode of ['ask', 'auto', 'code', 'full-access']) expect(resolveAcpAgentModeId('fx', fxMode)).toBeNull();
+    expect(resolveAcpSessionMode({ agentId: 'devin', agentModeId: 'dangerous', permissionMode: 'read-only', availableModes: [{ id: 'normal' }] }))
+      .toEqual({ kind: 'mode', modeId: 'normal' });
+    // FX full access stays reachable as Happier YOLO; automatic review never falls back to it.
+    const fxModes = [{ id: 'auto' }, { id: 'ask' }, { id: 'full-access' }];
+    expect(resolveAcpSessionMode({ agentId: 'fx', agentModeId: 'auto', permissionMode: 'yolo', availableModes: fxModes }))
+      .toEqual({ kind: 'mode', modeId: 'full-access' });
+    expect(resolveAcpSessionMode({ agentId: 'fx', agentModeId: null, permissionMode: 'safe-yolo', availableModes: [{ id: 'ask' }, { id: 'full-access' }] }))
+      .toEqual({ kind: 'unavailable' });
+  });});

@@ -27,6 +27,8 @@ const boundary = vi.hoisted(() => ({
     completeConnection: null as null | (() => void),
     listener: null as null | ((response: unknown) => void),
     lastResponse: null as unknown,
+    presented: vi.fn<() => Promise<unknown[]>>(),
+    dismiss: vi.fn<(id: string) => Promise<void>>(),
     nativeListeners: new Map<string, (event: unknown) => void>(),
     nativePending: vi.fn<() => Promise<unknown[]>>(),
     nativeClaim: vi.fn<(deliveryId: string) => Promise<boolean>>(),
@@ -59,6 +61,8 @@ vi.mock('expo-notifications', () => ({
     DEFAULT_ACTION_IDENTIFIER: 'expo.modules.notifications.actions.DEFAULT',
     getLastNotificationResponseAsync: async () => boundary.lastResponse,
     clearLastNotificationResponseAsync: async () => { boundary.lastResponse = null; },
+    getPresentedNotificationsAsync: () => boundary.presented(),
+    dismissNotificationAsync: (id: string) => boundary.dismiss(id),
     addNotificationResponseReceivedListener: (listener: (response: unknown) => void) => {
         boundary.listener = listener;
         return { remove: () => { boundary.listener = null; } };
@@ -132,6 +136,8 @@ describe('Native notification permission entry points', () => {
         boundary.connect.mockClear();
         boundary.completeConnection = null;
         boundary.lastResponse = null;
+        boundary.presented.mockReset().mockResolvedValue([]);
+        boundary.dismiss.mockReset().mockResolvedValue(undefined);
         boundary.nativeListeners.clear();
         boundary.nativePending.mockReset().mockResolvedValue([]);
         boundary.nativeClaim.mockReset().mockResolvedValue(true);
@@ -168,6 +174,42 @@ describe('Native notification permission entry points', () => {
         vi.unstubAllGlobals();
         vi.unstubAllEnvs();
         vi.restoreAllMocks();
+    });
+
+    it.each(['permission', 'question'] as const)('dismisses the confirmed background %s notification without loaded session state and preserves a newer occurrence', async (kind) => {
+        const current = response(kind === 'permission' ? PUSH_NOTIFICATION_ACTION_IDS.permissionAllowV1 : PUSH_NOTIFICATION_ACTION_IDS.questionChoice1V1);
+        const data = { ...current.notification.request.content.data, accountId: 'account', kind: kind === 'permission' ? 'permission' : 'user_action',
+            ...(kind === 'question' ? { questionAnswerV1: { kind: 'choices', questionKey: 'Which?', values: ['main'] } } : {}) };
+        const pressed = { ...current, notification: { request: { ...current.notification.request, content: { data: { ...data, accountId: kind === 'permission' ? undefined : data.accountId } } } } };
+        boundary.presented.mockResolvedValue([
+            { request: { identifier: 'settled-copy', content: { data } } },
+            { request: { identifier: current.notification.request.identifier, content: { data: { ...data, occurrenceId: 'newer-occurrence' } } } },
+            { request: { identifier: 'foreign', content: { data: { ...data, accountId: 'another-account' } } } },
+        ]);
+        const { storage } = await import('@/sync/domains/state/storage');
+        storage.setState({ sessions: {} });
+        let acknowledge!: (result: unknown) => void;
+        boundary.rpc.mockImplementationOnce(() => new Promise((resolve) => { acknowledge = resolve; }));
+        const execution = handleNotificationBackgroundTask({ data: pressed });
+        await vi.waitFor(() => expect(boundary.rpc).toHaveBeenCalledTimes(1));
+        expect(boundary.dismiss).not.toHaveBeenCalled();
+        acknowledge({ ok: true, result: { ok: true } });
+        await expect(execution).resolves.toMatchObject({ status: 'confirmed' });
+        expect(boundary.dismiss.mock.calls.map(([id]) => id)).toEqual(['settled-copy']);
+        boundary.dismiss.mockClear();
+        boundary.dismiss.mockRejectedValueOnce(new Error('native cleanup unavailable'));
+        await expect(executeNotificationPermissionAction(parsed(pressed))).resolves.toMatchObject({ status: 'confirmed' });
+        expect(boundary.rpc).toHaveBeenCalledTimes(1);
+    });
+
+    it('retains a notification when its permission action is rejected by the agent', async () => {
+        const current = response();
+        const data = { ...current.notification.request.content.data, accountId: 'account', kind: 'permission' };
+        const pressed = { ...current, notification: { request: { ...current.notification.request, content: { data } } } };
+        boundary.presented.mockResolvedValue([pressed.notification]);
+        boundary.rpc.mockResolvedValue({ ok: true, result: { ok: false, errorCode: 'permission_request_expired' } });
+        await expect(handleNotificationBackgroundTask({ data: pressed })).resolves.toMatchObject({ status: 'rejected' });
+        expect(boundary.dismiss).not.toHaveBeenCalled();
     });
 
     it('executes a foreground press even with task registration and coalesces the task race', async () => {
@@ -799,6 +841,19 @@ describe('Native notification permission entry points', () => {
         } finally { await hook.unmount(); }
     });
 
+    it('keeps live taps and permission actions working after restoring pending navigation', async () => {
+        const { setPendingNotificationNav, clearPendingNotificationNav } = await import('@/sync/domains/pending/pendingNotificationNav');
+        setPendingNotificationNav({ serverUrl, route: '/session/previous', accountId: 'account' });
+        const hook = await renderHook(() => useNotificationResponseRouting({ enabled: true, refreshAuth: async () => {} }));
+        try {
+            await vi.waitFor(() => expect(boundary.push).toHaveBeenCalledWith('/session/previous'));
+            await act(async () => { boundary.listener?.(response('expo.modules.notifications.actions.DEFAULT')); });
+            expectSessionNavigationToServer(profiles.getActiveServerSnapshot().serverId);
+            await act(async () => { boundary.listener?.(response()); });
+            await vi.waitFor(() => expect(boundary.rpc).toHaveBeenCalledTimes(1));
+        } finally { await hook.unmount(); clearPendingNotificationNav(); }
+    });
+
     it('navigates to the session for a saved cold-start response without executing it', async () => {
         boundary.lastResponse = response();
         const hook = await renderHook(() => useNotificationResponseRouting({ enabled: true, refreshAuth: async () => {} }));
@@ -946,6 +1001,8 @@ describe('Native notification permission entry points', () => {
         Platform.OS = 'ios';
         const { setPendingNotificationAction, getPendingNotificationAction } = await import('@/sync/domains/pending/pendingNotificationAction');
         setPendingNotificationAction({ serverUrl, sessionId: 'session', requestId: 'request', action: 'allow' });
+        const { setPendingNotificationNav, clearPendingNotificationNav } = await import('@/sync/domains/pending/pendingNotificationNav');
+        setPendingNotificationNav({ serverUrl, route: '/session/other-saved-session' });
         boundary.navigate.mockImplementationOnce(() => { throw new Error('navigation unavailable'); });
         const error = vi.spyOn(console, 'error').mockImplementation(() => {});
         const hook = await renderHook(() => useNotificationResponseRouting({ enabled: true, refreshAuth: async () => {} }));
@@ -953,6 +1010,9 @@ describe('Native notification permission entry points', () => {
             await flushHookEffects();
             expectSessionNavigationToServer(profiles.getActiveServerSnapshot().serverId);
             expect(error).toHaveBeenCalled();
+            expect(boundary.push).not.toHaveBeenCalledWith('/session/other-saved-session');
+            expect(boundary.listener).toEqual(expect.any(Function));
+            clearPendingNotificationNav();
             expect(getPendingNotificationAction()).toBeNull();
             expect(boundary.rpc).not.toHaveBeenCalled();
         } finally { await hook.unmount(); }

@@ -37,7 +37,7 @@ describe('buildDataKeyCredentialsForToken', () => {
         featureStatus = 200;
         runtimeFetchMock.mockReset();
         runtimeFetchMock.mockImplementation(async (input: RequestInfo | URL) => {
-            if (String(input).endsWith('/v1/features')) {
+            if (String(input).split('?')[0]?.endsWith('/v1/features')) {
                 const base = createRootLayoutFeaturesResponse();
                 return jsonResponse({
                     ...base,

@@ -151,6 +151,7 @@ export function CustomModal({ config, onClose, showBackdrop = true, visible, zIn
                     titleTestID={chrome.titleTestID}
                     subtitleTestID={chrome.subtitleTestID}
                     closeButtonTestID={chrome.closeButtonTestID}
+                    header={chrome.header ?? 'bar'}
                     layout={chrome.layout ?? 'fit'}
                     bodyScroll={chrome.bodyScroll ?? 'none'}
                     dimensions={chrome.dimensions}

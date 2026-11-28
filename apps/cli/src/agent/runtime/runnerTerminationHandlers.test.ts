@@ -5,12 +5,13 @@ import { tmpdir } from 'node:os';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { fatalSpy } = vi.hoisted(() => ({
+const { fatalSpy, warnSpy } = vi.hoisted(() => ({
   fatalSpy: vi.fn(),
+  warnSpy: vi.fn(),
 }));
 
 vi.mock('@/ui/logger', () => ({
-  logger: { fatal: fatalSpy },
+  logger: { fatal: fatalSpy, warnFile: warnSpy },
 }));
 
 vi.mock('../../configuration', () => ({
@@ -28,6 +29,7 @@ function createFakeProcess() {
 describe('registerRunnerTerminationHandlers', () => {
   beforeEach(() => {
     fatalSpy.mockClear();
+    warnSpy.mockClear();
   });
 
   it('closes runtime input admission synchronously before asynchronous termination cleanup starts', async () => {
@@ -76,6 +78,11 @@ describe('registerRunnerTerminationHandlers', () => {
       await vi.advanceTimersByTimeAsync(300);
 
       expect(exit).toHaveBeenCalledWith(0);
+      // Cutting cleanup short skips transcript drain and backend disposal; it must be visible.
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('termination cleanup exceeded'),
+        expect.objectContaining({ timeoutMs: 250, terminationKind: 'signal' }),
+      );
       await expect(handlers.whenTerminated).resolves.toEqual(
         expect.objectContaining({
           event: expect.objectContaining({ kind: 'signal', signal: 'SIGTERM' }),

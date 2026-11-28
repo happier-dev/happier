@@ -41,6 +41,8 @@ const VIEWPORT_HEIGHT = 500;
 
 const resizeObservers = new Set<ResizeObserverRecord>();
 let footerMeasurementsEnabled = true;
+let hiddenRowMeasurements = 0;
+let measuredRowHeight = ROW_HEIGHT;
 const FOOTER_TEST_ID = 'legend-visibility-footer';
 
 const DATA: readonly Row[] = Array.from({ length: ROW_COUNT }, (_value, index) => ({
@@ -67,6 +69,10 @@ function rect(width: number, height: number): DOMRectReadOnly {
 
 function measuredRect(element: Element): DOMRectReadOnly {
     const htmlElement = element as HTMLElement;
+    if (htmlElement.closest(`#${HOST_ID}[style*="display: none"]`)) {
+        if (htmlElement.querySelector(`[data-testid^="${ROW_TESTID_PREFIX}"]`)) hiddenRowMeasurements += 1;
+        return rect(0, 0);
+    }
     if (htmlElement.id === HOST_ID) return rect(800, VIEWPORT_HEIGHT);
     if (htmlElement.style.overflowY === 'auto' || htmlElement.style.overflow === 'auto') {
         return rect(800, VIEWPORT_HEIGHT);
@@ -77,7 +83,7 @@ function measuredRect(element: Element): DOMRectReadOnly {
         return rect(800, Number.parseFloat(footer.style.height || '0') || 0);
     }
     if (htmlElement.querySelector<HTMLElement>(`[data-testid^="${ROW_TESTID_PREFIX}"]`)) {
-        return rect(800, ROW_HEIGHT);
+        return rect(800, measuredRowHeight);
     }
     return rect(800, Number.parseFloat(htmlElement.style.height || '0') || 0);
 }
@@ -130,6 +136,8 @@ describe('Legend web row visibility contract', () => {
         vi.useFakeTimers();
         resizeObservers.clear();
         footerMeasurementsEnabled = true;
+        hiddenRowMeasurements = 0;
+        measuredRowHeight = ROW_HEIGHT;
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         container = document.createElement('div');
         container.style.height = `${VIEWPORT_HEIGHT}px`;
@@ -285,6 +293,89 @@ describe('Legend web row visibility contract', () => {
         expect(settled.loaded).toBe(true);
         expect(settled.rows).toBeGreaterThan(0);
         expect(settled.opacity).toBe(1);
+    });
+
+    it('preserves measured row geometry when a retained list updates while hidden', async () => {
+        const rows = Array.from({ length: 800 }, (_value, index) => ({ id: `row-${index}` }));
+        const onItemSizeChanged = vi.fn<(event: { size: number }) => void>();
+        const renderList = (hidden: boolean, data: readonly Row[]) => (
+            <div id={HOST_ID} style={{ display: hidden ? 'none' : 'block', height: VIEWPORT_HEIGHT }}>
+                <LegendList
+                    data={data}
+                    estimatedItemSize={ROW_HEIGHT}
+                    keyExtractor={keyExtractor}
+                    onItemSizeChanged={onItemSizeChanged}
+                    recycleItems={false}
+                    renderItem={renderRow}
+                />
+            </div>
+        );
+        await act(async () => root.render(renderList(false, rows)));
+        await act(async () => {
+            flushResizeObservers();
+            await vi.advanceTimersByTimeAsync(16);
+        });
+        expect(readRowContainerOpacity()).toBe(1);
+        const mountedBeforeHiding = countMountedRows();
+        expect(mountedBeforeHiding).toBeGreaterThan(0);
+        const newRows = [...rows.map(row => ({ ...row })), { id: 'new-row' }];
+        onItemSizeChanged.mockClear();
+
+        await act(async () => root.render(renderList(true, newRows)));
+
+        expect(hiddenRowMeasurements).toBeGreaterThan(0);
+        expect(onItemSizeChanged.mock.calls.map(([event]) => event.size)).not.toContain(0);
+        expect(countMountedRows()).toBe(mountedBeforeHiding);
+
+        await act(async () => root.render(renderList(false, newRows)));
+        await act(async () => {
+            flushResizeObservers();
+            await vi.advanceTimersByTimeAsync(16);
+        });
+        expect(readRowContainerOpacity()).toBe(1);
+        expect(countMountedRows()).toBe(mountedBeforeHiding);
+    });
+
+    it('discards a pending row shrink when the list becomes hidden before confirmation', async () => {
+        const onItemSizeChanged = vi.fn<(event: { size: number }) => void>();
+        await act(async () => root.render(
+            <div id={HOST_ID} style={{ height: VIEWPORT_HEIGHT }}>
+                <LegendList
+                    data={DATA}
+                    estimatedItemSize={ROW_HEIGHT}
+                    keyExtractor={keyExtractor}
+                    onItemSizeChanged={onItemSizeChanged}
+                    recycleItems={false}
+                    renderItem={renderRow}
+                />
+            </div>,
+        ));
+        await act(async () => {
+            flushResizeObservers();
+            await vi.advanceTimersByTimeAsync(16);
+        });
+        expect(readRowContainerOpacity()).toBe(1);
+        const host = document.getElementById(HOST_ID);
+        if (!host) throw new Error('Expected mounted list');
+        onItemSizeChanged.mockClear();
+        measuredRowHeight = 75;
+
+        await act(async () => {
+            flushResizeObservers();
+            host.style.display = 'none';
+            await vi.advanceTimersByTimeAsync(16);
+        });
+
+        expect(hiddenRowMeasurements).toBeGreaterThan(0);
+        expect(onItemSizeChanged.mock.calls.map(([event]) => event.size)).not.toContain(0);
+        await act(async () => {
+            flushResizeObservers();
+            host.style.display = 'block';
+            flushResizeObservers();
+            await vi.advanceTimersByTimeAsync(16);
+        });
+        expect(onItemSizeChanged.mock.calls.map(([event]) => event.size)).toContain(75);
+        expect(readRowContainerOpacity()).toBe(1);
     });
 
     it('keeps painted rows visible when a one-pixel footer measurement arrives after onLoad', async () => {

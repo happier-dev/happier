@@ -1,6 +1,6 @@
 import { DEFAULT_THEME_PROFILES_LOCAL_STATE, ThemeProfileLibrarySchema, mergeThemeProfileLibraries, resolveThemeProfileSelection } from '@/theme/profiles/themeProfilePersistence';
 import { canUseLegacyThemeProfiles, rememberThemeProfileMigration } from '@/sync/domains/settings/themeProfiles';
-import { tracking } from '@/track';
+import { applyAnalyticsOptOut } from '@/track/analyticsConsent';
 import { HappyError } from '@/utils/errors/errors';
 import { applySettings, settingsDefaults, settingsParse, type Settings } from '@/sync/domains/settings/settings';
 import { summarizeSettings, summarizeSettingsDelta, dbgSettings, isSettingsSyncDebugEnabled } from '@/sync/domains/settings/debugSettings';
@@ -79,6 +79,17 @@ export type SyncSettingsParams = {
         pinnedSessionIds: readonly string[];
     }>) => void | Promise<void>;
 };
+
+/**
+ * Applies the consent settings cached for the active account at startup.
+ * Cached defaults on a device that has never read this account's settings are not the
+ * account's choice, so analytics stays off until the first server read applies it.
+ */
+export function applyStartupConsentSettings(): void {
+    const { settings, settingsVersion } = storage.getState();
+    if (settingsVersion !== null) applyAnalyticsOptOut(settings.analyticsOptOut);
+    applyCrashReportsOptOut(settings.crashReportsOptOut);
+}
 
 export async function syncSettings(params: SyncSettingsParams): Promise<void> {
     const { credentials, encryption, pendingSettings, clearPendingSettings } = params;
@@ -189,9 +200,7 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
 
     function applyActiveSettingsSideEffects(nextSettings: Settings): void {
         if (!isSettingsScopeActive()) return;
-        if (tracking) {
-            nextSettings.analyticsOptOut ? tracking.optOut() : tracking.optIn();
-        }
+        applyAnalyticsOptOut(nextSettings.analyticsOptOut);
         applyCrashReportsOptOut(nextSettings.crashReportsOptOut);
     }
 
@@ -968,6 +977,10 @@ export function applySettingsLocalDelta(params: {
     }
 
     const nextSettings = applySettings(currentSettings, delta);
+    // Apply an opt-out before emitting, so opting out sends nothing.
+    if ('analyticsOptOut' in delta) {
+        applyAnalyticsOptOut(nextSettings.analyticsOptOut);
+    }
     emitAccountSettingChangedEvents({
         previousSettings: currentSettings,
         nextSettings,
@@ -988,10 +1001,6 @@ export function applySettingsLocalDelta(params: {
         pendingKeys: Object.keys(nextPending).sort(),
     });
 
-    // Sync PostHog opt-out state if it was changed
-    if (tracking && 'analyticsOptOut' in delta) {
-        nextSettings.analyticsOptOut ? tracking.optOut() : tracking.optIn();
-    }
     if ('crashReportsOptOut' in delta) {
         applyCrashReportsOptOut(nextSettings.crashReportsOptOut);
     }

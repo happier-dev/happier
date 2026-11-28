@@ -95,6 +95,35 @@ export const ACTION_IDS = [
   // Action approvals (approval queue)
   'approval.request.create',
   'approval.request.decide',
+
+  // Plans & Supporter (ids identical on 0.3)
+  'account.plan.get',
+  'billing.checkout.open',
+  'billing.manage.open',
+  'billing.restore',
+  'billing.refresh',
+  'supporter.code.apply',
+  'supporter.profile.get',
+  'supporter.profile.update',
+  'supporter.credits.list',
+  'supporter.ring.set',
+  'supporter.discord.link',
+  'supporter.github.link',
+  'supporter.ask.close',
+  'github.star.status',
+  'github.star',
+  'app.icon.list',
+  'app.icon.set',
+  'session.organization.pin.set',
+  'session.retention.leaving.list',
+  'session.retention.leaving.dismiss',
+  'session.retention.summary.get',
+  'session.export',
+  'machines.localHistory.status.get',
+  'machines.localHistory.due.list',
+  'machines.localHistory.retention.set',
+  'machines.localHistory.keep',
+  'machines.localHistory.letGo',
 ] as const;
 
 export const ActionIdSchema = lazySchema(() => z.enum(ACTION_IDS));

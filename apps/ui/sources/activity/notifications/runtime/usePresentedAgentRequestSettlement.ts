@@ -3,9 +3,9 @@ import { AppState, Platform } from 'react-native';
 
 import { storage } from '@/sync/domains/state/storage';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
-import { getActiveServerUrl, subscribeActiveServer } from '@/sync/domains/server/serverProfiles';
-import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
+import { subscribeActiveServer } from '@/sync/domains/server/serverProfiles';
 import { loadExpoNotifications } from '@/utils/platform/loadExpoNotifications';
+import { dismissSettledAgentRequestNotifications } from './agentRequestNotificationSettlement';
 
 /** Reconciles OS presentation only; the CLI's completed request remains authoritative. */
 export function usePresentedAgentRequestSettlement(): () => void {
@@ -19,38 +19,19 @@ export function usePresentedAgentRequestSettlement(): () => void {
         let received: { remove(): void } | undefined;
         let presentedSessionIds = new Set<string>();
 
-        const sweep = async () => {
-            const notifications = await loadExpoNotifications();
-            const presented = await notifications.getPresentedNotificationsAsync();
-            if (disposed) return;
-            // Only presented request notices create settlement work. A receipt,
-            // local send, resume, or Account change refreshes this native inventory.
-            presentedSessionIds = new Set(presented.flatMap((notification) => {
-                const data = notification.request.content.data;
-                return data && (data.kind === 'permission' || data.kind === 'user_action')
-                    && typeof data.sessionId === 'string' ? [data.sessionId] : [];
-            }));
-            for (const notification of presented) {
-                if (disposed) return;
-                const data = notification.request.content.data;
-                if (!data || (data.kind !== 'permission' && data.kind !== 'user_action')) continue;
-                const { accountId, serverUrl, sessionId, requestId, occurrenceId } = data;
-                if (typeof accountId !== 'string' || typeof serverUrl !== 'string'
-                    || typeof sessionId !== 'string' || typeof requestId !== 'string'
-                    || typeof occurrenceId !== 'string' || !occurrenceId) continue;
-                // Read after the native await: an Account/Home may have changed
-                // while inventory loaded. Missing or unloaded detail proves nothing.
-                const scope = getActiveServerAccountScope();
-                const serverKey = createServerUrlComparableKey(serverUrl);
-                if (!scope || scope.accountId !== accountId
-                    || !serverKey || serverKey !== createServerUrlComparableKey(getActiveServerUrl())) continue;
-                const agentState = storage.getState().sessions[sessionId]?.agentState;
-                const completed = agentState?.completedRequests?.[requestId];
-                if (!completed || completed.occurrenceId !== occurrenceId) continue;
-                if (agentState?.requests?.[requestId]?.occurrenceId === occurrenceId) continue;
-                await notifications.dismissNotificationAsync(notification.request.identifier);
-            }
-        };
+        const sweep = () => dismissSettledAgentRequestNotifications((notice) => {
+            // Read the active scope and completed state after the native inventory await.
+            const scope = getActiveServerAccountScope();
+            if (disposed || !scope) return null;
+            const { sessionId, requestId, kind } = notice;
+            const agentState = storage.getState().sessions[sessionId]?.agentState;
+            const occurrenceId = agentState?.completedRequests?.[requestId]?.occurrenceId;
+            if (typeof occurrenceId !== 'string' || !occurrenceId
+                || agentState?.requests?.[requestId]?.occurrenceId === occurrenceId) return null;
+            return { ...scope, sessionId, requestId, kind, occurrenceId };
+        }, (sessionIds) => {
+            if (!disposed) presentedSessionIds = sessionIds;
+        });
         const requestSweep = () => {
             dirty = true;
             if (running || disposed) return;

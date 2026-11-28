@@ -71,15 +71,20 @@ describe('Claude pool launch settings', () => {
         })).toThrow('Unable to read Claude launch settings');
     });
 
-    it.each([{ rawDays: 1, sameHome: false, expected: 365 }, { rawDays: 1000, sameHome: false, expected: 1000 }, { rawDays: 1, sameHome: true, expected: 1 }])('respects the actual raw retention choice $rawDays (same home=$sameHome)', ({ rawDays, sameHome, expected }) => {
+    it.each([
+        { rawDays: 1, nativeDays: 365, activeDays: 7, sameHome: false, expected: 365 },
+        { rawDays: 30, nativeDays: 90, activeDays: 365, sameHome: false, expected: 365 },
+        { rawDays: 1000, nativeDays: 365, activeDays: 365, sameHome: false, expected: 1000 },
+        { rawDays: 1, nativeDays: 365, activeDays: 365, sameHome: true, expected: 1 },
+    ])('respects the actual raw retention choice $rawDays (native=$nativeDays, active=$activeDays, same home=$sameHome)', ({ rawDays, nativeDays, activeDays, sameHome, expected }) => {
         const root = mkdtempSync(join(tmpdir(), 'claude-raw-retention-')); roots.push(root);
         const native = join(root, 'native'); const active = sameHome ? native : join(root, 'account');
         mkdirSync(join(native, 'projects'), { recursive: true });
-        writeFileSync(join(native, 'settings.json'), JSON.stringify({ cleanupPeriodDays: 365 }));
+        writeFileSync(join(native, 'settings.json'), JSON.stringify({ cleanupPeriodDays: nativeDays }));
         if (!sameHome) {
             mkdirSync(active);
             symlinkSync(join(native, 'projects'), join(active, 'projects'), process.platform === 'win32' ? 'junction' : 'dir');
-            writeFileSync(join(active, 'settings.json'), JSON.stringify({ cleanupPeriodDays: 365 }));
+            writeFileSync(join(active, 'settings.json'), JSON.stringify({ cleanupPeriodDays: activeDays }));
         }
         const args = ['--settings', JSON.stringify({ cleanupPeriodDays: rawDays })];
         const overlay = resolveClaudeLaunchSettingsOverlayArg({ args, settingsPath: undefined, launchSettings: {},

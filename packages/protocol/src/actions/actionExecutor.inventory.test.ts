@@ -1105,7 +1105,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
     const deps = createDeps();
     const executor = createActionExecutor(deps);
 
-    const res = await executor.execute('action.spec.search', { query: '', limit: 50 }, { surface: 'mcp' });
+    const res = await executor.execute('action.spec.search', { query: '', limit: 100 }, { surface: 'mcp' });
     expect(res.ok).toBe(true);
     expect((res as any).result.actionSpecs.some((spec: any) => spec.id === 'session.mode.set')).toBe(true);
     expect((res as any).result.actionSpecs.some((spec: any) => spec.id === 'ui.voice_global.reset')).toBe(false);
