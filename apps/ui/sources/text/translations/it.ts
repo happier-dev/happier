@@ -6260,6 +6260,7 @@ export const it: TranslationStructure = {
           sourceNotIdle: ({ agent }: { agent: string }) => `${agent} sta ancora lavorando. Non è stato inviato nulla: riprova quando ha finito.`,
           sourceStopFailed: ({ agent }: { agent: string }) => `Non è stato possibile arrestare ${agent}, quindi non è cambiato nulla. Non è stato inviato nulla.`,
           connectedAccountUnsupported: ({ agent }: { agent: string }) => `Questo account non può essere usato con ${agent}. Non è stato inviato nulla: scegli un altro account e riprova.`,
+          connectedAccountMissing: ({ account }: { account: string }) => `L’account selezionato «${account}» non esiste più. Il cambio non è iniziato e la sessione corrente è invariata. Scegli un altro account e riprova.`,
         },
         conflictingDestination: ({ agent }: { agent: string }) => `Non è stato inviato nulla. Questo messaggio ha già un’altra destinazione, quindi non può anche passare questa sessione a ${agent}. Rimuovine uno dei due e invia di nuovo.`,
         sourceStopped: ({ source, agent }: { source: string; agent: string }) => `${source} si è arrestato, ma il passaggio a ${agent} non è stato completato. Il messaggio non è stato inviato.`,

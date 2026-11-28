@@ -5726,6 +5726,7 @@ export const zhHans: TranslationStructure = {
           sourceNotIdle: ({ agent }: { agent: string }) => `${agent} 仍在工作。尚未发送任何内容，请在它完成后重试。`,
           sourceStopFailed: ({ agent }: { agent: string }) => `无法停止 ${agent}，因此没有任何变化。尚未发送任何内容。`,
           connectedAccountUnsupported: ({ agent }: { agent: string }) => `该账户无法用于 ${agent}。尚未发送任何内容——请选择其他账户后重试。`,
+          connectedAccountMissing: ({ account }: { account: string }) => `所选账户“${account}”已不存在。切换未开始，当前会话保持不变。请选择其他账户后重试。`,
         },
         conflictingDestination: ({ agent }: { agent: string }) => `尚未发送任何内容。这条消息已经有另一个目标，因此不能同时把此会话切换到 ${agent}。请去掉其中之一后重新发送。`,
         sourceStopped: ({ source, agent }: { source: string; agent: string }) => `${source} 已停止，但切换到 ${agent} 未完成。你的消息未发送。`,

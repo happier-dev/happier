@@ -326,7 +326,7 @@ export type InSessionAgentPickerControls = Readonly<{
     clearArmedContinuationSubmissionIfCurrent: (
         submission: SessionArmedAgentContinuationSubmission,
         armDisposition?: 'clear' | 'keep',
-    ) => boolean;
+    ) => void;
     /** Captures the exact canonical user-message request before transition dispatch. */
     recordArmedContinuationSubmission: (submission: SessionArmedAgentContinuationSubmission) => boolean;
     /**
@@ -627,13 +627,11 @@ export function useInSessionAgentPickerControls(
     const clearArmedContinuationSubmissionIfCurrent = React.useCallback((
         expected: SessionArmedAgentContinuationSubmission,
         armDisposition: 'clear' | 'keep' = 'clear',
-    ): boolean => {
+    ): void => {
         const persisted = draftSessionId === null
             ? undefined
             : readPersistedArmedContinuation(accountScope, draftSessionId);
         const persistedMatches = persisted?.submission?.localId === expected.localId;
-        const liveMatches = armed?.submission?.localId === expected.localId;
-        if (!persistedMatches && !liveMatches) return false;
         const settle = (current: ArmedAgentContinuation): ArmedAgentContinuation | null => {
             if (armDisposition === 'clear') return null;
             const { submission: _submission, ...choice } = current;
@@ -645,8 +643,7 @@ export function useInSessionAgentPickerControls(
             else clearPersistedArmedContinuation(accountScope, draftSessionId);
         }
         setArmed((current) => current?.submission?.localId === expected.localId ? settle(current) : current);
-        return true;
-    }, [accountScope, armed?.submission?.localId, draftSessionId]);
+    }, [accountScope, draftSessionId]);
 
     // The submission identity for the armed choice, derived from the choice
     // itself rather than minted at whichever affordance established it.

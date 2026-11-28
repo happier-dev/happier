@@ -248,6 +248,20 @@ describe('resolveArmedAgentContinuationDisposition', () => {
         }));
     });
 
+    it('identifies the missing account and says the switch did not start', () => {
+        const disposition = resolveArmedAgentContinuationDisposition({
+            type: 'rejected', code: 'connected_account_unavailable', sourceEffect: 'none',
+            connectedServiceDiagnostic: { code: 'connected_service_profile_missing', failurePhase: 'materialization',
+                serviceId: 'openai-codex', profileId: 'work-profile', source: 'spawn_resume',
+                retryable: false, suggestedActions: [] },
+        }, LABELS);
+        expect(disposition).toMatchObject({ draft: 'preserve', arm: 'keep', send: 'allow' });
+        expect(disposition.notice?.message).toContain('work-profile');
+        expect(disposition.notice?.message).toBe(t('session.agentContinuation.transition.rejected.connectedAccountMissing', {
+            account: 'work-profile',
+        }));
+    });
+
     it('says nothing at all when the switch completed and the message landed', () => {
         expect(resolveArmedAgentContinuationDisposition({ type: 'accepted', localId: 'local-1' }, LABELS)).toEqual({
             draft: 'clear',

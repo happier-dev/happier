@@ -1,6 +1,7 @@
 import { resolveConnectedServiceUxDiagnosticPresentation, translateConnectedServiceUxDiagnosticBody } from '@/components/sessions/connectedServices/diagnostics/connectedServiceUxDiagnostics';
 import {
     buildBackendTargetKey,
+    CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES,
     type BackendTargetRefV1,
     type ComposerAgentContinuationIntentV1,
     type SessionAgentTransitionInputV1,
@@ -418,11 +419,17 @@ export function reconcileArmedAgentContinuationDisposition(params: Readonly<{
                 awaitingRuntime: resolveAwaitingRuntime(result, facts),
             });
         case 'rejected': {
-            const diagnostic = resolveConnectedServiceUxDiagnosticPresentation(result.connectedServiceDiagnostic);
+            const diagnostic = result.connectedServiceDiagnostic;
+            const presentation = resolveConnectedServiceUxDiagnosticPresentation(diagnostic);
+            const message = diagnostic?.code === CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceProfileMissing
+                && diagnostic.profileId
+                ? t('session.agentContinuation.transition.rejected.connectedAccountMissing', { account: diagnostic.profileId })
+                : presentation
+                    ? translateConnectedServiceUxDiagnosticBody({ presentation, translate: t })
+                    : resolveRejectedMessage(result.code, labels);
             return buildDisposition({
                 depth: 'no_effect',
-                message: diagnostic ? translateConnectedServiceUxDiagnosticBody({ presentation: diagnostic, translate: t })
-                    : resolveRejectedMessage(result.code, labels),
+                message,
                 // A Session that already runs the armed Agent makes the armed row
                 // a promise about a switch that cannot happen.
                 armSpent: result.code === 'same_target',

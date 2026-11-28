@@ -6,6 +6,7 @@ import { resolveServerHttpBaseUrl } from '@/session/transport/http/serverHttpBas
 
 import {
   buildConnectedServiceCredentialRecord,
+  ConnectedServiceAuthGroupPolicyV1Schema,
   type ConnectedServiceId,
   FeaturesResponseSchema,
   SessionStopOutcomeSchema,
@@ -978,6 +979,54 @@ describe('runSessionAgentTransition', () => {
             profiles.mockRestore();
             read.mockRestore();
           }
+        });
+
+        it('recovers a selected group through launch policy before stopping the source', async () => {
+          primeHappyPath(sourceMetadata({ ...SOURCE_BOUND }));
+          const serviceId = 'openai-codex' as const;
+          const groupId = 'happier';
+          const api = await ApiClient.create(credentials);
+          let activeProfileId = 'expired';
+          const getGroup = async () => ({
+            v: 1 as const, serviceId, groupId, activeProfileId, displayName: null, runtimeStateRevision: 0,
+            generation: activeProfileId === 'expired' ? 1 : 2,
+            policy: ConnectedServiceAuthGroupPolicyV1Schema.parse({}),
+            state: { v: 1 as const },
+            members: ['expired', 'healthy'].map((profileId) => ({
+              v: 1 as const, serviceId, groupId, profileId, enabled: true, priority: 1,
+              state: { v: 1 as const }, createdAt: 1, updatedAt: 1,
+            })),
+            createdAt: 1, updatedAt: 1,
+          });
+          vi.spyOn(api, 'getConnectedServiceAuthGroup').mockImplementation(getGroup);
+          vi.spyOn(api, 'getAccountEncryptionMode').mockResolvedValue('plain');
+          vi.spyOn(api, 'getConnectedServiceCredentialPlain').mockImplementation(async ({ profileId }) => ({
+            revisionSemantics: 'legacy_unfenced', credentialRevision: null,
+            content: { t: 'plain', v: buildConnectedServiceCredentialRecord({
+              now: 0, serviceId, profileId, kind: 'oauth', expiresAt: profileId === 'expired' ? 1 : null,
+              oauth: { accessToken: 'fixture', refreshToken: 'fixture', idToken: null, scope: null,
+                tokenType: 'Bearer', providerAccountId: null, providerEmail: null },
+            }) },
+          }));
+          const result = await runSessionAgentTransition({
+            credentials,
+            request: request({
+              selection: { v: 1, agentId: 'codex', connectedServices: { v: 1, bindingsByServiceId: {
+                [serviceId]: { source: 'connected', selection: 'group', groupId },
+              } } },
+            }),
+            deps: { connectedServiceAdmission: { api, createAuthGroupSwitchCoordinator: () => ({
+              switchBeforeTurn: async () => ({ status: 'no_eligible_member' }),
+              switchAfterClassifiedFailure: async (input: { sessionId?: string }) => {
+                expect(input.sessionId).toBe(SESSION_ID);
+                expect(mocks.requestSessionStop).not.toHaveBeenCalled();
+                activeProfileId = 'healthy';
+                return { status: 'switched', activeProfileId, generation: 2 };
+              },
+            }) } },
+          });
+          expect(result.type).toBe('accepted');
+          expect(activeProfileId).toBe('healthy');
         });
 
         it('honors an explicit native choice even when the account has a connected default', async () => {

@@ -280,6 +280,18 @@ function assertNoBlockingMaterializationDiagnostics(params: Readonly<{
   });
 }
 
+function assertSpawnCredentialHasNotExpired(record: ConnectedServiceCredentialRecordV1, nowMs: number): void {
+  const { expiresAt, serviceId, profileId } = record;
+  if (record.kind !== 'oauth' || typeof expiresAt !== 'number' || !Number.isFinite(expiresAt) || expiresAt > nowMs) return;
+  throw new ConnectedServiceSpawnCredentialRefreshError({
+    kind: 'reconnect_required',
+    diagnostic: {
+      serviceId, profileId, reason: 'spawn_preflight', status: 'refresh_failed',
+      category: 'provider_401', expiresAt, expiryAgeMs: nowMs - expiresAt, refreshWindowMs: 0,
+    },
+  });
+}
+
 async function applySpawnPreflightRefresh(params: Readonly<{
   recordsByServiceId: Map<ConnectedServiceId, ConnectedServiceCredentialRecordV1>;
   credentialRevisionsByServiceId: Map<ConnectedServiceId, ConnectedServiceCredentialRevisionV1 | null>;
@@ -292,21 +304,7 @@ async function applySpawnPreflightRefresh(params: Readonly<{
     const record = params.recordsByServiceId.get(binding.serviceId);
     if (!record || !shouldPreflightRefreshCredential(record)) continue;
     if (!params.refreshService) {
-      if (typeof record.expiresAt === 'number' && Number.isFinite(record.expiresAt) && record.expiresAt <= params.nowMs) {
-        throw new ConnectedServiceSpawnCredentialRefreshError({
-          kind: 'reconnect_required',
-          diagnostic: {
-            serviceId: binding.serviceId,
-            profileId: binding.profileId,
-            reason: 'spawn_preflight',
-            status: 'refresh_failed',
-            category: 'provider_401',
-            expiresAt: record.expiresAt,
-            expiryAgeMs: params.nowMs - record.expiresAt,
-            refreshWindowMs: 0,
-          },
-        });
-      }
+      assertSpawnCredentialHasNotExpired(record, params.nowMs);
       continue;
     }
 
@@ -1082,7 +1080,7 @@ async function materializeAndVerifyConnectedServiceAuthForSpawn(params: Readonly
   existingSessionMetadata?: unknown;
   refreshService: ConnectedServiceSpawnCredentialRefreshService | null;
   forceOauthRefresh: boolean;
-  nowMs: number;
+  nowMs: () => number;
   vendorResumeId: string | null;
   resumeReachabilityRequired: boolean;
   candidatePersistedSessionFile: string | null;
@@ -1094,6 +1092,10 @@ async function materializeAndVerifyConnectedServiceAuthForSpawn(params: Readonly
   materializationRoot: string;
   cleanupMaterializationRoot: () => void;
 }>) | null> {
+  if (!params.refreshService) {
+    const nowMs = params.nowMs();
+    for (const record of params.recordsByServiceId.values()) assertSpawnCredentialHasNotExpired(record, nowMs);
+  }
   const materialized = await materializeConnectedServicesForSpawn({
     agentId: params.agentId,
     materializationPurpose: params.materializationPurpose,
@@ -1111,7 +1113,7 @@ async function materializeAndVerifyConnectedServiceAuthForSpawn(params: Readonly
             profileId,
             ...(params.forceOauthRefresh ? { force: true } : {}),
           });
-          const refreshed = resolveSpawnRefreshOutcome({ result, record, nowMs: params.nowMs });
+          const refreshed = resolveSpawnRefreshOutcome({ result, record, nowMs: params.nowMs() });
           if (!refreshed) return null;
           const revision = ConnectedServiceCredentialRevisionV1Schema.safeParse(result.credentialRevision);
           params.credentialRevisionsByServiceId.set(serviceId, revision.success ? revision.data : null);
@@ -1240,7 +1242,7 @@ export async function admitConnectedServiceAuthForSpawn(params: ConnectedService
       if (!switched) throw error;
     }
   }
-  return { selections, recordsByServiceId, credentialRevisionsByServiceId, groupSelections, nowMs, forceSpawnPreflightOauthRefresh };
+  return { selections, recordsByServiceId, credentialRevisionsByServiceId, groupSelections, forceSpawnPreflightOauthRefresh };
 }
 
 export type ConnectedServiceSpawnAdmission = NonNullable<Awaited<ReturnType<typeof admitConnectedServiceAuthForSpawn>>>;
@@ -1290,7 +1292,8 @@ export async function resolveConnectedServiceAuthForSpawn(params: ConnectedServi
   params.signal?.throwIfAborted();
   const admitted = params.admittedAuth ?? await admitConnectedServiceAuthForSpawn(params);
   if (!admitted) return null;
-  const { selections, recordsByServiceId, credentialRevisionsByServiceId, groupSelections, nowMs, forceSpawnPreflightOauthRefresh } = admitted;
+  const { selections, recordsByServiceId, credentialRevisionsByServiceId, groupSelections, forceSpawnPreflightOauthRefresh } = admitted;
+  const nowMs = params.nowMs ?? Date.now;
   const maxMaterializationAttempts = resolveMaxSpawnMaterializationAttempts(groupSelections);
   for (let attempt = 0; attempt < maxMaterializationAttempts; attempt += 1) {
     const selectionsByServiceId = buildSelectionsByServiceIdForSpawn({
@@ -1357,7 +1360,7 @@ export async function resolveConnectedServiceAuthForSpawn(params: ConnectedServi
         api: params.api,
         ...(params.sessionId ? { sessionId: params.sessionId } : {}),
         authGroupSwitchCoordinator: params.authGroupSwitchCoordinator ?? null,
-        nowMs,
+        nowMs: nowMs(),
       });
       if (!switched) throw error;
     }

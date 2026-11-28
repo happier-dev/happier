@@ -5573,6 +5573,7 @@ deps: {
                     sourceNotIdle: ({ agent }: { agent: string }) => `${agent} encara està treballant. No s’ha enviat res: torna-ho a provar quan acabi.`,
                     sourceStopFailed: ({ agent }: { agent: string }) => `No s’ha pogut aturar ${agent}, així que no ha canviat res. No s’ha enviat res.`,
                     connectedAccountUnsupported: ({ agent }: { agent: string }) => `Aquest compte no es pot fer servir amb ${agent}. No s’ha enviat res: tria un altre compte i torna-ho a provar.`,
+                    connectedAccountMissing: ({ account }: { account: string }) => `El compte «${account}» ja no existeix. El canvi no ha començat i la sessió actual continua igual. Tria un altre compte i torna-ho a provar.`,
                 },
                 conflictingDestination: ({ agent }: { agent: string }) => `No s’ha enviat res. Aquest missatge ja té una altra destinació, així que no pot canviar també aquesta sessió a ${agent}. Treu-ne una de les dues i torna a enviar.`,
                 sourceStopped: ({ source, agent }: { source: string; agent: string }) => `${source} s’ha aturat, però el canvi a ${agent} no s’ha completat. El teu missatge no s’ha enviat.`,

@@ -6466,6 +6466,7 @@ export const ru: TranslationStructure = {
           sourceNotIdle: ({ agent }: { agent: string }) => `${agent} ещё работает. Ничего не отправлено — попробуйте, когда он закончит.`,
           sourceStopFailed: ({ agent }: { agent: string }) => `Не удалось остановить ${agent}, поэтому ничего не изменилось. Ничего не отправлено.`,
           connectedAccountUnsupported: ({ agent }: { agent: string }) => `Этот аккаунт нельзя использовать с ${agent}. Ничего не отправлено — выберите другой аккаунт и попробуйте снова.`,
+          connectedAccountMissing: ({ account }: { account: string }) => `Выбранный аккаунт «${account}» больше не существует. Переключение не началось, текущий сеанс остался без изменений. Выберите другой аккаунт и попробуйте снова.`,
         },
         conflictingDestination: ({ agent }: { agent: string }) => `Ничего не отправлено. У этого сообщения уже есть другой адресат, поэтому оно не может заодно переключить сессию на ${agent}. Уберите одно из двух и отправьте снова.`,
         sourceStopped: ({ source, agent }: { source: string; agent: string }) => `${source} остановлен, но переключение на ${agent} не завершилось. Ваше сообщение не отправлено.`,

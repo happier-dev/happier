@@ -5590,6 +5590,7 @@ export const en = {
                     sourceNotIdle: ({ agent }: { agent: string }) => `${agent} is still working. Nothing was sent — try again once it finishes.`,
                     sourceStopFailed: ({ agent }: { agent: string }) => `${agent} couldn’t be stopped, so nothing changed. Nothing was sent.`,
                     connectedAccountUnsupported: ({ agent }: { agent: string }) => `That account can’t be used with ${agent}. Nothing was sent — choose another account and try again.`,
+                    connectedAccountMissing: ({ account }: { account: string }) => `The selected account “${account}” no longer exists. The switch didn’t start and your current session is unchanged. Choose another account and try again.`,
                 },
                 conflictingDestination: ({ agent }: { agent: string }) => `Nothing was sent. This message already has another destination, so it can’t also switch this Session to ${agent}. Clear one of the two and send again.`,
                 sourceStopped: ({ source, agent }: { source: string; agent: string }) => `${source} stopped, but the switch to ${agent} didn’t complete. Your message wasn’t sent.`,

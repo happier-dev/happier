@@ -88,6 +88,7 @@ const UNSUPPORTED = {
 } as const;
 
 type HookProps = Readonly<{
+    accountScope?: typeof SCOPE | null;
     currentAgentId?: string | null;
     entries?: readonly ResolvedBackendCatalogEntry[];
     featureDecision?: SessionAgentContinuationFeatureDecision;
@@ -100,7 +101,7 @@ let controlsRenderCount = 0;
 async function renderControls(props: HookProps = {}) {
     const hook = await renderHook((hookProps: HookProps) => (controlsRenderCount += 1, useInSessionAgentPickerControls({
         sessionId: 'session-1',
-        accountScope: SCOPE,
+        accountScope: hookProps.accountScope === undefined ? SCOPE : hookProps.accountScope,
         currentAgentId: hookProps.currentAgentId ?? 'claude',
         currentAgentLabel: 'Claude Code',
         currentAgentSessionActive: true,
@@ -515,7 +516,7 @@ describe('useInSessionAgentPickerControls arm draft', () => {
         if (targetMetadataLanded) expect(readTargetOptionIds(hook)).toEqual([]);
 
         await act(async () => {
-            expect(hook.getCurrent().clearArmedContinuationSubmissionIfCurrent(submission)).toBe(true);
+            hook.getCurrent().clearArmedContinuationSubmissionIfCurrent(submission);
         });
         await act(async () => { await Promise.resolve(); });
 
@@ -549,7 +550,7 @@ describe('useInSessionAgentPickerControls arm draft', () => {
         await armTarget(hook, 'agent:gemini');
 
         await act(async () => {
-            expect(hook.getCurrent().clearArmedContinuationSubmissionIfCurrent(submission)).toBe(false);
+            hook.getCurrent().clearArmedContinuationSubmissionIfCurrent(submission);
         });
 
         expect(hook.getCurrent().armedContinuation).toEqual(armedIntentFor('gemini'));
@@ -705,7 +706,7 @@ describe('useInSessionAgentPickerControls arm draft', () => {
                 expect(hook.getCurrent().recordArmedContinuationSubmission(submitted)).toBe(true);
             });
             await act(async () => {
-                expect(hook.getCurrent().clearArmedContinuationSubmissionIfCurrent(submitted, 'keep')).toBe(true);
+                hook.getCurrent().clearArmedContinuationSubmissionIfCurrent(submitted, 'keep');
             });
 
             expect(hook.getCurrent().armedContinuation?.selection.connectedServices).toEqual(CHOSEN);
@@ -715,6 +716,25 @@ describe('useInSessionAgentPickerControls arm draft', () => {
                 hook.getCurrent().setArmedContinuationConnectedServices(next);
             });
             expect(readPersistedArm()?.intent.selection.connectedServices).toEqual(next);
+        });
+
+        it('releases a refused submission from the dispatch render without an Account draft', async () => {
+            const hook = await renderControls({ accountScope: null });
+            await armTarget(hook, 'agent:codex');
+            await act(async () => hook.getCurrent().setArmedContinuationConnectedServices(CHOSEN));
+            const dispatch = hook.getCurrent();
+            const localId = dispatch.armedContinuationLocalId;
+            if (!localId) throw new Error('Expected armed continuation identity');
+            const submitted = {
+                localId,
+                input: { localId, text: 'Try this', meta: {} },
+                currentness: { text: 'Try this', mentions: [], attachmentDraftIds: [] },
+            };
+            await act(async () => { expect(dispatch.recordArmedContinuationSubmission(submitted)).toBe(true); });
+            expect(hook.getCurrent().armedContinuationSubmission?.localId).toBe(localId);
+            await act(async () => { dispatch.clearArmedContinuationSubmissionIfCurrent(submitted, 'keep'); });
+            expect(hook.getCurrent().armedContinuationSubmission).toBeNull();
+            expect(hook.getCurrent().armedContinuation?.selection.connectedServices).toEqual(CHOSEN);
         });
 
         it('restores the chosen account with the arm after a remount', async () => {

@@ -138,7 +138,11 @@ export type SessionAgentTransitionCoordinatorDeps = Readonly<{
   /** This Account's settings, for the shared vendor-resume eligibility gates. */
   readAccountSettings?: () => Record<string, unknown> | null;
   connectedServiceAdmission?: Pick<Parameters<typeof admitConnectedServiceAuthForSpawn>[0],
-    'api' | 'credentialRefreshService' | 'accountUsageStore' | 'runtimeQuotaSnapshots'>;
+    'api' | 'credentialRefreshService' | 'accountUsageStore' | 'runtimeQuotaSnapshots' | 'quotaFreshnessMs'> & Readonly<{
+      createAuthGroupSwitchCoordinator?: (sessionId: string) => NonNullable<
+        Parameters<typeof admitConnectedServiceAuthForSpawn>[0]['authGroupSwitchCoordinator']
+      >;
+    }>;
 }>;
 
 // Result arms are built ONLY through the effect-stage handle threaded down the
@@ -674,6 +678,8 @@ export async function runSessionAgentTransition(params: Readonly<{
     try {
       admittedAuth = await admitConnectedServiceAuthForSpawn({
         ...(params.deps?.connectedServiceAdmission ?? { api: await ApiClient.create(params.credentials) }),
+        authGroupSwitchCoordinator: params.deps?.connectedServiceAdmission?.createAuthGroupSwitchCoordinator?.(request.sessionId),
+        sessionId: request.sessionId,
         agentId: targetAgentId,
         credentials: params.credentials,
         connectedServicesBindingsRaw: targetBinding.connectedServices,
