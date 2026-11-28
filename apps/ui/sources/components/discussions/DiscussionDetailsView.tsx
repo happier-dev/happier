@@ -168,7 +168,9 @@ import { createDiscussionPassageBadge, createDiscussionReplyBadge } from './disc
 import { useDiscussionDraft } from './useDiscussionDraft';
 import { useDiscussionRepository as useRepository, useNewDiscussionCreate } from './useNewDiscussionCreate';
 import { formatDiscussionPresenceLine } from '@/components/discussions/discussionPresenceLine';
-import { DiscussionAgentsPanel, DiscussionParticipantsPanel, DiscussionParticipantsPopover, DiscussionRosterFaces, formatDiscussionRosterLine, ParticipantAgentMark, summarizeDiscussionRoster } from '@/components/discussions/DiscussionParticipantsPopover';
+import { answerPolicyLabel, DiscussionAgentsPanel, DiscussionParticipantsPanel, DiscussionParticipantsPopover, DiscussionRosterFaces, formatDiscussionRosterLine, ParticipantAgentMark, summarizeDiscussionRoster } from '@/components/discussions/DiscussionParticipantsPopover';
+import { DiscussionRoomReplyPolicyV1Schema } from '@happier-dev/protocol/discussions/participants';
+import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { DiscussionInviteButton } from '@/components/discussions/DiscussionInviteSheet';
 import { useDiscussionListRows } from '@/sync/ops/discussions/useDiscussionListRows';
 import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
@@ -454,6 +456,8 @@ function useNewDiscussionPresentation(props: Readonly<{ target: Extract<Discussi
         titleRequired, setTitleRequired, dismissRefusal, submit, retry } = props.create;
     const phone = useSurfaceStateSize() === 'phone';
     const invited = draft.participants;
+    const roomBot = invited.find(participant => participant.kind === 'session' && participant.answerPolicy !== undefined);
+    const roomPolicy = roomBot?.kind === 'session' ? roomBot.answerPolicy : undefined;
     const invitedFaces = React.useMemo(() => ({
         accountIds: [props.scope.accountId, ...invited.flatMap((participant) => participant.kind === 'account' ? [participant.accountId] : [])],
         agents: invited.flatMap((participant) => participant.kind === 'session' ? ['session' as const] : []),
@@ -507,6 +511,13 @@ function useNewDiscussionPresentation(props: Readonly<{ target: Extract<Discussi
             notice={titleRequired ? <Text testID="session-discussion-title-required" accessibilityLiveRegion="polite" style={[styles.fieldHint, styles.newNotice]}>{t('session.collaboration.discussion.titleRequired')}</Text> : undefined}
         />
         ), content: (<View style={[styles.newBody, mutation?.content ? styles.newBodySent : null]}>
+            {roomPolicy && !mutation?.content && props.target.anchor?.kind !== 'doc' ? <SegmentedTabBar
+                testIDPrefix="discussion-room-reply-policy" compact
+                activeTabId={roomPolicy}
+                tabs={DiscussionRoomReplyPolicyV1Schema.options.map(id => ({ id, label: answerPolicyLabel(id) }))}
+                onSelectTab={answerPolicy => draft.setParticipants(invited.map(participant =>
+                    participant.kind === 'session' && participant.answerPolicy ? { ...participant, answerPolicy } : participant))}
+            /> : null}
             {mutation?.content ? <SentMessageRise rises><HappierThreadMessage startsGroup space={theme.space} selectionColors={theme.colors.state.active} style={contentWidth}
                 face={<View testID={`session-discussion-message-face-person-${mutation.messageLocalId ?? mutation.localId}`}><Avatar id={viewerByline.avatar.id} imageUrl={viewerByline.avatar.imageUrl ?? null} size={SPEAKER_FACE_PX} /></View>}
                 attribution={<>

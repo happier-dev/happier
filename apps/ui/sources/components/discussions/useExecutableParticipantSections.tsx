@@ -104,7 +104,7 @@ export function useExecutableParticipantSections(
     seedProfileId?: string | null;
     /** How the viewer's sessions take part here; said once beside the section title, not on every row. */
     sessionsContext: string;
-    onChoose: (selection: ExecutableParticipantSelectionV1) => void;
+    onChoose: (selection: ExecutableParticipantSelectionV1, facts?: Readonly<{ bot: boolean }>) => void;
     /**
      * New Discussion: people of this Home lead the list (chosen with `onChoosePerson`), and only existing
      * Sessions follow — a model is started only once a Discussion exists to start it in.
@@ -201,7 +201,7 @@ export function useExecutableParticipantSections(
         repair: candidate.repair,
         onHighlight: () => onReadinessSessionChange?.(candidate.selection.session.sessionId),
         onPressIn: () => onReadinessSessionChange?.(candidate.selection.session.sessionId),
-        onSelect: () => onChoose(candidate.selection),
+        onSelect: () => onChoose(candidate.selection, { bot: candidate.bot === true }),
       });
     }
     const stateRow = (

@@ -82,7 +82,7 @@ function BotFaceMenu(props: Readonly<{
   const scope = accountLifetime.scope;
   const prepareNewDraft = React.useCallback((draftId: string) => {
     seedDiscussionDraft({ scope, address: { kind: 'newDiscussion', draftId },
-      text: '', mentions: [], participants: [{ kind: 'session', sessionId }] });
+      text: '', mentions: [], participants: [{ kind: 'session', sessionId, answerPolicy: 'when_mentioned' }] });
   }, [scope, sessionId]);
   const { openNewDiscussion } = useOpenDiscussion({ address: scope,
     anchor: { kind: 'session', sessionId }, sourceSurface: 'collaboration', prepareNewDraft });
@@ -92,7 +92,7 @@ function BotFaceMenu(props: Readonly<{
     onOpenChange={props.onOpenChange}
     items={[
       { id: 'change-face', title: t('bots.face.change') },
-      { id: 'new-discussion', title: t('session.collaboration.discussion.newDiscussion') },
+      { id: 'new-discussion', title: t('botTemplates.newGroup') },
     ]}
     matchTriggerWidth={false}
     onSelect={(id) => {

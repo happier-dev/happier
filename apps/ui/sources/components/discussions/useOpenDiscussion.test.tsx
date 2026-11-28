@@ -112,7 +112,7 @@ describe('open Discussion', () => {
         const draftId = new URL(route.push.mock.lastCall![0], 'https://happier.test').searchParams.get('draftId')!;
         const draft = await renderHook(() => useDiscussionDraft({ scope, address: { kind: 'newDiscussion', draftId } }),
             { wrapper: runtime.Wrapper });
-        expect(draft.getCurrent().participants).toEqual([participant]);
+        expect(draft.getCurrent().participants).toEqual([{ ...participant, answerPolicy: 'when_mentioned' }]);
         expect(draft.getCurrent().recipients).toEqual([]);
         expect(draft.getCurrent().text).toBe('');
     });

@@ -6,6 +6,7 @@ import { canonicalSessionDraftAddressV2, DiscussionDraftDocumentV2Schema, type D
 import type { DocPassageRefV1 } from '@happier-dev/protocol/artifacts/artifactCollaborationV1';
 import type { DiscussionMessageContentV1 } from '@happier-dev/protocol/discussions/content';
 import type { DiscussionParticipantRefV1 } from '@happier-dev/protocol/discussions/references';
+import type { DiscussionInitialParticipantV1 } from '@happier-dev/protocol/discussions/participants';
 import type { DiscussionReplyTargetV1 } from '@happier-dev/protocol/discussions/replyTargets';
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -61,8 +62,8 @@ export type DiscussionDraft = DiscussionComposerValue & Readonly<{
     replyTarget: DiscussionReplyTargetV1 | null;
     setReplyTarget(replyTarget: DiscussionReplyTargetV1 | null): void;
     /** New Discussion only: the people and agents invited at create (never who a message addresses). */
-    participants: readonly DiscussionParticipantRefV1[];
-    setParticipants(participants: readonly DiscussionParticipantRefV1[]): void;
+    participants: readonly DiscussionInitialParticipantV1[];
+    setParticipants(participants: readonly DiscussionInitialParticipantV1[]): void;
     passage: DocPassageRefV1 | null;
     submitted: DiscussionDraftSubmittedContentV2 | null;
     setPassage(passage: DocPassageRefV1 | null): void;
@@ -116,7 +117,7 @@ function readDiscussionDraftFields(
     recipientsMutationId?: string;
     replyTarget: DiscussionReplyTargetV1 | null;
     replyTargetMutationId?: string;
-    participants: readonly DiscussionParticipantRefV1[];
+    participants: readonly DiscussionInitialParticipantV1[];
     participantsMutationId?: string;
     passage: DocPassageRefV1 | null;
     submitted: DiscussionDraftSubmittedContentV2 | null;
@@ -196,7 +197,7 @@ export function seedDiscussionDraft(input: DiscussionComposerValue & Readonly<{
     scope: ServerAccountScope;
     address?: DiscussionDraftAddress;
     title?: string;
-    participants?: readonly DiscussionParticipantRefV1[];
+    participants?: readonly DiscussionInitialParticipantV1[];
     replyTarget?: Extract<DiscussionReplyTargetV1, { kind: 'message' }>;
 }>): boolean {
     const address: DiscussionDraftAddress = input.address ?? { kind: 'newDiscussion' };
@@ -286,7 +287,7 @@ export function useDiscussionDraft(params: Readonly<{
     const setReplyTarget = React.useCallback((value: DiscussionReplyTargetV1 | null) => {
         writeDiscussionSessionDraft({ scope, address, patch: { replyTarget: value } });
     }, [address, scope]);
-    const setParticipants = React.useCallback((value: readonly DiscussionParticipantRefV1[]) => {
+    const setParticipants = React.useCallback((value: readonly DiscussionInitialParticipantV1[]) => {
         if (address.kind !== 'newDiscussion') {
             throw new Error('An existing discussion invites through the participant Action');
         }

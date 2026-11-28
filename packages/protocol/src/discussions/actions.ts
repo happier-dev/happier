@@ -37,6 +37,7 @@ import {
 } from './models.js';
 import {
   DiscussionInitialParticipantsV1Schema,
+  DiscussionInitialSessionParticipantV1Schema,
   DiscussionInviteRequestV1Schema,
   DiscussionOwnerTransferRequestV1Schema,
   DiscussionParticipantRouteParamsV1Schema,
@@ -157,7 +158,9 @@ export const DiscussionCreateInputV1Schema = lazyZodSchema(() => z.strictObject(
   attachmentSources: z.optional(DiscussionAttachmentSourcesV1Schema),
   title: DiscussionActionTitleSchema,
   anchor: z.optional(DiscussionAnchorV1Schema),
-  participants: z.optional(z.array(z.union([DiscussionAccountParticipantRefV1Schema, DiscussionSessionParticipantTargetV1Schema])).check(
+  participants: z.optional(z.array(z.union([DiscussionAccountParticipantRefV1Schema, z.extend(DiscussionSessionParticipantTargetV1Schema, {
+    answerPolicy: DiscussionInitialSessionParticipantV1Schema.shape.answerPolicy,
+  })])).check(
     z.refine(participants => DiscussionInitialParticipantsV1Schema.safeParse(participants.filter(participant =>
       participant.kind === 'account' || typeof participant.sessionId === 'string')).success,
     { message: 'Discussion invitations must be deduplicated' }),

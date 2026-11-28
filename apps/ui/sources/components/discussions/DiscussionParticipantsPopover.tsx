@@ -5,8 +5,9 @@ import * as React from 'react';
 import type { TranscriptAccountActor } from '@happier-dev/session-core/messages';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import type {
-  DiscussionAnswerPolicyV1,
+import {
+  DiscussionAnswerPolicyV1Schema,
+  type DiscussionAnswerPolicyV1,
 } from '@happier-dev/protocol/discussions/participants';
 
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
@@ -220,12 +221,7 @@ export function formatDiscussionRosterLine(
       });
 }
 
-const ANSWER_POLICIES: readonly DiscussionAnswerPolicyV1[] = [
-  'when_addressed',
-  'reads_only',
-  'drafts_for_approval',
-  'watches_and_speaks_up',
-];
+const ANSWER_POLICIES = DiscussionAnswerPolicyV1Schema.options;
 
 export function answerPolicyLabel(policy: DiscussionAnswerPolicyV1): string {
   switch (policy) {
@@ -239,6 +235,10 @@ export function answerPolicyLabel(policy: DiscussionAnswerPolicyV1): string {
       return t('session.collaboration.discussion.participants.policyDrafts');
     case 'watches_and_speaks_up':
       return t('session.collaboration.discussion.participants.policyWatches');
+    case 'when_mentioned':
+      return t('botTemplates.roomWhenMentioned');
+    case 'every_message':
+      return t('botTemplates.roomEveryMessage');
   }
 }
 
@@ -253,6 +253,10 @@ export function answerPolicyDescription(policy: DiscussionAnswerPolicyV1): strin
       return t('session.collaboration.discussion.manage.policyDraftsBody');
     case 'watches_and_speaks_up':
       return t('session.collaboration.discussion.manage.policyWatchesBody');
+    case 'when_mentioned':
+      return t('botTemplates.roomWhenMentionedBody');
+    case 'every_message':
+      return t('botTemplates.roomEveryMessageBody');
   }
 }
 

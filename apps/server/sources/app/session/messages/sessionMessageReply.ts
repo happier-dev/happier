@@ -13,7 +13,7 @@ import type { SessionAccessAuthentication } from '@/app/session/access/sessionAc
 import { backgroundDeliveryAuthentication } from '@/app/session/access/sessionAccessAuthentication';
 import { resolveDiscussionContextInTx, discussionContextStorageAdapter, resolveDiscussionAudienceInTx } from '@/app/discussions/access';
 import { mayInjectResourceContextInTx } from '@/app/session/access/sessionContextInjection';
-import { DiscussionMessageAddressingV1Schema, type DiscussionAddressingV1 } from '@happier-dev/protocol/discussions/participants';
+import { discussionParticipantCanAnswerV1, DiscussionMessageAddressingV1Schema, type DiscussionAddressingV1 } from '@happier-dev/protocol/discussions/participants';
 import type { DiscussionMessageRefV1 } from '@happier-dev/protocol/discussions/messageRefs';
 import { DiscussionProducerV1StoredSchema } from '@happier-dev/protocol/discussions/content';
 import { hasExactCurrentPublisherAuthorityInTx } from '@/app/session/pending/hasExactCurrentPublisherAuthorityInTx';
@@ -409,7 +409,7 @@ async function isDiscussionReplyDestinationAdmittedInTx(tx: Tx, params: Readonly
         || !snapshot.data.participantSessionIds.includes(discussion.participantSessionId)
         || !participant || snapshot.data.watcherSessionIds?.includes(discussion.participantSessionId) && participant.answerPolicy !== 'watches_and_speaks_up')
         || participant && (participant.removedAt !== null
-            || !['when_addressed', 'drafts_for_approval', 'watches_and_speaks_up'].includes(participant.answerPolicy))
+            || !discussionParticipantCanAnswerV1(participant.answerPolicy))
         // A removed selected Session is not an implicit Workflow leaf. The
         // native birth owner already binds legitimate implicit leaves to this Run.
         || !participant && params.workflow && (session?.originKind !== 'run_step' || session.originRunId !== params.workflow.runId)

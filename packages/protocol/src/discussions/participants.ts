@@ -10,10 +10,18 @@ import { DiscussionAccessGrantsListResponseV1Schema, DiscussionAccessGrantMutati
 import { DiscussionModelParticipantLaunchV1Schema } from './modelParticipantLaunch.js';
 export { DiscussionModelParticipantLaunchV1Schema, projectDiscussionModelParticipantLaunchV1, type DiscussionModelParticipantLaunchV1 } from './modelParticipantLaunch.js';
 
+export const DiscussionRoomReplyPolicyV1Schema = lazyZodSchema(() => z.enum(['when_mentioned', 'every_message']));
+export type DiscussionRoomReplyPolicyV1 = z.infer<typeof DiscussionRoomReplyPolicyV1Schema>;
+
 export const DiscussionAnswerPolicyV1Schema = lazyZodSchema(() => z.enum([
-  'when_addressed', 'reads_only', 'drafts_for_approval', 'watches_and_speaks_up',
+  'when_addressed', 'reads_only', 'drafts_for_approval', 'watches_and_speaks_up', ...DiscussionRoomReplyPolicyV1Schema.options,
 ]));
 export type DiscussionAnswerPolicyV1 = z.infer<typeof DiscussionAnswerPolicyV1Schema>;
+
+export function discussionParticipantCanAnswerV1(policy: string): boolean {
+  const parsed = DiscussionAnswerPolicyV1Schema.safeParse(policy);
+  return parsed.success && parsed.data !== 'reads_only';
+}
 
 export const DiscussionSessionParticipantV1Schema = lazyZodSchema(() => z.strictObject({
   participant: DiscussionSessionParticipantRefV1Schema,
@@ -53,7 +61,12 @@ export const DiscussionParticipantsListResponseV1Schema = lazyZodSchema(() => z.
 }));
 export type DiscussionParticipantsListResponseV1 = z.infer<typeof DiscussionParticipantsListResponseV1Schema>;
 
-export const DiscussionInitialParticipantsV1Schema = lazyZodSchema(() => z.array(DiscussionParticipantRefV1Schema).check(
+export const DiscussionInitialSessionParticipantV1Schema = lazyZodSchema(() => z.extend(DiscussionSessionParticipantRefV1Schema, {
+  answerPolicy: z.optional(DiscussionRoomReplyPolicyV1Schema),
+}));
+export const DiscussionInitialParticipantsV1Schema = lazyZodSchema(() => z.array(z.union([
+  DiscussionAccountParticipantRefV1Schema, DiscussionInitialSessionParticipantV1Schema,
+])).check(
   z.refine(participants => new Set(participants.map(participant => participant.kind === 'account'
     ? `account:${participant.accountId}` : `session:${participant.sessionId}`)).size === participants.length,
     { message: 'Discussion invitations must be deduplicated' }),

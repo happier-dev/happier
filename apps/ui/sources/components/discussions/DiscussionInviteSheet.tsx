@@ -385,6 +385,8 @@ function createDiscussionInviteAdapter(
     ...(input.agentSections && input.offersAgents !== false
       ? { searchPlaceholder: t('session.collaboration.discussion.manage.invitePlaceholder') }
       : {}),
+    // The rules row says what it explains: who can read it and how an agent comes to answer.
+    ...(input.agentSections ? { helpLabel: t('session.collaboration.discussion.invite.helpTitle') } : {}),
     levels: {
       view: {
         label: t('session.collaboration.discussion.participants.canRead'),
@@ -733,8 +735,11 @@ function DiscussionDraftInviteList(props: Readonly<{
       ? current.filter(entry => participantKey(entry) !== key)
       : [...current, participant]);
   }, []);
-  const onChoose = React.useCallback((selection: ExecutableParticipantSelectionV1) => {
-    if (selection.kind === 'session') toggle({ kind: 'session', sessionId: selection.session.sessionId });
+  const onChoose = React.useCallback((selection: ExecutableParticipantSelectionV1, facts?: Readonly<{ bot: boolean }>) => {
+    if (selection.kind !== 'session') return;
+    const roomBot = latest.current.participants.find(participant => participant.kind === 'session' && participant.answerPolicy);
+    const answerPolicy = roomBot?.kind === 'session' ? roomBot.answerPolicy : 'when_mentioned';
+    toggle({ kind: 'session', sessionId: selection.session.sessionId, ...(facts?.bot ? { answerPolicy } : {}) });
   }, [toggle]);
   const viewerAccountId = props.accountLifetime.scope.accountId;
   const people = React.useMemo(() => ({

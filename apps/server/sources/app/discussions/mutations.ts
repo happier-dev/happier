@@ -5,6 +5,7 @@ import { DiscussionMessageContentV1Schema, DiscussionProducerV1Schema, Discussio
 import type { BinaryBlobReferenceV1 } from '@happier-dev/protocol/storage/binaryBlobV1';
 import { DiscussionCreateRequestV1Schema, DiscussionPostRequestV1Schema, type DiscussionCreateRequestV1, type DiscussionCreateResponseV1, type DiscussionDetailsResponseV1, type DiscussionPostRequestV1, type DiscussionPostResponseV1 } from '@happier-dev/protocol/discussions/api';
 import { serializeDiscussionMutationEqualityIntentV1 } from '@happier-dev/protocol/discussions/equality';
+import { discussionParticipantCanAnswerV1 } from '@happier-dev/protocol/discussions/participants';
 import { DiscussionAnchorV1Schema, type DiscussionReplyTargetV1 } from '@happier-dev/protocol/discussions/replyTargets';
 import { computeSessionMutationEqualityPlainDigestV1, SessionMutationEqualityEvidenceV1Schema, type SessionMutationEqualityEvidenceV1 } from '@happier-dev/protocol/sessions/mutations/sessionMutationEqualityV1';
 import type { StrictSessionStoredMessageContentEnvelope } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
@@ -363,7 +364,8 @@ export async function createDiscussionInTx(tx: Tx, input: DiscussionCreationInpu
     for (const participant of request.participants ?? []) {
         if (participant.kind !== 'session') continue;
         const invited = await inviteDiscussionParticipantInTx(tx, { actorAccountId: input.actorAccountId,
-            authentication: creatorAuthentication, discussionId: row.id, request: { participant } });
+            authentication: creatorAuthentication, discussionId: row.id,
+            request: { participant: { kind: 'session', sessionId: participant.sessionId }, answerPolicy: participant.answerPolicy } });
         if (!invited.ok) throw new DiscussionCreationRejectedError(invited.error);
     }
     const addressed = await admitAddressedParticipantsInTx(tx, { ...input, authentication: creatorAuthentication,
@@ -444,14 +446,15 @@ async function admitProducerInTx(tx: Tx, input: ExactDiscussion & Readonly<{
         && input.workflowReply.discussion?.participantSessionId === parsed.data.sessionId) return discussionSuccess(parsed.data);
     if (!participant || participant.removedAt || participant.session?.accountId !== input.actorAccountId) return discussionFailure('discussion_post_denied');
     if (participant.answerPolicy === 'drafts_for_approval' && !input.draftReview?.artifactId) return discussionFailure('discussion_post_denied');
-    if (participant.answerPolicy !== 'drafts_for_approval' && participant.answerPolicy !== 'when_addressed'
-        && participant.answerPolicy !== 'watches_and_speaks_up') return discussionFailure('discussion_post_denied');
+    if (!discussionParticipantCanAnswerV1(participant.answerPolicy)) return discussionFailure('discussion_post_denied');
     return discussionSuccess(parsed.data);
 }
 
 /** The original message owns concrete addressing; C1 owns current receiver disclosure/admission. */
 async function admitAddressedParticipantsInTx(tx: Tx, input: ExactDiscussion & Readonly<{ intent: Intent; producer?: DiscussionProducerV1; informationalReturn?: boolean }>): Promise<DiscussionResult<{ addressedSessionIds: string[]; watcherSessionIds: string[] }>> {
-    const ids = new Set(input.intent.mentionedSessionIds);
+    const mentions = new Set(input.intent.mentionedSessionIds);
+    const ids = new Set(mentions);
+    const humanPost = !input.producer && !input.informationalReturn;
     let repliedProducer: DiscussionProducerV1 | undefined;
     if (input.intent.replyTarget?.kind === 'message') {
         const replied = await tx.discussionMessage.findFirst({ where: { id: input.intent.replyTarget.messageId, discussionId: input.discussionId }, select: { producerV1: true } });
@@ -465,21 +468,24 @@ async function admitAddressedParticipantsInTx(tx: Tx, input: ExactDiscussion & R
         }
     }
     const participants = await tx.discussionParticipant.findMany({ where: { discussionId: input.discussionId, removedAt: null,
-        OR: [{ sessionId: { in: [...ids] } }, { answerPolicy: 'watches_and_speaks_up', sessionId: { not: null } }] },
+        OR: [{ sessionId: { in: [...ids] } }, { answerPolicy: 'watches_and_speaks_up', sessionId: { not: null } },
+            ...(humanPost ? [{ answerPolicy: 'every_message', sessionId: { not: null } }] : [])] },
         select: { sessionId: true, answerPolicy: true, session: { select: { archivedAt: true } } } });
     if ([...ids].some(id => !participants.some(participant => participant.sessionId === id))) return discussionFailure('discussion_invalid_mention');
     const addressed: string[] = [];
     const watchers: string[] = [];
     for (const participant of participants) {
-        if (participant.answerPolicy === 'reads_only') continue;
+        if (!participant.sessionId || !discussionParticipantCanAnswerV1(participant.answerPolicy)) continue;
         if (participant.answerPolicy === 'watches_and_speaks_up') {
             if (participant.sessionId === (input.producer?.kind === 'agent' ? input.producer.sessionId : undefined)
-                || input.informationalReturn && (!ids.has(participant.sessionId ?? '')
+                || input.informationalReturn && (!ids.has(participant.sessionId)
                     || participant.sessionId === (repliedProducer?.kind === 'agent' ? repliedProducer.sessionId : undefined))) continue;
-        } else if (!ids.has(participant.sessionId ?? '')
-            || !['when_addressed', 'drafts_for_approval'].includes(participant.answerPolicy)) continue;
-        if (!participant.sessionId || !participant.session || participant.session.archivedAt) {
-            if (ids.has(participant.sessionId ?? '')) return discussionFailure('discussion_subject_ineligible');
+        } else {
+            const explicitlySelected = participant.answerPolicy === 'when_mentioned' ? mentions.has(participant.sessionId) : ids.has(participant.sessionId);
+            if (!explicitlySelected && !(humanPost && participant.answerPolicy === 'every_message')) continue;
+        }
+        if (!participant.session || participant.session.archivedAt) {
+            if (ids.has(participant.sessionId)) return discussionFailure('discussion_subject_ineligible');
             continue;
         }
         // Invitation admitted the binding through actual Session control and G.

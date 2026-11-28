@@ -4,7 +4,7 @@ import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machin
 import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import Fastify, { type FastifyRequest } from 'fastify';
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from 'fastify-type-provider-zod';
-import { DiscussionInviteResponseV1Schema, DiscussionRemoveParticipantResponseV1Schema } from '@happier-dev/protocol/discussions/participants';
+import { DiscussionInviteResponseV1Schema, DiscussionRemoveParticipantResponseV1Schema, type DiscussionInitialParticipantV1 } from '@happier-dev/protocol/discussions/participants';
 import { buildDiscussionMutationRequestBodyV1, DiscussionCreateResponseV1Schema, DiscussionDetailsResponseV1Schema, DiscussionPostResponseV1Schema, DiscussionMessagesResponseV1Schema, DiscussionAgentPostResponseV1Schema, DiscussionAgentPublisherResponseV1Schema,
     DISCUSSION_AGENT_POST_EVENT_V1, DISCUSSION_HTTP_PATHS_V1, type DiscussionCreateRequestV1 } from '@happier-dev/protocol/discussions/api';
 import { UpdateContainerSchema } from '@happier-dev/protocol/updates';
@@ -96,7 +96,7 @@ const document = (text: string) => ({ v: 1 as const, parts: [{ t: 'text' as cons
 const authentication = createPresentUserSessionAccessAuthentication();
 function createRequest(input: Readonly<{
     creationLocalId?: string; firstLocalId?: string;
-    participants?: readonly { kind: 'account'; accountId: string }[];
+    participants?: readonly DiscussionInitialParticipantV1[];
     anchor?: { kind: 'session'; sessionId: string; messageId?: string };
 }> = {}): DiscussionCreateRequestV1 {
     return buildDiscussionMutationRequestBodyV1({
@@ -2308,6 +2308,49 @@ describe('First-class Discussions service (SQLite)', () => {
         } finally { await app.close(); }
         expect(await db.discussionParticipant.count({ where: { discussionId } })).toBe(1);
     });
+    it('delivers an unaddressed human post as an explicit Ask only to participants set to answer every message', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const always = await db.session.create({ data: { accountId: owner.id, tag: crypto.randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
+        const mentioned = await db.session.create({ data: { accountId: owner.id, tag: crypto.randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
+        const request = createRequest({ participants: [
+            { kind: 'session', sessionId: always.id, answerPolicy: 'every_message' },
+            { kind: 'session', sessionId: mentioned.id, answerPolicy: 'when_mentioned' },
+        ] });
+        const created = await createDiscussion({ authentication, actorAccountId: owner.id, request });
+        expect(created).toMatchObject({ ok: true, value: { firstMessage: { addressingV1: { participantSessionIds: [always.id] } } } });
+        if (!created.ok) throw new Error(created.error);
+        const discussionId = created.value.discussion.id;
+        expect(await createDiscussion({ authentication, actorAccountId: owner.id, request: {
+            ...request, participants: [{ kind: 'session', sessionId: always.id, answerPolicy: 'when_mentioned' }, request.participants![1]!],
+        } })).toMatchObject({ ok: false, error: 'discussion_idempotency_conflict' });
+        const posted = await postDiscussionMessage({ authentication, actorAccountId: owner.id, discussionId, request: postRequest('What should we ship?') });
+        expect(posted).toMatchObject({ ok: true, value: { message: { addressingV1: { participantSessionIds: [always.id] } } } });
+        if (!posted.ok) throw new Error(posted.error);
+        const observe = (sessionId: string) => inTx(tx => observePendingSessionFollowForDestinationInTx(tx, {
+            principal: { kind: 'destination_runtime', destinationRuntimeAccountId: owner.id, authentication }, destinationSessionId: sessionId,
+        }));
+        expect((await observe(always.id)).observations).toContainEqual(expect.objectContaining({
+            event: { kind: 'needs_you', type: 'decision', mode: 'wait' },
+            addressing: { discussionId, messageId: created.value.firstMessage.id, throughSeq: 1, participantSessionId: always.id },
+        }));
+        expect((await observe(mentioned.id)).observations).toEqual([]);
+        const asked = await postDiscussionMessage({ authentication, actorAccountId: owner.id, discussionId, request: {
+            ...postRequest('Please review'), content: { t: 'plain', v: { v: 1, parts: [
+                { t: 'mention', participant: { kind: 'session', sessionId: mentioned.id } },
+            ] } }, mentionedSessionIds: [mentioned.id],
+        } });
+        if (!asked.ok) throw new Error(asked.error);
+        expect(asked.value.message.addressingV1?.participantSessionIds).toEqual(expect.arrayContaining([always.id, mentioned.id]));
+        expect((await observe(mentioned.id)).observations).toContainEqual(expect.objectContaining({
+            event: { kind: 'needs_you', type: 'decision', mode: 'wait' },
+            addressing: { discussionId, messageId: asked.value.message.id, throughSeq: 3, participantSessionId: mentioned.id },
+        }));
+        expect(await postDiscussionMessage({ authentication, actorAccountId: owner.id, discussionId, request: postRequest('Here is my update'),
+            producer: { v: 1, kind: 'agent', sessionId: mentioned.id } })).toMatchObject({
+            ok: true, value: { message: { addressingV1: { participantSessionIds: [] } } },
+        });
+    });
+
     it('admits addressed drafts and opt-in watch originals through C1 while reads-only and own echoes stay silent', async () => {
         const { owner, discussionId } = await fixture();
         const draft = await db.session.create({ data: { accountId: owner.id, tag: crypto.randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
