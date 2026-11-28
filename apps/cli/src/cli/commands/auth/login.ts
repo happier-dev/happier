@@ -62,6 +62,10 @@ export async function handleAuthLogin(args: string[]): Promise<void> {
 
   if (waitTimeoutSeconds !== null) {
     process.env.HAPPIER_AUTH_WAIT_TIMEOUT_MS = String(waitTimeoutSeconds * 1000);
+    // Clarify which timeout applies: --wait-timeout is how long THIS terminal waits,
+    // the approval link expiry (shown separately) is when the relay invalidates the link.
+    console.log(chalk.gray(`This terminal will wait up to ${waitTimeoutSeconds} seconds for approval (--wait-timeout ${waitTimeoutSeconds}).`));
+    console.log(chalk.gray('The approval link itself has a separate expiry (shown below).\n'));
   }
 
   if (forceAuth) {
