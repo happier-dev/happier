@@ -43,6 +43,8 @@ export function createAgentNativeHomeReadService(input: Readonly<{
         if (!declaredFileIdSet.has(fileId)) {
           throw new Error('connected_service_native_home_credential_file_undeclared');
         }
+      }
+      const entries = await Promise.all(fileIds.map(async fileId => {
         try {
           const canonicalPath = await realpath(resolveDeclaredPath(input.root, fileId));
           const relativePath = relative(canonicalRoot, canonicalPath);
@@ -53,10 +55,14 @@ export function createAgentNativeHomeReadService(input: Readonly<{
           ) {
             throw new Error('connected_service_native_home_credential_path_unsafe');
           }
-          files[fileId] = new Uint8Array(await readFile(canonicalPath));
+          return [fileId, new Uint8Array(await readFile(canonicalPath))] as const;
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+          return null;
         }
+      }));
+      for (const entry of entries) {
+        if (entry) files[entry[0]] = entry[1];
       }
       return Object.freeze(files);
     },
