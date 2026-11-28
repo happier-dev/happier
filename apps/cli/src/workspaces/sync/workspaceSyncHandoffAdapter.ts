@@ -141,7 +141,10 @@ export type WorkspaceSyncHandoffAdapterDeps = Readonly<{
     targetPreflight?: HandoffTargetReplacementPreflightResultV1;
     sourcePhysicalEndpoint?: MachineInstallationPublicIdentityV1;
   }>>;
-  relationshipController?: Pick<ManagedWorkspaceSync, 'flush'>;
+  /** Existing-relationship flush; the handoff's admitted context selects whose custody reaches the controller. */
+  relationshipController?: Readonly<{
+    flush(relationshipId: string, signal?: AbortSignal, context?: RpcHandlerContext): Promise<WorkspaceSyncStatusV1>;
+  }>;
   prepareBetween?: (
     request: Readonly<{ sourceWorkspaceRefId: string; targetWorkspaceRefId: string }>,
     signal?: AbortSignal, context?: RpcHandlerContext,
@@ -329,7 +332,10 @@ function buildSettledResult(
 export function createWorkspaceSyncHandoffAdapter(deps: WorkspaceSyncHandoffAdapterDeps): WorkspaceSyncHandoffAdapter {
   const preparedOperations = new Map<string, PreparedOperation>();
   const registry = deps.executionRegistry ?? createWorkspaceSyncExecutionRegistry();
-  const relationshipController = deps.relationshipController ?? deps.sync;
+  const relationshipControllerFor = (context?: RpcHandlerContext) => ({
+    flush: (relationshipId: string, signal?: AbortSignal) => deps.relationshipController
+      ? deps.relationshipController.flush(relationshipId, signal, context) : deps.sync.flush(relationshipId, signal),
+  });
 
   const adapter: WorkspaceSyncHandoffAdapter = {
     executionRegistry: registry,
@@ -511,7 +517,7 @@ export function createWorkspaceSyncHandoffAdapter(deps: WorkspaceSyncHandoffAdap
             };
           }
           const status = input.action.kind === 'relationship'
-            ? await prepareWorkspaceSyncRelationship(relationshipController, input.action.relationshipId, input.signal)
+            ? await prepareWorkspaceSyncRelationship(relationshipControllerFor(context), input.action.relationshipId, input.signal)
             : undefined;
           const traversed = input.action.kind === 'linked_workspace'
             ? await prepareLinkedRoute(deps, admittedInput, context)
@@ -570,7 +576,8 @@ export function createWorkspaceSyncHandoffAdapter(deps: WorkspaceSyncHandoffAdap
             status = assertWorkspaceSyncStatusClean(await deps.sync.copyOnce(copyOnceInput(preparedInput), input.signal, operation?.fence?.ownershipHandles));
           }
         } else if (prepared.action.kind === 'relationship' && prepared.action.flushBeforeCommit) {
-          status = await prepareWorkspaceSyncRelationship(relationshipController, prepared.action.relationshipId, input.signal);
+          status = await prepareWorkspaceSyncRelationship(relationshipControllerFor(operation?.sourcePhaseContext),
+            prepared.action.relationshipId, input.signal);
         } else if (prepared.action.kind === 'create_relationship' && prepared.relationshipId) {
           status = await prepareWorkspaceSyncRelationship(deps.sync, prepared.relationshipId, input.signal);
         } else if (prepared.action.kind === 'linked_workspace') {

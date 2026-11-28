@@ -90,7 +90,7 @@ export type DaemonWorkspaceSyncRuntimeDependencies = Readonly<{
   resolvePrivateWorkspaceRoot?: WorkspaceSyncControllerOptions['resolvePrivateWorkspaceRoot'];
   stopRetainedNativeProcesses?: () => Promise<void>;
   openMachineCarrierTunnel?: WorkspaceSyncControllerOptions['openMachineCarrierTunnel'];
-  handoffRelationshipController?: Pick<ManagedWorkspaceSync, 'flush'>;
+  handoffRelationshipController?: WorkspaceSyncHandoffAdapterDeps['relationshipController'];
   handoffPrepareBetween?: WorkspaceSyncHandoffAdapterDeps['prepareBetween'];
   resolveHandoffExecutionInput?: WorkspaceSyncHandoffAdapterDeps['resolveExecutionInput'];
   relationshipOwner?: Pick<WorkspaceSyncRelationshipOwner, 'materializeEndpoints' | 'prepareCreate'>;

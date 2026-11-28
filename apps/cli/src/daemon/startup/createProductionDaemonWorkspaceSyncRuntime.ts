@@ -1516,12 +1516,25 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     }
   }));
 
-  const findRetainedHandoffExecution = (request: Pick<Parameters<DaemonWorkspaceSyncRuntimeDependencies['bootstrap']>[0], 'operationId' | 'action'>) =>
+  /** The custody holding an existing relationship for this handoff's requester: the installed Account's own
+   * (only when the installed owner itself may act, as `forRequester` decides), or the admitted requester's
+   * retained capture, never another Account's. Null when the requester holds none here. */
+  const selectHandoffRelationshipCustody = (relationshipId: string, context?: RpcHandlerContext) => {
+    if (canUseInstalledRelationshipOwner(context)) {
+      return { retained: executionRegistry()?.findForRequester(relationshipId, installedAccountId ?? undefined, semanticServerId) ?? null,
+        credentials: input.credentials, requester: false as const };
+    }
+    const retained = readRequesterPrivateExecution(relationshipId, context);
+    return retained ? { retained, credentials: retained.execution.credentials, requester: true as const } : null;
+  };
+  const relationshipNotOwned = () => compositionError('relationship_not_owned', 'The requester does not own this Sync relationship');
+  const findRetainedHandoffExecution = (request: Pick<Parameters<DaemonWorkspaceSyncRuntimeDependencies['bootstrap']>[0], 'operationId' | 'action'>,
+    context?: RpcHandlerContext) =>
     executionRegistry()?.findByOperationOrRelationship(request.operationId)
     ?? (request.action.kind === 'create_relationship'
       ? executionRegistry()?.findByRelationshipId(deriveWorkspaceSyncRelationshipId(request.operationId))
       : request.action.kind === 'relationship'
-        ? executionRegistry()?.findByRelationshipId(request.action.relationshipId)
+        ? selectHandoffRelationshipCustody(request.action.relationshipId, context)?.retained ?? null
         : null);
 
   const readHandoffExecutionBasis = async (request: Parameters<DaemonWorkspaceSyncRuntimeDependencies['bootstrap']>[0], context?: RpcHandlerContext,
@@ -1575,7 +1588,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
         sourceMachineId: resolved.endpoint.machineId, sourceRootPath: resolved.endpoint.rootPath } };
     }
     const authorization = context?.callerInputAuthorization;
-    const snapshot = findRetainedHandoffExecution(request)?.execution.getSnapshot?.()
+    const snapshot = findRetainedHandoffExecution(request, context)?.execution.getSnapshot?.()
       ?? await readHandoffProjectSnapshot(request.signal, context);
     if (authorization) {
       for (const endpoint of [
@@ -1824,6 +1837,11 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
         context.machineAdmission, context, accepted.childMachines.find(child => child.machineId === context.workspaceSyncSourceRouting?.sourceMachineId)?.controller
           ?? context.callerInputAuthorization.binding.workspaceSyncAdmission?.source);
       if (request.action.kind === 'relationship') await executionRegistry()?.bindRelationship(request.operationId, request.action.relationshipId);
+    }
+    // A requester's existing link is theirs only through custody held here (a Project Open has just retained
+    // its own above); refused before any bootstrap or flush effect.
+    if (request.action.kind === 'relationship' && !selectHandoffRelationshipCustody(request.action.relationshipId, context)) {
+      throw relationshipNotOwned();
     }
     assertOriginalTargetAuthority(request, accepted.input, authority, context);
     let targetPreflight: HandoffTargetReplacementPreflightResultV1 | undefined;
@@ -2272,8 +2290,13 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
       },
     },
     handoffRelationshipController: {
-      flush: async (relationshipId, signal) => {
-        const snapshot = executionRegistry()?.findByRelationshipId(relationshipId)?.execution.getSnapshot?.() ?? factories.getProjectSnapshot();
+      // The admitted requester's own custody reaches the controller; its requester ingress decides ownership there.
+      flush: async (relationshipId, signal, context) => {
+        const custody = selectHandoffRelationshipCustody(relationshipId, context);
+        if (!custody) throw relationshipNotOwned();
+        // Only the installed custody may resolve the link against the installed rows.
+        const snapshot = custody.requester ? custody.retained.execution.getSnapshot?.() ?? null
+          : custody.retained?.execution.getSnapshot?.() ?? factories.getProjectSnapshot();
         const relationship = resolveRelationship(snapshot, relationshipId);
         if (relationship.controllerMachineId === input.localMachineId) {
           if (!runtime) throw controllerUnavailable();
@@ -2281,7 +2304,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
         }
         try {
           const response = await factories.callMachineRpc({
-            credentials: input.credentials,
+            credentials: custody.credentials,
             machineId: relationship.controllerMachineId,
             method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_FLUSH,
             request: { relationshipId },
@@ -2423,7 +2446,12 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
         && bootstrapInput.targetMachineId === input.localMachineId && !nativeTarget) {
         throw compositionError('agent_isolation_unavailable', 'The captured native Sync target is unavailable');
       }
-      const bootstrapDriver = nativeTarget && bootstrapInput.targetMachineId === input.localMachineId
+      // A requester's existing link reaches its TARGET through the custody that holds it, as its owner does.
+      const requesterLink = bootstrapInput.action.kind === 'relationship' && !privateTarget
+        ? selectHandoffRelationshipCustody(bootstrapInput.action.relationshipId, context) : null;
+      const bootstrapDriver = requesterLink?.requester
+        ? selectWorkspaceSyncTargetDriver(targetDriverDeps(), requesterLink.retained, bootstrapInput.targetMachineId)
+        : nativeTarget && bootstrapInput.targetMachineId === input.localMachineId
         ? createIsolatedMemberDriver(targetDriverDeps(), privateTarget!)
         : personCopyTarget
           ? createSignedRemoteRequesterDriver(targetDriverDeps(), {
