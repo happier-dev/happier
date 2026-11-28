@@ -438,6 +438,7 @@ describe('installed deployment storage and target composition', () => {
             if (String(url).endsWith('/execution-authorization')) return { status: 200, data: { v: 1, token: 'home-proof', binding: {
                 accountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 }, accountEncryptionMode: 'plain',
                 admittedMachineRole: 'manage', environmentId: detail.environment.id,
+                ...(actionId === 'deployments.receipts.observe' ? { deploymentObservationReceiptId: receipt.deployment.id } : {}),
                 serverIdentityId: 'srv_native_home', custodianAccountId: 'owner', machineId: machine.id, installationId: machine.installationId,
                 actionId, requestId: request.envelope.requestId, target: request.envelope.target,
                 requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
@@ -470,121 +471,6 @@ describe('installed deployment storage and target composition', () => {
                 } finally { lifetime.abort(); }
                 return;
             }
-            await handleActionsCommand(['invoke', actionId, '--input-json', JSON.stringify(input),
-                '--server-id', profile.id, '--machine-id', 'machine-a', '--json'], {
-                readCredentialsFn: async () => credentials, readCredentialsForServerIdFn: async () => credentials,
-                getServerProfileFn: async () => ({ ...profile, lastUsedAt: 1 }),
-                createExecutorFn: params => createCliActionExecutorFromCredentials({ ...params,
-                    actionsSettingsProvider: createActionSettingsProvider({ accountSettings: accountSettingsParse({}) }) }),
-            });
-            expect(received, JSON.stringify({ output: JSON.parse(output), transportPaths })).toEqual([actionId]);
-            expect(JSON.parse(output)).toMatchObject({ ok: false, error: { code: 'unsupported_action', details: expected.details } });
-        } finally { vi.unstubAllGlobals(); process.exitCode = undefined; }
-        });
-    });
-
-    it.each([
-        { actionId: 'deployments.receipts.observe', selection: 'active' },
-        { actionId: 'deployments.receipts.observe', selection: 'retained' },
-        { actionId: 'deployments.observation.get', selection: 'active' },
-    ] as const)(
-        'routes CLI $actionId to the receipt owner for a cold native receipt ($selection)', async ({ actionId, selection }) => {
-        await withConfiguredDaemonTestHome({ prefix: 'happier-native-observation-',
-            env: { HAPPIER_SERVER_URL: 'https://home.test', HAPPIER_WEBAPP_URL: 'https://home.test' } }, async () => {
-        const detail = createDeploymentEnvironmentDetailV1();
-        const receipt = createDeploymentReceiptDetailV1();
-        const link = detail.targetLinks[0]!.targetLink;
-        if (selection === 'retained') detail.environment.runtimeTargetLinkId = undefined;
-        const keys = tweetnacl.sign.keyPair();
-        const machine = { id: 'machine-a', kind: 'persistent', active: true, activeAt: Date.now(),
-            installationId: 'installation-a', installationPublicKey: Buffer.from(keys.publicKey).toString('base64'),
-            revokedAt: null, replacedByMachineId: null, dataEncryptionKey: null, runnerContentKeyBinding: null,
-            access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } };
-        receipt.deployment.environmentId = detail.environment.id;
-        receipt.deployment.targetLinkId = link.id;
-        const documents = new Map<string, { row: Pick<typeof receipt.deployment,
-            'contentArtifactId' | 'contentHeaderVersion' | 'contentBodyVersion'>; kind: string; content: unknown }>([
-            [detail.environment.contentArtifactId, { row: detail.environment, kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, content: detail.content }],
-            [link.contentArtifactId, { row: link, kind: DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, content: detail.targetLinks[0]!.content }],
-            [receipt.deployment.contentArtifactId, { row: receipt.deployment, kind: DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, content: receipt.content }],
-        ]);
-        // Home metadata and the Account Artifact transport are system boundaries.
-        const transportPaths: string[] = [];
-        vi.spyOn(axios, 'request').mockImplementation(async request => ({ status: 200,
-            data: String(request.url).includes('/receipts/')
-                ? { ok: true, deployment: receipt.deployment, cancellable: false }
-                : { ok: true, environment: detail.environment, secretScope: detail.secretScope, targetLinks: [link] } }));
-        vi.spyOn(axios, 'get').mockImplementation(async url => {
-            const path = new URL(url).pathname;
-            transportPaths.push(`GET ${path}`);
-            if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
-            if (path === '/v1/account/encryption/currentness') return { status: 200,
-                data: createAccountEncryptionCurrentnessFixture({ mode: 'plain' }) };
-            if (path === '/v1/features/authenticated') return { status: 200,
-                data: { features: {}, capabilities: { serverIdentity: { serverIdentityId: 'srv_native_home' } } } };
-            if (path === '/v1/machines/machine-a') return { status: 200, data: { machine } };
-            if (path === '/v1/machines') return { status: 200, data: [machine] };
-            const document = documents.get(path.slice('/v1/artifacts/'.length));
-            if (!document) throw new Error('Unexpected Artifact read');
-            return { status: 200, data: { id: document.row.contentArtifactId, ownerAccountId: 'owner',
-                access: 'owner', publicAudience: 'none', encryptionMode: 'plain', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
-                header: encodePlainArtifactStoredContent({ kind: document.kind, title: 'Native deployment' }),
-                body: encodePlainArtifactStoredContent({ body: JSON.stringify(document.content) }),
-                headerVersion: document.row.contentHeaderVersion, bodyVersion: document.row.contentBodyVersion,
-                seq: 1, createdAt: 1, updatedAt: 1 } };
-        });
-        const deps = createDaemonDeploymentActionDeps({ credentials: { token: 'fixture', encryption: null },
-            serverId: 'srv_native_home', serverHttpBaseUrl: 'https://home.test', machineId: 'machine-a',
-            resolveRequesterIdentity: resolveOwnerRequesterIdentity,
-            runtime: { async acquire() { throw new Error('Observation cannot acquire native runtime'); } } });
-        const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps });
-        const input = { serverId: 'srv_native_home', environmentId: detail.environment.id, deploymentId: receipt.deployment.id,
-            ...(actionId === 'deployments.observation.get' ? { targetLinkId: link.id } : {}) };
-        const context = { ...ownerContext, surface: 'cli' as const, serverId: 'srv_native_home',
-            actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }) };
-        const expected = {
-            ok: false, errorCode: 'unsupported_action', effectAttempted: false,
-            details: { reason: 'target_not_supported', targetKind: 'ownServer',
-                requiredFact: 'providerDeploymentObservation', supportedAction: 'deployments.receipts.get',
-                remedy: expect.stringMatching(/\S/) },
-        };
-        const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 1,
-            provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
-        const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
-        const profile = { id: configuration.activeServerId, name: 'Home', serverUrl: 'https://home.test', webappUrl: 'https://home.test',
-            createdAt: 1, updatedAt: 1, homeConnectionDescriptorAuthority: 'exact' as const,
-            homeConnectionDescriptor: { v: 1 as const, homeServerIdentityId: 'srv_native_home', canonicalServerUrl: 'https://home.test',
-                revision: 1, endpoints: [{ kind: 'https' as const, url: 'https://home.test' }] } };
-        await persistence.updateSettings(settings => ({ ...settings, servers: { ...settings.servers, [profile.id]: profile } }));
-        persistence.writeDaemonState({ pid: process.pid, httpPort: 43123, startedAt: Date.now(), startedWithCliVersion: 'test',
-            controlToken: 'fixture-control', machineId: 'machine-a', accountId: 'owner' });
-        const received: string[] = [];
-        // Home admits these private-content roots even on the own Machine.
-        // Substitute HTTP only; the CLI dispatcher and receiving daemon Action owners stay real.
-        vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
-            transportPaths.push(`POST ${new URL(String(url)).pathname}`);
-            const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
-            expect(request.envelope.target).toEqual({ kind: 'machine', machineId: machine.id });
-            if (String(url).endsWith('/execution-authorization')) return { status: 200, data: { v: 1, token: 'home-proof', binding: {
-                accountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 }, accountEncryptionMode: 'plain',
-                admittedMachineRole: 'manage', environmentId: detail.environment.id,
-                serverIdentityId: 'srv_native_home', custodianAccountId: 'owner', machineId: machine.id, installationId: machine.installationId,
-                actionId, requestId: request.envelope.requestId, target: request.envelope.target,
-                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
-            } } };
-            received.push(actionId);
-            if (request.envelope.v !== 1) throw new Error('The plain-Account fixture sends v1 envelopes');
-            const result = await executor.execute(actionId, request.envelope.input, context);
-            return { status: 200, data: { v: 1, actionId, requestId: request.envelope.requestId, execution: result } };
-        });
-        let output = '';
-        vi.spyOn(process.stdout, 'write').mockImplementation((chunk, ...args) => {
-            output += String(chunk);
-            const callback = args.find(argument => typeof argument === 'function');
-            if (typeof callback === 'function') callback();
-            return true;
-        });
-        try {
             await handleActionsCommand(['invoke', actionId, '--input-json', JSON.stringify(input),
                 '--server-id', profile.id, '--machine-id', 'machine-a', '--json'], {
                 readCredentialsFn: async () => credentials, readCredentialsForServerIdFn: async () => credentials,
@@ -3532,7 +3418,8 @@ describe('installed deployment storage and target composition', () => {
                                     serverIdentityId: 'home', accountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 },
                                     admittedMachineRole: 'manage', custodianAccountId: 'owner',
                                     machineId: 'machine-a', installationId: 'installation-a', actionId: 'deployments.receipts.observe',
-                                    environmentId: receipt.environmentId, requestId: proposal.envelope.requestId, accountEncryptionMode: 'plain',
+                                    environmentId: receipt.environmentId, deploymentObservationReceiptId: receipt.id,
+                                    requestId: proposal.envelope.requestId, accountEncryptionMode: 'plain',
                                     requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(proposal.envelope), target: proposal.envelope.target } }) };
                         }
                         if (path.endsWith('/actions/deployments.receipts.observe')) {
