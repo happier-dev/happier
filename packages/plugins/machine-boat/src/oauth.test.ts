@@ -129,9 +129,16 @@ describe('Boat public OAuth', () => {
 
   it('revokes the retained refresh grant without exposing a vendor refusal body', async () => {
     const probe = fixture();
+    // Boat's OAuth guide documents a token-only revoke POST. Its client
+    // registration supplies client_id to exchange and refresh.
+    probe.reply(200, undefined);
     await expect(connectedAccountRuntime.revoke(probe.mutation)).resolves.toEqual({ status: 'remoteRevoked' });
     expect(probe.requests[0]).toMatchObject({ url: revokeUrl, method: 'POST', redirect: 'error' });
     expect(form(probe.requests[0]!)).toEqual({ token: 'boatrt_old' });
+    probe.reply(401, { error: 'invalid_client' });
+    await expect(connectedAccountRuntime.revoke(probe.mutation)).resolves.toMatchObject({
+      status: 'remoteUnsupported', diagnostic: { code: 'boat_oauth_manual_revoke_required' },
+    });
     probe.reply(503, { token: 'boatrt_old' });
     const refused = await connectedAccountRuntime.revoke(probe.mutation);
     expect(refused).toMatchObject({ status: 'outcomeUnknown' });
