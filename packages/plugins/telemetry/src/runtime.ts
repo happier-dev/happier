@@ -133,8 +133,9 @@ export function createCaptureRuntime(input: {
     withWriter: ingest.exclusive,
     async onBatch(batch, context) {
      const events = normalizeBatch(batch, context, options.admit !== undefined);
-     if (batch.rejectedRecords) ingest.recordLoss(context.partition, 'invalid_telemetry', batch.rejectedRecords, context.physicalRootIdentity);
-     const result = await ingest.write(events);
+     const result = await ingest.write(events, batch.rejectedRecords ? {
+      partition: context.partition, count: batch.rejectedRecords, physicalRootIdentity: context.physicalRootIdentity,
+     } : undefined);
      if (result.accepted) {
       if (options.admit) {
        const fingerprints = [...new Set(events.flatMap(event => event.kind === 'exception' ? [event.fingerprint] : []))];

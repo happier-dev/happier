@@ -4,9 +4,13 @@ export type CaptureCoverage = Readonly<{ lostObservations: number; reason: strin
 type WorktreeIdentity = Pick<CaptureEvent, 'physicalRootIdentity'>;
 type PartitionCoverage = Readonly<{ coverage: CaptureCoverage }> & WorktreeIdentity;
 type ObservationLoss = Readonly<{ count: number }> & WorktreeIdentity;
+type RejectedTelemetry = ObservationLoss & Readonly<{ partition: string }>;
 type CaptureWriteResult = { accepted: true; changedTraceIds: readonly string[] } | { accepted: false; code: string };
 /** One persistence batch at a time. Only request-bound work can wait for the writer. */
-export function createCaptureIngest(write: (events: readonly CaptureEvent[]) => Promise<readonly string[]>, publish: (coverage: CaptureCoverage, partitions: readonly string[]) => void = () => {}) {
+export function createCaptureIngest(
+ write: (events: readonly CaptureEvent[], changedCoveragePartition?: string) => Promise<readonly string[]>,
+ publish: (coverage: CaptureCoverage, partitions: readonly string[]) => void = () => {},
+) {
  let pending: Promise<void> | null = null;
  let failure: string | null = null;
  let lostObservations = 0;
@@ -16,7 +20,7 @@ export function createCaptureIngest(write: (events: readonly CaptureEvent[]) => 
  const coverage = (partition?: string): CaptureCoverage => partition === undefined
   ? { lostObservations, reason }
   : { ...partitions.get(partition)?.coverage ?? { lostObservations: 0, reason: null } };
- function lose(counts: ReadonlyMap<string, ObservationLoss>, cause: string) {
+ function addLoss(counts: ReadonlyMap<string, ObservationLoss>, cause: string) {
   for (const [partition, { count, physicalRootIdentity }] of counts) {
    const previous = partitions.get(partition);
    lostObservations += count;
@@ -25,7 +29,6 @@ export function createCaptureIngest(write: (events: readonly CaptureEvent[]) => 
    dirtyPartitions.add(partition);
   }
   reason = cause;
-  publish(coverage(), [...counts.keys()]);
  }
  function loseEvents(events: readonly CaptureEvent[], cause: string) {
   const counts = new Map<string, ObservationLoss>();
@@ -34,17 +37,24 @@ export function createCaptureIngest(write: (events: readonly CaptureEvent[]) => 
    counts.set(event.worktree, { count: (previous?.count ?? 0) + 1,
     physicalRootIdentity: event.physicalRootIdentity ?? previous?.physicalRootIdentity });
   }
-  lose(counts, cause);
+  addLoss(counts, cause);
+  publish(coverage(), [...counts.keys()]);
  }
- async function persist(events: readonly CaptureEvent[]): Promise<CaptureWriteResult> {
-  if (!events.length) return { accepted: true, changedTraceIds: [] };
+ async function persist(events: readonly CaptureEvent[], rejected?: RejectedTelemetry): Promise<CaptureWriteResult> {
+  if (rejected) addLoss(new Map([[rejected.partition, rejected]]), 'invalid_telemetry');
+  if (!events.length) {
+   if (rejected) publish(coverage(), [rejected.partition]);
+   return { accepted: true, changedTraceIds: [] };
+  }
+  // Accepted and rejected records share the admitted OTLP partition. On failure,
+  // loseEvents publishes the loss for that same partition.
   if (failure) { loseEvents(events, failure); return { accepted: false, code: failure }; }
   const snapshots = [...dirtyPartitions].map(partition => ({ partition, snapshot: partitions.get(partition)! }));
   const at = Date.now();
   const markers: CaptureEvent[] = snapshots.map(({ partition, snapshot }) => ({ id: 'coverage', worktree: partition, kind: 'coverage', source: 'capture', at,
    physicalRootIdentity: snapshot.physicalRootIdentity, detail: snapshot.coverage }));
   try {
-   const changedTraceIds = await write(markers.length ? [...events, ...markers] : events);
+   const changedTraceIds = await write(markers.length ? [...events, ...markers] : events, rejected?.partition);
    // A loss arriving while this batch commits belongs to the next snapshot.
    for (const { partition, snapshot } of snapshots) if (partitions.get(partition) === snapshot) dirtyPartitions.delete(partition);
    return { accepted: true, changedTraceIds };
@@ -76,7 +86,8 @@ export function createCaptureIngest(write: (events: readonly CaptureEvent[]) => 
   },
   coverage,
   recordLoss(partition: string, cause: string, count = 1, physicalRootIdentity?: string) {
-   lose(new Map([[partition, { count, physicalRootIdentity }]]), cause);
+   addLoss(new Map([[partition, { count, physicalRootIdentity }]]), cause);
+   publish(coverage(), [partition]);
   },
   pendingWorktreePartitions(physicalRoot: string): string[] {
    return [...dirtyPartitions].filter(partition => partitions.get(partition)?.physicalRootIdentity === physicalRoot);

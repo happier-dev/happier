@@ -220,6 +220,47 @@ describe('capture runtime through real HTTP and SQLite', () => {
         }
     });
 
+    it('publishes one change for an OTLP request that stores a point and records partial loss', async () => {
+        const f = await fixture();
+        const receiver = await f.runtime.acquireReceiver({ port: 0, context: { partition, capabilities: { metrics: true } } });
+        const point = {
+            startTimeUnixNano: '1700000000000000000', timeUnixNano: '1700000000100000000',
+            count: '1', sum: 0.05, explicitBounds: [1], bucketCounts: ['1', '0'],
+        };
+        const metrics = (dataPoints: readonly unknown[]) => ({ resourceMetrics: [{
+            scopeMetrics: [{ metrics: [{ name: 'http.server.request.duration', unit: 's',
+                histogram: { aggregationTemporality: 1, dataPoints },
+            }] }],
+        }] });
+        try {
+            const response = await post(receiver.endpoint, 'metrics', metrics([point, { ...point, timeUnixNano: '0' }]));
+            expect(response.status).toBe(200);
+            expect(await response.json()).toMatchObject({ partialSuccess: { rejectedDataPoints: '1' } });
+            expect(await f.runtime.store.metricPoints({ worktree: partition, since: 1_700_000_000_000, until: 1_700_000_001_000 })).toHaveLength(1);
+            expect(f.runtime.ingest.coverage(partition)).toEqual({ lostObservations: 1, reason: 'invalid_telemetry' });
+            expect(f.publications).toEqual([[partition]]);
+
+            const repeated = await post(receiver.endpoint, 'metrics', metrics([point]));
+            expect(repeated.status).toBe(200);
+            expect(await repeated.json()).toEqual({});
+            expect(f.publications).toEqual([[partition]]);
+
+            const rejected = await post(receiver.endpoint, 'metrics', metrics([{ ...point, timeUnixNano: '0' }]));
+            expect(rejected.status).toBe(200);
+            expect(await rejected.json()).toMatchObject({ partialSuccess: { rejectedDataPoints: '1' } });
+            expect(f.publications).toEqual([[partition], [partition]]);
+
+            const flushed = await post(receiver.endpoint, 'metrics', metrics([point]));
+            expect(flushed.status).toBe(200);
+            expect(await flushed.json()).toEqual({});
+            expect(await f.runtime.store.detail(partition, 'coverage')).toEqual({ lostObservations: 2, reason: 'invalid_telemetry' });
+            expect(f.publications).toEqual([[partition], [partition]]);
+        } finally {
+            await receiver.release();
+            f.close();
+        }
+    });
+
     it('acknowledges and retains overlapping trace, log and metric exports without replay', async () => {
         const f = await fixture();
         const receiver = await f.runtime.acquireReceiver({ port: 0, context: { partition, capabilities: { metrics: true } } });
