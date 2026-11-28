@@ -8,7 +8,7 @@ import type { FeedItem } from '../domains/social/feedTypes';
 import type { RelationshipUpdatedEvent, UserProfile } from '../domains/social/friendTypes';
 import type { LocalSettings } from '../domains/settings/localSettings';
 import type { ReviewCommentDraft } from '../domains/input/reviewComments/reviewCommentTypes';
-import type { PendingMessage, Session, Machine, ScmStatus, ScmWorkingSnapshot, DiscardedPendingMessage } from '../domains/state/storageTypes';
+import type { Session, Machine, ScmStatus, ScmWorkingSnapshot } from '../domains/state/storageTypes';
 import type { ScmCommitSelectionPatch } from '../domains/state/storageTypes';
 import type { NormalizedMessage } from '../typesRaw';
 import type { PermissionMode } from '../domains/permissions/permissionTypes';
@@ -23,7 +23,7 @@ import type { MachineDisplayRenderable } from '../domains/machines/machineDispla
 import type { ApplyMachinesOptions } from './domains/machines';
 import type { SessionListRenderableReplacementOptions } from './domains/sessionListRenderableStoreUpdate';
 import type { SessionMessages } from './domains/messages';
-import type { SessionPending } from './domains/pending';
+import type { PendingDomain } from './domains/pending';
 import type { PetsDomain } from './domains/pets';
 import type {
     EndpointConnectivitySnapshot,
@@ -183,19 +183,7 @@ export interface MessagesDomainSlice {
     isMutableToolCall: (sessionId: string, callId: string) => boolean;
 }
 
-export interface PendingDomainSlice {
-    sessionPending: Record<string, SessionPending>;
-    applyPendingLoaded: (sessionId: string) => void;
-    applyPendingSnapshot: (sessionId: string, snapshot: Readonly<{
-        messages: PendingMessage[];
-        discarded: DiscardedPendingMessage[];
-    }>) => void;
-    applyPendingMessages: (sessionId: string, messages: PendingMessage[]) => void;
-    applyDiscardedPendingMessages: (sessionId: string, messages: DiscardedPendingMessage[]) => void;
-    pruneServerPendingMessages: (sessionId: string) => void;
-    upsertPendingMessage: (sessionId: string, message: PendingMessage) => void;
-    removePendingMessage: (sessionId: string, pendingId: string) => void;
-}
+export type PendingDomainSlice = PendingDomain;
 
 export type TranscriptLoadingDomainSlice = TranscriptLoadingDomain;
 

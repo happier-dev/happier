@@ -481,7 +481,7 @@ import {
     resolveNextForkedTranscriptLoadOlderRequest,
 } from './domains/sessionFork/forkedTranscriptPaging';
 import {
-    adoptRuntimeAdmittedPendingProjection,
+    recordRuntimePendingAdmission,
     blockPendingDeliveryV2,
     deleteDiscardedPendingMessageV2,
     deletePendingMessageV2,
@@ -2804,7 +2804,7 @@ class Sync {
                     if (providerAcceptancePending) {
                         if (sendScope && isSendScopeCurrent()
                             && areServerAccountScopesEqual(sendScope, getActiveServerAccountScope())
-                            && adoptRuntimeAdmittedPendingProjection(sessionId, localId, sendScope)) {
+                            && recordRuntimePendingAdmission(sessionId, localId, sendScope)) {
                             // The server may have already published retirement while RPC was in flight.
                             fireAndForget(this.fetchPendingMessages(sessionId, sendScope), {
                                 tag: 'Sync.sendMessage.admittedPendingRefresh',

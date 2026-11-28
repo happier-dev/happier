@@ -2,6 +2,7 @@ import type { SessionMessageRole } from '@happier-dev/protocol';
 
 import type { ApiSessionMessagesResponse } from '@/sync/api/types/apiTypes';
 import { ApiSessionMessagesResponseSchema } from '@/sync/api/types/apiTypes';
+import { throwAuthenticationResponseErrorIfNeeded } from '@/sync/runtime/connectivity/authErrors';
 
 export type SessionMessagesPageScope = 'main' | 'sidechain' | 'all';
 
@@ -75,6 +76,20 @@ export async function fetchSessionMessagesPage(params: Readonly<{
 }>): Promise<ApiSessionMessagesResponse> {
     const response = await params.request(params.path);
     return parseSessionMessagesResponseJson(await response.json());
+}
+
+/** A missing route or inaccessible session cannot attest that this exact message is absent. */
+export async function isSessionTranscriptMessageAbsent(params: Readonly<{
+    request: (path: string, init?: RequestInit) => Promise<Response>;
+    sessionId: string;
+    localId: string;
+}>): Promise<boolean> {
+    const path = `/v2/sessions/${encodeURIComponent(params.sessionId)}/messages/by-local-id/${encodeURIComponent(params.localId)}`;
+    const response = await params.request(path, { method: 'GET', cache: 'no-store' });
+    throwAuthenticationResponseErrorIfNeeded(response.status);
+    if (response.status !== 404) return false;
+    const body: unknown = await response.json().catch(() => null);
+    return typeof body === 'object' && body !== null && 'error' in body && body.error === 'Message not found';
 }
 
 export { serializeTranscript, type TranscriptExportFormat } from './serializeTranscript';

@@ -1,4 +1,5 @@
 import { storage } from '@/sync/domains/state/storage';
+import { isSessionTranscriptMessageAbsent } from '@/sync/api/session/sessionMessagesApi';
 import {
     assertSafePendingIdPathSegment,
     findPendingOutboxMessage,
@@ -476,7 +477,7 @@ export async function setPendingMessageSendState(
 }
 
 /** Runtime RPC proved server Pending custody for this direct send's transient projection. */
-export function adoptRuntimeAdmittedPendingProjection(
+export function recordRuntimePendingAdmission(
     sessionId: string,
     localId: string,
     scope: ServerAccountScope,
@@ -491,7 +492,7 @@ export function adoptRuntimeAdmittedPendingProjection(
     state.upsertPendingMessage(sessionId, {
         ...projection,
         updatedAt: nowServerMs(),
-        source: 'server_pending',
+        runtimePendingAdmissionScope: scope,
         deliveryStatus: 'accepted',
         sendState: undefined,
     });
@@ -1721,10 +1722,31 @@ async function fetchAndApplyPendingMessagesV2Owned(
     }));
     if (!await isRefreshScopeCurrent()) return;
     if (!pendingSnapshotContainsEveryAcceptedLocalIdAfterCapture(refreshToken, rows)) return;
-    storage.getState().applyPendingSnapshot(
-        sessionId,
-        withholdPendingRowsCommittedAfterSnapshotCapture(sessionId, refreshToken, reconciled),
-    );
+
+    // The direct RPC acknowledged the exact Pending write. After an authoritative read no longer
+    // names that id, ordinary settlement has already committed its transcript row in the same
+    // transaction. Only an exact transcript miss proves the queue retired without writing it.
+    const snapshotLocalIds = new Set(rows.map((row) => row.localId));
+    const missingRuntimeAdmissions = reconciled.messages.flatMap((message) => {
+        const { localId, runtimePendingAdmissionScope } = message;
+        return localId && runtimePendingAdmissionScope && !snapshotLocalIds.has(localId)
+            && areServerAccountScopesEqual(runtimePendingAdmissionScope, params.outboxScope)
+            ? [{ localId, message }]
+            : [];
+    });
+    let retiredRuntimeAdmissions: ReadonlySet<PendingMessage> | undefined;
+    if (missingRuntimeAdmissions.length > 0) {
+        const results = await Promise.all(missingRuntimeAdmissions.map(async ({ localId, message }) =>
+            await isSessionTranscriptMessageAbsent({ request, sessionId, localId }) ? message : undefined
+        ));
+        if (!await isRefreshScopeCurrent()) return;
+        if (!pendingSnapshotContainsEveryAcceptedLocalIdAfterCapture(refreshToken, rows)) return;
+        retiredRuntimeAdmissions = new Set(results.filter((message) => message !== undefined));
+    }
+    storage.getState().applyPendingSnapshot(sessionId, {
+        ...withholdPendingRowsCommittedAfterSnapshotCapture(sessionId, refreshToken, reconciled),
+        retiredRuntimeAdmissions,
+    });
     } finally {
         if (latestPendingSnapshotRefreshByScopedSession.get(refreshKey) === refreshToken) {
             latestPendingSnapshotRefreshByScopedSession.delete(refreshKey);

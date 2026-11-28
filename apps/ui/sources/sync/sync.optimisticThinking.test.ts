@@ -833,7 +833,13 @@ describe('sync.sendMessage optimistic thinking', () => {
             await admission;
             return { ok: true, providerAcceptancePending: true };
         });
-        vi.spyOn(apiSocket, 'request').mockImplementation(async () => Response.json({ pending: [] }));
+        const request = vi.spyOn(apiSocket, 'request').mockImplementation(async (path) => {
+            if (path === `/v2/sessions/${sessionId}/messages/by-local-id/${localId}`) {
+                return Response.json({ error: 'Message not found' }, { status: 404 });
+            }
+            if (path.includes('/pending?')) return Response.json({ pending: [] });
+            return Response.json({ messages: [] });
+        });
 
         const sending = sync.sendMessage(sessionId, 'original input', undefined, undefined, { localId });
         try {
@@ -856,9 +862,77 @@ describe('sync.sendMessage optimistic thinking', () => {
         }
         await expect(sending).resolves.toEqual({ localId, persistence: 'provider_direct', providerAcceptancePending: true });
         await vi.waitFor(() => expect(storage.getState().sessionPending[sessionId]?.messages).toEqual([]));
+        expect(request).toHaveBeenCalledWith(`/v2/sessions/${sessionId}/messages/by-local-id/${localId}`, expect.anything());
         const transcript = storage.getState().sessionMessages[sessionId];
         expect(transcript.messageIdsOldestFirst.map((id) => transcript.messagesById[id]?.localId)).toEqual([
             'native-user-turn-local-id',
+        ]);
+    });
+
+    it('keeps an ordinary admitted send visible while Pending is empty and its transcript update is in flight', async () => {
+        const sessionId = 's_runtime_rpc_pending_commit_before_transcript';
+        const localId = 'ordinary-request';
+        const text = 'ordinary input';
+        storage.getState().applySessions([{ ...createSession({ sessionId }), encryptionMode: 'plain' }]);
+        const { sync } = await import('./sync');
+        sync.encryption = await Encryption.create(new Uint8Array(32).fill(9));
+        vi.spyOn(apiSocket, 'sessionRPC').mockResolvedValue({ ok: true, providerAcceptancePending: true });
+        const committed = {
+            id: 'committed-user-message',
+            seq: 1,
+            localId,
+            createdAt: 1,
+            updatedAt: 1,
+            content: { t: 'plain', v: { role: 'user', content: { type: 'text', text } } },
+        };
+        let deliverTranscript!: () => void;
+        const transcript = new Promise<void>((resolve) => { deliverTranscript = resolve; });
+        const request = vi.spyOn(apiSocket, 'request').mockImplementation(async (path) => {
+            if (path === `/v2/sessions/${sessionId}/messages/by-local-id/${localId}`) {
+                return Response.json({ message: committed });
+            }
+            if (path.includes('/pending?')) return Response.json({ pending: [] });
+            await transcript;
+            return Response.json({ messages: [committed] });
+        });
+
+        try {
+            await sync.sendMessage(sessionId, text, undefined, undefined, { localId });
+            await sync.fetchPendingMessages(sessionId);
+            expect(request).toHaveBeenCalledWith(`/v2/sessions/${sessionId}/messages/by-local-id/${localId}`, expect.anything());
+            expect(storage.getState().sessionPending[sessionId]?.messages).toEqual([
+                expect.objectContaining({ localId, text }),
+            ]);
+        } finally {
+            deliverTranscript();
+        }
+        await vi.waitFor(() => {
+            const state = storage.getState();
+            const messages = state.sessionMessages[sessionId];
+            expect(messages?.messageIdsOldestFirst.map((id) => messages.messagesById[id]?.localId)).toEqual([localId]);
+            expect(state.sessionPending[sessionId]?.messages).toEqual([]);
+        });
+    });
+
+    it('keeps an admitted send when the exact transcript lookup is unavailable on an older server', async () => {
+        const sessionId = 's_runtime_rpc_pending_legacy_transcript';
+        const localId = 'legacy-request';
+        storage.getState().applySessions([{ ...createSession({ sessionId }), encryptionMode: 'plain' }]);
+        const { sync } = await import('./sync');
+        sync.encryption = await Encryption.create(new Uint8Array(32).fill(9));
+        vi.spyOn(apiSocket, 'sessionRPC').mockResolvedValue({ ok: true, providerAcceptancePending: true });
+        vi.spyOn(apiSocket, 'request').mockImplementation(async (path) => {
+            if (path === `/v2/sessions/${sessionId}/messages/by-local-id/${localId}`) {
+                return Response.json({ error: 'Not found', method: 'GET', path }, { status: 404 });
+            }
+            if (path.includes('/pending?')) return Response.json({ pending: [] });
+            return Response.json({ messages: [] });
+        });
+
+        await sync.sendMessage(sessionId, 'legacy input', undefined, undefined, { localId });
+        await sync.fetchPendingMessages(sessionId);
+        expect(storage.getState().sessionPending[sessionId]?.messages).toEqual([
+            expect.objectContaining({ localId, text: 'legacy input' }),
         ]);
     });
 
