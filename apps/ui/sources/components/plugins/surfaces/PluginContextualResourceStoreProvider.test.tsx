@@ -356,9 +356,29 @@ it('batches mounted Services subjects once at the real Resource boundary and pre
         expect(notifyBusy).toHaveBeenCalledTimes(1);
         expect(notifyZero).not.toHaveBeenCalled();
         expect(machineResourceRpc.read).toHaveBeenCalledTimes(4);
+        // Adding a mounted Environment changes this collector's admitted occurrence while the original cell stays mounted.
+        const replacement = { ...exact, context: { ...exact.context, launchInput: { ...exact.context.launchInput,
+            environmentIds: [...exact.context.launchInput.environmentIds, 'new-environment'] } } };
+        const added = { ...demands[0]!, key: 'new-environment', environmentId: 'new-environment' };
+        releases.push(owner.mount(added.key, added));
+        machineResourceRpc.read.mockResolvedValue({ supported: true,
+            result: { ok: false, reason: 'unavailable', code: 'plugin_resource_unavailable' } });
+        await screen.update(<PluginContextualResourceStoreProvider><ServiceColumnResourceBatch owner={owner}
+            demands={[...demands, added]} binding={replacement} resource={demands[0]!.resource} /></PluginContextualResourceStoreProvider>);
+        await vi.waitFor(() => expect(machineResourceRpc.read.mock.calls.length).toBeGreaterThanOrEqual(5));
+        expect.soft(owner.read('busy')?.value).toBe(8);
+        const empty = resourceResponse('c');
+        machineResourceRpc.read.mockResolvedValue({ ...empty, result: { ...empty.result,
+            resource: demands[0]!.resource, kind: 'asset', bytesBase64: Buffer.from(JSON.stringify({ items: [] })).toString('base64') } });
+        const beforeEmpty = machineResourceRpc.read.mock.calls.length;
+        const replacementLease = acquirePluginContextualResourceStore(replacement)!;
+        try { await act(async () => { await replacementLease.store.getEntry(demands[0]!.resource).refresh(); }); }
+        finally { replacementLease.dispose(); }
+        expect(machineResourceRpc.read.mock.calls.length).toBeGreaterThan(beforeEmpty);
+        await vi.waitFor(() => expect(owner.read('busy')?.value).toBeNull());
         await screen.unmount();
         releases.forEach(release => release());
-        await vi.waitFor(() => expect(machineResourceRpc.close).toHaveBeenCalledTimes(1));
+        await vi.waitFor(() => expect(machineResourceRpc.close).toHaveBeenCalledTimes(2));
         expect([...owner.demands()]).toEqual([]);
         expect(owner.read('zero')).toBeNull();
     } finally {

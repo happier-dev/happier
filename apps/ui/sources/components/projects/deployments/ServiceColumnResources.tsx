@@ -113,7 +113,8 @@ function ServiceColumnResourcePublication(props: Readonly<{ owner: Owner; demand
       try { input = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(props.snapshot.value.bytes)); } catch { input = undefined; }
     }
     const parsed = PluginServiceListFieldResourceResultV1Schema.safeParse(input);
-    const rows = parsed.success ? parsed.data.items : [];
+    if (!parsed.success) return;
+    const rows = parsed.data.items;
     const fields = new Map<string, ReadonlyMap<string, ServiceColumnValue>>();
     for (const demand of props.demands) {
       let values = fields.get(demand.field.id);
