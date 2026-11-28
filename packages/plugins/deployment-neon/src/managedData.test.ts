@@ -206,6 +206,26 @@ describe('activated Neon managed data target', () => {
       expect(h.requests.every(request => request.method === 'GET')).toBe(true);
     } finally { await h.kit.dispose(); }
   });
+  it('verifies Link project choices with a Neon key scoped to the selected project', async () => {
+    const projectUrl = `https://console.neon.tech/api/v2/projects/${project.id}`;
+    const h = await host(request => request.url === projectUrl ? { project } : { message: 'Key scoped to one project' },
+      undefined, request => request.url === projectUrl ? 200 : 404);
+    try {
+      const resource = h.kit.registration('resources', 'input-options');
+      if (!resource) throw new Error('Missing input options');
+      const context = createTestResourceInvocationContext({ context: { kind: 'global' },
+        async readAction(ref, input, cancellation) { return { ok: true, result: await h.kit.invokeAction(ref.localId, input,
+          { signal: cancellation?.signal, surface: 'plugin' }) }; } });
+      const draftInput = { ...preparation('projects-link'), projectId: project.id, branchId: mainBranch.id };
+      const read = (draft: typeof draftInput) => resource.read({ ...context, query: { draftInput: draft, fieldPath: 'projectId' } });
+      expect(JSON.parse(String(await read(draftInput)))).toEqual({ options: [{ value: project.id, label: project.name }] });
+      expect(h.requests.map(request => request.url)).toEqual([projectUrl]);
+      await expect(read({ ...draftInput, projectId: 'another-project' }))
+        .rejects.toMatchObject({ code: 'provider_request_failed' });
+      expect(h.requests.map(request => request.url)).toEqual([projectUrl, 'https://console.neon.tech/api/v2/projects/another-project']);
+    } finally { await h.kit.dispose(); }
+  });
+
   it('offers the selected project branches before linking without inventing an existing target link', async () => {
     const h = await host(request => request.url.includes('/branches') ? { branches: [mainBranch], pagination: {} } : { project });
     try {

@@ -27,10 +27,14 @@ const runtime: PluginDynamicResourceRuntime = {
     if (!custody.targetLinkId && record(principal) && record(principal.purpose)) {
       custody.credentialPrincipal = { ...principal, purpose: { ...principal.purpose, consumer: { pluginId, localId } } };
     }
+    const search = options.query?.query;
+    const cursor = options.query?.cursor;
+    // A selected project can be verified by a project-scoped key that cannot list the organization.
+    const selectedProjectId = typeof draft.projectId === 'string' && !search && !cursor ? draft.projectId : undefined;
     const result = await options.readAction({ pluginId, localId }, { ...custody,
-      ...(field === 'branchId' ? { projectId: draft.projectId!, includeBranches: true, ...(options.query?.cursor ? { cursor: options.query.cursor } : {}) } : {}),
-      ...(field === 'projectId' && options.query?.query ? { search: options.query.query } : {}),
-      ...(field === 'projectId' && options.query?.cursor ? { cursor: options.query.cursor } : {}) }, { signal: options.signal });
+      ...(field === 'branchId' ? { projectId: draft.projectId!, includeBranches: true, ...(cursor ? { cursor } : {}) } : {}),
+      ...(field === 'projectId' ? { ...(selectedProjectId ? { projectId: selectedProjectId } : {}),
+        ...(search ? { search } : {}), ...(cursor ? { cursor } : {}) } : {}) }, { signal: options.signal });
     if (!result.ok) throw withActionFailureDiagnostic(new PluginError({ code: 'errorCode' in result && typeof result.errorCode === 'string' ? result.errorCode : 'deployment_unavailable' }), { phase: 'deployment.neon.options', causeKind: 'native_failure', error: result });
     const value = result.result;
     if (!record(value)) throw new PluginError({ code: 'provider_response_invalid' });
