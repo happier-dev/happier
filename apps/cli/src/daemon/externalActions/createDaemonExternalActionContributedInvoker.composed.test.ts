@@ -1,3 +1,13 @@
+import { rebindRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
+import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
+import { registerAccountHomeHttp, registerPlainArtifactRoutes } from '@/session/actions/widgetApproval.testkit';
+import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
+import { ReviewCommentActionInputSchemasV1 } from '@happier-dev/protocol/reviews/comments/actions';
+import { ReviewCommentPublicationTransportRequestV1Schema } from '@happier-dev/protocol/reviews/comments/publicationTransport';
+import { projectRequesterAccountActionAuthorization } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
 import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
 import { resolveActionSessionTargets } from '@happier-dev/protocol/actions/executor/sessionTargets';
 import { createExternalActionRuntime } from './externalActionRuntime.testkit';
@@ -323,6 +333,128 @@ function createExternalActionIngressExecutor(scope: 'global' | 'session' = 'sess
 }
 
 describe('createDaemonExternalActionContributedInvoker', () => {
+  it.each(['same-account', 'foreign-executor', 'unverified-source'] as const)(
+    'uses only the admitted Session Account for a replayed Review publication (%s)', scenario =>
+    withConfiguredDaemonTestHome({ prefix: 'review-publication-replay-', env: { HAPPIER_ACTIONS_SETTINGS_V1: undefined } }, async () => {
+      await updateMachineRegistration(() => ({ machineId: 'machine-local' }));
+      const source = createSharedBotContributedContext('session');
+      const makeCredentials = (accountId: string) => ({
+        token: `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`,
+        encryption: null,
+      });
+      const credentials = makeCredentials('alice');
+      const executorCredentials = scenario === 'foreign-executor' ? makeCredentials('bob') : credentials;
+      const home = 'https://review-publication.example.test';
+      const app = fastify();
+      const socket = await createRequesterCurrentnessSocketHarness();
+      const settings = accountSettingsParse({});
+      const features = registerAccountHomeHttp(app, { accountId: 'alice', serverId: 'server-external', settings });
+      registerPlainArtifactRoutes(app, 'alice');
+      app.get('/v1/account/security', async () => ({ v: 1, encryptionMode: 'plain',
+        nativeEmail: null, password: { status: 'not_enrolled', revision: null } }));
+      const claims: unknown[] = [];
+      app.post('/v1/reviews/comments/publication/claim', async request => {
+        expect(request.headers.authorization).toBe(`Bearer ${credentials.token}`);
+        const claim = ReviewCommentPublicationTransportRequestV1Schema.parse(request.body);
+        claims.push(claim);
+        return { disposition: 'dispatch', dispatchToken: 'dispatch-token',
+          publicationPlanId: claim.publicationPlanId, entries: [], verdict: claim.verdict,
+          instructions: { entries: [], verdict: 'dispatch' }, priorResult: null };
+      });
+      const restoreHttp = installAxiosFastifyAdapter({ app, origin: home });
+      vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+        const path = new URL(String(url)).pathname;
+        if (path !== '/v1/features' && path !== '/v1/features/authenticated') throw new Error(`Unexpected fetch ${path}`);
+        return Response.json(features);
+      });
+      const claim = ReviewCommentActionInputSchemasV1['reviews.comments.claimPublicationDispatch'].parse({
+        target: { providerId: 'external-forge', nativeService: { pluginId: 'acme.external', localId: 'account' },
+          entryRef: { sourceId: 'acme.external/source', kindId: 'pull-request', collisionScope: 'repo:1', entryId: '1' }, subtarget: null },
+        baseRevision: 'base', headRevision: 'head', entries: [], verdict: { kind: 'comment', body: 'Review verdict' },
+      });
+      const executor = createCliActionExecutorFromCredentials({
+        credentials: executorCredentials, readCredentials: async () => executorCredentials,
+        serverId: 'server-external', serverApiUrl: home, machineId: 'machine-local',
+        serverIdentityId: 'server-external', pluginActionExecutionOwner: 'current_process',
+        externalActionMachineInstallationId: 'bot-installation',
+        externalActionMachineRequestPrivateKey: Buffer.from(source.readInstallationIdentity().privateKey, 'base64url'),
+        actionsSettingsProvider: createActionSettingsProvider({ getAccountSettings: () => settings, allowEnvironmentOverride: false }),
+        onApprovalRequested: async (_artifactId, _signal, decide) => decide('approve'),
+      });
+      let seed: PluginActionsServiceSeed | undefined;
+      let stored: TargetActionApprovalRequestV1 | null = null;
+      const materialization = createPluginActionCallerMaterializationFixture('acme.external', { machineId: 'machine-local' });
+      const runtime = createExternalActionRuntime('global', 'acme.external', async () => {
+        if (!seed) throw new Error('Expected the real replay service seed');
+        const actions = createPluginInvocationActionsService({
+          seed: { ...seed, resolveCurrentPluginMaterializationRef: materialization.resolveCurrentPluginMaterializationRef },
+          actionExecutor: executor,
+          invokeContributedAction: async () => { throw new Error('Unexpected contributed child'); },
+        });
+        await actions.execute('reviews.comments.claimPublicationDispatch', claim);
+      }, undefined, undefined, value => { seed = value; }, undefined, 'writesRemote', undefined, { surfaces: ['agent', 'plugin'] });
+      const lease: PluginRuntimeRegistryLease = { registry: runtime, source: 'ephemeral',
+        durableRevision: runtime.durableRevision ?? -1, release: async () => {} };
+      const invoker = createDaemonExternalActionContributedInvoker({ acquireRuntimeRegistryLease: async () => lease,
+        requestCurrentIntent: createTargetActionCurrentIntentAdapter({
+          create: async request => {
+            stored = TargetActionApprovalRequestV1Schema.parse(JSON.parse(JSON.stringify(request)));
+            return { artifactId: 'review-publication' };
+          },
+          read: async () => stored,
+        }),
+      });
+      try {
+        expect(await createExternalActionExecutor(invoker).execute('action.invoke', {
+          action: { pluginId: 'acme.external', localId: 'inspect' }, input: {},
+        }, source.context)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+        const replay = createDaemonExternalActionContributedApprovalReplay({ credentials,
+          readInstallationIdentity: source.readInstallationIdentity,
+          isApprovalExecutionOriginCurrent: async args => scenario !== 'unverified-source' && await source.isApprovalExecutionOriginCurrent(args),
+          // The tracked Session process supplies its already-admitted credentials.
+          // Its projection, durable replay, and nested Review executor remain real.
+          prepareApprovalExecutionAuthorization: async ({ authorization, signal }) => {
+            const binding = authorization.binding;
+            const withHttp = await projectExternalActionRequesterHttpAuthorization({
+              authorization, serverId: 'server-external', serverIdentityId: binding.serverIdentityId,
+              serverHttpBaseUrl: home, target: binding.target, installationId: 'bot-installation',
+              privateKey: source.readInstallationIdentity().privateKey, rootAdmitted: true, signal,
+            });
+            if (!withHttp) throw new Error('Expected the signed requester HTTP port');
+            const projected = await projectRequesterAccountActionAuthorization({
+              authorization: withHttp, signal, serverIdentityId: binding.serverIdentityId,
+              bootstrap: { credentials, serverHttpBaseUrl: home, getBoundSessionId: () => 'bot-session', isCurrent: async () => true,
+                attribution: { serverId: 'server-external', accountId: 'alice', installationId: 'bot-installation', machineId: 'machine-local' } },
+            });
+            if (!projected) throw new Error('Expected exact Session Account custody');
+            const retained = retainVerifiedExternalActionRequester({ authorization: projected, isCurrent: async () => true });
+            return { authorization: rebindRequesterAccountActionContext(retained, retained) };
+          },
+          resolvePreparedApprovalExecutionOriginCurrentness: () => source.isApprovalExecutionOriginCurrent,
+          acquireRuntimeRegistryLease: async () => lease,
+          targetActionApprovals: { targetActionApprovalsGet: async () => stored,
+            targetActionApprovalsUpdate: async ({ request }) => {
+              stored = TargetActionApprovalRequestV1Schema.parse(JSON.parse(JSON.stringify(request)));
+              return { ok: true };
+            } },
+        });
+        const result = await replay({ artifactId: 'review-publication', decision: 'approve' });
+        if (scenario === 'same-account') {
+          expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
+          expect(claims).toHaveLength(1);
+        } else {
+          expect(result).toMatchObject({ ok: false, errorCode: scenario === 'foreign-executor'
+            ? 'review_comment_account_custody_denied' : 'approval_context_unavailable' });
+          expect(claims).toEqual([]);
+        }
+      } finally {
+        await runtime.dispose();
+        restoreHttp();
+        vi.unstubAllGlobals();
+        await socket.close();
+        await app.close();
+      }
+    }));
   it.each(['admitted', 'missing', 'other-account'] as const)('retains admitted Session targets through durable replay and nested child admission (%s)', async scenario => {
     const previousSettings = process.env.HAPPIER_ACTIONS_SETTINGS_V1;
     process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({ v: 1, actions: {

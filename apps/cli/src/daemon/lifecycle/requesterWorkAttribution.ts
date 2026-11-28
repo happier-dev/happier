@@ -5,6 +5,7 @@ import { projectDaemonSpawnUnavailable, type SpawnSessionOptions, type SpawnSess
 import { rethrowRequesterHomeReadFailure } from '../sessionEncryption/requesterCurrentness';
 import { isOriginalAccountActionCustody } from '../sessionEncryption/requesterAccountActionProjection';
 import { readRequesterAccountActionTransportContext } from '../sessionEncryption/requesterAccountActionContext';
+import { readHostReviewedChildOriginalAuthorizationV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { RequesterWorkAttributionV1Schema, type RequesterWorkAttributionV1 } from '@happier-dev/protocol/machines/requesterWorkAttributionV1';
 export { RequesterWorkAttributionV1Schema, RequesterWorkAttributionStoredReadV1Schema,
@@ -131,7 +132,10 @@ export async function canUseLocalRuntimeReviewAccount(
   if (!context?.sessionActionOrigin) return await canUseLocalRuntimeAccount(context, localAccountId, serverId);
   const { externalActionExecutionAuthorization, callerInputAuthorization, sessionActionOrigin, ...independentAuthority } = context;
   if (!localAccountId || carriesNonLocalRequesterAuthority(independentAuthority)) return false;
-  const authorizations = [externalActionExecutionAuthorization, callerInputAuthorization].filter(authorization => authorization !== undefined);
+  // The reviewed child may attach an exact-purpose HTTP view of the same
+  // root. Its verified issuer proof retains the original private custody.
+  const originalAuthorization = readHostReviewedChildOriginalAuthorizationV1(context) ?? externalActionExecutionAuthorization;
+  const authorizations = [originalAuthorization, callerInputAuthorization].filter(authorization => authorization !== undefined);
   if (authorizations.length === 0) return false;
   for (const authorization of authorizations) {
     const custody = readRequesterAccountActionTransportContext(authorization);

@@ -16,6 +16,7 @@ import { createTargetActionApprovalDecision, buildTargetActionApprovalDecisionRe
 import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
 import { ActionOperationCredentialUseV1Schema, projectActionFailureCauseV1, type ActionOperationCredentialUseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { readOriginalRequesterSessionCustodyId } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 
 import { acquireWorkflowApprovalRequester } from '../workflows/requesterCustody';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -128,21 +129,24 @@ export function createDaemonExternalActionContributedApprovalReplay(input: Reado
   const now = input.now ?? Date.now;
   const readInstallationIdentity = input.readInstallationIdentity
     ?? readInstallationIdentityIfExistsSync;
-  const prepareRequesterSource = async (authorization: ActionExecutorContext['externalActionExecutionAuthorization'], signal?: AbortSignal) => {
-    if (!authorization || !input.prepareApprovalExecutionAuthorization) return undefined;
-    const binding = authorization.binding;
-    // This reopening is the ordinary Account path. Delegated HTTP, Session and
-    // Workflow sources keep their existing currentness/custody owners.
-    if (!('authentication' in binding)
-      || (binding.authentication.kind !== 'account' && binding.authentication.kind !== 'terminal')
-      || binding.sessionActionOrigin || binding.workflowActionOrigin) return undefined;
-    const prepared = await input.prepareApprovalExecutionAuthorization({ authorization, ...(signal ? { signal } : {}) });
+  const prepareExactRequester = async (authorization: NonNullable<ActionExecutorContext['externalActionExecutionAuthorization']>, signal?: AbortSignal) => {
+    const prepared = await input.prepareApprovalExecutionAuthorization?.({ authorization, ...(signal ? { signal } : {}) });
     if (!prepared || prepared.authorization.token !== authorization.token
       || !sameStrictJsonValue(prepared.authorization.binding, authorization.binding)) {
       await prepared?.dispose?.();
       return null;
     }
     return prepared;
+  };
+  const prepareRequesterSource = async (authorization: ActionExecutorContext['externalActionExecutionAuthorization'], signal?: AbortSignal) => {
+    if (!authorization || !input.prepareApprovalExecutionAuthorization) return undefined;
+    const binding = authorization.binding;
+    // Ordinary Account currentness uses the reopened requester. Session and
+    // Workflow currentness are still decided by their existing source owners.
+    if (!('authentication' in binding)
+      || (binding.authentication.kind !== 'account' && binding.authentication.kind !== 'terminal')
+      || binding.sessionActionOrigin || binding.workflowActionOrigin) return undefined;
+    return await prepareExactRequester(authorization, signal);
   };
   const isRequesterSourceCurrent = async (request: TargetActionApprovalRequestV1, signal?: AbortSignal): Promise<boolean> => {
     const projected = projectTargetApprovalRequest(request);
@@ -229,6 +233,13 @@ export function createDaemonExternalActionContributedApprovalReplay(input: Reado
         };
         const persistenceFailure = await persist(terminal);
         return persistenceFailure ?? targetActionReplayFailure('approval_stale');
+      }
+      // The durable receipt carries the signed Session source, while its
+      // private Account ports must be reopened at their original installation.
+      if (sourceSession && originalAuthorization && input.prepareApprovalExecutionAuthorization
+        && readOriginalRequesterSessionCustodyId(originalAuthorization.binding) !== null) {
+        preparedSource = await prepareExactRequester(originalAuthorization, signal);
+        if (!preparedSource) return targetActionReplayFailure('approval_stale');
       }
       const installationIdentity = readInstallationIdentity();
       if (admittedWorkflowRequester && installationIdentity) {
@@ -339,6 +350,7 @@ export function createDaemonExternalActionContributedApprovalReplay(input: Reado
               sessionInputSource: origin.sessionInputSource,
               sessionAgentSpawnPolicyV1: origin.sessionAgentSpawnPolicyV1,
               workspaceWrites: sourceSession?.workspaceWrites,
+              ...(sourceSession && preparedSource ? { sessionActionOrigin: sourceSession } : {}),
               ...(context?.executeHostReviewedChildAction ? { executeHostReviewedChildAction: context.executeHostReviewedChildAction } : {}),
               ...(externalActionContext ?? {}),
             };
