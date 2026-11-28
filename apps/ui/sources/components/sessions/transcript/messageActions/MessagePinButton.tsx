@@ -31,6 +31,7 @@ export function MessagePinButton(props: Readonly<{
             invertedActionsLayout={props.invertedActionsLayout === true}
             onFocusChange={props.onFocusChange}
             onPress={() => props.onTogglePin?.(buildSessionMessagePinAtPressTime(pinTarget))}
+            shortcutCommandId="transcript.message.pin"
         />
     );
 }

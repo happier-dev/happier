@@ -70,6 +70,7 @@ import { NextPendingNavigationHost } from '@/components/sessions/pendingNavigati
 import { t } from '@/text';
 import { usePaneArrangement } from '@/components/appShell/panes/arrangement/usePaneArrangement';
 import { readActiveFileViewActionOwner, readShellColumnActionOwner } from '@/sync/ops/actions/scopeActionFamily';
+import { TRANSCRIPT_MESSAGE_CURSOR_ACTION_COMMANDS, readTranscriptMessageCursorActions } from '@/components/sessions/transcript/messageCursor/transcriptMessageCursorStore';
 import { focusPaneRegion } from '@/components/appShell/panes/paneRegionFocus';
 import { useAskHappierStarter } from '@/components/sessions/bots/useAskHappierOffer';
 import { useWorkspaceFileOpener } from '@/components/workspaces/files/useWorkspaceFileOpener';
@@ -189,6 +190,7 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
             'search.textInFiles': () => undefined,
             'search.replaceInFiles': () => undefined,
             'file.blame.toggle': () => undefined,
+            ...Object.fromEntries(Object.values(TRANSCRIPT_MESSAGE_CURSOR_ACTION_COMMANDS).map(id => [id, () => undefined])),
             'search.files': () => undefined,
             'search.symbols': () => undefined,
             ...(commandPaletteEnabled ? { 'commandPalette.open': () => undefined } : {}),
@@ -337,6 +339,7 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
                 execute: (actionId, input) => actionExecutor.execute(actionId, input, { surface: 'ui' }) }) : [],
             petControls,
             fileViewControls,
+            focusedMessageActions: readTranscriptMessageCursorActions(),
             themeCommands: loadThemeCommands,
             ...(sessionModelPicker ? { sessionModelPicker } : {}),
             ...(sessionModelFavorites.length > 0 ? { sessionModelFavorites } : {}),

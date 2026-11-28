@@ -135,6 +135,8 @@ type BuildCommandPaletteCommandsBaseParams = Readonly<{
     workflowsEnabled?: boolean;
   }>;
   shortcutLabels?: Partial<Record<KeyboardCommandId, string>>;
+  /** The focused transcript message's actions (the message cursor), read as the palette opens; listed first. */
+  focusedMessageActions?: readonly Readonly<{ commandId: KeyboardCommandId; run: () => void }>[];
   sessionCommands?: readonly Command[];
   keyboardCommands?: KeyboardCommandControls;
   petControls?: PetCommandControls;
@@ -234,6 +236,11 @@ export function buildCommandPaletteCommands(
   } = params;
 
   const cmds: Command[] = [
+    ...(params.focusedMessageActions ?? []).flatMap((action): Command[] => {
+      const command = defaultKeyboardCommands.find(candidate => candidate.id === action.commandId);
+      return command ? [{ id: action.commandId, emptyQuerySuggested: true, title: t(command.settingsTitleKey),
+        category: t('settingsKeyboard.groupTranscript'), shortcut: params.shortcutLabels?.[action.commandId], action: action.run }] : [];
+    }),
     {
       id: 'new-session',
       emptyQuerySuggested: true,

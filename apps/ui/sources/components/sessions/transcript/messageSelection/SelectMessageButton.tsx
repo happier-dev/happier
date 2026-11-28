@@ -49,6 +49,7 @@ export function SelectMessageButton(props: Readonly<{
             invertedActionsLayout={props.invertedActionsLayout === true}
             onFocusChange={props.onFocusChange}
             onPress={isSelectionToggle ? row.toggle : () => actions.enter(props.messageId)}
+            shortcutCommandId="transcript.message.select"
         />
     );
 }

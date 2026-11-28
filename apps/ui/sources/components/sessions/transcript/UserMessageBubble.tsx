@@ -44,7 +44,7 @@ export function UserMessageBubble(props: Readonly<{
     padding?: 'surface' | 'parts';
     /** Measures the painted surface, padding included. */
     onLayout?: ViewProps['onLayout'];
-    attention?: Pick<React.ComponentProps<typeof TranscriptJumpAttention>, 'sessionAddress' | 'routeMessageId' | 'seq' | 'radius'>;
+    attention?: Pick<React.ComponentProps<typeof TranscriptJumpAttention>, 'sessionAddress' | 'routeMessageId' | 'seq' | 'radius' | 'cursorFocused'>;
     testID?: string;
     children: React.ReactNode;
 }>) {

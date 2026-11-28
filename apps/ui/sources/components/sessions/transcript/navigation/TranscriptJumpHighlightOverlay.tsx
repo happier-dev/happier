@@ -7,6 +7,7 @@ import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreferenc
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { useVoiceReadAloudMessagePhase } from '@/components/voice/presence/useVoiceReadAloudMessagePhase';
 import { t } from '@/text';
+import { clearTranscriptMessageCursor } from '../messageCursor/transcriptMessageCursorStore';
 
 import {
     TRANSCRIPT_JUMP_HIGHLIGHT_DURATION_MS,
@@ -44,6 +45,8 @@ export function TranscriptJumpAttention(props: Readonly<{
     style?: StyleProp<ViewStyle>;
     viewProps?: ViewProps;
     viewRef?: React.Ref<View>;
+    /** This element's message holds the keyboard message cursor (#1031): it takes focus and keeps a static ring. */
+    cursorFocused?: boolean;
     children: React.ReactNode;
 }>): React.ReactElement {
     const token = useTranscriptJumpHighlight({
@@ -53,17 +56,66 @@ export function TranscriptJumpAttention(props: Readonly<{
         filePath: props.filePath ?? null,
     });
     const readAloud = useVoiceReadAloudMessagePhase(props.filePath ? null : props.sessionAddress, props.routeMessageId ?? null);
+    const cursorFocused = props.cursorFocused === true;
+    const ref = useMessageCursorFocus(cursorFocused, props.viewRef);
     return (
-        <View {...(props.viewProps ?? null)} ref={props.viewRef} style={props.style}>
+        <View {...(props.viewProps ?? null)} ref={ref} style={props.style}>
             {readAloud !== 'idle' ? (
                 <View pointerEvents="none" accessible
                     accessibilityLabel={readAloud === 'preparing' ? t('voicePresence.readAloud.preparing') : t('voicePresence.readAloud.speaking')}
                     style={[styles.ring, { borderRadius: props.radius }]}
                     testID="transcript-read-aloud-highlight" />
-            ) : token != null ? <TranscriptJumpAttentionRing key={token} token={token} radius={props.radius} /> : null}
+            ) : token != null ? <TranscriptJumpAttentionRing key={token} token={token} radius={props.radius} />
+                : cursorFocused ? <View pointerEvents="none" style={[styles.ring, { borderRadius: props.radius }]}
+                    testID={TRANSCRIPT_MESSAGE_CURSOR_TEST_ID} /> : null}
             {props.children}
         </View>
     );
+}
+
+export const TRANSCRIPT_MESSAGE_CURSOR_TEST_ID = 'transcript-message-cursor';
+
+function isEditableElement(element: Element | null): boolean {
+    if (!element) return false;
+    const tag = element.tagName.toLowerCase();
+    return tag === 'input' || tag === 'textarea' || (element as HTMLElement).isContentEditable === true
+        || element.closest('[contenteditable="true"], [role="textbox"]') != null;
+}
+
+/**
+ * The cursor's message holds real keyboard focus on web, so screen readers announce it and the keyboard owner
+ * reads a non-editable target. Moving into a text field outside a dialog (clicking the composer) ends the cursor;
+ * a dialog (the palette) returns focus here when it closes.
+ */
+function useMessageCursorFocus(focused: boolean, forwardedRef: React.Ref<View> | undefined): React.RefCallback<View> {
+    const nodeRef = React.useRef<View | null>(null);
+    const forwardedRefRef = React.useRef(forwardedRef);
+    forwardedRefRef.current = forwardedRef;
+    const ref = React.useCallback((node: View | null) => {
+        nodeRef.current = node;
+        const forwarded = forwardedRefRef.current;
+        if (typeof forwarded === 'function') forwarded(node);
+        else if (forwarded) (forwarded as React.MutableRefObject<View | null>).current = node;
+    }, []);
+    React.useEffect(() => {
+        if (Platform.OS !== 'web' || !focused) return;
+        const element = nodeRef.current as unknown as HTMLElement | null;
+        if (!element || typeof element.focus !== 'function') return;
+        element.setAttribute('tabindex', '-1');
+        element.style.outline = 'none';
+        element.focus({ preventScroll: true });
+        const onBlur = (event: FocusEvent) => {
+            const next = event.relatedTarget as Element | null;
+            if (isEditableElement(next) && !next?.closest('[role="dialog"], [aria-modal="true"]')) clearTranscriptMessageCursor();
+        };
+        element.addEventListener('blur', onBlur);
+        return () => {
+            element.removeEventListener('blur', onBlur);
+            element.removeAttribute('tabindex');
+            element.style.outline = '';
+        };
+    }, [focused]);
+    return ref;
 }
 
 const TranscriptJumpAttentionRing = React.memo(function TranscriptJumpAttentionRing(props: Readonly<{ token: number; radius: number }>) {

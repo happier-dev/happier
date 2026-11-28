@@ -6,17 +6,17 @@ import { BUILT_IN_SETTINGS_METADATA_V1 } from '@happier-dev/protocol/actions/set
 const isProgramCommand = (id: string) => /^(panes\.|shell\.column\.toggle$|media\.|search\.|files\.editor\.|review\.|editor\.selection\.ask$|files\.track\.toggle$|code\.)/.test(id);
 
 describe('Files and Editor program bindings', () => {
-  it('ignores retired message overrides while keeping bound transcript scrolling available', () => {
+  it('revives the message next/previous ids for the message cursor, honouring overrides saved for them', () => {
     const model = buildKeyboardShortcutSettingsModel({ platform: 'macos', surface: 'native', settings: {
       commandPaletteEnabled: true, keyboardShortcutsV2Enabled: true, keyboardSingleKeyShortcutsEnabled: true,
       keyboardShortcutDisabledCommandIdsV1: ['transcript.message.previous'],
       keyboardShortcutOverridesV1: { 'transcript.message.next': [{ binding: 'j' }] },
     } });
-    const ids: readonly string[] = model.commandRows.map(row => row.commandId);
-    expect(ids).not.toContain('transcript.message.next');
-    expect(ids).not.toContain('transcript.message.previous');
+    expect(model.commandRows.find(row => row.commandId === 'transcript.message.next')?.bindingValue).toBe('j');
+    expect(model.commandRows.find(row => row.commandId === 'transcript.message.focusLast')?.bindingValue).toBe('Mod+ArrowUp');
     expect(model.commandRows.find(row => row.commandId === 'transcript.scroll.top')?.defaultLabel).toBeTruthy();
-    expect(model.conflicts.some(conflict => conflict.commandIds.some(id => String(id).startsWith('transcript.message.')))).toBe(false);
+    // The cursor's keys live in their own scope: plain arrows, Escape and letters never collide with global commands.
+    expect(model.conflicts.filter(conflict => conflict.commandIds.some(id => String(id).startsWith('transcript.message.')))).toEqual([]);
   });
   for (const platform of ['macos', 'windows', 'linux', 'ios', 'android'] as const) {
     for (const surface of ['native', 'web'] as const) {

@@ -1124,6 +1124,36 @@ describe('AgentInput (history navigation)', () => {
     expect(mocks.onChangeText).toHaveBeenCalledWith('previous message');
   });
 
+  it('leaves Mod+ArrowUp to the transcript message cursor instead of recalling history', async () => {
+    mocks.historyMoveUp.mockReturnValue('previous message');
+
+    const { AgentInput } = await import('./AgentInput');
+    const screen = await renderScreen(<AgentInput
+          value=""
+          onChangeText={mocks.onChangeText}
+          placeholder="p"
+          onSend={mocks.onSend}
+          autocompleteKinds={[]}
+          autocompleteSuggestions={async () => []}
+          sessionId="s1"
+          metadata={null}
+          disabled={false}
+          showAbortButton={false}
+        />);
+
+    const input = findMultiTextInput(screen);
+    let handled: any = null;
+    await act(async () => {
+      handled = input.props.onKeyPress?.({ key: 'ArrowUp', metaKey: true, inputState: { text: '', selection: { start: 0, end: 0 } } });
+    });
+    expect(handled).toBe(false);
+    await act(async () => {
+      handled = input.props.onKeyPress?.({ key: 'ArrowUp', ctrlKey: true, inputState: { text: '', selection: { start: 0, end: 0 } } });
+    });
+    expect(handled).toBe(false);
+    expect(mocks.historyMoveUp).not.toHaveBeenCalled();
+  });
+
   it('uses live key event selection so ArrowUp at the real input start enters history immediately', async () => {
     mocks.historyMoveUp.mockReturnValue('previous message');
 

@@ -111,6 +111,7 @@ import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/ser
 import { createWorkflowInvocationRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { TranscriptJumpAttention } from '@/components/sessions/transcript/navigation/TranscriptJumpHighlightOverlay';
+import { useTranscriptMessageCursorFocused } from '@/components/sessions/transcript/messageCursor/transcriptMessageCursorStore';
 import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
 import { UserMessageBubble, userMessageBubbleAlignerStyle } from './UserMessageBubble';
 
@@ -958,6 +959,9 @@ function UserTextBlock(props: {
   const handleActionsBlur = React.useCallback(() => setIsActionRowFocused(false), []);
   const isWeb = Platform.OS === 'web';
 	  const transcriptSource = useSessionTranscriptSource();
+  const cursorAddress = React.useMemo(() => transcriptSource.sessionId === props.sessionId
+    ? normalizeSessionAddress(transcriptSource.serverId, props.sessionId) : null, [transcriptSource.sessionId, transcriptSource.serverId, props.sessionId]);
+  const cursorFocused = useTranscriptMessageCursorFocused(cursorAddress, buildMessageRouteId(props.message));
   const writeClipboard = useClipboardWrite(props.serverId ?? transcriptSource.serverId);
   const sourceCanSendMessages = transcriptSource.useInteraction().canSendMessages;
 	  const isDiscarded = isCommittedMessageDiscarded(props.metadata, props.message.localId);
@@ -1097,7 +1101,7 @@ function UserTextBlock(props: {
   const rowActionVisibilityInput = {
     platformOS: Platform.OS,
     isRowHovered: isMessageHovered,
-    isRowFocused: isActionRowFocused,
+    isRowFocused: isActionRowFocused || cursorFocused,
     coarsePrimaryPointer,
     selectionModeActive: selectionModeActionsVisible,
     touchOpened,
@@ -1143,6 +1147,7 @@ function UserTextBlock(props: {
       onActionsFocus={handleActionsFocus} onActionsBlur={handleActionsBlur}
       hoverProps={hoverProps}
       touchRevealKey={touchRevealKey}
+      cursorFocused={cursorFocused}
 >
       {(actionsRow) => (
         <View
@@ -1164,6 +1169,7 @@ function UserTextBlock(props: {
             routeMessageId={buildMessageRouteId(props.message)}
             seq={resolveTranscriptMessageSeq(props.message)}
             radius={TRANSCRIPT_MESSAGE_HIGHLIGHT_RADIUS}
+            cursorFocused={cursorFocused}
             style={styles.structuredUserMessageContent}
           >
             {structuredNode}
@@ -1286,6 +1292,7 @@ function UserTextBlock(props: {
       onActionsFocus={handleActionsFocus} onActionsBlur={handleActionsBlur}
       hoverProps={hoverProps}
       touchRevealKey={touchRevealKey}
+      cursorFocused={cursorFocused}
 >
       {(actionsRow) => (
       <View
@@ -1317,7 +1324,7 @@ function UserTextBlock(props: {
           ) : null}
           <UserMessageBubble
             discarded={isDiscarded}
-            attention={{ sessionAddress: transcriptSource.sessionId === props.sessionId ? normalizeSessionAddress(transcriptSource.serverId, props.sessionId) : null, routeMessageId: buildMessageRouteId(props.message), seq: resolveTranscriptMessageSeq(props.message), radius: TRANSCRIPT_MESSAGE_HIGHLIGHT_RADIUS }}
+            attention={{ sessionAddress: transcriptSource.sessionId === props.sessionId ? normalizeSessionAddress(transcriptSource.serverId, props.sessionId) : null, routeMessageId: buildMessageRouteId(props.message), seq: resolveTranscriptMessageSeq(props.message), radius: TRANSCRIPT_MESSAGE_HIGHLIGHT_RADIUS, cursorFocused }}
           >
             {bubbleContent}
           </UserMessageBubble>
@@ -1397,6 +1404,9 @@ function AgentTextBlock(props: {
   const isWeb = Platform.OS === 'web';
   const fallbackTextSelectable = shouldEnableFallbackTextNativeSelection(Platform.OS);
 	  const transcriptSource = useSessionTranscriptSource();
+  const cursorAddress = React.useMemo(() => transcriptSource.sessionId === props.sessionId
+    ? normalizeSessionAddress(transcriptSource.serverId, props.sessionId) : null, [transcriptSource.sessionId, transcriptSource.serverId, props.sessionId]);
+  const cursorFocused = useTranscriptMessageCursorFocused(cursorAddress, buildMessageRouteId(props.message));
   const writeClipboard = useClipboardWrite(props.serverId ?? transcriptSource.serverId);
   const sourceCanSendMessages = transcriptSource.useInteraction().canSendMessages;
   const { onJumpToAnchor: handleJumpToAnchor, onMarkdownLinkPress: handleMarkdownLinkPress, openPath: handleOpenAgentSessionMediaPath } = useTranscriptFileLinks({
@@ -1515,7 +1525,7 @@ function AgentTextBlock(props: {
   const rowActionVisibilityInput = {
     platformOS: Platform.OS,
     isRowHovered: isMessageHovered,
-    isRowFocused: isActionRowFocused,
+    isRowFocused: isActionRowFocused || cursorFocused,
     coarsePrimaryPointer,
     selectionModeActive: selectionModeActionsVisible,
     touchOpened,
@@ -1688,6 +1698,7 @@ function AgentTextBlock(props: {
       onActionsFocus={handleActionsFocus} onActionsBlur={handleActionsBlur}
       hoverProps={hoverProps}
       touchRevealKey={touchRevealKey}
+      cursorFocused={cursorFocused}
     >
       {(actionsRow) => (
       <TranscriptJumpAttention
@@ -1695,6 +1706,7 @@ function AgentTextBlock(props: {
         routeMessageId={buildMessageRouteId(props.message)}
         seq={resolveTranscriptMessageSeq(props.message)}
         radius={TRANSCRIPT_AGENT_BLOCK_HIGHLIGHT_RADIUS}
+        cursorFocused={cursorFocused}
         viewProps={{
           collapsable: false,
           ...streamingLiveRegionProps,

@@ -4,6 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
+import type { KeyboardCommandId } from '@/keyboard/types';
 
 import {
   MESSAGE_ACTION_BUTTON_PX,
@@ -39,6 +40,8 @@ export function MessageActionIconButton(
     onFocusChange?: (focused: boolean) => void;
     /** Where a sheet opened from this control anchors. */
     anchorRef?: React.Ref<View>;
+    /** The keyboard command that runs this action on the focused message; its key joins the tooltip. */
+    shortcutCommandId?: KeyboardCommandId;
   }>,
 ) {
   const { theme } = useUnistyles();
@@ -68,6 +71,7 @@ export function MessageActionIconButton(
         hasPopup={props.hasPopup}
         selected={props.selected}
         tooltip={props.accessibilityLabel}
+        shortcutCommandId={props.shortcutCommandId}
         disabled={props.disabled}
         disabledReason={props.disabledReason}
         onDisabledPress={props.onDisabledPress}

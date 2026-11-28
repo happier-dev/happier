@@ -219,6 +219,7 @@ import { resolveTranscriptMountSettleTuning } from '@/components/sessions/transc
 import { useTranscriptFirstPaintState, useTranscriptItemsPipeline, useTranscriptToolAutoExpandEffect } from '@/components/sessions/transcript/items/useTranscriptItemsPipeline';
 import { useTranscriptItemRenderer, useTranscriptItemsEdgeSlots } from '@/components/sessions/transcript/rowHost/useTranscriptRowHost';
 import { useTranscriptExpansionState } from '@/components/sessions/transcript/rowHost/useTranscriptExpansionState';
+import { TranscriptMessageCursorHost } from './messageCursor/TranscriptMessageCursorHost';
 import { TranscriptPendingNavigationLanding } from '@/components/sessions/pendingNavigation/useTranscriptPendingNavigationLanding';
 import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
 import { TranscriptFindSurface } from '@/components/sessions/transcript/find/TranscriptFindSurface';
@@ -1881,6 +1882,10 @@ export const ChatListInternal = React.memo(function ChatListInternal(props: Chat
             seqHint: message.seq ?? null }, { align: { kind: 'top-with-item-offset', itemOffsetPx: placement.itemOffsetPx } }),
         { tag: 'ChatList.revealNativeItem' });
     }, [jumpToTranscriptTarget, props.messagesById]);
+    // Rows key the message cursor by this same address (MessageView's transcript-source address).
+    const messageCursorAddress = React.useMemo(() => transcriptSource.sessionId === props.sessionId
+        ? normalizeSessionAddress(transcriptSource.serverId, props.sessionId) : null,
+    [props.sessionId, transcriptSource.serverId, transcriptSource.sessionId]);
     const findLoadedMessages = React.useMemo(() => {
         const ids = new Set(props.items.flatMap(collectTranscriptNavigationMessageIdsForItem));
         return [...ids].flatMap((id) => props.messagesById[id] ? [props.messagesById[id]] : []);
@@ -2162,6 +2167,8 @@ export const ChatListInternal = React.memo(function ChatListInternal(props: Chat
                 waitForVisualUpdate={waitForNextTranscriptVisualUpdate}
                 jumpToTarget={jumpToTranscriptTarget}
             />
+            <TranscriptMessageCursorHost address={messageCursorAddress} items={props.items} messagesById={props.messagesById}
+                jumpToTarget={jumpToTranscriptTarget} />
             <InitialPresentationReadinessProvider value={initialRichContentPresentationController.boundary}>
               <View
                 ref={transcriptViewportFocusRef}

@@ -27,6 +27,7 @@ import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import type { RowActionHoverHost } from './rowActionRevealHost';
 import { isTranscriptRowBodyTap, openTranscriptRowTouchActions, toggleTranscriptRowTouchActions, useTranscriptRowNativeTap } from './transcriptRowTouchReveal';
 import { ReadAloudReadinessSubscription } from './ReadAloudReadinessSubscription';
+import { TRANSCRIPT_MESSAGE_CURSOR_ACTION_COMMANDS, registerTranscriptMessageCursorActions, type TranscriptMessageCursorAction } from '../messageCursor/transcriptMessageCursorStore';
 
 type Props = Omit<CommittedMessageActionInput, 'openSavePrompt' | 'openSaveDecision'> & Readonly<{
     showActions: boolean;
@@ -42,6 +43,8 @@ type Props = Omit<CommittedMessageActionInput, 'openSavePrompt' | 'openSaveDecis
     hoverProps?: RowActionHoverHost['hoverProps'];
     /** On a touch host, the message key that a tap or long-press opens; null where hover reveals the row. */
     touchRevealKey: string | null;
+    /** This message holds the keyboard message cursor: its keys run these same actions. */
+    cursorFocused?: boolean;
     children: (row: React.ReactNode) => React.ReactNode;
 }>;
 
@@ -142,6 +145,18 @@ export function CommittedMessageActions(props: Props) {
         if (recovery) { recovery.onPress(); return; }
         if (action && !action.disabled) void action.onPress();
     };
+    // The message cursor's keys and the palette run this row's admitted actions, the ones its buttons run.
+    const cursorActionsRef = React.useRef(availableActions);
+    cursorActionsRef.current = availableActions;
+    const cursorFocused = props.cursorFocused === true;
+    React.useEffect(() => {
+        if (!cursorFocused) return;
+        return registerTranscriptMessageCursorActions(props.message.id, {
+            list: () => cursorActionsRef.current.flatMap((action): TranscriptMessageCursorAction[] => action.id === 'plugins' || action.disabled
+                ? [] : [{ id: action.id, commandId: TRANSCRIPT_MESSAGE_CURSOR_ACTION_COMMANDS[action.id], title: action.title,
+                    run: () => { void action.onPress(); } }]),
+        });
+    }, [cursorFocused, props.message.id]);
     // A pinned message keeps its pin in the row (the pinned state, and Unpin); Pin itself waits under ⋯.
     const pinAction = availableActions.find((action) => action.id === 'pin' && action.placement === 'row');
     const focusChange = (focused: boolean) => focused ? props.onActionsFocus() : props.onActionsBlur();
@@ -187,7 +202,8 @@ export function CommittedMessageActions(props: Props) {
                 disabled={action.disabled} disabledReason={action.disabledReason}
                 onDisabledPress={action.disabledRecovery?.onPress}
                 invertedActionsLayout={props.invertTimestampAndActions}
-                onPress={action.onPress} onFocusChange={focusChange} />;
+                onPress={action.onPress} onFocusChange={focusChange}
+                shortcutCommandId={action.id === 'plugins' ? undefined : TRANSCRIPT_MESSAGE_CURSOR_ACTION_COMMANDS[action.id]} />;
         })}
         <PluginMessageActionsView actions={pluginActions} invertedActionsLayout={props.invertTimestampAndActions}
             hostOverflowItems={overflowItems} onSelectHostOverflow={perform} overflowAnchorRef={overflowAnchorRef} />

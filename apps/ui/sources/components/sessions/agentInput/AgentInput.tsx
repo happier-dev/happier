@@ -4105,7 +4105,9 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         if (submitEnabled) {
             const historyInputState = resolveHistoryKeyInputState(event, inputStateRef.current);
             const isCollapsedSelection = historyInputState.selection.start === historyInputState.selection.end;
-            if (dictationEditable && props.messageHistory !== 'none' && isCollapsedSelection && (event.key === 'ArrowUp' || event.key === 'ArrowDown')
+            // Mod+Up / Mod+Down belong to the transcript message cursor (#1031); only plain arrows recall prompts.
+            const modifiedArrow = event.metaKey === true || event.ctrlKey === true;
+            if (dictationEditable && props.messageHistory !== 'none' && isCollapsedSelection && !modifiedArrow && (event.key === 'ArrowUp' || event.key === 'ArrowDown')
                 && stepMessageHistory(event.key === 'ArrowUp' ? 'up' : 'down', historyInputState)) {
                 return true;
             }

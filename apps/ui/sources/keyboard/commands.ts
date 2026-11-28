@@ -745,6 +745,36 @@ export const defaultKeyboardCommands: readonly KeyboardCommand[] = [
         defaultBinding: { binding: 'Home' },
         when: (context) => !context.isEditableTarget,
     },
+    // The transcript message cursor (#1031). Mod+Up enters it from the composer; the rest are registered only
+    // while a message holds the cursor, so plain arrows, Escape and letters stay with whatever else has focus.
+    {
+        id: 'transcript.message.focusLast',
+        settingsTitleKey: 'settingsKeyboard.commands.transcriptMessageFocusLast',
+        defaultBinding: { binding: 'Mod+ArrowUp', allowInEditable: true, nativeConsumable: true },
+    },
+    ...([
+        ['transcript.message.previous', 'transcriptMessagePrevious', ['ArrowUp']],
+        ['transcript.message.next', 'transcriptMessageNext', ['ArrowDown']],
+        ['transcript.message.exit', 'transcriptMessageExit', ['Escape', 'Mod+ArrowDown']],
+        ['transcript.message.copy', 'transcriptMessageCopy', ['c']],
+        ['transcript.message.pin', 'transcriptMessagePin', ['p']],
+        ['transcript.message.select', 'transcriptMessageSelect', ['x']],
+        ['transcript.message.fork', 'transcriptMessageFork', ['f']],
+        ['transcript.message.readAloud', 'transcriptMessageReadAloud', ['s']],
+        // Unbound by default: rollback has no confirmation, and the rest are rarer. Each is bindable.
+        ['transcript.message.rollback', 'transcriptMessageRollback', []],
+        ['transcript.message.savePrompt', 'transcriptMessageSavePrompt', []],
+        ['transcript.message.saveDecision', 'transcriptMessageSaveDecision', []],
+        ['transcript.message.discuss', 'transcriptMessageDiscuss', []],
+        ['transcript.message.secondOpinion', 'transcriptMessageSecondOpinion', []],
+        ['transcript.message.makeRepeatable', 'transcriptMessageMakeRepeatable', []],
+    ] as const).map(([id, titleKey, bindings]): KeyboardCommand => ({
+        id, settingsTitleKey: `settingsKeyboard.commands.${titleKey}`,
+        // The focused message owns its letters, as a focused editor does, whatever the single-key preference.
+        singleKeyScope: 'focused',
+        defaultBindings: (bindings as readonly string[]).map(binding => ({ binding, conflictScope: 'messageCursor', nativeConsumable: true })),
+        when: context => !context.isEditableTarget,
+    })),
     {
         id: 'files.editor.change.next',
         settingsTitleKey: 'settingsKeyboard.commands.reviewChangeNext',
