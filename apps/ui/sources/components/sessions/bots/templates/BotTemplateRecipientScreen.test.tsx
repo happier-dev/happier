@@ -1,6 +1,7 @@
 import * as React from 'react';
 import * as ReactNative from 'react-native';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import tweetnacl from 'tweetnacl';
 import 'fake-indexeddb/auto';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
@@ -25,6 +26,7 @@ import { registerCurrentUiContextActionPort } from '@/components/appShell/curren
 import { createCurrentUiContextVoiceToolPort } from '@/components/appShell/currentUiContext/currentUiContextVoiceToolPort';
 import { projectExternalActionHttpError } from '@happier-dev/protocol/actions/externalActionApi';
 import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { encodeBase64 } from '@/encryption/base64';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { NewSessionEmbeddedHostProvider, type NewSessionEmbeddedHost } from '@/components/sessions/new/navigation/newSessionHost';
 import { buildAccountPetCreateRequestV1 } from '@happier-dev/protocol/pets/importActionV1';
@@ -184,8 +186,9 @@ describe('recipient template page', () => {
         const { adoptHomeProfile } = await import('@/sync/domains/server/serverProfiles');
         await adoptHomeProfile({ descriptor: { serverUrl: 'https://template-setup-draft.test',
             homeServerIdentityId: 'srv_template_setup', displayName: 'Setup' }, source: 'manual', suggestedName: 'Setup' });
+        const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(23));
         const machine = { ...createPlainMachineRowFixture({ id: 'selected-machine', accountId: 'artifact-account' }),
-            installationId: 'selected-machine-installation' };
+            installationId: 'selected-machine-installation', installationPublicKey: encodeBase64(installation.publicKey, 'base64') };
         const features = createRootLayoutFeaturesResponse({ features: { bots: { enabled: true } },
             capabilities: { serverIdentity: { serverIdentityId: 'srv_template_setup' } } });
         home = await createPlainArtifactHomeFixture('https://template-setup-draft.test', { currentAccount: true,
@@ -244,8 +247,8 @@ describe('recipient template page', () => {
         const invokeRead = () => executor.execute('ui.current_context.command.invoke', { commandId: read!.id }, { surface: 'agent' });
         await act(async () => { screen.changeTextByTestId('bot-template-mcp-search-index', 'herbs'); });
         const uiEditedRead = await invokeRead();
-        expect(uiEditedRead).toMatchObject({ ok: true, result: { selections: { mcpServers: [{ key: 'search',
-            selection: { action: 'bind', inputKeys: ['index'] } }] } } });
+        expect(uiEditedRead).toMatchObject({ ok: true, result: { value: { selections: { mcpServers: [{ key: 'search',
+            selection: { action: 'bind', inputKeys: ['index'] } }] } } } });
         expect(JSON.stringify(uiEditedRead)).not.toContain('herbs');
         const selections = { software: [], accounts: [], mcpServers: [{ key: 'search', selection: { action: 'bind',
             inputs: { index: { t: 'literal', v: 'trees' } } } }] };
@@ -253,10 +256,10 @@ describe('recipient template page', () => {
             input: { selections } }, { surface: 'agent' })).toMatchObject({ ok: true }); });
         expect(screen.findByTestId('bot-template-mcp-search-index')!.props.value).toBe('trees');
         const agentEditedRead = await invokeRead();
-        expect(agentEditedRead).toMatchObject({ ok: true, result: { source: { kind: 'artifact', serverId: home.home.id,
+        expect(agentEditedRead).toMatchObject({ ok: true, result: { value: { source: { kind: 'artifact', serverId: home.home.id,
             artifactId: 'setup-template' }, expectedVersion: '1.0.0', expectedRevision: { headerVersion: 1, bodyVersion: 1 },
             selections: { software: [], accounts: [], mcpServers: [{ key: 'search',
-                selection: { action: 'bind', inputKeys: ['index'] } }] } } });
+                selection: { action: 'bind', inputKeys: ['index'] } }] } } } });
         expect(JSON.stringify(agentEditedRead)).not.toContain('trees');
         expect(screen.findByType(NewBotDraftFace).props.face).toMatchObject({ seed: 'template-face', body: 'tall' });
         onTestFinished(withPopoverWebGlobals());
