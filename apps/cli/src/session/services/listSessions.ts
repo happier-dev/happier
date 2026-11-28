@@ -1,4 +1,5 @@
 import { createExternalActionHeaderRefusalError } from '@/api/externalActionHeaderRefusal';
+import { SESSION_LIST_PREVIEW_TEXT_LIMIT } from '@happier-dev/protocol/sessions/messages/sessionMessageRole';
 import type { VendorResumeEligibilityReasonCode } from '@happier-dev/agents';
 import type { AccountSettings } from '@happier-dev/protocol';
 
@@ -30,7 +31,7 @@ import { readSessionAccessProjectionRoleV1 } from '@happier-dev/protocol/session
 import { createSessionProjectKeyResolverV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { tryDecryptSessionOwnerMetadataView, tryDecryptSessionPresentationMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 
-const LIST_SESSION_PREVIEW_TEXT_LIMIT = 200;
+
 
 /**
  * Explicit previews are one transcript request per returned Session. `Promise.all` fired all of
@@ -144,7 +145,7 @@ function requireSessionListAttentionContinuation(
 
 function toLastMessagePreview(message: SemanticTranscriptItem | undefined): ListSessionsLastMessagePreview | undefined {
   if (!message || !message.text) return undefined;
-  const text = message.text.slice(0, LIST_SESSION_PREVIEW_TEXT_LIMIT);
+  const text = message.text.slice(0, SESSION_LIST_PREVIEW_TEXT_LIMIT);
   return {
     id: message.id,
     createdAt: message.createdAt,
@@ -173,7 +174,7 @@ async function loadLastMessagePreview(params: Readonly<{
       limit: 1,
       sessionListPreview: true,
       roles: ['user', 'assistant'],
-      maxCharsPerMessage: LIST_SESSION_PREVIEW_TEXT_LIMIT,
+      maxCharsPerMessage: SESSION_LIST_PREVIEW_TEXT_LIMIT,
     });
     if (!res.ok) return undefined;
     return toLastMessagePreview(res.items[0]);

@@ -2,10 +2,21 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 
 export const SESSION_MESSAGE_ROLES = ['user', 'agent', 'event', 'unknown'] as const;
+export const SESSION_LIST_PREVIEW_TEXT_LIMIT = 200;
+export const SESSION_LIST_PREVIEW_MESSAGE_ROLES = ['user', 'agent'] as const;
 
 export const SessionMessageRoleSchema = lazyZodSchema(() => z.enum(SESSION_MESSAGE_ROLES));
 
 export type SessionMessageRole = z.infer<typeof SessionMessageRoleSchema>;
+
+export function isSessionListPreviewMessage(message: Readonly<{
+  sidechainId?: string | null;
+  messageRole?: SessionMessageRole | null;
+}>): boolean {
+  // Legacy user rows have no persisted role.
+  return message.sidechainId == null && (message.messageRole == null
+    || SESSION_LIST_PREVIEW_MESSAGE_ROLES.some(role => role === message.messageRole));
+}
 
 export type TranscriptBodySessionMessageProtocol = 'acp' | 'codex';
 

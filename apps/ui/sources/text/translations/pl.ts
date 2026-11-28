@@ -13166,6 +13166,7 @@ settingsSession: {
         freshSubtitle: 'Otwieraj nową wersję roboczą za każdym razem, gdy wybierzesz Nową sesję.',
     },
 	      sessionList: {
+	        detailLatestMessage: 'Ostatnia wiadomość',
 	          title: 'Lista sesji',
 	          footer: 'Dostosuj, co jest widoczne w wierszu sesji.',
 	          tagsTitle: 'Tagi sesji',

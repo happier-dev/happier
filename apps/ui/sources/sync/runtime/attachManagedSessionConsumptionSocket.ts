@@ -13,9 +13,16 @@ export async function replaceSessionConsumption(input: Readonly<{
     liveSessionIds: readonly string[];
     fullyAdmitted: boolean;
 }>> {
-    const result = await emitWithAckCancellable({ socket: input.socket, event: SESSION_CONSUMPTION_REPLACE_EVENT,
-        payload: input.declaration, timeoutMs: null, signal: input.signal });
-    const parsed = SessionConsumptionReplaceAckV1Schema.safeParse(result);
+    const declare = async (payload: SessionConsumptionReplaceV1) => SessionConsumptionReplaceAckV1Schema.safeParse(
+        await emitWithAckCancellable({ socket: input.socket, event: SESSION_CONSUMPTION_REPLACE_EVENT,
+            payload, timeoutMs: null, signal: input.signal }),
+    );
+    let parsed = await declare(input.declaration);
+    if (input.declaration.latestMessageSessionIds?.length && parsed.success && !parsed.data.ok && parsed.data.error === 'invalid_request') {
+        // Older Homes reject unknown fields. Keep existing transcript consumption available.
+        const { latestMessageSessionIds: _latestMessages, ...releasedDeclaration } = input.declaration;
+        parsed = await declare(releasedDeclaration);
+    }
     if (!parsed.success) throw new Error('session_consumption_invalid_ack');
     if (!parsed.data.ok) throw new Error(`session_consumption_${parsed.data.error}`);
     const requestedLive = new Set(input.declaration.liveSessionIds);

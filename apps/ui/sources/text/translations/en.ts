@@ -15479,6 +15479,7 @@ const enSettingsSession = {
     freshSubtitle: 'Open a new draft whenever you choose New session.',
   },
   sessionList: {
+    detailLatestMessage: 'Latest message',
     title: 'Session List',
     footer: 'Appearance and behavior of the session sidebar list.',
     tagsTitle: 'Session tags',

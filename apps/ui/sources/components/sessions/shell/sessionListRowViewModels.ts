@@ -146,6 +146,7 @@ export type SessionListRowViewModel = Readonly<{
     /** A guard stop is coming ("Stops in 4:52") or the guard stopped this session (plan 50 G3-2). */
     guardState: SessionListGuardState | null;
     rowContext: SessionListRowContextPresentation | null;
+    latestMessage?: string | null;
 }>;
 
 /** P5 row context (lab `clctx`): what the row says about where it runs, beyond its group. */
@@ -200,6 +201,7 @@ export type SessionListSelectedRowContextInput = Readonly<{
     rowContextStatusWords: boolean;
     rowDetailCurrentWork: boolean;
     rowDetailProgress: boolean;
+    rowDetailLatestMessage: boolean;
     rowDetailProject: boolean;
     rowDetailBranch: boolean;
     rowDetailMachine: boolean;
@@ -229,6 +231,7 @@ export function selectSessionListRowContextInput(
         rowContextStatusWords: context.statusWords === true,
         rowDetailCurrentWork: context.details?.currentWork !== false,
         rowDetailProgress: context.details?.progress !== false,
+        rowDetailLatestMessage: context.details?.latestMessage === true,
         rowDetailProject: context.details ? context.details.project : context.enabled,
         rowDetailBranch: context.details ? context.details.branch : context.enabled,
         rowDetailMachine: context.details ? context.details.machine : context.enabled,

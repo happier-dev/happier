@@ -13454,6 +13454,7 @@ settingsSession: {
         freshSubtitle: 'Abra um novo rascunho sempre que escolher Nova sessão.',
     },
 	      sessionList: {
+	        detailLatestMessage: 'Última mensagem',
 	          title: 'Lista de sessões',
 	          footer: 'Personalize o que aparece em cada linha de sessão.',
 	          tagsTitle: 'Tags da sessão',

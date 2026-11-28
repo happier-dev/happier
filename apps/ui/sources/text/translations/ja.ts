@@ -13634,6 +13634,7 @@ settingsSession: {
         freshSubtitle: '「新規セッション」を選ぶたびに新しい下書きを開きます。',
     },
 	    sessionList: {
+	      detailLatestMessage: '最新のメッセージ',
 	        title: 'セッション一覧',
 	        footer: '各セッション行に表示する内容をカスタマイズします。',
 	        tagsTitle: 'セッションタグ',

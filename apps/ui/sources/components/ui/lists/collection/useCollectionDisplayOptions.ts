@@ -27,6 +27,7 @@ const readArtifactPresentation = (settings: Settings) => settings.collectionDisp
 export const SESSION_COLLECTION_ROW_DETAILS = [
     { id: 'currentWork', labelKey: 'settingsSession.sessionList.detailCurrentWork' },
     { id: 'progress', labelKey: 'settingsSession.sessionList.detailProgress' },
+    { id: 'latestMessage', labelKey: 'settingsSession.sessionList.detailLatestMessage' },
     { id: 'project', labelKey: 'settingsSession.sessionList.detailProject' },
     { id: 'machine', labelKey: 'newSession.wizardSection.machine' },
     { id: 'branch', labelKey: 'settingsSession.sessionList.detailBranch' },

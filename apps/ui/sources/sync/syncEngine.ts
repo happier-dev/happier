@@ -73,6 +73,9 @@ import {
 } from './domains/state/storage';
 
 import type { ApiEphemeralActivityUpdate, ApiUpdateContainer } from './api/types/apiTypes';
+import { applySessionListLatestMessage, consumeSessionListLatestMessageUpdate, isSessionListLatestMessageDemandCurrent,
+    replaceSessionListLatestMessageViewport } from './runtime/sessionListLatestMessage';
+import { readSessionBatchForAuthority } from './runtime/orchestration/serverScopedRpc/readSessionBatchForAuthority';
 import {
     Session,
     Machine,
@@ -7438,6 +7441,43 @@ class Sync {
             || (route?.sessionId === sessionId && areServerProfileIdentifiersEquivalent(route.serverId, serverId));
     };
 
+    public readSessionListLatestMessages = async (
+        entered: ReturnType<typeof replaceSessionListLatestMessageViewport>,
+        rowHydration: Promise<void> | null,
+    ): Promise<void> => {
+        // The existing visible-row demand owns the Session key. Never hydrate it again for a preview.
+        await rowHydration?.catch(() => {});
+        const byHome = new Map<string, Array<(typeof entered)[number]>>();
+        for (const demand of entered) {
+            if (!isSessionListLatestMessageDemandCurrent(demand)) continue;
+            const group = byHome.get(demand.address.serverId) ?? [];
+            group.push(demand);
+            byHome.set(demand.address.serverId, group);
+        }
+        await Promise.all([...byHome].map(async ([serverId, demands]) => {
+            const authority = await captureServerRequestAuthorityForServerAccountScope({
+                serverId, activeRequest: this.requestViaConfiguredSocket,
+            });
+            const scope = captureEncryptionGenerationCurrentness(authority.context.encryption, authority.scope);
+            try {
+                const visible = demands.filter(isSessionListLatestMessageDemandCurrent);
+                if (!scope.isCurrent() || visible.length === 0) return;
+                const results = await readSessionBatchForAuthority({
+                    authority, sessionIds: visible.map(({ address }) => address.sessionId),
+                    includeSnapshot: false, includeMessages: true, latestMessageOnly: true, retry: 'none',
+                    assertCurrent: () => {
+                        if (!scope.isCurrent()) throw new Error('Session preview Home changed');
+                    },
+                });
+                await Promise.all(visible.map(demand => {
+                    const part = results.get(demand.address.sessionId)?.messages;
+                    const message = part?.status === 200 ? part.body.messages[0] : undefined;
+                    return message && applySessionListLatestMessage(demand, message, authority.context.encryption, scope.isCurrent);
+                }));
+            } finally { await authority.release(); }
+        }));
+    };
+
     /** A virtualized list batches its newly visible rows; exact reads share route acquisition. */
     public hydrateSessionListRows = async (
         addresses: readonly SessionAddress[],
@@ -14283,6 +14323,10 @@ class Sync {
         const sourceServerId = context.serverId;
         const shouldContinue = context.shouldContinue;
         const parsedUpdate = context.parsedUpdate ?? parseUpdateContainer(update);
+        if (!this.embedSessionScope && !context.sessionId && parsedUpdate) {
+            const preview = consumeSessionListLatestMessageUpdate(parsedUpdate.body, sourceServerId, context.encryption, shouldContinue);
+            if (preview) await preview;
+        }
         if (!this.embedSessionScope && !context.sessionId && shouldContinue()
             && parsedUpdate && socketRequiresSessionMetadataUpgradeDiscovery(parsedUpdate.body)) {
             this.metadataUpgradeDiscovery.invalidate();
@@ -14408,6 +14452,8 @@ class Sync {
     async consumeSessionRealtimeUpdateForHome(input: SessionRealtimeHomeScope & Readonly<{ update: ApiUpdateContainer }>): Promise<void> {
         if (!input.isCurrent() || this.embedSessionScope) return;
         const body = input.update.body;
+        const preview = consumeSessionListLatestMessageUpdate(body, input.serverId, input.encryption, input.isCurrent);
+        if (preview) await preview;
         if (body.t === 'update-session' && (body.metadata != null || body.ownerMetadata != null || body.metadataDocument === 'omitted')) {
             const sessionId = body.id;
             if (body.metadataDocument === 'omitted') await this.applySocketUpdateForScope(input.update, {

@@ -5,6 +5,8 @@ import { useActiveGatedExternalStore } from '@/utils/react/activeGatedExternalSt
 import { resolveSessionListRowStoreScopeKey } from './row/sessionListVisibleRowStoreScopes';
 import type { SessionListHomeObservation } from '@/sync/domains/session/listing/sessionListHomeObservation';
 import * as React from 'react';
+import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
+import { readSessionListLatestMessage, subscribeSessionListLatestMessage } from '@/sync/runtime/sessionListLatestMessage';
 
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import {
@@ -207,6 +209,7 @@ export const SessionListRowViewModelBoundary = React.memo(function SessionListRo
             rowContextStatusWords: props.rowContextStatusWords,
             rowDetailCurrentWork: props.rowDetailCurrentWork,
             rowDetailProgress: props.rowDetailProgress,
+            rowDetailLatestMessage: props.rowDetailLatestMessage,
             rowDetailProject: props.rowDetailProject,
             rowDetailBranch: props.rowDetailBranch,
             rowDetailMachine: props.rowDetailMachine,
@@ -228,6 +231,7 @@ export const SessionListRowViewModelBoundary = React.memo(function SessionListRo
         props.rowContextStatusWords,
         props.rowDetailCurrentWork,
         props.rowDetailProgress,
+        props.rowDetailLatestMessage,
         props.rowDetailProject,
         props.rowDetailBranch,
         props.rowDetailMachine,
@@ -259,10 +263,20 @@ export const SessionListRowViewModelBoundary = React.memo(function SessionListRo
         props.unscopedSelectionIsUnique,
     ]);
 
+    const previewAddress = React.useMemo(() => props.rowDetailLatestMessage && !(props.compact && props.compactMinimal)
+        ? normalizeSessionAddress(props.item.serverId, props.item.sessionId) : null,
+    [props.item.serverId, props.item.sessionId, props.rowDetailLatestMessage, props.compact, props.compactMinimal]);
+    const subscribePreview = React.useCallback((listener: () => void) =>
+        previewAddress ? subscribeSessionListLatestMessage(previewAddress, listener) : () => {}, [previewAddress]);
+    const readPreview = React.useCallback(() =>
+        previewAddress ? readSessionListLatestMessage(previewAddress) : null, [previewAddress]);
+    const latestMessage = React.useSyncExternalStore(subscribePreview, readPreview, readPreview);
+    const previewRowViewModel = React.useMemo(() => rowViewModel && latestMessage
+        ? { ...rowViewModel, latestMessage } : rowViewModel, [rowViewModel, latestMessage]);
     const sessionItem = (
         <SessionListSessionItem
             item={props.item}
-            rowViewModel={rowViewModel}
+            rowViewModel={previewRowViewModel}
             agentSwitchingEnabled={agentSwitchingEnabled}
             rowHeight={props.rowHeight}
             dragEnabled={props.dragEnabled}

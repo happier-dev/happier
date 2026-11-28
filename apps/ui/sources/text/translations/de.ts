@@ -13266,6 +13266,7 @@ settingsSession: {
         freshSubtitle: 'Öffne bei jeder Auswahl von „Neue Sitzung“ einen neuen Entwurf.',
     },
 	          sessionList: {
+	            detailLatestMessage: 'Letzte Nachricht',
 	              title: 'Session-Liste',
 	              footer: 'Aussehen und Verhalten der Session-Liste in der Seitenleiste.',
 	              tagsTitle: 'Session-Tags',

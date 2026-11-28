@@ -13175,6 +13175,7 @@ settingsSession: {
         freshSubtitle: 'Ouvre un nouveau brouillon à chaque sélection de Nouvelle session.',
     },
 	      sessionList: {
+	        detailLatestMessage: 'Dernier message',
 	          title: 'Liste des sessions',
 	          footer: 'Apparence et comportement de la liste des sessions dans la barre latérale.',
 	          tagsTitle: 'Tags de session',

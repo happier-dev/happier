@@ -53,9 +53,20 @@ const hydrateSessionListRowsMock = vi.spyOn(sync, 'hydrateSessionListRows');
 const { createEmptyAccountBootstrapHttpResponse } = await import('@/dev/testkit/fixtures/accountBootstrapHttpBoundary');
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
 let pendingSessionPage: Promise<void> | null = null;
+let answerLatestMessages: ((ids: string[]) => Response) | null = null;
+let answerPreviewSessionSnapshot: ((id: string) => Response | undefined) | null = null;
 const request: typeof home.request = async (url, init) => {
     const parsed = new URL(String(url));
     if (parsed.pathname === '/v2/sessions') await pendingSessionPage;
+    if (parsed.pathname === '/v2/sessions/read-batch' && typeof init?.body === 'string') {
+        const body = JSON.parse(init.body);
+        if (body.latestMessageOnly === true && answerLatestMessages) return answerLatestMessages(body.sessionIds);
+    }
+    const snapshotId = /^\/v2\/sessions\/(preview-row-\d+)$/u.exec(parsed.pathname)?.[1];
+    if (snapshotId) {
+        const fixture = answerPreviewSessionSnapshot?.(snapshotId);
+        if (fixture) return fixture;
+    }
     if (parsed.pathname === '/v2/session-organization') return Response.json({
         snapshot: buildSessionOrganizationSnapshotFromLegacyTestSettings({ serverId: 'srv_server_a', pinnedSessionKeysV1, sessionTagsV1 }),
     });
@@ -510,6 +521,8 @@ describe('SessionsList (native virtualization)', () => {
         hydrateSessionListRowsMock.mockClear();
         refreshSessionsMock.mockClear();
         pendingSessionPage = null;
+        answerLatestMessages = null;
+        answerPreviewSessionSnapshot = null;
         preloadEnrichedMarkdownRuntimeSpy.mockClear();
         keyboardRegistration = null;
         clearSessionListViewFilterRetentionForTests();
@@ -651,6 +664,139 @@ describe('SessionsList (native virtualization)', () => {
             expect(findSessionItem(screen, sessionA.id)?.props.rowViewModel?.rowContext)
                 .toMatchObject({ pluginContext: null, pluginMark: null });
         } finally { await screen.unmount(); }
+    });
+
+    it('reads one screen of latest messages on demand in a 620-Session Account and updates one row', async () => {
+        const { AES256Encryption } = await import('@/sync/encryption/encryptor');
+        const { encodeBase64 } = await import('@/encryption/base64');
+        const { readScopedAccountEncryption } = await import('@/sync/encryption/scopedAccountEncryption');
+        const { createLegacyAccountEncryptionCurrentnessFixture } = await import('@/dev/testkit/fixtures/accountEncryptionCurrentness');
+        const { SessionEncryption } = await import('@/sync/encryption/sessionEncryption');
+        const key = new Uint8Array(32).fill(29);
+        const cipher = new AES256Encryption(key);
+        const serverId = 'srv_server_a';
+        const credentials = { token: connection!.credentials.token, secret: encodeBase64(key, 'base64url') };
+        const currentness = createLegacyAccountEncryptionCurrentnessFixture({ secret: key });
+        connection = await restoreServerAccountForTest({
+            serverUrl: 'https://server-a.example.test', serverIdentityId: serverId, accountId: 'account-a', credentials,
+            request: async (url, init) => {
+                const path = new URL(String(url)).pathname;
+                if (path === '/v1/account/encryption/currentness') return Response.json(currentness);
+                if (path === '/v1/account/encryption') return Response.json({ mode: 'e2ee', updatedAt: currentness.updatedAt });
+                return request(url, init);
+            },
+        });
+        const encryption = expectPresent(readScopedAccountEncryption(serverId), 'expected admitted E2EE Account');
+        await waitForHomeGovernance(() => expect(realStorage.getState().isDataReady).toBe(true));
+        const rows = Array.from({ length: 620 }, (_, index) => createSessionListRenderableSessionFixture({
+            ...sessionB, id: `preview-row-${index}`, encryptionMode: 'e2ee',
+        }));
+        mockVisibleSessionListViewData = [mockVisibleSessionListViewData[0], ...rows.map(session => ({
+            type: 'session', session, groupKey: defaultProjectGroupKey, groupKind: 'project', serverId: 'srv_server_a',
+        }))];
+        const text = 'Assistant completed the check.\n' + Array.from({ length: 64 }, (_, index) =>
+            `The renderer verified fixture ${index + 1}: case ${index * 31 + 7} returned ${index * 13 + 4} rows and preserved the recorded snapshot.\n`
+        ).join('');
+        const raw = (value: string) => ({ role: 'agent', content: { type: 'acp', agentId: 'opencode', data: { type: 'message', message: value } } });
+        const seal = async (value: unknown) => ({ t: 'encrypted' as const,
+            c: encodeBase64((await cipher.encrypt([value], { contentCodec: 'session-message' }))[0]!, 'base64') });
+        const content = await seal(raw(text));
+        const metadata = encodeBase64((await cipher.encrypt([sessionB.metadata]))[0]!, 'base64');
+        const dataEncryptionKey = encodeBase64(await encryption.encryptEncryptionKey(key), 'base64');
+        answerPreviewSessionSnapshot = id => Response.json({ session: {
+            id, seq: 2, createdAt: 1, updatedAt: 2, active: false, activeAt: 1,
+            encryptionMode: 'e2ee', metadataVersion: 1, metadata, dataEncryptionKey,
+            agentStateVersion: 0, agentState: null, share: null,
+        } });
+        const toolOutput = Array.from({ length: 2048 }, (_, index) =>
+            `src/compiler/fixtures/chunk-${index}.ts: processed ${index * 47 + 9} nodes in ${index % 43 + 4}ms\n`
+        ).join('');
+        const tool = await seal({ role: 'agent', content: { type: 'acp', agentId: 'opencode', data: {
+            type: 'tool-result', callId: 'shell', output: toolOutput,
+        } } });
+        const latestRow = (id: string, message = content, seq = 2) => ({
+            id: `${id}-${seq}`, seq, localId: null, messageRole: 'agent' as const, createdAt: seq, updatedAt: seq, content: message,
+        });
+        const batches: string[][] = [];
+        let replyBytes = 0;
+        answerLatestMessages = ids => {
+            batches.push(ids);
+            const body = JSON.stringify({ results: ids.map(id => ({
+                sessionId: id, messages: { status: 200, body: { messages: [latestRow(id)], hasMore: false, nextBeforeSeq: null, nextAfterSeq: null } },
+            })) });
+            replyBytes += new TextEncoder().encode(body).length;
+            return new Response(body, { headers: { 'content-type': 'application/json' } });
+        };
+        realStorage.getState().applyServerScopedSessionListRows(serverId, rows, { source: 'ordinary', mode: 'append' });
+        realStorage.getState().applySettingsLocal({ sessionListDensity: 'detailed' });
+        const screen = await renderSessionsList();
+        const open = SessionEncryption.prototype.decryptMessages;
+        const times: Array<{ start: number; end: number }> = [];
+        const decrypt = vi.spyOn(SessionEncryption.prototype, 'decryptMessages').mockImplementation(async function (this: InstanceType<typeof SessionEncryption>, messages) {
+            const start = performance.now();
+            try { return await open.call(this, messages); }
+            finally { times.push({ start, end: performance.now() }); }
+        });
+        try {
+            const list = expectPresent(virtualizedListState.current?.props, 'missing virtualized list');
+            const idsByNodeId = new Map(rows.map(({ id }) => [buildSessionListIndexNodeId({ type: 'session', serverId, sessionId: id }), id]));
+            const allNodes = list.data.filter((item: { id: string }) => idsByNodeId.has(item.id));
+            expect(allNodes).toHaveLength(620);
+            const nodes = allNodes.slice(0, 20);
+            const ids = nodes.map((item: { id: string }) => idsByNodeId.get(item.id)!);
+            await encryption.initializeSessions(new Map(ids.map(id => [id, key])));
+            await act(async () => list.onViewableItemsChanged({ changed: [] as unknown[],
+                viewableItems: nodes.map((item: { id: string }, index: number) => ({ item, key: item.id, index, isViewable: true })),
+            }));
+            await flushHookEffects();
+            expect(batches).toEqual([]);
+            expect(decrypt).not.toHaveBeenCalled();
+            await act(async () => {
+                realStorage.getState().applySettingsLocal({
+                    collectionDisplayPreferencesV1: { sessionWork: { details: { latestMessage: true } } },
+                });
+            });
+            await waitForHomeGovernance(() => {
+                expect(batches).toHaveLength(1);
+                expect(decrypt).toHaveBeenCalledTimes(20);
+                expect(findSessionItem(screen, ids[0]!)?.props.rowViewModel.latestMessage).toContain('Assistant completed the check');
+                expect(screen.getTextContent().includes('Assistant completed the check')).toBe(true);
+            });
+            expect(batches[0]?.slice().sort()).toEqual(ids.slice().sort());
+            expect(decrypt).toHaveBeenCalledTimes(20);
+            const decryptWallMs = Math.max(...times.map(time => time.end)) - Math.min(...times.map(time => time.start));
+            const beforeListCommits = virtualizedListCommits.count;
+            const inlineDrag = await import('./useSessionInlineDrag');
+            const rowRenders = vi.spyOn(inlineDrag, 'useSessionInlineDrag');
+            try {
+                const sessionId = ids[0]!;
+                const newer = latestRow(sessionId, await seal(raw('The updated reply is visible.')), 4);
+                const toolRow = { ...latestRow(sessionId, tool, 3), messageRole: 'event' as const };
+                for (const message of [toolRow, newer]) {
+                    await act(async () => sync.consumeSessionRealtimeUpdateForHome({
+                        serverId: 'srv_server_a', encryption, credentials: connection!.credentials, isCurrent: () => true,
+                        update: { id: message.id, seq: message.seq, createdAt: message.createdAt,
+                            body: { t: 'new-message', sid: sessionId, delivery: 'full', message },
+                        },
+                    }));
+                }
+                await waitForHomeGovernance(() => expect(screen.getTextContent().includes('The updated reply is visible.')).toBe(true));
+                expect(batches).toHaveLength(1);
+                expect(decrypt).toHaveBeenCalledTimes(21);
+                expect(virtualizedListCommits.count - beforeListCommits).toBe(0);
+                expect(new Set(rowRenders.mock.calls.flatMap(([input]) => input.sessionKey ? [input.sessionKey] : [])))
+                    .toEqual(new Set([buildSessionOrganizationSessionKey('srv_server_a', sessionId)]));
+                expect(home.requests.filter(request => /\/messages(?:[?\/]|$)/u.test(request.path))).toEqual([]);
+                console.info('[latest-message-scale]', JSON.stringify({
+                    sessions: allNodes.length, visible: ids.length, requestsOff: 0, batchesOn: batches.length,
+                    replyBytes, assistantBytesPerMessage: new TextEncoder().encode(text).length,
+                    toolOutputBytes: new TextEncoder().encode(toolOutput).length, encryptedToolBytes: tool.c.length, decryptWallMs,
+                    rowRenderCallsOnMessage: rowRenders.mock.calls.length,
+                    updatedRows: new Set(rowRenders.mock.calls.map(([input]) => input.sessionKey)).size,
+                    listCommitsOnMessage: virtualizedListCommits.count - beforeListCommits,
+                }));
+            } finally { rowRenders.mockRestore(); }
+        } finally { decrypt.mockRestore(); await screen.unmount(); }
     });
 
     it('renders only the Session whose work note changed in a 200-Session list', async () => {

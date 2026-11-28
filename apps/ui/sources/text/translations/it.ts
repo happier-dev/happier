@@ -13558,6 +13558,7 @@ settingsSession: {
         freshSubtitle: 'Apri una nuova bozza ogni volta che scegli Nuova sessione.',
     },
 	      sessionList: {
+	        detailLatestMessage: 'Ultimo messaggio',
 	          title: 'Elenco sessioni',
 	          footer: 'Personalizza cosa appare in ogni riga della sessione.',
 	          tagsTitle: 'Tag della sessione',

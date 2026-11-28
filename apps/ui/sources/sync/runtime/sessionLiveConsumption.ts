@@ -14,6 +14,7 @@ import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindi
 import { getVoiceSessionSnapshot, useVoiceSessionStore } from '@/voice/session/voiceSessionStore';
 import { readSessionListRowsForServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { readLatestMessageSessionIds, subscribeLatestMessageDemand } from './sessionListLatestMessage';
 import type { SessionConsumptionReplaceV1 } from '@happier-dev/protocol/sessions';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
@@ -179,11 +180,16 @@ export function createSessionConsumptionProjection(serverId: string): Readonly<{
         for (const id of getVoiceBoundSessionIds(serverId)) live.add(id);
         const liveSessionIds = [...live].filter(id => resolveSessionLiveConsumption(id, serverId).isFullContentConsumer).sort();
         const durableSessionIds = [...new Set([...liveSessionIds, ...scmSessionIds])].sort();
-        if (liveSessionIds.length === declaration.liveSessionIds.length
+        const latestMessageSessionIds = readLatestMessageSessionIds(serverId).sort();
+        const previousLatestMessageSessionIds = declaration.latestMessageSessionIds ?? [];
+        if (latestMessageSessionIds.length === previousLatestMessageSessionIds.length
+            && latestMessageSessionIds.every((id, index) => id === previousLatestMessageSessionIds[index])
+            && liveSessionIds.length === declaration.liveSessionIds.length
             && liveSessionIds.every((id, index) => id === declaration.liveSessionIds[index])
             && durableSessionIds.length === declaration.durableSessionIds.length
             && durableSessionIds.every((id, index) => id === declaration.durableSessionIds[index])) return;
-        declaration = { v: 1, liveSessionIds, durableSessionIds };
+        declaration = { v: 1, liveSessionIds, durableSessionIds,
+            ...(latestMessageSessionIds.length > 0 && { latestMessageSessionIds }) };
         for (const listener of listeners) listener(declaration);
     }
     const refreshScm = () => {
@@ -192,6 +198,7 @@ export function createSessionConsumptionProjection(serverId: string): Readonly<{
     };
     const disposers = [
         subscribeSessionSurfaceVisibility(refresh),
+        subscribeLatestMessageDemand(refresh),
         subscribeSessionRealtimeTranscriptConsumers(refresh),
         subscribeMountedSessionRealtimeScmConsumerScopes(refreshScm),
         useVoiceTargetStore.subscribe(refresh),

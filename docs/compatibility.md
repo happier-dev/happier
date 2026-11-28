@@ -4777,6 +4777,13 @@ Callers using explicit `includeMessages: true` retain the existing all-scope
 page. A Home without read-batch retains the existing operation-scoped update
 requirement.
 
+The optional `latestMessageOnly: true` demand on a messages-only Session
+read-batch returns one admitted main conversation row per Session. It carries
+the existing stored content envelope and skips actor and tool-output reads.
+An older Home rejects the new demand, so the Session list leaves the preview
+empty. Its socket declaration uses the existing transcript consumption request
+without the optional preview interest when the older Home rejects that field.
+
 Released 0.2 legacy SystemRecord clients use a closed record vocabulary. An
 unscoped legacy list omits Usage records before pagination, preserving that
 page contract; explicitly scoped v1 Usage record reads remain available.

@@ -91,8 +91,12 @@ or the viewer's private Project placement. The Runs collection model groups by
 Date, Project or Workflow over the shared Account list window. The collection
 Spaces Action accepts Run-specific filters and saved Spaces.
 Sessions Lines 1, 2 and 3 still write the existing `sessionListDensity` key.
-Session Settings and the View menu offer the same seven Row details. Current
-work and Progress default on. Project, Machine and Branch inherit the retained
+Session Settings and the View menu offer the same Row details. Current work and
+Progress default on. Latest message defaults off. With Lines 2 or 3 and Latest
+message enabled, the list reads the latest main conversation message for visible
+Sessions in a batch, opens it through the existing transcript encryption
+owner, and updates the affected row from live messages. Compact rows and
+the Follow census carry no message preview. Project, Machine and Branch inherit the retained
 context choice until set independently. Machine uses the Session's held
 reachability label and omits the Project group's baseline Machine. Pull request
 and Changes are shown when SCM facts are already held for the checkout and branch.

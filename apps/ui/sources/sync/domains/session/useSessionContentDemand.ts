@@ -47,7 +47,8 @@ export function useSessionContentDemand(
         /** A visible result row also consumes its selected Turn's final reply. */
         resultTurnId?: string;
     }>,
-): void {
+): React.RefObject<Promise<void> | null> {
+    const pending = React.useRef<Promise<void> | null>(null);
     const { tag, hydrate, active = true, resetVersion = 0, onSettled, resultTurnId } = options;
     const contentDemand = resultTurnId ? 'session' : options.contentDemand ?? 'session';
     const previous = React.useRef<Readonly<{ keys: ReadonlySet<string>; resetVersion: number }>>({ keys: new Set(), resetVersion });
@@ -64,14 +65,18 @@ export function useSessionContentDemand(
         const toHydrate = hydrate === 'unsettled' && !resultTurnId ? entered.filter(address => isSessionContentUnsettled(address, contentDemand)) : entered;
         let current = true;
         const settled = () => { if (current) onSettled?.(); };
-        if (toHydrate.length > 0) fireAndForget((resultTurnId
+        if (toHydrate.length > 0) {
+            const acquisition = (resultTurnId
             ? sync.hydrateSessionListRows(toHydrate, { resultTurnId })
             : contentDemand === 'list-display'
                 ? sync.hydrateSessionListRows(toHydrate, { contentDemand })
-                : sync.hydrateSessionListRows(toHydrate)).finally(settled), { tag });
-        else settled();
+                : sync.hydrateSessionListRows(toHydrate)).finally(settled);
+            pending.current = acquisition;
+            fireAndForget(acquisition, { tag });
+        } else settled();
         return () => { current = false; release(); };
         // The addresses are fully described by their identity key.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [identity, active, resetVersion, hydrate, contentDemand, tag, onSettled]);
+    return pending;
 }

@@ -1079,6 +1079,21 @@ describe('Session id-batched reads (SQLite integration)', () => {
             expect(transcript.json().results[0].detail).toBeUndefined();
             expect(transcript.json().results[0].turns).toBeUndefined();
             expect(transcript.json().results[0].messages).toEqual(results[0].messages);
+
+            const latest = await app.inject({ method: 'POST', url: '/v2/sessions/read-batch', headers,
+                payload: { sessionIds: [plain.id, encrypted.id, denied.id], includeSnapshot: false,
+                    includeMessages: true, latestMessageOnly: true } });
+            expect(latest.statusCode).toBe(200);
+            const previews = SessionReadBatchResponseV1Schema.parse(latest.json()).results;
+            expect(previews).toEqual([
+                { sessionId: plain.id, messages: { status: 200, body: expect.objectContaining({
+                    messages: [expect.objectContaining({ seq: 151, messageRole: 'user' })],
+                }) } },
+                { sessionId: encrypted.id, messages: { status: 200, body: expect.objectContaining({
+                    messages: [expect.objectContaining({ content: { t: 'encrypted', c: 'sealed-content' } })],
+                }) } },
+                { sessionId: denied.id, messages: { status: 404, body: { error: 'Session not found' } } },
+            ]);
             const invalid = await app.inject({ method: 'POST', url: '/v2/sessions/read-batch', headers,
                 payload: { sessionIds: [plain.id], includeSnapshot: false, includeMessages: false } });
             expect(invalid.statusCode).toBe(400);

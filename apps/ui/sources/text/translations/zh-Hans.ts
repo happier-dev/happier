@@ -12969,6 +12969,7 @@ settingsSession: {
         freshSubtitle: '每次选择“新会话”时都打开新草稿。',
     },
 	    sessionList: {
+	      detailLatestMessage: '最新消息',
 	        title: '会话列表',
 	        footer: '自定义会话列表每行显示的内容。',
 	        tagsTitle: '会话标签',

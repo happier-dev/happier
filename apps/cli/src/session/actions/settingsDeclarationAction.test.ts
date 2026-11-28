@@ -100,6 +100,45 @@ describe('headless settings conditional writes', () => {
             ...baseline.collectionDisplayPreferencesV1, workflow,
         } } });
     });
+    it('reads and writes the opt-in latest Session message without changing other Row details', async () => {
+        const baseline = { collectionDisplayPreferencesV1: { sessionWork: { details: { progress: false } } } };
+        let content: AccountSettingsStoredContentEnvelope = { t: 'plain', v: baseline };
+        let version = 1;
+        vi.spyOn(axios, 'get').mockImplementation(async url => {
+            if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+            if (url.endsWith('/v2/account/settings')) return { status: 200, data: { content, version } };
+            throw new Error(`Unexpected HTTP read: ${url}`);
+        });
+        const write = vi.spyOn(axios, 'post').mockImplementation(async (url, raw) => {
+            if (!url.endsWith('/v2/account/settings')) throw new Error(`Unexpected HTTP write: ${url}`);
+            const request = AccountSettingsV2UpdateRequestSchema.parse(raw);
+            expect(request.expectedVersion).toBe(version);
+            if (!request.content) throw new Error('Expected stored Account settings');
+            content = request.content;
+            return { status: 200, data: { success: true, version: ++version } };
+        });
+        const token = `test.${Buffer.from(JSON.stringify({ sub: 'collection-latest-message-test' })).toString('base64url')}.test`;
+        const action = createCliSettingsDeclarationAction({ credentials: { token, encryption: null }, serverId: 'collection-home' });
+        const anchor = 'appearance.collectionDisplay';
+        const context = { surface: 'agent' } as const;
+        const read = () => action({ actionId: 'settings.get', input: { anchor }, context });
+
+        expect(await read()).toMatchObject({
+            value: { sessionWork: { details: { latestMessage: false, currentWork: true, progress: false } } },
+        });
+        for (const latestMessage of [true, false]) {
+            const value = { kind: 'sessionWork', details: { latestMessage } };
+            expect(await action({ actionId: 'settings.set', input: { anchor, value }, context })).toMatchObject({ anchor });
+            expect(await read()).toMatchObject({
+                value: { sessionWork: { details: { latestMessage, currentWork: true, progress: false } } },
+            });
+            expect(content).toEqual({ t: 'plain', v: { collectionDisplayPreferencesV1: {
+                sessionWork: { details: { progress: false, latestMessage } },
+            } } });
+        }
+        expect(write).toHaveBeenCalledTimes(2);
+    });
+
     it('refuses a read-only reset before reading or writing Account material', async () => {
         const read = vi.spyOn(axios, 'get');
         const write = vi.spyOn(axios, 'post');

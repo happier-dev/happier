@@ -14,6 +14,7 @@ export type SessionReadBatchRequestV1 = {
   includeSnapshot: boolean;
   includeTurns?: boolean;
   includeMessages: boolean;
+  latestMessageOnly?: true;
 };
 
 /** The application HTTP body limit owns request size; there is no competing id cap. */
@@ -25,10 +26,13 @@ export const SessionReadBatchRequestV1Schema: z.ZodMiniType<SessionReadBatchRequ
   /** Omission keeps the full snapshot contract; context-only readers explicitly omit turns. */
   includeTurns: z.optional(z.boolean()),
   includeMessages: z._default(z.boolean(), false),
+  latestMessageOnly: z.optional(z.literal(true)),
 }).check(z.refine(value => value.includeSnapshot || value.includeMessages, {
   message: 'At least one Session read part is required',
 })).check(z.refine(value => value.includeTurns !== true || value.includeSnapshot, {
   message: 'Session turns require a snapshot demand',
+})).check(z.refine(value => !value.latestMessageOnly || (value.includeMessages && !value.includeSnapshot), {
+  message: 'Latest-message demand requires a messages-only batch',
 })).check(z.refine(value => value.underSessionId === undefined
   || (value.includeSnapshot && value.includeTurns === false && !value.includeMessages), {
   message: 'Managed-subtree demand requires snapshot-only reads without turns',

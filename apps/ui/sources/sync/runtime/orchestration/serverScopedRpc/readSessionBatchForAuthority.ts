@@ -28,6 +28,7 @@ export type SessionPartsReadOptions = Readonly<{
     includeSnapshot: boolean;
     includeTurns?: boolean;
     includeMessages: boolean;
+    latestMessageOnly?: true;
     initialTranscript?: 'main';
     accessProjectionVersion?: 1;
     signal?: AbortSignal;
@@ -48,6 +49,7 @@ export function prepareSessionPartsRead(params: Omit<SessionPartsReadOptions, 's
     assertCurrent();
     const demand = SessionReadBatchRequestV1Schema.parse({ sessionIds: [], includeSnapshot: params.includeSnapshot,
         includeMessages: params.includeMessages, includeTurns: params.includeTurns,
+        ...(params.latestMessageOnly && { latestMessageOnly: params.latestMessageOnly }),
         accessProjectionVersion: params.accessProjectionVersion, underSessionId: params.underSessionId });
     const includeTurns = demand.includeSnapshot && demand.includeTurns !== false;
     const emptyBody = { ...demand, includeTurns };
@@ -56,7 +58,7 @@ export function prepareSessionPartsRead(params: Omit<SessionPartsReadOptions, 's
     const scope = transport?.scope ?? transportKey;
     const path = params.initialTranscript === 'main' ? '/v2/sessions/read-batch?initialTranscript=main' : '/v2/sessions/read-batch';
     const reservation = sessionParts.reserve(JSON.stringify([transportKey ?? null, params.includeSnapshot, includeTurns, params.includeMessages,
-        params.accessProjectionVersion ?? null, params.retry ?? null, params.underSessionId ?? null, params.initialTranscript ?? null]), { scope, signal: params.signal, fresh: params.fresh || !transport });
+        params.accessProjectionVersion ?? null, params.retry ?? null, params.underSessionId ?? null, params.initialTranscript ?? null, params.latestMessageOnly ?? null]), { scope, signal: params.signal, fresh: params.fresh || !transport });
     return {
         release: reservation.release,
         async read(sessionIds: readonly string[]): Promise<ReadonlyMap<string, SessionReadPart>> {

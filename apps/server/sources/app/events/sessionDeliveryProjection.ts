@@ -1,7 +1,8 @@
 import type { Socket } from 'socket.io';
+import { isSessionListPreviewMessage } from '@happier-dev/protocol/sessions/messages/sessionMessageRole';
 import { buildSessionMessageObservationFactsV1, classifySessionEventDelivery, type SessionMessageV1 } from '@happier-dev/protocol';
 
-import { appliesDurableMessageAppends, consumesSessionPersonalEvents, readSessionSocketConsumption } from '@/app/api/socket/sessionConsumption';
+import { appliesDurableMessageAppends, consumesSessionLatestMessage, consumesSessionPersonalEvents, readSessionSocketConsumption } from '@/app/api/socket/sessionConsumption';
 import { readAccountStoredContentCompatibilityForSocket } from '@/app/clientCompatibility/accountStoredContentCompatibility';
 import { projectSessionTurnWaitingCompatibility } from '@/app/clientCompatibility/sessionTurnWaitingCompatibility';
 import { log } from '@/utils/logging/log';
@@ -100,8 +101,10 @@ export function projectSessionDeliveryForSocket(
                 return null;
             }
             const decision = classifySessionEventDelivery({ event: body.t, consumption: readSessionSocketConsumption(data, sessionId) });
+            const needsPreview = body.delivery === 'full' && consumesSessionLatestMessage(data, sessionId)
+                && isSessionListPreviewMessage(body.message as SessionMessageV1);
             const { append, ...fullBody } = body;
-            if (decision.delivery === 'hint' && body.delivery === 'full') {
+            if (decision.delivery === 'hint' && !needsPreview && body.delivery === 'full') {
                 // Protected forwarding carries the canonical producer's already-serialized full row.
                 return projectOncePerDelivery(hintProjectionByDelivery, record, () => (
                     { ...record, body: { ...fullBody, delivery: 'hint', message: buildSessionMessageObservationFactsV1(body.message as SessionMessageV1) } }
@@ -110,7 +113,7 @@ export function projectSessionDeliveryForSocket(
             if (append !== undefined) {
                 // A revision's producer append: only what changed reaches a consumer that applies
                 // it against the named base; every other full-body consumer keeps the full row.
-                if (appliesDurableMessageAppends(data) && isMessageUpdateAppend(append)) {
+                if (!needsPreview && appliesDurableMessageAppends(data) && isMessageUpdateAppend(append)) {
                     const { base, content } = append;
                     return projectPayloadForSocket(data, { ...record, body: {
                         ...fullBody, delivery: 'delta', message: { ...(body.message as Record<string, unknown>), content }, base,

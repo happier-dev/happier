@@ -6,7 +6,7 @@ import { SessionTranscriptSurfaceItemReferenceInputV1Schema } from '@happier-dev
 import { catchupFollowupReturnedCounter } from "@/app/monitoring/metrics/index";
 import { SessionMessageDeliveryResolutionV1Schema, readStoredSessionMessageDeliveryResolutionV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageDeliveryResolutionV1';
 import { FollowDeliveryProjectionV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowDeliveryProjectionV1';
-import { SessionMessageRoleSchema, type SessionMessageRole } from '@happier-dev/protocol/sessions/messages/sessionMessageRole';
+import { SESSION_LIST_PREVIEW_MESSAGE_ROLES, SessionMessageRoleSchema, type SessionMessageRole } from '@happier-dev/protocol/sessions/messages/sessionMessageRole';
 import { MessageActionReferenceV1Schema } from '@happier-dev/protocol/sessions/messages/messageActionReferenceV1';
 import { ExternalShareableActorV1Schema, ExternalShareableTranscriptSnapshotV1Schema, deriveExternalShareableActorFromAdmissionReceiptV1 } from '@happier-dev/protocol/sessions/messages/sessionExternalShareableTranscriptV1';
 import { SessionMessageAccountActorV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessageAccountActorV1';
@@ -57,7 +57,7 @@ export function isAdmittedSessionListPreviewRequest(input: Readonly<{
     const query = input.query;
     return query?.limit === 1
         && query.scope === "main"
-        && query.roles === "user,agent"
+        && query.roles === SESSION_LIST_PREVIEW_MESSAGE_ROLES.join(",")
         && query.sidechainId === undefined
         && query.messageId === undefined
         && query.beforeSeq === undefined

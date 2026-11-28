@@ -108,6 +108,9 @@ import {
     subscribeSessionSurfaceVisibilityReset,
 } from '@/sync/domains/session/sessionSurfaceVisibility';
 import { useSessionContentDemand } from '@/sync/domains/session/useSessionContentDemand';
+import { replaceSessionListLatestMessageViewport } from '@/sync/runtime/sessionListLatestMessage';
+import { sync } from '@/sync/sync';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { useKeyboardShortcutHandlers } from '@/keyboard/KeyboardShortcutProvider';
 import { useSessionListSourceShortcut } from './search/useSessionListSourceShortcut';
@@ -1620,6 +1623,7 @@ export function useSessionListViewStateFromPaneState(
         viewportId: statusDemandViewportId,
         itemsBySelectionKey: sessionListItemBySelectionKey,
         dataActive: surfaceOwnership.dataActive,
+        latestMessageEnabled: sessionRowDetails.latestMessage && !(densityViewState.compact && densityViewState.compactMinimal),
         priorityRowKeys: prioritySessionRowKeys,
         totalRows: renderPaneState.summary.sessionCount,
     }), [
@@ -1629,6 +1633,9 @@ export function useSessionListViewStateFromPaneState(
         sessionListItemBySelectionKey,
         statusDemandViewportId,
         surfaceOwnership.dataActive,
+        sessionRowDetails.latestMessage,
+        densityViewState.compact,
+        densityViewState.compactMinimal,
     ]);
     const selectedSessionListItems = React.useMemo(() => {
         if (!sessionListSelectionSnapshot.isSelectionMode || sessionListSelectionSnapshot.selectedKeys.size === 0) {
@@ -2686,6 +2693,7 @@ export const SessionListViewportDemandPublisher = React.memo(function SessionLis
     viewportId: string;
     itemsBySelectionKey: ReadonlyMap<string, Extract<SessionListIndexItem, { type: 'session' }>>;
     dataActive: boolean;
+    latestMessageEnabled: boolean;
     priorityRowKeys: ReadonlySet<string>;
     totalRows: number;
 }>) {
@@ -2723,12 +2731,21 @@ export const SessionListViewportDemandPublisher = React.memo(function SessionLis
         visibleAddressesRef.current = addresses;
         return addresses;
     }, [props.itemsBySelectionKey, visibleRowKeys]);
-    useSessionContentDemand(visibleAddresses, {
+    const rowHydration = useSessionContentDemand(visibleAddresses, {
         tag: 'sessionsList.hydrateVisibleRows',
         hydrate: 'viewport',
         active: props.dataActive,
         resetVersion: visibilityResetVersion,
     });
+    React.useEffect(() => {
+        const entered = replaceSessionListLatestMessageViewport(props.viewportId,
+            props.dataActive && props.latestMessageEnabled ? visibleAddresses : []);
+        if (entered.length > 0) fireAndForget(sync.readSessionListLatestMessages(entered, rowHydration.current),
+            { tag: 'sessionsList.latestMessages' });
+    }, [props.viewportId, props.dataActive, props.latestMessageEnabled, visibleAddresses, visibilityResetVersion, rowHydration]);
+    React.useEffect(() => () => {
+        replaceSessionListLatestMessageViewport(props.viewportId, []);
+    }, [props.viewportId]);
     const statusDemandItems = React.useMemo(() => {
         const visibleItems: Array<Extract<SessionListIndexItem, { type: 'session' }>> = [];
         for (const rowKey of visibleRowKeys ?? []) {

@@ -309,6 +309,7 @@ type SessionItemContentProps = SessionItemBaseProps & Readonly<{
     appearanceColor: SessionListRowViewModel['appearanceColor'];
     /** P5 row context (lab `clctx`); absent for rows drawn outside the Sessions list. */
     rowContext?: SessionListRowViewModel['rowContext'];
+    latestMessage?: string | null;
 }>;
 
 function normalizeSessionItemActiveColorMode(value: unknown): SessionItemActiveColorMode {
@@ -619,6 +620,7 @@ const SessionItemContent = React.memo(
         draft,
         reminder,
         rowContext,
+        latestMessage,
         appearanceColor,
     }: SessionItemContentProps) => {
         const router = useDestinationRouter();
@@ -1333,6 +1335,7 @@ const SessionItemContent = React.memo(
         const rowAccessibilityLabel = [sessionNameResolved, rowContext?.accessibleLabel, reportsAccessibilityLabel, rowAttentionAccessibilityLabel,
             draft?.hasPreview ? t('sessionDrafts.badge') : null,
             nowLine ? [nowLine, noteAgeLabel].filter(Boolean).join(', ') : null,
+            rowLines > 1 ? latestMessage : null,
             !progressChip && runningWorkCount ? t('sessionWork.strip.stillWorking', { count: runningWorkCount }) : null,
             rowProgress ? describeSessionRowProgress(rowProgress) : null,
             isSessionIdentityLoading ? null : describeSessionRowScm(rowContext?.pullRequest ?? null, rowContext?.changes ?? null),
@@ -1642,7 +1645,13 @@ const SessionItemContent = React.memo(
                 {rowContext.pluginMark}
             </Text>
         ) : null;
-        const lineTwoText = workText ?? checkoutText;
+        const latestMessageText = latestMessage
+            ? <SessionRowLineText testID={`session-list-latest-message-${occurrenceTestId}`} tone="secondary">{latestMessage}</SessionRowLineText>
+            : null;
+        const lineTwoText = rowLines === 2 && workText && latestMessageText ? <>
+            {workText}
+            <SessionRowLineText tone="secondary" afterDot>{latestMessage}</SessionRowLineText>
+        </> : workText ?? latestMessageText ?? checkoutText;
         const lineTwoStart = contextProjectLabel || lineTwoText ? (
             <>
                 {contextProjectLabel ? (
@@ -1659,7 +1668,9 @@ const SessionItemContent = React.memo(
         // Lines 2 ends with one compact detail (the count, else the pull request, else a plugin's mark); changes wait
         // for line 3. Lines 3 keeps the count on line 2 and draws the pull request, changes and plugin mark on line 3.
         const lineTwoEnd = rowLines === 3 ? progressChip : progressChip ?? pullRequestChip ?? pluginMarkText;
-        const lineThreeStart = rowLines === 3 && workText ? checkoutText : null;
+        const lineThreeStart = rowLines === 3
+            ? (workText ? latestMessageText ?? checkoutText : latestMessageText ? checkoutText : null)
+            : null;
         const lineThreeEnd = rowLines === 3 && (pullRequestChip || changesStat || pluginMarkText) ? (
             <View style={styles.detailLineEnd}>{pullRequestChip}{changesStat}{pluginMarkText}</View>
         ) : null;
@@ -2097,6 +2108,7 @@ function SessionItemFromRowViewModel(props: SessionItemProps) {
             reminder={rowViewModel.reminder}
             appearanceColor={rowViewModel.appearanceColor}
             rowContext={rowViewModel.rowContext}
+            latestMessage={rowViewModel.latestMessage}
         />
     );
 }

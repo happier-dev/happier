@@ -13337,6 +13337,7 @@ settingsSession: {
         freshSubtitle: 'Abre un borrador nuevo cada vez que elijas Nueva sesión.',
     },
 	      sessionList: {
+	        detailLatestMessage: 'Último mensaje',
 	          title: 'Lista de sesiones',
 	          footer: 'Personaliza lo que aparece en cada fila de sesión.',
 	          tagsTitle: 'Etiquetas de sesión',

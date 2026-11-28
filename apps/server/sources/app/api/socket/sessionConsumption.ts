@@ -11,6 +11,7 @@ import { retireSessionBrowserLiveStreamsAfterAccessChange } from './machineLiveS
 interface SessionSocketConsumption {
     liveSessionIds: ReadonlySet<string>;
     durableSessionIds: ReadonlySet<string>;
+    latestMessageSessionIds?: ReadonlySet<string>;
 }
 
 /** UI consumers receive live segments only through demand this owner admitted. */
@@ -132,7 +133,14 @@ export function withdrawSessionConsumption(socket: Pick<Socket, "data">, session
     socket.data.sessionConsumption = {
         liveSessionIds: new Set([...current.liveSessionIds].filter(id => id !== sessionId)),
         durableSessionIds: new Set([...current.durableSessionIds].filter(id => id !== sessionId)),
+        ...(current.latestMessageSessionIds && {
+            latestMessageSessionIds: new Set([...current.latestMessageSessionIds].filter(id => id !== sessionId)),
+        }),
     } satisfies SessionSocketConsumption;
+}
+
+export function consumesSessionLatestMessage(data: Socket["data"], sessionId: string): boolean {
+    return isUiConsumptionSocket(data) && data.sessionConsumption?.latestMessageSessionIds?.has(sessionId) === true;
 }
 
 /** Audience admission is separate: this only selects delivery for an admitted socket. */
@@ -165,7 +173,9 @@ export function registerSessionConsumptionSocketEvent(socket: Socket, admission:
                 return;
             }
             const accountId = socket.data.userId;
-            const requested = [...new Set([...parsed.data.liveSessionIds, ...parsed.data.durableSessionIds])];
+            const requested = [...new Set([
+                ...parsed.data.liveSessionIds, ...parsed.data.durableSessionIds, ...parsed.data.latestMessageSessionIds ?? [],
+            ])];
             const authorize = async (tx: Tx, ids: readonly string[]) => {
                 const admitted: string[] = [];
                 for (const sessionId of ids) {
@@ -186,10 +196,13 @@ export function registerSessionConsumptionSocketEvent(socket: Socket, admission:
             }
             const liveSessionIds = [...new Set(parsed.data.liveSessionIds)].filter(id => admitted.has(id));
             const durableSessionIds = [...new Set(parsed.data.durableSessionIds)].filter(id => admitted.has(id));
+            const latestMessageSessionIds = parsed.data.latestMessageSessionIds === undefined ? undefined
+                : [...new Set(parsed.data.latestMessageSessionIds)].filter(id => admitted.has(id));
             socket.data.sessionConsumption = {
+                ...(latestMessageSessionIds && { latestMessageSessionIds: new Set(latestMessageSessionIds) }),
                 liveSessionIds: new Set(liveSessionIds), durableSessionIds: new Set(durableSessionIds),
             } satisfies SessionSocketConsumption;
-            reply({ ok: true, v: 1, liveSessionIds, durableSessionIds });
+            reply({ ok: true, v: 1, liveSessionIds, durableSessionIds, ...(latestMessageSessionIds && { latestMessageSessionIds }) });
         }).catch(error => {
             log({ module: "session-consumption", error }, "Session consumption declaration unavailable");
             reply({ ok: false, error: "unavailable" });
@@ -214,7 +227,8 @@ export function retireSessionConsumptionAfterAccessChange(sockets: Iterable<Sock
         void enqueueConsumptionWork(socket, async () => {
             const consumption: SessionSocketConsumption | undefined = socket.data.sessionConsumption;
             if (!consumption || !socket.connected
-                || (!consumption.liveSessionIds.has(sessionId) && !consumption.durableSessionIds.has(sessionId))) return;
+                || (!consumption.liveSessionIds.has(sessionId) && !consumption.durableSessionIds.has(sessionId)
+                    && !consumption.latestMessageSessionIds?.has(sessionId))) return;
             const decision = await captureReadSnapshot(tx => resolveSessionAccessForOperation(tx, {
                 accountId: socket.data.userId, sessionId, capability: "readTranscript",
                 authentication: readSessionAccessAuthenticationFromSocket(socket),

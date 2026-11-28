@@ -7,11 +7,11 @@ const sessionIds = z.array(asProtocolZod(SessionIdSchema));
 
 /** Closed, connection-local routing operation; no content or claimed authority. */
 export const SessionConsumptionReplaceV1Schema = z.strictObject({
-  v: z.literal(1), liveSessionIds: sessionIds, durableSessionIds: sessionIds,
+  v: z.literal(1), liveSessionIds: sessionIds, durableSessionIds: sessionIds, latestMessageSessionIds: z.optional(sessionIds),
 });
 export type SessionConsumptionReplaceV1 = z.infer<typeof SessionConsumptionReplaceV1Schema>;
 export const SessionConsumptionReplaceAckV1Schema = z.discriminatedUnion('ok', [
-  z.strictObject({ ok: z.literal(true), v: z.literal(1), liveSessionIds: sessionIds, durableSessionIds: sessionIds }),
+  z.strictObject({ ok: z.literal(true), v: z.literal(1), liveSessionIds: sessionIds, durableSessionIds: sessionIds, latestMessageSessionIds: z.optional(sessionIds) }),
   z.strictObject({ ok: z.literal(false), error: z.enum(['invalid_request', 'not_allowed', 'unavailable']) }),
 ]);
 export type SessionConsumptionReplaceAckV1 = z.infer<typeof SessionConsumptionReplaceAckV1Schema>;

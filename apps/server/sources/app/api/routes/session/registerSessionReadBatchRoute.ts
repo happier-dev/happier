@@ -75,6 +75,7 @@ export function registerSessionReadBatchRoute(app: Fastify) {
             })) : undefined;
         const messageResults = request.body.includeMessages ? await readComponent(() => readSessionMessagePages({
             userId: request.userId, sessionIds: request.body.sessionIds, authentication, previewRequest: request,
+            latestMessageOnly: request.body.latestMessageOnly,
         })) : undefined;
         const componentFor = <T>(batch: ReadonlyMap<string, PromiseSettledResult<T>> | { status: 503; body: { error: string } } | undefined, id: string): T | { status: 503; body: { error: string } } => {
             if (!batch) throw new Error('Session component batch missing');

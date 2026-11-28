@@ -24,6 +24,46 @@ describe("Session consumption through authenticated Socket.IO registration and S
     }, 120_000);
     afterAll(async () => { await harness?.close(); });
 
+    it("sends latest-message consumers conversation bodies only for admitted Sessions", async () => {
+        const [owner, stranger] = await Promise.all(Array.from({ length: 2 }, () => db.account.create({
+            data: { publicKey: crypto.randomUUID(), encryptionMode: "plain" },
+        })));
+        const session = await db.session.create({ data: {
+            accountId: owner.id, tag: crypto.randomUUID(), metadata: "{}", encryptionMode: "plain",
+        } });
+        const { open, settle, message, publish, updates, ticks, close } = await openSocketHarness(session.id);
+        try {
+            const shown = await open(owner.id, "sync");
+            const hidden = await open(owner.id, "sync");
+            const unrelated = await open(stranger.id, "sync");
+            const declare = (client: ClientSocket, ids: string[]) => client.timeout(7_500).emitWithAck("session-consumption-replace",
+                { v: 1, liveSessionIds: [], durableSessionIds: [], latestMessageSessionIds: ids });
+            expect(await declare(shown, [session.id, "missing"])).toMatchObject({ ok: true, latestMessageSessionIds: [session.id] });
+            expect(await declare(unrelated, [session.id])).toMatchObject({ ok: true, latestMessageSessionIds: [] });
+            await publish(owner.id);
+            await eventRouter.emitUpdate({ userId: owner.id,
+                payload: buildNewMessageUpdate({ ...message, id: "tool", seq: 2, messageRole: "event" }, session.id, 2, crypto.randomUUID()),
+                recipientFilter: { type: "all-interested-in-session", sessionId: session.id } });
+            await eventRouter.emitEphemeral({ userId: owner.id,
+                payload: { type: "transcript-stream-segment", sessionId: session.id, message: {
+                    localId: "segment", tick: 1, content: message.content, createdAt: 1, updatedAt: 2,
+                } }, recipientFilter: { type: "all-interested-in-session", sessionId: session.id } });
+            await settle();
+            expect(updates.get(shown)).toMatchObject([
+                { body: { delivery: "full", message: { id: "message", content: message.content } } },
+                { body: { delivery: "hint", message: { id: "tool" } } },
+            ]);
+            expect(updates.get(shown)?.[1]).not.toHaveProperty("body.message.content");
+            expect(updates.get(hidden)).toMatchObject([{ body: { delivery: "hint" } }, { body: { delivery: "hint" } }]);
+            expect(updates.get(unrelated)).toEqual([]);
+            expect(ticks.get(shown)).toEqual([]);
+            await declare(shown, []);
+            await publish(owner.id, true);
+            await settle();
+            expect(updates.get(shown)?.at(-1)).toMatchObject({ body: { delivery: "hint" } });
+        } finally { await close(); }
+    }, 60_000);
+
     it("replaces demand, isolates devices, survives reconnect and rechecks revoked access before hints or bodies", async () => {
         const [owner, viewer, stranger] = await Promise.all(Array.from({ length: 3 }, () => db.account.create({
             data: { publicKey: crypto.randomUUID(), encryptionMode: "plain" },

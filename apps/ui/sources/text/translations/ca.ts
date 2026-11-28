@@ -12580,6 +12580,7 @@ settingsSession: {
         freshSubtitle: 'Obre un esborrany nou cada vegada que triïs Sessió nova.',
     },
 	            sessionList: {
+	              detailLatestMessage: 'Últim missatge',
 	                title: 'Llista de sessions',
 	                footer: 'Personalitza què apareix a cada fila de sessió.',
 	                tagsTitle: 'Etiquetes de sessió',

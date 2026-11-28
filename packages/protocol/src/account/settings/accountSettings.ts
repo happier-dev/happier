@@ -874,6 +874,7 @@ export type CollectionLines = z.infer<typeof CollectionLinesSchema>;
 export const SessionCollectionRowDetailsSchema = lazyZodSchema(() => z.strictObject({
     currentWork: z.optional(z.boolean()),
     progress: z.optional(z.boolean()),
+    latestMessage: z.optional(z.boolean()),
     project: z.optional(z.boolean()),
     machine: z.optional(z.boolean()),
     branch: z.optional(z.boolean()),

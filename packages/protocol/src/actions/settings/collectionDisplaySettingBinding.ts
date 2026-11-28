@@ -61,6 +61,7 @@ export function readSessionCollectionRowDetails(
     return {
         currentWork: details?.currentWork ?? true,
         progress: details?.progress ?? true,
+        latestMessage: details?.latestMessage ?? false,
         project: details?.project ?? rowContext,
         machine: details?.machine ?? rowContext,
         branch: details?.branch ?? rowContext,
