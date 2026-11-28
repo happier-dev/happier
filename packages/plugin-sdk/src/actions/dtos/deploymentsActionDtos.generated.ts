@@ -15976,6 +15976,19 @@ export type DeploymentsActionResultById = {
                 }[];
                 effectAttempted?: boolean | undefined;
             };
+            volumeRemoval?: undefined | {
+                kind: 'kept';
+                otherEnvironments: number;
+                url: string;
+            } | {
+                kind: 'kept-unchecked';
+            } | {
+                kind: 'removed';
+                volume?: undefined | {
+                    name: string;
+                    provider: string;
+                };
+            };
         };
         previewHead?: undefined | {
             templateEnvironmentId: string;

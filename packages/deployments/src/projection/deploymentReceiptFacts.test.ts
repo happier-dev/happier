@@ -85,7 +85,8 @@ describe('receipt facts', () => {
             providerIdentity: { providerAccountId: 'provider', providerResourceId: 'project', providerEnvironment: 'production' },
             providerEnvironment: { kind: 'native', selection: { kind: 'production' } },
             preparedNative: { projectName: 'project', pages: { projectMode: 'gitIntegration', productionBranch: 'main' } },
-            observation: { v: 1, state: 'succeeded', observedAtMs: 1, builtSha },
+            observation: { v: 1, state: 'succeeded', observedAtMs: 1, builtSha,
+                volumeRemoval: { kind: 'kept', otherEnvironments: 2, url: 'https://railway.com/project/example' } },
         };
 
         expect(projectDeploymentReceiptHistoryEntryV1(receipt)).toMatchObject({
@@ -96,7 +97,11 @@ describe('receipt facts', () => {
         const investigation = await readDeploymentReceiptActionFactsV1({ ok: true, deployment: receipt.deployment }, {
             deploymentId: receipt.deployment.id, projection: 'investigation',
         }, async () => receipt);
-        expect(investigation).toMatchObject({ investigation: { sourceLabel: builtSha ? { kind: 'repository', sha: builtSha } : null } });
+        const { DeploymentReceiptGetResultV1Schema } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
+        expect(DeploymentReceiptGetResultV1Schema.parse(investigation)).toMatchObject({ investigation: {
+            sourceLabel: builtSha ? { kind: 'repository', sha: builtSha } : null,
+            volumeRemoval: receipt.content.platform.observation.volumeRemoval,
+        } });
         receipt.content.sourceMethod = 'upload';
         expect(projectDeploymentReceiptHistoryEntryV1(receipt).historyTitle).toBe('aaaaaaa · Requested commit');
     });

@@ -1,5 +1,6 @@
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { DeploymentVolumeRemovalOutcomeV1Schema } from './deploymentVolumeRemovalV1.js';
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision,
   DeploymentTimestampV1Schema as timestamp } from './deploymentIdentifiersV1.js';
 import { DeploymentTargetCredentialPrincipalV1Schema, DeploymentTargetRoleFailureV1Schema, DeploymentTargetRoleResultV1Schema,
@@ -83,15 +84,17 @@ export const DeploymentReceiptInvestigationV1Schema = lazyZodSchema(() => z.stri
     z.pick(DeploymentFolderSourceIntentV1Schema, { kind: true, manifestFingerprint: true }),
   ])),
   failure: z.optional(DeploymentReceiptFailureV1Schema),
+  volumeRemoval: z.optional(DeploymentVolumeRemovalOutcomeV1Schema),
 }));
 export type DeploymentReceiptInvestigationV1 = z.infer<typeof DeploymentReceiptInvestigationV1Schema>;
 
 /** Only the Account-opened exact receipt owner supplies these private evidence facts. */
 export function projectDeploymentReceiptInvestigationV1(content: Readonly<{
   sourceIntent?: DeploymentSourceIntentV1; failure?: DeploymentReceiptFailureV1;
-  platform?: Readonly<{ observation: Pick<DeploymentTargetRoleResultV1, 'builtSha'> }>;
+  platform?: Readonly<{ observation: Pick<DeploymentTargetRoleResultV1, 'builtSha'> & Pick<DeploymentReceiptInvestigationV1, 'volumeRemoval'> }>;
 }>): DeploymentReceiptInvestigationV1 {
   const source = content.sourceIntent;
+  const volumeRemoval = content.platform?.observation.volumeRemoval;
   return {
     ...(source ? { source: source.kind === 'repository'
       ? { kind: source.kind, projectSourceId: source.projectSourceId, sourceRevision: source.sourceRevision, sha: source.sha,
@@ -99,6 +102,7 @@ export function projectDeploymentReceiptInvestigationV1(content: Readonly<{
       : source.kind === 'folder' ? { kind: source.kind, manifestFingerprint: source.manifestFingerprint }
         : { kind: source.kind, contentRevision: source.contentRevision, composeDigest: source.composeDigest } } : {}),
     ...(content.failure ? { failure: content.failure } : {}),
+    ...(volumeRemoval ? { volumeRemoval } : {}),
   };
 }
 

@@ -1198,7 +1198,9 @@ or how many other environments use it, with a Railway link when it will be kept.
 If the volume cannot be checked during review, the approval explains that the
 volume will be removed only if no other environment uses it. The receipt records
 whether Railway removed the volume, kept it for other environments, or
-Happier could not confirm its removal.
+Happier could not confirm its removal. The Account-opened
+`deployments.receipts.get` investigation includes this recorded outcome as
+`investigation.volumeRemoval` when the receipt captured it.
 [Railway database reference](https://docs.railway.com/databases/reference) ·
 [Railway TCP proxy](https://docs.railway.com/networking/tcp-proxy)
 
