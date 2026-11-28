@@ -489,7 +489,7 @@ describe('Machine Execution Run owner account snapshot', () => {
                         }
                         await bridge.waitForTerminal(runId);
                         expect(bridge.get(runId)).toMatchObject({ status: outcome === 'cancelled Run' ? 'cancelled' : 'succeeded' });
-                        expect(await bridge.stop(runId)).toMatchObject({ ok: false, errorCode: 'execution_run_not_allowed', error: 'Not running' });
+                        expect(await bridge.stop(runId)).toMatchObject({ ok: true, status: outcome === 'cancelled Run' ? 'cancelled' : 'succeeded' });
                     }
                 }
                 // Observe retirement before disposing the bridge, which could mask a leak.
