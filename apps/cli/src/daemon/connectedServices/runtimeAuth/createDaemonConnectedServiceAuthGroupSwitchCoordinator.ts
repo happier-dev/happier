@@ -1,9 +1,8 @@
+import type { ConnectedServiceProfileHealth } from '@/cloud/connectedServices/resolveConnectedServiceCredentials';
 import {
   ConnectedServiceIdSchema,
-  isConnectedServiceCredentialHealthStatusReconnectRequired,
   type ConnectedServiceAuthGroupV1,
   type ConnectedServiceAuthGroupMemberStateV1,
-  type ConnectedServiceCredentialHealthStatusV1,
   type ConnectedServiceCredentialRevisionV1,
   type ConnectedServiceId,
 } from '@happier-dev/protocol';
@@ -65,13 +64,6 @@ type AuthGroupApi = Readonly<{
     expectedGeneration: number;
     expectedRuntimeStateRevision?: number;
   }>): Promise<ConnectedServiceAuthGroupV1>;
-  listConnectedServiceProfiles?(input: Readonly<{ serviceId: ConnectedServiceId }>): Promise<Readonly<{
-    serviceId: ConnectedServiceId;
-    profiles: ReadonlyArray<Readonly<{
-      profileId: string;
-      status: ConnectedServiceCredentialHealthStatusV1;
-    }>>;
-  }>>;
 }>;
 
 function readNonNegativeNumber(value: unknown): number | null {
@@ -112,17 +104,6 @@ function mapConnectedServiceAuthGenerationActionToApplyMode(
     default:
       return null;
   }
-}
-
-function mergeCredentialHealthStatus(input: Readonly<{
-  existing?: ConnectedServiceCredentialHealthStatusV1 | null;
-  profileListStatus: ConnectedServiceCredentialHealthStatusV1;
-}>): ConnectedServiceCredentialHealthStatusV1 {
-  void input.existing;
-  if (isConnectedServiceCredentialHealthStatusReconnectRequired(input.profileListStatus)) {
-    return input.profileListStatus;
-  }
-  return input.profileListStatus;
 }
 
 function resolveRetryAtMs(input: Readonly<{
@@ -240,6 +221,7 @@ export function createDaemonConnectedServiceAuthGroupSwitchCoordinator(params: R
     reason: string;
     deadlineAtMs?: number;
   }>) => Promise<ConnectedServiceGroupQuotaProbeResult | void>;
+  resolveProjectedCredentialHealth?: (serviceId: ConnectedServiceId, profileId: string) => ConnectedServiceProfileHealth;
   resolveCredentialRevision?: (
     serviceId: ConnectedServiceId,
     profileId: string | null,
@@ -312,27 +294,20 @@ export function createDaemonConnectedServiceAuthGroupSwitchCoordinator(params: R
           unresolvedState.activeProfileId,
         ) ?? null,
       };
-      if (typeof params.api.listConnectedServiceProfiles !== 'function') return state;
-      const profiles = await params.api.listConnectedServiceProfiles({ serviceId }).catch(() => null);
-      if (!profiles) return state;
-      const healthByProfileId = new Map(profiles.profiles.map((profile) => [profile.profileId, profile.status]));
+      const { resolveProjectedCredentialHealth } = params;
+      if (!resolveProjectedCredentialHealth) return state;
       const memberStatesByProfileId = new Map(state.memberStatesByProfileId);
-      for (const member of state.members) {
-        const healthStatus = healthByProfileId.get(member.profileId);
-        if (!healthStatus) continue;
-        const existing = memberStatesByProfileId.get(member.profileId) ?? {};
-        memberStatesByProfileId.set(member.profileId, {
-          ...existing,
-          credentialHealthStatus: mergeCredentialHealthStatus({
-            existing: existing.credentialHealthStatus,
-            profileListStatus: healthStatus,
-          }),
-        });
-      }
-      return {
-        ...state,
-        memberStatesByProfileId,
-      };
+      const members = state.members.filter(({ profileId }) => {
+        const health = resolveProjectedCredentialHealth(serviceId, profileId);
+        if (health.kind === 'present_but_unusable' || health.kind === 'usable') {
+          memberStatesByProfileId.set(profileId, {
+            ...memberStatesByProfileId.get(profileId),
+            credentialHealthStatus: health.status,
+          });
+        }
+        return health.kind !== 'confirmed_missing';
+      });
+      return { ...state, members, memberStatesByProfileId };
     },
     commitSwitch: async (input) => {
       const serviceId = ConnectedServiceIdSchema.parse(input.serviceId);

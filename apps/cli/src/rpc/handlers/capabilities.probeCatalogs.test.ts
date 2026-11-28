@@ -87,7 +87,7 @@ describe('capabilities.invoke pre-session catalogs', () => {
           : path === '/v1/account/encryption' ? { mode: 'plain', updatedAt: 0 }
           : path === '/v3/connect/openai-codex/profiles/work/credential'
             ? { content: { t: 'plain', v: record }, credentialRevision: 'csr_1123456789ABCDEFGHJKMNPQRS' }
-          : path === '/v2/connect/openai-codex/profiles' ? { serviceId: 'openai-codex', profiles: [] }
+          : path === '/v2/connect/openai-codex/profiles' ? { serviceId: 'openai-codex', profiles: [{ profileId: 'work', status: 'connected' }] }
           : null;
         if (!data) throw new Error(`Unexpected fixture HTTP request: ${path}`);
         return { config, status: 200, statusText: 'OK', headers: {}, data };

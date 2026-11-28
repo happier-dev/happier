@@ -40,7 +40,7 @@ describe.skipIf(process.platform === 'win32')('selected AGY discovery process an
         } }, version: 1 }
           : path === '/v1/account/encryption' ? { mode: 'plain', updatedAt: 0 }
           : path === '/v3/connect/antigravity/profiles/a/credential' ? { content: { t: 'plain', v: record }, credentialRevision: 'csr_1123456789ABCDEFGHJKMNPQRS' }
-          : path === '/v2/connect/antigravity/profiles' ? { serviceId: 'antigravity', profiles: [] } : null;
+          : path === '/v2/connect/antigravity/profiles' ? { serviceId: 'antigravity', profiles: [{ profileId: 'a', status: 'connected' }] } : null;
         if (!data) throw new Error(`Unexpected HTTP fixture: ${path}`);
         return { config, status: 200, statusText: 'OK', headers: {}, data };
       };
