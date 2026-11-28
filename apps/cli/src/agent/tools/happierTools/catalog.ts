@@ -14,20 +14,24 @@ function buildActionBackedTools(): readonly HappierBuiltInToolDefinition[] {
   for (const [name, id] of listActionSpecMcpToolBindings()) {
     const spec = getActionSpec(id);
 
-    tools.push({
+    const tool: HappierBuiltInToolDefinition = {
       name,
       title: spec.title,
       description: spec.description ?? spec.title,
       actionId: spec.id,
       inputSchema: spec.surfaceBindings?.mcp?.inputSchema ?? spec.inputSchema,
       ...(spec.examples ? { examples: spec.examples } : {}),
-      ...(spec.contextualDefaults ? { contextualDefaults: spec.contextualDefaults } : {}),
       ...(spec.outputSchema === undefined ? {} : { outputSchema: spec.outputSchema }),
       annotations: {
         ...(spec.sideEffectClass === 'read' ? { readOnlyHint: true } : {}),
         destructiveHint: spec.safety === 'danger',
       },
-    });
+    };
+    // The spec derives Machine defaults from its input schema on first read. Every CLI
+    // process evaluates this catalog, so reading it here would construct all Action
+    // input schemas; consumers read it when they bind or project that one tool.
+    Object.defineProperty(tool, 'contextualDefaults', { enumerable: true, get: () => spec.contextualDefaults });
+    tools.push(tool);
   }
 
   return Object.freeze(tools);
