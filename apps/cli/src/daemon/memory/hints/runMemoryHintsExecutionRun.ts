@@ -7,8 +7,12 @@ import type { runLlmTaskTextPrompt } from '@/agent/executionRuns/tasks/textPromp
  * The memory worker owns prompt construction and result consumption. Execution
  * lifecycle stays with the canonical execution.run Action supplied here, and the
  * background-task runner owner decides which Agent, model and route run it.
- * Nothing ready throws `LlmTaskRunnerUnavailableError`, which the hint pass
- * treats as a failed Run and backs off.
+ *
+ * Hint Runs are background work: they start in the daemon-owned detached scope
+ * so they never resume (wake) the hinted Session or spawn its runner. The
+ * prompt carries the transcript text; `commitHint` writes the result to the
+ * Session independently. Nothing ready throws `LlmTaskRunnerUnavailableError`,
+ * which the hint pass treats as a failed Run and backs off.
  */
 export type MemoryHintsExecutionRunTextPromptRunner = typeof runLlmTaskTextPrompt;
 
@@ -32,7 +36,7 @@ export async function runMemoryHintsExecutionRun(params: Readonly<{
     choice: params.choice,
     // Auto prefers the Session's own Agent on a cost tie.
     sessionAgentTargetKey: params.sessionAgentTargetKey,
-    sessionId: params.sessionId,
+    sessionId: null,
     intent: 'memory_hints',
     prompt: params.prompt,
     ...(params.credentials !== undefined ? { credentials: params.credentials } : {}),

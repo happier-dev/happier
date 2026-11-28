@@ -27,7 +27,7 @@ describe('runMemoryHintsExecutionRun', () => {
     { modelSelection: { agentTargetKey: CODEX, providerConnectionId: null, modelId: 'gpt-6-luna' }, title: 'Luna', costTier: 'low', structuredOutput: 'supported', noTools: true },
   ] };
 
-  it('passes the hinted Session\'s Agent so it wins a cheapest-tier tie', async () => {
+  it('passes the hinted Session\'s Agent so it wins a cheapest-tier tie, detached from the Session', async () => {
     const { runMemoryHintsExecutionRun } = await import('./runMemoryHintsExecutionRun');
     const executeStart = startSucceeds();
     const raw = await runMemoryHintsExecutionRun({
@@ -36,9 +36,9 @@ describe('runMemoryHintsExecutionRun', () => {
     });
     expect(raw).toContain('{"ok":true}');
     expect(executeStart).toHaveBeenCalledWith(expect.objectContaining({
-      intent: 'memory_hints', permissionMode: 'read_only',
+      sessionId: null, intent: 'memory_hints', permissionMode: 'read_only',
       modelSelection: { agentTargetKey: CODEX, providerConnectionId: null, modelId: 'gpt-6-luna' },
-    }), expect.objectContaining({ defaultSessionId: 'sess-123' }));
+    }), expect.not.objectContaining({ defaultSessionId: expect.anything() }));
   });
 
   it('without a Session Agent takes the cheapest ready model in catalog order', async () => {

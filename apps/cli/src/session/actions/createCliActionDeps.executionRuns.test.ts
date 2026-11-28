@@ -7,6 +7,7 @@ import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/acti
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { RPC_ERROR_CODES, RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createRpcCallError } from '@happier-dev/protocol/rpcErrors';
+import { ExternalActionMachineBootstrapV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import type {
   ActionApprovalRequestCreatedResult,
   ActionsService,
@@ -1953,6 +1954,17 @@ describe('background memory hint Runs', () => {
   // memory hint runner, text-prompt adapter, Action executor and CLI Run deps run
   // here; only Session HTTP, Session RPC and Machine RPC are boundaries.
   it('starts the hint Run in detached scope and reads, resumes or spawns no Session', () => withTempDir('memory-hint-detached-home-', async home => {
+    const readHome = vi.mocked(axios.get).getMockImplementation();
+    vi.mocked(axios.get).mockImplementation(async (url, ...args) => {
+      if (new URL(String(url)).pathname === '/v1/machines/machine-local') {
+        return { status: 200, data: { machine: ExternalActionMachineBootstrapV1Schema.parse({
+          id: 'machine-local', managedMachineRef: null, kind: 'persistent', active: true,
+          revokedAt: null, replacedByMachineId: null,
+        }) } };
+      }
+      if (!readHome) throw new Error(`Unexpected HTTP read: ${url}`);
+      return readHome(url, ...args);
+    });
     const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID']);
     try {
       env.patch({ HAPPIER_HOME_DIR: home, HAPPIER_ACTIVE_SERVER_ID: 'memory-hint-home' });
@@ -1974,7 +1986,7 @@ describe('background memory hint Runs', () => {
         if (method === SESSION_RPC_METHODS.EXECUTION_RUN_WAIT) return { ok: false, code: 'execution_run_wait_unavailable' };
         throw new Error(`Unexpected machine RPC ${method}`);
       });
-      const credentials = { token: ownerToken, encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) } };
+      const credentials = { token: ownerToken, encryption: null };
       const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: 'cli-global', mode: 'plain', ctx: null });
       const executor = createActionExecutor({
     readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"execution.run.start": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...deps, isActionEnabled: () => true });

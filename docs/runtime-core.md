@@ -2202,9 +2202,11 @@ A consequence: an agent or automation that keeps sending to a Session can resume
 it after a person stopped it. Everything that is not a new send stays held:
 daemon restart and respawn, machine reconnect, unattended pending activation,
 connected-service continuations, Session Follow occurrences, returned answers and
-Runs started by automation. The memory worker passes the
-Session's transcript in the hint Run prompt. The `commitHint` owner writes the
-result to the Session; the hint cursor advances only on a
+Runs started by automation. The memory worker's hint Runs never target a Session
+at all: `runMemoryHintsExecutionRun` starts them in the daemon-owned detached
+scope (`execution.run.start` with `sessionId: null`), so a hint never resumes an
+inactive Session or spawns its runner. The prompt carries the transcript text and
+`commitHint` writes the result to the Session; the hint cursor advances only on a
 committed shard, and a failed Run uses the per-Session hint failure backoff. The
 runner comes from `hints.summarizerRunner` through the background task runner
 owner (below). An unroutable legacy explicit choice pauses hint generation

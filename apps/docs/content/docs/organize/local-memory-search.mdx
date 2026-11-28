@@ -281,7 +281,9 @@ model) move to Auto. Happier keeps a recognized agent or model choice. If the
 previous agent cannot be identified, choose a runner in Memory settings to
 resume hint generation.
 
-The agent that writes hints needs its own sign-in or connected account on that
+Hints are background work. Each one runs as a short task on the machine, outside
+any session, so generating hints never resumes a stopped or inactive session. The
+agent that writes hints needs its own sign-in or connected account on that
 machine, whatever agent the session used. When no agent is ready, or a hint run
 fails, Happier waits before trying that session again, and the wait grows after
 each failure, up to the configured limit.
