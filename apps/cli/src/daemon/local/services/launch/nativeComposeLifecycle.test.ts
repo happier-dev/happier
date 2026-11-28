@@ -741,7 +741,7 @@ describe('Compose exact native resource lifetime', () => {
         const events: unknown[] = [];
         const beforeWatch = requests.length;
         const watch = await control.lifecycle.logs?.({ kind: 'watch', maxBytes: 5, emit: result => events.push(result) });
-        expect(events).toEqual([{ kind: 'unavailable', reason: 'unsupported' }]);
+        expect(events).toEqual([{ kind: 'source-changed', sourceRevision: JSON.stringify([id.repeat(64)]) }]);
         expect(requests).toHaveLength(beforeWatch);
         if (!watch || !('dispose' in watch)) throw new Error('Expected a native watch disposal');
         await watch.dispose();
@@ -947,6 +947,25 @@ describe('Compose exact native resource lifetime', () => {
         h.requests.length = 0;
         expect(await h.control.lifecycle.logs?.({ kind: 'read', maxBytes: 8_192 })).toMatchObject({ kind: 'page', page: { text: 'native output' } });
         expect(h.requests).toEqual([['logs', '--tail', '8192', 'a'.repeat(64)]]);
+    });
+    it('follows an admitted container with one push stream and settles when Docker exits', async () => {
+        const h = fixture();
+        await h.control.lifecycle.inspect();
+        const terminal = Promise.withResolvers<void>();
+        const results: unknown[] = [];
+        const watch = await h.control.lifecycle.logs!({ kind: 'watch', maxBytes: 8_192, emit(result) {
+            results.push(result);
+            if (result.kind !== 'page') terminal.resolve();
+        } });
+        if (!('dispose' in watch)) throw new Error('Expected a native follow subscription');
+        try {
+            await terminal.promise;
+            expect(results).toEqual([
+                expect.objectContaining({ kind: 'page', page: expect.objectContaining({ text: 'native output' }) }),
+                { kind: 'unavailable', reason: 'unavailable' },
+            ]);
+            expect(h.requests.filter(args => args[0] === 'logs')).toEqual([['logs', '--follow', '--tail', '0', 'a'.repeat(64)]]);
+        } finally { await watch.dispose(); }
     });
     it('recovers the incumbent identity, treats unavailable inspection as unknown, and never stops a replacement', async () => {
         const h = fixture();

@@ -86,17 +86,27 @@ async function withColdNativeLogTarget<T>(input: MachineServiceTargetInput,
   if (!homeServerId || !environmentId) return refused('service_unavailable');
   if (input.approvalScope && (input.approvalScope.kind !== 'environment'
     || input.approvalScope.environmentId !== environmentId)) return refused('approval_stale');
-  const [{ configuration }, { createOwnServerNativeRuntime }, nativeLogs, exec, { MANAGED_SERVICE_NATIVE_LOG_PAGE_BYTES }, nativeEngine] = await Promise.all([
-    import('@/configuration'), import('@/deployments/targets/ownServer/nativeRuntime'), import('./nativeComposeLifecycle'),
-    import('@/plugins/runtime/invocation/services/exec'), import('@/plugins/runtime/invocation/services/managedServiceNativeLogBudget'),
+  const [{ configuration }, { createOwnServerNativeRuntime }, nativeLogs, exec, logOwner, nativeEngine] = await Promise.all([
+    import('@/configuration'), import('@/deployments/targets/ownServer/nativeRuntime'), import('./nativeComposeLogs'),
+    import('@/plugins/runtime/invocation/services/exec'), import('@/plugins/runtime/invocation/services/managedServiceNativeLogs'),
     import('./nativeComposeEngine'),
   ]);
   const identity = await resolveOwnServerDeploymentIdentityForHost({ happierHomeDir: configuration.happyHomeDir,
     serverId: input.serverId, environmentId });
   const signal = input.signal ?? new AbortController().signal;
-  let current = true;
-  const runtime = createOwnServerNativeRuntime({ cwd: configuration.happyHomeDir, signal, isCurrent: () => current });
+  const lifetime = new AbortController();
+  const isCurrent = () => !lifetime.signal.aborted;
+  const runtime = createOwnServerNativeRuntime({ cwd: configuration.happyHomeDir, signal, nativeIoSignal: lifetime.signal, isCurrent });
   let launch: Awaited<ReturnType<typeof exec.authorizePluginExecLaunchForHost>> | undefined;
+  let watchOwnsLifetime = false;
+  const close = async () => {
+    lifetime.abort();
+    try { await runtime.settleNative(); }
+    finally {
+      try { await launch?.release(); }
+      finally { await exec.readPluginExecProcessCustodyForHost(runtime.exec).requestStop(); }
+    }
+  };
   try {
     const tool = await runtime.exec.systemTools.resolve({ toolId: 'docker', purpose: 'deployment-native-compose',
       cwd: configuration.happyHomeDir, signal });
@@ -133,17 +143,25 @@ async function withColdNativeLogTarget<T>(input: MachineServiceTargetInput,
       }
     });
     signal.throwIfAborted();
+    const source = { containerIds: target.containerIds, environment: true,
+      redactionLease: redactionLease ?? activationMasking?.lease, redactionComplete: activationMasking?.complete, run };
+    const logs = logOwner.createManagedServiceNativeLogs({ signal: lifetime.signal, isCurrent,
+      maxBytes: logOwner.MANAGED_SERVICE_NATIVE_LOG_PAGE_BYTES, redactedValues: () => [],
+      invoke: async request => request.kind === 'read' ? nativeLogs.readNativeComposeLogsForHost(source, request)
+        : nativeLogs.watchNativeComposeLogsForHost(source, request),
+    });
     return await consume({ kind: 'environment', environmentId: target.environmentId, deploymentId: target.deploymentId,
       actionScope: { kind: 'environment', environmentId: target.environmentId }, instanceId,
-      isCurrent: () => current && !signal.aborted, retirementSignal: signal,
-      readLogs: options => nativeLogs.readNativeComposeLogsForHost({ containerIds: target.containerIds, environment: true,
-        redactionLease: redactionLease ?? activationMasking?.lease, redactionComplete: activationMasking?.complete, run },
-        { kind: 'read', maxBytes: MANAGED_SERVICE_NATIVE_LOG_PAGE_BYTES, ...options }),
+      isCurrent, retirementSignal: lifetime.signal,
+      readLogs: options => logs.read({ ...options, signal: options?.signal ?? signal }),
+      watchLogs: async options => {
+        const watch = await logs.watch(options);
+        watchOwnsLifetime = true;
+        return { async dispose() { try { await watch.dispose(); } finally { await close(); } } };
+      },
     });
   } finally {
-    current = false;
-    try { await launch?.release(); await runtime.settleNative(); }
-    finally { await exec.readPluginExecProcessCustodyForHost(runtime.exec).requestStop(); }
+    if (!watchOwnsLifetime) await close();
   }
 }
 

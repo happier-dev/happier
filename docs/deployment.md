@@ -668,6 +668,13 @@ Machine service and deployment-step logs, including Find, copy and save. Hiding
 the pane or pausing Follow releases its existing watch demand; Retry reopens it.
 Partial rows remain visible after recoverable failure, with an incomplete notice.
 
+Own-server Compose Runtime and adopted Compose services use the Machine service
+viewer. Follow subscribes to Docker output for the admitted container generation
+and invalidates the existing bounded log read when Docker emits a new chunk.
+Closing the view, retiring the admitted generation, or ending a container's log
+stream closes the Follow subscription. Environment watches also close when their
+existing access observation reports withdrawal.
+
 Vercel's documented runtime endpoint is a live `application/stream+json` response.
 It provides no historical paging or resumable cursor. The adapter's line framing
 uses the official CLI endpoint consumer as characterized in its recorded fixture;

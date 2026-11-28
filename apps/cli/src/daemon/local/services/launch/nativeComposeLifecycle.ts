@@ -3,7 +3,7 @@ import { recordFailureCause } from '@/diagnostics/recordFailureCause';
 import { DeploymentFailureRecoveryV1Schema, projectDeploymentFailureRecoveryV1,
     type DeploymentNativeActivationFailureV1, type DeploymentNativeComposeFailureV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { classifyNativeComposeFailure, NATIVE_COMPOSE_REGISTRY_INSPECT_PHASE, readNativeComposeCommandFailure, readNativeComposeRegistryRateLimit, readNativeDockerSocketAccessFailure } from './nativeComposeFailure';
-import { readNativeComposeLogsForHost } from './nativeComposeLogs';
+import { readNativeComposeLogsForHost, watchNativeComposeLogsForHost } from './nativeComposeLogs';
 import { MANAGED_SERVICE_NATIVE_LOG_PAGE_BYTES } from '@/plugins/runtime/invocation/services/managedServiceNativeLogBudget';
 export { readNativeComposeLogsForHost } from './nativeComposeLogs';
 import { createActionExecuteFailureError, parseActionExecuteFailure, projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -748,13 +748,10 @@ function createNativeComposeServiceCapture(input: NativeComposeServiceInput) {
             return { dispose };
         },
         async logs(options) {
-            if (options.kind === 'watch') {
-                options.signal?.throwIfAborted();
-                options.emit({ kind: 'unavailable', reason: 'unsupported' });
-                return { dispose() {} };
-            }
-            return readNativeComposeLogsForHost({ containerIds: ids ?? [], observedIds,
-                environment: Boolean(input.environment), redactionLease: launch?.secretRedactionLease, run }, options);
+            const source = { containerIds: ids ?? [], observedIds,
+                environment: Boolean(input.environment), redactionLease: launch?.secretRedactionLease, run };
+            return options.kind === 'watch' ? watchNativeComposeLogsForHost(source, options)
+                : readNativeComposeLogsForHost(source, options);
         },
         async inspect(options) {
             if (cleared) return stopped;

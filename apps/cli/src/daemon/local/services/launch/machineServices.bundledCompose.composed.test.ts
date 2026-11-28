@@ -104,11 +104,22 @@ else process.exitCode=19;
                 expect(Buffer.byteLength(bounded.page.text)).toBeLessThanOrEqual(5);
                 const callsBeforeFollow = await readFile(callsPath, 'utf8');
                 const follow: unknown[] = [];
+                const ended = Promise.withResolvers<void>();
                 const subscription = await captured.lifecycle.logs!(candidate, { kind: 'watch', maxBytes: 128,
-                    emit: value => { follow.push(value); } });
-                expect(follow).toEqual([{ kind: 'unavailable', reason: 'unsupported' }]);
-                await subscription.dispose();
-                expect(await readFile(callsPath, 'utf8')).toBe(callsBeforeFollow);
+                    emit: value => { follow.push(value); if (value.kind === 'unavailable') ended.resolve(); } });
+                try {
+                    await ended.promise;
+                    expect(follow).toContainEqual(expect.objectContaining({ kind: 'page', page: expect.objectContaining({
+                        sourceRevision: JSON.stringify(containerIds), text: expect.stringMatching(/native [ab] log/),
+                        nextCursor: null, truncated: false,
+                    }) }));
+                    expect(follow.at(-1)).toEqual({ kind: 'unavailable', reason: 'unavailable' });
+                } finally { await subscription.dispose(); }
+                const followedCalls = (await readFile(callsPath, 'utf8')).slice(callsBeforeFollow.length)
+                    .trim().split('\n').filter(Boolean).map(line => JSON.parse(line) as string[]);
+                expect(followedCalls.filter(args => args[0] === 'logs')).toEqual(expect.arrayContaining([
+                    expect.arrayContaining(['logs', '--follow', '--tail', '0']),
+                ]));
                 await writeFile(statePath, JSON.stringify({ ...native, engineId: 'other-engine' }));
                 const callsBeforeForeignEngine = await readFile(callsPath, 'utf8');
                 for (const verb of ['start', 'stop'] as const) {

@@ -142,16 +142,18 @@ function logs(instance: ManagedServiceNativeInstanceV1, request: ManagedServiceN
     context?: PluginInvocationContext): Promise<Disposable>;
 async function logs(instance: ManagedServiceNativeInstanceV1, request: ManagedServiceNativeLogReadV1 | ManagedServiceNativeLogWatchV1,
     context?: PluginInvocationContext): Promise<ManagedServiceNativeLogResultV1 | Disposable> {
-    if (request.kind === 'watch') {
-        request.emit({ kind: 'unavailable', reason: 'unsupported' });
+    const unavailable = (result: Exclude<ManagedServiceNativeLogResultV1, { kind: 'page' }>) => {
+        if (request.kind === 'read') return result;
+        request.emit(result);
         return { dispose() {} };
-    }
-    if (!context) return { kind: 'unavailable', reason: 'admission_unavailable' };
+    };
+    if (!context) return unavailable({ kind: 'unavailable', reason: 'admission_unavailable' });
     try {
         const rows = await current(instance, context, request);
-        if (!rows?.length) return { kind: 'unavailable', reason: 'unavailable' };
+        if (!rows?.length) return unavailable({ kind: 'unavailable', reason: 'unavailable' });
         const sourceRevision = JSON.stringify(rows.map(row => row.id).sort());
-        if (request.cursor && request.cursor.sourceRevision !== sourceRevision) return { kind: 'source-changed', sourceRevision };
+        if (request.cursor && request.cursor.sourceRevision !== sourceRevision) return unavailable({ kind: 'source-changed', sourceRevision });
+        if (request.kind === 'watch') return followLogs(rows, sourceRevision, request, context);
         const parts: string[] = [];
         let truncated = false;
         for (const row of rows) {
@@ -168,8 +170,43 @@ async function logs(instance: ManagedServiceNativeInstanceV1, request: ManagedSe
             nextCursor: null, truncated: truncated || bytes.byteLength > request.maxBytes } };
     } catch (error) {
         failure(error, request);
-        return { kind: 'unavailable', reason: request.signal?.aborted ? 'cancelled' : 'unavailable' };
+        return unavailable({ kind: 'unavailable', reason: request.signal?.aborted ? 'cancelled' : 'unavailable' });
     }
+}
+
+function followLogs(rows: readonly Container[], sourceRevision: string, request: ManagedServiceNativeLogWatchV1,
+    context: PluginInvocationContext): Disposable {
+    const lifetime = new AbortController();
+    const signal = request.signal ? AbortSignal.any([request.signal, lifetime.signal]) : lifetime.signal;
+    let sequence = 0;
+    const settled = Promise.allSettled(rows.map(async row => {
+        try {
+            const child = await context.services.exec.spawn({ executable: docker,
+                args: ['logs', '--follow', '--tail', '0', row.id], maxStdoutBytes: 0, maxStderrBytes: 0 }, { signal });
+            const decoders = { stdout: new TextDecoder(), stderr: new TextDecoder() };
+            const output = child.onOutput(({ stream, data }) => {
+                for (let offset = 0; offset < data.length && !signal.aborted; offset += request.maxBytes) {
+                    const text = decoders[stream].decode(data.subarray(offset, offset + request.maxBytes), { stream: true });
+                    if (text) request.emit({ kind: 'page', page: { sourceRevision, text, nextCursor: null, truncated: false,
+                        rowId: String(++sequence) } });
+                }
+            });
+            try { await child.wait(); }
+            finally { await output.dispose(); await child.dispose(); }
+        } catch (error) {
+            failure(error, { signal });
+        } finally {
+            if (!signal.aborted) {
+                try { request.emit({ kind: 'unavailable', reason: 'unavailable' }); }
+                finally { lifetime.abort(); }
+            }
+        }
+    }));
+    return { async dispose() {
+        lifetime.abort();
+        const failed = (await settled).find(result => result.status === 'rejected');
+        if (failed) throw failed.reason;
+    } };
 }
 
 const lifecycle: ManagedServiceNativeLifecycleV1 = {

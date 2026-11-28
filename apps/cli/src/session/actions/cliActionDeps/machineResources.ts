@@ -35,6 +35,7 @@ import { isCustodianMachineAdmission } from '@/daemon/lifecycle/requesterWorkAtt
 import type { MachineAccessRoleV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { resolveMachineRpcRoutePolicy } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { MACHINE_SERVICE_LOGS_READ_ACTION_ID } from '@happier-dev/protocol/local/services/actionIdsV1';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { CliDeploymentEnvironmentAccessRead, CliDeploymentEnvironmentAccessObserve } from '@/deployments/createCliDeploymentActionDeps';
 export function createCliMachineResourceActionDeps(
   params: Pick<CliActionDepsParams, 'credentials' | 'isCredentialCurrent' | 'token' | 'externalActionMachineInstallationId' | 'externalActionMachineRequestPrivateKey' | 'serverIdentityId' | 'machineActionDirectTargetTransport' | 'machineGuardAction' | 'savedSecretOperationContext' | 'serverHttpBaseUrl'>,
@@ -400,50 +401,60 @@ export function createCliMachineResourceActionDeps(
           await assertProjectRequesterCurrent(context);
         } }, async handle => {
         if (!approvalScope) return { ok: false as const, errorCode: 'approval_stale', error: 'approval_stale' };
-        if (handle.kind === 'environment') {
-          const allowed = await canReadServiceEnvironment(input.serverId, handle.environmentId, context);
-          if (allowed !== true) return allowed;
-        }
-        const allowIncompleteSecretMasking = canReadIncompleteSecretMaskingForHost(context)
-          && logRequester.kind === 'owner_person';
-        const result = await (handle.readLogs?.({ ...(input.cursor ? { cursor: input.cursor } : {}), ...(signal ? { signal } : {}),
-          ...(allowIncompleteSecretMasking ? { allowIncompleteSecretMasking: true as const } : {}) })
-          ?? { kind: 'unavailable' as const, reason: 'unsupported' as const });
-        // This finite page belongs to the admitted read. Access withdrawal is
-        // enforced at the next read or the existing open-stream boundary.
-        if (resource?.sourceRevision !== undefined && result.kind === 'page' && result.page.sourceRevision !== resource.sourceRevision)
-          return { kind: 'source-changed' as const, sourceRevision: result.page.sourceRevision };
         const observation = resource?.observation;
-        if (observation && result.kind === 'page') {
-          if (!handle.watchLogs) return { kind: 'unavailable' as const, reason: 'unsupported' as const };
-          const retired = () => observation.retire();
-          handle.retirementSignal.addEventListener('abort', retired, { once: true });
-          const cursor = result.page.nextCursor ?? input.cursor;
-          let subscription: Awaited<ReturnType<NonNullable<typeof handle.watchLogs>>>;
-          try {
-            subscription = await handle.watchLogs({ signal: observation.signal,
-              ...(cursor ? { cursor } : {}), emit(value) {
-                if (handle.kind !== 'environment') { observation.emit(value); return; }
-                // Native invalidations carry no page, but must stop demanding
-                // output once this Environment is no longer readable.
-                void canReadServiceEnvironment(input.serverId, handle.environmentId, context).then(allowed => {
-                  if (observation.signal.aborted) return;
-                  if (allowed === true && !handle.retirementSignal.aborted && handle.isCurrent()) observation.emit(value);
-                  else observation.retire();
-                }).catch(() => observation.retire());
-              } });
-          } catch (error) { handle.retirementSignal.removeEventListener('abort', retired); throw error; }
-          observation.accept({ async dispose() {
-            handle.retirementSignal.removeEventListener('abort', retired);
-            await subscription.dispose();
-          } });
+        let access: { dispose(): Promise<void> } | undefined;
+        try {
           if (handle.kind === 'environment') {
-            const allowed = await canReadServiceEnvironment(input.serverId, handle.environmentId, context);
-            if (allowed !== true) { observation.retire(); return allowed; }
+            const { environmentId } = handle;
+            if (observation && handle.watchLogs) {
+              // Subscribe before the initial access read. That read covers the initial reset.
+              let establishing = true;
+              const watched = await observeEnvironmentAccessChanges({ serverId: input.serverId },
+                { ...context, signal: observation.signal }, event => {
+                  if (event.kind === 'retired' || !establishing
+                    && (event.kind === 'reset' || event.environmentIds.includes(environmentId))) observation.retire();
+                });
+              establishing = false;
+              if ('errorCode' in watched) return watched;
+              access = watched;
+            }
+            const allowed = await canReadServiceEnvironment(input.serverId, environmentId, context);
+            if (allowed !== true) return allowed;
           }
-          if (handle.retirementSignal.aborted || !handle.isCurrent()) observation.retire();
+          observation?.signal.throwIfAborted();
+          const allowIncompleteSecretMasking = canReadIncompleteSecretMaskingForHost(context)
+            && logRequester.kind === 'owner_person';
+          const result = await (handle.readLogs?.({ ...(input.cursor ? { cursor: input.cursor } : {}), ...(signal ? { signal } : {}),
+            ...(allowIncompleteSecretMasking ? { allowIncompleteSecretMasking: true as const } : {}) })
+            ?? { kind: 'unavailable' as const, reason: 'unsupported' as const });
+          if (resource?.sourceRevision !== undefined && result.kind === 'page' && result.page.sourceRevision !== resource.sourceRevision)
+            return { kind: 'source-changed' as const, sourceRevision: result.page.sourceRevision };
+          if (observation && result.kind === 'page') {
+            if (!handle.watchLogs) return { kind: 'unavailable' as const, reason: 'unsupported' as const };
+            const retired = () => observation.retire();
+            handle.retirementSignal.addEventListener('abort', retired, { once: true });
+            const cursor = result.page.nextCursor ?? input.cursor;
+            let subscription: Awaited<ReturnType<NonNullable<typeof handle.watchLogs>>>;
+            try {
+              subscription = await handle.watchLogs({ signal: observation.signal,
+                ...(cursor ? { cursor } : {}), emit(value) {
+                  if (value.kind === 'unavailable') observation.retire(new PluginError({ code: value.reason }));
+                  else if (value.kind === 'source-changed') observation.retire(new PluginError({ code: value.kind }));
+                  else if (!observation.signal.aborted) observation.emit(value);
+                } });
+            } catch (error) { handle.retirementSignal.removeEventListener('abort', retired); throw error; }
+            const retainedAccess = access;
+            observation.accept({ async dispose() {
+              handle.retirementSignal.removeEventListener('abort', retired);
+              try { await subscription.dispose(); } finally { await retainedAccess?.dispose(); }
+            } });
+            access = undefined;
+            if (handle.retirementSignal.aborted || !handle.isCurrent()) observation.retire();
+          }
+          return result;
+        } finally {
+          await access?.dispose();
         }
-        return result;
       });
     },
     machineReachabilityAction: async ({ actionId, input, context, signal }) => {
