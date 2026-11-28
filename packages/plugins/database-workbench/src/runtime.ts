@@ -5,7 +5,7 @@ import type {
     DatabaseOperationInputV1,
     DatabaseOperationResultV1,
 } from '@happier-dev/plugin-sdk/database';
-import { readAutomationDatabaseSubjectV1 } from '@happier-dev/plugin-sdk/automations';
+import { projectAutomationDatabaseFindingSubjectV1 } from '@happier-dev/plugin-sdk/events';
 import { PluginError, type JsonValue, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/plugin-sdk/errors';
 import { databaseActionOperationClass } from '@happier-dev/plugin-sdk/actions';
@@ -81,8 +81,8 @@ export function createDatabaseRuntime(options: Readonly<{
             && result.observation.group !== 'indexAdvice') {
             try {
                 const observation = projectDatabaseFindingObservation(result.observation, sourceScope, context);
-                const subject = readAutomationDatabaseSubjectV1(observation.sourceScope.serverId, input.target);
-                if (subject.ok) await emitDatabaseFindingObservation({ observation, subject: subject.subject,
+                const subject = projectAutomationDatabaseFindingSubjectV1(observation.sourceScope.serverId, input.target);
+                await emitDatabaseFindingObservation({ observation, subject,
                     observationReceivedAt: Date.now(), observedDelta: 1 }, context);
             } catch (error) {
                 // The read has settled; finding emission cannot replace the result.

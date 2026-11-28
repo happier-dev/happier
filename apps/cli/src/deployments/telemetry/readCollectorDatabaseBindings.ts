@@ -1,6 +1,6 @@
 import { DatabaseConnectionUrlError, parseDatabaseConnectionUrl } from '@happier-dev/databases';
 import type { DeploymentTelemetryServiceV1 } from '@happier-dev/plugin-sdk';
-import { projectAutomationDatabaseSubjectV1 } from '@happier-dev/plugin-sdk/events';
+import { projectAutomationDatabaseFindingSubjectV1 } from '@happier-dev/plugin-sdk/events';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
@@ -51,9 +51,8 @@ export async function readCollectorDatabaseBindings(host: DeploymentTargetRoleAd
                 try {
                     const { engine, hostname, port, database } = parseDatabaseConnectionUrl(value);
                     if (engine === 'sqlite' || !hostname || !database) return [];
-                    const subject = projectAutomationDatabaseSubjectV1({ kind: 'database', serverId, target: 'service' in binding
-                        ? { kind: 'environment', environmentId, service: binding.service, database }
-                        : { kind: 'managed_deployment', environmentId, targetLinkId: binding.targetLinkId, databaseName: database } });
+                    const subject = projectAutomationDatabaseFindingSubjectV1(serverId, { kind: 'environment_binding', environmentId,
+                        address: 'service' in binding ? { service: binding.service } : { targetLinkId: binding.targetLinkId } });
                     return [{ engine, hostname, port: port ?? (engine === 'postgresql' ? 5432 : 3306), database, subject }];
                 } catch (error) {
                     if (error instanceof DatabaseConnectionUrlError) return [];

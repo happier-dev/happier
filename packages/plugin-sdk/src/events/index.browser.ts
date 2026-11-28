@@ -1,5 +1,7 @@
 export type { AutomationDatabaseSubjectV1 } from './databaseSubjects.js';
 export { AutomationDatabaseSubjectV1ProtocolSchema } from './databaseSubjects.js';
+export { AutomationDatabaseFindingSubjectV1ProtocolSchema, projectAutomationDatabaseFindingSubjectV1 } from './databaseSubjects.js';
+export type { AutomationDatabaseFindingSubjectV1 } from './databaseSubjects.js';
 export { BackupOutcomeEventV1ProtocolSchema } from './machineServices.js';
 export type { ConnectedServiceCredentialHealthEventV1 } from './machineServices.js';
 export { ConnectedServiceCredentialHealthEventV1ProtocolSchema } from './machineServices.js';

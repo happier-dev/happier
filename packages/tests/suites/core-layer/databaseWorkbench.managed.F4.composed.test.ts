@@ -35,6 +35,7 @@ import { PluginEventAutomationSetupResultV1Schema } from '@happier-dev/protocol/
 import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityMaterializationsReadActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
 import { DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1, MachineRolesGetResultV1Schema } from '@happier-dev/protocol/machines/roles/machineRolesV1';
 import { DATABASE_FINDING_EVENT_REF, DATABASE_FINDING_SETUP_LOCAL_ID } from '../../../plugins/database-workbench/src/insights/events';
+import { projectAutomationDatabaseFindingSubjectV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { ConnectedAccountAttemptResponseSchema } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
 import { CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/connect/configurationActionsV1';
@@ -488,10 +489,10 @@ it.each(providers)('F4 selects %s preview/production without a neighboring fallb
             .find(row => row.machineId === machine.target.machineId)?.materializations
             .find(row => row.pluginId === DATABASE_PLUGIN_ID_V1 && row.enabled && row.trustState === 'trusted');
           if (!materialization) throw new Error('Plan 85 missing installed Workbench');
-          const arm = async (databaseName: string) => {
+          const arm = async (targetLinkId: string) => {
             const setup = await account.execute('action.invoke', { action: { pluginId: DATABASE_PLUGIN_ID_V1, localId: DATABASE_FINDING_SETUP_LOCAL_ID },
-              input: { v: 1, sourceScope: machine.target, subject: { ...automationSubject.subject,
-                target: { ...automationSubject.subject.target, databaseName } } } },
+              input: { v: 1, sourceScope: machine.target,
+                subject: projectAutomationDatabaseFindingSubjectV1(fixture.serverId, { ...target, targetLinkId }) } },
             { externalActionTarget: { kind: 'machine', machineId: machine.target.machineId } });
             if (!setup.ok) throw new Error(`Plan 85 source setup refused (${setup.errorCode})`);
             const source = PluginEventAutomationSetupResultV1Schema.parse(setup.result);
@@ -510,8 +511,8 @@ it.each(providers)('F4 selects %s preview/production without a neighboring fallb
             if (!result.ok) throw new Error(`Plan 85 trigger refused (${result.errorCode})`);
             return WorkflowTriggerWriteResultV1Schema.parse(result.result);
           };
-          const armed = await arm(database);
-          const neighboring = await arm(`${database}_neighbor`);
+          const armed = await arm(target.targetLinkId);
+          const neighboring = await arm(randomUUID());
           function trace(databaseName?: string) {
             const traceId = randomBytes(16).toString('hex');
             const spanId = randomBytes(8).toString('hex');
@@ -546,7 +547,7 @@ it.each(providers)('F4 selects %s preview/production without a neighboring fallb
             { timeoutMs: 90_000, context: 'A second distinct finding completes after excluded observations and replay' });
           expect(await runs(neighboring.set.automationId)).toEqual([]);
           expect(admittedFindings.length).toBe(2);
-          const privateValues = [direct.href, JSON.stringify(direct.password), 'plan85_id'];
+          const privateValues = [direct.href, JSON.stringify(direct.password), 'plan85_id', JSON.stringify(database)];
           expect(admittedFindings.some(request => privateValues.some(value => request.includes(value)))).toBe(false);
           const readsBefore = databaseSourceReads;
           const disabled = WorkflowTriggerWriteResultV1Schema.parse(await invoke('workflow.trigger.update', {

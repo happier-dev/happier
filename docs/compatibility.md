@@ -378,6 +378,23 @@ wire epoch and adds no compatibility adapter. The inspected `../0.2` frontier
 at `73c533b470ac33a7605b50689b6cd93089a3ae6f` has no deployment suggestion
 Action contract.
 
+## Database finding Event binding IDs (unreleased 0.3)
+
+Database finding source contract version 2 publishes the Home-qualified binding ID
+in the Event payload and operand context. Environment IDs and write-role binding
+addresses determine the identity for deployed databases. The Worktree or manual
+target's existing structural address determines its identity. A database name,
+engine, hostname, port, or credential does not contribute to the ID. The
+Workbench presents a finding with its locally selected target and descriptor.
+
+The Event source config and subject are closed. Matching 0.3 development
+publishers, authoring clients, and Home readers must load together. Exact finding
+triggers armed against the earlier development contract require re-arming from
+the selected database. Action triggers keep their existing logical database
+subjects. The inspected `../0.2` frontier at `4df6e9e1a1c50c60a470da7324adcced4b6eec28`
+has no Database Workbench finding Event contract.
+
+
 ## Automation Event watcher broker grants (unreleased 0.3)
 
 The existing signed Provider broker V1 grant supports an additive Automation

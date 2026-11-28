@@ -1,6 +1,6 @@
 import { computeCanonicalDomainSeparatedDigest, createCanonicalJsonSigningInput, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import { AutomationDatabaseSubjectV1ProtocolSchema, automationSubjectKeyV1, projectAutomationDatabaseSubjectV1,
-    type AutomationDatabaseSubjectV1 } from '@happier-dev/plugin-sdk/events';
+import { AutomationDatabaseFindingSubjectV1ProtocolSchema, automationSubjectKeyV1,
+    type AutomationDatabaseFindingSubjectV1 } from '@happier-dev/plugin-sdk/events';
 import { admitCheckpointedPluginEventObservationV1, createPluginEventAutomationSetupResultV1JsonSchema,
     type PluginEventObservationV1 } from '@happier-dev/plugin-sdk/events';
 import { defineProtocolObject } from '@happier-dev/plugin-sdk/protocol';
@@ -12,10 +12,10 @@ import { DATABASE_FINDING_EVENT_REF, DatabaseFindingEventSourceV1Schema, type Da
 
 export { DATABASE_FINDING_EVENT_REF } from './findingEventSource.js';
 export const DATABASE_FINDING_SETUP_LOCAL_ID = 'insights/observation/setup';
-export const DATABASE_FINDING_SOURCE_CONTRACT_VERSION = 1;
+export const DATABASE_FINDING_SOURCE_CONTRACT_VERSION = 2;
 
 export const DatabaseFindingEventPayloadV1Schema = defineProtocolObject({
-    subject: AutomationDatabaseSubjectV1ProtocolSchema, observation: DatabaseFindingObservationV1ProtocolSchema,
+    subject: AutomationDatabaseFindingSubjectV1ProtocolSchema, observation: DatabaseFindingObservationV1ProtocolSchema,
 }, { policy: 'closed' });
 
 /** A source identifies this Machine's observations, not a global database incident. */
@@ -58,12 +58,12 @@ export const databaseFindingEvent = {
 /** AE owns matching, conditions and occurrence dedupe. No source-local seen store. */
 export async function emitDatabaseFindingObservation(input: Readonly<{
     observation: DatabaseFindingObservationV1;
-    subject: AutomationDatabaseSubjectV1;
+    subject: AutomationDatabaseFindingSubjectV1;
     /** The producer retains this fact when replaying the same evidence. */
     observationReceivedAt: number;
     observedDelta: 0 | 1;
 }>, context: PluginInvocationContext): Promise<void> {
-    const subject = projectAutomationDatabaseSubjectV1(input.subject);
+    const subject = AutomationDatabaseFindingSubjectV1ProtocolSchema.parse(input.subject);
     const observation = input.observation;
     const source = { v: 1 as const, subject, sourceScope: observation.sourceScope };
     const evidence: Omit<PluginEventObservationV1, 'sourceInstanceId'> = {

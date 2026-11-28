@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readPluginAutomationSubjectV1, projectPluginAutomationSubjectsV1 } from './automationPluginSubjectV1.js';
 import { AutomationDatabaseSubjectV1Schema, AutomationSubjectV1Schema, projectAutomationDatabaseSubjectV1,
+    AutomationDatabaseFindingSubjectV1Schema, projectAutomationDatabaseFindingSubjectV1,
     projectAutomationSubjectStructuralV1, readAutomationDatabaseSubjectV1, automationSubjectKeyV1, automationSubjectSharedKeyV1,
     automationSubjectKeyMatchesV1, automationSubjectMatchesV1, type AutomationSubjectV1 } from './automationSubjectV1.js';
 import { DatabaseManualTargetV1Schema, DatabaseWorktreeTargetV1Schema } from '../databases/databaseTargetIdentityV1.js';
@@ -8,6 +9,22 @@ import { DatabaseManualTargetV1Schema, DatabaseWorktreeTargetV1Schema } from '..
 // Canonical serialization order and framing cannot be controlled through UI authoring.
 // These pure identity rules complement, and do not replace, P01.F1–F7.
 describe('automation subject identity', () => {
+    it('matches a database finding by the admitted write-role binding through endpoint rotation', () => {
+        const target = { kind: 'managed_deployment' as const,
+            environment: { serverId: 'home', projectSourceId: 'source', environmentId: 'environment' },
+            targetLinkId: 'link', contribution: { pluginId: 'provider', contributionId: 'database' },
+            platformProjectId: 'provider-project', branchId: 'provider-branch', database: 'private-database' };
+        const subject = projectAutomationDatabaseFindingSubjectV1('home', target);
+        const fromCollector = projectAutomationDatabaseFindingSubjectV1('home', {
+            kind: 'environment_binding', environmentId: 'environment', address: { targetLinkId: 'link' },
+        });
+        expect(AutomationSubjectV1Schema.parse(fromCollector)).toEqual(subject);
+        expect(projectAutomationDatabaseFindingSubjectV1('home', { ...target, database: 'rotated-database' })).toEqual(subject);
+        expect(projectAutomationDatabaseFindingSubjectV1('home', { ...target, targetLinkId: 'neighbor' })).not.toEqual(subject);
+        expect(AutomationDatabaseFindingSubjectV1Schema.safeParse({ ...subject,
+            target: { ...subject.target, databaseName: target.database } }).success).toBe(false);
+    });
+
     it('resolves managed databases by admitted Home, Environment, Link and logical database only (AM1)', () => {
         const target = { kind: 'managed_deployment' as const,
             environment: { serverId: 'home', projectSourceId: 'source', environmentId: 'environment' },

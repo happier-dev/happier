@@ -1,6 +1,6 @@
 import type { DeploymentTelemetryServiceV1 } from '@happier-dev/plugin-sdk';
 import type { BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
-import type { AutomationDatabaseSubjectV1 } from '@happier-dev/plugin-sdk/events';
+import type { AutomationDatabaseFindingSubjectV1 } from '@happier-dev/plugin-sdk/events';
 import { PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1 } from '@happier-dev/plugin-sdk/storage';
 import { CAPTURED_DATABASE_FINDING_EVENT_REF_V1, type CapturedDatabaseFindingV1,
     type DatabaseCaptureSourceV1 } from '@happier-dev/database-protocol';
@@ -12,7 +12,7 @@ import { databaseEndpointKey } from './databaseEndpoint.js';
 
 type BindingSource = NonNullable<DeploymentTelemetryServiceV1['databaseBindings']>;
 type BindingSnapshot = {
-    matches?: ReadonlyMap<string, AutomationDatabaseSubjectV1 | null>;
+    matches?: ReadonlyMap<string, AutomationDatabaseFindingSubjectV1 | null>;
 };
 
 export function startDatabaseFindingProjection(input: Readonly<{
@@ -37,7 +37,7 @@ export function startDatabaseFindingProjection(input: Readonly<{
         const snapshot: BindingSnapshot = {};
         bindings.set(environmentId, snapshot);
         retain(source.read(environmentId, context.signal).then(rows => {
-            const matches = new Map<string, AutomationDatabaseSubjectV1 | null>();
+            const matches = new Map<string, AutomationDatabaseFindingSubjectV1 | null>();
             for (const row of rows) {
                 const key = databaseEndpointKey(row);
                 matches.set(key, matches.has(key) ? null : row.subject);

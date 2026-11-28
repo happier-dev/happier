@@ -92,8 +92,7 @@ export function FindingBrief({ target, recordKey, sourceSelection, request, find
         selected = parsed.data.finding;
       }
       const seed = buildDatabaseFindingWorkflowSeed(selected);
-      if (seed) await host.openAutomationEvent(seed);
-      else setError({ title });
+      await host.openAutomationEvent(seed);
     } catch (cause) {
       setError({ title, details: isPluginError(cause) ? `${cause.code} (${cause.message})`
         : cause instanceof Error ? cause.message : undefined });

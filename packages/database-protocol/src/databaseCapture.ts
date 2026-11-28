@@ -4,7 +4,7 @@ import {
     readProductionCaptureFindingGroupKeyV1,
     type DatabaseCaptureFindingDetailV1,
 } from '@happier-dev/plugin-sdk/database';
-import { AutomationDatabaseSubjectV1ProtocolSchema } from '@happier-dev/plugin-sdk/events';
+import { AutomationDatabaseFindingSubjectV1ProtocolSchema } from '@happier-dev/plugin-sdk/events';
 import { defineProtocolLiteral, defineProtocolNumber, defineProtocolObject } from '@happier-dev/plugin-sdk/protocol';
 
 export {
@@ -23,7 +23,7 @@ export const CAPTURED_DATABASE_FINDING_EVENT_REF_V1 = {
 } as const;
 export const CapturedDatabaseFindingV1Schema = defineProtocolObject({
     observation: DatabaseFindingObservationV1ProtocolSchema,
-    subject: AutomationDatabaseSubjectV1ProtocolSchema,
+    subject: AutomationDatabaseFindingSubjectV1ProtocolSchema,
     observationReceivedAt: defineProtocolNumber({ integer: true, minimum: 0 }),
     observedDelta: defineProtocolLiteral(1),
 }, { policy: 'closed' });

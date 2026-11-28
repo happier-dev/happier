@@ -38,6 +38,7 @@ import { createCredentialedAccountArtifactStore } from '../../../../apps/cli/src
 import { runWithServerHttpBaseUrl } from '../../../../apps/cli/src/api/client/serverHttpBaseUrl';
 import { readAccountIdFromToken } from '../../../../apps/cli/src/cloud/decodeJwtPayload';
 import { DATABASE_FINDING_EVENT_REF, DATABASE_FINDING_SETUP_LOCAL_ID } from '../../../plugins/database-workbench/src/insights/events';
+import { projectAutomationDatabaseFindingSubjectV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 import { fetchJson } from '../../src/testkit/http';
 import { waitFor } from '../../src/testkit/timing';
 import { startDatabaseWorkbenchFixture } from '../../src/testkit/databaseWorkbench';
@@ -405,7 +406,7 @@ it('P4 F9: an owner Workflow describes the selected native database', async () =
     if (!materialization) throw new Error('F9 Environment source omitted its live Workbench materialization');
     const event = await reviewed('action.invoke', {
       action: { pluginId: DATABASE_PLUGIN_ID_V1, localId: DATABASE_FINDING_SETUP_LOCAL_ID },
-      input: { v: 1, subject: automationSubject.subject, sourceScope: machine.target },
+      input: { v: 1, subject: projectAutomationDatabaseFindingSubjectV1(fixture.serverId, described.descriptor.target), sourceScope: machine.target },
     }, true);
     const eventSource = PluginEventAutomationSetupResultV1Schema.parse(event);
     const readWorkflow = (selectedTarget: typeof target) => ({ version: 1, blocks: [{ kind: 'action', id: 'read-selected-database',

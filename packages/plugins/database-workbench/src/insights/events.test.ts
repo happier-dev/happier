@@ -3,6 +3,7 @@ import { PluginEventAutomationDeclarationV1Schema, readAutomationEventSubjectKin
 import { definePlugin, PluginError } from '@happier-dev/plugin-sdk';
 import { decideDatabaseAccessV1 } from '@happier-dev/databases';
 import { createPluginTestkit, createTestResourceInvocationContext, type PluginTestServicesFixture } from '@happier-dev/plugin-sdk/testing';
+import { projectAutomationDatabaseFindingSubjectV1 } from '@happier-dev/plugin-sdk/events';
 import { DATABASE_STATS_READ_ACTION_ID_V1 } from '@happier-dev/database-protocol';
 import { databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
 import { createDatabaseActions } from '../actions.js';
@@ -10,7 +11,8 @@ import { createDatabaseRuntime, type DatabaseOperationAdmission } from '../runti
 import { createDatabaseConnectionResourceRuntime } from '../resources.js';
 import { plugin as nativePlugin } from '../manifest.js';
 import { createDatabaseInsightProducers } from './findings.js';
-import { DATABASE_FINDING_EVENT_REF, DATABASE_FINDING_SETUP_LOCAL_ID, databaseFindingEventSourceInstanceId } from './events.js';
+import { DATABASE_FINDING_EVENT_REF, DATABASE_FINDING_SETUP_LOCAL_ID, DATABASE_FINDING_SOURCE_CONTRACT_VERSION,
+    databaseFindingEventSourceInstanceId } from './events.js';
 import { createNativeFindingFixture, target, invocation } from './nativeFixture.testkit.js';
 
 async function fixture(native: Awaited<ReturnType<typeof createNativeFindingFixture>>, services: PluginTestServicesFixture, held: boolean) {
@@ -43,9 +45,11 @@ describe('native completed observation admission', () => {
     it('registers a usable Event source setup without acquiring a database', async () => {
         const kit = await createPluginTestkit({ manifest: nativePlugin.manifest, module: nativePlugin });
         try {
-            const source = { v: 1, subject: { kind: 'database', serverId: 'server', target }, sourceScope: { serverId: 'server', machineId: 'machine' } } as const;
+            const source = { v: 1, subject: projectAutomationDatabaseFindingSubjectV1('server', target),
+                sourceScope: { serverId: 'server', machineId: 'machine' } } as const;
             expect(await kit.invokeAction(DATABASE_FINDING_SETUP_LOCAL_ID, source, invocation)).toMatchObject({
-                sourceInstanceId: databaseFindingEventSourceInstanceId(source), sourceContractVersion: 1, sourceConfig: source,
+                sourceInstanceId: databaseFindingEventSourceInstanceId(source),
+                sourceContractVersion: DATABASE_FINDING_SOURCE_CONTRACT_VERSION, sourceConfig: source,
             });
             expect(nativePlugin.manifest.contributes.events).toEqual(expect.arrayContaining([
                 expect.objectContaining({ id: DATABASE_FINDING_EVENT_REF.localId, automation: expect.objectContaining({ eligible: true }) }),
@@ -58,11 +62,17 @@ describe('native completed observation admission', () => {
 
     it.each([false, true])('admits a completed native stats read through AE (held demand: %s) without database content', async held => {
         const admissions: unknown[] = [];
-        const source = { v: 1, subject: { kind: 'database', serverId: 'server', target }, sourceScope: { serverId: 'server', machineId: 'machine' } } as const;
+        const managedTarget = { kind: 'managed_deployment', environment: { serverId: 'server', environmentId: 'environment',
+            projectSourceId: 'source' }, targetLinkId: 'link', contribution: { pluginId: 'happier.deployment.neon', contributionId: 'database' },
+            platformProjectId: 'provider-project', branchId: 'provider-branch', database: 'private_database_name' } as const;
+        const selected = held ? target : managedTarget;
+        const other = held ? { ...target, savedSecretId: 'other-database' } : { ...managedTarget, targetLinkId: 'other-link' };
+        const source = { v: 1, subject: projectAutomationDatabaseFindingSubjectV1('server', selected),
+            sourceScope: { serverId: 'server', machineId: 'machine' } } as const;
         const setup = await createPluginTestkit({ manifest: nativePlugin.manifest, module: nativePlugin });
         const definitions = await (async () => {
             try {
-                const neighbor = { ...source, subject: { ...source.subject, target: { ...target, savedSecretId: 'other-database' } } };
+                const neighbor = { ...source, subject: projectAutomationDatabaseFindingSubjectV1('server', other) };
                 const sources = [
                     ['exact', source, '22222222-2222-4222-8222-222222222222'],
                     ['other-exact', neighbor, '33333333-3333-4333-8333-333333333333'],
@@ -100,7 +110,7 @@ describe('native completed observation admission', () => {
         const kit = await fixture(native, { actions }, held);
         try {
             expect(await kit.invokeAction(databaseActionLocalIdV1(DATABASE_STATS_READ_ACTION_ID_V1),
-                { operation: 'stats.read', target, ...(held ? { subscriptionId: 'fixture' } : {}),
+                { operation: 'stats.read', target: selected, ...(held ? { subscriptionId: 'fixture' } : {}),
                     request: { kind: 'stats.read', group: 'tables', selection: { schema: 'main', page: { rows: 20 } } } }, invocation))
                 .toMatchObject({ ok: true, observation: { status: 'available', group: 'tables' } });
             expect(admissions).toEqual(expect.arrayContaining([
@@ -111,11 +121,12 @@ describe('native completed observation admission', () => {
             expect(native.sqlReads()).toBe(1); // Emission consumes completed evidence; it performs no second SQL read.
             expect(JSON.stringify(admissions)).not.toContain('first');
             expect(JSON.stringify(admissions)).not.toContain('CREATE');
+            expect(JSON.stringify(admissions)).not.toContain(managedTarget.database);
             expect(admissions[0]).toMatchObject({ subjectContexts: [{ role: 'operand', subject: source.subject }],
                 payload: { subject: source.subject,
                     observation: { sourceScope: source.sourceScope, kind: 'tables', summary: { records: 2 } } } });
             expect(await kit.invokeAction(databaseActionLocalIdV1(DATABASE_STATS_READ_ACTION_ID_V1),
-                { operation: 'stats.read', target, ...(held ? { subscriptionId: 'fixture' } : {}),
+                { operation: 'stats.read', target: selected, ...(held ? { subscriptionId: 'fixture' } : {}),
                     request: { kind: 'stats.read', group: 'statements', selection: { page: { rows: 20 }, order: 'calls' } } }, invocation))
                 .toMatchObject({ ok: true, observation: { status: 'unavailable' } });
             expect(admissions).toHaveLength(2);

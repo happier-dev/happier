@@ -3,7 +3,7 @@ import { expect, it } from 'vitest';
 import { AutomationEventAdmitHttpResultV1Schema } from '@happier-dev/protocol/automations/automationActionSpecsV1';
 import { AutomationEventActionHttpPathsV1 } from '@happier-dev/protocol/automations/event';
 import { PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1 } from '@happier-dev/protocol/plugins/installations/manifests';
-import { AutomationDatabaseSubjectV1Schema, projectAutomationDatabaseSubjectV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
+import { projectAutomationDatabaseFindingSubjectV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 import { PluginEventAutomationSetupResultV1Schema } from '@happier-dev/protocol/automations/event-setup-result';
 import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityMaterializationsReadActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
 import { WorkflowActionOutputSchemasV1 } from '@happier-dev/protocol/workflows/actionsV1';
@@ -46,6 +46,8 @@ it('P4-F9-known-good-observation-run', async () => {
           typeof authorization !== 'string' || typeof publisherProof !== 'string') {
         throw new Error('F9 observation transport capture is incomplete');
       }
+      expect(request.body.text).not.toContain('dbw_selected');
+      expect(request.body.text).not.toContain('"databaseName"');
       // Model duplicate delivery by the network while the real daemon Action
       // is still awaiting its first response. Keep the signed request in memory.
       const replay = await fetchJson<unknown>(fixture.server.baseUrl + admitPath, {
@@ -65,9 +67,7 @@ it('P4-F9-known-good-observation-run', async () => {
     await fixture.postgres.sql('dbw_selected', `CREATE TABLE dbw_f9_workload (id integer, private_value text);
       INSERT INTO dbw_f9_workload VALUES (1, '${privateLiteral}');
       SELECT sum(id) FROM dbw_f9_workload WHERE private_value = '${privateLiteral}';`);
-    const subject = projectAutomationDatabaseSubjectV1(AutomationDatabaseSubjectV1Schema.parse({
-      kind: 'database', serverId: fixture.serverId, target: target,
-    }));
+    const subject = projectAutomationDatabaseFindingSubjectV1(fixture.serverId, target);
     const headers = { Authorization: `Bearer ${fixture.owner.credentials.token}` };
     let materialization: { machineId: string; materializationId: string; pluginId: string } | undefined;
     await waitFor(async () => {

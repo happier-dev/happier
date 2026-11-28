@@ -1,6 +1,8 @@
 export type { EventContribution } from '../events.js';
 export { AutomationDatabaseSubjectV1ProtocolSchema, projectAutomationDatabaseSubjectV1, automationSubjectKeyV1 } from './databaseSubjects.js';
 export type { AutomationDatabaseSubjectV1 } from './databaseSubjects.js';
+export { AutomationDatabaseFindingSubjectV1ProtocolSchema, projectAutomationDatabaseFindingSubjectV1 } from './databaseSubjects.js';
+export type { AutomationDatabaseFindingSubjectV1 } from './databaseSubjects.js';
 export { DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1, DeploymentReceiptChangedEventV1ProtocolSchema,
     readDeploymentAccountChangeV1 } from './deploymentReceipts.js';
 export { DEPLOYMENT_RECEIPT_EVENT_REFS_V1, deploymentInProgressStates } from './deploymentReceipts.js';

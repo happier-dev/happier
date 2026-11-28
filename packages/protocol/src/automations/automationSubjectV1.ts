@@ -6,6 +6,7 @@ import { MachineTargetV1Schema } from '../machines/machineAccessV1.js';
 import { QualifiedProjectKeyV1Schema } from '../workspaces/workspaceRefV1.js';
 import { DeploymentEnvironmentRefV1Schema } from '../deployments/deploymentEnvironmentRefV1.js';
 import { DeploymentBackupRestoreDatabaseDestinationV1Schema } from '../deployments/deploymentBackupRestoreV1.js';
+import { environmentSecretBindingIdentityV1, type EnvironmentDataRoleAddressV1 } from '../deployments/storedAppInputV1.js';
 import { DatabaseManualTargetV1Schema, DatabaseWorktreeTargetV1Schema, DatabaseManagedDeploymentTargetV1Schema, type DatabaseTargetV1 } from '../databases/databaseTargetIdentityV1.js';
 import { SavedHealthCheckSelectorV1Schema } from '../deployments/healthCheckSourceV1.js';
 import { ApprovalProfileIdV1Schema } from '../actions/approvalProfileIdV1.js';
@@ -14,6 +15,19 @@ import { PluginContributionLocalIdSchema } from '../plugins/contributionIdentity
 import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 import { computeCanonicalDomainSeparatedDigest } from '../crypto/canonicalDigest.js';
+
+const automationDatabaseFindingBindingTarget = lazyZodSchema(() => z.strictObject({
+    kind: z.literal('binding'),
+    bindingId: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/)),
+}));
+
+/** An Event can match the binding without receiving its locally resolved database endpoint. */
+export const AutomationDatabaseFindingSubjectV1Schema = lazyZodSchema(() => z.strictObject({
+    kind: z.literal('database'),
+    serverId: MachineTargetV1Schema.shape.serverId,
+    target: automationDatabaseFindingBindingTarget,
+}));
+export type AutomationDatabaseFindingSubjectV1 = z.infer<typeof AutomationDatabaseFindingSubjectV1Schema>;
 
 /** C1 identity epoch V1: all identity envelopes are closed. No visibility is implied. */
 export const AutomationDatabaseSubjectV1Schema = lazyZodSchema(() => {
@@ -32,10 +46,28 @@ export const AutomationDatabaseSubjectV1Schema = lazyZodSchema(() => {
             environmentId: DeploymentEnvironmentRefV1Schema.shape.environmentId,
             targetLinkId: managed.targetLinkId,
             databaseName: managed.database,
-        })]),
+        }), automationDatabaseFindingBindingTarget]),
     });
 });
 export type AutomationDatabaseSubjectV1 = z.infer<typeof AutomationDatabaseSubjectV1Schema>;
+
+type DatabaseFindingBinding = Readonly<{ kind: 'environment_binding'; environmentId: string; address: EnvironmentDataRoleAddressV1 }>;
+
+/** Match the existing write-role binding, independent of its endpoint or credential revision. */
+export function projectAutomationDatabaseFindingSubjectV1(serverId: string,
+    target: DatabaseTargetV1 | DatabaseFindingBinding): AutomationDatabaseFindingSubjectV1 {
+    const binding = target.kind === 'managed_deployment'
+        ? { environmentId: target.environment.environmentId, address: { targetLinkId: target.targetLinkId } }
+        : target.kind === 'deployment_service'
+            ? { environmentId: target.environment.environmentId, address: { service: target.serviceId } }
+            : target.kind === 'environment_binding' ? target : null;
+    const identity = binding
+        ? [binding.environmentId, environmentSecretBindingIdentityV1({ purpose: 'dataRole', role: 'write', ...binding.address })]
+        : [createCanonicalJsonSigningInput(target)];
+    return AutomationDatabaseFindingSubjectV1Schema.parse({ kind: 'database', serverId, target: {
+        kind: 'binding', bindingId: computeCanonicalDomainSeparatedDigest('happier.database.finding-binding.v1', identity),
+    } });
+}
 
 /** Accept only a sanitized, structured selector; never an endpoint or execution value. */
 export function projectAutomationDatabaseSubjectV1(subject: AutomationDatabaseSubjectV1): AutomationDatabaseSubjectV1 {
