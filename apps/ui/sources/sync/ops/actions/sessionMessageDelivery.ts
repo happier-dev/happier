@@ -161,7 +161,8 @@ export function createSessionMessageDelivery(params: Readonly<{
         }
       }
       // Relay the validated authored variant, not its local text/metadata projection.
-      let input = { ...args.authoredInput, sessionId };
+      const authoredTargetInput = { ...args.authoredInput, sessionId };
+      let input = authoredTargetInput;
       const context: ActionExecutorContext = { ...actionContext, actionCaller: args.actionCaller ?? args.context.actionCaller,
         serverId: account.serverId, runtimeAccountId: account.accountId,
         externalActionTarget: { kind: 'machine', machineId } };
@@ -232,7 +233,7 @@ export function createSessionMessageDelivery(params: Readonly<{
           return { ok: false, errorCode: 'session_account_scope_retired', error: 'session_account_scope_retired' };
         }
       }
-      if (advertisedInputSchema && !supportsSessionMessageInputJsonSchema(advertisedInputSchema, input)) {
+      if (input !== authoredTargetInput && advertisedInputSchema && !supportsSessionMessageInputJsonSchema(advertisedInputSchema, input)) {
         await preparedAttachments?.releaseOnRejection();
         return { ok: false, errorCode: 'session_input_target_update_required', error: 'session_input_target_update_required' };
       }

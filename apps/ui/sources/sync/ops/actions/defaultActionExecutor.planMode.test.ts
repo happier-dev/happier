@@ -919,6 +919,9 @@ describe('default Action executor mode and catalog contracts', () => {
   });
   it.each(['ui', 'repeated_send', 'human_return', 'composer', 'composer_wait', 'composer_group', 'composer_presentation_retired', 'composer_account_retired', 'voice', 'legacy', 'schema_legacy', 'extended_send', 'triage_send', 'triage_schema_unavailable', 'native_command', 'schema_nested_legacy', 'schema_nested_legacy_none', 'review_send'] as const)('keeps an Ask on the canonical daemon send owner with its exact input and observation intent (%s)', async client => {
     const triage = client === 'triage_send' || client === 'triage_schema_unavailable';
+    const inputValidation = client === 'triage_send'
+      ? vi.spyOn(await import('@happier-dev/protocol/actions/actionInputJsonSchemaValidation'), 'supportsSessionMessageInputJsonSchema')
+      : undefined;
     const surface = client === 'voice' ? 'voice' : triage ? 'plugin' : 'ui';
     const triageCaller = { kind: 'plugin' as const, pluginId: 'happier.triage', contributionLocalId: 'sessions/run-configured-v1',
       occurrenceId: '["@happier-dev/plugins-triage","happier.triage","0.0.0"]',
@@ -1303,6 +1306,10 @@ describe('default Action executor mode and catalog contracts', () => {
     expect(homes.requestsFor('/v1/actions/session.message.send')).toHaveLength(1);
     expect(homes.requestsFor('/v2/sessions/ask-session/pending')).toHaveLength(0);
     if (triage) expect(homes.requestsFor('/v1/actions/action.spec.get')).toHaveLength(1);
+    if (inputValidation) {
+      expect(inputValidation).toHaveBeenCalledTimes(1);
+      inputValidation.mockRestore();
+    }
     if (client === 'repeated_send') {
       let sendNumber = 0;
       const send = () => createDefaultActionExecutor().execute('session.message.send', { ...input, localId: `ask-input-${++sendNumber}` }, context());
