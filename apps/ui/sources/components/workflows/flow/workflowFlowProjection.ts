@@ -481,7 +481,7 @@ export function listWorkflowFlowNotTakenNodeIds(
   const notTaken = new Set<string>();
   if (runStates === undefined || runStates.size === 0) return notTaken;
   const ran = (nodeId: string): boolean => {
-    if ((runStates.get(nodeId)?.length ?? 0) > 0) return true;
+    if (runStates.get(nodeId)?.some((state) => state.lifecycle !== 'skipped') === true) return true;
     return projection.nodesById.get(nodeId)?.childNodeIds.some(ran) === true;
   };
   const markAll = (nodeId: string): void => {

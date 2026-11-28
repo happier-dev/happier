@@ -4,7 +4,9 @@ import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { findAllHostTestInstances } from '@/dev/testkit/render/renderScreen';
 import { installSettingsViewCommonModuleMocks } from '@/components/settings/settingsViewTestHelpers';
+import { t } from '@/text';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -18,6 +20,29 @@ const { happierPageTextMetrics } = await import('@happier-dev/plugin-ui/presenta
 function BackArrow() {
     return React.createElement('BackArrow');
 }
+
+it('hides the title measuring text and exposes the loading status until the title arrives', async () => {
+    const placeholder = 'Untitled run';
+    const screen = await renderScreen(<PageHeader title={placeholder} titlePending alwaysShowTitle />);
+    const titleText = findAllHostTestInstances(screen.root, node => node.children.includes(placeholder));
+    expect(titleText).toHaveLength(1);
+    const canRead = (node: ReactTestInstance): boolean => {
+        for (let current: ReactTestInstance | null = node; current !== null; current = current.parent) {
+            const props = current.props;
+            if (typeof current.type === 'string' && (props['aria-hidden'] || props.accessibilityElementsHidden
+                || props.importantForAccessibility === 'no-hide-descendants')) return false;
+        }
+        return true;
+    };
+    expect(titleText.filter(canRead)).toHaveLength(0);
+    const loadingStatuses = () => findAllHostTestInstances(screen.root,
+        node => node.props.role === 'status' && node.props.accessibilityLabel === t('common.loading')).filter(canRead);
+    expect(loadingStatuses()).toHaveLength(1);
+    await screen.update(<PageHeader title="Weekly report" alwaysShowTitle />);
+    expect(loadingStatuses()).toHaveLength(0);
+    expect(findAllHostTestInstances(screen.root, node => node.children.includes('Weekly report')).filter(canRead)).toHaveLength(1);
+    await screen.unmount();
+});
 
 async function renderHeader(params: Readonly<{ chromeShowsTitle?: boolean; alwaysShowTitle?: boolean; description?: string }>) {
     const header = (

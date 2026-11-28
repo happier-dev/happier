@@ -6,7 +6,7 @@ import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workf
 import { renderScreen } from '@/dev/testkit';
 
 import { WorkflowFlowView } from './WorkflowFlowView';
-import { projectWorkflowFlow } from './workflowFlowProjection';
+import { indexWorkflowFlowRunStates, projectWorkflowFlow } from './workflowFlowProjection';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { WorkflowLifecycleStatus } from '@/components/workflows/presentation/WorkflowLifecycleStatus';
 
@@ -288,14 +288,18 @@ describe('WorkflowFlowView map grammar (07 S14)', () => {
         const withRecovery = { ...definition, blocks: [...definition.blocks,
             { ...step('recover'), runWhen: 'failure' as const }] } as WorkflowDefinitionV1;
         const projection = projectWorkflowFlow(withRecovery);
-        const runStates = new Map([['docs', [{ nodeId: 'docs', invocationId: 'd-1', lifecycle: 'completed' as const }]]]);
+        const docs = { nodeId: 'docs', invocationId: 'd-1', lifecycle: 'completed' as const };
+        const runStates = indexWorkflowFlowRunStates([
+            docs,
+            { nodeId: 'recover', invocationId: 'recovery-1', lifecycle: 'skipped' },
+        ]);
         const succeeded = await renderScreen(<WorkflowFlowView projection={projection} selectedNodeId={null} testIDPrefix="flow"
             runStates={runStates} notStartedLabel="skipped" runSucceeded />);
         expect(succeeded.findByTestId('flow-node-recover')).toBeNull();
         expect(succeeded.findByTestId('flow-node-docs')).not.toBeNull();
         await succeeded.unmount();
         const running = await renderScreen(<WorkflowFlowView projection={projection} selectedNodeId={null} testIDPrefix="flow"
-            runStates={runStates} notStartedLabel="not started" />);
+            runStates={indexWorkflowFlowRunStates([docs])} notStartedLabel="not started" />);
         expect(running.findByTestId('flow-node-recover')).not.toBeNull();
     });
 

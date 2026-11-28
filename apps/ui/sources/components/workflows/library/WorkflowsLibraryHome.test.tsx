@@ -292,6 +292,8 @@ describe('workflow library page anatomy', () => {
             { id: 'pending', schedule: { ...once, scheduledAt: nextAt }, remaining: 1, next: nextAt,
                 trigger: t('workflows.triggers.once.at', { time: formatOnceScheduleInstant(nextAt) }), hasStarted: false },
             { id: 'recurring', schedule: recurring, remaining: null, next: nextAt, trigger: t('workflows.triggers.summary.everyHours', { count: 1 }), hasStarted: true },
+            { id: 'waiting', schedule: once, remaining: 0, next: null, trigger: t('workflows.triggers.once.missedOn', { time }),
+                hasStarted: false, runState: 'missed' as const, recentRunState: 'queued' as const },
         ].map((scenario, index) => ({ ...scenario, definitionId: `10000000-0000-4000-8000-00000000007${index}` }));
         const automations = cases.map(({ id, definitionId, schedule, remaining, next, hasStarted, runState }) => AutomationDefinitionDetailSchema.parse({
             id, name: `Scheduled ${id}`, description: null, enabled: true,
@@ -332,9 +334,9 @@ describe('workflow library page anatomy', () => {
             if (actionId === 'workflow.run.summaries' && input.sourceArtifactIds !== undefined) return { ok: true, result: {
                 remainingSourceArtifactIds: [],
                 summaries: cases.filter(({ definitionId }) => input.sourceArtifactIds?.includes(definitionId))
-                    .map(({ id, definitionId, runState, hasStarted }) => {
-                        const recent = runState === undefined && !hasStarted ? null : createWorkflowRunRecentSummaryFixture({
-                            runId: `run-${id}`, state: runState ?? 'succeeded',
+                    .map(({ id, definitionId, runState, recentRunState = runState, hasStarted }) => {
+                        const recent = recentRunState === undefined && !hasStarted ? null : createWorkflowRunRecentSummaryFixture({
+                            runId: `run-${id}`, state: recentRunState ?? 'succeeded',
                         });
                         return { sourceArtifactId: definitionId, recent: recent ? [recent] : [], needsYouCount: 0, needsYouRunId: null,
                             lastRun: hasStarted ? { ...recent, createdAt: startedAt, startedAt, finishedAt: startedAt } : null };
@@ -367,8 +369,8 @@ describe('workflow library page anatomy', () => {
                     const rowId = `workflows-home:row:${definitionId}`;
                     // Row presses may be layered behind the content; inspect the whole item, including its cells.
                     const row = screen.findAllByTestId(presentation === 'grid' ? `${rowId}:chrome` : rowId)[0];
-                    return row === undefined ? [] : findAllHostTestInstances(row, node => typeof node.props.children === 'string')
-                        .map(node => node.props.children);
+                    return row === undefined ? [] : findAllHostTestInstances(row, node => node.children.some(child => typeof child === 'string'))
+                        .flatMap(node => node.children.filter(child => typeof child === 'string'));
                 };
                 await vi.waitFor(() => {
                     expect(collection()?.props.presentation).toBe(presentation);
@@ -381,10 +383,15 @@ describe('workflow library page anatomy', () => {
                     for (const { id, definitionId } of cases) expect(text(definitionId), `${presentation}: ${id} rendered text`).not.toHaveLength(0);
                     expect(text(cases[1]!.definitionId), `${presentation}: last-started Run is loaded`)
                         .toEqual(expect.arrayContaining([expect.stringContaining(age)]));
+                    expect(text(cases.at(-1)!.definitionId), `${presentation}: waiting state`).toContain(t('workflows.runState.queued'));
                 });
                 for (const { id, definitionId, trigger, hasStarted } of cases) {
                     const copy = text(definitionId);
-                    expect.soft(copy, `${presentation}: ${id} trigger`).toContain(trigger);
+                    if (id === 'waiting') {
+                        expect.soft(copy, `${presentation}: waiting trigger`).not.toContain(trigger);
+                    } else {
+                        expect.soft(copy, `${presentation}: ${id} trigger`).toContain(trigger);
+                    }
                     expect.soft(copy.filter(line => line.includes(age) || line === t('workflows.destination.neverRan')),
                         `${presentation}: ${id} last run`).toEqual(hasStarted ? [t('workflows.destination.lastRunStandalone', { age })] : []);
                 }

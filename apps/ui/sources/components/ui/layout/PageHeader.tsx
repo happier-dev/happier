@@ -442,11 +442,11 @@ export function PageHeaderActionButton(props: Readonly<{ action: PageHeaderPrima
  */
 function PendingPageTitle(props: Readonly<{ title: string }>) {
     return (
-        <View aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={stylesheet.pendingTitle}>
-            <View style={stylesheet.pendingTitleText}>
+        <View style={stylesheet.pendingTitle}>
+            <View aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={stylesheet.pendingTitleText}>
                 <PageTitleText header={false} style={stylesheet.title}>{props.title}</PageTitleText>
             </View>
-            <View style={stylesheet.pendingTitleBar}>
+            <View accessible role="status" accessibilityLabel={t('common.loading')} accessibilityLiveRegion="polite" style={stylesheet.pendingTitleBar}>
                 <SkeletonTitle line="whole" lineHeight={PAGE_TITLE_LINE_HEIGHT} testID="page-header-title-pending" />
             </View>
         </View>

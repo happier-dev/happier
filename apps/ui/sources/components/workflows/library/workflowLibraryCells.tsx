@@ -60,8 +60,8 @@ export function readWorkflowLibraryStateWord(state: WorkflowLibraryRowState): st
 }
 
 /**
- * A list row's line 2 trigger sentence. A Run waiting to start is the row's news, so while one waits the row says that
- * state alone; its trigger's occurrence line ("Missed on …") would sit beside it with no link (round 16 nit 5).
+ * A Library item's trigger sentence. While a Run waits to start, the item says that state without a competing
+ * trigger occurrence line ("Missed on …").
  */
 export function readWorkflowLibraryLineTrigger(facts: WorkflowLibraryRowFacts): string | null {
   return facts.state === 'queued' ? null : facts.triggerLine;
@@ -321,7 +321,7 @@ export const WorkflowLibraryStateWord = React.memo(
     const word = readWorkflowLibraryStateWord(props.state);
     if (word === null) return null;
     if (props.state === 'queued') {
-      return <StatusPill testID={props.testID} variant="neutral" chrome="plain" label={word} labelVariant="phrase"
+      return <StatusPill testID={props.testID} variant="neutral" chrome="plain" label={word} labelVariant="phrase" labelNumberOfLines={1}
         leading={<WorkflowRunStateMark presentation={describeWorkflowRunState('queued')} size={ICON_SIZE.xs} />} />;
     }
     if (props.state === 'needsYou') {
@@ -395,7 +395,7 @@ export function buildWorkflowLibraryFields(
       minWidth: 140,
       maxWidth: 320,
       priority: 6,
-      render: (row) => readFacts(row).triggerLine,
+      render: (row) => readWorkflowLibraryLineTrigger(readFacts(row)),
     },
     {
       key: 'steps',
@@ -475,11 +475,12 @@ export function buildWorkflowLibraryCard(
     body: {
       render: (row) => {
         const facts = readFacts(row);
+        const triggerLine = readWorkflowLibraryLineTrigger(facts);
         const trigger = facts.triggers[0];
         return (
           <WorkflowSentencePreview
-            triggerLine={facts.triggerLine}
-            triggerGlyph={trigger ? resolveTriggerEventGroup(trigger, facts.triggerLine ?? undefined).glyph : undefined}
+            triggerLine={triggerLine}
+            triggerGlyph={trigger && triggerLine !== null ? resolveTriggerEventGroup(trigger, triggerLine).glyph : undefined}
             steps={facts.steps}
             testID={`workflows-home:card:${row.key}:sentence`}
           />
