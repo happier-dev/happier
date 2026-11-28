@@ -81,7 +81,7 @@ async function fixture(mode: 'success' | 'buildFailure' | 'cancel' | 'lost' | 'd
       })) };
     }
     let value: unknown = { id: 'app', deployment_id: mode === 'compactVersion' ? versionId.replaceAll('-', '') : versionId };
-    if (request.url.endsWith('/workers/scripts')) value = [{ id: 'app', tag: 'worker-tag' }];
+    if (request.url.endsWith('/workers/workers/worker-tag')) value = { id: 'worker-tag', name: 'app' };
     else if (request.url.endsWith('/assets-upload-session')) value = { jwt: 'asset-upload-token',
       buckets: assetBuckets ?? (mode === 'assetsCached' ? [] : [[mode === 'unknownAsset' ? 'unknown-hash' : 'asset-hash']]) };
     else if (request.url.includes('/workers/assets/upload')) value = { jwt: 'asset-completion-token' };
@@ -108,7 +108,7 @@ it('inspects and links explicit Workers upload without native Git access or a bu
     expect(inspected).not.toHaveProperty('repositoryAccess');
     if (!inspected || typeof inspected !== 'object' || Array.isArray(inspected)) throw new Error('Expected prepared Worker');
     expect(await h.kit.invokeAction('workers-link', { ...preparation, ...inspected })).toEqual(inspected);
-    expect(h.requests.map(request => new URL(request.url).pathname)).toEqual(['/client/v4/accounts/account/workers/scripts']);
+    expect(h.requests.map(request => new URL(request.url).pathname)).toEqual(['/client/v4/accounts/account/workers/workers/worker-tag']);
   } finally { await h.dispose(); }
 });
 

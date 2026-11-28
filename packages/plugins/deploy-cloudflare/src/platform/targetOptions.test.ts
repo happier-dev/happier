@@ -76,7 +76,7 @@ it.each(['workers-inspect', 'pages-inspect', 'targets-inspect-v1'])('resolves re
 
 it.each([
   { targetKind: 'cloudflare-workers', row: { id: 'selected-worker', tag: 'worker-tag' },
-    expected: { value: { kind: 'native', selection: { kind: 'script', scriptName: 'selected-worker' } }, label: 'selected-worker' }, endpoint: '/workers/scripts',
+    expected: { value: { kind: 'native', selection: { kind: 'script', scriptName: 'selected-worker', workerTag: 'worker-tag' } }, label: 'selected-worker' }, endpoint: '/workers/scripts',
     projectPath: 'providerEnvironment', account: { providerAccountId: 'account' } },
   { targetKind: 'cloudflare-pages', row: { id: 'pages-id', name: 'selected-pages' },
     expected: { value: 'selected-pages', label: 'selected-pages' }, endpoint: '/pages/projects',
@@ -95,7 +95,11 @@ it.each([
   const resourceId = typeof resourceRef === 'string' ? resourceRef : resourceRef?.localId;
   if (typeof resourceId !== 'string') throw new Error('Missing project options Resource');
   const requests: HttpRequest[] = [];
-  const http = createPluginHttpFixture({ async request(request) { requests.push(request); return json([row]); } });
+  const http = createPluginHttpFixture({ async request(request) {
+    requests.push(request);
+    return new URL(request.url).pathname.endsWith('/workers/workers/worker-tag')
+      ? json({ id: 'worker-tag', name: 'selected-worker' }) : json([row]);
+  } });
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });
   try {
     const resource = kit.registration('resources', resourceId);
@@ -106,14 +110,22 @@ it.each([
       query: { draftInput: { credentialRef, credentialPrincipal }, fieldPath: project.path },
       readAction: async (ref, input) => ({ ok: true, result: await kit.invokeAction(ref.localId, input) }) })))
       .rejects.toMatchObject({ code: 'missing_option_dependency', details: { requiredDraftPath: accountField } });
+    const selectionDraft = { credentialRef, credentialPrincipal: { ...credentialPrincipal, purpose: {
+      ...credentialPrincipal.purpose, consumer: { pluginId: entry.manifest.id, localId: target.actions.inspect } } }, ...account };
     const bytes = await resource.read(createTestResourceInvocationContext({
-      query: { draftInput: { credentialRef, credentialPrincipal: { ...credentialPrincipal, purpose: {
-        ...credentialPrincipal.purpose, consumer: { pluginId: entry.manifest.id, localId: target.actions.inspect } } },
-        ...account }, fieldPath: project.path },
+      query: { draftInput: selectionDraft, fieldPath: project.path },
       readAction: async (ref, input) => ({ ok: true, result: await kit.invokeAction(ref.localId, input) }) }));
-    expect(JSON.parse(typeof bytes === 'string' ? bytes : new TextDecoder().decode(bytes)))
-      .toEqual({ options: [expected], ...(targetKind === 'cloudflare-pages' ? { nextCursor: '2' } : {}) });
-    expect(requests.map(request => new URL(request.url).pathname)).toEqual([`/client/v4/accounts/account${endpoint}`]);
+    const picked = JSON.parse(typeof bytes === 'string' ? bytes : new TextDecoder().decode(bytes));
+    if (targetKind === 'cloudflare-workers') {
+      await expect(kit.invokeAction(target.actions.inspect, {
+        ...selectionDraft, v: 1, serverId: 'home', environmentId: 'environment', expectedRevision: 1, sourceMethod: 'upload',
+        providerEnvironment: picked.options[0].value,
+        repository: { kind: 'github', deployment: 'https://github.com', repository: 'example/app' },
+      })).resolves.toMatchObject({ providerIdentity: { providerResourceId: 'worker-tag' } });
+    }
+    const listPath = `/client/v4/accounts/account${endpoint}`;
+    expect(requests.filter(request => new URL(request.url).pathname === listPath)).toHaveLength(1);
+    expect(picked).toEqual({ options: [expected], ...(targetKind === 'cloudflare-pages' ? { nextCursor: '2' } : {}) });
   } finally { await kit.dispose(); }
 });
 
@@ -180,15 +192,19 @@ it('keeps Worker names and immutable tags distinct, filters scripts by search an
     expect(await kit.invokeAction('target-options-read', { ...selected, fieldPath: 'providerIdentity.providerResourceId', query: 'hello' }))
       .toEqual({ options: [{ value: 'immutable-tag', label: 'hello-worker' }] });
     expect(await kit.invokeAction('target-options-read', { ...selected, fieldPath: 'providerEnvironment', query: 'hello' }))
-      .toEqual({ options: [{ value: { kind: 'native', selection: { kind: 'script', scriptName: 'hello-worker' } }, label: 'hello-worker' }] });
+      .toEqual({ options: [{ value: { kind: 'native', selection: { kind: 'script', scriptName: 'hello-worker', workerTag: 'immutable-tag' } }, label: 'hello-worker' }] });
     expect(await kit.invokeAction('target-options-read', { ...selected, providerIdentity: { providerAccountId: 'account', providerResourceId: 'immutable-tag' }, fieldPath: 'triggerUuid' }))
       .toEqual({ options: [{ value: 'trigger-id', label: 'trigger-id' }] });
     expect(await kit.invokeAction('target-options-read', { credentialRef, credentialPrincipal, product: 'workers',
       providerAccountId: 'account', scriptName: 'hello-worker', fieldPath: 'triggerUuid' }))
       .toEqual({ options: [{ value: 'trigger-id', label: 'trigger-id' }] });
+    expect(await kit.invokeAction('target-options-read', { credentialRef, credentialPrincipal, product: 'workers',
+      providerAccountId: 'account', scriptName: 'hello-worker', workerTag: 'immutable-tag', fieldPath: 'triggerUuid' }))
+      .toEqual({ options: [{ value: 'trigger-id', label: 'trigger-id' }] });
     expect(requests.slice(2).map(request => new URL(request.url).pathname)).toEqual([
       '/client/v4/accounts/account/builds/workers/immutable-tag/triggers',
       '/client/v4/accounts/account/workers/scripts',
+      '/client/v4/accounts/account/builds/workers/immutable-tag/triggers',
       '/client/v4/accounts/account/builds/workers/immutable-tag/triggers',
     ]);
   } finally { await kit.dispose(); }
@@ -348,23 +364,33 @@ it('binds a draft Worker tag to the native script before producing Link content'
   const requests: HttpRequest[] = [];
   const http = createPluginHttpFixture({ async request(request) {
     requests.push(request);
+    const path = new URL(request.url).pathname;
+    if (path.endsWith('/workers/workers/native-a')) return json({ id: 'native-a', name: 'worker-a' });
+    if (path.endsWith('/workers/workers/native-b')) return json({ id: 'native-b', name: 'worker-b' });
     return json([{ id: 'worker-a', tag: 'native-a' }, { id: 'worker-b', tag: 'native-b' }]);
   } });
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });
-  const inspect = (providerResourceId: string) => kit.invokeAction('workers-inspect', {
+  const inspect = (providerResourceId?: string, workerTag?: string) => kit.invokeAction('workers-inspect', {
     v: 1, serverId: 'home', environmentId: 'environment', expectedRevision: 1,
     credentialRef, credentialPrincipal: { ...credentialPrincipal,
       purpose: { ...credentialPrincipal.purpose, consumer: { pluginId: entry.manifest.id, localId: 'workers-inspect' } } },
     product: 'workers', sourceMethod: 'upload',
-    providerIdentity: { providerAccountId: 'account', providerResourceId, providerEnvironment: 'script:worker-b' },
-    providerEnvironment: { kind: 'native', selection: { kind: 'script', scriptName: 'worker-b' } },
+    ...(providerResourceId
+      ? { providerIdentity: { providerAccountId: 'account', providerResourceId, providerEnvironment: 'script:worker-b' } }
+      : { providerAccountId: 'account' }),
+    providerEnvironment: { kind: 'native', selection: { kind: 'script', scriptName: 'worker-b', ...(workerTag ? { workerTag } : {}) } },
     repository: { kind: 'github', deployment: 'https://github.com', repository: 'example/app' },
   });
   try {
     await expect(inspect('native-b')).resolves.toMatchObject({ providerIdentity: { providerResourceId: 'native-b' } });
     await expect(inspect('native-a')).rejects.toMatchObject({ code: 'deployment_unavailable' });
+    await expect(inspect('native-a', 'native-a')).rejects.toMatchObject({ code: 'deployment_unavailable' });
+    await expect(inspect()).resolves.toMatchObject({ providerIdentity: { providerResourceId: 'native-b' } });
     expect(requests.map(request => new URL(request.url).pathname)).toEqual([
-      '/client/v4/accounts/account/workers/scripts', '/client/v4/accounts/account/workers/scripts',
+      '/client/v4/accounts/account/workers/workers/native-b',
+      '/client/v4/accounts/account/workers/workers/native-a',
+      '/client/v4/accounts/account/workers/workers/native-a',
+      '/client/v4/accounts/account/workers/scripts',
     ]);
   } finally { await kit.dispose(); }
 });

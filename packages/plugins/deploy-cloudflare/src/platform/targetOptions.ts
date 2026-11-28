@@ -18,10 +18,10 @@ const product: PluginJsonSchema = { type: 'string', enum: ['workers', 'pages'] }
 const inputSchema: PluginJsonSchema = { type: 'object', additionalProperties: false, properties: {
   credentialRef: base.properties!.credentialRef!, credentialPrincipal: base.properties!.credentialPrincipal!,
   product, providerIdentity, providerAccountId: base.properties!.providerAccountId!,
-  resourceName: DeploymentTargetRoleInputProtocolSchemasV1.create.jsonSchema.properties!.resourceName!, scriptName: text, gitBranch: text, fieldPath: text, query: { type: 'string' }, cursor: { type: 'string', pattern: '^[1-9][0-9]*$' },
+  resourceName: DeploymentTargetRoleInputProtocolSchemasV1.create.jsonSchema.properties!.resourceName!, scriptName: text, workerTag: text, gitBranch: text, fieldPath: text, query: { type: 'string' }, cursor: { type: 'string', pattern: '^[1-9][0-9]*$' },
 }, required: ['credentialRef', 'credentialPrincipal', 'fieldPath'] };
 type Input = Readonly<{ product?: 'workers' | 'pages'; providerIdentity?: { providerAccountId?: string; providerResourceId?: string };
-  providerAccountId?: string; resourceName?: string; scriptName?: string; gitBranch?: string;
+  providerAccountId?: string; resourceName?: string; scriptName?: string; workerTag?: string; gitBranch?: string;
   fieldPath: string; query?: string; cursor?: string }>;
 type Option = { value: JsonValue; label: string };
 function invalid(): never { throw new PluginError({ code: 'provider_response_invalid' }); }
@@ -70,7 +70,7 @@ async function read(input: Input, context: DeploymentContext) {
     if (!accountId) missingDependency(input.fieldPath.startsWith('providerIdentity.') ? 'providerIdentity.providerAccountId' : 'providerAccountId');
     let path: string;
     if (input.fieldPath === 'triggerUuid') {
-      const workerTag = input.providerIdentity?.providerResourceId ?? (input.scriptName
+      const workerTag = input.providerIdentity?.providerResourceId ?? input.workerTag ?? (input.scriptName
         ? await resolveWorkerTag(accountId, input.scriptName, context)
         : missingDependency(input.providerIdentity ? 'providerIdentity.providerResourceId' : 'providerEnvironment'));
       if (typeof workerTag !== 'string') refuse(workerTag);
@@ -90,7 +90,7 @@ async function read(input: Input, context: DeploymentContext) {
         const scripts = await readWorkerScripts(accountId, context);
         if ('code' in scripts) refuse(scripts);
         return { options: options(scripts.map(({ scriptName, workerTag }) => ({ label: scriptName,
-          value: input.fieldPath === 'providerEnvironment' ? { kind: 'native', selection: { kind: 'script', scriptName } } : workerTag })), input.query) };
+          value: input.fieldPath === 'providerEnvironment' ? { kind: 'native', selection: { kind: 'script', scriptName, workerTag } } : workerTag })), input.query) };
       }
       if (input.query) params.set('name', input.query);
       path = `/workers/workers/${encodeURIComponent(selectedScript)}/previews${params.size ? `?${params}` : ''}`;
@@ -169,6 +169,7 @@ function targetOptionsFor(product?: 'workers' | 'pages') {
     if (isObject(carrier) && isObject(carrier.selection)) {
       const selection = carrier.selection;
       if (typeof selection.scriptName === 'string') input.scriptName = selection.scriptName;
+      if (selectedProduct === 'workers' && selection.kind === 'script' && name(selection.workerTag)) input.workerTag = selection.workerTag;
       if (selectedProduct === 'pages' && selection.kind === 'preview' && name(selection.gitBranch)) input.gitBranch = selection.gitBranch;
     }
     return input;
@@ -204,7 +205,7 @@ const projectField = { path: 'preparedNative.projectName', title: 'Pages project
   optionsDraftDependencies: ['product', 'providerEnvironment.selection.kind', 'providerEnvironment.selection.scriptName'],
   inputType: { pluginId, localId: 'target-choice' } } as const;
 const workerTriggerField = { path: 'triggerUuid', title: 'Worker build trigger', widget: 'select',
-  optionsDraftDependencies: ['providerIdentity.providerResourceId', 'providerEnvironment.selection.scriptName'], inputType: { pluginId, localId: 'target-choice' },
+  optionsDraftDependencies: ['providerIdentity.providerResourceId', 'providerEnvironment.selection.scriptName', 'providerEnvironment.selection.workerTag'], inputType: { pluginId, localId: 'target-choice' },
   requiredWhen: { op: 'and', all: [{ op: 'eq', path: 'providerEnvironment.selection.kind', value: 'script' },
     { op: 'not', predicate: { op: 'eq', path: 'sourceMethod', value: 'upload' } }] },
   visibleWhen: { op: 'and', all: [{ op: 'eq', path: 'providerEnvironment.selection.kind', value: 'script' },

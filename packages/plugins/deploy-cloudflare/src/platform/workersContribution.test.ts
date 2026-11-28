@@ -21,7 +21,7 @@ it('activates prepare/link and exact-SHA lifecycle roles using the captured cano
   const http = createPluginHttpFixture({ async request(request) {
     requests.push(request);
     let result: unknown;
-    if (request.url.endsWith('/workers/scripts')) result = [{ id: 'app', tag: workerTag }];
+    if (request.url.endsWith(`/workers/workers/${workerTag}`)) result = { id: workerTag, name: 'app' };
     else if (request.url.endsWith('/triggers')) result = [{ trigger_uuid: triggerUuid, external_script_id: workerTag,
       repo_connection: { provider_type: 'github', provider_account_name: 'example', repo_name: 'app', repo_id: '123' } }];
     else if (request.url.endsWith('/cancel')) result = { build_uuid: 'build-selected', build_outcome: 'cancelled' };
@@ -74,7 +74,7 @@ it('activates native Preview preparation and lifecycle on the existing Worker ta
     requests.push(request);
     if (missing) return { status: 404, headers: {}, body: new Uint8Array() };
     let result: unknown;
-    if (request.url.endsWith('/workers/scripts')) result = [{ id: scriptName, tag: workerTag }];
+    if (request.url.endsWith(`/workers/workers/${workerTag}`)) result = { id: workerTag, name: scriptName };
     else if (request.url.endsWith('/previews/review%2Fname')) result = { id: previewId, name: previewName };
     else if (request.url.endsWith(`/previews/${previewId}`)) result = { preview_id: previewId, branch: gitBranch };
     else if (request.url.endsWith(`/builds/workers/${workerTag}`)) result = { script_tag: workerTag, previews_enabled: true,
@@ -102,7 +102,7 @@ it('activates native Preview preparation and lifecycle on the existing Worker ta
     if (!prepared || typeof prepared !== 'object' || Array.isArray(prepared)) throw new Error('Expected prepared Preview');
     expect(await kit.invokeAction('workers-link', { ...preparation, ...prepared })).toEqual(prepared);
     expect(requests.map(request => request.url)).toEqual([
-      `${root}/workers/scripts`, `${root}/workers/workers/${scriptName}/previews/review%2Fname`,
+      `${root}/workers/workers/${workerTag}`, `${root}/workers/workers/${scriptName}/previews/review%2Fname`,
       `${root}/builds/workers/${workerTag}/previews/${previewId}`, `${root}/builds/workers/${workerTag}`,
     ]);
     const common = { ...preparation, ...prepared, targetLinkId: 'link', expectedTargetLinkRevision: 1,
@@ -129,7 +129,7 @@ it('activates native Preview preparation and lifecycle on the existing Worker ta
     await expect(invoke('workers-inspect', input)).rejects.toMatchObject({ code: 'deployment_unavailable' });
     expect(requests.slice(beforeMissing).map(request => [request.method, request.url])).toEqual([
       ['POST', `${root}/builds/workers/${workerTag}/previews/${previewId}/builds`],
-      ['GET', `${root}/workers/scripts`],
+      ['GET', `${root}/workers/workers/${workerTag}`],
     ]);
     expect(requests.every(request => request.credentialBinding?.kind === 'connectedAccountPurpose'
       && request.credentialBinding.purpose === 'deploy.manage')).toBe(true);

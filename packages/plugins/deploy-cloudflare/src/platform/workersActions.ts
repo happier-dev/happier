@@ -8,7 +8,7 @@ import type { PluginAccountActionContext, PluginActionDeclaration } from '@happi
 import { targetProductSchema } from './targetOptions.js';
 import { cloudflareReviewNotice } from './reviewNotice.js';
 import { workerEnvironmentKey, prepareWorker, deployWorker, observeWorker, cancelWorker, observeUploadedWorker,
-  isUploadedWorkerReference, resolveWorkerTag, workersAddressAccessId } from './workers.js';
+  isUploadedWorkerReference, resolveWorkerTag, verifyWorkerTag, workersAddressAccessId } from './workers.js';
 import { inspectPreviewIdentity, preparePreview } from './preview.js';
 import { teardownWorker } from './workersTeardown.js';
 import { deployPreview, observePreview, cancelPreview, observeUploadedPreview, isUploadedPreviewReference,
@@ -82,24 +82,32 @@ export const workersPrepare: PreparationAction = { ...common, title: 'Prepare th
       | { providerIdentity?: never; providerAccountId: string });
     const environment = request.providerEnvironment.selection;
     const accountId = request.providerIdentity ? request.providerIdentity.providerAccountId : request.providerAccountId;
-    const workerTag = await resolveWorkerTag(accountId, environment.scriptName, io(context));
+    const contextIo = io(context);
+    const selectedTag = (environment.kind === 'script' ? environment.workerTag : undefined)
+      ?? request.providerIdentity?.providerResourceId;
+    const workerTag = selectedTag
+      ? await verifyWorkerTag(accountId, environment.scriptName, selectedTag, contextIo)
+      : await resolveWorkerTag(accountId, environment.scriptName, contextIo);
     if (typeof workerTag !== 'string') refuse(workerTag);
     if (request.providerIdentity && request.providerIdentity.providerResourceId !== workerTag) {
       throw new PluginError({ code: 'deployment_unavailable', details: { phase: 'link' } });
     }
     if (request.sourceMethod === 'upload') {
       const preview = environment.kind === 'preview' ? await inspectPreviewIdentity({ accountId,
-        scriptName: environment.scriptName, previewName: environment.previewName }, io(context)) : null;
+        scriptName: environment.scriptName, previewName: environment.previewName }, contextIo) : null;
       if (preview && 'code' in preview) refuse(preview);
       return projectNativeJsonValueForTransport({ credentialPrincipal: request.credentialPrincipal,
         providerIdentity: { providerAccountId: accountId, providerResourceId: workerTag,
           providerEnvironment: workerEnvironmentKey(environment.scriptName, preview?.previewName) },
         sourceMethod: request.sourceMethod,
-        providerEnvironment: request.providerEnvironment, preparedNative: { projectName: environment.scriptName,
+        providerEnvironment: environment.kind === 'script'
+          ? { kind: 'native', selection: { kind: 'script', scriptName: environment.scriptName,
+            ...(environment.builds ? { builds: environment.builds } : {}) } }
+          : request.providerEnvironment,
+        preparedNative: { projectName: environment.scriptName,
           ...(preview ? { previewId: preview.previewId, scriptName: environment.scriptName } : {}),
           reviewNotice: cloudflareReviewNotice('workers', 'upload') } });
     }
-    const contextIo = io(context);
     if (environment.kind === 'preview') {
       const prepared = await preparePreview({ accountId, workerTag, scriptName: environment.scriptName,
         previewName: environment.previewName, repository: request.repository }, contextIo);

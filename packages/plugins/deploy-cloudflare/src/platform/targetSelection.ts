@@ -6,7 +6,7 @@ const closed = { policy: 'closed' } as const;
 const identifier = defineProtocolString({ minLength: 1 });
 const production = defineProtocolObject({ kind: defineProtocolLiteral('production') }, closed);
 const branch = defineProtocolObject({ kind: defineProtocolLiteral('preview'), gitBranch: identifier.optional() }, closed);
-const script = defineProtocolObject({ kind: defineProtocolLiteral('script'), scriptName: identifier,
+const script = defineProtocolObject({ kind: defineProtocolLiteral('script'), scriptName: identifier, workerTag: identifier.optional(),
   builds: defineProtocolObject({ repositoryId: identifier, namespaceId: identifier,
     buildTokenUuid: defineProtocolString({ pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' }) }, closed).optional(),
 }, closed);

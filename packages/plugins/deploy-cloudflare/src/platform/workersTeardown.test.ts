@@ -31,9 +31,17 @@ async function fixture(handler: (request: HttpRequest) => Promise<ReturnType<typ
 }
 
 it('deletes the legacy discovery/link producer’s Worker ID without force, then settles only after GET proves absence', async () => {
-  const { kit, requests } = await fixture(async request => request.url.endsWith('/workers/scripts')
-    ? response(200, { success: true, result: [{ id: 'production-worker', tag: workerId }] })
-    : request.method === 'DELETE' ? response(200, { success: true, errors: [], messages: [] }) : response(404));
+  let deleted = false;
+  const { kit, requests } = await fixture(async request => {
+    if (request.url.endsWith('/workers/scripts')) {
+      return response(200, { success: true, result: [{ id: 'production-worker', tag: workerId }] });
+    }
+    if (request.method === 'DELETE') {
+      deleted = true;
+      return response(200, { success: true, errors: [], messages: [] });
+    }
+    return deleted ? response(404) : response(200, { success: true, result: { id: workerId, name: 'production-worker' } });
+  });
   try {
     const request = input();
     const choices = await kit.invokeAction('target-options-read', { credentialRef: request.credentialRef,
@@ -53,7 +61,7 @@ it('deletes the legacy discovery/link producer’s Worker ID without force, then
       .toMatchObject({ state: 'succeeded', providerResourceAbsent: true });
     expect(requests.map(request => [request.method, request.url])).toEqual([
       ['GET', `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts`],
-      ['GET', `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts`],
+      ['GET', root],
       ['DELETE', root], ['GET', root],
     ]);
     expect(requests.every(request => request.credentialBinding?.kind === 'connectedAccountPurpose'

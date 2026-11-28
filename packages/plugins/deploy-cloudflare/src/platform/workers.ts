@@ -41,6 +41,14 @@ export async function resolveWorkerTag(accountId: string, scriptName: string, co
   return selected?.workerTag ?? failure('deployment_unavailable', 'link');
 }
 
+/** Inspect verifies the name of a selected immutable Worker before any name-addressed operation. */
+export async function verifyWorkerTag(accountId: string, scriptName: string, workerTag: string, context: WorkerContext) {
+  const reply = await request(context, accountId, `/workers/workers/${encodeURIComponent(workerTag)}`, 'link');
+  if ('code' in reply) return reply;
+  if (!isObject(reply.value) || !text(reply.value.id) || !text(reply.value.name)) return failure('provider_response_invalid', 'link');
+  return reply.value.id === workerTag && reply.value.name === scriptName ? workerTag : failure('deployment_unavailable', 'link');
+}
+
 /** Git and Upload preparation name the same selected provider Environment. */
 export function workerEnvironmentKey(scriptName: string, previewName?: string): string {
   return previewName === undefined ? `script:${scriptName}` : `preview:${JSON.stringify([scriptName, previewName])}`;
