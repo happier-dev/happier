@@ -19,11 +19,11 @@ import { registerAccountHomeHttp } from '@/session/actions/widgetApproval.testki
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
 import { executeAccountPluginAction } from '@/session/actions/executeAccountPluginAction';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
-import type { MachineActionDirectTargetTransport } from '@/session/actions/createCliActionDeps';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { registerAuthoredAccountActionRelease } from './accountPluginActions.testkit';
 import { manifest as admittedSourceManifest } from './accountMachineActionIntent.fixture';
-import { resolveAccountMachineSourceActionMachine } from './invocation/actions/accountMachineActionTransport';
+import type { WorkflowActionApprovalContext } from '@/daemon/workflows/actionApproval';
+import { invokeAccountMachineSourceAction, resolveAccountMachineSourceActionMachine } from './invocation/actions/accountMachineActionTransport';
 
 const { machineRpc } = vi.hoisted(() => ({ machineRpc: vi.fn() }));
 vi.mock('@/session/transport/rpc/machineRpc', async importOriginal => ({
@@ -56,11 +56,59 @@ const provider = definePlugin({ id: 'acme.account-source-provider', version: '1.
     provider: protocol.contribute({ operations: { read: protocol.operations.read.bind('read') } }),
 } } } });
 
+it('keeps an admitted Workflow requester on the installed Machine for its nested tracker Action', async () => {
+    const machineId = 'selected-machine';
+    const workflowRunId = 'admitted-run';
+    const requesterWorkAttributionV1 = {
+        serverId: 'account-machine', accountId: 'requester', machineId: 'origin-machine',
+        installationId: 'origin-installation',
+    };
+    const actionCaller = { kind: 'workflowRun', runId: workflowRunId,
+        authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' } } as const;
+    const providerResult = { ok: true, result: { key: 'provider-with-workflow-custody', machine: true } };
+    const approvalContext: WorkflowActionApprovalContext = {
+        surface: 'agent', authority: 'account_automation', runtimeAccountId: 'installed-account',
+        actionCaller, serverId: requesterWorkAttributionV1.serverId, requesterWorkAttributionV1,
+        executionRunWorkflowRunId: workflowRunId, executionRunTargetMachineId: machineId,
+        workflowActionMachineTransport: {
+            machineId, workflowRunId,
+            invoke: async (method, request, options) => {
+                expect(method).toBe(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE);
+                expect(DaemonPluginStructuredMessageActionExecuteRequestSchema.parse(request)).toMatchObject({
+                    executionSurface: 'agent', expectedContributorOccurrenceId: 'provider-machine-occurrence',
+                });
+                expect(options?.localActionContext).toMatchObject({
+                    actionCaller, requesterWorkAttributionV1, authority: 'account_automation',
+                    runtimeAccountId: 'installed-account', executionRunWorkflowRunId: workflowRunId,
+                });
+                return providerResult;
+            },
+        },
+    };
+    machineRpc.mockResolvedValue({ ok: true, result: { key: 'host-origin', machine: true } });
+    const callerManifest = normalizePluginManifestV2(admittedSourceManifest);
+    expect(await invokeAccountMachineSourceAction({
+        credentials: { token: 'installed-account', encryption: null, credentialProvenance: 'stored_session' },
+        serverUrl: 'http://unused-home.test', machineId, callerManifest,
+        callerSourceCustody: { kind: 'account_release', pluginId: callerManifest.id, version: callerManifest.version,
+            archiveDigestSha256: `sha256:${'a'.repeat(64)}` },
+        source: {
+            manifest: normalizePluginManifestV2(provider.manifest), occurrenceId: 'provider-machine-occurrence',
+            sourceCustody: { kind: 'managed', immutableGenerationId: 'provider-machine-generation', installSource: 'archive' },
+        },
+        request: {
+            action: { pluginId: provider.manifest.id, localId: 'read' }, input: { key: 'provider' },
+            surface: 'plugin', originSurface: 'agent', signal: new AbortController().signal, approvalContext,
+            caller: { kind: 'plugin', pluginId: callerManifest.id, occurrenceId: 'caller-occurrence',
+                contribution: { id: 'source', qualifiedId: `${callerManifest.id}/actions/source` } },
+        },
+    })).toEqual({ status: 'executed', value: providerResult.result });
+});
+
 it.each([
     { outcome: 'acknowledged', placement: 'selected' },
     { outcome: 'ui', placement: 'selected' },
     { outcome: 'uiAutomation', placement: 'selected' },
-    { outcome: 'workflow', placement: 'selected' },
     { outcome: 'lostAck', placement: 'selected' },
     { outcome: 'authoredRefusal', placement: 'selected' },
     { outcome: 'notSent', placement: 'selected' },
@@ -133,32 +181,8 @@ it.each([
         const cli = createCliActionExecutorFromCredentials({ credentials, serverId: 'account-machine',
             serverIdentityId: 'account-machine', serverApiUrl: endpoint,
             ...(placement === 'selected' ? { machineId: 'selected-machine' } : {}) });
-        const workflowRunId = 'admitted-run';
-        const workflowActionMachineTransport: MachineActionDirectTargetTransport = {
-            machineId: 'selected-machine', workflowRunId,
-            invoke: async (method, request, options) => {
-                expect(method).toBe(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE);
-                expect(DaemonPluginStructuredMessageActionExecuteRequestSchema.parse(request)).toMatchObject({
-                    executionSurface: 'agent', expectedContributorOccurrenceId: source.occurrenceId,
-                    invocation: { kind: 'clientPluginAction', clientActionBinding: { pluginId } },
-                });
-                expect(options?.localActionContext).toMatchObject({
-                    actionCaller: { kind: 'workflowRun', runId: workflowRunId },
-                    authority: 'account_automation', executionRunWorkflowRunId: workflowRunId,
-                    runtimeAccountId: 'owner',
-                });
-                providerEffects++;
-                return { ok: true, result: { key: 'provider-with-workflow-custody', machine: true } };
-            },
-        };
-        const context: ActionExecutorContext & { workflowActionMachineTransport?: MachineActionDirectTargetTransport } = {
-            surface: outcome === 'workflow' ? 'agent' : presentUi || outcome === 'uiAutomation' ? 'ui' : 'cli',
-            ...(outcome === 'workflow' ? {
-                actionCaller: { kind: 'workflowRun' as const, runId: workflowRunId,
-                    authorization: { principal: { kind: 'host' as const }, admittedPermissionCeiling: 'default' as const } },
-                executionRunWorkflowRunId: workflowRunId, executionRunTargetMachineId: 'selected-machine',
-                workflowActionMachineTransport,
-            } : {}),
+        const context: ActionExecutorContext = {
+            surface: presentUi || outcome === 'uiAutomation' ? 'ui' : 'cli',
             ...(presentUi ? { authority: 'present_user' as const } : outcome === 'uiAutomation' ? { authority: 'account_automation' as const } : {}),
             actionRequestId: '4d13dc15-d859-4c0e-9abe-d561a12894d5',
             runtimeAccountId: 'owner', serverId: 'account-machine', serverIdentityId: 'account-machine',
@@ -166,7 +190,7 @@ it.each([
             ...(placement === 'session' ? { defaultSessionMachineId: 'selected-machine' } : {}),
         };
         const input = { action: { pluginId, localId: 'source' }, input: { key: 'provider' } };
-        const result = presentUi || outcome === 'uiAutomation' || outcome === 'workflow'
+        const result = presentUi || outcome === 'uiAutomation'
             ? await (async () => {
                 const host = { token: credentials.token, credentials, sessionId: 'cli-global', mode: 'plain' as const, ctx: null,
                     serverHttpBaseUrl: endpoint, runtimeActionMachineId: 'selected-machine',
@@ -186,7 +210,7 @@ it.each([
             : outcome === 'lostAck' ? { ok: false, errorCode: 'plugin_action_outcome_unknown' }
             : outcome === 'authoredRefusal' ? { ok: false, errorCode: 'credential_unavailable',
                 details: { name: 'PluginError', remediation: { kind: 'retry' } } }
-            : { ok: true, result: { key: outcome === 'workflow' ? 'provider-with-workflow-custody' : 'provider', machine: true } });
+            : { ok: true, result: { key: 'provider', machine: true } });
         for (const request of requests) {
             expect(request.machineId).toBe('selected-machine');
             expect(request.requireCurrentMachine).toBe(true);
