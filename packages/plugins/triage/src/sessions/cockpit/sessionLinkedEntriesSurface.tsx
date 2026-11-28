@@ -434,7 +434,7 @@ function readFailureDetails(text: Translate, code: string, requestId?: string): 
 function SessionLinkFailureLine({ title, code, requestId, presentation }: Readonly<{
     title: string;
     code: string;
-    requestId?: string;
+    requestId: string | undefined;
     presentation: ReturnType<typeof presentTriageSourceConnectionFailure>;
 }>): React.ReactElement {
     const host = usePluginHostApi();
@@ -502,10 +502,11 @@ function LinkReadFailure({ notice, onRefresh }: Readonly<{
 }>): React.ReactElement {
     const text = usePluginTranslation();
     const error = notice.error;
-    const connectionFailure = presentTriageSourceConnectionFailure(error?.code, text);
-    if (connectionFailure !== undefined && error !== undefined) return <SessionLinkFailureLine
-        title={connectionFailure.title} code={error.code} requestId={readPluginErrorRequestIdV1(error)} presentation={connectionFailure} />;
-    return <ActionFailureDetails code={error?.code} message={error?.message} details={error?.details}
+    const code = error?.code;
+    const connectionFailure = presentTriageSourceConnectionFailure(code, text);
+    if (connectionFailure !== undefined && code !== undefined) return <SessionLinkFailureLine
+        title={connectionFailure.title} code={code} requestId={readPluginErrorRequestIdV1(error)} presentation={connectionFailure} />;
+    return <ActionFailureDetails code={code} message={error?.message} details={error?.details}
         requestId={readPluginErrorRequestIdV1(error)} inline={{
             fallback: text('plugins.triage.sessionLinks.unavailable', 'Linked entries could not be read'),
             diagnostics: error?.diagnostics,
