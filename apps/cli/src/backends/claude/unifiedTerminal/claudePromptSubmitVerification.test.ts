@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import { runTerminalPromptSubmission } from '@/integrations/terminalHost/promptSubmitVerification';
@@ -68,11 +70,12 @@ describe('createClaudePromptSubmitVerificationPolicy', () => {
     },
   );
 
-  it('submits a numbered draft in a named composer and recognizes when it clears', async () => {
+  it.each([
+    ['plain', '────────── Build check ──────────', '────────────────────────────────'],
+    ['labelled', '────────── Build check ─', '────────── ↓ 4 more ────────────'],
+  ])('submits a numbered draft in a named composer with a %s closing rule', async (_label, top, bottom) => {
     const policy = createClaudePromptSubmitVerificationPolicy();
     const promptText = '1. check the build\n2. review the output';
-    const top = '────────── Build check ──────────';
-    const bottom = '────────────────────────────────';
     let screenText = [top, '❯ 1. check the build', '  2. review the output', bottom].join('\n');
     const result = await runTerminalPromptSubmission({
       promptText,
@@ -254,6 +257,68 @@ describe('createClaudePromptSubmitVerificationPolicy', () => {
       submitMayHaveReachedPane: false,
     });
     expect(submitEnter).toHaveBeenCalledOnce();
+  });
+
+  it('submits a scrolled composer whose top rule also carries the session name (2026-11-24 incident)', async () => {
+    const screenText = readFileSync(
+      new URL('./tuiControls/__fixtures__/claude-2.1.331-scrolled-named-composer.ansi', import.meta.url),
+      'utf8',
+    );
+    const promptText = [
+      '/compact Ich räume jetzt den Kontext auf.',
+      'Danach geht es mit der Schweizer Fassung weiter.',
+      'fr-Kopf gelandet 483d2ec6 und live geprüft. #699 wartet auf Johanna..',
+      'Behalte in der Zusammenfassung: Auftrag, naechster Schritt, Entscheidungen samt Grund, verworfene Wege samt Grund, Artefakt-Kennungen (Pfade, Zweig, PR, CI-IDs, Task- und Subagent-IDs) und offene Nutzerfragen. Verwirf Tool-Ausgaben und abgeschlossene Teilaufgaben ausser deren Ergebnis. Die Fleet-Uebergabe wird nach dem Compact automatisch wieder eingespielt; verweise darauf, statt sie zu wiederholen.',
+    ].join('\n');
+    const policy = createClaudePromptSubmitVerificationPolicy();
+    const submitEnter = vi.fn(async () => 'success' as const);
+    const submit = (screenText: string) => runTerminalPromptSubmission({
+      promptText,
+      verifyStagedBeforeSubmit: async ({ promptText }) => policy.isPromptStagedBeforeSubmit({ promptText, screenText }),
+      submitEnter,
+      verifyAfterSubmit: async () => false,
+      remainingTimeoutMs: () => 0,
+      wait: async () => {},
+      postSubmitSettleMs: 0,
+    });
+
+    expect(await submit(screenText)).toEqual({ success: true });
+    expect(await submit(screenText.replace('wieder eingespielt', 'wieder eingespielX'))).toMatchObject({
+      success: false,
+      phase: 'after_write_before_enter',
+      submitMayHaveReachedPane: false,
+    });
+    expect(submitEnter).toHaveBeenCalledOnce();
+  });
+
+  it.each(['Build status ↑ 2 jobs', 'Build status ↑ 2 more jobs'])(
+    'does not stage transcript text under a rule labelled %s',
+    (label) => {
+      const promptText = 'Check the staged draft before sending.';
+      const screenText = [
+        `─── ${label} ───`,
+        `  ${promptText}`,
+        '─────────────────────────────',
+      ].join('\n');
+
+      const policy = createClaudePromptSubmitVerificationPolicy();
+      expect(policy.isPromptStagedBeforeSubmit({ promptText, screenText })).toBe(false);
+    },
+  );
+
+  it('stages an unscrolled composer whose top rule carries the session name', () => {
+    const screenText = readFileSync(
+      new URL('./tuiControls/__fixtures__/claude-2.1.331-named-composer.ansi', import.meta.url),
+      'utf8',
+    );
+    const sentence = 'Dies ist ein harmloser Absatz fuer den Eingabefeld-Mitschnitt und enthaelt keinen Auftrag.';
+    const promptText = [`${sentence} ${sentence} ${sentence}`, `${sentence} ${sentence} ${sentence}`].join('\n');
+    const policy = createClaudePromptSubmitVerificationPolicy();
+    expect(policy.isPromptStagedBeforeSubmit({ promptText, screenText })).toBe(true);
+    expect(() => policy.isPromptStagedBeforeSubmit({
+      promptText,
+      screenText: screenText.replace('Eingabefeld-Mitschnitt und enthaelt keinen Auftrag. Dies ist ein harmloser', 'Eingabefeld-Mitschnitt und enthaelt keinen Auftrag. Dies ist ein harmlosXr'),
+    })).toThrow();
   });
 
   it('accepts a sufficiently long canonical visible composer window before and after submit', () => {
