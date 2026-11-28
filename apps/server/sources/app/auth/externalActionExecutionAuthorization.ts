@@ -1752,7 +1752,7 @@ async function isReviewedManagedAcquirePurpose(binding: ExternalActionExecutionA
     // Encrypted operands are opened and compared once by the installed host.
     // Plain roots also expose their exact retained Run and bound operand here.
     return root.v === 2 || root.input !== null && typeof root.input === 'object' && !Array.isArray(root.input)
-        && root.input.runId === parsed.data.requestId
+        && 'runId' in root.input && (root.input as Record<string, unknown>).runId === parsed.data.requestId
         && sameManagedInput(root.workflowPreparation?.acquisition, input);
 }
 
