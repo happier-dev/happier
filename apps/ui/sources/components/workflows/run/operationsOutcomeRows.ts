@@ -167,7 +167,7 @@ function findingRow(
     // The agent writes Markdown; a one-line row says it as plain text, the same projection message previews use.
     preview?.state === 'available'
       ? stripMarkdown(preview.text)
-      : finding.result
+      : finding.result?.completedAt != null
         ? t('workflows.triggers.guided.outcome.reported')
         // Whether the agent finished lives in its Session; this row never guesses.
         : t(session ? 'workflows.triggers.guided.outcome.inSession' : 'workflows.triggers.guided.outcome.working');

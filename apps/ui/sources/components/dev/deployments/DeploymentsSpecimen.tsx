@@ -18,6 +18,8 @@ import { showDeploymentDispositionSheet, type DeploymentDispositionSheetInput } 
 import { deploymentSheetStyles, showDeploymentSheet } from '@/components/projects/deployments/deploymentSheet';
 import { DeploymentPreparationRecognized } from '@/components/projects/deployments/DeploymentPreparationRecognized';
 import { DeploymentAddServiceMatches } from '@/components/approvals/DeploymentAddPortsFacts';
+import { OperationsOutcomeGroup } from '@/components/workflows/run/OperationsOutcomeGroup';
+import { createInvestigationOutcomeFixture } from '@/dev/testkit/fixtures/investigationOutcomeFixture';
 import { ActionInputFields } from '@/components/sessions/actions/ActionInputFields';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -918,6 +920,14 @@ export function DeploymentsSpecimen(
   if (props.state === 'add-name-conflict') return <ListPresentationProvider value="page" pageInsets="contained">
     <DeploymentAddServiceMatches machine="Home server" names rows={[{ name: 'search-1' }]} testID="review.add.name-conflict" />
   </ListPresentationProvider>;
+  const investigation = props.state.slice('investigation-'.length);
+  if (props.state.startsWith('investigation-') && (investigation === 'working' || investigation === 'inconclusive'
+    || investigation === 'proposal' || investigation === 'settled' || investigation === 'handle')) {
+    return <ListPresentationProvider value="page" pageInsets="contained">
+      <OperationsOutcomeGroup input={createInvestigationOutcomeFixture(getActiveServerId(), investigation)}
+        testID="project-deployments.environment.investigation" />
+    </ListPresentationProvider>;
+  }
   if (props.state === 'prepare-recognized' || props.state === 'prepare-unknown') {
     const known = props.state === 'prepare-recognized';
     return <ListPresentationProvider value="page" pageInsets="contained">

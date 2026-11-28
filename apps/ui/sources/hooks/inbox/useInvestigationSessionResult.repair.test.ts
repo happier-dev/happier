@@ -234,6 +234,9 @@ it('carries a linked repair journey through proposal, command evidence, redeploy
         expect(performed).toEqual([]);
         expect(storage.getState().artifactApprovalArtifactsBySessionId.repair?.approval).toBeDefined();
         expect(outcome().proposal.approval?.artifactId).toBe('approval');
+        expect(outcome().produced.approvals[0]?.review).toMatchObject({
+            actionId: 'projects.compute.exec', actionArgs: { executable: 'pnpm', argv: ['test:repair'] },
+        });
         expect(outcome().produced.operations).toEqual([]); // A requested approval has not executed.
         if (!commandProposal?.ok) throw new Error('Expected admitted command proposal');
         messages.push(tool('approval', 'projects.compute.exec', commandProposal.result));
@@ -255,6 +258,7 @@ it('carries a linked repair journey through proposal, command evidence, redeploy
         expect(delivered).toMatchObject([{ sessionId: 'repair', localId: 'approval-result:approval' }]);
         expect(ApprovalRequestSchema.parse(stored).status).toBe('executed');
         expect(outcome().proposal.approval?.artifactId).toBe('approval');
+        expect(outcome().produced.approvals[0]?.review).toBeUndefined();
         messages.unshift(tool('pr', 'scm.pullRequest.openOrReuse', ScmPullRequestOpenOrReuseResponseSchema.parse({ success: true,
             result: 'created', nextAction: { kind: 'none' }, pullRequest: {
                 provider: { id: 'happier.scm.forge.github/github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },

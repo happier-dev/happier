@@ -5217,6 +5217,12 @@ their agent-action catalog is loading or unavailable. The Account investigation
 owner supplies this state for the current subject and Controller, and Retry
 uses the same catalog acquisition path.
 
+In 0.3 development, Environment Overview can show the linked investigation
+finding in place. The finding carries the agent's evidence and uncertainty and
+opens the full Session. When the linked Session has an open proposal with
+retained review facts, the outcome shows those effects with the shared Action
+review. The approval link opens the existing decision page.
+
 Environment `healthNotices` separately selects authenticated Home/Account C1
 activity through the shell's existing Artifact acquisition. Optional typed
 `environmentHealth` is the producer's condition-at-write aggregate, not a

@@ -18,6 +18,8 @@ import { CurrentUiContextSnapshotV1Schema } from '@happier-dev/protocol/plugins/
 
 import { OperationsOutcomeGroup } from './OperationsOutcomeGroup';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import type { OperationsRunOutcomeInput } from '@/sync/domains/workflows/operationsRunOutcome';
 
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
@@ -29,7 +31,7 @@ function Publication() {
   return null;
 }
 
-const routerMock = vi.hoisted(() => ({ push: null as null | ReturnType<typeof vi.fn> }));
+const routerMock = vi.hoisted(() => ({ push: null as null | ReturnType<typeof vi.fn>, navigate: null as null | ReturnType<typeof vi.fn> }));
 
 vi.mock('react-native', async () => {
   const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -47,6 +49,7 @@ vi.mock('expo-router', async () => {
   const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
   const mocked = createExpoRouterMock();
   routerMock.push = mocked.spies.push;
+  routerMock.navigate = mocked.spies.navigate;
   return mocked.module;
 });
 
@@ -75,11 +78,43 @@ const input = {
 afterEach(async () => {
   vi.restoreAllMocks();
   routerMock.push?.mockClear();
+  routerMock.navigate?.mockClear();
   await standardCleanup();
   await homes.reset();
 });
 
 describe('OperationsOutcomeGroup', () => {
+  it('shows the retained Action consequences beside the finding and keeps the full Session one press away', async () => {
+    await loadSyncSingletonForTests();
+    const serverId = await homes.addHome({ name: 'Investigation', serverUrl: 'https://investigation-outcome.test', accountId: 'owner', currentAccount: true });
+    const address = { serverId, sessionId: 'repair-session' };
+    const finding = 'The migration was skipped. The build log confirms it. A database lock is still possible.';
+    const input: OperationsRunOutcomeInput = {
+      subject: { kind: 'deploymentEnvironment', serverId, environmentId: 'env' },
+      finding: { kind: 'investigate', session: address, result: {
+        preview: { state: 'available', text: finding }, workflowInvocation: null, completedAt: 1,
+      } },
+      produced: {
+        approvals: [{ serverId, request: { kind: 'approval_request_created', artifactId: 'repair-approval', actionId: 'projects.compute.exec' },
+          status: 'open',
+          review: { actionId: 'projects.compute.exec', actionArgs: {
+            workspace: { serverId, machineId: 'runner', workspaceId: 'workspace', rootPath: '/repo' },
+            executable: 'pnpm', argv: ['test:repair'], cwd: '/repo', choice: { kind: 'primary' },
+          } } }],
+        pullRequests: [], operations: [], pendingOperations: [], receipts: [],
+      },
+    };
+    const screen = await renderScreen(<InjectedAuthProvider credentials={null}>
+      <OperationsOutcomeGroup input={input} testID="investigation" />
+    </InjectedAuthProvider>);
+    expect(screen.findByType(MarkdownView).props.markdown).toBe(finding);
+    expect(screen.getTextContent()).toContain('pnpm test:repair');
+    await screen.pressByTestIdAsync('investigation.finding');
+    await vi.waitFor(() => expect(routerMock.navigate).toHaveBeenCalledWith(
+      `/session/repair-session?serverId=${encodeURIComponent(serverId)}`, expect.any(Object),
+    ));
+  });
+
   it('publishes exactly its approval navigation and withdraws hidden outcome addresses', async () => {
     const home = await createPlainArtifactHomeFixture('https://workflow-approval-navigation.test');
     try {

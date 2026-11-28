@@ -34,9 +34,11 @@ function rows(input: Partial<OperationsRunOutcomeInput>) {
 
 describe('presentOperationsOutcomeRows', () => {
   it('shows only the finding and recovery when nothing was proposed or applied', () => {
-    const presented = rows({});
+    const presented = rows({ finding: { ...started, result: {
+      preview: { state: 'unavailable' }, workflowInvocation: null, completedAt: null,
+    } } });
     expect(presented.map((row) => row.key)).toEqual(['finding', 'recovery']);
-    expect(presented[0]).toMatchObject({ session });
+    expect(presented[0]).toMatchObject({ session, value: t('workflows.triggers.guided.outcome.inSession') });
     expect(presented[1]).not.toHaveProperty('tone');
     expect(presented[1]).toMatchObject({ known: false });
   });

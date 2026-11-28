@@ -5,6 +5,7 @@ import { buildSessionActivityAttention } from '@/activity/attention/buildSession
 import { readInboxReadySessionTurn } from '@/activity/presentation/buildInboxReadySessionResult';
 import { useSessionMessages, useTranscriptApprovalArtifactsForSession } from '@/sync/store/hooks';
 import { resolveApprovalDisplayStatus } from '@/components/approvals/approvalStatusLabel';
+import { isConfidentialSecretApprovalAction, readConfidentialActionInputsApproval } from '@/components/approvals/confidentialSecretApprovalModel';
 import { readTranscriptOperationsProducedResults } from '@/components/sessions/transcript/references/transcriptOperationsProducedResults';
 import { EMPTY_OPERATIONS_RUN_PRODUCED_RESULTS } from '@/sync/domains/workflows/operationsRunOutcome';
 import { storage } from '@/sync/domains/state/storageStore';
@@ -59,8 +60,12 @@ export function useInvestigationSessionResult(
         const approvals = new Map(transcriptProduced.approvals.map(value =>
             [JSON.stringify([value.serverId, value.request.artifactId]), value] as const));
         for (const { artifact, approval } of approvalArtifacts) {
+            const { actionId, actionArgs, preview } = approval;
+            const review = approval.status === 'open' && !isConfidentialSecretApprovalAction(actionId)
+                && readConfidentialActionInputsApproval(approval) === null ? { actionId, actionArgs, preview } : undefined;
             approvals.set(JSON.stringify([address.serverId, artifact.id]), { serverId: address.serverId, status: resolveApprovalDisplayStatus(approval),
-                request: { kind: 'approval_request_created', artifactId: artifact.id, actionId: approval.actionId } });
+                request: { kind: 'approval_request_created', artifactId: artifact.id, actionId },
+                ...(review ? { review } : {}) });
         }
         return { ...transcriptProduced, approvals: [...approvals.values()] };
     }, [address, readable, transcriptProduced, approvalArtifacts]);

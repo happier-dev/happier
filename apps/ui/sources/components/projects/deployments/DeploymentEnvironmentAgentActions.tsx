@@ -5,7 +5,10 @@ import { StyleSheet } from 'react-native-unistyles';
 import { InvestigationAgentActionButtons } from '@/components/inbox/detail/InvestigationAgentActionButtons';
 import { InvestigationOutcomeBanner } from '@/components/inbox/detail/InvestigationOutcomeBanner';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { OperationsOutcomeGroup } from '@/components/workflows/run/OperationsOutcomeGroup';
+import { useAccountNoticeInvestigation } from '@/hooks/inbox/AccountNoticeInvestigationProvider';
 import { useInvestigateFailure } from '@/hooks/inbox/useInvestigateFailure';
+import { useInvestigationSessionResult } from '@/hooks/inbox/useInvestigationSessionResult';
 import { t } from '@/text';
 import { DeploymentPreparationEntry, type DeploymentPreparationContext } from './DeploymentPreparation';
 
@@ -35,8 +38,14 @@ export function DeploymentEnvironmentAgentActions(props: Readonly<{
   }), [props.controllerMachineId]);
   const investigation = useInvestigateFailure(subject, options);
   const actions = investigation.actions ?? [];
+  const owner = useAccountNoticeInvestigation();
+  const started = investigation.outcome?.kind === 'started' ? investigation.outcome : null;
+  const linked = useInvestigationSessionResult(owner, actions.length > 0 || started ? subject : null, started, options);
+  const result = React.useMemo(() => linked ? {
+    subject, finding: { kind: 'investigate' as const, ...linked }, produced: linked.produced,
+  } : null, [linked, subject]);
   // Healthy with nothing to offer stays silent; a refused catalog keeps the section to say what it needs.
-  if (!props.preparation && actions.length === 0 && !investigation.showOutcome && !investigation.catalogOutcome) return null;
+  if (!props.preparation && actions.length === 0 && !investigation.showOutcome && !investigation.catalogOutcome && !result) return null;
   const content = (
     <View style={styles.actions}>
       {props.preparation ? <DeploymentPreparationEntry {...props.preparation} environmentId={props.environmentId} mode="prepare"
@@ -52,6 +61,9 @@ export function DeploymentEnvironmentAgentActions(props: Readonly<{
             pending={investigation.pending} placement="inline" />
         </View>
       ) : null}
+      {result ? <View style={styles.outcome}>
+        <OperationsOutcomeGroup input={result} testID="project-deployments.environment.investigation" />
+      </View> : null}
     </View>
   );
   return props.placement === 'section' ? (

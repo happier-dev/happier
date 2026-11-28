@@ -4,6 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
+import { ApprovalReviewFacts } from '@/components/approvals/ApprovalReviewFacts';
 import { openActionOperationDetail } from '@/components/inbox/actionOperations/openActionOperationDetail';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -44,6 +45,19 @@ export const OperationsOutcomeGroup = React.memo(
     const navigateToSession = useNavigateToSession();
     const router = useRouter();
     const { openReceipt } = props;
+    const proposedApproval = outcome.finding.kind === 'investigate'
+      ? outcome.produced.approvals.find(({ request }) => request === outcome.proposal.approval)
+      : undefined;
+    const reviewProps = (link: OperationsOutcomeLink | undefined) => {
+      if (!proposedApproval?.review || link?.kind !== 'approval'
+        || link.artifactId !== proposedApproval.request.artifactId || link.serverId !== proposedApproval.serverId) return undefined;
+      const { actionId, actionArgs, preview } = proposedApproval.review;
+      return {
+        bottomElement: <ApprovalReviewFacts actionId={actionId} actionArgs={actionArgs} preview={preview} status="open" serverId={link.serverId}
+          artifactId={link.artifactId} testID={`${props.testID}.proposal.review`} />,
+        bottomElementOutsidePressable: true,
+      };
+    };
     // Each kind opens where it already lives; a receipt on another Home has no page here, so it stays a fact.
     const linkOpener = (link: OperationsOutcomeLink): (() => void) | undefined => {
       switch (link.kind) {
@@ -85,6 +99,7 @@ export const OperationsOutcomeGroup = React.memo(
               key={row.key}
               testID={`${props.testID}.${row.key}`}
               title={row.title}
+              detail={row.session ? t('runs.openSession') : undefined}
               // A finding is the agent's own words, drawn in full as its Markdown; its links stay its own, outside the row's press.
               {...(row.key === 'finding'
                 ? row.markdown
@@ -94,6 +109,7 @@ export const OperationsOutcomeGroup = React.memo(
                     }
                   : { subtitle: row.value, subtitleLines: 3 }
                 : factProps(row.value, row.tone))}
+              {...reviewProps(row.opens)}
               showChevron={Boolean(onPress)}
               {...(onPress ? { onPress } : {})}
             />,
@@ -104,6 +120,7 @@ export const OperationsOutcomeGroup = React.memo(
                   testID={`${props.testID}.${row.key}.link.${linkKey(link)}`}
                   title={link.title}
                   {...factProps(link.detail, link.tone)}
+                  {...reviewProps(link)}
                   showChevron={Boolean(open)}
                   {...(open ? { onPress: open } : {})}
                 />

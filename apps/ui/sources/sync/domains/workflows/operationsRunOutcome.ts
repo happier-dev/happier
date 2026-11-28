@@ -4,6 +4,7 @@ import type { WorkflowFinalResultV1 } from '@happier-dev/protocol/workflows/work
 import type { SessionMessageRefV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageRefV1';
 import type { InboxReadySessionResult } from '@/activity/presentation/buildInboxReadySessionResult';
 import type { ActionApprovalRequestCreatedResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import type { ScmPullRequestSummary } from '@happier-dev/protocol/scm/pullRequests';
 import type { DeploymentReceiptHeaderV1 } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentEnvironmentHealthAggregateV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
@@ -19,7 +20,13 @@ export type OperationsRunReceiptReference = Readonly<{
 export type OperationsRunProducedResults = Readonly<{
     pullRequests: readonly ScmPullRequestSummary[];
     /** `status` is the request's own lifecycle when its Artifact is loaded; a transcript handle alone has none. */
-    approvals: readonly Readonly<{ serverId: string; request: ActionApprovalRequestCreatedResult; status?: string }>[];
+    approvals: readonly Readonly<{
+        serverId: string;
+        request: ActionApprovalRequestCreatedResult;
+        status?: string;
+        /** Presentation facts from an opened, ordinary Action request in the investigation Session. */
+        review?: Pick<ApprovalRequest, 'actionId' | 'actionArgs' | 'preview'>;
+    }>[];
     operations: readonly QualifiedActionOperation[];
     pendingOperations: readonly NonNullable<Extract<DeploymentReceiptAcceptedResultV1, { kind: 'pending' }>['operation']>[];
     receipts: readonly OperationsRunReceiptReference[];
