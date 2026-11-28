@@ -276,14 +276,17 @@ async function fixture(options: Readonly<{ projectCleanupUnavailable?: boolean;
     if (request.requesterIdentity.kind !== 'isolated') throw Object.assign(new Error('not a member'), { code: 'agent_isolation_unavailable' });
     if (options.memberIdentityUnavailable) return { requesterIdentity: request.requesterIdentity, workingDirectory: memberRoot,
       agentIsolation: { requesterIdentity: request.requesterIdentity, read: () => daemonIsolation }, dispose: async () => {} };
-    const other = request.requesterIdentity.requester.accountId === 'other-account';
+    const accountId = request.requesterIdentity.requester.accountId;
+    const secondManageAccount = accountId === 'second-manage-account';
+    const other = accountId === 'other-account' || secondManageAccount;
     const workspaceRoot = other ? otherMemberRoot : memberRoot;
     const agentUid = other ? 2402 : 2401;
+    const nativeHome = secondManageAccount ? join(directory, 'other-member-home') : memberHome;
     const memberIdentity = { ...deriveAgentIsolationMemberIdentity({ ...request.requesterIdentity, homeServerIdentityId: home }),
-      workspaceRoot, home: memberHome, agentUid, agentGid: agentUid };
-    os.memberHomes.set(memberIdentity.username, { path: memberHome, uid: agentUid });
+      workspaceRoot, home: nativeHome, agentUid, agentGid: agentUid };
+    os.memberHomes.set(memberIdentity.username, { path: nativeHome, uid: agentUid });
     const snapshot = { ...daemonIsolation, workspaceRoots: [workspaceRoot], memberIdentity, localTransport: { agentUid, agentGid: agentUid },
-      launch: { managedHappierBinaryPath: '/opt/happier/cli/current/happier', runtimeHome: join(memberHome, 'runtime'),
+      launch: { managedHappierBinaryPath: '/opt/happier/cli/current/happier', runtimeHome: join(nativeHome, 'runtime'),
         environment: {}, selectedEnvironmentKeys: [], selectedMaterials: [] } };
     return { requesterIdentity: request.requesterIdentity, memberIdentity, workingDirectory: workspaceRoot,
       ...(requesterAccounts ? { connectedAccounts: requesterAccounts } : {}),
@@ -894,6 +897,16 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
     expect(await invoke(RPC_METHODS.SCM_BRANCH_CHECKOUT, checkout, 'other-account'))
       .toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN, effectAttempted: false });
     expect(git(cwd, 'branch', '--show-current')).toBe('main\n');
+
+    const launchCount = os.runAs.length;
+    const daemonTouchCount = os.daemonTouches.length;
+    const crossAccount = await invoke(RPC_METHODS.SCM_BRANCH_CHECKOUT, checkout, 'second-manage-account');
+    await expect(f.authorizeRequest.mock.results.at(-1)?.value).resolves.toMatchObject({ ok: true });
+    expect(crossAccount).toMatchObject({ success: false, errorCode: 'INVALID_PATH' });
+    expect(os.runAs.slice(launchCount).map(run => run.uid)).not.toContain(2401);
+    expect(os.daemonTouches.slice(daemonTouchCount)).toEqual([]);
+    expect(git(cwd, 'branch', '--show-current')).toBe('main\n');
+
     // Can use stays in its member folder, even for a repository in its member user's home.
     const useRead = await f.invoke(RPC_METHODS.SCM_STATUS_SNAPSHOT, { cwd }, 'member-account', 'use');
     expect(useRead, JSON.stringify(useRead)).toMatchObject({ success: false, errorCode: 'INVALID_PATH' });
