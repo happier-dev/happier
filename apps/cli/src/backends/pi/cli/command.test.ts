@@ -35,4 +35,8 @@ describe('handlePiCliCommand', () => {
       resume: 'pi-1',
     });
   });
+
+  it.each(['--continue', '-c'])('does not interpret %s after the argument separator', async (flag) => {
+    await expect(runWithArgs(['pi', '--', flag])).resolves.toMatchObject({ continueRecentSession: false });
+  });
 });

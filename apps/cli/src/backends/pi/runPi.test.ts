@@ -1,13 +1,7 @@
-import { mkdir, realpath, symlink, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
-
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Credentials } from '@/persistence';
 import { PI_BROKER_SELECTIONS_ENV, serializePiBrokerSelections } from '@/backends/pi/brokerExtension';
-import { formatPiSessionDirectoryForCwd } from '@/backends/pi/utils/piSessionFiles';
-import { createEnvKeyScope } from '@/testkit/env/envScope';
-import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 
 const { runStandardAcpProviderMock, createPiAcpRuntimeMock } = vi.hoisted(() => ({
   runStandardAcpProviderMock: vi.fn(),
@@ -183,120 +177,22 @@ describe('runPi', () => {
     expect(config.resolvePermissionModeQueueKey('read-only')).toBe('read,grep,find,ls');
   });
 
-  describe('--continue', () => {
-    const envScope = createEnvKeyScope([
-      'HOME',
-      'USERPROFILE',
-      'PWD',
-      'HAPPIER_STACK_INVOKED_CWD',
-      'HAPPIER_SESSION_REQUESTED_DIRECTORY',
-      'PI_CODING_AGENT_DIR',
-      'PI_CODING_AGENT_SESSION_DIR',
-    ]);
-    let root: string;
-    let cwd: string;
-    let physicalCwd: string;
-    let agentDir: string;
-    let processCwd: string;
-    let cwdSpy: { mockRestore: () => void } | null = null;
+  it('opens native continuation before the first prompt', async () => {
+    await withTty(false, () => runPi({ credentials, continueRecentSession: true }));
 
-    beforeEach(async () => {
-      root = await createTempDir('happier-run-pi-continue-');
-      cwd = join(root, 'project');
-      agentDir = join(root, 'agent');
-      await mkdir(cwd, { recursive: true });
-      // Pi encodes its session dir from its own process.cwd(), which is the physical path.
-      physicalCwd = await realpath(cwd);
-      envScope.patch({
-        HOME: join(root, 'home'),
-        USERPROFILE: join(root, 'home'),
-        PWD: undefined,
-        HAPPIER_STACK_INVOKED_CWD: undefined,
-        HAPPIER_SESSION_REQUESTED_DIRECTORY: undefined,
-        PI_CODING_AGENT_DIR: agentDir,
-        PI_CODING_AGENT_SESSION_DIR: undefined,
-      });
-      processCwd = cwd;
-      cwdSpy = vi.spyOn(process, 'cwd').mockImplementation(() => processCwd);
-    });
+    const [options, config] = runStandardAcpProviderMock.mock.calls[0]!;
+    expect(options.resume).toBeUndefined();
+    expect(config.startRuntimeBeforeFirstPrompt).toBe(true);
+    config.createRuntime(createRuntimeParams());
+    expect(createPiAcpRuntimeMock.mock.calls[0]?.[0].continueRecentSession).toBe(true);
+  });
 
-    afterEach(async () => {
-      cwdSpy?.mockRestore();
-      envScope.restore();
-      await removeTempDir(root);
-    });
+  it('keeps an explicit --resume over --continue', async () => {
+    await withTty(false, () => runPi({ credentials, continueRecentSession: true, resume: 'explicit-id' }));
 
-    async function writeSession(name: string, piCwd = physicalCwd): Promise<string> {
-      const dir = join(agentDir, 'sessions', formatPiSessionDirectoryForCwd(piCwd));
-      await mkdir(dir, { recursive: true });
-      const filePath = join(dir, name);
-      await writeFile(filePath, `${JSON.stringify({ type: 'session', version: 3, id: 'pi-1', timestamp: '', cwd: piCwd })}\n`);
-      return filePath;
-    }
-
-    it('resumes the newest Pi session file for the working directory', async () => {
-      const sessionFile = await writeSession('2026-11-16T00-00-00-000Z_pi-1.jsonl');
-
-      await runPi({ credentials, continueRecentSession: true });
-
-      expect(runStandardAcpProviderMock.mock.calls[0]?.[0].resume).toBe(sessionFile);
-    });
-
-    // POSIX getcwd() reports the physical path; Windows reports the launch path unresolved (below).
-    it.skipIf(process.platform === 'win32')('on POSIX looks in the physical directory Happier launches Pi in, not the runner cwd', async () => {
-      // hstack runs the CLI from the repo root and passes the user's (here symlinked) directory.
-      processCwd = join(root, 'repo-root');
-      await mkdir(processCwd, { recursive: true });
-      const link = join(root, 'project-link');
-      await symlink(cwd, link, 'junction');
-      envScope.patch({ HAPPIER_STACK_INVOKED_CWD: link });
-      const sessionFile = await writeSession('2026-11-16T00-00-00-000Z_pi-1.jsonl');
-
-      await runPi({ credentials, continueRecentSession: true });
-
-      expect(runStandardAcpProviderMock.mock.calls[0]?.[0].resume).toBe(sessionFile);
-    });
-
-    it('on Windows looks in the directory as launched, since Pi\'s process.cwd() keeps junctions there', async () => {
-      const link = join(root, 'project-link');
-      await symlink(cwd, link, 'junction');
-      envScope.patch({ HAPPIER_STACK_INVOKED_CWD: link });
-      const sessionFile = await writeSession('2026-11-16T00-00-00-000Z_pi-1.jsonl', link);
-      const platform = Object.getOwnPropertyDescriptor(process, 'platform');
-      Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
-      try {
-        await runPi({ credentials, continueRecentSession: true });
-      } finally {
-        if (platform) Object.defineProperty(process, 'platform', platform);
-      }
-
-      expect(runStandardAcpProviderMock.mock.calls[0]?.[0].resume).toBe(sessionFile);
-    });
-
-    it('keeps an explicit --resume over --continue', async () => {
-      await writeSession('2026-11-16T00-00-00-000Z_pi-1.jsonl');
-
-      await runPi({ credentials, continueRecentSession: true, resume: 'explicit-id' });
-
-      expect(runStandardAcpProviderMock.mock.calls[0]?.[0].resume).toBe('explicit-id');
-    });
-
-    it.each(['default', 'configured'])('starts a new session and names the %s directory it checked', async (kind) => {
-      const sessionDir = kind === 'default'
-        ? join(agentDir, 'sessions', formatPiSessionDirectoryForCwd(process.platform === 'win32' ? cwd : physicalCwd))
-        : join(root, 'custom-sessions');
-      if (kind === 'configured') envScope.patch({ PI_CODING_AGENT_SESSION_DIR: sessionDir });
-      const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
-      let stderrText = '';
-      try {
-        await runPi({ credentials, continueRecentSession: true });
-        stderrText = stderr.mock.calls.map(([chunk]) => String(chunk)).join('');
-      } finally {
-        stderr.mockRestore();
-      }
-
-      expect(runStandardAcpProviderMock.mock.calls[0]?.[0].resume).toBeUndefined();
-      expect(stderrText).toContain(`No previous Pi session in ${sessionDir};`);
-    });
+    const [options, config] = runStandardAcpProviderMock.mock.calls[0]!;
+    expect(options.resume).toBe('explicit-id');
+    config.createRuntime(createRuntimeParams());
+    expect(createPiAcpRuntimeMock.mock.calls[0]?.[0].continueRecentSession).toBe(false);
   });
 });

@@ -91,6 +91,17 @@ export async function pathExistsAsFile(path: string): Promise<boolean> {
   }
 }
 
+export async function matchesPiSessionFileIdentity(
+  path: string,
+  sessionId: string,
+  options: { requireHeader?: boolean } = {},
+): Promise<boolean> {
+  if (!isAbsolute(path) || !await pathExistsAsFile(path)) return false;
+  const header = await readPiSessionHeader(path);
+  if (header) return header.id === sessionId;
+  return options.requireHeader !== true && doesPiSessionFileNameMatchSessionId(basename(path), sessionId);
+}
+
 export async function findNewestPiSessionFileInDir(params: Readonly<{
   sessionId: string;
   dir: string;
@@ -110,6 +121,8 @@ export async function findNewestPiSessionFileInDir(params: Readonly<{
     try {
       const metadata = await stat(path);
       if (!metadata.isFile()) continue;
+      const header = await readPiSessionHeader(path);
+      if (header && header.id !== params.sessionId) continue;
       matches.push({
         path,
         mtimeMs: typeof metadata.mtimeMs === 'number' && Number.isFinite(metadata.mtimeMs)

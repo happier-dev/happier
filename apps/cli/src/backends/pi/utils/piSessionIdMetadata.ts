@@ -3,12 +3,12 @@ import {
   buildPiAgentRuntimeDescriptorV1,
   readAgentRuntimeDescriptorV1ForProvider,
 } from '@happier-dev/protocol';
-import { basename, isAbsolute } from 'node:path';
+import { isAbsolute } from 'node:path';
 
 import {
   buildPiResumeSearchRoots,
-  doesPiSessionFileNameMatchSessionId,
   findPiSessionFileForId,
+  matchesPiSessionFileIdentity,
   pathExistsAsFile,
   resolvePiSessionIdFromResumeReference,
 } from '@/backends/pi/utils/piSessionFiles';
@@ -147,9 +147,17 @@ export async function resolvePiSessionFileForRuntimeSession(params: Readonly<{
   cwd: string;
   processEnv?: NodeJS.ProcessEnv;
   candidatePersistedSessionFile?: string | null;
+  reportedSessionFile?: string | null;
 }>): Promise<string | null> {
   const vendorSessionReference = normalizeOptionalString(params.vendorSessionReference);
   const candidatePersistedSessionFile = normalizeOptionalAbsolutePath(params.candidatePersistedSessionFile);
+  const reportedSessionFile = normalizeOptionalAbsolutePath(params.reportedSessionFile);
+
+  if (reportedSessionFile) {
+    return vendorSessionReference && await matchesPiSessionFileIdentity(reportedSessionFile, vendorSessionReference, {
+      requireHeader: true,
+    }) ? reportedSessionFile : null;
+  }
 
   if (vendorSessionReference && isAbsolute(vendorSessionReference) && await pathExistsAsFile(vendorSessionReference)) {
     return vendorSessionReference;
@@ -162,8 +170,7 @@ export async function resolvePiSessionFileForRuntimeSession(params: Readonly<{
 
   if (
     candidatePersistedSessionFile &&
-    doesPiSessionFileNameMatchSessionId(basename(candidatePersistedSessionFile), sessionId) &&
-    await pathExistsAsFile(candidatePersistedSessionFile)
+    await matchesPiSessionFileIdentity(candidatePersistedSessionFile, sessionId)
   ) {
     return candidatePersistedSessionFile;
   }
@@ -183,11 +190,13 @@ export async function publishPiSessionIdMetadata(params: Readonly<{
     getMetadataSnapshot?: () => Metadata | null;
   }>;
   getPiSessionId: () => string | null;
+  reportedSessionFile?: string | null;
   cwd: string;
   processEnv?: NodeJS.ProcessEnv;
   lastPublished: PiSessionIdMetadataLastPublishedState;
 }>): Promise<void> {
   const currentSessionReference = normalizeOptionalString(params.getPiSessionId());
+  const reportedSessionFile = normalizeOptionalAbsolutePath(params.reportedSessionFile);
   const metadataSnapshot = params.operation === 'resume'
     ? params.session.getMetadataSnapshot?.()
     : null;
@@ -200,14 +209,16 @@ export async function publishPiSessionIdMetadata(params: Readonly<{
     : null;
   const durableResumeIdentity = candidateDurableResumeIdentity
     && (
-      candidateDurableResumeIdentity.sessionFile === null
+      (reportedSessionFile === null && candidateDurableResumeIdentity.sessionFile === null)
       || (
         durableResumeSessionId !== null
-        && doesPiSessionFileNameMatchSessionId(
-          basename(candidateDurableResumeIdentity.sessionFile),
+        && candidateDurableResumeIdentity.sessionFile !== null
+        && (reportedSessionFile === null || reportedSessionFile === candidateDurableResumeIdentity.sessionFile)
+        && await matchesPiSessionFileIdentity(
+          candidateDurableResumeIdentity.sessionFile,
           durableResumeSessionId,
+          { requireHeader: reportedSessionFile !== null },
         )
-        && await pathExistsAsFile(candidateDurableResumeIdentity.sessionFile)
       )
     )
     ? candidateDurableResumeIdentity
@@ -219,11 +230,12 @@ export async function publishPiSessionIdMetadata(params: Readonly<{
     const persistedSessionFileSurfaces = currentSessionReference && metadataSnapshot
       ? readPiResumeSessionFileSurfaces(metadataSnapshot, currentSessionReference)
       : null;
-    const persistedResumeSessionFile = currentSessionReference && params.operation === 'resume'
+    const persistedResumeSessionFile = currentSessionReference && (reportedSessionFile || params.operation === 'resume')
       ? await resolvePiSessionFileForRuntimeSession({
         vendorSessionReference: currentSessionReference,
         cwd: params.cwd,
         processEnv: params.processEnv,
+        reportedSessionFile,
         candidatePersistedSessionFile: persistedSessionFileSurfaces?.coherent
           ? persistedSessionFileSurfaces.sessionFile
           : null,
@@ -237,7 +249,7 @@ export async function publishPiSessionIdMetadata(params: Readonly<{
     });
   }
 
-  if (!currentSessionReference) return;
+  if (!currentSessionReference || (reportedSessionFile && params.lastPublished.sessionFile === reportedSessionFile)) return;
 
   const scheduleResolveAttempt = (attemptIndex: number): void => {
     const delayMs = PI_SESSION_FILE_RESOLVE_RETRY_DELAYS_MS[attemptIndex];
@@ -256,6 +268,7 @@ export async function publishPiSessionIdMetadata(params: Readonly<{
         cwd: params.cwd,
         processEnv: params.processEnv,
         candidatePersistedSessionFile,
+        reportedSessionFile,
       }).then((resolvedSessionFile) => {
         if (resolvedSessionFile) {
           if (params.lastPublished.value !== currentSessionReference) return;

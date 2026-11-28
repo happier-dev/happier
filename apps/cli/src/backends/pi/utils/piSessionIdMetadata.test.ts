@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -232,6 +232,41 @@ describe('maybeUpdatePiSessionIdMetadata', () => {
         },
       });
     });
+  });
+
+  it('waits for the exact Pi-reported path instead of publishing a matching file elsewhere', async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), 'pi-reported-session-file-'));
+    try {
+      const cwd = join(tempRoot, 'repo');
+      const agentDir = join(tempRoot, 'pi-agent');
+      const sessionsDir = join(agentDir, 'sessions', formatPiSessionDirectoryForCwd(cwd));
+      const reportedSessionFile = join(tempRoot, 'renamed.jsonl');
+      await mkdir(sessionsDir, { recursive: true });
+      await writeFile(join(sessionsDir, 'session-pi-session-1.jsonl'), '{}\n');
+      const lastPublished = { value: null as string | null, sessionFile: null as string | null };
+      let metadata = createTestMetadata({ flavor: 'pi' });
+      const publishedFiles: unknown[] = [];
+      await publishPiSessionIdMetadata({
+        operation: 'create',
+        session: {
+          updateMetadata: (updater) => {
+            metadata = updater(metadata);
+            publishedFiles.push(metadata.piSessionFile);
+          },
+          getMetadataSnapshot: () => metadata,
+        },
+        getPiSessionId: () => 'pi-session-1',
+        reportedSessionFile,
+        cwd,
+        processEnv: { PI_CODING_AGENT_DIR: agentDir },
+        lastPublished,
+      });
+      await writeFile(reportedSessionFile, `${JSON.stringify({ type: 'session', id: 'pi-session-1', cwd })}\n`);
+      await vi.waitFor(() => expect(metadata.piSessionFile).toBe(reportedSessionFile));
+      expect(publishedFiles.filter(Boolean)).toEqual([reportedSessionFile]);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
   });
 
   it('retries session-file discovery and publishes piSessionFile when the file appears shortly after startup', async () => {

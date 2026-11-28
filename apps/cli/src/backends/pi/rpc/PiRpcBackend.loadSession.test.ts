@@ -7,7 +7,6 @@ import { join } from 'node:path';
 
 import type { AgentBackend } from '@/agent/core';
 
-import { resolvePiContinueSessionFile } from '../utils/resolvePiContinueSessionFile';
 import { PiRpcBackend } from './PiRpcBackend';
 
 function makeTempDir(prefix: string): string {
@@ -26,8 +25,11 @@ if (bootLog) {
 }
 
 const sessionIndex = process.argv.indexOf('--session');
-const sessionPath = sessionIndex >= 0 ? process.argv[sessionIndex + 1] : null;
-let sessionId = process.env.FAKE_PI_RPC_SESSION_ID || (sessionPath && sessionPath.includes('pi-session-1') ? 'pi-session-1' : null);
+const continued = process.argv.includes('--continue') && process.env.FAKE_PI_CONTINUE_SESSION_FILE;
+const sessionPath = sessionIndex >= 0 ? process.argv[sessionIndex + 1] : continued || null;
+let sessionId = (sessionPath && sessionPath === process.env.FAKE_PI_CONTINUE_SESSION_FILE && process.env.FAKE_PI_CONTINUE_SESSION_ID)
+  || process.env.FAKE_PI_RPC_SESSION_ID
+  || (sessionPath && sessionPath.includes('pi-session-1') ? 'pi-session-1' : null);
 let promptCount = 0;
 
 const rl = readline.createInterface({ input: process.stdin });
@@ -296,25 +298,36 @@ describe('PiRpcBackend loadSession', () => {
     expect(boots[0]!.argv).toContain(sessionPath);
   });
 
-  it('resumes the file selected by --continue using its header ID and exact path', async () => {
+  it.each(['resume', 'create'] as const)('lets native --continue select the session on initial startup (%s)', async (operation) => {
     workDir = makeTempDir('happier-pi-load-session-continue-');
     const sessionDir = join(workDir, 'sessions');
     mkdirSync(sessionDir);
-    const sessionPath = join(sessionDir, '2026-02-18T00-00-00-000Z_my_feature.jsonl');
-    writeFileSync(sessionPath, `${JSON.stringify({ type: 'session', id: 'my_feature', cwd: workDir })}\n`);
+    const sessionPath = join(sessionDir, 'renamed.jsonl');
+    if (operation === 'resume') {
+      writeFileSync(sessionPath, `${JSON.stringify({ type: 'session', id: 'my_feature', cwd: workDir })}\n`);
+    }
     const bootLogPath = join(workDir, 'boot.log');
+    const opened: unknown[] = [];
     backend = new PiRpcBackend({
       cwd: workDir,
       command: process.execPath,
       args: [makeFakePiRpcLoadSessionScript(workDir)],
-      env: { BOOT_LOG_PATH: bootLogPath, FAKE_PI_RPC_SESSION_ID: 'my_feature' },
+      env: {
+        BOOT_LOG_PATH: bootLogPath,
+        FAKE_PI_RPC_SESSION_ID: 'unexpected-fresh',
+        FAKE_PI_CONTINUE_SESSION_ID: 'my_feature',
+        FAKE_PI_CONTINUE_SESSION_FILE: sessionPath,
+      },
+      takeContinueRecentSession: () => true,
+      onSessionOpened: (identity) => opened.push(identity),
     });
 
-    const selected = await resolvePiContinueSessionFile({ cwd: workDir, env: { PI_CODING_AGENT_SESSION_DIR: sessionDir } });
-    expect(selected?.sessionFile).toBe(sessionPath);
-    await expect(backend.loadSession!(selected.sessionFile!)).resolves.toEqual({ sessionId: 'my_feature' });
+    await expect(backend.startSession()).resolves.toEqual({ sessionId: 'my_feature' });
+    expect(opened).toEqual([{ sessionId: 'my_feature', sessionFile: sessionPath, operation }]);
     const boots = parseBootLog(await readFile(bootLogPath, 'utf8'));
-    expect(boots[0]?.argv).toEqual(expect.arrayContaining(['--session', sessionPath]));
+    expect(boots).toHaveLength(1);
+    expect(boots[0]?.argv).toContain('--continue');
+    expect(boots[0]?.argv).not.toContain('--session');
   });
 
   it('does not match session files by sibling id prefix', async () => {
@@ -447,5 +460,36 @@ describe('PiRpcBackend loadSession', () => {
     expect(boots[0]!.argv).toContain('pi-session-1');
     expect(boots[1]!.argv).toContain('--session');
     expect(boots[1]!.argv).toContain('pi-session-1');
+  });
+
+  it('recovers a continued session from its original file without selecting the latest session again', async () => {
+    workDir = makeTempDir('happier-pi-recover-continued-session-');
+    const bootLogPath = join(workDir, 'boot.log');
+    const sessionPath = join(workDir, 'renamed.jsonl');
+    writeFileSync(sessionPath, `${JSON.stringify({ type: 'session', id: 'pi-session-1', cwd: workDir })}\n`);
+
+    backend = new PiRpcBackend({
+      cwd: workDir,
+      command: process.execPath,
+      args: [makeFakePiRpcLoadSessionScript(workDir)],
+      env: {
+        BOOT_LOG_PATH: bootLogPath,
+        FAKE_PI_CONTINUE_SESSION_FILE: sessionPath,
+        FAKE_PI_CONTINUE_SESSION_ID: 'pi-session-1',
+        FAKE_PI_EXIT_AFTER_FIRST_PROMPT: '1',
+      },
+      takeContinueRecentSession: () => true,
+    });
+
+    const { sessionId } = await backend.startSession();
+    await backend.sendPrompt(sessionId, 'first prompt exits');
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    await expect(backend.sendPrompt(sessionId, 'recover')).resolves.toBeUndefined();
+
+    const boots = parseBootLog(await readFile(bootLogPath, 'utf8'));
+    expect(boots).toHaveLength(2);
+    expect(boots[0]?.argv).toContain('--continue');
+    expect(boots[1]?.argv).toEqual(expect.arrayContaining(['--session', sessionPath]));
+    expect(boots[1]?.argv).not.toContain('--continue');
   });
 });

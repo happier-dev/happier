@@ -42,11 +42,9 @@ In development builds, Pi's own `--continue` (or `-c`) picks up where you left o
 happier pi --continue
 ```
 
-Happier opens the session plain `pi --continue` would open in the current directory: the most
-recently changed Pi session for that directory, in the session directory Pi itself uses
-(`PI_CODING_AGENT_SESSION_DIR`, `sessionDir` in Pi's settings, or the default under
-`PI_CODING_AGENT_DIR` or `~/.pi/agent`). If there is none, `happier pi` prints the working
-directory it checked and starts a new session, so run it from the directory where you started Pi.
+Pi uses the current working directory and its own session settings to select the most recent
+session. Run the command from the project directory where you started Pi. If no session
+matches, Pi starts a new one.
 `--resume <session-id>` takes precedence over `--continue`.
 
 ## Native terminal

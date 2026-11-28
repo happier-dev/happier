@@ -5,7 +5,7 @@ import type { PiBridgeSessionConfig } from '@/backends/pi/bridgeExtension';
 import {
   resolvePiBrokerExtensionArgs,
 } from '@/backends/pi/brokerExtension';
-import { PiRpcBackend } from '@/backends/pi/rpc/PiRpcBackend';
+import { PiRpcBackend, type PiRpcSpawnOptions } from '@/backends/pi/rpc/PiRpcBackend';
 import type { PiRpcChannelHost } from '@/backends/pi/rpc/piRpcChannel';
 import { readConnectedServiceChildSelectionsFromEnv } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
 import { requireProviderCliLaunchSpec } from '@/runtime/managedTools/requireProviderCliLaunchSpec';
@@ -42,6 +42,8 @@ export interface PiBackendOptions extends AgentFactoryOptions {
   launchMode?: 'rpc' | 'interactive';
   /** Transport to the interactive Pi (shared local control); omitted for the RPC child. */
   channelHost?: PiRpcChannelHost;
+  takeContinueRecentSession?: PiRpcSpawnOptions['takeContinueRecentSession'];
+  onSessionOpened?: PiRpcSpawnOptions['onSessionOpened'];
 }
 
 // `null` means Happier must not override Pi's native tool catalog. Passing
@@ -175,6 +177,8 @@ export function createPiBackend(options: PiBackendOptions): AgentBackend {
     // args above must never carry the literal prompt content.
     appendSystemPromptText: options.appendSystemPromptText ?? null,
     permissionHandler: options.permissionHandler,
+    takeContinueRecentSession: options.takeContinueRecentSession,
+    onSessionOpened: options.onSessionOpened,
     ...(options.channelHost ? { channelHost: options.channelHost } : {}),
     env: {
       ...env,

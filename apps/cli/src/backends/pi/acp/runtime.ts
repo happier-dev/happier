@@ -17,6 +17,7 @@ import { logger } from '@/ui/logger';
 import type { PiBackendOptions } from '@/backends/pi/acp/backend';
 import { resolveHappyToolsBridgeBackendOptions } from '@/backends/pi/bridgeExtension';
 import type { PiSharedTerminalHost } from '@/backends/pi/sharedControl/piSharedTerminalHost';
+import type { PiOpenedSessionIdentity } from '@/backends/pi/rpc/PiRpcBackend';
 import { publishPiSessionIdMetadata } from '@/backends/pi/utils/piSessionIdMetadata';
 import { resolveExpectedPiSessionIdForResume } from '@/backends/pi/utils/piSessionFiles';
 
@@ -47,10 +48,13 @@ export function createPiAcpRuntime(params: {
    * instead of spawning the headless RPC child.
    */
   sharedTerminal?: PiSharedTerminalHost;
+  continueRecentSession?: boolean;
 }) {
   const sharedTerminal = params.sharedTerminal ?? null;
   const lastPublishedPiSessionId: { value: string | null; sessionFile?: string | null } = { value: null };
   let lastPiIdentityGeneration: number | null = null;
+  let continueRecentSession = params.continueRecentSession === true;
+  let openedSession: PiOpenedSessionIdentity | null = null;
 
   return createCatalogProviderAcpRuntime<PiBackendOptions>({
     provider: 'pi',
@@ -68,10 +72,12 @@ export function createPiAcpRuntime(params: {
           lastPublishedPiSessionId.sessionFile = null;
           lastPiIdentityGeneration = event.generation;
         }
+        const opened = openedSession?.sessionId === event.vendorSessionId ? openedSession : null;
         await publishPiSessionIdMetadata({
-          operation: event.operation,
+          operation: opened?.operation ?? event.operation,
           session: params.session,
           getPiSessionId: () => event.vendorSessionId,
+          reportedSessionFile: opened?.sessionFile,
           cwd: params.directory,
           processEnv: process.env,
           lastPublished: lastPublishedPiSessionId,
@@ -100,6 +106,14 @@ export function createPiAcpRuntime(params: {
     providerInputConsumer: params.providerInputConsumer,
     // The terminal user owns in-flight input; web prompts are delivered only while Pi is idle.
     inFlightSteer: { enabled: sharedTerminal === null },
+    backendOptions: {
+      takeContinueRecentSession: () => {
+        const requested = continueRecentSession;
+        continueRecentSession = false;
+        return requested;
+      },
+      onSessionOpened: (identity) => { openedSession = identity; },
+    },
     resolveBackendOptionsBeforeSpawn: async ({ session }) => {
       const memoryRecallGuidanceEnabled = params.memoryRecallGuidanceEnabled === true;
       const sessionProfileId = session.getMetadataSnapshot()?.profileId ?? null;

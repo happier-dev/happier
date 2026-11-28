@@ -1,4 +1,4 @@
-import { basename, isAbsolute } from 'node:path';
+import { basename, isAbsolute, join } from 'node:path';
 
 import type {
   VerifyResumeReachableInput,
@@ -6,9 +6,10 @@ import type {
 } from '@/backends/connectedServices/verifyResumeReachableTypes';
 import {
   buildPiResumeSearchRoots,
-  doesPiSessionFileNameMatchSessionId,
   findPiSessionFileForId,
+  matchesPiSessionFileIdentity,
   pathExistsAsFile,
+  resolveExpectedPiSessionIdForResume,
   resolvePiSessionIdFromResumeReference,
 } from '@/backends/pi/utils/piSessionFiles';
 
@@ -33,9 +34,9 @@ function asNonEmptyString(value: unknown): string | null {
  *
  * When `input.targetStrict` is set (the §2 spawn gate), reachability is proven ONLY from the EXACT
  * final path Pi reads (`PI_CODING_AGENT_DIR/sessions/--<cwd>--`, which follows the shared-state
- * symlink into native). The source-proof fast-paths (persisted hint, absolute resume id) and the
- * broad native/legacy/staging search roots are all skipped so a file present only in a source/staging
- * location cannot produce a false-positive spawn gate (CS-FINDING-6 / plan §2).
+ * symlink into native). A known basename can be resolved there if its header matches. The broad
+ * native/legacy/staging roots and any absolute source path are skipped to keep source-only files
+ * from satisfying the spawn gate (CS-FINDING-6 / plan §2).
  */
 export async function verifyResumeReachablePi(
   input: VerifyResumeReachableInput,
@@ -46,7 +47,9 @@ export async function verifyResumeReachablePi(
   if (!vendorResumeId) {
     return { ok: false, reason: 'pi_session_file_not_found' };
   }
-  const sessionId = resolvePiSessionIdFromResumeReference(vendorResumeId);
+  const sessionId = targetStrict
+    ? resolvePiSessionIdFromResumeReference(vendorResumeId)
+    : await resolveExpectedPiSessionIdForResume(vendorResumeId);
   if (!sessionId) {
     return { ok: false, reason: 'pi_session_file_not_found' };
   }
@@ -54,8 +57,7 @@ export async function verifyResumeReachablePi(
   if (
     !targetStrict &&
     candidatePersistedSessionFile &&
-    doesPiSessionFileNameMatchSessionId(basename(candidatePersistedSessionFile), sessionId) &&
-    await pathExistsAsFile(candidatePersistedSessionFile)
+    await matchesPiSessionFileIdentity(candidatePersistedSessionFile, sessionId)
   ) {
     return { ok: true, resolvedPath: candidatePersistedSessionFile };
   }
@@ -71,6 +73,14 @@ export async function verifyResumeReachablePi(
     candidatePersistedSessionFile,
     targetStrict,
   });
+  if (targetStrict && candidatePersistedSessionFile && isAbsolute(candidatePersistedSessionFile)) {
+    for (const root of roots) {
+      const targetPath = join(root, basename(candidatePersistedSessionFile));
+      if (await matchesPiSessionFileIdentity(targetPath, sessionId, { requireHeader: true })) {
+        return { ok: true, resolvedPath: targetPath };
+      }
+    }
+  }
   const resolvedPath = await findPiSessionFileForId({ sessionId, roots });
   if (resolvedPath) {
     return { ok: true, resolvedPath };
