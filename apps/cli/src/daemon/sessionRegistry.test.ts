@@ -1091,6 +1091,34 @@ describe('sessionRegistry', () => {
     expect((await readSessionMarker(legacyPidSessionTrackingKey(4321)))?.activeTurnId).toBeUndefined();
   });
 
+  it('reads the primary marker once while persisting exact turn admission', async () => {
+    let markerPath: string | undefined;
+    let markerReads = 0;
+    vi.doMock('node:fs/promises', async () => {
+      const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+      return { ...fs, readFile: (...args: Parameters<typeof fs.readFile>) => {
+        if (args[0] === markerPath) markerReads++;
+        return fs.readFile(...args);
+      } };
+    });
+    const { daemonSessionsDir, readSessionMarker, updateSessionMarkerActiveTurn, writeSessionMarker } =
+      await import('./sessionRegistry');
+    const trackingKey = legacyPidSessionTrackingKey(12347);
+    await writeSessionMarker({
+      trackingKey, pid: 12347, happySessionId: 'sess-active-turn', startedBy: 'daemon', createdAt: 100,
+    });
+    markerPath = join(daemonSessionsDir(), 'pid-12347.json');
+    const admission = { turnId: 'turn-1', inputId: 'input-1', userMessageSeq: 7, userMessageSeqs: [7] };
+    await expect(updateSessionMarkerActiveTurn({
+      trackingKey, sessionId: 'sess-active-turn', activeTurnId: admission.turnId,
+      agentRuntimeDaemonServiceActiveAdmission: admission,
+    })).resolves.toBe(true);
+    expect(markerReads).toBe(1);
+    await expect(readSessionMarker(trackingKey)).resolves.toMatchObject({
+      activeTurnId: admission.turnId, agentRuntimeDaemonServiceActiveAdmission: admission, createdAt: 100,
+    });
+  });
+
   it('persists and clears only the exact active turn and causal input custody for the matching session marker', async () => {
     const {
       listSessionMarkers,

@@ -310,25 +310,28 @@ function agentSessionStartupInstructionsMarkersEqual(
 async function writeSessionMarkerUnlocked(
   marker: SessionMarkerWriteInput,
   options: WriteSessionMarkerOptions = {},
+  existingUnderLock?: SessionMarkerRead,
 ): Promise<void> {
   await ensureDir(daemonSessionsDir());
   const now = Date.now();
   const filePath = join(daemonSessionsDir(), sessionMarkerFileName(marker.trackingKey));
 
-  let createdAtFromDisk: number | undefined;
-  let existingMarkerFromDisk: DaemonSessionMarker | null = null;
-  try {
-    const raw = await readFile(filePath, 'utf-8');
-    const existing = DaemonSessionMarkerStoredReadSchema.safeParse(JSON.parse(raw));
-    if (existing.success) {
-      existingMarkerFromDisk = withTrackingKey(existing.data, marker.trackingKey);
-      createdAtFromDisk = existing.data.createdAt;
-    }
-  } catch (e) {
-    // ignore ENOENT (new marker); log other errors for diagnostics
-    const err = e as NodeJS.ErrnoException;
-    if (err?.code !== 'ENOENT') {
-      logger.debug(`[sessionRegistry] Could not read existing session marker ${sessionMarkerFileName(marker.trackingKey)} to preserve createdAt`, e);
+  // A scoped read under this same mutation lock can supply the primary marker.
+  // A legacy marker cannot stand in for the destination's own stored fields.
+  let existingMarkerFromDisk = existingUnderLock?.path === filePath ? existingUnderLock.marker : null;
+  if (!existingMarkerFromDisk) {
+    try {
+      const raw = await readFile(filePath, 'utf-8');
+      const existing = DaemonSessionMarkerStoredReadSchema.safeParse(JSON.parse(raw));
+      if (existing.success) {
+        existingMarkerFromDisk = withTrackingKey(existing.data, marker.trackingKey);
+      }
+    } catch (e) {
+      // ignore ENOENT (new marker); log other errors for diagnostics
+      const err = e as NodeJS.ErrnoException;
+      if (err?.code !== 'ENOENT') {
+        logger.debug(`[sessionRegistry] Could not read existing session marker ${sessionMarkerFileName(marker.trackingKey)} to preserve createdAt`, e);
+      }
     }
   }
 
@@ -585,7 +588,7 @@ async function writeSessionMarkerUnlocked(
       ? {}
       : { metadata: withoutMirroredReplaySeedText(marker.metadata) }),
     happyHomeDir: configuration.happyHomeDir,
-    createdAt: marker.createdAt ?? createdAtFromDisk ?? now,
+    createdAt: marker.createdAt ?? existingMarkerFromDisk?.createdAt ?? now,
     updatedAt: now,
   });
   await writeJsonAtomic(filePath, payload.respawn
@@ -1136,16 +1139,18 @@ export async function promoteSessionMarkerPid(
   });
 }
 
-export async function readSessionMarker(trackingKey: SessionTrackingKey,
+type SessionMarkerRead = Readonly<{ marker: DaemonSessionMarker; path: string }>;
+
+async function readSessionMarkerWithPath(trackingKey: SessionTrackingKey,
   scope: SessionMarkerReadScope = configuration,
-): Promise<DaemonSessionMarker | null> {
+): Promise<SessionMarkerRead | null> {
   for (const dir of daemonSessionMarkerDirs(scope)) {
     const filePath = join(dir, sessionMarkerFileName(trackingKey));
     try {
       const raw = await readFile(filePath, 'utf-8');
       const parsed = DaemonSessionMarkerStoredReadSchema.safeParse(JSON.parse(raw));
       if (parsed.success && parsed.data.happyHomeDir === scope.happyHomeDir) {
-        return withTrackingKey(parsed.data, trackingKey);
+        return { marker: withTrackingKey(parsed.data, trackingKey), path: filePath };
       }
     } catch (e) {
       const err = e as NodeJS.ErrnoException;
@@ -1155,6 +1160,13 @@ export async function readSessionMarker(trackingKey: SessionTrackingKey,
     }
   }
   return null;
+}
+
+export async function readSessionMarker(
+  trackingKey: SessionTrackingKey,
+  scope: SessionMarkerReadScope = configuration,
+): Promise<DaemonSessionMarker | null> {
+  return (await readSessionMarkerWithPath(trackingKey, scope))?.marker ?? null;
 }
 
 export async function markSessionMarkerConnectedServiceRestartIntent(params: Readonly<{
@@ -1229,8 +1241,9 @@ export async function updateSessionMarkerActiveTurn(params: Readonly<{
     return false;
   }
   return await runWithSessionMarkerMutationLock(params.trackingKey, async () => {
-    const existing = await readSessionMarker(params.trackingKey);
-    if (!existing || existing.happySessionId !== params.sessionId) return false;
+    const read = await readSessionMarkerWithPath(params.trackingKey);
+    if (!read || read.marker.happySessionId !== params.sessionId) return false;
+    const { marker: existing } = read;
     if (params.expectedActiveTurnId !== undefined && existing.activeTurnId !== params.expectedActiveTurnId) {
       return false;
     }
@@ -1268,7 +1281,7 @@ export async function updateSessionMarkerActiveTurn(params: Readonly<{
               },
           }
         : {}),
-    }, { preserveActiveTurnId: false });
+    }, { preserveActiveTurnId: false }, read);
     return true;
   });
 }
