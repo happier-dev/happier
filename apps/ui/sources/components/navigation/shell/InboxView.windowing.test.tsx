@@ -51,6 +51,17 @@ describe('InboxView windowing', () => {
         await removeServerProfile(homeId);
     });
 
+    it('offers Allow once and Deny inline on the Inbox page for a simple approval', async () => {
+        const { InboxView } = await import('./InboxView');
+        const approval = createInboxApprovalArtifactFixture({ id: 'quick-answer', serverId: homeId });
+        seedAdmittedArtifactRows([approval], storage);
+        const screen = await renderScreen(<InboxView />);
+        await vi.waitFor(() => {
+            expect(screen.findHostByTestId('inbox.approval.quick-answer.allow_once')).not.toBeNull();
+            expect(screen.findHostByTestId('inbox.approval.quick-answer.deny')).not.toBeNull();
+        });
+    });
+
     it('mounts only the approval rows near the viewport, not every waiting approval', async () => {
         const { InboxView } = await import('./InboxView');
         const screen = await renderScreen(<InboxView />);

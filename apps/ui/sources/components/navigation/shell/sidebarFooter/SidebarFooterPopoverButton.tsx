@@ -24,19 +24,27 @@ export type SidebarFooterPopoverContentProps = Readonly<{
     scrollProps?: FloatingOverlayScrollProps;
 }>;
 
-export type SidebarFooterPopoverTrigger = (state: Readonly<{ onPress: (event?: unknown) => void; open: boolean; right?: React.ReactNode }>) => React.ReactNode;
+export type SidebarFooterDestination = Readonly<{ href: string; onOpen: () => void }>;
+
+export type SidebarFooterPopoverTrigger = (state: Readonly<{
+    onPress: (event?: unknown) => void;
+    open: boolean;
+    destinationHref?: string;
+    right?: React.ReactNode;
+}>) => React.ReactNode;
 
 /**
- * One icon button in the sidebar footer that opens its popover upwards. Click, Enter or Space opens
- * it and moves focus into it; Escape closes it and returns focus to the button (the Popover owner).
- * `hoverPreview` also opens it, without taking focus, after the pointer rests on the button — never
- * the only way in. The content mounts only while open, so a closed button costs nothing.
+ * A sidebar button with a popover. A destination opens its page on press and can preview on web hover.
+ * For popover actions, pressing moves focus into the popover and Escape returns focus to the trigger.
+ * Content mounts only while the popover is open.
  */
 export function SidebarFooterPopoverButton(props: Readonly<{
     testID: string;
     iconName: IconName;
     label: string;
     hoverPreview?: boolean;
+    destination?: SidebarFooterDestination;
+    onLongPress?: () => void;
     /** Where the popover opens: above a footer icon, or beside a rail icon. */
     placement?: 'top' | 'right';
     /** The visible button square; the rail's icons are larger than the footer's. */
@@ -69,10 +77,12 @@ export function SidebarFooterPopoverButton(props: Readonly<{
     onOpenIntent?: () => void;
 }>) {
     const { theme } = useUnistyles();
+    const destinationHref = props.destination?.href;
+    const openDestination = props.destination?.onOpen;
     const popoverWidthPx = props.popoverWidthPx ?? POPOVER_WIDTH_PX;
     const popoverMaxHeightPx = props.popoverMaxHeightPx ?? POPOVER_MAX_HEIGHT_PX;
     const anchorRef = React.useRef<View>(null);
-    const hoverPreview = props.hoverPreview === true && Platform.OS === 'web';
+    const hoverPreview = props.hoverPreview === true && Platform.OS === 'web' && (!destinationHref || !props.renderTrigger);
     // The control a press came from: Escape returns focus there (the anchor view is not focusable).
     const focusReturnRef = React.useRef<FocusReturnTarget>(null);
     const { mode, toggle, close, open, hoverProps, popoverLayer } = useHoverPreviewPopover({ enabled: hoverPreview });
@@ -93,19 +103,25 @@ export function SidebarFooterPopoverButton(props: Readonly<{
         if (previous === 'closed' && mode === 'preview') intents.current.open?.();
     }, [mode]);
     const onPress = React.useCallback((event?: unknown) => {
+        if (openDestination) {
+            close();
+            openDestination();
+            return;
+        }
         focusReturnRef.current = readPressFocusReturnTarget(event);
         if (mode === 'closed') intents.current.open?.();
         toggle();
-    }, [mode, toggle]);
+    }, [close, mode, openDestination, toggle]);
     return (
         <View ref={anchorRef} collapsable={false} style={styles.anchor} {...hoverProps}>
-            {props.renderTrigger ? props.renderTrigger({ onPress, open: mode !== 'closed' }) : <IconButton
+            {props.renderTrigger ? props.renderTrigger({ onPress, open: mode !== 'closed', destinationHref }) : <IconButton
                 testID={props.testID}
                 variant="plain"
                 size={props.buttonSizePx ?? SIDEBAR_FOOTER_ICON_BUTTON_SIZE_PX}
                 interactiveTargetGapPx={SIDEBAR_FOOTER_GAP_PX}
                 interactiveTargetEdgesPx={props.interactiveTargetEdgesPx}
                 accessibilityLabel={props.label}
+                accessibilityRole={destinationHref ? 'link' : undefined}
                 // A previewing button needs no tooltip: resting on it shows the popover itself.
                 tooltip={hoverPreview ? undefined : props.label}
                 tooltipHidden={mode !== 'closed'}
@@ -113,6 +129,7 @@ export function SidebarFooterPopoverButton(props: Readonly<{
                 selected={props.selected === true || mode !== 'closed'}
                 icon={props.renderIcon?.(mode !== 'closed') ?? <Icon name={props.iconName} size={props.iconSizePx ?? SIDEBAR_FOOTER_ICON_GLYPH_SIZE_PX} color={theme.colors.text.secondary} />}
                 onPress={onPress}
+                onLongPress={props.onLongPress}
             />}
             {mode !== 'closed' ? (
                 <Popover

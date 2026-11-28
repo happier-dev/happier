@@ -4,13 +4,11 @@ import { themeSurfaceDataSet } from '@happier-dev/plugin-ui';
 import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
 import { sidebarWrapperPaint } from './sidebarPaint';
 import { Platform, View, type LayoutChangeEvent } from 'react-native';
-import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useHappierMaterialColorResolver, useHappierTabSelection } from '@happier-dev/plugin-ui/presentation';
 
 import { resolveAppRailBand, useActivateAppDestination, type AppRailBand } from '@/components/appShell/destinations/compactAppDestinationCatalog';
 import { WorkspaceDestinationRow } from '@/components/appShell/workspace/WorkspaceDestinationRow';
-import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -27,10 +25,9 @@ import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { t, type TranslationKeyNoParams } from '@/text';
 import { useSharedUpdatesSummary } from '@/updates/useUpdatesSummary';
-import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
-import { SidebarFooterPopoverButton, type SidebarFooterPopoverContentProps, type SidebarFooterPopoverTrigger } from '../sidebarFooter/SidebarFooterPopoverButton';
+import { SidebarFooterPopoverButton, type SidebarFooterDestination, type SidebarFooterPopoverContentProps, type SidebarFooterPopoverTrigger } from '../sidebarFooter/SidebarFooterPopoverButton';
 import { SidebarUsagePopoverContent } from '../sidebarFooter/SidebarUsagePopoverContent';
 import { RAIL_POPOVER_WIDE_WIDTH_PX } from '../sidebarFooter/sidebarFooterLayout';
 import { InboxPopoverContent } from '@/components/inbox/InboxPopover';
@@ -95,8 +92,7 @@ const renderUsage = (content: SidebarFooterPopoverContentProps) => <SidebarUsage
 /**
  * The app's rail (lab `xrail-R1`): every destination as an icon, the open one filled. The app's own
  * destinations come first, then Plugins and the plugin destinations that asked for the navigation;
- * those that do not fit go into "More". At the bottom: Usage and Machines (their popovers, Usage's
- * only where connected-account limits are reported), Updates
+ * those that do not fit go into "More". At the bottom: Usage and Machines (with hover previews), Updates
  * while one exists, Settings and the person, whose Home/account popover opens from the avatar.
  */
 export const AppRail = React.memo(function AppRail() {
@@ -221,7 +217,7 @@ export const AppRailSurface = React.memo(function AppRailSurface(props: Readonly
         seenBotIdsRef.current = new Set([...(seenBotIdsRef.current ?? []), ...entries.bots.map(bot => bot.id)]);
     }, [entries.bots]);
     const renderFooter = props.renderFooter ?? ((item: AppRailPlacementItem, trigger?: SidebarFooterPopoverTrigger) =>
-        <AppRailFooterItem item={item} renderTrigger={trigger} activeId={activeId} />);
+        <AppRailFooterItem item={item} renderTrigger={trigger} activeId={activeId} onOpen={open} />);
 
     // The rail is a dock: its popovers and its column peeks answer one hover intent.
     return (<AppRailHoverScope>
@@ -282,10 +278,8 @@ const AppRailItem = React.memo(function AppRailItem(props: Readonly<{
     if (entry.activation === 'botsRoster' && !unavailable) {
         return <AppRailBots entry={entry} />;
     }
-    // Lab `inbox-I2`: the Inbox answers from beside the rail; the page is one "Open Inbox" away, and the
-    // icon of the Inbox already on screen simply stays on it.
-    if (entry.kind === 'builtin' && entry.signal === 'inboxCount' && !unavailable && !props.active) {
-        return <AppRailInbox entry={entry} onOpenPage={props.onOpen} />;
+    if (entry.kind === 'builtin' && entry.signal === 'inboxCount' && !unavailable) {
+        return <AppRailInbox entry={entry} active={props.active} onOpenPage={props.onOpen} onCustomize={props.onCustomize} />;
     }
     const button = (peeks: boolean) => (
         <IconButton
@@ -337,21 +331,26 @@ const INBOX_POPOVER_WIDTH_PX = 400;
 
 const AppRailInbox = React.memo(function AppRailInbox(props: Readonly<{
     entry: AppRailEntry;
+    active: boolean;
     onOpenPage: (entry: AppRailEntry) => void;
+    onCustomize?: () => void;
 }>) {
-    const styles = stylesheet;
-    const { entry, onOpenPage } = props;
+    const { entry, active, onOpenPage } = props;
     const openPage = React.useCallback(() => onOpenPage(entry), [entry, onOpenPage]);
     const renderContent = React.useCallback((content: SidebarFooterPopoverContentProps) => (
         <InboxPopoverContent close={content.close} onOpenInbox={openPage} scrollProps={content.scrollProps} />
     ), [openPage]);
-    const renderIcon = React.useCallback((open: boolean) => <AppRailIcon name={entry.icon} active={open} />, [entry.icon]);
+    const renderIcon = React.useCallback((open: boolean) => <AppRailIcon name={entry.icon} active={open || active} />, [active, entry.icon]);
     return (
         <AppRailSlot href={entry.routePath} badge={<AppRailInboxBadge testID={`app-rail:${entry.id}-badge`} />}>
             <SidebarFooterPopoverButton
                 testID={`app-rail:${entry.id}`}
                 iconName={entry.icon}
                 label={entry.title}
+                destination={{ href: entry.routePath, onOpen: openPage }}
+                selected={active}
+                hoverPreview={!active}
+                onLongPress={active ? props.onCustomize : undefined}
                 placement="right"
                 anchorAlignVertical="start"
                 buttonSizePx={APP_RAIL_ITEM_SIZE_PX}
@@ -385,6 +384,7 @@ const AppRailMore = React.memo(function AppRailMore(props: Readonly<{
     const styles = stylesheet;
     const { theme } = useUnistyles();
     const [open, setOpen] = React.useState(false);
+    const dismiss = React.useCallback(() => setOpen(false), []);
     // Keyboard selection and a row press invoke the same current mounted More presentation.
     // Footer triggers and Bot commands stay here only; this map never resolves an Action or an order.
     const footerActions = React.useRef(new Map<string, () => void>());
@@ -395,10 +395,10 @@ const AppRailMore = React.memo(function AppRailMore(props: Readonly<{
     const wrapItem = React.useCallback((item: Readonly<{ id: string }>, children: React.ReactNode) => {
         const entry = props.entries.find(candidate => candidate.id === item.id);
         if (entry?.kind === 'footer') return props.renderFooter(entry, state => <AppRailFooterMenuRow
-            item={entry} trigger={state} registerAction={registerFooterAction} />);
+            item={entry} trigger={state} dismiss={dismiss} registerAction={registerFooterAction} />);
         return <WorkspaceDestinationRow href={entry?.kind === 'destination' && entry.entry.availability === 'available' && entry.entry.activation === 'navigate'
             ? entry.entry.routePath : null}>{children}</WorkspaceDestinationRow>;
-    }, [props.entries, props.renderFooter, registerFooterAction]);
+    }, [dismiss, props.entries, props.renderFooter, registerFooterAction]);
     const navigateToSession = useNavigateToSession();
     const botHomeIds = React.useMemo(() => [...new Set((props.bots ?? []).map(bot => bot.serverId))], [props.bots]);
     const botScopes = useServerCredentialAccountScopeBindings(botHomeIds);
@@ -512,28 +512,42 @@ function AppRailBotOverflowActions(props: Readonly<{
 function AppRailFooterMenuRow(props: Readonly<{
     item: AppRailPlacementItem;
     trigger: Parameters<SidebarFooterPopoverTrigger>[0];
+    dismiss: () => void;
     registerAction: (id: string, action: (() => void) | null) => void;
 }>) {
     const { theme } = useUnistyles();
     const { id } = props.item;
-    const { onPress } = props.trigger;
+    const { dismiss, registerAction } = props;
+    const { destinationHref, onPress } = props.trigger;
+    const activate = React.useCallback((event?: unknown) => {
+        if (destinationHref) dismiss();
+        onPress(event);
+    }, [destinationHref, dismiss, onPress]);
     React.useEffect(() => {
-        props.registerAction(id, onPress);
-        return () => props.registerAction(id, null);
-    }, [id, onPress, props.registerAction]);
-    return <SelectableRow testID={`app-rail-more:${id}`} title={props.item.title} variant="slim" presentation="menu"
-        onPress={onPress} selected={props.trigger.open} right={props.trigger.right}
-        left={<Icon name={props.item.icon} size={MENU_ROW_METRICS.iconGlyphSizePx} color={theme.colors.text.secondary} />} />;
+        registerAction(id, activate);
+        return () => registerAction(id, null);
+    }, [activate, id, registerAction]);
+    return <WorkspaceDestinationRow href={destinationHref ?? null}>
+        <SelectableRow testID={`app-rail-more:${id}`} title={props.item.title} variant="slim" presentation="menu"
+            accessibilityLabel={props.item.title} onPress={activate} selected={props.trigger.open} right={props.trigger.right}
+            left={<Icon name={props.item.icon} size={MENU_ROW_METRICS.iconGlyphSizePx} color={theme.colors.text.secondary} />} />
+    </WorkspaceDestinationRow>;
 }
 
 const AppRailFooterItem = React.memo(function AppRailFooterItem(props: Readonly<{
     item: AppRailPlacementItem;
+    onOpen: (entry: AppRailEntry) => void;
     renderTrigger?: SidebarFooterPopoverTrigger;
     /** The open rail entry: a footer control whose destination is open shows selected (Machines' rail door). */
     activeId?: string | null;
 }>) {
-    if (props.item.id === 'app-rail-usage') return <AppRailUsage renderTrigger={props.renderTrigger} />;
-    if (props.item.id === 'app-rail-machines') return <AppRailMachines renderTrigger={props.renderTrigger} selected={props.activeId === 'machines'} />;
+    const entry = props.item.kind === 'footer' ? props.item.destination : undefined;
+    const { onOpen } = props;
+    const openPage = React.useCallback(() => { if (entry) onOpen(entry); }, [entry, onOpen]);
+    const destination = entry ? { href: entry.routePath, onOpen: openPage } : undefined;
+    if (props.item.id === 'app-rail-usage' && destination) return <AppRailUsage renderTrigger={props.renderTrigger} destination={destination} />;
+    if (props.item.id === 'app-rail-machines' && destination) return <AppRailMachines renderTrigger={props.renderTrigger} destination={destination}
+        selected={props.activeId === entry?.id} />;
     if (props.item.id === 'app-rail-updates') return <AppRailUpdates renderTrigger={props.renderTrigger} />;
     if (props.item.id === 'app-rail-account') {
         const account = <AppRailAccount renderTrigger={props.renderTrigger
@@ -543,56 +557,34 @@ const AppRailFooterItem = React.memo(function AppRailFooterItem(props: Readonly<
     return null;
 });
 
-const AppRailUsage = React.memo(function AppRailUsage(props: Readonly<{ renderTrigger?: SidebarFooterPopoverTrigger }>) {
-    const router = useRouter();
-    // The Usage popover previews connected-account limits where this Home reports them; the icon
-    // itself is always there and otherwise opens the Usage page.
+const AppRailUsage = React.memo(function AppRailUsage(props: Readonly<{ destination: SidebarFooterDestination; renderTrigger?: SidebarFooterPopoverTrigger }>) {
+    // The Usage icon opens the page. Where this Home reports limits, it also previews them on hover.
     const quotaMetersAvailable = useFeatureEnabled('connectedServices.quotas');
     // A red count only for accounts that need a new sign-in; low limits never badge (lab G2).
     const signInCount = useConnectedAccountsNeedingSignInCount();
     const menuTrigger: SidebarFooterPopoverTrigger | undefined = props.renderTrigger ? state => props.renderTrigger?.({ ...state,
         right: signInCount > 0 ? <AppRailMenuCount tone={resolveAppRailBadgeTone({ source: 'signIn' })} value={signInCount} /> : undefined,
     }) : undefined;
-    const openUsage = React.useCallback(() => {
-        const result = runGuardedNavigation(() => router.push(SETTINGS_ROUTES.usage as never));
-        if (result !== true) fireAndForget(result, { tag: 'AppRail.usage' });
-    }, [router]);
     const control = (
-        <>
-                {quotaMetersAvailable ? (
-                    <SidebarFooterPopoverButton
-                        testID="app-rail-usage"
-                        iconName="speedometer"
-                        renderIcon={renderUsageIcon}
-                        label={t('settings.usage')}
-                        placement="right"
-                        buttonSizePx={APP_RAIL_ITEM_SIZE_PX}
-                        interactiveTargetEdgesPx={APP_RAIL_ITEM_EDGES_PX}
-                        iconSizePx={APP_RAIL_ICON_GLYPH_SIZE_PX}
-                        popoverWidthPx={RAIL_POPOVER_WIDE_WIDTH_PX}
-                        hoverPreview
-                        renderContent={renderUsage}
-                        renderTrigger={menuTrigger}
-                    />
-                ) : (
-                    // Without connected-account limits there is nothing to preview: the icon opens Usage.
-                    menuTrigger ? menuTrigger({ onPress: openUsage, open: false }) : <IconButton
-                        testID="app-rail-usage"
-                        variant="plain"
-                        size={APP_RAIL_ITEM_SIZE_PX}
-                        interactiveTargetEdgesPx={APP_RAIL_ITEM_EDGES_PX}
-                        accessibilityLabel={t('settings.usage')}
-                        tooltip={t('settings.usage')}
-                        tooltipPlacement="right"
-                        icon={<AppRailIcon name="speedometer" />}
-                        onPress={openUsage}
-                    />
-                )}
-        </>
+        <SidebarFooterPopoverButton
+            testID="app-rail-usage"
+            iconName="speedometer"
+            renderIcon={renderUsageIcon}
+            label={t('settings.usage')}
+            destination={props.destination}
+            placement="right"
+            buttonSizePx={APP_RAIL_ITEM_SIZE_PX}
+            interactiveTargetEdgesPx={APP_RAIL_ITEM_EDGES_PX}
+            iconSizePx={APP_RAIL_ICON_GLYPH_SIZE_PX}
+            popoverWidthPx={RAIL_POPOVER_WIDE_WIDTH_PX}
+            hoverPreview={quotaMetersAvailable}
+            renderContent={renderUsage}
+            renderTrigger={menuTrigger}
+        />
     );
-    if (props.renderTrigger) return <WorkspaceDestinationRow href={SETTINGS_ROUTES.usage}>{control}</WorkspaceDestinationRow>;
+    if (props.renderTrigger) return control;
     return (
-        <AppRailSlot href={SETTINGS_ROUTES.usage} badge={signInCount > 0 ? (
+        <AppRailSlot href={props.destination.href} badge={signInCount > 0 ? (
             <AppRailBadge
                 testID="app-rail-usage-badge"
                 signal={{ kind: 'count', value: signInCount, tone: resolveAppRailBadgeTone({ source: 'signIn' }) }}

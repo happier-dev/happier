@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
 import * as React from 'react';
 import { act } from 'react';
+import { useRouter } from 'expo-router';
 import { createRoot } from 'react-dom/client';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -19,7 +20,9 @@ vi.mock('@/utils/web/reactDomCjs', async () => {
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { InboxSummaryProvider } from '@/hooks/inbox/useInboxSummary';
 import { resolveCompactAppDestinations } from '@/components/appShell/destinations/compactAppDestinationCatalog';
-import { AppRailSurface } from './AppRail';
+import { getStorage } from '@/sync/domains/state/storage';
+import { navigationPlacementPatch } from '@/sync/domains/settings/navigationPlacement';
+import { AppRail, AppRailSurface } from './AppRail';
 import { buildAppRailEntries } from './appRailModel';
 
 describe('AppRail More activation through DropdownMenu', () => {
@@ -71,9 +74,7 @@ describe('AppRail More activation through DropdownMenu', () => {
         }
     });
 
-    // SHELL-ACCEPT-1116 (b): Machines, the last row of More, did nothing on click. A footer control in More runs its
-    // own trigger (its roster popover) from the row.
-    it('runs a footer control from its More row by pointer', async () => {
+    it('navigates to Machines when the More menu selects its row by keyboard', async () => {
         const container = document.createElement('div');
         document.body.appendChild(container);
         const root = createRoot(container);
@@ -81,36 +82,39 @@ describe('AppRail More activation through DropdownMenu', () => {
         const height = vi.spyOn(document.documentElement, 'clientHeight', 'get').mockReturnValue(577);
         window.dispatchEvent(new Event('resize'));
         const bounds = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(10, 100, 36, 36));
-        const entries = buildAppRailEntries(resolveCompactAppDestinations({
-            builtins: { externalSessions: true, inbox: true, workflows: true, friends: true }, pages: [],
-        }));
-        const openRoster = vi.fn();
+        const initialState = getStorage().getState();
+        getStorage().getState().applyLocalSettings({
+            navigationSurfacePlacementsV1: navigationPlacementPatch('appRail', {
+                orderedIds: ['app-rail-machines'], placements: { 'app-rail-machines': 'overflow' },
+            }),
+        }, { source: 'ui' });
+        const router = useRouter();
+        vi.mocked(router.navigate).mockClear();
         try {
             await act(async () => {
                 root.render(<InjectedAuthProvider credentials={null}><InboxSummaryProvider>
-                    <AppRailSurface entries={entries} activeId={null} onOpen={() => {}}
-                        preferences={{ orderedIds: [], placements: { projects: 'overflow' } }}
-                        renderFooter={(item, trigger) => item.id === 'app-rail-machines' && trigger
-                            ? trigger({ onPress: openRoster, open: false }) : null}
-                        onCustomize={() => {}} />
+                    <AppRail />
                 </InboxSummaryProvider></InjectedAuthProvider>);
             });
             const trigger = container.querySelector<HTMLElement>('[data-testid="app-rail-more.trigger"]')!;
             await act(async () => { trigger.click(); });
-            const row = await vi.waitFor(() => {
-                const found = document.querySelector<HTMLElement>('[data-testid="app-rail-more:app-rail-machines"]');
+            const frame = await vi.waitFor(() => {
+                const found = document.querySelector<HTMLElement>('[data-testid="app-rail-more:app-rail-machines:scroll-frame"]');
                 expect(found).not.toBeNull();
                 return found!;
             });
-            await act(async () => {
-                row.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }));
-                row.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, button: 0 }));
-                row.click();
+            expect(frame.querySelector('[aria-label="settings.machines"]')).not.toBeNull();
+            const key = (value: string) => frame.dispatchEvent(new KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true }));
+            await act(async () => { key('Home'); });
+            await act(async () => { key('Enter'); });
+            await vi.waitFor(() => {
+                expect(router.navigate).toHaveBeenCalledExactlyOnceWith('/machines');
+                expect(trigger.getAttribute('aria-expanded')).toBe('false');
             });
-            await vi.waitFor(() => expect(openRoster).toHaveBeenCalledTimes(1));
         } finally {
             await act(async () => root.unmount());
             container.remove();
+            getStorage().setState(initialState, true);
             bounds.mockRestore();
             width.mockRestore();
             height.mockRestore();

@@ -1,11 +1,12 @@
 import * as React from 'react';
+import { useRouter } from 'expo-router';
 import { View } from 'react-native';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { InboxSummaryProvider } from '@/hooks/inbox/useInboxSummary';
-import { resolveCompactAppDestinations } from '@/components/appShell/destinations/compactAppDestinationCatalog';
+import { resolveCompactAppDestinations, useActivateAppDestination } from '@/components/appShell/destinations/compactAppDestinationCatalog';
 
 import { AppRailSurface } from './AppRail';
 import { buildAppRailEntries } from './appRailModel';
@@ -50,45 +51,25 @@ function entries() {
   );
 }
 
-function renderRail(activeId: string | null, onOpen: (entry: unknown) => void) {
-  return renderScreen(
-    <InjectedAuthProvider credentials={null}>
-      <InboxSummaryProvider>
-        <AppRailSurface
-          entries={entries()}
-          activeId={activeId}
-          onOpen={onOpen}
-          renderFooter={(item) => <View testID={item.id} />}
-        />
-      </InboxSummaryProvider>
-    </InjectedAuthProvider>,
-  );
+function Rail(props: Readonly<{ activeId: string | null }>) {
+  const onOpen = useActivateAppDestination();
+  return <AppRailSurface entries={entries()} activeId={props.activeId} onOpen={onOpen}
+    renderFooter={item => <View testID={item.id} />} />;
 }
 
-describe('AppRail Inbox (lab inbox-I2)', () => {
-  it('opens the Inbox popover beside the rail instead of leaving the page', async () => {
-    const onOpen = vi.fn();
-    const screen = await renderRail(null, onOpen);
-    expect(screen.findByTestId('inbox.popover.open')).toBeNull();
+describe('AppRail Inbox', () => {
+  it.each([null, 'inbox'])('opens the Inbox page from the pinned link (active=%s)', async activeId => {
+    const router = useRouter();
+    vi.mocked(router.navigate).mockClear();
+    const screen = await renderScreen(<InjectedAuthProvider credentials={null}>
+      <InboxSummaryProvider><Rail activeId={activeId} /></InboxSummaryProvider>
+    </InjectedAuthProvider>);
 
+    expect(screen.findHostByTestId('app-rail:inbox')?.props).toMatchObject({
+      role: 'link', accessibilityLabel: 'tabs.inbox',
+    });
     await screen.pressByTestIdAsync('app-rail:inbox');
-
-    expect(screen.findByTestId('inbox.popover.open')).not.toBeNull();
-    expect(onOpen).not.toHaveBeenCalled();
-    await screen.pressByTestIdAsync('inbox.popover.open');
-    expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ id: 'inbox' }));
+    expect(router.navigate).toHaveBeenCalledExactlyOnceWith('/inbox');
     expect(screen.findByTestId('inbox.popover.open')).toBeNull();
-  });
-
-  it('opens the Inbox page itself while the Inbox is already on screen', async () => {
-    const onOpen = vi.fn();
-    const screen = await renderRail('inbox', onOpen);
-
-    await screen.pressByTestIdAsync('app-rail:inbox');
-
-    expect(screen.findByTestId('inbox.popover.open')).toBeNull();
-    expect(onOpen).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'inbox' }),
-    );
   });
 });

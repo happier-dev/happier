@@ -46,6 +46,7 @@ afterEach(async () => {
 });
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const destination = { href: '/machines', onOpen: () => {} };
 
 /** A machine's published resource summary (plan 20's daemonState `resources`), as the daemon writes it. */
 function published(level: 'calm' | 'look' | 'needs_you', reasons: readonly unknown[]) {
@@ -110,9 +111,13 @@ describe('AppRailMachines', () => {
             const read = vi.spyOn(sentences, 'readMachinePublishedResources');
             const scope = { serverId: servedHome!.homes.rail!.id, accountId: 'rail-account' };
             await publishMachineInventoryForTest(scope, [online, offline, ...others]);
-            const screen = await renderScreen(<AppRailMachines />);
+            const screen = await renderScreen(<AppRailMachines destination={destination} />);
             expect(screen.findByTestId('app-rail-machines-badge')).not.toBeNull();
-            expect.soft(screen.findByTestId('app-rail-machines')?.props.accessibilityLabel).toContain(online.id);
+            const link = screen.findHostByTestId('app-rail-machines');
+            expect(link?.props.role ?? link?.props.accessibilityRole).toBe('link');
+            const name = String(link?.props['aria-label'] ?? link?.props.accessibilityLabel);
+            expect(name).toContain('settings.machines');
+            expect(name).toContain(online.id);
             read.mockClear();
             for (let index = 0; index < 20; index += 1) {
                 await act(async () => storage.setState(state => ({ machines: {
@@ -136,7 +141,7 @@ describe('AppRailMachines', () => {
             await setHomeMachines([acted]);
             const { AppRailMachines } = await import('./AppRailMachines');
             const { SidebarFooterPopoverButton } = await import('../sidebarFooter/SidebarFooterPopoverButton');
-            const screen = await renderScreen(<AppRailMachines />);
+            const screen = await renderScreen(<AppRailMachines destination={destination} />);
             expect(screen.findByTestId('app-rail-machines-badge')).not.toBeNull();
             const before = storage.getState().localSettings;
             await act(async () => screen.root.findByType(SidebarFooterPopoverButton).props.onOpenIntent?.());
@@ -159,7 +164,7 @@ describe('AppRailMachines', () => {
             machinesRailSeenState.set(key, { look: { '["another-home","other"]': ['memory'] }, guardSeenAt: 0 });
             const { AppRailMachines } = await import('./AppRailMachines');
             const { SidebarFooterPopoverButton } = await import('../sidebarFooter/SidebarFooterPopoverButton');
-            const screen = await renderScreen(<AppRailMachines />);
+            const screen = await renderScreen(<AppRailMachines destination={destination} />);
             expect(screen.findByTestId('app-rail-machines-badge')).not.toBeNull();
             await act(async () => screen.root.findByType(SidebarFooterPopoverButton).props.onOpenIntent?.());
             expect(screen.findByTestId('app-rail-machines-badge')).toBeNull();
@@ -188,7 +193,7 @@ describe('AppRailMachines', () => {
             const key = railScopeKey();
             const { AppRailMachines } = await import('./AppRailMachines');
             const { SidebarFooterPopoverButton } = await import('../sidebarFooter/SidebarFooterPopoverButton');
-            const screen = await renderScreen(<AppRailMachines />);
+            const screen = await renderScreen(<AppRailMachines destination={destination} />);
             await act(async () => screen.root.findByType(SidebarFooterPopoverButton).props.onOpenIntent?.());
             const seen = machinesRailSeenState.read(key);
             await act(async () => {
@@ -215,7 +220,7 @@ describe('AppRailMachines', () => {
         recordMachineRequestFailed({ serverId, accountId: 'rail-account', machineId: failed.id });
         const { AppRailMachines } = await import('./AppRailMachines');
         const { SidebarFooterPopoverButton } = await import('../sidebarFooter/SidebarFooterPopoverButton');
-        const screen = await renderScreen(<AppRailMachines />);
+        const screen = await renderScreen(<AppRailMachines destination={destination} />);
         await act(async () => screen.root.findByType(SidebarFooterPopoverButton).props.onWarmIntent?.());
         await flushHookEffects();
         expect(vitalsRpc).not.toHaveBeenCalled();
@@ -235,7 +240,7 @@ describe('AppRailMachines', () => {
             let commits = 0;
             const screen = await renderScreen(
                 <React.Profiler id="rail-machines" onRender={() => { commits += 1; }}>
-                    <AppRailMachines />
+                    <AppRailMachines destination={destination} />
                 </React.Profiler>,
             );
             await flushHookEffects({ cycles: 2 });
@@ -275,7 +280,7 @@ describe('AppRailMachines', () => {
             let commits = 0;
             const screen = await renderScreen(
                 <React.Profiler id="rail-machines" onRender={() => { commits += 1; }}>
-                    <AppRailMachines />
+                    <AppRailMachines destination={destination} />
                 </React.Profiler>,
             );
             await flushHookEffects({ cycles: 2 });
@@ -304,9 +309,9 @@ describe('AppRailMachines', () => {
         const { AppRailMachines } = await import('./AppRailMachines');
         const selectedButtons = (screen: Awaited<ReturnType<typeof renderScreen>>) => screen.findAll((node) =>
             node.props?.testID === 'app-rail-machines' && node.props?.selected === true);
-        const closed = await renderScreen(<AppRailMachines />);
+        const closed = await renderScreen(<AppRailMachines destination={destination} />);
         expect(selectedButtons(closed)).toHaveLength(0);
-        const open = await renderScreen(<AppRailMachines selected />);
+        const open = await renderScreen(<AppRailMachines destination={destination} selected />);
         expect(selectedButtons(open).length).toBeGreaterThan(0);
         expect(open.findByTestId('sidebar-machines-popover-content')).toBeNull();
     });
@@ -314,7 +319,7 @@ describe('AppRailMachines', () => {
     it('previews its popover on hover like the Usage icon', async () => {
         const { AppRailMachines } = await import('./AppRailMachines');
         const { SidebarFooterPopoverButton } = await import('../sidebarFooter/SidebarFooterPopoverButton');
-        const screen = await renderScreen(<AppRailMachines />);
+        const screen = await renderScreen(<AppRailMachines destination={destination} />);
         expect(screen.root.findByType(SidebarFooterPopoverButton).props.hoverPreview).toBe(true);
     });
 });

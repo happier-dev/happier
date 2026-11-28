@@ -20,7 +20,7 @@ function Content(props: Readonly<{ close: () => void }>) {
 let container: HTMLDivElement;
 let root: ReturnType<typeof createRoot>;
 
-async function renderButton(hoverPreview = false, intents: Readonly<{ onOpenIntent?: () => void }> = {}) {
+async function renderButton(hoverPreview = false, options: Pick<React.ComponentProps<typeof SidebarFooterPopoverButton>, 'destination' | 'onOpenIntent'> = {}) {
     await act(async () => {
         root.render(
             <SidebarFooterPopoverButton
@@ -28,7 +28,7 @@ async function renderButton(hoverPreview = false, intents: Readonly<{ onOpenInte
                 iconName="speedometer"
                 label="Usage"
                 hoverPreview={hoverPreview}
-                {...intents}
+                {...options}
                 renderContent={({ close }) => <Content close={close} />}
             />,
         );
@@ -101,6 +101,22 @@ describe('SidebarFooterPopoverButton', () => {
         await act(async () => { pointerLeave(button); });
         await act(async () => { vi.advanceTimersByTime(1000); });
         expect(popover()).not.toBeNull();
+    });
+
+    it('closes a destination preview and navigates when its trigger is pressed', async () => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        const onOpen = vi.fn();
+        const button = await renderButton(true, { destination: { href: '/settings/usage', onOpen } });
+        expect(button.getAttribute('role')).toBe('link');
+
+        await act(async () => { pointerEnter(button); });
+        await act(async () => { vi.advanceTimersByTime(motionTokens.overlay.popover.hoverOpenDelayMs + 10); });
+        expect(popover()).not.toBeNull();
+        expect(onOpen).not.toHaveBeenCalled();
+
+        await act(async () => { button.click(); });
+        expect(onOpen).toHaveBeenCalledOnce();
+        expect(popover()).toBeNull();
     });
 
     it('closes a hover preview when the pointer leaves', async () => {

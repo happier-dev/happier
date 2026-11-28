@@ -4,7 +4,7 @@ import { useMachinesRailSeen, writeMachinesRailSeen } from '@/sync/domains/state
 import { t } from '@/text';
 import { areServerAccountScopesEqual, serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 
-import { SidebarFooterPopoverButton, type SidebarFooterPopoverContentProps, type SidebarFooterPopoverTrigger } from '../sidebarFooter/SidebarFooterPopoverButton';
+import { SidebarFooterPopoverButton, type SidebarFooterDestination, type SidebarFooterPopoverContentProps, type SidebarFooterPopoverTrigger } from '../sidebarFooter/SidebarFooterPopoverButton';
 import { SidebarMachinesPopoverContent } from '../sidebarFooter/SidebarMachinesPopoverContent';
 import { RAIL_POPOVER_ROSTER_MAX_HEIGHT_PX, RAIL_POPOVER_WIDE_WIDTH_PX } from '../sidebarFooter/sidebarFooterLayout';
 import { AppRailBadge, AppRailMenuCount } from './AppRailBadge';
@@ -20,6 +20,7 @@ import { buildMachinesRailSeen, forgetRecoveredMachinesRailReasons, useMachinesR
  * The tooltip names the machine and its reason. Opening the popover records what was seen (MPG-16).
  */
 export const AppRailMachines = React.memo(function AppRailMachines(props: Readonly<{
+    destination: SidebarFooterDestination;
     renderTrigger?: SidebarFooterPopoverTrigger;
     /** The Machines page is open through the rail door (`/machines/**`): the icon is the selected destination (R1). */
     selected?: boolean;
@@ -62,6 +63,7 @@ export const AppRailMachines = React.memo(function AppRailMachines(props: Readon
     const button = (
         <SidebarFooterPopoverButton
             testID="app-rail-machines"
+            destination={props.destination}
             iconName="desktop"
             renderIcon={renderIcon}
             label={label}
@@ -79,5 +81,5 @@ export const AppRailMachines = React.memo(function AppRailMachines(props: Readon
         />
     );
     if (props.renderTrigger) return button;
-    return <AppRailSlot badge={signal ? <AppRailBadge testID="app-rail-machines-badge" signal={signal} /> : null}>{button}</AppRailSlot>;
+    return <AppRailSlot href={props.destination.href} badge={signal ? <AppRailBadge testID="app-rail-machines-badge" signal={signal} /> : null}>{button}</AppRailSlot>;
 });

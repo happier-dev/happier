@@ -10,6 +10,7 @@ import {
     type BuiltinAppShellColumnId,
     type CompactAppDestination,
 } from '@/components/appShell/destinations/compactAppDestinationCatalog';
+import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { t } from '@/text';
 import type { NavigationDefaultPlacement, NavigationPlacement } from '@/sync/domains/settings/navigationPlacement';
 import type { SessionOrganizationProjection } from '@/sync/domains/session/organization';
@@ -99,6 +100,7 @@ export type AppRailEntries = Readonly<{
     plugins: readonly AppRailEntry[];
     /** The bottom of the rail: Settings. */
     account: readonly AppRailEntry[];
+    footerDestinations: Readonly<Partial<Record<AppRailFooterItemId, AppRailEntry>>>;
     /** In pin order, including slots whose visible Session row is still pending. */
     bots: readonly AppRailBotSlot[];
 }>;
@@ -112,7 +114,7 @@ export type AppRailPlacementItem = Readonly<{
     defaultPlacement: NavigationDefaultPlacement;
     /** For an `auto` default (an arrival): whether the person has something there yet. */
     hasContent?: boolean;
-}> & (Readonly<{ kind: 'destination'; entry: AppRailEntry }> | Readonly<{ kind: 'footer'; id: AppRailFooterItemId }>);
+}> & (Readonly<{ kind: 'destination'; entry: AppRailEntry }> | Readonly<{ kind: 'footer'; id: AppRailFooterItemId; destination?: AppRailEntry }>);
 
 /**
  * The rail entries that join a fresh rail the first time the person has something there (owner 11-28, servers IA
@@ -142,7 +144,7 @@ export function buildAppRailPlacementItems(entries: AppRailEntries, updatesVisib
                 : resolveAppRailBand(entry) === 'work' || group === 'account' ? 'pinned' : 'overflow',
             ...(entry.visibility === 'hidden' || entry.contextual ? null : arrival(entry.id)), entry }));
     const footer = (id: AppRailFooterItemId, title: string, icon: AppRailEntry['icon'], defaultPlacement: NavigationPlacement): AppRailPlacementItem =>
-        ({ kind: 'footer', id, title, icon, group: 'account', defaultPlacement, ...arrival(id) });
+        ({ kind: 'footer', id, title, icon, group: 'account', defaultPlacement, destination: entries.footerDestinations[id], ...arrival(id) });
     return [
         ...destinations(entries.app, 'app'), ...destinations(entries.plugins, 'plugins'),
         footer('app-rail-usage', t('settings.usage'), 'speedometer', 'overflow'),
@@ -165,10 +167,17 @@ export function buildAppRailEntries(catalog: readonly CompactAppDestination[], o
 }>): AppRailEntries {
     const region = (name: 'app' | 'plugins' | 'account') => selectAppDestinationsInPlacement(catalog, { kind: 'rail', region: name }, options)
         .filter(destination => !isRailControlDestination(destination));
+    const account = region('account');
+    const settings = account.find(entry => entry.id === 'settings');
     return {
         app: region('app'),
         plugins: region('plugins'),
-        account: region('account'),
+        account,
+        footerDestinations: {
+            // Usage is a shortcut into Settings and shares its selection identity.
+            'app-rail-usage': settings && { ...settings, routePath: SETTINGS_ROUTES.usage },
+            'app-rail-machines': catalog.find(entry => entry.id === 'machines' && isRailControlDestination(entry)),
+        },
         bots: (options?.botHomes ?? []).flatMap(home => home.organization.railPinnedSessionIds.flatMap<AppRailBotSlot>(sessionId => {
             if (!Object.hasOwn(home.rowsBySessionId, sessionId)) return [];
             const address = {

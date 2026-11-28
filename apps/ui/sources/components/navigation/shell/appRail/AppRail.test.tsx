@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useRouter } from 'expo-router';
 import { View, type LayoutChangeEvent } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -18,7 +19,8 @@ import { INBOX_ARTIFACT_KINDS } from '@/sync/domains/artifacts/inboxArtifacts';
 import { t } from '@/text';
 import { resolveCompactAppDestinations } from '@/components/appShell/destinations/compactAppDestinationCatalog';
 import type { PluginPage } from '@/components/plugins/pages/pluginPages';
-import { AppRailSurface } from './AppRail';
+import { AppRail, AppRailSurface } from './AppRail';
+import { navigationPlacementPatch } from '@/sync/domains/settings/navigationPlacement';
 import { AppShellPeekProvider } from './AppShellPeek';
 import { AppRailAccount } from './AppRailAccount';
 import { buildAppRailEntries, buildAppRailPlacementItems } from './appRailModel';
@@ -229,9 +231,12 @@ describe('AppRail measured room', () => {
         expect(customize).toHaveBeenCalledOnce();
     });
 
-    it('opens the canonical Usage popover by row press and keyboard from More', async () => {
+    it.each([
+        ['app-rail-usage', '/settings/usage', 'settings.usage'],
+        ['app-rail-machines', '/machines', 'settings.machines'],
+    ])('navigates from the pinned %s icon and its More row', async (id, href, label) => {
         getStorage().setState({ settings: settingsDefaults });
-        // Configure only the endpoint boundary. Both the feature decision and Usage's popup/data owners stay real.
+        // A quota-enabled Home exercises the Usage trigger that used to open a popover.
         await stubServerFeaturesFetch({ connectedServicesQuotasEnabled: true });
         await getServerFeaturesSnapshot({ serverId: getActiveServerSnapshot().serverId, force: true });
         const feature = await renderHook(() => useFeatureDecision('connectedServices.quotas'), {
@@ -239,21 +244,38 @@ describe('AppRail measured room', () => {
         });
         expect(feature.getCurrent()).toMatchObject({ state: 'enabled' });
         await feature.unmount();
+        const renderRail = (placement: 'pinned' | 'overflow') => {
+            getStorage().getState().applyLocalSettings({
+                navigationSurfacePlacementsV1: navigationPlacementPatch('appRail', {
+                    orderedIds: [],
+                    placements: { 'app-rail-usage': 'hidden', 'app-rail-machines': 'hidden',
+                        'app-rail-account': 'hidden', [id]: placement },
+                }),
+            }, { source: 'ui' });
+            return renderScreen(
+                <InjectedAuthProvider credentials={null}><InboxSummaryProvider>
+                    <AppRail />
+                </InboxSummaryProvider></InjectedAuthProvider>,
+            );
+        };
+        const router = useRouter();
+        vi.mocked(router.navigate).mockClear();
+        const pinned = await renderRail('pinned');
+        expect(pinned.findHostByTestId(id)?.props).toMatchObject({ role: 'link', accessibilityLabel: label });
+        await pinned.pressByTestIdAsync(id);
+        expect(router.navigate).toHaveBeenCalledWith(href);
+        expect(pinned.findByTestId(`${id}-popover`)).toBeNull();
+        await pinned.unmount();
+
         vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-        const all = entries();
-        const screen = await renderScreen(<InjectedAuthProvider credentials={null}><InboxSummaryProvider><AppRailSurface entries={all} activeId={null}
-            onOpen={() => {}} preferences={{ orderedIds: [], placements: { ...pinAll(all).placements,
-                'app-rail-usage': 'overflow', 'app-rail-machines': 'hidden', 'app-rail-account': 'hidden',
-            } }} /></InboxSummaryProvider></InjectedAuthProvider>);
-        await screen.pressByTestIdAsync('app-rail-more.trigger');
+        vi.mocked(router.navigate).mockClear();
+        const overflow = await renderRail('overflow');
+        await overflow.pressByTestIdAsync('app-rail-more.trigger');
         await flushHookEffects({ cycles: 1, advanceTimersMs: 0 });
-        expect(screen.findByTestId('app-rail-usage-popover')).toBeNull();
-        await screen.pressByTestIdAsync('app-rail-more:app-rail-usage');
-        expect(screen.findByTestId('app-rail-usage-popover')).not.toBeNull();
-        await act(async () => screen.findByTestId('app-rail-more:app-rail-usage:scroll-frame')?.props.onKeyDown({ nativeEvent: { key: 'Enter' } }));
-        expect(screen.findByTestId('app-rail-usage-popover')).toBeNull();
-        await act(async () => screen.findByTestId('app-rail-more:app-rail-usage:scroll-frame')?.props.onKeyDown({ nativeEvent: { key: 'Enter' } }));
-        expect(screen.findByTestId('app-rail-usage-popover')).not.toBeNull();
+        await overflow.pressByTestIdAsync(`app-rail-more:${id}`);
+        expect(router.navigate).toHaveBeenCalledWith(href);
+        expect(overflow.findByTestId(`${id}-popover`)).toBeNull();
+        expect(overflow.findByTestId(`app-rail-more:${id}`)).toBeNull();
     });
 });
 
