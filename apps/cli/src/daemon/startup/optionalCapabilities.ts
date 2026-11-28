@@ -1,4 +1,5 @@
-export type DaemonOptionalCapability = 'account_catalogs' | 'plugin_runtime' | 'connected_service_reconcile';
+export type DaemonOptionalCapability = 'account_catalogs' | 'plugin_runtime' | 'connected_service_reconcile'
+  | 'external_session_identity_backfill';
 
 export type DaemonOptionalCapabilityResult =
   | Readonly<{ status: 'ready'; capability: DaemonOptionalCapability }>
